@@ -426,8 +426,9 @@ public unsafe class NpcAiController : IDisposable
             newPos = npcPos + moveDir * moveDist;
         }
 
-        // Write position directly to game object (bypasses SetPosition hook)
-        gameObj->Position = newPos;
+        // Call the real SetPosition via the hook bypass — this updates both
+        // the struct field AND the DrawObject (3D model position).
+        movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
 
         // Face the player
         ForceRotateToward(npc, playerPos, deltaTime);
@@ -435,6 +436,7 @@ public unsafe class NpcAiController : IDisposable
 
     /// <summary>
     /// Rotate any NPC to face a target position, regardless of IsClientControlled.
+    /// Uses SetApproachRotation to properly update the DrawObject.
     /// </summary>
     private void ForceRotateToward(SimulatedNpc npc, Vector3 targetPos, float deltaTime)
     {
@@ -454,10 +456,13 @@ public unsafe class NpcAiController : IDisposable
         while (diff < -MathF.PI) diff += 2 * MathF.PI;
 
         var rotSpeed = 5.0f * deltaTime;
+        float newRot;
         if (MathF.Abs(diff) < rotSpeed)
-            gameObj->Rotation = targetRot;
+            newRot = targetRot;
         else
-            gameObj->Rotation = currentRot + MathF.Sign(diff) * rotSpeed;
+            newRot = currentRot + MathF.Sign(diff) * rotSpeed;
+
+        movementBlockHook.SetApproachRotation(gameObj, newRot);
     }
 
     public void Dispose()

@@ -30,13 +30,43 @@ public unsafe class MovementBlockHook : IDisposable
 
     /// <summary>
     /// Addresses of NPCs whose server-driven position updates should be blocked
-    /// (we control their position directly for the target approach feature).
+    /// (we control their position via SetApproachPosition/Rotation instead).
     /// </summary>
     private readonly HashSet<nint> approachBlockedAddresses = new();
+
+    /// <summary>
+    /// When true, the next SetPosition/SetRotation call is from our approach
+    /// logic and should be allowed through (not blocked by the approach filter).
+    /// </summary>
+    private bool allowApproachUpdate;
 
     public void AddApproachNpc(nint address) => approachBlockedAddresses.Add(address);
     public void RemoveApproachNpc(nint address) => approachBlockedAddresses.Remove(address);
     public void ClearApproachNpcs() => approachBlockedAddresses.Clear();
+
+    /// <summary>
+    /// Move an approach-controlled NPC by calling the real SetPosition,
+    /// bypassing our own block. This properly updates the DrawObject (3D model).
+    /// </summary>
+    public void SetApproachPosition(GameObject* obj, float x, float y, float z)
+    {
+        if (setPositionHook == null) return;
+        allowApproachUpdate = true;
+        setPositionHook.Original(obj, x, y, z);
+        allowApproachUpdate = false;
+    }
+
+    /// <summary>
+    /// Rotate an approach-controlled NPC by calling the real SetRotation,
+    /// bypassing our own block.
+    /// </summary>
+    public void SetApproachRotation(GameObject* obj, float value)
+    {
+        if (setRotationHook == null) return;
+        allowApproachUpdate = true;
+        setRotationHook.Original(obj, value);
+        allowApproachUpdate = false;
+    }
 
     public MovementBlockHook(IGameInteropProvider gameInterop, IClientState clientState, IPluginLog log)
     {
@@ -79,8 +109,8 @@ public unsafe class MovementBlockHook : IDisposable
         if (IsBlocking && IsLocalPlayer(thisPtr))
             return; // Skip — player position stays frozen
 
-        if (approachBlockedAddresses.Contains((nint)thisPtr))
-            return; // Skip — we control this NPC's position for target approach
+        if (!allowApproachUpdate && approachBlockedAddresses.Contains((nint)thisPtr))
+            return; // Skip — server update blocked; we move this NPC via SetApproachPosition
 
         setPositionHook!.Original(thisPtr, x, y, z);
     }
@@ -90,8 +120,8 @@ public unsafe class MovementBlockHook : IDisposable
         if (IsBlocking && IsLocalPlayer(thisPtr))
             return; // Skip — player rotation stays frozen
 
-        if (approachBlockedAddresses.Contains((nint)thisPtr))
-            return; // Skip — we control this NPC's rotation for target approach
+        if (!allowApproachUpdate && approachBlockedAddresses.Contains((nint)thisPtr))
+            return; // Skip — server update blocked; we rotate this NPC via SetApproachRotation
 
         setRotationHook!.Original(thisPtr, value);
     }
