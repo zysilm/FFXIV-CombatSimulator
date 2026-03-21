@@ -32,6 +32,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly AnimationController animationController;
     private readonly CombatEngine combatEngine;
     private readonly NpcAiController npcAiController;
+    private readonly MovementBlockHook movementBlockHook;
     private readonly UseActionHook useActionHook;
     private readonly MainWindow mainWindow;
     private readonly HpBarOverlay hpBarOverlay;
@@ -70,16 +71,18 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         damageCalculator = new DamageCalculator();
         chatCommandExecutor = new ChatCommandExecutor(log);
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
+        movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, chatCommandExecutor, config);
         npcSelector = new NpcSelector(objectTable, targetManager, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
-            glamourerIpc, config, npcSelector, clientState, log);
+            glamourerIpc, movementBlockHook, config, npcSelector, clientState, log);
         npcAiController = new NpcAiController(combatEngine, animationController, clientState, log);
 
-        // Safety — enable hook immediately; it already gates on combatEngine.IsActive
+        // Safety — enable hooks immediately; they gate on internal state
         useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, config, clientState, log);
         useActionHook.Enable();
+        movementBlockHook.Enable();
 
         // GUI
         mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, chatGui, log);
@@ -115,6 +118,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcSelector.DeselectAll();
 
         useActionHook.Dispose();
+        movementBlockHook.Dispose();
         combatLogWindow.Dispose();
         hpBarOverlay.Dispose();
         mainWindow.Dispose();

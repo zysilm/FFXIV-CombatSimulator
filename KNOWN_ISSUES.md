@@ -1,28 +1,23 @@
 # Known Issues
 
 ## Movement blocking on player death
-When the player dies in the combat simulator, WASD keyboard keys and controller left joystick movement are not reliably blocked.
+**Status: FIX IMPLEMENTED** — Hooks `InputData.IsInputIdDown/Pressed/Held` to return false for movement InputIds when player is dead. See `Safety/MovementBlockHook.cs`.
 
-### Approaches tried (all failed)
+### Current approach (position hook)
+Hooks `GameObject.SetPosition` and `GameObject.SetRotation` at the native function level via `IGameInteropProvider.HookFromAddress`. When `IsBlocking` is true and the target object is the local player, the hooks skip the original call — position and rotation simply never change. Unlike input-based approaches, this prevents movement at the destination (the game engine calculates movement normally but the position write is silently dropped), so there is no shaking, no input side-effects, and no timing issues.
+
+### Previous approaches tried (all failed)
+0. **InputId query hooks** — Hooked `InputData.IsInputIdDown/Pressed/Held` to return false for movement InputIds. Result: character jumps erratically and strange keyboard behavior. The hook was too broad — `IsInputIdDown` is used for all input queries, not just movement, causing widespread side-effects.
 1. **Position/rotation forcing per tick** — Saved death position, forced `GameObject->Position` and `Rotation` back every frame. Result: character shakes violently due to game engine fighting the correction each frame.
 2. **CharacterModes.EmoteLoop** — Set `Character->Mode = CharacterModes.EmoteLoop` (value 3) each tick. Result: did not block movement, and caused visual artifacts (eyes open during playdead animation).
 3. **CharacterModes.AnimLock** — Considered but not tested; likely same timing issues as EmoteLoop.
 4. **Zeroing gamepad input** — Zeroed `GamepadInputData.LeftStickX/Y` and processed float fields (`LeftStickLeft/Right/Up/Down`) on both `UIInputData.Instance()` and `Framework.Instance()` each tick. Result: no effect, game's native `MoveControl` reads input before the plugin's framework update runs.
 5. **Zeroing keyboard input** — Zeroed `KeyboardInputData.KeyState[0x57/0x41/0x53/0x44]` (WASD VK codes) on both `UIInputData` and `Framework`. Result: no effect, same timing issue as gamepad.
 
-### What would likely work
-- A native hook into `Client::Game::Control::MoveControl` input processing (no C# wrapper in FFXIVClientStructs, only IDA data references exist: `MoveControl::SplineController2D`, `MoveControllerSubMemberForMine`)
-- Hooking at the input polling level before the game reads it (requires finding the right native function signature)
-
-### Relevant structs/fields
-- `UIInputData.Instance()` → `GamepadInputs` (offset 0x8), `KeyboardInputs` (offset 0x500)
-- `Framework.Instance()` → `GamepadInputs` (offset 0x07B0), `KeyboardInputs` (offset 0x0A2C)
-- `GamepadInputData.LeftStickX` (0x0), `LeftStickY` (0x4), `LeftStickLeft` (0xA4), `LeftStickRight` (0xA8), `LeftStickUp` (0xC4), `LeftStickDown` (0xC8)
-- `KeyboardInputData._keyState` (offset 0x4, 159 entries of `KeyStateFlags`)
-- `KeyStateFlags`: Down=1, Pressed=2, Released=4, Held=8
-- WASD VK codes: W=0x57, A=0x41, S=0x53, D=0x44
-- `Character->Mode` (CharacterModes enum): Normal=1, Dead=2, EmoteLoop=3, AnimLock=8
-- `UIInputData.FilterGamepadInputs()` — strips all gamepad input (untested, would block buttons too)
+### Notes
+- The position hook approach blocks ALL position changes for the local player while active (including teleports, mount movement, etc.). This is acceptable because the block is only active during combat sim death state and is cleared on reset/stop.
+- `GameObject.SetPosition` signature: `E8 ?? ?? ?? ?? 83 4B 70 01`
+- `GameObject.SetRotation` signature: `E8 ?? ?? ?? ?? 83 FE 20`
 
 ---
 

@@ -4,6 +4,7 @@ using System.Numerics;
 using CombatSimulator.Animation;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
+using CombatSimulator.Safety;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 
@@ -47,6 +48,7 @@ public class CombatEngine : IDisposable
     private readonly DamageCalculator damageCalculator;
     private readonly AnimationController animationController;
     private readonly GlamourerIpc glamourerIpc;
+    private readonly MovementBlockHook movementBlockHook;
     private readonly Configuration config;
     private readonly NpcSelector npcSelector;
     private readonly IClientState clientState;
@@ -73,6 +75,7 @@ public class CombatEngine : IDisposable
         DamageCalculator damageCalculator,
         AnimationController animationController,
         GlamourerIpc glamourerIpc,
+        MovementBlockHook movementBlockHook,
         Configuration config,
         NpcSelector npcSelector,
         IClientState clientState,
@@ -82,6 +85,7 @@ public class CombatEngine : IDisposable
         this.damageCalculator = damageCalculator;
         this.animationController = animationController;
         this.glamourerIpc = glamourerIpc;
+        this.movementBlockHook = movementBlockHook;
         this.config = config;
         this.npcSelector = npcSelector;
         this.clientState = clientState;
@@ -132,6 +136,7 @@ public class CombatEngine : IDisposable
         }
         npcSelector.DeselectAll();
         animationController.ResetPlayerDeathAnimation();
+        movementBlockHook.IsBlocking = false;
         RevertGlamourer();
 
         AddLogEntry("Combat simulation stopped.", CombatLogType.Info);
@@ -165,6 +170,7 @@ public class CombatEngine : IDisposable
         }
 
         animationController.ResetPlayerDeathAnimation();
+        movementBlockHook.IsBlocking = false;
         RevertGlamourer();
 
         playerDeathTriggered = false;
@@ -552,6 +558,7 @@ public class CombatEngine : IDisposable
             if (!playerDeathTriggered)
             {
                 playerDeathTriggered = true;
+                movementBlockHook.IsBlocking = true;
                 animationController.PlayPlayerDeath();
                 animationController.PlayVictory(isPlayerVictory: false);
                 ApplyGlamourer();
