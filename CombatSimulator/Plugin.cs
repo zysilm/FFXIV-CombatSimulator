@@ -23,7 +23,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly IPluginLog log;
 
     private readonly Configuration config;
-    private readonly HyperboreaDetector hyperboreaDetector;
     private readonly NpcSelector npcSelector;
     private readonly ActionDataProvider actionDataProvider;
     private readonly DamageCalculator damageCalculator;
@@ -64,14 +63,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         config = pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         config.Initialize(pluginInterface);
 
-        // Core
-        hyperboreaDetector = new HyperboreaDetector(pluginInterface, chatGui, log);
-
         // Simulation
         actionDataProvider = new ActionDataProvider(dataManager);
         damageCalculator = new DamageCalculator();
         chatCommandExecutor = new ChatCommandExecutor(log);
-        animationController = new AnimationController(log, clientState, chatCommandExecutor, config);
+        animationController = new AnimationController(log, clientState, dataManager, chatCommandExecutor, config);
         npcSelector = new NpcSelector(objectTable, targetManager, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
@@ -79,13 +75,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcAiController = new NpcAiController(combatEngine, animationController, clientState, log);
 
         // Safety — enable hook immediately; it already gates on combatEngine.IsActive
-        useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, log);
+        useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, config, clientState, log);
         useActionHook.Enable();
 
         // GUI
-        mainWindow = new MainWindow(config, hyperboreaDetector, npcSelector,
-            combatEngine, npcAiController, chatGui, log);
-        hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui);
+        mainWindow = new MainWindow(config, npcSelector, combatEngine, chatGui, log);
+        hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
 
         // Register
@@ -141,11 +136,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         switch (parts[0].ToLowerInvariant())
         {
             case "start":
-                if (config.RequireHyperborea && !hyperboreaDetector.IsHyperboreaLoaded)
-                {
-                    chatGui.PrintError("[CombatSim] Hyperborea is not loaded. Cannot start simulation.");
-                    return;
-                }
                 combatEngine.StartSimulation();
                 chatGui.Print("[CombatSim] Combat simulation started.");
                 break;
@@ -174,7 +164,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         if (combatEngine.IsActive)
         {
-            if (config.ShowEnemyHpBar)
+            if (config.ShowEnemyHpBar || config.ShowPlayerHpBar)
                 hpBarOverlay.Draw();
 
             if (config.ShowCombatLog)
@@ -206,7 +196,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             var deltaTime = (float)(1.0 / 60.0);
 
-            hyperboreaDetector.Tick(deltaTime);
             combatEngine.Tick(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
         }

@@ -12,34 +12,62 @@ public class HpBarOverlay : IDisposable
     private readonly NpcSelector npcSelector;
     private readonly CombatEngine combatEngine;
     private readonly IGameGui gameGui;
+    private readonly IClientState clientState;
+    private readonly Configuration config;
 
     private const float BarWidth = 200f;
     private const float BarHeight = 16f;
 
-    public HpBarOverlay(NpcSelector npcSelector, CombatEngine combatEngine, IGameGui gameGui)
+    public HpBarOverlay(
+        NpcSelector npcSelector,
+        CombatEngine combatEngine,
+        IGameGui gameGui,
+        IClientState clientState,
+        Configuration config)
     {
         this.npcSelector = npcSelector;
         this.combatEngine = combatEngine;
         this.gameGui = gameGui;
+        this.clientState = clientState;
+        this.config = config;
     }
 
     public unsafe void Draw()
     {
         var drawList = ImGui.GetBackgroundDrawList();
 
-        foreach (var npc in npcSelector.SelectedNpcs)
+        // Draw enemy HP bars
+        if (config.ShowEnemyHpBar)
         {
-            if (!npc.IsSpawned || npc.BattleChara == null)
-                continue;
+            foreach (var npc in npcSelector.SelectedNpcs)
+            {
+                if (!npc.IsSpawned || npc.BattleChara == null)
+                    continue;
 
-            var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
-            var worldPos = gameObj->Position;
-            worldPos.Y += gameObj->Height + 0.5f;
+                var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
+                var worldPos = gameObj->Position;
+                worldPos.Y += gameObj->Height + 0.5f;
 
-            if (!gameGui.WorldToScreen(worldPos, out var screenPos))
-                continue;
+                if (!gameGui.WorldToScreen(worldPos, out var screenPos))
+                    continue;
 
-            DrawNpcHpBar(drawList, npc, screenPos);
+                DrawNpcHpBar(drawList, npc, screenPos);
+            }
+        }
+
+        // Draw player HP bar
+        if (config.ShowPlayerHpBar)
+        {
+            var player = clientState.LocalPlayer;
+            if (player != null)
+            {
+                var worldPos = player.Position;
+                worldPos.Y += 2.2f; // Approximate character height + offset
+                if (gameGui.WorldToScreen(worldPos, out var screenPos))
+                {
+                    DrawPlayerHpBar(drawList, screenPos);
+                }
+            }
         }
     }
 
@@ -119,6 +147,57 @@ public class HpBarOverlay : IDisposable
                 0xFFFFFFFF,
                 castText);
         }
+    }
+
+    private void DrawPlayerHpBar(ImDrawListPtr drawList, Vector2 screenPos)
+    {
+        var ps = combatEngine.State.PlayerState;
+        float hpPercent = ps.MaxHp > 0 ? (float)ps.CurrentHp / ps.MaxHp : 1;
+
+        var barPos = screenPos - new Vector2(BarWidth / 2, 0);
+
+        // Background
+        drawList.AddRectFilled(
+            barPos,
+            barPos + new Vector2(BarWidth, BarHeight),
+            ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.1f, 0.85f)));
+
+        // HP fill (blue tint for player to distinguish from enemy green)
+        var fillColor = hpPercent > 0.5f
+            ? new Vector4(0.1f, 0.6f, 0.9f, 1)
+            : hpPercent > 0.25f
+                ? new Vector4(0.8f, 0.8f, 0.1f, 1)
+                : new Vector4(0.8f, 0.1f, 0.1f, 1);
+
+        if (hpPercent > 0)
+        {
+            drawList.AddRectFilled(
+                barPos,
+                barPos + new Vector2(BarWidth * hpPercent, BarHeight),
+                ImGui.ColorConvertFloat4ToU32(fillColor));
+        }
+
+        // Border
+        drawList.AddRect(
+            barPos,
+            barPos + new Vector2(BarWidth, BarHeight),
+            ImGui.ColorConvertFloat4ToU32(new Vector4(0.6f, 0.6f, 0.6f, 0.8f)));
+
+        // Name
+        var nameText = $"[Sim] {ps.Name}";
+        var nameSize = ImGui.CalcTextSize(nameText);
+        drawList.AddText(
+            screenPos - new Vector2(nameSize.X / 2, nameSize.Y + 4),
+            ImGui.ColorConvertFloat4ToU32(new Vector4(0.4f, 0.7f, 1f, 1)),
+            nameText);
+
+        // HP text
+        var hpText = $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
+        var hpSize = ImGui.CalcTextSize(hpText);
+        drawList.AddText(
+            barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
+            0xFFFFFFFF,
+            hpText);
     }
 
     public void Dispose()

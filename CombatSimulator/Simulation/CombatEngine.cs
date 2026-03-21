@@ -123,17 +123,21 @@ public class CombatEngine : IDisposable
         {
             npc.State.Reset();
 
-            // Revive dead NPCs
+            // Revive dead NPCs: reset death animation + restore normal mode
             unsafe
             {
                 if (npc.BattleChara != null)
                 {
+                    animationController.ResetDeathAnimation(npc.BattleChara);
                     var character = (Character*)npc.BattleChara;
                     character->Mode = CharacterModes.Normal;
                     character->ModeParam = 0;
                 }
             }
         }
+
+        // Reset player death animation if it was applied via timeline
+        animationController.ResetPlayerDeathAnimation();
 
         playerDeathTriggered = false;
         victoryTriggered = false;
@@ -685,7 +689,7 @@ public class CombatEngine : IDisposable
         {
             ps.AutoAttackTimer = 2.56f; // Standard auto-attack delay
 
-            // Auto-attack closest target NPC
+            // Auto-attack closest engaged NPC
             foreach (var npc in npcSelector.SelectedNpcs)
             {
                 if (npc.State.IsAlive && npc.IsEngaged)
@@ -693,6 +697,16 @@ public class CombatEngine : IDisposable
                     var dmg = damageCalculator.CalculateNpcAutoAttack(ps, npc.State, 110);
                     npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
                     State.TotalDamageDealt += dmg.Damage;
+
+                    // Trigger auto-attack animation + VFX
+                    var autoAttackData = new ActionData
+                    {
+                        ActionId = 7, // Auto-attack
+                        Potency = 110,
+                        DamageType = SimDamageType.Physical,
+                        AnimationLock = 0.6f,
+                    };
+                    TriggerActionEffect(ps, npc.State, autoAttackData, dmg);
 
                     if (!npc.State.IsAlive)
                         OnEntityDeath(npc.State);

@@ -7,6 +7,7 @@ using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
+using Lumina.Excel.Sheets;
 
 namespace CombatSimulator.Animation;
 
@@ -37,14 +38,21 @@ public unsafe class AnimationController : IDisposable
     private readonly IPluginLog log;
     private readonly IClientState clientState;
     private readonly ChatCommandExecutor commandExecutor;
+    private readonly EmoteTimelinePlayer emotePlayer;
     private readonly Configuration config;
 
     // Monotonically increasing sequence number for fabricated ActionEffects
     private uint globalSequence = 0x10000000;
 
+    // Cached "Play Dead" emote timeline IDs (resolved at init)
+    private ushort playDeadLoopTimeline;
+    private ushort playDeadIntroTimeline;
+    private bool playDeadResolved;
+
     public AnimationController(
         IPluginLog log,
         IClientState clientState,
+        IDataManager dataManager,
         ChatCommandExecutor commandExecutor,
         Configuration config)
     {
@@ -52,8 +60,57 @@ public unsafe class AnimationController : IDisposable
         this.clientState = clientState;
         this.commandExecutor = commandExecutor;
         this.config = config;
+        this.emotePlayer = new EmoteTimelinePlayer(log);
 
-        log.Info("AnimationController: Initialized with ActionEffectHandler + command system.");
+        ResolvePlayDeadTimelines(dataManager);
+
+        log.Info("AnimationController: Initialized with ActionEffectHandler + emote timeline system.");
+    }
+
+    private void ResolvePlayDeadTimelines(IDataManager dataManager)
+    {
+        try
+        {
+            var emoteSheet = dataManager.GetExcelSheet<Emote>();
+            if (emoteSheet == null)
+            {
+                log.Warning("AnimationController: Emote sheet not found.");
+                return;
+            }
+
+            // If user specified a custom emote ID, use that
+            uint targetEmoteId = config.DeathEmoteId;
+
+            if (targetEmoteId > 0)
+            {
+                var emote = emoteSheet.GetRow(targetEmoteId);
+                playDeadLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
+                playDeadIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
+                playDeadResolved = playDeadLoopTimeline != 0 || playDeadIntroTimeline != 0;
+                log.Info($"AnimationController: Custom death emote {targetEmoteId} → loop={playDeadLoopTimeline}, intro={playDeadIntroTimeline}");
+                return;
+            }
+
+            // Auto-detect: search for "Play Dead" emote by name
+            foreach (var emote in emoteSheet)
+            {
+                var name = emote.Name.ToString();
+                if (name.Equals("Play Dead", StringComparison.OrdinalIgnoreCase))
+                {
+                    playDeadLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
+                    playDeadIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
+                    playDeadResolved = playDeadLoopTimeline != 0 || playDeadIntroTimeline != 0;
+                    log.Info($"AnimationController: Resolved 'Play Dead' emote (id={emote.RowId}) → loop={playDeadLoopTimeline}, intro={playDeadIntroTimeline}");
+                    return;
+                }
+            }
+
+            log.Warning("AnimationController: Could not find 'Play Dead' emote. Death will use fallback (CharacterModes.Dead for NPCs).");
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "AnimationController: Failed to resolve Play Dead emote timelines.");
+        }
     }
 
     public void Tick(float deltaTime)
@@ -205,7 +262,8 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
-    /// Play death animation on an NPC (CharacterModes.Dead).
+    /// Play death animation on an NPC using BypassEmote-style timeline (playdead).
+    /// Falls back to CharacterModes.Dead if playdead timelines aren't available.
     /// </summary>
     public void PlayDeathAnimation(SimulatedNpc npc)
     {
@@ -215,9 +273,19 @@ public unsafe class AnimationController : IDisposable
                 return;
 
             var character = (Character*)npc.BattleChara;
-            character->SetMode(CharacterModes.Dead, 0);
 
-            log.Verbose($"Death animation triggered for NPC '{npc.Name}'.");
+            if (playDeadResolved)
+            {
+                // Use BypassEmote-style timeline: plays playdead on any character (no unlock needed)
+                emotePlayer.PlayLoopedEmote(character, playDeadLoopTimeline, playDeadIntroTimeline);
+                log.Verbose($"Death emote (timeline) triggered for NPC '{npc.Name}'.");
+            }
+            else
+            {
+                // Fallback: set dead mode directly
+                character->SetMode(CharacterModes.Dead, 0);
+                log.Verbose($"Death mode (fallback) triggered for NPC '{npc.Name}'.");
+            }
         }
         catch (Exception ex)
         {
@@ -226,15 +294,76 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
-    /// Execute the death command on the player character (e.g., /playdead).
+    /// Play death animation on the player character.
+    /// If a custom command is configured, uses that. Otherwise uses BypassEmote-style timeline.
     /// </summary>
     public void PlayPlayerDeath()
     {
-        var command = config.PlayerDeathCommand;
-        if (!string.IsNullOrWhiteSpace(command))
+        try
         {
-            commandExecutor.ExecuteCommand(command);
-            log.Info($"Player death command executed: {command}");
+            // If a custom command is set, use it
+            var command = config.PlayerDeathCommand;
+            if (!string.IsNullOrWhiteSpace(command))
+            {
+                commandExecutor.ExecuteCommand(command);
+                log.Info($"Player death command executed: {command}");
+                return;
+            }
+
+            // Use BypassEmote-style timeline (no emote unlock needed)
+            if (playDeadResolved)
+            {
+                var player = clientState.LocalPlayer;
+                if (player != null)
+                {
+                    var character = (Character*)player.Address;
+                    emotePlayer.PlayLoopedEmote(character, playDeadLoopTimeline, playDeadIntroTimeline);
+                    log.Info("Player death emote (timeline) triggered.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Failed to play player death animation.");
+        }
+    }
+
+    /// <summary>
+    /// Reset death animation on an NPC character (clear timeline override).
+    /// </summary>
+    public void ResetDeathAnimation(FFXIVClientStructs.FFXIV.Client.Game.Character.BattleChara* battleChara)
+    {
+        if (battleChara == null) return;
+
+        try
+        {
+            var character = (Character*)battleChara;
+            if (playDeadResolved)
+                emotePlayer.ResetEmote(character);
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Failed to reset death animation.");
+        }
+    }
+
+    /// <summary>
+    /// Reset death animation on the local player (clear timeline override).
+    /// </summary>
+    public void ResetPlayerDeathAnimation()
+    {
+        try
+        {
+            var player = clientState.LocalPlayer;
+            if (player == null) return;
+
+            var character = (Character*)player.Address;
+            if (playDeadResolved)
+                emotePlayer.ResetEmote(character);
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Failed to reset player death animation.");
         }
     }
 

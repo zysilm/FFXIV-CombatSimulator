@@ -1,6 +1,5 @@
 using System;
 using System.Numerics;
-using CombatSimulator.Ai;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
@@ -11,35 +10,26 @@ namespace CombatSimulator.Gui;
 public class MainWindow : IDisposable
 {
     private readonly Configuration config;
-    private readonly Core.HyperboreaDetector hyperboreaDetector;
     private readonly NpcSelector npcSelector;
     private readonly CombatEngine combatEngine;
-    private readonly NpcAiController npcAiController;
     private readonly IChatGui chatGui;
     private readonly IPluginLog log;
 
-    // Target selection state
-    private int selectedLevel = 90;
-    private float selectedHpMultiplier = 1.0f;
-    private int selectedBehaviorType = 1; // BasicMelee
+    // Model override state
     private int modelOverrideId = 0;
 
     private static readonly string[] BehaviorNames = { "Training Dummy", "Basic Melee", "Basic Ranged", "Boss" };
 
     public MainWindow(
         Configuration config,
-        Core.HyperboreaDetector hyperboreaDetector,
         NpcSelector npcSelector,
         CombatEngine combatEngine,
-        NpcAiController npcAiController,
         IChatGui chatGui,
         IPluginLog log)
     {
         this.config = config;
-        this.hyperboreaDetector = hyperboreaDetector;
         this.npcSelector = npcSelector;
         this.combatEngine = combatEngine;
-        this.npcAiController = npcAiController;
         this.chatGui = chatGui;
         this.log = log;
     }
@@ -57,8 +47,6 @@ public class MainWindow : IDisposable
         config.ShowMainWindow = showWindow;
 
         DrawStatusSection();
-        ImGui.Separator();
-        DrawTargetSelectionSection();
         ImGui.Separator();
         DrawActiveTargetsSection();
         ImGui.Separator();
@@ -79,76 +67,18 @@ public class MainWindow : IDisposable
         ImGui.SameLine();
         ImGui.TextColored(statusColor, statusText);
 
-        hyperboreaDetector.CheckStatus();
-        var hyperLoaded = hyperboreaDetector.IsHyperboreaLoaded;
-        var hyperColor = hyperLoaded ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0.3f, 0.3f, 1);
-        var hyperText = hyperLoaded ? "Detected" : "Not Found";
-
-        ImGui.Text("Hyperborea:");
-        ImGui.SameLine();
-        ImGui.TextColored(hyperColor, hyperText);
-
-        if (!hyperLoaded && config.RequireHyperborea)
-        {
-            ImGui.TextColored(new Vector4(1, 1, 0, 1),
-                "WARNING: Hyperborea is required for safe operation.");
-        }
-
         if (simActive && combatEngine.State.CombatDuration > 0)
         {
             ImGui.Text($"DPS: {combatEngine.State.Dps:N0}");
             ImGui.SameLine();
             ImGui.Text($"Duration: {combatEngine.State.CombatDuration:F1}s");
         }
-    }
 
-    private void DrawTargetSelectionSection()
-    {
-        if (ImGui.CollapsingHeader("Select Combat Target", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!simActive)
         {
             ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1),
-                "Target an NPC in-game, then click Select.");
-
-            // Settings for the selected target
-            ImGui.SliderInt("Level", ref selectedLevel, 1, 100);
-            ImGui.SliderFloat("HP Multiplier", ref selectedHpMultiplier, 0.1f, 10.0f, "%.1f");
-            ImGui.Combo("Behavior", ref selectedBehaviorType, BehaviorNames, BehaviorNames.Length);
-
-            // Select button
-            var canSelect = npcSelector.SelectedNpcs.Count < npcSelector.MaxTargets;
-            if (!canSelect)
-                ImGui.BeginDisabled();
-
-            if (ImGui.Button("Select Current Target", new Vector2(200, 0)))
-            {
-                var (npc, error) = npcSelector.SelectCurrentTarget(
-                    selectedLevel, selectedHpMultiplier,
-                    (NpcBehaviorType)selectedBehaviorType);
-
-                if (npc != null)
-                {
-                    combatEngine.RegisterNpcEntity(npc);
-                    chatGui.Print($"[CombatSim] Selected '{npc.Name}' as combat target (Lv.{selectedLevel}).");
-                }
-                else
-                {
-                    chatGui.PrintError($"[CombatSim] {error}");
-                }
-            }
-
-            if (!canSelect)
-                ImGui.EndDisabled();
-
-            ImGui.SameLine();
-            if (ImGui.Button("Deselect All", new Vector2(150, 0)))
-            {
-                foreach (var npc in npcSelector.SelectedNpcs)
-                    combatEngine.UnregisterNpcEntity(npc.SimulatedEntityId);
-                npcSelector.DeselectAll();
-                chatGui.Print("[CombatSim] All targets deselected.");
-            }
-
-            ImGui.Text($"Selected: {npcSelector.SelectedNpcs.Count} / {npcSelector.MaxTargets}");
+                "Start combat and attack any NPC to begin.\n" +
+                "Targets are auto-registered on first attack.");
         }
     }
 
@@ -158,7 +88,7 @@ public class MainWindow : IDisposable
         {
             if (npcSelector.SelectedNpcs.Count == 0)
             {
-                ImGui.TextDisabled("No targets selected.");
+                ImGui.TextDisabled("No targets yet. Attack an NPC to register it.");
                 return;
             }
 
@@ -188,14 +118,6 @@ public class MainWindow : IDisposable
 
                 ImGui.SameLine();
                 ImGui.Text(label);
-
-                // Deselect button
-                ImGui.SameLine(ImGui.GetWindowWidth() - 70);
-                if (ImGui.SmallButton("Deselect"))
-                {
-                    combatEngine.UnregisterNpcEntity(npc.SimulatedEntityId);
-                    npcSelector.DeselectNpc(npc);
-                }
 
                 // Cast bar
                 if (npc.State.IsCasting && npc.CurrentCastSkill != null)
@@ -239,18 +161,11 @@ public class MainWindow : IDisposable
 
             if (!isActive)
             {
-                var canStart = !config.RequireHyperborea || hyperboreaDetector.IsHyperboreaLoaded;
-                if (!canStart)
-                    ImGui.BeginDisabled();
-
                 if (ImGui.Button("Start Combat", new Vector2(150, 0)))
                 {
                     combatEngine.StartSimulation();
                     chatGui.Print("[CombatSim] Combat simulation started.");
                 }
-
-                if (!canStart)
-                    ImGui.EndDisabled();
             }
             else
             {
@@ -323,6 +238,13 @@ public class MainWindow : IDisposable
                 config.Save();
             }
 
+            var showPlayerHp = config.ShowPlayerHpBar;
+            if (ImGui.Checkbox("Show Player HP Bar", ref showPlayerHp))
+            {
+                config.ShowPlayerHpBar = showPlayerHp;
+                config.Save();
+            }
+
             var showLog = config.ShowCombatLog;
             if (ImGui.Checkbox("Show Combat Log", ref showLog))
             {
@@ -330,26 +252,26 @@ public class MainWindow : IDisposable
                 config.Save();
             }
 
-            var requireHyper = config.RequireHyperborea;
-            if (ImGui.Checkbox("Require Hyperborea", ref requireHyper))
-            {
-                config.RequireHyperborea = requireHyper;
-                config.Save();
-            }
-
-            if (!requireHyper)
-            {
-                ImGui.TextColored(new Vector4(1, 0.5f, 0, 1),
-                    "WARNING: Disabling Hyperborea requirement\n" +
-                    "reduces safety. The UseAction hook still\n" +
-                    "blocks server packets, but Hyperborea's\n" +
-                    "full firewall provides stronger protection.");
-            }
+            ImGui.Separator();
 
             var defaultLevel = config.DefaultNpcLevel;
             if (ImGui.SliderInt("Default NPC Level", ref defaultLevel, 1, 100))
             {
                 config.DefaultNpcLevel = defaultLevel;
+                config.Save();
+            }
+
+            var hpMult = config.DefaultNpcHpMultiplier;
+            if (ImGui.SliderFloat("Default HP Multiplier", ref hpMult, 0.1f, 10.0f, "%.1f"))
+            {
+                config.DefaultNpcHpMultiplier = hpMult;
+                config.Save();
+            }
+
+            var behaviorType = config.DefaultNpcBehaviorType;
+            if (ImGui.Combo("Default NPC Behavior", ref behaviorType, BehaviorNames, BehaviorNames.Length))
+            {
+                config.DefaultNpcBehaviorType = behaviorType;
                 config.Save();
             }
         }
@@ -384,7 +306,20 @@ public class MainWindow : IDisposable
                 config.Save();
             }
             ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "(default: /playdead)");
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "(empty = bypass)");
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
+                "Empty = BypassEmote-style playdead (no unlock needed).\n" +
+                "Set a command (e.g., /playdead) to use that instead.\n" +
+                "NPC death always uses bypass timeline.");
+
+            var deathEmoteId = (int)config.DeathEmoteId;
+            if (ImGui.InputInt("Death Emote ID", ref deathEmoteId))
+            {
+                config.DeathEmoteId = (uint)Math.Max(0, deathEmoteId);
+                config.Save();
+            }
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "(0 = auto-detect)");
 
             ImGui.Separator();
 
