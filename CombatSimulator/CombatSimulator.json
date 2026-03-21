@@ -1,0 +1,16 @@
+{
+    "Name": "Combat Simulator",
+    "Author": "CombatSimulator",
+    "Punchline": "Spawn battle NPCs and fight them client-side.",
+    "Description": "A client-side combat simulator that spawns battle NPCs you can fight. Requires Hyperborea for network safety. All combat is simulated locally - no data is sent to the server.",
+    "RepoUrl": "",
+    "Tags": [
+        "combat",
+        "simulation",
+        "training"
+    ],
+    "CategoryTags": [
+        "other"
+    ],
+    "LoadPriority": 0
+}
