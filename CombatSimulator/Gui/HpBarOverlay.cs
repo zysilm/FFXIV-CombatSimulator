@@ -4,8 +4,6 @@ using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
-using FFXIVClientStructs.FFXIV.Client.Graphics.Render;
-using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 
 namespace CombatSimulator.Gui;
 
@@ -40,7 +38,6 @@ public class HpBarOverlay : IDisposable
     public unsafe void Draw()
     {
         var drawList = ImGui.GetBackgroundDrawList();
-        var offset = new Vector2(config.HpBarOffsetX, config.HpBarOffsetY);
 
         // Draw enemy HP bars
         if (config.ShowEnemyHpBar)
@@ -51,17 +48,13 @@ public class HpBarOverlay : IDisposable
                     continue;
 
                 var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
-                if (!TryGetBoneWorldPosition(gameObj, out var worldPos))
-                {
-                    // Fallback: use object position + height
-                    worldPos = gameObj->Position;
-                    worldPos.Y += gameObj->Height + 0.5f;
-                }
+                var worldPos = gameObj->Position;
+                worldPos.Y += gameObj->Height + 0.5f;
 
                 if (!gameGui.WorldToScreen(worldPos, out var screenPos))
                     continue;
 
-                DrawNpcHpBar(drawList, npc, screenPos + offset);
+                DrawNpcHpBar(drawList, npc, screenPos);
             }
         }
 
@@ -90,80 +83,6 @@ public class HpBarOverlay : IDisposable
         // Draw reset confirmation popup (ImGui window, not background draw)
         if (showResetPopup)
             DrawResetPopup();
-    }
-
-    /// <summary>
-    /// Try to get the world position of the configured bone (j_head, j_kubi, etc.)
-    /// by walking the character's skeleton hierarchy.
-    /// </summary>
-    private unsafe bool TryGetBoneWorldPosition(
-        FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject* gameObj,
-        out Vector3 worldPos)
-    {
-        worldPos = Vector3.Zero;
-
-        try
-        {
-            var drawObject = gameObj->DrawObject;
-            if (drawObject == null)
-                return false;
-
-            // DrawObject for characters is actually a CharacterBase
-            var charBase = (CharacterBase*)drawObject;
-            var skeleton = charBase->Skeleton;
-            if (skeleton == null || skeleton->PartialSkeletonCount == 0)
-                return false;
-
-            // Search for the bone in PartialSkeleton[0] (main body skeleton)
-            var partial = &skeleton->PartialSkeletons[0];
-            var pose = partial->GetHavokPose(0);
-            if (pose == null || pose->Skeleton == null)
-                return false;
-
-            var hkSkel = pose->Skeleton;
-            var boneName = config.HpBarBoneName;
-            int boneIndex = -1;
-
-            for (int i = 0; i < hkSkel->Bones.Length; i++)
-            {
-                var name = hkSkel->Bones[i].Name.String;
-                if (name != null && name.Equals(boneName, StringComparison.OrdinalIgnoreCase))
-                {
-                    boneIndex = i;
-                    break;
-                }
-            }
-
-            if (boneIndex < 0)
-                return false;
-
-            // Get bone position in model space
-            var modelPose = pose->GetSyncedPoseModelSpace();
-            if (modelPose == null || boneIndex >= modelPose->Length)
-                return false;
-
-            var boneTransform = (*modelPose)[boneIndex];
-            var boneModelPos = new Vector3(
-                boneTransform.Translation.X,
-                boneTransform.Translation.Y,
-                boneTransform.Translation.Z);
-
-            // Transform from model space to world space using skeleton transform
-            ref var skTransform = ref skeleton->Transform;
-            var skPos = (Vector3)skTransform.Position;
-            var skRot = (Quaternion)skTransform.Rotation;
-            var skScale = (Vector3)skTransform.Scale;
-
-            var scaledBonePos = boneModelPos * skScale;
-            var rotatedBonePos = Vector3.Transform(scaledBonePos, skRot);
-            worldPos = skPos + rotatedBonePos;
-
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private void DrawNpcHpBar(ImDrawListPtr drawList, SimulatedNpc npc, Vector2 screenPos)

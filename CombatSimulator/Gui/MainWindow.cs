@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
+using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
@@ -12,11 +14,16 @@ public class MainWindow : IDisposable
     private readonly Configuration config;
     private readonly NpcSelector npcSelector;
     private readonly CombatEngine combatEngine;
+    private readonly GlamourerIpc glamourerIpc;
     private readonly IChatGui chatGui;
     private readonly IPluginLog log;
 
     // Model override state
     private int modelOverrideId = 0;
+
+    // Glamourer design list cache for combo box
+    private List<KeyValuePair<Guid, string>> glamourerDesigns = new();
+    private int glamourerSelectedIndex = -1;
 
     private static readonly string[] BehaviorNames = { "Training Dummy", "Basic Melee", "Basic Ranged", "Boss" };
 
@@ -24,12 +31,14 @@ public class MainWindow : IDisposable
         Configuration config,
         NpcSelector npcSelector,
         CombatEngine combatEngine,
+        GlamourerIpc glamourerIpc,
         IChatGui chatGui,
         IPluginLog log)
     {
         this.config = config;
         this.npcSelector = npcSelector;
         this.combatEngine = combatEngine;
+        this.glamourerIpc = glamourerIpc;
         this.chatGui = chatGui;
         this.log = log;
     }
@@ -260,34 +269,6 @@ public class MainWindow : IDisposable
             }
 
             ImGui.Separator();
-            ImGui.Text("HP Bar Position");
-
-            var offsetX = config.HpBarOffsetX;
-            if (ImGui.SliderFloat("Offset X", ref offsetX, -200f, 200f, "%.0f"))
-            {
-                config.HpBarOffsetX = offsetX;
-                config.Save();
-            }
-
-            var offsetY = config.HpBarOffsetY;
-            if (ImGui.SliderFloat("Offset Y", ref offsetY, -200f, 200f, "%.0f"))
-            {
-                config.HpBarOffsetY = offsetY;
-                config.Save();
-            }
-
-            var boneName = config.HpBarBoneName;
-            if (ImGui.InputText("Bone Name", ref boneName, 64))
-            {
-                config.HpBarBoneName = boneName;
-                config.Save();
-            }
-            ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "(?)");
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Bone to attach HP bars to.\nCommon: j_head, j_kubi (neck), j_sebo_a (spine)");
-
-            ImGui.Separator();
 
             var defaultLevel = config.DefaultNpcLevel;
             if (ImGui.SliderInt("Default NPC Level", ref defaultLevel, 1, 100))
@@ -374,6 +355,85 @@ public class MainWindow : IDisposable
             ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
                 "Target Victory runs on your character\n" +
                 "(NPCs can't execute commands).");
+        }
+
+        if (ImGui.CollapsingHeader("Glamourer Integration"))
+        {
+            DrawGlamourerSection();
+        }
+    }
+
+    private void DrawGlamourerSection()
+    {
+        var enabled = config.ApplyGlamourerOnDeath;
+        if (ImGui.Checkbox("Apply Glamourer Preset on Death", ref enabled))
+        {
+            config.ApplyGlamourerOnDeath = enabled;
+            config.Save();
+        }
+        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
+            "Applies a Glamourer design to your character\n" +
+            "when you die. Reverts on reset/stop.");
+
+        if (!enabled)
+            return;
+
+        ImGui.Spacing();
+
+        if (!glamourerIpc.IsAvailable && glamourerDesigns.Count == 0)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.5f, 0.3f, 1),
+                "Glamourer not detected. Click Refresh.");
+        }
+
+        if (ImGui.Button("Refresh Designs"))
+        {
+            var designs = glamourerIpc.GetDesignList();
+            glamourerDesigns = new List<KeyValuePair<Guid, string>>(designs);
+            glamourerDesigns.Sort((a, b) => string.Compare(a.Value, b.Value, StringComparison.OrdinalIgnoreCase));
+
+            // Restore selected index from config
+            glamourerSelectedIndex = -1;
+            if (Guid.TryParse(config.DeathGlamourerDesignId, out var savedId))
+            {
+                for (int i = 0; i < glamourerDesigns.Count; i++)
+                {
+                    if (glamourerDesigns[i].Key == savedId)
+                    {
+                        glamourerSelectedIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            if (glamourerDesigns.Count > 0)
+                chatGui.Print($"[CombatSim] Found {glamourerDesigns.Count} Glamourer designs.");
+            else
+                chatGui.Print("[CombatSim] No Glamourer designs found. Is Glamourer installed?");
+        }
+
+        if (glamourerDesigns.Count > 0)
+        {
+            // Build display names for combo
+            var names = new string[glamourerDesigns.Count];
+            for (int i = 0; i < glamourerDesigns.Count; i++)
+                names[i] = glamourerDesigns[i].Value;
+
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.Combo("##GlamourerDesign", ref glamourerSelectedIndex, names, names.Length))
+            {
+                if (glamourerSelectedIndex >= 0 && glamourerSelectedIndex < glamourerDesigns.Count)
+                {
+                    config.DeathGlamourerDesignId = glamourerDesigns[glamourerSelectedIndex].Key.ToString();
+                    config.Save();
+                }
+            }
+
+            if (glamourerSelectedIndex >= 0 && glamourerSelectedIndex < glamourerDesigns.Count)
+            {
+                ImGui.TextColored(new Vector4(0.5f, 0.8f, 0.5f, 1),
+                    $"Selected: {glamourerDesigns[glamourerSelectedIndex].Value}");
+            }
         }
     }
 

@@ -3,6 +3,7 @@ using CombatSimulator.Ai;
 using CombatSimulator.Animation;
 using CombatSimulator.Core;
 using CombatSimulator.Gui;
+using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
@@ -27,6 +28,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly ActionDataProvider actionDataProvider;
     private readonly DamageCalculator damageCalculator;
     private readonly ChatCommandExecutor chatCommandExecutor;
+    private readonly GlamourerIpc glamourerIpc;
     private readonly AnimationController animationController;
     private readonly CombatEngine combatEngine;
     private readonly NpcAiController npcAiController;
@@ -67,11 +69,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         actionDataProvider = new ActionDataProvider(dataManager);
         damageCalculator = new DamageCalculator();
         chatCommandExecutor = new ChatCommandExecutor(log);
+        glamourerIpc = new GlamourerIpc(pluginInterface, log);
         animationController = new AnimationController(log, clientState, dataManager, chatCommandExecutor, config);
         npcSelector = new NpcSelector(objectTable, targetManager, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
-            npcSelector, clientState, log);
+            glamourerIpc, config, npcSelector, clientState, log);
         npcAiController = new NpcAiController(combatEngine, animationController, clientState, log);
 
         // Safety — enable hook immediately; it already gates on combatEngine.IsActive
@@ -79,7 +82,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         useActionHook.Enable();
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, combatEngine, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation;
+using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
@@ -45,11 +46,14 @@ public class CombatEngine : IDisposable
     private readonly ActionDataProvider actionDataProvider;
     private readonly DamageCalculator damageCalculator;
     private readonly AnimationController animationController;
+    private readonly GlamourerIpc glamourerIpc;
+    private readonly Configuration config;
     private readonly NpcSelector npcSelector;
     private readonly IClientState clientState;
     private readonly IPluginLog log;
     private bool playerDeathTriggered;
     private bool victoryTriggered;
+    private bool glamourerApplied;
 
     public SimulationState State { get; } = new();
     public bool IsActive => State.IsActive;
@@ -68,6 +72,8 @@ public class CombatEngine : IDisposable
         ActionDataProvider actionDataProvider,
         DamageCalculator damageCalculator,
         AnimationController animationController,
+        GlamourerIpc glamourerIpc,
+        Configuration config,
         NpcSelector npcSelector,
         IClientState clientState,
         IPluginLog log)
@@ -75,6 +81,8 @@ public class CombatEngine : IDisposable
         this.actionDataProvider = actionDataProvider;
         this.damageCalculator = damageCalculator;
         this.animationController = animationController;
+        this.glamourerIpc = glamourerIpc;
+        this.config = config;
         this.npcSelector = npcSelector;
         this.clientState = clientState;
         this.log = log;
@@ -91,6 +99,7 @@ public class CombatEngine : IDisposable
         State.CombatStartTime = 0;
         playerDeathTriggered = false;
         victoryTriggered = false;
+        glamourerApplied = false;
 
         AddLogEntry("Combat simulation started.", CombatLogType.Info);
         log.Info("Combat simulation started.");
@@ -123,6 +132,7 @@ public class CombatEngine : IDisposable
         }
         npcSelector.DeselectAll();
         animationController.ResetPlayerDeathAnimation();
+        RevertGlamourer();
 
         AddLogEntry("Combat simulation stopped.", CombatLogType.Info);
         log.Info("Combat simulation stopped.");
@@ -154,11 +164,12 @@ public class CombatEngine : IDisposable
             }
         }
 
-        // Reset player death animation if it was applied via timeline
         animationController.ResetPlayerDeathAnimation();
+        RevertGlamourer();
 
         playerDeathTriggered = false;
         victoryTriggered = false;
+        glamourerApplied = false;
 
         AddLogEntry("Combat state reset.", CombatLogType.Info);
     }
@@ -202,6 +213,7 @@ public class CombatEngine : IDisposable
 
         // Tick MP regeneration
         TickMpRegen(State.PlayerState, deltaTime);
+
     }
 
     public void EnqueuePlayerAction(uint actionType, uint actionId, ulong targetId, uint extraParam)
@@ -542,6 +554,7 @@ public class CombatEngine : IDisposable
                 playerDeathTriggered = true;
                 animationController.PlayPlayerDeath();
                 animationController.PlayVictory(isPlayerVictory: false);
+                ApplyGlamourer();
             }
         }
         else
@@ -574,6 +587,30 @@ public class CombatEngine : IDisposable
                 animationController.PlayVictory(isPlayerVictory: true);
             }
         }
+    }
+
+    private void ApplyGlamourer()
+    {
+        if (!config.ApplyGlamourerOnDeath || glamourerApplied)
+            return;
+
+        if (!Guid.TryParse(config.DeathGlamourerDesignId, out var designId))
+            return;
+
+        if (glamourerIpc.ApplyDesign(designId))
+        {
+            glamourerApplied = true;
+            AddLogEntry("Glamourer death preset applied.", CombatLogType.Info);
+        }
+    }
+
+    private void RevertGlamourer()
+    {
+        if (!glamourerApplied)
+            return;
+
+        glamourerIpc.RevertState();
+        glamourerApplied = false;
     }
 
     private unsafe void InitializePlayerState()
