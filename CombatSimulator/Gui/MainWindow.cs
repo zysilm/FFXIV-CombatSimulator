@@ -58,6 +58,7 @@ public class MainWindow : IDisposable
         DrawStatusSection();
         ImGui.Separator();
         DrawActiveTargetsSection();
+        DrawTargetBehaviorsSection();
         ImGui.Separator();
         DrawSimulationSection();
         ImGui.Separator();
@@ -158,6 +159,33 @@ public class MainWindow : IDisposable
                 }
 
                 ImGui.PopID();
+            }
+        }
+    }
+
+    private void DrawTargetBehaviorsSection()
+    {
+        if (ImGui.CollapsingHeader("Target Behaviors"))
+        {
+            var approach = config.EnableTargetApproach;
+            if (ImGui.Checkbox("Move Targets Near Player", ref approach))
+            {
+                config.EnableTargetApproach = approach;
+                config.Save();
+            }
+
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
+                "Active targets will move to stay near your character.\n" +
+                "On death or reset, they remain in place.");
+
+            if (approach)
+            {
+                var dist = config.TargetApproachDistance;
+                if (ImGui.SliderFloat("Approach Distance", ref dist, 1.0f, 30.0f, "%.1f yalms"))
+                {
+                    config.TargetApproachDistance = dist;
+                    config.Save();
+                }
             }
         }
     }

@@ -155,6 +155,10 @@ public class CombatEngine : IDisposable
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             npc.State.Reset();
+            npc.AiState = Ai.NpcAiState.Idle;
+            npc.AutoAttackTimer = 0;
+            npc.DeadTimer = 0;
+            npc.CurrentCastSkill = null;
 
             // Revive dead NPCs: reset death animation + restore normal mode
             unsafe

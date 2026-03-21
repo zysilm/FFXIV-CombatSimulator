@@ -49,6 +49,10 @@ public class Configuration : IPluginConfiguration
     public bool ApplyGlamourerOnDeath { get; set; } = false;
     public string DeathGlamourerDesignId { get; set; } = "";
 
+    // Target Behaviors
+    public bool EnableTargetApproach { get; set; } = false;
+    public float TargetApproachDistance { get; set; } = 3.0f;
+
     // Recent NPCs
     public List<uint> RecentNpcIds { get; set; } = new();
 

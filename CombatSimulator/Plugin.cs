@@ -77,7 +77,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, config, npcSelector, clientState, log);
-        npcAiController = new NpcAiController(combatEngine, animationController, clientState, log);
+        npcAiController = new NpcAiController(combatEngine, animationController, movementBlockHook, clientState, config, log);
 
         // Safety — enable hooks immediately; they gate on internal state
         useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, config, clientState, log);
