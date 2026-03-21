@@ -1,10 +1,12 @@
 # Known Issues
 
 ## Movement blocking on player death
-**Status: FIX IMPLEMENTED** — Hooks `InputData.IsInputIdDown/Pressed/Held` to return false for movement InputIds when player is dead. See `Safety/MovementBlockHook.cs`.
+**Status: FIXED** — Hooks `GameObject.SetPosition` and `GameObject.SetRotation` at the native function level.
 
 ### Current approach (position hook)
-Hooks `GameObject.SetPosition` and `GameObject.SetRotation` at the native function level via `IGameInteropProvider.HookFromAddress`. When `IsBlocking` is true and the target object is the local player, the hooks skip the original call — position and rotation simply never change. Unlike input-based approaches, this prevents movement at the destination (the game engine calculates movement normally but the position write is silently dropped), so there is no shaking, no input side-effects, and no timing issues.
+Hooks `GameObject.SetPosition` and `GameObject.SetRotation` via `IGameInteropProvider.HookFromAddress`. When `IsBlocking` is true and the target object is the local player, the hooks skip the original call — position and rotation simply never change. Unlike input-based approaches, this prevents movement at the destination (the game engine calculates movement normally but the position write is silently dropped), so there is no shaking, no input side-effects, and no timing issues.
+
+The same hook infrastructure is also used for the **Target Approach** feature — blocking server-driven position updates for NPCs whose positions are being controlled by the approach system.
 
 ### Previous approaches tried (all failed)
 0. **InputId query hooks** — Hooked `InputData.IsInputIdDown/Pressed/Held` to return false for movement InputIds. Result: character jumps erratically and strange keyboard behavior. The hook was too broad — `IsInputIdDown` is used for all input queries, not just movement, causing widespread side-effects.
@@ -41,3 +43,16 @@ Setting `CharacterData.InCombat = true` on an NPC when it becomes an active comb
 - `Character.WeaponFlags` (offset 0x1980) — `IsOffhandDrawn` at bit 0
 - `WeaponState` (via `UIState.Instance()->WeaponState`) — player-only, has `SetUnsheathed(bool, bool, bool)`
 - `EmoteController.PoseType.WeaponDrawn` = 1
+
+---
+
+## Target Approach — terrain limitations
+**Status: KNOWN LIMITATION**
+
+The Target Approach feature uses linear movement with Y-coordinate approximation from the player's position. This means:
+- On flat terrain: works well
+- On slopes: NPCs may float slightly above or clip into terrain
+- Through walls/buildings: NPCs will clip through obstacles
+
+### Future solution
+Integrate navmesh pathfinding via [vnavmesh](https://github.com/awgil/ffxiv_navmesh) or DotRecast for terrain-aware pathfinding.

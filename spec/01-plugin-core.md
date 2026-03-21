@@ -13,7 +13,7 @@ command registration, and coordinates all subsystems.
 ## Entry Point
 
 ```csharp
-public unsafe class CombatSimulatorPlugin : IDalamudPlugin
+public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 ```
 
 ### Constructor-Injected Services
@@ -29,36 +29,39 @@ public unsafe class CombatSimulatorPlugin : IDalamudPlugin
 | `IGameGui` | World-to-screen coordinate conversion |
 | `IChatGui` | Chat message output |
 | `ICondition` | Game condition flags |
+| `ITargetManager` | Current target tracking |
 | `IPluginLog` | Logging |
 
 ## Subsystem Initialization Order
-1. Load configuration
-2. Initialize Hyperborea detector
-3. Initialize Network Safety Layer (UseAction hook - disabled initially)
-4. Initialize NPC Spawner
-5. Initialize Combat Simulation Engine
-6. Initialize NPC AI Controller
-7. Initialize Animation/VFX Controller
-8. Initialize UI windows
-9. Register chat commands
-10. Subscribe to IFramework.Update
+1. Static service container (Services.Init)
+2. Load configuration
+3. Action data provider + damage calculator
+4. Chat command executor + Glamourer IPC
+5. MovementBlockHook (position/rotation freeze)
+6. AnimationController
+7. NpcSelector (target management)
+8. CombatEngine (simulation core)
+9. NpcAiController (AI + target approach)
+10. UseActionHook (action interception) — enabled immediately
+11. MovementBlockHook — enabled immediately
+12. GUI windows (MainWindow, HpBarOverlay, CombatLogWindow)
+13. Register chat commands
+14. Subscribe to IFramework.Update + UiBuilder.Draw
 
 ## Subsystem Disposal Order (reverse)
-1. Unsubscribe from IFramework.Update
+1. Unsubscribe from IFramework.Update + UiBuilder events
 2. Deregister chat commands
-3. Dispose UI windows
-4. Stop combat simulation
-5. Despawn all NPCs
-6. Dispose hooks (Network Safety Layer)
-7. Save configuration
+3. Stop combat simulation
+4. Deselect all NPCs
+5. Dispose hooks (UseActionHook, MovementBlockHook)
+6. Dispose GUI windows
+7. Dispose NpcAiController, CombatEngine, AnimationController, NpcSelector
 
 ## Chat Commands
 
 | Command | Description |
 |---------|-------------|
 | `/combatsim` | Toggle main configuration window |
-| `/combatsim spawn [npcId]` | Spawn an NPC by BNpcName ID |
-| `/combatsim despawn` | Despawn all simulated NPCs |
 | `/combatsim start` | Enable combat simulation mode |
 | `/combatsim stop` | Disable combat simulation mode |
 | `/combatsim reset` | Reset all combat state (HP, cooldowns) |
@@ -66,12 +69,16 @@ public unsafe class CombatSimulatorPlugin : IDalamudPlugin
 ## Configuration (Persisted)
 
 ```csharp
-public class CombatSimulatorConfig
+public class Configuration : IPluginConfiguration
 {
-    // General
+    public int Version { get; set; } = 1;
+
+    // General / Display
     public bool ShowMainWindow { get; set; } = false;
     public bool ShowCombatLog { get; set; } = true;
     public bool ShowEnemyHpBar { get; set; } = true;
+    public bool ShowPlayerHpBar { get; set; } = true;
+    public bool ShowHudPlayerHpBar { get; set; } = false;
 
     // Simulation
     public float DamageMultiplier { get; set; } = 1.0f;
@@ -81,75 +88,49 @@ public class CombatSimulatorConfig
     // NPC Defaults
     public int DefaultNpcLevel { get; set; } = 90;
     public float DefaultNpcHpMultiplier { get; set; } = 1.0f;
+    public int DefaultNpcBehaviorType { get; set; } = 1; // BasicMelee
 
-    // Safety
-    public bool RequireHyperborea { get; set; } = true;
+    // Animation Commands
+    public string PlayerMeleeAttackCommand { get; set; } = "";
+    public string PlayerRangedAttackCommand { get; set; } = "";
+    public string PlayerDeathCommand { get; set; } = "";
+    public uint DeathEmoteId { get; set; } = 0;
+    public string PlayerVictoryCommand { get; set; } = "";
+    public string TargetVictoryCommand { get; set; } = "";
 
-    // Recent NPCs (for quick re-spawn)
+    // Glamourer Integration
+    public bool ApplyGlamourerOnDeath { get; set; } = false;
+    public string DeathGlamourerDesignId { get; set; } = "";
+
+    // Target Behaviors
+    public bool EnableTargetApproach { get; set; } = false;
+    public float TargetApproachDistance { get; set; } = 3.0f;
+
+    // Recent NPCs
     public List<uint> RecentNpcIds { get; set; } = new();
 }
 ```
-
-## Hyperborea Detection
-
-### Detection Method
-Check if the Hyperborea plugin is loaded via Dalamud's plugin interface:
-
-```csharp
-public class HyperboreaDetector
-{
-    // Check via InstalledPlugins enumeration
-    public bool IsHyperboreaLoaded { get; }
-
-    // Optional: check if firewall is active via IPC or reflection
-    public bool IsFirewallActive { get; }
-}
-```
-
-### Behavior When Hyperborea Not Detected
-- If `RequireHyperborea` config is true:
-  - Show prominent warning in main window
-  - Block combat simulation from starting
-  - Chat message: "Combat Simulator requires Hyperborea to be active for safety."
-- If `RequireHyperborea` config is false:
-  - Show warning but allow simulation
-  - UseAction hook provides safety independently
 
 ## Framework Update Loop
 
 ```
 OnFrameworkUpdate(deltaTime):
+  // 1. Validate selected NPCs still exist
+  npcSelector.Tick()
+
   if (!simulationActive) return
 
-  // 1. Process queued player actions (from UseAction hook)
-  ProcessPlayerActionQueue()
+  deltaTime = 1/60 (fixed timestep)
 
-  // 2. Tick NPC AI for all spawned NPCs
-  foreach (npc in spawnedNpcs)
-    npcAiController.Tick(npc, deltaTime)
+  // 2. Tick combat engine (cooldowns, casting, combos, status effects, auto-attacks)
+  combatEngine.Tick(deltaTime)
 
-  // 3. Tick simulation state
-  simulationEngine.Tick(deltaTime)
-    - Cooldown timers
-    - DoT/HoT ticks
-    - Status effect durations
-    - Animation lock countdown
-    - Cast progress
-    - Combo timer
-
-  // 4. Update entity world state
-  UpdateNpcPositions()
-  UpdateNpcRotations()
-
-  // 5. Check win/lose conditions
-  CheckDeathConditions()
-
-  // 6. Update UI state
-  UpdateHpBars()
-  UpdateCombatLog()
+  // 3. Tick NPC AI for all selected NPCs
+  //    (includes target approach positioning when enabled)
+  npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs)
 ```
 
 ## Error Handling
 - All hook detours wrapped in try/catch
-- On unhandled exception: disable simulation, log error, show user message
+- On unhandled exception in framework update: log error, stop simulation
 - Never crash the game client — fail gracefully and disable

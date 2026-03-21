@@ -2,27 +2,27 @@
 
 ## Overview
 The network safety layer ensures that NO combat-related data is sent to the
-FFXIV server during simulation. This is the critical safety component that
-prevents GM detection and account action.
+FFXIV server during simulation. Additionally, the MovementBlockHook provides
+client-side position control for the player (death freeze) and NPC targets
+(approach positioning).
 
 ## Defense in Depth Strategy
 
 ```
-Layer 1: Hyperborea's Packet Firewall
+Layer 1: Hyperborea's Packet Firewall (optional)
   └── Blocks ALL outgoing packets except heartbeat
   └── Blocks ALL incoming packets except whitelisted opcodes
-  └── This is the primary protection
 
-Layer 2: Our UseAction Hook
+Layer 2: UseAction Hook
   └── Intercepts UseAction() calls
   └── Blocks the call from reaching the game's network layer
   └── Routes to our simulation engine instead
-  └── This works EVEN IF Hyperborea is not active
+  └── Works independently of Hyperborea
 
-Layer 3: Client-Only Object Indexes
-  └── All spawned NPCs use indexes 200-448
-  └── Server has no knowledge of these objects
-  └── No entity sync packets are generated for client objects
+Layer 3: Client-Only Object Manipulation
+  └── NPC selection modifies only client-side ObjectKind/SubKind
+  └── Server has no knowledge of these changes
+  └── No entity sync packets generated for ObjectKind modifications
 ```
 
 ## UseAction Hook
@@ -30,7 +30,6 @@ Layer 3: Client-Only Object Indexes
 ### Hook Target
 ```csharp
 // FFXIVClientStructs: ActionManager.UseAction
-// Signature: from ActionManager.MemberFunctionPointers.UseAction
 private delegate bool UseActionDelegate(
     ActionManager* actionManager,
     ActionType actionType,
@@ -45,121 +44,75 @@ private Hook<UseActionDelegate> useActionHook;
 ```
 
 ### Hook Behavior
-
-```csharp
-private bool UseActionDetour(
-    ActionManager* actionManager,
-    ActionType actionType,
-    uint actionId,
-    ulong targetId,
-    uint extraParam,
-    ActionManager.UseActionMode mode,
-    uint comboRouteId,
-    bool* outOptAreaTargeted)
-{
-    // Only intercept during active simulation
-    if (!combatEngine.IsActive)
-        return useActionHook.Original(...);  // Pass through normally
-
-    // Only intercept combat actions (type 1)
-    if (actionType != ActionType.Action)
-        return useActionHook.Original(...);  // Pass through non-combat
-
-    // Check if target is a simulated NPC
-    if (!IsSimulatedTarget(targetId))
-        return useActionHook.Original(...);  // Not our target
-
-    // === INTERCEPT ===
-    // Do NOT call original (would send packet to server)
-    // Route to our simulation engine instead
-    var result = combatEngine.ProcessPlayerAction(
-        actionType, actionId, targetId, extraParam);
-
-    // Return true to indicate "action was processed"
-    // (prevents the game from showing "unable to use" errors)
-    return result.Success;
-}
-```
+1. If simulation is not active → pass through to original
+2. If actionType is not Action (1) → pass through (emotes, mounts work normally)
+3. If target is not a selected combat NPC → pass through
+4. Otherwise: **INTERCEPT** — route to CombatEngine, do NOT call original
+5. Auto-register unregistered targets on first attack
 
 ### Key Safety Rules
 
 1. **NEVER call `useActionHook.Original()` for simulated combat targets**
-   - This is the line that sends packets to the server
-   - Only call original for non-simulation actions
-
 2. **Always pass through non-combat action types**
-   - Mount, general actions, emotes should work normally
-   - Only intercept `ActionType.Action` (value 1)
-
 3. **Always pass through when simulation is inactive**
-   - Player should be able to play normally when not simulating
-
 4. **Always pass through for non-simulated targets**
-   - If player targets a real game entity, don't intercept
 
-## Target Identification
+## MovementBlockHook
 
+### Purpose
+Hooks `GameObject.SetPosition` and `GameObject.SetRotation` at the native
+function level via `IGameInteropProvider.HookFromAddress`. Provides two
+independent blocking modes:
+
+1. **Player death freeze**: When `IsBlocking = true`, blocks all position/rotation
+   changes for the local player. Used during simulated death to prevent movement.
+
+2. **NPC approach control**: Blocks server-driven position/rotation updates for
+   specific NPCs whose positions are being controlled by the target approach
+   feature. This prevents flickering from server updates fighting our writes.
+
+### Implementation
 ```csharp
-private bool IsSimulatedTarget(ulong targetId)
+public unsafe class MovementBlockHook : IDisposable
 {
-    // Check if the target entity ID matches any of our spawned NPCs
-    foreach (var npc in npcSpawner.SpawnedNpcs)
-    {
-        if (npc.SimulatedEntityId == targetId)
-            return true;
-    }
-    return false;
+    // Player death freeze
+    public bool IsBlocking { get; set; }
+
+    // NPC approach position blocking
+    private readonly HashSet<nint> approachBlockedAddresses;
+    public void AddApproachNpc(nint address);
+    public void RemoveApproachNpc(nint address);
+    public void ClearApproachNpcs();
 }
 ```
 
-Simulated entity IDs use the range `0xF0000000 - 0xF00000FF` which is
-not used by real game entities (real entities use server-assigned IDs).
-
-## UseActionLocation Hook (Ground-Targeted Actions)
-
+### Hook Detours
 ```csharp
-// For ground-targeted abilities (e.g., Salted Earth, Asylum)
-private delegate bool UseActionLocationDelegate(
-    ActionManager* actionManager,
-    ActionType actionType,
-    uint actionId,
-    ulong targetId,
-    Vector3* location,
-    uint extraParam,
-    byte a7);
-
-private Hook<UseActionLocationDelegate> useActionLocationHook;
-```
-
-Same interception logic: block during simulation, pass through otherwise.
-
-## Hyperborea Status Monitoring
-
-```csharp
-public class HyperboreaDetector
+private void SetPositionDetour(GameObject* thisPtr, float x, float y, float z)
 {
-    /// Check if the Hyperborea plugin assembly is loaded.
-    public bool IsPluginLoaded()
-    {
-        var plugins = pluginInterface.InstalledPlugins;
-        return plugins.Any(p =>
-            p.InternalName == "Hyperborea" && p.IsLoaded);
-    }
+    // Block 1: Player death freeze
+    if (IsBlocking && IsLocalPlayer(thisPtr))
+        return;
 
-    /// Periodic check (every 5 seconds) to verify Hyperborea is still active.
-    /// If Hyperborea is unloaded during simulation, warn the user.
-    public void CheckStatus()
-    {
-        if (wasActive && !IsPluginLoaded())
-        {
-            // Hyperborea was unloaded! Emergency stop.
-            chatGui.PrintError("[CombatSim] Hyperborea was unloaded! " +
-                "Stopping simulation for safety.");
-            combatEngine.StopSimulation();
-        }
-    }
+    // Block 2: NPC approach control
+    if (approachBlockedAddresses.Contains((nint)thisPtr))
+        return;
+
+    setPositionHook.Original(thisPtr, x, y, z);
 }
+// SetRotationDetour follows same pattern
 ```
+
+### Signatures
+- `GameObject.SetPosition`: via `GameObject.MemberFunctionPointers.SetPosition`
+- `GameObject.SetRotation`: via `GameObject.MemberFunctionPointers.SetRotation`
+
+### Notes
+- Both hooks enabled immediately at plugin load; they gate on internal state
+- Player death block is set by CombatEngine on simulated death, cleared on reset/stop
+- NPC approach block is managed by NpcAiController, cleared on dispose/stop
+- Direct memory writes (`gameObj->Position = value`) bypass SetPosition and are
+  NOT intercepted by the hook — this is how we set controlled positions
 
 ## What We NEVER Do
 
@@ -177,36 +130,9 @@ public class HyperboreaDetector
 | Action | Why It's Safe |
 |--------|--------------|
 | Read player stats from BattleChara | Read-only, no network |
-| Spawn objects at index 200+ | Client-only objects |
+| Change NPC ObjectKind to BattleNpc | Client-side struct field only |
 | Call ActionEffectHandler.Receive with fake data | Client-side animation only |
-| Write to spawned NPC memory (position, etc.) | Client-only objects |
+| Write to NPC position via direct memory | Client-only visual change |
+| Block NPC SetPosition via hook | Prevents server overwrite of our position |
 | Render ImGui overlays | Pure UI layer |
 | Read game data sheets via Lumina | Local file access |
-
-## Emergency Stop
-
-If any error occurs in the hook detour:
-```csharp
-try
-{
-    // ... hook logic ...
-}
-catch (Exception ex)
-{
-    pluginLog.Error(ex, "UseAction hook error, disabling simulation");
-    combatEngine.StopSimulation();
-    // ALWAYS pass through to original on error
-    return useActionHook.Original(...);
-}
-```
-
-## Testing Checklist
-
-- [ ] UseAction hook correctly passes through when simulation is inactive
-- [ ] UseAction hook correctly passes through for non-simulated targets
-- [ ] UseAction hook correctly blocks for simulated targets
-- [ ] Non-combat actions (mount, emote) work during simulation
-- [ ] Hyperborea detection correctly identifies loaded/unloaded state
-- [ ] Emergency stop triggers on hook errors
-- [ ] Plugin disposal correctly removes all hooks
-- [ ] No action packets appear in network traffic during simulation
