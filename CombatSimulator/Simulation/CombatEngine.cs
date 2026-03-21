@@ -106,6 +106,24 @@ public class CombatEngine : IDisposable
         lock (queueLock)
             actionQueue.Clear();
 
+        // Clean up all active targets (reset animations, restore ObjectKind, etc.)
+        foreach (var npc in npcSelector.SelectedNpcs)
+        {
+            UnregisterNpcEntity(npc.SimulatedEntityId);
+            unsafe
+            {
+                if (npc.BattleChara != null)
+                {
+                    animationController.ResetDeathAnimation(npc.BattleChara);
+                    var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)npc.BattleChara;
+                    character->Mode = FFXIVClientStructs.FFXIV.Client.Game.Character.CharacterModes.Normal;
+                    character->ModeParam = 0;
+                }
+            }
+        }
+        npcSelector.DeselectAll();
+        animationController.ResetPlayerDeathAnimation();
+
         AddLogEntry("Combat simulation stopped.", CombatLogType.Info);
         log.Info("Combat simulation stopped.");
     }

@@ -164,7 +164,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         if (combatEngine.IsActive)
         {
-            if (config.ShowEnemyHpBar || config.ShowPlayerHpBar)
+            if (config.ShowEnemyHpBar || config.ShowPlayerHpBar || config.ShowHudPlayerHpBar)
                 hpBarOverlay.Draw();
 
             if (config.ShowCombatLog)

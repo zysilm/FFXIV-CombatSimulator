@@ -245,12 +245,47 @@ public class MainWindow : IDisposable
                 config.Save();
             }
 
+            var showHudPlayerHp = config.ShowHudPlayerHpBar;
+            if (ImGui.Checkbox("Show HUD Player HP Bar", ref showHudPlayerHp))
+            {
+                config.ShowHudPlayerHpBar = showHudPlayerHp;
+                config.Save();
+            }
+
             var showLog = config.ShowCombatLog;
             if (ImGui.Checkbox("Show Combat Log", ref showLog))
             {
                 config.ShowCombatLog = showLog;
                 config.Save();
             }
+
+            ImGui.Separator();
+            ImGui.Text("HP Bar Position");
+
+            var offsetX = config.HpBarOffsetX;
+            if (ImGui.SliderFloat("Offset X", ref offsetX, -200f, 200f, "%.0f"))
+            {
+                config.HpBarOffsetX = offsetX;
+                config.Save();
+            }
+
+            var offsetY = config.HpBarOffsetY;
+            if (ImGui.SliderFloat("Offset Y", ref offsetY, -200f, 200f, "%.0f"))
+            {
+                config.HpBarOffsetY = offsetY;
+                config.Save();
+            }
+
+            var boneName = config.HpBarBoneName;
+            if (ImGui.InputText("Bone Name", ref boneName, 64))
+            {
+                config.HpBarBoneName = boneName;
+                config.Save();
+            }
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "(?)");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Bone to attach HP bars to.\nCommon: j_head, j_kubi (neck), j_sebo_a (spine)");
 
             ImGui.Separator();
 

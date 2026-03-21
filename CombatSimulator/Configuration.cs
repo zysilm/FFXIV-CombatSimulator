@@ -15,6 +15,14 @@ public class Configuration : IPluginConfiguration
     public bool ShowCombatLog { get; set; } = true;
     public bool ShowEnemyHpBar { get; set; } = true;
     public bool ShowPlayerHpBar { get; set; } = true;
+    public bool ShowHudPlayerHpBar { get; set; } = false;
+
+    // HP Bar position offset (relative to bone position, in screen pixels)
+    public float HpBarOffsetX { get; set; } = 0f;
+    public float HpBarOffsetY { get; set; } = -20f;
+
+    // Bone to attach HP bars to: "j_head", "j_kubi" (neck), etc.
+    public string HpBarBoneName { get; set; } = "j_head";
 
     // Simulation
     public float DamageMultiplier { get; set; } = 1.0f;

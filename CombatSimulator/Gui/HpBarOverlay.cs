@@ -4,6 +4,8 @@ using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
+using FFXIVClientStructs.FFXIV.Client.Graphics.Render;
+using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 
 namespace CombatSimulator.Gui;
 
@@ -17,6 +19,9 @@ public class HpBarOverlay : IDisposable
 
     private const float BarWidth = 200f;
     private const float BarHeight = 16f;
+
+    // Reset confirmation popup state
+    private bool showResetPopup;
 
     public HpBarOverlay(
         NpcSelector npcSelector,
@@ -35,6 +40,7 @@ public class HpBarOverlay : IDisposable
     public unsafe void Draw()
     {
         var drawList = ImGui.GetBackgroundDrawList();
+        var offset = new Vector2(config.HpBarOffsetX, config.HpBarOffsetY);
 
         // Draw enemy HP bars
         if (config.ShowEnemyHpBar)
@@ -45,29 +51,118 @@ public class HpBarOverlay : IDisposable
                     continue;
 
                 var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
-                var worldPos = gameObj->Position;
-                worldPos.Y += gameObj->Height + 0.5f;
+                if (!TryGetBoneWorldPosition(gameObj, out var worldPos))
+                {
+                    // Fallback: use object position + height
+                    worldPos = gameObj->Position;
+                    worldPos.Y += gameObj->Height + 0.5f;
+                }
 
                 if (!gameGui.WorldToScreen(worldPos, out var screenPos))
                     continue;
 
-                DrawNpcHpBar(drawList, npc, screenPos);
+                DrawNpcHpBar(drawList, npc, screenPos + offset);
             }
         }
 
-        // Draw player HP bar
+        // Draw player HP bar (world overlay, simple position above character)
         if (config.ShowPlayerHpBar)
         {
             var player = clientState.LocalPlayer;
             if (player != null)
             {
                 var worldPos = player.Position;
-                worldPos.Y += 2.2f; // Approximate character height + offset
+                worldPos.Y += 2.2f;
+
                 if (gameGui.WorldToScreen(worldPos, out var screenPos))
                 {
                     DrawPlayerHpBar(drawList, screenPos);
                 }
             }
+        }
+
+        // Draw HUD player HP bar (fixed screen position)
+        if (config.ShowHudPlayerHpBar)
+        {
+            DrawHudPlayerHpBar();
+        }
+
+        // Draw reset confirmation popup (ImGui window, not background draw)
+        if (showResetPopup)
+            DrawResetPopup();
+    }
+
+    /// <summary>
+    /// Try to get the world position of the configured bone (j_head, j_kubi, etc.)
+    /// by walking the character's skeleton hierarchy.
+    /// </summary>
+    private unsafe bool TryGetBoneWorldPosition(
+        FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject* gameObj,
+        out Vector3 worldPos)
+    {
+        worldPos = Vector3.Zero;
+
+        try
+        {
+            var drawObject = gameObj->DrawObject;
+            if (drawObject == null)
+                return false;
+
+            // DrawObject for characters is actually a CharacterBase
+            var charBase = (CharacterBase*)drawObject;
+            var skeleton = charBase->Skeleton;
+            if (skeleton == null || skeleton->PartialSkeletonCount == 0)
+                return false;
+
+            // Search for the bone in PartialSkeleton[0] (main body skeleton)
+            var partial = &skeleton->PartialSkeletons[0];
+            var pose = partial->GetHavokPose(0);
+            if (pose == null || pose->Skeleton == null)
+                return false;
+
+            var hkSkel = pose->Skeleton;
+            var boneName = config.HpBarBoneName;
+            int boneIndex = -1;
+
+            for (int i = 0; i < hkSkel->Bones.Length; i++)
+            {
+                var name = hkSkel->Bones[i].Name.String;
+                if (name != null && name.Equals(boneName, StringComparison.OrdinalIgnoreCase))
+                {
+                    boneIndex = i;
+                    break;
+                }
+            }
+
+            if (boneIndex < 0)
+                return false;
+
+            // Get bone position in model space
+            var modelPose = pose->GetSyncedPoseModelSpace();
+            if (modelPose == null || boneIndex >= modelPose->Length)
+                return false;
+
+            var boneTransform = (*modelPose)[boneIndex];
+            var boneModelPos = new Vector3(
+                boneTransform.Translation.X,
+                boneTransform.Translation.Y,
+                boneTransform.Translation.Z);
+
+            // Transform from model space to world space using skeleton transform
+            ref var skTransform = ref skeleton->Transform;
+            var skPos = (Vector3)skTransform.Position;
+            var skRot = (Quaternion)skTransform.Rotation;
+            var skScale = (Vector3)skTransform.Scale;
+
+            var scaledBonePos = boneModelPos * skScale;
+            var rotatedBonePos = Vector3.Transform(scaledBonePos, skRot);
+            worldPos = skPos + rotatedBonePos;
+
+            return true;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -153,6 +248,7 @@ public class HpBarOverlay : IDisposable
     {
         var ps = combatEngine.State.PlayerState;
         float hpPercent = ps.MaxHp > 0 ? (float)ps.CurrentHp / ps.MaxHp : 1;
+        bool isDead = !ps.IsAlive;
 
         var barPos = screenPos - new Vector2(BarWidth / 2, 0);
 
@@ -163,11 +259,13 @@ public class HpBarOverlay : IDisposable
             ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.1f, 0.85f)));
 
         // HP fill (blue tint for player to distinguish from enemy green)
-        var fillColor = hpPercent > 0.5f
-            ? new Vector4(0.1f, 0.6f, 0.9f, 1)
-            : hpPercent > 0.25f
-                ? new Vector4(0.8f, 0.8f, 0.1f, 1)
-                : new Vector4(0.8f, 0.1f, 0.1f, 1);
+        var fillColor = isDead
+            ? new Vector4(0.3f, 0.0f, 0.0f, 1)
+            : hpPercent > 0.5f
+                ? new Vector4(0.1f, 0.6f, 0.9f, 1)
+                : hpPercent > 0.25f
+                    ? new Vector4(0.8f, 0.8f, 0.1f, 1)
+                    : new Vector4(0.8f, 0.1f, 0.1f, 1);
 
         if (hpPercent > 0)
         {
@@ -183,21 +281,150 @@ public class HpBarOverlay : IDisposable
             barPos + new Vector2(BarWidth, BarHeight),
             ImGui.ColorConvertFloat4ToU32(new Vector4(0.6f, 0.6f, 0.6f, 0.8f)));
 
-        // Name
-        var nameText = $"[Sim] {ps.Name}";
+        // Name label
+        var nameText = isDead ? $"[DEAD] {ps.Name}" : $"[Sim] {ps.Name}";
+        var nameColor = isDead
+            ? new Vector4(1f, 0.2f, 0.2f, 1)
+            : new Vector4(0.4f, 0.7f, 1f, 1);
         var nameSize = ImGui.CalcTextSize(nameText);
         drawList.AddText(
             screenPos - new Vector2(nameSize.X / 2, nameSize.Y + 4),
-            ImGui.ColorConvertFloat4ToU32(new Vector4(0.4f, 0.7f, 1f, 1)),
+            ImGui.ColorConvertFloat4ToU32(nameColor),
             nameText);
 
         // HP text
-        var hpText = $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
+        var hpText = isDead ? "DEFEATED" : $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
         var hpSize = ImGui.CalcTextSize(hpText);
         drawList.AddText(
             barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
             0xFFFFFFFF,
             hpText);
+
+        // Skull button when dead — drawn as an invisible ImGui button over the bar area
+        if (isDead)
+        {
+            // Draw skull symbol to the right of the bar
+            var skullText = "\u2620"; // Unicode skull and crossbones
+            var skullSize = ImGui.CalcTextSize(skullText);
+            var skullPos = new Vector2(barPos.X + BarWidth + 4, barPos.Y + (BarHeight - skullSize.Y) / 2);
+
+            // Pulsing red color for attention
+            float pulse = (MathF.Sin((float)ImGui.GetTime() * 4f) + 1f) / 2f;
+            var skullColor = new Vector4(1f, 0.1f + pulse * 0.3f, 0.1f, 1f);
+            drawList.AddText(skullPos, ImGui.ColorConvertFloat4ToU32(skullColor), skullText);
+
+            // Create an invisible button over the skull + bar area for click detection
+            // We need to use an ImGui window for this since background drawlist doesn't handle input
+            ImGui.SetNextWindowPos(barPos - new Vector2(0, nameSize.Y + 4), ImGuiCond.Always);
+            ImGui.SetNextWindowSize(new Vector2(BarWidth + skullSize.X + 8, BarHeight + nameSize.Y + 8));
+            if (ImGui.Begin("##DeathClickArea", ImGuiWindowFlags.NoDecoration |
+                ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoMove |
+                ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoScrollbar |
+                ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoFocusOnAppearing |
+                ImGuiWindowFlags.NoBringToFrontOnFocus))
+            {
+                if (ImGui.InvisibleButton("##SkullReset", ImGui.GetContentRegionAvail()))
+                {
+                    showResetPopup = true;
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("You are defeated! Click to reset battle.");
+                }
+                ImGui.End();
+            }
+        }
+    }
+
+    private void DrawHudPlayerHpBar()
+    {
+        var ps = combatEngine.State.PlayerState;
+        bool isDead = !ps.IsAlive;
+        float hpPercent = ps.MaxHp > 0 ? (float)ps.CurrentHp / ps.MaxHp : (isDead ? 0 : 1);
+
+        ImGui.SetNextWindowSize(new Vector2(240, 0), ImGuiCond.FirstUseEver);
+
+        if (ImGui.Begin("Player HP##HudPlayerHpBar", ImGuiWindowFlags.NoScrollbar |
+            ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize |
+            ImGuiWindowFlags.NoFocusOnAppearing))
+        {
+            // Name line
+            if (isDead)
+            {
+                ImGui.TextColored(new Vector4(1f, 0.2f, 0.2f, 1), $"[DEAD] {ps.Name}");
+                ImGui.SameLine();
+
+                float pulse = (MathF.Sin((float)ImGui.GetTime() * 4f) + 1f) / 2f;
+                var skullColor = new Vector4(1f, 0.1f + pulse * 0.3f, 0.1f, 1f);
+                ImGui.PushStyleColor(ImGuiCol.Button, Vector4.Zero);
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1f, 0.3f, 0.3f, 0.3f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1f, 0.3f, 0.3f, 0.5f));
+                ImGui.PushStyleColor(ImGuiCol.Text, skullColor);
+                if (ImGui.SmallButton("\u2620##hudReset"))
+                {
+                    showResetPopup = true;
+                }
+                ImGui.PopStyleColor(4);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Click to reset battle");
+            }
+            else
+            {
+                ImGui.TextColored(new Vector4(0.4f, 0.7f, 1f, 1), $"[Sim] {ps.Name}");
+            }
+
+            // HP bar
+            var fillColor = isDead
+                ? new Vector4(0.3f, 0f, 0f, 1)
+                : hpPercent > 0.5f
+                    ? new Vector4(0.1f, 0.6f, 0.9f, 1)
+                    : hpPercent > 0.25f
+                        ? new Vector4(0.8f, 0.8f, 0.1f, 1)
+                        : new Vector4(0.8f, 0.1f, 0.1f, 1);
+
+            ImGui.PushStyleColor(ImGuiCol.PlotHistogram, fillColor);
+            var hpText = isDead ? "DEFEATED" : $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
+            ImGui.ProgressBar(hpPercent, new Vector2(-1, 0), hpText);
+            ImGui.PopStyleColor();
+        }
+        ImGui.End();
+    }
+
+    private void DrawResetPopup()
+    {
+        ImGui.SetNextWindowPos(ImGui.GetMainViewport().GetCenter(), ImGuiCond.Appearing,
+            new Vector2(0.5f, 0.5f));
+        ImGui.SetNextWindowSize(new Vector2(300, 0));
+
+        if (ImGui.Begin("Defeated!", ref showResetPopup,
+            ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize |
+            ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.TextWrapped("You have been defeated in combat!");
+            ImGui.Spacing();
+            ImGui.TextWrapped("Would you like to reset the battle?");
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            var buttonWidth = 120f;
+            var spacing = ImGui.GetContentRegionAvail().X - buttonWidth * 2;
+
+            if (ImGui.Button("Reset Battle", new Vector2(buttonWidth, 0)))
+            {
+                combatEngine.ResetState();
+                showResetPopup = false;
+            }
+
+            ImGui.SameLine(0, spacing);
+
+            if (ImGui.Button("Cancel", new Vector2(buttonWidth, 0)))
+            {
+                showResetPopup = false;
+            }
+
+            ImGui.End();
+        }
     }
 
     public void Dispose()
