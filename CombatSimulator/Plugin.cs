@@ -1,6 +1,7 @@
 using System;
 using CombatSimulator.Ai;
 using CombatSimulator.Animation;
+using CombatSimulator.Camera;
 using CombatSimulator.Core;
 using CombatSimulator.Gui;
 using CombatSimulator.Integration;
@@ -35,6 +36,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly NpcAiController npcAiController;
     private readonly MovementBlockHook movementBlockHook;
     private readonly UseActionHook useActionHook;
+    private readonly DeathCamController deathCamController;
     private readonly MainWindow mainWindow;
     private readonly HpBarOverlay hpBarOverlay;
     private readonly CombatLogWindow combatLogWindow;
@@ -76,9 +78,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, chatCommandExecutor, config);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
+        deathCamController = new DeathCamController(clientState, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
-            glamourerIpc, movementBlockHook, config, npcSelector, clientState, log);
+            glamourerIpc, movementBlockHook, config, npcSelector, clientState, log,
+            deathCamController);
         npcAiController = new NpcAiController(combatEngine, animationController, movementBlockHook, clientState, config, log);
 
         // Safety — enable hooks immediately; they gate on internal state
@@ -87,7 +91,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         movementBlockHook.Enable();
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, deathCamController, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
 
@@ -128,6 +132,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         mainWindow.Dispose();
         npcAiController.Dispose();
         combatEngine.Dispose();
+        deathCamController.Dispose();
         animationController.Dispose();
         npcSelector.Dispose();
 
@@ -231,6 +236,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             var deltaTime = (float)(1.0 / 60.0);
 
             combatEngine.Tick(deltaTime);
+            deathCamController.Tick(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
         }
         catch (Exception ex)

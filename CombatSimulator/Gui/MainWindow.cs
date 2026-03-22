@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using CombatSimulator.Camera;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
@@ -15,6 +16,7 @@ public class MainWindow : IDisposable
     private readonly NpcSelector npcSelector;
     private readonly CombatEngine combatEngine;
     private readonly GlamourerIpc glamourerIpc;
+    private readonly DeathCamController deathCamController;
     private readonly IChatGui chatGui;
     private readonly IPluginLog log;
 
@@ -33,6 +35,7 @@ public class MainWindow : IDisposable
         NpcSelector npcSelector,
         CombatEngine combatEngine,
         GlamourerIpc glamourerIpc,
+        DeathCamController deathCamController,
         IChatGui chatGui,
         IPluginLog log)
     {
@@ -40,6 +43,7 @@ public class MainWindow : IDisposable
         this.npcSelector = npcSelector;
         this.combatEngine = combatEngine;
         this.glamourerIpc = glamourerIpc;
+        this.deathCamController = deathCamController;
         this.chatGui = chatGui;
         this.log = log;
     }
@@ -67,6 +71,7 @@ public class MainWindow : IDisposable
         DrawAnimationCommandsSection();
         DrawGlamourerHeaderSection();
         DrawGuiSettingsSection();
+        DrawDeathCamSection();
         DrawExperimentalHeaderSection();
 
         ImGui.End();
@@ -419,6 +424,86 @@ public class MainWindow : IDisposable
             {
                 config.ShowShortcuts = showShortcuts;
                 config.Save();
+            }
+        }
+    }
+
+    private void DrawDeathCamSection()
+    {
+        if (ImGui.CollapsingHeader("Death Cam (Experimental)"))
+        {
+            ImGui.TextColored(new Vector4(1.0f, 0.8f, 0.2f, 1.0f), "Experimental: may cause camera issues.");
+            ImGui.TextColored(new Vector4(1.0f, 0.8f, 0.2f, 1.0f), "Use /combatsim stop or zone change to recover.");
+            ImGui.Spacing();
+
+            var enabled = config.EnableDeathCam;
+            if (ImGui.Checkbox("Enable Death Cam", ref enabled))
+            {
+                config.EnableDeathCam = enabled;
+                config.Save();
+            }
+
+            if (!enabled)
+                return;
+
+            // Bone selector
+            var boneNames = new string[DeathCamController.CenterBones.Length];
+            int currentBoneIdx = 0;
+            for (int i = 0; i < DeathCamController.CenterBones.Length; i++)
+            {
+                boneNames[i] = DeathCamController.CenterBones[i].Name;
+                if (DeathCamController.CenterBones[i].Index == config.DeathCamBoneIndex)
+                    currentBoneIdx = i;
+            }
+
+            if (ImGui.Combo("Center Bone", ref currentBoneIdx, boneNames, boneNames.Length))
+            {
+                config.DeathCamBoneIndex = DeathCamController.CenterBones[currentBoneIdx].Index;
+                config.Save();
+            }
+
+            // Set Anchor button
+            if (ImGui.Button("Set Anchor (current camera position)"))
+            {
+                if (deathCamController.SetAnchor())
+                    chatGui.Print("[CombatSim] Death cam anchor set.");
+                else
+                    chatGui.PrintError("[CombatSim] Failed to set anchor. Make sure you have a character loaded.");
+            }
+
+            // Anchor status
+            if (config.DeathCamAnchorSet)
+            {
+                ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.4f, 1.0f), "Anchor is set.");
+                ImGui.Text($"H: {config.DeathCamAnchorDirH:F2}  V: {config.DeathCamAnchorDirV:F2}  Dist: {config.DeathCamAnchorDistance:F1}");
+            }
+            else
+            {
+                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "No anchor set. Position camera and click Set Anchor.");
+            }
+
+            // Transition duration
+            var duration = config.DeathCamTransitionDuration;
+            if (ImGui.SliderFloat("Transition Duration", ref duration, 0.5f, 5.0f, "%.1f sec"))
+            {
+                config.DeathCamTransitionDuration = duration;
+                config.Save();
+            }
+
+            // Clear anchor
+            if (config.DeathCamAnchorSet)
+            {
+                if (ImGui.SmallButton("Clear Anchor"))
+                {
+                    config.DeathCamAnchorSet = false;
+                    config.Save();
+                }
+            }
+
+            // Show current state
+            if (deathCamController.State != DeathCamState.Inactive)
+            {
+                ImGui.TextColored(new Vector4(0.5f, 0.8f, 1.0f, 1.0f), $"State: {deathCamController.State}");
             }
         }
     }

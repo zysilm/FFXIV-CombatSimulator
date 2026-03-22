@@ -70,6 +70,15 @@ public class Configuration : IPluginConfiguration
     // Experimental
     public bool EnableTorture { get; set; } = false;
 
+    // Death Cam (Experimental)
+    public bool EnableDeathCam { get; set; } = false;
+    public int DeathCamBoneIndex { get; set; } = 1; // n_hara (waist)
+    public float DeathCamTransitionDuration { get; set; } = 1.5f;
+    public float DeathCamAnchorDirH { get; set; } = 0;
+    public float DeathCamAnchorDirV { get; set; } = 0;
+    public float DeathCamAnchorDistance { get; set; } = 5.0f;
+    public bool DeathCamAnchorSet { get; set; } = false;
+
     // Recent NPCs
     public List<uint> RecentNpcIds { get; set; } = new();
 

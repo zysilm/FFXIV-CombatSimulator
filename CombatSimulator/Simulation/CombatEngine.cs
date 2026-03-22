@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation;
+using CombatSimulator.Camera;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
@@ -53,6 +54,7 @@ public class CombatEngine : IDisposable
     private readonly NpcSelector npcSelector;
     private readonly IClientState clientState;
     private readonly IPluginLog log;
+    private readonly DeathCamController? deathCamController;
     private bool playerDeathTriggered;
     private bool victoryTriggered;
     private bool glamourerApplied;
@@ -91,7 +93,8 @@ public class CombatEngine : IDisposable
         Configuration config,
         NpcSelector npcSelector,
         IClientState clientState,
-        IPluginLog log)
+        IPluginLog log,
+        DeathCamController? deathCamController = null)
     {
         this.actionDataProvider = actionDataProvider;
         this.damageCalculator = damageCalculator;
@@ -102,6 +105,7 @@ public class CombatEngine : IDisposable
         this.npcSelector = npcSelector;
         this.clientState = clientState;
         this.log = log;
+        this.deathCamController = deathCamController;
     }
 
     public void StartSimulation()
@@ -158,6 +162,7 @@ public class CombatEngine : IDisposable
         npcSelector.DeselectAll();
         animationController.ResetPlayerDeathAnimation();
         movementBlockHook.IsBlocking = false;
+        deathCamController?.Deactivate();
         RevertGlamourer();
 
         AddLogEntry("Combat simulation stopped.", CombatLogType.Info);
@@ -168,6 +173,7 @@ public class CombatEngine : IDisposable
     {
         State.Reset();
         CombatLog.Clear();
+        deathCamController?.Deactivate();
 
         // Re-initialize player state
         InitializePlayerState();
@@ -706,6 +712,7 @@ public class CombatEngine : IDisposable
                 animationController.PlayPlayerDeath();
                 animationController.PlayVictory(isPlayerVictory: false);
                 ApplyGlamourer();
+                deathCamController?.Activate();
             }
         }
         else
