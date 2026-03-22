@@ -1,6 +1,18 @@
 # Combat Simulator
 
-A Dalamud plugin for FFXIV by **zysilm** that provides client-side combat simulation. Select existing NPCs as combat targets and fight them locally — no server interaction, no risk.
+A [Dalamud](https://github.com/goatcorp/Dalamud) plugin for FFXIV that provides client-side combat simulation. Select existing NPCs as combat targets and fight them locally — no server interaction, no risk.
+
+## Installation
+
+Open Dalamud Settings in-game (`/xlsettings`) and follow these steps:
+
+1. Click the **Experimental** tab.
+2. Paste the following URL into the empty box at the bottom of **Custom Plugin Repositories**:
+   ```
+   https://raw.githubusercontent.com/zysilm/FFXIV-CombatSimulator/main/pluginmaster.json
+   ```
+3. Click the **+** button, then click **Save**.
+4. Open the Plugin Installer (`/xlplugins`) and search for **Combat Simulator**.
 
 ## Features
 
@@ -10,9 +22,7 @@ A Dalamud plugin for FFXIV by **zysilm** that provides client-side combat simula
 - **Combat Animations** — Real FFXIV animations via ActionEffectHandler (attack swings, damage flytext, death)
 - **Battle Stance** — Active targets visually enter combat-ready "drawn weapon" state
 - **Target Approach** — NPCs automatically move to stay near your character with configurable distance
-- **NPC Spread** — Multiple targets distribute across a 240° arc to avoid stacking
 - **Aggro Propagation** — Nearby idle targets join the fight when one is attacked (configurable range)
-- **Death Animation Delay** — 500ms delay so killing blow animation plays before death
 - **HP Bar Overlays** — Enemy and player simulated HP bars rendered in-world
 - **Combat Log** — Scrollable log of all combat events
 - **Shortcuts Bar** — Optional floating bar with Start, Reset All, and Reboot buttons
@@ -20,24 +30,6 @@ A Dalamud plugin for FFXIV by **zysilm** that provides client-side combat simula
 - **Camera Distance Override** — Bypass the game's min/max zoom limits for more camera freedom
 - **Glamourer Integration** — Apply glamourer presets on death and on reset/respawn
 - **Network Safe** — All combat is client-side only; UseAction hook prevents any server packets
-
-## Installation
-
-1. Download the latest build artifact from the [Actions](../../actions) tab (click the latest successful run → download `latest`)
-2. Extract the `CombatSimulator` folder into `%APPDATA%\XIVLauncher\devPlugins\`
-3. In-game, open Dalamud Settings → Experimental → enable Dev Plugins if not already
-4. The plugin loads automatically on next launch
-
-## Building from Source (Optional)
-
-If you want to build it yourself:
-
-```bash
-git clone --recursive <repo-url>
-dotnet build CombatSimulator/CombatSimulator.csproj -c Release
-```
-
-Requires .NET 8.0 SDK and Dalamud.
 
 ## Usage
 
@@ -55,17 +47,14 @@ Requires .NET 8.0 SDK and Dalamud.
 | `/combatsim stop` | Stop simulation |
 | `/combatsim reset` | Reset all combat state |
 
-## Architecture
+## Building from Source
 
-See [spec/README.md](spec/README.md) for the full specification index.
+```bash
+git clone --recursive https://github.com/zysilm/FFXIV-CombatSimulator.git
+dotnet build CombatSimulator/CombatSimulator.csproj -c Release
+```
 
-Key components:
-- **CombatEngine** — Core simulation loop (damage calc, action pipeline, death queue)
-- **NpcAiController** — Per-NPC state machine + target approach + aggro propagation
-- **AnimationController** — ActionEffect fabrication, death animations, battle stance
-- **UseActionHook** — Intercepts player actions, routes to simulation instead of server
-- **MovementBlockHook** — Position/rotation freeze for player death + NPC approach control
-- **GlamourerIpc** — External plugin integration for visual presets
+Requires .NET 8.0 SDK and Dalamud.
 
 ## Safety
 
