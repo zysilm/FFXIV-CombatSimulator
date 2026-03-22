@@ -117,6 +117,9 @@ public class CombatEngine : IDisposable
         glamourerApplied = false;
         pendingDeaths.Clear();
 
+        // Apply glamourer combat-ready preset on start
+        ApplyResetGlamourer();
+
         AddLogEntry("Combat simulation started.", CombatLogType.Info);
         log.Info("Combat simulation started.");
     }

@@ -49,7 +49,7 @@ public class Configuration : IPluginConfiguration
     public bool ApplyGlamourerOnDeath { get; set; } = false;
     public string DeathGlamourerDesignId { get; set; } = "";
 
-    // Glamourer: apply a preset on reset (respawn)
+    // Glamourer: apply a preset on start / reset / reboot (combat ready look)
     public bool ApplyGlamourerOnReset { get; set; } = false;
     public string ResetGlamourerDesignId { get; set; } = "";
 

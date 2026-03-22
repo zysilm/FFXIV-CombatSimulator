@@ -180,6 +180,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             if (config.ShowCombatLog)
                 combatLogWindow.Draw();
         }
+        else
+        {
+            // Restore native HP bar when sim is not active
+            hpBarOverlay.RestoreNativeHpBar();
+        }
     }
 
     private void OnOpenMainUi()

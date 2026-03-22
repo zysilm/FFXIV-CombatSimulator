@@ -442,7 +442,7 @@ public class MainWindow : IDisposable
         }
 
         var enabledReset = config.ApplyGlamourerOnReset;
-        if (ImGui.Checkbox("Apply Glamourer Preset on Reset", ref enabledReset))
+        if (ImGui.Checkbox("Apply Glamourer Preset on Start/Reset", ref enabledReset))
         {
             config.ApplyGlamourerOnReset = enabledReset;
             config.Save();
@@ -450,7 +450,7 @@ public class MainWindow : IDisposable
 
         ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
             "Death preset reverts on reset/stop.\n" +
-            "Reset preset applies when you respawn.");
+            "Start/Reset preset applies on start, reset, and reboot.");
 
         if (!enabled && !enabledReset)
             return;
