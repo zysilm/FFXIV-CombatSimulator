@@ -72,7 +72,6 @@ public class CombatEngine : IDisposable
 
     // Pending death animations (delayed so the killing blow visuals play first)
     private readonly List<PendingDeath> pendingDeaths = new();
-    private readonly List<PendingDeath> pendingDeathReapplies = new();
     private const float DeathAnimationDelay = 0.5f;
 
     private struct PendingDeath
@@ -117,7 +116,6 @@ public class CombatEngine : IDisposable
         victoryTriggered = false;
         glamourerApplied = false;
         pendingDeaths.Clear();
-        pendingDeathReapplies.Clear();
 
         // Apply glamourer combat-ready preset on start
         ApplyResetGlamourer();
@@ -203,7 +201,6 @@ public class CombatEngine : IDisposable
         victoryTriggered = false;
         glamourerApplied = false;
         pendingDeaths.Clear();
-        pendingDeathReapplies.Clear();
 
         AddLogEntry("Combat state reset.", CombatLogType.Info);
     }
@@ -224,8 +221,10 @@ public class CombatEngine : IDisposable
         // Process pending death animations
         TickPendingDeaths(deltaTime);
 
-        // Process pending death pose reapplications (brutal mode)
-        TickPendingDeathReapplies(deltaTime);
+        // Torture mode: enforce death state every frame to prevent hit reactions
+        // from overriding facial expressions on dead characters
+        if (config.EnableTorture)
+            EnforceDeathState();
 
         // Tick cooldowns
         TickCooldowns(State.PlayerState, deltaTime);
@@ -455,10 +454,6 @@ public class CombatEngine : IDisposable
         {
             result.TargetKilled = true;
             OnEntityDeath(target);
-
-            // Brutal: re-apply death pose after hit to preserve facial expression
-            if (config.EnableTorture)
-                ReapplyDeathPose(target);
         }
 
         return result;
@@ -531,10 +526,6 @@ public class CombatEngine : IDisposable
         {
             result.TargetKilled = true;
             OnEntityDeath(target);
-
-            // Brutal: re-apply death pose after hit to preserve facial expression
-            if (config.EnableTorture)
-                ReapplyDeathPose(target);
         }
 
         return result;
@@ -644,34 +635,33 @@ public class CombatEngine : IDisposable
         }
     }
 
-    private void TickPendingDeathReapplies(float deltaTime)
+    /// <summary>
+    /// Torture mode: every frame, force dead characters into CharacterModes.Dead
+    /// so that hit reactions from ActionEffectHandler cannot override their
+    /// death facial expression. The Dead mode suppresses reaction animations.
+    /// </summary>
+    private unsafe void EnforceDeathState()
     {
-        for (int i = pendingDeathReapplies.Count - 1; i >= 0; i--)
+        // Enforce on dead NPCs
+        foreach (var npc in npcSelector.SelectedNpcs)
         {
-            var pd = pendingDeathReapplies[i];
-            pd.Timer -= deltaTime;
-            pendingDeathReapplies[i] = pd;
-
-            if (pd.Timer <= 0)
+            if (!npc.State.IsAlive && npc.BattleChara != null)
             {
-                pendingDeathReapplies.RemoveAt(i);
+                var character = (Character*)npc.BattleChara;
+                if (character->Mode != CharacterModes.Dead)
+                    character->SetMode(CharacterModes.Dead, 0);
+            }
+        }
 
-                // Re-apply death animation to restore facial expression
-                if (pd.IsPlayer)
-                {
-                    animationController.PlayPlayerDeath();
-                }
-                else
-                {
-                    foreach (var npc in npcSelector.SelectedNpcs)
-                    {
-                        if (npc.SimulatedEntityId == pd.EntityId)
-                        {
-                            animationController.PlayDeathAnimation(npc);
-                            break;
-                        }
-                    }
-                }
+        // Enforce on dead player
+        if (!State.PlayerState.IsAlive && playerDeathTriggered)
+        {
+            var player = clientState.LocalPlayer;
+            if (player != null)
+            {
+                var character = (Character*)player.Address;
+                if (character->Mode != CharacterModes.Dead)
+                    character->SetMode(CharacterModes.Dead, 0);
             }
         }
     }
@@ -716,33 +706,6 @@ public class CombatEngine : IDisposable
                 victoryTriggered = true;
                 animationController.PlayVictory(isPlayerVictory: true);
             }
-        }
-    }
-
-    /// <summary>
-    /// Re-apply death pose after a hit on a dead entity (brutal mode).
-    /// This preserves the death facial expression that the hit reaction would otherwise override.
-    /// </summary>
-    private void ReapplyDeathPose(SimulatedEntityState entity)
-    {
-        if (entity.IsPlayer)
-        {
-            // Re-apply player death pose with a short delay so the hit VFX plays first
-            pendingDeathReapplies.Add(new PendingDeath
-            {
-                EntityId = 0UL,
-                IsPlayer = true,
-                Timer = 0.15f,
-            });
-        }
-        else
-        {
-            pendingDeathReapplies.Add(new PendingDeath
-            {
-                EntityId = entity.EntityId,
-                IsPlayer = false,
-                Timer = 0.15f,
-            });
         }
     }
 
@@ -947,11 +910,7 @@ public class CombatEngine : IDisposable
                     TriggerActionEffect(ps, npc.State, autoAttackData, dmg);
 
                     if (!npc.State.IsAlive)
-                    {
                         OnEntityDeath(npc.State);
-                        if (config.EnableTorture)
-                            ReapplyDeathPose(npc.State);
-                    }
 
                     break;
                 }
