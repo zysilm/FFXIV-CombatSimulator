@@ -68,7 +68,7 @@ public class Configuration : IPluginConfiguration
     public int MaxTargets { get; set; } = 10;
 
     // Experimental
-    public bool EnableBrutal { get; set; } = false;
+    public bool EnableTorture { get; set; } = false;
 
     // Recent NPCs
     public List<uint> RecentNpcIds { get; set; } = new();
