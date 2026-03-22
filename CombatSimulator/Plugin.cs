@@ -53,6 +53,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         IChatGui chatGui,
         ICondition condition,
         ITargetManager targetManager,
+        ISigScanner sigScanner,
         IPluginLog log)
     {
         this.pluginInterface = pluginInterface;
@@ -76,9 +77,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         chatCommandExecutor = new ChatCommandExecutor(log);
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
-        animationController = new AnimationController(log, clientState, dataManager, chatCommandExecutor, config);
+        animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
-        deathCamController = new DeathCamController(gameInterop, clientState, config, log);
+        deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, config, npcSelector, clientState, log,
@@ -91,7 +92,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         movementBlockHook.Enable();
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, deathCamController, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, deathCamController, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
 

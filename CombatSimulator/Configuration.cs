@@ -6,6 +6,22 @@ using Dalamud.Plugin;
 namespace CombatSimulator;
 
 [Serializable]
+public class DeathCamPreset
+{
+    public string Name { get; set; } = "";
+    public int BoneIndex { get; set; } = 1;
+    public float DirH { get; set; } = 0;
+    public float DirV { get; set; } = 0;
+    public float Distance { get; set; } = 5.0f;
+    public float FoV { get; set; } = 0.78f;
+    public float HeightOffset { get; set; } = 0f;
+    public float SideOffset { get; set; } = 0f;
+    public float Tilt { get; set; } = 0f;
+    public bool DisableCollision { get; set; } = true;
+    public float TransitionDuration { get; set; } = 1.5f;
+}
+
+[Serializable]
 public class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
@@ -70,6 +86,14 @@ public class Configuration : IPluginConfiguration
     // Experimental
     public bool EnableTorture { get; set; } = false;
 
+    // Hit VFX on player when taking damage (empty = disabled)
+    public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
+    public bool EnableHitVfx { get; set; } = true;
+
+    // Player HP Bar
+    public float PlayerHpBarYOffset { get; set; } = 0.3f;
+    public string CustomPlayerName { get; set; } = "";
+
     // Death Cam (Experimental)
     public bool EnableDeathCam { get; set; } = false;
     public int DeathCamBoneIndex { get; set; } = 1; // n_hara (waist)
@@ -77,14 +101,15 @@ public class Configuration : IPluginConfiguration
     public float DeathCamAnchorDirH { get; set; } = 0;
     public float DeathCamAnchorDirV { get; set; } = 0;
     public float DeathCamAnchorDistance { get; set; } = 5.0f;
+    public float DeathCamFoV { get; set; } = 0.78f;
     public float DeathCamHeightOffset { get; set; } = 0f;
     public float DeathCamSideOffset { get; set; } = 0f;
+    public float DeathCamTilt { get; set; } = 0f;
+    public bool DeathCamDisableCollision { get; set; } = true;
     public bool DeathCamAnchorSet { get; set; } = false;
 
-    // Camera Distance Override (global)
-    public bool EnableCameraDistanceOverride { get; set; } = false;
-    public float CameraMinDistance { get; set; } = 0.0f;
-    public float CameraMaxDistance { get; set; } = 20.0f;
+    // Death Cam Presets
+    public List<DeathCamPreset> DeathCamPresets { get; set; } = new();
 
     // Recent NPCs
     public List<uint> RecentNpcIds { get; set; } = new();

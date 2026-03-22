@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using CombatSimulator.Animation;
 using CombatSimulator.Camera;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
@@ -18,6 +19,7 @@ public class MainWindow : IDisposable
     private readonly NpcSelector npcSelector;
     private readonly CombatEngine combatEngine;
     private readonly GlamourerIpc glamourerIpc;
+    private readonly AnimationController animationController;
     private readonly DeathCamController deathCamController;
     private readonly IChatGui chatGui;
     private readonly IPluginLog log;
@@ -31,6 +33,12 @@ public class MainWindow : IDisposable
     private int glamourerResetSelectedIndex = -1;
 
     private static readonly string[] BehaviorNames = { "Training Dummy", "Basic Melee", "Basic Ranged", "Boss" };
+
+    // Death cam preset state
+    private string newPresetName = "";
+    private int selectedPresetIndex = -1;
+    private bool overwritePopupOpen = false;
+    private string overwriteTargetName = "";
 
     private static void HelpMarker(string desc)
     {
@@ -54,6 +62,7 @@ public class MainWindow : IDisposable
         NpcSelector npcSelector,
         CombatEngine combatEngine,
         GlamourerIpc glamourerIpc,
+        AnimationController animationController,
         DeathCamController deathCamController,
         IChatGui chatGui,
         IPluginLog log)
@@ -62,6 +71,7 @@ public class MainWindow : IDisposable
         this.npcSelector = npcSelector;
         this.combatEngine = combatEngine;
         this.glamourerIpc = glamourerIpc;
+        this.animationController = animationController;
         this.deathCamController = deathCamController;
         this.chatGui = chatGui;
         this.log = log;
@@ -88,6 +98,7 @@ public class MainWindow : IDisposable
         DrawTargetBehaviorsSection();
         ImGui.Separator();
         DrawAnimationCommandsSection();
+        DrawHitVfxSection();
         DrawGlamourerHeaderSection();
         DrawGuiSettingsSection();
         DrawDeathCamSection();
@@ -411,6 +422,33 @@ public class MainWindow : IDisposable
         }
     }
 
+    private void DrawHitVfxSection()
+    {
+        if (ImGui.CollapsingHeader("Hit VFX"))
+        {
+            var enableVfx = config.EnableHitVfx;
+            if (ImGui.Checkbox("Enable Hit VFX on Player", ref enableVfx))
+            {
+                config.EnableHitVfx = enableVfx;
+                config.Save();
+            }
+            HelpMarker("Spawn a visual effect on your character when hit by NPC attacks.");
+
+            var vfxPath = config.HitVfxPath;
+            if (ImGui.InputText("VFX Path (.avfx)", ref vfxPath, 256))
+            {
+                config.HitVfxPath = vfxPath;
+                config.Save();
+            }
+            HelpMarker("Game VFX path to spawn on hit. Uses FFXIV's internal .avfx format.\nDefault: vfx/common/eff/dk05th_stdn0t.avfx");
+
+            if (!animationController.HitVfxAvailable)
+            {
+                ImGui.TextColored(new Vector4(1.0f, 0.4f, 0.4f, 1.0f), "ActorVfxCreate not found — hit VFX unavailable.");
+            }
+        }
+    }
+
     private void DrawGlamourerHeaderSection()
     {
         if (ImGui.CollapsingHeader("Glamourer Integration"))
@@ -462,6 +500,24 @@ public class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Show a floating shortcuts bar for quick access to common actions.");
+
+            // Custom player name
+            var customName = config.CustomPlayerName;
+            if (ImGui.InputText("Custom Player Name", ref customName, 64))
+            {
+                config.CustomPlayerName = customName;
+                config.Save();
+            }
+            HelpMarker("Custom name shown on the sim HP bar. Leave empty to use your character's actual name.");
+
+            // Player HP bar Y offset
+            var hpYOffset = config.PlayerHpBarYOffset;
+            if (ImGui.SliderFloat("Player HP Bar Y Offset", ref hpYOffset, -3.0f, 5.0f, "%.2f"))
+            {
+                config.PlayerHpBarYOffset = hpYOffset;
+                config.Save();
+            }
+            HelpMarker("Vertical offset for the player HP bar in world space. Higher values move the bar up.");
         }
     }
 
@@ -484,6 +540,97 @@ public class MainWindow : IDisposable
             if (!enabled)
                 return;
 
+            // --- Presets ---
+            ImGui.Separator();
+            ImGui.Text("Presets");
+
+            var presetNames = new string[config.DeathCamPresets.Count];
+            for (int i = 0; i < config.DeathCamPresets.Count; i++)
+                presetNames[i] = config.DeathCamPresets[i].Name;
+
+            var hasSelection = selectedPresetIndex >= 0 && selectedPresetIndex < config.DeathCamPresets.Count;
+
+            ImGui.SetNextItemWidth(250);
+            ImGui.Combo("##PresetSelect", ref selectedPresetIndex, presetNames, presetNames.Length);
+
+            ImGui.SameLine();
+            if (ImGui.Button("Load") && hasSelection)
+            {
+                LoadPreset(config.DeathCamPresets[selectedPresetIndex]);
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("Overwrite") && hasSelection)
+            {
+                overwriteTargetName = config.DeathCamPresets[selectedPresetIndex].Name;
+                overwritePopupOpen = true;
+                ImGui.OpenPopup("Confirm Overwrite##PresetOverwrite");
+            }
+
+            ImGui.SameLine();
+            var io = ImGui.GetIO();
+            bool ctrlShiftHeld = io.KeyCtrl && io.KeyShift;
+            if (!ctrlShiftHeld)
+            {
+                ImGui.BeginDisabled();
+                ImGui.Button("Delete");
+                ImGui.EndDisabled();
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    ImGui.SetTooltip("Hold Ctrl+Shift to enable delete.");
+            }
+            else if (ImGui.Button("Delete") && hasSelection)
+            {
+                config.DeathCamPresets.RemoveAt(selectedPresetIndex);
+                selectedPresetIndex = Math.Min(selectedPresetIndex, config.DeathCamPresets.Count - 1);
+                config.Save();
+            }
+
+            ImGui.SetNextItemWidth(250);
+            ImGui.InputText("##PresetName", ref newPresetName, 64);
+            ImGui.SameLine();
+            if (ImGui.Button("Save Preset") && newPresetName.Length > 0)
+            {
+                var existingIdx = config.DeathCamPresets.FindIndex(p =>
+                    p.Name.Equals(newPresetName, StringComparison.OrdinalIgnoreCase));
+                if (existingIdx >= 0)
+                {
+                    overwriteTargetName = newPresetName;
+                    overwritePopupOpen = true;
+                    ImGui.OpenPopup("Confirm Overwrite##PresetOverwrite");
+                }
+                else
+                {
+                    SavePreset(newPresetName);
+                    newPresetName = "";
+                }
+            }
+
+            // Overwrite confirmation popup
+            if (ImGui.BeginPopupModal("Confirm Overwrite##PresetOverwrite", ref overwritePopupOpen,
+                    ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoMove))
+            {
+                ImGui.Text($"Overwrite preset \"{overwriteTargetName}\"?");
+                ImGui.Spacing();
+
+                if (ImGui.Button("Yes", new Vector2(80, 0)))
+                {
+                    SavePreset(overwriteTargetName);
+                    newPresetName = "";
+                    overwritePopupOpen = false;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("No", new Vector2(80, 0)))
+                {
+                    overwritePopupOpen = false;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.EndPopup();
+            }
+
+            // --- Settings ---
+            ImGui.Separator();
+
             // Bone selector
             var boneNames = new string[DeathCamController.CenterBones.Length];
             int currentBoneIdx = 0;
@@ -501,25 +648,27 @@ public class MainWindow : IDisposable
             }
             HelpMarker("The bone the camera orbits around. Waist is recommended for stable tracking.");
 
-            // Height offset
-            var heightOffset = config.DeathCamHeightOffset;
-            if (ImGui.SliderFloat("Height Offset", ref heightOffset, -5.0f, 10.0f, "%.2f"))
+            // Disable Camera Collision
+            var disableCollision = config.DeathCamDisableCollision;
+            if (ImGui.Checkbox("Disable Camera Collision", ref disableCollision))
             {
-                config.DeathCamHeightOffset = heightOffset;
+                config.DeathCamDisableCollision = disableCollision;
                 config.Save();
             }
-            HelpMarker("Vertical offset added to the camera look-at point. Raise or lower the camera focus.");
+            HelpMarker("Camera ignores wall/object collision during death cam.");
 
-            // Side offset
-            var sideOffset = config.DeathCamSideOffset;
-            if (ImGui.SliderFloat("Side Offset", ref sideOffset, -5.0f, 5.0f, "%.2f"))
+            // Transition duration
+            var duration = config.DeathCamTransitionDuration;
+            if (ImGui.SliderFloat("Transition Duration", ref duration, 0.5f, 5.0f, "%.1f sec"))
             {
-                config.DeathCamSideOffset = sideOffset;
+                config.DeathCamTransitionDuration = duration;
                 config.Save();
             }
-            HelpMarker("Horizontal offset relative to character facing. Positive = right, negative = left.");
+            HelpMarker("How long the camera takes to interpolate to the anchor on death.");
 
-            // Set Anchor button + Preview toggle
+            // --- Actions ---
+            ImGui.Separator();
+
             if (ImGui.Button("Set Anchor"))
             {
                 if (deathCamController.SetAnchor())
@@ -531,40 +680,32 @@ public class MainWindow : IDisposable
 
             ImGui.SameLine();
             var preview = deathCamController.IsPreviewActive;
-            if (ImGui.Button(preview ? "Preview: ON" : "Preview: OFF"))
+            var previewLabel = preview ? "Preview: ON" : "Preview: OFF";
+            if (preview)
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.6f, 0.2f, 1f));
+            if (ImGui.Button(previewLabel))
             {
                 deathCamController.SetPreview(!preview);
             }
-            HelpMarker("Toggle live preview: applies height/side offsets to the current camera so you can see the result.");
+            if (preview)
+                ImGui.PopStyleColor();
+            HelpMarker("Toggle live preview. Opens camera control window for intuitive tweaking.");
+
+            ImGui.SameLine();
+            if (config.DeathCamAnchorSet && ImGui.SmallButton("Clear Anchor"))
+            {
+                config.DeathCamAnchorSet = false;
+                config.Save();
+            }
 
             // Anchor status
             if (config.DeathCamAnchorSet)
             {
                 ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.4f, 1.0f), "Anchor is set.");
-                ImGui.Text($"H: {config.DeathCamAnchorDirH:F2}  V: {config.DeathCamAnchorDirV:F2}  Dist: {config.DeathCamAnchorDistance:F1}  Height: {config.DeathCamHeightOffset:F1}  Side: {config.DeathCamSideOffset:F1}");
             }
             else
             {
                 ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "No anchor set. Position camera and click Set Anchor.");
-            }
-
-            // Transition duration
-            var duration = config.DeathCamTransitionDuration;
-            if (ImGui.SliderFloat("Transition Duration", ref duration, 0.5f, 5.0f, "%.1f sec"))
-            {
-                config.DeathCamTransitionDuration = duration;
-                config.Save();
-            }
-            HelpMarker("How long (in seconds) the camera takes to interpolate from current position to the anchor.");
-
-            // Clear anchor
-            if (config.DeathCamAnchorSet)
-            {
-                if (ImGui.SmallButton("Clear Anchor"))
-                {
-                    config.DeathCamAnchorSet = false;
-                    config.Save();
-                }
             }
 
             // Show current state
@@ -572,39 +713,137 @@ public class MainWindow : IDisposable
             {
                 ImGui.TextColored(new Vector4(0.5f, 0.8f, 1.0f, 1.0f), $"State: {deathCamController.State}");
             }
-
-            ImGui.Spacing();
-            ImGui.Separator();
-            ImGui.Spacing();
-
-            // Camera Distance Override (global)
-            var distOverride = config.EnableCameraDistanceOverride;
-            if (ImGui.Checkbox("Override Camera Distance Limits", ref distOverride))
-            {
-                config.EnableCameraDistanceOverride = distOverride;
-                config.Save();
-            }
-            HelpMarker("Globally overrides the min/max camera zoom distance. Works at all times when enabled, not just death cam.");
-
-            if (distOverride)
-            {
-                var minDist = config.CameraMinDistance;
-                if (ImGui.SliderFloat("Min Camera Dist", ref minDist, 0.0f, 5.0f, "%.2f"))
-                {
-                    config.CameraMinDistance = minDist;
-                    config.Save();
-                }
-                HelpMarker("Minimum zoom distance. Default game value is ~1.5. Set to 0 for extreme close-up.");
-
-                var maxDist = config.CameraMaxDistance;
-                if (ImGui.SliderFloat("Max Camera Dist", ref maxDist, 5.0f, 100.0f, "%.1f"))
-                {
-                    config.CameraMaxDistance = maxDist;
-                    config.Save();
-                }
-                HelpMarker("Maximum zoom distance. Default game value is ~20.");
-            }
         }
+
+        // Draw camera control window when preview is active
+        if (deathCamController.IsPreviewActive)
+            DrawCameraControlWindow();
+    }
+
+    private void SavePreset(string name)
+    {
+        // Update existing preset with same name, or add new
+        var existing = config.DeathCamPresets.FindIndex(p => p.Name == name);
+        var preset = new DeathCamPreset
+        {
+            Name = name,
+            BoneIndex = config.DeathCamBoneIndex,
+            DirH = config.DeathCamAnchorDirH,
+            DirV = config.DeathCamAnchorDirV,
+            Distance = config.DeathCamAnchorDistance,
+            FoV = config.DeathCamFoV,
+            HeightOffset = config.DeathCamHeightOffset,
+            SideOffset = config.DeathCamSideOffset,
+            Tilt = config.DeathCamTilt,
+            DisableCollision = config.DeathCamDisableCollision,
+            TransitionDuration = config.DeathCamTransitionDuration,
+        };
+        if (existing >= 0)
+            config.DeathCamPresets[existing] = preset;
+        else
+            config.DeathCamPresets.Add(preset);
+        config.DeathCamAnchorSet = true;
+        config.Save();
+        chatGui.Print($"[CombatSim] Preset '{name}' saved.");
+    }
+
+    private void LoadPreset(DeathCamPreset preset)
+    {
+        config.DeathCamBoneIndex = preset.BoneIndex;
+        config.DeathCamAnchorDirH = preset.DirH;
+        config.DeathCamAnchorDirV = preset.DirV;
+        config.DeathCamAnchorDistance = preset.Distance;
+        config.DeathCamFoV = preset.FoV;
+        config.DeathCamHeightOffset = preset.HeightOffset;
+        config.DeathCamSideOffset = preset.SideOffset;
+        config.DeathCamTilt = preset.Tilt;
+        config.DeathCamDisableCollision = preset.DisableCollision;
+        config.DeathCamTransitionDuration = preset.TransitionDuration;
+        config.DeathCamAnchorSet = true;
+        config.Save();
+        chatGui.Print($"[CombatSim] Preset '{preset.Name}' loaded.");
+    }
+
+    private void DrawCameraControlWindow()
+    {
+        ImGui.SetNextWindowSize(new Vector2(320, 0), ImGuiCond.FirstUseEver);
+        if (!ImGui.Begin("Death Cam Controls##CamCtrl", ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoFocusOnAppearing))
+        {
+            ImGui.End();
+            return;
+        }
+
+        bool changed = false;
+
+        // --- Orbit ---
+        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Orbit");
+        ImGui.Separator();
+
+        var distance = config.DeathCamAnchorDistance;
+        if (ImGui.DragFloat("Distance", ref distance, 0.05f, 0.0f, 30.0f, "%.2f"))
+        { config.DeathCamAnchorDistance = distance; changed = true; }
+
+        var dirH = config.DeathCamAnchorDirH;
+        if (ImGui.DragFloat("Horizontal", ref dirH, 0.01f, -MathF.PI, MathF.PI, "%.2f rad"))
+        { config.DeathCamAnchorDirH = dirH; changed = true; }
+
+        var dirV = config.DeathCamAnchorDirV;
+        if (ImGui.DragFloat("Vertical", ref dirV, 0.01f, -MathF.PI / 2f, MathF.PI / 2f, "%.2f rad"))
+        { config.DeathCamAnchorDirV = dirV; changed = true; }
+
+        ImGui.Spacing();
+
+        // --- Lens ---
+        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Lens");
+        ImGui.Separator();
+
+        var fov = config.DeathCamFoV;
+        if (ImGui.DragFloat("Field of View", ref fov, 0.005f, 0.1f, 2.0f, "%.2f rad"))
+        { config.DeathCamFoV = fov; changed = true; }
+
+        var tilt = config.DeathCamTilt;
+        if (ImGui.DragFloat("Tilt (Roll)", ref tilt, 0.005f, -MathF.PI, MathF.PI, "%.2f rad"))
+        { config.DeathCamTilt = tilt; changed = true; }
+
+        ImGui.Spacing();
+
+        // --- Offset ---
+        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Offset");
+        ImGui.Separator();
+
+        var heightOffset = config.DeathCamHeightOffset;
+        if (ImGui.DragFloat("Height", ref heightOffset, 0.02f, -5.0f, 10.0f, "%.2f"))
+        { config.DeathCamHeightOffset = heightOffset; changed = true; }
+
+        var sideOffset = config.DeathCamSideOffset;
+        if (ImGui.DragFloat("Side", ref sideOffset, 0.02f, -5.0f, 5.0f, "%.2f"))
+        { config.DeathCamSideOffset = sideOffset; changed = true; }
+
+        ImGui.Spacing();
+
+        // --- Quick Actions ---
+        if (ImGui.Button("Reset All to Default"))
+        {
+            config.DeathCamAnchorDirH = 0;
+            config.DeathCamAnchorDirV = 0;
+            config.DeathCamAnchorDistance = 5.0f;
+            config.DeathCamFoV = 0.78f;
+            config.DeathCamTilt = 0f;
+            config.DeathCamHeightOffset = 0f;
+            config.DeathCamSideOffset = 0f;
+            changed = true;
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Close Preview"))
+        {
+            deathCamController.SetPreview(false);
+        }
+
+        if (changed)
+            config.Save();
+
+        ImGui.End();
     }
 
     private void DrawExperimentalHeaderSection()
