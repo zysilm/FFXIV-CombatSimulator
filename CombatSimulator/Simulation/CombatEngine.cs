@@ -70,6 +70,17 @@ public class CombatEngine : IDisposable
     private readonly Queue<QueuedAction> actionQueue = new();
     private readonly object queueLock = new();
 
+    // Pending death animations (delayed so the killing blow visuals play first)
+    private readonly List<PendingDeath> pendingDeaths = new();
+    private const float DeathAnimationDelay = 0.5f;
+
+    private struct PendingDeath
+    {
+        public ulong EntityId;
+        public bool IsPlayer;
+        public float Timer;
+    }
+
     public CombatEngine(
         ActionDataProvider actionDataProvider,
         DamageCalculator damageCalculator,
@@ -104,6 +115,7 @@ public class CombatEngine : IDisposable
         playerDeathTriggered = false;
         victoryTriggered = false;
         glamourerApplied = false;
+        pendingDeaths.Clear();
 
         AddLogEntry("Combat simulation started.", CombatLogType.Info);
         log.Info("Combat simulation started.");
@@ -180,6 +192,7 @@ public class CombatEngine : IDisposable
         playerDeathTriggered = false;
         victoryTriggered = false;
         glamourerApplied = false;
+        pendingDeaths.Clear();
 
         AddLogEntry("Combat state reset.", CombatLogType.Info);
     }
@@ -196,6 +209,9 @@ public class CombatEngine : IDisposable
 
         // Process queued player actions
         ProcessActionQueue();
+
+        // Process pending death animations
+        TickPendingDeaths(deltaTime);
 
         // Tick cooldowns
         TickCooldowns(State.PlayerState, deltaTime);
@@ -573,13 +589,26 @@ public class CombatEngine : IDisposable
         return 0;
     }
 
-    private void OnEntityDeath(SimulatedEntityState entity)
+    private void TickPendingDeaths(float deltaTime)
     {
-        AddLogEntry($"{entity.Name} is defeated!", CombatLogType.Death);
-
-        if (entity.IsPlayer)
+        for (int i = pendingDeaths.Count - 1; i >= 0; i--)
         {
-            // Player died
+            var pd = pendingDeaths[i];
+            pd.Timer -= deltaTime;
+            pendingDeaths[i] = pd;
+
+            if (pd.Timer <= 0)
+            {
+                pendingDeaths.RemoveAt(i);
+                ExecuteDeathAnimation(pd.EntityId, pd.IsPlayer);
+            }
+        }
+    }
+
+    private void ExecuteDeathAnimation(ulong entityId, bool isPlayer)
+    {
+        if (isPlayer)
+        {
             if (!playerDeathTriggered)
             {
                 playerDeathTriggered = true;
@@ -591,10 +620,9 @@ public class CombatEngine : IDisposable
         }
         else
         {
-            // NPC died — trigger death animation and player victory
             foreach (var npc in npcSelector.SelectedNpcs)
             {
-                if (npc.SimulatedEntityId == entity.EntityId)
+                if (npc.SimulatedEntityId == entityId)
                 {
                     animationController.PlayDeathAnimation(npc);
                     break;
@@ -615,10 +643,23 @@ public class CombatEngine : IDisposable
             if (allDead && !victoryTriggered)
             {
                 victoryTriggered = true;
-                AddLogEntry("Victory!", CombatLogType.Info);
                 animationController.PlayVictory(isPlayerVictory: true);
             }
         }
+    }
+
+    private void OnEntityDeath(SimulatedEntityState entity)
+    {
+        AddLogEntry($"{entity.Name} is defeated!", CombatLogType.Death);
+
+        // Queue death animation with a short delay so the killing blow plays first
+        pendingDeaths.Add(new PendingDeath
+        {
+            EntityId = entity.IsPlayer ? 0UL : entity.EntityId,
+            IsPlayer = entity.IsPlayer,
+            Timer = DeathAnimationDelay,
+        });
+
     }
 
     private void ApplyGlamourer()
