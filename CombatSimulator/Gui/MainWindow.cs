@@ -61,9 +61,13 @@ public class MainWindow : IDisposable
         DrawSimulationSection();
         ImGui.Separator();
         DrawActiveTargetsSection();
+        DrawNpcDefaultsSection();
         DrawTargetBehaviorsSection();
         ImGui.Separator();
-        DrawSettingsSection();
+        DrawAnimationCommandsSection();
+        DrawGlamourerHeaderSection();
+        DrawGuiSettingsSection();
+        DrawExperimentalHeaderSection();
 
         ImGui.End();
     }
@@ -164,6 +168,40 @@ public class MainWindow : IDisposable
         }
     }
 
+    private void DrawNpcDefaultsSection()
+    {
+        if (ImGui.CollapsingHeader("NPC Defaults"))
+        {
+            var defaultLevel = config.DefaultNpcLevel;
+            if (ImGui.SliderInt("Default NPC Level", ref defaultLevel, 1, 100))
+            {
+                config.DefaultNpcLevel = defaultLevel;
+                config.Save();
+            }
+
+            var hpMult = config.DefaultNpcHpMultiplier;
+            if (ImGui.SliderFloat("Default HP Multiplier", ref hpMult, 0.1f, 10.0f, "%.1f"))
+            {
+                config.DefaultNpcHpMultiplier = hpMult;
+                config.Save();
+            }
+
+            var behaviorType = config.DefaultNpcBehaviorType;
+            if (ImGui.Combo("Default NPC Behavior", ref behaviorType, BehaviorNames, BehaviorNames.Length))
+            {
+                config.DefaultNpcBehaviorType = behaviorType;
+                config.Save();
+            }
+
+            var maxTargets = config.MaxTargets;
+            if (ImGui.SliderInt("Max Targets", ref maxTargets, 1, 100))
+            {
+                config.MaxTargets = maxTargets;
+                config.Save();
+            }
+        }
+    }
+
     private void DrawTargetBehaviorsSection()
     {
         if (ImGui.CollapsingHeader("Target Behaviors"))
@@ -174,10 +212,6 @@ public class MainWindow : IDisposable
                 config.EnableTargetApproach = approach;
                 config.Save();
             }
-
-            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
-                "Active targets will move to stay near your character.\n" +
-                "On death or reset, they remain in place.");
 
             if (approach)
             {
@@ -198,9 +232,6 @@ public class MainWindow : IDisposable
                 config.Save();
             }
 
-            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
-                "When you attack one target, nearby idle targets\njoin the fight automatically.");
-
             if (aggro)
             {
                 var aggroRange = config.AggroPropagationRange;
@@ -210,17 +241,6 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
             }
-
-            ImGui.Spacing();
-
-            var maxTargets = config.MaxTargets;
-            if (ImGui.SliderInt("Max Targets", ref maxTargets, 1, 100))
-            {
-                config.MaxTargets = maxTargets;
-                config.Save();
-            }
-            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
-                "Maximum number of active targets at once.");
         }
     }
 
@@ -298,9 +318,73 @@ public class MainWindow : IDisposable
         }
     }
 
-    private void DrawSettingsSection()
+    private void DrawAnimationCommandsSection()
     {
-        if (ImGui.CollapsingHeader("Settings"))
+        if (ImGui.CollapsingHeader("Animation Commands"))
+        {
+            var meleeCmd = config.PlayerMeleeAttackCommand;
+            if (ImGui.InputText("Melee Attack", ref meleeCmd, 64))
+            {
+                config.PlayerMeleeAttackCommand = meleeCmd;
+                config.Save();
+            }
+
+            var rangedCmd = config.PlayerRangedAttackCommand;
+            if (ImGui.InputText("Ranged Attack", ref rangedCmd, 64))
+            {
+                config.PlayerRangedAttackCommand = rangedCmd;
+                config.Save();
+            }
+
+            ImGui.Separator();
+
+            var deathCmd = config.PlayerDeathCommand;
+            if (ImGui.InputText("Player Death", ref deathCmd, 64))
+            {
+                config.PlayerDeathCommand = deathCmd;
+                config.Save();
+            }
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "(empty = bypass)");
+
+            var deathEmoteId = (int)config.DeathEmoteId;
+            if (ImGui.InputInt("Death Emote ID", ref deathEmoteId))
+            {
+                config.DeathEmoteId = (uint)Math.Max(0, deathEmoteId);
+                config.Save();
+            }
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "(0 = auto-detect)");
+
+            ImGui.Separator();
+
+            var victoryCmd = config.PlayerVictoryCommand;
+            if (ImGui.InputText("Player Victory", ref victoryCmd, 64))
+            {
+                config.PlayerVictoryCommand = victoryCmd;
+                config.Save();
+            }
+
+            var targetVictoryCmd = config.TargetVictoryCommand;
+            if (ImGui.InputText("Target Victory", ref targetVictoryCmd, 64))
+            {
+                config.TargetVictoryCommand = targetVictoryCmd;
+                config.Save();
+            }
+        }
+    }
+
+    private void DrawGlamourerHeaderSection()
+    {
+        if (ImGui.CollapsingHeader("Glamourer Integration"))
+        {
+            DrawGlamourerSection();
+        }
+    }
+
+    private void DrawGuiSettingsSection()
+    {
+        if (ImGui.CollapsingHeader("GUI Settings"))
         {
             var showHp = config.ShowEnemyHpBar;
             if (ImGui.Checkbox("Show Enemy HP Bar", ref showHp))
@@ -336,104 +420,19 @@ public class MainWindow : IDisposable
                 config.ShowShortcuts = showShortcuts;
                 config.Save();
             }
-
-            ImGui.Separator();
-
-            var defaultLevel = config.DefaultNpcLevel;
-            if (ImGui.SliderInt("Default NPC Level", ref defaultLevel, 1, 100))
-            {
-                config.DefaultNpcLevel = defaultLevel;
-                config.Save();
-            }
-
-            var hpMult = config.DefaultNpcHpMultiplier;
-            if (ImGui.SliderFloat("Default HP Multiplier", ref hpMult, 0.1f, 10.0f, "%.1f"))
-            {
-                config.DefaultNpcHpMultiplier = hpMult;
-                config.Save();
-            }
-
-            var behaviorType = config.DefaultNpcBehaviorType;
-            if (ImGui.Combo("Default NPC Behavior", ref behaviorType, BehaviorNames, BehaviorNames.Length))
-            {
-                config.DefaultNpcBehaviorType = behaviorType;
-                config.Save();
-            }
         }
+    }
 
-        if (ImGui.CollapsingHeader("Animation Commands"))
-        {
-            ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1),
-                "Leave empty for default timeline animation.\n" +
-                "Set a command (e.g., /gsit) for custom animation.");
-            ImGui.Spacing();
-
-            var meleeCmd = config.PlayerMeleeAttackCommand;
-            if (ImGui.InputText("Melee Attack", ref meleeCmd, 64))
-            {
-                config.PlayerMeleeAttackCommand = meleeCmd;
-                config.Save();
-            }
-
-            var rangedCmd = config.PlayerRangedAttackCommand;
-            if (ImGui.InputText("Ranged Attack", ref rangedCmd, 64))
-            {
-                config.PlayerRangedAttackCommand = rangedCmd;
-                config.Save();
-            }
-
-            ImGui.Separator();
-
-            var deathCmd = config.PlayerDeathCommand;
-            if (ImGui.InputText("Player Death", ref deathCmd, 64))
-            {
-                config.PlayerDeathCommand = deathCmd;
-                config.Save();
-            }
-            ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "(empty = bypass)");
-            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
-                "Empty = BypassEmote-style playdead (no unlock needed).\n" +
-                "Set a command (e.g., /playdead) to use that instead.\n" +
-                "NPC death always uses bypass timeline.");
-
-            var deathEmoteId = (int)config.DeathEmoteId;
-            if (ImGui.InputInt("Death Emote ID", ref deathEmoteId))
-            {
-                config.DeathEmoteId = (uint)Math.Max(0, deathEmoteId);
-                config.Save();
-            }
-            ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "(0 = auto-detect)");
-
-            ImGui.Separator();
-
-            var victoryCmd = config.PlayerVictoryCommand;
-            if (ImGui.InputText("Player Victory", ref victoryCmd, 64))
-            {
-                config.PlayerVictoryCommand = victoryCmd;
-                config.Save();
-            }
-
-            var targetVictoryCmd = config.TargetVictoryCommand;
-            if (ImGui.InputText("Target Victory", ref targetVictoryCmd, 64))
-            {
-                config.TargetVictoryCommand = targetVictoryCmd;
-                config.Save();
-            }
-            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
-                "Target Victory runs on your character\n" +
-                "(NPCs can't execute commands).");
-        }
-
-        if (ImGui.CollapsingHeader("Glamourer Integration"))
-        {
-            DrawGlamourerSection();
-        }
-
+    private void DrawExperimentalHeaderSection()
+    {
         if (ImGui.CollapsingHeader("Experimental"))
         {
-            DrawExperimentalSection();
+            var torture = config.EnableTorture;
+            if (ImGui.Checkbox("Torture", ref torture))
+            {
+                config.EnableTorture = torture;
+                config.Save();
+            }
         }
     }
 
@@ -532,24 +531,6 @@ public class MainWindow : IDisposable
                     return i;
         }
         return -1;
-    }
-
-    private void DrawExperimentalSection()
-    {
-        ImGui.TextColored(new Vector4(1f, 0.6f, 0.2f, 1),
-            "These features are experimental and may behave unexpectedly.");
-        ImGui.Spacing();
-
-        var brutal = config.EnableBrutal;
-        if (ImGui.Checkbox("Brutal Mode", ref brutal))
-        {
-            config.EnableBrutal = brutal;
-            config.Save();
-        }
-        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
-            "Allow attacking dead characters in both directions.\n" +
-            "No death animation or victory triggers.\n" +
-            "Hit reactions and facial expressions are preserved.");
     }
 
     public void DrawShortcutsBar()

@@ -52,7 +52,7 @@ public unsafe class NpcAiController : IDisposable
                 continue;
 
             // Keep active targets in battle stance (drawn weapon / combat idle)
-            if (npc.BattleChara != null && (config.EnableBrutal || npc.AiState != NpcAiState.Dead))
+            if (npc.BattleChara != null && npc.AiState != NpcAiState.Dead)
                 animationController.SetBattleStance(npc);
 
             TickNpc(npc, deltaTime, playerPos, playerEntityId);
@@ -67,7 +67,7 @@ public unsafe class NpcAiController : IDisposable
             {
                 if (!npc.IsSpawned || npc.BattleChara == null)
                     continue;
-                if (config.EnableBrutal || npc.AiState != NpcAiState.Dead)
+                if (npc.AiState != NpcAiState.Dead)
                     approachNpcs.Add(npc);
             }
 
@@ -122,8 +122,8 @@ public unsafe class NpcAiController : IDisposable
                 skill.CooldownRemaining = Math.Max(0, skill.CooldownRemaining - deltaTime);
         }
 
-        // Check if NPC should be dead (skip in brutal mode — dead NPCs keep fighting)
-        if (!config.EnableBrutal && !npc.State.IsAlive && npc.AiState != NpcAiState.Dead)
+        // Check if NPC should be dead
+        if (!npc.State.IsAlive && npc.AiState != NpcAiState.Dead)
         {
             npc.AiState = NpcAiState.Dead;
             npc.DeadTimer = 0;
@@ -207,8 +207,8 @@ public unsafe class NpcAiController : IDisposable
             return;
         }
 
-        // Check if player is alive (skip in brutal mode)
-        if (!config.EnableBrutal && !combatEngine.State.PlayerState.IsAlive)
+        // Check if player is alive (in brutal mode, NPCs keep hitting the dead player)
+        if (!config.EnableTorture && !combatEngine.State.PlayerState.IsAlive)
         {
             npc.AiState = NpcAiState.Idle;
             return;
@@ -387,10 +387,10 @@ public unsafe class NpcAiController : IDisposable
     private void TickApproach(SimulatedNpc npc, float deltaTime, Vector3 playerPos, int npcIndex, int totalNpcs)
     {
         if (npc.BattleChara == null) return;
-        if (!config.EnableBrutal && npc.AiState == NpcAiState.Dead) return;
+        if (npc.AiState == NpcAiState.Dead) return;
 
-        // Don't move NPCs when the player is dead — they stay in place (skip in brutal)
-        if (!config.EnableBrutal && !combatEngine.State.PlayerState.IsAlive) return;
+        // Don't move NPCs when the player is dead — they stay in place
+        if (!combatEngine.State.PlayerState.IsAlive) return;
 
         var gameObj = (GameObject*)npc.BattleChara;
         var npcPos = (Vector3)gameObj->Position;
