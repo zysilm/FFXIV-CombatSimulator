@@ -86,6 +86,10 @@ public class Configuration : IPluginConfiguration
     // Experimental
     public bool EnableTorture { get; set; } = false;
 
+    // Hit VFX on player when taking damage (empty = disabled)
+    public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
+    public bool EnableHitVfx { get; set; } = true;
+
     // Player HP Bar
     public float PlayerHpBarYOffset { get; set; } = 0.3f;
     public string CustomPlayerName { get; set; } = "";

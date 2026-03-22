@@ -9,6 +9,9 @@ using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using Lumina.Excel.Sheets;
 
+// ActorVfxCreate — spawns a .avfx on an actor (same function VFXEditor / Brio use)
+// Signature from VFXEditor: scans the function body directly
+
 namespace CombatSimulator.Animation;
 
 public class ActionEffectRequest
@@ -49,10 +52,24 @@ public unsafe class AnimationController : IDisposable
     private ushort playDeadIntroTimeline;
     private bool playDeadResolved;
 
+    // ActorVfxCreate — spawns a .avfx particle effect attached to an actor
+    private delegate nint ActorVfxCreateDelegate(
+        string path, nint a2, nint a3, float a4, char a5, ushort a6, char a7);
+
+    private ActorVfxCreateDelegate? actorVfxCreate;
+
+    // Default hit VFX path candidates (tried in order until one sticks)
+    public static readonly string[] HitVfxCandidates =
+    {
+        "vfx/common/eff/dk05th_stdn0t.avfx",
+        "vfx/common/eff/cmhit_fire1t.avfx",
+    };
+
     public AnimationController(
         IPluginLog log,
         IClientState clientState,
         IDataManager dataManager,
+        ISigScanner sigScanner,
         ChatCommandExecutor commandExecutor,
         Configuration config)
     {
@@ -63,9 +80,30 @@ public unsafe class AnimationController : IDisposable
         this.emotePlayer = new EmoteTimelinePlayer(log);
 
         ResolvePlayDeadTimelines(dataManager);
+        ResolveActorVfxCreate(sigScanner);
 
         log.Info("AnimationController: Initialized with ActionEffectHandler + emote timeline system.");
     }
+
+    private void ResolveActorVfxCreate(ISigScanner sigScanner)
+    {
+        try
+        {
+            var addr = sigScanner.ScanText(
+                "40 53 55 56 57 48 81 EC ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 0F B6 AC 24 ?? ?? ?? ?? 0F 28 F3 49 8B F8");
+            actorVfxCreate = Marshal.GetDelegateForFunctionPointer<ActorVfxCreateDelegate>(addr);
+            log.Info($"AnimationController: ActorVfxCreate resolved at 0x{addr:X}");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "AnimationController: Could not resolve ActorVfxCreate — hit VFX will be unavailable.");
+        }
+    }
+
+    /// <summary>
+    /// Whether hit VFX spawning is available (ActorVfxCreate was resolved).
+    /// </summary>
+    public bool HitVfxAvailable => actorVfxCreate != null;
 
     private void ResolvePlayDeadTimelines(IDataManager dataManager)
     {
@@ -469,6 +507,32 @@ public unsafe class AnimationController : IDisposable
                 }
             }
         });
+    }
+
+    /// <summary>
+    /// Spawn a hit VFX on the player character (independent of the action pipeline).
+    /// Called when the player takes damage from NPC attacks.
+    /// </summary>
+    public void SpawnHitVfxOnPlayer()
+    {
+        if (actorVfxCreate == null) return;
+
+        try
+        {
+            var player = clientState.LocalPlayer;
+            if (player == null) return;
+
+            var vfxPath = config.HitVfxPath;
+            if (string.IsNullOrWhiteSpace(vfxPath)) return;
+
+            var playerAddr = player.Address;
+            actorVfxCreate(vfxPath, playerAddr, playerAddr, -1, (char)0, 0, (char)0);
+            log.Verbose($"Hit VFX spawned on player: {vfxPath}");
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Failed to spawn hit VFX on player.");
+        }
     }
 
     private Character* FindCharacter(uint entityId, bool isPlayer)

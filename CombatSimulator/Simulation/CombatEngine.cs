@@ -520,6 +520,10 @@ public class CombatEngine : IDisposable
         };
         TriggerActionEffect(npc.State, target, actionData2, dmgResult);
 
+        // Spawn hit VFX on player (independent of action pipeline since ActionId 7 has no VFX)
+        if (config.EnableHitVfx && target.IsPlayer)
+            animationController.SpawnHitVfxOnPlayer();
+
         result.Success = true;
         result.Damage = dmgResult.Damage;
         result.IsCritical = dmgResult.IsCritical;

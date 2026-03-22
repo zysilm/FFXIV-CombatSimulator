@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using CombatSimulator.Animation;
 using CombatSimulator.Camera;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
@@ -18,6 +19,7 @@ public class MainWindow : IDisposable
     private readonly NpcSelector npcSelector;
     private readonly CombatEngine combatEngine;
     private readonly GlamourerIpc glamourerIpc;
+    private readonly AnimationController animationController;
     private readonly DeathCamController deathCamController;
     private readonly IChatGui chatGui;
     private readonly IPluginLog log;
@@ -58,6 +60,7 @@ public class MainWindow : IDisposable
         NpcSelector npcSelector,
         CombatEngine combatEngine,
         GlamourerIpc glamourerIpc,
+        AnimationController animationController,
         DeathCamController deathCamController,
         IChatGui chatGui,
         IPluginLog log)
@@ -66,6 +69,7 @@ public class MainWindow : IDisposable
         this.npcSelector = npcSelector;
         this.combatEngine = combatEngine;
         this.glamourerIpc = glamourerIpc;
+        this.animationController = animationController;
         this.deathCamController = deathCamController;
         this.chatGui = chatGui;
         this.log = log;
@@ -92,6 +96,7 @@ public class MainWindow : IDisposable
         DrawTargetBehaviorsSection();
         ImGui.Separator();
         DrawAnimationCommandsSection();
+        DrawHitVfxSection();
         DrawGlamourerHeaderSection();
         DrawGuiSettingsSection();
         DrawDeathCamSection();
@@ -412,6 +417,33 @@ public class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Chat command when the target/NPC side wins.");
+        }
+    }
+
+    private void DrawHitVfxSection()
+    {
+        if (ImGui.CollapsingHeader("Hit VFX"))
+        {
+            var enableVfx = config.EnableHitVfx;
+            if (ImGui.Checkbox("Enable Hit VFX on Player", ref enableVfx))
+            {
+                config.EnableHitVfx = enableVfx;
+                config.Save();
+            }
+            HelpMarker("Spawn a visual effect on your character when hit by NPC attacks.");
+
+            var vfxPath = config.HitVfxPath;
+            if (ImGui.InputText("VFX Path (.avfx)", ref vfxPath, 256))
+            {
+                config.HitVfxPath = vfxPath;
+                config.Save();
+            }
+            HelpMarker("Game VFX path to spawn on hit. Uses FFXIV's internal .avfx format.\nDefault: vfx/common/eff/dk05th_stdn0t.avfx");
+
+            if (!animationController.HitVfxAvailable)
+            {
+                ImGui.TextColored(new Vector4(1.0f, 0.4f, 0.4f, 1.0f), "ActorVfxCreate not found — hit VFX unavailable.");
+            }
         }
     }
 
