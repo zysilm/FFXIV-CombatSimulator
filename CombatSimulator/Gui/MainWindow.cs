@@ -37,6 +37,8 @@ public class MainWindow : IDisposable
     // Death cam preset state
     private string newPresetName = "";
     private int selectedPresetIndex = -1;
+    private bool overwritePopupOpen = false;
+    private string overwriteTargetName = "";
 
     private static void HelpMarker(string desc)
     {
@@ -546,28 +548,84 @@ public class MainWindow : IDisposable
             for (int i = 0; i < config.DeathCamPresets.Count; i++)
                 presetNames[i] = config.DeathCamPresets[i].Name;
 
-            ImGui.SetNextItemWidth(150);
+            var hasSelection = selectedPresetIndex >= 0 && selectedPresetIndex < config.DeathCamPresets.Count;
+
+            ImGui.SetNextItemWidth(250);
             ImGui.Combo("##PresetSelect", ref selectedPresetIndex, presetNames, presetNames.Length);
+
             ImGui.SameLine();
-            if (ImGui.Button("Load") && selectedPresetIndex >= 0 && selectedPresetIndex < config.DeathCamPresets.Count)
+            if (ImGui.Button("Load") && hasSelection)
             {
                 LoadPreset(config.DeathCamPresets[selectedPresetIndex]);
             }
+
             ImGui.SameLine();
-            if (ImGui.Button("Delete") && selectedPresetIndex >= 0 && selectedPresetIndex < config.DeathCamPresets.Count)
+            if (ImGui.Button("Overwrite") && hasSelection)
+            {
+                overwriteTargetName = config.DeathCamPresets[selectedPresetIndex].Name;
+                overwritePopupOpen = true;
+                ImGui.OpenPopup("Confirm Overwrite##PresetOverwrite");
+            }
+
+            ImGui.SameLine();
+            var io = ImGui.GetIO();
+            bool ctrlShiftHeld = io.KeyCtrl && io.KeyShift;
+            if (!ctrlShiftHeld)
+            {
+                ImGui.BeginDisabled();
+                ImGui.Button("Delete");
+                ImGui.EndDisabled();
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    ImGui.SetTooltip("Hold Ctrl+Shift to enable delete.");
+            }
+            else if (ImGui.Button("Delete") && hasSelection)
             {
                 config.DeathCamPresets.RemoveAt(selectedPresetIndex);
                 selectedPresetIndex = Math.Min(selectedPresetIndex, config.DeathCamPresets.Count - 1);
                 config.Save();
             }
 
-            ImGui.SetNextItemWidth(150);
+            ImGui.SetNextItemWidth(250);
             ImGui.InputText("##PresetName", ref newPresetName, 64);
             ImGui.SameLine();
             if (ImGui.Button("Save Preset") && newPresetName.Length > 0)
             {
-                SavePreset(newPresetName);
-                newPresetName = "";
+                var existingIdx = config.DeathCamPresets.FindIndex(p =>
+                    p.Name.Equals(newPresetName, StringComparison.OrdinalIgnoreCase));
+                if (existingIdx >= 0)
+                {
+                    overwriteTargetName = newPresetName;
+                    overwritePopupOpen = true;
+                    ImGui.OpenPopup("Confirm Overwrite##PresetOverwrite");
+                }
+                else
+                {
+                    SavePreset(newPresetName);
+                    newPresetName = "";
+                }
+            }
+
+            // Overwrite confirmation popup
+            if (ImGui.BeginPopupModal("Confirm Overwrite##PresetOverwrite", ref overwritePopupOpen,
+                    ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoMove))
+            {
+                ImGui.Text($"Overwrite preset \"{overwriteTargetName}\"?");
+                ImGui.Spacing();
+
+                if (ImGui.Button("Yes", new Vector2(80, 0)))
+                {
+                    SavePreset(overwriteTargetName);
+                    newPresetName = "";
+                    overwritePopupOpen = false;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("No", new Vector2(80, 0)))
+                {
+                    overwritePopupOpen = false;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.EndPopup();
             }
 
             // --- Settings ---
