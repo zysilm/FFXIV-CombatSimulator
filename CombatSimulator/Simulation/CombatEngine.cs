@@ -434,12 +434,9 @@ public class CombatEngine : IDisposable
         State.TotalDamageTaken += dmgResult.Damage;
 
         // Trigger animation (NPC → Player)
-        // Use monster-appropriate animation ActionId instead of player skill ActionIds
-        // (player ActionIds like 31/141 don't animate on monster models)
-        var animationActionId = animationController.GetNpcSkillAnimationId(actionId);
         var actionData2 = new ActionData
         {
-            ActionId = animationActionId,
+            ActionId = actionId,
             Potency = potency > 0 ? potency : 110,
             DamageType = SimDamageType.Physical,
             AnimationLock = 0.6f,
