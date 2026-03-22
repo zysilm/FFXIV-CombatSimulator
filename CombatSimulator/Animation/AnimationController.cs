@@ -49,6 +49,9 @@ public unsafe class AnimationController : IDisposable
     private ushort playDeadIntroTimeline;
     private bool playDeadResolved;
 
+    // Cached monster attack ActionIds for NPC skill animations (attack1/2/3 variants)
+    private uint[] npcAttackActionIds = { 7 };
+
     public AnimationController(
         IPluginLog log,
         IClientState clientState,
@@ -63,6 +66,7 @@ public unsafe class AnimationController : IDisposable
         this.emotePlayer = new EmoteTimelinePlayer(log);
 
         ResolvePlayDeadTimelines(dataManager);
+        ResolveMonsterAttackActions(dataManager);
 
         log.Info("AnimationController: Initialized with ActionEffectHandler + emote timeline system.");
     }
@@ -111,6 +115,78 @@ public unsafe class AnimationController : IDisposable
         {
             log.Error(ex, "AnimationController: Failed to resolve Play Dead emote timelines.");
         }
+    }
+
+    private void ResolveMonsterAttackActions(IDataManager dataManager)
+    {
+        try
+        {
+            var actionSheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>();
+            if (actionSheet == null)
+            {
+                log.Warning("AnimationController: Action sheet not found.");
+                return;
+            }
+
+            // Look for monster "Attack" actions (non-player actions with low IDs).
+            // In FFXIV, monster attack variants are typically:
+            //   ActionId 870  = "Attack" (monster melee, different animation from 7)
+            //   ActionId 871  = "Attack" (monster variant 2)
+            //   ActionId 872  = "Attack" (monster variant 3)
+            // We also include 7 (universal auto-attack) as the base.
+            var candidates = new List<uint> { 7 };
+
+            // Search for non-player "Attack" actions in a reasonable ID range
+            foreach (var action in actionSheet)
+            {
+                if (action.RowId > 2000) break; // Monster attacks are in the low ID range
+
+                var name = action.Name.ExtractText();
+                if (string.IsNullOrEmpty(name)) continue;
+
+                // Look for actions named "Attack" that are not player actions
+                if (name.Equals("Attack", StringComparison.OrdinalIgnoreCase) && !action.IsPlayerAction)
+                {
+                    if (!candidates.Contains(action.RowId))
+                        candidates.Add(action.RowId);
+                }
+            }
+
+            if (candidates.Count > 1)
+            {
+                npcAttackActionIds = candidates.ToArray();
+                log.Info($"AnimationController: Resolved {npcAttackActionIds.Length} monster attack ActionIds: [{string.Join(", ", npcAttackActionIds)}]");
+            }
+            else
+            {
+                log.Info("AnimationController: No additional monster attack variants found, using ActionId 7 only.");
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "AnimationController: Failed to resolve monster attack actions.");
+        }
+    }
+
+    /// <summary>
+    /// Get an appropriate monster animation ActionId for an NPC skill.
+    /// Auto-attacks (ActionId 7) pass through unchanged.
+    /// Skills get a rotating monster attack variant (attack2/attack3) so they look different from auto-attacks.
+    /// </summary>
+    public uint GetNpcSkillAnimationId(uint skillActionId)
+    {
+        // Auto-attack passes through as-is
+        if (skillActionId == 7)
+            return 7;
+
+        // If we only have the base auto-attack, use it for everything
+        if (npcAttackActionIds.Length <= 1)
+            return 7;
+
+        // Use a non-auto-attack variant for skills (skip index 0 which is always 7)
+        // Rotate through available variants based on the skill ActionId for variety
+        var variantIndex = 1 + (int)(skillActionId % (npcAttackActionIds.Length - 1));
+        return npcAttackActionIds[variantIndex];
     }
 
     public void Tick(float deltaTime)
