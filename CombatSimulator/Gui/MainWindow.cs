@@ -187,6 +187,28 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
             }
+
+            ImGui.Spacing();
+
+            var aggro = config.EnableAggroPropagation;
+            if (ImGui.Checkbox("Aggro Propagation", ref aggro))
+            {
+                config.EnableAggroPropagation = aggro;
+                config.Save();
+            }
+
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
+                "When you attack one target, nearby idle targets\njoin the fight automatically.");
+
+            if (aggro)
+            {
+                var aggroRange = config.AggroPropagationRange;
+                if (ImGui.SliderFloat("Aggro Range", ref aggroRange, 1.0f, 50.0f, "%.1f yalms"))
+                {
+                    config.AggroPropagationRange = aggroRange;
+                    config.Save();
+                }
+            }
         }
     }
 

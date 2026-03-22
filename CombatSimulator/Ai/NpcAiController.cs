@@ -57,10 +57,19 @@ public unsafe class NpcAiController : IDisposable
         // Target approach: move active targets near the player
         if (config.EnableTargetApproach)
         {
+            // Count live approach-eligible NPCs for spread calculation
+            var approachNpcs = new List<SimulatedNpc>();
             foreach (var npc in npcs)
             {
                 if (!npc.IsSpawned || npc.BattleChara == null)
                     continue;
+                if (npc.AiState != NpcAiState.Dead)
+                    approachNpcs.Add(npc);
+            }
+
+            for (int i = 0; i < approachNpcs.Count; i++)
+            {
+                var npc = approachNpcs[i];
 
                 // Register NPC in the SetPosition block list so server can't override us
                 if (!npc.IsClientControlled)
@@ -70,7 +79,7 @@ public unsafe class NpcAiController : IDisposable
                 if (npc.AiState == NpcAiState.Resetting)
                     npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
 
-                TickApproach(npc, deltaTime, playerPos);
+                TickApproach(npc, deltaTime, playerPos, i, approachNpcs.Count);
             }
         }
         else
@@ -368,9 +377,10 @@ public unsafe class NpcAiController : IDisposable
 
     /// <summary>
     /// Move an active target NPC toward the player, stopping at the configured distance.
+    /// Each NPC gets a unique angular slot around the player so they spread out naturally.
     /// Works for both real and client-controlled NPCs.
     /// </summary>
-    private void TickApproach(SimulatedNpc npc, float deltaTime, Vector3 playerPos)
+    private void TickApproach(SimulatedNpc npc, float deltaTime, Vector3 playerPos, int npcIndex, int totalNpcs)
     {
         if (npc.BattleChara == null) return;
         if (npc.AiState == NpcAiState.Dead) return;
@@ -384,31 +394,51 @@ public unsafe class NpcAiController : IDisposable
         float distToPlayer = Vector3.Distance(npcPos, playerPos);
         float targetDist = config.TargetApproachDistance;
 
-        // Already close enough — just face the player
-        if (distToPlayer <= targetDist + 0.3f)
-        {
-            ForceRotateToward(npc, playerPos, deltaTime);
-            return;
-        }
-
-        // Calculate target position: on the line from player toward the NPC, at targetDist
+        // Calculate the angular slot for this NPC so they spread around the player
         Vector3 targetPos;
-        if (distToPlayer < 0.1f)
+        if (totalNpcs <= 1)
         {
-            // NPC is right on top of the player — place it in front
-            var player = clientState.LocalPlayer;
-            float playerRot = player?.Rotation ?? 0;
-            var forward = new Vector3(-MathF.Sin(playerRot), 0, -MathF.Cos(playerRot));
-            targetPos = playerPos + forward * targetDist;
+            // Single NPC: approach from its current direction
+            if (distToPlayer < 0.1f)
+            {
+                var player = clientState.LocalPlayer;
+                float playerRot = player?.Rotation ?? 0;
+                var forward = new Vector3(-MathF.Sin(playerRot), 0, -MathF.Cos(playerRot));
+                targetPos = playerPos + forward * targetDist;
+            }
+            else
+            {
+                var dirFromPlayer = (npcPos - playerPos) / distToPlayer;
+                targetPos = playerPos + dirFromPlayer * targetDist;
+            }
         }
         else
         {
-            var dirFromPlayer = (npcPos - playerPos) / distToPlayer;
-            targetPos = playerPos + dirFromPlayer * targetDist;
+            // Multiple NPCs: distribute evenly in front of the player
+            // In FFXIV, playerRot points forward; NPC at angle playerRot is in front of the player
+            var player = clientState.LocalPlayer;
+            float playerRot = player?.Rotation ?? 0;
+
+            // The center of the arc is the player's forward direction
+            // Index 0 is always dead center (directly facing the player)
+            float arcSpan = MathF.PI * 4f / 3f; // 240 degrees
+            float angleStep = totalNpcs > 1 ? arcSpan / (totalNpcs - 1) : 0;
+            float startAngle = playerRot - arcSpan / 2f;
+            float angle = startAngle + angleStep * npcIndex;
+
+            var dir = new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle));
+            targetPos = playerPos + dir * targetDist;
         }
 
         // Approximate terrain following: use player Y
         targetPos.Y = playerPos.Y;
+
+        // Already close enough — just face the player
+        if (Vector3.Distance(npcPos, targetPos) <= 0.3f)
+        {
+            ForceRotateToward(npc, playerPos, deltaTime);
+            return;
+        }
 
         // Smooth movement toward the target position
         float speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;

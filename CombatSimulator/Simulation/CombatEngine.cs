@@ -373,6 +373,8 @@ public class CombatEngine : IDisposable
             CombatLogType.DamageDealt);
 
         // Engage the NPC if it was idle
+        Vector3 engagedNpcPos = Vector3.Zero;
+        bool didEngage = false;
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             if (npc.SimulatedEntityId == (uint)targetId &&
@@ -380,7 +382,26 @@ public class CombatEngine : IDisposable
             {
                 npc.AiState = Ai.NpcAiState.Combat;
                 AddLogEntry($"{npc.Name} engages!", CombatLogType.Info);
+                engagedNpcPos = GetEntityPosition(npc.State);
+                didEngage = true;
                 break;
+            }
+        }
+
+        // Aggro propagation: nearby idle targets also join combat
+        if (didEngage && config.EnableAggroPropagation)
+        {
+            float aggroRange = config.AggroPropagationRange;
+            foreach (var npc in npcSelector.SelectedNpcs)
+            {
+                if (npc.AiState != Ai.NpcAiState.Idle || !npc.IsSpawned)
+                    continue;
+                var npcPos = GetEntityPosition(npc.State);
+                if (Vector3.Distance(npcPos, engagedNpcPos) <= aggroRange)
+                {
+                    npc.AiState = Ai.NpcAiState.Combat;
+                    AddLogEntry($"{npc.Name} joins the fight!", CombatLogType.Info);
+                }
             }
         }
 
