@@ -252,11 +252,9 @@ public unsafe class DeathCamController : IDisposable
                 Vector3 origin = sceneCam->RenderCamera->Origin;
                 sceneCam->RenderCamera->Origin = origin + offset;
 
-                // Also update the render camera view matrix translation for the offset
                 ApplyOffsetToViewMatrix(ref sceneCam->RenderCamera->ViewMatrix, offset);
             }
 
-            // Update scene camera view matrix as well
             ApplyOffsetToViewMatrix(ref sceneCam->ViewMatrix, offset);
         }
         catch (Exception ex)
@@ -276,6 +274,7 @@ public unsafe class DeathCamController : IDisposable
         viewMatrix.M42 -= viewMatrix.M21 * offset.X + viewMatrix.M22 * offset.Y + viewMatrix.M23 * offset.Z;
         viewMatrix.M43 -= viewMatrix.M31 * offset.X + viewMatrix.M32 * offset.Y + viewMatrix.M33 * offset.Z;
     }
+
 
     /// <summary>
     /// Get the world position of a bone on the local player character.
@@ -453,6 +452,9 @@ public unsafe class DeathCamController : IDisposable
             gameCam->MinFoV = savedMinFoV;
             gameCam->MaxFoV = savedMaxFoV;
 
+            // Reset tilt to 0
+            *(float*)((byte*)gameCam + 0x170) = 0f;
+
             limitsOverridden = false;
             log.Info("DeathCam: Camera limits restored.");
         }
@@ -526,6 +528,10 @@ public unsafe class DeathCamController : IDisposable
         gameCam->Distance = distance;
         gameCam->InterpDistance = distance;
         gameCam->FoV = fov;
+
+        // Write tilt (roll) — native game camera field at offset 0x170 (same as Cammy)
+        // The game engine reads this and applies the roll rotation when building the view matrix
+        *(float*)((byte*)gameCam + 0x170) = config.DeathCamTilt;
 
         // Zero input deltas so user input doesn't fight us
         gameCam->InputDeltaH = 0;

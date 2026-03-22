@@ -6,6 +6,22 @@ using Dalamud.Plugin;
 namespace CombatSimulator;
 
 [Serializable]
+public class DeathCamPreset
+{
+    public string Name { get; set; } = "";
+    public int BoneIndex { get; set; } = 1;
+    public float DirH { get; set; } = 0;
+    public float DirV { get; set; } = 0;
+    public float Distance { get; set; } = 5.0f;
+    public float FoV { get; set; } = 0.78f;
+    public float HeightOffset { get; set; } = 0f;
+    public float SideOffset { get; set; } = 0f;
+    public float Tilt { get; set; } = 0f;
+    public bool DisableCollision { get; set; } = true;
+    public float TransitionDuration { get; set; } = 1.5f;
+}
+
+[Serializable]
 public class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
@@ -70,6 +86,9 @@ public class Configuration : IPluginConfiguration
     // Experimental
     public bool EnableTorture { get; set; } = false;
 
+    // Player HP Bar
+    public float PlayerHpBarYOffset { get; set; } = 0.3f;
+
     // Death Cam (Experimental)
     public bool EnableDeathCam { get; set; } = false;
     public int DeathCamBoneIndex { get; set; } = 1; // n_hara (waist)
@@ -80,8 +99,12 @@ public class Configuration : IPluginConfiguration
     public float DeathCamFoV { get; set; } = 0.78f;
     public float DeathCamHeightOffset { get; set; } = 0f;
     public float DeathCamSideOffset { get; set; } = 0f;
+    public float DeathCamTilt { get; set; } = 0f;
     public bool DeathCamDisableCollision { get; set; } = true;
     public bool DeathCamAnchorSet { get; set; } = false;
+
+    // Death Cam Presets
+    public List<DeathCamPreset> DeathCamPresets { get; set; } = new();
 
     // Recent NPCs
     public List<uint> RecentNpcIds { get; set; } = new();

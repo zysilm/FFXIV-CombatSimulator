@@ -84,7 +84,7 @@ public class HpBarOverlay : IDisposable
             if (player != null)
             {
                 var worldPos = player.Position;
-                worldPos.Y += 0.3f;
+                worldPos.Y += config.PlayerHpBarYOffset;
 
                 if (gameGui.WorldToScreen(worldPos, out var screenPos))
                 {
