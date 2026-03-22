@@ -1,0 +1,50 @@
+name: Build Feature Branch
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+
+env:
+  PLUGIN_NAME: CombatSimulator
+  SOLUTION_DIR: CombatSimulator
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup Dalamud
+        run: |
+          mkdir -p ~/.xlcore/dalamud/Hooks/dev
+          wget -q https://goatcorp.github.io/dalamud-distrib/stg/latest.zip -O /tmp/dalamud.zip
+          unzip -o /tmp/dalamud.zip -d ~/.xlcore/dalamud/Hooks/dev
+
+      - name: Build
+        run: dotnet build ${{ env.SOLUTION_DIR }}/${{ env.PLUGIN_NAME }}.csproj -c Release
+        env:
+          DALAMUD_HOME: ~/.xlcore/dalamud/Hooks/dev
+
+      - name: Package
+        run: |
+          out_dir="${{ env.SOLUTION_DIR }}/bin/Release/net8.0-windows"
+          mkdir -p release/${{ env.PLUGIN_NAME }}
+          cp "$out_dir"/${{ env.PLUGIN_NAME }}.dll release/${{ env.PLUGIN_NAME }}/
+          cp "$out_dir"/${{ env.PLUGIN_NAME }}.json release/${{ env.PLUGIN_NAME }}/
+          [ -f "$out_dir"/${{ env.PLUGIN_NAME }}.pdb ] && cp "$out_dir"/${{ env.PLUGIN_NAME }}.pdb release/${{ env.PLUGIN_NAME }}/ || true
+          cd release && zip -r ../latest.zip ${{ env.PLUGIN_NAME }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest
+          path: latest.zip

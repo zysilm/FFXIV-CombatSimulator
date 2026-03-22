@@ -134,7 +134,10 @@ public class CombatEngine : IDisposable
         lock (queueLock)
             actionQueue.Clear();
 
-        // Clean up all active targets (reset animations, restore ObjectKind, etc.)
+        // Clear approach position blocks FIRST so position restores in DeselectAll aren't blocked
+        movementBlockHook.ClearApproachNpcs();
+
+        // Clean up all active targets (reset animations, restore ObjectKind, position, etc.)
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             UnregisterNpcEntity(npc.SimulatedEntityId);

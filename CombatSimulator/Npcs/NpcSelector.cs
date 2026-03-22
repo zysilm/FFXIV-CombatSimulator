@@ -117,11 +117,15 @@ public unsafe class NpcSelector : IDisposable
                     character->ModelContainer.ModelCharaId = npc.OriginalModelCharaId;
                 }
 
-                // Restore original ObjectKind/SubKind
                 var gameObj = (GameObject*)npc.BattleChara;
+
+                // Restore position to where the NPC was before we moved it
+                gameObj->Position = npc.SpawnPosition;
+
+                // Restore original ObjectKind/SubKind
                 gameObj->ObjectKind = (ObjectKind)npc.OriginalObjectKind;
                 gameObj->SubKind = npc.OriginalSubKind;
-                log.Info($"Restored ObjectKind/SubKind for '{npc.Name}'.");
+                log.Info($"Restored ObjectKind/SubKind and position for '{npc.Name}'.");
             }
             catch (Exception ex)
             {
