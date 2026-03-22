@@ -501,6 +501,42 @@ public class MainWindow : IDisposable
             }
             HelpMarker("The bone the camera orbits around. Waist is recommended for stable tracking.");
 
+            // Camera Distance (directly edits anchor value)
+            var distance = config.DeathCamAnchorDistance;
+            if (ImGui.SliderFloat("Camera Distance", ref distance, 0.0f, 30.0f, "%.2f"))
+            {
+                config.DeathCamAnchorDistance = distance;
+                config.Save();
+            }
+            HelpMarker("Camera orbit distance. Set Anchor captures this, or adjust manually. Values below ~1.5 bypass the game's default minimum.");
+
+            // Vertical Angle (directly edits anchor value)
+            var dirV = config.DeathCamAnchorDirV;
+            if (ImGui.SliderFloat("Vertical Angle", ref dirV, -MathF.PI / 2f, MathF.PI / 2f, "%.2f rad"))
+            {
+                config.DeathCamAnchorDirV = dirV;
+                config.Save();
+            }
+            HelpMarker("Camera pitch angle in radians. -π/2 = straight down, +π/2 = straight up. Set Anchor captures this, or adjust manually.");
+
+            // Horizontal Angle (directly edits anchor value)
+            var dirH = config.DeathCamAnchorDirH;
+            if (ImGui.SliderFloat("Horizontal Angle", ref dirH, -MathF.PI, MathF.PI, "%.2f rad"))
+            {
+                config.DeathCamAnchorDirH = dirH;
+                config.Save();
+            }
+            HelpMarker("Camera yaw angle relative to character facing. Adjust to orbit around the character in preview mode.");
+
+            // FOV
+            var fov = config.DeathCamFoV;
+            if (ImGui.SliderFloat("Field of View", ref fov, 0.1f, 2.0f, "%.2f rad"))
+            {
+                config.DeathCamFoV = fov;
+                config.Save();
+            }
+            HelpMarker("Camera field of view in radians. Default ~0.78 (45°). Lower = zoomed in, higher = wide angle.");
+
             // Height offset
             var heightOffset = config.DeathCamHeightOffset;
             if (ImGui.SliderFloat("Height Offset", ref heightOffset, -5.0f, 10.0f, "%.2f"))
@@ -508,7 +544,7 @@ public class MainWindow : IDisposable
                 config.DeathCamHeightOffset = heightOffset;
                 config.Save();
             }
-            HelpMarker("Vertical offset added to the camera look-at point. Raise or lower the camera focus.");
+            HelpMarker("Vertical offset added to the camera position. Shifts the whole camera up or down.");
 
             // Side offset
             var sideOffset = config.DeathCamSideOffset;
@@ -517,7 +553,16 @@ public class MainWindow : IDisposable
                 config.DeathCamSideOffset = sideOffset;
                 config.Save();
             }
-            HelpMarker("Horizontal offset relative to character facing. Positive = right, negative = left.");
+            HelpMarker("Horizontal offset perpendicular to camera direction. Positive = right, negative = left.");
+
+            // Disable Camera Collision
+            var disableCollision = config.DeathCamDisableCollision;
+            if (ImGui.Checkbox("Disable Camera Collision", ref disableCollision))
+            {
+                config.DeathCamDisableCollision = disableCollision;
+                config.Save();
+            }
+            HelpMarker("When enabled, camera ignores wall/object collision during death cam. Prevents the camera from snapping closer when obstructed.");
 
             // Set Anchor button + Preview toggle
             if (ImGui.Button("Set Anchor"))
@@ -535,13 +580,13 @@ public class MainWindow : IDisposable
             {
                 deathCamController.SetPreview(!preview);
             }
-            HelpMarker("Toggle live preview: applies height/side offsets to the current camera so you can see the result.");
+            HelpMarker("Toggle live preview: locks camera to all anchor settings (angle, distance, offsets) so you see exactly what death cam will look like.");
 
             // Anchor status
             if (config.DeathCamAnchorSet)
             {
                 ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.4f, 1.0f), "Anchor is set.");
-                ImGui.Text($"H: {config.DeathCamAnchorDirH:F2}  V: {config.DeathCamAnchorDirV:F2}  Dist: {config.DeathCamAnchorDistance:F1}  Height: {config.DeathCamHeightOffset:F1}  Side: {config.DeathCamSideOffset:F1}");
+                ImGui.Text($"H: {config.DeathCamAnchorDirH:F2}  V: {config.DeathCamAnchorDirV:F2}  Dist: {config.DeathCamAnchorDistance:F1}  FoV: {config.DeathCamFoV:F2}  Height: {config.DeathCamHeightOffset:F1}  Side: {config.DeathCamSideOffset:F1}");
             }
             else
             {
@@ -573,37 +618,6 @@ public class MainWindow : IDisposable
                 ImGui.TextColored(new Vector4(0.5f, 0.8f, 1.0f, 1.0f), $"State: {deathCamController.State}");
             }
 
-            ImGui.Spacing();
-            ImGui.Separator();
-            ImGui.Spacing();
-
-            // Camera Distance Override (global)
-            var distOverride = config.EnableCameraDistanceOverride;
-            if (ImGui.Checkbox("Override Camera Distance Limits", ref distOverride))
-            {
-                config.EnableCameraDistanceOverride = distOverride;
-                config.Save();
-            }
-            HelpMarker("Globally overrides the min/max camera zoom distance. Works at all times when enabled, not just death cam.");
-
-            if (distOverride)
-            {
-                var minDist = config.CameraMinDistance;
-                if (ImGui.SliderFloat("Min Camera Dist", ref minDist, 0.0f, 5.0f, "%.2f"))
-                {
-                    config.CameraMinDistance = minDist;
-                    config.Save();
-                }
-                HelpMarker("Minimum zoom distance. Default game value is ~1.5. Set to 0 for extreme close-up.");
-
-                var maxDist = config.CameraMaxDistance;
-                if (ImGui.SliderFloat("Max Camera Dist", ref maxDist, 5.0f, 100.0f, "%.1f"))
-                {
-                    config.CameraMaxDistance = maxDist;
-                    config.Save();
-                }
-                HelpMarker("Maximum zoom distance. Default game value is ~20.");
-            }
         }
     }
 
