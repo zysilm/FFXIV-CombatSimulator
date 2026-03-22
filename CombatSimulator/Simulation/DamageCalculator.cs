@@ -160,16 +160,26 @@ public class DamageCalculator
 
     public DamageResult CalculateNpcAutoAttack(SimulatedEntityState npc, SimulatedEntityState target, int potency = 110)
     {
-        // Simplified NPC damage based on level difference
-        int level = npc.Level;
-        float baseDamage = potency * (1.0f + level * 0.05f);
+        int npcLevel = npc.Level;
+        int targetLevel = target.Level > 0 ? target.Level : 90;
 
-        // Target defense
+        // Base damage scales quadratically with NPC level for meaningful numbers
+        float baseDamage = potency * (1.0f + npcLevel * 0.1f + npcLevel * npcLevel * 0.002f);
+
+        // Level difference multiplier: each level the NPC is above the target
+        // increases damage significantly (and below reduces it)
+        int levelDiff = npcLevel - targetLevel;
+        float levelMultiplier = 1.0f + levelDiff * 0.08f;
+        if (levelDiff > 0)
+            levelMultiplier += levelDiff * levelDiff * 0.005f; // Extra scaling when NPC is higher
+        levelMultiplier = Math.Max(0.2f, levelMultiplier);
+
+        // Target defense mitigation (softened so defense doesn't negate everything)
         int defense = target.Defense > 0 ? target.Defense : 500;
-        float mitigation = 1000f / (1000f + defense);
+        float mitigation = 2000f / (2000f + defense);
 
         float variance = 0.90f + (float)rng.NextDouble() * 0.20f;
-        float damage = baseDamage * mitigation * variance;
+        float damage = baseDamage * levelMultiplier * mitigation * variance;
 
         return new DamageResult
         {

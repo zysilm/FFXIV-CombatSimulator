@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using CombatSimulator.Animation;
 using CombatSimulator.Npcs;
+using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
@@ -15,18 +16,24 @@ public unsafe class NpcAiController : IDisposable
 {
     private readonly CombatEngine combatEngine;
     private readonly AnimationController animationController;
+    private readonly MovementBlockHook movementBlockHook;
     private readonly IClientState clientState;
+    private readonly Configuration config;
     private readonly IPluginLog log;
 
     public NpcAiController(
         CombatEngine combatEngine,
         AnimationController animationController,
+        MovementBlockHook movementBlockHook,
         IClientState clientState,
+        Configuration config,
         IPluginLog log)
     {
         this.combatEngine = combatEngine;
         this.animationController = animationController;
+        this.movementBlockHook = movementBlockHook;
         this.clientState = clientState;
+        this.config = config;
         this.log = log;
     }
 
@@ -44,8 +51,54 @@ public unsafe class NpcAiController : IDisposable
             if (!npc.IsSpawned)
                 continue;
 
+            // Keep active targets in battle stance (drawn weapon / combat idle)
+            if (npc.BattleChara != null && npc.AiState != NpcAiState.Dead)
+                animationController.SetBattleStance(npc);
+
             TickNpc(npc, deltaTime, playerPos, playerEntityId);
         }
+
+        // Target approach: move active targets near the player
+        if (config.EnableTargetApproach)
+        {
+            // Count live approach-eligible NPCs for spread calculation
+            var approachNpcs = new List<SimulatedNpc>();
+            foreach (var npc in npcs)
+            {
+                if (!npc.IsSpawned || npc.BattleChara == null)
+                    continue;
+                if (npc.AiState != NpcAiState.Dead)
+                    approachNpcs.Add(npc);
+            }
+
+            for (int i = 0; i < approachNpcs.Count; i++)
+            {
+                var npc = approachNpcs[i];
+
+                // Register NPC in the SetPosition block list so server can't override us
+                if (!npc.IsClientControlled)
+                    movementBlockHook.AddApproachNpc(npc.Address);
+
+                // Prevent Resetting state when approach is active
+                if (npc.AiState == NpcAiState.Resetting)
+                    npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
+
+                TickApproach(npc, deltaTime, playerPos, i, approachNpcs.Count);
+            }
+        }
+        else
+        {
+            // Clear all approach blocks when feature is disabled
+            movementBlockHook.ClearApproachNpcs();
+        }
+    }
+
+    /// <summary>
+    /// Clear approach state. Called on simulation stop.
+    /// </summary>
+    public void ClearApproachState()
+    {
+        movementBlockHook.ClearApproachNpcs();
     }
 
     public void EngageNpc(SimulatedNpc npc)
@@ -129,8 +182,8 @@ public unsafe class NpcAiController : IDisposable
         if (npc.IsClientControlled)
             RotateTowardPlayer(npc, playerPos, deltaTime);
 
-        // Skip leash check for real NPCs (they don't move)
-        if (npc.IsClientControlled)
+        // Skip leash check for real NPCs (they don't move) and when approach is active
+        if (npc.IsClientControlled && !config.EnableTargetApproach)
         {
             float distFromSpawn = Vector3.Distance(npcPos, npc.SpawnPosition);
             if (distFromSpawn > npc.Behavior.LeashDistance)
@@ -154,8 +207,8 @@ public unsafe class NpcAiController : IDisposable
             return;
         }
 
-        // Check if player is alive
-        if (!combatEngine.State.PlayerState.IsAlive)
+        // Check if player is alive (in brutal mode, NPCs keep hitting the dead player)
+        if (!config.EnableTorture && !combatEngine.State.PlayerState.IsAlive)
         {
             npc.AiState = NpcAiState.Idle;
             return;
@@ -326,7 +379,128 @@ public unsafe class NpcAiController : IDisposable
         gameObj->Position = position;
     }
 
+    /// <summary>
+    /// Move an active target NPC toward the player, stopping at the configured distance.
+    /// Each NPC gets a unique angular slot around the player so they spread out naturally.
+    /// Works for both real and client-controlled NPCs.
+    /// </summary>
+    private void TickApproach(SimulatedNpc npc, float deltaTime, Vector3 playerPos, int npcIndex, int totalNpcs)
+    {
+        if (npc.BattleChara == null) return;
+        if (npc.AiState == NpcAiState.Dead) return;
+
+        // Don't move NPCs when the player is dead — they stay in place
+        if (!combatEngine.State.PlayerState.IsAlive) return;
+
+        var gameObj = (GameObject*)npc.BattleChara;
+        var npcPos = (Vector3)gameObj->Position;
+
+        float distToPlayer = Vector3.Distance(npcPos, playerPos);
+        float targetDist = config.TargetApproachDistance;
+
+        // Calculate the angular slot for this NPC so they spread around the player
+        Vector3 targetPos;
+        if (totalNpcs <= 1)
+        {
+            // Single NPC: approach from its current direction
+            if (distToPlayer < 0.1f)
+            {
+                var player = clientState.LocalPlayer;
+                float playerRot = player?.Rotation ?? 0;
+                var forward = new Vector3(-MathF.Sin(playerRot), 0, -MathF.Cos(playerRot));
+                targetPos = playerPos + forward * targetDist;
+            }
+            else
+            {
+                var dirFromPlayer = (npcPos - playerPos) / distToPlayer;
+                targetPos = playerPos + dirFromPlayer * targetDist;
+            }
+        }
+        else
+        {
+            // Multiple NPCs: distribute evenly in front of the player
+            // In FFXIV, playerRot points forward; NPC at angle playerRot is in front of the player
+            var player = clientState.LocalPlayer;
+            float playerRot = player?.Rotation ?? 0;
+
+            // The center of the arc is the player's forward direction
+            // Index 0 is always dead center (directly facing the player)
+            float arcSpan = MathF.PI * 4f / 3f; // 240 degrees
+            float angleStep = totalNpcs > 1 ? arcSpan / (totalNpcs - 1) : 0;
+            float startAngle = playerRot - arcSpan / 2f;
+            float angle = startAngle + angleStep * npcIndex;
+
+            var dir = new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle));
+            targetPos = playerPos + dir * targetDist;
+        }
+
+        // Approximate terrain following: use player Y
+        targetPos.Y = playerPos.Y;
+
+        // Already close enough — just face the player
+        if (Vector3.Distance(npcPos, targetPos) <= 0.3f)
+        {
+            ForceRotateToward(npc, playerPos, deltaTime);
+            return;
+        }
+
+        // Smooth movement toward the target position
+        float speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;
+        float remainingDist = Vector3.Distance(npcPos, targetPos);
+        float moveDist = speed * deltaTime;
+
+        Vector3 newPos;
+        if (remainingDist <= moveDist)
+        {
+            newPos = targetPos;
+        }
+        else
+        {
+            var moveDir = Vector3.Normalize(targetPos - npcPos);
+            newPos = npcPos + moveDir * moveDist;
+        }
+
+        // Call the real SetPosition via the hook bypass — this updates both
+        // the struct field AND the DrawObject (3D model position).
+        movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
+
+        // Face the player
+        ForceRotateToward(npc, playerPos, deltaTime);
+    }
+
+    /// <summary>
+    /// Rotate any NPC to face a target position, regardless of IsClientControlled.
+    /// Uses SetApproachRotation to properly update the DrawObject.
+    /// </summary>
+    private void ForceRotateToward(SimulatedNpc npc, Vector3 targetPos, float deltaTime)
+    {
+        if (npc.BattleChara == null) return;
+
+        var gameObj = (GameObject*)npc.BattleChara;
+        var npcPos = (Vector3)gameObj->Position;
+        var dir = targetPos - npcPos;
+
+        if (dir.LengthSquared() < 0.001f) return;
+
+        var targetRot = MathF.Atan2(dir.X, dir.Z);
+        var currentRot = gameObj->Rotation;
+        var diff = targetRot - currentRot;
+
+        while (diff > MathF.PI) diff -= 2 * MathF.PI;
+        while (diff < -MathF.PI) diff += 2 * MathF.PI;
+
+        var rotSpeed = 5.0f * deltaTime;
+        float newRot;
+        if (MathF.Abs(diff) < rotSpeed)
+            newRot = targetRot;
+        else
+            newRot = currentRot + MathF.Sign(diff) * rotSpeed;
+
+        movementBlockHook.SetApproachRotation(gameObj, newRot);
+    }
+
     public void Dispose()
     {
+        movementBlockHook.ClearApproachNpcs();
     }
 }

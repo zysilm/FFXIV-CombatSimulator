@@ -49,6 +49,43 @@ public class Configuration : IPluginConfiguration
     public bool ApplyGlamourerOnDeath { get; set; } = false;
     public string DeathGlamourerDesignId { get; set; } = "";
 
+    // Glamourer: apply a preset on start / reset / reboot (combat ready look)
+    public bool ApplyGlamourerOnReset { get; set; } = false;
+    public string ResetGlamourerDesignId { get; set; } = "";
+
+    // Shortcuts bar
+    public bool ShowShortcuts { get; set; } = false;
+
+    // Target Behaviors
+    public bool EnableTargetApproach { get; set; } = false;
+    public float TargetApproachDistance { get; set; } = 3.0f;
+
+    // Aggro propagation: nearby BattleNpcs auto-added as targets when one is engaged
+    public bool EnableAggroPropagation { get; set; } = false;
+    public float AggroPropagationRange { get; set; } = 15.0f;
+
+    // Maximum number of active targets
+    public int MaxTargets { get; set; } = 10;
+
+    // Experimental
+    public bool EnableTorture { get; set; } = false;
+
+    // Death Cam (Experimental)
+    public bool EnableDeathCam { get; set; } = false;
+    public int DeathCamBoneIndex { get; set; } = 1; // n_hara (waist)
+    public float DeathCamTransitionDuration { get; set; } = 1.5f;
+    public float DeathCamAnchorDirH { get; set; } = 0;
+    public float DeathCamAnchorDirV { get; set; } = 0;
+    public float DeathCamAnchorDistance { get; set; } = 5.0f;
+    public float DeathCamHeightOffset { get; set; } = 0f;
+    public float DeathCamSideOffset { get; set; } = 0f;
+    public bool DeathCamAnchorSet { get; set; } = false;
+
+    // Camera Distance Override (global)
+    public bool EnableCameraDistanceOverride { get; set; } = false;
+    public float CameraMinDistance { get; set; } = 0.0f;
+    public float CameraMaxDistance { get; set; } = 20.0f;
+
     // Recent NPCs
     public List<uint> RecentNpcIds { get; set; } = new();
 

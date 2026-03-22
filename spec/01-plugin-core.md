@@ -101,10 +101,19 @@ public class Configuration : IPluginConfiguration
     // Glamourer Integration
     public bool ApplyGlamourerOnDeath { get; set; } = false;
     public string DeathGlamourerDesignId { get; set; } = "";
+    public bool ApplyGlamourerOnReset { get; set; } = false;
+    public string ResetGlamourerDesignId { get; set; } = "";
 
     // Target Behaviors
     public bool EnableTargetApproach { get; set; } = false;
     public float TargetApproachDistance { get; set; } = 3.0f;
+
+    // Aggro propagation: nearby idle targets join combat when one is engaged
+    public bool EnableAggroPropagation { get; set; } = false;
+    public float AggroPropagationRange { get; set; } = 15.0f;
+
+    // Shortcuts bar
+    public bool ShowShortcuts { get; set; } = false;
 
     // Recent NPCs
     public List<uint> RecentNpcIds { get; set; } = new();

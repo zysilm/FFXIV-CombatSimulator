@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation;
+using CombatSimulator.Camera;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
@@ -53,6 +54,7 @@ public class CombatEngine : IDisposable
     private readonly NpcSelector npcSelector;
     private readonly IClientState clientState;
     private readonly IPluginLog log;
+    private readonly DeathCamController? deathCamController;
     private bool playerDeathTriggered;
     private bool victoryTriggered;
     private bool glamourerApplied;
@@ -70,6 +72,18 @@ public class CombatEngine : IDisposable
     private readonly Queue<QueuedAction> actionQueue = new();
     private readonly object queueLock = new();
 
+    // Pending death animations (delayed so the killing blow visuals play first)
+    private readonly List<PendingDeath> pendingDeaths = new();
+    private readonly List<PendingDeath> pendingDeathReapplies = new();
+    private const float DeathAnimationDelay = 0.5f;
+
+    private struct PendingDeath
+    {
+        public ulong EntityId;
+        public bool IsPlayer;
+        public float Timer;
+    }
+
     public CombatEngine(
         ActionDataProvider actionDataProvider,
         DamageCalculator damageCalculator,
@@ -79,7 +93,8 @@ public class CombatEngine : IDisposable
         Configuration config,
         NpcSelector npcSelector,
         IClientState clientState,
-        IPluginLog log)
+        IPluginLog log,
+        DeathCamController? deathCamController = null)
     {
         this.actionDataProvider = actionDataProvider;
         this.damageCalculator = damageCalculator;
@@ -90,6 +105,7 @@ public class CombatEngine : IDisposable
         this.npcSelector = npcSelector;
         this.clientState = clientState;
         this.log = log;
+        this.deathCamController = deathCamController;
     }
 
     public void StartSimulation()
@@ -104,6 +120,11 @@ public class CombatEngine : IDisposable
         playerDeathTriggered = false;
         victoryTriggered = false;
         glamourerApplied = false;
+        pendingDeaths.Clear();
+        pendingDeathReapplies.Clear();
+
+        // Apply glamourer combat-ready preset on start
+        ApplyResetGlamourer();
 
         AddLogEntry("Combat simulation started.", CombatLogType.Info);
         log.Info("Combat simulation started.");
@@ -119,7 +140,10 @@ public class CombatEngine : IDisposable
         lock (queueLock)
             actionQueue.Clear();
 
-        // Clean up all active targets (reset animations, restore ObjectKind, etc.)
+        // Clear approach position blocks FIRST so position restores in DeselectAll aren't blocked
+        movementBlockHook.ClearApproachNpcs();
+
+        // Clean up all active targets (reset animations, restore ObjectKind, position, etc.)
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             UnregisterNpcEntity(npc.SimulatedEntityId);
@@ -128,6 +152,7 @@ public class CombatEngine : IDisposable
                 if (npc.BattleChara != null)
                 {
                     animationController.ResetDeathAnimation(npc.BattleChara);
+                    animationController.ClearBattleStance(npc);
                     var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)npc.BattleChara;
                     character->Mode = FFXIVClientStructs.FFXIV.Client.Game.Character.CharacterModes.Normal;
                     character->ModeParam = 0;
@@ -137,6 +162,7 @@ public class CombatEngine : IDisposable
         npcSelector.DeselectAll();
         animationController.ResetPlayerDeathAnimation();
         movementBlockHook.IsBlocking = false;
+        deathCamController?.Deactivate();
         RevertGlamourer();
 
         AddLogEntry("Combat simulation stopped.", CombatLogType.Info);
@@ -147,6 +173,7 @@ public class CombatEngine : IDisposable
     {
         State.Reset();
         CombatLog.Clear();
+        deathCamController?.Deactivate();
 
         // Re-initialize player state
         InitializePlayerState();
@@ -155,6 +182,10 @@ public class CombatEngine : IDisposable
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             npc.State.Reset();
+            npc.AiState = Ai.NpcAiState.Idle;
+            npc.AutoAttackTimer = 0;
+            npc.DeadTimer = 0;
+            npc.CurrentCastSkill = null;
 
             // Revive dead NPCs: reset death animation + restore normal mode
             unsafe
@@ -172,10 +203,13 @@ public class CombatEngine : IDisposable
         animationController.ResetPlayerDeathAnimation();
         movementBlockHook.IsBlocking = false;
         RevertGlamourer();
+        ApplyResetGlamourer();
 
         playerDeathTriggered = false;
         victoryTriggered = false;
         glamourerApplied = false;
+        pendingDeaths.Clear();
+        pendingDeathReapplies.Clear();
 
         AddLogEntry("Combat state reset.", CombatLogType.Info);
     }
@@ -192,6 +226,12 @@ public class CombatEngine : IDisposable
 
         // Process queued player actions
         ProcessActionQueue();
+
+        // Process pending death animations
+        TickPendingDeaths(deltaTime);
+
+        // Torture mode: re-apply death pose after hits on dead characters
+        TickPendingDeathReapplies(deltaTime);
 
         // Tick cooldowns
         TickCooldowns(State.PlayerState, deltaTime);
@@ -259,7 +299,7 @@ public class CombatEngine : IDisposable
             return result;
         }
 
-        if (!target.IsAlive)
+        if (!config.EnableTorture && !target.IsAlive)
         {
             result.FailReason = "Target is already dead.";
             return result;
@@ -369,6 +409,8 @@ public class CombatEngine : IDisposable
             CombatLogType.DamageDealt);
 
         // Engage the NPC if it was idle
+        Vector3 engagedNpcPos = Vector3.Zero;
+        bool didEngage = false;
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             if (npc.SimulatedEntityId == (uint)targetId &&
@@ -376,7 +418,41 @@ public class CombatEngine : IDisposable
             {
                 npc.AiState = Ai.NpcAiState.Combat;
                 AddLogEntry($"{npc.Name} engages!", CombatLogType.Info);
+                engagedNpcPos = GetEntityPosition(npc.State);
+                didEngage = true;
                 break;
+            }
+        }
+
+        // Aggro propagation: scan the game world for nearby BattleNpcs and add them as targets
+        if (didEngage && config.EnableAggroPropagation)
+        {
+            float aggroRange = config.AggroPropagationRange;
+
+            // First, activate any already-selected idle NPCs in range
+            foreach (var npc in npcSelector.SelectedNpcs)
+            {
+                if (npc.AiState != Ai.NpcAiState.Idle || !npc.IsSpawned)
+                    continue;
+                var npcPos = GetEntityPosition(npc.State);
+                if (Vector3.Distance(npcPos, engagedNpcPos) <= aggroRange)
+                {
+                    npc.AiState = Ai.NpcAiState.Combat;
+                    AddLogEntry($"{npc.Name} joins the fight!", CombatLogType.Info);
+                }
+            }
+
+            // Then, scan the object table for new BattleNpcs in range and auto-add them
+            var newNpcs = npcSelector.SelectNearbyBattleNpcs(
+                engagedNpcPos, aggroRange,
+                config.DefaultNpcLevel, config.DefaultNpcHpMultiplier,
+                (Npcs.NpcBehaviorType)config.DefaultNpcBehaviorType);
+
+            foreach (var newNpc in newNpcs)
+            {
+                RegisterNpcEntity(newNpc);
+                newNpc.AiState = Ai.NpcAiState.Combat;
+                AddLogEntry($"{newNpc.Name} joins the fight!", CombatLogType.Info);
             }
         }
 
@@ -385,6 +461,9 @@ public class CombatEngine : IDisposable
         {
             result.TargetKilled = true;
             OnEntityDeath(target);
+
+            if (config.EnableTorture)
+                ReapplyDeathPose(target);
         }
 
         return result;
@@ -400,7 +479,7 @@ public class CombatEngine : IDisposable
         };
 
         var target = State.GetEntity(targetId);
-        if (target == null || !target.IsAlive || !npc.State.IsAlive)
+        if (target == null || !npc.State.IsAlive || (!config.EnableTorture && !target.IsAlive))
         {
             result.FailReason = "Invalid target or source dead.";
             return result;
@@ -430,9 +509,11 @@ public class CombatEngine : IDisposable
         State.TotalDamageTaken += dmgResult.Damage;
 
         // Trigger animation (NPC → Player)
+        // Always use ActionId 7 (auto-attack) — player skill ActionIds (31, 141, etc.)
+        // animate inconsistently on monster models
         var actionData2 = new ActionData
         {
-            ActionId = actionId,
+            ActionId = 7,
             Potency = potency > 0 ? potency : 110,
             DamageType = SimDamageType.Physical,
             AnimationLock = 0.6f,
@@ -455,6 +536,9 @@ public class CombatEngine : IDisposable
         {
             result.TargetKilled = true;
             OnEntityDeath(target);
+
+            if (config.EnableTorture)
+                ReapplyDeathPose(target);
         }
 
         return result;
@@ -548,13 +632,79 @@ public class CombatEngine : IDisposable
         return 0;
     }
 
-    private void OnEntityDeath(SimulatedEntityState entity)
+    private void TickPendingDeaths(float deltaTime)
     {
-        AddLogEntry($"{entity.Name} is defeated!", CombatLogType.Death);
+        for (int i = pendingDeaths.Count - 1; i >= 0; i--)
+        {
+            var pd = pendingDeaths[i];
+            pd.Timer -= deltaTime;
+            pendingDeaths[i] = pd;
 
+            if (pd.Timer <= 0)
+            {
+                pendingDeaths.RemoveAt(i);
+                ExecuteDeathAnimation(pd.EntityId, pd.IsPlayer);
+            }
+        }
+    }
+
+    private void TickPendingDeathReapplies(float deltaTime)
+    {
+        for (int i = pendingDeathReapplies.Count - 1; i >= 0; i--)
+        {
+            var pd = pendingDeathReapplies[i];
+            pd.Timer -= deltaTime;
+            pendingDeathReapplies[i] = pd;
+
+            if (pd.Timer <= 0)
+            {
+                pendingDeathReapplies.RemoveAt(i);
+
+                if (pd.IsPlayer)
+                {
+                    animationController.PlayPlayerDeath();
+                }
+                else
+                {
+                    foreach (var npc in npcSelector.SelectedNpcs)
+                    {
+                        if (npc.SimulatedEntityId == pd.EntityId)
+                        {
+                            animationController.PlayDeathAnimation(npc);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void ReapplyDeathPose(SimulatedEntityState entity)
+    {
         if (entity.IsPlayer)
         {
-            // Player died
+            pendingDeathReapplies.Add(new PendingDeath
+            {
+                EntityId = 0UL,
+                IsPlayer = true,
+                Timer = 0.15f,
+            });
+        }
+        else
+        {
+            pendingDeathReapplies.Add(new PendingDeath
+            {
+                EntityId = entity.EntityId,
+                IsPlayer = false,
+                Timer = 0.15f,
+            });
+        }
+    }
+
+    private void ExecuteDeathAnimation(ulong entityId, bool isPlayer)
+    {
+        if (isPlayer)
+        {
             if (!playerDeathTriggered)
             {
                 playerDeathTriggered = true;
@@ -562,14 +712,14 @@ public class CombatEngine : IDisposable
                 animationController.PlayPlayerDeath();
                 animationController.PlayVictory(isPlayerVictory: false);
                 ApplyGlamourer();
+                deathCamController?.Activate();
             }
         }
         else
         {
-            // NPC died — trigger death animation and player victory
             foreach (var npc in npcSelector.SelectedNpcs)
             {
-                if (npc.SimulatedEntityId == entity.EntityId)
+                if (npc.SimulatedEntityId == entityId)
                 {
                     animationController.PlayDeathAnimation(npc);
                     break;
@@ -590,10 +740,23 @@ public class CombatEngine : IDisposable
             if (allDead && !victoryTriggered)
             {
                 victoryTriggered = true;
-                AddLogEntry("Victory!", CombatLogType.Info);
                 animationController.PlayVictory(isPlayerVictory: true);
             }
         }
+    }
+
+    private void OnEntityDeath(SimulatedEntityState entity)
+    {
+        AddLogEntry($"{entity.Name} is defeated!", CombatLogType.Death);
+
+        // Queue death animation with a short delay so the killing blow plays first
+        pendingDeaths.Add(new PendingDeath
+        {
+            EntityId = entity.IsPlayer ? 0UL : entity.EntityId,
+            IsPlayer = entity.IsPlayer,
+            Timer = DeathAnimationDelay,
+        });
+
     }
 
     private void ApplyGlamourer()
@@ -609,6 +772,18 @@ public class CombatEngine : IDisposable
             glamourerApplied = true;
             AddLogEntry("Glamourer death preset applied.", CombatLogType.Info);
         }
+    }
+
+    private void ApplyResetGlamourer()
+    {
+        if (!config.ApplyGlamourerOnReset)
+            return;
+
+        if (!Guid.TryParse(config.ResetGlamourerDesignId, out var designId))
+            return;
+
+        if (glamourerIpc.ApplyDesign(designId))
+            AddLogEntry("Glamourer reset preset applied.", CombatLogType.Info);
     }
 
     private void RevertGlamourer()
@@ -754,7 +929,7 @@ public class CombatEngine : IDisposable
             // Auto-attack closest engaged NPC
             foreach (var npc in npcSelector.SelectedNpcs)
             {
-                if (npc.State.IsAlive && npc.IsEngaged)
+                if ((config.EnableTorture || npc.State.IsAlive) && npc.IsEngaged)
                 {
                     var dmg = damageCalculator.CalculateNpcAutoAttack(ps, npc.State, 110);
                     npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
@@ -771,7 +946,11 @@ public class CombatEngine : IDisposable
                     TriggerActionEffect(ps, npc.State, autoAttackData, dmg);
 
                     if (!npc.State.IsAlive)
+                    {
                         OnEntityDeath(npc.State);
+                        if (config.EnableTorture)
+                            ReapplyDeathPose(npc.State);
+                    }
 
                     break;
                 }

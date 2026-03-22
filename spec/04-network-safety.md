@@ -57,6 +57,39 @@ private Hook<UseActionDelegate> useActionHook;
 3. **Always pass through when simulation is inactive**
 4. **Always pass through for non-simulated targets**
 
+### Hook Health Check
+
+The UseAction hook is the single critical safety point. If it becomes disabled,
+disposed, or otherwise unhealthy, player actions targeting simulated NPCs would
+pass through to the original function and generate server-bound packets.
+
+To guard against this:
+
+```csharp
+public bool IsHealthy => useActionHook != null && hookEnabled && !useActionHook.IsDisposed;
+```
+
+**Framework update check (every frame):**
+If `IsHealthy` returns false while the simulation is active, the plugin performs
+an emergency stop — halting the simulation immediately and printing an error to
+chat. This prevents any window where actions could leak to the server.
+
+```
+OnFrameworkUpdate:
+  if combatEngine.IsActive && !useActionHook.IsHealthy:
+    log.Error("UseAction hook failed — emergency stop")
+    chatGui.PrintError("SAFETY: UseAction hook failed. Simulation stopped.")
+    combatEngine.StopSimulation()
+    return
+```
+
+**Startup guard:**
+`StartSimulation` is blocked (via command handler and UI) if the hook is not
+healthy. The user is informed via chat error message.
+
+This ensures there is never a frame where the simulation is active without a
+functioning UseAction hook intercepting player actions.
+
 ## MovementBlockHook
 
 ### Purpose

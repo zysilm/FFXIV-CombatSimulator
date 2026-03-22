@@ -29,6 +29,13 @@ public unsafe class UseActionHook : IDisposable
     private Hook<UseActionDelegate>? useActionHook;
     private bool hookEnabled;
 
+    /// <summary>
+    /// True if the hook was created successfully and is currently enabled.
+    /// When false during active simulation, the sim must be emergency-stopped
+    /// to prevent unintercepted actions from reaching the server.
+    /// </summary>
+    public bool IsHealthy => useActionHook != null && hookEnabled && !useActionHook.IsDisposed;
+
     public UseActionHook(
         IGameInteropProvider gameInterop,
         CombatEngine combatEngine,

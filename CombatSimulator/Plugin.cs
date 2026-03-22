@@ -1,6 +1,7 @@
 using System;
 using CombatSimulator.Ai;
 using CombatSimulator.Animation;
+using CombatSimulator.Camera;
 using CombatSimulator.Core;
 using CombatSimulator.Gui;
 using CombatSimulator.Integration;
@@ -19,6 +20,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private readonly IDalamudPluginInterface pluginInterface;
     private readonly ICommandManager commandManager;
+    private readonly IClientState clientState;
     private readonly IFramework framework;
     private readonly IChatGui chatGui;
     private readonly IPluginLog log;
@@ -34,6 +36,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly NpcAiController npcAiController;
     private readonly MovementBlockHook movementBlockHook;
     private readonly UseActionHook useActionHook;
+    private readonly DeathCamController deathCamController;
     private readonly MainWindow mainWindow;
     private readonly HpBarOverlay hpBarOverlay;
     private readonly CombatLogWindow combatLogWindow;
@@ -54,6 +57,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     {
         this.pluginInterface = pluginInterface;
         this.commandManager = commandManager;
+        this.clientState = clientState;
         this.framework = framework;
         this.chatGui = chatGui;
         this.log = log;
@@ -73,11 +77,13 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, chatCommandExecutor, config);
-        npcSelector = new NpcSelector(objectTable, targetManager, log);
+        npcSelector = new NpcSelector(objectTable, targetManager, config, log);
+        deathCamController = new DeathCamController(gameInterop, clientState, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
-            glamourerIpc, movementBlockHook, config, npcSelector, clientState, log);
-        npcAiController = new NpcAiController(combatEngine, animationController, clientState, log);
+            glamourerIpc, movementBlockHook, config, npcSelector, clientState, log,
+            deathCamController);
+        npcAiController = new NpcAiController(combatEngine, animationController, movementBlockHook, clientState, config, log);
 
         // Safety — enable hooks immediately; they gate on internal state
         useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, config, clientState, log);
@@ -85,7 +91,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         movementBlockHook.Enable();
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, deathCamController, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
 
@@ -102,6 +108,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         pluginInterface.UiBuilder.OpenMainUi += OnOpenMainUi;
         pluginInterface.UiBuilder.OpenConfigUi += OnOpenConfig;
         framework.Update += OnFrameworkUpdate;
+        clientState.TerritoryChanged += OnTerritoryChanged;
 
         log.Info("Combat Simulator loaded.");
     }
@@ -109,6 +116,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     public void Dispose()
     {
         framework.Update -= OnFrameworkUpdate;
+        clientState.TerritoryChanged -= OnTerritoryChanged;
         pluginInterface.UiBuilder.Draw -= OnDraw;
         pluginInterface.UiBuilder.OpenMainUi -= OnOpenMainUi;
         pluginInterface.UiBuilder.OpenConfigUi -= OnOpenConfig;
@@ -124,6 +132,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         mainWindow.Dispose();
         npcAiController.Dispose();
         combatEngine.Dispose();
+        deathCamController.Dispose();
         animationController.Dispose();
         npcSelector.Dispose();
 
@@ -143,6 +152,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         switch (parts[0].ToLowerInvariant())
         {
             case "start":
+                if (!useActionHook.IsHealthy)
+                {
+                    chatGui.PrintError("[CombatSim] Cannot start: UseAction hook is not healthy. Actions would reach the server.");
+                    break;
+                }
                 combatEngine.StartSimulation();
                 chatGui.Print("[CombatSim] Combat simulation started.");
                 break;
@@ -166,6 +180,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnDraw()
     {
+        if (config.ShowShortcuts)
+            mainWindow.DrawShortcutsBar();
+
         if (config.ShowMainWindow)
             mainWindow.Draw();
 
@@ -176,6 +193,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             if (config.ShowCombatLog)
                 combatLogWindow.Draw();
+        }
+        else
+        {
+            // Restore native HP bar when sim is not active
+            hpBarOverlay.RestoreNativeHpBar();
         }
     }
 
@@ -198,10 +220,23 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // Validate selected NPCs still exist
             npcSelector.Tick();
 
+            var deltaTime = (float)(1.0 / 60.0);
+
+            // Death cam preview runs independently of combat
+            deathCamController.Tick(deltaTime);
+
             if (!combatEngine.IsActive)
                 return;
 
-            var deltaTime = (float)(1.0 / 60.0);
+            // Safety: verify UseAction hook is still healthy.
+            // If the hook is gone, actions would pass through to the server unintercepted.
+            if (!useActionHook.IsHealthy)
+            {
+                log.Error("UseAction hook is no longer healthy — emergency stopping simulation to prevent server packets.");
+                chatGui.PrintError("[CombatSim] SAFETY: UseAction hook failed. Simulation stopped to prevent server communication.");
+                combatEngine.StopSimulation();
+                return;
+            }
 
             combatEngine.Tick(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
@@ -209,6 +244,16 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         catch (Exception ex)
         {
             log.Error(ex, "Error in framework update, stopping simulation.");
+            combatEngine.StopSimulation();
+        }
+    }
+
+    private void OnTerritoryChanged(ushort territoryId)
+    {
+        if (combatEngine.IsActive)
+        {
+            log.Info($"Territory changed to {territoryId} — auto-stopping combat simulation.");
+            chatGui.Print("[CombatSim] Zone changed. Combat simulation stopped.");
             combatEngine.StopSimulation();
         }
     }

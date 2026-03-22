@@ -1,0 +1,94 @@
+name: Release Plugin
+
+on:
+  push:
+    branches: [main]
+
+env:
+  PLUGIN_NAME: CombatSimulator
+  SOLUTION_DIR: CombatSimulator
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup Dalamud
+        run: |
+          mkdir -p $HOME/dalamud
+          wget -q https://goatcorp.github.io/dalamud-distrib/latest.zip -O /tmp/dalamud.zip
+          unzip -o /tmp/dalamud.zip -d $HOME/dalamud
+
+      - name: Build
+        run: dotnet build ${{ env.SOLUTION_DIR }}/${{ env.PLUGIN_NAME }}.csproj -c Release
+        env:
+          DALAMUD_HOME: /home/runner/dalamud
+
+      - name: Extract version
+        id: version
+        run: |
+          ver=$(grep -oP '(?<=<Version>).*(?=</Version>)' ${{ env.SOLUTION_DIR }}/${{ env.PLUGIN_NAME }}.csproj)
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release artifacts
+        run: |
+          out_dir=$(find ${{ env.SOLUTION_DIR }}/bin/Release -name "${{ env.PLUGIN_NAME }}.dll" -printf '%h' -quit)
+          echo "Output dir: $out_dir"
+          mkdir -p release/${{ env.PLUGIN_NAME }}
+          cp "$out_dir"/${{ env.PLUGIN_NAME }}.dll release/${{ env.PLUGIN_NAME }}/
+          cp "$out_dir"/${{ env.PLUGIN_NAME }}.json release/${{ env.PLUGIN_NAME }}/
+          [ -f "$out_dir"/${{ env.PLUGIN_NAME }}.pdb ] && cp "$out_dir"/${{ env.PLUGIN_NAME }}.pdb release/${{ env.PLUGIN_NAME }}/ || true
+          cd release && zip -r ../${{ env.PLUGIN_NAME }}.zip ${{ env.PLUGIN_NAME }}
+
+      - name: Generate pluginmaster.json
+        run: |
+          python3 -c "
+          import json
+          with open('${{ env.SOLUTION_DIR }}/${{ env.PLUGIN_NAME }}.json') as f:
+              data = json.load(f)
+          data['AssemblyVersion'] = '${{ steps.version.outputs.version }}'
+          data['InternalName'] = '${{ env.PLUGIN_NAME }}'
+          data['RepoUrl'] = 'https://github.com/${{ github.repository }}'
+          dl = 'https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/${{ env.PLUGIN_NAME }}.zip'
+          data['DownloadLinkInstall'] = dl
+          data['DownloadLinkUpdate'] = dl
+          data['DownloadLinkTesting'] = dl
+          data['DalamudApiLevel'] = 14
+          print(json.dumps([data], indent=2))
+          " > release/pluginmaster.json
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PLUGIN_NAME }}
+          path: release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: ${{ env.PLUGIN_NAME }} v${{ steps.version.outputs.version }}
+          files: ${{ env.PLUGIN_NAME }}.zip
+          generate_release_notes: true
+
+      - name: Update pluginmaster.json on repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan pluginmaster
+          git rm -rf . 2>/dev/null || true
+          cp release/pluginmaster.json pluginmaster.json
+          git add pluginmaster.json
+          git commit -m "Update pluginmaster.json for v${{ steps.version.outputs.version }}"
+          git push -f origin pluginmaster

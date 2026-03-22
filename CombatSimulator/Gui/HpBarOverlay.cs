@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 
 namespace CombatSimulator.Gui;
 
@@ -17,6 +19,20 @@ public class HpBarOverlay : IDisposable
 
     private const float BarWidth = 200f;
     private const float BarHeight = 16f;
+
+    // Native addon names to hide when combat sim is active
+    private static readonly string[] NativeAddonNames =
+    {
+        "_ParameterWidget",        // Player HP/MP bar
+        "_TargetInfo",             // Target info (combined)
+        "_TargetInfoMainTarget",   // Target HP bar
+        "_TargetInfoBuffDebuff",   // Target buffs/debuffs
+        "_TargetInfoCastBar",      // Target cast bar
+    };
+
+    // Saved positions for hidden addons (to restore later)
+    private readonly Dictionary<string, (short X, short Y)> savedAddonPositions = new();
+    private bool nativeAddonsHidden;
 
     // Reset confirmation popup state
     private bool showResetPopup;
@@ -37,6 +53,9 @@ public class HpBarOverlay : IDisposable
 
     public unsafe void Draw()
     {
+        // Hide native HP/target bars when combat sim is active
+        SetNativeAddonsHidden(true);
+
         var drawList = ImGui.GetBackgroundDrawList();
 
         // Draw enemy HP bars
@@ -58,14 +77,14 @@ public class HpBarOverlay : IDisposable
             }
         }
 
-        // Draw player HP bar (world overlay, simple position above character)
+        // Draw player HP bar (world overlay, lower position near feet)
         if (config.ShowPlayerHpBar)
         {
             var player = clientState.LocalPlayer;
             if (player != null)
             {
                 var worldPos = player.Position;
-                worldPos.Y += 2.2f;
+                worldPos.Y += 0.3f;
 
                 if (gameGui.WorldToScreen(worldPos, out var screenPos))
                 {
@@ -346,7 +365,66 @@ public class HpBarOverlay : IDisposable
         }
     }
 
+    /// <summary>
+    /// Restore native UI addons. Called when sim stops or plugin disposes.
+    /// </summary>
+    public void RestoreNativeHpBar()
+    {
+        if (nativeAddonsHidden)
+            SetNativeAddonsHidden(false);
+    }
+
+    /// <summary>
+    /// Hide native addons by moving them off-screen (robust against game re-enabling IsVisible).
+    /// Restore by moving them back to saved positions.
+    /// </summary>
+    private unsafe void SetNativeAddonsHidden(bool hide)
+    {
+        try
+        {
+            var stage = AtkStage.Instance();
+            if (stage == null || stage->RaptureAtkUnitManager == null)
+                return;
+
+            foreach (var name in NativeAddonNames)
+            {
+                var addon = stage->RaptureAtkUnitManager->GetAddonByName(name);
+                if (addon == null)
+                    continue;
+
+                if (hide)
+                {
+                    // Only save position if we haven't already hidden it
+                    if (!savedAddonPositions.ContainsKey(name))
+                        savedAddonPositions[name] = (addon->X, addon->Y);
+
+                    addon->SetPosition(-9999, -9999);
+                }
+                else
+                {
+                    if (savedAddonPositions.TryGetValue(name, out var pos))
+                    {
+                        addon->SetPosition(pos.X, pos.Y);
+                    }
+                }
+            }
+
+            if (hide)
+                nativeAddonsHidden = true;
+            else
+            {
+                nativeAddonsHidden = false;
+                savedAddonPositions.Clear();
+            }
+        }
+        catch
+        {
+            // Silently ignore — addons may not exist in all contexts
+        }
+    }
+
     public void Dispose()
     {
+        RestoreNativeHpBar();
     }
 }
