@@ -78,7 +78,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, chatCommandExecutor, config);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
-        deathCamController = new DeathCamController(clientState, config, log);
+        deathCamController = new DeathCamController(gameInterop, clientState, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, config, npcSelector, clientState, log,
@@ -220,6 +220,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // Validate selected NPCs still exist
             npcSelector.Tick();
 
+            var deltaTime = (float)(1.0 / 60.0);
+
+            // Death cam preview runs independently of combat
+            deathCamController.Tick(deltaTime);
+
             if (!combatEngine.IsActive)
                 return;
 
@@ -233,10 +238,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 return;
             }
 
-            var deltaTime = (float)(1.0 / 60.0);
-
             combatEngine.Tick(deltaTime);
-            deathCamController.Tick(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
         }
         catch (Exception ex)

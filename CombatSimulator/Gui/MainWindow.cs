@@ -503,7 +503,7 @@ public class MainWindow : IDisposable
 
             // Height offset
             var heightOffset = config.DeathCamHeightOffset;
-            if (ImGui.SliderFloat("Height Offset", ref heightOffset, -5.0f, 10.0f, "%.1f"))
+            if (ImGui.SliderFloat("Height Offset", ref heightOffset, -5.0f, 10.0f, "%.2f"))
             {
                 config.DeathCamHeightOffset = heightOffset;
                 config.Save();
@@ -512,7 +512,7 @@ public class MainWindow : IDisposable
 
             // Side offset
             var sideOffset = config.DeathCamSideOffset;
-            if (ImGui.SliderFloat("Side Offset", ref sideOffset, -5.0f, 5.0f, "%.1f"))
+            if (ImGui.SliderFloat("Side Offset", ref sideOffset, -5.0f, 5.0f, "%.2f"))
             {
                 config.DeathCamSideOffset = sideOffset;
                 config.Save();
