@@ -178,7 +178,29 @@ When an NPC uses a skill with CastTime > 0:
 ## NPC Death
 
 When NPC HP reaches 0:
-1. Set AI state to Dead
-2. Death animation triggered by AnimationController
+1. Death is queued with a 500ms delay (see spec 03 — Death Animation Delay)
+2. After delay: AI state set to Dead, death animation triggered
 3. NPC stops all actions
 4. On combat reset: AI state returns to Idle, HP restored, death animation cleared
+
+## Battle Stance
+
+Every frame, NPCs that are alive and have a valid BattleChara pointer get their
+battle stance enforced via `AnimationController.SetBattleStance()`. This ensures
+they visually appear in a combat-ready "drawn weapon" state. See spec 05 for
+the struct fields involved.
+
+Battle stance is cleared for all NPCs when simulation stops via
+`AnimationController.ClearBattleStance()`.
+
+## Aggro Propagation
+
+When `Configuration.EnableAggroPropagation` is true and an NPC is first engaged,
+all other idle NPCs within `AggroPropagationRange` yalms are automatically
+transitioned to Combat state. This creates a group-pull behavior where nearby
+enemies join the fight when one is attacked.
+
+## NPC Facing
+
+At least one active target NPC is forced to face the player character each frame.
+When target approach is enabled, all approached NPCs are rotated toward the player.

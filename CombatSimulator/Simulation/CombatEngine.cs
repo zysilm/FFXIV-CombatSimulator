@@ -189,6 +189,7 @@ public class CombatEngine : IDisposable
         animationController.ResetPlayerDeathAnimation();
         movementBlockHook.IsBlocking = false;
         RevertGlamourer();
+        ApplyResetGlamourer();
 
         playerDeathTriggered = false;
         victoryTriggered = false;
@@ -472,9 +473,11 @@ public class CombatEngine : IDisposable
         State.TotalDamageTaken += dmgResult.Damage;
 
         // Trigger animation (NPC → Player)
+        // Always use ActionId 7 (auto-attack) — player skill ActionIds (31, 141, etc.)
+        // animate inconsistently on monster models
         var actionData2 = new ActionData
         {
-            ActionId = actionId,
+            ActionId = 7,
             Potency = potency > 0 ? potency : 110,
             DamageType = SimDamageType.Physical,
             AnimationLock = 0.6f,
@@ -676,6 +679,18 @@ public class CombatEngine : IDisposable
             glamourerApplied = true;
             AddLogEntry("Glamourer death preset applied.", CombatLogType.Info);
         }
+    }
+
+    private void ApplyResetGlamourer()
+    {
+        if (!config.ApplyGlamourerOnReset)
+            return;
+
+        if (!Guid.TryParse(config.ResetGlamourerDesignId, out var designId))
+            return;
+
+        if (glamourerIpc.ApplyDesign(designId))
+            AddLogEntry("Glamourer reset preset applied.", CombatLogType.Info);
     }
 
     private void RevertGlamourer()

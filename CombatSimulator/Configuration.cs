@@ -49,6 +49,13 @@ public class Configuration : IPluginConfiguration
     public bool ApplyGlamourerOnDeath { get; set; } = false;
     public string DeathGlamourerDesignId { get; set; } = "";
 
+    // Glamourer: apply a preset on reset (respawn)
+    public bool ApplyGlamourerOnReset { get; set; } = false;
+    public string ResetGlamourerDesignId { get; set; } = "";
+
+    // Shortcuts bar
+    public bool ShowShortcuts { get; set; } = false;
+
     // Target Behaviors
     public bool EnableTargetApproach { get; set; } = false;
     public float TargetApproachDistance { get; set; } = 3.0f;

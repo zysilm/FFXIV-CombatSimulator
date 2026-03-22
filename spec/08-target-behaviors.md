@@ -145,10 +145,43 @@ between "Active Targets" and "Simulation Controls":
 - Slider range: 1.0–30.0 yalms, step 0.1
 - Changes take effect immediately (next frame)
 
+## NPC Spread Algorithm
+
+When multiple NPCs are active, they are distributed across a 240-degree arc
+centered on the player's forward direction to prevent stacking:
+
+```csharp
+float arcSpan = MathF.PI * 4f / 3f; // 240 degrees
+float angleStep = totalNpcs > 1 ? arcSpan / (totalNpcs - 1) : 0;
+float startAngle = playerRot - arcSpan / 2f;
+float angle = startAngle + angleStep * npcIndex;
+var dir = new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle));
+targetPos = playerPos + dir * targetDist;
+```
+
+Each NPC is assigned a unique angular slot based on its index, ensuring they
+are evenly spaced and never stack on the same coordinate.
+
+## Aggro Propagation
+
+When `EnableAggroPropagation` is true, engaging one target causes nearby idle
+targets within `AggroPropagationRange` yalms to automatically join combat.
+
+```
+── Target Behaviors ─────────────────────────────
+│ ☑ Move Targets Near Player                    │
+│ Approach Distance: [──●──] 3.0 yalms          │
+│                                                │
+│ ☑ Aggro Propagation                           │
+│ Aggro Range: [──●──] 15.0 yalms               │
+│ Nearby idle targets join combat when one is    │
+│ attacked.                                      │
+──────────────────────────────────────────────────
+```
+
 ## Edge Cases
 
-- **Multiple NPCs**: Each NPC maintains its original angle relative to the player.
-  If two NPCs start at the same angle, they may overlap (acceptable for v1).
+- **Multiple NPCs**: NPCs are spread across a 240° arc (see above). No stacking.
 - **NPC on top of player**: Falls back to placing NPC in front of the player.
 - **Terrain height**: Approximated using player Y coordinate. This works well on
   flat terrain but may cause floating/clipping on slopes or multi-level areas.
@@ -163,7 +196,6 @@ between "Active Targets" and "Simulation Controls":
 - **Navmesh pathfinding**: Integrate with [vnavmesh](https://github.com/awgil/ffxiv_navmesh)
   or DotRecast for terrain-aware pathfinding instead of linear movement.
   Would prevent NPCs from walking through walls or floating over terrain.
-- **NPC spread**: Distribute multiple NPCs evenly around the player to avoid stacking.
 - **Per-NPC toggle**: Allow enabling/disabling approach per individual target.
 - **Approach speed setting**: Configurable movement speed for approach animation.
 

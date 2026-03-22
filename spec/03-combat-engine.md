@@ -323,6 +323,66 @@ On tick:
     autoAttackTimer = autoAttackDelay
 ```
 
+## NPC Damage Formula
+
+NPC auto-attacks and skills use a separate formula (`CalculateNpcAutoAttack`)
+with quadratic level scaling for more impactful damage at high levels:
+
+```
+baseDamage = potency × (1.0 + npcLevel × 0.1 + npcLevel² × 0.002)
+
+levelDiff = npcLevel - targetLevel
+levelMultiplier = 1.0 + levelDiff × 0.08
+  + (if levelDiff > 0: levelDiff² × 0.005)   // extra quadratic bonus
+levelMultiplier = max(0.2, levelMultiplier)
+
+defense mitigation = 2000 / (2000 + defense)    // softened curve
+variance = random(0.90, 1.10)
+
+finalDamage = baseDamage × levelMultiplier × mitigation × variance
+```
+
+This ensures a level 100 NPC vs a level 70 player deals lethal damage within
+~30 seconds, which feels combat-appropriate.
+
+## Death Animation Delay
+
+When an entity's HP reaches 0, death is not applied immediately. Instead, it
+is queued into a `pendingDeaths` list with a 500ms timer. This allows the
+killing blow's attack animation to fully play before the death animation starts.
+
+```csharp
+private readonly List<PendingDeath> pendingDeaths = new();
+private const float DeathAnimationDelay = 0.5f; // 500ms
+
+private struct PendingDeath
+{
+    public ulong EntityId;
+    public bool IsPlayer;
+    public float Timer;
+}
+```
+
+Each frame, `TickPendingDeaths(deltaTime)` decrements the timer. When it
+expires, `ExecuteDeathAnimation()` triggers the actual death animation and
+state changes. Pending deaths are cleared on simulation start and reset.
+
+## Aggro Propagation
+
+When a target is first engaged (transitions to combat), nearby idle targets
+can automatically join the fight. Controlled by configuration:
+
+- `EnableAggroPropagation` (bool) — toggle on/off
+- `AggroPropagationRange` (float) — maximum distance in yalms
+
+```
+On NPC engage:
+  if config.EnableAggroPropagation:
+    for each idle NPC within AggroPropagationRange of the engaged NPC:
+      set AiState = Combat
+      log "{name} joins the fight!"
+```
+
 ## Cast Bar Simulation
 
 ```

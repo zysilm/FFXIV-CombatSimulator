@@ -24,6 +24,7 @@ public class MainWindow : IDisposable
     // Glamourer design list cache for combo box
     private List<KeyValuePair<Guid, string>> glamourerDesigns = new();
     private int glamourerSelectedIndex = -1;
+    private int glamourerResetSelectedIndex = -1;
 
     private static readonly string[] BehaviorNames = { "Training Dummy", "Basic Melee", "Basic Ranged", "Boss" };
 
@@ -45,6 +46,9 @@ public class MainWindow : IDisposable
 
     public void Draw()
     {
+        if (config.ShowShortcuts)
+            DrawShortcutsBar();
+
         ImGui.SetNextWindowSize(new Vector2(420, 600), ImGuiCond.FirstUseEver);
         var showWindow = config.ShowMainWindow;
         if (!ImGui.Begin("Combat Simulator", ref showWindow))
@@ -57,10 +61,10 @@ public class MainWindow : IDisposable
 
         DrawStatusSection();
         ImGui.Separator();
+        DrawSimulationSection();
+        ImGui.Separator();
         DrawActiveTargetsSection();
         DrawTargetBehaviorsSection();
-        ImGui.Separator();
-        DrawSimulationSection();
         ImGui.Separator();
         DrawSettingsSection();
 
@@ -318,6 +322,13 @@ public class MainWindow : IDisposable
                 config.Save();
             }
 
+            var showShortcuts = config.ShowShortcuts;
+            if (ImGui.Checkbox("Show Shortcuts Bar", ref showShortcuts))
+            {
+                config.ShowShortcuts = showShortcuts;
+                config.Save();
+            }
+
             ImGui.Separator();
 
             var defaultLevel = config.DefaultNpcLevel;
@@ -421,11 +432,19 @@ public class MainWindow : IDisposable
             config.ApplyGlamourerOnDeath = enabled;
             config.Save();
         }
-        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
-            "Applies a Glamourer design to your character\n" +
-            "when you die. Reverts on reset/stop.");
 
-        if (!enabled)
+        var enabledReset = config.ApplyGlamourerOnReset;
+        if (ImGui.Checkbox("Apply Glamourer Preset on Reset", ref enabledReset))
+        {
+            config.ApplyGlamourerOnReset = enabledReset;
+            config.Save();
+        }
+
+        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
+            "Death preset reverts on reset/stop.\n" +
+            "Reset preset applies when you respawn.");
+
+        if (!enabled && !enabledReset)
             return;
 
         ImGui.Spacing();
@@ -442,19 +461,8 @@ public class MainWindow : IDisposable
             glamourerDesigns = new List<KeyValuePair<Guid, string>>(designs);
             glamourerDesigns.Sort((a, b) => string.Compare(a.Value, b.Value, StringComparison.OrdinalIgnoreCase));
 
-            // Restore selected index from config
-            glamourerSelectedIndex = -1;
-            if (Guid.TryParse(config.DeathGlamourerDesignId, out var savedId))
-            {
-                for (int i = 0; i < glamourerDesigns.Count; i++)
-                {
-                    if (glamourerDesigns[i].Key == savedId)
-                    {
-                        glamourerSelectedIndex = i;
-                        break;
-                    }
-                }
-            }
+            glamourerSelectedIndex = FindDesignIndex(config.DeathGlamourerDesignId);
+            glamourerResetSelectedIndex = FindDesignIndex(config.ResetGlamourerDesignId);
 
             if (glamourerDesigns.Count > 0)
                 chatGui.Print($"[CombatSim] Found {glamourerDesigns.Count} Glamourer designs.");
@@ -464,27 +472,100 @@ public class MainWindow : IDisposable
 
         if (glamourerDesigns.Count > 0)
         {
-            // Build display names for combo
             var names = new string[glamourerDesigns.Count];
             for (int i = 0; i < glamourerDesigns.Count; i++)
                 names[i] = glamourerDesigns[i].Value;
 
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.Combo("##GlamourerDesign", ref glamourerSelectedIndex, names, names.Length))
+            if (enabled)
             {
-                if (glamourerSelectedIndex >= 0 && glamourerSelectedIndex < glamourerDesigns.Count)
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.Combo("##DeathDesign", ref glamourerSelectedIndex, names, names.Length))
                 {
-                    config.DeathGlamourerDesignId = glamourerDesigns[glamourerSelectedIndex].Key.ToString();
-                    config.Save();
+                    if (glamourerSelectedIndex >= 0 && glamourerSelectedIndex < glamourerDesigns.Count)
+                    {
+                        config.DeathGlamourerDesignId = glamourerDesigns[glamourerSelectedIndex].Key.ToString();
+                        config.Save();
+                    }
                 }
+                if (glamourerSelectedIndex >= 0 && glamourerSelectedIndex < glamourerDesigns.Count)
+                    ImGui.TextColored(new Vector4(0.5f, 0.8f, 0.5f, 1),
+                        $"Death: {glamourerDesigns[glamourerSelectedIndex].Value}");
             }
 
-            if (glamourerSelectedIndex >= 0 && glamourerSelectedIndex < glamourerDesigns.Count)
+            if (enabledReset)
             {
-                ImGui.TextColored(new Vector4(0.5f, 0.8f, 0.5f, 1),
-                    $"Selected: {glamourerDesigns[glamourerSelectedIndex].Value}");
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.Combo("##ResetDesign", ref glamourerResetSelectedIndex, names, names.Length))
+                {
+                    if (glamourerResetSelectedIndex >= 0 && glamourerResetSelectedIndex < glamourerDesigns.Count)
+                    {
+                        config.ResetGlamourerDesignId = glamourerDesigns[glamourerResetSelectedIndex].Key.ToString();
+                        config.Save();
+                    }
+                }
+                if (glamourerResetSelectedIndex >= 0 && glamourerResetSelectedIndex < glamourerDesigns.Count)
+                    ImGui.TextColored(new Vector4(0.5f, 0.8f, 0.5f, 1),
+                        $"Reset: {glamourerDesigns[glamourerResetSelectedIndex].Value}");
             }
         }
+    }
+
+    private int FindDesignIndex(string designId)
+    {
+        if (Guid.TryParse(designId, out var id))
+        {
+            for (int i = 0; i < glamourerDesigns.Count; i++)
+                if (glamourerDesigns[i].Key == id)
+                    return i;
+        }
+        return -1;
+    }
+
+    private void DrawShortcutsBar()
+    {
+        ImGui.SetNextWindowSize(new Vector2(320, 0), ImGuiCond.FirstUseEver);
+        if (!ImGui.Begin("Combat Shortcuts", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.End();
+            return;
+        }
+
+        var isActive = combatEngine.IsActive;
+        var btnSize = new Vector2(95, 28);
+
+        if (!isActive)
+        {
+            if (ImGui.Button("Start", btnSize))
+            {
+                combatEngine.StartSimulation();
+                chatGui.Print("[CombatSim] Combat simulation started.");
+            }
+        }
+        else
+        {
+            if (ImGui.Button("Stop", btnSize))
+            {
+                combatEngine.StopSimulation();
+                chatGui.Print("[CombatSim] Combat simulation stopped.");
+            }
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Reset All", btnSize))
+        {
+            combatEngine.ResetState();
+            chatGui.Print("[CombatSim] Combat state reset.");
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Reboot", btnSize))
+        {
+            combatEngine.StopSimulation();
+            combatEngine.StartSimulation();
+            chatGui.Print("[CombatSim] Combat simulation rebooted.");
+        }
+
+        ImGui.End();
     }
 
     public void Dispose()

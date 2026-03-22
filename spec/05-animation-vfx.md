@@ -241,8 +241,9 @@ public unsafe void PlayDeathAnimation(SimulatedNpc npc)
 
 ## Auto-Attack Animation
 
-NPC auto-attacks use ActionId 7 (generic auto-attack) or monster-specific
-auto-attack IDs. These trigger the standard melee swing animation.
+All NPC actions (auto-attacks AND skills) use **ActionId 7** (generic auto-attack).
+Player-specific ActionIds (31, 141, 144, etc.) animate inconsistently on monster
+models, so ActionId 7 is used universally for reliable animations on all NPCs.
 
 ```csharp
 public void PlayNpcAutoAttack(SimulatedNpc npc, ulong targetId)
@@ -279,6 +280,25 @@ private ushort QuantizeRotation(float radians)
     return (ushort)(normalized / (2f * MathF.PI) * 65535f);
 }
 ```
+
+## Battle Stance (Weapon Draw)
+
+Active combat target NPCs are set to a "drawn weapon" battle-ready visual state.
+This is enforced every frame while the NPC is alive and in combat:
+
+```csharp
+public void SetBattleStance(SimulatedNpc npc)
+{
+    var character = (Character*)npc.BattleChara;
+    character->CharacterData.InCombat = true;
+    character->CharacterData.IsHostile = true;
+    character->Timeline.IsWeaponDrawn = true;
+    character->Timeline.ModelState = 1;
+}
+```
+
+All four flags must be set together — `InCombat` alone is insufficient for most
+monster models. `ClearBattleStance()` resets all flags when simulation stops.
 
 ## Fallback: Direct VFX Spawning
 
