@@ -67,6 +67,9 @@ public class Configuration : IPluginConfiguration
     // Maximum number of active targets
     public int MaxTargets { get; set; } = 10;
 
+    // Experimental
+    public bool EnableBrutal { get; set; } = false;
+
     // Recent NPCs
     public List<uint> RecentNpcIds { get; set; } = new();
 

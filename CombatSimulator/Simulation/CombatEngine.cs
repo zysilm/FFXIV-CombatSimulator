@@ -274,7 +274,7 @@ public class CombatEngine : IDisposable
         };
 
         // Validate
-        if (!State.PlayerState.IsAlive)
+        if (!config.EnableBrutal && !State.PlayerState.IsAlive)
         {
             result.FailReason = "Player is dead.";
             return result;
@@ -287,7 +287,7 @@ public class CombatEngine : IDisposable
             return result;
         }
 
-        if (!target.IsAlive)
+        if (!config.EnableBrutal && !target.IsAlive)
         {
             result.FailReason = "Target is already dead.";
             return result;
@@ -444,8 +444,8 @@ public class CombatEngine : IDisposable
             }
         }
 
-        // Check death
-        if (!target.IsAlive)
+        // Check death (skip in brutal mode — no death triggers)
+        if (!config.EnableBrutal && !target.IsAlive)
         {
             result.TargetKilled = true;
             OnEntityDeath(target);
@@ -464,7 +464,7 @@ public class CombatEngine : IDisposable
         };
 
         var target = State.GetEntity(targetId);
-        if (target == null || !target.IsAlive || !npc.State.IsAlive)
+        if (target == null || (!config.EnableBrutal && (!target.IsAlive || !npc.State.IsAlive)))
         {
             result.FailReason = "Invalid target or source dead.";
             return result;
@@ -516,8 +516,8 @@ public class CombatEngine : IDisposable
             $"{npc.Name} {actionName} → You: {dmgResult.Damage:N0} damage",
             CombatLogType.DamageTaken);
 
-        // Check player death
-        if (!target.IsAlive)
+        // Check player death (skip in brutal mode)
+        if (!config.EnableBrutal && !target.IsAlive)
         {
             result.TargetKilled = true;
             OnEntityDeath(target);
@@ -846,7 +846,7 @@ public class CombatEngine : IDisposable
     private void TickAutoAttack(float deltaTime)
     {
         var ps = State.PlayerState;
-        if (!ps.IsAlive)
+        if (!config.EnableBrutal && !ps.IsAlive)
             return;
 
         ps.AutoAttackTimer -= deltaTime;
@@ -857,7 +857,7 @@ public class CombatEngine : IDisposable
             // Auto-attack closest engaged NPC
             foreach (var npc in npcSelector.SelectedNpcs)
             {
-                if (npc.State.IsAlive && npc.IsEngaged)
+                if ((config.EnableBrutal || npc.State.IsAlive) && npc.IsEngaged)
                 {
                     var dmg = damageCalculator.CalculateNpcAutoAttack(ps, npc.State, 110);
                     npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
@@ -873,7 +873,7 @@ public class CombatEngine : IDisposable
                     };
                     TriggerActionEffect(ps, npc.State, autoAttackData, dmg);
 
-                    if (!npc.State.IsAlive)
+                    if (!config.EnableBrutal && !npc.State.IsAlive)
                         OnEntityDeath(npc.State);
 
                     break;

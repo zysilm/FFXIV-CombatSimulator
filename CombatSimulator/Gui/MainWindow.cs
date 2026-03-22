@@ -430,6 +430,11 @@ public class MainWindow : IDisposable
         {
             DrawGlamourerSection();
         }
+
+        if (ImGui.CollapsingHeader("Experimental"))
+        {
+            DrawExperimentalSection();
+        }
     }
 
     private void DrawGlamourerSection()
@@ -527,6 +532,24 @@ public class MainWindow : IDisposable
                     return i;
         }
         return -1;
+    }
+
+    private void DrawExperimentalSection()
+    {
+        ImGui.TextColored(new Vector4(1f, 0.6f, 0.2f, 1),
+            "These features are experimental and may behave unexpectedly.");
+        ImGui.Spacing();
+
+        var brutal = config.EnableBrutal;
+        if (ImGui.Checkbox("Brutal Mode", ref brutal))
+        {
+            config.EnableBrutal = brutal;
+            config.Save();
+        }
+        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
+            "Allow attacking dead characters in both directions.\n" +
+            "No death animation or victory triggers.\n" +
+            "Hit reactions and facial expressions are preserved.");
     }
 
     public void DrawShortcutsBar()

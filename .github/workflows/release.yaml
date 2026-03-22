@@ -26,14 +26,14 @@ jobs:
 
       - name: Setup Dalamud
         run: |
-          mkdir -p ~/.xlcore/dalamud/Hooks/dev
-          wget -q https://goatcorp.github.io/dalamud-distrib/stg/latest.zip -O /tmp/dalamud.zip
-          unzip -o /tmp/dalamud.zip -d ~/.xlcore/dalamud/Hooks/dev
+          mkdir -p $HOME/dalamud
+          wget -q https://goatcorp.github.io/dalamud-distrib/latest.zip -O /tmp/dalamud.zip
+          unzip -o /tmp/dalamud.zip -d $HOME/dalamud
 
       - name: Build
         run: dotnet build ${{ env.SOLUTION_DIR }}/${{ env.PLUGIN_NAME }}.csproj -c Release
         env:
-          DALAMUD_HOME: ~/.xlcore/dalamud/Hooks/dev
+          DALAMUD_HOME: /home/runner/dalamud
 
       - name: Extract version
         id: version
@@ -43,7 +43,8 @@ jobs:
 
       - name: Prepare release artifacts
         run: |
-          out_dir="${{ env.SOLUTION_DIR }}/bin/Release/net8.0-windows"
+          out_dir=$(find ${{ env.SOLUTION_DIR }}/bin/Release -name "${{ env.PLUGIN_NAME }}.dll" -printf '%h' -quit)
+          echo "Output dir: $out_dir"
           mkdir -p release/${{ env.PLUGIN_NAME }}
           cp "$out_dir"/${{ env.PLUGIN_NAME }}.dll release/${{ env.PLUGIN_NAME }}/
           cp "$out_dir"/${{ env.PLUGIN_NAME }}.json release/${{ env.PLUGIN_NAME }}/
