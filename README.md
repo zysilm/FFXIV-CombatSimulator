@@ -16,22 +16,28 @@ A Dalamud plugin for FFXIV by **zysilm** that provides client-side combat simula
 - **HP Bar Overlays** — Enemy and player simulated HP bars rendered in-world
 - **Combat Log** — Scrollable log of all combat events
 - **Shortcuts Bar** — Optional floating bar with Start, Reset All, and Reboot buttons
+- **Death Cam** — Cinematic camera that smoothly transitions to an anchored position on player death, with configurable height/side offsets and bone tracking
+- **Camera Distance Override** — Bypass the game's min/max zoom limits for more camera freedom
 - **Glamourer Integration** — Apply glamourer presets on death and on reset/respawn
 - **Network Safe** — All combat is client-side only; UseAction hook prevents any server packets
 
-## Requirements
+## Installation
 
-- FFXIV with XIVLauncher/Dalamud
-- .NET 8.0 SDK (for building)
-- Dalamud dev plugins enabled
+1. Download the latest build artifact from the [Actions](../../actions) tab (click the latest successful run → download `latest`)
+2. Extract the `CombatSimulator` folder into `%APPDATA%\XIVLauncher\devPlugins\`
+3. In-game, open Dalamud Settings → Experimental → enable Dev Plugins if not already
+4. The plugin loads automatically on next launch
 
-## Build
+## Building from Source (Optional)
+
+If you want to build it yourself:
 
 ```bash
-dotnet build CombatSimulator/CombatSimulator.csproj
+git clone --recursive <repo-url>
+dotnet build CombatSimulator/CombatSimulator.csproj -c Release
 ```
 
-Output goes to `%APPDATA%\XIVLauncher\devPlugins\CombatSimulator\`.
+Requires .NET 8.0 SDK and Dalamud.
 
 ## Usage
 
