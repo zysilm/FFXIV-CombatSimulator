@@ -81,6 +81,11 @@ public class Configuration : IPluginConfiguration
     public float DeathCamSideOffset { get; set; } = 0f;
     public bool DeathCamAnchorSet { get; set; } = false;
 
+    // Camera Distance Override (global)
+    public bool EnableCameraDistanceOverride { get; set; } = false;
+    public float CameraMinDistance { get; set; } = 0.0f;
+    public float CameraMaxDistance { get; set; } = 20.0f;
+
     // Recent NPCs
     public List<uint> RecentNpcIds { get; set; } = new();
 

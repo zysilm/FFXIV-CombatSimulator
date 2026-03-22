@@ -97,20 +97,28 @@ public unsafe class DeathCamController : IDisposable
     /// </summary>
     private void CameraUpdateDetour(CameraBase* thisPtr)
     {
-        // Let the game compute the camera position normally
-        cameraUpdateHook!.Original(thisPtr);
-
-        // Only modify the main game camera, not lobby/spectator/etc.
+        // Check if this is the main game camera
+        bool isGameCamera = false;
         try
         {
             var camMgr = GameCameraManager.Instance();
-            if (camMgr == null || (nint)thisPtr != (nint)camMgr->Camera)
-                return;
+            isGameCamera = camMgr != null && (nint)thisPtr == (nint)camMgr->Camera;
         }
-        catch
+        catch { }
+
+        // Apply camera distance override BEFORE the game computes (global, always-on when enabled)
+        if (isGameCamera && config.EnableCameraDistanceOverride)
         {
-            return;
+            var gameCam = (FFXIVClientStructs.FFXIV.Client.Game.Camera*)thisPtr;
+            gameCam->MinDistance = config.CameraMinDistance;
+            gameCam->MaxDistance = config.CameraMaxDistance;
         }
+
+        // Let the game compute the camera position normally
+        cameraUpdateHook!.Original(thisPtr);
+
+        if (!isGameCamera)
+            return;
 
         if (state == DeathCamState.Inactive && !IsPreviewActive)
             return;

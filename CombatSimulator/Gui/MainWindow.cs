@@ -572,6 +572,38 @@ public class MainWindow : IDisposable
             {
                 ImGui.TextColored(new Vector4(0.5f, 0.8f, 1.0f, 1.0f), $"State: {deathCamController.State}");
             }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            // Camera Distance Override (global)
+            var distOverride = config.EnableCameraDistanceOverride;
+            if (ImGui.Checkbox("Override Camera Distance Limits", ref distOverride))
+            {
+                config.EnableCameraDistanceOverride = distOverride;
+                config.Save();
+            }
+            HelpMarker("Globally overrides the min/max camera zoom distance. Works at all times when enabled, not just death cam.");
+
+            if (distOverride)
+            {
+                var minDist = config.CameraMinDistance;
+                if (ImGui.SliderFloat("Min Camera Dist", ref minDist, 0.0f, 5.0f, "%.2f"))
+                {
+                    config.CameraMinDistance = minDist;
+                    config.Save();
+                }
+                HelpMarker("Minimum zoom distance. Default game value is ~1.5. Set to 0 for extreme close-up.");
+
+                var maxDist = config.CameraMaxDistance;
+                if (ImGui.SliderFloat("Max Camera Dist", ref maxDist, 5.0f, 100.0f, "%.1f"))
+                {
+                    config.CameraMaxDistance = maxDist;
+                    config.Save();
+                }
+                HelpMarker("Maximum zoom distance. Default game value is ~20.");
+            }
         }
     }
 
