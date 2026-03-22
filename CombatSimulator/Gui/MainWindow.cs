@@ -467,6 +467,15 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Show a floating shortcuts bar for quick access to common actions.");
 
+            // Custom player name
+            var customName = config.CustomPlayerName;
+            if (ImGui.InputText("Custom Player Name", ref customName, 64))
+            {
+                config.CustomPlayerName = customName;
+                config.Save();
+            }
+            HelpMarker("Custom name shown on the sim HP bar. Leave empty to use your character's actual name.");
+
             // Player HP bar Y offset
             var hpYOffset = config.PlayerHpBarYOffset;
             if (ImGui.SliderFloat("Player HP Bar Y Offset", ref hpYOffset, -3.0f, 5.0f, "%.2f"))

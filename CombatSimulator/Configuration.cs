@@ -88,6 +88,7 @@ public class Configuration : IPluginConfiguration
 
     // Player HP Bar
     public float PlayerHpBarYOffset { get; set; } = 0.3f;
+    public string CustomPlayerName { get; set; } = "";
 
     // Death Cam (Experimental)
     public bool EnableDeathCam { get; set; } = false;

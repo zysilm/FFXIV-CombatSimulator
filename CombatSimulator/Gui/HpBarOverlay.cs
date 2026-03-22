@@ -220,7 +220,8 @@ public class HpBarOverlay : IDisposable
             ImGui.ColorConvertFloat4ToU32(new Vector4(0.6f, 0.6f, 0.6f, 0.8f)));
 
         // Name label
-        var nameText = isDead ? $"[DEAD] {ps.Name}" : $"[Sim] {ps.Name}";
+        var displayName = !string.IsNullOrEmpty(config.CustomPlayerName) ? config.CustomPlayerName : ps.Name;
+        var nameText = isDead ? $"[DEAD] {displayName}" : $"[Sim] {displayName}";
         var nameColor = isDead
             ? new Vector4(1f, 0.2f, 0.2f, 1)
             : new Vector4(0.4f, 0.7f, 1f, 1);
@@ -287,9 +288,10 @@ public class HpBarOverlay : IDisposable
             ImGuiWindowFlags.NoFocusOnAppearing))
         {
             // Name line
+            var hudDisplayName = !string.IsNullOrEmpty(config.CustomPlayerName) ? config.CustomPlayerName : ps.Name;
             if (isDead)
             {
-                ImGui.TextColored(new Vector4(1f, 0.2f, 0.2f, 1), $"[DEAD] {ps.Name}");
+                ImGui.TextColored(new Vector4(1f, 0.2f, 0.2f, 1), $"[DEAD] {hudDisplayName}");
                 ImGui.SameLine();
 
                 float pulse = (MathF.Sin((float)ImGui.GetTime() * 4f) + 1f) / 2f;
@@ -308,7 +310,7 @@ public class HpBarOverlay : IDisposable
             }
             else
             {
-                ImGui.TextColored(new Vector4(0.4f, 0.7f, 1f, 1), $"[Sim] {ps.Name}");
+                ImGui.TextColored(new Vector4(0.4f, 0.7f, 1f, 1), $"[Sim] {hudDisplayName}");
             }
 
             // HP bar
