@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using CombatSimulator.Simulation;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
@@ -12,17 +13,19 @@ public unsafe class NpcSelector : IDisposable
 {
     private readonly IObjectTable objectTable;
     private readonly ITargetManager targetManager;
+    private readonly Configuration config;
     private readonly IPluginLog log;
 
     private readonly List<SimulatedNpc> selectedNpcs = new();
 
     public IReadOnlyList<SimulatedNpc> SelectedNpcs => selectedNpcs;
-    public int MaxTargets => 10;
+    public int MaxTargets => config.MaxTargets;
 
-    public NpcSelector(IObjectTable objectTable, ITargetManager targetManager, IPluginLog log)
+    public NpcSelector(IObjectTable objectTable, ITargetManager targetManager, Configuration config, IPluginLog log)
     {
         this.objectTable = objectTable;
         this.targetManager = targetManager;
+        this.config = config;
         this.log = log;
     }
 
@@ -170,6 +173,96 @@ public unsafe class NpcSelector : IDisposable
         {
             log.Error(ex, $"Failed to restore model for '{npc.Name}'.");
         }
+    }
+
+    /// <summary>
+    /// Scan the object table for BattleNpc objects near the given position
+    /// and auto-register them as combat targets (aggro propagation).
+    /// Returns the list of newly added NPCs.
+    /// </summary>
+    public List<SimulatedNpc> SelectNearbyBattleNpcs(
+        Vector3 position, float range, int level, float hpMultiplier, NpcBehaviorType behaviorType)
+    {
+        var added = new List<SimulatedNpc>();
+
+        foreach (var obj in objectTable)
+        {
+            if (selectedNpcs.Count >= MaxTargets)
+                break;
+
+            // Only consider BattleNpc objects (use Dalamud's managed ObjectKind enum)
+            if ((byte)obj.ObjectKind != (byte)ObjectKind.BattleNpc)
+                continue;
+
+            // Skip if already selected
+            bool alreadySelected = false;
+            foreach (var existing in selectedNpcs)
+            {
+                if (existing.SimulatedEntityId == obj.EntityId)
+                {
+                    alreadySelected = true;
+                    break;
+                }
+            }
+            if (alreadySelected)
+                continue;
+
+            // Check distance
+            float dist = Vector3.Distance(obj.Position, position);
+            if (dist > range)
+                continue;
+
+            // Try to add this NPC as a target
+            var battleChara = (BattleChara*)obj.Address;
+            var character = (Character*)battleChara;
+            var gameObj = (GameObject*)battleChara;
+
+            int originalModelCharaId = character->ModelContainer.ModelCharaId;
+            byte originalObjectKind = (byte)gameObj->ObjectKind;
+            byte originalSubKind = gameObj->SubKind;
+
+            int maxHp = CalculateNpcHp(level, hpMultiplier);
+
+            var npc = new SimulatedNpc
+            {
+                SimulatedEntityId = obj.EntityId,
+                ObjectIndex = -1,
+                Name = obj.Name.TextValue,
+                BattleChara = battleChara,
+                GameObjectRef = obj,
+                SpawnPosition = obj.Position,
+                Behavior = NpcBehavior.Create(behaviorType),
+                IsSpawned = true,
+                IsClientControlled = false,
+                OriginalModelCharaId = originalModelCharaId,
+                OriginalObjectKind = originalObjectKind,
+                OriginalSubKind = originalSubKind,
+                State = new SimulatedEntityState
+                {
+                    EntityId = obj.EntityId,
+                    Name = obj.Name.TextValue,
+                    IsPlayer = false,
+                    Level = level,
+                    MaxHp = maxHp,
+                    CurrentHp = maxHp,
+                    MaxMp = 10000,
+                    CurrentMp = 10000,
+                    MainStat = 100 + level * 10,
+                    Defense = 100 + level * 5,
+                    MagicDefense = 100 + level * 5,
+                },
+            };
+
+            // Make the NPC attackable
+            gameObj->ObjectKind = ObjectKind.BattleNpc;
+            gameObj->SubKind = (byte)BattleNpcSubKind.Combatant;
+
+            selectedNpcs.Add(npc);
+            added.Add(npc);
+            log.Info($"Aggro: Auto-selected '{npc.Name}' (EntityId=0x{obj.EntityId:X}) as combat target. HP={maxHp}");
+        }
+
+        return added;
     }
 
     /// <summary>

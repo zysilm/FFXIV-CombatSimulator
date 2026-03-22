@@ -73,7 +73,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, chatCommandExecutor, config);
-        npcSelector = new NpcSelector(objectTable, targetManager, log);
+        npcSelector = new NpcSelector(objectTable, targetManager, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, config, npcSelector, clientState, log);
@@ -166,6 +166,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnDraw()
     {
+        if (config.ShowShortcuts)
+            mainWindow.DrawShortcutsBar();
+
         if (config.ShowMainWindow)
             mainWindow.Draw();
 

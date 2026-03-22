@@ -60,9 +60,12 @@ public class Configuration : IPluginConfiguration
     public bool EnableTargetApproach { get; set; } = false;
     public float TargetApproachDistance { get; set; } = 3.0f;
 
-    // Aggro propagation: nearby idle targets join combat when one is engaged
+    // Aggro propagation: nearby BattleNpcs auto-added as targets when one is engaged
     public bool EnableAggroPropagation { get; set; } = false;
     public float AggroPropagationRange { get; set; } = 15.0f;
+
+    // Maximum number of active targets
+    public int MaxTargets { get; set; } = 10;
 
     // Recent NPCs
     public List<uint> RecentNpcIds { get; set; } = new();

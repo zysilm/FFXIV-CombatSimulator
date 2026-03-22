@@ -1,6 +1,6 @@
 # Combat Simulator
 
-A Dalamud plugin for FFXIV that provides client-side combat simulation. Select existing NPCs as combat targets and fight them locally — no server interaction, no risk.
+A Dalamud plugin for FFXIV by **zysilm** that provides client-side combat simulation. Select existing NPCs as combat targets and fight them locally — no server interaction, no risk.
 
 ## Features
 

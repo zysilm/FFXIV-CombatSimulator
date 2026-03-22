@@ -46,9 +46,6 @@ public class MainWindow : IDisposable
 
     public void Draw()
     {
-        if (config.ShowShortcuts)
-            DrawShortcutsBar();
-
         ImGui.SetNextWindowSize(new Vector2(420, 600), ImGuiCond.FirstUseEver);
         var showWindow = config.ShowMainWindow;
         if (!ImGui.Begin("Combat Simulator", ref showWindow))
@@ -213,6 +210,17 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
             }
+
+            ImGui.Spacing();
+
+            var maxTargets = config.MaxTargets;
+            if (ImGui.SliderInt("Max Targets", ref maxTargets, 1, 100))
+            {
+                config.MaxTargets = maxTargets;
+                config.Save();
+            }
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
+                "Maximum number of active targets at once.");
         }
     }
 
@@ -521,7 +529,7 @@ public class MainWindow : IDisposable
         return -1;
     }
 
-    private void DrawShortcutsBar()
+    public void DrawShortcutsBar()
     {
         ImGui.SetNextWindowSize(new Vector2(320, 0), ImGuiCond.FirstUseEver);
         if (!ImGui.Begin("Combat Shortcuts", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))

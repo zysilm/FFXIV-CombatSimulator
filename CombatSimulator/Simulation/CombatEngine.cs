@@ -406,10 +406,12 @@ public class CombatEngine : IDisposable
             }
         }
 
-        // Aggro propagation: nearby idle targets also join combat
+        // Aggro propagation: scan the game world for nearby BattleNpcs and add them as targets
         if (didEngage && config.EnableAggroPropagation)
         {
             float aggroRange = config.AggroPropagationRange;
+
+            // First, activate any already-selected idle NPCs in range
             foreach (var npc in npcSelector.SelectedNpcs)
             {
                 if (npc.AiState != Ai.NpcAiState.Idle || !npc.IsSpawned)
@@ -420,6 +422,19 @@ public class CombatEngine : IDisposable
                     npc.AiState = Ai.NpcAiState.Combat;
                     AddLogEntry($"{npc.Name} joins the fight!", CombatLogType.Info);
                 }
+            }
+
+            // Then, scan the object table for new BattleNpcs in range and auto-add them
+            var newNpcs = npcSelector.SelectNearbyBattleNpcs(
+                engagedNpcPos, aggroRange,
+                config.DefaultNpcLevel, config.DefaultNpcHpMultiplier,
+                (Npcs.NpcBehaviorType)config.DefaultNpcBehaviorType);
+
+            foreach (var newNpc in newNpcs)
+            {
+                RegisterNpcEntity(newNpc);
+                newNpc.AiState = Ai.NpcAiState.Combat;
+                AddLogEntry($"{newNpc.Name} joins the fight!", CombatLogType.Info);
             }
         }
 
