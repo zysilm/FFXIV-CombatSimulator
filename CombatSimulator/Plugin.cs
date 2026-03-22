@@ -53,6 +53,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         IChatGui chatGui,
         ICondition condition,
         ITargetManager targetManager,
+        ISigScanner sigScanner,
         IPluginLog log)
     {
         this.pluginInterface = pluginInterface;
@@ -78,7 +79,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, chatCommandExecutor, config);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
-        deathCamController = new DeathCamController(gameInterop, clientState, config, log);
+        deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, config, npcSelector, clientState, log,

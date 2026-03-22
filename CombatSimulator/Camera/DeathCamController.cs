@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -30,6 +31,7 @@ public unsafe class DeathCamController : IDisposable
 
     private readonly IClientState clientState;
     private readonly IGameInteropProvider gameInterop;
+    private readonly ISigScanner sigScanner;
     private readonly Configuration config;
     private readonly IPluginLog log;
 
@@ -43,9 +45,6 @@ public unsafe class DeathCamController : IDisposable
     private float startFoV;
     private Vector3 startLookAt;
 
-    // Last written distance — used by hook for collision disable
-    private float lastWrittenDistance;
-
     // Saved original camera limits — restored on deactivation
     private float savedMinDistance;
     private float savedMaxDistance;
@@ -55,20 +54,94 @@ public unsafe class DeathCamController : IDisposable
     private float savedMaxFoV;
     private bool limitsOverridden;
 
+    // Camera collision assembly patch (same approach as Cammy)
+    // Patches the CALL to collision raycast with XOR AL,AL; NOP; NOP; NOP
+    // This makes the game think no collision occurred, skipping distance adjustment entirely
+    private nint collisionPatchAddress;
+    private byte[]? collisionOriginalBytes;
+    private static readonly byte[] CollisionPatchBytes = { 0x30, 0xC0, 0x90, 0x90, 0x90 }; // xor al, al; nop; nop; nop
+    private bool collisionPatchActive;
+
     // Camera update hook — intercepts camera computation to apply offsets
     private delegate void CameraUpdateDelegate(CameraBase* thisPtr);
     private Hook<CameraUpdateDelegate>? cameraUpdateHook;
 
     public DeathCamState State => state;
     public bool IsPreviewActive { get; private set; }
+    public bool CollisionPatchAvailable => collisionPatchAddress != nint.Zero;
 
-    public DeathCamController(IGameInteropProvider gameInterop, IClientState clientState, Configuration config, IPluginLog log)
+    public DeathCamController(IGameInteropProvider gameInterop, IClientState clientState, ISigScanner sigScanner, Configuration config, IPluginLog log)
     {
         this.gameInterop = gameInterop;
         this.clientState = clientState;
+        this.sigScanner = sigScanner;
         this.config = config;
         this.log = log;
+
+        InitCollisionPatch();
     }
+
+    /// <summary>
+    /// Scan for the camera collision raycast call and save original bytes for patching.
+    /// Signature from Cammy: matches the CALL + TEST AL,AL + JZ pattern in the camera collision check.
+    /// </summary>
+    private void InitCollisionPatch()
+    {
+        try
+        {
+            collisionPatchAddress = sigScanner.ScanModule("E8 ?? ?? ?? ?? 84 C0 0F 84 ?? ?? ?? ?? F3 0F 10 44 24 ?? 41 B7 01");
+            if (collisionPatchAddress != nint.Zero)
+            {
+                collisionOriginalBytes = new byte[CollisionPatchBytes.Length];
+                System.Runtime.InteropServices.Marshal.Copy(collisionPatchAddress, collisionOriginalBytes, 0, collisionOriginalBytes.Length);
+                log.Info($"DeathCam: Camera collision patch address found at 0x{collisionPatchAddress:X}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "DeathCam: Could not find camera collision signature — collision disable will not work.");
+            collisionPatchAddress = nint.Zero;
+        }
+    }
+
+    /// <summary>
+    /// Enable the camera collision disable patch (replaces CALL with XOR AL,AL + NOPs).
+    /// </summary>
+    private void EnableCollisionPatch()
+    {
+        if (collisionPatchActive || collisionPatchAddress == nint.Zero)
+            return;
+
+        WriteMemory(collisionPatchAddress, CollisionPatchBytes);
+        collisionPatchActive = true;
+        log.Info("DeathCam: Camera collision patch enabled.");
+    }
+
+    /// <summary>
+    /// Disable the camera collision patch (restore original bytes).
+    /// </summary>
+    private void DisableCollisionPatch()
+    {
+        if (!collisionPatchActive || collisionPatchAddress == nint.Zero || collisionOriginalBytes == null)
+            return;
+
+        WriteMemory(collisionPatchAddress, collisionOriginalBytes);
+        collisionPatchActive = false;
+        log.Info("DeathCam: Camera collision patch disabled.");
+    }
+
+    /// <summary>
+    /// Write bytes to a code address, temporarily making the page writable.
+    /// </summary>
+    private static void WriteMemory(nint address, byte[] bytes)
+    {
+        VirtualProtect(address, (nuint)bytes.Length, 0x40 /* PAGE_EXECUTE_READWRITE */, out uint oldProtect);
+        Marshal.Copy(bytes, 0, address, bytes.Length);
+        VirtualProtect(address, (nuint)bytes.Length, oldProtect, out _);
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern bool VirtualProtect(nint lpAddress, nuint dwSize, uint flNewProtect, out uint lpflOldProtect);
 
     /// <summary>
     /// Create and enable the camera update hook. Call after the game camera is available.
@@ -132,13 +205,6 @@ public unsafe class DeathCamController : IDisposable
         {
             var gameCam = (FFXIVClientStructs.FFXIV.Client.Game.Camera*)thisPtr;
             var sceneCam = &thisPtr->SceneCamera;
-
-            // Disable collision: force distance back to target after game's collision raycast
-            if (config.DeathCamDisableCollision && state != DeathCamState.Inactive)
-            {
-                gameCam->Distance = lastWrittenDistance;
-                gameCam->InterpDistance = lastWrittenDistance;
-            }
 
             float camH = gameCam->DirH;
             var offset = ComputeOffsetFromCameraAngle(camH);
@@ -405,6 +471,7 @@ public unsafe class DeathCamController : IDisposable
             return;
 
         state = DeathCamState.Inactive;
+        DisableCollisionPatch();
         RestoreCameraLimits();
         log.Info("DeathCam: Deactivated.");
     }
@@ -465,8 +532,6 @@ public unsafe class DeathCamController : IDisposable
         gameCam->InputDeltaV = 0;
         gameCam->InputDeltaHAdjusted = 0;
         gameCam->InputDeltaVAdjusted = 0;
-
-        lastWrittenDistance = distance;
     }
 
     /// <summary>
@@ -478,6 +543,13 @@ public unsafe class DeathCamController : IDisposable
     {
         // Lazily create the camera hook once the camera is available
         EnsureHook();
+
+        // Manage collision patch: enable when death cam active + config on, disable otherwise
+        bool wantCollisionDisabled = config.DeathCamDisableCollision && state != DeathCamState.Inactive;
+        if (wantCollisionDisabled && !collisionPatchActive)
+            EnableCollisionPatch();
+        else if (!wantCollisionDisabled && collisionPatchActive)
+            DisableCollisionPatch();
 
         // Preview mode: lock camera to anchor values
         if (IsPreviewActive && state == DeathCamState.Inactive && config.DeathCamAnchorSet)
@@ -594,6 +666,7 @@ public unsafe class DeathCamController : IDisposable
     {
         IsPreviewActive = false;
         Deactivate();
+        DisableCollisionPatch();
         RestoreCameraLimits();
         cameraUpdateHook?.Dispose();
     }
