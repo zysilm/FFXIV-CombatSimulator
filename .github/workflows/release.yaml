@@ -45,11 +45,11 @@ jobs:
         run: |
           out_dir=$(find ${{ env.SOLUTION_DIR }}/bin/Release -name "${{ env.PLUGIN_NAME }}.dll" -printf '%h' -quit)
           echo "Output dir: $out_dir"
-          mkdir -p release/${{ env.PLUGIN_NAME }}
-          cp "$out_dir"/${{ env.PLUGIN_NAME }}.dll release/${{ env.PLUGIN_NAME }}/
-          cp "$out_dir"/${{ env.PLUGIN_NAME }}.json release/${{ env.PLUGIN_NAME }}/
-          [ -f "$out_dir"/${{ env.PLUGIN_NAME }}.pdb ] && cp "$out_dir"/${{ env.PLUGIN_NAME }}.pdb release/${{ env.PLUGIN_NAME }}/ || true
-          cd release && zip -r ../${{ env.PLUGIN_NAME }}.zip ${{ env.PLUGIN_NAME }}
+          mkdir -p release
+          cp "$out_dir"/${{ env.PLUGIN_NAME }}.dll release/
+          cp "$out_dir"/${{ env.PLUGIN_NAME }}.json release/
+          [ -f "$out_dir"/${{ env.PLUGIN_NAME }}.pdb ] && cp "$out_dir"/${{ env.PLUGIN_NAME }}.pdb release/ || true
+          cd release && zip -r ../${{ env.PLUGIN_NAME }}.zip .
 
       - name: Generate pluginmaster.json
         run: |
