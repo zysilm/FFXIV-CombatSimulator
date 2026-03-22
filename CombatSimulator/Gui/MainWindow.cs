@@ -5,6 +5,8 @@ using CombatSimulator.Camera;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
+using Dalamud.Interface;
+using Dalamud.Interface.Utility.Raii;
 using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
 
@@ -33,7 +35,10 @@ public class MainWindow : IDisposable
     private static void HelpMarker(string desc)
     {
         ImGui.SameLine();
-        ImGui.TextDisabled("(?)");
+        using (ImRaii.PushFont(UiBuilder.IconFont))
+        {
+            ImGui.TextDisabled(FontAwesomeIcon.InfoCircle.ToIconString());
+        }
         if (ImGui.IsItemHovered())
         {
             ImGui.BeginTooltip();
@@ -514,15 +519,23 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Horizontal offset relative to character facing. Positive = right, negative = left.");
 
-            // Set Anchor button
-            if (ImGui.Button("Set Anchor (current camera position)"))
+            // Set Anchor button + Preview toggle
+            if (ImGui.Button("Set Anchor"))
             {
                 if (deathCamController.SetAnchor())
                     chatGui.Print("[CombatSim] Death cam anchor set.");
                 else
                     chatGui.PrintError("[CombatSim] Failed to set anchor. Make sure you have a character loaded.");
             }
-            HelpMarker("Capture the current camera angle and distance as the death cam target. Height offset is saved separately.");
+            HelpMarker("Capture the current camera angle and distance as the death cam target.");
+
+            ImGui.SameLine();
+            var preview = deathCamController.IsPreviewActive;
+            if (ImGui.Button(preview ? "Preview: ON" : "Preview: OFF"))
+            {
+                deathCamController.SetPreview(!preview);
+            }
+            HelpMarker("Toggle live preview: applies height/side offsets to the current camera so you can see the result.");
 
             // Anchor status
             if (config.DeathCamAnchorSet)

@@ -40,6 +40,7 @@ public unsafe class DeathCamController : IDisposable
     private Vector3 startLookAt;
 
     public DeathCamState State => state;
+    public bool IsPreviewActive { get; private set; }
 
     public DeathCamController(IClientState clientState, Configuration config, IPluginLog log)
     {
@@ -213,19 +214,52 @@ public unsafe class DeathCamController : IDisposable
     }
 
     /// <summary>
+    /// Toggle preview mode: applies height/side offsets to the live camera so
+    /// the user can see the result before dying.
+    /// </summary>
+    public void SetPreview(bool on)
+    {
+        IsPreviewActive = on;
+        if (on)
+            log.Info("DeathCam: Preview ON.");
+        else
+            log.Info("DeathCam: Preview OFF.");
+    }
+
+    /// <summary>
     /// Called every framework update. Writes camera overrides while active.
     /// </summary>
     public void Tick(float deltaTime)
     {
-        if (state == DeathCamState.Inactive)
+        if (state == DeathCamState.Inactive && !IsPreviewActive)
             return;
 
         try
         {
+            var camMgr = GameCameraManager.Instance();
+            if (camMgr == null || camMgr->Camera == null)
+            {
+                if (state != DeathCamState.Inactive) Deactivate();
+                return;
+            }
+
+            var gameCam = camMgr->Camera;
+            var sceneCam = &gameCam->CameraBase.SceneCamera;
+            var facing = GetCharacterFacing();
+
+            // Preview mode: apply height/side offsets to the current camera look-at
+            // so the user can see the effect live without dying
+            if (IsPreviewActive && state == DeathCamState.Inactive)
+            {
+                var offsetVec = ComputeOffset(facing);
+                ApplyLookAtOffset(gameCam, sceneCam, offsetVec);
+                return;
+            }
+
+            // Death cam active states
             var bonePos = GetBoneWorldPosition(config.DeathCamBoneIndex);
             if (bonePos == null)
             {
-                // Fallback: use player root position
                 var player = clientState.LocalPlayer;
                 if (player == null)
                 {
@@ -235,26 +269,8 @@ public unsafe class DeathCamController : IDisposable
                 bonePos = player.Position;
             }
 
-            var camMgr = GameCameraManager.Instance();
-            if (camMgr == null || camMgr->Camera == null)
-            {
-                Deactivate();
-                return;
-            }
+            var targetLookAt = bonePos.Value + ComputeOffset(facing);
 
-            var gameCam = camMgr->Camera;
-            var sceneCam = &gameCam->CameraBase.SceneCamera;
-            var facing = GetCharacterFacing();
-
-            // Apply height and side offsets to bone position
-            // Side offset is perpendicular to character facing (right = positive)
-            float rightX = MathF.Cos(facing);
-            float rightZ = -MathF.Sin(facing);
-            var targetLookAt = bonePos.Value
-                + new Vector3(0, config.DeathCamHeightOffset, 0)
-                + new Vector3(rightX * config.DeathCamSideOffset, 0, rightZ * config.DeathCamSideOffset);
-
-            // Compute target values
             float targetDirH = config.DeathCamAnchorDirH + facing;
             float targetDirV = config.DeathCamAnchorDirV;
             float targetDistance = config.DeathCamAnchorDistance;
@@ -290,6 +306,41 @@ public unsafe class DeathCamController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Compute the height + side offset vector from config.
+    /// </summary>
+    private Vector3 ComputeOffset(float facing)
+    {
+        float rightX = MathF.Cos(facing);
+        float rightZ = -MathF.Sin(facing);
+        return new Vector3(0, config.DeathCamHeightOffset, 0)
+            + new Vector3(rightX * config.DeathCamSideOffset, 0, rightZ * config.DeathCamSideOffset);
+    }
+
+    /// <summary>
+    /// In preview mode, shift the existing camera look-at point and eye position
+    /// by the offset vector, without changing DirH/DirV/Distance.
+    /// </summary>
+    private static void ApplyLookAtOffset(
+        FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam,
+        FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Camera* sceneCam,
+        Vector3 offset)
+    {
+        // Shift look-at (cast FFXIVClientStructs Vector3 to System.Numerics and back)
+        Vector3 lookAt = sceneCam->LookAtVector;
+        sceneCam->LookAtVector = lookAt + offset;
+
+        // Shift eye position by the same amount to keep angles intact
+        Vector3 pos = sceneCam->Position;
+        sceneCam->Position = pos + offset;
+
+        if (sceneCam->RenderCamera != null)
+        {
+            Vector3 origin = sceneCam->RenderCamera->Origin;
+            sceneCam->RenderCamera->Origin = origin + offset;
+        }
+    }
+
     private static void WriteCameraState(
         FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam,
         FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Camera* sceneCam,
@@ -307,8 +358,26 @@ public unsafe class DeathCamController : IDisposable
         gameCam->InputDeltaHAdjusted = 0;
         gameCam->InputDeltaVAdjusted = 0;
 
-        // Override orbit center to be the bone position
+        // Override orbit center (look-at point)
         sceneCam->LookAtVector = lookAt;
+
+        // Compute eye position from spherical coordinates around look-at point
+        // DirH: 0=north(+Z), increases clockwise; DirV: 0=horizontal, positive=up
+        float cosV = MathF.Cos(dirV);
+        var eyeOffset = new Vector3(
+            distance * MathF.Sin(dirH) * cosV,
+            distance * -MathF.Sin(dirV),
+            distance * MathF.Cos(dirH) * cosV);
+        var eyePos = lookAt + eyeOffset;
+
+        // Write eye position to scene camera (Object.Position at offset 0x50)
+        sceneCam->Position = eyePos;
+
+        // Write to render camera origin for immediate effect
+        if (sceneCam->RenderCamera != null)
+        {
+            sceneCam->RenderCamera->Origin = eyePos;
+        }
     }
 
     /// <summary>
@@ -330,6 +399,7 @@ public unsafe class DeathCamController : IDisposable
 
     public void Dispose()
     {
+        IsPreviewActive = false;
         Deactivate();
     }
 }
