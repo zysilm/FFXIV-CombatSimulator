@@ -246,6 +246,14 @@ public unsafe class DeathCamController : IDisposable
             var sceneCam = &gameCam->CameraBase.SceneCamera;
             var facing = GetCharacterFacing();
 
+            // Apply height and side offsets to bone position
+            // Side offset is perpendicular to character facing (right = positive)
+            float rightX = MathF.Cos(facing);
+            float rightZ = -MathF.Sin(facing);
+            var targetLookAt = bonePos.Value
+                + new Vector3(0, config.DeathCamHeightOffset, 0)
+                + new Vector3(rightX * config.DeathCamSideOffset, 0, rightZ * config.DeathCamSideOffset);
+
             // Compute target values
             float targetDirH = config.DeathCamAnchorDirH + facing;
             float targetDirV = config.DeathCamAnchorDirV;
@@ -260,7 +268,7 @@ public unsafe class DeathCamController : IDisposable
                 float dirH = AngleLerp(startDirH, targetDirH, smooth);
                 float dirV = Lerp(startDirV, targetDirV, smooth);
                 float distance = Lerp(startDistance, targetDistance, smooth);
-                var lookAt = Vector3.Lerp(startLookAt, bonePos.Value, smooth);
+                var lookAt = Vector3.Lerp(startLookAt, targetLookAt, smooth);
 
                 WriteCameraState(gameCam, sceneCam, dirH, dirV, distance, lookAt);
 
@@ -272,7 +280,7 @@ public unsafe class DeathCamController : IDisposable
             }
             else if (state == DeathCamState.Following)
             {
-                WriteCameraState(gameCam, sceneCam, targetDirH, targetDirV, targetDistance, bonePos.Value);
+                WriteCameraState(gameCam, sceneCam, targetDirH, targetDirV, targetDistance, targetLookAt);
             }
         }
         catch (Exception ex)

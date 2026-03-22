@@ -38,14 +38,13 @@ jobs:
         run: |
           out_dir=$(find ${{ env.SOLUTION_DIR }}/bin/Release -name "${{ env.PLUGIN_NAME }}.dll" -printf '%h' -quit)
           echo "Output dir: $out_dir"
-          mkdir -p release/${{ env.PLUGIN_NAME }}
-          cp "$out_dir"/${{ env.PLUGIN_NAME }}.dll release/${{ env.PLUGIN_NAME }}/
-          cp "$out_dir"/${{ env.PLUGIN_NAME }}.json release/${{ env.PLUGIN_NAME }}/
-          [ -f "$out_dir"/${{ env.PLUGIN_NAME }}.pdb ] && cp "$out_dir"/${{ env.PLUGIN_NAME }}.pdb release/${{ env.PLUGIN_NAME }}/ || true
-          cd release && zip -r ../latest.zip ${{ env.PLUGIN_NAME }}
+          mkdir -p artifact/${{ env.PLUGIN_NAME }}
+          cp "$out_dir"/${{ env.PLUGIN_NAME }}.dll artifact/${{ env.PLUGIN_NAME }}/
+          cp "$out_dir"/${{ env.PLUGIN_NAME }}.json artifact/${{ env.PLUGIN_NAME }}/
+          [ -f "$out_dir"/${{ env.PLUGIN_NAME }}.pdb ] && cp "$out_dir"/${{ env.PLUGIN_NAME }}.pdb artifact/${{ env.PLUGIN_NAME }}/ || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: latest
-          path: latest.zip
+          path: artifact/

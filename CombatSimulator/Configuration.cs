@@ -77,6 +77,8 @@ public class Configuration : IPluginConfiguration
     public float DeathCamAnchorDirH { get; set; } = 0;
     public float DeathCamAnchorDirV { get; set; } = 0;
     public float DeathCamAnchorDistance { get; set; } = 5.0f;
+    public float DeathCamHeightOffset { get; set; } = 0f;
+    public float DeathCamSideOffset { get; set; } = 0f;
     public bool DeathCamAnchorSet { get; set; } = false;
 
     // Recent NPCs

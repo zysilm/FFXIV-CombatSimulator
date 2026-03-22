@@ -30,6 +30,20 @@ public class MainWindow : IDisposable
 
     private static readonly string[] BehaviorNames = { "Training Dummy", "Basic Melee", "Basic Ranged", "Boss" };
 
+    private static void HelpMarker(string desc)
+    {
+        ImGui.SameLine();
+        ImGui.TextDisabled("(?)");
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.BeginTooltip();
+            ImGui.PushTextWrapPos(ImGui.GetFontSize() * 20.0f);
+            ImGui.TextUnformatted(desc);
+            ImGui.PopTextWrapPos();
+            ImGui.EndTooltip();
+        }
+    }
+
     public MainWindow(
         Configuration config,
         NpcSelector npcSelector,
@@ -183,6 +197,7 @@ public class MainWindow : IDisposable
                 config.DefaultNpcLevel = defaultLevel;
                 config.Save();
             }
+            HelpMarker("Level assigned to newly selected NPC targets.");
 
             var hpMult = config.DefaultNpcHpMultiplier;
             if (ImGui.SliderFloat("Default HP Multiplier", ref hpMult, 0.1f, 10.0f, "%.1f"))
@@ -190,6 +205,7 @@ public class MainWindow : IDisposable
                 config.DefaultNpcHpMultiplier = hpMult;
                 config.Save();
             }
+            HelpMarker("Multiplier applied to base NPC HP. Higher = tankier enemies.");
 
             var behaviorType = config.DefaultNpcBehaviorType;
             if (ImGui.Combo("Default NPC Behavior", ref behaviorType, BehaviorNames, BehaviorNames.Length))
@@ -197,13 +213,7 @@ public class MainWindow : IDisposable
                 config.DefaultNpcBehaviorType = behaviorType;
                 config.Save();
             }
-
-            var maxTargets = config.MaxTargets;
-            if (ImGui.SliderInt("Max Targets", ref maxTargets, 1, 100))
-            {
-                config.MaxTargets = maxTargets;
-                config.Save();
-            }
+            HelpMarker("AI behavior for newly selected NPCs. Dummy = no attacks, Melee/Ranged = auto-attack, Boss = special patterns.");
         }
     }
 
@@ -217,6 +227,7 @@ public class MainWindow : IDisposable
                 config.EnableTargetApproach = approach;
                 config.Save();
             }
+            HelpMarker("Teleport selected NPC targets close to the player when combat starts.");
 
             if (approach)
             {
@@ -226,6 +237,7 @@ public class MainWindow : IDisposable
                     config.TargetApproachDistance = dist;
                     config.Save();
                 }
+                HelpMarker("How close (in yalms) targets are moved to the player.");
             }
 
             ImGui.Spacing();
@@ -236,6 +248,7 @@ public class MainWindow : IDisposable
                 config.EnableAggroPropagation = aggro;
                 config.Save();
             }
+            HelpMarker("Automatically add nearby BattleNpcs as combat targets when one is engaged.");
 
             if (aggro)
             {
@@ -245,6 +258,15 @@ public class MainWindow : IDisposable
                     config.AggroPropagationRange = aggroRange;
                     config.Save();
                 }
+                HelpMarker("Radius (in yalms) to scan for nearby BattleNpcs to auto-add.");
+
+                var maxTargets = config.MaxTargets;
+                if (ImGui.SliderInt("Aggro Max Targets", ref maxTargets, 1, 100))
+                {
+                    config.MaxTargets = maxTargets;
+                    config.Save();
+                }
+                HelpMarker("Maximum number of active combat targets (includes manually selected and auto-aggro'd).");
             }
         }
     }
@@ -286,6 +308,7 @@ public class MainWindow : IDisposable
                 combatEngine.DamageMultiplier = dmgMult;
                 config.Save();
             }
+            HelpMarker("Global damage multiplier applied to all attacks.");
 
             var crit = config.EnableCriticalHits;
             if (ImGui.Checkbox("Critical Hits", ref crit))
@@ -294,6 +317,7 @@ public class MainWindow : IDisposable
                 combatEngine.EnableCriticalHits = crit;
                 config.Save();
             }
+            HelpMarker("Enable critical hit chance on attacks.");
 
             ImGui.SameLine();
             var dh = config.EnableDirectHits;
@@ -303,6 +327,7 @@ public class MainWindow : IDisposable
                 combatEngine.EnableDirectHits = dh;
                 config.Save();
             }
+            HelpMarker("Enable direct hit chance on attacks.");
 
             if (isActive)
             {
@@ -333,6 +358,7 @@ public class MainWindow : IDisposable
                 config.PlayerMeleeAttackCommand = meleeCmd;
                 config.Save();
             }
+            HelpMarker("Chat command to execute for melee attack animation. Empty = use default timeline.");
 
             var rangedCmd = config.PlayerRangedAttackCommand;
             if (ImGui.InputText("Ranged Attack", ref rangedCmd, 64))
@@ -340,6 +366,7 @@ public class MainWindow : IDisposable
                 config.PlayerRangedAttackCommand = rangedCmd;
                 config.Save();
             }
+            HelpMarker("Chat command to execute for ranged attack animation. Empty = use default timeline.");
 
             ImGui.Separator();
 
@@ -349,8 +376,7 @@ public class MainWindow : IDisposable
                 config.PlayerDeathCommand = deathCmd;
                 config.Save();
             }
-            ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "(empty = bypass)");
+            HelpMarker("Chat command on player death (e.g. /playdead). Empty = bypass emote timeline.");
 
             var deathEmoteId = (int)config.DeathEmoteId;
             if (ImGui.InputInt("Death Emote ID", ref deathEmoteId))
@@ -358,8 +384,7 @@ public class MainWindow : IDisposable
                 config.DeathEmoteId = (uint)Math.Max(0, deathEmoteId);
                 config.Save();
             }
-            ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "(0 = auto-detect)");
+            HelpMarker("Emote ID for the death animation. 0 = auto-detect 'Play Dead' from emote sheet.");
 
             ImGui.Separator();
 
@@ -369,6 +394,7 @@ public class MainWindow : IDisposable
                 config.PlayerVictoryCommand = victoryCmd;
                 config.Save();
             }
+            HelpMarker("Chat command when the player wins (e.g. /victory).");
 
             var targetVictoryCmd = config.TargetVictoryCommand;
             if (ImGui.InputText("Target Victory", ref targetVictoryCmd, 64))
@@ -376,6 +402,7 @@ public class MainWindow : IDisposable
                 config.TargetVictoryCommand = targetVictoryCmd;
                 config.Save();
             }
+            HelpMarker("Chat command when the target/NPC side wins.");
         }
     }
 
@@ -397,6 +424,7 @@ public class MainWindow : IDisposable
                 config.ShowEnemyHpBar = showHp;
                 config.Save();
             }
+            HelpMarker("Display a floating HP bar above enemy targets during combat.");
 
             var showPlayerHp = config.ShowPlayerHpBar;
             if (ImGui.Checkbox("Show Player HP Bar", ref showPlayerHp))
@@ -404,6 +432,7 @@ public class MainWindow : IDisposable
                 config.ShowPlayerHpBar = showPlayerHp;
                 config.Save();
             }
+            HelpMarker("Display a simulated player HP bar overlay during combat.");
 
             var showHudPlayerHp = config.ShowHudPlayerHpBar;
             if (ImGui.Checkbox("Show HUD Player HP Bar", ref showHudPlayerHp))
@@ -411,6 +440,7 @@ public class MainWindow : IDisposable
                 config.ShowHudPlayerHpBar = showHudPlayerHp;
                 config.Save();
             }
+            HelpMarker("Override the native FFXIV HUD HP bar with simulated HP values.");
 
             var showLog = config.ShowCombatLog;
             if (ImGui.Checkbox("Show Combat Log", ref showLog))
@@ -418,6 +448,7 @@ public class MainWindow : IDisposable
                 config.ShowCombatLog = showLog;
                 config.Save();
             }
+            HelpMarker("Show the combat log window with damage/healing/death events.");
 
             var showShortcuts = config.ShowShortcuts;
             if (ImGui.Checkbox("Show Shortcuts Bar", ref showShortcuts))
@@ -425,6 +456,7 @@ public class MainWindow : IDisposable
                 config.ShowShortcuts = showShortcuts;
                 config.Save();
             }
+            HelpMarker("Show a floating shortcuts bar for quick access to common actions.");
         }
     }
 
@@ -442,6 +474,7 @@ public class MainWindow : IDisposable
                 config.EnableDeathCam = enabled;
                 config.Save();
             }
+            HelpMarker("On player death, smoothly transition camera to an anchored position following a bone.");
 
             if (!enabled)
                 return;
@@ -461,6 +494,25 @@ public class MainWindow : IDisposable
                 config.DeathCamBoneIndex = DeathCamController.CenterBones[currentBoneIdx].Index;
                 config.Save();
             }
+            HelpMarker("The bone the camera orbits around. Waist is recommended for stable tracking.");
+
+            // Height offset
+            var heightOffset = config.DeathCamHeightOffset;
+            if (ImGui.SliderFloat("Height Offset", ref heightOffset, -5.0f, 10.0f, "%.1f"))
+            {
+                config.DeathCamHeightOffset = heightOffset;
+                config.Save();
+            }
+            HelpMarker("Vertical offset added to the camera look-at point. Raise or lower the camera focus.");
+
+            // Side offset
+            var sideOffset = config.DeathCamSideOffset;
+            if (ImGui.SliderFloat("Side Offset", ref sideOffset, -5.0f, 5.0f, "%.1f"))
+            {
+                config.DeathCamSideOffset = sideOffset;
+                config.Save();
+            }
+            HelpMarker("Horizontal offset relative to character facing. Positive = right, negative = left.");
 
             // Set Anchor button
             if (ImGui.Button("Set Anchor (current camera position)"))
@@ -470,12 +522,13 @@ public class MainWindow : IDisposable
                 else
                     chatGui.PrintError("[CombatSim] Failed to set anchor. Make sure you have a character loaded.");
             }
+            HelpMarker("Capture the current camera angle and distance as the death cam target. Height offset is saved separately.");
 
             // Anchor status
             if (config.DeathCamAnchorSet)
             {
                 ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.4f, 1.0f), "Anchor is set.");
-                ImGui.Text($"H: {config.DeathCamAnchorDirH:F2}  V: {config.DeathCamAnchorDirV:F2}  Dist: {config.DeathCamAnchorDistance:F1}");
+                ImGui.Text($"H: {config.DeathCamAnchorDirH:F2}  V: {config.DeathCamAnchorDirV:F2}  Dist: {config.DeathCamAnchorDistance:F1}  Height: {config.DeathCamHeightOffset:F1}  Side: {config.DeathCamSideOffset:F1}");
             }
             else
             {
@@ -489,6 +542,7 @@ public class MainWindow : IDisposable
                 config.DeathCamTransitionDuration = duration;
                 config.Save();
             }
+            HelpMarker("How long (in seconds) the camera takes to interpolate from current position to the anchor.");
 
             // Clear anchor
             if (config.DeathCamAnchorSet)
@@ -518,6 +572,7 @@ public class MainWindow : IDisposable
                 config.EnableTorture = torture;
                 config.Save();
             }
+            HelpMarker("Allow attacks on dead characters. Dead targets stay on the floor and take hits but cannot fight back.");
         }
     }
 
