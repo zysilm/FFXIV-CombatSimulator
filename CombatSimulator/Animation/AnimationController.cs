@@ -262,6 +262,59 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
+    /// Put an NPC into "battle ready" visual state — weapon drawn, combat stance.
+    /// Sets InCombat, IsHostile, IsWeaponDrawn flags, and switches to combat animation set.
+    /// </summary>
+    public void SetBattleStance(SimulatedNpc npc)
+    {
+        try
+        {
+            if (npc.BattleChara == null) return;
+
+            var character = (Character*)npc.BattleChara;
+
+            // Set combat flags on CharacterData
+            character->CharacterData.InCombat = true;
+            character->CharacterData.IsHostile = true;
+
+            // Set weapon drawn flag on Timeline
+            character->Timeline.IsWeaponDrawn = true;
+
+            // Switch to combat animation set
+            character->Timeline.ModelState = 1;
+
+            log.Verbose($"Battle stance set for NPC '{npc.Name}'.");
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, $"Failed to set battle stance for {npc.Name}.");
+        }
+    }
+
+    /// <summary>
+    /// Reset NPC visual state to normal (sheathed weapon, idle stance).
+    /// </summary>
+    public void ClearBattleStance(SimulatedNpc npc)
+    {
+        try
+        {
+            if (npc.BattleChara == null) return;
+
+            var character = (Character*)npc.BattleChara;
+
+            character->CharacterData.InCombat = false;
+            character->Timeline.IsWeaponDrawn = false;
+            character->Timeline.ModelState = 0;
+
+            log.Verbose($"Battle stance cleared for NPC '{npc.Name}'.");
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, $"Failed to clear battle stance for {npc.Name}.");
+        }
+    }
+
+    /// <summary>
     /// Play death animation on an NPC using BypassEmote-style timeline (playdead).
     /// Falls back to CharacterModes.Dead if playdead timelines aren't available.
     /// </summary>

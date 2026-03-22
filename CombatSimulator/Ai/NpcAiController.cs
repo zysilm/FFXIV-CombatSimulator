@@ -51,6 +51,10 @@ public unsafe class NpcAiController : IDisposable
             if (!npc.IsSpawned)
                 continue;
 
+            // Keep active targets in battle stance (drawn weapon / combat idle)
+            if (npc.BattleChara != null && npc.AiState != NpcAiState.Dead)
+                animationController.SetBattleStance(npc);
+
             TickNpc(npc, deltaTime, playerPos, playerEntityId);
         }
 

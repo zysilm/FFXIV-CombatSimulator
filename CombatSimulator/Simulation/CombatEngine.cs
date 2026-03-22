@@ -140,6 +140,7 @@ public class CombatEngine : IDisposable
                 if (npc.BattleChara != null)
                 {
                     animationController.ResetDeathAnimation(npc.BattleChara);
+                    animationController.ClearBattleStance(npc);
                     var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)npc.BattleChara;
                     character->Mode = FFXIVClientStructs.FFXIV.Client.Game.Character.CharacterModes.Normal;
                     character->ModeParam = 0;
