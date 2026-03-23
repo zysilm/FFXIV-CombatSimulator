@@ -97,7 +97,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         movementBlockHook.Enable();
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, deathCamController, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, deathCamController, ragdollController, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
 

@@ -5,6 +5,7 @@ using CombatSimulator.Animation;
 using CombatSimulator.Camera;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
+using CombatSimulator.Physics;
 using CombatSimulator.Simulation;
 using Dalamud.Interface;
 using Dalamud.Interface.Utility.Raii;
@@ -21,6 +22,7 @@ public class MainWindow : IDisposable
     private readonly GlamourerIpc glamourerIpc;
     private readonly AnimationController animationController;
     private readonly DeathCamController deathCamController;
+    private readonly RagdollController? ragdollController;
     private readonly IChatGui chatGui;
     private readonly IPluginLog log;
 
@@ -64,6 +66,7 @@ public class MainWindow : IDisposable
         GlamourerIpc glamourerIpc,
         AnimationController animationController,
         DeathCamController deathCamController,
+        RagdollController? ragdollController,
         IChatGui chatGui,
         IPluginLog log)
     {
@@ -73,6 +76,7 @@ public class MainWindow : IDisposable
         this.glamourerIpc = glamourerIpc;
         this.animationController = animationController;
         this.deathCamController = deathCamController;
+        this.ragdollController = ragdollController;
         this.chatGui = chatGui;
         this.log = log;
     }
@@ -889,7 +893,7 @@ public class MainWindow : IDisposable
             ImGui.Text("Physics");
 
             var hitForce = config.RagdollHitForce;
-            if (ImGui.SliderFloat("Hit Force", ref hitForce, 0.1f, 5.0f, "%.1f"))
+            if (ImGui.SliderFloat("Hit Force", ref hitForce, 0.1f, 50.0f, "%.1f"))
             {
                 config.RagdollHitForce = hitForce;
                 config.Save();
@@ -927,6 +931,27 @@ public class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Gravity effect on dangling bones. Currently reserved for future use.");
+
+            // Diagnostics
+            if (ragdollController != null)
+            {
+                ImGui.Separator();
+                ImGui.Text("Diagnostics");
+
+                var hookOk = ragdollController.IsAvailable;
+                ImGui.TextColored(
+                    hookOk ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0.3f, 0.3f, 1),
+                    hookOk ? "Render hook: Active" : "Render hook: NOT FOUND");
+
+                ImGui.Text($"Status: {ragdollController.DiagStatus}");
+                ImGui.Text($"Tracked: {ragdollController.TrackedEntityCount}");
+
+                var bm = ragdollController.BoneManip;
+                ImGui.Text($"Hook calls: {bm.DiagRenderCalls}");
+                ImGui.Text($"Overrides applied: {bm.DiagOverridesApplied} ({bm.DiagLastBoneCount} bones)");
+                if (!string.IsNullOrEmpty(bm.DiagLastSkipReason))
+                    ImGui.TextColored(new Vector4(1, 0.5f, 0, 1), $"Last skip: {bm.DiagLastSkipReason}");
+            }
         }
     }
 

@@ -91,7 +91,7 @@ public class Configuration : IPluginConfiguration
     public float DeathPoseSettleTime { get; set; } = 2.0f;
     public float RagdollDamping { get; set; } = 3.0f;
     public float RagdollStiffness { get; set; } = 1.0f;
-    public float RagdollHitForce { get; set; } = 1.0f;
+    public float RagdollHitForce { get; set; } = 10.0f;
     public float RagdollMaxBoneAngle { get; set; } = 30f;
     public float RagdollGravity { get; set; } = 1.0f;
 

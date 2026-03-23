@@ -23,6 +23,21 @@ public class RagdollController : IDisposable
     private const int MaxSimultaneousRagdolls = 4;
 
     public bool IsAvailable => boneManipulator.IsHooked;
+    public int TrackedEntityCount => entityStates.Count;
+    public BoneManipulator BoneManip => boneManipulator;
+
+    /// <summary>Get phase of first tracked entity (for diagnostics).</summary>
+    public string DiagStatus
+    {
+        get
+        {
+            if (!IsAvailable) return "Hook not found";
+            if (entityStates.Count == 0) return "No entities tracked";
+            foreach (var (id, state) in entityStates)
+                return $"{state.Phase} (0x{id:X})";
+            return "?";
+        }
+    }
 
     public RagdollController(
         BoneManipulator boneManipulator,
@@ -81,6 +96,8 @@ public class RagdollController : IDisposable
 
         // Ensure animation is frozen when actively simulating
         boneManipulator.FreezeAnimation(state.CharacterAddress);
+
+        log.Verbose($"RagdollController: Hit applied to 0x{entityId:X}, force={config.RagdollHitForce}, dir={hitDir}");
     }
 
     /// <summary>
@@ -161,6 +178,14 @@ public class RagdollController : IDisposable
                 if (state.Simulation == null) break;
 
                 // Update physics params from config (allow live tweaking)
+                state.Simulation.UpdateParams(new RagdollParams
+                {
+                    HitForce = config.RagdollHitForce,
+                    Damping = config.RagdollDamping,
+                    Stiffness = config.RagdollStiffness,
+                    MaxBoneAngleDeg = config.RagdollMaxBoneAngle,
+                    Gravity = config.RagdollGravity,
+                });
                 state.Simulation.Tick(dt);
 
                 // Push bone overrides to BoneManipulator

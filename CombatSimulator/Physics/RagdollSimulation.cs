@@ -11,7 +11,7 @@ namespace CombatSimulator.Physics;
 public class RagdollSimulation
 {
     private readonly DeathPoseCapture poseCapture;
-    private readonly RagdollParams parameters;
+    private RagdollParams parameters;
 
     // Per-bone physics state
     private readonly BonePhysicsState[] boneStates;
@@ -43,6 +43,14 @@ public class RagdollSimulation
         }
 
         IsSettled = true;
+    }
+
+    /// <summary>
+    /// Update physics parameters for live tuning.
+    /// </summary>
+    public void UpdateParams(RagdollParams newParams)
+    {
+        parameters = newParams;
     }
 
     /// <summary>

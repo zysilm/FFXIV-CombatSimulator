@@ -370,6 +370,9 @@ public class CombatEngine : IDisposable
             State.PlayerState, target, actionData, isCombo,
             EnableCriticalHits, EnableDirectHits, DamageMultiplier);
 
+        // Check if target is already dead before applying damage (for ragdoll suppression)
+        var targetAlreadyDead = !target.IsAlive;
+
         // Apply damage
         target.CurrentHp = Math.Max(0, target.CurrentHp - dmgResult.Damage);
 
@@ -405,8 +408,9 @@ public class CombatEngine : IDisposable
         result.IsDirectHit = dmgResult.IsDirectHit;
         result.IsCombo = isCombo;
 
-        // Trigger animation
-        TriggerActionEffect(State.PlayerState, target, actionData, dmgResult);
+        // Trigger animation — skip on already-dead targets when ragdoll is active
+        if (!(targetAlreadyDead && config.EnableRagdoll))
+            TriggerActionEffect(State.PlayerState, target, actionData, dmgResult);
 
         // Log
         var critText = dmgResult.IsCritical ? " critical" : "";
@@ -512,21 +516,28 @@ public class CombatEngine : IDisposable
             }
         }
 
+        // Check if target is already dead before applying damage (for ragdoll suppression)
+        var targetAlreadyDead = !target.IsAlive;
+
         // Apply damage to target (player)
         target.CurrentHp = Math.Max(0, target.CurrentHp - dmgResult.Damage);
         State.TotalDamageTaken += dmgResult.Damage;
 
         // Trigger animation (NPC → Player)
-        // Always use ActionId 7 (auto-attack) — player skill ActionIds (31, 141, etc.)
-        // animate inconsistently on monster models
-        var actionData2 = new ActionData
+        // Skip ActionEffect on already-dead targets when ragdoll is active —
+        // ActionEffect triggers hit reaction animations that change facial expression
+        // and fight with ragdoll bone overrides.
+        if (!(targetAlreadyDead && config.EnableRagdoll))
         {
-            ActionId = 7,
-            Potency = potency > 0 ? potency : 110,
-            DamageType = SimDamageType.Physical,
-            AnimationLock = 0.6f,
-        };
-        TriggerActionEffect(npc.State, target, actionData2, dmgResult);
+            var actionData2 = new ActionData
+            {
+                ActionId = 7,
+                Potency = potency > 0 ? potency : 110,
+                DamageType = SimDamageType.Physical,
+                AnimationLock = 0.6f,
+            };
+            TriggerActionEffect(npc.State, target, actionData2, dmgResult);
+        }
 
         // Spawn hit VFX on player (independent of action pipeline since ActionId 7 has no VFX)
         if (config.EnableHitVfx && target.IsPlayer)
@@ -1002,19 +1013,23 @@ public class CombatEngine : IDisposable
             {
                 if ((IsTortureModeActive || npc.State.IsAlive) && npc.IsEngaged)
                 {
+                    var npcAlreadyDead = !npc.State.IsAlive;
                     var dmg = damageCalculator.CalculateNpcAutoAttack(ps, npc.State, 110);
                     npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
                     State.TotalDamageDealt += dmg.Damage;
 
-                    // Trigger auto-attack animation + VFX
-                    var autoAttackData = new ActionData
+                    // Trigger auto-attack animation + VFX — skip on dead targets with ragdoll
+                    if (!(npcAlreadyDead && config.EnableRagdoll))
                     {
-                        ActionId = 7, // Auto-attack
-                        Potency = 110,
-                        DamageType = SimDamageType.Physical,
-                        AnimationLock = 0.6f,
-                    };
-                    TriggerActionEffect(ps, npc.State, autoAttackData, dmg);
+                        var autoAttackData = new ActionData
+                        {
+                            ActionId = 7, // Auto-attack
+                            Potency = 110,
+                            DamageType = SimDamageType.Physical,
+                            AnimationLock = 0.6f,
+                        };
+                        TriggerActionEffect(ps, npc.State, autoAttackData, dmg);
+                    }
 
                     if (!npc.State.IsAlive)
                     {

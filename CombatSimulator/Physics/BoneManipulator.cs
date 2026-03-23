@@ -33,7 +33,17 @@ public unsafe class BoneManipulator : IDisposable
     private readonly object overrideLock = new();
     private readonly Dictionary<nint, BoneOverrideSet> pendingOverrides = new();
 
+    // Diagnostics
+    private int renderHookCallCount;
+    private int overridesAppliedCount;
+    private int lastAppliedBoneCount;
+    private string lastSkipReason = "";
+
     public bool IsHooked => renderHook != null;
+    public int DiagRenderCalls => renderHookCallCount;
+    public int DiagOverridesApplied => overridesAppliedCount;
+    public int DiagLastBoneCount => lastAppliedBoneCount;
+    public string DiagLastSkipReason => lastSkipReason;
 
     public BoneManipulator(IGameInteropProvider gameInterop, ISigScanner sigScanner, IPluginLog log)
     {
@@ -55,6 +65,7 @@ public unsafe class BoneManipulator : IDisposable
 
     private nint RenderDetour(nint a1, nint a2, nint a3, int a4)
     {
+        renderHookCallCount++;
         try
         {
             ApplyPendingOverrides();
@@ -126,20 +137,20 @@ public unsafe class BoneManipulator : IDisposable
     private void ApplyToCharacter(nint charAddr, BoneOverrideSet overrideSet)
     {
         var gameObj = (GameObject*)charAddr;
-        if (gameObj->DrawObject == null) return;
+        if (gameObj->DrawObject == null) { lastSkipReason = "DrawObject null"; return; }
 
         var charBase = (CharacterBase*)gameObj->DrawObject;
         var skeleton = charBase->Skeleton;
-        if (skeleton == null) return;
+        if (skeleton == null) { lastSkipReason = "Skeleton null"; return; }
 
         // Only operate on partial skeleton 0 (main body)
-        if (skeleton->PartialSkeletonCount < 1) return;
+        if (skeleton->PartialSkeletonCount < 1) { lastSkipReason = "No partial skeletons"; return; }
         var partial = &skeleton->PartialSkeletons[0];
         var pose = partial->GetHavokPose(0);
-        if (pose == null) return;
-        if (pose->ModelInSync == 0) return; // Model space not ready
+        if (pose == null) { lastSkipReason = "Pose null"; return; }
 
         var boneCount = pose->ModelPose.Length;
+        int applied = 0;
 
         foreach (var (boneIdx, deltaRotation) in overrideSet.Rotations)
         {
@@ -161,6 +172,14 @@ public unsafe class BoneManipulator : IDisposable
             modelTransform.Rotation.Y = newQuat.Y;
             modelTransform.Rotation.Z = newQuat.Z;
             modelTransform.Rotation.W = newQuat.W;
+            applied++;
+        }
+
+        if (applied > 0)
+        {
+            overridesAppliedCount++;
+            lastAppliedBoneCount = applied;
+            lastSkipReason = "";
         }
     }
 
