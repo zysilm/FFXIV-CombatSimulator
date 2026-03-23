@@ -932,6 +932,18 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Gravity effect on dangling bones. Currently reserved for future use.");
 
+            ImGui.Spacing();
+            if (ImGui.Button("Reset to Defaults"))
+            {
+                config.DeathPoseSettleTime = 2.0f;
+                config.RagdollDamping = 3.0f;
+                config.RagdollStiffness = 1.0f;
+                config.RagdollHitForce = 10.0f;
+                config.RagdollMaxBoneAngle = 30f;
+                config.RagdollGravity = 1.0f;
+                config.Save();
+            }
+
             // Diagnostics
             if (ragdollController != null)
             {
