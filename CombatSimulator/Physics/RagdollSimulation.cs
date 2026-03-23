@@ -205,7 +205,10 @@ public class RagdollSimulation
             var dot = MathF.Abs(Quaternion.Dot(state.CurrentRotation, state.RestRotation));
             if (dot < 0.9999f)
             {
-                result[boneIdx] = state.CurrentRotation;
+                // Output delta rotation (deviation from rest) so BoneManipulator can multiply it
+                // onto the current model-space rotation: delta = current * inverse(rest)
+                result[boneIdx] = Quaternion.Normalize(
+                    state.CurrentRotation * Quaternion.Inverse(state.RestRotation));
             }
         }
 

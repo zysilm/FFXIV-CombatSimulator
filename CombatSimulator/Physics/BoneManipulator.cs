@@ -16,22 +16,24 @@ using FFXIVClientStructs.Havok.Common.Base.Math.Vector;
 namespace CombatSimulator.Physics;
 
 /// <summary>
-/// Low-level bone transform read/write. Hooks UpdateBonePhysics so our writes
-/// survive the game's animation pipeline.
+/// Low-level bone transform read/write. Hooks the render manager function
+/// (same approach as CustomizePlus) so bone writes work in normal gameplay, not just GPose.
+/// Applies rotation deltas to model-space transforms each frame before rendering.
 /// </summary>
 public unsafe class BoneManipulator : IDisposable
 {
     private readonly IPluginLog log;
 
-    // Hook: fires after the game's bone physics pass completes
-    private delegate nint UpdateBonePhysicsDelegate(nint a1);
-    private Hook<UpdateBonePhysicsDelegate>? updateBonePhysicsHook;
+    // Render hook — fires every frame before rendering (same as CustomizePlus)
+    // Signature: "E8 ?? ?? ?? ?? 48 81 C3 ?? ?? ?? ?? BF ?? ?? ?? ?? 33 ED"
+    private delegate nint RenderDelegate(nint a1, nint a2, nint a3, int a4);
+    private Hook<RenderDelegate>? renderHook;
 
-    // Pending bone overrides to apply in the hook (written by RagdollController, consumed in hook)
+    // Pending bone overrides to apply in the hook
     private readonly object overrideLock = new();
     private readonly Dictionary<nint, BoneOverrideSet> pendingOverrides = new();
 
-    public bool IsHooked => updateBonePhysicsHook != null;
+    public bool IsHooked => renderHook != null;
 
     public BoneManipulator(IGameInteropProvider gameInterop, ISigScanner sigScanner, IPluginLog log)
     {
@@ -40,36 +42,34 @@ public unsafe class BoneManipulator : IDisposable
         try
         {
             var addr = sigScanner.ScanText(
-                "48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 57 41 54 41 56 48 83 EC ?? 48 8B 59 ?? 45 33 E4");
-            updateBonePhysicsHook = gameInterop.HookFromAddress<UpdateBonePhysicsDelegate>(addr, UpdateBonePhysicsDetour);
-            updateBonePhysicsHook.Enable();
-            log.Info($"BoneManipulator: UpdateBonePhysics hooked at 0x{addr:X}");
+                "E8 ?? ?? ?? ?? 48 81 C3 ?? ?? ?? ?? BF ?? ?? ?? ?? 33 ED");
+            renderHook = gameInterop.HookFromAddress<RenderDelegate>(addr, RenderDetour);
+            renderHook.Enable();
+            log.Info($"BoneManipulator: Render hook established at 0x{addr:X}");
         }
         catch (Exception ex)
         {
-            log.Warning(ex, "BoneManipulator: Could not hook UpdateBonePhysics — ragdoll will be unavailable.");
+            log.Warning(ex, "BoneManipulator: Could not hook render function — ragdoll will be unavailable.");
         }
     }
 
-    private nint UpdateBonePhysicsDetour(nint a1)
+    private nint RenderDetour(nint a1, nint a2, nint a3, int a4)
     {
-        var result = updateBonePhysicsHook!.Original(a1);
-
         try
         {
             ApplyPendingOverrides();
         }
         catch (Exception ex)
         {
-            log.Error(ex, "BoneManipulator: Error applying bone overrides in hook.");
+            log.Error(ex, "BoneManipulator: Error applying bone overrides in render hook.");
         }
 
-        return result;
+        return renderHook!.Original(a1, a2, a3, a4);
     }
 
     /// <summary>
     /// Set bone rotation overrides for a character. Called from RagdollController each frame.
-    /// The overrides will be applied in the next UpdateBonePhysics hook call.
+    /// Rotations are delta quaternions multiplied onto the current model-space rotation.
     /// </summary>
     public void SetBoneOverrides(nint characterAddress, BoneOverrideSet overrides)
     {
@@ -137,23 +137,31 @@ public unsafe class BoneManipulator : IDisposable
         var partial = &skeleton->PartialSkeletons[0];
         var pose = partial->GetHavokPose(0);
         if (pose == null) return;
+        if (pose->ModelInSync == 0) return; // Model space not ready
 
-        var boneCount = pose->LocalPose.Length;
+        var boneCount = pose->ModelPose.Length;
 
-        foreach (var (boneIdx, rotation) in overrideSet.Rotations)
+        foreach (var (boneIdx, deltaRotation) in overrideSet.Rotations)
         {
             if (boneIdx < 0 || boneIdx >= boneCount) continue;
 
-            // Write rotation to local-space pose directly
-            var localTransform = &pose->LocalPose.Data[boneIdx];
-            localTransform->Rotation.X = rotation.X;
-            localTransform->Rotation.Y = rotation.Y;
-            localTransform->Rotation.Z = rotation.Z;
-            localTransform->Rotation.W = rotation.W;
-        }
+            // Read current model-space transform
+            ref var modelTransform = ref pose->ModelPose.Data[boneIdx];
 
-        // Mark model space as needing sync
-        pose->ModelInSync = 0;
+            // Multiply delta rotation onto existing rotation (same as CustomizePlus ModifyExistingRotation)
+            var currentQuat = new Quaternion(
+                modelTransform.Rotation.X,
+                modelTransform.Rotation.Y,
+                modelTransform.Rotation.Z,
+                modelTransform.Rotation.W);
+
+            var newQuat = Quaternion.Normalize(Quaternion.Multiply(currentQuat, deltaRotation));
+
+            modelTransform.Rotation.X = newQuat.X;
+            modelTransform.Rotation.Y = newQuat.Y;
+            modelTransform.Rotation.Z = newQuat.Z;
+            modelTransform.Rotation.W = newQuat.W;
+        }
     }
 
     /// <summary>
@@ -265,17 +273,18 @@ public unsafe class BoneManipulator : IDisposable
     public void Dispose()
     {
         ClearAllOverrides();
-        updateBonePhysicsHook?.Dispose();
+        renderHook?.Dispose();
     }
 }
 
 /// <summary>
-/// Set of bone rotation overrides to apply in the hook.
+/// Set of bone rotation overrides to apply in the render hook.
+/// Rotations are delta quaternions (deviation from rest pose) applied to model-space.
 /// </summary>
 public class BoneOverrideSet
 {
     /// <summary>
-    /// BoneIndex → Quaternion rotation (local space).
+    /// BoneIndex → delta Quaternion rotation (multiplied onto model-space rotation).
     /// </summary>
     public Dictionary<int, Quaternion> Rotations { get; set; } = new();
 }

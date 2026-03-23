@@ -72,6 +72,9 @@ public class Configuration : IPluginConfiguration
     // Shortcuts bar
     public bool ShowShortcuts { get; set; } = false;
 
+    // Death Cam toolbar
+    public bool ShowDeathCamToolbar { get; set; } = false;
+
     // Target Behaviors
     public bool EnableTargetApproach { get; set; } = false;
     public float TargetApproachDistance { get; set; } = 3.0f;

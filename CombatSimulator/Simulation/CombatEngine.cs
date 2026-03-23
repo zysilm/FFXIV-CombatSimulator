@@ -703,9 +703,11 @@ public class CombatEngine : IDisposable
                 // Entity has ragdoll ready — send hit impulse
                 var attackerPos = GetAttackerPosition(entity);
                 ragdollController.OnHitDeadEntity(entityId, attackerPos);
-                return;
             }
-            // else: ragdoll not ready yet (still settling), fall through to legacy
+            // When ragdoll is enabled, never fall through to legacy replay —
+            // it replays the death animation which resets facial expression.
+            // Hits during settle period are silently dropped until pose capture completes.
+            return;
         }
 
         // Legacy fallback: replay death animation

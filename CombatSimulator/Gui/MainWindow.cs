@@ -502,6 +502,14 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Show a floating shortcuts bar for quick access to common actions.");
 
+            var showDcToolbar = config.ShowDeathCamToolbar;
+            if (ImGui.Checkbox("Show Death Cam Toolbar", ref showDcToolbar))
+            {
+                config.ShowDeathCamToolbar = showDcToolbar;
+                config.Save();
+            }
+            HelpMarker("Show a floating toolbar to quickly switch between death cam presets.");
+
             // Custom player name
             var customName = config.CustomPlayerName;
             if (ImGui.InputText("Custom Player Name", ref customName, 64))
@@ -870,7 +878,7 @@ public class MainWindow : IDisposable
             ImGui.Text("Timing");
 
             var settleTime = config.DeathPoseSettleTime;
-            if (ImGui.SliderFloat("Death Pose Settle Time", ref settleTime, 0.5f, 5.0f, "%.1f sec"))
+            if (ImGui.SliderFloat("Death Pose Settle Time", ref settleTime, 0.1f, 100.0f, "%.1f sec"))
             {
                 config.DeathPoseSettleTime = settleTime;
                 config.Save();
@@ -1022,6 +1030,70 @@ public class MainWindow : IDisposable
                     return i;
         }
         return -1;
+    }
+
+    public void DrawDeathCamToolbar()
+    {
+        var presets = config.DeathCamPresets;
+        if (presets.Count == 0)
+        {
+            ImGui.SetNextWindowSize(new Vector2(200, 0), ImGuiCond.FirstUseEver);
+            if (ImGui.Begin("Death Cam Presets", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+            {
+                ImGui.TextDisabled("No presets saved.");
+            }
+            ImGui.End();
+            return;
+        }
+
+        // Clamp selected index
+        if (selectedPresetIndex < 0 || selectedPresetIndex >= presets.Count)
+            selectedPresetIndex = 0;
+
+        ImGui.SetNextWindowSize(new Vector2(280, 0), ImGuiCond.FirstUseEver);
+        if (!ImGui.Begin("Death Cam Presets", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.End();
+            return;
+        }
+
+        var arrowSize = new Vector2(28, 28);
+
+        // Left arrow
+        var atStart = selectedPresetIndex <= 0;
+        if (atStart) ImGui.BeginDisabled();
+        if (ImGui.Button("<", arrowSize))
+        {
+            selectedPresetIndex--;
+            LoadPreset(presets[selectedPresetIndex]);
+        }
+        if (atStart) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+
+        // Preset name label (centered in available space)
+        var presetName = presets[selectedPresetIndex].Name;
+        var avail = ImGui.GetContentRegionAvail().X - arrowSize.X - ImGui.GetStyle().ItemSpacing.X;
+        var textSize = ImGui.CalcTextSize(presetName).X;
+        var pad = (avail - textSize) * 0.5f;
+        if (pad > 0) ImGui.SetCursorPosX(ImGui.GetCursorPosX() + pad);
+        ImGui.AlignTextToFramePadding();
+        ImGui.Text(presetName);
+
+        ImGui.SameLine();
+        if (pad > 0) ImGui.SetCursorPosX(ImGui.GetContentRegionMax().X - arrowSize.X);
+
+        // Right arrow
+        var atEnd = selectedPresetIndex >= presets.Count - 1;
+        if (atEnd) ImGui.BeginDisabled();
+        if (ImGui.Button(">", arrowSize))
+        {
+            selectedPresetIndex++;
+            LoadPreset(presets[selectedPresetIndex]);
+        }
+        if (atEnd) ImGui.EndDisabled();
+
+        ImGui.End();
     }
 
     public void DrawShortcutsBar()
