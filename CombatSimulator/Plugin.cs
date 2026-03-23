@@ -6,6 +6,7 @@ using CombatSimulator.Core;
 using CombatSimulator.Gui;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
+using CombatSimulator.Physics;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using Dalamud.Game.Command;
@@ -36,6 +37,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly NpcAiController npcAiController;
     private readonly MovementBlockHook movementBlockHook;
     private readonly UseActionHook useActionHook;
+    private readonly BoneManipulator boneManipulator;
+    private readonly RagdollController ragdollController;
     private readonly DeathCamController deathCamController;
     private readonly MainWindow mainWindow;
     private readonly HpBarOverlay hpBarOverlay;
@@ -79,11 +82,13 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
+        boneManipulator = new BoneManipulator(gameInterop, sigScanner, log);
+        ragdollController = new RagdollController(boneManipulator, config, clientState, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, config, npcSelector, clientState, log,
-            deathCamController);
+            deathCamController, ragdollController);
         npcAiController = new NpcAiController(combatEngine, animationController, movementBlockHook, clientState, config, log);
 
         // Safety — enable hooks immediately; they gate on internal state
@@ -133,6 +138,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         mainWindow.Dispose();
         npcAiController.Dispose();
         combatEngine.Dispose();
+        ragdollController.Dispose();
+        boneManipulator.Dispose();
         deathCamController.Dispose();
         animationController.Dispose();
         npcSelector.Dispose();
@@ -225,6 +232,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             // Death cam preview runs independently of combat
             deathCamController.Tick(deltaTime);
+
+            // Ragdoll physics tick (runs independently of combat for settle timer)
+            ragdollController.Tick(deltaTime);
 
             if (!combatEngine.IsActive)
                 return;

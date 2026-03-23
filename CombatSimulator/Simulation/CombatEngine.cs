@@ -5,6 +5,7 @@ using CombatSimulator.Animation;
 using CombatSimulator.Camera;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
+using CombatSimulator.Physics;
 using CombatSimulator.Safety;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
@@ -55,12 +56,16 @@ public class CombatEngine : IDisposable
     private readonly IClientState clientState;
     private readonly IPluginLog log;
     private readonly DeathCamController? deathCamController;
+    private readonly RagdollController? ragdollController;
     private bool playerDeathTriggered;
     private bool victoryTriggered;
     private bool glamourerApplied;
 
     public SimulationState State { get; } = new();
     public bool IsActive => State.IsActive;
+
+    /// <summary>Whether torture/ragdoll mode allows hitting dead targets.</summary>
+    private bool IsTortureModeActive => config.EnableRagdoll || config.EnableTorture;
     public List<CombatLogEntry> CombatLog { get; } = new();
 
     // Configuration (set from plugin config)
@@ -94,7 +99,8 @@ public class CombatEngine : IDisposable
         NpcSelector npcSelector,
         IClientState clientState,
         IPluginLog log,
-        DeathCamController? deathCamController = null)
+        DeathCamController? deathCamController = null,
+        RagdollController? ragdollController = null)
     {
         this.actionDataProvider = actionDataProvider;
         this.damageCalculator = damageCalculator;
@@ -106,6 +112,7 @@ public class CombatEngine : IDisposable
         this.clientState = clientState;
         this.log = log;
         this.deathCamController = deathCamController;
+        this.ragdollController = ragdollController;
     }
 
     public void StartSimulation()
@@ -161,6 +168,7 @@ public class CombatEngine : IDisposable
         }
         npcSelector.DeselectAll();
         animationController.ResetPlayerDeathAnimation();
+        ragdollController?.StopAll();
         movementBlockHook.IsBlocking = false;
         deathCamController?.Deactivate();
         RevertGlamourer();
@@ -299,7 +307,7 @@ public class CombatEngine : IDisposable
             return result;
         }
 
-        if (!config.EnableTorture && !target.IsAlive)
+        if (!IsTortureModeActive && !target.IsAlive)
         {
             result.FailReason = "Target is already dead.";
             return result;
@@ -462,7 +470,7 @@ public class CombatEngine : IDisposable
             result.TargetKilled = true;
             OnEntityDeath(target);
 
-            if (config.EnableTorture)
+            if (IsTortureModeActive)
                 ReapplyDeathPose(target);
         }
 
@@ -479,7 +487,7 @@ public class CombatEngine : IDisposable
         };
 
         var target = State.GetEntity(targetId);
-        if (target == null || !npc.State.IsAlive || (!config.EnableTorture && !target.IsAlive))
+        if (target == null || !npc.State.IsAlive || (!IsTortureModeActive && !target.IsAlive))
         {
             result.FailReason = "Invalid target or source dead.";
             return result;
@@ -541,7 +549,7 @@ public class CombatEngine : IDisposable
             result.TargetKilled = true;
             OnEntityDeath(target);
 
-            if (config.EnableTorture)
+            if (IsTortureModeActive)
                 ReapplyDeathPose(target);
         }
 
@@ -685,6 +693,22 @@ public class CombatEngine : IDisposable
 
     private void ReapplyDeathPose(SimulatedEntityState entity)
     {
+        // Try ragdoll first
+        if (config.EnableRagdoll && ragdollController != null && ragdollController.IsAvailable)
+        {
+            var entityId = entity.IsPlayer ? 0UL : entity.EntityId;
+
+            if (ragdollController.IsReady(entityId))
+            {
+                // Entity has ragdoll ready — send hit impulse
+                var attackerPos = GetAttackerPosition(entity);
+                ragdollController.OnHitDeadEntity(entityId, attackerPos);
+                return;
+            }
+            // else: ragdoll not ready yet (still settling), fall through to legacy
+        }
+
+        // Legacy fallback: replay death animation
         if (entity.IsPlayer)
         {
             pendingDeathReapplies.Add(new PendingDeath
@@ -705,7 +729,35 @@ public class CombatEngine : IDisposable
         }
     }
 
-    private void ExecuteDeathAnimation(ulong entityId, bool isPlayer)
+    /// <summary>
+    /// Get approximate attacker position for ragdoll hit direction.
+    /// </summary>
+    private unsafe Vector3 GetAttackerPosition(SimulatedEntityState target)
+    {
+        // Find the nearest alive NPC (or player) as the attacker
+        if (target.IsPlayer)
+        {
+            // Player was hit by an NPC — find a nearby engaged NPC
+            foreach (var npc in npcSelector.SelectedNpcs)
+            {
+                if (npc.State.IsAlive && npc.BattleChara != null)
+                {
+                    var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
+                    return go->Position;
+                }
+            }
+        }
+        else
+        {
+            // NPC was hit by player
+            var player = clientState.LocalPlayer;
+            if (player != null)
+                return player.Position;
+        }
+        return Vector3.Zero;
+    }
+
+    private unsafe void ExecuteDeathAnimation(ulong entityId, bool isPlayer)
     {
         if (isPlayer)
         {
@@ -717,6 +769,14 @@ public class CombatEngine : IDisposable
                 animationController.PlayVictory(isPlayerVictory: false);
                 ApplyGlamourer();
                 deathCamController?.Activate();
+
+                // Register with ragdoll controller for pose capture
+                if (config.EnableRagdoll && ragdollController != null)
+                {
+                    var player = clientState.LocalPlayer;
+                    if (player != null)
+                        ragdollController.OnEntityDeath(0UL, player.Address, true);
+                }
             }
         }
         else
@@ -726,6 +786,11 @@ public class CombatEngine : IDisposable
                 if (npc.SimulatedEntityId == entityId)
                 {
                     animationController.PlayDeathAnimation(npc);
+
+                    // Register with ragdoll controller for pose capture
+                    if (config.EnableRagdoll && ragdollController != null && npc.BattleChara != null)
+                        ragdollController.OnEntityDeath(entityId, (nint)npc.BattleChara, false);
+
                     break;
                 }
             }
@@ -933,7 +998,7 @@ public class CombatEngine : IDisposable
             // Auto-attack closest engaged NPC
             foreach (var npc in npcSelector.SelectedNpcs)
             {
-                if ((config.EnableTorture || npc.State.IsAlive) && npc.IsEngaged)
+                if ((IsTortureModeActive || npc.State.IsAlive) && npc.IsEngaged)
                 {
                     var dmg = damageCalculator.CalculateNpcAutoAttack(ps, npc.State, 110);
                     npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
@@ -952,7 +1017,7 @@ public class CombatEngine : IDisposable
                     if (!npc.State.IsAlive)
                     {
                         OnEntityDeath(npc.State);
-                        if (config.EnableTorture)
+                        if (IsTortureModeActive)
                             ReapplyDeathPose(npc.State);
                     }
 

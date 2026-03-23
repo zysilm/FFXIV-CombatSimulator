@@ -102,6 +102,7 @@ public class MainWindow : IDisposable
         DrawGlamourerHeaderSection();
         DrawGuiSettingsSection();
         DrawDeathCamSection();
+        DrawRagdollSection();
         DrawExperimentalHeaderSection();
 
         ImGui.End();
@@ -846,18 +847,84 @@ public class MainWindow : IDisposable
         ImGui.End();
     }
 
-    private void DrawExperimentalHeaderSection()
+    private void DrawRagdollSection()
     {
-        if (ImGui.CollapsingHeader("Experimental"))
+        if (ImGui.CollapsingHeader("Ragdoll (Experimental)"))
         {
-            var torture = config.EnableTorture;
-            if (ImGui.Checkbox("Torture", ref torture))
+            ImGui.TextColored(new Vector4(1.0f, 0.8f, 0.2f, 1.0f), "Experimental: dead characters physically react to hits.");
+            ImGui.Spacing();
+
+            var enabled = config.EnableRagdoll;
+            if (ImGui.Checkbox("Enable Ragdoll", ref enabled))
             {
-                config.EnableTorture = torture;
+                config.EnableRagdoll = enabled;
+                // Sync legacy flag
+                config.EnableTorture = enabled;
                 config.Save();
             }
-            HelpMarker("Allow attacks on dead characters. Dead targets stay on the floor and take hits but cannot fight back.");
+            HelpMarker("When enabled, dead characters' bones respond to hit impacts with physics-based deformation.");
+
+            if (!enabled) return;
+
+            ImGui.Separator();
+            ImGui.Text("Timing");
+
+            var settleTime = config.DeathPoseSettleTime;
+            if (ImGui.SliderFloat("Death Pose Settle Time", ref settleTime, 0.5f, 5.0f, "%.1f sec"))
+            {
+                config.DeathPoseSettleTime = settleTime;
+                config.Save();
+            }
+            HelpMarker("Seconds to wait after death animation before capturing the rest pose for ragdoll.");
+
+            ImGui.Separator();
+            ImGui.Text("Physics");
+
+            var hitForce = config.RagdollHitForce;
+            if (ImGui.SliderFloat("Hit Force", ref hitForce, 0.1f, 5.0f, "%.1f"))
+            {
+                config.RagdollHitForce = hitForce;
+                config.Save();
+            }
+            HelpMarker("Impulse strength per hit. Higher = more dramatic bone movement.");
+
+            var damping = config.RagdollDamping;
+            if (ImGui.SliderFloat("Damping", ref damping, 0.5f, 10.0f, "%.1f"))
+            {
+                config.RagdollDamping = damping;
+                config.Save();
+            }
+            HelpMarker("How quickly bone motion dies down. Higher = faster settling.");
+
+            var stiffness = config.RagdollStiffness;
+            if (ImGui.SliderFloat("Return Stiffness", ref stiffness, 0.0f, 5.0f, "%.1f"))
+            {
+                config.RagdollStiffness = stiffness;
+                config.Save();
+            }
+            HelpMarker("Spring force pulling bones back to the rest pose. 0 = no return.");
+
+            var maxAngle = config.RagdollMaxBoneAngle;
+            if (ImGui.SliderFloat("Max Bone Angle", ref maxAngle, 5f, 90f, "%.0f deg"))
+            {
+                config.RagdollMaxBoneAngle = maxAngle;
+                config.Save();
+            }
+            HelpMarker("Maximum rotation deviation from the rest pose per bone.");
+
+            var gravity = config.RagdollGravity;
+            if (ImGui.SliderFloat("Gravity", ref gravity, 0f, 3.0f, "%.1f"))
+            {
+                config.RagdollGravity = gravity;
+                config.Save();
+            }
+            HelpMarker("Gravity effect on dangling bones. Currently reserved for future use.");
         }
+    }
+
+    private void DrawExperimentalHeaderSection()
+    {
+        // Kept for any future experimental features outside ragdoll
     }
 
     private void DrawGlamourerSection()

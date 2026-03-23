@@ -83,7 +83,16 @@ public class Configuration : IPluginConfiguration
     // Maximum number of active targets
     public int MaxTargets { get; set; } = 10;
 
-    // Experimental
+    // Ragdoll (Experimental) — replaces old torture mode
+    public bool EnableRagdoll { get; set; } = false;
+    public float DeathPoseSettleTime { get; set; } = 2.0f;
+    public float RagdollDamping { get; set; } = 3.0f;
+    public float RagdollStiffness { get; set; } = 1.0f;
+    public float RagdollHitForce { get; set; } = 1.0f;
+    public float RagdollMaxBoneAngle { get; set; } = 30f;
+    public float RagdollGravity { get; set; } = 1.0f;
+
+    // Legacy — kept for backward compatibility migration
     public bool EnableTorture { get; set; } = false;
 
     // Hit VFX on player when taking damage (empty = disabled)
