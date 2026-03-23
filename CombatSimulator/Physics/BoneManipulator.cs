@@ -149,29 +149,67 @@ public unsafe class BoneManipulator : IDisposable
         var pose = partial->GetHavokPose(0);
         if (pose == null) { lastSkipReason = "Pose null"; return; }
 
+        var havokSkel = pose->Skeleton;
+        if (havokSkel == null) { lastSkipReason = "hkaSkeleton null"; return; }
+
         var boneCount = pose->ModelPose.Length;
+        var parentCount = havokSkel->ParentIndices.Length;
         int applied = 0;
 
+        // Model-space approach with hierarchy propagation:
+        // For each bone with a delta, rotate that bone AND all descendants.
+        // This ensures child bones move with their parents (no rubber gum).
         foreach (var (boneIdx, deltaRotation) in overrideSet.Rotations)
         {
             if (boneIdx < 0 || boneIdx >= boneCount) continue;
 
-            // Read current model-space transform
-            ref var modelTransform = ref pose->ModelPose.Data[boneIdx];
+            ref var boneXform = ref pose->ModelPose.Data[boneIdx];
 
-            // Multiply delta rotation onto existing rotation (same as CustomizePlus ModifyExistingRotation)
-            var currentQuat = new Quaternion(
-                modelTransform.Rotation.X,
-                modelTransform.Rotation.Y,
-                modelTransform.Rotation.Z,
-                modelTransform.Rotation.W);
+            // Pivot = this bone's model-space position
+            var pivotX = boneXform.Translation.X;
+            var pivotY = boneXform.Translation.Y;
+            var pivotZ = boneXform.Translation.Z;
 
-            var newQuat = Quaternion.Normalize(Quaternion.Multiply(currentQuat, deltaRotation));
+            // Apply delta to this bone's model-space rotation
+            var curQuat = new Quaternion(
+                boneXform.Rotation.X, boneXform.Rotation.Y,
+                boneXform.Rotation.Z, boneXform.Rotation.W);
+            var newQuat = Quaternion.Normalize(deltaRotation * curQuat);
+            boneXform.Rotation.X = newQuat.X;
+            boneXform.Rotation.Y = newQuat.Y;
+            boneXform.Rotation.Z = newQuat.Z;
+            boneXform.Rotation.W = newQuat.W;
 
-            modelTransform.Rotation.X = newQuat.X;
-            modelTransform.Rotation.Y = newQuat.Y;
-            modelTransform.Rotation.Z = newQuat.Z;
-            modelTransform.Rotation.W = newQuat.W;
+            // Propagate to all descendants: rotate their position around pivot
+            // and rotate their orientation by the same delta.
+            for (int i = 0; i < boneCount; i++)
+            {
+                if (i == boneIdx) continue;
+                if (!IsDescendantOf(i, boneIdx, havokSkel->ParentIndices.Data, parentCount)) continue;
+
+                ref var descXform = ref pose->ModelPose.Data[i];
+
+                // Rotate position around pivot
+                var relX = descXform.Translation.X - pivotX;
+                var relY = descXform.Translation.Y - pivotY;
+                var relZ = descXform.Translation.Z - pivotZ;
+                var relPos = new Vector3(relX, relY, relZ);
+                var rotatedPos = Vector3.Transform(relPos, deltaRotation);
+                descXform.Translation.X = pivotX + rotatedPos.X;
+                descXform.Translation.Y = pivotY + rotatedPos.Y;
+                descXform.Translation.Z = pivotZ + rotatedPos.Z;
+
+                // Rotate orientation
+                var descQuat = new Quaternion(
+                    descXform.Rotation.X, descXform.Rotation.Y,
+                    descXform.Rotation.Z, descXform.Rotation.W);
+                var newDescQuat = Quaternion.Normalize(deltaRotation * descQuat);
+                descXform.Rotation.X = newDescQuat.X;
+                descXform.Rotation.Y = newDescQuat.Y;
+                descXform.Rotation.Z = newDescQuat.Z;
+                descXform.Rotation.W = newDescQuat.W;
+            }
+
             applied++;
         }
 
@@ -181,6 +219,24 @@ public unsafe class BoneManipulator : IDisposable
             lastAppliedBoneCount = applied;
             lastSkipReason = "";
         }
+    }
+
+    /// <summary>
+    /// Walk up the parent chain to check if boneIdx is a descendant of ancestorIdx.
+    /// </summary>
+    private static bool IsDescendantOf(int boneIdx, int ancestorIdx, short* parentIndices, int count)
+    {
+        int current = boneIdx;
+        // Walk up parents (max depth ~20 for humanoid skeletons)
+        for (int safety = 0; safety < 32; safety++)
+        {
+            if (current < 0 || current >= count) return false;
+            var parent = parentIndices[current];
+            if (parent == ancestorIdx) return true;
+            if (parent < 0) return false;
+            current = parent;
+        }
+        return false;
     }
 
     /// <summary>
