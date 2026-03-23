@@ -152,65 +152,90 @@ public unsafe class BoneManipulator : IDisposable
         var havokSkel = pose->Skeleton;
         if (havokSkel == null) { lastSkipReason = "hkaSkeleton null"; return; }
 
-        var boneCount = pose->ModelPose.Length;
+        var boneCount = pose->LocalPose.Length;
+        var modelCount = pose->ModelPose.Length;
         var parentCount = havokSkel->ParentIndices.Length;
+        if (boneCount != modelCount) { lastSkipReason = "Pose length mismatch"; return; }
+
         int applied = 0;
 
-        // Model-space approach with hierarchy propagation:
-        // For each bone with a delta, rotate that bone AND all descendants.
-        // This ensures child bones move with their parents (no rubber gum).
-        foreach (var (boneIdx, deltaRotation) in overrideSet.Rotations)
+        // Full hierarchy recomputation approach:
+        // 1. Read each bone's LocalPose rotation, apply our delta if one exists
+        // 2. Recompute ModelPose for the full skeleton from the (modified) local transforms
+        // This guarantees children follow parents — no rubber gum / noodle necks.
+
+        // Root bone (index 0): ModelPose = LocalPose (possibly with delta)
         {
-            if (boneIdx < 0 || boneIdx >= boneCount) continue;
+            ref var local = ref pose->LocalPose.Data[0];
+            ref var model = ref pose->ModelPose.Data[0];
 
-            ref var boneXform = ref pose->ModelPose.Data[boneIdx];
-
-            // Pivot = this bone's model-space position
-            var pivotX = boneXform.Translation.X;
-            var pivotY = boneXform.Translation.Y;
-            var pivotZ = boneXform.Translation.Z;
-
-            // Apply delta to this bone's model-space rotation
-            var curQuat = new Quaternion(
-                boneXform.Rotation.X, boneXform.Rotation.Y,
-                boneXform.Rotation.Z, boneXform.Rotation.W);
-            var newQuat = Quaternion.Normalize(deltaRotation * curQuat);
-            boneXform.Rotation.X = newQuat.X;
-            boneXform.Rotation.Y = newQuat.Y;
-            boneXform.Rotation.Z = newQuat.Z;
-            boneXform.Rotation.W = newQuat.W;
-
-            // Propagate to all descendants: rotate their position around pivot
-            // and rotate their orientation by the same delta.
-            for (int i = 0; i < boneCount; i++)
+            var localRot = new Quaternion(local.Rotation.X, local.Rotation.Y, local.Rotation.Z, local.Rotation.W);
+            if (overrideSet.Rotations.TryGetValue(0, out var delta0))
             {
-                if (i == boneIdx) continue;
-                if (!IsDescendantOf(i, boneIdx, havokSkel->ParentIndices.Data, parentCount)) continue;
-
-                ref var descXform = ref pose->ModelPose.Data[i];
-
-                // Rotate position around pivot
-                var relX = descXform.Translation.X - pivotX;
-                var relY = descXform.Translation.Y - pivotY;
-                var relZ = descXform.Translation.Z - pivotZ;
-                var relPos = new Vector3(relX, relY, relZ);
-                var rotatedPos = Vector3.Transform(relPos, deltaRotation);
-                descXform.Translation.X = pivotX + rotatedPos.X;
-                descXform.Translation.Y = pivotY + rotatedPos.Y;
-                descXform.Translation.Z = pivotZ + rotatedPos.Z;
-
-                // Rotate orientation
-                var descQuat = new Quaternion(
-                    descXform.Rotation.X, descXform.Rotation.Y,
-                    descXform.Rotation.Z, descXform.Rotation.W);
-                var newDescQuat = Quaternion.Normalize(deltaRotation * descQuat);
-                descXform.Rotation.X = newDescQuat.X;
-                descXform.Rotation.Y = newDescQuat.Y;
-                descXform.Rotation.Z = newDescQuat.Z;
-                descXform.Rotation.W = newDescQuat.W;
+                localRot = Quaternion.Normalize(localRot * delta0);
+                applied++;
             }
 
-            applied++;
+            model.Translation = local.Translation;
+            model.Rotation.X = localRot.X;
+            model.Rotation.Y = localRot.Y;
+            model.Rotation.Z = localRot.Z;
+            model.Rotation.W = localRot.W;
+            model.Scale = local.Scale;
+        }
+
+        // All other bones: ModelPose[i] = ModelPose[parent] * LocalPose[i]
+        for (int i = 1; i < boneCount && i < parentCount; i++)
+        {
+            var parentIdx = havokSkel->ParentIndices[i];
+            if (parentIdx < 0 || parentIdx >= boneCount) continue;
+
+            ref var local = ref pose->LocalPose.Data[i];
+            ref var model = ref pose->ModelPose.Data[i];
+            ref var parentModel = ref pose->ModelPose.Data[parentIdx];
+
+            // Read local rotation, apply ragdoll delta if present
+            var localRot = new Quaternion(local.Rotation.X, local.Rotation.Y, local.Rotation.Z, local.Rotation.W);
+            if (overrideSet.Rotations.TryGetValue(i, out var delta))
+            {
+                localRot = Quaternion.Normalize(localRot * delta);
+                applied++;
+            }
+
+            // Parent's model-space transform
+            var parentRot = new Quaternion(
+                parentModel.Rotation.X, parentModel.Rotation.Y,
+                parentModel.Rotation.Z, parentModel.Rotation.W);
+            var parentPos = new Vector3(
+                parentModel.Translation.X, parentModel.Translation.Y, parentModel.Translation.Z);
+            var parentScale = new Vector3(
+                parentModel.Scale.X, parentModel.Scale.Y, parentModel.Scale.Z);
+
+            // Compose: model = parent * local
+            // Rotation: parentRot * localRot
+            var modelRot = Quaternion.Normalize(parentRot * localRot);
+
+            // Translation: parentPos + rotate(localTranslation * parentScale, parentRot)
+            var localTrans = new Vector3(local.Translation.X, local.Translation.Y, local.Translation.Z);
+            var scaledTrans = localTrans * parentScale;
+            var rotatedTrans = Vector3.Transform(scaledTrans, parentRot);
+            var modelPos = parentPos + rotatedTrans;
+
+            // Scale: parentScale * localScale
+            var localScale = new Vector3(local.Scale.X, local.Scale.Y, local.Scale.Z);
+            var modelScale = parentScale * localScale;
+
+            // Write to ModelPose
+            model.Translation.X = modelPos.X;
+            model.Translation.Y = modelPos.Y;
+            model.Translation.Z = modelPos.Z;
+            model.Rotation.X = modelRot.X;
+            model.Rotation.Y = modelRot.Y;
+            model.Rotation.Z = modelRot.Z;
+            model.Rotation.W = modelRot.W;
+            model.Scale.X = modelScale.X;
+            model.Scale.Y = modelScale.Y;
+            model.Scale.Z = modelScale.Z;
         }
 
         if (applied > 0)
@@ -219,24 +244,6 @@ public unsafe class BoneManipulator : IDisposable
             lastAppliedBoneCount = applied;
             lastSkipReason = "";
         }
-    }
-
-    /// <summary>
-    /// Walk up the parent chain to check if boneIdx is a descendant of ancestorIdx.
-    /// </summary>
-    private static bool IsDescendantOf(int boneIdx, int ancestorIdx, short* parentIndices, int count)
-    {
-        int current = boneIdx;
-        // Walk up parents (max depth ~20 for humanoid skeletons)
-        for (int safety = 0; safety < 32; safety++)
-        {
-            if (current < 0 || current >= count) return false;
-            var parent = parentIndices[current];
-            if (parent == ancestorIdx) return true;
-            if (parent < 0) return false;
-            current = parent;
-        }
-        return false;
     }
 
     /// <summary>
