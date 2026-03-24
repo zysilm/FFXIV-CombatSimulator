@@ -274,7 +274,7 @@ public class MainWindow : IDisposable
             if (aggro)
             {
                 var aggroRange = config.AggroPropagationRange;
-                if (ImGui.SliderFloat("Aggro Range", ref aggroRange, 1.0f, 50.0f, "%.1f yalms"))
+                if (ImGui.SliderFloat("Aggro Range", ref aggroRange, 1.0f, 1000.0f, "%.1f yalms"))
                 {
                     config.AggroPropagationRange = aggroRange;
                     config.Save();
