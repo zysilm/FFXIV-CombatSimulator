@@ -443,6 +443,9 @@ public unsafe class AnimationController : IDisposable
 
             var character = (Character*)npc.BattleChara;
 
+            // Hide weapons so they don't float in the dead character's hand
+            character->DrawData.HideWeapons(true);
+
             if (playDeadResolved)
             {
                 // Use BypassEmote-style timeline: plays playdead on any character (no unlock needed)
@@ -486,6 +489,7 @@ public unsafe class AnimationController : IDisposable
                 if (player != null)
                 {
                     var character = (Character*)player.Address;
+                    character->DrawData.HideWeapons(true);
                     emotePlayer.PlayLoopedEmote(character, playDeadLoopTimeline, playDeadIntroTimeline);
                     log.Info("Player death emote (timeline) triggered.");
                 }
@@ -509,6 +513,7 @@ public unsafe class AnimationController : IDisposable
             var character = (Character*)battleChara;
             if (playDeadResolved)
                 emotePlayer.ResetEmote(character);
+            character->DrawData.HideWeapons(false);
         }
         catch (Exception ex)
         {
@@ -529,6 +534,7 @@ public unsafe class AnimationController : IDisposable
             var character = (Character*)player.Address;
             if (playDeadResolved)
                 emotePlayer.ResetEmote(character);
+            character->DrawData.HideWeapons(false);
         }
         catch (Exception ex)
         {
