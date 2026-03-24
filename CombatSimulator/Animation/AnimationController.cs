@@ -443,8 +443,9 @@ public unsafe class AnimationController : IDisposable
 
             var character = (Character*)npc.BattleChara;
 
-            // Hide weapons so they don't float in the dead character's hand
-            character->DrawData.HideWeapons(true);
+            // Hide weapon models so they don't float in the dead character's hand
+            character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).IsHidden = true;
+            character->DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).IsHidden = true;
 
             if (playDeadResolved)
             {
@@ -489,7 +490,8 @@ public unsafe class AnimationController : IDisposable
                 if (player != null)
                 {
                     var character = (Character*)player.Address;
-                    character->DrawData.HideWeapons(true);
+                    character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).IsHidden = true;
+                    character->DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).IsHidden = true;
                     emotePlayer.PlayLoopedEmote(character, playDeadLoopTimeline, playDeadIntroTimeline);
                     log.Info("Player death emote (timeline) triggered.");
                 }
@@ -513,7 +515,8 @@ public unsafe class AnimationController : IDisposable
             var character = (Character*)battleChara;
             if (playDeadResolved)
                 emotePlayer.ResetEmote(character);
-            character->DrawData.HideWeapons(false);
+            character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).IsHidden = false;
+            character->DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).IsHidden = false;
         }
         catch (Exception ex)
         {
@@ -534,7 +537,8 @@ public unsafe class AnimationController : IDisposable
             var character = (Character*)player.Address;
             if (playDeadResolved)
                 emotePlayer.ResetEmote(character);
-            character->DrawData.HideWeapons(false);
+            character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).IsHidden = false;
+            character->DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).IsHidden = false;
         }
         catch (Exception ex)
         {
