@@ -1,6 +1,6 @@
 <Project Sdk="Dalamud.NET.Sdk/14.0.2">
   <PropertyGroup>
-    <Version>0.4.0</Version>
+    <Version>0.4.1</Version>
     <Authors>zysilm</Authors>
     <Description>Client-side combat simulation with spawned battle NPCs</Description>
     <IsPackable>false</IsPackable>
