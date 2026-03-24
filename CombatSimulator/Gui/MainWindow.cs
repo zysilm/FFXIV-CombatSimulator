@@ -563,8 +563,18 @@ public class MainWindow : IDisposable
 
             var hasSelection = selectedPresetIndex >= 0 && selectedPresetIndex < config.DeathCamPresets.Count;
 
-            ImGui.SetNextItemWidth(250);
-            ImGui.Combo("##PresetSelect", ref selectedPresetIndex, presetNames, presetNames.Length);
+            if (ImGui.BeginListBox("##PresetSelect", new System.Numerics.Vector2(250, ImGui.GetTextLineHeightWithSpacing() * 8 + ImGui.GetStyle().FramePadding.Y * 2)))
+            {
+                for (int i = 0; i < presetNames.Length; i++)
+                {
+                    bool isSelected = selectedPresetIndex == i;
+                    if (ImGui.Selectable(presetNames[i], isSelected))
+                        selectedPresetIndex = i;
+                    if (isSelected)
+                        ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndListBox();
+            }
 
             ImGui.SameLine();
             if (ImGui.Button("Load") && hasSelection)
