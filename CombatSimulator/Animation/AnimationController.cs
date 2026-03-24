@@ -55,6 +55,9 @@ public unsafe class AnimationController : IDisposable
     private ushort playDeadIntroTimeline;
     private bool playDeadResolved;
 
+    // Saved weapon models for restoration after death (entityId → (mainHand, offHand))
+    private readonly Dictionary<uint, (WeaponModelId Main, WeaponModelId Off)> savedWeapons = new();
+
     // ActorVfxCreate — spawns a .avfx particle effect attached to an actor
     private delegate nint ActorVfxCreateDelegate(
         string path, nint a2, nint a3, float a4, char a5, ushort a6, char a7);
@@ -443,9 +446,14 @@ public unsafe class AnimationController : IDisposable
 
             var character = (Character*)npc.BattleChara;
 
-            // Hide weapon models so they don't float in the dead character's hand
-            character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).IsHidden = true;
-            character->DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).IsHidden = true;
+            // Remove weapon models so they don't show during the fall or on the corpse
+            var entityId = ((GameObject*)character)->EntityId;
+            savedWeapons[entityId] = (
+                character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).ModelId,
+                character->DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).ModelId);
+            var empty = new WeaponModelId { Value = 0 };
+            character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, empty, 0, 0, 0, 0);
+            character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, empty, 0, 0, 0, 0);
 
             if (playDeadResolved)
             {
@@ -490,8 +498,13 @@ public unsafe class AnimationController : IDisposable
                 if (player != null)
                 {
                     var character = (Character*)player.Address;
-                    character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).IsHidden = true;
-                    character->DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).IsHidden = true;
+                    var entityId = ((GameObject*)character)->EntityId;
+                    savedWeapons[entityId] = (
+                        character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).ModelId,
+                        character->DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).ModelId);
+                    var empty = new WeaponModelId { Value = 0 };
+                    character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, empty, 0, 0, 0, 0);
+                    character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, empty, 0, 0, 0, 0);
                     emotePlayer.PlayLoopedEmote(character, playDeadLoopTimeline, playDeadIntroTimeline);
                     log.Info("Player death emote (timeline) triggered.");
                 }
@@ -515,8 +528,13 @@ public unsafe class AnimationController : IDisposable
             var character = (Character*)battleChara;
             if (playDeadResolved)
                 emotePlayer.ResetEmote(character);
-            character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).IsHidden = false;
-            character->DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).IsHidden = false;
+            var entityId = ((GameObject*)character)->EntityId;
+            if (savedWeapons.TryGetValue(entityId, out var weapons))
+            {
+                character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, weapons.Main, 0, 0, 0, 0);
+                character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, weapons.Off, 0, 0, 0, 0);
+                savedWeapons.Remove(entityId);
+            }
         }
         catch (Exception ex)
         {
@@ -537,8 +555,13 @@ public unsafe class AnimationController : IDisposable
             var character = (Character*)player.Address;
             if (playDeadResolved)
                 emotePlayer.ResetEmote(character);
-            character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).IsHidden = false;
-            character->DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).IsHidden = false;
+            var entityId = ((GameObject*)character)->EntityId;
+            if (savedWeapons.TryGetValue(entityId, out var weapons))
+            {
+                character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, weapons.Main, 0, 0, 0, 0);
+                character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, weapons.Off, 0, 0, 0, 0);
+                savedWeapons.Remove(entityId);
+            }
         }
         catch (Exception ex)
         {
