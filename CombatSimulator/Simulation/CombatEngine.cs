@@ -592,6 +592,7 @@ public class CombatEngine : IDisposable
                 IsRanged = isRanged,
                 AnimationTimelineId = actionData.AnimationTimelineId,
                 HitTimelineId = actionData.HitTimelineId,
+                AttackTypeId = actionData.AttackTypeId,
                 Targets =
                 {
                     new TargetEffect

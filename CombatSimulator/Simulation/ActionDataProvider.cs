@@ -38,6 +38,9 @@ public class ActionData
 
     /// <summary>VFX RowId reference from the Action sheet.</summary>
     public uint VfxId { get; set; }
+
+    /// <summary>Raw AttackType RowId (1=slash, 2=pierce, 3=blunt, 4=shot, 5=magic).</summary>
+    public uint AttackTypeId { get; set; }
 }
 
 public class ActionDataProvider
@@ -78,7 +81,8 @@ public class ActionDataProvider
             IsPlayerAction = action.IsPlayerAction,
         };
 
-        // Damage type from AttackType
+        // Attack type (raw + mapped)
+        data.AttackTypeId = action.AttackType.RowId;
         data.DamageType = action.AttackType.RowId switch
         {
             1 => SimDamageType.Physical, // Slashing

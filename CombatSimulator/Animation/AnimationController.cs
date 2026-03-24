@@ -26,6 +26,7 @@ public class ActionEffectRequest
     public bool IsRanged { get; set; }
     public ushort AnimationTimelineId { get; set; }
     public ushort HitTimelineId { get; set; }
+    public uint AttackTypeId { get; set; }
     public List<TargetEffect> Targets { get; set; } = new();
 }
 
@@ -227,9 +228,20 @@ public unsafe class AnimationController : IDisposable
         }
     }
 
+    // Hit VFX paths per AttackType — stable game asset paths
+    private static readonly Dictionary<uint, string> HitVfxByAttackType = new()
+    {
+        { 1, "vfx/common/eff/dk05th_stdn0t.avfx" },  // Slashing
+        { 2, "vfx/common/eff/dk05th_stdn0t.avfx" },  // Piercing
+        { 3, "vfx/common/eff/dk04th_stdn0t.avfx" },  // Blunt (impact)
+        { 4, "vfx/common/eff/dk05th_stdn0t.avfx" },  // Shot
+        { 5, "vfx/common/eff/cmhit_fire1t.avfx" },   // Magic
+    };
+    private const string DefaultHitVfx = "vfx/common/eff/dk05th_stdn0t.avfx";
+
     /// <summary>
-    /// Spawn hit VFX on each target using ActorVfxCreate.
-    /// Uses a generic hit effect; caster-side spell VFX comes from the animation timeline.
+    /// Spawn attack-type-appropriate hit VFX on each target using ActorVfxCreate.
+    /// Caster-side spell VFX comes from the animation timeline.
     /// </summary>
     private void SpawnTargetHitVfx(ActionEffectRequest request)
     {
@@ -237,13 +249,17 @@ public unsafe class AnimationController : IDisposable
 
         try
         {
+            // Pick VFX based on attack type
+            if (!HitVfxByAttackType.TryGetValue(request.AttackTypeId, out var vfxPath))
+                vfxPath = DefaultHitVfx;
+
             foreach (var target in request.Targets)
             {
                 if (target.Damage <= 0 && target.Healing <= 0) continue;
 
                 // Find target game object
                 nint targetAddr = 0;
-                foreach (var obj in Core.Services.ObjectTable)
+                foreach (var obj in Services.ObjectTable)
                 {
                     if (obj.EntityId == (uint)target.TargetId)
                     {
@@ -261,12 +277,8 @@ public unsafe class AnimationController : IDisposable
                     if (player != null) casterAddr = player.Address;
                 }
 
-                var vfxPath = config.HitVfxPath;
-                if (string.IsNullOrWhiteSpace(vfxPath))
-                    vfxPath = "vfx/common/eff/dk05th_stdn0t.avfx";
-
                 actorVfxCreate(vfxPath, targetAddr, casterAddr, -1, (char)0, 0, (char)0);
-                log.Verbose($"Hit VFX spawned on target 0x{target.TargetId:X}");
+                log.Verbose($"Hit VFX ({vfxPath}) spawned on target 0x{target.TargetId:X}");
             }
         }
         catch (Exception ex)
