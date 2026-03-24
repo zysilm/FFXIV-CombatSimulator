@@ -17,6 +17,9 @@ public class RagdollSimulation
     private readonly BonePhysicsState[] boneStates;
     private readonly HashSet<int> ragdollBoneSet;
 
+    // Precomputed bone directions (parent→bone in model space) for gravity
+    private readonly Vector3[] restBoneDirections;
+
     // Whether any bone has non-trivial velocity (optimization: skip tick when settled)
     public bool IsSettled { get; private set; }
 
@@ -28,6 +31,23 @@ public class RagdollSimulation
         var snapshot = poseCapture.Snapshot;
         boneStates = new BonePhysicsState[snapshot.BoneCount];
         ragdollBoneSet = new HashSet<int>(poseCapture.RagdollBoneIndices);
+
+        // Precompute bone directions from snapshot model-space positions
+        restBoneDirections = new Vector3[snapshot.BoneCount];
+        for (int i = 0; i < snapshot.BoneCount; i++)
+        {
+            var parentIdx = snapshot.ParentIndices[i];
+            if (parentIdx >= 0 && parentIdx < snapshot.BoneCount)
+            {
+                var dir = snapshot.ModelPositions[i] - snapshot.ModelPositions[parentIdx];
+                restBoneDirections[i] = dir.LengthSquared() > 0.0001f
+                    ? Vector3.Normalize(dir) : Vector3.UnitY;
+            }
+            else
+            {
+                restBoneDirections[i] = Vector3.UnitY;
+            }
+        }
 
         // Initialize all bones to rest state
         for (int i = 0; i < snapshot.BoneCount; i++)
@@ -153,7 +173,19 @@ public class RagdollSimulation
             // 1. Apply damping
             state.AngularVelocity *= MathF.Max(0, 1f - damping * dt);
 
-            // 2. Apply spring return toward rest pose
+            // 2. Apply gravity — torque that pulls bone direction toward -Y (down)
+            if (parameters.Gravity > 0.001f)
+            {
+                // Rotate the rest bone direction by the current delta to get where the bone points now
+                var deltaRot = state.CurrentRotation * Quaternion.Inverse(state.RestRotation);
+                var currentDir = Vector3.Transform(restBoneDirections[i], deltaRot);
+
+                // Gravity torque = cross(currentDir, down) — perpendicular axis that rotates toward down
+                var gravityTorque = Vector3.Cross(currentDir, -Vector3.UnitY) * parameters.Gravity;
+                state.AngularVelocity += gravityTorque * dt / state.Mass;
+            }
+
+            // 3. Apply spring return toward rest pose
             var restInv = Quaternion.Inverse(state.RestRotation);
             var delta = state.CurrentRotation * restInv;
 
@@ -172,7 +204,7 @@ public class RagdollSimulation
                 state.AngularVelocity -= axis * angle * stiffness * dt;
             }
 
-            // 3. Integrate rotation
+            // 4. Integrate rotation
             var angVelMag = state.AngularVelocity.Length();
             if (angVelMag > 0.0001f)
             {
@@ -184,7 +216,7 @@ public class RagdollSimulation
                 state.CurrentRotation = Quaternion.Normalize(incrementalRot * state.CurrentRotation);
             }
 
-            // 4. Clamp: limit deviation from rest pose
+            // 5. Clamp: limit deviation from rest pose
             float maxAngleRad = state.MaxAngleFromRest * MathF.PI / 180f;
             ClampRotation(ref state.CurrentRotation, state.RestRotation, maxAngleRad);
 

@@ -104,7 +104,12 @@ public class DeathPoseCapture
             // Skip EX bones (extra/accessory)
             if (name.StartsWith("j_ex_")) continue;
 
-            // Include everything else (spine, limbs, head, neck, etc.)
+            // Skip upper body core — head, neck, spine rotate awkwardly without translation
+            // and cause rubber-gum artifacts at the neck-head joint
+            if (name == "j_kao" || name == "j_kubi" ||
+                name == "j_sebo_a" || name == "j_sebo_b" || name == "j_sebo_c") continue;
+
+            // Include everything else (clavicles, limbs, pelvis, etc.)
             eligible.Add(i);
         }
 
