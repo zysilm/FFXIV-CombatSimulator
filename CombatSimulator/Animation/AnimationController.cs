@@ -269,15 +269,8 @@ public unsafe class AnimationController : IDisposable
                 }
                 if (targetAddr == 0) continue;
 
-                // Also resolve caster for the "source" parameter
-                var casterAddr = targetAddr; // fallback
-                if (request.IsSourcePlayer)
-                {
-                    var player = clientState.LocalPlayer;
-                    if (player != null) casterAddr = player.Address;
-                }
-
-                actorVfxCreate(vfxPath, targetAddr, casterAddr, -1, (char)0, 0, (char)0);
+                // Use targetAddr for both params — same pattern as SpawnHitVfxOnPlayer which works
+                actorVfxCreate(vfxPath, targetAddr, targetAddr, -1, (char)0, 0, (char)0);
                 log.Verbose($"Hit VFX ({vfxPath}) spawned on target 0x{target.TargetId:X}");
             }
         }
