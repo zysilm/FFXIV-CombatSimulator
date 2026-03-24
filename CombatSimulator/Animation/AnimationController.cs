@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using CombatSimulator.Core;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
@@ -23,6 +24,8 @@ public class ActionEffectRequest
     public float SourceRotation { get; set; }
     public bool IsSourcePlayer { get; set; }
     public bool IsRanged { get; set; }
+    public ushort AnimationTimelineId { get; set; }
+    public ushort HitTimelineId { get; set; }
     public List<TargetEffect> Targets { get; set; } = new();
 }
 
@@ -185,12 +188,87 @@ public unsafe class AnimationController : IDisposable
                 }
             }
 
-            // Use ActionEffectHandler.Receive() for the real combat pipeline
+            // Play caster's action animation timeline (includes spell VFX triggers)
+            if (request.AnimationTimelineId != 0)
+                PlayCasterActionTimeline(request);
+
+            // Spawn hit VFX on targets
+            SpawnTargetHitVfx(request);
+
+            // Use ActionEffectHandler.Receive() for flytext + damage numbers
             CallActionEffectReceive(request);
         }
         catch (Exception ex)
         {
             log.Error(ex, "Failed to play action effect.");
+        }
+    }
+
+    /// <summary>
+    /// Play the caster's attack/spell animation timeline directly on the character.
+    /// This triggers the animation + embedded VFX (casting circle, projectile, etc.).
+    /// </summary>
+    private void PlayCasterActionTimeline(ActionEffectRequest request)
+    {
+        try
+        {
+            Character* casterPtr = FindCharacter(request.SourceEntityId, request.IsSourcePlayer);
+            if (casterPtr == null) return;
+
+            emotePlayer.PlayOneShot(casterPtr, request.AnimationTimelineId);
+            log.Verbose($"Caster animation timeline {request.AnimationTimelineId} played for action {request.ActionId}.");
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Failed to play caster action timeline.");
+        }
+    }
+
+    /// <summary>
+    /// Spawn hit VFX on each target using ActorVfxCreate.
+    /// Uses a generic hit effect; caster-side spell VFX comes from the animation timeline.
+    /// </summary>
+    private void SpawnTargetHitVfx(ActionEffectRequest request)
+    {
+        if (actorVfxCreate == null) return;
+
+        try
+        {
+            foreach (var target in request.Targets)
+            {
+                if (target.Damage <= 0 && target.Healing <= 0) continue;
+
+                // Find target game object
+                nint targetAddr = 0;
+                foreach (var obj in Core.Services.ObjectTable)
+                {
+                    if (obj.EntityId == (uint)target.TargetId)
+                    {
+                        targetAddr = obj.Address;
+                        break;
+                    }
+                }
+                if (targetAddr == 0) continue;
+
+                // Also resolve caster for the "source" parameter
+                var casterAddr = targetAddr; // fallback
+                if (request.IsSourcePlayer)
+                {
+                    var player = clientState.LocalPlayer;
+                    if (player != null) casterAddr = player.Address;
+                }
+
+                var vfxPath = config.HitVfxPath;
+                if (string.IsNullOrWhiteSpace(vfxPath))
+                    vfxPath = "vfx/common/eff/dk05th_stdn0t.avfx";
+
+                actorVfxCreate(vfxPath, targetAddr, casterAddr, -1, (char)0, 0, (char)0);
+                log.Verbose($"Hit VFX spawned on target 0x{target.TargetId:X}");
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Failed to spawn target hit VFX.");
         }
     }
 

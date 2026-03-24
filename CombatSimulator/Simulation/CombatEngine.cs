@@ -590,6 +590,8 @@ public class CombatEngine : IDisposable
                 SourceRotation = GetEntityRotation(source),
                 IsSourcePlayer = source.IsPlayer,
                 IsRanged = isRanged,
+                AnimationTimelineId = actionData.AnimationTimelineId,
+                HitTimelineId = actionData.HitTimelineId,
                 Targets =
                 {
                     new TargetEffect

@@ -29,6 +29,15 @@ public class ActionData
     public int ComboPotency { get; set; }
     public float AnimationLock { get; set; } = 0.6f;
     public bool IsPlayerAction { get; set; } = true;
+
+    /// <summary>ActionTimeline RowId for the attack/cast-end animation (includes VFX triggers).</summary>
+    public ushort AnimationTimelineId { get; set; }
+
+    /// <summary>ActionTimeline RowId for target hit reaction.</summary>
+    public ushort HitTimelineId { get; set; }
+
+    /// <summary>VFX RowId reference from the Action sheet.</summary>
+    public uint VfxId { get; set; }
 }
 
 public class ActionDataProvider
@@ -84,6 +93,11 @@ public class ActionDataProvider
         // we approximate from the action description or use defaults.
         // For MVP, use a reasonable default based on recast.
         data.Potency = EstimatePotency(data);
+
+        // Animation timeline IDs (for VFX triggering)
+        data.AnimationTimelineId = (ushort)action.AnimationEnd.RowId;
+        data.HitTimelineId = (ushort)action.ActionTimelineHit.RowId;
+        data.VfxId = action.VFX.RowId;
 
         // Combo
         if (action.ActionCombo.RowId != 0)
