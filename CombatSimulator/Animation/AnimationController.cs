@@ -257,6 +257,10 @@ public unsafe class AnimationController : IDisposable
             {
                 if (target.Damage <= 0 && target.Healing <= 0) continue;
 
+                // Skip player targets — player hit VFX is handled by SpawnHitVfxOnPlayer (uses config path)
+                var player = clientState.LocalPlayer;
+                if (player != null && (uint)target.TargetId == player.EntityId) continue;
+
                 // Find target game object
                 nint targetAddr = 0;
                 foreach (var obj in Services.ObjectTable)
