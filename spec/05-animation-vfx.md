@@ -300,6 +300,9 @@ public void SetBattleStance(SimulatedNpc npc)
 All four flags must be set together — `InCombat` alone is insufficient for most
 monster models. `ClearBattleStance()` resets all flags when simulation stops.
 
+> **Known limitation:** Setting these flags does not reliably trigger the weapon-draw
+> animation on all NPC models. See KNOWN_ISSUES.md for details and workarounds attempted.
+
 ## Fallback: Direct VFX Spawning
 
 If ActionEffectHandler.Receive() proves unreliable, we can spawn VFX directly:
