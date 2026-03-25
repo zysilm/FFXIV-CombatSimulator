@@ -32,6 +32,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly ChatCommandExecutor chatCommandExecutor;
     private readonly GlamourerIpc glamourerIpc;
     private readonly AnimationController animationController;
+    private readonly ConvulsionController convulsionController;
     private readonly CombatEngine combatEngine;
     private readonly NpcAiController npcAiController;
     private readonly MovementBlockHook movementBlockHook;
@@ -78,11 +79,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
+        convulsionController = new ConvulsionController(gameInterop, sigScanner, config, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
-            glamourerIpc, movementBlockHook, config, npcSelector, clientState, log,
+            glamourerIpc, movementBlockHook, convulsionController, config, npcSelector, clientState, log,
             deathCamController);
         npcAiController = new NpcAiController(combatEngine, animationController, movementBlockHook, clientState, config, log);
 
@@ -133,6 +135,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         mainWindow.Dispose();
         npcAiController.Dispose();
         combatEngine.Dispose();
+        convulsionController.Dispose();
         deathCamController.Dispose();
         animationController.Dispose();
         npcSelector.Dispose();

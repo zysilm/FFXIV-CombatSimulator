@@ -6,6 +6,7 @@ using CombatSimulator.Camera;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
+using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 
@@ -54,6 +55,7 @@ public class CombatEngine : IDisposable
     private readonly NpcSelector npcSelector;
     private readonly IClientState clientState;
     private readonly IPluginLog log;
+    private readonly ConvulsionController convulsionController;
     private readonly DeathCamController? deathCamController;
     private bool playerDeathTriggered;
     private bool victoryTriggered;
@@ -74,7 +76,6 @@ public class CombatEngine : IDisposable
 
     // Pending death animations (delayed so the killing blow visuals play first)
     private readonly List<PendingDeath> pendingDeaths = new();
-    private readonly List<PendingDeath> pendingDeathReapplies = new();
     private const float DeathAnimationDelay = 0.5f;
 
     private struct PendingDeath
@@ -90,6 +91,7 @@ public class CombatEngine : IDisposable
         AnimationController animationController,
         GlamourerIpc glamourerIpc,
         MovementBlockHook movementBlockHook,
+        ConvulsionController convulsionController,
         Configuration config,
         NpcSelector npcSelector,
         IClientState clientState,
@@ -101,6 +103,7 @@ public class CombatEngine : IDisposable
         this.animationController = animationController;
         this.glamourerIpc = glamourerIpc;
         this.movementBlockHook = movementBlockHook;
+        this.convulsionController = convulsionController;
         this.config = config;
         this.npcSelector = npcSelector;
         this.clientState = clientState;
@@ -121,7 +124,6 @@ public class CombatEngine : IDisposable
         victoryTriggered = false;
         glamourerApplied = false;
         pendingDeaths.Clear();
-        pendingDeathReapplies.Clear();
 
         // Apply glamourer combat-ready preset on start
         ApplyResetGlamourer();
@@ -162,6 +164,7 @@ public class CombatEngine : IDisposable
         npcSelector.DeselectAll();
         animationController.ResetPlayerDeathAnimation();
         movementBlockHook.IsBlocking = false;
+        convulsionController.Deactivate();
         deathCamController?.Deactivate();
         RevertGlamourer();
 
@@ -202,6 +205,7 @@ public class CombatEngine : IDisposable
 
         animationController.ResetPlayerDeathAnimation();
         movementBlockHook.IsBlocking = false;
+        convulsionController.Deactivate();
         RevertGlamourer();
         ApplyResetGlamourer();
 
@@ -209,7 +213,6 @@ public class CombatEngine : IDisposable
         victoryTriggered = false;
         glamourerApplied = false;
         pendingDeaths.Clear();
-        pendingDeathReapplies.Clear();
 
         AddLogEntry("Combat state reset.", CombatLogType.Info);
     }
@@ -229,9 +232,6 @@ public class CombatEngine : IDisposable
 
         // Process pending death animations
         TickPendingDeaths(deltaTime);
-
-        // Torture mode: re-apply death pose after hits on dead characters
-        TickPendingDeathReapplies(deltaTime);
 
         // Tick cooldowns
         TickCooldowns(State.PlayerState, deltaTime);
@@ -299,7 +299,7 @@ public class CombatEngine : IDisposable
             return result;
         }
 
-        if (!config.EnableTorture && !target.IsAlive)
+        if (!target.IsAlive)
         {
             result.FailReason = "Target is already dead.";
             return result;
@@ -461,9 +461,6 @@ public class CombatEngine : IDisposable
         {
             result.TargetKilled = true;
             OnEntityDeath(target);
-
-            if (config.EnableTorture)
-                ReapplyDeathPose(target);
         }
 
         return result;
@@ -479,7 +476,7 @@ public class CombatEngine : IDisposable
         };
 
         var target = State.GetEntity(targetId);
-        if (target == null || !npc.State.IsAlive || (!config.EnableTorture && !target.IsAlive))
+        if (target == null || !npc.State.IsAlive || !target.IsAlive)
         {
             result.FailReason = "Invalid target or source dead.";
             return result;
@@ -540,9 +537,6 @@ public class CombatEngine : IDisposable
         {
             result.TargetKilled = true;
             OnEntityDeath(target);
-
-            if (config.EnableTorture)
-                ReapplyDeathPose(target);
         }
 
         return result;
@@ -652,59 +646,6 @@ public class CombatEngine : IDisposable
         }
     }
 
-    private void TickPendingDeathReapplies(float deltaTime)
-    {
-        for (int i = pendingDeathReapplies.Count - 1; i >= 0; i--)
-        {
-            var pd = pendingDeathReapplies[i];
-            pd.Timer -= deltaTime;
-            pendingDeathReapplies[i] = pd;
-
-            if (pd.Timer <= 0)
-            {
-                pendingDeathReapplies.RemoveAt(i);
-
-                if (pd.IsPlayer)
-                {
-                    animationController.PlayPlayerDeath();
-                }
-                else
-                {
-                    foreach (var npc in npcSelector.SelectedNpcs)
-                    {
-                        if (npc.SimulatedEntityId == pd.EntityId)
-                        {
-                            animationController.PlayDeathAnimation(npc);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private void ReapplyDeathPose(SimulatedEntityState entity)
-    {
-        if (entity.IsPlayer)
-        {
-            pendingDeathReapplies.Add(new PendingDeath
-            {
-                EntityId = 0UL,
-                IsPlayer = true,
-                Timer = 0.15f,
-            });
-        }
-        else
-        {
-            pendingDeathReapplies.Add(new PendingDeath
-            {
-                EntityId = entity.EntityId,
-                IsPlayer = false,
-                Timer = 0.15f,
-            });
-        }
-    }
-
     private void ExecuteDeathAnimation(ulong entityId, bool isPlayer)
     {
         if (isPlayer)
@@ -717,6 +658,27 @@ public class CombatEngine : IDisposable
                 animationController.PlayVictory(isPlayerVictory: false);
                 ApplyGlamourer();
                 deathCamController?.Activate();
+
+                // Activate convulsion effect on player death
+                if (config.EnableTorture)
+                {
+                    var player = clientState.LocalPlayer;
+                    if (player != null)
+                    {
+                        unsafe
+                        {
+                            var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;
+                            var drawObj = gameObj->DrawObject;
+                            if (drawObj != null)
+                            {
+                                convulsionController.Activate(
+                                    (nint)drawObj,
+                                    config.ConvulsionIntensity,
+                                    config.ConvulsionDuration);
+                            }
+                        }
+                    }
+                }
             }
         }
         else
@@ -933,7 +895,7 @@ public class CombatEngine : IDisposable
             // Auto-attack closest engaged NPC
             foreach (var npc in npcSelector.SelectedNpcs)
             {
-                if ((config.EnableTorture || npc.State.IsAlive) && npc.IsEngaged)
+                if (npc.State.IsAlive && npc.IsEngaged)
                 {
                     var dmg = damageCalculator.CalculateNpcAutoAttack(ps, npc.State, 110);
                     npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
@@ -950,11 +912,7 @@ public class CombatEngine : IDisposable
                     TriggerActionEffect(ps, npc.State, autoAttackData, dmg);
 
                     if (!npc.State.IsAlive)
-                    {
                         OnEntityDeath(npc.State);
-                        if (config.EnableTorture)
-                            ReapplyDeathPose(npc.State);
-                    }
 
                     break;
                 }

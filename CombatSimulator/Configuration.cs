@@ -89,6 +89,10 @@ public class Configuration : IPluginConfiguration
     // Experimental
     public bool EnableTorture { get; set; } = false;
 
+    // Convulsion settings (hidden behind EnableTorture)
+    public float ConvulsionIntensity { get; set; } = 0.5f;
+    public float ConvulsionDuration { get; set; } = 8.0f;
+
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
     public bool EnableHitVfx { get; set; } = true;

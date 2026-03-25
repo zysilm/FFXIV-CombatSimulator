@@ -27,6 +27,10 @@ public class MainWindow : IDisposable
     // Model override state
     private int modelOverrideId = 0;
 
+    // Torture easter egg state (non-serialized, resets each session)
+    private int tortureClickCount = 0;
+    private bool tortureUnlocked = false;
+
     // Glamourer design list cache for combo box
     private List<KeyValuePair<Guid, string>> glamourerDesigns = new();
     private int glamourerSelectedIndex = -1;
@@ -868,13 +872,59 @@ public class MainWindow : IDisposable
     {
         if (ImGui.CollapsingHeader("Experimental"))
         {
-            var torture = config.EnableTorture;
-            if (ImGui.Checkbox("Torture", ref torture))
+            if (!tortureUnlocked)
             {
-                config.EnableTorture = torture;
-                config.Save();
+                ImGui.BeginDisabled();
+                var dummy = false;
+                ImGui.Checkbox("Torture", ref dummy);
+                ImGui.EndDisabled();
+
+                // Detect clicks on the disabled checkbox area
+                var min = ImGui.GetItemRectMin();
+                var max = ImGui.GetItemRectMax();
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                {
+                    var mousePos = ImGui.GetMousePos();
+                    if (mousePos.X >= min.X && mousePos.X <= max.X &&
+                        mousePos.Y >= min.Y && mousePos.Y <= max.Y)
+                    {
+                        tortureClickCount++;
+                        if (tortureClickCount >= 7)
+                            tortureUnlocked = true;
+                    }
+                }
             }
-            HelpMarker("Allow attacks on dead characters. Dead targets stay on the floor and take hits but cannot fight back.");
+            else
+            {
+                var torture = config.EnableTorture;
+                if (ImGui.Checkbox("Torture", ref torture))
+                {
+                    config.EnableTorture = torture;
+                    config.Save();
+                }
+                HelpMarker("Death convulsion effect on player character.");
+
+                if (config.EnableTorture)
+                {
+                    ImGui.Indent();
+
+                    var intensity = config.ConvulsionIntensity;
+                    if (ImGui.SliderFloat("Intensity", ref intensity, 0.1f, 1.0f, "%.1f"))
+                    {
+                        config.ConvulsionIntensity = intensity;
+                        config.Save();
+                    }
+
+                    var duration = config.ConvulsionDuration;
+                    if (ImGui.SliderFloat("Duration (s)", ref duration, 2.0f, 30.0f, "%.1f"))
+                    {
+                        config.ConvulsionDuration = duration;
+                        config.Save();
+                    }
+
+                    ImGui.Unindent();
+                }
+            }
         }
     }
 

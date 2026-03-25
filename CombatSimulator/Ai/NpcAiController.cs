@@ -207,8 +207,8 @@ public unsafe class NpcAiController : IDisposable
             return;
         }
 
-        // Check if player is alive (in brutal mode, NPCs keep hitting the dead player)
-        if (!config.EnableTorture && !combatEngine.State.PlayerState.IsAlive)
+        // Check if player is alive — NPCs stop attacking when player is dead
+        if (!combatEngine.State.PlayerState.IsAlive)
         {
             npc.AiState = NpcAiState.Idle;
             return;
