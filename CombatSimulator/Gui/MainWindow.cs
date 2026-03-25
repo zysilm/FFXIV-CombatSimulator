@@ -501,6 +501,14 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Show a floating shortcuts bar for quick access to common actions.");
 
+            var showDcToolbar = config.ShowDeathCamToolbar;
+            if (ImGui.Checkbox("Show Death Cam Toolbar", ref showDcToolbar))
+            {
+                config.ShowDeathCamToolbar = showDcToolbar;
+                config.Save();
+            }
+            HelpMarker("Show a floating toolbar to quickly switch between death cam presets.");
+
             // Custom player name
             var customName = config.CustomPlayerName;
             if (ImGui.InputText("Custom Player Name", ref customName, 64))
@@ -550,8 +558,18 @@ public class MainWindow : IDisposable
 
             var hasSelection = selectedPresetIndex >= 0 && selectedPresetIndex < config.DeathCamPresets.Count;
 
-            ImGui.SetNextItemWidth(250);
-            ImGui.Combo("##PresetSelect", ref selectedPresetIndex, presetNames, presetNames.Length);
+            if (ImGui.BeginListBox("##PresetSelect", new Vector2(250, ImGui.GetTextLineHeightWithSpacing() * 8 + ImGui.GetStyle().FramePadding.Y * 2)))
+            {
+                for (int i = 0; i < presetNames.Length; i++)
+                {
+                    bool isSelected = selectedPresetIndex == i;
+                    if (ImGui.Selectable(presetNames[i], isSelected))
+                        selectedPresetIndex = i;
+                    if (isSelected)
+                        ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndListBox();
+            }
 
             ImGui.SameLine();
             if (ImGui.Button("Load") && hasSelection)
@@ -1000,6 +1018,66 @@ public class MainWindow : IDisposable
             combatEngine.StartSimulation();
             chatGui.Print("[CombatSim] Combat simulation rebooted.");
         }
+
+        ImGui.End();
+    }
+
+    public void DrawDeathCamToolbar()
+    {
+        var presets = config.DeathCamPresets;
+        if (presets.Count == 0)
+        {
+            ImGui.SetNextWindowSize(new Vector2(200, 0), ImGuiCond.FirstUseEver);
+            if (ImGui.Begin("Death Cam Presets", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+            {
+                ImGui.TextDisabled("No presets saved.");
+            }
+            ImGui.End();
+            return;
+        }
+
+        if (selectedPresetIndex < 0 || selectedPresetIndex >= presets.Count)
+            selectedPresetIndex = 0;
+
+        ImGui.SetNextWindowSize(new Vector2(280, 0), ImGuiCond.FirstUseEver);
+        if (!ImGui.Begin("Death Cam Presets", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.End();
+            return;
+        }
+
+        var arrowSize = new Vector2(28, 28);
+
+        var atStart = selectedPresetIndex <= 0;
+        if (atStart) ImGui.BeginDisabled();
+        if (ImGui.Button("<", arrowSize))
+        {
+            selectedPresetIndex--;
+            LoadPreset(presets[selectedPresetIndex]);
+        }
+        if (atStart) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+
+        var presetName = presets[selectedPresetIndex].Name;
+        var avail = ImGui.GetContentRegionAvail().X - arrowSize.X - ImGui.GetStyle().ItemSpacing.X;
+        var textSize = ImGui.CalcTextSize(presetName).X;
+        var pad = (avail - textSize) * 0.5f;
+        if (pad > 0) ImGui.SetCursorPosX(ImGui.GetCursorPosX() + pad);
+        ImGui.AlignTextToFramePadding();
+        ImGui.Text(presetName);
+
+        ImGui.SameLine();
+        if (pad > 0) ImGui.SetCursorPosX(ImGui.GetContentRegionMax().X - arrowSize.X);
+
+        var atEnd = selectedPresetIndex >= presets.Count - 1;
+        if (atEnd) ImGui.BeginDisabled();
+        if (ImGui.Button(">", arrowSize))
+        {
+            selectedPresetIndex++;
+            LoadPreset(presets[selectedPresetIndex]);
+        }
+        if (atEnd) ImGui.EndDisabled();
 
         ImGui.End();
     }

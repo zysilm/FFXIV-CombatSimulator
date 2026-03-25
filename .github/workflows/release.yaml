@@ -82,13 +82,17 @@ jobs:
           files: ${{ env.PLUGIN_NAME }}.zip
           generate_release_notes: true
 
-      - name: Update pluginmaster.json on repo
+      - name: Update pluginmaster.json on main
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout --orphan pluginmaster
-          git rm -rf . 2>/dev/null || true
+          git stash
+          git checkout main
           cp release/pluginmaster.json pluginmaster.json
           git add pluginmaster.json
-          git commit -m "Update pluginmaster.json for v${{ steps.version.outputs.version }}"
-          git push -f origin pluginmaster
+          if git diff --cached --quiet; then
+            echo "pluginmaster.json already up to date"
+          else
+            git commit -m "Update pluginmaster.json for v${{ steps.version.outputs.version }} [skip ci]"
+            git push origin main
+          fi
