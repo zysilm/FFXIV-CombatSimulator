@@ -8,6 +8,7 @@ using BepuPhysics.Constraints;
 using BepuUtilities;
 using BepuUtilities.Memory;
 using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using BepuSimulation = BepuPhysics.Simulation;
 
@@ -44,6 +45,10 @@ public unsafe class RagdollController : IDisposable
 
     // Diagnostic frame counter
     private int frameCount;
+
+    // Animation freeze state
+    private float savedOverallSpeed = 1.0f;
+    private readonly HashSet<int> ragdollBoneIndices = new();
 
     public bool IsActive => isActive;
 
@@ -117,8 +122,25 @@ public unsafe class RagdollController : IDisposable
     {
         if (!isActive) return;
         isActive = false;
+
+        // Restore animation speed before clearing the address
+        if (targetCharacterAddress != nint.Zero && physicsStarted)
+        {
+            try
+            {
+                var character = (Character*)targetCharacterAddress;
+                character->Timeline.OverallSpeed = savedOverallSpeed;
+                log.Info($"RagdollController: Animation restored (speed={savedOverallSpeed:F2})");
+            }
+            catch (Exception ex)
+            {
+                log.Warning(ex, "RagdollController: Failed to restore animation speed");
+            }
+        }
+
         targetCharacterAddress = nint.Zero;
         physicsStarted = false;
+        ragdollBoneIndices.Clear();
 
         DestroySimulation();
         log.Info("RagdollController: Deactivated");
@@ -420,6 +442,20 @@ public unsafe class RagdollController : IDisposable
                 });
         }
 
+        // Build ragdoll bone index set for fast lookup during propagation
+        ragdollBoneIndices.Clear();
+        foreach (var rb in ragdollBones)
+            ragdollBoneIndices.Add(rb.BoneIndex);
+
+        // Freeze animation so the death animation stops fighting physics.
+        // With OverallSpeed=0, the animation system stops advancing time,
+        // so it writes the same frozen frame each render. We then overwrite
+        // ragdoll bones with physics, and propagate to non-ragdoll descendants.
+        var character = (Character*)targetCharacterAddress;
+        savedOverallSpeed = character->Timeline.OverallSpeed;
+        character->Timeline.OverallSpeed = 0f;
+        log.Info($"RagdollController: Animation frozen (saved speed={savedOverallSpeed:F2})");
+
         log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, ground={groundY:F3}");
         return ragdollBones.Count > 0;
     }
@@ -431,6 +467,10 @@ public unsafe class RagdollController : IDisposable
         var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
         if (skelNullable == null) return;
         var skel = skelNullable.Value;
+
+        // Keep animation frozen (game may recalculate OverallSpeed each frame)
+        var character = (Character*)targetCharacterAddress;
+        character->Timeline.OverallSpeed = 0f;
 
         // Step physics
         simulation.Timestep(1.0f / 60.0f);
@@ -487,6 +527,30 @@ public unsafe class RagdollController : IDisposable
             }
 
             boneService.WriteBoneTransform(skel, rb.BoneIndex, modelPos, modelRot, result);
+        }
+
+        // Propagate ragdoll movement to non-ragdoll descendant bones (hands, fingers, toes).
+        // Without this, these bones stay at their frozen animation positions while their
+        // ragdoll parent bones move via physics, causing mesh tearing at boundaries.
+        for (int i = 0; i < skel.BoneCount && i < skel.ParentCount; i++)
+        {
+            if (ragdollBoneIndices.Contains(i)) continue; // already handled by physics
+
+            var parentIdx = skel.HavokSkeleton->ParentIndices[i];
+            if (parentIdx < 0 || !result.HasAccumulated[parentIdx]) continue;
+
+            var parentDelta = result.AccumulatedDeltas[parentIdx];
+            var parentOrigPos = result.OriginalPositions[parentIdx];
+            ref var parentModel = ref pose->ModelPose.Data[parentIdx];
+            var parentNewPos = new Vector3(parentModel.Translation.X, parentModel.Translation.Y, parentModel.Translation.Z);
+
+            // Rotate this bone around its parent's original position, then translate by parent displacement
+            var relPos = result.OriginalPositions[i] - parentOrigPos;
+            relPos = Vector3.Transform(relPos, parentDelta);
+            var newPos = parentOrigPos + relPos + (parentNewPos - parentOrigPos);
+            var newRot = Quaternion.Normalize(parentDelta * result.OriginalRotations[i]);
+
+            boneService.WriteBoneTransform(skel, i, newPos, newRot, result);
         }
 
         // Propagate j_kao changes to face/hair partial skeletons
