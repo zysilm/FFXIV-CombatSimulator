@@ -1,10 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
-using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
-using FFXIVClientStructs.FFXIV.Client.Game.Object;
-using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 
 namespace CombatSimulator.Animation;
 
@@ -12,15 +9,15 @@ public unsafe class ConvulsionController : IDisposable
 {
     private readonly IPluginLog log;
     private readonly Configuration config;
-
-    private delegate nint RenderDelegate(nint a1, nint a2, nint a3, int a4);
-    private Hook<RenderDelegate>? renderHook;
+    private readonly BoneTransformService boneService;
 
     // State
     private bool isActive;
     private nint targetCharacterAddress;
     private float elapsed;
     private float duration;
+
+    public bool IsActive => isActive;
 
     // Only these bones participate in convulsion
     private static readonly HashSet<string> AllowedBones = new()
@@ -46,8 +43,9 @@ public unsafe class ConvulsionController : IDisposable
     private bool bonesResolved;
     private readonly Random rng = new();
 
-    // Head follow: j_kao bone index (resolved but not in AllowedBones)
+    // Head follow
     private int kaoBoneIndex = -1;
+    private int kaoParentIndex = -1;
 
     private struct RuntimeBoneConfig
     {
@@ -58,26 +56,16 @@ public unsafe class ConvulsionController : IDisposable
         public float AxisX;
         public float AxisY;
         public float AxisZ;
-        public float Intensity; // per-bone intensity multiplier
+        public float Intensity;
     }
 
-    public ConvulsionController(IGameInteropProvider gameInterop, ISigScanner sigScanner, Configuration config, IPluginLog log)
+    public ConvulsionController(BoneTransformService boneService, Configuration config, IPluginLog log)
     {
-        this.log = log;
+        this.boneService = boneService;
         this.config = config;
+        this.log = log;
 
-        try
-        {
-            var addr = sigScanner.ScanText(
-                "E8 ?? ?? ?? ?? 48 81 C3 ?? ?? ?? ?? BF ?? ?? ?? ?? 33 ED");
-            renderHook = gameInterop.HookFromAddress<RenderDelegate>(addr, RenderDetour);
-            renderHook.Enable();
-            log.Info($"ConvulsionController: Render hook at 0x{addr:X}");
-        }
-        catch (Exception ex)
-        {
-            log.Error(ex, "ConvulsionController: Failed to create render hook.");
-        }
+        boneService.OnRenderFrame += OnRenderFrame;
     }
 
     public void Activate(nint characterAddress, float intensityScale, float durationSeconds)
@@ -99,54 +87,36 @@ public unsafe class ConvulsionController : IDisposable
         targetCharacterAddress = nint.Zero;
         bonesResolved = false;
         kaoBoneIndex = -1;
+        kaoParentIndex = -1;
         runtimeBones.Clear();
         log.Info("ConvulsionController: Deactivated");
     }
 
-    private nint RenderDetour(nint a1, nint a2, nint a3, int a4)
+    private void OnRenderFrame()
     {
-        if (isActive)
-        {
-            try
-            {
-                ApplyConvulsion();
-            }
-            catch (Exception ex)
-            {
-                log.Error(ex, "ConvulsionController: Error in render hook");
-                Deactivate();
-            }
-        }
+        if (!isActive) return;
 
-        return renderHook!.Original(a1, a2, a3, a4);
+        try
+        {
+            ApplyConvulsion();
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "ConvulsionController: Error in render frame");
+            Deactivate();
+        }
     }
 
     private void ApplyConvulsion()
     {
-        if (targetCharacterAddress == nint.Zero) return;
+        var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
+        if (skelNullable == null) return;
+        var skel = skelNullable.Value;
 
-        var gameObj = (GameObject*)targetCharacterAddress;
-        if (gameObj->DrawObject == null) return;
-
-        var charBase = (CharacterBase*)gameObj->DrawObject;
-        var skeleton = charBase->Skeleton;
-        if (skeleton == null || skeleton->PartialSkeletonCount < 1) return;
-
-        var partial = &skeleton->PartialSkeletons[0];
-        var pose = partial->GetHavokPose(0);
-        if (pose == null || pose->Skeleton == null) return;
-        if (pose->ModelInSync == 0) return;
-
-        var havokSkel = pose->Skeleton;
-        var boneCount = pose->LocalPose.Length;
-        var modelCount = pose->ModelPose.Length;
-        var parentCount = havokSkel->ParentIndices.Length;
-        if (boneCount != modelCount) return;
-
-        // Resolve bones dynamically on first frame
+        // Resolve bones on first frame
         if (!bonesResolved)
         {
-            BuildRuntimeBones(havokSkel, boneCount);
+            BuildRuntimeBones(skel);
             bonesResolved = true;
         }
 
@@ -161,12 +131,12 @@ public unsafe class ConvulsionController : IDisposable
         // Exponential decay
         float decay = (float)Math.Exp(-elapsed * 3.0 / duration);
 
-        // Build deltas
+        // Compute per-bone rotation deltas
         var deltas = new Dictionary<int, Quaternion>();
         for (int i = 0; i < runtimeBones.Count; i++)
         {
             var bc = runtimeBones[i];
-            if (bc.BoneIndex < 0 || bc.BoneIndex >= boneCount) continue;
+            if (bc.BoneIndex < 0 || bc.BoneIndex >= skel.BoneCount) continue;
 
             float currentIntensity = bc.Intensity * decay;
             float angle = bc.MaxAngleDeg * currentIntensity *
@@ -181,217 +151,91 @@ public unsafe class ConvulsionController : IDisposable
 
         if (deltas.Count == 0) return;
 
-        // CustomizePlus approach: modify ModelPose directly, never touch LocalPose.
-        // This preserves physics (breast, stomach, etc.) since physics writes to ModelPose.
-
-        // Save original positions/rotations BEFORE any modifications (fixes propagation bug)
-        var origPos = new Vector3[boneCount];
-        var origRot = new Quaternion[boneCount];
-        for (int i = 0; i < boneCount; i++)
-        {
-            ref var m = ref pose->ModelPose.Data[i];
-            origPos[i] = new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z);
-            origRot[i] = new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W);
-        }
-
-        // Track accumulated model-space rotation delta per bone for propagation
-        var accDelta = new Quaternion[boneCount];
-        var hasAcc = new bool[boneCount];
-
-        // In rotation mode, skip j_kao in the main loop — handle it separately
+        // In rotation head mode, skip j_kao in the main loop
+        HashSet<int>? skipBones = null;
         bool kaoRotationMode = kaoBoneIndex >= 0 && config.ConvulsionHeadFollowMode == 1;
-
-        for (int i = 0; i < boneCount && i < parentCount; i++)
+        if (kaoRotationMode)
         {
-            if (kaoRotationMode && i == kaoBoneIndex) continue;
-
-            var parentIdx = (i > 0) ? havokSkel->ParentIndices[i] : (short)-1;
-            bool hasDirect = deltas.TryGetValue(i, out var directDelta);
-            bool parentHasAcc = parentIdx >= 0 && parentIdx < boneCount && hasAcc[parentIdx];
-
-            if (!hasDirect && !parentHasAcc)
-                continue;
-
-            var newRot = origRot[i];
-            var newPos = origPos[i];
-
-            // Propagate parent's accumulated delta (rotate around parent's ORIGINAL pivot)
-            if (parentHasAcc)
-            {
-                var parentOrigPos = origPos[parentIdx];
-                var pDelta = accDelta[parentIdx];
-
-                var relPos = origPos[i] - parentOrigPos;
-                relPos = Vector3.Transform(relPos, pDelta);
-                newPos = parentOrigPos + relPos;
-
-                // Parent also moved — add its displacement
-                ref var parentModel = ref pose->ModelPose.Data[parentIdx];
-                var parentNewPos = new Vector3(parentModel.Translation.X, parentModel.Translation.Y, parentModel.Translation.Z);
-                newPos += parentNewPos - parentOrigPos;
-
-                newRot = Quaternion.Normalize(pDelta * newRot);
-            }
-
-            // Apply this bone's own direct delta (local-space, so right-multiply)
-            if (hasDirect)
-            {
-                newRot = Quaternion.Normalize(newRot * directDelta);
-            }
-
-            // Compute accumulated delta for children: total change from original
-            accDelta[i] = Quaternion.Normalize(newRot * Quaternion.Inverse(origRot[i]));
-            hasAcc[i] = true;
-
-            // Write back
-            ref var model = ref pose->ModelPose.Data[i];
-            model.Translation.X = newPos.X;
-            model.Translation.Y = newPos.Y;
-            model.Translation.Z = newPos.Z;
-            model.Rotation.X = newRot.X;
-            model.Rotation.Y = newRot.Y;
-            model.Rotation.Z = newRot.Z;
-            model.Rotation.W = newRot.W;
+            skipBones = new HashSet<int> { kaoBoneIndex };
         }
 
-        // Rotation mode: rotate j_kao around its ground contact point instead of translating.
-        // The head rests on the ground at the point furthest from the neck connection.
-        // Converting the neck displacement into a rotation makes the head rock/roll in place.
-        if (kaoRotationMode && kaoBoneIndex < boneCount)
+        // Apply deltas via service (handles propagation)
+        var result = boneService.ApplyRotationDeltas(skel, deltas, skipBones);
+
+        // Head rotation mode: rotate j_kao around ground contact instead of translating
+        if (kaoRotationMode && kaoBoneIndex < skel.BoneCount &&
+            kaoParentIndex >= 0 && kaoParentIndex < skel.BoneCount &&
+            result.HasAccumulated[kaoParentIndex])
         {
-            var kaoParentIdx = havokSkel->ParentIndices[kaoBoneIndex];
-            if (kaoParentIdx >= 0 && kaoParentIdx < boneCount && hasAcc[kaoParentIdx])
+            var neckDelta = result.AccumulatedDeltas[kaoParentIndex];
+            ref var neckModel = ref skel.Pose->ModelPose.Data[kaoParentIndex];
+            var neckNewPos = new Vector3(neckModel.Translation.X, neckModel.Translation.Y, neckModel.Translation.Z);
+            var neckOrigPos = result.OriginalPositions[kaoParentIndex];
+            var kaoOrigPos = result.OriginalPositions[kaoBoneIndex];
+            var kaoOrigRot = result.OriginalRotations[kaoBoneIndex];
+
+            // Desired displacement (what translation mode would produce)
+            var relToNeck = kaoOrigPos - neckOrigPos;
+            var rotatedRel = Vector3.Transform(relToNeck, neckDelta);
+            var desiredPos = neckOrigPos + rotatedRel + (neckNewPos - neckOrigPos);
+            var displacement = desiredPos - kaoOrigPos;
+
+            // Ground contact: furthest point on head from neck, ~headRadius away
+            const float headRadius = 0.12f;
+            var neckToHead = kaoOrigPos - neckOrigPos;
+            var headDirLen = neckToHead.Length();
+            var headDir = headDirLen > 0.001f ? neckToHead / headDirLen : Vector3.UnitY;
+            var groundContact = kaoOrigPos + headDir * headRadius;
+
+            // Convert displacement to rotation around ground contact
+            var leverArm = kaoOrigPos - groundContact;
+            var leverLen = leverArm.Length();
+
+            Quaternion pivotRot = Quaternion.Identity;
+            if (leverLen > 0.001f && displacement.Length() > 0.0001f)
             {
-                var neckDelta = accDelta[kaoParentIdx];
-                ref var neckModel = ref pose->ModelPose.Data[kaoParentIdx];
-                var neckNewPos = new Vector3(neckModel.Translation.X, neckModel.Translation.Y, neckModel.Translation.Z);
-
-                // Desired displacement (what translation mode would do)
-                var relToNeck = origPos[kaoBoneIndex] - origPos[kaoParentIdx];
-                var rotatedRel = Vector3.Transform(relToNeck, neckDelta);
-                var desiredPos = origPos[kaoParentIdx] + rotatedRel + (neckNewPos - origPos[kaoParentIdx]);
-                var displacement = desiredPos - origPos[kaoBoneIndex];
-
-                // Estimate ground contact point: head extends from neck connection,
-                // ground contact is at the far side (opposite from neck), ~headRadius away.
-                const float headRadius = 0.12f;
-                var headDir = Vector3.Normalize(origPos[kaoBoneIndex] - origPos[kaoParentIdx]);
-                var groundContact = origPos[kaoBoneIndex] + headDir * headRadius;
-
-                // Convert displacement to rotation around ground contact
-                var leverArm = origPos[kaoBoneIndex] - groundContact; // from ground to j_kao
-                var leverLen = leverArm.Length();
-
-                Quaternion pivotRot;
-                if (leverLen > 0.001f && displacement.Length() > 0.0001f)
+                var rotAxis = Vector3.Cross(leverArm, displacement);
+                var axisLen = rotAxis.Length();
+                if (axisLen > 0.00001f)
                 {
-                    var rotAxis = Vector3.Cross(leverArm, displacement);
-                    var axisLen = rotAxis.Length();
-                    if (axisLen > 0.00001f)
-                    {
-                        rotAxis /= axisLen;
-                        var rotAngle = displacement.Length() / leverLen;
-                        pivotRot = Quaternion.CreateFromAxisAngle(rotAxis, rotAngle);
-                    }
-                    else
-                    {
-                        pivotRot = Quaternion.Identity;
-                    }
+                    rotAxis /= axisLen;
+                    pivotRot = Quaternion.CreateFromAxisAngle(rotAxis, displacement.Length() / leverLen);
                 }
-                else
-                {
-                    pivotRot = Quaternion.Identity;
-                }
-
-                // Apply rotation around ground contact point
-                var kaoNewPos = groundContact + Vector3.Transform(leverArm, pivotRot);
-                var kaoNewRot = Quaternion.Normalize(pivotRot * origRot[kaoBoneIndex]);
-
-                ref var kaoModel = ref pose->ModelPose.Data[kaoBoneIndex];
-                kaoModel.Translation.X = kaoNewPos.X;
-                kaoModel.Translation.Y = kaoNewPos.Y;
-                kaoModel.Translation.Z = kaoNewPos.Z;
-                kaoModel.Rotation.X = kaoNewRot.X;
-                kaoModel.Rotation.Y = kaoNewRot.Y;
-                kaoModel.Rotation.Z = kaoNewRot.Z;
-                kaoModel.Rotation.W = kaoNewRot.W;
-
-                accDelta[kaoBoneIndex] = Quaternion.Normalize(kaoNewRot * Quaternion.Inverse(origRot[kaoBoneIndex]));
-                hasAcc[kaoBoneIndex] = true;
             }
+
+            var kaoNewPos = groundContact + Vector3.Transform(leverArm, pivotRot);
+            var kaoNewRot = Quaternion.Normalize(pivotRot * kaoOrigRot);
+
+            boneService.WriteBoneTransform(skel, kaoBoneIndex, kaoNewPos, kaoNewRot, result);
         }
 
-        // Propagate j_kao changes to other partial skeletons (face, hair, etc.).
-        // Each partial skeleton's root bone connects to a bone in partial 0.
-        // The face skeleton (partial 1+) roots at j_kao — if we don't update those,
-        // the game will overwrite j_kao with the unmodified face root position.
-        if (kaoBoneIndex >= 0 && hasAcc[kaoBoneIndex])
+        // Propagate j_kao changes to face/hair partial skeletons
+        if (kaoBoneIndex >= 0 && result.HasAccumulated[kaoBoneIndex])
         {
-            var kaoDelta = accDelta[kaoBoneIndex];
-            ref var kaoModel = ref pose->ModelPose.Data[kaoBoneIndex];
-            var kaoNewPos = new Vector3(kaoModel.Translation.X, kaoModel.Translation.Y, kaoModel.Translation.Z);
-            var kaoNewRot = new Quaternion(kaoModel.Rotation.X, kaoModel.Rotation.Y, kaoModel.Rotation.Z, kaoModel.Rotation.W);
-            var kaoPosDisplacement = kaoNewPos - origPos[kaoBoneIndex];
-
-            for (int ps = 1; ps < skeleton->PartialSkeletonCount; ps++)
-            {
-                var otherPartial = &skeleton->PartialSkeletons[ps];
-                var otherPose = otherPartial->GetHavokPose(0);
-                if (otherPose == null || otherPose->Skeleton == null) continue;
-                if (otherPose->ModelInSync == 0) continue;
-
-                var otherBoneCount = otherPose->ModelPose.Length;
-                if (otherBoneCount < 1) continue;
-
-                // Check if root bone (index 0) of this partial skeleton matches j_kao by name
-                var rootName = otherPose->Skeleton->Bones[0].Name.String;
-                if (rootName != "j_kao") continue;
-
-                // Apply delta to root bone and propagate to all children
-                var otherParentCount = otherPose->Skeleton->ParentIndices.Length;
-                for (int b = 0; b < otherBoneCount && b < otherParentCount; b++)
-                {
-                    ref var boneModel = ref otherPose->ModelPose.Data[b];
-                    var bOldPos = new Vector3(boneModel.Translation.X, boneModel.Translation.Y, boneModel.Translation.Z);
-                    var bOldRot = new Quaternion(boneModel.Rotation.X, boneModel.Rotation.Y, boneModel.Rotation.Z, boneModel.Rotation.W);
-
-                    // Rotate position around j_kao's original position, then add displacement
-                    var relToKao = bOldPos - origPos[kaoBoneIndex];
-                    relToKao = Vector3.Transform(relToKao, kaoDelta);
-                    var bNewPos = origPos[kaoBoneIndex] + relToKao + kaoPosDisplacement;
-
-                    var bNewRot = Quaternion.Normalize(kaoDelta * bOldRot);
-
-                    boneModel.Translation.X = bNewPos.X;
-                    boneModel.Translation.Y = bNewPos.Y;
-                    boneModel.Translation.Z = bNewPos.Z;
-                    boneModel.Rotation.X = bNewRot.X;
-                    boneModel.Rotation.Y = bNewRot.Y;
-                    boneModel.Rotation.Z = bNewRot.Z;
-                    boneModel.Rotation.W = bNewRot.W;
-                }
-            }
+            boneService.PropagateToPartialSkeletons(skel, kaoBoneIndex, "j_kao", result);
         }
     }
 
-    private void BuildRuntimeBones(FFXIVClientStructs.Havok.Animation.Rig.hkaSkeleton* skeleton, int boneCount)
+    private void BuildRuntimeBones(SkeletonAccess skel)
     {
         runtimeBones.Clear();
         kaoBoneIndex = -1;
+        kaoParentIndex = -1;
 
-        var bones = skeleton->Bones;
+        var bones = skel.HavokSkeleton->Bones;
         var nameCount = bones.Length;
+        var boneCount = skel.BoneCount;
 
         for (int i = 0; i < boneCount && i < nameCount; i++)
         {
             var name = bones[i].Name.String;
             if (name == null) continue;
 
-            // Track j_kao for head follow (not convulsed, just follows neck)
             if (name == "j_kao")
             {
                 kaoBoneIndex = i;
-                log.Info($"ConvulsionController: Found j_kao at bone index {i}");
+                kaoParentIndex = (i > 0) ? skel.HavokSkeleton->ParentIndices[i] : -1;
+                log.Info($"ConvulsionController: Found j_kao at bone index {i}, parent={kaoParentIndex}");
                 continue;
             }
 
@@ -452,6 +296,6 @@ public unsafe class ConvulsionController : IDisposable
     public void Dispose()
     {
         Deactivate();
-        renderHook?.Dispose();
+        boneService.OnRenderFrame -= OnRenderFrame;
     }
 }

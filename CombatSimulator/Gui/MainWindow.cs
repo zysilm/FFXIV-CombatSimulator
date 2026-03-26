@@ -20,7 +20,9 @@ public class MainWindow : IDisposable
     private readonly CombatEngine combatEngine;
     private readonly GlamourerIpc glamourerIpc;
     private readonly AnimationController animationController;
+    private readonly ConvulsionController convulsionController;
     private readonly DeathCamController deathCamController;
+    private readonly IClientState clientState;
     private readonly IChatGui chatGui;
     private readonly IPluginLog log;
 
@@ -67,7 +69,9 @@ public class MainWindow : IDisposable
         CombatEngine combatEngine,
         GlamourerIpc glamourerIpc,
         AnimationController animationController,
+        ConvulsionController convulsionController,
         DeathCamController deathCamController,
+        IClientState clientState,
         IChatGui chatGui,
         IPluginLog log)
     {
@@ -76,7 +80,9 @@ public class MainWindow : IDisposable
         this.combatEngine = combatEngine;
         this.glamourerIpc = glamourerIpc;
         this.animationController = animationController;
+        this.convulsionController = convulsionController;
         this.deathCamController = deathCamController;
+        this.clientState = clientState;
         this.chatGui = chatGui;
         this.log = log;
     }
@@ -905,6 +911,42 @@ public class MainWindow : IDisposable
                 if (config.EnableTorture)
                 {
                     ImGui.Indent();
+
+                    // Instant convulse toggle
+                    var convulseActive = convulsionController.IsActive;
+                    if (ImGui.Checkbox("Convulse Now", ref convulseActive))
+                    {
+                        if (convulseActive)
+                        {
+                            var player = clientState.LocalPlayer;
+                            if (player != null)
+                            {
+                                convulsionController.Activate(
+                                    player.Address,
+                                    config.ConvulsionIntensity,
+                                    config.ConvulsionDuration);
+                            }
+                        }
+                        else
+                        {
+                            convulsionController.Deactivate();
+                        }
+                    }
+                    ImGui.SameLine();
+                    if (ImGui.Button("Reset Settings"))
+                    {
+                        config.ConvulsionIntensity = 0.5f;
+                        config.ConvulsionDuration = 8.0f;
+                        config.ConvulsionKosiIntensity = 0.5f;
+                        config.ConvulsionKosiFrequency = 10.0f;
+                        config.ConvulsionSeboAIntensity = 0.3f;
+                        config.ConvulsionSeboAFrequency = 6.0f;
+                        config.ConvulsionFrequencyRatio = 1.0f;
+                        config.ConvulsionHeadFollowMode = 0;
+                        config.Save();
+                    }
+
+                    ImGui.Separator();
 
                     var intensity = config.ConvulsionIntensity;
                     if (ImGui.SliderFloat("Intensity", ref intensity, 0.1f, 1.0f, "%.2f"))

@@ -32,6 +32,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly ChatCommandExecutor chatCommandExecutor;
     private readonly GlamourerIpc glamourerIpc;
     private readonly AnimationController animationController;
+    private readonly BoneTransformService boneTransformService;
     private readonly ConvulsionController convulsionController;
     private readonly CombatEngine combatEngine;
     private readonly NpcAiController npcAiController;
@@ -79,7 +80,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
-        convulsionController = new ConvulsionController(gameInterop, sigScanner, config, log);
+        boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
+        convulsionController = new ConvulsionController(boneTransformService, config, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         combatEngine = new CombatEngine(
@@ -94,7 +96,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         movementBlockHook.Enable();
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, deathCamController, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, convulsionController, deathCamController, clientState, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
 
@@ -136,6 +138,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcAiController.Dispose();
         combatEngine.Dispose();
         convulsionController.Dispose();
+        boneTransformService.Dispose();
         deathCamController.Dispose();
         animationController.Dispose();
         npcSelector.Dispose();
