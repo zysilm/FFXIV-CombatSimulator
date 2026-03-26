@@ -944,7 +944,7 @@ public class MainWindow : IDisposable
                     config.RagdollFloorOffset = floorOffset;
                     config.Save();
                 }
-                HelpMarker("Lower the terrain ground by this amount. Prevents joints from starting at floor level, which causes bad constraint solving.");
+                HelpMarker("Extra clearance above ground when spawning ragdoll bodies. Prevents joints from starting at floor level, which causes bad constraint solving. Bodies settle under gravity within a few frames.");
 
                 ImGui.Separator();
                 if (ImGui.Button("Reset to Defaults##ragdoll"))
