@@ -22,13 +22,23 @@ public unsafe class ConvulsionController : IDisposable
     private float elapsed;
     private float duration;
 
-    // Bones excluded from convulsion
-    private static readonly HashSet<string> ExcludedBones = new()
+    // Only these bones participate in convulsion
+    private static readonly HashSet<string> AllowedBones = new()
     {
-        "j_kao",
-        "j_kubi",
-        "j_sebo_c",
-        "j_sebo_b",
+        "j_kosi",       // waist/pelvis
+        "j_sebo_a",     // spine A
+        "j_ude_a_l",    // upper arm L
+        "j_ude_a_r",    // upper arm R
+        "j_ude_b_l",    // forearm L
+        "j_ude_b_r",    // forearm R
+        "j_te_l",       // hand L
+        "j_te_r",       // hand R
+        "j_asi_a_l",    // thigh L
+        "j_asi_a_r",    // thigh R
+        "j_asi_b_l",    // shin L
+        "j_asi_b_r",    // shin R
+        "j_asi_c_l",    // foot L
+        "j_asi_c_r",    // foot R
     };
 
     // Dynamically built per-activation
@@ -166,64 +176,68 @@ public unsafe class ConvulsionController : IDisposable
 
         if (deltas.Count == 0) return;
 
-        // Full hierarchy recomputation
+        // CustomizePlus approach: modify ModelPose directly, never touch LocalPose.
+        // This preserves physics (breast, stomach, etc.) since physics writes to ModelPose.
+        //
+        // For each bone with a direct delta: right-multiply its ModelPose rotation.
+        // For descendants of modified bones: propagate position/rotation changes
+        // so the skeleton stays connected without recomputing from LocalPose.
+
+        // Track accumulated model-space rotation delta per bone for propagation
+        var accDelta = new Quaternion[boneCount];
+        var hasAcc = new bool[boneCount];
+
+        for (int i = 0; i < boneCount && i < parentCount; i++)
         {
-            ref var local = ref pose->LocalPose.Data[0];
-            ref var model = ref pose->ModelPose.Data[0];
+            var parentIdx = (i > 0) ? havokSkel->ParentIndices[i] : (short)-1;
+            bool hasDirect = deltas.TryGetValue(i, out var directDelta);
+            bool parentHasAcc = parentIdx >= 0 && parentIdx < boneCount && hasAcc[parentIdx];
 
-            var localRot = new Quaternion(local.Rotation.X, local.Rotation.Y, local.Rotation.Z, local.Rotation.W);
-            if (deltas.TryGetValue(0, out var delta0))
-                localRot = Quaternion.Normalize(localRot * delta0);
+            if (!hasDirect && !parentHasAcc)
+                continue;
 
-            model.Translation = local.Translation;
-            model.Rotation.X = localRot.X;
-            model.Rotation.Y = localRot.Y;
-            model.Rotation.Z = localRot.Z;
-            model.Rotation.W = localRot.W;
-            model.Scale = local.Scale;
-        }
-
-        for (int i = 1; i < boneCount && i < parentCount; i++)
-        {
-            var parentIdx = havokSkel->ParentIndices[i];
-            if (parentIdx < 0 || parentIdx >= boneCount) continue;
-
-            ref var local = ref pose->LocalPose.Data[i];
             ref var model = ref pose->ModelPose.Data[i];
-            ref var parentModel = ref pose->ModelPose.Data[parentIdx];
 
-            var localRot = new Quaternion(local.Rotation.X, local.Rotation.Y, local.Rotation.Z, local.Rotation.W);
-            if (deltas.TryGetValue(i, out var delta))
-                localRot = Quaternion.Normalize(localRot * delta);
+            // Read current model-space transform
+            var oldRot = new Quaternion(model.Rotation.X, model.Rotation.Y, model.Rotation.Z, model.Rotation.W);
+            var oldPos = new Vector3(model.Translation.X, model.Translation.Y, model.Translation.Z);
 
-            var parentRot = new Quaternion(
-                parentModel.Rotation.X, parentModel.Rotation.Y,
-                parentModel.Rotation.Z, parentModel.Rotation.W);
-            var parentPos = new Vector3(
-                parentModel.Translation.X, parentModel.Translation.Y, parentModel.Translation.Z);
-            var parentScale = new Vector3(
-                parentModel.Scale.X, parentModel.Scale.Y, parentModel.Scale.Z);
+            var newRot = oldRot;
+            var newPos = oldPos;
 
-            var modelRot = Quaternion.Normalize(parentRot * localRot);
+            // Propagate parent's accumulated delta (rotate around parent pivot)
+            if (parentHasAcc)
+            {
+                ref var parentModel = ref pose->ModelPose.Data[parentIdx];
+                var parentPos = new Vector3(parentModel.Translation.X, parentModel.Translation.Y, parentModel.Translation.Z);
+                var pDelta = accDelta[parentIdx];
 
-            var localTrans = new Vector3(local.Translation.X, local.Translation.Y, local.Translation.Z);
-            var scaledTrans = localTrans * parentScale;
-            var rotatedTrans = Vector3.Transform(scaledTrans, parentRot);
-            var modelPos = parentPos + rotatedTrans;
+                var relPos = newPos - parentPos;
+                relPos = Vector3.Transform(relPos, pDelta);
+                newPos = parentPos + relPos;
 
-            var localScale = new Vector3(local.Scale.X, local.Scale.Y, local.Scale.Z);
-            var modelScale = parentScale * localScale;
+                newRot = Quaternion.Normalize(pDelta * newRot);
+            }
 
-            model.Translation.X = modelPos.X;
-            model.Translation.Y = modelPos.Y;
-            model.Translation.Z = modelPos.Z;
-            model.Rotation.X = modelRot.X;
-            model.Rotation.Y = modelRot.Y;
-            model.Rotation.Z = modelRot.Z;
-            model.Rotation.W = modelRot.W;
-            model.Scale.X = modelScale.X;
-            model.Scale.Y = modelScale.Y;
-            model.Scale.Z = modelScale.Z;
+            // Apply this bone's own direct delta (local-space, so right-multiply)
+            if (hasDirect)
+            {
+                newRot = Quaternion.Normalize(newRot * directDelta);
+            }
+
+            // Compute accumulated delta for children: total change from original
+            // accDelta = newRot * inverse(oldRot)
+            accDelta[i] = Quaternion.Normalize(newRot * Quaternion.Inverse(oldRot));
+            hasAcc[i] = true;
+
+            // Write back
+            model.Translation.X = newPos.X;
+            model.Translation.Y = newPos.Y;
+            model.Translation.Z = newPos.Z;
+            model.Rotation.X = newRot.X;
+            model.Rotation.Y = newRot.Y;
+            model.Rotation.Z = newRot.Z;
+            model.Rotation.W = newRot.W;
         }
     }
 
@@ -238,7 +252,7 @@ public unsafe class ConvulsionController : IDisposable
         {
             var name = bones[i].Name.String;
             if (name == null) continue;
-            if (ExcludedBones.Contains(name)) continue;
+            if (!AllowedBones.Contains(name)) continue;
 
             RuntimeBoneConfig bc;
 
@@ -272,13 +286,12 @@ public unsafe class ConvulsionController : IDisposable
             }
             else
             {
-                // All other non-excluded bones: use global intensity, randomized frequency
-                var freq = 8.0f + (float)(rng.NextDouble() * 6.0); // 8–14 Hz
+                var baseFreq = 8.0f + (float)(rng.NextDouble() * 6.0);
                 bc = new RuntimeBoneConfig
                 {
                     BoneIndex = i,
                     MaxAngleDeg = 3.0f,
-                    FreqHz = freq,
+                    FreqHz = baseFreq * config.ConvulsionFrequencyRatio,
                     PhaseOffset = (float)(rng.NextDouble() * Math.PI * 2.0),
                     AxisX = 0.6f + (float)(rng.NextDouble() * 0.4),
                     AxisY = (float)(rng.NextDouble() * 0.3),
@@ -290,7 +303,7 @@ public unsafe class ConvulsionController : IDisposable
             runtimeBones.Add(bc);
         }
 
-        log.Info($"ConvulsionController: Built {runtimeBones.Count} bone configs (excluded {ExcludedBones.Count})");
+        log.Info($"ConvulsionController: Built {runtimeBones.Count} bone configs from {AllowedBones.Count} allowed");
     }
 
     public void Dispose()

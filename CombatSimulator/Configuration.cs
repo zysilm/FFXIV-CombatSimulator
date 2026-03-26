@@ -96,6 +96,7 @@ public class Configuration : IPluginConfiguration
     public float ConvulsionKosiFrequency { get; set; } = 10.0f;
     public float ConvulsionSeboAIntensity { get; set; } = 0.3f;
     public float ConvulsionSeboAFrequency { get; set; } = 6.0f;
+    public float ConvulsionFrequencyRatio { get; set; } = 1.0f;
 
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";

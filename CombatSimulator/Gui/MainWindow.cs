@@ -920,6 +920,13 @@ public class MainWindow : IDisposable
                         config.Save();
                     }
 
+                    var freqRatio = config.ConvulsionFrequencyRatio;
+                    if (ImGui.SliderFloat("Frequency Ratio", ref freqRatio, 0.1f, 5.0f, "%.2f"))
+                    {
+                        config.ConvulsionFrequencyRatio = freqRatio;
+                        config.Save();
+                    }
+
                     ImGui.Separator();
                     ImGui.Text("j_kosi (pelvis)");
                     var kosiIntensity = config.ConvulsionKosiIntensity;
