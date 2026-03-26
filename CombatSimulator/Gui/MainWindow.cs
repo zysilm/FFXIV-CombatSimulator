@@ -938,13 +938,23 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Velocity damping per frame. Lower = more energy loss.");
 
-                var fakeFloor = config.RagdollFakeFloor;
-                if (ImGui.Checkbox("Fake Floor##ragdoll", ref fakeFloor))
+                var floorOffset = config.RagdollFloorOffset;
+                if (ImGui.SliderFloat("Floor Offset##ragdoll", ref floorOffset, 0.0f, 0.5f, "%.2f"))
                 {
-                    config.RagdollFakeFloor = fakeFloor;
+                    config.RagdollFloorOffset = floorOffset;
                     config.Save();
                 }
-                HelpMarker("Place ground at lowest bone position instead of raycast. Prevents free-fall phase and reduces ground collision artifacts.");
+                HelpMarker("Lower the terrain ground by this amount. Prevents joints from starting at floor level, which causes bad constraint solving.");
+
+                ImGui.Separator();
+                if (ImGui.Button("Reset to Defaults##ragdoll"))
+                {
+                    config.RagdollActivationDelay = 1.0f;
+                    config.RagdollGravity = 9.8f;
+                    config.RagdollDamping = 0.97f;
+                    config.RagdollFloorOffset = 0.1f;
+                    config.Save();
+                }
 
                 ImGui.Unindent();
             }

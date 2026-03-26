@@ -40,8 +40,10 @@ public unsafe class RagdollController : IDisposable
     // Bone-to-body mapping
     private readonly List<RagdollBone> ragdollBones = new();
 
-    // Ground height
+    // Ground height (physics ground may be lowered by floor offset)
     private float groundY;
+    // Real terrain ground (before floor offset), used for visual correction
+    private float realGroundY;
 
     // Diagnostic frame counter
     private int frameCount;
@@ -361,24 +363,16 @@ public unsafe class RagdollController : IDisposable
                 boneToFirstChild[def.ParentName] = def.Name;
         }
 
-        // Fake floor: set ground at the lowest bone position minus capsule extent.
-        // This prevents uniform free-fall (all bodies already near/touching ground from frame 1)
-        // and avoids capsules starting inside the ground (which causes explosive correction).
-        if (config.RagdollFakeFloor)
+        // Store real terrain level before any offset
+        realGroundY = groundY;
+
+        // Lower physics ground to avoid joints starting at floor level, which causes
+        // degenerate constraint solving (many simultaneous ground penetrations).
+        // The visual correction in StepAndApply compensates so the character doesn't sink.
+        if (config.RagdollFloorOffset > 0)
         {
-            float lowestY = float.MaxValue;
-            foreach (var def in BoneDefs)
-            {
-                if (!boneWorldPositions.TryGetValue(def.Name, out var wp)) continue;
-                var boneBottom = wp.Y - def.CapsuleRadius - def.CapsuleHalfLength;
-                if (boneBottom < lowestY)
-                    lowestY = boneBottom;
-            }
-            if (lowestY < float.MaxValue)
-            {
-                groundY = lowestY - 0.01f; // tiny margin below lowest capsule extent
-                log.Info($"RagdollController: Fake floor adjusted ground Y={groundY:F3} (lowest bone extent)");
-            }
+            groundY -= config.RagdollFloorOffset;
+            log.Info($"RagdollController: Floor offset applied, physics ground Y={groundY:F3} (real={realGroundY:F3}, offset={config.RagdollFloorOffset:F2})");
         }
 
         // --- Pass 2: Create physics bodies ---
@@ -657,8 +651,16 @@ public unsafe class RagdollController : IDisposable
         frameCount++;
         var logThisFrame = frameCount <= 3 || frameCount % 60 == 0;
 
-        // Write physics body transforms back to ModelPose
-        for (int i = 0; i < ragdollBones.Count; i++)
+        // --- Pass 1: Read physics bodies, compute bone world positions/rotations ---
+        // We need all positions first to measure how far the ragdoll sank below
+        // the real terrain (due to the lowered physics ground), then correct uniformly.
+        var boneCount = ragdollBones.Count;
+        var worldPositions = new Vector3[boneCount];
+        var worldRotations = new Quaternion[boneCount];
+        var boneValid = new bool[boneCount];
+        var lowestBoneY = float.MaxValue;
+
+        for (int i = 0; i < boneCount; i++)
         {
             var rb = ragdollBones[i];
             if (rb.BoneIndex < 0 || rb.BoneIndex >= skel.BoneCount) continue;
@@ -675,23 +677,52 @@ public unsafe class RagdollController : IDisposable
             }
 
             // Reconstruct bone world rotation from physics capsule rotation + stored offset
-            var boneWorldRot = Quaternion.Normalize(bodyRef.Pose.Orientation * rb.CapsuleToBoneOffset);
+            worldRotations[i] = Quaternion.Normalize(bodyRef.Pose.Orientation * rb.CapsuleToBoneOffset);
 
             // Convert capsule center (at segment midpoint) back to bone origin position.
             // The bone is at the parent-end of the capsule: center - halfLength * capsuleY.
-            Vector3 boneWorldPos;
             if (rb.SegmentHalfLength > 0)
             {
                 var capsuleYAxis = Vector3.Transform(Vector3.UnitY, bodyRef.Pose.Orientation);
-                boneWorldPos = bodyRef.Pose.Position - rb.SegmentHalfLength * capsuleYAxis;
+                worldPositions[i] = bodyRef.Pose.Position - rb.SegmentHalfLength * capsuleYAxis;
             }
             else
             {
-                boneWorldPos = bodyRef.Pose.Position;
+                worldPositions[i] = bodyRef.Pose.Position;
             }
 
+            if (worldPositions[i].Y < lowestBoneY)
+                lowestBoneY = worldPositions[i].Y;
+
+            boneValid[i] = true;
+        }
+
+        // --- Floor offset correction ---
+        // Physics ground was lowered by RagdollFloorOffset for stable constraint solving.
+        // Measure how far the lowest bone sank below the REAL terrain and shift all bones
+        // up by that amount. This way: during the fall (bones above real ground) no correction
+        // is applied; after settling on the lowered ground, correction matches the actual sinkage.
+        float yCorrection = 0f;
+        if (config.RagdollFloorOffset > 0 && lowestBoneY < realGroundY)
+        {
+            yCorrection = realGroundY - lowestBoneY;
+            // Cap at the offset amount — any sinkage beyond the offset is genuine physics
+            // (e.g., slopes), not an artifact of the lowered ground.
+            if (yCorrection > config.RagdollFloorOffset)
+                yCorrection = config.RagdollFloorOffset;
+        }
+
+        // --- Pass 2: Apply correction and write to ModelPose ---
+        for (int i = 0; i < boneCount; i++)
+        {
+            if (!boneValid[i]) continue;
+            var rb = ragdollBones[i];
+
+            var boneWorldPos = worldPositions[i];
+            boneWorldPos.Y += yCorrection;
+
             var modelPos = WorldToModel(boneWorldPos);
-            var modelRot = WorldRotToModel(boneWorldRot);
+            var modelRot = WorldRotToModel(worldRotations[i]);
 
             if (logThisFrame)
             {
@@ -700,7 +731,7 @@ public unsafe class RagdollController : IDisposable
                 log.Info($"[Ragdoll F{frameCount}] '{rb.Name}' " +
                          $"animPos=({animPos.X:F3},{animPos.Y:F3},{animPos.Z:F3}) " +
                          $"boneWorld=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3}) " +
-                         $"→modelPos=({modelPos.X:F3},{modelPos.Y:F3},{modelPos.Z:F3})");
+                         $"yCorr={yCorrection:F3} →modelPos=({modelPos.X:F3},{modelPos.Y:F3},{modelPos.Z:F3})");
             }
 
             boneService.WriteBoneTransform(skel, rb.BoneIndex, modelPos, modelRot, result);
