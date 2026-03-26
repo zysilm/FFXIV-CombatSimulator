@@ -42,6 +42,9 @@ public unsafe class RagdollController : IDisposable
     // Ground height
     private float groundY;
 
+    // Diagnostic frame counter
+    private int frameCount;
+
     public bool IsActive => isActive;
 
     // Ragdoll bone definition
@@ -135,6 +138,7 @@ public unsafe class RagdollController : IDisposable
                 if (elapsed < activationDelay) return;
                 if (!InitializePhysics()) { Deactivate(); return; }
                 physicsStarted = true;
+                frameCount = 0;
             }
 
             StepAndApply();
@@ -331,8 +335,13 @@ public unsafe class RagdollController : IDisposable
                 CapsuleToBoneOffset = capsuleToBoneOffset,
             });
 
-            log.Verbose($"RagdollController: '{def.Name}' idx={boneIdx} " +
-                         $"worldPos=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3})");
+            // Log initial state for diagnostics
+            var capsuleY = Vector3.Transform(Vector3.UnitY, capsuleWorldRot);
+            log.Info($"[Ragdoll Init] '{def.Name}' idx={boneIdx} " +
+                     $"worldPos=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3}) " +
+                     $"boneRot=({boneWorldRot.X:F3},{boneWorldRot.Y:F3},{boneWorldRot.Z:F3},{boneWorldRot.W:F3}) " +
+                     $"capsuleY=({capsuleY.X:F3},{capsuleY.Y:F3},{capsuleY.Z:F3}) " +
+                     $"offset=({capsuleToBoneOffset.X:F3},{capsuleToBoneOffset.Y:F3},{capsuleToBoneOffset.Z:F3},{capsuleToBoneOffset.W:F3})");
         }
 
         // --- Pass 3: Add constraints between connected bones ---
@@ -375,22 +384,27 @@ public unsafe class RagdollController : IDisposable
             foreach (var def in BoneDefs)
                 if (def.Name == rb.Name) { swingLimit = def.SwingLimit; break; }
 
-            // Swing axes: the bone segment direction expressed in each body's local frame.
-            // For the child body, capsule Y = segment direction, so local axis = (0,1,0).
-            // For the parent body, compute from the world segment direction.
+            // CRITICAL: Both axes must represent the SAME world direction in their respective
+            // local frames so the constraint starts satisfied (angle=0). Use the segment direction
+            // from parent body to joint (child position) as the shared reference direction.
+            // Previously AxisLocalA was always (0,1,0) (capsule Y), which only works for non-leaf
+            // bones where capsule Y aligns with the segment. For leaf bones, capsule Y can point
+            // in any direction, causing massive initial violations (e.g., head: 135° vs 23° limit).
             var segDirWorld = anchorWorld - parentBodyRef.Pose.Position;
             if (segDirWorld.Length() > 0.001f)
                 segDirWorld = Vector3.Normalize(segDirWorld);
             else
                 segDirWorld = Vector3.UnitY;
 
+            var axisChildLocal = Vector3.Transform(segDirWorld,
+                Quaternion.Inverse(childBodyRef.Pose.Orientation));
             var axisParentLocal = Vector3.Transform(segDirWorld,
                 Quaternion.Inverse(parentBodyRef.Pose.Orientation));
 
             simulation.Solver.Add(rb.BodyHandle, parentHandle,
                 new SwingLimit
                 {
-                    AxisLocalA = new Vector3(0, 1, 0), // child capsule Y
+                    AxisLocalA = axisChildLocal,
                     AxisLocalB = axisParentLocal,
                     MaximumSwingAngle = swingLimit,
                     SpringSettings = new SpringSettings(15, 3),
@@ -432,6 +446,9 @@ public unsafe class RagdollController : IDisposable
             result.OriginalRotations[i] = new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W);
         }
 
+        frameCount++;
+        var logThisFrame = frameCount <= 3 || frameCount % 60 == 0;
+
         // Write physics body transforms back to ModelPose
         for (int i = 0; i < ragdollBones.Count; i++)
         {
@@ -455,6 +472,19 @@ public unsafe class RagdollController : IDisposable
             // Convert physics world-space results back to skeleton model-space
             var modelPos = WorldToModel(bodyRef.Pose.Position);
             var modelRot = WorldRotToModel(boneWorldRot);
+
+            if (logThisFrame)
+            {
+                ref var origM = ref pose->ModelPose.Data[rb.BoneIndex];
+                var animPos = new Vector3(origM.Translation.X, origM.Translation.Y, origM.Translation.Z);
+                var animRot = new Quaternion(origM.Rotation.X, origM.Rotation.Y, origM.Rotation.Z, origM.Rotation.W);
+                log.Info($"[Ragdoll F{frameCount}] '{rb.Name}' " +
+                         $"animPos=({animPos.X:F3},{animPos.Y:F3},{animPos.Z:F3}) " +
+                         $"physWorldPos=({bodyRef.Pose.Position.X:F3},{bodyRef.Pose.Position.Y:F3},{bodyRef.Pose.Position.Z:F3}) " +
+                         $"→modelPos=({modelPos.X:F3},{modelPos.Y:F3},{modelPos.Z:F3}) " +
+                         $"animRot=({animRot.X:F3},{animRot.Y:F3},{animRot.Z:F3},{animRot.W:F3}) " +
+                         $"→modelRot=({modelRot.X:F3},{modelRot.Y:F3},{modelRot.Z:F3},{modelRot.W:F3})");
+            }
 
             boneService.WriteBoneTransform(skel, rb.BoneIndex, modelPos, modelRot, result);
         }
