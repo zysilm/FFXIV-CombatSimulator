@@ -30,6 +30,12 @@ public unsafe class RagdollController : IDisposable
     private float activationDelay;
     private bool physicsStarted;
 
+    // Skeleton world transform (captured at activation from Skeleton.Transform)
+    // ModelPose is in skeleton-local space; these convert to/from world space.
+    private Vector3 skelWorldPos;
+    private Quaternion skelWorldRot;
+    private Quaternion skelWorldRotInv;
+
     // Bone-to-body mapping
     private readonly List<RagdollBone> ragdollBones = new();
 
@@ -56,6 +62,9 @@ public unsafe class RagdollController : IDisposable
         public int ParentBoneIndex; // parent bone index (-1 if root)
         public BodyHandle BodyHandle;
         public string Name;
+        // Rotation offset: physicsBodyRot * CapsuleToBoneOffset = boneWorldRot
+        // Capsule Y axis is oriented along the bone segment, which differs from the bone's rotation.
+        public Quaternion CapsuleToBoneOffset;
     }
 
     // Bone definitions for the ragdoll skeleton
@@ -137,11 +146,69 @@ public unsafe class RagdollController : IDisposable
         }
     }
 
+    // --- Coordinate conversion using Skeleton.Transform ---
+    // ModelPose is in skeleton-local space (NOT character-position-offset space).
+    // The proper conversion uses the skeleton's full transform (position + rotation).
+    //   WorldPos  = skelPos + Rotate(modelPos, skelRot)
+    //   ModelPos  = Rotate(worldPos - skelPos, skelRotInv)
+    //   WorldRot  = skelRot * modelRot
+    //   ModelRot  = skelRotInv * worldRot
+
+    private Vector3 ModelToWorld(Vector3 modelPos)
+        => skelWorldPos + Vector3.Transform(modelPos, skelWorldRot);
+
+    private Vector3 WorldToModel(Vector3 worldPos)
+        => Vector3.Transform(worldPos - skelWorldPos, skelWorldRotInv);
+
+    private Quaternion ModelRotToWorld(Quaternion modelRot)
+        => Quaternion.Normalize(skelWorldRot * modelRot);
+
+    private Quaternion WorldRotToModel(Quaternion worldRot)
+        => Quaternion.Normalize(skelWorldRotInv * worldRot);
+
+    /// <summary>
+    /// Compute the shortest rotation that takes Vector3.UnitY to the given direction.
+    /// BEPU capsules have their length along local Y, so this orients a capsule along a limb segment.
+    /// </summary>
+    private static Quaternion RotationFromYToDirection(Vector3 dir)
+    {
+        var dirN = Vector3.Normalize(dir);
+        var dot = Vector3.Dot(Vector3.UnitY, dirN);
+
+        // Already along Y
+        if (dot > 0.9999f) return Quaternion.Identity;
+        // Opposite to Y — rotate 180° around X
+        if (dot < -0.9999f) return Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI);
+
+        var axis = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, dirN));
+        var angle = MathF.Acos(Math.Clamp(dot, -1f, 1f));
+        return Quaternion.CreateFromAxisAngle(axis, angle);
+    }
+
     private bool InitializePhysics()
     {
         var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
         if (skelNullable == null) return false;
         var skel = skelNullable.Value;
+
+        // Get skeleton transform for proper world↔model conversion
+        // This is the authoritative transform — NOT GameObject.Rotation (which is just a float yaw).
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton == null) return false;
+
+        skelWorldPos = new Vector3(
+            skeleton->Transform.Position.X,
+            skeleton->Transform.Position.Y,
+            skeleton->Transform.Position.Z);
+        skelWorldRot = new Quaternion(
+            skeleton->Transform.Rotation.X,
+            skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z,
+            skeleton->Transform.Rotation.W);
+        skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
+
+        log.Info($"RagdollController: Skeleton transform pos=({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3}) " +
+                 $"rot=({skelWorldRot.X:F3},{skelWorldRot.Y:F3},{skelWorldRot.Z:F3},{skelWorldRot.W:F3})");
 
         // Resolve bone indices
         var nameToIndex = new Dictionary<string, int>();
@@ -158,25 +225,17 @@ public unsafe class RagdollController : IDisposable
             nameToIndex[def.Name] = idx;
         }
 
-        // Get character world position for ground height estimation
-        var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress;
-        var charWorldPos = gameObj->Position;
-
         // Raycast for ground height
-        groundY = charWorldPos.Y;
+        groundY = skelWorldPos.Y;
         if (BGCollisionModule.RaycastMaterialFilter(
-                new Vector3(charWorldPos.X, charWorldPos.Y + 2.0f, charWorldPos.Z),
+                new Vector3(skelWorldPos.X, skelWorldPos.Y + 2.0f, skelWorldPos.Z),
                 new Vector3(0, -1, 0),
                 out var hitInfo,
                 50f))
         {
             groundY = hitInfo.Point.Y;
-            log.Info($"RagdollController: Ground height from raycast: {groundY:F3}");
         }
-        else
-        {
-            log.Info($"RagdollController: Using character Y as ground: {groundY:F3}");
-        }
+        log.Info($"RagdollController: Ground Y={groundY:F3}");
 
         // Create BEPU simulation
         bufferPool = new BufferPool();
@@ -186,7 +245,7 @@ public unsafe class RagdollController : IDisposable
             new RagdollPoseIntegratorCallbacks(
                 new Vector3(0, -config.RagdollGravity, 0),
                 config.RagdollDamping),
-            new SolveDescription(4, 1));
+            new SolveDescription(8, 1));
 
         // Add ground plane as static body
         var groundShapeIndex = simulation.Shapes.Add(new Box(1000, 0.1f, 1000));
@@ -195,34 +254,70 @@ public unsafe class RagdollController : IDisposable
             Quaternion.Identity,
             groundShapeIndex));
 
-        // Read current bone positions from ModelPose (death pose) and create physics bodies
+        // --- Pass 1: Collect bone world positions and rotations ---
         var pose = skel.Pose;
-        var charPos = new Vector3(charWorldPos.X, charWorldPos.Y, charWorldPos.Z);
+        var boneWorldPositions = new Dictionary<string, Vector3>();
+        var boneWorldRotations = new Dictionary<string, Quaternion>();
 
         foreach (var def in BoneDefs)
         {
+            if (!nameToIndex.TryGetValue(def.Name, out var idx)) continue;
+            ref var mt = ref pose->ModelPose.Data[idx];
+            var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+            var modelRot = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
+            boneWorldPositions[def.Name] = ModelToWorld(modelPos);
+            boneWorldRotations[def.Name] = ModelRotToWorld(modelRot);
+        }
+
+        // Build child lookup: for each bone, find its first child in BoneDefs
+        var boneToFirstChild = new Dictionary<string, string>();
+        foreach (var def in BoneDefs)
+        {
+            if (def.ParentName != null && !boneToFirstChild.ContainsKey(def.ParentName))
+                boneToFirstChild[def.ParentName] = def.Name;
+        }
+
+        // --- Pass 2: Create physics bodies ---
+        foreach (var def in BoneDefs)
+        {
             if (!nameToIndex.TryGetValue(def.Name, out var boneIdx)) continue;
+            if (!boneWorldPositions.TryGetValue(def.Name, out var boneWorldPos)) continue;
+            var boneWorldRot = boneWorldRotations[def.Name];
 
-            // Get bone position in model space, convert to world space
-            ref var modelTransform = ref pose->ModelPose.Data[boneIdx];
-            var boneModelPos = new Vector3(modelTransform.Translation.X, modelTransform.Translation.Y, modelTransform.Translation.Z);
-            var boneWorldPos = boneModelPos + charPos;
+            // Determine capsule orientation from bone→child segment direction.
+            // BEPU capsules have length along local Y, so we rotate Y to align with the segment.
+            Quaternion capsuleWorldRot;
+            if (boneToFirstChild.TryGetValue(def.Name, out var childName) &&
+                boneWorldPositions.TryGetValue(childName, out var childWorldPos))
+            {
+                var segment = childWorldPos - boneWorldPos;
+                capsuleWorldRot = segment.Length() > 0.001f
+                    ? RotationFromYToDirection(segment)
+                    : boneWorldRot;
+            }
+            else
+            {
+                // Leaf bone: no child to orient toward, use bone's own rotation
+                capsuleWorldRot = boneWorldRot;
+            }
 
-            var boneModelRot = new Quaternion(modelTransform.Rotation.X, modelTransform.Rotation.Y, modelTransform.Rotation.Z, modelTransform.Rotation.W);
+            // Rotation offset: capsuleWorldRot * offset = boneWorldRot
+            // => offset = Inverse(capsuleWorldRot) * boneWorldRot
+            var capsuleToBoneOffset = Quaternion.Normalize(
+                Quaternion.Inverse(capsuleWorldRot) * boneWorldRot);
 
-            // Create capsule body
+            // Create capsule body at the bone's world position
             var capsule = new Capsule(def.CapsuleRadius, def.CapsuleHalfLength * 2);
             var shapeIndex = simulation.Shapes.Add(capsule);
 
             var bodyDesc = BodyDescription.CreateDynamic(
-                new RigidPose(boneWorldPos, boneModelRot),
+                new RigidPose(boneWorldPos, capsuleWorldRot),
                 capsule.ComputeInertia(def.Mass),
                 new CollidableDescription(shapeIndex),
                 new BodyActivityDescription(0.01f));
 
             var bodyHandle = simulation.Bodies.Add(bodyDesc);
 
-            // Find parent bone index
             int parentBoneIdx = -1;
             if (def.ParentName != null && nameToIndex.TryGetValue(def.ParentName, out var pIdx))
                 parentBoneIdx = pIdx;
@@ -233,10 +328,14 @@ public unsafe class RagdollController : IDisposable
                 ParentBoneIndex = parentBoneIdx,
                 BodyHandle = bodyHandle,
                 Name = def.Name,
+                CapsuleToBoneOffset = capsuleToBoneOffset,
             });
+
+            log.Verbose($"RagdollController: '{def.Name}' idx={boneIdx} " +
+                         $"worldPos=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3})");
         }
 
-        // Add joint constraints between connected bones
+        // --- Pass 3: Add constraints between connected bones ---
         var boneIdxToBodyHandle = new Dictionary<int, BodyHandle>();
         foreach (var rb in ragdollBones)
             boneIdxToBodyHandle[rb.BoneIndex] = rb.BodyHandle;
@@ -247,27 +346,22 @@ public unsafe class RagdollController : IDisposable
             if (rb.ParentBoneIndex < 0) continue;
             if (!boneIdxToBodyHandle.TryGetValue(rb.ParentBoneIndex, out var parentHandle)) continue;
 
-            // Get bone positions for computing joint anchor
-            ref var childModel = ref pose->ModelPose.Data[rb.BoneIndex];
-            ref var parentModel = ref pose->ModelPose.Data[rb.ParentBoneIndex];
+            // Joint anchor is at the child bone's world position
+            var anchorWorld = boneWorldPositions[rb.Name];
 
-            var childPos = new Vector3(childModel.Translation.X, childModel.Translation.Y, childModel.Translation.Z) + charPos;
-            var parentPos = new Vector3(parentModel.Translation.X, parentModel.Translation.Y, parentModel.Translation.Z) + charPos;
-
-            // Joint anchor is at the child bone position (where the joint connects)
             var childBodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
             var parentBodyRef = simulation.Bodies.GetBodyReference(parentHandle);
 
-            // Compute local offsets for ball-socket constraint
-            var anchorWorld = childPos;
-            var childLocalOffset = anchorWorld - childBodyRef.Pose.Position;
-            var parentLocalOffset = anchorWorld - parentBodyRef.Pose.Position;
+            // BallSocket local offsets: transform world anchor into each body's local space
+            // Pattern from BEPU RagdollDemo: Transform(worldOffset, Conjugate(bodyOrientation))
+            var childLocalAnchor = Vector3.Transform(
+                anchorWorld - childBodyRef.Pose.Position,
+                Quaternion.Inverse(childBodyRef.Pose.Orientation));
+            var parentLocalAnchor = Vector3.Transform(
+                anchorWorld - parentBodyRef.Pose.Position,
+                Quaternion.Inverse(parentBodyRef.Pose.Orientation));
 
-            // Transform to body-local space
-            var childLocalAnchor = Vector3.Transform(childLocalOffset, Quaternion.Inverse(childBodyRef.Pose.Orientation));
-            var parentLocalAnchor = Vector3.Transform(parentLocalOffset, Quaternion.Inverse(parentBodyRef.Pose.Orientation));
-
-            // Ball-socket constraint (keeps bones connected)
+            // BallSocket: positional connection at joint
             simulation.Solver.Add(rb.BodyHandle, parentHandle,
                 new BallSocket
                 {
@@ -276,25 +370,43 @@ public unsafe class RagdollController : IDisposable
                     SpringSettings = new SpringSettings(30, 5),
                 });
 
-            // Find the swing limit for this bone
+            // SwingLimit: restrict angle between connected bodies
             float swingLimit = 0.5f;
             foreach (var def in BoneDefs)
-            {
                 if (def.Name == rb.Name) { swingLimit = def.SwingLimit; break; }
-            }
 
-            // Swing limit (prevents unrealistic bending)
+            // Swing axes: the bone segment direction expressed in each body's local frame.
+            // For the child body, capsule Y = segment direction, so local axis = (0,1,0).
+            // For the parent body, compute from the world segment direction.
+            var segDirWorld = anchorWorld - parentBodyRef.Pose.Position;
+            if (segDirWorld.Length() > 0.001f)
+                segDirWorld = Vector3.Normalize(segDirWorld);
+            else
+                segDirWorld = Vector3.UnitY;
+
+            var axisParentLocal = Vector3.Transform(segDirWorld,
+                Quaternion.Inverse(parentBodyRef.Pose.Orientation));
+
             simulation.Solver.Add(rb.BodyHandle, parentHandle,
                 new SwingLimit
                 {
-                    AxisLocalA = new Vector3(0, 1, 0),
-                    AxisLocalB = new Vector3(0, 1, 0),
+                    AxisLocalA = new Vector3(0, 1, 0), // child capsule Y
+                    AxisLocalB = axisParentLocal,
                     MaximumSwingAngle = swingLimit,
                     SpringSettings = new SpringSettings(15, 3),
                 });
+
+            // AngularMotor: damp relative angular velocity between connected bodies
+            // Prevents wild oscillation. Pattern from BEPU RagdollDemo.
+            simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                new AngularMotor
+                {
+                    TargetVelocityLocalA = Vector3.Zero,
+                    Settings = new MotorSettings(float.MaxValue, 0.01f),
+                });
         }
 
-        log.Info($"RagdollController: Physics initialized with {ragdollBones.Count} bodies, ground={groundY:F3}");
+        log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, ground={groundY:F3}");
         return ragdollBones.Count > 0;
     }
 
@@ -309,64 +421,45 @@ public unsafe class RagdollController : IDisposable
         // Step physics
         simulation.Timestep(1.0f / 60.0f);
 
-        // Get character world position
-        var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress;
-        var charWorldPos = gameObj->Position;
-        var charPos = new Vector3(charWorldPos.X, charWorldPos.Y, charWorldPos.Z);
-
-        // Save original rotations to compute deltas
         var pose = skel.Pose;
 
-        // Build rotation deltas from physics results
-        var deltas = new Dictionary<int, Quaternion>();
-
-        for (int i = 0; i < ragdollBones.Count; i++)
+        // Save original positions/rotations for delta tracking (needed for j_kao propagation)
+        var result = new BoneModificationResult(skel.BoneCount);
+        for (int i = 0; i < skel.BoneCount; i++)
         {
-            var rb = ragdollBones[i];
-            if (rb.BoneIndex < 0 || rb.BoneIndex >= skel.BoneCount) continue;
-
-            var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
-            var physicsRot = bodyRef.Pose.Orientation;
-
-            // Current bone rotation in model space
-            ref var model = ref pose->ModelPose.Data[rb.BoneIndex];
-            var currentRot = new Quaternion(model.Rotation.X, model.Rotation.Y, model.Rotation.Z, model.Rotation.W);
-
-            // Physics rotation is in world space; bone rotation is in model space
-            // For now, directly set the rotation from physics (they're equivalent for non-rotated characters)
-            var targetRot = new Quaternion(physicsRot.X, physicsRot.Y, physicsRot.Z, physicsRot.W);
-
-            // Compute delta: targetRot = delta * currentRot  =>  delta = targetRot * inverse(currentRot)
-            var delta = Quaternion.Normalize(targetRot * Quaternion.Inverse(currentRot));
-
-            // Only apply if delta is meaningful
-            if (MathF.Abs(delta.W) < 0.9999f)
-                deltas[rb.BoneIndex] = Quaternion.Normalize(currentRot * delta * Quaternion.Inverse(currentRot));
+            ref var m = ref pose->ModelPose.Data[i];
+            result.OriginalPositions[i] = new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z);
+            result.OriginalRotations[i] = new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W);
         }
 
-        if (deltas.Count == 0) return;
-
-        // Apply via BoneTransformService
-        var result = boneService.ApplyRotationDeltas(skel, deltas);
-
-        // Also update positions from physics (ragdoll moves bones)
+        // Write physics body transforms back to ModelPose
         for (int i = 0; i < ragdollBones.Count; i++)
         {
             var rb = ragdollBones[i];
             if (rb.BoneIndex < 0 || rb.BoneIndex >= skel.BoneCount) continue;
 
             var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
-            var physicsPos = bodyRef.Pose.Position;
-            var physicsRot = bodyRef.Pose.Orientation;
 
-            // Convert world position back to model space
-            var modelPos = new Vector3(physicsPos.X, physicsPos.Y, physicsPos.Z) - charPos;
-            var modelRot = new Quaternion(physicsRot.X, physicsRot.Y, physicsRot.Z, physicsRot.W);
+            // Guard against NaN from physics explosion — deactivate instead of crashing
+            if (float.IsNaN(bodyRef.Pose.Position.X) || float.IsNaN(bodyRef.Pose.Position.Y) ||
+                float.IsNaN(bodyRef.Pose.Position.Z) || float.IsNaN(bodyRef.Pose.Orientation.W))
+            {
+                log.Warning($"RagdollController: NaN detected in body '{rb.Name}', deactivating");
+                Deactivate();
+                return;
+            }
+
+            // Reconstruct bone world rotation from physics capsule rotation + stored offset
+            var boneWorldRot = Quaternion.Normalize(bodyRef.Pose.Orientation * rb.CapsuleToBoneOffset);
+
+            // Convert physics world-space results back to skeleton model-space
+            var modelPos = WorldToModel(bodyRef.Pose.Position);
+            var modelRot = WorldRotToModel(boneWorldRot);
 
             boneService.WriteBoneTransform(skel, rb.BoneIndex, modelPos, modelRot, result);
         }
 
-        // Propagate j_kao to face partial skeletons
+        // Propagate j_kao changes to face/hair partial skeletons
         var kaoIdx = -1;
         for (int i = 0; i < ragdollBones.Count; i++)
         {
@@ -394,7 +487,7 @@ public unsafe class RagdollController : IDisposable
     }
 }
 
-// BEPU callbacks — prefixed to avoid ambiguity with other project types
+// --- BEPU Callbacks ---
 
 struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 {
@@ -402,13 +495,13 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 
     public bool AllowContactGeneration(int workerIndex, CollidableReference a, CollidableReference b, ref float speculativeMargin)
     {
-        return a.Mobility != CollidableMobility.Static || b.Mobility != CollidableMobility.Static;
+        // Only allow body-static collisions (ragdoll vs ground).
+        // Disable all body-body collisions to prevent self-collision explosions.
+        return a.Mobility == CollidableMobility.Static || b.Mobility == CollidableMobility.Static;
     }
 
     public bool AllowContactGeneration(int workerIndex, CollidablePair pair, int childIndexA, int childIndexB)
-    {
-        return true;
-    }
+        => true;
 
     public bool ConfigureContactManifold<TManifold>(int workerIndex, CollidablePair pair, ref TManifold manifold,
         out PairMaterialProperties pairMaterial) where TManifold : unmanaged, IContactManifold<TManifold>
@@ -420,10 +513,7 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     }
 
     public bool ConfigureContactManifold(int workerIndex, CollidablePair pair, int childIndexA, int childIndexB,
-        ref ConvexContactManifold manifold)
-    {
-        return true;
-    }
+        ref ConvexContactManifold manifold) => true;
 
     public void Dispose() { }
 }
