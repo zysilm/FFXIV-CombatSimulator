@@ -46,6 +46,9 @@ public unsafe class ConvulsionController : IDisposable
     private bool bonesResolved;
     private readonly Random rng = new();
 
+    // Head follow: j_kao bone index (resolved but not in AllowedBones)
+    private int kaoBoneIndex = -1;
+
     private struct RuntimeBoneConfig
     {
         public int BoneIndex;
@@ -95,6 +98,7 @@ public unsafe class ConvulsionController : IDisposable
         isActive = false;
         targetCharacterAddress = nint.Zero;
         bonesResolved = false;
+        kaoBoneIndex = -1;
         runtimeBones.Clear();
         log.Info("ConvulsionController: Deactivated");
     }
@@ -131,6 +135,7 @@ public unsafe class ConvulsionController : IDisposable
         var partial = &skeleton->PartialSkeletons[0];
         var pose = partial->GetHavokPose(0);
         if (pose == null || pose->Skeleton == null) return;
+        if (pose->ModelInSync == 0) return;
 
         var havokSkel = pose->Skeleton;
         var boneCount = pose->LocalPose.Length;
@@ -178,10 +183,16 @@ public unsafe class ConvulsionController : IDisposable
 
         // CustomizePlus approach: modify ModelPose directly, never touch LocalPose.
         // This preserves physics (breast, stomach, etc.) since physics writes to ModelPose.
-        //
-        // For each bone with a direct delta: right-multiply its ModelPose rotation.
-        // For descendants of modified bones: propagate position/rotation changes
-        // so the skeleton stays connected without recomputing from LocalPose.
+
+        // Save original positions/rotations BEFORE any modifications (fixes propagation bug)
+        var origPos = new Vector3[boneCount];
+        var origRot = new Quaternion[boneCount];
+        for (int i = 0; i < boneCount; i++)
+        {
+            ref var m = ref pose->ModelPose.Data[i];
+            origPos[i] = new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z);
+            origRot[i] = new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W);
+        }
 
         // Track accumulated model-space rotation delta per bone for propagation
         var accDelta = new Quaternion[boneCount];
@@ -196,25 +207,23 @@ public unsafe class ConvulsionController : IDisposable
             if (!hasDirect && !parentHasAcc)
                 continue;
 
-            ref var model = ref pose->ModelPose.Data[i];
+            var newRot = origRot[i];
+            var newPos = origPos[i];
 
-            // Read current model-space transform
-            var oldRot = new Quaternion(model.Rotation.X, model.Rotation.Y, model.Rotation.Z, model.Rotation.W);
-            var oldPos = new Vector3(model.Translation.X, model.Translation.Y, model.Translation.Z);
-
-            var newRot = oldRot;
-            var newPos = oldPos;
-
-            // Propagate parent's accumulated delta (rotate around parent pivot)
+            // Propagate parent's accumulated delta (rotate around parent's ORIGINAL pivot)
             if (parentHasAcc)
             {
-                ref var parentModel = ref pose->ModelPose.Data[parentIdx];
-                var parentPos = new Vector3(parentModel.Translation.X, parentModel.Translation.Y, parentModel.Translation.Z);
+                var parentOrigPos = origPos[parentIdx];
                 var pDelta = accDelta[parentIdx];
 
-                var relPos = newPos - parentPos;
+                var relPos = origPos[i] - parentOrigPos;
                 relPos = Vector3.Transform(relPos, pDelta);
-                newPos = parentPos + relPos;
+                newPos = parentOrigPos + relPos;
+
+                // Parent also moved — add its displacement
+                ref var parentModel = ref pose->ModelPose.Data[parentIdx];
+                var parentNewPos = new Vector3(parentModel.Translation.X, parentModel.Translation.Y, parentModel.Translation.Z);
+                newPos += parentNewPos - parentOrigPos;
 
                 newRot = Quaternion.Normalize(pDelta * newRot);
             }
@@ -226,11 +235,11 @@ public unsafe class ConvulsionController : IDisposable
             }
 
             // Compute accumulated delta for children: total change from original
-            // accDelta = newRot * inverse(oldRot)
-            accDelta[i] = Quaternion.Normalize(newRot * Quaternion.Inverse(oldRot));
+            accDelta[i] = Quaternion.Normalize(newRot * Quaternion.Inverse(origRot[i]));
             hasAcc[i] = true;
 
             // Write back
+            ref var model = ref pose->ModelPose.Data[i];
             model.Translation.X = newPos.X;
             model.Translation.Y = newPos.Y;
             model.Translation.Z = newPos.Z;
@@ -239,11 +248,64 @@ public unsafe class ConvulsionController : IDisposable
             model.Rotation.Z = newRot.Z;
             model.Rotation.W = newRot.W;
         }
+
+        // Propagate j_kao changes to other partial skeletons (face, hair, etc.).
+        // Each partial skeleton's root bone connects to a bone in partial 0.
+        // The face skeleton (partial 1+) roots at j_kao — if we don't update those,
+        // the game will overwrite j_kao with the unmodified face root position.
+        if (kaoBoneIndex >= 0 && hasAcc[kaoBoneIndex])
+        {
+            var kaoDelta = accDelta[kaoBoneIndex];
+            ref var kaoModel = ref pose->ModelPose.Data[kaoBoneIndex];
+            var kaoNewPos = new Vector3(kaoModel.Translation.X, kaoModel.Translation.Y, kaoModel.Translation.Z);
+            var kaoNewRot = new Quaternion(kaoModel.Rotation.X, kaoModel.Rotation.Y, kaoModel.Rotation.Z, kaoModel.Rotation.W);
+            var kaoPosDisplacement = kaoNewPos - origPos[kaoBoneIndex];
+
+            for (int ps = 1; ps < skeleton->PartialSkeletonCount; ps++)
+            {
+                var otherPartial = &skeleton->PartialSkeletons[ps];
+                var otherPose = otherPartial->GetHavokPose(0);
+                if (otherPose == null || otherPose->Skeleton == null) continue;
+                if (otherPose->ModelInSync == 0) continue;
+
+                var otherBoneCount = otherPose->ModelPose.Length;
+                if (otherBoneCount < 1) continue;
+
+                // Check if root bone (index 0) of this partial skeleton matches j_kao by name
+                var rootName = otherPose->Skeleton->Bones[0].Name.String;
+                if (rootName != "j_kao") continue;
+
+                // Apply delta to root bone and propagate to all children
+                var otherParentCount = otherPose->Skeleton->ParentIndices.Length;
+                for (int b = 0; b < otherBoneCount && b < otherParentCount; b++)
+                {
+                    ref var boneModel = ref otherPose->ModelPose.Data[b];
+                    var bOldPos = new Vector3(boneModel.Translation.X, boneModel.Translation.Y, boneModel.Translation.Z);
+                    var bOldRot = new Quaternion(boneModel.Rotation.X, boneModel.Rotation.Y, boneModel.Rotation.Z, boneModel.Rotation.W);
+
+                    // Rotate position around j_kao's original position, then add displacement
+                    var relToKao = bOldPos - origPos[kaoBoneIndex];
+                    relToKao = Vector3.Transform(relToKao, kaoDelta);
+                    var bNewPos = origPos[kaoBoneIndex] + relToKao + kaoPosDisplacement;
+
+                    var bNewRot = Quaternion.Normalize(kaoDelta * bOldRot);
+
+                    boneModel.Translation.X = bNewPos.X;
+                    boneModel.Translation.Y = bNewPos.Y;
+                    boneModel.Translation.Z = bNewPos.Z;
+                    boneModel.Rotation.X = bNewRot.X;
+                    boneModel.Rotation.Y = bNewRot.Y;
+                    boneModel.Rotation.Z = bNewRot.Z;
+                    boneModel.Rotation.W = bNewRot.W;
+                }
+            }
+        }
     }
 
     private void BuildRuntimeBones(FFXIVClientStructs.Havok.Animation.Rig.hkaSkeleton* skeleton, int boneCount)
     {
         runtimeBones.Clear();
+        kaoBoneIndex = -1;
 
         var bones = skeleton->Bones;
         var nameCount = bones.Length;
@@ -252,6 +314,15 @@ public unsafe class ConvulsionController : IDisposable
         {
             var name = bones[i].Name.String;
             if (name == null) continue;
+
+            // Track j_kao for head follow (not convulsed, just follows neck)
+            if (name == "j_kao")
+            {
+                kaoBoneIndex = i;
+                log.Info($"ConvulsionController: Found j_kao at bone index {i}");
+                continue;
+            }
+
             if (!AllowedBones.Contains(name)) continue;
 
             RuntimeBoneConfig bc;
