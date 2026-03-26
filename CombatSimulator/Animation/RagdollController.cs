@@ -84,6 +84,10 @@ public unsafe class RagdollController : IDisposable
         // Rotation offset: physicsBodyRot * CapsuleToBoneOffset = boneWorldRot
         // Capsule Y axis is oriented along the bone segment, which differs from the bone's rotation.
         public Quaternion CapsuleToBoneOffset;
+        // Half the distance from this bone to its child bone. Used to convert
+        // the capsule center (at segment midpoint) back to the bone origin position.
+        // 0 for leaf bones and degenerate (zero-length) segments.
+        public float SegmentHalfLength;
     }
 
     // Bone definitions for the ragdoll skeleton
@@ -315,7 +319,7 @@ public unsafe class RagdollController : IDisposable
         {
             groundY = hitInfo.Point.Y;
         }
-        log.Info($"RagdollController: Ground Y={groundY:F3}");
+        log.Info($"RagdollController: Raycast ground Y={groundY:F3}");
 
         // Create BEPU simulation
         bufferPool = new BufferPool();
@@ -357,43 +361,96 @@ public unsafe class RagdollController : IDisposable
                 boneToFirstChild[def.ParentName] = def.Name;
         }
 
+        // Fake floor: set ground at the lowest bone position minus capsule extent.
+        // This prevents uniform free-fall (all bodies already near/touching ground from frame 1)
+        // and avoids capsules starting inside the ground (which causes explosive correction).
+        if (config.RagdollFakeFloor)
+        {
+            float lowestY = float.MaxValue;
+            foreach (var def in BoneDefs)
+            {
+                if (!boneWorldPositions.TryGetValue(def.Name, out var wp)) continue;
+                var boneBottom = wp.Y - def.CapsuleRadius - def.CapsuleHalfLength;
+                if (boneBottom < lowestY)
+                    lowestY = boneBottom;
+            }
+            if (lowestY < float.MaxValue)
+            {
+                groundY = lowestY - 0.01f; // tiny margin below lowest capsule extent
+                log.Info($"RagdollController: Fake floor adjusted ground Y={groundY:F3} (lowest bone extent)");
+            }
+        }
+
         // --- Pass 2: Create physics bodies ---
+        // Capsule center is offset from bone origin (joint) along the segment direction
+        // by BoneDefs.CapsuleHalfLength. This gives proper lever arms at joints (per BEPU
+        // RagdollDemo pattern). Capsule LENGTH comes from BoneDefs (fixed anatomical size),
+        // NOT from the animation pose distance — death poses bend joints, making bone
+        // distances unreliable (e.g., shin=0.06m in death pose vs 0.22m anatomical).
         foreach (var def in BoneDefs)
         {
             if (!nameToIndex.TryGetValue(def.Name, out var boneIdx)) continue;
             if (!boneWorldPositions.TryGetValue(def.Name, out var boneWorldPos)) continue;
             var boneWorldRot = boneWorldRotations[def.Name];
 
-            // Determine capsule orientation from bone→child segment direction.
-            // BEPU capsules have length along local Y, so we rotate Y to align with the segment.
+            Vector3 capsuleCenter;
+            float segmentHalfLength;
+            float capsuleLength = def.CapsuleHalfLength * 2;
             Quaternion capsuleWorldRot;
+
             if (boneToFirstChild.TryGetValue(def.Name, out var childName) &&
                 boneWorldPositions.TryGetValue(childName, out var childWorldPos))
             {
                 var segment = childWorldPos - boneWorldPos;
-                capsuleWorldRot = segment.Length() > 0.001f
-                    ? RotationFromYToDirection(segment)
-                    : boneWorldRot;
+                var segLen = segment.Length();
+
+                if (segLen > 0.01f)
+                {
+                    // Offset capsule center from bone origin along segment direction.
+                    // Direction from pose, distance from BoneDefs (pose-independent).
+                    var segDir = segment / segLen;
+                    capsuleCenter = boneWorldPos + def.CapsuleHalfLength * segDir;
+                    segmentHalfLength = def.CapsuleHalfLength;
+                    capsuleWorldRot = RotationFromYToDirection(segment);
+                }
+                else
+                {
+                    // Degenerate (co-located bones like j_kosi↔j_sebo_a): keep at bone position
+                    capsuleCenter = boneWorldPos;
+                    segmentHalfLength = 0f;
+                    capsuleWorldRot = boneWorldRot;
+                }
             }
             else
             {
-                // Leaf bone: no child to orient toward, use bone's own rotation
+                // Leaf bone: no child, keep at bone position
+                capsuleCenter = boneWorldPos;
+                segmentHalfLength = 0f;
                 capsuleWorldRot = boneWorldRot;
             }
 
             // Rotation offset: capsuleWorldRot * offset = boneWorldRot
-            // => offset = Inverse(capsuleWorldRot) * boneWorldRot
             var capsuleToBoneOffset = Quaternion.Normalize(
                 Quaternion.Inverse(capsuleWorldRot) * boneWorldRot);
 
-            // Create capsule body at the bone's world position
-            var capsule = new Capsule(def.CapsuleRadius, def.CapsuleHalfLength * 2);
+            // Clamp capsule center above ground — use orientation-aware Y extent
+            // (horizontal capsules only need radius clearance, not full halfLength)
+            var capsuleYDir = Vector3.Transform(Vector3.UnitY, capsuleWorldRot);
+            var yExtentFromCenter = MathF.Abs(capsuleYDir.Y) * def.CapsuleHalfLength + def.CapsuleRadius;
+            var minY = groundY + 0.05f + yExtentFromCenter; // ground box top at groundY + 0.05
+            if (capsuleCenter.Y < minY)
+            {
+                log.Info($"[Ragdoll Init] Clamping '{def.Name}' Y from {capsuleCenter.Y:F3} to {minY:F3}");
+                capsuleCenter.Y = minY;
+            }
+
+            var capsule = new Capsule(def.CapsuleRadius, capsuleLength);
             var shapeIndex = simulation.Shapes.Add(capsule);
 
             var bodyDesc = BodyDescription.CreateDynamic(
-                new RigidPose(boneWorldPos, capsuleWorldRot),
+                new RigidPose(capsuleCenter, capsuleWorldRot),
                 capsule.ComputeInertia(def.Mass),
-                new CollidableDescription(shapeIndex),
+                new CollidableDescription(shapeIndex, 0.04f),
                 new BodyActivityDescription(0.01f));
 
             var bodyHandle = simulation.Bodies.Add(bodyDesc);
@@ -409,15 +466,16 @@ public unsafe class RagdollController : IDisposable
                 BodyHandle = bodyHandle,
                 Name = def.Name,
                 CapsuleToBoneOffset = capsuleToBoneOffset,
+                SegmentHalfLength = segmentHalfLength,
             });
 
             // Log initial state for diagnostics
-            var capsuleY = Vector3.Transform(Vector3.UnitY, capsuleWorldRot);
+            var logCapsuleY = Vector3.Transform(Vector3.UnitY, capsuleWorldRot);
             log.Info($"[Ragdoll Init] '{def.Name}' idx={boneIdx} " +
-                     $"worldPos=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3}) " +
-                     $"boneRot=({boneWorldRot.X:F3},{boneWorldRot.Y:F3},{boneWorldRot.Z:F3},{boneWorldRot.W:F3}) " +
-                     $"capsuleY=({capsuleY.X:F3},{capsuleY.Y:F3},{capsuleY.Z:F3}) " +
-                     $"offset=({capsuleToBoneOffset.X:F3},{capsuleToBoneOffset.Y:F3},{capsuleToBoneOffset.Z:F3},{capsuleToBoneOffset.W:F3})");
+                     $"bonePos=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3}) " +
+                     $"capsuleCenter=({capsuleCenter.X:F3},{capsuleCenter.Y:F3},{capsuleCenter.Z:F3}) " +
+                     $"segHalf={segmentHalfLength:F3} capsuleLen={capsuleLength:F3} " +
+                     $"capsuleY=({logCapsuleY.X:F3},{logCapsuleY.Y:F3},{logCapsuleY.Z:F3})");
         }
 
         // --- Pass 3: Add constraints between connected bones ---
@@ -538,11 +596,13 @@ public unsafe class RagdollController : IDisposable
             }
 
             // --- AngularMotor: damp relative angular velocity ---
+            // Damping 0.01 matches BEPU RagdollDemo. Higher values (like 1.0) make joints
+            // almost rigid, preventing natural articulation and causing uniform-fall behavior.
             simulation.Solver.Add(rb.BodyHandle, parentHandle,
                 new AngularMotor
                 {
                     TargetVelocityLocalA = Vector3.Zero,
-                    Settings = new MotorSettings(float.MaxValue, 1.0f),
+                    Settings = new MotorSettings(float.MaxValue, 0.01f),
                 });
         }
 
@@ -617,21 +677,30 @@ public unsafe class RagdollController : IDisposable
             // Reconstruct bone world rotation from physics capsule rotation + stored offset
             var boneWorldRot = Quaternion.Normalize(bodyRef.Pose.Orientation * rb.CapsuleToBoneOffset);
 
-            // Convert physics world-space results back to skeleton model-space
-            var modelPos = WorldToModel(bodyRef.Pose.Position);
+            // Convert capsule center (at segment midpoint) back to bone origin position.
+            // The bone is at the parent-end of the capsule: center - halfLength * capsuleY.
+            Vector3 boneWorldPos;
+            if (rb.SegmentHalfLength > 0)
+            {
+                var capsuleYAxis = Vector3.Transform(Vector3.UnitY, bodyRef.Pose.Orientation);
+                boneWorldPos = bodyRef.Pose.Position - rb.SegmentHalfLength * capsuleYAxis;
+            }
+            else
+            {
+                boneWorldPos = bodyRef.Pose.Position;
+            }
+
+            var modelPos = WorldToModel(boneWorldPos);
             var modelRot = WorldRotToModel(boneWorldRot);
 
             if (logThisFrame)
             {
                 ref var origM = ref pose->ModelPose.Data[rb.BoneIndex];
                 var animPos = new Vector3(origM.Translation.X, origM.Translation.Y, origM.Translation.Z);
-                var animRot = new Quaternion(origM.Rotation.X, origM.Rotation.Y, origM.Rotation.Z, origM.Rotation.W);
                 log.Info($"[Ragdoll F{frameCount}] '{rb.Name}' " +
                          $"animPos=({animPos.X:F3},{animPos.Y:F3},{animPos.Z:F3}) " +
-                         $"physWorldPos=({bodyRef.Pose.Position.X:F3},{bodyRef.Pose.Position.Y:F3},{bodyRef.Pose.Position.Z:F3}) " +
-                         $"→modelPos=({modelPos.X:F3},{modelPos.Y:F3},{modelPos.Z:F3}) " +
-                         $"animRot=({animRot.X:F3},{animRot.Y:F3},{animRot.Z:F3},{animRot.W:F3}) " +
-                         $"→modelRot=({modelRot.X:F3},{modelRot.Y:F3},{modelRot.Z:F3},{modelRot.W:F3})");
+                         $"boneWorld=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3}) " +
+                         $"→modelPos=({modelPos.X:F3},{modelPos.Y:F3},{modelPos.Z:F3})");
             }
 
             boneService.WriteBoneTransform(skel, rb.BoneIndex, modelPos, modelRot, result);
@@ -708,7 +777,7 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     public bool ConfigureContactManifold<TManifold>(int workerIndex, CollidablePair pair, ref TManifold manifold,
         out PairMaterialProperties pairMaterial) where TManifold : unmanaged, IContactManifold<TManifold>
     {
-        pairMaterial.FrictionCoefficient = 0.8f;
+        pairMaterial.FrictionCoefficient = 1f;
         pairMaterial.MaximumRecoveryVelocity = 2f;
         pairMaterial.SpringSettings = new SpringSettings(30, 1);
         return true;

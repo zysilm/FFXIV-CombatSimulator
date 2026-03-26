@@ -938,6 +938,14 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Velocity damping per frame. Lower = more energy loss.");
 
+                var fakeFloor = config.RagdollFakeFloor;
+                if (ImGui.Checkbox("Fake Floor##ragdoll", ref fakeFloor))
+                {
+                    config.RagdollFakeFloor = fakeFloor;
+                    config.Save();
+                }
+                HelpMarker("Place ground at lowest bone position instead of raycast. Prevents free-fall phase and reduces ground collision artifacts.");
+
                 ImGui.Unindent();
             }
         }

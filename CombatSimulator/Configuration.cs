@@ -106,6 +106,7 @@ public class Configuration : IPluginConfiguration
     public float RagdollActivationDelay { get; set; } = 1.0f;
     public float RagdollGravity { get; set; } = 9.8f;
     public float RagdollDamping { get; set; } = 0.97f;
+    public bool RagdollFakeFloor { get; set; } = true;  // Ground at lowest bone position instead of raycast
 
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
