@@ -21,6 +21,7 @@ public class MainWindow : IDisposable
     private readonly GlamourerIpc glamourerIpc;
     private readonly AnimationController animationController;
     private readonly ConvulsionController convulsionController;
+    private readonly RagdollController ragdollController;
     private readonly DeathCamController deathCamController;
     private readonly IClientState clientState;
     private readonly IChatGui chatGui;
@@ -70,6 +71,7 @@ public class MainWindow : IDisposable
         GlamourerIpc glamourerIpc,
         AnimationController animationController,
         ConvulsionController convulsionController,
+        RagdollController ragdollController,
         DeathCamController deathCamController,
         IClientState clientState,
         IChatGui chatGui,
@@ -81,6 +83,7 @@ public class MainWindow : IDisposable
         this.glamourerIpc = glamourerIpc;
         this.animationController = animationController;
         this.convulsionController = convulsionController;
+        this.ragdollController = ragdollController;
         this.deathCamController = deathCamController;
         this.clientState = clientState;
         this.chatGui = chatGui;
@@ -112,6 +115,7 @@ public class MainWindow : IDisposable
         DrawGlamourerHeaderSection();
         DrawGuiSettingsSection();
         DrawDeathCamSection();
+        DrawRagdollSection();
         DrawExperimentalHeaderSection();
 
         ImGui.End();
@@ -872,6 +876,71 @@ public class MainWindow : IDisposable
             config.Save();
 
         ImGui.End();
+    }
+
+    private void DrawRagdollSection()
+    {
+        if (ImGui.CollapsingHeader("Rag doll (Experimental)"))
+        {
+            ImGui.TextColored(new Vector4(1.0f, 0.8f, 0.2f, 1.0f), "Experimental: ragdoll physics on death.");
+
+            var enabled = config.EnableRagdoll;
+            if (ImGui.Checkbox("Enable Ragdoll##ragdoll", ref enabled))
+            {
+                config.EnableRagdoll = enabled;
+                config.Save();
+            }
+            HelpMarker("Replace death animation with ragdoll physics after a configurable delay.");
+
+            if (config.EnableRagdoll)
+            {
+                ImGui.Indent();
+
+                // Ragdoll Now toggle
+                var ragdollActive = ragdollController.IsActive;
+                if (ImGui.Checkbox("Ragdoll Now", ref ragdollActive))
+                {
+                    if (ragdollActive)
+                    {
+                        var player = clientState.LocalPlayer;
+                        if (player != null)
+                            ragdollController.Activate(player.Address);
+                    }
+                    else
+                    {
+                        ragdollController.Deactivate();
+                    }
+                }
+                HelpMarker("Instantly toggle ragdoll on the player character.");
+
+                ImGui.Separator();
+
+                var delay = config.RagdollActivationDelay;
+                if (ImGui.SliderFloat("Activation Delay (s)##ragdoll", ref delay, 0.0f, 10.0f, "%.1f"))
+                {
+                    config.RagdollActivationDelay = delay;
+                    config.Save();
+                }
+                HelpMarker("Seconds after death before ragdoll physics take over.");
+
+                var gravity = config.RagdollGravity;
+                if (ImGui.SliderFloat("Gravity##ragdoll", ref gravity, 0.1f, 30.0f, "%.1f"))
+                {
+                    config.RagdollGravity = gravity;
+                    config.Save();
+                }
+
+                var damping = config.RagdollDamping;
+                if (ImGui.SliderFloat("Damping##ragdoll", ref damping, 0.8f, 1.0f, "%.3f"))
+                {
+                    config.RagdollDamping = damping;
+                    config.Save();
+                }
+                HelpMarker("Velocity damping per frame. Lower = more energy loss.");
+
+                ImGui.Unindent();
+            }
+        }
     }
 
     private void DrawExperimentalHeaderSection()

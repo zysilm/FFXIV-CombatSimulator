@@ -101,6 +101,12 @@ public class Configuration : IPluginConfiguration
     // Head follow mode: 0 = Translation (head slides), 1 = Rotation (head rocks at ground contact)
     public int ConvulsionHeadFollowMode { get; set; } = 0;
 
+    // Ragdoll physics (Experimental)
+    public bool EnableRagdoll { get; set; } = false;
+    public float RagdollActivationDelay { get; set; } = 1.0f;
+    public float RagdollGravity { get; set; } = 9.8f;
+    public float RagdollDamping { get; set; } = 0.97f;
+
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
     public bool EnableHitVfx { get; set; } = true;

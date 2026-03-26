@@ -55,6 +55,7 @@ public class CombatEngine : IDisposable
     private readonly IClientState clientState;
     private readonly IPluginLog log;
     private readonly ConvulsionController convulsionController;
+    private readonly RagdollController ragdollController;
     private readonly DeathCamController? deathCamController;
     private bool playerDeathTriggered;
     private bool victoryTriggered;
@@ -91,6 +92,7 @@ public class CombatEngine : IDisposable
         GlamourerIpc glamourerIpc,
         MovementBlockHook movementBlockHook,
         ConvulsionController convulsionController,
+        RagdollController ragdollController,
         Configuration config,
         NpcSelector npcSelector,
         IClientState clientState,
@@ -103,6 +105,7 @@ public class CombatEngine : IDisposable
         this.glamourerIpc = glamourerIpc;
         this.movementBlockHook = movementBlockHook;
         this.convulsionController = convulsionController;
+        this.ragdollController = ragdollController;
         this.config = config;
         this.npcSelector = npcSelector;
         this.clientState = clientState;
@@ -164,6 +167,7 @@ public class CombatEngine : IDisposable
         animationController.ResetPlayerDeathAnimation();
         movementBlockHook.IsBlocking = false;
         convulsionController.Deactivate();
+        ragdollController.Deactivate();
         deathCamController?.Deactivate();
         RevertGlamourer();
 
@@ -205,6 +209,7 @@ public class CombatEngine : IDisposable
         animationController.ResetPlayerDeathAnimation();
         movementBlockHook.IsBlocking = false;
         convulsionController.Deactivate();
+        ragdollController.Deactivate();
         RevertGlamourer();
         ApplyResetGlamourer();
 
@@ -668,6 +673,16 @@ public class CombatEngine : IDisposable
                             player.Address,
                             config.ConvulsionIntensity,
                             config.ConvulsionDuration);
+                    }
+                }
+
+                // Activate ragdoll physics on player death
+                if (config.EnableRagdoll)
+                {
+                    var player = clientState.LocalPlayer;
+                    if (player != null)
+                    {
+                        ragdollController.Activate(player.Address);
                     }
                 }
             }

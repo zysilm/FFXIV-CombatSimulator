@@ -2,6 +2,15 @@
   "version": 1,
   "dependencies": {
     "net10.0-windows7.0": {
+      "BepuPhysics": {
+        "type": "Direct",
+        "requested": "[2.5.0-beta.22, )",
+        "resolved": "2.5.0-beta.22",
+        "contentHash": "5IUdt8tI+B3NmlzgZYF+j1s83rtLlZ8U6Wwodgd+yu7IC5PqYCcJYFyhordZS3VKBJNbGrjyxGV00s6RSFsqPg==",
+        "dependencies": {
+          "BepuUtilities": "2.5.0-beta.22"
+        }
+      },
       "DalamudPackager": {
         "type": "Direct",
         "requested": "[14.0.2, )",
@@ -13,6 +22,11 @@
         "requested": "[1.2.39, )",
         "resolved": "1.2.39",
         "contentHash": "fcFN01tDTIQqDuTwr1jUQK/geofiwjG5DycJQOnC72i1SsLAk1ELe+apBOuZ11UMQG8YKFZG1FgvjZPbqHyatg=="
+      },
+      "BepuUtilities": {
+        "type": "Transitive",
+        "resolved": "2.5.0-beta.22",
+        "contentHash": "UMra8NdnA/Jqw7PfofgeOCGTzcUbLKuRDGYNAMWsS39D6NGojZz1srXxzShhnhiA+/HiVVZItTKmNmgwiUbiIw=="
       }
     }
   }
