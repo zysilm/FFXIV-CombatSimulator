@@ -45,6 +45,23 @@ public unsafe class RagdollController : IDisposable
     // Diagnostic frame counter
     private int frameCount;
 
+    // Frozen initial bone poses — prevents death animation from fighting ragdoll
+    private Vector3[]? frozenBonePositions;
+    private Quaternion[]? frozenBoneRotations;
+    private int frozenBoneCount;
+    private HashSet<int>? ragdollBoneIndices;
+
+    // Hierarchical bone propagation — non-ragdoll bones follow their ragdoll ancestors
+    private int[]? closestRagdollAncestor; // nearest ragdoll ancestor index, -1 if none
+    private bool[]? isKosiAncestor;        // true for bones above j_kosi (n_root, n_hara)
+    private short[]? skeletonParentIndices; // cached parent indices
+    private int kosiIndex = -1;            // bone index of j_kosi
+
+    // Per-frame temporary arrays (pre-allocated at init to avoid GC pressure)
+    private Vector3[]? framePhysPositions;
+    private Quaternion[]? framePhysRotations;
+    private bool[]? frameHasPhysics;
+
     public bool IsActive => isActive;
 
     // Ragdoll bone definition
@@ -344,6 +361,84 @@ public unsafe class RagdollController : IDisposable
                      $"offset=({capsuleToBoneOffset.X:F3},{capsuleToBoneOffset.Y:F3},{capsuleToBoneOffset.Z:F3},{capsuleToBoneOffset.W:F3})");
         }
 
+        // Capture initial model-space poses for ALL bones.
+        // Non-ragdoll bones will be frozen to these values each frame to prevent
+        // the death animation from fighting with ragdoll physics.
+        frozenBoneCount = skel.BoneCount;
+        frozenBonePositions = new Vector3[frozenBoneCount];
+        frozenBoneRotations = new Quaternion[frozenBoneCount];
+        ragdollBoneIndices = new HashSet<int>();
+
+        for (int i = 0; i < frozenBoneCount; i++)
+        {
+            ref var m = ref pose->ModelPose.Data[i];
+            frozenBonePositions[i] = new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z);
+            frozenBoneRotations[i] = new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W);
+        }
+
+        foreach (var rb in ragdollBones)
+            ragdollBoneIndices.Add(rb.BoneIndex);
+
+        // Pre-compute hierarchical propagation data
+        kosiIndex = -1;
+        if (nameToIndex.TryGetValue("j_kosi", out var kosiIdx2))
+            kosiIndex = kosiIdx2;
+
+        // Cache parent indices from havok skeleton
+        skeletonParentIndices = new short[frozenBoneCount];
+        for (int pi = 0; pi < frozenBoneCount && pi < skel.ParentCount; pi++)
+            skeletonParentIndices[pi] = (pi > 0) ? skel.HavokSkeleton->ParentIndices[pi] : (short)-1;
+
+        // Mark ancestors of j_kosi (walk up from kosi to root)
+        isKosiAncestor = new bool[frozenBoneCount];
+        if (kosiIndex >= 0)
+        {
+            var cur = (kosiIndex > 0 && kosiIndex < skel.ParentCount)
+                ? skeletonParentIndices[kosiIndex] : (short)-1;
+            while (cur >= 0)
+            {
+                isKosiAncestor[cur] = true;
+                cur = (cur > 0) ? skeletonParentIndices[cur] : (short)-1;
+            }
+        }
+
+        // For each non-ragdoll bone, find nearest ragdoll ancestor
+        closestRagdollAncestor = new int[frozenBoneCount];
+        for (int bi = 0; bi < frozenBoneCount; bi++)
+        {
+            closestRagdollAncestor[bi] = -1;
+            if (ragdollBoneIndices.Contains(bi)) continue;
+            if (isKosiAncestor[bi]) continue;
+
+            var cur = (bi > 0 && bi < skel.ParentCount) ? skeletonParentIndices[bi] : (short)-1;
+            while (cur >= 0)
+            {
+                if (ragdollBoneIndices.Contains(cur))
+                {
+                    closestRagdollAncestor[bi] = cur;
+                    break;
+                }
+                cur = (cur > 0) ? skeletonParentIndices[cur] : (short)-1;
+            }
+        }
+
+        // Pre-allocate per-frame arrays
+        framePhysPositions = new Vector3[frozenBoneCount];
+        framePhysRotations = new Quaternion[frozenBoneCount];
+        frameHasPhysics = new bool[frozenBoneCount];
+
+        {
+            var kosiAncCount = 0;
+            var ragdollDescCount = 0;
+            for (int bi = 0; bi < frozenBoneCount; bi++)
+            {
+                if (isKosiAncestor[bi]) kosiAncCount++;
+                if (closestRagdollAncestor[bi] >= 0) ragdollDescCount++;
+            }
+            log.Info($"RagdollController: Propagation — kosiIdx={kosiIndex}, " +
+                     $"kosiAncestors={kosiAncCount}, bonesWithRagdollAncestor={ragdollDescCount}");
+        }
+
         // --- Pass 3: Add constraints between connected bones ---
         var boneIdxToBodyHandle = new Dictionary<int, BodyHandle>();
         foreach (var rb in ragdollBones)
@@ -436,6 +531,8 @@ public unsafe class RagdollController : IDisposable
         simulation.Timestep(1.0f / 60.0f);
 
         var pose = skel.Pose;
+        frameCount++;
+        var logThisFrame = frameCount <= 3 || frameCount % 60 == 0;
 
         // Save original positions/rotations for delta tracking (needed for j_kao propagation)
         var result = new BoneModificationResult(skel.BoneCount);
@@ -446,10 +543,13 @@ public unsafe class RagdollController : IDisposable
             result.OriginalRotations[i] = new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W);
         }
 
-        frameCount++;
-        var logThisFrame = frameCount <= 3 || frameCount % 60 == 0;
+        if (frozenBonePositions == null || frozenBoneRotations == null ||
+            framePhysPositions == null || framePhysRotations == null || frameHasPhysics == null)
+            return;
 
-        // Write physics body transforms back to ModelPose
+        // --- Phase 1: Compute physics model-space transforms for all ragdoll bones ---
+        Array.Clear(frameHasPhysics, 0, frozenBoneCount);
+
         for (int i = 0; i < ragdollBones.Count; i++)
         {
             var rb = ragdollBones[i];
@@ -457,7 +557,7 @@ public unsafe class RagdollController : IDisposable
 
             var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
 
-            // Guard against NaN from physics explosion — deactivate instead of crashing
+            // NaN guard
             if (float.IsNaN(bodyRef.Pose.Position.X) || float.IsNaN(bodyRef.Pose.Position.Y) ||
                 float.IsNaN(bodyRef.Pose.Position.Z) || float.IsNaN(bodyRef.Pose.Orientation.W))
             {
@@ -466,27 +566,78 @@ public unsafe class RagdollController : IDisposable
                 return;
             }
 
-            // Reconstruct bone world rotation from physics capsule rotation + stored offset
             var boneWorldRot = Quaternion.Normalize(bodyRef.Pose.Orientation * rb.CapsuleToBoneOffset);
-
-            // Convert physics world-space results back to skeleton model-space
-            var modelPos = WorldToModel(bodyRef.Pose.Position);
-            var modelRot = WorldRotToModel(boneWorldRot);
+            framePhysPositions[rb.BoneIndex] = WorldToModel(bodyRef.Pose.Position);
+            framePhysRotations[rb.BoneIndex] = WorldRotToModel(boneWorldRot);
+            frameHasPhysics[rb.BoneIndex] = true;
 
             if (logThisFrame)
             {
-                ref var origM = ref pose->ModelPose.Data[rb.BoneIndex];
-                var animPos = new Vector3(origM.Translation.X, origM.Translation.Y, origM.Translation.Z);
-                var animRot = new Quaternion(origM.Rotation.X, origM.Rotation.Y, origM.Rotation.Z, origM.Rotation.W);
                 log.Info($"[Ragdoll F{frameCount}] '{rb.Name}' " +
-                         $"animPos=({animPos.X:F3},{animPos.Y:F3},{animPos.Z:F3}) " +
-                         $"physWorldPos=({bodyRef.Pose.Position.X:F3},{bodyRef.Pose.Position.Y:F3},{bodyRef.Pose.Position.Z:F3}) " +
-                         $"→modelPos=({modelPos.X:F3},{modelPos.Y:F3},{modelPos.Z:F3}) " +
-                         $"animRot=({animRot.X:F3},{animRot.Y:F3},{animRot.Z:F3},{animRot.W:F3}) " +
-                         $"→modelRot=({modelRot.X:F3},{modelRot.Y:F3},{modelRot.Z:F3},{modelRot.W:F3})");
+                         $"physWorld=({bodyRef.Pose.Position.X:F3},{bodyRef.Pose.Position.Y:F3},{bodyRef.Pose.Position.Z:F3}) " +
+                         $"→model=({framePhysPositions[rb.BoneIndex].X:F3},{framePhysPositions[rb.BoneIndex].Y:F3},{framePhysPositions[rb.BoneIndex].Z:F3})");
+            }
+        }
+
+        // --- Phase 2: Compute j_kosi delta for ancestor propagation ---
+        var kosiRotDelta = Quaternion.Identity;
+        var kosiPosDelta = Vector3.Zero;
+        if (kosiIndex >= 0 && frameHasPhysics[kosiIndex])
+        {
+            kosiPosDelta = framePhysPositions[kosiIndex] - frozenBonePositions[kosiIndex];
+            kosiRotDelta = Quaternion.Normalize(
+                framePhysRotations[kosiIndex] * Quaternion.Inverse(frozenBoneRotations[kosiIndex]));
+        }
+
+        // --- Phase 3: Write ALL bones with hierarchical propagation ---
+        // Ragdoll bones → use physics directly.
+        // Ancestors of kosi (n_root, n_hara) → translate + rotate by kosi's delta.
+        // Non-ragdoll descendants of ragdoll bones (hands, fingers) → rotate around
+        //   their closest ragdoll ancestor's frozen position, then shift to new position.
+        // Everything else → freeze to activation-time pose.
+        for (int i = 0; i < skel.BoneCount; i++)
+        {
+            Vector3 finalPos;
+            Quaternion finalRot;
+
+            if (i < frozenBoneCount && frameHasPhysics[i])
+            {
+                // Ragdoll bone: use physics result directly
+                finalPos = framePhysPositions[i];
+                finalRot = framePhysRotations[i];
+            }
+            else if (isKosiAncestor != null && i < isKosiAncestor.Length && isKosiAncestor[i])
+            {
+                // Ancestor of j_kosi (n_root, n_hara): follow pelvis delta
+                finalPos = frozenBonePositions[i] + kosiPosDelta;
+                finalRot = Quaternion.Normalize(kosiRotDelta * frozenBoneRotations[i]);
+            }
+            else if (closestRagdollAncestor != null && i < closestRagdollAncestor.Length &&
+                     closestRagdollAncestor[i] >= 0)
+            {
+                // Non-ragdoll descendant of a ragdoll bone (e.g. hands, fingers):
+                // Rotate frozen position around ancestor's frozen position by ancestor's
+                // rotation delta, then shift to ancestor's new position.
+                var ancestorIdx = closestRagdollAncestor[i];
+                var ancestorRotDelta = Quaternion.Normalize(
+                    framePhysRotations[ancestorIdx] * Quaternion.Inverse(frozenBoneRotations[ancestorIdx]));
+
+                var relToAncestor = frozenBonePositions[i] - frozenBonePositions[ancestorIdx];
+                finalPos = framePhysPositions[ancestorIdx] + Vector3.Transform(relToAncestor, ancestorRotDelta);
+                finalRot = Quaternion.Normalize(ancestorRotDelta * frozenBoneRotations[i]);
+            }
+            else if (i < frozenBoneCount)
+            {
+                // No ragdoll influence: freeze to initial pose
+                finalPos = frozenBonePositions[i];
+                finalRot = frozenBoneRotations[i];
+            }
+            else
+            {
+                continue;
             }
 
-            boneService.WriteBoneTransform(skel, rb.BoneIndex, modelPos, modelRot, result);
+            boneService.WriteBoneTransform(skel, i, finalPos, finalRot, result);
         }
 
         // Propagate j_kao changes to face/hair partial skeletons
@@ -504,6 +655,16 @@ public unsafe class RagdollController : IDisposable
     private void DestroySimulation()
     {
         ragdollBones.Clear();
+        frozenBonePositions = null;
+        frozenBoneRotations = null;
+        ragdollBoneIndices = null;
+        closestRagdollAncestor = null;
+        isKosiAncestor = null;
+        skeletonParentIndices = null;
+        kosiIndex = -1;
+        framePhysPositions = null;
+        framePhysRotations = null;
+        frameHasPhysics = null;
         simulation?.Dispose();
         simulation = null;
         bufferPool?.Clear();
