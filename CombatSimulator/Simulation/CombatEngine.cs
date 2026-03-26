@@ -6,7 +6,6 @@ using CombatSimulator.Camera;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
-using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 
@@ -665,18 +664,10 @@ public class CombatEngine : IDisposable
                     var player = clientState.LocalPlayer;
                     if (player != null)
                     {
-                        unsafe
-                        {
-                            var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;
-                            var drawObj = gameObj->DrawObject;
-                            if (drawObj != null)
-                            {
-                                convulsionController.Activate(
-                                    (nint)drawObj,
-                                    config.ConvulsionIntensity,
-                                    config.ConvulsionDuration);
-                            }
-                        }
+                        convulsionController.Activate(
+                            player.Address,
+                            config.ConvulsionIntensity,
+                            config.ConvulsionDuration);
                     }
                 }
             }

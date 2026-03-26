@@ -876,10 +876,9 @@ public class MainWindow : IDisposable
             {
                 ImGui.BeginDisabled();
                 var dummy = false;
-                ImGui.Checkbox("Torture", ref dummy);
+                ImGui.Checkbox("Bone Rotation test", ref dummy);
                 ImGui.EndDisabled();
 
-                // Detect clicks on the disabled checkbox area
                 var min = ImGui.GetItemRectMin();
                 var max = ImGui.GetItemRectMax();
                 if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
@@ -897,28 +896,57 @@ public class MainWindow : IDisposable
             else
             {
                 var torture = config.EnableTorture;
-                if (ImGui.Checkbox("Torture", ref torture))
+                if (ImGui.Checkbox("Bone Rotation test", ref torture))
                 {
                     config.EnableTorture = torture;
                     config.Save();
                 }
-                HelpMarker("Death convulsion effect on player character.");
 
                 if (config.EnableTorture)
                 {
                     ImGui.Indent();
 
                     var intensity = config.ConvulsionIntensity;
-                    if (ImGui.SliderFloat("Intensity", ref intensity, 0.1f, 1.0f, "%.1f"))
+                    if (ImGui.SliderFloat("Intensity", ref intensity, 0.1f, 1.0f, "%.2f"))
                     {
                         config.ConvulsionIntensity = intensity;
                         config.Save();
                     }
 
                     var duration = config.ConvulsionDuration;
-                    if (ImGui.SliderFloat("Duration (s)", ref duration, 2.0f, 30.0f, "%.1f"))
+                    if (ImGui.SliderFloat("Duration (s)", ref duration, 1.0f, 10000.0f, "%.1f", ImGuiSliderFlags.Logarithmic))
                     {
                         config.ConvulsionDuration = duration;
+                        config.Save();
+                    }
+
+                    ImGui.Separator();
+                    ImGui.Text("j_kosi (pelvis)");
+                    var kosiIntensity = config.ConvulsionKosiIntensity;
+                    if (ImGui.SliderFloat("Intensity##kosi", ref kosiIntensity, 0.0f, 1.0f, "%.2f"))
+                    {
+                        config.ConvulsionKosiIntensity = kosiIntensity;
+                        config.Save();
+                    }
+                    var kosiFreq = config.ConvulsionKosiFrequency;
+                    if (ImGui.SliderFloat("Frequency##kosi", ref kosiFreq, 0.1f, 30.0f, "%.1f Hz"))
+                    {
+                        config.ConvulsionKosiFrequency = kosiFreq;
+                        config.Save();
+                    }
+
+                    ImGui.Separator();
+                    ImGui.Text("j_sebo_a (spine A)");
+                    var seboAIntensity = config.ConvulsionSeboAIntensity;
+                    if (ImGui.SliderFloat("Intensity##seboA", ref seboAIntensity, 0.0f, 1.0f, "%.2f"))
+                    {
+                        config.ConvulsionSeboAIntensity = seboAIntensity;
+                        config.Save();
+                    }
+                    var seboAFreq = config.ConvulsionSeboAFrequency;
+                    if (ImGui.SliderFloat("Frequency##seboA", ref seboAFreq, 0.1f, 30.0f, "%.1f Hz"))
+                    {
+                        config.ConvulsionSeboAFrequency = seboAFreq;
                         config.Save();
                     }
 
