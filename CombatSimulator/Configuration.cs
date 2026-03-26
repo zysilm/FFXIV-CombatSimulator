@@ -98,6 +98,9 @@ public class Configuration : IPluginConfiguration
     public float ConvulsionSeboAFrequency { get; set; } = 6.0f;
     public float ConvulsionFrequencyRatio { get; set; } = 1.0f;
 
+    // Head follow mode: 0 = Translation (head slides), 1 = Rotation (head rocks at ground contact)
+    public int ConvulsionHeadFollowMode { get; set; } = 0;
+
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
     public bool EnableHitVfx { get; set; } = true;

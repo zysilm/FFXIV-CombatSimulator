@@ -927,6 +927,13 @@ public class MainWindow : IDisposable
                         config.Save();
                     }
 
+                    var headMode = config.ConvulsionHeadFollowMode;
+                    if (ImGui.Combo("Head Follow", ref headMode, "Translation\0Rotation\0"))
+                    {
+                        config.ConvulsionHeadFollowMode = headMode;
+                        config.Save();
+                    }
+
                     ImGui.Separator();
                     ImGui.Text("j_kosi (pelvis)");
                     var kosiIntensity = config.ConvulsionKosiIntensity;

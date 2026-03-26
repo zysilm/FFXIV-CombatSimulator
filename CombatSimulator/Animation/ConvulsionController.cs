@@ -198,8 +198,13 @@ public unsafe class ConvulsionController : IDisposable
         var accDelta = new Quaternion[boneCount];
         var hasAcc = new bool[boneCount];
 
+        // In rotation mode, skip j_kao in the main loop — handle it separately
+        bool kaoRotationMode = kaoBoneIndex >= 0 && config.ConvulsionHeadFollowMode == 1;
+
         for (int i = 0; i < boneCount && i < parentCount; i++)
         {
+            if (kaoRotationMode && i == kaoBoneIndex) continue;
+
             var parentIdx = (i > 0) ? havokSkel->ParentIndices[i] : (short)-1;
             bool hasDirect = deltas.TryGetValue(i, out var directDelta);
             bool parentHasAcc = parentIdx >= 0 && parentIdx < boneCount && hasAcc[parentIdx];
@@ -247,6 +252,73 @@ public unsafe class ConvulsionController : IDisposable
             model.Rotation.Y = newRot.Y;
             model.Rotation.Z = newRot.Z;
             model.Rotation.W = newRot.W;
+        }
+
+        // Rotation mode: rotate j_kao around its ground contact point instead of translating.
+        // The head rests on the ground at the point furthest from the neck connection.
+        // Converting the neck displacement into a rotation makes the head rock/roll in place.
+        if (kaoRotationMode && kaoBoneIndex < boneCount)
+        {
+            var kaoParentIdx = havokSkel->ParentIndices[kaoBoneIndex];
+            if (kaoParentIdx >= 0 && kaoParentIdx < boneCount && hasAcc[kaoParentIdx])
+            {
+                var neckDelta = accDelta[kaoParentIdx];
+                ref var neckModel = ref pose->ModelPose.Data[kaoParentIdx];
+                var neckNewPos = new Vector3(neckModel.Translation.X, neckModel.Translation.Y, neckModel.Translation.Z);
+
+                // Desired displacement (what translation mode would do)
+                var relToNeck = origPos[kaoBoneIndex] - origPos[kaoParentIdx];
+                var rotatedRel = Vector3.Transform(relToNeck, neckDelta);
+                var desiredPos = origPos[kaoParentIdx] + rotatedRel + (neckNewPos - origPos[kaoParentIdx]);
+                var displacement = desiredPos - origPos[kaoBoneIndex];
+
+                // Estimate ground contact point: head extends from neck connection,
+                // ground contact is at the far side (opposite from neck), ~headRadius away.
+                const float headRadius = 0.12f;
+                var headDir = Vector3.Normalize(origPos[kaoBoneIndex] - origPos[kaoParentIdx]);
+                var groundContact = origPos[kaoBoneIndex] + headDir * headRadius;
+
+                // Convert displacement to rotation around ground contact
+                var leverArm = origPos[kaoBoneIndex] - groundContact; // from ground to j_kao
+                var leverLen = leverArm.Length();
+
+                Quaternion pivotRot;
+                if (leverLen > 0.001f && displacement.Length() > 0.0001f)
+                {
+                    var rotAxis = Vector3.Cross(leverArm, displacement);
+                    var axisLen = rotAxis.Length();
+                    if (axisLen > 0.00001f)
+                    {
+                        rotAxis /= axisLen;
+                        var rotAngle = displacement.Length() / leverLen;
+                        pivotRot = Quaternion.CreateFromAxisAngle(rotAxis, rotAngle);
+                    }
+                    else
+                    {
+                        pivotRot = Quaternion.Identity;
+                    }
+                }
+                else
+                {
+                    pivotRot = Quaternion.Identity;
+                }
+
+                // Apply rotation around ground contact point
+                var kaoNewPos = groundContact + Vector3.Transform(leverArm, pivotRot);
+                var kaoNewRot = Quaternion.Normalize(pivotRot * origRot[kaoBoneIndex]);
+
+                ref var kaoModel = ref pose->ModelPose.Data[kaoBoneIndex];
+                kaoModel.Translation.X = kaoNewPos.X;
+                kaoModel.Translation.Y = kaoNewPos.Y;
+                kaoModel.Translation.Z = kaoNewPos.Z;
+                kaoModel.Rotation.X = kaoNewRot.X;
+                kaoModel.Rotation.Y = kaoNewRot.Y;
+                kaoModel.Rotation.Z = kaoNewRot.Z;
+                kaoModel.Rotation.W = kaoNewRot.W;
+
+                accDelta[kaoBoneIndex] = Quaternion.Normalize(kaoNewRot * Quaternion.Inverse(origRot[kaoBoneIndex]));
+                hasAcc[kaoBoneIndex] = true;
+            }
         }
 
         // Propagate j_kao changes to other partial skeletons (face, hair, etc.).
