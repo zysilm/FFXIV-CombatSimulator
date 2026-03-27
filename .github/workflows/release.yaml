@@ -43,12 +43,13 @@ jobs:
 
       - name: Prepare release artifacts
         run: |
-          out_dir=$(find ${{ env.SOLUTION_DIR }}/bin/Release -name "${{ env.PLUGIN_NAME }}.dll" -printf '%h' -quit)
-          echo "Output dir: $out_dir"
+          # Dalamud SDK produces latest.zip with all DLLs (plugin + dependencies)
+          sdk_zip="${{ env.SOLUTION_DIR }}/bin/Release/${{ env.PLUGIN_NAME }}/latest.zip"
+          echo "SDK zip: $sdk_zip"
           mkdir -p release
-          cp "$out_dir"/${{ env.PLUGIN_NAME }}.dll release/
-          cp "$out_dir"/${{ env.PLUGIN_NAME }}.json release/
-          [ -f "$out_dir"/${{ env.PLUGIN_NAME }}.pdb ] && cp "$out_dir"/${{ env.PLUGIN_NAME }}.pdb release/ || true
+          unzip -o "$sdk_zip" -d release/
+          # Remove nested zip artifact if present
+          rm -f release/${{ env.PLUGIN_NAME }}.zip
           cd release && zip -r ../${{ env.PLUGIN_NAME }}.zip .
 
       - name: Generate pluginmaster.json
