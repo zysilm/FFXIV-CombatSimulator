@@ -103,10 +103,10 @@ public unsafe class RagdollController : IDisposable
         new RagdollBoneDef { Name = "j_sebo_c",  ParentName = "j_sebo_b", CapsuleRadius = 0.06f, CapsuleHalfLength = 0.05f, Mass = 4.0f,  SwingLimit = 0.15f, Joint = JointType.Ball,  TwistLimitAngle = 0.2f  }, // spine
         new RagdollBoneDef { Name = "j_kubi",    ParentName = "j_sebo_c", CapsuleRadius = 0.04f, CapsuleHalfLength = 0.03f, Mass = 2.0f,  SwingLimit = 0.25f, Joint = JointType.Ball,  TwistLimitAngle = 0.3f  }, // neck
         new RagdollBoneDef { Name = "j_kao",     ParentName = "j_kubi",   CapsuleRadius = 0.08f, CapsuleHalfLength = 0.04f, Mass = 3.0f,  SwingLimit = 0.3f,  Joint = JointType.Ball,  TwistLimitAngle = 0.3f  }, // head
-        new RagdollBoneDef { Name = "j_ude_a_l", ParentName = "j_sebo_c", CapsuleRadius = 0.03f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 0.8f,  Joint = JointType.Ball,  TwistLimitAngle = 0.5f  }, // shoulder
-        new RagdollBoneDef { Name = "j_ude_a_r", ParentName = "j_sebo_c", CapsuleRadius = 0.03f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 0.8f,  Joint = JointType.Ball,  TwistLimitAngle = 0.5f  }, // shoulder
-        new RagdollBoneDef { Name = "j_ude_b_l", ParentName = "j_ude_a_l",CapsuleRadius = 0.025f,CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = 1.2f,  Joint = JointType.Hinge, TwistLimitAngle = 0f    }, // elbow
-        new RagdollBoneDef { Name = "j_ude_b_r", ParentName = "j_ude_a_r",CapsuleRadius = 0.025f,CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = 1.2f,  Joint = JointType.Hinge, TwistLimitAngle = 0f    }, // elbow
+        new RagdollBoneDef { Name = "j_ude_a_l", ParentName = "j_sebo_c", CapsuleRadius = 0.03f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,  Joint = JointType.Ball,  TwistLimitAngle = 0.8f  }, // shoulder (~103° swing, ~46° twist)
+        new RagdollBoneDef { Name = "j_ude_a_r", ParentName = "j_sebo_c", CapsuleRadius = 0.03f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,  Joint = JointType.Ball,  TwistLimitAngle = 0.8f  }, // shoulder (~103° swing, ~46° twist)
+        new RagdollBoneDef { Name = "j_ude_b_l", ParentName = "j_ude_a_l",CapsuleRadius = 0.025f,CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = 2.5f,  Joint = JointType.Hinge, TwistLimitAngle = 0f    }, // elbow (~143° flexion range)
+        new RagdollBoneDef { Name = "j_ude_b_r", ParentName = "j_ude_a_r",CapsuleRadius = 0.025f,CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = 2.5f,  Joint = JointType.Hinge, TwistLimitAngle = 0f    }, // elbow (~143° flexion range)
         new RagdollBoneDef { Name = "j_asi_a_l", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 0.7f,  Joint = JointType.Ball,  TwistLimitAngle = 0.3f  }, // hip
         new RagdollBoneDef { Name = "j_asi_a_r", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 0.7f,  Joint = JointType.Ball,  TwistLimitAngle = 0.3f  }, // hip
         new RagdollBoneDef { Name = "j_asi_b_l", ParentName = "j_asi_a_l",CapsuleRadius = 0.035f,CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = 1.2f,  Joint = JointType.Hinge, TwistLimitAngle = 0f    }, // knee
@@ -363,6 +363,17 @@ public unsafe class RagdollController : IDisposable
                 boneToFirstChild[def.ParentName] = def.Name;
         }
 
+        // Build first-child lookup from full skeleton hierarchy (not just BoneDefs).
+        // Used for leaf bones to find the actual child bone direction (e.g., forearm
+        // needs elbow→wrist direction from j_te_l, not shoulder→elbow from parent).
+        var skelFirstChild = new Dictionary<int, int>();
+        for (int i = 0; i < skel.BoneCount && i < skel.ParentCount; i++)
+        {
+            var parentIdx = skel.HavokSkeleton->ParentIndices[i];
+            if (parentIdx >= 0 && !skelFirstChild.ContainsKey(parentIdx))
+                skelFirstChild[parentIdx] = i;
+        }
+
         // Store real terrain level before any offset
         realGroundY = groundY;
 
@@ -415,9 +426,36 @@ public unsafe class RagdollController : IDisposable
                     capsuleWorldRot = boneWorldRot;
                 }
             }
+            else if (skelFirstChild.TryGetValue(boneIdx, out var skelChildIdx) &&
+                     skelChildIdx < skel.BoneCount)
+            {
+                // Leaf bone in BoneDefs but has a child in the full skeleton (e.g.,
+                // forearm j_ude_b → hand j_te, foot j_asi_c → toe).
+                // Use bone→skelChild direction for capsule orientation so the capsule
+                // extends along the actual limb, not along the parent segment.
+                ref var childMt = ref pose->ModelPose.Data[skelChildIdx];
+                var childModelPos = new Vector3(childMt.Translation.X, childMt.Translation.Y, childMt.Translation.Z);
+                var skelChildWorldPos = ModelToWorld(childModelPos);
+                var toSkelChild = skelChildWorldPos - boneWorldPos;
+                var toSkelChildLen = toSkelChild.Length();
+
+                if (toSkelChildLen > 0.01f)
+                {
+                    var dir = toSkelChild / toSkelChildLen;
+                    capsuleCenter = boneWorldPos + def.CapsuleHalfLength * dir;
+                    segmentHalfLength = def.CapsuleHalfLength;
+                    capsuleWorldRot = RotationFromYToDirection(toSkelChild);
+                }
+                else
+                {
+                    capsuleCenter = boneWorldPos;
+                    segmentHalfLength = 0f;
+                    capsuleWorldRot = boneWorldRot;
+                }
+            }
             else
             {
-                // Leaf bone: no child, keep at bone position
+                // True root with no parent: keep at bone position
                 capsuleCenter = boneWorldPos;
                 segmentHalfLength = 0f;
                 capsuleWorldRot = boneWorldRot;
@@ -505,11 +543,12 @@ public unsafe class RagdollController : IDisposable
                 anchorWorld - parentBodyRef.Pose.Position,
                 Quaternion.Inverse(parentBodyRef.Pose.Orientation));
 
-            // Segment direction from parent body to child (used for swing/twist axes)
-            var segDirWorld = anchorWorld - parentBodyRef.Pose.Position;
-            if (segDirWorld.Length() > 0.001f)
-                segDirWorld = Vector3.Normalize(segDirWorld);
-            else
+            // Segment direction along the child body's capsule axis (used for swing/twist/hinge).
+            // This is the direction the limb extends in, NOT the direction from parent body
+            // center to anchor (which is wrong for branching joints like shoulders where
+            // the parent body is the chest and the child branches off to the side).
+            var segDirWorld = Vector3.Transform(Vector3.UnitY, childBodyRef.Pose.Orientation);
+            if (segDirWorld.LengthSquared() < 0.001f)
                 segDirWorld = Vector3.UnitY;
 
             // --- Positional + angular constraint ---
