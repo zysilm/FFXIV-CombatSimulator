@@ -938,6 +938,14 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Lower the terrain ground by this amount. Prevents joints from starting at floor level, which causes bad constraint solving.");
 
+                var selfCollision = config.RagdollSelfCollision;
+                if (ImGui.Checkbox("Self Collision##ragdoll", ref selfCollision))
+                {
+                    config.RagdollSelfCollision = selfCollision;
+                    config.Save();
+                }
+                HelpMarker("Body parts collide with each other (arms vs torso, legs vs legs). Prevents clipping but may cause slight stretching. Takes effect on next ragdoll activation.");
+
                 ImGui.Separator();
                 if (ImGui.Button("Reset to Defaults##ragdoll"))
                 {
@@ -945,6 +953,7 @@ public class MainWindow : IDisposable
                     config.RagdollGravity = 9.8f;
                     config.RagdollDamping = 0.97f;
                     config.RagdollFloorOffset = 0.1f;
+                    config.RagdollSelfCollision = true;
                     config.Save();
                 }
 

@@ -92,6 +92,7 @@ public class Configuration : IPluginConfiguration
     public float RagdollGravity { get; set; } = 9.8f;
     public float RagdollDamping { get; set; } = 0.97f;
     public float RagdollFloorOffset { get; set; } = 0.1f;  // Lower terrain by this amount to avoid joint-floor collision artifacts
+    public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
 
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";

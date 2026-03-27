@@ -108,6 +108,8 @@ public unsafe class RagdollController : IDisposable
         new RagdollBoneDef { Name = "j_ude_a_r", ParentName = "j_sebo_c", CapsuleRadius = 0.03f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,  Joint = JointType.Ball,  TwistMinAngle = -0.8f,  TwistMaxAngle = 0.8f  }, // shoulder
         new RagdollBoneDef { Name = "j_ude_b_l", ParentName = "j_ude_a_l",CapsuleRadius = 0.025f,CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = 0f,    Joint = JointType.Hinge, TwistMinAngle = -0.17f, TwistMaxAngle = 2.6f  }, // elbow: -10° to 150°
         new RagdollBoneDef { Name = "j_ude_b_r", ParentName = "j_ude_a_r",CapsuleRadius = 0.025f,CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = 0f,    Joint = JointType.Hinge, TwistMinAngle = -0.17f, TwistMaxAngle = 2.6f  }, // elbow: -10° to 150°
+        new RagdollBoneDef { Name = "j_te_l",   ParentName = "j_ude_b_l",CapsuleRadius = 0.02f, CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.8f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // left wrist
+        new RagdollBoneDef { Name = "j_te_r",   ParentName = "j_ude_b_r",CapsuleRadius = 0.02f, CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.8f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // right wrist
         new RagdollBoneDef { Name = "j_asi_a_l", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 0.7f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // hip
         new RagdollBoneDef { Name = "j_asi_a_r", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 0.7f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // hip
         new RagdollBoneDef { Name = "j_asi_b_l", ParentName = "j_asi_a_l",CapsuleRadius = 0.035f,CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = 0f,    Joint = JointType.Hinge, TwistMinAngle = -0.17f, TwistMaxAngle = 2.4f  }, // knee: -10° to 140°
@@ -325,10 +327,14 @@ public unsafe class RagdollController : IDisposable
         log.Info($"RagdollController: Raycast ground Y={groundY:F3}");
 
         // Create BEPU simulation
+        // When self-collision is enabled, ConnectedPairs filters out nearby body pairs
+        // (1-2 hops) while allowing distant body-body collisions (arms vs torso).
+        // When disabled (null), only body-static collisions are allowed.
+        var connectedPairs = config.RagdollSelfCollision ? new HashSet<(int, int)>() : null;
         bufferPool = new BufferPool();
         simulation = BepuSimulation.Create(
             bufferPool,
-            new RagdollNarrowPhaseCallbacks(),
+            new RagdollNarrowPhaseCallbacks { ConnectedPairs = connectedPairs },
             new RagdollPoseIntegratorCallbacks(
                 new Vector3(0, -config.RagdollGravity, 0),
                 config.RagdollDamping),
@@ -524,6 +530,21 @@ public unsafe class RagdollController : IDisposable
             var rb = ragdollBones[i];
             if (rb.ParentBoneIndex < 0) continue;
             if (!boneIdxToBodyHandle.TryGetValue(rb.ParentBoneIndex, out var parentHandle)) continue;
+
+            // Exclude direct parent-child from collision (they share a joint anchor)
+            var lo = Math.Min(rb.BodyHandle.Value, parentHandle.Value);
+            var hi = Math.Max(rb.BodyHandle.Value, parentHandle.Value);
+            connectedPairs.Add((lo, hi));
+
+            // Also exclude grandparent (2 hops) — nearby bodies in the chain would
+            // cause collision forces that stretch the spring constraints between them.
+            var parentRb = ragdollBones.Find(r => r.BoneIndex == rb.ParentBoneIndex);
+            if (parentRb.ParentBoneIndex >= 0 && boneIdxToBodyHandle.TryGetValue(parentRb.ParentBoneIndex, out var grandparentHandle))
+            {
+                lo = Math.Min(rb.BodyHandle.Value, grandparentHandle.Value);
+                hi = Math.Max(rb.BodyHandle.Value, grandparentHandle.Value);
+                connectedPairs.Add((lo, hi));
+            }
 
             // Find the bone definition for this bone
             RagdollBoneDef boneDef = default;
@@ -846,13 +867,32 @@ public unsafe class RagdollController : IDisposable
 
 struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 {
+    // Connected body pairs that should NOT collide (parent-child joints).
+    // All other body-body pairs DO collide (arms vs torso, etc.).
+    public HashSet<(int, int)> ConnectedPairs;
+
     public void Initialize(BepuSimulation simulation) { }
 
     public bool AllowContactGeneration(int workerIndex, CollidableReference a, CollidableReference b, ref float speculativeMargin)
     {
-        // Only allow body-static collisions (ragdoll vs ground).
-        // Disable all body-body collisions to prevent self-collision explosions.
-        return a.Mobility == CollidableMobility.Static || b.Mobility == CollidableMobility.Static;
+        // Always allow body-static collisions (ragdoll vs ground)
+        if (a.Mobility == CollidableMobility.Static || b.Mobility == CollidableMobility.Static)
+            return true;
+
+        // Body-body: allow UNLESS they are directly connected by a joint.
+        // Connected pairs would explode because they share a constraint anchor point.
+        if (ConnectedPairs != null && a.Mobility == CollidableMobility.Dynamic && b.Mobility == CollidableMobility.Dynamic)
+        {
+            var idA = a.BodyHandle.Value;
+            var idB = b.BodyHandle.Value;
+            var lo = Math.Min(idA, idB);
+            var hi = Math.Max(idA, idB);
+            if (ConnectedPairs.Contains((lo, hi)))
+                return false;
+            return true;
+        }
+
+        return false;
     }
 
     public bool AllowContactGeneration(int workerIndex, CollidablePair pair, int childIndexA, int childIndexB)
