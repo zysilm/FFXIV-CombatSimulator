@@ -531,19 +531,23 @@ public unsafe class RagdollController : IDisposable
             if (rb.ParentBoneIndex < 0) continue;
             if (!boneIdxToBodyHandle.TryGetValue(rb.ParentBoneIndex, out var parentHandle)) continue;
 
-            // Exclude direct parent-child from collision (they share a joint anchor)
-            var lo = Math.Min(rb.BodyHandle.Value, parentHandle.Value);
-            var hi = Math.Max(rb.BodyHandle.Value, parentHandle.Value);
-            connectedPairs.Add((lo, hi));
-
-            // Also exclude grandparent (2 hops) — nearby bodies in the chain would
-            // cause collision forces that stretch the spring constraints between them.
-            var parentRb = ragdollBones.Find(r => r.BoneIndex == rb.ParentBoneIndex);
-            if (parentRb.ParentBoneIndex >= 0 && boneIdxToBodyHandle.TryGetValue(parentRb.ParentBoneIndex, out var grandparentHandle))
+            // When self-collision is enabled, exclude nearby pairs (1-2 hops)
+            if (connectedPairs != null)
             {
-                lo = Math.Min(rb.BodyHandle.Value, grandparentHandle.Value);
-                hi = Math.Max(rb.BodyHandle.Value, grandparentHandle.Value);
+                // Exclude direct parent-child (they share a joint anchor)
+                var lo = Math.Min(rb.BodyHandle.Value, parentHandle.Value);
+                var hi = Math.Max(rb.BodyHandle.Value, parentHandle.Value);
                 connectedPairs.Add((lo, hi));
+
+                // Also exclude grandparent (2 hops) — nearby bodies in the chain would
+                // cause collision forces that stretch the spring constraints between them.
+                var parentRb = ragdollBones.Find(r => r.BoneIndex == rb.ParentBoneIndex);
+                if (parentRb.ParentBoneIndex >= 0 && boneIdxToBodyHandle.TryGetValue(parentRb.ParentBoneIndex, out var grandparentHandle))
+                {
+                    lo = Math.Min(rb.BodyHandle.Value, grandparentHandle.Value);
+                    hi = Math.Max(rb.BodyHandle.Value, grandparentHandle.Value);
+                    connectedPairs.Add((lo, hi));
+                }
             }
 
             // Find the bone definition for this bone
