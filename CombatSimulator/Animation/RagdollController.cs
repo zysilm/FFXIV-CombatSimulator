@@ -472,16 +472,11 @@ public unsafe class RagdollController : IDisposable
             var capsuleToBoneOffset = Quaternion.Normalize(
                 Quaternion.Inverse(capsuleWorldRot) * boneWorldRot);
 
-            // Clamp capsule center above ground — use orientation-aware Y extent
-            // (horizontal capsules only need radius clearance, not full halfLength)
-            var capsuleYDir = Vector3.Transform(Vector3.UnitY, capsuleWorldRot);
-            var yExtentFromCenter = MathF.Abs(capsuleYDir.Y) * def.CapsuleHalfLength + def.CapsuleRadius;
-            var minY = groundY + 0.05f + yExtentFromCenter; // ground box top at groundY + 0.05
-            if (capsuleCenter.Y < minY)
-            {
-                log.Info($"[Ragdoll Init] Clamping '{def.Name}' Y from {capsuleCenter.Y:F3} to {minY:F3}");
-                capsuleCenter.Y = minY;
-            }
+            // No Y clamping — let capsules start at their actual bone positions.
+            // The floor offset already provides clearance between the physics ground
+            // and the real terrain. Clamping creates artificial initial configurations
+            // that the solver must correct, causing visible rigid-body translation
+            // (standing pose sinks) or bouncing (corpse pose lifts).
 
             var capsule = new Capsule(def.CapsuleRadius, capsuleLength);
             var shapeIndex = simulation.Shapes.Add(capsule);
@@ -711,6 +706,25 @@ public unsafe class RagdollController : IDisposable
         // Keep animation frozen (game may recalculate OverallSpeed each frame)
         var character = (Character*)targetCharacterAddress;
         character->Timeline.OverallSpeed = 0f;
+
+        // Re-read skeleton transform every frame. The game may update the character's
+        // root position between frames (death transitions, position adjustments).
+        // Using a stale transform causes systematic vertical offset in WorldToModel
+        // conversion, making the character appear to drop or bounce on activation.
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton != null)
+        {
+            skelWorldPos = new Vector3(
+                skeleton->Transform.Position.X,
+                skeleton->Transform.Position.Y,
+                skeleton->Transform.Position.Z);
+            skelWorldRot = new Quaternion(
+                skeleton->Transform.Rotation.X,
+                skeleton->Transform.Rotation.Y,
+                skeleton->Transform.Rotation.Z,
+                skeleton->Transform.Rotation.W);
+            skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
+        }
 
         // Step physics
         simulation.Timestep(1.0f / 60.0f);
