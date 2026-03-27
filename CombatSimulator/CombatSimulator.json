@@ -2,7 +2,7 @@
     "Name": "Combat Simulator",
     "Author": "zysilm",
     "Punchline": "Fight existing NPCs in client-side combat simulation.",
-    "Description": "A client-side combat simulator that lets you fight existing NPCs locally. Features NPC AI, combat animations, death effects (ragdoll physics, convulsions), death cam, HP overlays, and glamourer integration. All combat is simulated locally - no data is sent to the server.",
+    "Description": "A client-side combat simulator that lets you fight existing NPCs locally. Features NPC AI, combat animations, death effects (ragdoll physics), death cam, HP overlays, and glamourer integration. All combat is simulated locally - no data is sent to the server.",
     "RepoUrl": "https://github.com/zysilm/FFXIV-CombatSimulator",
     "Tags": [
         "combat",

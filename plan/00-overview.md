@@ -33,9 +33,9 @@ fully client-side combat simulation. No data is sent to the server.
 |  |  Animation/VFX    |    |  Death Effects              |         |
 |  |  Controller       |    |                             |         |
 |  |                    |    |  - Ragdoll (BEPUphysics2)  |         |
-|  |  - Attack anims   |    |  - Convulsion (bone rot.)   |         |
-|  |  - Hit reactions  |    |  - Death Cam (camera ctrl)  |         |
-|  |  - Death anim     |    |  - Glamourer integration    |         |
+|  |  - Attack anims   |    |  - Death Cam (camera ctrl)  |         |
+|  |  - Hit reactions  |    |  - Glamourer integration    |         |
+|  |  - Death anim     |    |                             |         |
 |  |  - Damage flytext |    +-----------------------------+         |
 |  +------------------+                                            |
 |                                                                   |
@@ -84,7 +84,6 @@ After research, using the internal fight system directly is NOT possible:
 ### 4. Death Effects
 - **Ragdoll physics** via BEPUphysics2 — capsule-based ragdoll with 16 bones,
   joint constraints (Hinge/BallSocket), ground collision, and bone-to-model mapping
-- **Convulsion** via bone rotation — per-bone sinusoidal rotation on lower body bones
 - **Death Cam** — smooth camera transition to an anchored position with bone tracking
 - **Glamourer** — apply outfit presets on death/reset via IPC
 

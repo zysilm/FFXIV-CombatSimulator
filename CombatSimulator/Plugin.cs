@@ -33,7 +33,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly GlamourerIpc glamourerIpc;
     private readonly AnimationController animationController;
     private readonly BoneTransformService boneTransformService;
-    private readonly ConvulsionController convulsionController;
     private readonly RagdollController ragdollController;
     private readonly CombatEngine combatEngine;
     private readonly NpcAiController npcAiController;
@@ -82,13 +81,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
-        convulsionController = new ConvulsionController(boneTransformService, config, log);
         ragdollController = new RagdollController(boneTransformService, config, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
-            glamourerIpc, movementBlockHook, convulsionController, ragdollController,
+            glamourerIpc, movementBlockHook, ragdollController,
             config, npcSelector, clientState, log, deathCamController);
         npcAiController = new NpcAiController(combatEngine, animationController, movementBlockHook, clientState, config, log);
 
@@ -98,7 +96,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         movementBlockHook.Enable();
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, convulsionController, ragdollController, deathCamController, clientState, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, ragdollController, deathCamController, clientState, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
 
@@ -140,7 +138,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcAiController.Dispose();
         combatEngine.Dispose();
         ragdollController.Dispose();
-        convulsionController.Dispose();
         boneTransformService.Dispose();
         deathCamController.Dispose();
         animationController.Dispose();

@@ -16,4 +16,4 @@
 
 **Safety:** UseAction hook blocks all server-bound action packets. All combat is client-side only.
 
-**Core features:** Combat simulation, NPC AI, death effects (ragdoll, convulsions), death cam, glamourer integration.
+**Core features:** Combat simulation, NPC AI, death effects (ragdoll), death cam, glamourer integration.

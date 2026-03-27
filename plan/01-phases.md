@@ -63,7 +63,6 @@
 **Goal:** Dramatic visual effects on character death.
 
 - [x] Ragdoll physics via BEPUphysics2 (16-bone capsule ragdoll)
-- [x] Convulsion effect (per-bone sinusoidal rotation on lower body)
 - [x] Death Cam (smooth camera transition with bone tracking and presets)
 - [x] Glamourer integration (apply outfit presets on death/reset)
 - [x] Movement blocking on player death (position/rotation hook)

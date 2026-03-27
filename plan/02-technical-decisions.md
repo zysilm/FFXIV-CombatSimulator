@@ -65,12 +65,6 @@
 - Bone transforms written to ModelPose in render hook
 - **Benefit:** Realistic death physics without game engine support
 
-### Convulsion via Bone Rotation - CHOSEN
-- Per-bone sinusoidal rotation on lower body bones
-- Uses BoneTransformService render hook (shared with ragdoll)
-- Exponential decay over configurable duration
-- **Benefit:** Dramatic death effect, simpler than ragdoll
-
 ## Decision 5: Animation Trigger Method
 
 ### Fabricated ActionEffect -> ActionEffectHandler.Receive() - CHOSEN

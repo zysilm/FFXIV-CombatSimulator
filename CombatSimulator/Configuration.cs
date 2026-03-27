@@ -86,21 +86,6 @@ public class Configuration : IPluginConfiguration
     // Maximum number of active targets
     public int MaxTargets { get; set; } = 10;
 
-    // Experimental
-    public bool EnableTorture { get; set; } = false;
-
-    // Convulsion settings (hidden behind EnableTorture)
-    public float ConvulsionIntensity { get; set; } = 0.5f;
-    public float ConvulsionDuration { get; set; } = 8.0f;
-    public float ConvulsionKosiIntensity { get; set; } = 0.5f;
-    public float ConvulsionKosiFrequency { get; set; } = 10.0f;
-    public float ConvulsionSeboAIntensity { get; set; } = 0.3f;
-    public float ConvulsionSeboAFrequency { get; set; } = 6.0f;
-    public float ConvulsionFrequencyRatio { get; set; } = 1.0f;
-
-    // Head follow mode: 0 = Translation (head slides), 1 = Rotation (head rocks at ground contact)
-    public int ConvulsionHeadFollowMode { get; set; } = 0;
-
     // Ragdoll physics (Experimental)
     public bool EnableRagdoll { get; set; } = false;
     public float RagdollActivationDelay { get; set; } = 1.0f;

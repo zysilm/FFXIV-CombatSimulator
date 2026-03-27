@@ -20,7 +20,6 @@ public class MainWindow : IDisposable
     private readonly CombatEngine combatEngine;
     private readonly GlamourerIpc glamourerIpc;
     private readonly AnimationController animationController;
-    private readonly ConvulsionController convulsionController;
     private readonly RagdollController ragdollController;
     private readonly DeathCamController deathCamController;
     private readonly IClientState clientState;
@@ -29,10 +28,6 @@ public class MainWindow : IDisposable
 
     // Model override state
     private int modelOverrideId = 0;
-
-    // Torture easter egg state (non-serialized, resets each session)
-    private int tortureClickCount = 0;
-    private bool tortureUnlocked = false;
 
     // Glamourer design list cache for combo box
     private List<KeyValuePair<Guid, string>> glamourerDesigns = new();
@@ -70,7 +65,6 @@ public class MainWindow : IDisposable
         CombatEngine combatEngine,
         GlamourerIpc glamourerIpc,
         AnimationController animationController,
-        ConvulsionController convulsionController,
         RagdollController ragdollController,
         DeathCamController deathCamController,
         IClientState clientState,
@@ -82,7 +76,6 @@ public class MainWindow : IDisposable
         this.combatEngine = combatEngine;
         this.glamourerIpc = glamourerIpc;
         this.animationController = animationController;
-        this.convulsionController = convulsionController;
         this.ragdollController = ragdollController;
         this.deathCamController = deathCamController;
         this.clientState = clientState;
@@ -116,7 +109,6 @@ public class MainWindow : IDisposable
         DrawGuiSettingsSection();
         DrawDeathCamSection();
         DrawRagdollSection();
-        DrawExperimentalHeaderSection();
 
         ImGui.End();
     }
@@ -957,144 +949,6 @@ public class MainWindow : IDisposable
                 }
 
                 ImGui.Unindent();
-            }
-        }
-    }
-
-    private void DrawExperimentalHeaderSection()
-    {
-        if (ImGui.CollapsingHeader("Experimental"))
-        {
-            if (!tortureUnlocked)
-            {
-                ImGui.BeginDisabled();
-                var dummy = false;
-                ImGui.Checkbox("Bone Rotation test", ref dummy);
-                ImGui.EndDisabled();
-
-                var min = ImGui.GetItemRectMin();
-                var max = ImGui.GetItemRectMax();
-                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
-                {
-                    var mousePos = ImGui.GetMousePos();
-                    if (mousePos.X >= min.X && mousePos.X <= max.X &&
-                        mousePos.Y >= min.Y && mousePos.Y <= max.Y)
-                    {
-                        tortureClickCount++;
-                        if (tortureClickCount >= 7)
-                            tortureUnlocked = true;
-                    }
-                }
-            }
-            else
-            {
-                var torture = config.EnableTorture;
-                if (ImGui.Checkbox("Bone Rotation test", ref torture))
-                {
-                    config.EnableTorture = torture;
-                    config.Save();
-                }
-
-                if (config.EnableTorture)
-                {
-                    ImGui.Indent();
-
-                    // Instant convulse toggle
-                    var convulseActive = convulsionController.IsActive;
-                    if (ImGui.Checkbox("Convulse Now", ref convulseActive))
-                    {
-                        if (convulseActive)
-                        {
-                            var player = clientState.LocalPlayer;
-                            if (player != null)
-                            {
-                                convulsionController.Activate(
-                                    player.Address,
-                                    config.ConvulsionIntensity,
-                                    config.ConvulsionDuration);
-                            }
-                        }
-                        else
-                        {
-                            convulsionController.Deactivate();
-                        }
-                    }
-                    ImGui.SameLine();
-                    if (ImGui.Button("Reset Settings"))
-                    {
-                        config.ConvulsionIntensity = 0.5f;
-                        config.ConvulsionDuration = 8.0f;
-                        config.ConvulsionKosiIntensity = 0.5f;
-                        config.ConvulsionKosiFrequency = 10.0f;
-                        config.ConvulsionSeboAIntensity = 0.3f;
-                        config.ConvulsionSeboAFrequency = 6.0f;
-                        config.ConvulsionFrequencyRatio = 1.0f;
-                        config.ConvulsionHeadFollowMode = 0;
-                        config.Save();
-                    }
-
-                    ImGui.Separator();
-
-                    var intensity = config.ConvulsionIntensity;
-                    if (ImGui.SliderFloat("Intensity", ref intensity, 0.1f, 1.0f, "%.2f"))
-                    {
-                        config.ConvulsionIntensity = intensity;
-                        config.Save();
-                    }
-
-                    var duration = config.ConvulsionDuration;
-                    if (ImGui.SliderFloat("Duration (s)", ref duration, 1.0f, 10000.0f, "%.1f", ImGuiSliderFlags.Logarithmic))
-                    {
-                        config.ConvulsionDuration = duration;
-                        config.Save();
-                    }
-
-                    var freqRatio = config.ConvulsionFrequencyRatio;
-                    if (ImGui.SliderFloat("Frequency Ratio", ref freqRatio, 0.1f, 5.0f, "%.2f"))
-                    {
-                        config.ConvulsionFrequencyRatio = freqRatio;
-                        config.Save();
-                    }
-
-                    var headMode = config.ConvulsionHeadFollowMode;
-                    if (ImGui.Combo("Head Follow", ref headMode, "Translation\0Rotation\0"))
-                    {
-                        config.ConvulsionHeadFollowMode = headMode;
-                        config.Save();
-                    }
-
-                    ImGui.Separator();
-                    ImGui.Text("j_kosi (pelvis)");
-                    var kosiIntensity = config.ConvulsionKosiIntensity;
-                    if (ImGui.SliderFloat("Intensity##kosi", ref kosiIntensity, 0.0f, 1.0f, "%.2f"))
-                    {
-                        config.ConvulsionKosiIntensity = kosiIntensity;
-                        config.Save();
-                    }
-                    var kosiFreq = config.ConvulsionKosiFrequency;
-                    if (ImGui.SliderFloat("Frequency##kosi", ref kosiFreq, 0.1f, 30.0f, "%.1f Hz"))
-                    {
-                        config.ConvulsionKosiFrequency = kosiFreq;
-                        config.Save();
-                    }
-
-                    ImGui.Separator();
-                    ImGui.Text("j_sebo_a (spine A)");
-                    var seboAIntensity = config.ConvulsionSeboAIntensity;
-                    if (ImGui.SliderFloat("Intensity##seboA", ref seboAIntensity, 0.0f, 1.0f, "%.2f"))
-                    {
-                        config.ConvulsionSeboAIntensity = seboAIntensity;
-                        config.Save();
-                    }
-                    var seboAFreq = config.ConvulsionSeboAFrequency;
-                    if (ImGui.SliderFloat("Frequency##seboA", ref seboAFreq, 0.1f, 30.0f, "%.1f Hz"))
-                    {
-                        config.ConvulsionSeboAFrequency = seboAFreq;
-                        config.Save();
-                    }
-
-                    ImGui.Unindent();
-                }
             }
         }
     }

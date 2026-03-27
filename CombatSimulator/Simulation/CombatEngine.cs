@@ -54,7 +54,6 @@ public class CombatEngine : IDisposable
     private readonly NpcSelector npcSelector;
     private readonly IClientState clientState;
     private readonly IPluginLog log;
-    private readonly ConvulsionController convulsionController;
     private readonly RagdollController ragdollController;
     private readonly DeathCamController? deathCamController;
     private bool playerDeathTriggered;
@@ -91,7 +90,6 @@ public class CombatEngine : IDisposable
         AnimationController animationController,
         GlamourerIpc glamourerIpc,
         MovementBlockHook movementBlockHook,
-        ConvulsionController convulsionController,
         RagdollController ragdollController,
         Configuration config,
         NpcSelector npcSelector,
@@ -104,7 +102,6 @@ public class CombatEngine : IDisposable
         this.animationController = animationController;
         this.glamourerIpc = glamourerIpc;
         this.movementBlockHook = movementBlockHook;
-        this.convulsionController = convulsionController;
         this.ragdollController = ragdollController;
         this.config = config;
         this.npcSelector = npcSelector;
@@ -166,7 +163,6 @@ public class CombatEngine : IDisposable
         npcSelector.DeselectAll();
         animationController.ResetPlayerDeathAnimation();
         movementBlockHook.IsBlocking = false;
-        convulsionController.Deactivate();
         ragdollController.Deactivate();
         deathCamController?.Deactivate();
         RevertGlamourer();
@@ -208,7 +204,6 @@ public class CombatEngine : IDisposable
 
         animationController.ResetPlayerDeathAnimation();
         movementBlockHook.IsBlocking = false;
-        convulsionController.Deactivate();
         ragdollController.Deactivate();
         RevertGlamourer();
         ApplyResetGlamourer();
@@ -662,19 +657,6 @@ public class CombatEngine : IDisposable
                 animationController.PlayVictory(isPlayerVictory: false);
                 ApplyGlamourer();
                 deathCamController?.Activate();
-
-                // Activate convulsion effect on player death
-                if (config.EnableTorture)
-                {
-                    var player = clientState.LocalPlayer;
-                    if (player != null)
-                    {
-                        convulsionController.Activate(
-                            player.Address,
-                            config.ConvulsionIntensity,
-                            config.ConvulsionDuration);
-                    }
-                }
 
                 // Activate ragdoll physics on player death
                 if (config.EnableRagdoll)
