@@ -736,7 +736,7 @@ public unsafe class RagdollController : IDisposable
         var worldPositions = new Vector3[boneCount];
         var worldRotations = new Quaternion[boneCount];
         var boneValid = new bool[boneCount];
-        var lowestBoneY = float.MaxValue;
+        var lowestCapsuleBottomY = float.MaxValue;
 
         for (int i = 0; i < boneCount; i++)
         {
@@ -769,21 +769,30 @@ public unsafe class RagdollController : IDisposable
                 worldPositions[i] = bodyRef.Pose.Position;
             }
 
-            if (worldPositions[i].Y < lowestBoneY)
-                lowestBoneY = worldPositions[i].Y;
+            // Track lowest capsule bottom (not bone origin) for floor correction.
+            // The capsule extends below its center by |capsuleY.Y| * halfLength + radius.
+            RagdollBoneDef boneDef = default;
+            foreach (var def in BoneDefs)
+                if (def.Name == rb.Name) { boneDef = def; break; }
+            var capsuleYDir = Vector3.Transform(Vector3.UnitY, bodyRef.Pose.Orientation);
+            var capsuleBottomY = bodyRef.Pose.Position.Y
+                                 - MathF.Abs(capsuleYDir.Y) * boneDef.CapsuleHalfLength
+                                 - boneDef.CapsuleRadius;
+            if (capsuleBottomY < lowestCapsuleBottomY)
+                lowestCapsuleBottomY = capsuleBottomY;
 
             boneValid[i] = true;
         }
 
         // --- Floor offset correction ---
         // Physics ground was lowered by RagdollFloorOffset for stable constraint solving.
-        // Measure how far the lowest bone sank below the REAL terrain and shift all bones
-        // up by that amount. This way: during the fall (bones above real ground) no correction
-        // is applied; after settling on the lowered ground, correction matches the actual sinkage.
+        // Measure how far the lowest capsule bottom sank below the REAL terrain and shift
+        // all bones up by that amount. Uses capsule extents (not bone origins) because
+        // a bone origin can be above ground while its capsule extends below.
         float yCorrection = 0f;
-        if (config.RagdollFloorOffset > 0 && lowestBoneY < realGroundY)
+        if (config.RagdollFloorOffset > 0 && lowestCapsuleBottomY < realGroundY)
         {
-            yCorrection = realGroundY - lowestBoneY;
+            yCorrection = realGroundY - lowestCapsuleBottomY;
             // Cap at the offset amount — any sinkage beyond the offset is genuine physics
             // (e.g., slopes), not an artifact of the lowered ground.
             if (yCorrection > config.RagdollFloorOffset)
