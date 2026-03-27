@@ -55,4 +55,4 @@ The Target Approach feature uses linear movement with Y-coordinate approximation
 - Through walls/buildings: NPCs will clip through obstacles
 
 ### Future solution
-Integrate navmesh pathfinding via [vnavmesh](https://github.com/awgil/ffxiv_navmesh) or DotRecast for terrain-aware pathfinding.
+Integrate navmesh pathfinding via vnavmesh or DotRecast for terrain-aware pathfinding.

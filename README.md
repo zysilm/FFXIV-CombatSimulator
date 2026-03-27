@@ -26,9 +26,10 @@ Open Dalamud Settings in-game (`/xlsettings`) and follow these steps:
 - **HP Bar Overlays** — Enemy and player simulated HP bars rendered in-world
 - **Combat Log** — Scrollable log of all combat events
 - **Shortcuts Bar** — Optional floating bar with Start, Reset All, and Reboot buttons
+- **Death Effects** — Ragdoll physics (BEPUphysics2) and convulsion effects on character death
 - **Death Cam** — Cinematic camera that smoothly transitions to an anchored position on player death, with configurable height/side offsets and bone tracking
-- **Camera Distance Override** — Bypass the game's min/max zoom limits for more camera freedom
-- **Glamourer Integration** — Apply glamourer presets on death and on reset/respawn
+- **Hit VFX** — Configurable visual effects on player when taking damage
+- **Glamourer Integration** — Apply glamourer presets on death and on reset
 - **Network Safe** — All combat is client-side only; UseAction hook prevents any server packets
 
 ## Usage
