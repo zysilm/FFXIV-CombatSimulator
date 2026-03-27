@@ -350,10 +350,15 @@ public unsafe class RagdollController : IDisposable
                 config.RagdollDamping),
             new SolveDescription(8, 1));
 
-        // Add ground plane as static body
-        var groundShapeIndex = simulation.Shapes.Add(new Box(1000, 0.1f, 1000));
+        // Add ground plane as a thick static box. The box must be thick enough
+        // to prevent capsules from tunneling through during fast impacts (e.g.,
+        // knee bending pushes shin capsule downward at high speed). A 0.1m box
+        // was easily penetrated; 10m prevents any tunneling. The box is positioned
+        // so its TOP surface is at groundY.
+        var groundThickness = 10f;
+        var groundShapeIndex = simulation.Shapes.Add(new Box(1000, groundThickness, 1000));
         simulation.Statics.Add(new StaticDescription(
-            new Vector3(0, groundY, 0),
+            new Vector3(0, groundY - groundThickness / 2f, 0),
             Quaternion.Identity,
             groundShapeIndex));
 
@@ -846,8 +851,12 @@ public unsafe class RagdollController : IDisposable
         // Measure how far the lowest capsule bottom sank below the REAL terrain and shift
         // all bones up by that amount. Uses capsule extents (not bone origins) because
         // a bone origin can be above ground while its capsule extends below.
+        // Skip floor correction during the first ~30 frames to let the ragdoll settle.
+        // On the first frame, capsule bottoms from the init pose (e.g., standing on a mount)
+        // may extend below realGroundY even though the character is above the ground.
+        // Applying correction immediately causes a visible upward bounce.
         float yCorrection = 0f;
-        if (config.RagdollFloorOffset > 0 && lowestCapsuleBottomY < realGroundY)
+        if (frameCount > 30 && config.RagdollFloorOffset > 0 && lowestCapsuleBottomY < realGroundY)
         {
             yCorrection = realGroundY - lowestCapsuleBottomY;
             // Cap at the offset amount — any sinkage beyond the offset is genuine physics
