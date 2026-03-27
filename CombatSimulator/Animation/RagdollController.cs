@@ -59,8 +59,8 @@ public unsafe class RagdollController : IDisposable
     public bool IsActive => isActive;
 
     // Joint type determines which BEPU constraints are used:
-    // Ball = BallSocket + SwingLimit + TwistLimit (full 3-DOF rotation, limited by cone + twist)
-    // Hinge = Hinge + SwingLimit (1-DOF rotation in one plane, like knees/elbows)
+    // Ball = BallSocket + SwingLimit + TwistLimit + AngularMotor (full 3-DOF rotation)
+    // Hinge = Hinge + TwistLimit (as angular range) + AngularMotor (1-DOF rotation)
     private enum JointType { Ball, Hinge }
 
     // Ragdoll bone definition
@@ -71,9 +71,10 @@ public unsafe class RagdollController : IDisposable
         public float CapsuleRadius;
         public float CapsuleHalfLength;
         public float Mass;
-        public float SwingLimit;      // radians — max deviation from initial direction
+        public float SwingLimit;      // Ball: cone angle (radians). Hinge: unused.
         public JointType Joint;       // constraint type
-        public float TwistLimitAngle; // radians — max twist around connection axis (0 = skip, Hinge inherently prevents twist)
+        public float TwistMinAngle;   // Min rotation angle (radians). Hinge: angular range min (negative = hyperextension).
+        public float TwistMaxAngle;   // Max rotation angle (radians). Hinge: angular range max (positive = flexion).
     }
 
     // Runtime bone with physics body
@@ -93,26 +94,26 @@ public unsafe class RagdollController : IDisposable
     }
 
     // Bone definitions for the ragdoll skeleton
-    // Joint types: Hinge for knees/elbows (single-plane rotation), Ball for everything else
-    // TwistLimitAngle: radians of allowed axial twist. 0 = no twist limit (Hinge prevents twist inherently)
+    // Ball joints: SwingLimit = cone angle, TwistMin/Max = axial rotation range
+    // Hinge joints: SwingLimit unused, TwistMin/Max = angular range (min = hyperextension, max = flexion)
     private static readonly RagdollBoneDef[] BoneDefs = new[]
     {
-        new RagdollBoneDef { Name = "j_kosi",    ParentName = null,       CapsuleRadius = 0.08f, CapsuleHalfLength = 0.06f, Mass = 8.0f,  SwingLimit = 0.2f,  Joint = JointType.Ball,  TwistLimitAngle = 0f    }, // pelvis (root)
-        new RagdollBoneDef { Name = "j_sebo_a",  ParentName = "j_kosi",   CapsuleRadius = 0.06f, CapsuleHalfLength = 0.05f, Mass = 5.0f,  SwingLimit = 0.2f,  Joint = JointType.Ball,  TwistLimitAngle = 0.2f  }, // spine
-        new RagdollBoneDef { Name = "j_sebo_b",  ParentName = "j_sebo_a", CapsuleRadius = 0.06f, CapsuleHalfLength = 0.05f, Mass = 5.0f,  SwingLimit = 0.15f, Joint = JointType.Ball,  TwistLimitAngle = 0.2f  }, // spine
-        new RagdollBoneDef { Name = "j_sebo_c",  ParentName = "j_sebo_b", CapsuleRadius = 0.06f, CapsuleHalfLength = 0.05f, Mass = 4.0f,  SwingLimit = 0.15f, Joint = JointType.Ball,  TwistLimitAngle = 0.2f  }, // spine
-        new RagdollBoneDef { Name = "j_kubi",    ParentName = "j_sebo_c", CapsuleRadius = 0.04f, CapsuleHalfLength = 0.03f, Mass = 2.0f,  SwingLimit = 0.25f, Joint = JointType.Ball,  TwistLimitAngle = 0.3f  }, // neck
-        new RagdollBoneDef { Name = "j_kao",     ParentName = "j_kubi",   CapsuleRadius = 0.08f, CapsuleHalfLength = 0.04f, Mass = 3.0f,  SwingLimit = 0.3f,  Joint = JointType.Ball,  TwistLimitAngle = 0.3f  }, // head
-        new RagdollBoneDef { Name = "j_ude_a_l", ParentName = "j_sebo_c", CapsuleRadius = 0.03f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,  Joint = JointType.Ball,  TwistLimitAngle = 0.8f  }, // shoulder (~103° swing, ~46° twist)
-        new RagdollBoneDef { Name = "j_ude_a_r", ParentName = "j_sebo_c", CapsuleRadius = 0.03f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,  Joint = JointType.Ball,  TwistLimitAngle = 0.8f  }, // shoulder (~103° swing, ~46° twist)
-        new RagdollBoneDef { Name = "j_ude_b_l", ParentName = "j_ude_a_l",CapsuleRadius = 0.025f,CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = 2.5f,  Joint = JointType.Hinge, TwistLimitAngle = 0f    }, // elbow (~143° flexion range)
-        new RagdollBoneDef { Name = "j_ude_b_r", ParentName = "j_ude_a_r",CapsuleRadius = 0.025f,CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = 2.5f,  Joint = JointType.Hinge, TwistLimitAngle = 0f    }, // elbow (~143° flexion range)
-        new RagdollBoneDef { Name = "j_asi_a_l", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 0.7f,  Joint = JointType.Ball,  TwistLimitAngle = 0.3f  }, // hip
-        new RagdollBoneDef { Name = "j_asi_a_r", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 0.7f,  Joint = JointType.Ball,  TwistLimitAngle = 0.3f  }, // hip
-        new RagdollBoneDef { Name = "j_asi_b_l", ParentName = "j_asi_a_l",CapsuleRadius = 0.035f,CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = 1.2f,  Joint = JointType.Hinge, TwistLimitAngle = 0f    }, // knee
-        new RagdollBoneDef { Name = "j_asi_b_r", ParentName = "j_asi_a_r",CapsuleRadius = 0.035f,CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = 1.2f,  Joint = JointType.Hinge, TwistLimitAngle = 0f    }, // knee
-        new RagdollBoneDef { Name = "j_asi_c_l", ParentName = "j_asi_b_l",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistLimitAngle = 0.2f  }, // foot
-        new RagdollBoneDef { Name = "j_asi_c_r", ParentName = "j_asi_b_r",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistLimitAngle = 0.2f  }, // foot
+        new RagdollBoneDef { Name = "j_kosi",    ParentName = null,       CapsuleRadius = 0.08f, CapsuleHalfLength = 0.06f, Mass = 8.0f,  SwingLimit = 0.2f,  Joint = JointType.Ball,  TwistMinAngle = 0f,     TwistMaxAngle = 0f    }, // pelvis (root)
+        new RagdollBoneDef { Name = "j_sebo_a",  ParentName = "j_kosi",   CapsuleRadius = 0.06f, CapsuleHalfLength = 0.05f, Mass = 5.0f,  SwingLimit = 0.2f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // spine
+        new RagdollBoneDef { Name = "j_sebo_b",  ParentName = "j_sebo_a", CapsuleRadius = 0.06f, CapsuleHalfLength = 0.05f, Mass = 5.0f,  SwingLimit = 0.15f, Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // spine
+        new RagdollBoneDef { Name = "j_sebo_c",  ParentName = "j_sebo_b", CapsuleRadius = 0.06f, CapsuleHalfLength = 0.05f, Mass = 4.0f,  SwingLimit = 0.15f, Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // chest
+        new RagdollBoneDef { Name = "j_kubi",    ParentName = "j_sebo_c", CapsuleRadius = 0.04f, CapsuleHalfLength = 0.03f, Mass = 2.0f,  SwingLimit = 0.25f, Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // neck
+        new RagdollBoneDef { Name = "j_kao",     ParentName = "j_kubi",   CapsuleRadius = 0.08f, CapsuleHalfLength = 0.04f, Mass = 3.0f,  SwingLimit = 0.3f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // head
+        new RagdollBoneDef { Name = "j_ude_a_l", ParentName = "j_sebo_c", CapsuleRadius = 0.03f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,  Joint = JointType.Ball,  TwistMinAngle = -0.8f,  TwistMaxAngle = 0.8f  }, // shoulder
+        new RagdollBoneDef { Name = "j_ude_a_r", ParentName = "j_sebo_c", CapsuleRadius = 0.03f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,  Joint = JointType.Ball,  TwistMinAngle = -0.8f,  TwistMaxAngle = 0.8f  }, // shoulder
+        new RagdollBoneDef { Name = "j_ude_b_l", ParentName = "j_ude_a_l",CapsuleRadius = 0.025f,CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = 0f,    Joint = JointType.Hinge, TwistMinAngle = -0.17f, TwistMaxAngle = 2.6f  }, // elbow: -10° to 150°
+        new RagdollBoneDef { Name = "j_ude_b_r", ParentName = "j_ude_a_r",CapsuleRadius = 0.025f,CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = 0f,    Joint = JointType.Hinge, TwistMinAngle = -0.17f, TwistMaxAngle = 2.6f  }, // elbow: -10° to 150°
+        new RagdollBoneDef { Name = "j_asi_a_l", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 0.7f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // hip
+        new RagdollBoneDef { Name = "j_asi_a_r", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 0.7f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // hip
+        new RagdollBoneDef { Name = "j_asi_b_l", ParentName = "j_asi_a_l",CapsuleRadius = 0.035f,CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = 0f,    Joint = JointType.Hinge, TwistMinAngle = -0.17f, TwistMaxAngle = 2.4f  }, // knee: -10° to 140°
+        new RagdollBoneDef { Name = "j_asi_b_r", ParentName = "j_asi_a_r",CapsuleRadius = 0.035f,CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = 0f,    Joint = JointType.Hinge, TwistMinAngle = -0.17f, TwistMaxAngle = 2.4f  }, // knee: -10° to 140°
+        new RagdollBoneDef { Name = "j_asi_c_l", ParentName = "j_asi_b_l",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // foot
+        new RagdollBoneDef { Name = "j_asi_c_r", ParentName = "j_asi_b_r",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // foot
     };
 
     public RagdollController(BoneTransformService boneService, Configuration config, IPluginLog log)
@@ -512,8 +513,8 @@ public unsafe class RagdollController : IDisposable
 
         // --- Pass 3: Add constraints between connected bones ---
         // Per the BEPU RagdollDemo, each joint gets a layered constraint set:
-        //   Ball joints: BallSocket + SwingLimit + TwistLimit + AngularMotor
-        //   Hinge joints: Hinge + SwingLimit + AngularMotor (Hinge inherently prevents twist)
+        //   Ball joints: BallSocket + SwingLimit (cone) + TwistLimit (axial, asymmetric) + AngularMotor
+        //   Hinge joints: Hinge + TwistLimit (angular range, asymmetric) + AngularMotor
         var boneIdxToBodyHandle = new Dictionary<int, BodyHandle>();
         foreach (var rb in ragdollBones)
             boneIdxToBodyHandle[rb.BoneIndex] = rb.BodyHandle;
@@ -555,8 +556,6 @@ public unsafe class RagdollController : IDisposable
             if (boneDef.Joint == JointType.Hinge)
             {
                 // Hinge: constrains position AND restricts rotation to one plane.
-                // Knees only bend forward/backward, elbows in one plane.
-                // The hinge axis is perpendicular to the bone segment, in the horizontal plane.
                 var hingeAxisWorld = ComputeHingeAxis(segDirWorld);
                 var hingeAxisLocalChild = Vector3.Normalize(Vector3.Transform(
                     hingeAxisWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
@@ -573,7 +572,24 @@ public unsafe class RagdollController : IDisposable
                         SpringSettings = new SpringSettings(30, 5),
                     });
 
-                log.Info($"[Ragdoll Constraint] '{rb.Name}' Hinge axis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3})");
+                // TwistLimit as asymmetric angular range for the hinge.
+                // The twist axis = hinge axis, reference = segment direction.
+                // At init angle=0, positive = flexion, negative = hyperextension.
+                if (boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0)
+                {
+                    var hingeTwistBasis = CreateTwistBasis(hingeAxisWorld, segDirWorld);
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                        new TwistLimit
+                        {
+                            LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * hingeTwistBasis),
+                            LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * hingeTwistBasis),
+                            MinimumAngle = boneDef.TwistMinAngle,
+                            MaximumAngle = boneDef.TwistMaxAngle,
+                            SpringSettings = new SpringSettings(15, 3),
+                        });
+                }
+
+                log.Info($"[Ragdoll Constraint] '{rb.Name}' Hinge axis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3}) range=[{boneDef.TwistMinAngle:F2},{boneDef.TwistMaxAngle:F2}]");
             }
             else
             {
@@ -585,47 +601,45 @@ public unsafe class RagdollController : IDisposable
                         LocalOffsetB = parentLocalAnchor,
                         SpringSettings = new SpringSettings(30, 5),
                     });
-            }
 
-            // --- SwingLimit: restrict angle between connected bodies ---
-            // Both axes represent the SAME world direction (segment dir) in their respective
-            // local frames so the constraint starts satisfied (angle=0).
-            var axisChildLocal = Vector3.Transform(segDirWorld,
-                Quaternion.Inverse(childBodyRef.Pose.Orientation));
-            var axisParentLocal = Vector3.Transform(segDirWorld,
-                Quaternion.Inverse(parentBodyRef.Pose.Orientation));
-
-            simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                new SwingLimit
+                // SwingLimit: symmetric cone limiting deviation from initial direction
+                if (boneDef.SwingLimit > 0)
                 {
-                    AxisLocalA = axisChildLocal,
-                    AxisLocalB = axisParentLocal,
-                    MaximumSwingAngle = boneDef.SwingLimit,
-                    SpringSettings = new SpringSettings(15, 3),
-                });
+                    var axisChildLocal = Vector3.Transform(segDirWorld,
+                        Quaternion.Inverse(childBodyRef.Pose.Orientation));
+                    var axisParentLocal = Vector3.Transform(segDirWorld,
+                        Quaternion.Inverse(parentBodyRef.Pose.Orientation));
 
-            // --- TwistLimit: restrict axial rotation (spinning around bone axis) ---
-            // Only for Ball joints — Hinge inherently prevents twist.
-            if (boneDef.Joint == JointType.Ball && boneDef.TwistLimitAngle > 0)
-            {
-                // Compute a reference direction perpendicular to the twist axis
-                var refDir = Vector3.Cross(segDirWorld, Vector3.UnitY);
-                if (refDir.LengthSquared() < 0.001f)
-                    refDir = Vector3.Cross(segDirWorld, Vector3.UnitX);
-                refDir = Vector3.Normalize(refDir);
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                        new SwingLimit
+                        {
+                            AxisLocalA = axisChildLocal,
+                            AxisLocalB = axisParentLocal,
+                            MaximumSwingAngle = boneDef.SwingLimit,
+                            SpringSettings = new SpringSettings(15, 3),
+                        });
+                }
 
-                // Build twist basis: Z = twist axis (segment dir), X = reference direction
-                var twistBasis = CreateTwistBasis(segDirWorld, refDir);
+                // TwistLimit: asymmetric axial rotation around the bone's segment axis
+                if (boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0)
+                {
+                    var refDir = Vector3.Cross(segDirWorld, Vector3.UnitY);
+                    if (refDir.LengthSquared() < 0.001f)
+                        refDir = Vector3.Cross(segDirWorld, Vector3.UnitX);
+                    refDir = Vector3.Normalize(refDir);
 
-                simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                    new TwistLimit
-                    {
-                        LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * twistBasis),
-                        LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis),
-                        MinimumAngle = -boneDef.TwistLimitAngle,
-                        MaximumAngle = boneDef.TwistLimitAngle,
-                        SpringSettings = new SpringSettings(15, 3),
-                    });
+                    var twistBasis = CreateTwistBasis(segDirWorld, refDir);
+
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                        new TwistLimit
+                        {
+                            LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * twistBasis),
+                            LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis),
+                            MinimumAngle = boneDef.TwistMinAngle,
+                            MaximumAngle = boneDef.TwistMaxAngle,
+                            SpringSettings = new SpringSettings(15, 3),
+                        });
+                }
             }
 
             // --- AngularMotor: damp relative angular velocity ---
