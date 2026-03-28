@@ -135,9 +135,7 @@ public unsafe class RagdollController : IDisposable
         new RagdollBoneDef { Name = "j_asi_c_r", ParentName = "j_asi_b_r",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // foot
     };
 
-    // --- NPC bone collision: reduced bone set for collision volumes ---
-    // 10 major bones — skip extremities (wrists, feet, neck, lower spine)
-    // for performance while covering the main collision surface.
+    // --- NPC bone collision: full 18-bone set matching the player ragdoll ---
     private struct NpcBoneCollisionDef
     {
         public string Name;
@@ -149,15 +147,23 @@ public unsafe class RagdollController : IDisposable
     private static readonly NpcBoneCollisionDef[] NpcBoneDefs = new[]
     {
         new NpcBoneCollisionDef { Name = "j_kosi",    ChildName = "j_sebo_a",  CapsuleRadius = 0.12f,  CapsuleHalfLength = 0.06f  }, // pelvis
+        new NpcBoneCollisionDef { Name = "j_sebo_a",  ChildName = "j_sebo_b",  CapsuleRadius = 0.10f,  CapsuleHalfLength = 0.05f  }, // lower spine
         new NpcBoneCollisionDef { Name = "j_sebo_b",  ChildName = "j_sebo_c",  CapsuleRadius = 0.10f,  CapsuleHalfLength = 0.05f  }, // mid spine
         new NpcBoneCollisionDef { Name = "j_sebo_c",  ChildName = "j_kubi",    CapsuleRadius = 0.10f,  CapsuleHalfLength = 0.05f  }, // chest
+        new NpcBoneCollisionDef { Name = "j_kubi",    ChildName = "j_kao",     CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.03f  }, // neck
         new NpcBoneCollisionDef { Name = "j_kao",     ChildName = null,         CapsuleRadius = 0.08f,  CapsuleHalfLength = 0.04f  }, // head
         new NpcBoneCollisionDef { Name = "j_ude_a_l", ChildName = "j_ude_b_l", CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.08f  }, // left upper arm
         new NpcBoneCollisionDef { Name = "j_ude_a_r", ChildName = "j_ude_b_r", CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.08f  }, // right upper arm
+        new NpcBoneCollisionDef { Name = "j_ude_b_l", ChildName = "j_te_l",   CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f  }, // left forearm
+        new NpcBoneCollisionDef { Name = "j_ude_b_r", ChildName = "j_te_r",   CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f  }, // right forearm
+        new NpcBoneCollisionDef { Name = "j_te_l",   ChildName = null,         CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f  }, // left hand
+        new NpcBoneCollisionDef { Name = "j_te_r",   ChildName = null,         CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f  }, // right hand
         new NpcBoneCollisionDef { Name = "j_asi_a_l", ChildName = "j_asi_b_l", CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.12f  }, // left upper leg
         new NpcBoneCollisionDef { Name = "j_asi_a_r", ChildName = "j_asi_b_r", CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.12f  }, // right upper leg
         new NpcBoneCollisionDef { Name = "j_asi_b_l", ChildName = "j_asi_c_l", CapsuleRadius = 0.035f, CapsuleHalfLength = 0.11f  }, // left lower leg
         new NpcBoneCollisionDef { Name = "j_asi_b_r", ChildName = "j_asi_c_r", CapsuleRadius = 0.035f, CapsuleHalfLength = 0.11f  }, // right lower leg
+        new NpcBoneCollisionDef { Name = "j_asi_c_l", ChildName = null,         CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f  }, // left foot
+        new NpcBoneCollisionDef { Name = "j_asi_c_r", ChildName = null,         CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f  }, // right foot
     };
 
     // Per-bone static collision body for an NPC
