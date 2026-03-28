@@ -49,12 +49,32 @@ public unsafe class HairPhysicsSimulator
         var skeleton = charBase->Skeleton;
         if (skeleton == null) return;
 
+        log.Info($"HairPhysics: Character has {skeleton->PartialSkeletonCount} partial skeletons");
         for (int ps = 1; ps < skeleton->PartialSkeletonCount; ps++)
         {
             var partial = &skeleton->PartialSkeletons[ps];
             var pose = partial->GetHavokPose(0);
-            if (pose == null || pose->Skeleton == null) continue;
-            if (pose->ModelInSync == 0) continue;
+            if (pose == null || pose->Skeleton == null)
+            {
+                log.Info($"HairPhysics: Partial {ps} — no pose/skeleton");
+                continue;
+            }
+            if (pose->ModelInSync == 0)
+            {
+                log.Info($"HairPhysics: Partial {ps} — ModelInSync=0, skipping");
+                continue;
+            }
+
+            // Log all bone names for diagnostics
+            var boneNames = new System.Text.StringBuilder();
+            var bones = pose->Skeleton->Bones;
+            for (int b = 0; b < bones.Length && b < 10; b++)
+            {
+                if (b > 0) boneNames.Append(", ");
+                boneNames.Append(bones[b].Name.String ?? "null");
+            }
+            if (bones.Length > 10) boneNames.Append($", ... ({bones.Length} total)");
+            log.Info($"HairPhysics: Partial {ps} — {bones.Length} bones: [{boneNames}]");
 
             if (!IsHairPartialSkeleton(pose)) continue;
 
