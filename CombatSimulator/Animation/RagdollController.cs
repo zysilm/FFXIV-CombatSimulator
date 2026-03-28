@@ -678,6 +678,35 @@ public unsafe class RagdollController : IDisposable
                         });
 
                     log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad dot={Vector3.Dot(forwardWorld, segDirWorld):F3}");
+
+                    // TwistLimit as one-sided anti-hyperextension constraint.
+                    // Twist axis = hinge axis. Reference direction = forwardWorld (flexion direction).
+                    // The current angle between child segment and forwardWorld is the "init angle".
+                    // Allow full flexion (angle can decrease toward 0) but block hyperextension
+                    // (angle cannot increase much beyond the init value).
+                    var initAngle = MathF.Acos(Math.Clamp(
+                        Vector3.Dot(segDirWorld, forwardWorld), -1f, 1f));
+                    var twistBasis = CreateTwistBasis(hingeAxisWorld, forwardWorld);
+                    var twistBasisLocalChild = Quaternion.Normalize(
+                        Quaternion.Inverse(childBodyRef.Pose.Orientation) * twistBasis);
+                    var twistBasisLocalParent = Quaternion.Normalize(
+                        Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis);
+
+                    // Min = -0.1 (allow tiny backward motion beyond init)
+                    // Max = init angle + 0.1 (block further hyperextension)
+                    // At init: angle ≈ initAngle. Flexion moves toward 0 (allowed).
+                    // Hyperextension moves beyond initAngle (blocked by Max).
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                        new TwistLimit
+                        {
+                            LocalBasisA = twistBasisLocalChild,
+                            LocalBasisB = twistBasisLocalParent,
+                            MinimumAngle = -0.1f,
+                            MaximumAngle = initAngle + 0.15f,
+                            SpringSettings = new SpringSettings(15, 1),
+                        });
+
+                    log.Info($"[Ragdoll Constraint] '{rb.Name}' TwistLimit: initAngle={initAngle:F2}rad min={-0.1f:F2} max={initAngle + 0.15f:F2}");
                 }
 
                 log.Info($"[Ragdoll Constraint] '{rb.Name}' Hinge axis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3})");
