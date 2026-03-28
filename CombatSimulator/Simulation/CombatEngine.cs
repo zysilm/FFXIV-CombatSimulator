@@ -475,9 +475,14 @@ public class CombatEngine : IDisposable
         };
 
         var target = State.GetEntity(targetId);
-        if (target == null || !npc.State.IsAlive || !target.IsAlive)
+        if (target == null || !npc.State.IsAlive)
         {
             result.FailReason = "Invalid target or source dead.";
+            return result;
+        }
+        if (!target.IsAlive && !config.NpcAttackAfterDeath)
+        {
+            result.FailReason = "Target is dead.";
             return result;
         }
 
@@ -501,6 +506,7 @@ public class CombatEngine : IDisposable
         }
 
         // Apply damage to target (player)
+        bool wasAlive = target.IsAlive;
         target.CurrentHp = Math.Max(0, target.CurrentHp - dmgResult.Damage);
         State.TotalDamageTaken += dmgResult.Damage;
 
@@ -531,8 +537,8 @@ public class CombatEngine : IDisposable
             $"{npc.Name} {actionName} → You: {dmgResult.Damage:N0} damage",
             CombatLogType.DamageTaken);
 
-        // Check player death
-        if (!target.IsAlive)
+        // Check player death (only trigger death event on the killing blow)
+        if (!target.IsAlive && wasAlive)
         {
             result.TargetKilled = true;
             OnEntityDeath(target);
