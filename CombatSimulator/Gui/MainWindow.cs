@@ -551,7 +551,19 @@ public class MainWindow : IDisposable
             }
             HelpMarker("On player death, smoothly transition camera to an anchored position following a bone.");
 
-            if (!enabled)
+            var activeCam = config.EnableActiveCam;
+            if (ImGui.Checkbox("Active Cam", ref activeCam))
+            {
+                config.EnableActiveCam = activeCam;
+                config.Save();
+                if (activeCam && config.DeathCamAnchorSet)
+                    deathCamController.SetActiveCam(true);
+                else
+                    deathCamController.SetActiveCam(false);
+            }
+            HelpMarker("Use the same camera setup while alive. Shares anchor, bone, and offset settings with Death Cam. Death Cam takes priority on death.");
+
+            if (!enabled && !activeCam)
                 return;
 
             // --- Presets ---

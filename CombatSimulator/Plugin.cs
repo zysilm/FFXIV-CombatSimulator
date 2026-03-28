@@ -95,6 +95,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         useActionHook.Enable();
         movementBlockHook.Enable();
 
+        // Restore active cam if it was enabled in config
+        if (config.EnableActiveCam && config.DeathCamAnchorSet)
+            deathCamController.SetActiveCam(true);
+
         // GUI
         mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, ragdollController, deathCamController, clientState, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui, clientState, config);

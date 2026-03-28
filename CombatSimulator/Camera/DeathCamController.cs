@@ -27,6 +27,8 @@ public unsafe class DeathCamController : IDisposable
         ("j_sebo_c (Upper Spine)", 5),
         ("j_kubi (Neck)", 8),
         ("j_kao (Head)", 9),
+        ("j_mune_l (Left Chest)", 6),
+        ("j_mune_r (Right Chest)", 7),
     };
 
     private readonly IClientState clientState;
@@ -68,6 +70,7 @@ public unsafe class DeathCamController : IDisposable
 
     public DeathCamState State => state;
     public bool IsPreviewActive { get; private set; }
+    public bool IsActiveCamMode { get; private set; }
     public bool CollisionPatchAvailable => collisionPatchAddress != nint.Zero;
 
     public DeathCamController(IGameInteropProvider gameInterop, IClientState clientState, ISigScanner sigScanner, Configuration config, IPluginLog log)
@@ -198,7 +201,7 @@ public unsafe class DeathCamController : IDisposable
         if (!isGameCamera)
             return;
 
-        if (state == DeathCamState.Inactive && !IsPreviewActive)
+        if (state == DeathCamState.Inactive && !IsPreviewActive && !IsActiveCamMode)
             return;
 
         try
@@ -209,9 +212,9 @@ public unsafe class DeathCamController : IDisposable
             float camH = gameCam->DirH;
             var offset = ComputeOffsetFromCameraAngle(camH);
 
-            if (state != DeathCamState.Inactive)
+            if (state != DeathCamState.Inactive || IsActiveCamMode)
             {
-                // Death cam: override look-at to follow bone
+                // Death cam / Active cam: override look-at to follow bone
                 var bonePos = GetBoneWorldPosition(config.DeathCamBoneIndex);
                 if (bonePos == null)
                 {
@@ -469,13 +472,36 @@ public unsafe class DeathCamController : IDisposable
     /// </summary>
     public void Deactivate()
     {
-        if (state == DeathCamState.Inactive)
+        if (state == DeathCamState.Inactive && !IsActiveCamMode)
             return;
 
         state = DeathCamState.Inactive;
+        IsActiveCamMode = false;
         DisableCollisionPatch();
         RestoreCameraLimits();
         log.Info("DeathCam: Deactivated.");
+    }
+
+    /// <summary>
+    /// Toggle active cam mode: same camera behavior as death cam but independent of death state.
+    /// When death cam activates (character dies), it takes priority. Active cam resumes after reset.
+    /// </summary>
+    public void SetActiveCam(bool on)
+    {
+        IsActiveCamMode = on;
+        if (on)
+        {
+            log.Info("DeathCam: Active cam ON.");
+        }
+        else
+        {
+            if (state == DeathCamState.Inactive && !IsPreviewActive)
+            {
+                DisableCollisionPatch();
+                RestoreCameraLimits();
+            }
+            log.Info("DeathCam: Active cam OFF.");
+        }
     }
 
     /// <summary>
@@ -551,7 +577,7 @@ public unsafe class DeathCamController : IDisposable
         EnsureHook();
 
         // Manage collision patch: enable when death cam active + config on, disable otherwise
-        bool wantCollisionDisabled = config.DeathCamDisableCollision && state != DeathCamState.Inactive;
+        bool wantCollisionDisabled = config.DeathCamDisableCollision && (state != DeathCamState.Inactive || IsActiveCamMode);
         if (wantCollisionDisabled && !collisionPatchActive)
             EnableCollisionPatch();
         else if (!wantCollisionDisabled && collisionPatchActive)
@@ -578,6 +604,31 @@ public unsafe class DeathCamController : IDisposable
             catch (Exception ex)
             {
                 log.Warning(ex, "DeathCam: Error during preview tick.");
+            }
+            return;
+        }
+
+        // Active cam: follow bone while alive (same as Following state but independent)
+        if (IsActiveCamMode && state == DeathCamState.Inactive && config.DeathCamAnchorSet)
+        {
+            try
+            {
+                var camMgr = GameCameraManager.Instance();
+                if (camMgr == null || camMgr->Camera == null)
+                    return;
+
+                var gameCam = camMgr->Camera;
+                var facing = GetCharacterFacing();
+
+                WriteCameraParams(gameCam,
+                    config.DeathCamAnchorDirH + facing,
+                    config.DeathCamAnchorDirV,
+                    config.DeathCamAnchorDistance,
+                    config.DeathCamFoV);
+            }
+            catch (Exception ex)
+            {
+                log.Warning(ex, "DeathCam: Error during active cam tick.");
             }
             return;
         }
