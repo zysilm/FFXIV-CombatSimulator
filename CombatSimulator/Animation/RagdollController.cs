@@ -394,17 +394,63 @@ public unsafe class RagdollController : IDisposable
                 config.RagdollDamping),
             new SolveDescription(8, 1));
 
-        // Add ground plane as a thick static box. The box must be thick enough
-        // to prevent capsules from tunneling through during fast impacts (e.g.,
-        // knee bending pushes shin capsule downward at high speed). A 0.1m box
-        // was easily penetrated; 10m prevents any tunneling. The box is positioned
-        // so its TOP surface is at groundY.
+        // Safety net: flat box well below the character prevents infinite falling
+        // if the terrain mesh has gaps or winding issues.
         var groundThickness = 10f;
-        var groundShapeIndex = simulation.Shapes.Add(new Box(1000, groundThickness, 1000));
+        var safetyBoxIndex = simulation.Shapes.Add(new Box(1000, groundThickness, 1000));
         simulation.Statics.Add(new StaticDescription(
-            new Vector3(0, groundY - groundThickness / 2f, 0),
+            new Vector3(0, groundY - groundThickness / 2f - 2f, 0),
             Quaternion.Identity,
-            groundShapeIndex));
+            safetyBoxIndex));
+
+        // Build terrain mesh from raycasts to capture hills, slopes, and valleys.
+        {
+            var terrainRadius = 4.0f;
+            var terrainStep = 0.5f;
+            var gridSize = (int)(terrainRadius * 2 / terrainStep) + 1;
+            var heights = new float[gridSize, gridSize];
+            var ox = skelWorldPos.X - terrainRadius;
+            var oz = skelWorldPos.Z - terrainRadius;
+
+            for (int gz = 0; gz < gridSize; gz++)
+            for (int gx = 0; gx < gridSize; gx++)
+            {
+                var wx = ox + gx * terrainStep;
+                var wz = oz + gz * terrainStep;
+                if (BGCollisionModule.RaycastMaterialFilter(
+                        new Vector3(wx, skelWorldPos.Y + 2.0f, wz),
+                        new Vector3(0, -1, 0), out var gridHit, 50f))
+                    heights[gx, gz] = gridHit.Point.Y;
+                else
+                    heights[gx, gz] = groundY;
+            }
+
+            var triCount = (gridSize - 1) * (gridSize - 1) * 2;
+            bufferPool.Take<Triangle>(triCount, out var triangles);
+            int ti = 0;
+            for (int gz = 0; gz < gridSize - 1; gz++)
+            for (int gx = 0; gx < gridSize - 1; gx++)
+            {
+                var x0 = ox + gx * terrainStep;
+                var x1 = x0 + terrainStep;
+                var z0 = oz + gz * terrainStep;
+                var z1 = z0 + terrainStep;
+                var v00 = new Vector3(x0, heights[gx, gz], z0);
+                var v10 = new Vector3(x1, heights[gx + 1, gz], z0);
+                var v01 = new Vector3(x0, heights[gx, gz + 1], z1);
+                var v11 = new Vector3(x1, heights[gx + 1, gz + 1], z1);
+
+                // CW winding from above → front face points UP for collision from above
+                triangles[ti++] = new Triangle(v00, v10, v01);
+                triangles[ti++] = new Triangle(v10, v11, v01);
+            }
+
+            var terrainMesh = new BepuPhysics.Collidables.Mesh(triangles, Vector3.One, bufferPool);
+            var terrainIndex = simulation.Shapes.Add(terrainMesh);
+            simulation.Statics.Add(new StaticDescription(
+                Vector3.Zero, Quaternion.Identity, terrainIndex));
+            log.Info($"RagdollController: Terrain mesh {gridSize}x{gridSize} ({triCount} tris) + safety box at Y={groundY - 2f:F3}");
+        }
 
         // --- Pass 1: Collect bone world positions and rotations ---
         var pose = skel.Pose;
