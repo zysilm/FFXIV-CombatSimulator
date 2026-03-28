@@ -352,7 +352,7 @@ public class MainWindow : IDisposable
                 HelpMarker("Radius (in yalms) to scan for nearby BattleNpcs to auto-add.");
 
                 var maxTargets = config.MaxTargets;
-                if (ImGui.SliderInt("Aggro Max Targets", ref maxTargets, 1, 100))
+                if (ImGui.SliderInt("Aggro Max Targets", ref maxTargets, 1, 30))
                 {
                     config.MaxTargets = maxTargets;
                     config.Save();
