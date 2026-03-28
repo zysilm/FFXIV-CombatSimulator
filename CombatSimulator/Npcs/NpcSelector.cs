@@ -122,6 +122,10 @@ public unsafe class NpcSelector : IDisposable
                 // Restore position to where the NPC was before we moved it
                 gameObj->Position = npc.SpawnPosition;
 
+                // Clear NPC's target (may have been set to player during combat)
+                var character2 = (Character*)npc.BattleChara;
+                character2->TargetId = default;
+
                 // Restore original ObjectKind/SubKind
                 gameObj->ObjectKind = (ObjectKind)npc.OriginalObjectKind;
                 gameObj->SubKind = npc.OriginalSubKind;

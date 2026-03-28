@@ -55,6 +55,20 @@ public unsafe class NpcAiController : IDisposable
             if (npc.BattleChara != null && npc.AiState != NpcAiState.Dead)
                 animationController.SetBattleStance(npc);
 
+            // Set NPC's target to the player during combat (client-side only).
+            // This makes NPCs visually look at the player and affects emote interactions.
+            if (config.EnableNpcTargetPlayer && npc.BattleChara != null)
+            {
+                var character = (Character*)npc.BattleChara;
+                bool inCombat = npc.AiState == NpcAiState.Engaging
+                             || npc.AiState == NpcAiState.Combat
+                             || npc.AiState == NpcAiState.Chasing;
+                if (inCombat)
+                    character->TargetId = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObjectId)playerEntityId;
+                else if (character->TargetId.ObjectId == playerEntityId)
+                    character->TargetId = default; // clear target on death/idle/reset
+            }
+
             TickNpc(npc, deltaTime, playerPos, playerEntityId);
         }
 

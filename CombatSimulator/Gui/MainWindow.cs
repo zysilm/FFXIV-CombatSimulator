@@ -333,6 +333,14 @@ public class MainWindow : IDisposable
     {
         if (ImGui.CollapsingHeader("Target Behaviors"))
         {
+            var npcTarget = config.EnableNpcTargetPlayer;
+            if (ImGui.Checkbox("NPCs Target Player", ref npcTarget))
+            {
+                config.EnableNpcTargetPlayer = npcTarget;
+                config.Save();
+            }
+            HelpMarker("Active NPCs visually target the player during combat. Affects head tracking, emote interactions, and combat stance direction.");
+
             var approach = config.EnableTargetApproach;
             if (ImGui.Checkbox("Move Targets Near Player", ref approach))
             {
