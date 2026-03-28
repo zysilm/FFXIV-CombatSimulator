@@ -654,7 +654,7 @@ public class CombatEngine : IDisposable
                 playerDeathTriggered = true;
                 movementBlockHook.IsBlocking = true;
                 animationController.PlayPlayerDeath();
-                animationController.PlayVictory(isPlayerVictory: false);
+                animationController.PlayVictory(isPlayerVictory: false, npcSelector.SelectedNpcs);
                 ApplyGlamourer();
                 deathCamController?.Activate();
 

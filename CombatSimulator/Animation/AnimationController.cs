@@ -461,7 +461,7 @@ public unsafe class AnimationController : IDisposable
     /// <summary>
     /// Execute victory animation/command.
     /// </summary>
-    public void PlayVictory(bool isPlayerVictory)
+    public void PlayVictory(bool isPlayerVictory, IReadOnlyList<SimulatedNpc>? npcs = null)
     {
         if (isPlayerVictory)
         {
@@ -474,11 +474,33 @@ public unsafe class AnimationController : IDisposable
         }
         else
         {
-            var command = config.TargetVictoryCommand;
-            if (!string.IsNullOrWhiteSpace(command))
+            // Play emote on each surviving NPC via timeline (bypasses unlock checks)
+            var emoteId = config.TargetVictoryEmoteId;
+            if (emoteId > 0 && npcs != null)
             {
-                commandExecutor.ExecuteCommand(command);
-                log.Info($"Target victory command executed: {command}");
+                try
+                {
+                    var emoteSheet = Core.Services.DataManager.GetExcelSheet<Emote>();
+                    if (emoteSheet != null)
+                    {
+                        var emote = emoteSheet.GetRow(emoteId);
+                        var loopTimeline = (ushort)emote.ActionTimeline[0].RowId;
+                        var introTimeline = (ushort)emote.ActionTimeline[1].RowId;
+
+                        foreach (var npc in npcs)
+                        {
+                            if (npc.BattleChara == null || !npc.State.IsAlive) continue;
+                            var character = (Character*)npc.BattleChara;
+                            if (introTimeline != 0 || loopTimeline != 0)
+                                emotePlayer.PlayLoopedEmote(character, loopTimeline, introTimeline);
+                            log.Info($"NPC '{npc.Name}' playing victory emote {emoteId} (loop={loopTimeline}, intro={introTimeline})");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    log.Warning(ex, $"Failed to play target victory emote {emoteId}");
+                }
             }
         }
     }

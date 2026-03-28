@@ -10,6 +10,7 @@ using Dalamud.Interface;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
+using Lumina.Excel.Sheets;
 
 namespace CombatSimulator.Gui;
 
@@ -36,6 +37,10 @@ public class MainWindow : IDisposable
     private int glamourerResetSelectedIndex = -1;
 
     private static readonly string[] BehaviorNames = { "Training Dummy", "Basic Melee", "Basic Ranged", "Boss" };
+
+    // Emote list cache for target victory dropdown
+    private List<(uint Id, string Name)>? emoteListCache;
+    private int targetVictoryEmoteIndex = -1;
 
     // Death cam preset state
     private string newPresetName = "";
@@ -520,13 +525,56 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Chat command when the player wins (e.g. /victory).");
 
-            var targetVictoryCmd = config.TargetVictoryCommand;
-            if (ImGui.InputText("Target Victory", ref targetVictoryCmd, 64))
+            // Target Victory: emote played on each surviving NPC when the player dies
+            if (emoteListCache == null)
             {
-                config.TargetVictoryCommand = targetVictoryCmd;
-                config.Save();
+                emoteListCache = new List<(uint, string)> { (0, "(None)") };
+                try
+                {
+                    var emoteSheet = Core.Services.DataManager.GetExcelSheet<Emote>();
+                    if (emoteSheet != null)
+                    {
+                        foreach (var emote in emoteSheet)
+                        {
+                            var name = emote.Name.ToString();
+                            if (!string.IsNullOrWhiteSpace(name))
+                                emoteListCache.Add((emote.RowId, $"{name} [{emote.RowId}]"));
+                        }
+                    }
+                }
+                catch { }
             }
-            HelpMarker("Chat command when the target/NPC side wins.");
+
+            // Find current selection index
+            if (targetVictoryEmoteIndex < 0)
+            {
+                targetVictoryEmoteIndex = 0;
+                for (int i = 0; i < emoteListCache.Count; i++)
+                {
+                    if (emoteListCache[i].Id == config.TargetVictoryEmoteId)
+                    { targetVictoryEmoteIndex = i; break; }
+                }
+            }
+
+            var currentEmoteName = targetVictoryEmoteIndex < emoteListCache.Count
+                ? emoteListCache[targetVictoryEmoteIndex].Name : "(None)";
+            if (ImGui.BeginCombo("Target Victory", currentEmoteName))
+            {
+                for (int i = 0; i < emoteListCache.Count; i++)
+                {
+                    var isSelected = i == targetVictoryEmoteIndex;
+                    if (ImGui.Selectable(emoteListCache[i].Name, isSelected))
+                    {
+                        targetVictoryEmoteIndex = i;
+                        config.TargetVictoryEmoteId = emoteListCache[i].Id;
+                        config.Save();
+                    }
+                    if (isSelected)
+                        ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+            HelpMarker("Emote played on each surviving NPC when the player dies. NPCs perform this emote toward the player.");
         }
     }
 

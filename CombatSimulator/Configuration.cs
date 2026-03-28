@@ -60,7 +60,7 @@ public class Configuration : IPluginConfiguration
 
     // Victory: command executed when one party wins
     public string PlayerVictoryCommand { get; set; } = "";
-    public string TargetVictoryCommand { get; set; } = "";
+    public uint TargetVictoryEmoteId { get; set; } = 0; // 0 = none, otherwise Emote sheet RowId
 
     // Glamourer: apply a preset on player death
     public bool ApplyGlamourerOnDeath { get; set; } = false;
