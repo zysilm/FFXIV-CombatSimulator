@@ -49,6 +49,7 @@ public unsafe class DeathCamController : IDisposable
     private float startDistance;
     private float startFoV;
     private Vector3 startLookAt;
+    private Vector3 anchoredLookAt;
 
     // Saved original camera limits — restored on deactivation
     private float savedMinDistance;
@@ -216,7 +217,10 @@ public unsafe class DeathCamController : IDisposable
 
             if (state != DeathCamState.Inactive)
             {
-                // Death cam: override look-at to follow bone
+                // Death cam: track bone position only (like ActiveCamera).
+                // During interpolation, smoothly transition to the bone position.
+                // Once anchored, only update the look-at position gently to avoid
+                // camera jitter from ragdoll bone movement.
                 var bonePos = GetBoneWorldPosition(config.DeathCamBoneName);
                 if (bonePos == null)
                 {
@@ -227,17 +231,23 @@ public unsafe class DeathCamController : IDisposable
 
                 if (bonePos != null)
                 {
+                    var targetLookAt = bonePos.Value + offset;
+
                     if (state == DeathCamState.Interpolating)
                     {
                         float t = Math.Clamp(interpElapsed / config.DeathCamTransitionDuration, 0f, 1f);
                         float smooth = t * t * (3f - 2f * t);
-                        var targetLookAt = bonePos.Value + offset;
                         Vector3 lookAt = Vector3.Lerp(startLookAt, targetLookAt, smooth);
                         sceneCam->LookAtVector = lookAt;
+                        anchoredLookAt = lookAt;
                     }
                     else
                     {
-                        sceneCam->LookAtVector = bonePos.Value + offset;
+                        // Anchored: smoothly follow bone position to avoid jitter.
+                        // Use a gentle lerp so the camera doesn't rigidly track every
+                        // frame of ragdoll bone movement.
+                        anchoredLookAt = Vector3.Lerp(anchoredLookAt, targetLookAt, 0.05f);
+                        sceneCam->LookAtVector = anchoredLookAt;
                     }
                 }
             }
