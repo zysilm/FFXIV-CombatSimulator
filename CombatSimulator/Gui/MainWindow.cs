@@ -172,6 +172,7 @@ public class MainWindow : IDisposable
             case 4: // Ragdoll
                 DrawRagdollSection();
                 DrawNpcCollisionSection();
+                DrawNpcSettleCollisionSection();
                 break;
             case 5: // Settings
                 DrawGuiSettingsSection();
@@ -1035,7 +1036,7 @@ public class MainWindow : IDisposable
 
     private void DrawRagdollSection()
     {
-        if (ImGui.CollapsingHeader("Rag doll (Experimental)"))
+        if (ImGui.CollapsingHeader("Ragdoll"))
         {
             var enabled = config.EnableRagdoll;
             if (ImGui.Checkbox("Enable Ragdoll##ragdoll", ref enabled))
@@ -1135,7 +1136,7 @@ public class MainWindow : IDisposable
 
     private void DrawNpcCollisionSection()
     {
-        if (ImGui.CollapsingHeader("NPC Collision (Experimental)"))
+        if (ImGui.CollapsingHeader("NPC Collision"))
         {
             var npcCollision = config.RagdollNpcCollision;
             if (ImGui.Checkbox("Enable NPC Collision##npccol", ref npcCollision))
@@ -1157,37 +1158,34 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Scale multiplier for NPC bone collision capsules. Increase for larger NPC models.");
 
-                ImGui.Separator();
+                ImGui.Unindent();
+            }
+        }
+    }
 
-                // --- Settle Collision ---
-                var settleCol = config.RagdollNpcSettleCollision;
-                if (ImGui.Checkbox("NPC Collision (Settle)##npccol", ref settleCol))
+    private void DrawNpcSettleCollisionSection()
+    {
+        if (ImGui.CollapsingHeader("NPC Collision (Settle)"))
+        {
+            var settleCol = config.RagdollNpcSettleCollision;
+            if (ImGui.Checkbox("Enable Settle Collision##settle", ref settleCol))
+            {
+                config.RagdollNpcSettleCollision = settleCol;
+                config.Save();
+            }
+            HelpMarker("Keep ragdoll reactive to NPC bones after settling. Wakes sleeping bodies when an NPC bone moves nearby.");
+
+            if (config.RagdollNpcSettleCollision)
+            {
+                ImGui.Indent();
+
+                var wakeRadius = config.RagdollNpcSettleWakeRadius;
+                if (ImGui.SliderFloat("Wake Radius##settle", ref wakeRadius, 0.1f, 2.0f, "%.2f"))
                 {
-                    config.RagdollNpcSettleCollision = settleCol;
+                    config.RagdollNpcSettleWakeRadius = wakeRadius;
                     config.Save();
                 }
-                HelpMarker("Keep ragdoll reactive to NPC bones after settling. Wakes sleeping bodies when an NPC bone moves nearby.");
-
-                if (config.RagdollNpcSettleCollision)
-                {
-                    var wakeRadius = config.RagdollNpcSettleWakeRadius;
-                    if (ImGui.SliderFloat("Wake Radius##settle", ref wakeRadius, 0.1f, 2.0f, "%.2f"))
-                    {
-                        config.RagdollNpcSettleWakeRadius = wakeRadius;
-                        config.Save();
-                    }
-                    HelpMarker("Distance threshold to wake a sleeping ragdoll body when an NPC bone is nearby.");
-                }
-
-                ImGui.Separator();
-                if (ImGui.Button("Reset to Defaults##npccol"))
-                {
-                    config.RagdollNpcCollision = false;
-                    config.RagdollNpcCollisionScale = 0.0001f;
-                    config.RagdollNpcSettleCollision = false;
-                    config.RagdollNpcSettleWakeRadius = 0.3f;
-                    config.Save();
-                }
+                HelpMarker("Distance threshold to wake a sleeping ragdoll body when an NPC bone is nearby.");
 
                 ImGui.Unindent();
             }
