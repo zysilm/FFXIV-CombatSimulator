@@ -791,6 +791,7 @@ public unsafe class RagdollController : IDisposable
             var skelDist = (newSkelPos - skelWorldPos).Length();
             if (skelDist > 0.1f)
             {
+                log.Info($"[Ragdoll F{frameCount}] Skeleton moved {skelDist:F3}m: ({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3})→({newSkelPos.X:F3},{newSkelPos.Y:F3},{newSkelPos.Z:F3})");
                 if (BGCollisionModule.RaycastMaterialFilter(
                         new Vector3(newSkelPos.X, newSkelPos.Y + 2.0f, newSkelPos.Z),
                         new Vector3(0, -1, 0),
@@ -799,6 +800,7 @@ public unsafe class RagdollController : IDisposable
                 {
                     realGroundY = hitInfo.Point.Y;
                     groundY = realGroundY - config.RagdollFloorOffset;
+                    log.Info($"[Ragdoll F{frameCount}] Ground re-raycast: realY={realGroundY:F3} physicsY={groundY:F3}");
                 }
             }
 
@@ -842,7 +844,7 @@ public unsafe class RagdollController : IDisposable
         }
 
         frameCount++;
-        var logThisFrame = frameCount <= 3 || frameCount % 60 == 0;
+        var logThisFrame = frameCount <= 3 || frameCount % 12 == 0; // every 0.2s at 60fps
 
         // --- Pass 1: Read physics bodies, compute bone world positions/rotations ---
         // We need all positions first to measure how far the ragdoll sank below
@@ -918,6 +920,27 @@ public unsafe class RagdollController : IDisposable
                 yCorrection = config.RagdollFloorOffset;
         }
 
+        // --- Frame summary (once per log frame, before per-bone data) ---
+        if (logThisFrame)
+        {
+            var awakeBodies = 0;
+            var maxLinVel = 0f;
+            var maxAngVel = 0f;
+            for (int i = 0; i < boneCount; i++)
+            {
+                if (!boneValid[i]) continue;
+                var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
+                if (bodyRef.Awake) awakeBodies++;
+                var linSpeed = bodyRef.Velocity.Linear.Length();
+                var angSpeed = bodyRef.Velocity.Angular.Length();
+                if (linSpeed > maxLinVel) maxLinVel = linSpeed;
+                if (angSpeed > maxAngVel) maxAngVel = angSpeed;
+            }
+            log.Info($"[Ragdoll F{frameCount}] t={frameCount / 60f:F2}s awake={awakeBodies}/{boneCount} " +
+                     $"yCorr={yCorrection:F3} lowestY={lowestCapsuleBottomY:F3} realGnd={realGroundY:F3} " +
+                     $"maxLinVel={maxLinVel:F3} maxAngVel={maxAngVel:F3}");
+        }
+
         // --- Pass 2: Apply correction and write to ModelPose ---
         for (int i = 0; i < boneCount; i++)
         {
@@ -932,12 +955,15 @@ public unsafe class RagdollController : IDisposable
 
             if (logThisFrame)
             {
-                ref var origM = ref pose->ModelPose.Data[rb.BoneIndex];
-                var animPos = new Vector3(origM.Translation.X, origM.Translation.Y, origM.Translation.Z);
+                var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+                var wr = worldRotations[i];
+                var lv = bodyRef.Velocity.Linear;
+                var av = bodyRef.Velocity.Angular;
                 log.Info($"[Ragdoll F{frameCount}] '{rb.Name}' " +
-                         $"animPos=({animPos.X:F3},{animPos.Y:F3},{animPos.Z:F3}) " +
-                         $"boneWorld=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3}) " +
-                         $"yCorr={yCorrection:F3} →modelPos=({modelPos.X:F3},{modelPos.Y:F3},{modelPos.Z:F3})");
+                         $"wPos=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3}) " +
+                         $"wRot=({wr.X:F3},{wr.Y:F3},{wr.Z:F3},{wr.W:F3}) " +
+                         $"linV=({lv.X:F3},{lv.Y:F3},{lv.Z:F3}) angV=({av.X:F3},{av.Y:F3},{av.Z:F3}) " +
+                         $"awake={bodyRef.Awake}");
             }
 
             boneService.WriteBoneTransform(skel, rb.BoneIndex, modelPos, modelRot, result);
