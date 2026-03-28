@@ -217,7 +217,7 @@ public unsafe class HairPhysicsSimulator
                 if (velMag > 0.0001f)
                 {
                     var velAxis = state.AngularVelocity / velMag;
-                    var velAngle = velMag * dt;
+                    var velAngle = velMag; // velocity is already per-frame (integrated with dt)
                     var velRot = Quaternion.CreateFromAxisAngle(velAxis, velAngle);
 
                     var newDir = Vector3.Transform(currentDir, velRot);
