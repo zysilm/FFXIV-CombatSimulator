@@ -173,6 +173,24 @@ public class MainWindow : IDisposable
                 DrawRagdollSection();
                 DrawNpcCollisionSection();
                 DrawNpcSettleCollisionSection();
+                ImGui.Separator();
+                if (ImGui.Button("Reset All to Defaults##ragdollpage"))
+                {
+                    // Ragdoll
+                    config.RagdollActivationDelay = 1.0f;
+                    config.RagdollGravity = 9.8f;
+                    config.RagdollDamping = 0.97f;
+                    config.RagdollFloorOffset = 0f;
+                    config.RagdollSelfCollision = true;
+                    config.RagdollTightKneeLimits = false;
+                    config.RagdollMassScale = 1.0f;
+                    // NPC Collision
+                    config.RagdollNpcCollision = false;
+                    config.RagdollNpcCollisionScale = 0.0001f;
+                    // NPC Collision (Settle)
+                    config.RagdollNpcSettleCollision = false;
+                    config.Save();
+                }
                 break;
             case 5: // Settings
                 DrawGuiSettingsSection();
@@ -1116,18 +1134,6 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Use tight swing limits on knees and elbows. Prevents hyperextension but reduces range of motion (guided bend). Takes effect on next ragdoll activation.");
 
-                ImGui.Separator();
-                if (ImGui.Button("Reset to Defaults##ragdoll"))
-                {
-                    config.RagdollActivationDelay = 1.0f;
-                    config.RagdollGravity = 9.8f;
-                    config.RagdollDamping = 0.97f;
-                    config.RagdollFloorOffset = 0f;
-                    config.RagdollSelfCollision = true;
-                    config.RagdollTightKneeLimits = false;
-                    config.RagdollMassScale = 1.0f;
-                    config.Save();
-                }
 
                 ImGui.Unindent();
             }
