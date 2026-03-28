@@ -46,6 +46,10 @@ public unsafe class NpcAiController : IDisposable
         var playerPos = player.Position;
         var playerEntityId = player.EntityId;
 
+        // Read the player's actual GameObjectId from the game object (includes Type byte)
+        var playerGameObj = (GameObject*)player.Address;
+        var playerGameObjectId = playerGameObj->GetGameObjectId();
+
         foreach (var npc in npcs)
         {
             if (!npc.IsSpawned)
@@ -55,18 +59,18 @@ public unsafe class NpcAiController : IDisposable
             if (npc.BattleChara != null && npc.AiState != NpcAiState.Dead)
                 animationController.SetBattleStance(npc);
 
-            // Set NPC's target to the player during combat (client-side only).
-            // This makes NPCs visually look at the player and affects emote interactions.
+            // Set NPC's target to the player (client-side only).
+            // NPCs target the player during combat AND when player is dead (standing over corpse).
+            // Only clear when NPC itself is dead or resetting.
             if (config.EnableNpcTargetPlayer && npc.BattleChara != null)
             {
                 var character = (Character*)npc.BattleChara;
-                bool inCombat = npc.AiState == NpcAiState.Engaging
-                             || npc.AiState == NpcAiState.Combat
-                             || npc.AiState == NpcAiState.Chasing;
-                if (inCombat)
-                    character->TargetId = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObjectId)playerEntityId;
+                bool shouldTarget = npc.AiState != NpcAiState.Dead
+                                 && npc.AiState != NpcAiState.Resetting;
+                if (shouldTarget)
+                    character->TargetId = playerGameObjectId;
                 else if (character->TargetId.ObjectId == playerEntityId)
-                    character->TargetId = default; // clear target on death/idle/reset
+                    character->TargetId = default;
             }
 
             TickNpc(npc, deltaTime, playerPos, playerEntityId);
