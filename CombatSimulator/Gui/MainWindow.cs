@@ -183,13 +183,13 @@ public class MainWindow : IDisposable
                     config.RagdollFloorOffset = 0f;
                     config.RagdollSelfCollision = true;
                     config.RagdollTightKneeLimits = false;
+                    config.RagdollJointStiffness = 1.0f;
                     config.RagdollMassScale = 1.0f;
                     // NPC Collision
                     config.RagdollNpcCollision = false;
                     config.RagdollNpcCollisionScale = 0.0001f;
                     // NPC Collision (Settle)
                     config.RagdollNpcSettleCollision = false;
-                    config.RagdollNpcSettleStiffness = 1.0f;
                     config.Save();
                 }
                 break;
@@ -1135,6 +1135,13 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Use tight swing limits on knees and elbows. Prevents hyperextension but reduces range of motion (guided bend). Takes effect on next ragdoll activation.");
 
+                var stiffness = config.RagdollJointStiffness;
+                if (ImGui.SliderFloat("Joint Stiffness##ragdoll", ref stiffness, 1.0f, 20.0f, "%.1fx"))
+                {
+                    config.RagdollJointStiffness = stiffness;
+                    config.Save();
+                }
+                HelpMarker("Multiplier for joint constraint strength. Higher = stiffer joints, body resists twisting. Takes effect on next ragdoll activation.");
 
                 ImGui.Unindent();
             }
@@ -1181,21 +1188,6 @@ public class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Prevent ragdoll bodies from sleeping so they always react to NPC bones. Takes effect on next ragdoll activation.");
-
-            if (config.RagdollNpcSettleCollision)
-            {
-                ImGui.Indent();
-
-                var stiffness = config.RagdollNpcSettleStiffness;
-                if (ImGui.SliderFloat("Joint Stiffness##settle", ref stiffness, 1.0f, 20.0f, "%.1fx"))
-                {
-                    config.RagdollNpcSettleStiffness = stiffness;
-                    config.Save();
-                }
-                HelpMarker("Multiplier for joint constraint strength. Higher = body resists twisting from NPC collisions (especially waist). Takes effect on next ragdoll activation.");
-
-                ImGui.Unindent();
-            }
         }
     }
 

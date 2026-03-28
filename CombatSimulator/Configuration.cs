@@ -95,11 +95,11 @@ public class Configuration : IPluginConfiguration
     public float RagdollFloorOffset { get; set; } = 0f;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public bool RagdollTightKneeLimits { get; set; } = false; // Tight swing limits on knees/elbows (prevents hyperextension but reduces range of motion)
+    public float RagdollJointStiffness { get; set; } = 1.0f; // Multiplier for joint constraint strength
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollNpcCollision { get; set; } = false;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcSettleCollision { get; set; } = false;
-    public float RagdollNpcSettleStiffness { get; set; } = 1.0f;
     public float RagdollMassScale { get; set; } = 1.0f;
 
     // Active Camera — camera tracks a bone with free orbital control

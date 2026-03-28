@@ -600,10 +600,9 @@ public unsafe class RagdollController : IDisposable
         foreach (var rb in ragdollBones)
             boneIdxToBodyHandle[rb.BoneIndex] = rb.BodyHandle;
 
-        // Settle stiffness: when NPC settle collision is active, multiply constraint
-        // spring frequencies and motor damping to resist NPC collision forces.
-        var stiffness = (config.RagdollNpcSettleCollision && config.RagdollNpcCollision)
-            ? config.RagdollNpcSettleStiffness : 1f;
+        // Joint stiffness: multiply constraint spring frequencies and motor damping.
+        // Higher = stiffer joints, body resists twisting. 1.0 = default ragdoll behavior.
+        var stiffness = config.RagdollJointStiffness;
         var jointSpring = new SpringSettings(30 * stiffness, 1);
         var limitSpring = new SpringSettings(15 * stiffness, 1);
         var motorDamping = 0.01f * stiffness;
