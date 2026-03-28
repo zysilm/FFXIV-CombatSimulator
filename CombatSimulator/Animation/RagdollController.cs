@@ -803,7 +803,9 @@ public unsafe class RagdollController : IDisposable
             skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
         }
 
-        // Update NPC collision volumes to track their current positions
+        // Update NPC collision volumes to track their current positions.
+        // Must call UpdateBounds() after repositioning — BEPU2 doesn't auto-update
+        // broad phase AABBs for statics, so without it collisions are never detected.
         for (int i = 0; i < npcStatics.Count; i++)
         {
             var (handle, npcAddr) = npcStatics[i];
@@ -812,6 +814,7 @@ public unsafe class RagdollController : IDisposable
                 var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npcAddr;
                 var staticRef = simulation.Statics.GetStaticReference(handle);
                 staticRef.Pose.Position = new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z);
+                staticRef.UpdateBounds();
             }
             catch { }
         }
