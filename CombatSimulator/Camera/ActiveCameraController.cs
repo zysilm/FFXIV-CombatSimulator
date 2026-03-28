@@ -182,13 +182,21 @@ public unsafe class ActiveCameraController : IDisposable
                 {
                     var gameCam = camMgr->Camera;
 
-                    // Allow closer zoom (lower min distance from default ~1.5 to 0)
-                    if (!distanceOverridden)
+                    // Allow closer zoom if enabled
+                    if (config.ActiveCameraCloseZoom)
                     {
-                        savedMinDistance = gameCam->MinDistance;
-                        distanceOverridden = true;
+                        if (!distanceOverridden)
+                        {
+                            savedMinDistance = gameCam->MinDistance;
+                            distanceOverridden = true;
+                        }
+                        gameCam->MinDistance = 1.0f;
                     }
-                    gameCam->MinDistance = 1.0f;
+                    else if (distanceOverridden)
+                    {
+                        gameCam->MinDistance = savedMinDistance;
+                        distanceOverridden = false;
+                    }
 
                     // Lock vertical angle if configured
                     if (config.ActiveCameraLockVertical)

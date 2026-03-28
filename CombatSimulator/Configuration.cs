@@ -102,6 +102,7 @@ public class Configuration : IPluginConfiguration
     public float ActiveCameraVerticalAngle { get; set; } = 0f;
     public bool ActiveCameraLockVertical { get; set; } = false;
     public bool ActiveCameraDisableCollision { get; set; } = false;
+    public bool ActiveCameraCloseZoom { get; set; } = true;
 
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";

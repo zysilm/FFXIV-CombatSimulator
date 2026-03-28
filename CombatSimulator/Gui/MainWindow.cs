@@ -952,6 +952,14 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Camera passes through walls and objects.");
+
+                var closeZoom = config.ActiveCameraCloseZoom;
+                if (ImGui.Checkbox("Allow Close Zoom##activecam", ref closeZoom))
+                {
+                    config.ActiveCameraCloseZoom = closeZoom;
+                    config.Save();
+                }
+                HelpMarker("Allow the camera to zoom closer than the game default.");
             }
 
             ImGui.Unindent();
