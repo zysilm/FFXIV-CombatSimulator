@@ -52,6 +52,11 @@ public unsafe class RagdollController : IDisposable
     private float savedOverallSpeed = 1.0f;
     private readonly HashSet<int> ragdollBoneIndices = new();
 
+    // Captured reference pose — saved on first physics frame to avoid jitter
+    // from the game alternating between two adjacent animation frames
+    private Vector3[]? frozenPositions;
+    private Quaternion[]? frozenRotations;
+
     // Ancestor bone index — n_hara must follow j_kosi to prevent mesh tearing
     private int nHaraIndex = -1;
 
@@ -174,6 +179,8 @@ public unsafe class RagdollController : IDisposable
         physicsStarted = false;
         ragdollBoneIndices.Clear();
         nHaraIndex = -1;
+        frozenPositions = null;
+        frozenRotations = null;
 
         DestroySimulation();
         log.Info("RagdollController: Deactivated");
@@ -618,10 +625,23 @@ public unsafe class RagdollController : IDisposable
                 // Hyperextension: child axis rotates away, angle exceeds 90° (blocked).
                 if (boneDef.SwingLimit > 0)
                 {
-                    // "Forward" direction on the parent body = Cross(hingeAxis, parentSegDir).
-                    // This is the direction the child limb swings toward during flexion.
+                    // "Forward" direction: the direction the child swings toward during flexion.
+                    // Use Cross(parentSeg, childSeg) to find the actual bending plane normal,
+                    // then Cross(normal, parentSeg) gives the forward in the bending plane.
+                    // This is more robust than Cross(hingeAxis, parentSeg) for non-standard poses.
                     var parentSegDir = Vector3.Transform(Vector3.UnitY, parentBodyRef.Pose.Orientation);
-                    var forwardWorld = Vector3.Normalize(Vector3.Cross(hingeAxisWorld, parentSegDir));
+                    var bendNormal = Vector3.Cross(parentSegDir, segDirWorld);
+                    Vector3 forwardWorld;
+                    if (bendNormal.LengthSquared() > 0.001f)
+                    {
+                        bendNormal = Vector3.Normalize(bendNormal);
+                        forwardWorld = Vector3.Normalize(Vector3.Cross(bendNormal, parentSegDir));
+                    }
+                    else
+                    {
+                        // Parent and child are collinear — fallback to hinge-based forward
+                        forwardWorld = Vector3.Normalize(Vector3.Cross(hingeAxisWorld, parentSegDir));
+                    }
 
                     var swingAxisLocalParent = Vector3.Normalize(Vector3.Transform(
                         forwardWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
@@ -779,13 +799,27 @@ public unsafe class RagdollController : IDisposable
 
         var pose = skel.Pose;
 
-        // Save original positions/rotations for delta tracking (needed for j_kao propagation)
+        // Capture the animation pose on the first frame. The game alternates between
+        // two adjacent animation frames even with OverallSpeed=0, causing jitter on
+        // non-ragdoll bones (fingers, toes, hair). Using a stable reference eliminates this.
+        if (frozenPositions == null)
+        {
+            frozenPositions = new Vector3[skel.BoneCount];
+            frozenRotations = new Quaternion[skel.BoneCount];
+            for (int i = 0; i < skel.BoneCount; i++)
+            {
+                ref var m = ref pose->ModelPose.Data[i];
+                frozenPositions[i] = new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z);
+                frozenRotations[i] = new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W);
+            }
+        }
+
+        // Use the frozen reference pose for delta tracking, not the flickering ModelPose
         var result = new BoneModificationResult(skel.BoneCount);
         for (int i = 0; i < skel.BoneCount; i++)
         {
-            ref var m = ref pose->ModelPose.Data[i];
-            result.OriginalPositions[i] = new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z);
-            result.OriginalRotations[i] = new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W);
+            result.OriginalPositions[i] = frozenPositions[i];
+            result.OriginalRotations[i] = frozenRotations![i];
         }
 
         frameCount++;
