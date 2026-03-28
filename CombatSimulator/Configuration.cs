@@ -28,6 +28,7 @@ public class Configuration : IPluginConfiguration
 
     // General
     public bool ShowMainWindow { get; set; } = false;
+    public float SidebarWidth { get; set; } = 130f;
     public bool ShowCombatLog { get; set; } = true;
     public bool ShowEnemyHpBar { get; set; } = true;
     public bool ShowPlayerHpBar { get; set; } = true;

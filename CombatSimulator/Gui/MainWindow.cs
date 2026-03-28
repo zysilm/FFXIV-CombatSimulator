@@ -118,9 +118,13 @@ public class MainWindow : IDisposable
         DrawStatusSection();
         ImGui.Separator();
 
-        // Left sidebar + right content
+        // Left sidebar + right content with draggable splitter
         var contentHeight = ImGui.GetContentRegionAvail().Y;
-        var sidebarWidth = 100f;
+        var totalWidth = ImGui.GetContentRegionAvail().X;
+        var sidebarWidth = config.SidebarWidth;
+
+        // Clamp sidebar width
+        sidebarWidth = Math.Clamp(sidebarWidth, 80f, totalWidth - 150f);
 
         // Left sidebar
         ImGui.BeginChild("##sidebar", new Vector2(sidebarWidth, contentHeight), true);
@@ -130,6 +134,17 @@ public class MainWindow : IDisposable
                 selectedTab = i;
         }
         ImGui.EndChild();
+
+        // Draggable splitter
+        ImGui.SameLine();
+        ImGui.Button("##splitter", new Vector2(4, contentHeight));
+        if (ImGui.IsItemActive())
+        {
+            config.SidebarWidth = sidebarWidth + ImGui.GetIO().MouseDelta.X;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetMouseCursor((ImGuiMouseCursor)5); // ResizeEW
 
         ImGui.SameLine();
 
