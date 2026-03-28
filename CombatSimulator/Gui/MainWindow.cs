@@ -1228,6 +1228,14 @@ public class MainWindow : IDisposable
 
             ImGui.Indent();
 
+            var attackDead = config.NpcAttackAfterDeath;
+            if (ImGui.Checkbox("NPCs Attack After Death##dev", ref attackDead))
+            {
+                config.NpcAttackAfterDeath = attackDead;
+                config.Save();
+            }
+            HelpMarker("Enemies continue attacking and approaching the player after death in combat sim.");
+
             var massScale = config.RagdollMassScale;
             if (ImGui.SliderFloat("Mass Scale##dev", ref massScale, 0.1f, 10.0f, "%.1f"))
             {

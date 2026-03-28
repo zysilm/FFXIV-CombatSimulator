@@ -225,8 +225,8 @@ public unsafe class NpcAiController : IDisposable
             return;
         }
 
-        // Check if player is alive — NPCs stop attacking when player is dead
-        if (!combatEngine.State.PlayerState.IsAlive)
+        // Check if player is alive — NPCs stop attacking when player is dead (unless overridden)
+        if (!combatEngine.State.PlayerState.IsAlive && !config.NpcAttackAfterDeath)
         {
             npc.AiState = NpcAiState.Idle;
             return;
@@ -407,8 +407,8 @@ public unsafe class NpcAiController : IDisposable
         if (npc.BattleChara == null) return;
         if (npc.AiState == NpcAiState.Dead) return;
 
-        // Don't move NPCs when the player is dead — they stay in place
-        if (!combatEngine.State.PlayerState.IsAlive) return;
+        // Don't move NPCs when the player is dead — they stay in place (unless overridden)
+        if (!combatEngine.State.PlayerState.IsAlive && !config.NpcAttackAfterDeath) return;
 
         var gameObj = (GameObject*)npc.BattleChara;
         var npcPos = (Vector3)gameObj->Position;
