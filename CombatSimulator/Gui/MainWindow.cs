@@ -42,6 +42,10 @@ public class MainWindow : IDisposable
     private bool overwritePopupOpen = false;
     private string overwriteTargetName = "";
 
+    // Active cam preset state
+    private string acNewPresetName = "";
+    private int acSelectedPresetIndex = -1;
+
     private static void HelpMarker(string desc)
     {
         ImGui.SameLine();
@@ -884,18 +888,146 @@ public class MainWindow : IDisposable
                 config.Save();
                 deathCamController.SetActiveCam(activeCam);
             }
-            HelpMarker("Camera tracks the selected bone while alive. You control the camera angle freely with mouse/keyboard. Uses the same bone selection and offset settings as Death Cam.");
+            HelpMarker("Camera tracks the selected bone while alive. You control the camera angle freely with mouse/keyboard.");
 
-            if (config.EnableActiveCam)
+            if (!config.EnableActiveCam)
             {
-                if (deathCamController.IsActiveCamMode)
-                    ImGui.TextColored(new Vector4(0.3f, 1.0f, 0.3f, 1.0f), "Active Cam: ON");
-                else
-                    ImGui.TextColored(new Vector4(1.0f, 0.5f, 0.2f, 1.0f), "Active Cam: waiting (set anchor in Death Cam first)");
+                ImGui.Unindent();
+                return;
+            }
+
+            if (deathCamController.IsActiveCamMode)
+                ImGui.TextColored(new Vector4(0.3f, 1.0f, 0.3f, 1.0f), "Active");
+            else
+                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "Inactive");
+
+            // Bone selector
+            var boneNames = new string[DeathCamController.CenterBones.Length];
+            for (int b = 0; b < DeathCamController.CenterBones.Length; b++)
+                boneNames[b] = DeathCamController.CenterBones[b].Name;
+
+            int acBoneIdx = 0;
+            for (int b = 0; b < DeathCamController.CenterBones.Length; b++)
+                if (DeathCamController.CenterBones[b].Index == config.ActiveCamBoneIndex) { acBoneIdx = b; break; }
+
+            if (ImGui.Combo("Center Bone##activecam", ref acBoneIdx, boneNames, boneNames.Length))
+            {
+                config.ActiveCamBoneIndex = DeathCamController.CenterBones[acBoneIdx].Index;
+                config.Save();
+            }
+
+            var acCollision = config.ActiveCamDisableCollision;
+            if (ImGui.Checkbox("Disable Camera Collision##activecam", ref acCollision))
+            {
+                config.ActiveCamDisableCollision = acCollision;
+                config.Save();
+            }
+
+            // Offsets
+            var acHeight = config.ActiveCamHeightOffset;
+            if (ImGui.DragFloat("Height Offset##activecam", ref acHeight, 0.01f, -5f, 10f, "%.2f"))
+            {
+                config.ActiveCamHeightOffset = acHeight;
+                config.Save();
+            }
+
+            var acSide = config.ActiveCamSideOffset;
+            if (ImGui.DragFloat("Side Offset##activecam", ref acSide, 0.01f, -5f, 5f, "%.2f"))
+            {
+                config.ActiveCamSideOffset = acSide;
+                config.Save();
+            }
+
+            var acTilt = config.ActiveCamTilt;
+            if (ImGui.DragFloat("Tilt##activecam", ref acTilt, 0.01f, -MathF.PI, MathF.PI, "%.2f"))
+            {
+                config.ActiveCamTilt = acTilt;
+                config.Save();
+            }
+
+            // --- Presets ---
+            ImGui.Separator();
+            ImGui.Text("Presets");
+
+            var acPresets = config.ActiveCamPresets;
+            if (acPresets.Count > 0)
+            {
+                var names = new string[acPresets.Count];
+                for (int i = 0; i < acPresets.Count; i++) names[i] = acPresets[i].Name;
+
+                if (ImGui.BeginListBox("##ACPresetSelect", new Vector2(250, ImGui.GetTextLineHeightWithSpacing() * Math.Min(acPresets.Count, 6) + ImGui.GetStyle().FramePadding.Y * 2)))
+                {
+                    for (int i = 0; i < names.Length; i++)
+                    {
+                        if (ImGui.Selectable(names[i], acSelectedPresetIndex == i))
+                            acSelectedPresetIndex = i;
+                    }
+                    ImGui.EndListBox();
+                }
+
+                var hasSelection = acSelectedPresetIndex >= 0 && acSelectedPresetIndex < acPresets.Count;
+
+                if (hasSelection && ImGui.Button("Load##acpreset"))
+                    LoadActiveCamPreset(acPresets[acSelectedPresetIndex]);
+
+                if (hasSelection)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.Button("Delete##acpreset") && ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift)
+                    {
+                        acPresets.RemoveAt(acSelectedPresetIndex);
+                        acSelectedPresetIndex = -1;
+                        config.Save();
+                    }
+                    if (!ImGui.GetIO().KeyCtrl || !ImGui.GetIO().KeyShift)
+                    {
+                        ImGui.SameLine();
+                        ImGui.TextDisabled("(Ctrl+Shift to delete)");
+                    }
+                }
+            }
+
+            ImGui.InputText("##acPresetName", ref acNewPresetName, 64);
+            ImGui.SameLine();
+            if (ImGui.Button("Save##acpreset") && acNewPresetName.Length > 0)
+            {
+                SaveActiveCamPreset(acNewPresetName);
+                acNewPresetName = "";
             }
 
             ImGui.Unindent();
         }
+    }
+
+    private void SaveActiveCamPreset(string name)
+    {
+        var existing = config.ActiveCamPresets.FindIndex(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+        var preset = new ActiveCamPreset
+        {
+            Name = name,
+            BoneIndex = config.ActiveCamBoneIndex,
+            HeightOffset = config.ActiveCamHeightOffset,
+            SideOffset = config.ActiveCamSideOffset,
+            Tilt = config.ActiveCamTilt,
+            DisableCollision = config.ActiveCamDisableCollision,
+        };
+        if (existing >= 0)
+            config.ActiveCamPresets[existing] = preset;
+        else
+            config.ActiveCamPresets.Add(preset);
+        config.Save();
+        chatGui.Print($"[CombatSim] Active Cam preset '{name}' saved.");
+    }
+
+    private void LoadActiveCamPreset(ActiveCamPreset preset)
+    {
+        config.ActiveCamBoneIndex = preset.BoneIndex;
+        config.ActiveCamHeightOffset = preset.HeightOffset;
+        config.ActiveCamSideOffset = preset.SideOffset;
+        config.ActiveCamTilt = preset.Tilt;
+        config.ActiveCamDisableCollision = preset.DisableCollision;
+        config.Save();
+        chatGui.Print($"[CombatSim] Active Cam preset '{preset.Name}' loaded.");
     }
 
     private void DrawRagdollSection()
@@ -1188,6 +1320,58 @@ public class MainWindow : IDisposable
         {
             selectedPresetIndex++;
             LoadPreset(presets[selectedPresetIndex]);
+        }
+        if (atEnd) ImGui.EndDisabled();
+
+        ImGui.End();
+    }
+
+    public void DrawActiveCamToolbar()
+    {
+        var presets = config.ActiveCamPresets;
+        if (presets.Count == 0)
+            return;
+
+        if (acSelectedPresetIndex < 0 || acSelectedPresetIndex >= presets.Count)
+            acSelectedPresetIndex = 0;
+
+        ImGui.SetNextWindowSize(new Vector2(280, 0), ImGuiCond.FirstUseEver);
+        if (!ImGui.Begin("Active Cam Presets", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.End();
+            return;
+        }
+
+        var arrowSize = new Vector2(28, 28);
+
+        var atStart = acSelectedPresetIndex <= 0;
+        if (atStart) ImGui.BeginDisabled();
+        if (ImGui.Button("<##ac", arrowSize))
+        {
+            acSelectedPresetIndex--;
+            LoadActiveCamPreset(presets[acSelectedPresetIndex]);
+        }
+        if (atStart) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+
+        var presetName = presets[acSelectedPresetIndex].Name;
+        var avail = ImGui.GetContentRegionAvail().X - arrowSize.X - ImGui.GetStyle().ItemSpacing.X;
+        var textSize = ImGui.CalcTextSize(presetName).X;
+        var pad = (avail - textSize) * 0.5f;
+        if (pad > 0) ImGui.SetCursorPosX(ImGui.GetCursorPosX() + pad);
+        ImGui.AlignTextToFramePadding();
+        ImGui.Text(presetName);
+
+        ImGui.SameLine();
+        if (pad > 0) ImGui.SetCursorPosX(ImGui.GetContentRegionMax().X - arrowSize.X);
+
+        var atEnd = acSelectedPresetIndex >= presets.Count - 1;
+        if (atEnd) ImGui.BeginDisabled();
+        if (ImGui.Button(">##ac", arrowSize))
+        {
+            acSelectedPresetIndex++;
+            LoadActiveCamPreset(presets[acSelectedPresetIndex]);
         }
         if (atEnd) ImGui.EndDisabled();
 

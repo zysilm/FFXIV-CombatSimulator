@@ -210,12 +210,15 @@ public unsafe class DeathCamController : IDisposable
             var sceneCam = &thisPtr->SceneCamera;
 
             float camH = gameCam->DirH;
-            var offset = ComputeOffsetFromCameraAngle(camH);
+            // Use Active Cam config when in active cam mode, Death Cam config otherwise
+            bool useActiveCam = IsActiveCamMode && state == DeathCamState.Inactive;
+            var offset = ComputeOffsetFromCameraAngle(camH, useActiveCam);
 
             if (state != DeathCamState.Inactive || IsActiveCamMode)
             {
                 // Death cam / Active cam: override look-at to follow bone
-                var bonePos = GetBoneWorldPosition(config.DeathCamBoneIndex);
+                var boneIdx = useActiveCam ? config.ActiveCamBoneIndex : config.DeathCamBoneIndex;
+                var bonePos = GetBoneWorldPosition(boneIdx);
                 if (bonePos == null)
                 {
                     var player = clientState.LocalPlayer;
@@ -577,7 +580,8 @@ public unsafe class DeathCamController : IDisposable
         EnsureHook();
 
         // Manage collision patch: enable when death cam active + config on, disable otherwise
-        bool wantCollisionDisabled = config.DeathCamDisableCollision && (state != DeathCamState.Inactive || IsActiveCamMode);
+        bool wantCollisionDisabled = (state != DeathCamState.Inactive && config.DeathCamDisableCollision) ||
+                                    (IsActiveCamMode && state == DeathCamState.Inactive && config.ActiveCamDisableCollision);
         if (wantCollisionDisabled && !collisionPatchActive)
             EnableCollisionPatch();
         else if (!wantCollisionDisabled && collisionPatchActive)
@@ -668,16 +672,18 @@ public unsafe class DeathCamController : IDisposable
     /// Compute the height + side offset vector using the camera's horizontal angle.
     /// Side offset is perpendicular to camera direction (matching Cammy's approach).
     /// </summary>
-    private Vector3 ComputeOffsetFromCameraAngle(float cameraHRotation)
+    private Vector3 ComputeOffsetFromCameraAngle(float cameraHRotation, bool useActiveCam = false)
     {
-        var offset = new Vector3(0, config.DeathCamHeightOffset, 0);
+        var heightOffset = useActiveCam ? config.ActiveCamHeightOffset : config.DeathCamHeightOffset;
+        var sideOffset = useActiveCam ? config.ActiveCamSideOffset : config.DeathCamSideOffset;
+        var offset = new Vector3(0, heightOffset, 0);
 
-        if (config.DeathCamSideOffset != 0)
+        if (sideOffset != 0)
         {
             // Cammy: a = currentHRotation - PI/2 (perpendicular to camera direction)
             float a = cameraHRotation - MathF.PI / 2f;
-            offset.X += -config.DeathCamSideOffset * MathF.Sin(a);
-            offset.Z += -config.DeathCamSideOffset * MathF.Cos(a);
+            offset.X += -sideOffset * MathF.Sin(a);
+            offset.Z += -sideOffset * MathF.Cos(a);
         }
 
         return offset;
