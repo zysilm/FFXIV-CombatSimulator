@@ -136,6 +136,29 @@ public unsafe class RagdollController : IDisposable
         new RagdollBoneDef { Name = "j_asi_b_r", ParentName = "j_asi_a_r",CapsuleRadius = 0.035f,CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // knee
         new RagdollBoneDef { Name = "j_asi_c_l", ParentName = "j_asi_b_l",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // foot
         new RagdollBoneDef { Name = "j_asi_c_r", ParentName = "j_asi_b_r",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // foot
+        // Fingers — tight swing limits, hinge joints (curl only), very light mass
+        // Left hand
+        new RagdollBoneDef { Name = "j_oya_a_l",  ParentName = "j_te_l",    CapsuleRadius = 0.006f, CapsuleHalfLength = 0.012f, Mass = 0.05f, SwingLimit = 0.4f,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // L thumb base
+        new RagdollBoneDef { Name = "j_oya_b_l",  ParentName = "j_oya_a_l", CapsuleRadius = 0.005f, CapsuleHalfLength = 0.010f, Mass = 0.03f, SwingLimit = 0.3f,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // L thumb tip
+        new RagdollBoneDef { Name = "j_hito_a_l", ParentName = "j_te_l",    CapsuleRadius = 0.005f, CapsuleHalfLength = 0.014f, Mass = 0.05f, SwingLimit = 0.3f,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // L index base
+        new RagdollBoneDef { Name = "j_hito_b_l", ParentName = "j_hito_a_l",CapsuleRadius = 0.004f, CapsuleHalfLength = 0.010f, Mass = 0.03f, SwingLimit = 0.25f, Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // L index mid
+        new RagdollBoneDef { Name = "j_naka_a_l", ParentName = "j_te_l",    CapsuleRadius = 0.005f, CapsuleHalfLength = 0.015f, Mass = 0.05f, SwingLimit = 0.3f,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // L middle base
+        new RagdollBoneDef { Name = "j_naka_b_l", ParentName = "j_naka_a_l",CapsuleRadius = 0.004f, CapsuleHalfLength = 0.010f, Mass = 0.03f, SwingLimit = 0.25f, Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // L middle mid
+        new RagdollBoneDef { Name = "j_kusu_a_l", ParentName = "j_te_l",    CapsuleRadius = 0.005f, CapsuleHalfLength = 0.013f, Mass = 0.05f, SwingLimit = 0.3f,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // L ring base
+        new RagdollBoneDef { Name = "j_kusu_b_l", ParentName = "j_kusu_a_l",CapsuleRadius = 0.004f, CapsuleHalfLength = 0.010f, Mass = 0.03f, SwingLimit = 0.25f, Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // L ring mid
+        new RagdollBoneDef { Name = "j_ko_a_l",   ParentName = "j_te_l",    CapsuleRadius = 0.004f, CapsuleHalfLength = 0.011f, Mass = 0.04f, SwingLimit = 0.3f,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // L pinky base
+        new RagdollBoneDef { Name = "j_ko_b_l",   ParentName = "j_ko_a_l",  CapsuleRadius = 0.003f, CapsuleHalfLength = 0.008f, Mass = 0.02f, SwingLimit = 0.25f, Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // L pinky mid
+        // Right hand
+        new RagdollBoneDef { Name = "j_oya_a_r",  ParentName = "j_te_r",    CapsuleRadius = 0.006f, CapsuleHalfLength = 0.012f, Mass = 0.05f, SwingLimit = 0.4f,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // R thumb base
+        new RagdollBoneDef { Name = "j_oya_b_r",  ParentName = "j_oya_a_r", CapsuleRadius = 0.005f, CapsuleHalfLength = 0.010f, Mass = 0.03f, SwingLimit = 0.3f,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // R thumb tip
+        new RagdollBoneDef { Name = "j_hito_a_r", ParentName = "j_te_r",    CapsuleRadius = 0.005f, CapsuleHalfLength = 0.014f, Mass = 0.05f, SwingLimit = 0.3f,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // R index base
+        new RagdollBoneDef { Name = "j_hito_b_r", ParentName = "j_hito_a_r",CapsuleRadius = 0.004f, CapsuleHalfLength = 0.010f, Mass = 0.03f, SwingLimit = 0.25f, Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // R index mid
+        new RagdollBoneDef { Name = "j_naka_a_r", ParentName = "j_te_r",    CapsuleRadius = 0.005f, CapsuleHalfLength = 0.015f, Mass = 0.05f, SwingLimit = 0.3f,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // R middle base
+        new RagdollBoneDef { Name = "j_naka_b_r", ParentName = "j_naka_a_r",CapsuleRadius = 0.004f, CapsuleHalfLength = 0.010f, Mass = 0.03f, SwingLimit = 0.25f, Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // R middle mid
+        new RagdollBoneDef { Name = "j_kusu_a_r", ParentName = "j_te_r",    CapsuleRadius = 0.005f, CapsuleHalfLength = 0.013f, Mass = 0.05f, SwingLimit = 0.3f,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // R ring base
+        new RagdollBoneDef { Name = "j_kusu_b_r", ParentName = "j_kusu_a_r",CapsuleRadius = 0.004f, CapsuleHalfLength = 0.010f, Mass = 0.03f, SwingLimit = 0.25f, Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // R ring mid
+        new RagdollBoneDef { Name = "j_ko_a_r",   ParentName = "j_te_r",    CapsuleRadius = 0.004f, CapsuleHalfLength = 0.011f, Mass = 0.04f, SwingLimit = 0.3f,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // R pinky base
+        new RagdollBoneDef { Name = "j_ko_b_r",   ParentName = "j_ko_a_r",  CapsuleRadius = 0.003f, CapsuleHalfLength = 0.008f, Mass = 0.02f, SwingLimit = 0.25f, Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // R pinky mid
     };
 
     // Per-bone static collision body for an NPC (dynamically created from skeleton)
