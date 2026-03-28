@@ -1158,9 +1158,10 @@ public unsafe class RagdollController : IDisposable
             catch { }
         }
 
-        // Settle collision: wake sleeping ragdoll bodies when NPC statics move nearby.
-        // BEPU2 doesn't auto-wake sleeping bodies from static repositioning, so we
-        // do a proximity check and explicitly awaken bodies within range.
+        // Settle collision: wake sleeping ragdoll bodies and push them away when
+        // NPC bone statics move nearby. Statics have no velocity in BEPU2, so just
+        // waking a body isn't enough — we apply a push impulse so the solver has
+        // a force to resolve against the overlapping static.
         if (config.RagdollNpcSettleCollision && npcCollisionStates.Count > 0)
         {
             var wakeRadiusSq = config.RagdollNpcSettleWakeRadius * config.RagdollNpcSettleWakeRadius;
@@ -1172,16 +1173,24 @@ public unsafe class RagdollController : IDisposable
 
                 var bodyPos = bodyRef.Pose.Position;
 
-                bool shouldWake = false;
-                for (int n = 0; n < npcCollisionStates.Count && !shouldWake; n++)
+                // Find the closest NPC bone static within wake radius
+                float closestDistSq = float.MaxValue;
+                Vector3 closestStaticPos = default;
+                bool found = false;
+
+                for (int n = 0; n < npcCollisionStates.Count; n++)
                 {
                     var npcState = npcCollisionStates[n];
                     if (npcState.IsFallback)
                     {
                         var staticRef = simulation.Statics.GetStaticReference(npcState.FallbackHandle);
                         var distSq = (bodyPos - staticRef.Pose.Position).LengthSquared();
-                        if (distSq < wakeRadiusSq)
-                            shouldWake = true;
+                        if (distSq < wakeRadiusSq && distSq < closestDistSq)
+                        {
+                            closestDistSq = distSq;
+                            closestStaticPos = staticRef.Pose.Position;
+                            found = true;
+                        }
                     }
                     else
                     {
@@ -1189,17 +1198,35 @@ public unsafe class RagdollController : IDisposable
                         {
                             var staticRef = simulation.Statics.GetStaticReference(npcState.BoneStatics[b].Handle);
                             var distSq = (bodyPos - staticRef.Pose.Position).LengthSquared();
-                            if (distSq < wakeRadiusSq)
+                            if (distSq < wakeRadiusSq && distSq < closestDistSq)
                             {
-                                shouldWake = true;
-                                break;
+                                closestDistSq = distSq;
+                                closestStaticPos = staticRef.Pose.Position;
+                                found = true;
                             }
                         }
                     }
                 }
 
-                if (shouldWake)
+                if (found)
+                {
+                    // Wake the body and push it away from the NPC bone
                     simulation.Awakener.AwakenBody(rb.BodyHandle);
+                    var pushDir = bodyPos - closestStaticPos;
+                    var pushLen = pushDir.Length();
+                    if (pushLen > 0.001f)
+                    {
+                        pushDir /= pushLen;
+                        // Stronger push when closer (inverse of distance, clamped)
+                        var pushStrength = MathF.Min(2.0f, config.RagdollNpcSettleWakeRadius / MathF.Max(pushLen, 0.01f));
+                        bodyRef.Velocity.Linear += pushDir * pushStrength;
+                    }
+                    else
+                    {
+                        // Directly overlapping — push upward
+                        bodyRef.Velocity.Linear += new Vector3(0, 1.0f, 0);
+                    }
+                }
             }
         }
 
