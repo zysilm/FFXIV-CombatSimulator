@@ -1052,7 +1052,7 @@ public class MainWindow : IDisposable
                     config.RagdollDamping = 0.97f;
                     config.RagdollFloorOffset = 0f;
                     config.RagdollSelfCollision = true;
-                    config.RagdollNpcCollision = true;
+                    config.RagdollNpcCollision = false;
                     config.RagdollNpcRadius = 0.3f;
                     config.RagdollMassScale = 1.0f;
                     config.Save();
