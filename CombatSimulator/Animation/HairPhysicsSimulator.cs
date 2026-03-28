@@ -29,6 +29,7 @@ public unsafe class HairPhysicsSimulator
     private readonly Configuration config;
     private readonly IPluginLog log;
     private readonly List<HairChainState> hairChains = new();
+    private int frameCount;
 
     // Head sphere for self-collision (model-space position read each frame)
     private const float HeadRadius = 0.12f;
@@ -107,6 +108,7 @@ public unsafe class HairPhysicsSimulator
         float dt)
     {
         if (hairChains.Count == 0) return;
+        frameCount++;
 
         var skeleton = charBase->Skeleton;
         if (skeleton == null) return;
@@ -132,7 +134,9 @@ public unsafe class HairPhysicsSimulator
             var chain = hairChains[c];
             var partial = &skeleton->PartialSkeletons[chain.PartialSkeletonIndex];
             var pose = partial->GetHavokPose(0);
-            if (pose == null || pose->Skeleton == null || pose->ModelInSync == 0) continue;
+            if (pose == null || pose->Skeleton == null) continue;
+            // Note: removed ModelInSync check — partial skeletons may not have it set
+            // after we've been writing to their ModelPose directly.
 
             var boneCount = Math.Min(chain.BoneCount, pose->ModelPose.Length);
             var parentCount = pose->Skeleton->ParentIndices.Length;
@@ -252,10 +256,20 @@ public unsafe class HairPhysicsSimulator
                     accDelta[b] = Quaternion.Normalize(ownDelta * accDelta[parentIdx]);
 
                     // Write rotation only (position stays where parent propagation put it)
+                    var oldRot = boneRot;
                     bm.Rotation.X = newRot.X;
                     bm.Rotation.Y = newRot.Y;
                     bm.Rotation.Z = newRot.Z;
                     bm.Rotation.W = newRot.W;
+
+                    if (frameCount <= 5 || frameCount % 60 == 0)
+                    {
+                        log.Info($"[HairPhys F{frameCount}] bone {b}: vel={state.AngularVelocity.Length():F4} " +
+                                 $"oldRot=({oldRot.X:F3},{oldRot.Y:F3},{oldRot.Z:F3},{oldRot.W:F3}) " +
+                                 $"newRot=({newRot.X:F3},{newRot.Y:F3},{newRot.Z:F3},{newRot.W:F3}) " +
+                                 $"dir=({currentDir.X:F3},{currentDir.Y:F3},{currentDir.Z:F3}) " +
+                                 $"grav=({gravityDirModel.X:F3},{gravityDirModel.Y:F3},{gravityDirModel.Z:F3})");
+                    }
                 }
                 else
                 {
