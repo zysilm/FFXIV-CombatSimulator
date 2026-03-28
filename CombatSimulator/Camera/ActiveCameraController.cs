@@ -188,7 +188,7 @@ public unsafe class ActiveCameraController : IDisposable
                         savedMinDistance = gameCam->MinDistance;
                         distanceOverridden = true;
                     }
-                    gameCam->MinDistance = 0f;
+                    gameCam->MinDistance = 1.0f;
 
                     // Lock vertical angle if configured
                     if (config.ActiveCameraLockVertical)
