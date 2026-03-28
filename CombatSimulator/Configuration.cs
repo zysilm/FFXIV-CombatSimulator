@@ -97,6 +97,11 @@ public class Configuration : IPluginConfiguration
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public bool RagdollTightKneeLimits { get; set; } = false; // Tight swing limits on knees/elbows (prevents hyperextension but reduces range of motion)
     public float RagdollJointStiffness { get; set; } = 1.0f; // Multiplier for joint constraint strength
+    // Hair physics
+    public bool RagdollHairPhysics { get; set; } = true;
+    public float RagdollHairGravityStrength { get; set; } = 0.5f;
+    public float RagdollHairDamping { get; set; } = 0.92f;
+    public float RagdollHairStiffness { get; set; } = 0.1f;
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollNpcCollision { get; set; } = false;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;

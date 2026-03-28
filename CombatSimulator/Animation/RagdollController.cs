@@ -56,6 +56,10 @@ public unsafe class RagdollController : IDisposable
 
     // Ancestor bone index — n_hara must follow j_kosi to prevent mesh tearing
     private int nHaraIndex = -1;
+    // Head bone index (j_kao) — used for hair physics and partial skeleton propagation
+    private int kaoBodyBoneIndex = -1;
+    // Hair physics simulator
+    private HairPhysicsSimulator? hairPhysics;
 
     // NPC bone collision — per-bone static capsules for active targets
     private readonly List<NpcCollisionState> npcCollisionStates = new();
@@ -204,6 +208,9 @@ public unsafe class RagdollController : IDisposable
         physicsStarted = false;
         ragdollBoneIndices.Clear();
         nHaraIndex = -1;
+        kaoBodyBoneIndex = -1;
+        hairPhysics?.Reset();
+        hairPhysics = null;
 
         DestroySimulation();
         log.Info("RagdollController: Deactivated");
@@ -836,7 +843,8 @@ public unsafe class RagdollController : IDisposable
 
         // Resolve ancestor bone — n_hara must follow j_kosi to prevent mesh tearing
         nHaraIndex = boneService.ResolveBoneIndex(skel, "n_hara");
-        log.Info($"RagdollController: n_hara index={nHaraIndex}");
+        kaoBodyBoneIndex = boneService.ResolveBoneIndex(skel, "j_kao");
+        log.Info($"RagdollController: n_hara index={nHaraIndex}, j_kao index={kaoBodyBoneIndex}");
 
         // Create NPC collision volumes — dynamically discover bones from each NPC's skeleton.
         // Works for any model (humanoid, monster, dragon) — no hardcoded bone names.
@@ -951,6 +959,14 @@ public unsafe class RagdollController : IDisposable
         foreach (var s in npcCollisionStates)
             totalNpcStatics += s.IsFallback ? 1 : s.BoneStatics.Count;
         log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, {npcCollisionStates.Count} NPCs ({totalNpcStatics} collision volumes), ground={groundY:F3}");
+
+        // Initialize hair physics
+        if (config.RagdollHairPhysics && kaoBodyBoneIndex >= 0)
+        {
+            hairPhysics = new HairPhysicsSimulator(config, log);
+            hairPhysics.Initialize(skel.CharBase, kaoBodyBoneIndex);
+        }
+
         return ragdollBones.Count > 0;
     }
 
@@ -1267,14 +1283,18 @@ public unsafe class RagdollController : IDisposable
         }
 
         // Propagate j_kao changes to face/hair partial skeletons
-        var kaoIdx = -1;
-        for (int i = 0; i < ragdollBones.Count; i++)
+        if (kaoBodyBoneIndex >= 0 && result.HasAccumulated[kaoBodyBoneIndex])
         {
-            if (ragdollBones[i].Name == "j_kao") { kaoIdx = ragdollBones[i].BoneIndex; break; }
+            boneService.PropagateToPartialSkeletons(skel, kaoBodyBoneIndex, "j_kao", result);
         }
-        if (kaoIdx >= 0 && result.HasAccumulated[kaoIdx])
+
+        // Apply hair physics (after rigid j_kao propagation)
+        if (hairPhysics != null && kaoBodyBoneIndex >= 0)
         {
-            boneService.PropagateToPartialSkeletons(skel, kaoIdx, "j_kao", result);
+            hairPhysics.StepAndApply(
+                skel.CharBase, kaoBodyBoneIndex,
+                skelWorldPos, skelWorldRot, skelWorldRotInv,
+                1.0f / 60.0f);
         }
     }
 

@@ -184,6 +184,10 @@ public class MainWindow : IDisposable
                     config.RagdollSelfCollision = true;
                     config.RagdollTightKneeLimits = false;
                     config.RagdollJointStiffness = 1.0f;
+                    config.RagdollHairPhysics = true;
+                    config.RagdollHairGravityStrength = 0.5f;
+                    config.RagdollHairDamping = 0.92f;
+                    config.RagdollHairStiffness = 0.1f;
                     config.RagdollMassScale = 1.0f;
                     // NPC Collision
                     config.RagdollNpcCollision = false;
@@ -1150,6 +1154,42 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Multiplier for joint constraint strength. Higher = stiffer joints, body resists twisting. Takes effect on next ragdoll activation.");
+
+                ImGui.Separator();
+                ImGui.Text("Hair Physics");
+
+                var hairPhysics = config.RagdollHairPhysics;
+                if (ImGui.Checkbox("Enable Hair Physics##ragdoll", ref hairPhysics))
+                {
+                    config.RagdollHairPhysics = hairPhysics;
+                    config.Save();
+                }
+                HelpMarker("Simulate hair draping under gravity during ragdoll. Takes effect on next ragdoll activation.");
+
+                if (config.RagdollHairPhysics)
+                {
+                    var hairGravity = config.RagdollHairGravityStrength;
+                    if (ImGui.SliderFloat("Hair Gravity##ragdoll", ref hairGravity, 0.0f, 1.0f, "%.2f"))
+                    {
+                        config.RagdollHairGravityStrength = hairGravity;
+                        config.Save();
+                    }
+
+                    var hairDamping = config.RagdollHairDamping;
+                    if (ImGui.SliderFloat("Hair Damping##ragdoll", ref hairDamping, 0.80f, 0.99f, "%.3f"))
+                    {
+                        config.RagdollHairDamping = hairDamping;
+                        config.Save();
+                    }
+
+                    var hairStiffness = config.RagdollHairStiffness;
+                    if (ImGui.SliderFloat("Hair Stiffness##ragdoll", ref hairStiffness, 0.0f, 0.5f, "%.2f"))
+                    {
+                        config.RagdollHairStiffness = hairStiffness;
+                        config.Save();
+                    }
+                    HelpMarker("Resistance to gravity. Higher = stiffer hair that holds its shape.");
+                }
 
                 ImGui.Unindent();
             }
