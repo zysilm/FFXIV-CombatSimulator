@@ -97,7 +97,7 @@ public class Configuration : IPluginConfiguration
     public bool RagdollTightKneeLimits { get; set; } = false; // Tight swing limits on knees/elbows (prevents hyperextension but reduces range of motion)
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollNpcCollision { get; set; } = false;
-    public float RagdollNpcCollisionScale { get; set; } = 1.0f;
+    public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public float RagdollMassScale { get; set; } = 1.0f;
     public bool EnableDZoom { get; set; } = false;
     public float DZoomTargetDistance { get; set; } = 1.0f;

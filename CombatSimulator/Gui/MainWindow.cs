@@ -171,10 +171,11 @@ public class MainWindow : IDisposable
                 break;
             case 4: // Ragdoll
                 DrawRagdollSection();
-                DrawDevSection();
+                DrawNpcCollisionSection();
                 break;
             case 5: // Settings
                 DrawGuiSettingsSection();
+                DrawDevSection();
                 break;
         }
         ImGui.EndChild();
@@ -1115,9 +1116,44 @@ public class MainWindow : IDisposable
                     config.RagdollFloorOffset = 0f;
                     config.RagdollSelfCollision = true;
                     config.RagdollTightKneeLimits = false;
-                    config.RagdollNpcCollision = false;
-                    config.RagdollNpcCollisionScale = 1.0f;
                     config.RagdollMassScale = 1.0f;
+                    config.Save();
+                }
+
+                ImGui.Unindent();
+            }
+        }
+    }
+
+    private void DrawNpcCollisionSection()
+    {
+        if (ImGui.CollapsingHeader("NPC Collision (Experimental)"))
+        {
+            var npcCollision = config.RagdollNpcCollision;
+            if (ImGui.Checkbox("Enable NPC Collision##npccol", ref npcCollision))
+            {
+                config.RagdollNpcCollision = npcCollision;
+                config.Save();
+            }
+            HelpMarker("Active combat targets have per-bone collision volumes for ragdoll interaction.");
+
+            if (config.RagdollNpcCollision)
+            {
+                ImGui.Indent();
+
+                var npcScale = config.RagdollNpcCollisionScale;
+                if (ImGui.SliderFloat("NPC Collision Scale##npccol", ref npcScale, 0.0001f, 5.0f, "%.4f"))
+                {
+                    config.RagdollNpcCollisionScale = npcScale;
+                    config.Save();
+                }
+                HelpMarker("Scale multiplier for NPC bone collision capsules. Increase for larger NPC models.");
+
+                ImGui.Separator();
+                if (ImGui.Button("Reset to Defaults##npccol"))
+                {
+                    config.RagdollNpcCollision = false;
+                    config.RagdollNpcCollisionScale = 0.0001f;
                     config.Save();
                 }
 
@@ -1154,27 +1190,6 @@ public class MainWindow : IDisposable
             }
 
             ImGui.Indent();
-
-            // --- NPC Collision ---
-            ImGui.Text("NPC Collision");
-            var npcCollision = config.RagdollNpcCollision;
-            if (ImGui.Checkbox("Enable NPC Collision##dev", ref npcCollision))
-            {
-                config.RagdollNpcCollision = npcCollision;
-                config.Save();
-            }
-            HelpMarker("Active combat targets have per-bone collision volumes for ragdoll interaction.");
-
-            if (config.RagdollNpcCollision)
-            {
-                var npcScale = config.RagdollNpcCollisionScale;
-                if (ImGui.SliderFloat("NPC Collision Scale##dev", ref npcScale, 0.0001f, 5.0f, "%.4f"))
-                {
-                    config.RagdollNpcCollisionScale = npcScale;
-                    config.Save();
-                }
-                HelpMarker("Scale multiplier for NPC bone collision capsules. Increase for larger NPC models.");
-            }
 
             var massScale = config.RagdollMassScale;
             if (ImGui.SliderFloat("Mass Scale##dev", ref massScale, 0.1f, 10.0f, "%.1f"))
