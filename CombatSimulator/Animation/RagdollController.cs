@@ -17,6 +17,7 @@ namespace CombatSimulator.Animation;
 public unsafe class RagdollController : IDisposable
 {
     private readonly BoneTransformService boneService;
+    private readonly Npcs.NpcSelector npcSelector;
     private readonly Configuration config;
     private readonly IPluginLog log;
 
@@ -55,6 +56,9 @@ public unsafe class RagdollController : IDisposable
 
     // Ancestor bone index — n_hara must follow j_kosi to prevent mesh tearing
     private int nHaraIndex = -1;
+
+    // NPC collision volumes — static capsules for active targets
+    private readonly List<(StaticHandle Handle, nint NpcAddress)> npcStatics = new();
 
 
     public bool IsActive => isActive;
@@ -129,9 +133,10 @@ public unsafe class RagdollController : IDisposable
         new RagdollBoneDef { Name = "j_asi_c_r", ParentName = "j_asi_b_r",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // foot
     };
 
-    public RagdollController(BoneTransformService boneService, Configuration config, IPluginLog log)
+    public RagdollController(BoneTransformService boneService, Npcs.NpcSelector npcSelector, Configuration config, IPluginLog log)
     {
         this.boneService = boneService;
+        this.npcSelector = npcSelector;
         this.config = config;
         this.log = log;
 
@@ -723,7 +728,30 @@ public unsafe class RagdollController : IDisposable
         nHaraIndex = boneService.ResolveBoneIndex(skel, "n_hara");
         log.Info($"RagdollController: n_hara index={nHaraIndex}");
 
-        log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, ground={groundY:F3}");
+        // Create NPC collision volumes — static capsules for active targets
+        npcStatics.Clear();
+        if (config.RagdollNpcCollision)
+        {
+            var npcCapsuleRadius = 0.3f;
+            var npcCapsuleLength = 1.0f; // internal segment length (total height ~ 1.6m with caps)
+            var npcShape = new Capsule(npcCapsuleRadius, npcCapsuleLength);
+            var npcShapeIndex = simulation.Shapes.Add(npcShape);
+
+            foreach (var npc in npcSelector.SelectedNpcs)
+            {
+                if (npc.BattleChara == null) continue;
+                var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
+                var npcPos = new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z);
+                var npcRot = Quaternion.Identity; // upright capsule
+
+                var staticHandle = simulation.Statics.Add(new StaticDescription(
+                    npcPos, npcRot, npcShapeIndex));
+                npcStatics.Add((staticHandle, npc.Address));
+                log.Info($"RagdollController: NPC collision volume for '{npc.Name}' at ({npcPos.X:F1},{npcPos.Y:F1},{npcPos.Z:F1})");
+            }
+        }
+
+        log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, {npcStatics.Count} NPC volumes, ground={groundY:F3}");
         return ragdollBones.Count > 0;
     }
 
@@ -773,6 +801,19 @@ public unsafe class RagdollController : IDisposable
                 skeleton->Transform.Rotation.Z,
                 skeleton->Transform.Rotation.W);
             skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
+        }
+
+        // Update NPC collision volumes to track their current positions
+        for (int i = 0; i < npcStatics.Count; i++)
+        {
+            var (handle, npcAddr) = npcStatics[i];
+            try
+            {
+                var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npcAddr;
+                var staticRef = simulation.Statics.GetStaticReference(handle);
+                staticRef.Pose.Position = new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z);
+            }
+            catch { }
         }
 
         // Step physics
@@ -930,6 +971,7 @@ public unsafe class RagdollController : IDisposable
     private void DestroySimulation()
     {
         ragdollBones.Clear();
+        npcStatics.Clear();
         simulation?.Dispose();
         simulation = null;
         bufferPool?.Clear();

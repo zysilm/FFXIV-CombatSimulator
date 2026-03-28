@@ -1042,6 +1042,14 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Body parts collide with each other (arms vs torso, legs vs legs). Prevents clipping but may cause slight stretching. Takes effect on next ragdoll activation.");
 
+                var npcCollision = config.RagdollNpcCollision;
+                if (ImGui.Checkbox("NPC Collision##ragdoll", ref npcCollision))
+                {
+                    config.RagdollNpcCollision = npcCollision;
+                    config.Save();
+                }
+                HelpMarker("Active combat targets have collision volumes. The ragdoll character can fall on and interact with NPCs. Takes effect on next ragdoll activation.");
+
                 ImGui.Separator();
                 if (ImGui.Button("Reset to Defaults##ragdoll"))
                 {
@@ -1050,6 +1058,7 @@ public class MainWindow : IDisposable
                     config.RagdollDamping = 0.97f;
                     config.RagdollFloorOffset = 0.1f;
                     config.RagdollSelfCollision = true;
+                    config.RagdollNpcCollision = true;
                     config.Save();
                 }
 
