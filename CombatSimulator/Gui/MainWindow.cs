@@ -1173,19 +1173,19 @@ public class MainWindow : IDisposable
                 config.RagdollNpcSettleCollision = settleCol;
                 config.Save();
             }
-            HelpMarker("Keep ragdoll reactive to NPC bones after settling. Wakes sleeping bodies when an NPC bone moves nearby.");
+            HelpMarker("Keep ragdoll reactive to NPC bones after settling. Bodies are re-awakened after the delay so they collide with NPC statics.");
 
             if (config.RagdollNpcSettleCollision)
             {
                 ImGui.Indent();
 
-                var wakeRadius = config.RagdollNpcSettleWakeRadius;
-                if (ImGui.SliderFloat("Wake Radius##settle", ref wakeRadius, 0.1f, 2.0f, "%.2f"))
+                var settleDelay = config.RagdollNpcSettleDelay;
+                if (ImGui.SliderFloat("Settle Delay (s)##settle", ref settleDelay, 0.5f, 10.0f, "%.1f"))
                 {
-                    config.RagdollNpcSettleWakeRadius = wakeRadius;
+                    config.RagdollNpcSettleDelay = settleDelay;
                     config.Save();
                 }
-                HelpMarker("Distance threshold to wake a sleeping ragdoll body when an NPC bone is nearby.");
+                HelpMarker("Seconds after ragdoll activation before bodies are kept awake for NPC collision.");
 
                 ImGui.Unindent();
             }

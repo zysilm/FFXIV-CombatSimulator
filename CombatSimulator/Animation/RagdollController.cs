@@ -1158,75 +1158,18 @@ public unsafe class RagdollController : IDisposable
             catch { }
         }
 
-        // Settle collision: wake sleeping ragdoll bodies and push them away when
-        // NPC bone statics move nearby. Statics have no velocity in BEPU2, so just
-        // waking a body isn't enough — we apply a push impulse so the solver has
-        // a force to resolve against the overlapping static.
-        if (config.RagdollNpcSettleCollision && npcCollisionStates.Count > 0)
+        // Settle collision: after a configurable delay, keep all ragdoll bodies awake
+        // so they continue reacting to NPC bone statics. BEPU2 sleeping bodies are
+        // completely inert — removed from collision detection entirely — so we must
+        // prevent sleep to maintain reactivity.
+        if (config.RagdollNpcSettleCollision && npcCollisionStates.Count > 0
+            && elapsed >= config.RagdollNpcSettleDelay)
         {
-            var wakeRadiusSq = config.RagdollNpcSettleWakeRadius * config.RagdollNpcSettleWakeRadius;
             for (int i = 0; i < ragdollBones.Count; i++)
             {
-                var rb = ragdollBones[i];
-                var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
-                if (bodyRef.Awake) continue; // already awake, skip
-
-                var bodyPos = bodyRef.Pose.Position;
-
-                // Find the closest NPC bone static within wake radius
-                float closestDistSq = float.MaxValue;
-                Vector3 closestStaticPos = default;
-                bool found = false;
-
-                for (int n = 0; n < npcCollisionStates.Count; n++)
-                {
-                    var npcState = npcCollisionStates[n];
-                    if (npcState.IsFallback)
-                    {
-                        var staticRef = simulation.Statics.GetStaticReference(npcState.FallbackHandle);
-                        var distSq = (bodyPos - staticRef.Pose.Position).LengthSquared();
-                        if (distSq < wakeRadiusSq && distSq < closestDistSq)
-                        {
-                            closestDistSq = distSq;
-                            closestStaticPos = staticRef.Pose.Position;
-                            found = true;
-                        }
-                    }
-                    else
-                    {
-                        for (int b = 0; b < npcState.BoneStatics.Count; b++)
-                        {
-                            var staticRef = simulation.Statics.GetStaticReference(npcState.BoneStatics[b].Handle);
-                            var distSq = (bodyPos - staticRef.Pose.Position).LengthSquared();
-                            if (distSq < wakeRadiusSq && distSq < closestDistSq)
-                            {
-                                closestDistSq = distSq;
-                                closestStaticPos = staticRef.Pose.Position;
-                                found = true;
-                            }
-                        }
-                    }
-                }
-
-                if (found)
-                {
-                    // Wake the body and push it away from the NPC bone
-                    simulation.Awakener.AwakenBody(rb.BodyHandle);
-                    var pushDir = bodyPos - closestStaticPos;
-                    var pushLen = pushDir.Length();
-                    if (pushLen > 0.001f)
-                    {
-                        pushDir /= pushLen;
-                        // Stronger push when closer (inverse of distance, clamped)
-                        var pushStrength = MathF.Min(2.0f, config.RagdollNpcSettleWakeRadius / MathF.Max(pushLen, 0.01f));
-                        bodyRef.Velocity.Linear += pushDir * pushStrength;
-                    }
-                    else
-                    {
-                        // Directly overlapping — push upward
-                        bodyRef.Velocity.Linear += new Vector3(0, 1.0f, 0);
-                    }
-                }
+                var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
+                if (!bodyRef.Awake)
+                    simulation.Awakener.AwakenBody(ragdollBones[i].BodyHandle);
             }
         }
 
