@@ -197,14 +197,12 @@ def evaluate(init_bones, settled, ground_y, skel_rot=None):
     penalties['joint_angles'] = min(joint_penalty, 15)
 
     # ===== 4b. KNEE BEND DIRECTION =====
-    # Knees must bend backward (shin behind thigh), not forward (hyperextension).
-    # Anatomically correct: the foot should be BEHIND the character relative to
-    # the thigh direction. We check this by projecting the shin vector onto the
-    # character's forward axis. If the shin has a forward component (foot in front
-    # of knee in character space), the knee is hyperextended.
+    # Knees must bend in the same direction as the init (death animation) pose.
+    # The death animation has knees bent correctly. If the settled pose has the
+    # bend axis reversed (cross product flipped), the knee is hyperextended.
     #
-    # Method: compute where the foot is relative to the knee, in character-local
-    # space. The shin should have a NEGATIVE forward component (foot behind knee).
+    # Method: cross(thigh, shin) gives the bend axis. Compare init vs settled.
+    # If the dot product of the two cross products is negative, the bend reversed.
     knee_bend = {}
     knee_bend_penalty = 0
     knee_chains = [
@@ -212,53 +210,59 @@ def evaluate(init_bones, settled, ground_y, skel_rot=None):
         ('j_asi_a_r', 'j_asi_b_r', 'j_asi_c_r', 'R.Knee'),
     ]
 
-    # Character forward direction from skeleton rotation
-    # Try both +Z and -Z conventions and report both for debugging
-    if skel_rot is not None:
-        char_fwd_negZ = quat_to_mat(skel_rot) @ np.array([0, 0, -1])
-        char_fwd_posZ = quat_to_mat(skel_rot) @ np.array([0, 0, 1])
-    else:
-        char_fwd_negZ = np.array([0, 0, -1])
-        char_fwd_posZ = np.array([0, 0, 1])
-
     for hip_name, knee_name, foot_name, label in knee_chains:
         if hip_name not in pos or knee_name not in pos or foot_name not in pos:
             continue
+        if hip_name not in init_bones or knee_name not in init_bones or foot_name not in init_bones:
+            continue
 
+        # Settled vectors
         thigh = pos[knee_name] - pos[hip_name]
         shin = pos[foot_name] - pos[knee_name]
         thigh_n = thigh / (np.linalg.norm(thigh) + 1e-10)
         shin_n = shin / (np.linalg.norm(shin) + 1e-10)
+        settled_cross = np.cross(thigh_n, shin_n)
+        settled_cross_len = np.linalg.norm(settled_cross)
 
-        # Project shin onto character forward (XZ plane only, ignore Y)
-        shin_xz = shin.copy()
-        shin_xz[1] = 0  # remove vertical component
-        shin_xz_len = np.linalg.norm(shin_xz)
+        # Init vectors
+        init_thigh = init_bones[knee_name]['bonePos'] - init_bones[hip_name]['bonePos']
+        init_shin = init_bones[foot_name]['bonePos'] - init_bones[knee_name]['bonePos']
+        init_thigh_n = init_thigh / (np.linalg.norm(init_thigh) + 1e-10)
+        init_shin_n = init_shin / (np.linalg.norm(init_shin) + 1e-10)
+        init_cross = np.cross(init_thigh_n, init_shin_n)
+        init_cross_len = np.linalg.norm(init_cross)
 
-        # Dot with both forward conventions
-        dot_negZ = float(np.dot(shin_xz, char_fwd_negZ)) if shin_xz_len > 0.01 else 0
-        dot_posZ = float(np.dot(shin_xz, char_fwd_posZ)) if shin_xz_len > 0.01 else 0
+        angle = joint_angles.get(label, 180)
 
-        # For knees, shin going forward (same direction as char forward) = hyperextension
-        # We report both conventions so we can determine which is correct
-        knee_bend[label] = {
-            'shin_dot_negZ': dot_negZ,
-            'shin_dot_posZ': dot_posZ,
-            'shin_xz_len': float(shin_xz_len),
-            'angle': joint_angles.get(label, 0),
-        }
+        # Method 1: cross product reversal from init
+        cross_dot = 0.0
+        if init_cross_len > 0.05 and settled_cross_len > 0.05:
+            cross_dot = float(np.dot(init_cross / init_cross_len, settled_cross / settled_cross_len))
 
-        # For now, flag if EITHER convention shows strong forward component
-        # (the one that shows positive dot = shin going in char forward direction = BAD)
-        # We take the MAX of the two dots — if it's positive, shin is going forward
-        # in at least one convention
-        max_fwd_dot = max(dot_negZ, dot_posZ)
-        if max_fwd_dot > 0.02 and joint_angles.get(label, 180) < 150:
-            # Shin has forward component AND knee is bent (not straight)
-            knee_bend[label]['direction'] = 'HYPEREXTENDED'
+        # Method 2: foot-above-knee check for tight bends
+        # When lying down with a tight knee bend (<90 deg), if the foot Y is
+        # higher than knee Y, the shin is folding upward = hyperextension.
+        foot_y = pos[foot_name][1]
+        knee_y = pos[knee_name][1]
+        foot_above_knee = foot_y > knee_y + 0.01  # 1cm tolerance
+
+        # Detect hyperextension from either method
+        direction = 'OK'
+        if cross_dot < 0 and angle < 150:
+            direction = 'REVERSED'
             knee_bend_penalty += 15
-        else:
-            knee_bend[label]['direction'] = 'OK'
+        elif foot_above_knee and angle < 90:
+            # Tight bend with foot above knee = shin folding upward
+            direction = 'FOOT_ABOVE'
+            knee_bend_penalty += 15
+
+        knee_bend[label] = {
+            'dot': cross_dot,
+            'foot_above': foot_above_knee,
+            'foot_dy': float(foot_y - knee_y),
+            'direction': direction,
+            'angle': angle,
+        }
 
     results['knee_bend_direction'] = knee_bend
     penalties['knee_bend_dir'] = min(knee_bend_penalty, 30)
@@ -402,10 +406,10 @@ def print_report(eval_result):
         print(f"\n--- Knee Bend Direction ---")
         for label, info in details['knee_bend_direction'].items():
             status = info['direction']
-            flag = " <<<" if status == "HYPEREXTENDED" else ""
-            dot_nz = info.get('shin_dot_negZ', 0)
-            dot_pz = info.get('shin_dot_posZ', 0)
-            print(f"  {label:>12}: {status} (fwd_dot_-Z={dot_nz:.3f}, fwd_dot_+Z={dot_pz:.3f}, angle={info['angle']:.1f}){flag}")
+            flag = " <<<" if status in ("REVERSED", "FOOT_ABOVE") else ""
+            dot = info.get('dot', 0)
+            foot_dy = info.get('foot_dy', 0)
+            print(f"  {label:>12}: {status} (cross_dot={dot:.3f}, foot_dY={foot_dy:+.3f}, angle={info['angle']:.1f}){flag}")
 
     # Segment stretch
     if details['segment_stretch']:

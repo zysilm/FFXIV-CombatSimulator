@@ -125,8 +125,8 @@ public unsafe class RagdollController : IDisposable
         new RagdollBoneDef { Name = "j_ude_b_r", ParentName = "j_ude_a_r",CapsuleRadius = 0.025f,CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = MathF.PI / 2,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // elbow: up to 90° flexion
         new RagdollBoneDef { Name = "j_te_l",   ParentName = "j_ude_b_l",CapsuleRadius = 0.02f, CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.8f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // left wrist
         new RagdollBoneDef { Name = "j_te_r",   ParentName = "j_ude_b_r",CapsuleRadius = 0.02f, CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.8f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // right wrist
-        new RagdollBoneDef { Name = "j_asi_a_l", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 0.7f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // hip
-        new RagdollBoneDef { Name = "j_asi_a_r", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 0.7f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // hip
+        new RagdollBoneDef { Name = "j_asi_a_l", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 1.3f,  Joint = JointType.Ball,  TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f  }, // hip — wide cone for death settling
+        new RagdollBoneDef { Name = "j_asi_a_r", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 1.3f,  Joint = JointType.Ball,  TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f  }, // hip — wide cone for death settling
         new RagdollBoneDef { Name = "j_asi_b_l", ParentName = "j_asi_a_l",CapsuleRadius = 0.035f,CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // knee: up to 90° flexion (prevents hyperextension)
         new RagdollBoneDef { Name = "j_asi_b_r", ParentName = "j_asi_a_r",CapsuleRadius = 0.035f,CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // knee: up to 90° flexion (prevents hyperextension)
         new RagdollBoneDef { Name = "j_asi_c_l", ParentName = "j_asi_b_l",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // foot
@@ -654,27 +654,14 @@ public unsafe class RagdollController : IDisposable
                     var parentSegDir = Vector3.Transform(Vector3.UnitY, parentBodyRef.Pose.Orientation);
                     var forwardWorld = Vector3.Normalize(Vector3.Cross(hingeAxisWorld, parentSegDir));
 
-                    // The cross product can point in either direction. We must ensure it
-                    // points toward the anatomically correct flexion side:
-                    //   Knees (j_asi_b): shin swings BACKWARD (opposite to character forward)
-                    //   Elbows (j_ude_b): forearm swings FORWARD (toward character forward)
-                    // Without this check, the SwingLimit allows hyperextension instead of
-                    // preventing it, causing knees to bend the wrong way.
-                    var charForward = Vector3.Transform(-Vector3.UnitZ, skelWorldRot);
-                    bool isKnee = rb.Name.StartsWith("j_asi_b");
-                    bool isElbow = rb.Name.StartsWith("j_ude_b");
-                    if (isKnee)
-                    {
-                        // Knees flex backward: forwardWorld should point opposite to charForward
-                        if (Vector3.Dot(forwardWorld, charForward) > 0)
-                            forwardWorld = -forwardWorld;
-                    }
-                    else if (isElbow)
-                    {
-                        // Elbows flex forward/inward: forwardWorld should point toward charForward
-                        if (Vector3.Dot(forwardWorld, charForward) < 0)
-                            forwardWorld = -forwardWorld;
-                    }
+                    // The cross product can point in either direction. We validate it
+                    // against the ACTUAL child segment direction from the init pose.
+                    // The death animation already has joints bent correctly, so the child
+                    // segment (shin for knees, forearm for elbows) points in the direction
+                    // of correct flexion. forwardWorld must agree with that direction.
+                    // This is robust regardless of character orientation or facing convention.
+                    if (Vector3.Dot(forwardWorld, segDirWorld) < 0)
+                        forwardWorld = -forwardWorld;
 
                     var swingAxisLocalParent = Vector3.Normalize(Vector3.Transform(
                         forwardWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
@@ -690,7 +677,7 @@ public unsafe class RagdollController : IDisposable
                             SpringSettings = new SpringSettings(15, 1),
                         });
 
-                    log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad charFwd=({charForward.X:F3},{charForward.Y:F3},{charForward.Z:F3})");
+                    log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad dot={Vector3.Dot(forwardWorld, segDirWorld):F3}");
                 }
 
                 log.Info($"[Ragdoll Constraint] '{rb.Name}' Hinge axis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3})");
