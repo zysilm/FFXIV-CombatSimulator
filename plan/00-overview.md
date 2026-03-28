@@ -30,12 +30,12 @@ fully client-side combat simulation. No data is sent to the server.
 |  +------------------+    +-----------------------------+         |
 |                                                                   |
 |  +------------------+    +-----------------------------+         |
-|  |  Animation/VFX    |    |  Death Effects              |         |
+|  |  Animation/VFX    |    |  Death Effects & Camera     |         |
 |  |  Controller       |    |                             |         |
 |  |                    |    |  - Ragdoll (BEPUphysics2)  |         |
-|  |  - Attack anims   |    |  - Death Cam (camera ctrl)  |         |
-|  |  - Hit reactions  |    |  - Glamourer integration    |         |
-|  |  - Death anim     |    |                             |         |
+|  |  - Attack anims   |    |  - Active Camera (bone trk) |         |
+|  |  - Hit reactions  |    |  - Death Cam (camera ctrl)  |         |
+|  |  - Death anim     |    |  - Glamourer integration    |         |
 |  |  - Damage flytext |    +-----------------------------+         |
 |  +------------------+                                            |
 |                                                                   |
@@ -81,9 +81,13 @@ After research, using the internal fight system directly is NOT possible:
 - Attack animations, hit reactions, damage numbers all work naturally
 - Death animation triggered by setting CharacterMode to Dead
 
-### 4. Death Effects
-- **Ragdoll physics** via BEPUphysics2 — capsule-based ragdoll with 16 bones,
-  joint constraints (Hinge/BallSocket), ground collision, and bone-to-model mapping
+### 4. Death Effects & Camera
+- **Ragdoll physics** via BEPUphysics2 — 18-bone capsule ragdoll with anatomical
+  joint limits (Hinge for knees/elbows, BallSocket for shoulders/hips), self-collision
+  filtering, thick ground plane, and bone-to-model mapping
+- **Active Camera** — independent camera controller (getCameraPosition vtable hook)
+  that tracks a bone with free orbital control, height/side offsets, vertical angle lock,
+  and collision disable. Completely separate from Death Cam.
 - **Death Cam** — smooth camera transition to an anchored position with bone tracking
 - **Glamourer** — apply outfit presets on death/reset via IPC
 

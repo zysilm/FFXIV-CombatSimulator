@@ -59,10 +59,14 @@
 
 ---
 
-## Phase 5: Death Effects (DONE)
-**Goal:** Dramatic visual effects on character death.
+## Phase 5: Death Effects & Camera (DONE)
+**Goal:** Dramatic visual effects on character death and camera control.
 
-- [x] Ragdoll physics via BEPUphysics2 (16-bone capsule ragdoll)
+- [x] Ragdoll physics via BEPUphysics2 (18-bone capsule ragdoll with wrists)
+- [x] Per-joint anatomical limits (asymmetric hinge ranges, swing cones, twist limits)
+- [x] Self-collision with 2-hop exclusion filtering (optional, GUI toggle)
+- [x] Thick ground plane to prevent capsule tunneling
+- [x] Active Camera (getCameraPosition vtable hook, bone tracking with free orbital control)
 - [x] Death Cam (smooth camera transition with bone tracking and presets)
 - [x] Glamourer integration (apply outfit presets on death/reset)
 - [x] Movement blocking on player death (position/rotation hook)

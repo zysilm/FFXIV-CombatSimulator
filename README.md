@@ -26,7 +26,8 @@ Open Dalamud Settings in-game (`/xlsettings`) and follow these steps:
 - **HP Bar Overlays** — Enemy and player simulated HP bars rendered in-world
 - **Combat Log** — Scrollable log of all combat events
 - **Shortcuts Bar** — Optional floating bar with Start, Reset All, and Reboot buttons
-- **Death Effects** — Ragdoll physics (BEPUphysics2) on character death
+- **Death Effects** — Ragdoll physics (BEPUphysics2) on character death with 18-bone capsule ragdoll, per-joint anatomical limits, self-collision, and ground contact
+- **Active Camera** — Camera tracks a selected bone with free orbital control, height/side offsets, vertical angle lock, and collision disable (Cammy-style getCameraPosition hook)
 - **Death Cam** — Cinematic camera that smoothly transitions to an anchored position on player death, with configurable height/side offsets and bone tracking
 - **Hit VFX** — Configurable visual effects on player when taking damage
 - **Glamourer Integration** — Apply glamourer presets on death and on reset
