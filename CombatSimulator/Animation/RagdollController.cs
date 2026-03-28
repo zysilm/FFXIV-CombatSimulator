@@ -415,11 +415,11 @@ public unsafe class RagdollController : IDisposable
         }
 
         // --- Pass 2: Create physics bodies ---
-        // Capsule center is offset from bone origin (joint) along the segment direction
-        // by BoneDefs.CapsuleHalfLength. This gives proper lever arms at joints (per BEPU
-        // RagdollDemo pattern). Capsule LENGTH comes from BoneDefs (fixed anatomical size),
-        // NOT from the animation pose distance — death poses bend joints, making bone
-        // distances unreliable (e.g., shin=0.06m in death pose vs 0.22m anatomical).
+        // Capsule center is offset from bone origin (joint) along the segment direction.
+        // Capsule half-length is clamped to not exceed half the actual segment distance
+        // in the current pose. Death poses bend joints severely (e.g., shin=0.06m vs
+        // 0.22m anatomical), and oversized capsules overlap their neighbors, causing
+        // explosive solver forces in the first frames.
         foreach (var def in BoneDefs)
         {
             if (!nameToIndex.TryGetValue(def.Name, out var boneIdx)) continue;
@@ -428,7 +428,7 @@ public unsafe class RagdollController : IDisposable
 
             Vector3 capsuleCenter;
             float segmentHalfLength;
-            float capsuleLength = def.CapsuleHalfLength * 2;
+            float effectiveHalfLength = def.CapsuleHalfLength;
             Quaternion capsuleWorldRot;
 
             if (boneToFirstChild.TryGetValue(def.Name, out var childName) &&
@@ -439,11 +439,21 @@ public unsafe class RagdollController : IDisposable
 
                 if (segLen > 0.01f)
                 {
-                    // Offset capsule center from bone origin along segment direction.
-                    // Direction from pose, distance from BoneDefs (pose-independent).
+                    // Clamp capsule half-length so the capsule doesn't extend past the
+                    // child bone. Without this, bent-limb poses create overlapping capsules
+                    // (e.g., shin capsule overshoots the foot when the knee is bent).
+                    // Use 45% of segment length (not 50% minus radius) to preserve capsule
+                    // elongation for rotational stability — near-spheres lose orientation.
+                    var maxHalf = MathF.Max(0.02f, segLen * 0.45f);
+                    if (effectiveHalfLength > maxHalf)
+                    {
+                        log.Info($"[Ragdoll Init] '{def.Name}' capsule clamped: halfLen {effectiveHalfLength:F3} -> {maxHalf:F3} (segLen={segLen:F3})");
+                        effectiveHalfLength = maxHalf;
+                    }
+
                     var segDir = segment / segLen;
-                    capsuleCenter = boneWorldPos + def.CapsuleHalfLength * segDir;
-                    segmentHalfLength = def.CapsuleHalfLength;
+                    capsuleCenter = boneWorldPos + effectiveHalfLength * segDir;
+                    segmentHalfLength = effectiveHalfLength;
                     capsuleWorldRot = RotationFromYToDirection(segment);
                 }
                 else
@@ -469,9 +479,16 @@ public unsafe class RagdollController : IDisposable
 
                 if (toSkelChildLen > 0.01f)
                 {
+                    var maxHalf = MathF.Max(0.02f, toSkelChildLen * 0.45f);
+                    if (effectiveHalfLength > maxHalf)
+                    {
+                        log.Info($"[Ragdoll Init] '{def.Name}' leaf capsule clamped: halfLen {effectiveHalfLength:F3} -> {maxHalf:F3} (segLen={toSkelChildLen:F3})");
+                        effectiveHalfLength = maxHalf;
+                    }
+
                     var dir = toSkelChild / toSkelChildLen;
-                    capsuleCenter = boneWorldPos + def.CapsuleHalfLength * dir;
-                    segmentHalfLength = def.CapsuleHalfLength;
+                    capsuleCenter = boneWorldPos + effectiveHalfLength * dir;
+                    segmentHalfLength = effectiveHalfLength;
                     capsuleWorldRot = RotationFromYToDirection(toSkelChild);
                 }
                 else
@@ -493,12 +510,20 @@ public unsafe class RagdollController : IDisposable
             var capsuleToBoneOffset = Quaternion.Normalize(
                 Quaternion.Inverse(capsuleWorldRot) * boneWorldRot);
 
-            // No Y clamping — let capsules start at their actual bone positions.
-            // The floor offset already provides clearance between the physics ground
-            // and the real terrain. Clamping creates artificial initial configurations
-            // that the solver must correct, causing visible rigid-body translation
-            // (standing pose sinks) or bouncing (corpse pose lifts).
+            // Clamp capsule center above ground so bodies don't start underground.
+            // Underground capsules cause explosive ground-collision forces in the first
+            // frames. Lift just enough so the capsule bottom (center - extent - radius)
+            // is at the ground plane.
+            var capsuleYAxis = Vector3.Transform(Vector3.UnitY, capsuleWorldRot);
+            var capsuleBottomExtent = MathF.Abs(capsuleYAxis.Y) * effectiveHalfLength + def.CapsuleRadius;
+            var minCenterY = groundY + capsuleBottomExtent + 0.005f; // 5mm clearance
+            if (capsuleCenter.Y < minCenterY)
+            {
+                log.Info($"[Ragdoll Init] '{def.Name}' lifted above ground: Y {capsuleCenter.Y:F3} -> {minCenterY:F3} (ground={groundY:F3})");
+                capsuleCenter.Y = minCenterY;
+            }
 
+            var capsuleLength = effectiveHalfLength * 2;
             var capsule = new Capsule(def.CapsuleRadius, capsuleLength);
             var shapeIndex = simulation.Shapes.Add(capsule);
 
@@ -629,6 +654,28 @@ public unsafe class RagdollController : IDisposable
                     var parentSegDir = Vector3.Transform(Vector3.UnitY, parentBodyRef.Pose.Orientation);
                     var forwardWorld = Vector3.Normalize(Vector3.Cross(hingeAxisWorld, parentSegDir));
 
+                    // The cross product can point in either direction. We must ensure it
+                    // points toward the anatomically correct flexion side:
+                    //   Knees (j_asi_b): shin swings BACKWARD (opposite to character forward)
+                    //   Elbows (j_ude_b): forearm swings FORWARD (toward character forward)
+                    // Without this check, the SwingLimit allows hyperextension instead of
+                    // preventing it, causing knees to bend the wrong way.
+                    var charForward = Vector3.Transform(-Vector3.UnitZ, skelWorldRot);
+                    bool isKnee = rb.Name.StartsWith("j_asi_b");
+                    bool isElbow = rb.Name.StartsWith("j_ude_b");
+                    if (isKnee)
+                    {
+                        // Knees flex backward: forwardWorld should point opposite to charForward
+                        if (Vector3.Dot(forwardWorld, charForward) > 0)
+                            forwardWorld = -forwardWorld;
+                    }
+                    else if (isElbow)
+                    {
+                        // Elbows flex forward/inward: forwardWorld should point toward charForward
+                        if (Vector3.Dot(forwardWorld, charForward) < 0)
+                            forwardWorld = -forwardWorld;
+                    }
+
                     var swingAxisLocalParent = Vector3.Normalize(Vector3.Transform(
                         forwardWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
                     var swingAxisLocalChild = Vector3.Normalize(Vector3.Transform(
@@ -643,7 +690,7 @@ public unsafe class RagdollController : IDisposable
                             SpringSettings = new SpringSettings(15, 1),
                         });
 
-                    log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad");
+                    log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad charFwd=({charForward.X:F3},{charForward.Y:F3},{charForward.Z:F3})");
                 }
 
                 log.Info($"[Ragdoll Constraint] '{rb.Name}' Hinge axis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3})");
