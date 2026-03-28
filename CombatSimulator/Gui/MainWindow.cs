@@ -1050,7 +1050,7 @@ public class MainWindow : IDisposable
                     config.RagdollActivationDelay = 1.0f;
                     config.RagdollGravity = 9.8f;
                     config.RagdollDamping = 0.97f;
-                    config.RagdollFloorOffset = 0.1f;
+                    config.RagdollFloorOffset = 0f;
                     config.RagdollSelfCollision = true;
                     config.RagdollNpcCollision = true;
                     config.RagdollNpcRadius = 0.3f;
