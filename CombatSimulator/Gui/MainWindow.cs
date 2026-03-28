@@ -90,9 +90,21 @@ public class MainWindow : IDisposable
         this.log = log;
     }
 
+    private int selectedTab = 0;
+
+    private static readonly string[] TabNames = new[]
+    {
+        "Combat",
+        "Targets",
+        "Animation",
+        "Camera",
+        "Ragdoll",
+        "Settings",
+    };
+
     public void Draw()
     {
-        ImGui.SetNextWindowSize(new Vector2(420, 600), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(new Vector2(560, 500), ImGuiCond.FirstUseEver);
         var showWindow = config.ShowMainWindow;
         if (!ImGui.Begin("Combat Simulator", ref showWindow))
         {
@@ -102,22 +114,55 @@ public class MainWindow : IDisposable
         }
         config.ShowMainWindow = showWindow;
 
+        // Status bar at top (always visible)
         DrawStatusSection();
         ImGui.Separator();
-        DrawSimulationSection();
-        ImGui.Separator();
-        DrawActiveTargetsSection();
-        DrawNpcDefaultsSection();
-        DrawTargetBehaviorsSection();
-        ImGui.Separator();
-        DrawAnimationCommandsSection();
-        DrawHitVfxSection();
-        DrawGlamourerHeaderSection();
-        DrawGuiSettingsSection();
-        DrawActiveCamSection();
-        DrawDeathCamSection();
-        DrawRagdollSection();
-        DrawDevSection();
+
+        // Left sidebar + right content
+        var contentHeight = ImGui.GetContentRegionAvail().Y;
+        var sidebarWidth = 100f;
+
+        // Left sidebar
+        ImGui.BeginChild("##sidebar", new Vector2(sidebarWidth, contentHeight), true);
+        for (int i = 0; i < TabNames.Length; i++)
+        {
+            if (ImGui.Selectable(TabNames[i], selectedTab == i))
+                selectedTab = i;
+        }
+        ImGui.EndChild();
+
+        ImGui.SameLine();
+
+        // Right content panel
+        ImGui.BeginChild("##content", new Vector2(0, contentHeight), true);
+        switch (selectedTab)
+        {
+            case 0: // Combat
+                DrawSimulationSection();
+                break;
+            case 1: // Targets
+                DrawActiveTargetsSection();
+                DrawNpcDefaultsSection();
+                DrawTargetBehaviorsSection();
+                break;
+            case 2: // Animation
+                DrawAnimationCommandsSection();
+                DrawHitVfxSection();
+                DrawGlamourerHeaderSection();
+                break;
+            case 3: // Camera
+                DrawActiveCamSection();
+                DrawDeathCamSection();
+                break;
+            case 4: // Ragdoll
+                DrawRagdollSection();
+                DrawDevSection();
+                break;
+            case 5: // Settings
+                DrawGuiSettingsSection();
+                break;
+        }
+        ImGui.EndChild();
 
         ImGui.End();
     }
