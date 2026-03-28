@@ -1158,10 +1158,34 @@ public class MainWindow : IDisposable
                 HelpMarker("Scale multiplier for NPC bone collision capsules. Increase for larger NPC models.");
 
                 ImGui.Separator();
+
+                // --- Settle Collision ---
+                var settleCol = config.RagdollNpcSettleCollision;
+                if (ImGui.Checkbox("NPC Collision (Settle)##npccol", ref settleCol))
+                {
+                    config.RagdollNpcSettleCollision = settleCol;
+                    config.Save();
+                }
+                HelpMarker("Keep ragdoll reactive to NPC bones after settling. Wakes sleeping bodies when an NPC bone moves nearby.");
+
+                if (config.RagdollNpcSettleCollision)
+                {
+                    var wakeRadius = config.RagdollNpcSettleWakeRadius;
+                    if (ImGui.SliderFloat("Wake Radius##settle", ref wakeRadius, 0.1f, 2.0f, "%.2f"))
+                    {
+                        config.RagdollNpcSettleWakeRadius = wakeRadius;
+                        config.Save();
+                    }
+                    HelpMarker("Distance threshold to wake a sleeping ragdoll body when an NPC bone is nearby.");
+                }
+
+                ImGui.Separator();
                 if (ImGui.Button("Reset to Defaults##npccol"))
                 {
                     config.RagdollNpcCollision = false;
                     config.RagdollNpcCollisionScale = 0.0001f;
+                    config.RagdollNpcSettleCollision = false;
+                    config.RagdollNpcSettleWakeRadius = 0.3f;
                     config.Save();
                 }
 

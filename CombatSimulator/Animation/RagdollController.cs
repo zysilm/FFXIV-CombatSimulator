@@ -1158,6 +1158,51 @@ public unsafe class RagdollController : IDisposable
             catch { }
         }
 
+        // Settle collision: wake sleeping ragdoll bodies when NPC statics move nearby.
+        // BEPU2 doesn't auto-wake sleeping bodies from static repositioning, so we
+        // do a proximity check and explicitly awaken bodies within range.
+        if (config.RagdollNpcSettleCollision && npcCollisionStates.Count > 0)
+        {
+            var wakeRadiusSq = config.RagdollNpcSettleWakeRadius * config.RagdollNpcSettleWakeRadius;
+            for (int i = 0; i < ragdollBones.Count; i++)
+            {
+                var rb = ragdollBones[i];
+                var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+                if (bodyRef.Awake) continue; // already awake, skip
+
+                var bodyPos = bodyRef.Pose.Position;
+
+                bool shouldWake = false;
+                for (int n = 0; n < npcCollisionStates.Count && !shouldWake; n++)
+                {
+                    var npcState = npcCollisionStates[n];
+                    if (npcState.IsFallback)
+                    {
+                        var staticRef = simulation.Statics.GetStaticReference(npcState.FallbackHandle);
+                        var distSq = (bodyPos - staticRef.Pose.Position).LengthSquared();
+                        if (distSq < wakeRadiusSq)
+                            shouldWake = true;
+                    }
+                    else
+                    {
+                        for (int b = 0; b < npcState.BoneStatics.Count; b++)
+                        {
+                            var staticRef = simulation.Statics.GetStaticReference(npcState.BoneStatics[b].Handle);
+                            var distSq = (bodyPos - staticRef.Pose.Position).LengthSquared();
+                            if (distSq < wakeRadiusSq)
+                            {
+                                shouldWake = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (shouldWake)
+                    simulation.Awakener.AwakenBody(rb.BodyHandle);
+            }
+        }
+
         // Step physics
         simulation.Timestep(1.0f / 60.0f);
 

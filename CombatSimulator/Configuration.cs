@@ -98,6 +98,8 @@ public class Configuration : IPluginConfiguration
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollNpcCollision { get; set; } = false;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
+    public bool RagdollNpcSettleCollision { get; set; } = false;
+    public float RagdollNpcSettleWakeRadius { get; set; } = 0.3f;
     public float RagdollMassScale { get; set; } = 1.0f;
 
     // Active Camera — camera tracks a bone with free orbital control
