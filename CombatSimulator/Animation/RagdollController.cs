@@ -31,7 +31,6 @@ public unsafe class RagdollController : IDisposable
     private float elapsed;
     private float activationDelay;
     private bool physicsStarted;
-    private bool settleApplied; // true once sleep has been disabled for settle collision
 
     // Skeleton world transform (captured at activation from Skeleton.Transform)
     // ModelPose is in skeleton-local space; these convert to/from world space.
@@ -198,7 +197,6 @@ public unsafe class RagdollController : IDisposable
         activationDelay = config.RagdollActivationDelay;
         elapsed = 0f;
         physicsStarted = false;
-        settleApplied = false;
         isActive = true;
 
         log.Info($"RagdollController: Activated (delay={activationDelay:F1}s)");
@@ -582,11 +580,14 @@ public unsafe class RagdollController : IDisposable
             var capsule = new Capsule(def.CapsuleRadius, capsuleLength);
             var shapeIndex = simulation.Shapes.Add(capsule);
 
+            // SleepThreshold: 0.01 = normal (bodies sleep when settled).
+            // -1 = never sleep (settle collision keeps bodies always active for NPC interaction).
+            var sleepThreshold = (config.RagdollNpcSettleCollision && config.RagdollNpcCollision) ? -1f : 0.01f;
             var bodyDesc = BodyDescription.CreateDynamic(
                 new RigidPose(capsuleCenter, capsuleWorldRot),
                 capsule.ComputeInertia(def.Mass * config.RagdollMassScale),
                 new CollidableDescription(shapeIndex, 0.04f),
-                new BodyActivityDescription(0.01f));
+                new BodyActivityDescription(sleepThreshold));
 
             var bodyHandle = simulation.Bodies.Add(bodyDesc);
 
@@ -1158,26 +1159,6 @@ public unsafe class RagdollController : IDisposable
                 }
             }
             catch { }
-        }
-
-        // Settle collision: after the delay, re-initialize the entire physics simulation.
-        // Modifying sleep thresholds or calling AwakenBody on settled bodies doesn't work
-        // reliably in BEPU2. The only proven approach is what Activate/InitializePhysics does:
-        // create fresh bodies from the current pose. This re-reads bone positions (now in the
-        // settled pose) and creates new active bodies that naturally collide with NPC statics.
-        if (config.RagdollNpcSettleCollision && npcCollisionStates.Count > 0
-            && elapsed >= config.RagdollNpcSettleDelay && !settleApplied)
-        {
-            settleApplied = true;
-            log.Info("RagdollController: Settle collision — re-initializing physics from settled pose");
-            DestroySimulation();
-            if (!InitializePhysics())
-            {
-                log.Warning("RagdollController: Settle re-init failed");
-                return;
-            }
-            // Don't step this frame — let the fresh simulation settle one tick first
-            return;
         }
 
         // Step physics
