@@ -94,6 +94,8 @@ public class Configuration : IPluginConfiguration
     public float RagdollFloorOffset { get; set; } = 0.1f;  // Lower terrain by this amount to avoid joint-floor collision artifacts
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public bool RagdollNpcCollision { get; set; } = true; // Active targets have collision volumes
+    public float RagdollNpcRadius { get; set; } = 0.3f;  // NPC collision capsule radius (meters)
+    public float RagdollMassScale { get; set; } = 1.0f;   // Ragdoll body mass multiplier
 
     // Active Camera — camera tracks a bone with free orbital control
     public bool EnableActiveCamera { get; set; } = false;

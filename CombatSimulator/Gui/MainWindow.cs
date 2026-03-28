@@ -1050,6 +1050,25 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Active combat targets have collision volumes. The ragdoll character can fall on and interact with NPCs. Takes effect on next ragdoll activation.");
 
+                if (config.RagdollNpcCollision)
+                {
+                    var npcRadius = config.RagdollNpcRadius;
+                    if (ImGui.SliderFloat("NPC Radius##ragdoll", ref npcRadius, 0.1f, 2.0f, "%.2f"))
+                    {
+                        config.RagdollNpcRadius = npcRadius;
+                        config.Save();
+                    }
+                    HelpMarker("Collision capsule radius for each NPC. Larger = easier to collide with but less precise.");
+                }
+
+                var massScale = config.RagdollMassScale;
+                if (ImGui.SliderFloat("Mass Scale##ragdoll", ref massScale, 0.1f, 10.0f, "%.1f"))
+                {
+                    config.RagdollMassScale = massScale;
+                    config.Save();
+                }
+                HelpMarker("Ragdoll body mass multiplier. Higher = heavier character (less affected by collisions). Lower = lighter (flies further on impact).");
+
                 ImGui.Separator();
                 if (ImGui.Button("Reset to Defaults##ragdoll"))
                 {
@@ -1059,6 +1078,8 @@ public class MainWindow : IDisposable
                     config.RagdollFloorOffset = 0.1f;
                     config.RagdollSelfCollision = true;
                     config.RagdollNpcCollision = true;
+                    config.RagdollNpcRadius = 0.3f;
+                    config.RagdollMassScale = 1.0f;
                     config.Save();
                 }
 

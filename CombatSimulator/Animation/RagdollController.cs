@@ -504,7 +504,7 @@ public unsafe class RagdollController : IDisposable
 
             var bodyDesc = BodyDescription.CreateDynamic(
                 new RigidPose(capsuleCenter, capsuleWorldRot),
-                capsule.ComputeInertia(def.Mass),
+                capsule.ComputeInertia(def.Mass * config.RagdollMassScale),
                 new CollidableDescription(shapeIndex, 0.04f),
                 new BodyActivityDescription(0.01f));
 
@@ -732,22 +732,30 @@ public unsafe class RagdollController : IDisposable
         npcStatics.Clear();
         if (config.RagdollNpcCollision)
         {
-            var npcCapsuleRadius = 0.3f;
-            var npcCapsuleLength = 1.0f; // internal segment length (total height ~ 1.6m with caps)
+            var npcCapsuleRadius = config.RagdollNpcRadius;
+            var npcCapsuleLength = MathF.Max(0.2f, 1.6f - npcCapsuleRadius * 2f); // keep total height ~1.6m
             var npcShape = new Capsule(npcCapsuleRadius, npcCapsuleLength);
             var npcShapeIndex = simulation.Shapes.Add(npcShape);
 
+            log.Info($"RagdollController: NPC collision — {npcSelector.SelectedNpcs.Count} selected NPCs");
+
             foreach (var npc in npcSelector.SelectedNpcs)
             {
-                if (npc.BattleChara == null) continue;
+                if (npc.BattleChara == null)
+                {
+                    log.Warning($"RagdollController: NPC '{npc.Name}' has null BattleChara, skipping");
+                    continue;
+                }
                 var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
                 var npcPos = new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z);
-                var npcRot = Quaternion.Identity; // upright capsule
 
                 var staticHandle = simulation.Statics.Add(new StaticDescription(
-                    npcPos, npcRot, npcShapeIndex));
+                    npcPos, Quaternion.Identity, npcShapeIndex));
                 npcStatics.Add((staticHandle, npc.Address));
-                log.Info($"RagdollController: NPC collision volume for '{npc.Name}' at ({npcPos.X:F1},{npcPos.Y:F1},{npcPos.Z:F1})");
+
+                // Log NPC position relative to player
+                var dist = (npcPos - skelWorldPos).Length();
+                log.Info($"RagdollController: NPC '{npc.Name}' volume at ({npcPos.X:F2},{npcPos.Y:F2},{npcPos.Z:F2}), dist={dist:F2}m from player");
             }
         }
 
