@@ -59,7 +59,6 @@ public unsafe class RagdollController : IDisposable
 
     // NPC bone collision — per-bone static capsules for active targets
     private readonly List<NpcCollisionState> npcCollisionStates = new();
-    private TypedIndex[]? npcBoneShapeIndices;  // pre-created shapes, one per NpcBoneDefs entry
     private TypedIndex npcFallbackShapeIndex;   // single-capsule fallback shape
 
 
@@ -135,46 +134,19 @@ public unsafe class RagdollController : IDisposable
         new RagdollBoneDef { Name = "j_asi_c_r", ParentName = "j_asi_b_r",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // foot
     };
 
-    // --- NPC bone collision: full 18-bone set matching the player ragdoll ---
-    private struct NpcBoneCollisionDef
-    {
-        public string Name;
-        public string? ChildName; // next bone in chain for segment direction (null = leaf)
-        public float CapsuleRadius;
-        public float CapsuleHalfLength;
-    }
-
-    private static readonly NpcBoneCollisionDef[] NpcBoneDefs = new[]
-    {
-        new NpcBoneCollisionDef { Name = "j_kosi",    ChildName = "j_sebo_a",  CapsuleRadius = 0.12f,  CapsuleHalfLength = 0.06f  }, // pelvis
-        new NpcBoneCollisionDef { Name = "j_sebo_a",  ChildName = "j_sebo_b",  CapsuleRadius = 0.10f,  CapsuleHalfLength = 0.05f  }, // lower spine
-        new NpcBoneCollisionDef { Name = "j_sebo_b",  ChildName = "j_sebo_c",  CapsuleRadius = 0.10f,  CapsuleHalfLength = 0.05f  }, // mid spine
-        new NpcBoneCollisionDef { Name = "j_sebo_c",  ChildName = "j_kubi",    CapsuleRadius = 0.10f,  CapsuleHalfLength = 0.05f  }, // chest
-        new NpcBoneCollisionDef { Name = "j_kubi",    ChildName = "j_kao",     CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.03f  }, // neck
-        new NpcBoneCollisionDef { Name = "j_kao",     ChildName = null,         CapsuleRadius = 0.08f,  CapsuleHalfLength = 0.04f  }, // head
-        new NpcBoneCollisionDef { Name = "j_ude_a_l", ChildName = "j_ude_b_l", CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.08f  }, // left upper arm
-        new NpcBoneCollisionDef { Name = "j_ude_a_r", ChildName = "j_ude_b_r", CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.08f  }, // right upper arm
-        new NpcBoneCollisionDef { Name = "j_ude_b_l", ChildName = "j_te_l",   CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f  }, // left forearm
-        new NpcBoneCollisionDef { Name = "j_ude_b_r", ChildName = "j_te_r",   CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f  }, // right forearm
-        new NpcBoneCollisionDef { Name = "j_te_l",   ChildName = null,         CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f  }, // left hand
-        new NpcBoneCollisionDef { Name = "j_te_r",   ChildName = null,         CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f  }, // right hand
-        new NpcBoneCollisionDef { Name = "j_asi_a_l", ChildName = "j_asi_b_l", CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.12f  }, // left upper leg
-        new NpcBoneCollisionDef { Name = "j_asi_a_r", ChildName = "j_asi_b_r", CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.12f  }, // right upper leg
-        new NpcBoneCollisionDef { Name = "j_asi_b_l", ChildName = "j_asi_c_l", CapsuleRadius = 0.035f, CapsuleHalfLength = 0.11f  }, // left lower leg
-        new NpcBoneCollisionDef { Name = "j_asi_b_r", ChildName = "j_asi_c_r", CapsuleRadius = 0.035f, CapsuleHalfLength = 0.11f  }, // right lower leg
-        new NpcBoneCollisionDef { Name = "j_asi_c_l", ChildName = null,         CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f  }, // left foot
-        new NpcBoneCollisionDef { Name = "j_asi_c_r", ChildName = null,         CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f  }, // right foot
-    };
-
-    // Per-bone static collision body for an NPC
+    // Per-bone static collision body for an NPC (dynamically created from skeleton)
     private struct NpcBoneStatic
     {
         public StaticHandle Handle;
-        public int BoneDefIndex;        // index into NpcBoneDefs
-        public int BoneIndex;           // resolved skeleton bone index
-        public int ChildBoneIndex;      // child bone for segment direction (-1 if leaf)
-        public float EffectiveHalfLength;
+        public int BoneIndex;           // this bone's skeleton index
+        public int ParentBoneIndex;     // parent bone for segment direction
+        public float HalfLength;        // half the segment length (scaled)
     }
+
+    // Default capsule radius for dynamically discovered bones
+    private const float NpcDefaultBoneRadius = 0.04f;
+    // Minimum segment length to create a collision capsule (skip face/hair bones)
+    private const float NpcMinSegmentLength = 0.02f;
 
     // Per-NPC collision state (bone-based or single-capsule fallback)
     private struct NpcCollisionState
@@ -859,22 +831,13 @@ public unsafe class RagdollController : IDisposable
         nHaraIndex = boneService.ResolveBoneIndex(skel, "n_hara");
         log.Info($"RagdollController: n_hara index={nHaraIndex}");
 
-        // Create NPC collision volumes — per-bone static capsules for active targets
+        // Create NPC collision volumes — dynamically discover bones from each NPC's skeleton.
+        // Works for any model (humanoid, monster, dragon) — no hardcoded bone names.
         npcCollisionStates.Clear();
-        npcBoneShapeIndices = null;
         if (config.RagdollNpcCollision)
         {
             var scale = config.RagdollNpcCollisionScale;
-
-            // Pre-create one shape per NpcBoneDefs entry (shared across all NPCs)
-            npcBoneShapeIndices = new TypedIndex[NpcBoneDefs.Length];
-            for (int i = 0; i < NpcBoneDefs.Length; i++)
-            {
-                var def = NpcBoneDefs[i];
-                var radius = def.CapsuleRadius * scale;
-                var length = def.CapsuleHalfLength * 2f * scale;
-                npcBoneShapeIndices[i] = simulation.Shapes.Add(new Capsule(radius, length));
-            }
+            var capsuleRadius = NpcDefaultBoneRadius * scale;
 
             // Fallback single-capsule shape for NPCs whose skeleton can't be read
             var fbRadius = 0.3f * scale;
@@ -894,113 +857,84 @@ public unsafe class RagdollController : IDisposable
                 var npcAddr = npc.Address;
                 var npcSkel = boneService.TryGetSkeleton(npcAddr);
 
-                if (npcSkel != null)
+                if (npcSkel == null)
                 {
-                    // Bone-based collision: read NPC skeleton and create per-bone statics
-                    var ns = npcSkel.Value;
-                    var npcSkeleton = ns.CharBase->Skeleton;
-                    if (npcSkeleton == null)
+                    CreateFallbackNpcCollision(npc, npcAddr);
+                    continue;
+                }
+
+                var ns = npcSkel.Value;
+                var npcSkeleton = ns.CharBase->Skeleton;
+                if (npcSkeleton == null)
+                {
+                    CreateFallbackNpcCollision(npc, npcAddr);
+                    continue;
+                }
+
+                var npcSkelPos = new Vector3(
+                    npcSkeleton->Transform.Position.X,
+                    npcSkeleton->Transform.Position.Y,
+                    npcSkeleton->Transform.Position.Z);
+                var npcSkelRot = new Quaternion(
+                    npcSkeleton->Transform.Rotation.X,
+                    npcSkeleton->Transform.Rotation.Y,
+                    npcSkeleton->Transform.Rotation.Z,
+                    npcSkeleton->Transform.Rotation.W);
+
+                var boneStatics = new List<NpcBoneStatic>();
+
+                // Iterate all bones with a parent — each parent→child segment becomes a capsule
+                var boneCount = Math.Min(ns.BoneCount, ns.ParentCount);
+                for (int i = 1; i < boneCount; i++) // skip root (index 0, no parent)
+                {
+                    var parentIdx = ns.HavokSkeleton->ParentIndices[i];
+                    if (parentIdx < 0 || parentIdx >= ns.BoneCount) continue;
+
+                    // Read parent and child bone world positions
+                    ref var parentMt = ref ns.Pose->ModelPose.Data[parentIdx];
+                    var parentModelPos = new Vector3(parentMt.Translation.X, parentMt.Translation.Y, parentMt.Translation.Z);
+                    var parentWorldPos = NpcModelToWorld(parentModelPos, npcSkelPos, npcSkelRot);
+
+                    ref var childMt = ref ns.Pose->ModelPose.Data[i];
+                    var childModelPos = new Vector3(childMt.Translation.X, childMt.Translation.Y, childMt.Translation.Z);
+                    var childWorldPos = NpcModelToWorld(childModelPos, npcSkelPos, npcSkelRot);
+
+                    var segment = childWorldPos - parentWorldPos;
+                    var segLen = segment.Length();
+                    if (segLen < NpcMinSegmentLength) continue; // skip tiny segments (face, fingers)
+
+                    var halfLen = segLen * 0.45f * scale;
+                    var capsuleLength = halfLen * 2f;
+                    var shapeIndex = simulation.Shapes.Add(new Capsule(capsuleRadius, capsuleLength));
+
+                    var segDir = segment / segLen;
+                    var capsuleCenter = parentWorldPos + halfLen * segDir;
+                    var capsuleRot = RotationFromYToDirection(segment);
+
+                    var staticHandle = simulation.Statics.Add(new StaticDescription(
+                        capsuleCenter, capsuleRot, shapeIndex));
+
+                    boneStatics.Add(new NpcBoneStatic
                     {
-                        CreateFallbackNpcCollision(npc, npcAddr);
-                        continue;
-                    }
+                        Handle = staticHandle,
+                        BoneIndex = i,
+                        ParentBoneIndex = parentIdx,
+                        HalfLength = halfLen,
+                    });
+                }
 
-                    var npcSkelPos = new Vector3(
-                        npcSkeleton->Transform.Position.X,
-                        npcSkeleton->Transform.Position.Y,
-                        npcSkeleton->Transform.Position.Z);
-                    var npcSkelRot = new Quaternion(
-                        npcSkeleton->Transform.Rotation.X,
-                        npcSkeleton->Transform.Rotation.Y,
-                        npcSkeleton->Transform.Rotation.Z,
-                        npcSkeleton->Transform.Rotation.W);
-
-                    var boneStatics = new List<NpcBoneStatic>();
-                    int resolvedCount = 0;
-
-                    for (int i = 0; i < NpcBoneDefs.Length; i++)
+                if (boneStatics.Count > 0)
+                {
+                    npcCollisionStates.Add(new NpcCollisionState
                     {
-                        var def = NpcBoneDefs[i];
-                        var boneIdx = boneService.ResolveBoneIndex(ns, def.Name);
-                        if (boneIdx < 0) continue;
-
-                        // Resolve child bone for segment direction
-                        int childIdx = -1;
-                        if (def.ChildName != null)
-                            childIdx = boneService.ResolveBoneIndex(ns, def.ChildName);
-
-                        // Read bone world position
-                        ref var mt = ref ns.Pose->ModelPose.Data[boneIdx];
-                        var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
-                        var boneWorldPos = NpcModelToWorld(modelPos, npcSkelPos, npcSkelRot);
-
-                        // Compute capsule center and orientation
-                        Vector3 capsuleCenter;
-                        Quaternion capsuleRot;
-                        float effectiveHalf = def.CapsuleHalfLength * scale;
-
-                        if (childIdx >= 0 && childIdx < ns.BoneCount)
-                        {
-                            ref var childMt = ref ns.Pose->ModelPose.Data[childIdx];
-                            var childModelPos = new Vector3(childMt.Translation.X, childMt.Translation.Y, childMt.Translation.Z);
-                            var childWorldPos = NpcModelToWorld(childModelPos, npcSkelPos, npcSkelRot);
-                            var segment = childWorldPos - boneWorldPos;
-                            var segLen = segment.Length();
-
-                            if (segLen > 0.01f)
-                            {
-                                var segDir = segment / segLen;
-                                capsuleCenter = boneWorldPos + effectiveHalf * segDir;
-                                capsuleRot = RotationFromYToDirection(segment);
-                            }
-                            else
-                            {
-                                capsuleCenter = boneWorldPos;
-                                var modelRot = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
-                                capsuleRot = NpcModelRotToWorld(modelRot, npcSkelRot);
-                            }
-                        }
-                        else
-                        {
-                            // Leaf bone or child not found: orient by bone rotation
-                            capsuleCenter = boneWorldPos;
-                            var modelRot = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
-                            capsuleRot = NpcModelRotToWorld(modelRot, npcSkelRot);
-                        }
-
-                        var staticHandle = simulation.Statics.Add(new StaticDescription(
-                            capsuleCenter, capsuleRot, npcBoneShapeIndices[i]));
-
-                        boneStatics.Add(new NpcBoneStatic
-                        {
-                            Handle = staticHandle,
-                            BoneDefIndex = i,
-                            BoneIndex = boneIdx,
-                            ChildBoneIndex = childIdx,
-                            EffectiveHalfLength = effectiveHalf,
-                        });
-                        resolvedCount++;
-                    }
-
-                    if (boneStatics.Count > 0)
-                    {
-                        npcCollisionStates.Add(new NpcCollisionState
-                        {
-                            NpcAddress = npcAddr,
-                            BoneStatics = boneStatics,
-                            IsFallback = false,
-                        });
-                        log.Info($"RagdollController: NPC '{npc.Name}' bone collision — {resolvedCount}/{NpcBoneDefs.Length} bones resolved");
-                    }
-                    else
-                    {
-                        // No bones resolved (non-humanoid?) — fall back
-                        CreateFallbackNpcCollision(npc, npcAddr);
-                    }
+                        NpcAddress = npcAddr,
+                        BoneStatics = boneStatics,
+                        IsFallback = false,
+                    });
+                    log.Info($"RagdollController: NPC '{npc.Name}' bone collision — {boneStatics.Count} segments from {boneCount} bones");
                 }
                 else
                 {
-                    // Skeleton not available — fall back to single capsule
                     CreateFallbackNpcCollision(npc, npcAddr);
                 }
             }
@@ -1122,40 +1056,34 @@ public unsafe class RagdollController : IDisposable
                 {
                     var bs = npcState.BoneStatics[b];
                     if (bs.BoneIndex < 0 || bs.BoneIndex >= ns.BoneCount) continue;
+                    if (bs.ParentBoneIndex < 0 || bs.ParentBoneIndex >= ns.BoneCount) continue;
 
-                    ref var mt = ref ns.Pose->ModelPose.Data[bs.BoneIndex];
-                    var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
-                    var boneWorldPos = NpcModelToWorld(modelPos, npcSkelPos, npcSkelRot);
+                    // Read parent→child segment from current animation pose
+                    ref var parentMt = ref ns.Pose->ModelPose.Data[bs.ParentBoneIndex];
+                    var parentWorldPos = NpcModelToWorld(
+                        new Vector3(parentMt.Translation.X, parentMt.Translation.Y, parentMt.Translation.Z),
+                        npcSkelPos, npcSkelRot);
+
+                    ref var childMt = ref ns.Pose->ModelPose.Data[bs.BoneIndex];
+                    var childWorldPos = NpcModelToWorld(
+                        new Vector3(childMt.Translation.X, childMt.Translation.Y, childMt.Translation.Z),
+                        npcSkelPos, npcSkelRot);
+
+                    var segment = childWorldPos - parentWorldPos;
+                    var segLen = segment.Length();
 
                     Vector3 capsuleCenter;
                     Quaternion capsuleRot;
-
-                    if (bs.ChildBoneIndex >= 0 && bs.ChildBoneIndex < ns.BoneCount)
+                    if (segLen > 0.01f)
                     {
-                        ref var childMt = ref ns.Pose->ModelPose.Data[bs.ChildBoneIndex];
-                        var childModelPos = new Vector3(childMt.Translation.X, childMt.Translation.Y, childMt.Translation.Z);
-                        var childWorldPos = NpcModelToWorld(childModelPos, npcSkelPos, npcSkelRot);
-                        var segment = childWorldPos - boneWorldPos;
-                        var segLen = segment.Length();
-
-                        if (segLen > 0.01f)
-                        {
-                            var segDir = segment / segLen;
-                            capsuleCenter = boneWorldPos + bs.EffectiveHalfLength * segDir;
-                            capsuleRot = RotationFromYToDirection(segment);
-                        }
-                        else
-                        {
-                            capsuleCenter = boneWorldPos;
-                            var modelRot = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
-                            capsuleRot = NpcModelRotToWorld(modelRot, npcSkelRot);
-                        }
+                        var segDir = segment / segLen;
+                        capsuleCenter = parentWorldPos + bs.HalfLength * segDir;
+                        capsuleRot = RotationFromYToDirection(segment);
                     }
                     else
                     {
-                        capsuleCenter = boneWorldPos;
-                        var modelRot = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
-                        capsuleRot = NpcModelRotToWorld(modelRot, npcSkelRot);
+                        capsuleCenter = parentWorldPos;
+                        capsuleRot = Quaternion.Identity;
                     }
 
                     var staticRef = simulation.Statics.GetStaticReference(bs.Handle);
@@ -1347,7 +1275,6 @@ public unsafe class RagdollController : IDisposable
     {
         ragdollBones.Clear();
         npcCollisionStates.Clear();
-        npcBoneShapeIndices = null;
         simulation?.Dispose();
         simulation = null;
         bufferPool?.Clear();
