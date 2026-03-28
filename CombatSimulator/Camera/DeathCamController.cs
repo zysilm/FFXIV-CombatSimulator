@@ -64,9 +64,15 @@ public unsafe class DeathCamController : IDisposable
     private static readonly byte[] CollisionPatchBytes = { 0x30, 0xC0, 0x90, 0x90, 0x90 }; // xor al, al; nop; nop; nop
     private bool collisionPatchActive;
 
-    // Camera update hook — intercepts camera computation to apply offsets
+    // Camera update hook — intercepts camera computation to apply offsets (Death Cam)
     private delegate void CameraUpdateDelegate(CameraBase* thisPtr);
     private Hook<CameraUpdateDelegate>? cameraUpdateHook;
+
+    // getCameraPosition hook — replaces orbit center for camera follow (vtable index 15)
+    // This is the Cammy approach: modify the orbit center BEFORE the game applies rotation,
+    // so the user retains full control of camera angle/zoom.
+    private delegate void GetCameraPositionDelegate(nint camera, nint target, Vector3* position, nint swapPerson);
+    private Hook<GetCameraPositionDelegate>? getCameraPosHook;
 
     public DeathCamState State => state;
     public bool IsPreviewActive { get; private set; }
@@ -172,12 +178,38 @@ public unsafe class DeathCamController : IDisposable
             cameraUpdateHook = gameInterop.HookFromAddress<CameraUpdateDelegate>(updateAddr, CameraUpdateDetour);
             cameraUpdateHook.Enable();
 
-            log.Info($"DeathCam: Camera update hook created at 0x{updateAddr:X}.");
+            // getCameraPosition = vtable[15] — orbit center computation
+            var getCamPosAddr = vtable[15];
+            getCameraPosHook = gameInterop.HookFromAddress<GetCameraPositionDelegate>(getCamPosAddr, GetCameraPositionDetour);
+            getCameraPosHook.Enable();
+
+            log.Info($"DeathCam: Camera hooks created (update=0x{updateAddr:X}, getCamPos=0x{getCamPosAddr:X}).");
         }
         catch (Exception ex)
         {
             log.Error(ex, "DeathCam: Failed to create camera update hook.");
         }
+    }
+
+    /// <summary>
+    /// getCameraPosition detour: replaces the orbit center with the bone world position.
+    /// The game then applies rotation/zoom around this new center, so the user retains
+    /// full camera control. This is the Cammy approach (vtable index 15).
+    /// </summary>
+    private void GetCameraPositionDetour(nint camera, nint target, Vector3* position, nint swapPerson)
+    {
+        getCameraPosHook!.Original(camera, target, position, swapPerson);
+
+        if (!IsCameraFollowActive)
+            return;
+
+        try
+        {
+            var bonePos = GetBoneWorldPosition(config.CameraFollowBoneIndex);
+            if (bonePos != null)
+                *position = bonePos.Value;
+        }
+        catch { }
     }
 
     /// <summary>
@@ -201,7 +233,7 @@ public unsafe class DeathCamController : IDisposable
         if (!isGameCamera)
             return;
 
-        if (state == DeathCamState.Inactive && !IsPreviewActive && !IsCameraFollowActive)
+        if (state == DeathCamState.Inactive && !IsPreviewActive)
             return;
 
         try
@@ -212,9 +244,9 @@ public unsafe class DeathCamController : IDisposable
             float camH = gameCam->DirH;
             var offset = ComputeOffsetFromCameraAngle(camH);
 
-            if (state != DeathCamState.Inactive || IsCameraFollowActive)
+            if (state != DeathCamState.Inactive)
             {
-                // Override look-at to follow bone. Camera follow bone takes priority over death cam bone.
+                // Death cam: override look-at to follow bone
                 var boneIdx = IsCameraFollowActive ? config.CameraFollowBoneIndex : config.DeathCamBoneIndex;
                 var bonePos = GetBoneWorldPosition(boneIdx);
                 if (bonePos == null)
@@ -596,11 +628,6 @@ public unsafe class DeathCamController : IDisposable
             return;
         }
 
-        // Camera follow: bone tracking is handled by the camera hook (look-at override).
-        // No WriteCameraParams — user controls orbital angles freely.
-        if (IsCameraFollowActive && state == DeathCamState.Inactive)
-            return;
-
         if (state == DeathCamState.Inactive)
             return;
 
@@ -694,5 +721,6 @@ public unsafe class DeathCamController : IDisposable
         DisableCollisionPatch();
         RestoreCameraLimits();
         cameraUpdateHook?.Dispose();
+        getCameraPosHook?.Dispose();
     }
 }

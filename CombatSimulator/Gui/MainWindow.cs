@@ -110,8 +110,8 @@ public class MainWindow : IDisposable
         DrawHitVfxSection();
         DrawGlamourerHeaderSection();
         DrawGuiSettingsSection();
-        DrawDeathCamSection();
         DrawActiveCamSection();
+        DrawDeathCamSection();
         DrawRagdollSection();
 
         ImGui.End();
