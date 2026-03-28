@@ -99,11 +99,9 @@ public class Configuration : IPluginConfiguration
     public bool RagdollNpcCollision { get; set; } = false;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public float RagdollMassScale { get; set; } = 1.0f;
-    public bool EnableDZoom { get; set; } = false;
-    public float DZoomTargetDistance { get; set; } = 1.0f;
-    public float DZoomDuration { get; set; } = 2.0f;
 
     // Active Camera — camera tracks a bone with free orbital control
+    public bool ShowActiveCamToolbar { get; set; } = false;
     public bool EnableActiveCamera { get; set; } = false;
     public string ActiveCameraBoneName { get; set; } = "j_kubi";
     public float ActiveCameraHeightOffset { get; set; } = 0f;

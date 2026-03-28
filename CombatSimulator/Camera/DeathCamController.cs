@@ -38,10 +38,6 @@ public unsafe class DeathCamController : IDisposable
     private DeathCamState state = DeathCamState.Inactive;
     private float interpElapsed;
 
-    // DZoom state — smooth zoom to target distance on death
-    private bool dZoomActive;
-    private float dZoomElapsed;
-    private float dZoomStartDistance;
 
     // Interpolation start values (captured at activation)
     private float startDirH;
@@ -454,25 +450,6 @@ public unsafe class DeathCamController : IDisposable
     }
 
     /// <summary>
-    /// Start DZoom: smoothly zoom from current distance to target distance.
-    /// Called on death, independent of whether DeathCam is enabled.
-    /// </summary>
-    public void StartDZoom()
-    {
-        if (!config.EnableDZoom) return;
-        try
-        {
-            var camMgr = GameCameraManager.Instance();
-            if (camMgr == null || camMgr->Camera == null) return;
-            dZoomStartDistance = camMgr->Camera->Distance;
-            dZoomElapsed = 0;
-            dZoomActive = true;
-            log.Info($"DeathCam: DZoom started from {dZoomStartDistance:F2} to {config.DZoomTargetDistance:F2} over {config.DZoomDuration:F1}s");
-        }
-        catch { }
-    }
-
-    /// <summary>
     /// Restore the game camera's original limits that we overrode.
     /// </summary>
     private void RestoreCameraLimits()
@@ -515,7 +492,6 @@ public unsafe class DeathCamController : IDisposable
             return;
 
         state = DeathCamState.Inactive;
-        dZoomActive = false;
         DisableCollisionPatch();
         RestoreCameraLimits();
         log.Info("DeathCam: Deactivated.");
@@ -593,8 +569,8 @@ public unsafe class DeathCamController : IDisposable
         // Lazily create the camera hook once the camera is available
         EnsureHook();
 
-        // Manage collision patch: enable when death cam or DZoom active + config on, disable otherwise
-        bool wantCollisionDisabled = config.DeathCamDisableCollision && (state != DeathCamState.Inactive || dZoomActive);
+        // Manage collision patch: enable when death cam active + config on, disable otherwise
+        bool wantCollisionDisabled = config.DeathCamDisableCollision && state != DeathCamState.Inactive;
         if (wantCollisionDisabled && !collisionPatchActive)
             EnableCollisionPatch();
         else if (!wantCollisionDisabled && collisionPatchActive)
@@ -623,26 +599,6 @@ public unsafe class DeathCamController : IDisposable
                 log.Warning(ex, "DeathCam: Error during preview tick.");
             }
             return;
-        }
-
-        // DZoom: smooth zoom toward target distance (works independently of death cam)
-        if (dZoomActive)
-        {
-            try
-            {
-                var camMgr2 = GameCameraManager.Instance();
-                if (camMgr2 != null && camMgr2->Camera != null)
-                {
-                    dZoomElapsed += deltaTime;
-                    float t = Math.Clamp(dZoomElapsed / config.DZoomDuration, 0f, 1f);
-                    float smooth = t * t * (3f - 2f * t);
-                    float dist = dZoomStartDistance + (config.DZoomTargetDistance - dZoomStartDistance) * smooth;
-                    camMgr2->Camera->Distance = dist;
-                    camMgr2->Camera->InterpDistance = dist;
-                    if (t >= 1f) dZoomActive = false;
-                }
-            }
-            catch { }
         }
 
         if (state == DeathCamState.Inactive)

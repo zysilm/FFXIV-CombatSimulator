@@ -585,6 +585,14 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Show a floating toolbar to quickly switch between death cam presets.");
 
+            var showAcToolbar = config.ShowActiveCamToolbar;
+            if (ImGui.Checkbox("Show Active Cam Toolbar", ref showAcToolbar))
+            {
+                config.ShowActiveCamToolbar = showAcToolbar;
+                config.Save();
+            }
+            HelpMarker("Show a floating toolbar to quickly adjust active camera bone, zoom, and offsets.");
+
             // Custom player name
             var customName = config.CustomPlayerName;
             if (ImGui.InputText("Custom Player Name", ref customName, 64))
@@ -1199,35 +1207,6 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Ragdoll body mass multiplier. Higher = heavier (resists collision). Lower = lighter (flies on impact).");
 
-            ImGui.Separator();
-
-            // --- DZoom ---
-            ImGui.Text("Death Zoom");
-            var dZoom = config.EnableDZoom;
-            if (ImGui.Checkbox("Enable DZoom##dev", ref dZoom))
-            {
-                config.EnableDZoom = dZoom;
-                config.Save();
-            }
-            HelpMarker("Smoothly zoom the camera to a close distance on character death.");
-
-            if (config.EnableDZoom)
-            {
-                var dZoomTarget = config.DZoomTargetDistance;
-                if (ImGui.SliderFloat("Target Distance##dzoom", ref dZoomTarget, 0.5f, 5.0f, "%.1f"))
-                {
-                    config.DZoomTargetDistance = dZoomTarget;
-                    config.Save();
-                }
-
-                var dZoomDuration = config.DZoomDuration;
-                if (ImGui.SliderFloat("Duration (s)##dzoom", ref dZoomDuration, 0.5f, 10.0f, "%.1f"))
-                {
-                    config.DZoomDuration = dZoomDuration;
-                    config.Save();
-                }
-            }
-
             ImGui.Unindent();
         }
     }
@@ -1432,6 +1411,63 @@ public class MainWindow : IDisposable
             LoadPreset(presets[selectedPresetIndex]);
         }
         if (atEnd) ImGui.EndDisabled();
+
+        ImGui.End();
+    }
+
+    public void DrawActiveCamToolbar()
+    {
+        if (!ImGui.Begin("Active Cam", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.End();
+            return;
+        }
+
+        // Bone selector (compact combo)
+        var bones = ActiveCameraController.CenterBones;
+        int boneIdx = 0;
+        for (int b = 0; b < bones.Length; b++)
+            if (bones[b].BoneName == config.ActiveCameraBoneName) { boneIdx = b; break; }
+
+        var boneLabels = new string[bones.Length];
+        for (int b = 0; b < bones.Length; b++)
+            boneLabels[b] = bones[b].Label;
+
+        ImGui.SetNextItemWidth(100);
+        if (ImGui.Combo("##acbone", ref boneIdx, boneLabels, boneLabels.Length))
+        {
+            config.ActiveCameraBoneName = bones[boneIdx].BoneName;
+            config.Save();
+        }
+
+        // Height offset
+        ImGui.SameLine();
+        var height = config.ActiveCameraHeightOffset;
+        ImGui.SetNextItemWidth(60);
+        if (ImGui.DragFloat("H##actb", ref height, 0.01f, -5f, 10f, "%.2f"))
+        {
+            config.ActiveCameraHeightOffset = height;
+            config.Save();
+        }
+
+        // Side offset
+        ImGui.SameLine();
+        var side = config.ActiveCameraSideOffset;
+        ImGui.SetNextItemWidth(60);
+        if (ImGui.DragFloat("S##actb", ref side, 0.01f, -5f, 5f, "%.2f"))
+        {
+            config.ActiveCameraSideOffset = side;
+            config.Save();
+        }
+
+        // Close zoom toggle
+        ImGui.SameLine();
+        var closeZoom = config.ActiveCameraCloseZoom;
+        if (ImGui.Checkbox("Zoom##actb", ref closeZoom))
+        {
+            config.ActiveCameraCloseZoom = closeZoom;
+            config.Save();
+        }
 
         ImGui.End();
     }

@@ -200,6 +200,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         if (config.ShowDeathCamToolbar)
             mainWindow.DrawDeathCamToolbar();
 
+        if (config.ShowActiveCamToolbar)
+            mainWindow.DrawActiveCamToolbar();
+
         if (config.ShowMainWindow)
             mainWindow.Draw();
 
