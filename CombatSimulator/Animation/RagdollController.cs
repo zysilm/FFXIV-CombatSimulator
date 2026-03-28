@@ -1160,28 +1160,24 @@ public unsafe class RagdollController : IDisposable
             catch { }
         }
 
-        // Settle collision: after the delay, disable sleep on all ragdoll bodies so
-        // they remain in the active collision set permanently. BEPU2 docs:
-        // "Setting SleepThreshold to a negative value guarantees the body cannot
-        //  go to sleep without user action."
-        // We also wake any already-sleeping bodies once when first applying this.
+        // Settle collision: after the delay, re-initialize the entire physics simulation.
+        // Modifying sleep thresholds or calling AwakenBody on settled bodies doesn't work
+        // reliably in BEPU2. The only proven approach is what Activate/InitializePhysics does:
+        // create fresh bodies from the current pose. This re-reads bone positions (now in the
+        // settled pose) and creates new active bodies that naturally collide with NPC statics.
         if (config.RagdollNpcSettleCollision && npcCollisionStates.Count > 0
             && elapsed >= config.RagdollNpcSettleDelay && !settleApplied)
         {
             settleApplied = true;
-            log.Info("RagdollController: Settle collision active — disabling sleep on all bodies");
-            for (int i = 0; i < ragdollBones.Count; i++)
+            log.Info("RagdollController: Settle collision — re-initializing physics from settled pose");
+            DestroySimulation();
+            if (!InitializePhysics())
             {
-                var handle = ragdollBones[i].BodyHandle;
-                // Wake first (moves body from sleeping set to active set)
-                var bodyRef = simulation.Bodies.GetBodyReference(handle);
-                if (!bodyRef.Awake)
-                    simulation.Awakener.AwakenBody(handle);
-                // Re-get reference (body may have moved between sets)
-                bodyRef = simulation.Bodies.GetBodyReference(handle);
-                // Disable sleep permanently — negative threshold = never sleeps
-                bodyRef.Activity.SleepThreshold = -1f;
+                log.Warning("RagdollController: Settle re-init failed");
+                return;
             }
+            // Don't step this frame — let the fresh simulation settle one tick first
+            return;
         }
 
         // Step physics
