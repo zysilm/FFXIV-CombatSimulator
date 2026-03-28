@@ -197,12 +197,14 @@ def evaluate(init_bones, settled, ground_y, skel_rot=None):
     penalties['joint_angles'] = min(joint_penalty, 15)
 
     # ===== 4b. KNEE BEND DIRECTION =====
-    # Knees must bend in the same direction as the init (death animation) pose.
-    # The death animation has knees bent correctly. If the settled pose has the
-    # bend axis reversed (cross product flipped), the knee is hyperextended.
+    # Derive "forward" from the body's own geometry (spine direction),
+    # not from skeleton rotation convention or init pose comparison.
     #
-    # Method: cross(thigh, shin) gives the bend axis. Compare init vs settled.
-    # If the dot product of the two cross products is negative, the bend reversed.
+    # For each knee:
+    #   body_axis = normalize(neck - pelvis) — spine direction
+    #   hinge_axis = cross(thigh_dir, body_axis) — lateral axis
+    #   forward = cross(hinge_axis, thigh_dir) — "forward" in bend plane
+    #   If dot(shin, forward) > 0 → shin goes forward = hyperextension
     knee_bend = {}
     knee_bend_penalty = 0
     knee_chains = [
@@ -210,56 +212,53 @@ def evaluate(init_bones, settled, ground_y, skel_rot=None):
         ('j_asi_a_r', 'j_asi_b_r', 'j_asi_c_r', 'R.Knee'),
     ]
 
+    # Body axis from spine (pelvis → neck/chest area)
+    body_axis = np.zeros(3)
+    if 'j_kosi' in pos and 'j_kubi' in pos:
+        body_axis = pos['j_kubi'] - pos['j_kosi']
+        ba_len = np.linalg.norm(body_axis)
+        if ba_len > 0.01:
+            body_axis = body_axis / ba_len
+
     for hip_name, knee_name, foot_name, label in knee_chains:
         if hip_name not in pos or knee_name not in pos or foot_name not in pos:
             continue
-        if hip_name not in init_bones or knee_name not in init_bones or foot_name not in init_bones:
-            continue
 
-        # Settled vectors
         thigh = pos[knee_name] - pos[hip_name]
         shin = pos[foot_name] - pos[knee_name]
         thigh_n = thigh / (np.linalg.norm(thigh) + 1e-10)
         shin_n = shin / (np.linalg.norm(shin) + 1e-10)
-        settled_cross = np.cross(thigh_n, shin_n)
-        settled_cross_len = np.linalg.norm(settled_cross)
-
-        # Init vectors
-        init_thigh = init_bones[knee_name]['bonePos'] - init_bones[hip_name]['bonePos']
-        init_shin = init_bones[foot_name]['bonePos'] - init_bones[knee_name]['bonePos']
-        init_thigh_n = init_thigh / (np.linalg.norm(init_thigh) + 1e-10)
-        init_shin_n = init_shin / (np.linalg.norm(init_shin) + 1e-10)
-        init_cross = np.cross(init_thigh_n, init_shin_n)
-        init_cross_len = np.linalg.norm(init_cross)
-
         angle = joint_angles.get(label, 180)
 
-        # Method 1: cross product reversal from init
-        cross_dot = 0.0
-        if init_cross_len > 0.05 and settled_cross_len > 0.05:
-            cross_dot = float(np.dot(init_cross / init_cross_len, settled_cross / settled_cross_len))
+        # Compute "forward" in the knee's bend plane using body geometry
+        hinge_axis = np.cross(thigh_n, body_axis)
+        hinge_len = np.linalg.norm(hinge_axis)
 
-        # Method 2: foot-above-knee check for tight bends
-        # When lying down with a tight knee bend (<90 deg), if the foot Y is
-        # higher than knee Y, the shin is folding upward = hyperextension.
-        foot_y = pos[foot_name][1]
-        knee_y = pos[knee_name][1]
-        foot_above_knee = foot_y > knee_y + 0.01  # 1cm tolerance
-
-        # Detect hyperextension from either method
         direction = 'OK'
-        if cross_dot < 0 and angle < 150:
-            direction = 'REVERSED'
-            knee_bend_penalty += 15
-        elif foot_above_knee and angle < 90:
-            # Tight bend with foot above knee = shin folding upward
-            direction = 'FOOT_ABOVE'
-            knee_bend_penalty += 15
+        fwd_dot = 0.0
+
+        if hinge_len > 0.1 and angle < 160:
+            hinge_axis = hinge_axis / hinge_len
+
+            # cross(thigh, body_axis) points LEFT for right leg, RIGHT for left leg.
+            # Ensure hinge_axis consistently points to the character's LEFT by checking
+            # which side this leg is on: if hip is to the LEFT of pelvis (in the
+            # hinge_axis direction), this is the left leg and we need to flip.
+            hip_offset = pos[hip_name] - pos['j_kosi']
+            if np.dot(hip_offset, hinge_axis) > 0:
+                hinge_axis = -hinge_axis  # flip so it always points character-left
+
+            forward = np.cross(hinge_axis, thigh_n)
+            forward = forward / (np.linalg.norm(forward) + 1e-10)
+            fwd_dot = float(np.dot(shin_n, forward))
+
+            # Positive = shin going forward = hyperextension
+            if fwd_dot > 0.15:
+                direction = 'HYPEREXTENDED'
+                knee_bend_penalty += 15
 
         knee_bend[label] = {
-            'dot': cross_dot,
-            'foot_above': foot_above_knee,
-            'foot_dy': float(foot_y - knee_y),
+            'fwd_dot': fwd_dot,
             'direction': direction,
             'angle': angle,
         }
@@ -406,10 +405,9 @@ def print_report(eval_result):
         print(f"\n--- Knee Bend Direction ---")
         for label, info in details['knee_bend_direction'].items():
             status = info['direction']
-            flag = " <<<" if status in ("REVERSED", "FOOT_ABOVE") else ""
-            dot = info.get('dot', 0)
-            foot_dy = info.get('foot_dy', 0)
-            print(f"  {label:>12}: {status} (cross_dot={dot:.3f}, foot_dY={foot_dy:+.3f}, angle={info['angle']:.1f}){flag}")
+            flag = " <<<" if status == "HYPEREXTENDED" else ""
+            fwd_dot = info.get('fwd_dot', 0)
+            print(f"  {label:>12}: {status} (fwd_dot={fwd_dot:+.3f}, angle={info['angle']:.1f}){flag}")
 
     # Segment stretch
     if details['segment_stretch']:
