@@ -46,6 +46,10 @@ public class MainWindow : IDisposable
     // Active camera bone selector state
     private int acSelectedBoneIndex = 0;
 
+    // Dev easter egg state
+    private int devClickCount = 0;
+    private bool devUnlocked = false;
+
     private static void HelpMarker(string desc)
     {
         ImGui.SameLine();
@@ -116,6 +120,7 @@ public class MainWindow : IDisposable
         DrawActiveCamSection();
         DrawDeathCamSection();
         DrawRagdollSection();
+        DrawDevSection();
 
         ImGui.End();
     }
@@ -667,14 +672,14 @@ public class MainWindow : IDisposable
             int currentBoneIdx = 0;
             for (int i = 0; i < DeathCamController.CenterBones.Length; i++)
             {
-                boneNames[i] = DeathCamController.CenterBones[i].Name;
-                if (DeathCamController.CenterBones[i].Index == config.DeathCamBoneIndex)
+                boneNames[i] = DeathCamController.CenterBones[i].Label;
+                if (DeathCamController.CenterBones[i].BoneName == config.DeathCamBoneName)
                     currentBoneIdx = i;
             }
 
             if (ImGui.Combo("Center Bone", ref currentBoneIdx, boneNames, boneNames.Length))
             {
-                config.DeathCamBoneIndex = DeathCamController.CenterBones[currentBoneIdx].Index;
+                config.DeathCamBoneName = DeathCamController.CenterBones[currentBoneIdx].BoneName;
                 config.Save();
             }
             HelpMarker("The bone the camera orbits around. Waist is recommended for stable tracking.");
@@ -758,7 +763,7 @@ public class MainWindow : IDisposable
         var preset = new DeathCamPreset
         {
             Name = name,
-            BoneIndex = config.DeathCamBoneIndex,
+            BoneName = config.DeathCamBoneName,
             DirH = config.DeathCamAnchorDirH,
             DirV = config.DeathCamAnchorDirV,
             Distance = config.DeathCamAnchorDistance,
@@ -780,7 +785,7 @@ public class MainWindow : IDisposable
 
     private void LoadPreset(DeathCamPreset preset)
     {
-        config.DeathCamBoneIndex = preset.BoneIndex;
+        config.DeathCamBoneName = preset.BoneName;
         config.DeathCamAnchorDirH = preset.DirH;
         config.DeathCamAnchorDirV = preset.DirV;
         config.DeathCamAnchorDistance = preset.Distance;
@@ -898,15 +903,15 @@ public class MainWindow : IDisposable
                 var bones = ActiveCameraController.CenterBones;
                 var boneNames = new string[bones.Length];
                 for (int b = 0; b < bones.Length; b++)
-                    boneNames[b] = bones[b].Name;
+                    boneNames[b] = bones[b].Label;
 
                 int boneIdx = 0;
                 for (int b = 0; b < bones.Length; b++)
-                    if (bones[b].Index == config.ActiveCameraBoneIndex) { boneIdx = b; break; }
+                    if (bones[b].BoneName == config.ActiveCameraBoneName) { boneIdx = b; break; }
 
                 if (ImGui.Combo("Center Bone##activecam", ref boneIdx, boneNames, boneNames.Length))
                 {
-                    config.ActiveCameraBoneIndex = bones[boneIdx].Index;
+                    config.ActiveCameraBoneName = bones[boneIdx].BoneName;
                     config.Save();
                 }
 
@@ -1042,33 +1047,6 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Body parts collide with each other (arms vs torso, legs vs legs). Prevents clipping but may cause slight stretching. Takes effect on next ragdoll activation.");
 
-                var npcCollision = config.RagdollNpcCollision;
-                if (ImGui.Checkbox("NPC Collision##ragdoll", ref npcCollision))
-                {
-                    config.RagdollNpcCollision = npcCollision;
-                    config.Save();
-                }
-                HelpMarker("Active combat targets have collision volumes. The ragdoll character can fall on and interact with NPCs. Takes effect on next ragdoll activation.");
-
-                if (config.RagdollNpcCollision)
-                {
-                    var npcRadius = config.RagdollNpcRadius;
-                    if (ImGui.SliderFloat("NPC Radius##ragdoll", ref npcRadius, 0.1f, 2.0f, "%.2f"))
-                    {
-                        config.RagdollNpcRadius = npcRadius;
-                        config.Save();
-                    }
-                    HelpMarker("Collision capsule radius for each NPC. Larger = easier to collide with but less precise.");
-                }
-
-                var massScale = config.RagdollMassScale;
-                if (ImGui.SliderFloat("Mass Scale##ragdoll", ref massScale, 0.1f, 10.0f, "%.1f"))
-                {
-                    config.RagdollMassScale = massScale;
-                    config.Save();
-                }
-                HelpMarker("Ragdoll body mass multiplier. Higher = heavier character (less affected by collisions). Lower = lighter (flies further on impact).");
-
                 ImGui.Separator();
                 if (ImGui.Button("Reset to Defaults##ragdoll"))
                 {
@@ -1085,6 +1063,96 @@ public class MainWindow : IDisposable
 
                 ImGui.Unindent();
             }
+        }
+    }
+
+    private void DrawDevSection()
+    {
+        if (ImGui.CollapsingHeader("Dev (Experimental)"))
+        {
+            if (!devUnlocked)
+            {
+                ImGui.BeginDisabled();
+                var dummy = false;
+                ImGui.Checkbox("Unlock experimental features", ref dummy);
+                ImGui.EndDisabled();
+
+                var min = ImGui.GetItemRectMin();
+                var max = ImGui.GetItemRectMax();
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                {
+                    var mousePos = ImGui.GetMousePos();
+                    if (mousePos.X >= min.X && mousePos.X <= max.X &&
+                        mousePos.Y >= min.Y && mousePos.Y <= max.Y)
+                    {
+                        devClickCount++;
+                        if (devClickCount >= 13)
+                            devUnlocked = true;
+                    }
+                }
+                return;
+            }
+
+            ImGui.Indent();
+
+            // --- NPC Collision ---
+            ImGui.Text("NPC Collision");
+            var npcCollision = config.RagdollNpcCollision;
+            if (ImGui.Checkbox("Enable NPC Collision##dev", ref npcCollision))
+            {
+                config.RagdollNpcCollision = npcCollision;
+                config.Save();
+            }
+            HelpMarker("Active combat targets have collision volumes for ragdoll interaction.");
+
+            if (config.RagdollNpcCollision)
+            {
+                var npcRadius = config.RagdollNpcRadius;
+                if (ImGui.SliderFloat("NPC Radius##dev", ref npcRadius, 0.1f, 2.0f, "%.2f"))
+                {
+                    config.RagdollNpcRadius = npcRadius;
+                    config.Save();
+                }
+            }
+
+            var massScale = config.RagdollMassScale;
+            if (ImGui.SliderFloat("Mass Scale##dev", ref massScale, 0.1f, 10.0f, "%.1f"))
+            {
+                config.RagdollMassScale = massScale;
+                config.Save();
+            }
+            HelpMarker("Ragdoll body mass multiplier. Higher = heavier (resists collision). Lower = lighter (flies on impact).");
+
+            ImGui.Separator();
+
+            // --- DZoom ---
+            ImGui.Text("Death Zoom");
+            var dZoom = config.EnableDZoom;
+            if (ImGui.Checkbox("Enable DZoom##dev", ref dZoom))
+            {
+                config.EnableDZoom = dZoom;
+                config.Save();
+            }
+            HelpMarker("Smoothly zoom the camera to a close distance on character death.");
+
+            if (config.EnableDZoom)
+            {
+                var dZoomTarget = config.DZoomTargetDistance;
+                if (ImGui.SliderFloat("Target Distance##dzoom", ref dZoomTarget, 0.5f, 5.0f, "%.1f"))
+                {
+                    config.DZoomTargetDistance = dZoomTarget;
+                    config.Save();
+                }
+
+                var dZoomDuration = config.DZoomDuration;
+                if (ImGui.SliderFloat("Duration (s)##dzoom", ref dZoomDuration, 0.5f, 10.0f, "%.1f"))
+                {
+                    config.DZoomDuration = dZoomDuration;
+                    config.Save();
+                }
+            }
+
+            ImGui.Unindent();
         }
     }
 
@@ -1301,7 +1369,7 @@ public class MainWindow : IDisposable
         {
             acSelectedBoneIndex = 0;
             for (int b = 0; b < bones.Length; b++)
-                if (bones[b].Index == config.ActiveCameraBoneIndex) { acSelectedBoneIndex = b; break; }
+                if (bones[b].BoneName == config.ActiveCameraBoneName) { acSelectedBoneIndex = b; break; }
         }
 
         ImGui.SetNextWindowSize(new Vector2(300, 0), ImGuiCond.FirstUseEver);
@@ -1318,14 +1386,14 @@ public class MainWindow : IDisposable
         if (ImGui.Button("<##ac", arrowSize))
         {
             acSelectedBoneIndex--;
-            config.ActiveCameraBoneIndex = bones[acSelectedBoneIndex].Index;
+            config.ActiveCameraBoneName = bones[acSelectedBoneIndex].BoneName;
             config.Save();
         }
         if (atStart) ImGui.EndDisabled();
 
         ImGui.SameLine();
 
-        var boneName = bones[acSelectedBoneIndex].Name;
+        var boneName = bones[acSelectedBoneIndex].Label;
         var avail = ImGui.GetContentRegionAvail().X - arrowSize.X - ImGui.GetStyle().ItemSpacing.X;
         var textSize = ImGui.CalcTextSize(boneName).X;
         var pad = (avail - textSize) * 0.5f;
@@ -1341,7 +1409,7 @@ public class MainWindow : IDisposable
         if (ImGui.Button(">##ac", arrowSize))
         {
             acSelectedBoneIndex++;
-            config.ActiveCameraBoneIndex = bones[acSelectedBoneIndex].Index;
+            config.ActiveCameraBoneName = bones[acSelectedBoneIndex].BoneName;
             config.Save();
         }
         if (atEnd) ImGui.EndDisabled();

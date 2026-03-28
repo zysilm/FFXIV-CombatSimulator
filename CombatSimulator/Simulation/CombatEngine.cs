@@ -657,6 +657,7 @@ public class CombatEngine : IDisposable
                 animationController.PlayVictory(isPlayerVictory: false);
                 ApplyGlamourer();
                 deathCamController?.Activate();
+                deathCamController?.StartDZoom();
 
                 // Activate ragdoll physics on player death
                 if (config.EnableRagdoll)

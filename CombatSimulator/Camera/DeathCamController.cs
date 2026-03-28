@@ -18,15 +18,15 @@ public enum DeathCamState
 
 public unsafe class DeathCamController : IDisposable
 {
-    public static readonly (string Name, int Index)[] CenterBones =
+    public static readonly (string Label, string BoneName)[] CenterBones =
     {
-        ("n_hara (Waist)", 1),
-        ("j_kosi (Hips)", 2),
-        ("j_sebo_a (Lower Spine)", 3),
-        ("j_sebo_b (Mid Spine)", 4),
-        ("j_sebo_c (Upper Spine)", 5),
-        ("j_kubi (Neck)", 8),
-        ("j_kao (Head)", 9),
+        ("Waist (n_hara)", "n_hara"),
+        ("Hips (j_kosi)", "j_kosi"),
+        ("Lower Spine (j_sebo_a)", "j_sebo_a"),
+        ("Mid Spine (j_sebo_b)", "j_sebo_b"),
+        ("Upper Spine (j_sebo_c)", "j_sebo_c"),
+        ("Neck (j_kubi)", "j_kubi"),
+        ("Head (j_kao)", "j_kao"),
     };
 
     private readonly IClientState clientState;
@@ -37,6 +37,11 @@ public unsafe class DeathCamController : IDisposable
 
     private DeathCamState state = DeathCamState.Inactive;
     private float interpElapsed;
+
+    // DZoom state — smooth zoom to target distance on death
+    private bool dZoomActive;
+    private float dZoomElapsed;
+    private float dZoomStartDistance;
 
     // Interpolation start values (captured at activation)
     private float startDirH;
@@ -212,7 +217,7 @@ public unsafe class DeathCamController : IDisposable
             if (state != DeathCamState.Inactive)
             {
                 // Death cam: override look-at to follow bone
-                var bonePos = GetBoneWorldPosition(config.DeathCamBoneIndex);
+                var bonePos = GetBoneWorldPosition(config.DeathCamBoneName);
                 if (bonePos == null)
                 {
                     var player = clientState.LocalPlayer;
@@ -280,7 +285,7 @@ public unsafe class DeathCamController : IDisposable
     /// Get the world position of a bone on the local player character.
     /// Returns null if the bone cannot be read.
     /// </summary>
-    public Vector3? GetBoneWorldPosition(int boneIndex)
+    public Vector3? GetBoneWorldPosition(string boneName)
     {
         try
         {
@@ -303,17 +308,30 @@ public unsafe class DeathCamController : IDisposable
             var pose = partialSkeleton->GetHavokPose(0);
             if (pose == null) return null;
 
-            var modelPose = pose->GetSyncedPoseModelSpace();
-            if (modelPose == null || modelPose->Length <= boneIndex || boneIndex < 0) return null;
+            // Resolve bone name to index by iterating the skeleton's bones
+            var havokSkeleton = pose->Skeleton;
+            if (havokSkeleton == null) return null;
 
-            // Read bone position in model space
+            int boneIndex = -1;
+            for (int i = 0; i < havokSkeleton->Bones.Length; i++)
+            {
+                if (havokSkeleton->Bones[i].Name.String == boneName)
+                {
+                    boneIndex = i;
+                    break;
+                }
+            }
+            if (boneIndex < 0) return null;
+
+            var modelPose = pose->GetSyncedPoseModelSpace();
+            if (modelPose == null || modelPose->Length <= boneIndex) return null;
+
             var boneTransform = modelPose->Data[boneIndex];
             var boneModelPos = new Vector3(
                 boneTransform.Translation.X,
                 boneTransform.Translation.Y,
                 boneTransform.Translation.Z);
 
-            // Transform to world space using skeleton transform
             var skeletonPos = new Vector3(
                 skeleton->Transform.Position.X,
                 skeleton->Transform.Position.Y,
@@ -324,12 +342,11 @@ public unsafe class DeathCamController : IDisposable
                 skeleton->Transform.Rotation.Z,
                 skeleton->Transform.Rotation.W);
 
-            var worldPos = skeletonPos + Vector3.Transform(boneModelPos, skeletonRot);
-            return worldPos;
+            return skeletonPos + Vector3.Transform(boneModelPos, skeletonRot);
         }
         catch (Exception ex)
         {
-            log.Warning(ex, "Failed to read bone world position.");
+            log.Warning(ex, $"Failed to read bone '{boneName}' world position.");
             return null;
         }
     }
@@ -368,7 +385,7 @@ public unsafe class DeathCamController : IDisposable
                 return false;
             }
 
-            var bonePos = GetBoneWorldPosition(config.DeathCamBoneIndex);
+            var bonePos = GetBoneWorldPosition(config.DeathCamBoneName);
             if (bonePos == null)
             {
                 log.Warning("DeathCam: Cannot set anchor — bone position not readable.");
@@ -431,6 +448,25 @@ public unsafe class DeathCamController : IDisposable
     }
 
     /// <summary>
+    /// Start DZoom: smoothly zoom from current distance to target distance.
+    /// Called on death, independent of whether DeathCam is enabled.
+    /// </summary>
+    public void StartDZoom()
+    {
+        if (!config.EnableDZoom) return;
+        try
+        {
+            var camMgr = GameCameraManager.Instance();
+            if (camMgr == null || camMgr->Camera == null) return;
+            dZoomStartDistance = camMgr->Camera->Distance;
+            dZoomElapsed = 0;
+            dZoomActive = true;
+            log.Info($"DeathCam: DZoom started from {dZoomStartDistance:F2} to {config.DZoomTargetDistance:F2} over {config.DZoomDuration:F1}s");
+        }
+        catch { }
+    }
+
+    /// <summary>
     /// Restore the game camera's original limits that we overrode.
     /// </summary>
     private void RestoreCameraLimits()
@@ -473,6 +509,7 @@ public unsafe class DeathCamController : IDisposable
             return;
 
         state = DeathCamState.Inactive;
+        dZoomActive = false;
         DisableCollisionPatch();
         RestoreCameraLimits();
         log.Info("DeathCam: Deactivated.");
@@ -580,6 +617,26 @@ public unsafe class DeathCamController : IDisposable
                 log.Warning(ex, "DeathCam: Error during preview tick.");
             }
             return;
+        }
+
+        // DZoom: smooth zoom toward target distance (works independently of death cam)
+        if (dZoomActive)
+        {
+            try
+            {
+                var camMgr2 = GameCameraManager.Instance();
+                if (camMgr2 != null && camMgr2->Camera != null)
+                {
+                    dZoomElapsed += deltaTime;
+                    float t = Math.Clamp(dZoomElapsed / config.DZoomDuration, 0f, 1f);
+                    float smooth = t * t * (3f - 2f * t);
+                    float dist = dZoomStartDistance + (config.DZoomTargetDistance - dZoomStartDistance) * smooth;
+                    camMgr2->Camera->Distance = dist;
+                    camMgr2->Camera->InterpDistance = dist;
+                    if (t >= 1f) dZoomActive = false;
+                }
+            }
+            catch { }
         }
 
         if (state == DeathCamState.Inactive)

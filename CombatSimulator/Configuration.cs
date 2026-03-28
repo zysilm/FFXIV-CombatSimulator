@@ -9,7 +9,7 @@ namespace CombatSimulator;
 public class DeathCamPreset
 {
     public string Name { get; set; } = "";
-    public int BoneIndex { get; set; } = 1;
+    public string BoneName { get; set; } = "n_hara";
     public float DirH { get; set; } = 0;
     public float DirV { get; set; } = 0;
     public float Distance { get; set; } = 5.0f;
@@ -93,13 +93,17 @@ public class Configuration : IPluginConfiguration
     public float RagdollDamping { get; set; } = 0.97f;
     public float RagdollFloorOffset { get; set; } = 0.1f;  // Lower terrain by this amount to avoid joint-floor collision artifacts
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
-    public bool RagdollNpcCollision { get; set; } = true; // Active targets have collision volumes
-    public float RagdollNpcRadius { get; set; } = 0.3f;  // NPC collision capsule radius (meters)
-    public float RagdollMassScale { get; set; } = 1.0f;   // Ragdoll body mass multiplier
+    // Dev (Experimental) — hidden behind easter egg
+    public bool RagdollNpcCollision { get; set; } = true;
+    public float RagdollNpcRadius { get; set; } = 0.3f;
+    public float RagdollMassScale { get; set; } = 1.0f;
+    public bool EnableDZoom { get; set; } = false;
+    public float DZoomTargetDistance { get; set; } = 1.0f;
+    public float DZoomDuration { get; set; } = 2.0f;
 
     // Active Camera — camera tracks a bone with free orbital control
     public bool EnableActiveCamera { get; set; } = false;
-    public int ActiveCameraBoneIndex { get; set; } = 1;
+    public string ActiveCameraBoneName { get; set; } = "j_kubi";
     public float ActiveCameraHeightOffset { get; set; } = 0f;
     public float ActiveCameraSideOffset { get; set; } = 0f;
     public float ActiveCameraVerticalAngle { get; set; } = 0f;
@@ -117,7 +121,7 @@ public class Configuration : IPluginConfiguration
 
     // Death Cam (Experimental)
     public bool EnableDeathCam { get; set; } = false;
-    public int DeathCamBoneIndex { get; set; } = 1; // n_hara (waist)
+    public string DeathCamBoneName { get; set; } = "n_hara";
     public float DeathCamTransitionDuration { get; set; } = 1.5f;
     public float DeathCamAnchorDirH { get; set; } = 0;
     public float DeathCamAnchorDirV { get; set; } = 0;

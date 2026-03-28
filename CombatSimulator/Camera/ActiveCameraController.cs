@@ -16,7 +16,7 @@ namespace CombatSimulator.Camera;
 public unsafe class ActiveCameraController : IDisposable
 {
     // Same bone list as DeathCamController for consistency
-    public static readonly (string Name, int Index)[] CenterBones = DeathCamController.CenterBones;
+    public static readonly (string Label, string BoneName)[] CenterBones = DeathCamController.CenterBones;
 
     private readonly IClientState clientState;
     private readonly IGameInteropProvider gameInterop;
@@ -133,7 +133,7 @@ public unsafe class ActiveCameraController : IDisposable
 
         try
         {
-            var bonePos = GetBoneWorldPosition(config.ActiveCameraBoneIndex);
+            var bonePos = GetBoneWorldPosition(config.ActiveCameraBoneName);
             if (bonePos == null) return;
 
             var pos = bonePos.Value;
@@ -223,7 +223,7 @@ public unsafe class ActiveCameraController : IDisposable
         }
     }
 
-    private Vector3? GetBoneWorldPosition(int boneIndex)
+    private Vector3? GetBoneWorldPosition(string boneName)
     {
         try
         {
@@ -244,8 +244,22 @@ public unsafe class ActiveCameraController : IDisposable
             var pose = partialSkeleton->GetHavokPose(0);
             if (pose == null) return null;
 
+            var havokSkeleton = pose->Skeleton;
+            if (havokSkeleton == null) return null;
+
+            int boneIndex = -1;
+            for (int i = 0; i < havokSkeleton->Bones.Length; i++)
+            {
+                if (havokSkeleton->Bones[i].Name.String == boneName)
+                {
+                    boneIndex = i;
+                    break;
+                }
+            }
+            if (boneIndex < 0) return null;
+
             var modelPose = pose->GetSyncedPoseModelSpace();
-            if (modelPose == null || modelPose->Length <= boneIndex || boneIndex < 0) return null;
+            if (modelPose == null || modelPose->Length <= boneIndex) return null;
 
             var boneTransform = modelPose->Data[boneIndex];
             var boneModelPos = new Vector3(
