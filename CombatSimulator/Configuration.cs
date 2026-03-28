@@ -98,7 +98,6 @@ public class Configuration : IPluginConfiguration
     public bool RagdollTightKneeLimits { get; set; } = false; // Tight swing limits on knees/elbows (prevents hyperextension but reduces range of motion)
     public float RagdollJointStiffness { get; set; } = 1.0f; // Multiplier for joint constraint strength
     // Dev (Experimental) — hidden behind easter egg
-    public bool NpcAttackAfterDeath { get; set; } = false;
     public bool RagdollNpcCollision { get; set; } = false;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcSettleCollision { get; set; } = false;
