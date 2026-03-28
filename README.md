@@ -26,11 +26,12 @@ Open Dalamud Settings in-game (`/xlsettings`) and follow these steps:
 - **HP Bar Overlays** — Enemy and player simulated HP bars rendered in-world
 - **Combat Log** — Scrollable log of all combat events
 - **Shortcuts Bar** — Optional floating bar with Start, Reset All, and Reboot buttons
-- **Death Effects** — Ragdoll physics (BEPUphysics2) on character death with 18-bone capsule ragdoll, per-joint anatomical limits, self-collision, and ground contact
-- **Active Camera** — Camera tracks a selected bone with free orbital control, height/side offsets, vertical angle lock, and collision disable (Cammy-style getCameraPosition hook)
-- **Death Cam** — Cinematic camera that smoothly transitions to an anchored position on player death, with configurable height/side offsets and bone tracking
+- **Death Effects** — Ragdoll physics (BEPUphysics2) on character death with 18-bone capsule ragdoll, per-joint anatomical limits, one-sided knee hyperextension prevention, self-collision, and ground contact
+- **Active Camera** — Camera tracks a selected bone with free orbital control, height/side offsets, vertical angle lock, and collision disable. Camera system inspired by [Cammy](https://github.com/UnknownX7/Cammy) (getCameraPosition hook pattern)
+- **Death Cam** — Cinematic camera that smoothly transitions to an anchored position on player death, with configurable height/side offsets, bone tracking, and smooth follow. Camera system inspired by [Cammy](https://github.com/UnknownX7/Cammy)
 - **Hit VFX** — Configurable visual effects on player when taking damage
 - **Glamourer Integration** — Apply glamourer presets on death and on reset
+- **Sidebar UI** — Tabbed layout with draggable sidebar for easy navigation
 - **Network Safe** — All combat is client-side only; UseAction hook prevents any server packets
 
 ## Usage
@@ -57,6 +58,11 @@ dotnet build CombatSimulator/CombatSimulator.csproj -c Release
 ```
 
 Requires .NET 8.0 SDK and Dalamud.
+
+## Credits
+
+- Camera system (Active Camera, Death Cam) inspired by [Cammy](https://github.com/UnknownX7/Cammy) by UnknownX7
+- Ragdoll physics powered by [BEPUphysics2](https://github.com/bepu/bepuphysics2) by Ross Nordby
 
 ## Safety
 
