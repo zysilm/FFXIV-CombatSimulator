@@ -31,6 +31,7 @@ public unsafe class RagdollController : IDisposable
     private float elapsed;
     private float activationDelay;
     private bool physicsStarted;
+    private bool settleApplied; // true once sleep has been disabled for settle collision
 
     // Skeleton world transform (captured at activation from Skeleton.Transform)
     // ModelPose is in skeleton-local space; these convert to/from world space.
@@ -197,6 +198,7 @@ public unsafe class RagdollController : IDisposable
         activationDelay = config.RagdollActivationDelay;
         elapsed = 0f;
         physicsStarted = false;
+        settleApplied = false;
         isActive = true;
 
         log.Info($"RagdollController: Activated (delay={activationDelay:F1}s)");
@@ -1158,18 +1160,27 @@ public unsafe class RagdollController : IDisposable
             catch { }
         }
 
-        // Settle collision: after a configurable delay, keep all ragdoll bodies awake
-        // so they continue reacting to NPC bone statics. BEPU2 sleeping bodies are
-        // completely inert — removed from collision detection entirely — so we must
-        // prevent sleep to maintain reactivity.
+        // Settle collision: after the delay, disable sleep on all ragdoll bodies so
+        // they remain in the active collision set permanently. BEPU2 docs:
+        // "Setting SleepThreshold to a negative value guarantees the body cannot
+        //  go to sleep without user action."
+        // We also wake any already-sleeping bodies once when first applying this.
         if (config.RagdollNpcSettleCollision && npcCollisionStates.Count > 0
-            && elapsed >= config.RagdollNpcSettleDelay)
+            && elapsed >= config.RagdollNpcSettleDelay && !settleApplied)
         {
+            settleApplied = true;
+            log.Info("RagdollController: Settle collision active — disabling sleep on all bodies");
             for (int i = 0; i < ragdollBones.Count; i++)
             {
-                var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
+                var handle = ragdollBones[i].BodyHandle;
+                // Wake first (moves body from sleeping set to active set)
+                var bodyRef = simulation.Bodies.GetBodyReference(handle);
                 if (!bodyRef.Awake)
-                    simulation.Awakener.AwakenBody(ragdollBones[i].BodyHandle);
+                    simulation.Awakener.AwakenBody(handle);
+                // Re-get reference (body may have moved between sets)
+                bodyRef = simulation.Bodies.GetBodyReference(handle);
+                // Disable sleep permanently — negative threshold = never sleeps
+                bodyRef.Activity.SleepThreshold = -1f;
             }
         }
 
