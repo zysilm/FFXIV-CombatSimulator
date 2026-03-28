@@ -33,6 +33,10 @@ public unsafe class ActiveCameraController : IDisposable
     private static readonly byte[] CollisionPatchBytes = { 0x30, 0xC0, 0x90, 0x90, 0x90 };
     private bool collisionPatchActive;
 
+    // Camera distance override — allow closer zoom when active
+    private float savedMinDistance;
+    private bool distanceOverridden;
+
     public bool IsActive { get; private set; }
 
     public ActiveCameraController(IGameInteropProvider gameInterop, IClientState clientState,
@@ -69,8 +73,22 @@ public unsafe class ActiveCameraController : IDisposable
         if (!on)
         {
             DisableCollisionPatch();
+            RestoreMinDistance();
         }
         log.Info($"ActiveCamera: {(on ? "ON" : "OFF")}");
+    }
+
+    private void RestoreMinDistance()
+    {
+        if (!distanceOverridden) return;
+        try
+        {
+            var camMgr = GameCameraManager.Instance();
+            if (camMgr != null && camMgr->Camera != null)
+                camMgr->Camera->MinDistance = savedMinDistance;
+        }
+        catch { }
+        distanceOverridden = false;
     }
 
     /// <summary>
@@ -154,8 +172,8 @@ public unsafe class ActiveCameraController : IDisposable
         else if (!wantCollision && collisionPatchActive)
             DisableCollisionPatch();
 
-        // Lock vertical angle
-        if (IsActive && config.ActiveCameraLockVertical)
+        // Camera distance + vertical angle overrides
+        if (IsActive)
         {
             try
             {
@@ -163,12 +181,37 @@ public unsafe class ActiveCameraController : IDisposable
                 if (camMgr != null && camMgr->Camera != null)
                 {
                     var gameCam = camMgr->Camera;
-                    gameCam->DirV = config.ActiveCameraVerticalAngle;
-                    gameCam->InputDeltaV = 0;
-                    gameCam->InputDeltaVAdjusted = 0;
+
+                    // Allow closer zoom (lower min distance from default ~1.5 to 0)
+                    if (!distanceOverridden)
+                    {
+                        savedMinDistance = gameCam->MinDistance;
+                        distanceOverridden = true;
+                    }
+                    gameCam->MinDistance = 0f;
+
+                    // Lock vertical angle if configured
+                    if (config.ActiveCameraLockVertical)
+                    {
+                        gameCam->DirV = config.ActiveCameraVerticalAngle;
+                        gameCam->InputDeltaV = 0;
+                        gameCam->InputDeltaVAdjusted = 0;
+                    }
                 }
             }
             catch { }
+        }
+        else if (distanceOverridden)
+        {
+            // Restore original min distance
+            try
+            {
+                var camMgr = GameCameraManager.Instance();
+                if (camMgr != null && camMgr->Camera != null)
+                    camMgr->Camera->MinDistance = savedMinDistance;
+            }
+            catch { }
+            distanceOverridden = false;
         }
     }
 
@@ -247,6 +290,7 @@ public unsafe class ActiveCameraController : IDisposable
     public void Dispose()
     {
         SetActive(false);
+        RestoreMinDistance();
         getCameraPosHook?.Dispose();
     }
 }
