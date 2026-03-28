@@ -91,7 +91,7 @@ public class Configuration : IPluginConfiguration
     public float RagdollActivationDelay { get; set; } = 1.0f;
     public float RagdollGravity { get; set; } = 9.8f;
     public float RagdollDamping { get; set; } = 0.97f;
-    public float RagdollFloorOffset { get; set; } = 0.1f;  // Lower terrain by this amount to avoid joint-floor collision artifacts
+    public float RagdollFloorOffset { get; set; } = 0f;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollNpcCollision { get; set; } = false;
