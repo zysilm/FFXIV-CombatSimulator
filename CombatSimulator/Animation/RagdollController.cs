@@ -600,6 +600,14 @@ public unsafe class RagdollController : IDisposable
         foreach (var rb in ragdollBones)
             boneIdxToBodyHandle[rb.BoneIndex] = rb.BodyHandle;
 
+        // Settle stiffness: when NPC settle collision is active, multiply constraint
+        // spring frequencies and motor damping to resist NPC collision forces.
+        var stiffness = (config.RagdollNpcSettleCollision && config.RagdollNpcCollision)
+            ? config.RagdollNpcSettleStiffness : 1f;
+        var jointSpring = new SpringSettings(30 * stiffness, 1);
+        var limitSpring = new SpringSettings(15 * stiffness, 1);
+        var motorDamping = 0.01f * stiffness;
+
         for (int i = 0; i < ragdollBones.Count; i++)
         {
             var rb = ragdollBones[i];
@@ -670,7 +678,7 @@ public unsafe class RagdollController : IDisposable
                         LocalHingeAxisA = hingeAxisLocalChild,
                         LocalOffsetB = parentLocalAnchor,
                         LocalHingeAxisB = hingeAxisLocalParent,
-                        SpringSettings = new SpringSettings(30, 1),
+                        SpringSettings = jointSpring,
                     });
 
                 // SwingLimit as bending range for the hinge (BEPU RagdollDemo pattern).
@@ -714,7 +722,7 @@ public unsafe class RagdollController : IDisposable
                             AxisLocalA = swingAxisLocalChild,   // child body = A (matches Hinge body order)
                             AxisLocalB = swingAxisLocalParent,  // parent body = B
                             MaximumSwingAngle = effectiveSwingLimit,
-                            SpringSettings = new SpringSettings(15, 1),
+                            SpringSettings = limitSpring,
                         });
 
                     log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad dot={Vector3.Dot(forwardWorld, segDirWorld):F3}");
@@ -743,7 +751,7 @@ public unsafe class RagdollController : IDisposable
                             LocalBasisB = twistBasisLocalParent,
                             MinimumAngle = -0.1f,
                             MaximumAngle = initAngle + 0.15f,
-                            SpringSettings = new SpringSettings(15, 1),
+                            SpringSettings = limitSpring,
                         });
 
                     log.Info($"[Ragdoll Constraint] '{rb.Name}' TwistLimit: initAngle={initAngle:F2}rad min={-0.1f:F2} max={initAngle + 0.15f:F2}");
@@ -759,7 +767,7 @@ public unsafe class RagdollController : IDisposable
                     {
                         LocalOffsetA = childLocalAnchor,
                         LocalOffsetB = parentLocalAnchor,
-                        SpringSettings = new SpringSettings(30, 1),
+                        SpringSettings = jointSpring,
                     });
 
                 // SwingLimit: symmetric cone limiting deviation from initial direction
@@ -776,7 +784,7 @@ public unsafe class RagdollController : IDisposable
                             AxisLocalA = axisChildLocal,
                             AxisLocalB = axisParentLocal,
                             MaximumSwingAngle = boneDef.SwingLimit,
-                            SpringSettings = new SpringSettings(15, 1),
+                            SpringSettings = limitSpring,
                         });
                 }
 
@@ -797,7 +805,7 @@ public unsafe class RagdollController : IDisposable
                             LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis),
                             MinimumAngle = boneDef.TwistMinAngle,
                             MaximumAngle = boneDef.TwistMaxAngle,
-                            SpringSettings = new SpringSettings(15, 1),
+                            SpringSettings = limitSpring,
                         });
                 }
             }
@@ -809,7 +817,7 @@ public unsafe class RagdollController : IDisposable
                 new AngularMotor
                 {
                     TargetVelocityLocalA = Vector3.Zero,
-                    Settings = new MotorSettings(float.MaxValue, 0.01f),
+                    Settings = new MotorSettings(float.MaxValue, motorDamping),
                 });
         }
 

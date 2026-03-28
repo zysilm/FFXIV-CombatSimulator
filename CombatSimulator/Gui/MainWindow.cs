@@ -189,6 +189,7 @@ public class MainWindow : IDisposable
                     config.RagdollNpcCollisionScale = 0.0001f;
                     // NPC Collision (Settle)
                     config.RagdollNpcSettleCollision = false;
+                    config.RagdollNpcSettleStiffness = 1.0f;
                     config.Save();
                 }
                 break;
@@ -1180,6 +1181,21 @@ public class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Prevent ragdoll bodies from sleeping so they always react to NPC bones. Takes effect on next ragdoll activation.");
+
+            if (config.RagdollNpcSettleCollision)
+            {
+                ImGui.Indent();
+
+                var stiffness = config.RagdollNpcSettleStiffness;
+                if (ImGui.SliderFloat("Joint Stiffness##settle", ref stiffness, 1.0f, 20.0f, "%.1fx"))
+                {
+                    config.RagdollNpcSettleStiffness = stiffness;
+                    config.Save();
+                }
+                HelpMarker("Multiplier for joint constraint strength. Higher = body resists twisting from NPC collisions (especially waist). Takes effect on next ragdoll activation.");
+
+                ImGui.Unindent();
+            }
         }
     }
 
