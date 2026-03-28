@@ -95,9 +95,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         useActionHook.Enable();
         movementBlockHook.Enable();
 
-        // Restore active cam if it was enabled in config
-        if (config.EnableActiveCam && config.DeathCamAnchorSet)
-            deathCamController.SetActiveCam(true);
+        // Restore camera follow if it was enabled in config
+        if (config.EnableCameraFollow)
+            deathCamController.SetCameraFollow(true);
 
         // GUI
         mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, ragdollController, deathCamController, clientState, chatGui, log);
@@ -197,8 +197,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         if (config.ShowDeathCamToolbar)
             mainWindow.DrawDeathCamToolbar();
 
-        if (config.EnableActiveCam && config.ActiveCamPresets.Count > 0)
-            mainWindow.DrawActiveCamToolbar();
+        if (config.EnableCameraFollow)
+            mainWindow.DrawCameraFollowToolbar();
 
         if (config.ShowMainWindow)
             mainWindow.Draw();

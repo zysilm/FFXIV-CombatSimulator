@@ -70,7 +70,7 @@ public unsafe class DeathCamController : IDisposable
 
     public DeathCamState State => state;
     public bool IsPreviewActive { get; private set; }
-    public bool IsActiveCamMode { get; private set; }
+    public bool IsCameraFollowActive { get; private set; }
     public bool CollisionPatchAvailable => collisionPatchAddress != nint.Zero;
 
     public DeathCamController(IGameInteropProvider gameInterop, IClientState clientState, ISigScanner sigScanner, Configuration config, IPluginLog log)
@@ -201,7 +201,7 @@ public unsafe class DeathCamController : IDisposable
         if (!isGameCamera)
             return;
 
-        if (state == DeathCamState.Inactive && !IsPreviewActive && !IsActiveCamMode)
+        if (state == DeathCamState.Inactive && !IsPreviewActive && !IsCameraFollowActive)
             return;
 
         try
@@ -210,14 +210,12 @@ public unsafe class DeathCamController : IDisposable
             var sceneCam = &thisPtr->SceneCamera;
 
             float camH = gameCam->DirH;
-            // Use Active Cam config when in active cam mode, Death Cam config otherwise
-            bool useActiveCam = IsActiveCamMode && state == DeathCamState.Inactive;
-            var offset = ComputeOffsetFromCameraAngle(camH, useActiveCam);
+            var offset = ComputeOffsetFromCameraAngle(camH);
 
-            if (state != DeathCamState.Inactive || IsActiveCamMode)
+            if (state != DeathCamState.Inactive || IsCameraFollowActive)
             {
-                // Death cam / Active cam: override look-at to follow bone
-                var boneIdx = useActiveCam ? config.ActiveCamBoneIndex : config.DeathCamBoneIndex;
+                // Override look-at to follow bone. Camera follow bone takes priority over death cam bone.
+                var boneIdx = IsCameraFollowActive ? config.CameraFollowBoneIndex : config.DeathCamBoneIndex;
                 var bonePos = GetBoneWorldPosition(boneIdx);
                 if (bonePos == null)
                 {
@@ -475,11 +473,10 @@ public unsafe class DeathCamController : IDisposable
     /// </summary>
     public void Deactivate()
     {
-        if (state == DeathCamState.Inactive && !IsActiveCamMode)
+        if (state == DeathCamState.Inactive)
             return;
 
         state = DeathCamState.Inactive;
-        IsActiveCamMode = false;
         DisableCollisionPatch();
         RestoreCameraLimits();
         log.Info("DeathCam: Deactivated.");
@@ -489,22 +486,10 @@ public unsafe class DeathCamController : IDisposable
     /// Toggle active cam mode: same camera behavior as death cam but independent of death state.
     /// When death cam activates (character dies), it takes priority. Active cam resumes after reset.
     /// </summary>
-    public void SetActiveCam(bool on)
+    public void SetCameraFollow(bool on)
     {
-        IsActiveCamMode = on;
-        if (on)
-        {
-            log.Info("DeathCam: Active cam ON.");
-        }
-        else
-        {
-            if (state == DeathCamState.Inactive && !IsPreviewActive)
-            {
-                DisableCollisionPatch();
-                RestoreCameraLimits();
-            }
-            log.Info("DeathCam: Active cam OFF.");
-        }
+        IsCameraFollowActive = on;
+        log.Info($"DeathCam: Camera follow {(on ? "ON" : "OFF")}.");
     }
 
     /// <summary>
@@ -580,8 +565,7 @@ public unsafe class DeathCamController : IDisposable
         EnsureHook();
 
         // Manage collision patch: enable when death cam active + config on, disable otherwise
-        bool wantCollisionDisabled = (state != DeathCamState.Inactive && config.DeathCamDisableCollision) ||
-                                    (IsActiveCamMode && state == DeathCamState.Inactive && config.ActiveCamDisableCollision);
+        bool wantCollisionDisabled = config.DeathCamDisableCollision && state != DeathCamState.Inactive;
         if (wantCollisionDisabled && !collisionPatchActive)
             EnableCollisionPatch();
         else if (!wantCollisionDisabled && collisionPatchActive)
@@ -612,10 +596,9 @@ public unsafe class DeathCamController : IDisposable
             return;
         }
 
-        // Active cam: bone tracking is handled by the camera hook (look-at override).
-        // We do NOT call WriteCameraParams here — the user controls orbital angles
-        // freely via mouse/keyboard/controller, just like normal gameplay.
-        if (IsActiveCamMode && state == DeathCamState.Inactive)
+        // Camera follow: bone tracking is handled by the camera hook (look-at override).
+        // No WriteCameraParams — user controls orbital angles freely.
+        if (IsCameraFollowActive && state == DeathCamState.Inactive)
             return;
 
         if (state == DeathCamState.Inactive)
@@ -672,18 +655,16 @@ public unsafe class DeathCamController : IDisposable
     /// Compute the height + side offset vector using the camera's horizontal angle.
     /// Side offset is perpendicular to camera direction (matching Cammy's approach).
     /// </summary>
-    private Vector3 ComputeOffsetFromCameraAngle(float cameraHRotation, bool useActiveCam = false)
+    private Vector3 ComputeOffsetFromCameraAngle(float cameraHRotation)
     {
-        var heightOffset = useActiveCam ? config.ActiveCamHeightOffset : config.DeathCamHeightOffset;
-        var sideOffset = useActiveCam ? config.ActiveCamSideOffset : config.DeathCamSideOffset;
-        var offset = new Vector3(0, heightOffset, 0);
+        var offset = new Vector3(0, config.DeathCamHeightOffset, 0);
 
-        if (sideOffset != 0)
+        if (config.DeathCamSideOffset != 0)
         {
             // Cammy: a = currentHRotation - PI/2 (perpendicular to camera direction)
             float a = cameraHRotation - MathF.PI / 2f;
-            offset.X += -sideOffset * MathF.Sin(a);
-            offset.Z += -sideOffset * MathF.Cos(a);
+            offset.X += -config.DeathCamSideOffset * MathF.Sin(a);
+            offset.Z += -config.DeathCamSideOffset * MathF.Cos(a);
         }
 
         return offset;

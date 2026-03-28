@@ -22,17 +22,6 @@ public class DeathCamPreset
 }
 
 [Serializable]
-public class ActiveCamPreset
-{
-    public string Name { get; set; } = "";
-    public int BoneIndex { get; set; } = 1;
-    public float HeightOffset { get; set; } = 0f;
-    public float SideOffset { get; set; } = 0f;
-    public float Tilt { get; set; } = 0f;
-    public bool DisableCollision { get; set; } = true;
-}
-
-[Serializable]
 public class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
@@ -105,14 +94,9 @@ public class Configuration : IPluginConfiguration
     public float RagdollFloorOffset { get; set; } = 0.1f;  // Lower terrain by this amount to avoid joint-floor collision artifacts
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
 
-    // Active Cam — camera tracks bone while character is alive, user controls orbital angles
-    public bool EnableActiveCam { get; set; } = false;
-    public int ActiveCamBoneIndex { get; set; } = 1;
-    public float ActiveCamHeightOffset { get; set; } = 0f;
-    public float ActiveCamSideOffset { get; set; } = 0f;
-    public float ActiveCamTilt { get; set; } = 0f;
-    public bool ActiveCamDisableCollision { get; set; } = true;
-    public List<ActiveCamPreset> ActiveCamPresets { get; set; } = new();
+    // Force Camera Follow — overrides camera look-at to track a specific bone
+    public bool EnableCameraFollow { get; set; } = false;
+    public int CameraFollowBoneIndex { get; set; } = 1;
 
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
