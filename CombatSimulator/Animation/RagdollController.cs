@@ -605,7 +605,7 @@ public unsafe class RagdollController : IDisposable
                         LocalHingeAxisA = hingeAxisLocalChild,
                         LocalOffsetB = parentLocalAnchor,
                         LocalHingeAxisB = hingeAxisLocalParent,
-                        SpringSettings = new SpringSettings(15, 1),
+                        SpringSettings = new SpringSettings(30, 1),
                     });
 
                 // SwingLimit as bending range for the hinge (BEPU RagdollDemo pattern).
@@ -650,7 +650,7 @@ public unsafe class RagdollController : IDisposable
                     {
                         LocalOffsetA = childLocalAnchor,
                         LocalOffsetB = parentLocalAnchor,
-                        SpringSettings = new SpringSettings(15, 1),
+                        SpringSettings = new SpringSettings(30, 1),
                     });
 
                 // SwingLimit: symmetric cone limiting deviation from initial direction
