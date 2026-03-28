@@ -43,9 +43,6 @@ public class MainWindow : IDisposable
     private bool overwritePopupOpen = false;
     private string overwriteTargetName = "";
 
-    // Active camera bone selector state
-    private int acSelectedBoneIndex = 0;
-
     // Dev easter egg state
     private int devClickCount = 0;
     private bool devUnlocked = false;
@@ -1354,63 +1351,6 @@ public class MainWindow : IDisposable
         {
             selectedPresetIndex++;
             LoadPreset(presets[selectedPresetIndex]);
-        }
-        if (atEnd) ImGui.EndDisabled();
-
-        ImGui.End();
-    }
-
-    public void DrawActiveCameraToolbar()
-    {
-        var bones = ActiveCameraController.CenterBones;
-        if (bones.Length == 0) return;
-
-        if (acSelectedBoneIndex < 0 || acSelectedBoneIndex >= bones.Length)
-        {
-            acSelectedBoneIndex = 0;
-            for (int b = 0; b < bones.Length; b++)
-                if (bones[b].BoneName == config.ActiveCameraBoneName) { acSelectedBoneIndex = b; break; }
-        }
-
-        ImGui.SetNextWindowSize(new Vector2(300, 0), ImGuiCond.FirstUseEver);
-        if (!ImGui.Begin("Active Camera", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
-        {
-            ImGui.End();
-            return;
-        }
-
-        var arrowSize = new Vector2(28, 28);
-
-        var atStart = acSelectedBoneIndex <= 0;
-        if (atStart) ImGui.BeginDisabled();
-        if (ImGui.Button("<##ac", arrowSize))
-        {
-            acSelectedBoneIndex--;
-            config.ActiveCameraBoneName = bones[acSelectedBoneIndex].BoneName;
-            config.Save();
-        }
-        if (atStart) ImGui.EndDisabled();
-
-        ImGui.SameLine();
-
-        var boneName = bones[acSelectedBoneIndex].Label;
-        var avail = ImGui.GetContentRegionAvail().X - arrowSize.X - ImGui.GetStyle().ItemSpacing.X;
-        var textSize = ImGui.CalcTextSize(boneName).X;
-        var pad = (avail - textSize) * 0.5f;
-        if (pad > 0) ImGui.SetCursorPosX(ImGui.GetCursorPosX() + pad);
-        ImGui.AlignTextToFramePadding();
-        ImGui.Text(boneName);
-
-        ImGui.SameLine();
-        if (pad > 0) ImGui.SetCursorPosX(ImGui.GetContentRegionMax().X - arrowSize.X);
-
-        var atEnd = acSelectedBoneIndex >= bones.Length - 1;
-        if (atEnd) ImGui.BeginDisabled();
-        if (ImGui.Button(">##ac", arrowSize))
-        {
-            acSelectedBoneIndex++;
-            config.ActiveCameraBoneName = bones[acSelectedBoneIndex].BoneName;
-            config.Save();
         }
         if (atEnd) ImGui.EndDisabled();
 
