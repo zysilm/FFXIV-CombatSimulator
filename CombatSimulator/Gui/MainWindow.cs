@@ -108,6 +108,7 @@ public class MainWindow : IDisposable
         DrawGlamourerHeaderSection();
         DrawGuiSettingsSection();
         DrawDeathCamSection();
+        DrawActiveCamSection();
         DrawRagdollSection();
 
         ImGui.End();
@@ -551,19 +552,7 @@ public class MainWindow : IDisposable
             }
             HelpMarker("On player death, smoothly transition camera to an anchored position following a bone.");
 
-            var activeCam = config.EnableActiveCam;
-            if (ImGui.Checkbox("Active Cam", ref activeCam))
-            {
-                config.EnableActiveCam = activeCam;
-                config.Save();
-                if (activeCam && config.DeathCamAnchorSet)
-                    deathCamController.SetActiveCam(true);
-                else
-                    deathCamController.SetActiveCam(false);
-            }
-            HelpMarker("Use the same camera setup while alive. Shares anchor, bone, and offset settings with Death Cam. Death Cam takes priority on death.");
-
-            if (!enabled && !activeCam)
+            if (!enabled)
                 return;
 
             // --- Presets ---
@@ -880,6 +869,33 @@ public class MainWindow : IDisposable
             config.Save();
 
         ImGui.End();
+    }
+
+    private void DrawActiveCamSection()
+    {
+        if (ImGui.CollapsingHeader("Active Cam"))
+        {
+            ImGui.Indent();
+
+            var activeCam = config.EnableActiveCam;
+            if (ImGui.Checkbox("Enable Active Cam", ref activeCam))
+            {
+                config.EnableActiveCam = activeCam;
+                config.Save();
+                deathCamController.SetActiveCam(activeCam);
+            }
+            HelpMarker("Camera tracks the selected bone while alive. You control the camera angle freely with mouse/keyboard. Uses the same bone selection and offset settings as Death Cam.");
+
+            if (config.EnableActiveCam)
+            {
+                if (deathCamController.IsActiveCamMode)
+                    ImGui.TextColored(new Vector4(0.3f, 1.0f, 0.3f, 1.0f), "Active Cam: ON");
+                else
+                    ImGui.TextColored(new Vector4(1.0f, 0.5f, 0.2f, 1.0f), "Active Cam: waiting (set anchor in Death Cam first)");
+            }
+
+            ImGui.Unindent();
+        }
     }
 
     private void DrawRagdollSection()

@@ -608,30 +608,11 @@ public unsafe class DeathCamController : IDisposable
             return;
         }
 
-        // Active cam: follow bone while alive (same as Following state but independent)
-        if (IsActiveCamMode && state == DeathCamState.Inactive && config.DeathCamAnchorSet)
-        {
-            try
-            {
-                var camMgr = GameCameraManager.Instance();
-                if (camMgr == null || camMgr->Camera == null)
-                    return;
-
-                var gameCam = camMgr->Camera;
-                var facing = GetCharacterFacing();
-
-                WriteCameraParams(gameCam,
-                    config.DeathCamAnchorDirH + facing,
-                    config.DeathCamAnchorDirV,
-                    config.DeathCamAnchorDistance,
-                    config.DeathCamFoV);
-            }
-            catch (Exception ex)
-            {
-                log.Warning(ex, "DeathCam: Error during active cam tick.");
-            }
+        // Active cam: bone tracking is handled by the camera hook (look-at override).
+        // We do NOT call WriteCameraParams here — the user controls orbital angles
+        // freely via mouse/keyboard/controller, just like normal gameplay.
+        if (IsActiveCamMode && state == DeathCamState.Inactive)
             return;
-        }
 
         if (state == DeathCamState.Inactive)
             return;
