@@ -27,7 +27,11 @@ Open Dalamud Settings in-game (`/xlsettings`) and follow these steps:
 - **Combat Log** — Scrollable log of all combat events
 - **Shortcuts Bar** — Optional floating bar with Start, Reset All, and Reboot buttons
 - **Death Effects** — Ragdoll physics (BEPUphysics2) on character death with 18-bone capsule ragdoll, per-joint anatomical limits, one-sided knee hyperextension prevention, self-collision, and ground contact
-- **Active Camera** — Camera tracks a selected bone with free orbital control, height/side offsets, vertical angle lock, and collision disable. Camera system inspired by [Cammy](https://github.com/UnknownX7/Cammy) (getCameraPosition hook pattern)
+- **Hair Physics** — Pendulum gravity simulation for hair bone chains during ragdoll, with configurable gravity strength, damping, and stiffness
+- **NPC Bone Collision** — Dynamic skeleton-based collision volumes for NPC targets (works with any model: humanoid, monster, dragon). Settle collision keeps ragdoll reactive after settling
+- **NPC Targeting** — Active NPCs visually target the player during combat (head tracking, emote interactions)
+- **Target Victory Emote** — NPCs play a selected emote toward the player on death (scrollable emote list from game data)
+- **Active Camera** — Camera tracks a selected bone with free orbital control, height/side offsets, vertical angle lock, and collision disable. Floating toolbar for quick adjustments. Camera system inspired by [Cammy](https://github.com/UnknownX7/Cammy)
 - **Death Cam** — Cinematic camera that smoothly transitions to an anchored position on player death, with configurable height/side offsets, bone tracking, and smooth follow. Camera system inspired by [Cammy](https://github.com/UnknownX7/Cammy)
 - **Hit VFX** — Configurable visual effects on player when taking damage
 - **Glamourer Integration** — Apply glamourer presets on death and on reset
