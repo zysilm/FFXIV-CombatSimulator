@@ -94,9 +94,14 @@ public class Configuration : IPluginConfiguration
     public float RagdollFloorOffset { get; set; } = 0.1f;  // Lower terrain by this amount to avoid joint-floor collision artifacts
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
 
-    // Force Camera Follow — overrides camera look-at to track a specific bone
-    public bool EnableCameraFollow { get; set; } = false;
-    public int CameraFollowBoneIndex { get; set; } = 1;
+    // Active Camera — camera tracks a bone with free orbital control
+    public bool EnableActiveCamera { get; set; } = false;
+    public int ActiveCameraBoneIndex { get; set; } = 1;
+    public float ActiveCameraHeightOffset { get; set; } = 0f;
+    public float ActiveCameraSideOffset { get; set; } = 0f;
+    public float ActiveCameraVerticalAngle { get; set; } = 0f;
+    public bool ActiveCameraLockVertical { get; set; } = false;
+    public bool ActiveCameraDisableCollision { get; set; } = false;
 
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";

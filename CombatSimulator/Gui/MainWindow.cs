@@ -22,6 +22,7 @@ public class MainWindow : IDisposable
     private readonly AnimationController animationController;
     private readonly RagdollController ragdollController;
     private readonly DeathCamController deathCamController;
+    private readonly ActiveCameraController activeCameraController;
     private readonly IClientState clientState;
     private readonly IChatGui chatGui;
     private readonly IPluginLog log;
@@ -42,8 +43,8 @@ public class MainWindow : IDisposable
     private bool overwritePopupOpen = false;
     private string overwriteTargetName = "";
 
-    // Camera follow bone selector state
-    private int cfSelectedBoneIndex = 0;
+    // Active camera bone selector state
+    private int acSelectedBoneIndex = 0;
 
     private static void HelpMarker(string desc)
     {
@@ -70,6 +71,7 @@ public class MainWindow : IDisposable
         AnimationController animationController,
         RagdollController ragdollController,
         DeathCamController deathCamController,
+        ActiveCameraController activeCameraController,
         IClientState clientState,
         IChatGui chatGui,
         IPluginLog log)
@@ -81,6 +83,7 @@ public class MainWindow : IDisposable
         this.animationController = animationController;
         this.ragdollController = ragdollController;
         this.deathCamController = deathCamController;
+        this.activeCameraController = activeCameraController;
         this.clientState = clientState;
         this.chatGui = chatGui;
         this.log = log;
@@ -876,35 +879,79 @@ public class MainWindow : IDisposable
 
     private void DrawActiveCamSection()
     {
-        if (ImGui.CollapsingHeader("Force Camera Follow"))
+        if (ImGui.CollapsingHeader("Active Camera"))
         {
             ImGui.Indent();
 
-            var follow = config.EnableCameraFollow;
-            if (ImGui.Checkbox("Enable##camerafollow", ref follow))
+            var enabled = config.EnableActiveCamera;
+            if (ImGui.Checkbox("Enable##activecam", ref enabled))
             {
-                config.EnableCameraFollow = follow;
+                config.EnableActiveCamera = enabled;
                 config.Save();
-                deathCamController.SetCameraFollow(follow);
+                activeCameraController.SetActive(enabled);
             }
-            HelpMarker("Forces the camera to track the selected bone. You control rotation/zoom freely. Overrides Death Cam bone when both are active.");
+            HelpMarker("Camera tracks the selected bone. You control rotation and zoom freely with mouse/keyboard.");
 
-            if (config.EnableCameraFollow)
+            if (config.EnableActiveCamera)
             {
                 // Bone selector
-                var boneNames = new string[DeathCamController.CenterBones.Length];
-                for (int b = 0; b < DeathCamController.CenterBones.Length; b++)
-                    boneNames[b] = DeathCamController.CenterBones[b].Name;
+                var bones = ActiveCameraController.CenterBones;
+                var boneNames = new string[bones.Length];
+                for (int b = 0; b < bones.Length; b++)
+                    boneNames[b] = bones[b].Name;
 
                 int boneIdx = 0;
-                for (int b = 0; b < DeathCamController.CenterBones.Length; b++)
-                    if (DeathCamController.CenterBones[b].Index == config.CameraFollowBoneIndex) { boneIdx = b; break; }
+                for (int b = 0; b < bones.Length; b++)
+                    if (bones[b].Index == config.ActiveCameraBoneIndex) { boneIdx = b; break; }
 
-                if (ImGui.Combo("Center Bone##camerafollow", ref boneIdx, boneNames, boneNames.Length))
+                if (ImGui.Combo("Center Bone##activecam", ref boneIdx, boneNames, boneNames.Length))
                 {
-                    config.CameraFollowBoneIndex = DeathCamController.CenterBones[boneIdx].Index;
+                    config.ActiveCameraBoneIndex = bones[boneIdx].Index;
                     config.Save();
                 }
+
+                // Height / Side offsets
+                var height = config.ActiveCameraHeightOffset;
+                if (ImGui.DragFloat("Height Offset##activecam", ref height, 0.01f, -5f, 10f, "%.2f"))
+                {
+                    config.ActiveCameraHeightOffset = height;
+                    config.Save();
+                }
+
+                var side = config.ActiveCameraSideOffset;
+                if (ImGui.DragFloat("Side Offset##activecam", ref side, 0.01f, -5f, 5f, "%.2f"))
+                {
+                    config.ActiveCameraSideOffset = side;
+                    config.Save();
+                }
+
+                // Vertical angle lock
+                var lockV = config.ActiveCameraLockVertical;
+                if (ImGui.Checkbox("Lock Vertical Angle##activecam", ref lockV))
+                {
+                    config.ActiveCameraLockVertical = lockV;
+                    config.Save();
+                }
+                HelpMarker("Lock the vertical camera angle to the value below. Mouse/keyboard vertical input is ignored.");
+
+                if (config.ActiveCameraLockVertical)
+                {
+                    var vAngle = config.ActiveCameraVerticalAngle;
+                    if (ImGui.DragFloat("Vertical Angle##activecam", ref vAngle, 0.01f, -MathF.PI / 2f, MathF.PI / 2f, "%.2f rad"))
+                    {
+                        config.ActiveCameraVerticalAngle = vAngle;
+                        config.Save();
+                    }
+                }
+
+                // Disable collision
+                var noCollision = config.ActiveCameraDisableCollision;
+                if (ImGui.Checkbox("Disable Camera Collision##activecam", ref noCollision))
+                {
+                    config.ActiveCameraDisableCollision = noCollision;
+                    config.Save();
+                }
+                HelpMarker("Camera passes through walls and objects.");
             }
 
             ImGui.Unindent();
@@ -1207,21 +1254,20 @@ public class MainWindow : IDisposable
         ImGui.End();
     }
 
-    public void DrawCameraFollowToolbar()
+    public void DrawActiveCameraToolbar()
     {
-        var bones = DeathCamController.CenterBones;
+        var bones = ActiveCameraController.CenterBones;
         if (bones.Length == 0) return;
 
-        // Find current bone in the array
-        if (cfSelectedBoneIndex < 0 || cfSelectedBoneIndex >= bones.Length)
+        if (acSelectedBoneIndex < 0 || acSelectedBoneIndex >= bones.Length)
         {
-            cfSelectedBoneIndex = 0;
+            acSelectedBoneIndex = 0;
             for (int b = 0; b < bones.Length; b++)
-                if (bones[b].Index == config.CameraFollowBoneIndex) { cfSelectedBoneIndex = b; break; }
+                if (bones[b].Index == config.ActiveCameraBoneIndex) { acSelectedBoneIndex = b; break; }
         }
 
         ImGui.SetNextWindowSize(new Vector2(300, 0), ImGuiCond.FirstUseEver);
-        if (!ImGui.Begin("Camera Follow", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+        if (!ImGui.Begin("Active Camera", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
         {
             ImGui.End();
             return;
@@ -1229,19 +1275,19 @@ public class MainWindow : IDisposable
 
         var arrowSize = new Vector2(28, 28);
 
-        var atStart = cfSelectedBoneIndex <= 0;
+        var atStart = acSelectedBoneIndex <= 0;
         if (atStart) ImGui.BeginDisabled();
-        if (ImGui.Button("<##cf", arrowSize))
+        if (ImGui.Button("<##ac", arrowSize))
         {
-            cfSelectedBoneIndex--;
-            config.CameraFollowBoneIndex = bones[cfSelectedBoneIndex].Index;
+            acSelectedBoneIndex--;
+            config.ActiveCameraBoneIndex = bones[acSelectedBoneIndex].Index;
             config.Save();
         }
         if (atStart) ImGui.EndDisabled();
 
         ImGui.SameLine();
 
-        var boneName = bones[cfSelectedBoneIndex].Name;
+        var boneName = bones[acSelectedBoneIndex].Name;
         var avail = ImGui.GetContentRegionAvail().X - arrowSize.X - ImGui.GetStyle().ItemSpacing.X;
         var textSize = ImGui.CalcTextSize(boneName).X;
         var pad = (avail - textSize) * 0.5f;
@@ -1252,12 +1298,12 @@ public class MainWindow : IDisposable
         ImGui.SameLine();
         if (pad > 0) ImGui.SetCursorPosX(ImGui.GetContentRegionMax().X - arrowSize.X);
 
-        var atEnd = cfSelectedBoneIndex >= bones.Length - 1;
+        var atEnd = acSelectedBoneIndex >= bones.Length - 1;
         if (atEnd) ImGui.BeginDisabled();
-        if (ImGui.Button(">##cf", arrowSize))
+        if (ImGui.Button(">##ac", arrowSize))
         {
-            cfSelectedBoneIndex++;
-            config.CameraFollowBoneIndex = bones[cfSelectedBoneIndex].Index;
+            acSelectedBoneIndex++;
+            config.ActiveCameraBoneIndex = bones[acSelectedBoneIndex].Index;
             config.Save();
         }
         if (atEnd) ImGui.EndDisabled();

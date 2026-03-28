@@ -39,6 +39,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly MovementBlockHook movementBlockHook;
     private readonly UseActionHook useActionHook;
     private readonly DeathCamController deathCamController;
+    private readonly ActiveCameraController activeCameraController;
     private readonly MainWindow mainWindow;
     private readonly HpBarOverlay hpBarOverlay;
     private readonly CombatLogWindow combatLogWindow;
@@ -84,6 +85,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         ragdollController = new RagdollController(boneTransformService, config, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
+        activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, ragdollController,
@@ -95,12 +97,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         useActionHook.Enable();
         movementBlockHook.Enable();
 
-        // Restore camera follow if it was enabled in config
-        if (config.EnableCameraFollow)
-            deathCamController.SetCameraFollow(true);
+        // Restore active camera if it was enabled in config
+        if (config.EnableActiveCamera)
+            activeCameraController.SetActive(true);
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, ragdollController, deathCamController, clientState, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, ragdollController, deathCamController, activeCameraController, clientState, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
 
@@ -144,6 +146,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         ragdollController.Dispose();
         boneTransformService.Dispose();
         deathCamController.Dispose();
+        activeCameraController.Dispose();
         animationController.Dispose();
         npcSelector.Dispose();
 
@@ -197,8 +200,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         if (config.ShowDeathCamToolbar)
             mainWindow.DrawDeathCamToolbar();
 
-        if (config.EnableCameraFollow)
-            mainWindow.DrawCameraFollowToolbar();
+        if (config.EnableActiveCamera)
+            mainWindow.DrawActiveCameraToolbar();
 
         if (config.ShowMainWindow)
             mainWindow.Draw();
@@ -239,8 +242,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             var deltaTime = (float)(1.0 / 60.0);
 
-            // Death cam preview runs independently of combat
+            // Camera controllers run independently of combat
             deathCamController.Tick(deltaTime);
+            activeCameraController.Tick(deltaTime);
 
             if (!combatEngine.IsActive)
                 return;
