@@ -668,12 +668,18 @@ public unsafe class RagdollController : IDisposable
                     var swingAxisLocalChild = Vector3.Normalize(Vector3.Transform(
                         segDirWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
 
+                    // When tight knee limits are enabled, use a reduced swing angle
+                    // that locks joints near their init pose (guided bend mode).
+                    var effectiveSwingLimit = boneDef.SwingLimit;
+                    if (config.RagdollTightKneeLimits)
+                        effectiveSwingLimit = MathF.Min(effectiveSwingLimit, 0.5f);
+
                     simulation.Solver.Add(rb.BodyHandle, parentHandle,
                         new SwingLimit
                         {
                             AxisLocalA = swingAxisLocalChild,   // child body = A (matches Hinge body order)
                             AxisLocalB = swingAxisLocalParent,  // parent body = B
-                            MaximumSwingAngle = boneDef.SwingLimit,
+                            MaximumSwingAngle = effectiveSwingLimit,
                             SpringSettings = new SpringSettings(15, 1),
                         });
 

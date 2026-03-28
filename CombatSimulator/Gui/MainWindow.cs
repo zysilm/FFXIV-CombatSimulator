@@ -548,10 +548,6 @@ public class MainWindow : IDisposable
     {
         if (ImGui.CollapsingHeader("Death Cam (Experimental)"))
         {
-            ImGui.TextColored(new Vector4(1.0f, 0.8f, 0.2f, 1.0f), "Experimental: may cause camera issues.");
-            ImGui.TextColored(new Vector4(1.0f, 0.8f, 0.2f, 1.0f), "Use /combatsim stop or zone change to recover.");
-            ImGui.Spacing();
-
             var enabled = config.EnableDeathCam;
             if (ImGui.Checkbox("Enable Death Cam", ref enabled))
             {
@@ -972,8 +968,6 @@ public class MainWindow : IDisposable
     {
         if (ImGui.CollapsingHeader("Rag doll (Experimental)"))
         {
-            ImGui.TextColored(new Vector4(1.0f, 0.8f, 0.2f, 1.0f), "Experimental: ragdoll physics on death.");
-
             var enabled = config.EnableRagdoll;
             if (ImGui.Checkbox("Enable Ragdoll##ragdoll", ref enabled))
             {
@@ -1044,6 +1038,14 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Body parts collide with each other (arms vs torso, legs vs legs). Prevents clipping but may cause slight stretching. Takes effect on next ragdoll activation.");
 
+                var tightKnees = config.RagdollTightKneeLimits;
+                if (ImGui.Checkbox("Tight Knee Limits##ragdoll", ref tightKnees))
+                {
+                    config.RagdollTightKneeLimits = tightKnees;
+                    config.Save();
+                }
+                HelpMarker("Use tight swing limits on knees and elbows. Prevents hyperextension but reduces range of motion (guided bend). Takes effect on next ragdoll activation.");
+
                 ImGui.Separator();
                 if (ImGui.Button("Reset to Defaults##ragdoll"))
                 {
@@ -1052,6 +1054,7 @@ public class MainWindow : IDisposable
                     config.RagdollDamping = 0.97f;
                     config.RagdollFloorOffset = 0f;
                     config.RagdollSelfCollision = true;
+                    config.RagdollTightKneeLimits = false;
                     config.RagdollNpcCollision = false;
                     config.RagdollNpcRadius = 0.3f;
                     config.RagdollMassScale = 1.0f;

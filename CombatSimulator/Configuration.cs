@@ -93,6 +93,7 @@ public class Configuration : IPluginConfiguration
     public float RagdollDamping { get; set; } = 0.97f;
     public float RagdollFloorOffset { get; set; } = 0f;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
+    public bool RagdollTightKneeLimits { get; set; } = false; // Tight swing limits on knees/elbows (prevents hyperextension but reduces range of motion)
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollNpcCollision { get; set; } = false;
     public float RagdollNpcRadius { get; set; } = 0.3f;
