@@ -593,8 +593,8 @@ public unsafe class DeathCamController : IDisposable
         // Lazily create the camera hook once the camera is available
         EnsureHook();
 
-        // Manage collision patch: enable when death cam active + config on, disable otherwise
-        bool wantCollisionDisabled = config.DeathCamDisableCollision && state != DeathCamState.Inactive;
+        // Manage collision patch: enable when death cam or DZoom active + config on, disable otherwise
+        bool wantCollisionDisabled = config.DeathCamDisableCollision && (state != DeathCamState.Inactive || dZoomActive);
         if (wantCollisionDisabled && !collisionPatchActive)
             EnableCollisionPatch();
         else if (!wantCollisionDisabled && collisionPatchActive)

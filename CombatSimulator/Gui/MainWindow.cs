@@ -323,7 +323,7 @@ public class MainWindow : IDisposable
             if (approach)
             {
                 var dist = config.TargetApproachDistance;
-                if (ImGui.SliderFloat("Approach Distance", ref dist, 1.0f, 30.0f, "%.1f yalms"))
+                if (ImGui.SliderFloat("Approach Distance", ref dist, 0.1f, 5.0f, "%.1f yalms"))
                 {
                     config.TargetApproachDistance = dist;
                     config.Save();
@@ -1116,7 +1116,7 @@ public class MainWindow : IDisposable
                     config.RagdollSelfCollision = true;
                     config.RagdollTightKneeLimits = false;
                     config.RagdollNpcCollision = false;
-                    config.RagdollNpcRadius = 0.3f;
+                    config.RagdollNpcCollisionScale = 1.0f;
                     config.RagdollMassScale = 1.0f;
                     config.Save();
                 }
@@ -1163,16 +1163,17 @@ public class MainWindow : IDisposable
                 config.RagdollNpcCollision = npcCollision;
                 config.Save();
             }
-            HelpMarker("Active combat targets have collision volumes for ragdoll interaction.");
+            HelpMarker("Active combat targets have per-bone collision volumes for ragdoll interaction.");
 
             if (config.RagdollNpcCollision)
             {
-                var npcRadius = config.RagdollNpcRadius;
-                if (ImGui.SliderFloat("NPC Radius##dev", ref npcRadius, 0.1f, 2.0f, "%.2f"))
+                var npcScale = config.RagdollNpcCollisionScale;
+                if (ImGui.SliderFloat("NPC Collision Scale##dev", ref npcScale, 0.0001f, 5.0f, "%.4f"))
                 {
-                    config.RagdollNpcRadius = npcRadius;
+                    config.RagdollNpcCollisionScale = npcScale;
                     config.Save();
                 }
+                HelpMarker("Scale multiplier for NPC bone collision capsules. Increase for larger NPC models.");
             }
 
             var massScale = config.RagdollMassScale;
