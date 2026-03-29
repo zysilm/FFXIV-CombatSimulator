@@ -224,9 +224,8 @@ public unsafe class VictorySequenceController : IDisposable
 
             if (stage.UseEmote && stage.EmoteId > 0)
             {
-                // Emote mode: resolve loop + intro from emote sheet, play with TargetObjId.
-                // Player Y is already lowered, so the game's emote system automatically
-                // selects the correct height-adjusted variant (L/M/H) via TargetObjId.
+                // Emote mode: resolve loop from emote sheet, use height-adjusted
+                // timeline as intro (kneel transition), base emote as loop (action).
                 try
                 {
                     var emoteSheet = Core.Services.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>();
@@ -234,7 +233,16 @@ public unsafe class VictorySequenceController : IDisposable
                     {
                         var emote = emoteSheet.GetRow(stage.EmoteId);
                         stage.ResolvedLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
-                        stage.ResolvedIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
+
+                        // Get height-adjusted intro (player Y is lowered)
+                        var adjusted = character->Timeline.GetHeightAdjustActionTimelineRowId(
+                            new FFXIVClientStructs.FFXIV.Client.Game.Object.GameObjectId { Id = playerObjId },
+                            stage.EmoteId);
+                        stage.ResolvedIntroTimeline = adjusted != 0
+                            ? (ushort)adjusted
+                            : (ushort)emote.ActionTimeline[1].RowId;
+
+                        log.Info($"VictorySequence: Emote {stage.EmoteId} heightAdj={adjusted} → intro={stage.ResolvedIntroTimeline} loop={stage.ResolvedLoopTimeline}");
                     }
                 }
                 catch { }
@@ -242,7 +250,6 @@ public unsafe class VictorySequenceController : IDisposable
                 if (stage.ResolvedIntroTimeline != 0 || stage.ResolvedLoopTimeline != 0)
                 {
                     emotePlayer.PlayLoopedEmote(character, stage.ResolvedLoopTimeline, stage.ResolvedIntroTimeline, playerObjId);
-                    log.Info($"VictorySequence: Emote {stage.EmoteId} (intro={stage.ResolvedIntroTimeline}, loop={stage.ResolvedLoopTimeline})");
                 }
             }
             else if (!stage.UseEmote && stage.ActionTimelineId > 0)
