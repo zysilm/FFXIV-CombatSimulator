@@ -1232,7 +1232,7 @@ public class MainWindow : IDisposable
                 HelpMarker("Multiplier for joint constraint strength. Higher = stiffer joints, body resists twisting. Takes effect on next ragdoll activation.");
 
                 var massScale = config.RagdollMassScale;
-                if (ImGui.SliderFloat("Mass Scale##ragdoll", ref massScale, 0.1f, 10.0f, "%.1fx"))
+                if (ImGui.SliderFloat("Mass Scale##ragdoll", ref massScale, 0.1f, 100.0f, "%.1fx"))
                 {
                     config.RagdollMassScale = massScale;
                     config.Save();
