@@ -285,32 +285,27 @@ public class VictorySequenceGui
 
             // === Timing ===
             ImGui.TextDisabled($"Stage {idx} — Timing");
+
             var st = s.StartTime;
-            ImGui.SetNextItemWidth(100);
-            if (ImGui.DragFloat("Start##t", ref st, 0.1f, 0, 120, "%.1f"))
+            if (ImGui.DragFloat("Start Time (s)##t", ref st, 0.1f, 0, 120, "%.1f"))
             {
                 s.StartTime = st;
                 if (idx > 0 && stages[idx - 1].EndTime >= 0)
                     stages[idx - 1].EndTime = st;
                 config.Save();
             }
-            ImGui.SameLine();
+
             if (!s.InfiniteWalk && s.EndTime >= 0)
             {
                 var et = s.EndTime;
-                ImGui.SetNextItemWidth(100);
-                if (ImGui.DragFloat("End##t", ref et, 0.1f, 0, 120, "%.1f"))
+                if (ImGui.DragFloat("End Time (s)##t", ref et, 0.1f, 0, 120, "%.1f"))
                 {
                     s.EndTime = et;
                     if (idx < stages.Count - 1) stages[idx + 1].StartTime = et;
                     config.Save();
                 }
             }
-            else
-            {
-                ImGui.TextDisabled("End: ∞");
-            }
-            ImGui.SameLine();
+
             var infTime = s.EndTime < 0;
             if (ImGui.Checkbox("Infinite Time##vsd", ref infTime))
             {
@@ -321,20 +316,19 @@ public class VictorySequenceGui
 
             // === Movement ===
             ImGui.TextDisabled("Movement");
+
+            var sd2 = s.StartDistance;
+            if (ImGui.DragFloat("Start Distance##d", ref sd2, 0.1f, -30, 30, "%.1f"))
+            {
+                s.StartDistance = sd2;
+                if (idx > 0) stages[idx - 1].EndDistance = sd2;
+                config.Save();
+            }
+
             if (!s.InfiniteWalk)
             {
-                var sd = s.StartDistance;
-                ImGui.SetNextItemWidth(100);
-                if (ImGui.DragFloat("Dist Start##d", ref sd, 0.1f, -30, 30, "%.1f"))
-                {
-                    s.StartDistance = sd;
-                    if (idx > 0) stages[idx - 1].EndDistance = sd;
-                    config.Save();
-                }
-                ImGui.SameLine();
                 var ed = s.EndDistance;
-                ImGui.SetNextItemWidth(100);
-                if (ImGui.DragFloat("Dist End##d", ref ed, 0.1f, -30, 30, "%.1f"))
+                if (ImGui.DragFloat("End Distance##d", ref ed, 0.1f, -30, 30, "%.1f"))
                 {
                     s.EndDistance = ed;
                     if (idx < stages.Count - 1) stages[idx + 1].StartDistance = ed;
@@ -343,34 +337,22 @@ public class VictorySequenceGui
             }
             else
             {
-                var sd = s.StartDistance;
-                ImGui.SetNextItemWidth(100);
-                if (ImGui.DragFloat("Dist Start##d", ref sd, 0.1f, -30, 30, "%.1f"))
-                {
-                    s.StartDistance = sd;
-                    if (idx > 0) stages[idx - 1].EndDistance = sd;
-                    config.Save();
-                }
-                ImGui.SameLine();
-                ImGui.TextDisabled("→ -∞");
-                ImGui.SameLine();
                 var ws = s.WalkSpeed;
-                ImGui.SetNextItemWidth(80);
-                if (ImGui.DragFloat("Speed##walk", ref ws, 0.1f, 0.1f, 20f, "%.1f"))
+                if (ImGui.DragFloat("Walk Speed (y/s)##walk", ref ws, 0.1f, 0.1f, 20f, "%.1f"))
                 { s.WalkSpeed = ws; config.Save(); }
             }
+
+            var ho = s.HeightOffset;
+            if (ImGui.DragFloat("Height Offset##h", ref ho, 0.01f, -5, 5, "%.2f"))
+            { s.HeightOffset = ho; config.Save(); }
+
             var infWalk = s.InfiniteWalk;
             if (ImGui.Checkbox("Infinite Walk##vsd", ref infWalk))
             {
                 s.InfiniteWalk = infWalk;
-                if (infWalk) s.EndTime = -1f; // force infinite time
+                if (infWalk) s.EndTime = -1f;
                 config.Save();
             }
-            ImGui.SameLine();
-            var ho = s.HeightOffset;
-            ImGui.SetNextItemWidth(80);
-            if (ImGui.DragFloat("Height##h", ref ho, 0.01f, -5, 5, "%.2f"))
-            { s.HeightOffset = ho; config.Save(); }
 
             // === Behavior ===
             ImGui.TextDisabled("Behavior");
@@ -429,31 +411,32 @@ public class VictorySequenceGui
             if (s.GrabEnabled)
             {
                 ImGui.Indent();
+
                 var npcIdx = FindBoneIndex(npcBoneList, s.NpcBoneName);
-                ImGui.SetNextItemWidth(150);
-                if (ImGui.Combo("NPC##gb", ref npcIdx, npcBoneList, npcBoneList.Length))
+                if (ImGui.Combo("NPC Bone##gb", ref npcIdx, npcBoneList, npcBoneList.Length))
                 { s.NpcBoneName = npcBoneList[npcIdx]; config.Save(); }
                 ImGui.SameLine();
                 if (ImGui.SmallButton("Refresh##nb")) RefreshNpcBones();
 
                 var playerIdx = FindBoneIndex(playerBoneList, s.PlayerBoneName);
-                ImGui.SetNextItemWidth(150);
-                if (ImGui.Combo("Player##gb", ref playerIdx, playerBoneList, playerBoneList.Length))
+                if (ImGui.Combo("Player Bone##gb", ref playerIdx, playerBoneList, playerBoneList.Length))
                 { s.PlayerBoneName = playerBoneList[playerIdx]; config.Save(); }
 
-                var gf = s.GrabForce; var gs = s.GrabSpeed; var gsf = s.GrabSpringFreq;
-                ImGui.SetNextItemWidth(70);
-                if (ImGui.DragFloat("F##gf", ref gf, 10f, 10, 5000, "%.0f"))
+                var gf = s.GrabForce;
+                if (ImGui.DragFloat("Force##gf", ref gf, 10f, 10, 5000, "%.0f"))
                 { s.GrabForce = gf; config.Save(); }
-                ImGui.SameLine(); ImGui.SetNextItemWidth(70);
-                if (ImGui.DragFloat("S##gs", ref gs, 1f, 1, 200, "%.0f"))
-                { s.GrabSpeed = gs; config.Save(); }
-                ImGui.SameLine(); ImGui.SetNextItemWidth(70);
-                if (ImGui.DragFloat("Freq##gf2", ref gsf, 5f, 10, 500, "%.0f"))
+
+                var gs2 = s.GrabSpeed;
+                if (ImGui.DragFloat("Speed##gs", ref gs2, 1f, 1, 200, "%.0f"))
+                { s.GrabSpeed = gs2; config.Save(); }
+
+                var gsf = s.GrabSpringFreq;
+                if (ImGui.DragFloat("Spring Freq##gf2", ref gsf, 5f, 10, 500, "%.0f"))
                 { s.GrabSpringFreq = gsf; config.Save(); }
-                ImGui.SameLine();
-                if (ImGui.SmallButton("Def##grst"))
+
+                if (ImGui.SmallButton("Reset Defaults##grst"))
                 { s.GrabForce = 1000; s.GrabSpeed = 50; s.GrabSpringFreq = 120; config.Save(); }
+
                 ImGui.Unindent();
             }
         }
