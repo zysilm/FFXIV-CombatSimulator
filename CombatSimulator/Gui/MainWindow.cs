@@ -1125,14 +1125,6 @@ public class MainWindow : IDisposable
                     }
                     HelpMarker("Closest distance the camera can zoom to.");
 
-                    var preventFade = config.ActiveCameraPreventFade;
-                    if (ImGui.Checkbox("Prevent Model Fade##activecam", ref preventFade))
-                    {
-                        config.ActiveCameraPreventFade = preventFade;
-                        config.Save();
-                    }
-                    HelpMarker("Prevent characters from disappearing when the camera zooms very close. Reduces near clip plane and forces model visibility.");
-
                     ImGui.Unindent();
                 }
             }
