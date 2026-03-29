@@ -267,6 +267,23 @@ public unsafe class VictorySequenceController : IDisposable
                     catch { }
                 }
 
+                // Try height adjustment — player Y is already lowered, so the game
+                // should return the L variant timeline when there's a height difference
+                try
+                {
+                    var adjusted = character->Timeline.GetHeightAdjustActionTimelineRowId(
+                        new FFXIVClientStructs.FFXIV.Client.Game.Object.GameObjectId { Id = playerObjId },
+                        stage.EmoteId);
+                    if (adjusted != 0)
+                    {
+                        stage.ResolvedLoopTimeline = (ushort)adjusted;
+                        if (stage.ResolvedIntroTimeline == 0)
+                            stage.ResolvedIntroTimeline = (ushort)adjusted;
+                        log.Info($"VictorySequence: Height-adjusted emote {stage.EmoteId} → timeline {adjusted}");
+                    }
+                }
+                catch { }
+
                 if (stage.ResolvedIntroTimeline != 0 || stage.ResolvedLoopTimeline != 0)
                 {
                     emotePlayer.PlayLoopedEmote(character, stage.ResolvedLoopTimeline, stage.ResolvedIntroTimeline, playerObjId);
