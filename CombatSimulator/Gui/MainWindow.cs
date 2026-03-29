@@ -1231,6 +1231,14 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Multiplier for joint constraint strength. Higher = stiffer joints, body resists twisting. Takes effect on next ragdoll activation.");
 
+                var massScale = config.RagdollMassScale;
+                if (ImGui.SliderFloat("Mass Scale##ragdoll", ref massScale, 0.1f, 10.0f, "%.1fx"))
+                {
+                    config.RagdollMassScale = massScale;
+                    config.Save();
+                }
+                HelpMarker("Body mass multiplier. Higher = heavier (resists being pushed, falls faster). Lower = lighter (flies on impact). Takes effect on next ragdoll activation.");
+
                 ImGui.Separator();
                 ImGui.Text("Hair Physics");
 
