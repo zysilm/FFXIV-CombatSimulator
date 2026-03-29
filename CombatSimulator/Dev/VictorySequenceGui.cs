@@ -13,6 +13,8 @@ public class VictorySequenceGui
     private readonly IPluginLog log;
     private readonly Npcs.NpcSelector npcSelector;
     private int selectedStageIndex = -1;
+    private string newPresetName = "";
+    private int selectedPresetIdx = -1;
 
     // Cached lists (loaded once)
     private List<(uint Id, string Name)>? emoteCache;
@@ -293,6 +295,52 @@ public class VictorySequenceGui
             stages.Add(newStage);
             selectedStageIndex = stages.Count - 1;
             config.Save();
+        }
+
+        // --- Presets ---
+        ImGui.Separator();
+        ImGui.TextDisabled("Presets");
+        var presets = config.VictoryCinematicPresets;
+
+        // Save current stages as a new preset
+        ImGui.SetNextItemWidth(120);
+        ImGui.InputText("##presetname", ref newPresetName, 32);
+        ImGui.SameLine();
+        if (ImGui.Button("Save##preset") && !string.IsNullOrWhiteSpace(newPresetName))
+        {
+            presets.Add(new VictoryCinematicPreset
+            {
+                Name = newPresetName,
+                Stages = VictoryCinematicPreset.CloneStages(stages),
+            });
+            newPresetName = "";
+            config.Save();
+        }
+
+        // Load / Delete preset
+        if (presets.Count > 0)
+        {
+            var presetNames = new string[presets.Count];
+            for (int i = 0; i < presets.Count; i++) presetNames[i] = presets[i].Name;
+            if (selectedPresetIdx >= presets.Count) selectedPresetIdx = 0;
+
+            ImGui.SetNextItemWidth(120);
+            ImGui.Combo("##presetsel", ref selectedPresetIdx, presetNames, presetNames.Length);
+            ImGui.SameLine();
+            if (ImGui.Button("Load##preset"))
+            {
+                stages.Clear();
+                stages.AddRange(VictoryCinematicPreset.CloneStages(presets[selectedPresetIdx].Stages));
+                selectedStageIndex = -1;
+                config.Save();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Delete##preset"))
+            {
+                presets.RemoveAt(selectedPresetIdx);
+                if (selectedPresetIdx >= presets.Count) selectedPresetIdx = presets.Count - 1;
+                config.Save();
+            }
         }
 
         // Selected stage detail editor

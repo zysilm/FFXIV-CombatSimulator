@@ -106,6 +106,7 @@ public class Configuration : IPluginConfiguration
     // Dev (Experimental) — hidden behind easter egg
     public bool EnableVictorySequence { get; set; } = false;
     public List<VictorySequenceStage> VictorySequenceStages { get; set; } = new();
+    public List<VictoryCinematicPreset> VictoryCinematicPresets { get; set; } = new();
     public bool RagdollNpcCollision { get; set; } = false;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcSettleCollision { get; set; } = false;
