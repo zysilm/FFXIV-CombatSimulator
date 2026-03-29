@@ -1344,8 +1344,117 @@ public unsafe class RagdollController : IDisposable
         }
     }
 
+    // --- Grab constraint API (for cinematic victory sequence) ---
+    private ConstraintHandle grabConstraintHandle;
+    private bool grabConstraintActive;
+    private BodyHandle grabBodyHandle;
+
+    /// <summary>
+    /// Create a OneBodyLinearServo constraint that pins a ragdoll bone to a world-space
+    /// target position. The target is updated each frame via UpdateGrabTarget().
+    /// Also ensures all ragdoll bodies stay awake (SleepThreshold = -1).
+    /// </summary>
+    public bool CreateGrabConstraint(string boneName, Vector3 initialTarget, float maxForce = 50f, float maxSpeed = 5f)
+    {
+        if (simulation == null || !isActive) return false;
+
+        // Find the body for this bone
+        BodyHandle? targetBody = null;
+        foreach (var rb in ragdollBones)
+        {
+            if (rb.Name == boneName)
+            {
+                targetBody = rb.BodyHandle;
+                break;
+            }
+        }
+        if (targetBody == null)
+        {
+            log.Warning($"RagdollController: Grab bone '{boneName}' not found in ragdoll");
+            return false;
+        }
+
+        grabBodyHandle = targetBody.Value;
+
+        // Ensure all bodies stay awake so the grab constraint is always active
+        for (int i = 0; i < ragdollBones.Count; i++)
+        {
+            var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
+            bodyRef.Activity.SleepThreshold = -1f;
+        }
+
+        // Create OneBodyLinearServo: pins a body to a world-space target
+        grabConstraintHandle = simulation.Solver.Add(grabBodyHandle,
+            new OneBodyLinearServo
+            {
+                LocalOffset = Vector3.Zero, // center of the bone body
+                Target = initialTarget,
+                ServoSettings = new ServoSettings(maxSpeed, 1f, maxForce),
+                SpringSettings = new SpringSettings(30, 1),
+            });
+
+        grabConstraintActive = true;
+        log.Info($"RagdollController: Grab constraint created on '{boneName}' → ({initialTarget.X:F2},{initialTarget.Y:F2},{initialTarget.Z:F2})");
+        return true;
+    }
+
+    /// <summary>
+    /// Update the grab constraint's target position (call each frame with NPC hand world pos).
+    /// </summary>
+    public void UpdateGrabTarget(Vector3 worldTarget)
+    {
+        if (!grabConstraintActive || simulation == null) return;
+
+        try
+        {
+            var desc = new OneBodyLinearServo
+            {
+                LocalOffset = Vector3.Zero,
+                Target = worldTarget,
+                ServoSettings = new ServoSettings(5f, 1f, 50f),
+                SpringSettings = new SpringSettings(30, 1),
+            };
+            simulation.Solver.ApplyDescription(grabConstraintHandle, desc);
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "RagdollController: Failed to update grab target");
+            RemoveGrabConstraint();
+        }
+    }
+
+    /// <summary>
+    /// Remove the grab constraint and restore normal sleep thresholds.
+    /// </summary>
+    public void RemoveGrabConstraint()
+    {
+        if (!grabConstraintActive || simulation == null) return;
+
+        try
+        {
+            simulation.Solver.Remove(grabConstraintHandle);
+        }
+        catch { }
+
+        // Restore normal sleep threshold (unless settle collision wants them awake)
+        var normalThreshold = (config.RagdollNpcSettleCollision && config.RagdollNpcCollision) ? -1f : 0.01f;
+        for (int i = 0; i < ragdollBones.Count; i++)
+        {
+            try
+            {
+                var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
+                bodyRef.Activity.SleepThreshold = normalThreshold;
+            }
+            catch { }
+        }
+
+        grabConstraintActive = false;
+        log.Info("RagdollController: Grab constraint removed");
+    }
+
     private void DestroySimulation()
     {
+        grabConstraintActive = false;
         ragdollBones.Clear();
         npcCollisionStates.Clear();
         simulation?.Dispose();

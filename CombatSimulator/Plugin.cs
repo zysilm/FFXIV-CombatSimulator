@@ -89,7 +89,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
         victorySequenceController = new Dev.VictorySequenceController(
             boneTransformService, animationController.EmotePlayer,
-            movementBlockHook, clientState, config, log);
+            movementBlockHook, ragdollController, clientState, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, ragdollController,

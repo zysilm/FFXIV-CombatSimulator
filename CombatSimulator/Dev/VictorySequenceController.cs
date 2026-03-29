@@ -16,6 +16,7 @@ public unsafe class VictorySequenceController : IDisposable
     private readonly BoneTransformService boneService;
     private readonly EmoteTimelinePlayer emotePlayer;
     private readonly MovementBlockHook movementBlockHook;
+    private readonly RagdollController ragdollController;
     private readonly IClientState clientState;
     private readonly Configuration config;
     private readonly IPluginLog log;
@@ -41,6 +42,7 @@ public unsafe class VictorySequenceController : IDisposable
         BoneTransformService boneService,
         EmoteTimelinePlayer emotePlayer,
         MovementBlockHook movementBlockHook,
+        RagdollController ragdollController,
         IClientState clientState,
         Configuration config,
         IPluginLog log)
@@ -48,6 +50,7 @@ public unsafe class VictorySequenceController : IDisposable
         this.boneService = boneService;
         this.emotePlayer = emotePlayer;
         this.movementBlockHook = movementBlockHook;
+        this.ragdollController = ragdollController;
         this.clientState = clientState;
         this.config = config;
         this.log = log;
@@ -199,10 +202,30 @@ public unsafe class VictorySequenceController : IDisposable
             stageAnimPlayed = true;
         }
 
-        // Update grab state
-        grabActive = stage.GrabEnabled;
-        if (grabActive && (npcHandBoneIdx < 0 || playerNeckBoneIdx < 0))
+        // Update grab state — use BEPU2 OneBodyLinearServo via ragdoll
+        if (stage.GrabEnabled && !grabActive)
+        {
+            // Activate grab: create physics constraint on player's ragdoll bone
             ResolveBoneIndices(stage);
+            if (npcHandBoneIdx >= 0 && ragdollController.IsActive)
+            {
+                var npcHandWorld = GetNpcBoneWorldPos(stage.NpcBoneName);
+                if (npcHandWorld != null)
+                {
+                    grabActive = ragdollController.CreateGrabConstraint(
+                        stage.PlayerBoneName, npcHandWorld.Value);
+                    if (grabActive)
+                        log.Info("VictorySequence: BEPU2 grab constraint activated");
+                }
+            }
+        }
+        else if (!stage.GrabEnabled && grabActive)
+        {
+            // Deactivate grab
+            ragdollController.RemoveGrabConstraint();
+            grabActive = false;
+            log.Info("VictorySequence: Grab constraint deactivated");
+        }
     }
 
     private void ResolveBoneIndices(VictorySequenceStage stage)
@@ -226,137 +249,55 @@ public unsafe class VictorySequenceController : IDisposable
         log.Info($"VictorySequence: Grab bones resolved — NPC '{stage.NpcBoneName}'={npcHandBoneIdx}, Player '{stage.PlayerBoneName}'={playerNeckBoneIdx}");
     }
 
-    private int grabFrameCount;
+    /// <summary>
+    /// Read an NPC bone's world position from its current animation frame.
+    /// </summary>
+    private Vector3? GetNpcBoneWorldPos(string boneName)
+    {
+        if (cinematicNpc?.BattleChara == null) return null;
+
+        var npcSkel = boneService.TryGetSkeleton(cinematicNpc.Address);
+        if (npcSkel == null) return null;
+        var ns = npcSkel.Value;
+
+        var idx = boneService.ResolveBoneIndex(ns, boneName);
+        if (idx < 0 || idx >= ns.BoneCount) return null;
+
+        var npcSkeleton = ns.CharBase->Skeleton;
+        if (npcSkeleton == null) return null;
+
+        var nSkelPos = new Vector3(
+            npcSkeleton->Transform.Position.X,
+            npcSkeleton->Transform.Position.Y,
+            npcSkeleton->Transform.Position.Z);
+        var nSkelRot = new Quaternion(
+            npcSkeleton->Transform.Rotation.X,
+            npcSkeleton->Transform.Rotation.Y,
+            npcSkeleton->Transform.Rotation.Z,
+            npcSkeleton->Transform.Rotation.W);
+
+        ref var mt = ref ns.Pose->ModelPose.Data[idx];
+        var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+        return nSkelPos + Vector3.Transform(modelPos, nSkelRot);
+    }
 
     private void OnRenderFrame()
     {
+        // Update BEPU2 grab target each render frame with NPC hand world position
         if (!isActive || !grabActive || cinematicNpc?.BattleChara == null) return;
-        if (npcHandBoneIdx < 0 || playerNeckBoneIdx < 0) return;
 
         try
         {
-            var player = clientState.LocalPlayer;
-            if (player == null) return;
+            var stages = config.VictorySequenceStages;
+            if (currentStageIndex < 0 || currentStageIndex >= stages.Count) return;
 
-            // Read NPC hand bone world position (from current animation frame)
-            var npcSkel = boneService.TryGetSkeleton(cinematicNpc.Address);
-            if (npcSkel == null) return;
-            var ns = npcSkel.Value;
-            if (npcHandBoneIdx >= ns.BoneCount) return;
-
-            var npcSkeleton = ns.CharBase->Skeleton;
-            if (npcSkeleton == null) return;
-            var nSkelPos = new Vector3(
-                npcSkeleton->Transform.Position.X,
-                npcSkeleton->Transform.Position.Y,
-                npcSkeleton->Transform.Position.Z);
-            var nSkelRot = new Quaternion(
-                npcSkeleton->Transform.Rotation.X,
-                npcSkeleton->Transform.Rotation.Y,
-                npcSkeleton->Transform.Rotation.Z,
-                npcSkeleton->Transform.Rotation.W);
-
-            ref var npcHandMt = ref ns.Pose->ModelPose.Data[npcHandBoneIdx];
-            var npcHandModel = new Vector3(npcHandMt.Translation.X, npcHandMt.Translation.Y, npcHandMt.Translation.Z);
-            var npcHandWorld = nSkelPos + Vector3.Transform(npcHandModel, nSkelRot);
-
-            // Read player skeleton
-            var playerSkel = boneService.TryGetSkeleton(player.Address);
-            if (playerSkel == null) return;
-            var ps = playerSkel.Value;
-            if (playerNeckBoneIdx >= ps.BoneCount) return;
-
-            var playerSkeleton = ps.CharBase->Skeleton;
-            if (playerSkeleton == null) return;
-            var pSkelPos = new Vector3(
-                playerSkeleton->Transform.Position.X,
-                playerSkeleton->Transform.Position.Y,
-                playerSkeleton->Transform.Position.Z);
-            var pSkelRot = new Quaternion(
-                playerSkeleton->Transform.Rotation.X,
-                playerSkeleton->Transform.Rotation.Y,
-                playerSkeleton->Transform.Rotation.Z,
-                playerSkeleton->Transform.Rotation.W);
-            var pSkelRotInv = Quaternion.Inverse(pSkelRot);
-
-            // Read player bone current position and rotation in model space
-            ref var playerBoneMt = ref ps.Pose->ModelPose.Data[playerNeckBoneIdx];
-            var boneModelPos = new Vector3(playerBoneMt.Translation.X, playerBoneMt.Translation.Y, playerBoneMt.Translation.Z);
-            var boneModelRot = new Quaternion(playerBoneMt.Rotation.X, playerBoneMt.Rotation.Y, playerBoneMt.Rotation.Z, playerBoneMt.Rotation.W);
-
-            // Player bone world position
-            var boneWorldPos = pSkelPos + Vector3.Transform(boneModelPos, pSkelRot);
-
-            // Direction from player bone to NPC hand (in model space)
-            var dirToHandWorld = npcHandWorld - boneWorldPos;
-            var dirLen = dirToHandWorld.Length();
-            if (dirLen < 0.001f) return;
-            dirToHandWorld /= dirLen;
-
-            // Convert direction to model space
-            var dirToHandModel = Vector3.Transform(dirToHandWorld, pSkelRotInv);
-
-            // Current bone "up" direction in model space (Y axis of bone rotation)
-            var boneUp = Vector3.Transform(Vector3.UnitY, boneModelRot);
-
-            // Compute rotation that tilts bone toward the NPC hand
-            var dot = Vector3.Dot(boneUp, dirToHandModel);
-            if (MathF.Abs(dot) > 0.999f) return; // already aligned or opposite
-
-            var axis = Vector3.Cross(boneUp, dirToHandModel);
-            var axisLen = axis.Length();
-            if (axisLen < 0.0001f) return;
-            axis /= axisLen;
-
-            var angle = MathF.Acos(Math.Clamp(dot, -1f, 1f));
-            // Clamp rotation to prevent extreme twisting (max ~45 degrees)
-            angle = MathF.Min(angle, MathF.PI / 4f);
-
-            var rotDelta = Quaternion.CreateFromAxisAngle(axis, angle);
-            var newRot = Quaternion.Normalize(rotDelta * boneModelRot);
-
-            // Write ROTATION ONLY — no position change, no mesh deformation
-            playerBoneMt.Rotation.X = newRot.X;
-            playerBoneMt.Rotation.Y = newRot.Y;
-            playerBoneMt.Rotation.Z = newRot.Z;
-            playerBoneMt.Rotation.W = newRot.W;
-
-            // Propagate to descendants (face, hair follow neck rotation)
-            // Apply same rotation delta to all child bones in this partial skeleton
-            var parentCount = Math.Min(ps.BoneCount, ps.ParentCount);
-            for (int i = 0; i < parentCount; i++)
-            {
-                if (i == playerNeckBoneIdx) continue;
-                var parentIdx = ps.HavokSkeleton->ParentIndices[i];
-                if (parentIdx != playerNeckBoneIdx) continue;
-
-                ref var childMt = ref ps.Pose->ModelPose.Data[i];
-                // Rotate child position around parent bone
-                var childPos = new Vector3(childMt.Translation.X, childMt.Translation.Y, childMt.Translation.Z);
-                var relPos = childPos - boneModelPos;
-                var newChildPos = boneModelPos + Vector3.Transform(relPos, rotDelta);
-                childMt.Translation.X = newChildPos.X;
-                childMt.Translation.Y = newChildPos.Y;
-                childMt.Translation.Z = newChildPos.Z;
-                // Rotate child orientation
-                var childRot = new Quaternion(childMt.Rotation.X, childMt.Rotation.Y, childMt.Rotation.Z, childMt.Rotation.W);
-                var newChildRot = Quaternion.Normalize(rotDelta * childRot);
-                childMt.Rotation.X = newChildRot.X;
-                childMt.Rotation.Y = newChildRot.Y;
-                childMt.Rotation.Z = newChildRot.Z;
-                childMt.Rotation.W = newChildRot.W;
-            }
-
-            grabFrameCount++;
-            if (grabFrameCount <= 3 || grabFrameCount % 60 == 0)
-            {
-                log.Info($"[Grab F{grabFrameCount}] NPC hand=({npcHandWorld.X:F3},{npcHandWorld.Y:F3},{npcHandWorld.Z:F3}) " +
-                         $"bone angle={angle * 180 / MathF.PI:F1}°");
-            }
+            var npcHandWorld = GetNpcBoneWorldPos(stages[currentStageIndex].NpcBoneName);
+            if (npcHandWorld != null)
+                ragdollController.UpdateGrabTarget(npcHandWorld.Value);
         }
         catch (Exception ex)
         {
-            log.Warning(ex, "VictorySequence: Error in grab render frame");
+            log.Warning(ex, "VictorySequence: Error updating grab target");
         }
     }
 
@@ -365,6 +306,13 @@ public unsafe class VictorySequenceController : IDisposable
         if (!isActive) return;
 
         boneService.OnRenderFrame -= OnRenderFrame;
+
+        // Remove BEPU2 grab constraint
+        if (grabActive)
+        {
+            ragdollController.RemoveGrabConstraint();
+            grabActive = false;
+        }
 
         if (cinematicNpc?.BattleChara != null)
         {
@@ -375,8 +323,6 @@ public unsafe class VictorySequenceController : IDisposable
         isActive = false;
         cinematicNpc = null;
         currentStageIndex = -1;
-        grabActive = false;
-        grabFrameCount = 0;
         npcHandBoneIdx = -1;
         playerNeckBoneIdx = -1;
 
