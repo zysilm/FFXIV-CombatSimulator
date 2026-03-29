@@ -256,10 +256,16 @@ public class VictorySequenceGui
             var s = stages[selectedStageIndex];
             ImGui.Text($"Stage {selectedStageIndex}");
 
-            // Time range
+            // Time range (coupled: start syncs prev end, end syncs next start)
+            var idx = selectedStageIndex;
             var st = s.StartTime;
             if (ImGui.DragFloat("Start Time (s)##vsd", ref st, 0.1f, 0, 120, "%.1f"))
-            { s.StartTime = st; config.Save(); }
+            {
+                s.StartTime = st;
+                if (idx > 0 && stages[idx - 1].EndTime >= 0)
+                    stages[idx - 1].EndTime = st;
+                config.Save();
+            }
 
             var isInfinite = s.EndTime < 0;
             if (ImGui.Checkbox("Infinite##vsd", ref isInfinite))
@@ -270,21 +276,36 @@ public class VictorySequenceGui
                 var et = s.EndTime;
                 ImGui.SetNextItemWidth(120);
                 if (ImGui.DragFloat("End Time (s)##vsd", ref et, 0.1f, 0, 120, "%.1f"))
-                { s.EndTime = et; config.Save(); }
+                {
+                    s.EndTime = et;
+                    if (idx < stages.Count - 1)
+                        stages[idx + 1].StartTime = et;
+                    config.Save();
+                }
             }
             else
             {
                 ImGui.TextDisabled("End Time: infinite");
             }
 
-            // Distances
+            // Distances (coupled: start syncs prev end, end syncs next start)
             var sd = s.StartDistance;
             if (ImGui.DragFloat("Start Distance##vsd", ref sd, 0.1f, 0, 30, "%.1f"))
-            { s.StartDistance = sd; config.Save(); }
+            {
+                s.StartDistance = sd;
+                if (idx > 0)
+                    stages[idx - 1].EndDistance = sd;
+                config.Save();
+            }
 
             var ed = s.EndDistance;
             if (ImGui.DragFloat("End Distance##vsd", ref ed, 0.1f, 0, 30, "%.1f"))
-            { s.EndDistance = ed; config.Save(); }
+            {
+                s.EndDistance = ed;
+                if (idx < stages.Count - 1)
+                    stages[idx + 1].StartDistance = ed;
+                config.Save();
+            }
 
             var ho = s.HeightOffset;
             if (ImGui.DragFloat("Height Offset##vsd", ref ho, 0.01f, -5, 5, "%.2f"))
@@ -334,6 +355,14 @@ public class VictorySequenceGui
                 // Grab physics tweaks
                 ImGui.Separator();
                 ImGui.TextDisabled("Grab Physics");
+                if (ImGui.SmallButton("Reset Defaults##grab"))
+                {
+                    s.GrabForce = 1000f;
+                    s.GrabSpeed = 50f;
+                    s.GrabSpringFreq = 120f;
+                    config.Save();
+                }
+
                 var gf = s.GrabForce;
                 if (ImGui.DragFloat("Force##grab", ref gf, 10f, 10, 5000, "%.0f"))
                 { s.GrabForce = gf; config.Save(); }
