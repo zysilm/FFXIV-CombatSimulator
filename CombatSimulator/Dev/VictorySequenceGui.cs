@@ -172,7 +172,7 @@ public class VictorySequenceGui
                 ImGui.TableNextRow();
 
                 ImGui.TableNextColumn();
-                if (ImGui.Selectable($"{i}##sel{i}", selectedStageIndex == i, ImGuiSelectableFlags.SpanAllColumns))
+                if (ImGui.Selectable($"{i}##sel{i}", selectedStageIndex == i))
                     selectedStageIndex = i;
 
                 ImGui.TableNextColumn();
