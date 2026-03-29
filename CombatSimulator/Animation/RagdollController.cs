@@ -659,6 +659,8 @@ public unsafe class RagdollController : IDisposable
         var jointSpring = new SpringSettings(30 * stiffness, 1);
         var limitSpring = new SpringSettings(15 * stiffness, 1);
         var motorDamping = 0.01f * stiffness;
+        savedMotorDamping = motorDamping;
+        angularMotorHandles.Clear();
 
         for (int i = 0; i < ragdollBones.Count; i++)
         {
@@ -865,12 +867,13 @@ public unsafe class RagdollController : IDisposable
             // --- AngularMotor: damp relative angular velocity ---
             // Damping 0.01 matches BEPU RagdollDemo. Higher values (like 1.0) make joints
             // almost rigid, preventing natural articulation and causing uniform-fall behavior.
-            simulation.Solver.Add(rb.BodyHandle, parentHandle,
+            var motorHandle = simulation.Solver.Add(rb.BodyHandle, parentHandle,
                 new AngularMotor
                 {
                     TargetVelocityLocalA = Vector3.Zero,
                     Settings = new MotorSettings(float.MaxValue, motorDamping),
                 });
+            angularMotorHandles.Add(motorHandle);
         }
 
         // Build ragdoll bone index set for fast lookup during propagation
@@ -1348,6 +1351,9 @@ public unsafe class RagdollController : IDisposable
     private ConstraintHandle grabConstraintHandle;
     private bool grabConstraintActive;
     private BodyHandle grabBodyHandle;
+    // Angular motor handles — stored to weaken/restore during grab
+    private readonly List<ConstraintHandle> angularMotorHandles = new();
+    private float savedMotorDamping;
 
     /// <summary>
     /// Create a OneBodyLinearServo constraint that pins a ragdoll bone to a world-space
@@ -1382,6 +1388,24 @@ public unsafe class RagdollController : IDisposable
             var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
             bodyRef.Activity.SleepThreshold = -1f;
         }
+
+        // Weaken angular motors so the body swings freely from the grab point.
+        // Reduce damping to ~1% of normal so joints barely resist rotation.
+        var weakDamping = savedMotorDamping * 0.01f;
+        foreach (var mh in angularMotorHandles)
+        {
+            try
+            {
+                var desc = new AngularMotor
+                {
+                    TargetVelocityLocalA = Vector3.Zero,
+                    Settings = new MotorSettings(float.MaxValue, weakDamping),
+                };
+                simulation.Solver.ApplyDescription(mh, desc);
+            }
+            catch { }
+        }
+        log.Info($"RagdollController: Weakened {angularMotorHandles.Count} angular motors (damping {savedMotorDamping:F4} → {weakDamping:F4})");
 
         // Create OneBodyLinearServo: pins a body to a world-space target
         grabConstraintHandle = simulation.Solver.Add(grabBodyHandle,
@@ -1436,6 +1460,22 @@ public unsafe class RagdollController : IDisposable
         }
         catch { }
 
+        // Restore angular motor damping to original values
+        foreach (var mh in angularMotorHandles)
+        {
+            try
+            {
+                var desc = new AngularMotor
+                {
+                    TargetVelocityLocalA = Vector3.Zero,
+                    Settings = new MotorSettings(float.MaxValue, savedMotorDamping),
+                };
+                simulation.Solver.ApplyDescription(mh, desc);
+            }
+            catch { }
+        }
+        log.Info($"RagdollController: Restored {angularMotorHandles.Count} angular motors (damping={savedMotorDamping:F4})");
+
         // Restore normal sleep threshold (unless settle collision wants them awake)
         var normalThreshold = (config.RagdollNpcSettleCollision && config.RagdollNpcCollision) ? -1f : 0.01f;
         for (int i = 0; i < ragdollBones.Count; i++)
@@ -1455,6 +1495,7 @@ public unsafe class RagdollController : IDisposable
     private void DestroySimulation()
     {
         grabConstraintActive = false;
+        angularMotorHandles.Clear();
         ragdollBones.Clear();
         npcCollisionStates.Clear();
         simulation?.Dispose();
