@@ -26,6 +26,7 @@ public class MainWindow : IDisposable
     private readonly ActiveCameraController activeCameraController;
     private readonly IClientState clientState;
     private readonly IChatGui chatGui;
+    private readonly Dev.VictorySequenceGui victorySequenceGui;
     private readonly IPluginLog log;
 
     // Model override state
@@ -93,6 +94,7 @@ public class MainWindow : IDisposable
         this.clientState = clientState;
         this.chatGui = chatGui;
         this.log = log;
+        this.victorySequenceGui = new Dev.VictorySequenceGui(config, log);
     }
 
     private int selectedTab = 0;
@@ -1326,6 +1328,8 @@ public class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Ragdoll body mass multiplier. Higher = heavier (resists collision). Lower = lighter (flies on impact).");
+
+            victorySequenceGui.Draw();
 
             ImGui.Unindent();
         }

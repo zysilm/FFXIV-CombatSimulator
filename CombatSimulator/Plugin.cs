@@ -40,6 +40,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly UseActionHook useActionHook;
     private readonly DeathCamController deathCamController;
     private readonly ActiveCameraController activeCameraController;
+    private readonly Dev.VictorySequenceController victorySequenceController;
     private readonly MainWindow mainWindow;
     private readonly HpBarOverlay hpBarOverlay;
     private readonly CombatLogWindow combatLogWindow;
@@ -86,10 +87,14 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         ragdollController = new RagdollController(boneTransformService, npcSelector, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
+        victorySequenceController = new Dev.VictorySequenceController(
+            boneTransformService, animationController.EmotePlayer,
+            movementBlockHook, clientState, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, ragdollController,
-            config, npcSelector, clientState, log, deathCamController);
+            config, npcSelector, clientState, log, deathCamController,
+            victorySequenceController);
         npcAiController = new NpcAiController(combatEngine, animationController, movementBlockHook, clientState, config, log);
 
         // Safety — enable hooks immediately; they gate on internal state
@@ -143,6 +148,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         mainWindow.Dispose();
         npcAiController.Dispose();
         combatEngine.Dispose();
+        victorySequenceController.Dispose();
         ragdollController.Dispose();
         boneTransformService.Dispose();
         deathCamController.Dispose();
@@ -261,6 +267,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             combatEngine.Tick(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
+            victorySequenceController.Tick(deltaTime);
         }
         catch (Exception ex)
         {

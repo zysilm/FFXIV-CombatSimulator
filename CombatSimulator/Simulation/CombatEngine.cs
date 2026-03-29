@@ -56,6 +56,7 @@ public class CombatEngine : IDisposable
     private readonly IPluginLog log;
     private readonly RagdollController ragdollController;
     private readonly DeathCamController? deathCamController;
+    private readonly Dev.VictorySequenceController? victorySequenceController;
     private bool playerDeathTriggered;
     private bool victoryTriggered;
     private bool glamourerApplied;
@@ -95,7 +96,8 @@ public class CombatEngine : IDisposable
         NpcSelector npcSelector,
         IClientState clientState,
         IPluginLog log,
-        DeathCamController? deathCamController = null)
+        DeathCamController? deathCamController = null,
+        Dev.VictorySequenceController? victorySequenceController = null)
     {
         this.actionDataProvider = actionDataProvider;
         this.damageCalculator = damageCalculator;
@@ -108,6 +110,7 @@ public class CombatEngine : IDisposable
         this.clientState = clientState;
         this.log = log;
         this.deathCamController = deathCamController;
+        this.victorySequenceController = victorySequenceController;
     }
 
     public void StartSimulation()
@@ -140,6 +143,9 @@ public class CombatEngine : IDisposable
 
         lock (queueLock)
             actionQueue.Clear();
+
+        // Stop victory sequence if running
+        victorySequenceController?.Stop();
 
         // Clear approach position blocks FIRST so position restores in DeselectAll aren't blocked
         movementBlockHook.ClearApproachNpcs();
@@ -175,6 +181,7 @@ public class CombatEngine : IDisposable
     {
         State.Reset();
         CombatLog.Clear();
+        victorySequenceController?.Stop();
         deathCamController?.Deactivate();
 
         // Re-initialize player state
@@ -654,7 +661,26 @@ public class CombatEngine : IDisposable
                 playerDeathTriggered = true;
                 movementBlockHook.IsBlocking = true;
                 animationController.PlayPlayerDeath();
-                animationController.PlayVictory(isPlayerVictory: false, npcSelector.SelectedNpcs);
+                // Try cinematic victory sequence first; fall back to normal emotes
+                SimulatedNpc? cinematicNpc = null;
+                if (victorySequenceController != null)
+                {
+                    var (started, cNpc) = victorySequenceController.TryStart(npcSelector.SelectedNpcs);
+                    if (started) cinematicNpc = cNpc;
+                }
+                // Play normal victory emote on all NPCs (or all except cinematic one)
+                if (cinematicNpc != null)
+                {
+                    var otherNpcs = new List<SimulatedNpc>();
+                    foreach (var npc in npcSelector.SelectedNpcs)
+                        if (npc != cinematicNpc && npc.State.IsAlive) otherNpcs.Add(npc);
+                    if (otherNpcs.Count > 0)
+                        animationController.PlayVictory(isPlayerVictory: false, otherNpcs);
+                }
+                else
+                {
+                    animationController.PlayVictory(isPlayerVictory: false, npcSelector.SelectedNpcs);
+                }
                 ApplyGlamourer();
                 deathCamController?.Activate();
 

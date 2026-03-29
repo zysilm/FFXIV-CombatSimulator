@@ -42,6 +42,7 @@ public unsafe class AnimationController : IDisposable
     private readonly IClientState clientState;
     private readonly ChatCommandExecutor commandExecutor;
     private readonly EmoteTimelinePlayer emotePlayer;
+    public EmoteTimelinePlayer EmotePlayer => emotePlayer;
     private readonly Configuration config;
 
     // Monotonically increasing sequence number for fabricated ActionEffects

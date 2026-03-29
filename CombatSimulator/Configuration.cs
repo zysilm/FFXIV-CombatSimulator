@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using CombatSimulator.Dev;
 using Dalamud.Configuration;
 using Dalamud.Plugin;
 
@@ -103,6 +104,8 @@ public class Configuration : IPluginConfiguration
     public float RagdollHairDamping { get; set; } = 0.92f;
     public float RagdollHairStiffness { get; set; } = 0.1f;
     // Dev (Experimental) — hidden behind easter egg
+    public bool EnableVictorySequence { get; set; } = false;
+    public List<VictorySequenceStage> VictorySequenceStages { get; set; } = new();
     public bool RagdollNpcCollision { get; set; } = false;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcSettleCollision { get; set; } = false;
