@@ -226,6 +226,8 @@ public unsafe class VictorySequenceController : IDisposable
         log.Info($"VictorySequence: Grab bones resolved — NPC '{stage.NpcBoneName}'={npcHandBoneIdx}, Player '{stage.PlayerBoneName}'={playerNeckBoneIdx}");
     }
 
+    private int grabFrameCount;
+
     private void OnRenderFrame()
     {
         if (!isActive || !grabActive || cinematicNpc?.BattleChara == null) return;
@@ -236,36 +238,12 @@ public unsafe class VictorySequenceController : IDisposable
             var player = clientState.LocalPlayer;
             if (player == null) return;
 
-            // Get NPC skeleton
+            // Get NPC skeleton — read hand bone world position from current animation frame
             var npcSkel = boneService.TryGetSkeleton(cinematicNpc.Address);
             if (npcSkel == null) return;
             var ns = npcSkel.Value;
             if (npcHandBoneIdx >= ns.BoneCount) return;
 
-            // Get player skeleton
-            var playerSkel = boneService.TryGetSkeleton(player.Address);
-            if (playerSkel == null) return;
-            var ps = playerSkel.Value;
-            if (playerNeckBoneIdx >= ps.BoneCount) return;
-
-            // Read player neck world position
-            var playerSkeleton = ps.CharBase->Skeleton;
-            if (playerSkeleton == null) return;
-            var pSkelPos = new Vector3(
-                playerSkeleton->Transform.Position.X,
-                playerSkeleton->Transform.Position.Y,
-                playerSkeleton->Transform.Position.Z);
-            var pSkelRot = new Quaternion(
-                playerSkeleton->Transform.Rotation.X,
-                playerSkeleton->Transform.Rotation.Y,
-                playerSkeleton->Transform.Rotation.Z,
-                playerSkeleton->Transform.Rotation.W);
-
-            ref var playerNeckMt = ref ps.Pose->ModelPose.Data[playerNeckBoneIdx];
-            var playerNeckModel = new Vector3(playerNeckMt.Translation.X, playerNeckMt.Translation.Y, playerNeckMt.Translation.Z);
-            var playerNeckWorld = pSkelPos + Vector3.Transform(playerNeckModel, pSkelRot);
-
-            // Read NPC skeleton transform
             var npcSkeleton = ns.CharBase->Skeleton;
             if (npcSkeleton == null) return;
             var nSkelPos = new Vector3(
@@ -277,16 +255,46 @@ public unsafe class VictorySequenceController : IDisposable
                 npcSkeleton->Transform.Rotation.Y,
                 npcSkeleton->Transform.Rotation.Z,
                 npcSkeleton->Transform.Rotation.W);
-            var nSkelRotInv = Quaternion.Inverse(nSkelRot);
 
-            // Convert player neck world pos to NPC model space
-            var targetInNpcModel = Vector3.Transform(playerNeckWorld - nSkelPos, nSkelRotInv);
-
-            // Write NPC hand bone to target position
             ref var npcHandMt = ref ns.Pose->ModelPose.Data[npcHandBoneIdx];
-            npcHandMt.Translation.X = targetInNpcModel.X;
-            npcHandMt.Translation.Y = targetInNpcModel.Y;
-            npcHandMt.Translation.Z = targetInNpcModel.Z;
+            var npcHandModel = new Vector3(npcHandMt.Translation.X, npcHandMt.Translation.Y, npcHandMt.Translation.Z);
+            var npcHandWorld = nSkelPos + Vector3.Transform(npcHandModel, nSkelRot);
+
+            // Get player skeleton — move player bone toward NPC hand
+            // Player is frozen (death pose or ragdoll) so ModelPose writes persist
+            var playerSkel = boneService.TryGetSkeleton(player.Address);
+            if (playerSkel == null) return;
+            var ps = playerSkel.Value;
+            if (playerNeckBoneIdx >= ps.BoneCount) return;
+
+            var playerSkeleton = ps.CharBase->Skeleton;
+            if (playerSkeleton == null) return;
+            var pSkelPos = new Vector3(
+                playerSkeleton->Transform.Position.X,
+                playerSkeleton->Transform.Position.Y,
+                playerSkeleton->Transform.Position.Z);
+            var pSkelRot = new Quaternion(
+                playerSkeleton->Transform.Rotation.X,
+                playerSkeleton->Transform.Rotation.Y,
+                playerSkeleton->Transform.Rotation.Z,
+                playerSkeleton->Transform.Rotation.W);
+            var pSkelRotInv = Quaternion.Inverse(pSkelRot);
+
+            // Convert NPC hand world position to player model space
+            var targetInPlayerModel = Vector3.Transform(npcHandWorld - pSkelPos, pSkelRotInv);
+
+            // Write player bone to NPC hand position (player is frozen, this persists)
+            ref var playerBoneMt = ref ps.Pose->ModelPose.Data[playerNeckBoneIdx];
+            playerBoneMt.Translation.X = targetInPlayerModel.X;
+            playerBoneMt.Translation.Y = targetInPlayerModel.Y;
+            playerBoneMt.Translation.Z = targetInPlayerModel.Z;
+
+            grabFrameCount++;
+            if (grabFrameCount <= 3 || grabFrameCount % 60 == 0)
+            {
+                log.Info($"[Grab F{grabFrameCount}] NPC hand world=({npcHandWorld.X:F3},{npcHandWorld.Y:F3},{npcHandWorld.Z:F3}) " +
+                         $"→ player bone model=({targetInPlayerModel.X:F3},{targetInPlayerModel.Y:F3},{targetInPlayerModel.Z:F3})");
+            }
         }
         catch (Exception ex)
         {
@@ -310,6 +318,7 @@ public unsafe class VictorySequenceController : IDisposable
         cinematicNpc = null;
         currentStageIndex = -1;
         grabActive = false;
+        grabFrameCount = 0;
         npcHandBoneIdx = -1;
         playerNeckBoneIdx = -1;
 

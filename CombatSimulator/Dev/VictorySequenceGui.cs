@@ -189,7 +189,17 @@ public class VictorySequenceGui
 
         if (ImGui.Button("+ Add Stage##vseq"))
         {
-            stages.Add(new VictorySequenceStage());
+            var newStage = new VictorySequenceStage();
+            // Chain from previous stage's end values
+            if (stages.Count > 0)
+            {
+                var prev = stages[^1];
+                newStage.StartTime = prev.EndTime;
+                newStage.EndTime = prev.EndTime; // user adjusts end time
+                newStage.StartDistance = prev.EndDistance;
+                newStage.EndDistance = prev.EndDistance;
+            }
+            stages.Add(newStage);
             selectedStageIndex = stages.Count - 1;
             config.Save();
         }
