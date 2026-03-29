@@ -191,7 +191,6 @@ public unsafe class ActiveCameraController : IDisposable
                             distanceOverridden = true;
                         }
                         gameCam->MinDistance = config.ActiveCameraMinZoomDistance;
-                        gameCam->InterpDistance = gameCam->Distance;
                     }
                     else if (distanceOverridden)
                     {
