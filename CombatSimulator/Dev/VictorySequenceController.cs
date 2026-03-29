@@ -249,7 +249,21 @@ public unsafe class VictorySequenceController : IDisposable
 
                 if (stage.ResolvedIntroTimeline != 0 || stage.ResolvedLoopTimeline != 0)
                 {
-                    emotePlayer.PlayLoopedEmote(character, stage.ResolvedLoopTimeline, stage.ResolvedIntroTimeline, playerObjId);
+                    if (stage.ResolvedIntroTimeline != 0 && stage.ResolvedIntroTimeline != stage.ResolvedLoopTimeline)
+                    {
+                        // Height-adjusted: set kneel posture as BaseOverride,
+                        // then play the emote action as a one-shot overlay on top.
+                        // This layers: base=kneel, overlay=poke (like the game does internally).
+                        character->Timeline.BaseOverride = stage.ResolvedIntroTimeline;
+                        emotePlayer.PlayOneShot(character, stage.ResolvedLoopTimeline);
+                        log.Info($"VictorySequence: Layered emote — base={stage.ResolvedIntroTimeline} (kneel) + overlay={stage.ResolvedLoopTimeline} (action)");
+                    }
+                    else
+                    {
+                        // No height adjustment — play normally
+                        emotePlayer.PlayLoopedEmote(character, stage.ResolvedLoopTimeline, stage.ResolvedIntroTimeline, playerObjId);
+                        log.Info($"VictorySequence: Emote {stage.EmoteId} (intro={stage.ResolvedIntroTimeline}, loop={stage.ResolvedLoopTimeline})");
+                    }
                 }
             }
             else if (!stage.UseEmote && stage.ActionTimelineId > 0)
