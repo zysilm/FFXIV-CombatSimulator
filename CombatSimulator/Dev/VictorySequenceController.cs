@@ -204,9 +204,10 @@ public unsafe class VictorySequenceController : IDisposable
             }
             else if (!stage.UseEmote && stage.ActionTimelineId > 0)
             {
-                // Action timeline mode: play raw timeline ID directly
-                emotePlayer.PlayOneShot(character, (ushort)stage.ActionTimelineId);
-                log.Info($"VictorySequence: ActionTimeline {stage.ActionTimelineId}");
+                // Action timeline mode: set BaseOverride to force the animation
+                // (PlayOneShot uses low priority that gets overridden by NPC state)
+                character->Timeline.BaseOverride = (ushort)stage.ActionTimelineId;
+                log.Info($"VictorySequence: ActionTimeline {stage.ActionTimelineId} via BaseOverride");
             }
 
             stageAnimPlayed = true;
