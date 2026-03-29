@@ -480,6 +480,15 @@ public unsafe class AnimationController : IDisposable
             {
                 try
                 {
+                    // Get player's object ID so the emote targets the player (facing, height adjust)
+                    ulong playerObjId = 0;
+                    var player = clientState.LocalPlayer;
+                    if (player != null)
+                    {
+                        var playerObj = (GameObject*)player.Address;
+                        playerObjId = playerObj->GetGameObjectId().Id;
+                    }
+
                     var emoteSheet = Core.Services.DataManager.GetExcelSheet<Emote>();
                     if (emoteSheet != null)
                     {
@@ -492,8 +501,8 @@ public unsafe class AnimationController : IDisposable
                             if (npc.BattleChara == null || !npc.State.IsAlive) continue;
                             var character = (Character*)npc.BattleChara;
                             if (introTimeline != 0 || loopTimeline != 0)
-                                emotePlayer.PlayLoopedEmote(character, loopTimeline, introTimeline);
-                            log.Info($"NPC '{npc.Name}' playing victory emote {emoteId} (loop={loopTimeline}, intro={introTimeline})");
+                                emotePlayer.PlayLoopedEmote(character, loopTimeline, introTimeline, playerObjId);
+                            log.Info($"NPC '{npc.Name}' playing victory emote {emoteId} toward player 0x{playerObjId:X}");
                         }
                     }
                 }

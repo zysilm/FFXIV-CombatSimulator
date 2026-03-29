@@ -52,7 +52,7 @@ public unsafe class EmoteTimelinePlayer
     /// Play a looped emote: blend the intro animation, then set BaseOverride for the loop.
     /// This is the pattern used by BypassEmote for persistent emotes like /playdead.
     /// </summary>
-    public void PlayLoopedEmote(Character* native, ushort loopTimeline, ushort introTimeline)
+    public void PlayLoopedEmote(Character* native, ushort loopTimeline, ushort introTimeline, ulong targetObjId = 0)
     {
         if (native == null) return;
 
@@ -60,13 +60,13 @@ public unsafe class EmoteTimelinePlayer
         {
             // Blend intro animation first (the "falling down" part)
             if (introTimeline != 0)
-                BlendTimeline(native, introTimeline, priority: 1);
+                BlendTimeline(native, introTimeline, priority: 1, targetObjId: targetObjId);
 
             // Set base override to loop timeline (the "lying on ground" part)
             if (loopTimeline != 0)
                 native->Timeline.BaseOverride = loopTimeline;
 
-            log.Verbose($"EmoteTimelinePlayer: Played looped emote (intro={introTimeline}, loop={loopTimeline}).");
+            log.Verbose($"EmoteTimelinePlayer: Played looped emote (intro={introTimeline}, loop={loopTimeline}, target=0x{targetObjId:X}).");
         }
         catch (Exception ex)
         {
@@ -115,7 +115,7 @@ public unsafe class EmoteTimelinePlayer
     /// Core blend: allocate ActionTimelineAnimParams, configure, and call PlayTimeline.
     /// Mirrors BypassEmote's ExperimentalBlend approach.
     /// </summary>
-    private void BlendTimeline(Character* native, ushort actionTimeline, int priority = -1)
+    private void BlendTimeline(Character* native, ushort actionTimeline, int priority = -1, ulong targetObjId = 0)
     {
         var animParams = (ActionTimelineAnimParams*)Marshal.AllocHGlobal(0x60);
         try
@@ -125,7 +125,7 @@ public unsafe class EmoteTimelinePlayer
             animParams->StartTS = 0.0f;
             animParams->Unk1C = -1.0f;
             animParams->Unk20 = 0;
-            animParams->TargetObjId = 0;
+            animParams->TargetObjId = targetObjId;
             animParams->Unk30 = 0;
             animParams->Priority = (uint)priority;
             animParams->Unk38 = -1;
