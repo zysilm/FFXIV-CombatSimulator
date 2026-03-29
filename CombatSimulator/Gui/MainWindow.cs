@@ -1539,7 +1539,7 @@ public class MainWindow : IDisposable
             return;
         }
 
-        // Bone selector (compact combo)
+        // Bone selector
         var bones = ActiveCameraController.CenterBones;
         int boneIdx = 0;
         for (int b = 0; b < bones.Length; b++)
@@ -1549,7 +1549,9 @@ public class MainWindow : IDisposable
         for (int b = 0; b < bones.Length; b++)
             boneLabels[b] = bones[b].Label;
 
-        ImGui.SetNextItemWidth(100);
+        ImGui.Text("Bone");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(140);
         if (ImGui.Combo("##acbone", ref boneIdx, boneLabels, boneLabels.Length))
         {
             config.ActiveCameraBoneName = bones[boneIdx].BoneName;
@@ -1557,29 +1559,30 @@ public class MainWindow : IDisposable
         }
 
         // Height offset
+        ImGui.Text("H");
         ImGui.SameLine();
         var height = config.ActiveCameraHeightOffset;
-        ImGui.SetNextItemWidth(60);
-        if (ImGui.DragFloat("H##actb", ref height, 0.01f, -5f, 10f, "%.2f"))
+        ImGui.SetNextItemWidth(100);
+        if (ImGui.DragFloat("##acH", ref height, 0.01f, -5f, 10f, "%.2f"))
         {
             config.ActiveCameraHeightOffset = height;
             config.Save();
         }
 
         // Side offset
+        ImGui.Text("S");
         ImGui.SameLine();
         var side = config.ActiveCameraSideOffset;
-        ImGui.SetNextItemWidth(60);
-        if (ImGui.DragFloat("S##actb", ref side, 0.01f, -5f, 5f, "%.2f"))
+        ImGui.SetNextItemWidth(100);
+        if (ImGui.DragFloat("##acS", ref side, 0.01f, -5f, 5f, "%.2f"))
         {
             config.ActiveCameraSideOffset = side;
             config.Save();
         }
 
         // Close zoom toggle
-        ImGui.SameLine();
         var closeZoom = config.ActiveCameraCloseZoom;
-        if (ImGui.Checkbox("Zoom##actb", ref closeZoom))
+        if (ImGui.Checkbox("Close Zoom##actb", ref closeZoom))
         {
             config.ActiveCameraCloseZoom = closeZoom;
             config.Save();
