@@ -238,7 +238,7 @@ public unsafe class VictorySequenceController : IDisposable
             var player = clientState.LocalPlayer;
             if (player == null) return;
 
-            // Get NPC skeleton — read hand bone world position from current animation frame
+            // Read NPC hand bone world position (from current animation frame)
             var npcSkel = boneService.TryGetSkeleton(cinematicNpc.Address);
             if (npcSkel == null) return;
             var ns = npcSkel.Value;
@@ -260,8 +260,7 @@ public unsafe class VictorySequenceController : IDisposable
             var npcHandModel = new Vector3(npcHandMt.Translation.X, npcHandMt.Translation.Y, npcHandMt.Translation.Z);
             var npcHandWorld = nSkelPos + Vector3.Transform(npcHandModel, nSkelRot);
 
-            // Get player skeleton — move player bone toward NPC hand
-            // Player is frozen (death pose or ragdoll) so ModelPose writes persist
+            // Read player skeleton
             var playerSkel = boneService.TryGetSkeleton(player.Address);
             if (playerSkel == null) return;
             var ps = playerSkel.Value;
@@ -280,20 +279,79 @@ public unsafe class VictorySequenceController : IDisposable
                 playerSkeleton->Transform.Rotation.W);
             var pSkelRotInv = Quaternion.Inverse(pSkelRot);
 
-            // Convert NPC hand world position to player model space
-            var targetInPlayerModel = Vector3.Transform(npcHandWorld - pSkelPos, pSkelRotInv);
-
-            // Write player bone to NPC hand position (player is frozen, this persists)
+            // Read player bone current position and rotation in model space
             ref var playerBoneMt = ref ps.Pose->ModelPose.Data[playerNeckBoneIdx];
-            playerBoneMt.Translation.X = targetInPlayerModel.X;
-            playerBoneMt.Translation.Y = targetInPlayerModel.Y;
-            playerBoneMt.Translation.Z = targetInPlayerModel.Z;
+            var boneModelPos = new Vector3(playerBoneMt.Translation.X, playerBoneMt.Translation.Y, playerBoneMt.Translation.Z);
+            var boneModelRot = new Quaternion(playerBoneMt.Rotation.X, playerBoneMt.Rotation.Y, playerBoneMt.Rotation.Z, playerBoneMt.Rotation.W);
+
+            // Player bone world position
+            var boneWorldPos = pSkelPos + Vector3.Transform(boneModelPos, pSkelRot);
+
+            // Direction from player bone to NPC hand (in model space)
+            var dirToHandWorld = npcHandWorld - boneWorldPos;
+            var dirLen = dirToHandWorld.Length();
+            if (dirLen < 0.001f) return;
+            dirToHandWorld /= dirLen;
+
+            // Convert direction to model space
+            var dirToHandModel = Vector3.Transform(dirToHandWorld, pSkelRotInv);
+
+            // Current bone "up" direction in model space (Y axis of bone rotation)
+            var boneUp = Vector3.Transform(Vector3.UnitY, boneModelRot);
+
+            // Compute rotation that tilts bone toward the NPC hand
+            var dot = Vector3.Dot(boneUp, dirToHandModel);
+            if (MathF.Abs(dot) > 0.999f) return; // already aligned or opposite
+
+            var axis = Vector3.Cross(boneUp, dirToHandModel);
+            var axisLen = axis.Length();
+            if (axisLen < 0.0001f) return;
+            axis /= axisLen;
+
+            var angle = MathF.Acos(Math.Clamp(dot, -1f, 1f));
+            // Clamp rotation to prevent extreme twisting (max ~45 degrees)
+            angle = MathF.Min(angle, MathF.PI / 4f);
+
+            var rotDelta = Quaternion.CreateFromAxisAngle(axis, angle);
+            var newRot = Quaternion.Normalize(rotDelta * boneModelRot);
+
+            // Write ROTATION ONLY — no position change, no mesh deformation
+            playerBoneMt.Rotation.X = newRot.X;
+            playerBoneMt.Rotation.Y = newRot.Y;
+            playerBoneMt.Rotation.Z = newRot.Z;
+            playerBoneMt.Rotation.W = newRot.W;
+
+            // Propagate to descendants (face, hair follow neck rotation)
+            // Apply same rotation delta to all child bones in this partial skeleton
+            var parentCount = Math.Min(ps.BoneCount, ps.ParentCount);
+            for (int i = 0; i < parentCount; i++)
+            {
+                if (i == playerNeckBoneIdx) continue;
+                var parentIdx = ps.HavokSkeleton->ParentIndices[i];
+                if (parentIdx != playerNeckBoneIdx) continue;
+
+                ref var childMt = ref ps.Pose->ModelPose.Data[i];
+                // Rotate child position around parent bone
+                var childPos = new Vector3(childMt.Translation.X, childMt.Translation.Y, childMt.Translation.Z);
+                var relPos = childPos - boneModelPos;
+                var newChildPos = boneModelPos + Vector3.Transform(relPos, rotDelta);
+                childMt.Translation.X = newChildPos.X;
+                childMt.Translation.Y = newChildPos.Y;
+                childMt.Translation.Z = newChildPos.Z;
+                // Rotate child orientation
+                var childRot = new Quaternion(childMt.Rotation.X, childMt.Rotation.Y, childMt.Rotation.Z, childMt.Rotation.W);
+                var newChildRot = Quaternion.Normalize(rotDelta * childRot);
+                childMt.Rotation.X = newChildRot.X;
+                childMt.Rotation.Y = newChildRot.Y;
+                childMt.Rotation.Z = newChildRot.Z;
+                childMt.Rotation.W = newChildRot.W;
+            }
 
             grabFrameCount++;
             if (grabFrameCount <= 3 || grabFrameCount % 60 == 0)
             {
-                log.Info($"[Grab F{grabFrameCount}] NPC hand world=({npcHandWorld.X:F3},{npcHandWorld.Y:F3},{npcHandWorld.Z:F3}) " +
-                         $"→ player bone model=({targetInPlayerModel.X:F3},{targetInPlayerModel.Y:F3},{targetInPlayerModel.Z:F3})");
+                log.Info($"[Grab F{grabFrameCount}] NPC hand=({npcHandWorld.X:F3},{npcHandWorld.Y:F3},{npcHandWorld.Z:F3}) " +
+                         $"bone angle={angle * 180 / MathF.PI:F1}°");
             }
         }
         catch (Exception ex)
