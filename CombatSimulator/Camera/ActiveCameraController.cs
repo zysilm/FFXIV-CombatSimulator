@@ -191,21 +191,7 @@ public unsafe class ActiveCameraController : IDisposable
                             distanceOverridden = true;
                         }
                         gameCam->MinDistance = config.ActiveCameraMinZoomDistance;
-
-                        // Smooth close zoom: cap InterpDistance so it can't deviate far
-                        // from Distance. Allows smooth scroll interpolation within a small
-                        // range but prevents the large snap-backs that cause sudden jumps.
-                        if (config.ActiveCameraSmoothCloseZoom)
-                        {
-                            // Prevent InterpDistance from jumping above Distance by more than 0.3
-                            var maxInterp = gameCam->Distance + 0.3f;
-                            if (gameCam->InterpDistance > maxInterp)
-                                gameCam->InterpDistance = maxInterp;
-
-                            // Also prevent InterpDistance from going below our minimum
-                            if (gameCam->InterpDistance < config.ActiveCameraMinZoomDistance)
-                                gameCam->InterpDistance = config.ActiveCameraMinZoomDistance;
-                        }
+                        gameCam->InterpDistance = gameCam->Distance;
                     }
                     else if (distanceOverridden)
                     {

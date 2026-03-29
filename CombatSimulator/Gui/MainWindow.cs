@@ -1117,14 +1117,6 @@ public class MainWindow : IDisposable
                 {
                     ImGui.Indent();
 
-                    var smoothZoom = config.ActiveCameraSmoothCloseZoom;
-                    if (ImGui.Checkbox("Smooth Close Zoom##activecam", ref smoothZoom))
-                    {
-                        config.ActiveCameraSmoothCloseZoom = smoothZoom;
-                        config.Save();
-                    }
-                    HelpMarker("Prevent the game from snapping the camera back when zoomed past the default minimum. Corrects the interpolation target only when snap-back is detected.");
-
                     var minDist = config.ActiveCameraMinZoomDistance;
                     if (ImGui.SliderFloat("Min Zoom Distance##activecam", ref minDist, 0.0f, 2.0f, "%.2f"))
                     {
