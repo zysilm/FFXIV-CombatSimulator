@@ -181,9 +181,20 @@ public unsafe class VictorySequenceController : IDisposable
         var gameObj = (GameObject*)cinematicNpc.BattleChara;
         movementBlockHook.SetApproachPosition(gameObj, targetPos.X, targetPos.Y, targetPos.Z);
 
-        // Rotate NPC to face player
-        var toPlayer = playerDeathPos - targetPos;
-        var rotAngle = MathF.Atan2(toPlayer.X, toPlayer.Z);
+        // Rotate NPC: infinite walk keeps initial facing direction (toward player),
+        // normal mode recalculates each frame (which flips when distance goes negative)
+        float rotAngle;
+        if (stage.InfiniteWalk)
+        {
+            // Face toward player from starting position (never flips)
+            var walkDir = -facingDir; // NPC faces opposite of facing dir (toward player)
+            rotAngle = MathF.Atan2(walkDir.X, walkDir.Z);
+        }
+        else
+        {
+            var toPlayer = playerDeathPos - targetPos;
+            rotAngle = MathF.Atan2(toPlayer.X, toPlayer.Z);
+        }
         movementBlockHook.SetApproachRotation(gameObj, rotAngle);
 
         // Play animation on stage enter, or re-play if user changed config live
