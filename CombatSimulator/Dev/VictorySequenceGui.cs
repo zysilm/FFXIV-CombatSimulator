@@ -483,6 +483,18 @@ public class VictorySequenceGui
             if (ImGui.Checkbox("Emote##mode", ref useEmote))
             { s.UseEmote = useEmote; config.Save(); }
 
+            if (s.UseEmote && s.EmoteId > 0)
+            {
+                var variantNames = new[] { "Standing", "Ground (L)", "Chair", "Upper Body" };
+                var variant = s.EmoteVariant;
+                if (ImGui.Combo("Variant##emvar", ref variant, variantNames, variantNames.Length))
+                {
+                    s.EmoteVariant = variant;
+                    s.ResolvedIntroTimeline = 0; s.ResolvedLoopTimeline = 0; // force re-resolve
+                    config.Save();
+                }
+            }
+
             // === Grab ===
             var grab = s.GrabEnabled;
             if (ImGui.Checkbox("Grab##vsd", ref grab))

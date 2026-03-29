@@ -12,6 +12,7 @@ public class VictorySequenceStage
     public bool UseEmote { get; set; }
     public uint EmoteId { get; set; }
     public uint ActionTimelineId { get; set; }
+    public int EmoteVariant { get; set; }              // 0=Standing, 1=Ground, 2=Chair, 3=UpperBody
     public ushort ResolvedIntroTimeline { get; set; }
     public ushort ResolvedLoopTimeline { get; set; }
     public bool GrabEnabled { get; set; }
