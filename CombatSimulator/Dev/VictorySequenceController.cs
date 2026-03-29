@@ -92,6 +92,13 @@ public unsafe class VictorySequenceController : IDisposable
         playerFacingAngle = playerObj->Rotation;
         playerObjId = playerObj->GetGameObjectId().Id;
 
+        // Lower the player's game position to ground level so the game's emote
+        // height adjustment system sees the target as on the ground (L variant).
+        // The player is dead — ragdoll controls the visual, not GameObject.Position.
+        // Direct struct write bypasses MovementBlockHook.IsBlocking.
+        playerObj->Position.Y -= 1.5f; // ~character standing height → ground level
+        log.Info($"VictorySequence: Lowered player Y from {playerDeathPos.Y:F2} to {playerObj->Position.Y:F2}");
+
         // Register NPC for approach movement (bypass server overrides)
         movementBlockHook.AddApproachNpc(cinematicNpc.Address);
 
@@ -230,36 +237,9 @@ public unsafe class VictorySequenceController : IDisposable
                             var emote = emoteSheet.GetRow(stage.EmoteId);
                             var varIdx = stage.EmoteVariant;
 
-                            ushort selectedTimeline = 0;
-
-                            if (varIdx == 7)
-                            {
-                                // Auto Adjust: temporarily lower player Y to force L variant
-                                var player = clientState.LocalPlayer;
-                                if (player != null)
-                                {
-                                    var playerObj = (GameObject*)player.Address;
-                                    var savedY = playerObj->Position.Y;
-                                    playerObj->Position.Y = savedY - 2.0f; // lower by 2 yalms
-                                    try
-                                    {
-                                        var adjusted = character->Timeline.GetHeightAdjustActionTimelineRowId(
-                                            new FFXIVClientStructs.FFXIV.Client.Game.Object.GameObjectId { Id = playerObjId },
-                                            stage.EmoteId);
-                                        if (adjusted != 0)
-                                            selectedTimeline = (ushort)adjusted;
-                                        log.Info($"VictorySequence: Auto adjust → timeline {adjusted} (lowered Y by 2)");
-                                    }
-                                    finally
-                                    {
-                                        playerObj->Position.Y = savedY; // restore
-                                    }
-                                }
-                            }
-                            else if (varIdx >= 0 && varIdx < 7)
-                            {
-                                selectedTimeline = (ushort)emote.ActionTimeline[varIdx].RowId;
-                            }
+                            // Use the selected index as the timeline to play
+                            var selectedTimeline = (varIdx >= 0 && varIdx < 7)
+                                ? (ushort)emote.ActionTimeline[varIdx].RowId : (ushort)0;
 
                             if (selectedTimeline != 0)
                             {
@@ -409,6 +389,18 @@ public unsafe class VictorySequenceController : IDisposable
     public void Stop()
     {
         if (!isActive) return;
+
+        // Restore player Y position
+        try
+        {
+            var player = clientState.LocalPlayer;
+            if (player != null)
+            {
+                var playerObj = (GameObject*)player.Address;
+                playerObj->Position.Y = playerDeathPos.Y;
+            }
+        }
+        catch { }
 
         boneService.OnRenderFrame -= OnRenderFrame;
 

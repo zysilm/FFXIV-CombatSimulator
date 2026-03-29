@@ -493,7 +493,6 @@ public class VictorySequenceGui
                     "[4] Upper Body",
                     "[5] Variant A",
                     "[6] Variant B",
-                    "[7] Auto Adjust (lower target)",
                 };
                 var variant = s.EmoteVariant;
                 if (ImGui.Combo("Variant##emvar", ref variant, variantNames, variantNames.Length))
