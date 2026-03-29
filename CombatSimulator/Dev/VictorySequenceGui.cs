@@ -14,8 +14,9 @@ public class VictorySequenceGui
     private readonly Npcs.NpcSelector npcSelector;
     private int selectedStageIndex = -1;
 
-    // Cached emote list (alphabetically sorted, loaded once)
+    // Cached lists (alphabetically sorted, loaded once)
     private List<(uint Id, string Name)>? emoteCache;
+    private List<(uint Id, string Name)>? actionTimelineCache;
 
     // Dynamic bone lists — refreshed from actual skeletons
     private string[] npcBoneList = Array.Empty<string>();
@@ -114,6 +115,29 @@ public class VictorySequenceGui
         catch { }
     }
 
+    private void EnsureActionTimelineCache()
+    {
+        if (actionTimelineCache != null) return;
+        actionTimelineCache = new List<(uint, string)> { (0, "(None)") };
+        try
+        {
+            var sheet = Core.Services.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ActionTimeline>();
+            if (sheet != null)
+            {
+                var items = new List<(uint Id, string Name)>();
+                foreach (var row in sheet)
+                {
+                    var key = row.Key.ToString();
+                    if (string.IsNullOrWhiteSpace(key)) continue;
+                    items.Add((row.RowId, $"{key} [{row.RowId}]"));
+                }
+                items.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+                actionTimelineCache.AddRange(items);
+            }
+        }
+        catch { }
+    }
+
     private int FindEmoteIndex(uint emoteId)
     {
         if (emoteCache == null) return 0;
@@ -129,19 +153,18 @@ public class VictorySequenceGui
         return 0;
     }
 
-    /// <summary>Resolve emote ID to intro + loop timeline IDs from Lumina.</summary>
     private void ResolveEmoteTimelines(VictorySequenceStage stage)
     {
-        stage.AnimationTimelineId = 0;
-        stage.LoopTimelineId = 0;
+        stage.ResolvedIntroTimeline = 0;
+        stage.ResolvedLoopTimeline = 0;
         if (stage.EmoteId == 0) return;
         try
         {
             var emoteSheet = Core.Services.DataManager.GetExcelSheet<Emote>();
             if (emoteSheet == null) return;
             var emote = emoteSheet.GetRow(stage.EmoteId);
-            stage.LoopTimelineId = (ushort)emote.ActionTimeline[0].RowId;
-            stage.AnimationTimelineId = (ushort)emote.ActionTimeline[1].RowId;
+            stage.ResolvedLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
+            stage.ResolvedIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
         }
         catch { }
     }
@@ -149,6 +172,7 @@ public class VictorySequenceGui
     public void Draw()
     {
         EnsureEmoteCache();
+        EnsureActionTimelineCache();
         EnsurePlayerBones();
         ImGui.Separator();
         ImGui.Text("Victory Cinematic");
@@ -172,7 +196,7 @@ public class VictorySequenceGui
             ImGui.TableSetupColumn("#", ImGuiTableColumnFlags.WidthFixed, 20);
             ImGui.TableSetupColumn("Time", ImGuiTableColumnFlags.WidthFixed, 90);
             ImGui.TableSetupColumn("Distance", ImGuiTableColumnFlags.WidthFixed, 90);
-            ImGui.TableSetupColumn("Emote", ImGuiTableColumnFlags.WidthFixed, 100);
+            ImGui.TableSetupColumn("Behavior", ImGuiTableColumnFlags.WidthFixed, 100);
             ImGui.TableSetupColumn("Grab", ImGuiTableColumnFlags.WidthFixed, 35);
             ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 70);
             ImGui.TableHeadersRow();
@@ -195,8 +219,10 @@ public class VictorySequenceGui
                 ImGui.Text($"{s.StartDistance:F1}→{s.EndDistance:F1}");
 
                 ImGui.TableNextColumn();
-                var emoteName = s.EmoteId > 0 ? FindEmoteName(s.EmoteId) : "-";
-                ImGui.Text(emoteName);
+                var behaviorName = s.UseEmote
+                    ? (s.EmoteId > 0 ? FindEmoteName(s.EmoteId) : "-")
+                    : (s.ActionTimelineId > 0 ? FindActionTimelineName(s.ActionTimelineId) : "-");
+                ImGui.Text(behaviorName);
 
                 ImGui.TableNextColumn();
                 ImGui.Text(s.GrabEnabled ? "Y" : "");
@@ -311,26 +337,64 @@ public class VictorySequenceGui
             if (ImGui.DragFloat("Height Offset##vsd", ref ho, 0.01f, -5, 5, "%.2f"))
             { s.HeightOffset = ho; config.Save(); }
 
-            // Emote dropdown
-            var emoteIdx = FindEmoteIndex(s.EmoteId);
-            var emoteName = emoteIdx < emoteCache!.Count ? emoteCache[emoteIdx].Name : "(None)";
-            if (ImGui.BeginCombo("Emote##vsd", emoteName))
+            // Behavior: action timeline or emote (toggle on right)
+            var useEmote = s.UseEmote;
+            if (useEmote)
             {
-                for (int i = 0; i < emoteCache.Count; i++)
+                // Emote mode
+                var emoteIdx = FindEmoteIndex(s.EmoteId);
+                var emoteName = emoteIdx < emoteCache!.Count ? emoteCache[emoteIdx].Name : "(None)";
+                ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 80);
+                if (ImGui.BeginCombo("##behavvsd", emoteName))
                 {
-                    var isSelected = i == emoteIdx;
-                    if (ImGui.Selectable(emoteCache[i].Name, isSelected))
+                    for (int i = 0; i < emoteCache.Count; i++)
                     {
-                        s.EmoteId = emoteCache[i].Id;
-                        ResolveEmoteTimelines(s);
-                        config.Save();
+                        var isSelected = i == emoteIdx;
+                        if (ImGui.Selectable(emoteCache[i].Name, isSelected))
+                        {
+                            s.EmoteId = emoteCache[i].Id;
+                            s.ActionTimelineId = 0;
+                            ResolveEmoteTimelines(s);
+                            config.Save();
+                        }
+                        if (isSelected) ImGui.SetItemDefaultFocus();
                     }
-                    if (isSelected) ImGui.SetItemDefaultFocus();
+                    ImGui.EndCombo();
                 }
-                ImGui.EndCombo();
+                if (s.EmoteId > 0)
+                    ImGui.TextDisabled($"  Intro={s.ResolvedIntroTimeline} Loop={s.ResolvedLoopTimeline}");
             }
-            if (s.EmoteId > 0)
-                ImGui.TextDisabled($"  Intro={s.AnimationTimelineId} Loop={s.LoopTimelineId}");
+            else
+            {
+                // Action timeline mode
+                int atIdx = 0;
+                for (int i = 0; i < actionTimelineCache!.Count; i++)
+                    if (actionTimelineCache[i].Id == s.ActionTimelineId) { atIdx = i; break; }
+                var atName = atIdx < actionTimelineCache.Count ? actionTimelineCache[atIdx].Name : "(None)";
+                ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 80);
+                if (ImGui.BeginCombo("##behavvsd", atName))
+                {
+                    for (int i = 0; i < actionTimelineCache.Count; i++)
+                    {
+                        var isSelected = i == atIdx;
+                        if (ImGui.Selectable(actionTimelineCache[i].Name, isSelected))
+                        {
+                            s.ActionTimelineId = actionTimelineCache[i].Id;
+                            s.EmoteId = 0;
+                            s.ResolvedIntroTimeline = 0;
+                            s.ResolvedLoopTimeline = 0;
+                            config.Save();
+                        }
+                        if (isSelected) ImGui.SetItemDefaultFocus();
+                    }
+                    ImGui.EndCombo();
+                }
+            }
+            ImGui.SameLine();
+            if (ImGui.Checkbox("Emote##modevsd", ref useEmote))
+            { s.UseEmote = useEmote; config.Save(); }
+            ImGui.SameLine();
+            ImGui.Text("Behavior");
 
             // Grab section
             var grab = s.GrabEnabled;
@@ -386,12 +450,24 @@ public class VictorySequenceGui
         for (int i = 0; i < emoteCache.Count; i++)
             if (emoteCache[i].Id == emoteId)
             {
-                // Return just the name part (before the [id])
                 var name = emoteCache[i].Name;
                 var bracket = name.LastIndexOf(" [");
                 return bracket > 0 ? name[..bracket] : name;
             }
         return $"#{emoteId}";
+    }
+
+    private string FindActionTimelineName(uint atId)
+    {
+        if (actionTimelineCache == null) return "?";
+        for (int i = 0; i < actionTimelineCache.Count; i++)
+            if (actionTimelineCache[i].Id == atId)
+            {
+                var name = actionTimelineCache[i].Name;
+                var bracket = name.LastIndexOf(" [");
+                return bracket > 0 ? name[..bracket] : name;
+            }
+        return $"#{atId}";
     }
 
     private static void HelpMarker(string desc)

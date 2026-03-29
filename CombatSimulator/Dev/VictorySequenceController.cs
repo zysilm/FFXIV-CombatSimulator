@@ -174,33 +174,41 @@ public unsafe class VictorySequenceController : IDisposable
         movementBlockHook.SetApproachRotation(gameObj, rotAngle);
 
         // Play animation on stage enter
-        if (!stageAnimPlayed && stage.EmoteId > 0)
+        if (!stageAnimPlayed)
         {
-            // Resolve timeline IDs from emote if not already set
-            if (stage.AnimationTimelineId == 0 && stage.LoopTimelineId == 0)
+            var character = (Character*)cinematicNpc.BattleChara;
+
+            if (stage.UseEmote && stage.EmoteId > 0)
             {
-                try
+                // Emote mode: resolve intro/loop timelines from emote sheet
+                if (stage.ResolvedIntroTimeline == 0 && stage.ResolvedLoopTimeline == 0)
                 {
-                    var emoteSheet = Core.Services.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>();
-                    if (emoteSheet != null)
+                    try
                     {
-                        var emote = emoteSheet.GetRow(stage.EmoteId);
-                        stage.LoopTimelineId = (ushort)emote.ActionTimeline[0].RowId;
-                        stage.AnimationTimelineId = (ushort)emote.ActionTimeline[1].RowId;
+                        var emoteSheet = Core.Services.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>();
+                        if (emoteSheet != null)
+                        {
+                            var emote = emoteSheet.GetRow(stage.EmoteId);
+                            stage.ResolvedLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
+                            stage.ResolvedIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
+                        }
                     }
+                    catch { }
                 }
-                catch { }
+
+                if (stage.ResolvedIntroTimeline != 0 || stage.ResolvedLoopTimeline != 0)
+                {
+                    emotePlayer.PlayLoopedEmote(character, stage.ResolvedLoopTimeline, stage.ResolvedIntroTimeline, playerObjId);
+                    log.Info($"VictorySequence: Emote {stage.EmoteId} (intro={stage.ResolvedIntroTimeline}, loop={stage.ResolvedLoopTimeline})");
+                }
+            }
+            else if (!stage.UseEmote && stage.ActionTimelineId > 0)
+            {
+                // Action timeline mode: play raw timeline ID directly
+                emotePlayer.PlayOneShot(character, (ushort)stage.ActionTimelineId);
+                log.Info($"VictorySequence: ActionTimeline {stage.ActionTimelineId}");
             }
 
-            if (stage.AnimationTimelineId != 0 || stage.LoopTimelineId != 0)
-            {
-                var character = (Character*)cinematicNpc.BattleChara;
-                if (stage.LoopTimelineId != 0)
-                    emotePlayer.PlayLoopedEmote(character, stage.LoopTimelineId, stage.AnimationTimelineId, playerObjId);
-                else
-                    emotePlayer.PlayOneShot(character, stage.AnimationTimelineId);
-                log.Info($"VictorySequence: Playing emote {stage.EmoteId} (intro={stage.AnimationTimelineId}, loop={stage.LoopTimelineId})");
-            }
             stageAnimPlayed = true;
         }
 
