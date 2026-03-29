@@ -1389,9 +1389,9 @@ public unsafe class RagdollController : IDisposable
             bodyRef.Activity.SleepThreshold = -1f;
         }
 
-        // Weaken angular motors so the body swings freely from the grab point.
-        // Reduce damping to ~1% of normal so joints barely resist rotation.
-        var weakDamping = savedMotorDamping * 0.01f;
+        // Weaken angular motors so the body swings more from the grab point.
+        // Reduce damping to ~20% of normal — enough swing but body keeps structure.
+        var weakDamping = savedMotorDamping * 0.2f;
         foreach (var mh in angularMotorHandles)
         {
             try
