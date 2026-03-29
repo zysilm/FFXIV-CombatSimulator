@@ -24,4 +24,5 @@ public class VictorySequenceStage
     // Infinite walk: NPC walks toward player at constant speed forever
     public bool InfiniteWalk { get; set; }
     public float WalkSpeed { get; set; } = 0f;          // yalms per second (negative = walk away)
+    public bool LockFacing { get; set; } = true;        // lock facing to initial approach direction (prevents 180° flip)
 }

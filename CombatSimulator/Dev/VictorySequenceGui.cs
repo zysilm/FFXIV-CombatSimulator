@@ -373,6 +373,10 @@ public class VictorySequenceGui
                 config.Save();
             }
 
+            var lockFace = s.LockFacing;
+            if (ImGui.Checkbox("Lock Facing##vsd", ref lockFace))
+            { s.LockFacing = lockFace; config.Save(); }
+
             // === Behavior ===
             ImGui.TextDisabled("Behavior");
             var useEmote = s.UseEmote;
