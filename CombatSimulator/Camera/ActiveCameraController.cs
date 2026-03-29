@@ -198,6 +198,27 @@ public unsafe class ActiveCameraController : IDisposable
                         distanceOverridden = false;
                     }
 
+                    // Prevent character/NPC from disappearing at close zoom
+                    if (config.ActiveCameraPreventFade && config.ActiveCameraCloseZoom)
+                    {
+                        // Reduce near clip plane so geometry isn't clipped when camera
+                        // is inside the model's bounding box
+                        var sceneCam = &gameCam->CameraBase.SceneCamera;
+                        if (sceneCam->RenderCamera != null)
+                        {
+                            if (sceneCam->RenderCamera->NearPlane > 0.01f)
+                                sceneCam->RenderCamera->NearPlane = 0.01f;
+                        }
+
+                        // Force player model visibility (game may hide it at close range)
+                        var player = clientState.LocalPlayer;
+                        if (player != null)
+                        {
+                            var playerObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;
+                            playerObj->RenderFlags |= FFXIVClientStructs.FFXIV.Client.Game.Object.VisibilityFlags.Model;
+                        }
+                    }
+
                     // Lock vertical angle if configured
                     if (config.ActiveCameraLockVertical)
                     {
