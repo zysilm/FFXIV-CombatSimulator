@@ -281,164 +281,180 @@ public class VictorySequenceGui
         {
             ImGui.Separator();
             var s = stages[selectedStageIndex];
-            ImGui.Text($"Stage {selectedStageIndex}");
-
-            // Time range (coupled: start syncs prev end, end syncs next start)
             var idx = selectedStageIndex;
+
+            // === Timing ===
+            ImGui.TextDisabled($"Stage {idx} — Timing");
             var st = s.StartTime;
-            if (ImGui.DragFloat("Start Time (s)##vsd", ref st, 0.1f, 0, 120, "%.1f"))
+            ImGui.SetNextItemWidth(100);
+            if (ImGui.DragFloat("Start##t", ref st, 0.1f, 0, 120, "%.1f"))
             {
                 s.StartTime = st;
                 if (idx > 0 && stages[idx - 1].EndTime >= 0)
                     stages[idx - 1].EndTime = st;
                 config.Save();
             }
-
-            var isInfinite = s.EndTime < 0;
-            if (ImGui.Checkbox("Infinite##vsd", ref isInfinite))
-            { s.EndTime = isInfinite ? -1f : s.StartTime + 3f; config.Save(); }
             ImGui.SameLine();
-            if (!isInfinite)
+            if (!s.InfiniteWalk && s.EndTime >= 0)
             {
                 var et = s.EndTime;
-                ImGui.SetNextItemWidth(120);
-                if (ImGui.DragFloat("End Time (s)##vsd", ref et, 0.1f, 0, 120, "%.1f"))
+                ImGui.SetNextItemWidth(100);
+                if (ImGui.DragFloat("End##t", ref et, 0.1f, 0, 120, "%.1f"))
                 {
                     s.EndTime = et;
-                    if (idx < stages.Count - 1)
-                        stages[idx + 1].StartTime = et;
+                    if (idx < stages.Count - 1) stages[idx + 1].StartTime = et;
                     config.Save();
                 }
             }
             else
             {
-                ImGui.TextDisabled("End Time: infinite");
+                ImGui.TextDisabled("End: ∞");
             }
-
-            // Distances (coupled: start syncs prev end, end syncs next start)
-            var sd = s.StartDistance;
-            if (ImGui.DragFloat("Start Distance##vsd", ref sd, 0.1f, 0, 30, "%.1f"))
+            ImGui.SameLine();
+            var infTime = s.EndTime < 0;
+            if (ImGui.Checkbox("Infinite Time##vsd", ref infTime))
             {
-                s.StartDistance = sd;
-                if (idx > 0)
-                    stages[idx - 1].EndDistance = sd;
+                s.EndTime = infTime ? -1f : s.StartTime + 3f;
+                if (!infTime) s.InfiniteWalk = false;
                 config.Save();
             }
 
-            var ed = s.EndDistance;
-            if (ImGui.DragFloat("End Distance##vsd", ref ed, 0.1f, 0, 30, "%.1f"))
+            // === Movement ===
+            ImGui.TextDisabled("Movement");
+            if (!s.InfiniteWalk)
             {
-                s.EndDistance = ed;
-                if (idx < stages.Count - 1)
-                    stages[idx + 1].StartDistance = ed;
+                var sd = s.StartDistance;
+                ImGui.SetNextItemWidth(100);
+                if (ImGui.DragFloat("Dist Start##d", ref sd, 0.1f, -30, 30, "%.1f"))
+                {
+                    s.StartDistance = sd;
+                    if (idx > 0) stages[idx - 1].EndDistance = sd;
+                    config.Save();
+                }
+                ImGui.SameLine();
+                var ed = s.EndDistance;
+                ImGui.SetNextItemWidth(100);
+                if (ImGui.DragFloat("Dist End##d", ref ed, 0.1f, -30, 30, "%.1f"))
+                {
+                    s.EndDistance = ed;
+                    if (idx < stages.Count - 1) stages[idx + 1].StartDistance = ed;
+                    config.Save();
+                }
+            }
+            else
+            {
+                var sd = s.StartDistance;
+                ImGui.SetNextItemWidth(100);
+                if (ImGui.DragFloat("Dist Start##d", ref sd, 0.1f, -30, 30, "%.1f"))
+                {
+                    s.StartDistance = sd;
+                    if (idx > 0) stages[idx - 1].EndDistance = sd;
+                    config.Save();
+                }
+                ImGui.SameLine();
+                ImGui.TextDisabled("→ -∞");
+                ImGui.SameLine();
+                var ws = s.WalkSpeed;
+                ImGui.SetNextItemWidth(80);
+                if (ImGui.DragFloat("Speed##walk", ref ws, 0.1f, 0.1f, 20f, "%.1f"))
+                { s.WalkSpeed = ws; config.Save(); }
+            }
+            var infWalk = s.InfiniteWalk;
+            if (ImGui.Checkbox("Infinite Walk##vsd", ref infWalk))
+            {
+                s.InfiniteWalk = infWalk;
+                if (infWalk) s.EndTime = -1f; // force infinite time
                 config.Save();
             }
-
+            ImGui.SameLine();
             var ho = s.HeightOffset;
-            if (ImGui.DragFloat("Height Offset##vsd", ref ho, 0.01f, -5, 5, "%.2f"))
+            ImGui.SetNextItemWidth(80);
+            if (ImGui.DragFloat("Height##h", ref ho, 0.01f, -5, 5, "%.2f"))
             { s.HeightOffset = ho; config.Save(); }
 
-            // Behavior: action timeline or emote (toggle on right)
+            // === Behavior ===
+            ImGui.TextDisabled("Behavior");
             var useEmote = s.UseEmote;
             if (useEmote)
             {
-                // Emote mode
                 var emoteIdx = FindEmoteIndex(s.EmoteId);
                 var emoteName = emoteIdx < emoteCache!.Count ? emoteCache[emoteIdx].Name : "(None)";
-                ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 80);
+                ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 70);
                 if (ImGui.BeginCombo("##behavvsd", emoteName))
                 {
                     for (int i = 0; i < emoteCache.Count; i++)
                     {
-                        var isSelected = i == emoteIdx;
-                        if (ImGui.Selectable(emoteCache[i].Name, isSelected))
+                        if (ImGui.Selectable(emoteCache[i].Name, i == emoteIdx))
                         {
                             s.EmoteId = emoteCache[i].Id;
                             s.ActionTimelineId = 0;
                             ResolveEmoteTimelines(s);
                             config.Save();
                         }
-                        if (isSelected) ImGui.SetItemDefaultFocus();
+                        if (i == emoteIdx) ImGui.SetItemDefaultFocus();
                     }
                     ImGui.EndCombo();
                 }
-                if (s.EmoteId > 0)
-                    ImGui.TextDisabled($"  Intro={s.ResolvedIntroTimeline} Loop={s.ResolvedLoopTimeline}");
             }
             else
             {
-                // Action timeline mode
                 int atIdx = 0;
                 for (int i = 0; i < actionTimelineCache!.Count; i++)
                     if (actionTimelineCache[i].Id == s.ActionTimelineId) { atIdx = i; break; }
                 var atName = atIdx < actionTimelineCache.Count ? actionTimelineCache[atIdx].Name : "(None)";
-                ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 80);
+                ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 70);
                 if (ImGui.BeginCombo("##behavvsd", atName))
                 {
                     for (int i = 0; i < actionTimelineCache.Count; i++)
                     {
-                        var isSelected = i == atIdx;
-                        if (ImGui.Selectable(actionTimelineCache[i].Name, isSelected))
+                        if (ImGui.Selectable(actionTimelineCache[i].Name, i == atIdx))
                         {
                             s.ActionTimelineId = actionTimelineCache[i].Id;
-                            s.EmoteId = 0;
-                            s.ResolvedIntroTimeline = 0;
-                            s.ResolvedLoopTimeline = 0;
+                            s.EmoteId = 0; s.ResolvedIntroTimeline = 0; s.ResolvedLoopTimeline = 0;
                             config.Save();
                         }
-                        if (isSelected) ImGui.SetItemDefaultFocus();
+                        if (i == atIdx) ImGui.SetItemDefaultFocus();
                     }
                     ImGui.EndCombo();
                 }
             }
             ImGui.SameLine();
-            if (ImGui.Checkbox("Emote##modevsd", ref useEmote))
+            if (ImGui.Checkbox("Emote##mode", ref useEmote))
             { s.UseEmote = useEmote; config.Save(); }
-            ImGui.SameLine();
-            ImGui.Text("Behavior");
 
-            // Grab section
+            // === Grab ===
             var grab = s.GrabEnabled;
-            if (ImGui.Checkbox("Grab Enabled##vsd", ref grab))
+            if (ImGui.Checkbox("Grab##vsd", ref grab))
             { s.GrabEnabled = grab; config.Save(); }
-
             if (s.GrabEnabled)
             {
-                // NPC bone dropdown (dynamic — refreshable from selected target)
+                ImGui.Indent();
                 var npcIdx = FindBoneIndex(npcBoneList, s.NpcBoneName);
-                if (ImGui.Combo("NPC Bone##vsd", ref npcIdx, npcBoneList, npcBoneList.Length))
+                ImGui.SetNextItemWidth(150);
+                if (ImGui.Combo("NPC##gb", ref npcIdx, npcBoneList, npcBoneList.Length))
                 { s.NpcBoneName = npcBoneList[npcIdx]; config.Save(); }
                 ImGui.SameLine();
-                if (ImGui.SmallButton("Refresh##npcbones"))
-                    RefreshNpcBones();
+                if (ImGui.SmallButton("Refresh##nb")) RefreshNpcBones();
 
-                // Player bone dropdown
                 var playerIdx = FindBoneIndex(playerBoneList, s.PlayerBoneName);
-                if (ImGui.Combo("Player Bone##vsd", ref playerIdx, playerBoneList, playerBoneList.Length))
+                ImGui.SetNextItemWidth(150);
+                if (ImGui.Combo("Player##gb", ref playerIdx, playerBoneList, playerBoneList.Length))
                 { s.PlayerBoneName = playerBoneList[playerIdx]; config.Save(); }
 
-                // Grab physics tweaks
-                ImGui.Separator();
-                ImGui.TextDisabled("Grab Physics");
-                if (ImGui.SmallButton("Reset Defaults##grab"))
-                {
-                    s.GrabForce = 1000f;
-                    s.GrabSpeed = 50f;
-                    s.GrabSpringFreq = 120f;
-                    config.Save();
-                }
-
-                var gf = s.GrabForce;
-                if (ImGui.DragFloat("Force##grab", ref gf, 10f, 10, 5000, "%.0f"))
+                var gf = s.GrabForce; var gs = s.GrabSpeed; var gsf = s.GrabSpringFreq;
+                ImGui.SetNextItemWidth(70);
+                if (ImGui.DragFloat("F##gf", ref gf, 10f, 10, 5000, "%.0f"))
                 { s.GrabForce = gf; config.Save(); }
-
-                var gs = s.GrabSpeed;
-                if (ImGui.DragFloat("Speed##grab", ref gs, 1f, 1, 200, "%.0f"))
+                ImGui.SameLine(); ImGui.SetNextItemWidth(70);
+                if (ImGui.DragFloat("S##gs", ref gs, 1f, 1, 200, "%.0f"))
                 { s.GrabSpeed = gs; config.Save(); }
-
-                var gsf = s.GrabSpringFreq;
-                if (ImGui.DragFloat("Spring Freq##grab", ref gsf, 5f, 10, 500, "%.0f"))
+                ImGui.SameLine(); ImGui.SetNextItemWidth(70);
+                if (ImGui.DragFloat("Freq##gf2", ref gsf, 5f, 10, 500, "%.0f"))
                 { s.GrabSpringFreq = gsf; config.Save(); }
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Def##grst"))
+                { s.GrabForce = 1000; s.GrabSpeed = 50; s.GrabSpringFreq = 120; config.Save(); }
+                ImGui.Unindent();
             }
         }
 

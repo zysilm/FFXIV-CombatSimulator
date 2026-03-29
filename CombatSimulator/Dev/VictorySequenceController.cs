@@ -155,12 +155,22 @@ public unsafe class VictorySequenceController : IDisposable
 
         var stage = stages[currentStageIndex];
 
-        // Interpolate NPC distance
-        var duration = stage.EndTime - stage.StartTime;
-        var progress = duration > 0.001f
-            ? Math.Clamp((elapsed - stage.StartTime) / duration, 0f, 1f)
-            : 1f;
-        var dist = stage.StartDistance + (stage.EndDistance - stage.StartDistance) * progress;
+        // Calculate NPC distance
+        float dist;
+        if (stage.InfiniteWalk)
+        {
+            // Constant speed walk: distance decreases over time
+            var timeInStage = elapsed - stage.StartTime;
+            dist = stage.StartDistance - stage.WalkSpeed * timeInStage;
+        }
+        else
+        {
+            var duration = stage.EndTime - stage.StartTime;
+            var progress = duration > 0.001f
+                ? Math.Clamp((elapsed - stage.StartTime) / duration, 0f, 1f)
+                : 1f;
+            dist = stage.StartDistance + (stage.EndDistance - stage.StartDistance) * progress;
+        }
 
         // Position along player's facing direction
         var facingDir = new Vector3(MathF.Sin(playerFacingAngle), 0, MathF.Cos(playerFacingAngle));
