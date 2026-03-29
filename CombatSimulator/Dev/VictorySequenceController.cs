@@ -208,9 +208,10 @@ public unsafe class VictorySequenceController : IDisposable
 
             if (stage.UseEmote && stage.EmoteId > 0)
             {
-                // Emote mode: resolve timelines from emote sheet.
-                // Prefer ground timeline [2] for dead player (L adjustment),
-                // fall back to normal loop [0] + intro [1].
+                // Emote mode: use normal loop [0] + intro [1] timelines.
+                // These contain the full emote animation (body + hands).
+                // Height adjustment (H/M/L) is handled by TargetObjId in PlayLoopedEmote.
+                if (stage.ResolvedIntroTimeline == 0 && stage.ResolvedLoopTimeline == 0)
                 {
                     try
                     {
@@ -218,34 +219,8 @@ public unsafe class VictorySequenceController : IDisposable
                         if (emoteSheet != null)
                         {
                             var emote = emoteSheet.GetRow(stage.EmoteId);
-
-                            // Try ground variant first (index 2) — for dead/low targets
-                            var groundTimeline = (ushort)emote.ActionTimeline[2].RowId;
-                            if (groundTimeline != 0)
-                            {
-                                stage.ResolvedLoopTimeline = groundTimeline;
-                                stage.ResolvedIntroTimeline = groundTimeline; // ground uses same for both
-                                log.Info($"VictorySequence: Using ground timeline {groundTimeline} for emote {stage.EmoteId}");
-                            }
-                            else
-                            {
-                                // Try height-adjusted variant via game function
-                                var adjusted = character->Timeline.GetHeightAdjustActionTimelineRowId(
-                                    new FFXIVClientStructs.FFXIV.Client.Game.Object.GameObjectId { Id = playerObjId },
-                                    stage.EmoteId);
-                                if (adjusted != 0)
-                                {
-                                    stage.ResolvedLoopTimeline = (ushort)adjusted;
-                                    stage.ResolvedIntroTimeline = (ushort)adjusted;
-                                    log.Info($"VictorySequence: Using height-adjusted timeline {adjusted} for emote {stage.EmoteId}");
-                                }
-                                else
-                                {
-                                    // Fall back to normal loop + intro
-                                    stage.ResolvedLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
-                                    stage.ResolvedIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
-                                }
-                            }
+                            stage.ResolvedLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
+                            stage.ResolvedIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
                         }
                     }
                     catch { }
@@ -259,23 +234,8 @@ public unsafe class VictorySequenceController : IDisposable
             }
             else if (!stage.UseEmote && stage.ActionTimelineId > 0)
             {
-                // Action timeline mode: try height-adjusted variant first
-                var timelineId = stage.ActionTimelineId;
-                try
-                {
-                    var adjusted = character->Timeline.GetHeightAdjustActionTimelineRowId(
-                        new FFXIVClientStructs.FFXIV.Client.Game.Object.GameObjectId { Id = playerObjId },
-                        timelineId);
-                    if (adjusted != 0)
-                    {
-                        timelineId = adjusted;
-                        log.Info($"VictorySequence: Height-adjusted ActionTimeline {stage.ActionTimelineId} → {adjusted}");
-                    }
-                }
-                catch { }
-
-                character->Timeline.BaseOverride = (ushort)timelineId;
-                log.Info($"VictorySequence: ActionTimeline {timelineId} via BaseOverride");
+                character->Timeline.BaseOverride = (ushort)stage.ActionTimelineId;
+                log.Info($"VictorySequence: ActionTimeline {stage.ActionTimelineId} via BaseOverride");
             }
 
             stageAnimPlayed = true;
