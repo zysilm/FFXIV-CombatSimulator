@@ -233,26 +233,15 @@ public unsafe class VictorySequenceController : IDisposable
                     {
                         var emote = emoteSheet.GetRow(stage.EmoteId);
                         stage.ResolvedLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
-
-                        // Get height-adjusted intro (player Y is lowered)
-                        var adjusted = character->Timeline.GetHeightAdjustActionTimelineRowId(
-                            new FFXIVClientStructs.FFXIV.Client.Game.Object.GameObjectId { Id = playerObjId },
-                            stage.EmoteId);
-                        stage.ResolvedIntroTimeline = adjusted != 0
-                            ? (ushort)adjusted
-                            : (ushort)emote.ActionTimeline[1].RowId;
-
-                        log.Info($"VictorySequence: Emote {stage.EmoteId} heightAdj={adjusted} → intro={stage.ResolvedIntroTimeline} loop={stage.ResolvedLoopTimeline}");
+                        stage.ResolvedIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
                     }
                 }
                 catch { }
 
                 if (stage.ResolvedIntroTimeline != 0 || stage.ResolvedLoopTimeline != 0)
                 {
-                    // Use TimelineContainer.PlayActionTimeline — higher-level than
-                    // TimelineSequencer.PlayTimeline, may handle height adjustment internally.
-                    character->Timeline.PlayActionTimeline(stage.ResolvedIntroTimeline, stage.ResolvedLoopTimeline);
-                    log.Info($"VictorySequence: PlayActionTimeline intro={stage.ResolvedIntroTimeline} loop={stage.ResolvedLoopTimeline}");
+                    emotePlayer.PlayLoopedEmote(character, stage.ResolvedLoopTimeline, stage.ResolvedIntroTimeline, playerObjId);
+                    log.Info($"VictorySequence: Emote {stage.EmoteId} (intro={stage.ResolvedIntroTimeline}, loop={stage.ResolvedLoopTimeline})");
                 }
             }
             else if (!stage.UseEmote && stage.ActionTimelineId > 0)
