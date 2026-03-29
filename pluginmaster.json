@@ -14,11 +14,11 @@
       "other"
     ],
     "LoadPriority": 0,
-    "AssemblyVersion": "1.5.3",
+    "AssemblyVersion": "1.5.4",
     "InternalName": "CombatSimulator",
-    "DownloadLinkInstall": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v1.5.3/CombatSimulator.zip",
-    "DownloadLinkUpdate": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v1.5.3/CombatSimulator.zip",
-    "DownloadLinkTesting": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v1.5.3/CombatSimulator.zip",
+    "DownloadLinkInstall": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v1.5.4/CombatSimulator.zip",
+    "DownloadLinkUpdate": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v1.5.4/CombatSimulator.zip",
+    "DownloadLinkTesting": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v1.5.4/CombatSimulator.zip",
     "DalamudApiLevel": 14
   }
 ]
