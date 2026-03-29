@@ -534,12 +534,15 @@ public class MainWindow : IDisposable
                     var emoteSheet = Core.Services.DataManager.GetExcelSheet<Emote>();
                     if (emoteSheet != null)
                     {
+                        var emotes = new List<(uint Id, string Name)>();
                         foreach (var emote in emoteSheet)
                         {
                             var name = emote.Name.ToString();
                             if (!string.IsNullOrWhiteSpace(name))
-                                emoteListCache.Add((emote.RowId, $"{name} [{emote.RowId}]"));
+                                emotes.Add((emote.RowId, $"{name} [{emote.RowId}]"));
                         }
+                        emotes.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+                        emoteListCache.AddRange(emotes);
                     }
                 }
                 catch { }
