@@ -17,29 +17,10 @@ public class VictorySequenceGui
     // Cached emote list (alphabetically sorted, loaded once)
     private List<(uint Id, string Name)>? emoteCache;
 
-    // NPC bone list — defaults to humanoid, refreshable from selected target
-    private string[] npcBoneList = DefaultHumanBones;
-    private static readonly string[] DefaultHumanBones =
-    {
-        "j_te_r", "j_te_l",
-        "j_ude_b_r", "j_ude_b_l",
-        "j_ude_a_r", "j_ude_a_l",
-        "j_asi_c_r", "j_asi_c_l",
-        "j_asi_b_r", "j_asi_b_l",
-        "j_asi_a_r", "j_asi_a_l",
-        "j_kao", "j_kubi", "j_sebo_c", "j_kosi",
-    };
-
-    private static readonly string[] PlayerBones =
-    {
-        "j_kubi",                       // neck
-        "j_kao",                        // head
-        "j_sebo_c",                     // chest
-        "j_sebo_b",                     // mid spine
-        "j_kosi",                       // pelvis
-        "n_hara",                       // waist
-        "j_te_r", "j_te_l",           // hands
-    };
+    // Dynamic bone lists — refreshed from actual skeletons
+    private string[] npcBoneList = Array.Empty<string>();
+    private string[] playerBoneList = Array.Empty<string>();
+    private bool playerBonesLoaded;
 
     public VictorySequenceGui(Configuration config, Npcs.NpcSelector npcSelector, IPluginLog log)
     {
@@ -48,36 +29,53 @@ public class VictorySequenceGui
         this.log = log;
     }
 
+    private unsafe string[] ReadBonesFromCharacter(nint address)
+    {
+        if (address == nint.Zero) return Array.Empty<string>();
+        var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)address;
+        if (gameObj->DrawObject == null) return Array.Empty<string>();
+        var charBase = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)gameObj->DrawObject;
+        var skeleton = charBase->Skeleton;
+        if (skeleton == null || skeleton->PartialSkeletonCount < 1) return Array.Empty<string>();
+        var partial = &skeleton->PartialSkeletons[0];
+        var pose = partial->GetHavokPose(0);
+        if (pose == null || pose->Skeleton == null) return Array.Empty<string>();
+
+        var havokBones = pose->Skeleton->Bones;
+        var bones = new List<string>();
+        for (int i = 0; i < havokBones.Length; i++)
+        {
+            var name = havokBones[i].Name.String;
+            if (!string.IsNullOrWhiteSpace(name))
+                bones.Add(name);
+        }
+        bones.Sort(StringComparer.OrdinalIgnoreCase);
+        return bones.ToArray();
+    }
+
     private unsafe void RefreshNpcBones()
     {
-        // Read bones from the first selected NPC target's skeleton
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             if (npc.BattleChara == null) continue;
-            var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
-            if (gameObj->DrawObject == null) continue;
-            var charBase = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)gameObj->DrawObject;
-            var skeleton = charBase->Skeleton;
-            if (skeleton == null || skeleton->PartialSkeletonCount < 1) continue;
-            var partial = &skeleton->PartialSkeletons[0];
-            var pose = partial->GetHavokPose(0);
-            if (pose == null || pose->Skeleton == null) continue;
-
-            var havokBones = pose->Skeleton->Bones;
-            var bones = new List<string>();
-            for (int i = 0; i < havokBones.Length; i++)
+            npcBoneList = ReadBonesFromCharacter(npc.Address);
+            if (npcBoneList.Length > 0)
             {
-                var name = havokBones[i].Name.String;
-                if (!string.IsNullOrWhiteSpace(name))
-                    bones.Add(name);
+                log.Info($"VictorySequenceGui: Refreshed NPC bones from '{npc.Name}' — {npcBoneList.Length} bones");
+                return;
             }
-            bones.Sort(StringComparer.OrdinalIgnoreCase);
-            npcBoneList = bones.ToArray();
-            log.Info($"VictorySequenceGui: Refreshed NPC bones from '{npc.Name}' — {npcBoneList.Length} bones");
-            return;
         }
-        npcBoneList = DefaultHumanBones;
-        log.Info("VictorySequenceGui: No target selected, using default human bones");
+        log.Info("VictorySequenceGui: No target selected or no bones found");
+    }
+
+    private unsafe void EnsurePlayerBones()
+    {
+        if (playerBonesLoaded) return;
+        var player = Core.Services.ClientState.LocalPlayer;
+        if (player == null) return;
+        playerBoneList = ReadBonesFromCharacter(player.Address);
+        if (playerBoneList.Length > 0)
+            playerBonesLoaded = true;
     }
 
     private void EnsureEmoteCache()
@@ -138,6 +136,7 @@ public class VictorySequenceGui
     public void Draw()
     {
         EnsureEmoteCache();
+        EnsurePlayerBones();
         ImGui.Separator();
         ImGui.Text("Victory Cinematic");
 
@@ -236,16 +235,6 @@ public class VictorySequenceGui
             selectedStageIndex = stages.Count - 1;
             config.Save();
         }
-        if (stages.Count > 0)
-        {
-            ImGui.SameLine();
-            if (ImGui.Button("Remove All##vseq"))
-            {
-                stages.Clear();
-                selectedStageIndex = -1;
-                config.Save();
-            }
-        }
 
         // Selected stage detail editor
         if (selectedStageIndex >= 0 && selectedStageIndex < stages.Count)
@@ -325,9 +314,9 @@ public class VictorySequenceGui
                     RefreshNpcBones();
 
                 // Player bone dropdown
-                var playerIdx = FindBoneIndex(PlayerBones, s.PlayerBoneName);
-                if (ImGui.Combo("Player Bone##vsd", ref playerIdx, PlayerBones, PlayerBones.Length))
-                { s.PlayerBoneName = PlayerBones[playerIdx]; config.Save(); }
+                var playerIdx = FindBoneIndex(playerBoneList, s.PlayerBoneName);
+                if (ImGui.Combo("Player Bone##vsd", ref playerIdx, playerBoneList, playerBoneList.Length))
+                { s.PlayerBoneName = playerBoneList[playerIdx]; config.Save(); }
 
                 // Grab physics tweaks
                 ImGui.Separator();
