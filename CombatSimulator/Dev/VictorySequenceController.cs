@@ -30,7 +30,6 @@ public unsafe class VictorySequenceController : IDisposable
     private uint lastPlayedEmoteId;
     private uint lastPlayedActionTimelineId;
     private bool lastPlayedUseEmote;
-    private int lastPlayedEmoteVariant;
     private Vector3 playerDeathPos;
     private float playerFacingAngle;
     private ulong playerObjId;
@@ -209,7 +208,6 @@ public unsafe class VictorySequenceController : IDisposable
         bool configChanged = stageAnimPlayed && (
             stage.UseEmote != lastPlayedUseEmote ||
             stage.EmoteId != lastPlayedEmoteId ||
-            stage.EmoteVariant != lastPlayedEmoteVariant ||
             stage.ActionTimelineId != lastPlayedActionTimelineId);
         if (!stageAnimPlayed || configChanged)
         {
@@ -226,60 +224,17 @@ public unsafe class VictorySequenceController : IDisposable
 
             if (stage.UseEmote && stage.EmoteId > 0)
             {
-                // Emote mode: resolve timelines based on selected variant index.
-                // Emote sheet has 7 ActionTimeline entries (indices 0-6).
-                {
-                    try
-                    {
-                        var emoteSheet = Core.Services.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>();
-                        if (emoteSheet != null)
-                        {
-                            var emote = emoteSheet.GetRow(stage.EmoteId);
-                            var varIdx = stage.EmoteVariant;
-
-                            // Use the selected index as the timeline to play
-                            var selectedTimeline = (varIdx >= 0 && varIdx < 7)
-                                ? (ushort)emote.ActionTimeline[varIdx].RowId : (ushort)0;
-
-                            if (selectedTimeline != 0)
-                            {
-                                // For index 0, also use index 1 as intro
-                                if (varIdx == 0)
-                                {
-                                    stage.ResolvedLoopTimeline = selectedTimeline;
-                                    stage.ResolvedIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
-                                }
-                                else
-                                {
-                                    // For other indices, use as both intro and loop
-                                    stage.ResolvedLoopTimeline = selectedTimeline;
-                                    stage.ResolvedIntroTimeline = selectedTimeline;
-                                }
-                            }
-                            else
-                            {
-                                // Fallback to default loop + intro
-                                stage.ResolvedLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
-                                stage.ResolvedIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
-                            }
-                        }
-                    }
-                    catch { }
-                }
-
-                // Try height adjustment — player Y is already lowered, so the game
-                // should return the L variant timeline when there's a height difference
+                // Emote mode: resolve loop + intro from emote sheet, play with TargetObjId.
+                // Player Y is already lowered, so the game's emote system automatically
+                // selects the correct height-adjusted variant (L/M/H) via TargetObjId.
                 try
                 {
-                    var adjusted = character->Timeline.GetHeightAdjustActionTimelineRowId(
-                        new FFXIVClientStructs.FFXIV.Client.Game.Object.GameObjectId { Id = playerObjId },
-                        stage.EmoteId);
-                    if (adjusted != 0)
+                    var emoteSheet = Core.Services.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>();
+                    if (emoteSheet != null)
                     {
-                        stage.ResolvedLoopTimeline = (ushort)adjusted;
-                        if (stage.ResolvedIntroTimeline == 0)
-                            stage.ResolvedIntroTimeline = (ushort)adjusted;
-                        log.Info($"VictorySequence: Height-adjusted emote {stage.EmoteId} → timeline {adjusted}");
+                        var emote = emoteSheet.GetRow(stage.EmoteId);
+                        stage.ResolvedLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
+                        stage.ResolvedIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
                     }
                 }
                 catch { }
@@ -299,7 +254,6 @@ public unsafe class VictorySequenceController : IDisposable
             stageAnimPlayed = true;
             lastPlayedUseEmote = stage.UseEmote;
             lastPlayedEmoteId = stage.EmoteId;
-            lastPlayedEmoteVariant = stage.EmoteVariant;
             lastPlayedActionTimelineId = stage.ActionTimelineId;
         }
 
