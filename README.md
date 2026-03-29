@@ -31,7 +31,8 @@ Open Dalamud Settings in-game (`/xlsettings`) and follow these steps:
 - **NPC Bone Collision** — Dynamic skeleton-based collision volumes for NPC targets (works with any model: humanoid, monster, dragon). Settle collision keeps ragdoll reactive after settling
 - **NPC Targeting** — Active NPCs visually target the player during combat (head tracking, emote interactions)
 - **Target Victory Emote** — NPCs play a selected emote toward the player on death (scrollable emote list from game data)
-- **Active Camera** — Camera tracks a selected bone with free orbital control, height/side offsets, vertical angle lock, and collision disable. Floating toolbar for quick adjustments. Camera system inspired by [Cammy](https://github.com/UnknownX7/Cammy)
+- **Active Camera** — Camera tracks a selected bone with free orbital control, height/side offsets, vertical angle lock, collision disable, and close zoom with configurable minimum distance. Floating toolbar for quick adjustments. Camera system inspired by [Cammy](https://github.com/UnknownX7/Cammy)
+- **Victory Cinematic** — (Dev) Multi-stage choreographed NPC victory sequence with timeline editor, emote/action selection, distance/time interpolation, infinite walk mode, BEPU2 physics grab constraint, dynamic bone targeting, and preset save/load system
 - **Death Cam** — Cinematic camera that smoothly transitions to an anchored position on player death, with configurable height/side offsets, bone tracking, and smooth follow. Camera system inspired by [Cammy](https://github.com/UnknownX7/Cammy)
 - **Hit VFX** — Configurable visual effects on player when taking damage
 - **Glamourer Integration** — Apply glamourer presets on death and on reset
