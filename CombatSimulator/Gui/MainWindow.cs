@@ -1125,6 +1125,14 @@ public class MainWindow : IDisposable
                     }
                     HelpMarker("Closest distance the camera can zoom to.");
 
+                    var preventFade = config.ActiveCameraPreventFade;
+                    if (ImGui.Checkbox("Prevent Model Fade##activecam", ref preventFade))
+                    {
+                        config.ActiveCameraPreventFade = preventFade;
+                        config.Save();
+                    }
+                    HelpMarker("Prevent characters and NPCs from disappearing when the camera zooms very close. Hooks the game's ShouldDrawGameObject to always allow rendering.");
+
                     ImGui.Unindent();
                 }
             }

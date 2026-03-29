@@ -33,6 +33,14 @@ public unsafe class ActiveCameraController : IDisposable
     private static readonly byte[] CollisionPatchBytes = { 0x30, 0xC0, 0x90, 0x90, 0x90 };
     private bool collisionPatchActive;
 
+    // ShouldDrawGameObject hook — prevents model fade at close zoom
+    private delegate bool ShouldDrawGameObjectDelegate(
+        FFXIVClientStructs.FFXIV.Client.Game.CameraBase* thisPtr,
+        FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject* gameObject,
+        Vector3* sceneCameraPos, Vector3* lookAtVector);
+    private Hook<ShouldDrawGameObjectDelegate>? shouldDrawHook;
+    private bool shouldDrawHookActive;
+
     // Camera distance override — allow closer zoom when active
     private float savedMinDistance;
     private bool distanceOverridden;
@@ -48,6 +56,34 @@ public unsafe class ActiveCameraController : IDisposable
         this.log = log;
 
         InitCollisionPatch(sigScanner);
+        InitShouldDrawHook(gameInterop);
+    }
+
+    private void InitShouldDrawHook(IGameInteropProvider gameInterop)
+    {
+        try
+        {
+            var addr = (nint)FFXIVClientStructs.FFXIV.Client.Game.CameraBase.MemberFunctionPointers.ShouldDrawGameObject;
+            if (addr != nint.Zero)
+            {
+                shouldDrawHook = gameInterop.HookFromAddress<ShouldDrawGameObjectDelegate>(
+                    addr, ShouldDrawGameObjectDetour);
+                log.Info($"ActiveCamera: ShouldDrawGameObject hook ready at 0x{addr:X}");
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "ActiveCamera: Failed to create ShouldDrawGameObject hook");
+        }
+    }
+
+    private bool ShouldDrawGameObjectDetour(
+        FFXIVClientStructs.FFXIV.Client.Game.CameraBase* thisPtr,
+        FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject* gameObject,
+        Vector3* sceneCameraPos, Vector3* lookAtVector)
+    {
+        // Always return true — prevents character/NPC models from disappearing at close zoom
+        return true;
     }
 
     private void InitCollisionPatch(ISigScanner sigScanner)
@@ -171,6 +207,21 @@ public unsafe class ActiveCameraController : IDisposable
             EnableCollisionPatch();
         else if (!wantCollision && collisionPatchActive)
             DisableCollisionPatch();
+
+        // ShouldDrawGameObject hook: enable when prevent fade is wanted
+        bool wantPreventFade = IsActive && config.ActiveCameraPreventFade && config.ActiveCameraCloseZoom;
+        if (wantPreventFade && !shouldDrawHookActive && shouldDrawHook != null)
+        {
+            shouldDrawHook.Enable();
+            shouldDrawHookActive = true;
+            log.Info("ActiveCamera: ShouldDrawGameObject hook enabled");
+        }
+        else if (!wantPreventFade && shouldDrawHookActive && shouldDrawHook != null)
+        {
+            shouldDrawHook.Disable();
+            shouldDrawHookActive = false;
+            log.Info("ActiveCamera: ShouldDrawGameObject hook disabled");
+        }
 
         // Camera distance + vertical angle overrides
         if (IsActive)
@@ -313,6 +364,7 @@ public unsafe class ActiveCameraController : IDisposable
     {
         SetActive(false);
         RestoreMinDistance();
+        shouldDrawHook?.Dispose();
         getCameraPosHook?.Dispose();
     }
 }
