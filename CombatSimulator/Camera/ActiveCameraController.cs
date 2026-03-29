@@ -190,7 +190,12 @@ public unsafe class ActiveCameraController : IDisposable
                             savedMinDistance = gameCam->MinDistance;
                             distanceOverridden = true;
                         }
-                        gameCam->MinDistance = 1.0f;
+                        gameCam->MinDistance = 0f;
+                        // Sync InterpDistance to Distance to prevent the game's
+                        // interpolation from fighting the user's scroll input.
+                        // Without this, InterpDistance snaps back to the original
+                        // MinDistance and pulls the camera out suddenly.
+                        gameCam->InterpDistance = gameCam->Distance;
                     }
                     else if (distanceOverridden)
                     {
