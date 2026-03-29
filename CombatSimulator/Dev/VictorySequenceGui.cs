@@ -129,6 +129,7 @@ public class VictorySequenceGui
                 {
                     var key = row.Key.ToString();
                     if (string.IsNullOrWhiteSpace(key)) continue;
+                    if (!key.StartsWith("battle/")) continue;
                     items.Add((row.RowId, $"{key} [{row.RowId}]"));
                 }
                 items.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
