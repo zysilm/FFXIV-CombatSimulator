@@ -14,9 +14,12 @@ public class VictorySequenceGui
     private readonly Npcs.NpcSelector npcSelector;
     private int selectedStageIndex = -1;
 
-    // Cached lists (alphabetically sorted, loaded once)
+    // Cached lists (loaded once)
     private List<(uint Id, string Name)>? emoteCache;
-    private List<(uint Id, string Name)>? actionTimelineCache;
+    // All action timelines keyed by prefix (e.g., "battle", "normal", "resident")
+    private Dictionary<string, List<(uint Id, string Name)>>? actionTimelineByPrefix;
+    private string[]? actionTimelinePrefixes;
+    private int selectedPrefixIndex;
 
     // Dynamic bone lists — refreshed from actual skeletons
     private string[] npcBoneList = Array.Empty<string>();
@@ -117,26 +120,42 @@ public class VictorySequenceGui
 
     private void EnsureActionTimelineCache()
     {
-        if (actionTimelineCache != null) return;
-        actionTimelineCache = new List<(uint, string)> { (0, "(None)") };
+        if (actionTimelineByPrefix != null) return;
+        actionTimelineByPrefix = new Dictionary<string, List<(uint, string)>>();
         try
         {
             var sheet = Core.Services.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ActionTimeline>();
-            if (sheet != null)
+            if (sheet == null) return;
+            foreach (var row in sheet)
             {
-                var items = new List<(uint Id, string Name)>();
-                foreach (var row in sheet)
-                {
-                    var key = row.Key.ToString();
-                    if (string.IsNullOrWhiteSpace(key)) continue;
-                    if (!key.StartsWith("battle/")) continue;
-                    items.Add((row.RowId, $"{key} [{row.RowId}]"));
-                }
-                items.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
-                actionTimelineCache.AddRange(items);
+                var key = row.Key.ToString();
+                if (string.IsNullOrWhiteSpace(key)) continue;
+                var slash = key.IndexOf('/');
+                var prefix = slash > 0 ? key[..slash] : "other";
+                if (!actionTimelineByPrefix.ContainsKey(prefix))
+                    actionTimelineByPrefix[prefix] = new List<(uint, string)> { (0, "(None)") };
+                actionTimelineByPrefix[prefix].Add((row.RowId, $"{key} [{row.RowId}]"));
             }
+            // Sort each prefix list alphabetically
+            foreach (var list in actionTimelineByPrefix.Values)
+                list.Sort(1, list.Count - 1, Comparer<(uint, string)>.Create(
+                    (a, b) => string.Compare(a.Item2, b.Item2, StringComparison.OrdinalIgnoreCase)));
+            // Build sorted prefix list
+            var prefixes = new List<string>(actionTimelineByPrefix.Keys);
+            prefixes.Sort(StringComparer.OrdinalIgnoreCase);
+            actionTimelinePrefixes = prefixes.ToArray();
         }
         catch { }
+    }
+
+    private List<(uint Id, string Name)> GetCurrentActionTimelineList()
+    {
+        if (actionTimelineByPrefix == null || actionTimelinePrefixes == null || actionTimelinePrefixes.Length == 0)
+            return new List<(uint, string)> { (0, "(None)") };
+        if (selectedPrefixIndex < 0 || selectedPrefixIndex >= actionTimelinePrefixes.Length)
+            selectedPrefixIndex = 0;
+        var prefix = actionTimelinePrefixes[selectedPrefixIndex];
+        return actionTimelineByPrefix.TryGetValue(prefix, out var list) ? list : new List<(uint, string)> { (0, "(None)") };
     }
 
     private int FindEmoteIndex(uint emoteId)
@@ -380,18 +399,26 @@ public class VictorySequenceGui
             }
             else
             {
-                int atIdx = 0;
-                for (int i = 0; i < actionTimelineCache!.Count; i++)
-                    if (actionTimelineCache[i].Id == s.ActionTimelineId) { atIdx = i; break; }
-                var atName = atIdx < actionTimelineCache.Count ? actionTimelineCache[atIdx].Name : "(None)";
-                ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 70);
-                if (ImGui.BeginCombo("##behavvsd", atName))
+                // Filter dropdown (prefix selector)
+                if (actionTimelinePrefixes != null && actionTimelinePrefixes.Length > 0)
                 {
-                    for (int i = 0; i < actionTimelineCache.Count; i++)
+                    if (ImGui.Combo("Filter##atfilt", ref selectedPrefixIndex, actionTimelinePrefixes, actionTimelinePrefixes.Length))
+                    { /* just changes the filter, no save needed */ }
+                }
+
+                // Action timeline dropdown (filtered by prefix)
+                var atList = GetCurrentActionTimelineList();
+                int atIdx = 0;
+                for (int i = 0; i < atList.Count; i++)
+                    if (atList[i].Id == s.ActionTimelineId) { atIdx = i; break; }
+                var atName = atIdx < atList.Count ? atList[atIdx].Name : "(None)";
+                if (ImGui.BeginCombo("Action##behavvsd", atName))
+                {
+                    for (int i = 0; i < atList.Count; i++)
                     {
-                        if (ImGui.Selectable(actionTimelineCache[i].Name, i == atIdx))
+                        if (ImGui.Selectable(atList[i].Name, i == atIdx))
                         {
-                            s.ActionTimelineId = actionTimelineCache[i].Id;
+                            s.ActionTimelineId = atList[i].Id;
                             s.EmoteId = 0; s.ResolvedIntroTimeline = 0; s.ResolvedLoopTimeline = 0;
                             config.Save();
                         }
@@ -459,14 +486,17 @@ public class VictorySequenceGui
 
     private string FindActionTimelineName(uint atId)
     {
-        if (actionTimelineCache == null) return "?";
-        for (int i = 0; i < actionTimelineCache.Count; i++)
-            if (actionTimelineCache[i].Id == atId)
-            {
-                var name = actionTimelineCache[i].Name;
-                var bracket = name.LastIndexOf(" [");
-                return bracket > 0 ? name[..bracket] : name;
-            }
+        if (actionTimelineByPrefix == null) return $"#{atId}";
+        foreach (var list in actionTimelineByPrefix.Values)
+        {
+            for (int i = 0; i < list.Count; i++)
+                if (list[i].Id == atId)
+                {
+                    var name = list[i].Name;
+                    var bracket = name.LastIndexOf(" [");
+                    return bracket > 0 ? name[..bracket] : name;
+                }
+        }
         return $"#{atId}";
     }
 
