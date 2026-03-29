@@ -23,5 +23,5 @@ public class VictorySequenceStage
     public float GrabSpringFreq { get; set; } = 120f;
     // Infinite walk: NPC walks toward player at constant speed forever
     public bool InfiniteWalk { get; set; }
-    public float WalkSpeed { get; set; } = 2.0f;       // yalms per second
+    public float WalkSpeed { get; set; } = 0f;          // yalms per second (negative = walk away)
 }

@@ -338,7 +338,7 @@ public class VictorySequenceGui
             else
             {
                 var ws = s.WalkSpeed;
-                if (ImGui.DragFloat("Walk Speed (y/s)##walk", ref ws, 0.1f, 0.1f, 20f, "%.1f"))
+                if (ImGui.DragFloat("Walk Speed (y/s)##walk", ref ws, 0.1f, -20f, 20f, "%.1f"))
                 { s.WalkSpeed = ws; config.Save(); }
             }
 
