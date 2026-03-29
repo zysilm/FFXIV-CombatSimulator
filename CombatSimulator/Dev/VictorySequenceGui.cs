@@ -491,8 +491,9 @@ public class VictorySequenceGui
                     "[2] Ground",
                     "[3] Chair",
                     "[4] Upper Body",
-                    "[5] Adjust 1 (L?)",
-                    "[6] Adjust 2 (H?)",
+                    "[5] Variant A",
+                    "[6] Variant B",
+                    "[7] Auto Adjust (lower target)",
                 };
                 var variant = s.EmoteVariant;
                 if (ImGui.Combo("Variant##emvar", ref variant, variantNames, variantNames.Length))

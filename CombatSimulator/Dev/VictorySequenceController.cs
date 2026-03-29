@@ -213,6 +213,10 @@ public unsafe class VictorySequenceController : IDisposable
             }
             var character = (Character*)cinematicNpc.BattleChara;
 
+            // Reset current emote before playing new one (BaseOverride persists otherwise)
+            if (configChanged)
+                emotePlayer.ResetEmote(character);
+
             if (stage.UseEmote && stage.EmoteId > 0)
             {
                 // Emote mode: resolve timelines based on selected variant index.
@@ -226,9 +230,36 @@ public unsafe class VictorySequenceController : IDisposable
                             var emote = emoteSheet.GetRow(stage.EmoteId);
                             var varIdx = stage.EmoteVariant;
 
-                            // Use the selected index as the timeline to play
-                            var selectedTimeline = (varIdx >= 0 && varIdx < 7)
-                                ? (ushort)emote.ActionTimeline[varIdx].RowId : (ushort)0;
+                            ushort selectedTimeline = 0;
+
+                            if (varIdx == 7)
+                            {
+                                // Auto Adjust: temporarily lower player Y to force L variant
+                                var player = clientState.LocalPlayer;
+                                if (player != null)
+                                {
+                                    var playerObj = (GameObject*)player.Address;
+                                    var savedY = playerObj->Position.Y;
+                                    playerObj->Position.Y = savedY - 2.0f; // lower by 2 yalms
+                                    try
+                                    {
+                                        var adjusted = character->Timeline.GetHeightAdjustActionTimelineRowId(
+                                            new FFXIVClientStructs.FFXIV.Client.Game.Object.GameObjectId { Id = playerObjId },
+                                            stage.EmoteId);
+                                        if (adjusted != 0)
+                                            selectedTimeline = (ushort)adjusted;
+                                        log.Info($"VictorySequence: Auto adjust → timeline {adjusted} (lowered Y by 2)");
+                                    }
+                                    finally
+                                    {
+                                        playerObj->Position.Y = savedY; // restore
+                                    }
+                                }
+                            }
+                            else if (varIdx >= 0 && varIdx < 7)
+                            {
+                                selectedTimeline = (ushort)emote.ActionTimeline[varIdx].RowId;
+                            }
 
                             if (selectedTimeline != 0)
                             {
