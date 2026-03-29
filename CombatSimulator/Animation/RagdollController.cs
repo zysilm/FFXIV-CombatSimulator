@@ -1063,7 +1063,8 @@ public unsafe class RagdollController : IDisposable
             var skelDist = (newSkelPos - skelWorldPos).Length();
             if (skelDist > 0.1f)
             {
-                log.Info($"[Ragdoll F{frameCount}] Skeleton moved {skelDist:F3}m: ({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3})→({newSkelPos.X:F3},{newSkelPos.Y:F3},{newSkelPos.Z:F3})");
+                if (config.RagdollVerboseLog)
+                    log.Info($"[Ragdoll F{frameCount}] Skeleton moved {skelDist:F3}m: ({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3})→({newSkelPos.X:F3},{newSkelPos.Y:F3},{newSkelPos.Z:F3})");
                 if (BGCollisionModule.RaycastMaterialFilter(
                         new Vector3(newSkelPos.X, newSkelPos.Y + 2.0f, newSkelPos.Z),
                         new Vector3(0, -1, 0),
@@ -1072,7 +1073,8 @@ public unsafe class RagdollController : IDisposable
                 {
                     realGroundY = hitInfo.Point.Y;
                     groundY = realGroundY - config.RagdollFloorOffset;
-                    log.Info($"[Ragdoll F{frameCount}] Ground re-raycast: realY={realGroundY:F3} physicsY={groundY:F3}");
+                    if (config.RagdollVerboseLog)
+                        log.Info($"[Ragdoll F{frameCount}] Ground re-raycast: realY={realGroundY:F3} physicsY={groundY:F3}");
                 }
             }
 
@@ -1179,7 +1181,7 @@ public unsafe class RagdollController : IDisposable
         }
 
         frameCount++;
-        var logThisFrame = frameCount <= 3 || frameCount % 12 == 0; // every 0.2s at 60fps
+        var logThisFrame = config.RagdollVerboseLog && (frameCount <= 3 || frameCount % 12 == 0);
 
         // --- Pass 1: Read physics bodies, compute bone world positions/rotations ---
         // We need all positions first to measure how far the ragdoll sank below

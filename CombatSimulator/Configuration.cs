@@ -104,6 +104,7 @@ public class Configuration : IPluginConfiguration
     public float RagdollHairDamping { get; set; } = 0.92f;
     public float RagdollHairStiffness { get; set; } = 0.1f;
     // Dev (Experimental) — hidden behind easter egg
+    public bool RagdollVerboseLog { get; set; } = false;
     public bool EnableVictorySequence { get; set; } = false;
     public List<VictorySequenceStage> VictorySequenceStages { get; set; } = new();
     public List<VictoryCinematicPreset> VictoryCinematicPresets { get; set; } = new();

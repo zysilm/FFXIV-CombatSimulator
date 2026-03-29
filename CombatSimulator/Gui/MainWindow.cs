@@ -1344,6 +1344,13 @@ public class MainWindow : IDisposable
 
             ImGui.Indent();
 
+            var ragdollLog = config.RagdollVerboseLog;
+            if (ImGui.Checkbox("Ragdoll Verbose Log##dev", ref ragdollLog))
+            {
+                config.RagdollVerboseLog = ragdollLog;
+                config.Save();
+            }
+
             victorySequenceGui.Draw();
 
             ImGui.Unindent();
