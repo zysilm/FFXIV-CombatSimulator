@@ -27,6 +27,9 @@ public unsafe class VictorySequenceController : IDisposable
     private SimulatedNpc? cinematicNpc;
     private int currentStageIndex = -1;
     private bool stageAnimPlayed;
+    private uint lastPlayedEmoteId;
+    private uint lastPlayedActionTimelineId;
+    private bool lastPlayedUseEmote;
     private Vector3 playerDeathPos;
     private float playerFacingAngle;
     private ulong playerObjId;
@@ -173,8 +176,12 @@ public unsafe class VictorySequenceController : IDisposable
         var rotAngle = MathF.Atan2(toPlayer.X, toPlayer.Z);
         movementBlockHook.SetApproachRotation(gameObj, rotAngle);
 
-        // Play animation on stage enter
-        if (!stageAnimPlayed)
+        // Play animation on stage enter, or re-play if user changed config live
+        bool configChanged = stageAnimPlayed && (
+            stage.UseEmote != lastPlayedUseEmote ||
+            stage.EmoteId != lastPlayedEmoteId ||
+            stage.ActionTimelineId != lastPlayedActionTimelineId);
+        if (!stageAnimPlayed || configChanged)
         {
             var character = (Character*)cinematicNpc.BattleChara;
 
@@ -211,6 +218,9 @@ public unsafe class VictorySequenceController : IDisposable
             }
 
             stageAnimPlayed = true;
+            lastPlayedUseEmote = stage.UseEmote;
+            lastPlayedEmoteId = stage.EmoteId;
+            lastPlayedActionTimelineId = stage.ActionTimelineId;
         }
 
         // Update grab state — use BEPU2 OneBodyLinearServo via ragdoll
