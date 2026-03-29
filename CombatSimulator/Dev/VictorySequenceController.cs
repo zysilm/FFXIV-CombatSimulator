@@ -139,7 +139,7 @@ public unsafe class VictorySequenceController : IDisposable
         {
             currentStageIndex = newStageIdx;
             stageAnimPlayed = false;
-            log.Info($"VictorySequence: Entering stage {newStageIdx} '{stages[newStageIdx].Label}'");
+            log.Info($"VictorySequence: Entering stage {newStageIdx} (emote={stages[newStageIdx].EmoteId})");
         }
 
         if (currentStageIndex < 0 || currentStageIndex >= stages.Count)
@@ -169,15 +169,34 @@ public unsafe class VictorySequenceController : IDisposable
         movementBlockHook.SetApproachRotation(gameObj, rotAngle);
 
         // Play animation on stage enter
-        if (!stageAnimPlayed && stage.AnimationTimelineId != 0)
+        if (!stageAnimPlayed && stage.EmoteId > 0)
         {
-            var character = (Character*)cinematicNpc.BattleChara;
-            if (stage.LoopTimelineId != 0)
-                emotePlayer.PlayLoopedEmote(character, stage.LoopTimelineId, stage.AnimationTimelineId, playerObjId);
-            else
-                emotePlayer.PlayOneShot(character, stage.AnimationTimelineId);
+            // Resolve timeline IDs from emote if not already set
+            if (stage.AnimationTimelineId == 0 && stage.LoopTimelineId == 0)
+            {
+                try
+                {
+                    var emoteSheet = Core.Services.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>();
+                    if (emoteSheet != null)
+                    {
+                        var emote = emoteSheet.GetRow(stage.EmoteId);
+                        stage.LoopTimelineId = (ushort)emote.ActionTimeline[0].RowId;
+                        stage.AnimationTimelineId = (ushort)emote.ActionTimeline[1].RowId;
+                    }
+                }
+                catch { }
+            }
+
+            if (stage.AnimationTimelineId != 0 || stage.LoopTimelineId != 0)
+            {
+                var character = (Character*)cinematicNpc.BattleChara;
+                if (stage.LoopTimelineId != 0)
+                    emotePlayer.PlayLoopedEmote(character, stage.LoopTimelineId, stage.AnimationTimelineId, playerObjId);
+                else
+                    emotePlayer.PlayOneShot(character, stage.AnimationTimelineId);
+                log.Info($"VictorySequence: Playing emote {stage.EmoteId} (intro={stage.AnimationTimelineId}, loop={stage.LoopTimelineId})");
+            }
             stageAnimPlayed = true;
-            log.Info($"VictorySequence: Playing anim {stage.AnimationTimelineId} (loop={stage.LoopTimelineId})");
         }
 
         // Update grab state
