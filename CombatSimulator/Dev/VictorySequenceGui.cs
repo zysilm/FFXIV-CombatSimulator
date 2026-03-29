@@ -11,24 +11,23 @@ public class VictorySequenceGui
 {
     private readonly Configuration config;
     private readonly IPluginLog log;
+    private readonly Npcs.NpcSelector npcSelector;
     private int selectedStageIndex = -1;
 
     // Cached emote list (alphabetically sorted, loaded once)
     private List<(uint Id, string Name)>? emoteCache;
 
-    // Known bone names for dropdowns
-    private static readonly string[] NpcBones =
+    // NPC bone list — defaults to humanoid, refreshable from selected target
+    private string[] npcBoneList = DefaultHumanBones;
+    private static readonly string[] DefaultHumanBones =
     {
-        "j_te_r", "j_te_l",           // hands (right/left)
-        "j_ude_b_r", "j_ude_b_l",     // forearms
-        "j_ude_a_r", "j_ude_a_l",     // upper arms
-        "j_asi_c_r", "j_asi_c_l",     // feet
-        "j_asi_b_r", "j_asi_b_l",     // lower legs
-        "j_asi_a_r", "j_asi_a_l",     // upper legs
-        "j_kao",                        // head
-        "j_kubi",                       // neck
-        "j_sebo_c",                     // chest
-        "j_kosi",                       // pelvis
+        "j_te_r", "j_te_l",
+        "j_ude_b_r", "j_ude_b_l",
+        "j_ude_a_r", "j_ude_a_l",
+        "j_asi_c_r", "j_asi_c_l",
+        "j_asi_b_r", "j_asi_b_l",
+        "j_asi_a_r", "j_asi_a_l",
+        "j_kao", "j_kubi", "j_sebo_c", "j_kosi",
     };
 
     private static readonly string[] PlayerBones =
@@ -42,10 +41,43 @@ public class VictorySequenceGui
         "j_te_r", "j_te_l",           // hands
     };
 
-    public VictorySequenceGui(Configuration config, IPluginLog log)
+    public VictorySequenceGui(Configuration config, Npcs.NpcSelector npcSelector, IPluginLog log)
     {
         this.config = config;
+        this.npcSelector = npcSelector;
         this.log = log;
+    }
+
+    private unsafe void RefreshNpcBones()
+    {
+        // Read bones from the first selected NPC target's skeleton
+        foreach (var npc in npcSelector.SelectedNpcs)
+        {
+            if (npc.BattleChara == null) continue;
+            var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
+            if (gameObj->DrawObject == null) continue;
+            var charBase = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)gameObj->DrawObject;
+            var skeleton = charBase->Skeleton;
+            if (skeleton == null || skeleton->PartialSkeletonCount < 1) continue;
+            var partial = &skeleton->PartialSkeletons[0];
+            var pose = partial->GetHavokPose(0);
+            if (pose == null || pose->Skeleton == null) continue;
+
+            var havokBones = pose->Skeleton->Bones;
+            var bones = new List<string>();
+            for (int i = 0; i < havokBones.Length; i++)
+            {
+                var name = havokBones[i].Name.String;
+                if (!string.IsNullOrWhiteSpace(name))
+                    bones.Add(name);
+            }
+            bones.Sort(StringComparer.OrdinalIgnoreCase);
+            npcBoneList = bones.ToArray();
+            log.Info($"VictorySequenceGui: Refreshed NPC bones from '{npc.Name}' — {npcBoneList.Length} bones");
+            return;
+        }
+        npcBoneList = DefaultHumanBones;
+        log.Info("VictorySequenceGui: No target selected, using default human bones");
     }
 
     private void EnsureEmoteCache()
@@ -145,7 +177,7 @@ public class VictorySequenceGui
                     selectedStageIndex = i;
 
                 ImGui.TableNextColumn();
-                ImGui.Text($"{s.StartTime:F1}-{s.EndTime:F1}s");
+                ImGui.Text(s.EndTime < 0 ? $"{s.StartTime:F1}-∞" : $"{s.StartTime:F1}-{s.EndTime:F1}s");
 
                 ImGui.TableNextColumn();
                 ImGui.Text($"{s.StartDistance:F1}→{s.EndDistance:F1}");
@@ -194,8 +226,9 @@ public class VictorySequenceGui
             if (stages.Count > 0)
             {
                 var prev = stages[^1];
-                newStage.StartTime = prev.EndTime;
-                newStage.EndTime = prev.EndTime; // user adjusts end time
+                var prevEnd = prev.EndTime < 0 ? prev.StartTime + 5f : prev.EndTime;
+                newStage.StartTime = prevEnd;
+                newStage.EndTime = prevEnd; // user adjusts end time
                 newStage.StartDistance = prev.EndDistance;
                 newStage.EndDistance = prev.EndDistance;
             }
@@ -226,9 +259,21 @@ public class VictorySequenceGui
             if (ImGui.DragFloat("Start Time (s)##vsd", ref st, 0.1f, 0, 120, "%.1f"))
             { s.StartTime = st; config.Save(); }
 
-            var et = s.EndTime;
-            if (ImGui.DragFloat("End Time (s)##vsd", ref et, 0.1f, 0, 120, "%.1f"))
-            { s.EndTime = et; config.Save(); }
+            var isInfinite = s.EndTime < 0;
+            if (ImGui.Checkbox("Infinite##vsd", ref isInfinite))
+            { s.EndTime = isInfinite ? -1f : s.StartTime + 3f; config.Save(); }
+            ImGui.SameLine();
+            if (!isInfinite)
+            {
+                var et = s.EndTime;
+                ImGui.SetNextItemWidth(120);
+                if (ImGui.DragFloat("End Time (s)##vsd", ref et, 0.1f, 0, 120, "%.1f"))
+                { s.EndTime = et; config.Save(); }
+            }
+            else
+            {
+                ImGui.TextDisabled("End Time: infinite");
+            }
 
             // Distances
             var sd = s.StartDistance;
@@ -271,15 +316,33 @@ public class VictorySequenceGui
 
             if (s.GrabEnabled)
             {
-                // NPC bone dropdown
-                var npcIdx = FindBoneIndex(NpcBones, s.NpcBoneName);
-                if (ImGui.Combo("NPC Bone##vsd", ref npcIdx, NpcBones, NpcBones.Length))
-                { s.NpcBoneName = NpcBones[npcIdx]; config.Save(); }
+                // NPC bone dropdown (dynamic — refreshable from selected target)
+                var npcIdx = FindBoneIndex(npcBoneList, s.NpcBoneName);
+                if (ImGui.Combo("NPC Bone##vsd", ref npcIdx, npcBoneList, npcBoneList.Length))
+                { s.NpcBoneName = npcBoneList[npcIdx]; config.Save(); }
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Refresh##npcbones"))
+                    RefreshNpcBones();
 
                 // Player bone dropdown
                 var playerIdx = FindBoneIndex(PlayerBones, s.PlayerBoneName);
                 if (ImGui.Combo("Player Bone##vsd", ref playerIdx, PlayerBones, PlayerBones.Length))
                 { s.PlayerBoneName = PlayerBones[playerIdx]; config.Save(); }
+
+                // Grab physics tweaks
+                ImGui.Separator();
+                ImGui.TextDisabled("Grab Physics");
+                var gf = s.GrabForce;
+                if (ImGui.DragFloat("Force##grab", ref gf, 10f, 10, 5000, "%.0f"))
+                { s.GrabForce = gf; config.Save(); }
+
+                var gs = s.GrabSpeed;
+                if (ImGui.DragFloat("Speed##grab", ref gs, 1f, 1, 200, "%.0f"))
+                { s.GrabSpeed = gs; config.Save(); }
+
+                var gsf = s.GrabSpringFreq;
+                if (ImGui.DragFloat("Spring Freq##grab", ref gsf, 5f, 10, 500, "%.0f"))
+                { s.GrabSpringFreq = gsf; config.Save(); }
             }
         }
 

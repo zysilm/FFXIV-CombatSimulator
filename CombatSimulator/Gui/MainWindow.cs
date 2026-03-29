@@ -94,7 +94,7 @@ public class MainWindow : IDisposable
         this.clientState = clientState;
         this.chatGui = chatGui;
         this.log = log;
-        this.victorySequenceGui = new Dev.VictorySequenceGui(config, log);
+        this.victorySequenceGui = new Dev.VictorySequenceGui(config, npcSelector, log);
     }
 
     private int selectedTab = 0;

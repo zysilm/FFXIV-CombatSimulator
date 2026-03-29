@@ -122,15 +122,17 @@ public unsafe class VictorySequenceController : IDisposable
         int newStageIdx = -1;
         for (int i = 0; i < stages.Count; i++)
         {
-            if (elapsed >= stages[i].StartTime && elapsed < stages[i].EndTime)
+            var isInfinite = stages[i].EndTime < 0;
+            if (elapsed >= stages[i].StartTime && (isInfinite || elapsed < stages[i].EndTime))
             {
                 newStageIdx = i;
                 break;
             }
         }
 
-        // Past all stages → stop
-        if (newStageIdx == -1 && stages.Count > 0 && elapsed >= stages[^1].EndTime)
+        // Past all stages → stop (but not if last stage is infinite)
+        var lastEnd = stages.Count > 0 ? stages[^1].EndTime : 0;
+        if (newStageIdx == -1 && stages.Count > 0 && lastEnd >= 0 && elapsed >= lastEnd)
         {
             log.Info("VictorySequence: All stages complete");
             Stop();
@@ -213,7 +215,8 @@ public unsafe class VictorySequenceController : IDisposable
                 if (npcHandWorld != null)
                 {
                     grabActive = ragdollController.CreateGrabConstraint(
-                        stage.PlayerBoneName, npcHandWorld.Value);
+                        stage.PlayerBoneName, npcHandWorld.Value,
+                        stage.GrabForce, stage.GrabSpeed, stage.GrabSpringFreq);
                     if (grabActive)
                         log.Info("VictorySequence: BEPU2 grab constraint activated");
                 }
