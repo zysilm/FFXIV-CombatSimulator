@@ -192,14 +192,19 @@ public unsafe class ActiveCameraController : IDisposable
                         }
                         gameCam->MinDistance = config.ActiveCameraMinZoomDistance;
 
-                        // Smooth close zoom: only correct InterpDistance when the game
-                        // has snapped it back above our position (the snap-back problem).
-                        // This preserves the game's smooth scroll interpolation normally.
-                        if (config.ActiveCameraSmoothCloseZoom
-                            && gameCam->Distance < savedMinDistance
-                            && gameCam->InterpDistance > gameCam->Distance)
+                        // Smooth close zoom: cap InterpDistance so it can't deviate far
+                        // from Distance. Allows smooth scroll interpolation within a small
+                        // range but prevents the large snap-backs that cause sudden jumps.
+                        if (config.ActiveCameraSmoothCloseZoom)
                         {
-                            gameCam->InterpDistance = gameCam->Distance;
+                            // Prevent InterpDistance from jumping above Distance by more than 0.3
+                            var maxInterp = gameCam->Distance + 0.3f;
+                            if (gameCam->InterpDistance > maxInterp)
+                                gameCam->InterpDistance = maxInterp;
+
+                            // Also prevent InterpDistance from going below our minimum
+                            if (gameCam->InterpDistance < config.ActiveCameraMinZoomDistance)
+                                gameCam->InterpDistance = config.ActiveCameraMinZoomDistance;
                         }
                     }
                     else if (distanceOverridden)
