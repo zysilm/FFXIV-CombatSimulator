@@ -190,12 +190,17 @@ public unsafe class ActiveCameraController : IDisposable
                             savedMinDistance = gameCam->MinDistance;
                             distanceOverridden = true;
                         }
-                        gameCam->MinDistance = 0f;
-                        // Sync InterpDistance to Distance to prevent the game's
-                        // interpolation from fighting the user's scroll input.
-                        // Without this, InterpDistance snaps back to the original
-                        // MinDistance and pulls the camera out suddenly.
-                        gameCam->InterpDistance = gameCam->Distance;
+                        gameCam->MinDistance = config.ActiveCameraMinZoomDistance;
+
+                        // Smooth close zoom: only correct InterpDistance when the game
+                        // has snapped it back above our position (the snap-back problem).
+                        // This preserves the game's smooth scroll interpolation normally.
+                        if (config.ActiveCameraSmoothCloseZoom
+                            && gameCam->Distance < savedMinDistance
+                            && gameCam->InterpDistance > gameCam->Distance)
+                        {
+                            gameCam->InterpDistance = gameCam->Distance;
+                        }
                     }
                     else if (distanceOverridden)
                     {

@@ -1112,6 +1112,29 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Allow the camera to zoom closer than the game default.");
+
+                if (config.ActiveCameraCloseZoom)
+                {
+                    ImGui.Indent();
+
+                    var smoothZoom = config.ActiveCameraSmoothCloseZoom;
+                    if (ImGui.Checkbox("Smooth Close Zoom##activecam", ref smoothZoom))
+                    {
+                        config.ActiveCameraSmoothCloseZoom = smoothZoom;
+                        config.Save();
+                    }
+                    HelpMarker("Prevent the game from snapping the camera back when zoomed past the default minimum. Corrects the interpolation target only when snap-back is detected.");
+
+                    var minDist = config.ActiveCameraMinZoomDistance;
+                    if (ImGui.SliderFloat("Min Zoom Distance##activecam", ref minDist, 0.0f, 2.0f, "%.2f"))
+                    {
+                        config.ActiveCameraMinZoomDistance = minDist;
+                        config.Save();
+                    }
+                    HelpMarker("Closest distance the camera can zoom to.");
+
+                    ImGui.Unindent();
+                }
             }
 
             ImGui.Unindent();
