@@ -1549,9 +1549,7 @@ public class MainWindow : IDisposable
         for (int b = 0; b < bones.Length; b++)
             boneLabels[b] = bones[b].Label;
 
-        ImGui.Text("Bone");
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(140);
+        ImGui.SetNextItemWidth(100);
         if (ImGui.Combo("##acbone", ref boneIdx, boneLabels, boneLabels.Length))
         {
             config.ActiveCameraBoneName = bones[boneIdx].BoneName;
@@ -1559,10 +1557,11 @@ public class MainWindow : IDisposable
         }
 
         // Height offset
+        ImGui.SameLine();
         ImGui.Text("H");
         ImGui.SameLine();
         var height = config.ActiveCameraHeightOffset;
-        ImGui.SetNextItemWidth(100);
+        ImGui.SetNextItemWidth(60);
         if (ImGui.DragFloat("##acH", ref height, 0.01f, -5f, 10f, "%.2f"))
         {
             config.ActiveCameraHeightOffset = height;
@@ -1570,10 +1569,11 @@ public class MainWindow : IDisposable
         }
 
         // Side offset
+        ImGui.SameLine();
         ImGui.Text("S");
         ImGui.SameLine();
         var side = config.ActiveCameraSideOffset;
-        ImGui.SetNextItemWidth(100);
+        ImGui.SetNextItemWidth(60);
         if (ImGui.DragFloat("##acS", ref side, 0.01f, -5f, 5f, "%.2f"))
         {
             config.ActiveCameraSideOffset = side;
@@ -1581,8 +1581,9 @@ public class MainWindow : IDisposable
         }
 
         // Close zoom toggle
+        ImGui.SameLine();
         var closeZoom = config.ActiveCameraCloseZoom;
-        if (ImGui.Checkbox("Close Zoom##actb", ref closeZoom))
+        if (ImGui.Checkbox("Zoom##actb", ref closeZoom))
         {
             config.ActiveCameraCloseZoom = closeZoom;
             config.Save();
