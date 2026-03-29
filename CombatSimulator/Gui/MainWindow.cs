@@ -1321,14 +1321,6 @@ public class MainWindow : IDisposable
 
             ImGui.Indent();
 
-            var massScale = config.RagdollMassScale;
-            if (ImGui.SliderFloat("Mass Scale##dev", ref massScale, 0.1f, 10.0f, "%.1f"))
-            {
-                config.RagdollMassScale = massScale;
-                config.Save();
-            }
-            HelpMarker("Ragdoll body mass multiplier. Higher = heavier (resists collision). Lower = lighter (flies on impact).");
-
             victorySequenceGui.Draw();
 
             ImGui.Unindent();

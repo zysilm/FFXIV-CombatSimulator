@@ -55,6 +55,19 @@ public class VictorySequenceGui
 
     private unsafe void RefreshNpcBones()
     {
+        // Read from game's current target (not combat sim target list)
+        var target = Core.Services.ClientState.LocalPlayer?.TargetObject;
+        if (target != null)
+        {
+            npcBoneList = ReadBonesFromCharacter(target.Address);
+            if (npcBoneList.Length > 0)
+            {
+                log.Info($"VictorySequenceGui: Refreshed NPC bones from '{target.Name}' — {npcBoneList.Length} bones");
+                return;
+            }
+        }
+
+        // Fallback: try combat sim selected NPCs
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             if (npc.BattleChara == null) continue;
@@ -65,7 +78,7 @@ public class VictorySequenceGui
                 return;
             }
         }
-        log.Info("VictorySequenceGui: No target selected or no bones found");
+        log.Info("VictorySequenceGui: No target found — target an NPC in-game then click Refresh");
     }
 
     private unsafe void EnsurePlayerBones()
