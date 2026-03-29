@@ -1354,7 +1354,7 @@ public unsafe class RagdollController : IDisposable
     /// target position. The target is updated each frame via UpdateGrabTarget().
     /// Also ensures all ragdoll bodies stay awake (SleepThreshold = -1).
     /// </summary>
-    public bool CreateGrabConstraint(string boneName, Vector3 initialTarget, float maxForce = 50f, float maxSpeed = 5f)
+    public bool CreateGrabConstraint(string boneName, Vector3 initialTarget, float maxForce = 1000f, float maxSpeed = 50f)
     {
         if (simulation == null || !isActive) return false;
 
@@ -1387,10 +1387,10 @@ public unsafe class RagdollController : IDisposable
         grabConstraintHandle = simulation.Solver.Add(grabBodyHandle,
             new OneBodyLinearServo
             {
-                LocalOffset = Vector3.Zero, // center of the bone body
+                LocalOffset = Vector3.Zero,
                 Target = initialTarget,
                 ServoSettings = new ServoSettings(maxSpeed, 1f, maxForce),
-                SpringSettings = new SpringSettings(30, 1),
+                SpringSettings = new SpringSettings(120, 1),
             });
 
         grabConstraintActive = true;
@@ -1411,8 +1411,8 @@ public unsafe class RagdollController : IDisposable
             {
                 LocalOffset = Vector3.Zero,
                 Target = worldTarget,
-                ServoSettings = new ServoSettings(5f, 1f, 50f),
-                SpringSettings = new SpringSettings(30, 1),
+                ServoSettings = new ServoSettings(50f, 1f, 1000f),
+                SpringSettings = new SpringSettings(120, 1),
             };
             simulation.Solver.ApplyDescription(grabConstraintHandle, desc);
         }
