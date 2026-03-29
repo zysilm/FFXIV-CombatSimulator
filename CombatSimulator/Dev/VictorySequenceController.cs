@@ -215,8 +215,8 @@ public unsafe class VictorySequenceController : IDisposable
 
             if (stage.UseEmote && stage.EmoteId > 0)
             {
-                // Emote mode: resolve timelines based on selected variant.
-                // 0=Standing (loop[0]+intro[1]), 1=Ground[2], 2=Chair[3], 3=UpperBody[4]
+                // Emote mode: resolve timelines based on selected variant index.
+                // Emote sheet has 7 ActionTimeline entries (indices 0-6).
                 {
                     try
                     {
@@ -224,27 +224,32 @@ public unsafe class VictorySequenceController : IDisposable
                         if (emoteSheet != null)
                         {
                             var emote = emoteSheet.GetRow(stage.EmoteId);
-                            switch (stage.EmoteVariant)
+                            var varIdx = stage.EmoteVariant;
+
+                            // Use the selected index as the timeline to play
+                            var selectedTimeline = (varIdx >= 0 && varIdx < 7)
+                                ? (ushort)emote.ActionTimeline[varIdx].RowId : (ushort)0;
+
+                            if (selectedTimeline != 0)
                             {
-                                case 1: // Ground
-                                    var gt = (ushort)emote.ActionTimeline[2].RowId;
-                                    stage.ResolvedLoopTimeline = gt != 0 ? gt : (ushort)emote.ActionTimeline[0].RowId;
-                                    stage.ResolvedIntroTimeline = gt != 0 ? gt : (ushort)emote.ActionTimeline[1].RowId;
-                                    break;
-                                case 2: // Chair
-                                    var ct = (ushort)emote.ActionTimeline[3].RowId;
-                                    stage.ResolvedLoopTimeline = ct != 0 ? ct : (ushort)emote.ActionTimeline[0].RowId;
-                                    stage.ResolvedIntroTimeline = ct != 0 ? ct : (ushort)emote.ActionTimeline[1].RowId;
-                                    break;
-                                case 3: // Upper Body
-                                    var ut = (ushort)emote.ActionTimeline[4].RowId;
-                                    stage.ResolvedLoopTimeline = ut != 0 ? ut : (ushort)emote.ActionTimeline[0].RowId;
-                                    stage.ResolvedIntroTimeline = ut != 0 ? ut : (ushort)emote.ActionTimeline[1].RowId;
-                                    break;
-                                default: // Standing (normal)
-                                    stage.ResolvedLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
+                                // For index 0, also use index 1 as intro
+                                if (varIdx == 0)
+                                {
+                                    stage.ResolvedLoopTimeline = selectedTimeline;
                                     stage.ResolvedIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
-                                    break;
+                                }
+                                else
+                                {
+                                    // For other indices, use as both intro and loop
+                                    stage.ResolvedLoopTimeline = selectedTimeline;
+                                    stage.ResolvedIntroTimeline = selectedTimeline;
+                                }
+                            }
+                            else
+                            {
+                                // Fallback to default loop + intro
+                                stage.ResolvedLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
+                                stage.ResolvedIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
                             }
                         }
                     }

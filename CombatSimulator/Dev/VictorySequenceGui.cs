@@ -485,14 +485,26 @@ public class VictorySequenceGui
 
             if (s.UseEmote && s.EmoteId > 0)
             {
-                var variantNames = new[] { "Standing", "Ground (L)", "Chair", "Upper Body" };
+                var variantNames = new[] {
+                    "[0] Loop+Intro (default)",
+                    "[1] Intro only",
+                    "[2] Ground",
+                    "[3] Chair",
+                    "[4] Upper Body",
+                    "[5] Adjust 1 (L?)",
+                    "[6] Adjust 2 (H?)",
+                };
                 var variant = s.EmoteVariant;
                 if (ImGui.Combo("Variant##emvar", ref variant, variantNames, variantNames.Length))
                 {
                     s.EmoteVariant = variant;
-                    s.ResolvedIntroTimeline = 0; s.ResolvedLoopTimeline = 0; // force re-resolve
+                    s.ResolvedIntroTimeline = 0; s.ResolvedLoopTimeline = 0;
                     config.Save();
                 }
+
+                // Show resolved timeline IDs for debugging
+                if (s.ResolvedLoopTimeline != 0 || s.ResolvedIntroTimeline != 0)
+                    ImGui.TextDisabled($"  Resolved: intro={s.ResolvedIntroTimeline} loop={s.ResolvedLoopTimeline}");
             }
 
             // === Grab ===
