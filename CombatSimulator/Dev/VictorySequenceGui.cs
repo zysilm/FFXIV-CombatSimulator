@@ -432,7 +432,7 @@ public class VictorySequenceGui
             {
                 var emoteIdx = FindEmoteIndex(s.EmoteId);
                 var emoteName = emoteIdx < emoteCache!.Count ? emoteCache[emoteIdx].Name : "(None)";
-                ImGui.SetNextItemWidth(200);
+                ImGui.SetNextItemWidth(500);
                 if (ImGui.BeginCombo("##behavvsd", emoteName))
                 {
                     for (int i = 0; i < emoteCache.Count; i++)
@@ -490,7 +490,7 @@ public class VictorySequenceGui
                 for (int i = 0; i < atList.Count; i++)
                     if (atList[i].Id == s.ActionTimelineId) { atIdx = i; break; }
                 var atName = atIdx < atList.Count ? atList[atIdx].Name : "(None)";
-                ImGui.SetNextItemWidth(200);
+                ImGui.SetNextItemWidth(500);
                 if (ImGui.BeginCombo("Action##behavvsd", atName))
                 {
                     for (int i = 0; i < atList.Count; i++)
