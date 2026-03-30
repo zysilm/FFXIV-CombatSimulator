@@ -190,24 +190,15 @@ public unsafe class VictorySequenceController : IDisposable
 
         // Rotate NPC facing direction
         float rotAngle;
-        if (stage.LockFacing)
+        if (stage.LockFacing || stage.InfiniteWalk)
         {
-            // Track player's head bone (j_kao) in real time
-            var player = clientState.LocalPlayer;
-            var headPos = player != null ? GetBoneWorldPos(player.Address, "j_kao") : null;
-            var faceTarget = headPos ?? playerDeathPos;
-            var toHead = faceTarget - targetPos;
-            rotAngle = MathF.Atan2(toHead.X, toHead.Z);
-        }
-        else if (stage.InfiniteWalk)
-        {
-            // Lock to initial approach direction (never flips)
+            // Lock to initial approach direction (toward player, never flips)
             var walkDir = -facingDir;
             rotAngle = MathF.Atan2(walkDir.X, walkDir.Z);
         }
         else
         {
-            // Recalculate each frame from NPC→player position (flips at negative distance)
+            // Recalculate each frame (flips 180° when distance goes negative)
             var toPlayer = playerDeathPos - targetPos;
             rotAngle = MathF.Atan2(toPlayer.X, toPlayer.Z);
         }
@@ -272,7 +263,7 @@ public unsafe class VictorySequenceController : IDisposable
             ResolveBoneIndices(stage);
             if (npcHandBoneIdx >= 0 && ragdollController.IsActive)
             {
-                var npcHandWorld = GetBoneWorldPos(cinematicNpc!.Address,stage.NpcBoneName);
+                var npcHandWorld = GetNpcBoneWorldPos(stage.NpcBoneName);
                 if (npcHandWorld != null)
                 {
                     grabActive = ragdollController.CreateGrabConstraint(
@@ -314,15 +305,15 @@ public unsafe class VictorySequenceController : IDisposable
     }
 
     /// <summary>
-    /// Read any character's bone world position from its current skeleton.
+    /// Read an NPC bone's world position from its current animation frame.
     /// </summary>
-    private Vector3? GetBoneWorldPos(nint characterAddress, string boneName)
+    private Vector3? GetNpcBoneWorldPos(string boneName)
     {
-        if (characterAddress == nint.Zero) return null;
+        if (cinematicNpc?.BattleChara == null) return null;
 
-        var skel = boneService.TryGetSkeleton(characterAddress);
-        if (skel == null) return null;
-        var ns = skel.Value;
+        var npcSkel = boneService.TryGetSkeleton(cinematicNpc.Address);
+        if (npcSkel == null) return null;
+        var ns = npcSkel.Value;
 
         var idx = boneService.ResolveBoneIndex(ns, boneName);
         if (idx < 0 || idx >= ns.BoneCount) return null;
@@ -355,7 +346,7 @@ public unsafe class VictorySequenceController : IDisposable
             var stages = config.VictorySequenceStages;
             if (currentStageIndex < 0 || currentStageIndex >= stages.Count) return;
 
-            var npcHandWorld = GetBoneWorldPos(cinematicNpc!.Address,stages[currentStageIndex].NpcBoneName);
+            var npcHandWorld = GetNpcBoneWorldPos(stages[currentStageIndex].NpcBoneName);
             if (npcHandWorld != null)
                 ragdollController.UpdateGrabTarget(npcHandWorld.Value);
         }
