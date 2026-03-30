@@ -25,11 +25,14 @@ public unsafe class VictorySequenceController : IDisposable
     private bool isActive;
     private float elapsed;
     private SimulatedNpc? cinematicNpc;
+    private Vector3 npcOriginalPos;
     private int currentStageIndex = -1;
     private bool stageAnimPlayed;
     private uint lastPlayedEmoteId;
     private uint lastPlayedActionTimelineId;
     private bool lastPlayedUseEmote;
+    private string lastGrabNpcBone = "";
+    private string lastGrabPlayerBone = "";
     private Vector3 playerDeathPos;
     private float playerFacingAngle;
     private ulong playerObjId;
@@ -97,6 +100,10 @@ public unsafe class VictorySequenceController : IDisposable
         // Direct struct write bypasses MovementBlockHook.IsBlocking.
         playerObj->Position.Y -= 1.5f; // ~character standing height → ground level
         log.Info($"VictorySequence: Lowered player Y from {playerDeathPos.Y:F2} to {playerObj->Position.Y:F2}");
+
+        // Save NPC original position for restoration on stop
+        var npcObj = (GameObject*)cinematicNpc.BattleChara;
+        npcOriginalPos = npcObj->Position;
 
         // Register NPC for approach movement (bypass server overrides)
         movementBlockHook.AddApproachNpc(cinematicNpc.Address);
@@ -266,20 +273,35 @@ public unsafe class VictorySequenceController : IDisposable
         }
 
         // Update grab state — use BEPU2 OneBodyLinearServo via ragdoll
+        // Also detect live bone name changes for debugging
+        bool grabBonesChanged = grabActive && (
+            stage.NpcBoneName != lastGrabNpcBone ||
+            stage.PlayerBoneName != lastGrabPlayerBone);
+        if (grabBonesChanged)
+        {
+            ragdollController.RemoveGrabConstraint();
+            grabActive = false;
+            log.Info("VictorySequence: Grab bones changed, re-creating constraint");
+        }
+
         if (stage.GrabEnabled && !grabActive)
         {
             // Activate grab: create physics constraint on player's ragdoll bone
             ResolveBoneIndices(stage);
             if (npcHandBoneIdx >= 0 && ragdollController.IsActive)
             {
-                var npcHandWorld = GetBoneWorldPos(cinematicNpc!.Address,stage.NpcBoneName);
+                var npcHandWorld = GetBoneWorldPos(cinematicNpc!.Address, stage.NpcBoneName);
                 if (npcHandWorld != null)
                 {
                     grabActive = ragdollController.CreateGrabConstraint(
                         stage.PlayerBoneName, npcHandWorld.Value,
                         stage.GrabForce, stage.GrabSpeed, stage.GrabSpringFreq);
                     if (grabActive)
+                    {
+                        lastGrabNpcBone = stage.NpcBoneName;
+                        lastGrabPlayerBone = stage.PlayerBoneName;
                         log.Info("VictorySequence: BEPU2 grab constraint activated");
+                    }
                 }
             }
         }
@@ -392,6 +414,9 @@ public unsafe class VictorySequenceController : IDisposable
 
         if (cinematicNpc?.BattleChara != null)
         {
+            // Restore NPC to original position
+            var npcObj = (GameObject*)cinematicNpc.BattleChara;
+            movementBlockHook.SetApproachPosition(npcObj, npcOriginalPos.X, npcOriginalPos.Y, npcOriginalPos.Z);
             movementBlockHook.RemoveApproachNpc(cinematicNpc.Address);
             emotePlayer.ResetEmote((Character*)cinematicNpc.BattleChara);
         }
