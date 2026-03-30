@@ -58,8 +58,6 @@ public unsafe class RagdollController : IDisposable
     private int nHaraIndex = -1;
     // Head bone index (j_kao) — used for hair physics and partial skeleton propagation
     private int kaoBodyBoneIndex = -1;
-    // Bones to skip during descendant propagation (mod physics like breast)
-    private readonly HashSet<int> skipPropagationBones = new();
     // Hair physics simulator
     private HairPhysicsSimulator? hairPhysics;
 
@@ -894,28 +892,6 @@ public unsafe class RagdollController : IDisposable
         kaoBodyBoneIndex = boneService.ResolveBoneIndex(skel, "j_kao");
         log.Info($"RagdollController: n_hara index={nHaraIndex}, j_kao index={kaoBodyBoneIndex}");
 
-        // Resolve bones to skip in descendant propagation (preserve mod physics)
-        skipPropagationBones.Clear();
-        foreach (var skipName in new[] { "j_mune_l", "j_mune_r" })
-        {
-            var idx = boneService.ResolveBoneIndex(skel, skipName);
-            if (idx >= 0)
-            {
-                skipPropagationBones.Add(idx);
-                // Also skip all descendants of this bone
-                for (int d = 0; d < skel.BoneCount && d < skel.ParentCount; d++)
-                {
-                    var p = d;
-                    while (p >= 0 && p < skel.ParentCount)
-                    {
-                        if (p == idx) { skipPropagationBones.Add(d); break; }
-                        p = skel.HavokSkeleton->ParentIndices[p];
-                        if (p <= 0) break;
-                    }
-                }
-            }
-        }
-
         // Create NPC collision volumes — dynamically discover bones from each NPC's skeleton.
         // Works for any model (humanoid, monster, dragon) — no hardcoded bone names.
         npcCollisionStates.Clear();
@@ -1335,8 +1311,7 @@ public unsafe class RagdollController : IDisposable
         // ragdoll parent bones move via physics, causing mesh tearing at boundaries.
         for (int i = 0; i < skel.BoneCount && i < skel.ParentCount; i++)
         {
-            if (ragdollBoneIndices.Contains(i)) continue;
-            if (skipPropagationBones.Contains(i)) continue;
+            if (ragdollBoneIndices.Contains(i)) continue; // already handled by physics
 
             var parentIdx = skel.HavokSkeleton->ParentIndices[i];
             if (parentIdx < 0 || !result.HasAccumulated[parentIdx]) continue;
