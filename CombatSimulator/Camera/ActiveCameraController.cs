@@ -209,7 +209,7 @@ public unsafe class ActiveCameraController : IDisposable
             DisableCollisionPatch();
 
         // ShouldDrawGameObject hook: enable when prevent fade is wanted
-        bool wantPreventFade = IsActive && config.ActiveCameraPreventFade && config.ActiveCameraCloseZoom;
+        bool wantPreventFade = IsActive && config.ActiveCameraPreventFade;
         if (wantPreventFade && !shouldDrawHookActive && shouldDrawHook != null)
         {
             shouldDrawHook.Enable();
@@ -233,21 +233,13 @@ public unsafe class ActiveCameraController : IDisposable
                 {
                     var gameCam = camMgr->Camera;
 
-                    // Allow closer zoom if enabled
-                    if (config.ActiveCameraCloseZoom)
+                    // Apply configured min zoom distance
+                    if (!distanceOverridden)
                     {
-                        if (!distanceOverridden)
-                        {
-                            savedMinDistance = gameCam->MinDistance;
-                            distanceOverridden = true;
-                        }
-                        gameCam->MinDistance = config.ActiveCameraMinZoomDistance;
+                        savedMinDistance = gameCam->MinDistance;
+                        distanceOverridden = true;
                     }
-                    else if (distanceOverridden)
-                    {
-                        gameCam->MinDistance = savedMinDistance;
-                        distanceOverridden = false;
-                    }
+                    gameCam->MinDistance = config.ActiveCameraMinZoomDistance;
 
                     // Lock vertical angle if configured
                     if (config.ActiveCameraLockVertical)

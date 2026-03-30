@@ -123,7 +123,6 @@ public class Configuration : IPluginConfiguration
     public float ActiveCameraVerticalAngle { get; set; } = 0f;
     public bool ActiveCameraLockVertical { get; set; } = false;
     public bool ActiveCameraDisableCollision { get; set; } = false;
-    public bool ActiveCameraCloseZoom { get; set; } = true;
     public float ActiveCameraMinZoomDistance { get; set; } = 1.0f;
     public bool ActiveCameraPreventFade { get; set; } = false;
 

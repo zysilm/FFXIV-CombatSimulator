@@ -1106,36 +1106,21 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Camera passes through walls and objects.");
 
-                var closeZoom = config.ActiveCameraCloseZoom;
-                if (ImGui.Checkbox("Allow Close Zoom##activecam", ref closeZoom))
+                var minDist = config.ActiveCameraMinZoomDistance;
+                if (ImGui.SliderFloat("Min Zoom Distance##activecam", ref minDist, 0.0f, 2.0f, "%.2f"))
                 {
-                    config.ActiveCameraCloseZoom = closeZoom;
+                    config.ActiveCameraMinZoomDistance = minDist;
                     config.Save();
                 }
-                HelpMarker("Allow the camera to zoom closer than the game default.");
+                HelpMarker("Minimum camera distance. Lower = closer zoom. Default 1.0.");
 
-                if (config.ActiveCameraCloseZoom)
+                var preventFade = config.ActiveCameraPreventFade;
+                if (ImGui.Checkbox("Prevent Model Fade##activecam", ref preventFade))
                 {
-                    ImGui.Indent();
-
-                    var minDist = config.ActiveCameraMinZoomDistance;
-                    if (ImGui.SliderFloat("Min Zoom Distance##activecam", ref minDist, 0.0f, 2.0f, "%.2f"))
-                    {
-                        config.ActiveCameraMinZoomDistance = minDist;
-                        config.Save();
-                    }
-                    HelpMarker("Closest distance the camera can zoom to.");
-
-                    var preventFade = config.ActiveCameraPreventFade;
-                    if (ImGui.Checkbox("Prevent Model Fade##activecam", ref preventFade))
-                    {
-                        config.ActiveCameraPreventFade = preventFade;
-                        config.Save();
-                    }
-                    HelpMarker("Prevent characters and NPCs from disappearing when the camera zooms very close. Hooks the game's ShouldDrawGameObject to always allow rendering.");
-
-                    ImGui.Unindent();
+                    config.ActiveCameraPreventFade = preventFade;
+                    config.Save();
                 }
+                HelpMarker("Prevent characters and NPCs from disappearing when the camera zooms very close.");
             }
 
             ImGui.Unindent();
@@ -1627,14 +1612,6 @@ public class MainWindow : IDisposable
             config.Save();
         }
 
-        // Close zoom toggle
-        ImGui.SameLine();
-        var closeZoom = config.ActiveCameraCloseZoom;
-        if (ImGui.Checkbox("Zoom##actb", ref closeZoom))
-        {
-            config.ActiveCameraCloseZoom = closeZoom;
-            config.Save();
-        }
 
         ImGui.End();
     }
