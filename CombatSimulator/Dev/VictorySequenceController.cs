@@ -101,9 +101,8 @@ public unsafe class VictorySequenceController : IDisposable
         playerObj->Position.Y -= 1.5f; // ~character standing height → ground level
         log.Info($"VictorySequence: Lowered player Y from {playerDeathPos.Y:F2} to {playerObj->Position.Y:F2}");
 
-        // Save NPC original position for restoration on stop
-        var npcObj = (GameObject*)cinematicNpc.BattleChara;
-        npcOriginalPos = npcObj->Position;
+        // Save NPC's true original position (before any plugin manipulation)
+        npcOriginalPos = cinematicNpc.SpawnPosition;
 
         // Register NPC for approach movement (bypass server overrides)
         movementBlockHook.AddApproachNpc(cinematicNpc.Address);
