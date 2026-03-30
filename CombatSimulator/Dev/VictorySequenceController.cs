@@ -188,25 +188,28 @@ public unsafe class VictorySequenceController : IDisposable
         var gameObj = (GameObject*)cinematicNpc.BattleChara;
         movementBlockHook.SetApproachPosition(gameObj, targetPos.X, targetPos.Y, targetPos.Z);
 
-        // Rotate NPC to face the player's head bone (j_kao) for realistic eye contact.
-        // Lock Facing only prevents the 180° flip — still tracks the head.
+        // Rotate NPC facing direction
         float rotAngle;
-        var player = clientState.LocalPlayer;
-        var headPos = player != null ? GetBoneWorldPos(player.Address, "j_kao") : null;
-        var faceTarget = headPos ?? playerDeathPos;
-        var toHead = faceTarget - targetPos;
-        rotAngle = MathF.Atan2(toHead.X, toHead.Z);
-
-        if (stage.LockFacing || stage.InfiniteWalk)
+        if (stage.LockFacing)
         {
-            // Prevent 180° flip: if NPC would face away from approach direction, clamp
-            var approachAngle = MathF.Atan2(-facingDir.X, -facingDir.Z);
-            var diff = rotAngle - approachAngle;
-            while (diff > MathF.PI) diff -= 2 * MathF.PI;
-            while (diff < -MathF.PI) diff += 2 * MathF.PI;
-            // Allow up to 90° deviation from approach direction for head tracking
-            if (MathF.Abs(diff) > MathF.PI / 2f)
-                rotAngle = approachAngle; // snap back to approach direction
+            // Track player's head bone (j_kao) in real time
+            var player = clientState.LocalPlayer;
+            var headPos = player != null ? GetBoneWorldPos(player.Address, "j_kao") : null;
+            var faceTarget = headPos ?? playerDeathPos;
+            var toHead = faceTarget - targetPos;
+            rotAngle = MathF.Atan2(toHead.X, toHead.Z);
+        }
+        else if (stage.InfiniteWalk)
+        {
+            // Lock to initial approach direction (never flips)
+            var walkDir = -facingDir;
+            rotAngle = MathF.Atan2(walkDir.X, walkDir.Z);
+        }
+        else
+        {
+            // Recalculate each frame from NPC→player position (flips at negative distance)
+            var toPlayer = playerDeathPos - targetPos;
+            rotAngle = MathF.Atan2(toPlayer.X, toPlayer.Z);
         }
         movementBlockHook.SetApproachRotation(gameObj, rotAngle);
 
