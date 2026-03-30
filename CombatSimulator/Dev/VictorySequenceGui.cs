@@ -448,6 +448,32 @@ public class VictorySequenceGui
                     }
                     ImGui.EndCombo();
                 }
+
+                // Arrow buttons for quick emote navigation
+                ImGui.SameLine();
+                if (ImGui.SmallButton("<##em"))
+                {
+                    var newIdx = emoteIdx - 1;
+                    if (newIdx >= 0)
+                    {
+                        s.EmoteId = emoteCache[newIdx].Id;
+                        s.ActionTimelineId = 0;
+                        ResolveEmoteTimelines(s);
+                        config.Save();
+                    }
+                }
+                ImGui.SameLine();
+                if (ImGui.SmallButton(">##em"))
+                {
+                    var newIdx = emoteIdx + 1;
+                    if (newIdx < emoteCache.Count)
+                    {
+                        s.EmoteId = emoteCache[newIdx].Id;
+                        s.ActionTimelineId = 0;
+                        ResolveEmoteTimelines(s);
+                        config.Save();
+                    }
+                }
             }
             else
             {
@@ -477,6 +503,30 @@ public class VictorySequenceGui
                         if (i == atIdx) ImGui.SetItemDefaultFocus();
                     }
                     ImGui.EndCombo();
+                }
+
+                // Arrow buttons for quick action navigation
+                ImGui.SameLine();
+                if (ImGui.SmallButton("<##at"))
+                {
+                    var newIdx = atIdx - 1;
+                    if (newIdx >= 0)
+                    {
+                        s.ActionTimelineId = atList[newIdx].Id;
+                        s.EmoteId = 0; s.ResolvedIntroTimeline = 0; s.ResolvedLoopTimeline = 0;
+                        config.Save();
+                    }
+                }
+                ImGui.SameLine();
+                if (ImGui.SmallButton(">##at"))
+                {
+                    var newIdx = atIdx + 1;
+                    if (newIdx < atList.Count)
+                    {
+                        s.ActionTimelineId = atList[newIdx].Id;
+                        s.EmoteId = 0; s.ResolvedIntroTimeline = 0; s.ResolvedLoopTimeline = 0;
+                        config.Save();
+                    }
                 }
             }
             ImGui.SameLine();
