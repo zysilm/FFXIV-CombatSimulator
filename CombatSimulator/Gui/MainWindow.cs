@@ -187,6 +187,7 @@ public class MainWindow : IDisposable
                     config.RagdollActivationDelay = 1.0f;
                     config.RagdollGravity = 9.8f;
                     config.RagdollDamping = 0.97f;
+                    config.RagdollSolverIterations = 8;
                     config.RagdollFloorOffset = 0f;
                     config.RagdollSelfCollision = true;
                     config.RagdollTightKneeLimits = false;
@@ -1198,6 +1199,14 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Velocity damping per frame. Lower = more energy loss.");
+
+                var solverIter = config.RagdollSolverIterations;
+                if (ImGui.SliderInt("Solver Iterations##ragdoll", ref solverIter, 4, 64))
+                {
+                    config.RagdollSolverIterations = solverIter;
+                    config.Save();
+                }
+                HelpMarker("BEPU2 constraint solver iterations per timestep. Higher = more stable/accurate joints but costs performance. Default 8. Takes effect on next ragdoll activation.");
 
                 var floorOffset = config.RagdollFloorOffset;
                 if (ImGui.SliderFloat("Floor Offset##ragdoll", ref floorOffset, 0.0f, 0.5f, "%.2f"))
