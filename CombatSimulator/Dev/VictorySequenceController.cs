@@ -179,54 +179,38 @@ public unsafe class VictorySequenceController : IDisposable
             dist = stage.StartDistance + (stage.EndDistance - stage.StartDistance) * progress;
         }
 
-        // Position and facing
+        // Position along player's facing direction
         var facingDir = new Vector3(MathF.Sin(playerFacingAngle), 0, MathF.Cos(playerFacingAngle));
-        Vector3 targetPos;
-        float rotAngle;
-
-        if (stage.LockFacing)
-        {
-            // Lock Facing: anchor position AND facing to player's j_kao head bone.
-            // NPC moves along the line from head bone outward, and faces the head.
-            var player = clientState.LocalPlayer;
-            var headPos = player != null ? GetBoneWorldPos(player.Address, "j_kao") : null;
-            var anchor = headPos ?? playerDeathPos;
-
-            // Direction from head to NPC approach (XZ plane only, stable)
-            var headToApproach = new Vector3(facingDir.X, 0, facingDir.Z);
-            var headToApproachLen = headToApproach.Length();
-            if (headToApproachLen > 0.001f)
-                headToApproach /= headToApproachLen;
-            else
-                headToApproach = facingDir;
-
-            targetPos = anchor + headToApproach * dist;
-            targetPos.Y = anchor.Y + stage.HeightOffset;
-
-            var toHead = anchor - targetPos;
-            rotAngle = MathF.Atan2(toHead.X, toHead.Z);
-        }
-        else
-        {
-            // Non-LockFacing: position along player body facing direction
-            targetPos = playerDeathPos + facingDir * dist;
-            targetPos.Y = playerDeathPos.Y + stage.HeightOffset;
-
-            if (stage.InfiniteWalk)
-            {
-                var walkDir = -facingDir;
-                rotAngle = MathF.Atan2(walkDir.X, walkDir.Z);
-            }
-            else
-            {
-                var toPlayer = playerDeathPos - targetPos;
-                rotAngle = MathF.Atan2(toPlayer.X, toPlayer.Z);
-            }
-        }
+        var targetPos = playerDeathPos + facingDir * dist;
+        targetPos.Y = playerDeathPos.Y + stage.HeightOffset;
 
         // Move NPC via approach bypass
         var gameObj = (GameObject*)cinematicNpc.BattleChara;
         movementBlockHook.SetApproachPosition(gameObj, targetPos.X, targetPos.Y, targetPos.Z);
+
+        // Rotate NPC facing direction
+        float rotAngle;
+        if (stage.LockFacing)
+        {
+            // Track player's head bone (j_kao) in real time
+            var player = clientState.LocalPlayer;
+            var headPos = player != null ? GetBoneWorldPos(player.Address, "j_kao") : null;
+            var faceTarget = headPos ?? playerDeathPos;
+            var toHead = faceTarget - targetPos;
+            rotAngle = MathF.Atan2(toHead.X, toHead.Z);
+        }
+        else if (stage.InfiniteWalk)
+        {
+            // Lock to initial approach direction (never flips)
+            var walkDir = -facingDir;
+            rotAngle = MathF.Atan2(walkDir.X, walkDir.Z);
+        }
+        else
+        {
+            // Recalculate each frame from NPC→player position (flips at negative distance)
+            var toPlayer = playerDeathPos - targetPos;
+            rotAngle = MathF.Atan2(toPlayer.X, toPlayer.Z);
+        }
         movementBlockHook.SetApproachRotation(gameObj, rotAngle);
 
         // Play animation on stage enter, or re-play if user changed config live
