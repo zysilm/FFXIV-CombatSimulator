@@ -171,17 +171,20 @@ public unsafe class RagdollController : IDisposable
         boneService.OnRenderFrame += OnRenderFrame;
     }
 
-    public void Activate(nint characterAddress)
+    private bool useDynamicBones; // true = dynamic bone discovery (mounts), false = hardcoded BoneDefs (humanoid)
+
+    public void Activate(nint characterAddress, bool dynamicBones = false, float? delayOverride = null)
     {
         if (isActive) Deactivate();
 
         targetCharacterAddress = characterAddress;
-        activationDelay = config.RagdollActivationDelay;
+        useDynamicBones = dynamicBones;
+        activationDelay = delayOverride ?? config.RagdollActivationDelay;
         elapsed = 0f;
         physicsStarted = false;
         isActive = true;
 
-        log.Info($"RagdollController: Activated (delay={activationDelay:F1}s)");
+        log.Info($"RagdollController: Activated (delay={activationDelay:F1}s, dynamic={dynamicBones})");
     }
 
     public void Deactivate()
@@ -353,9 +356,103 @@ public unsafe class RagdollController : IDisposable
         log.Info($"RagdollController: Skeleton transform pos=({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3}) " +
                  $"rot=({skelWorldRot.X:F3},{skelWorldRot.Y:F3},{skelWorldRot.Z:F3},{skelWorldRot.W:F3})");
 
-        // Resolve bone indices
-        var nameToIndex = new Dictionary<string, int>();
         ragdollBones.Clear();
+
+        if (useDynamicBones)
+        {
+            // Dynamic bone discovery — iterate all parent→child segments in the skeleton.
+            // Works for any model (mounts, monsters, etc.) without hardcoded bone names.
+            var dynBoneCount = Math.Min(skel.BoneCount, skel.ParentCount);
+            var dynBonePos = new Vector3[dynBoneCount];
+            var dynBoneRot = new Quaternion[dynBoneCount];
+            var dynBodyMap = new Dictionary<int, BodyHandle>();
+
+            for (int i = 0; i < dynBoneCount; i++)
+            {
+                ref var mt = ref skel.Pose->ModelPose.Data[i];
+                dynBonePos[i] = ModelToWorld(new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z));
+                dynBoneRot[i] = ModelRotToWorld(new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W));
+            }
+
+            var dynRadius = NpcDefaultBoneRadius;
+            var dynSleepThreshold = 0.01f;
+            var dynStiffness = config.RagdollJointStiffness;
+
+            for (int i = 1; i < dynBoneCount; i++)
+            {
+                var parentIdx = skel.HavokSkeleton->ParentIndices[i];
+                if (parentIdx < 0 || parentIdx >= dynBoneCount) continue;
+
+                var segment = dynBonePos[i] - dynBonePos[parentIdx];
+                var segLen = segment.Length();
+                if (segLen < NpcMinSegmentLength) continue;
+
+                var halfLen = segLen * 0.45f;
+                var segDir = segment / segLen;
+                var capsuleCenter = dynBonePos[parentIdx] + halfLen * segDir;
+                var capsuleRot = RotationFromYToDirection(segment);
+                var capsuleToBoneOffset = Quaternion.Normalize(Quaternion.Inverse(capsuleRot) * dynBoneRot[i]);
+
+                var capsule = new Capsule(dynRadius, halfLen * 2);
+                var shapeIndex = simulation.Shapes.Add(capsule);
+                var mass = MathF.Max(0.5f, segLen * 10f) * config.RagdollMassScale;
+
+                var bodyDesc = BodyDescription.CreateDynamic(
+                    new RigidPose(capsuleCenter, capsuleRot),
+                    capsule.ComputeInertia(mass),
+                    new CollidableDescription(shapeIndex, 0.04f),
+                    new BodyActivityDescription(dynSleepThreshold));
+
+                var bodyHandle = simulation.Bodies.Add(bodyDesc);
+                dynBodyMap[i] = bodyHandle;
+
+                ragdollBones.Add(new RagdollBone
+                {
+                    BoneIndex = i,
+                    ParentBoneIndex = parentIdx,
+                    BodyHandle = bodyHandle,
+                    Name = skel.HavokSkeleton->Bones[i].Name.String ?? $"bone_{i}",
+                    CapsuleToBoneOffset = capsuleToBoneOffset,
+                    SegmentHalfLength = halfLen,
+                });
+
+                // Add BallSocket joint if parent has a body
+                if (dynBodyMap.TryGetValue(parentIdx, out var parentHandle))
+                {
+                    var anchorWorld = dynBonePos[i];
+                    var childRef = simulation.Bodies.GetBodyReference(bodyHandle);
+                    var parentRef = simulation.Bodies.GetBodyReference(parentHandle);
+
+                    var childLocalAnchor = Vector3.Transform(
+                        anchorWorld - childRef.Pose.Position,
+                        Quaternion.Inverse(childRef.Pose.Orientation));
+                    var parentLocalAnchor = Vector3.Transform(
+                        anchorWorld - parentRef.Pose.Position,
+                        Quaternion.Inverse(parentRef.Pose.Orientation));
+
+                    simulation.Solver.Add(bodyHandle, parentHandle,
+                        new BallSocket
+                        {
+                            LocalOffsetA = childLocalAnchor,
+                            LocalOffsetB = parentLocalAnchor,
+                            SpringSettings = new SpringSettings(30 * dynStiffness, 1),
+                        });
+
+                    simulation.Solver.Add(bodyHandle, parentHandle,
+                        new AngularMotor
+                        {
+                            TargetVelocityLocalA = Vector3.Zero,
+                            Settings = new MotorSettings(float.MaxValue, 0.01f * dynStiffness),
+                        });
+                }
+            }
+
+            log.Info($"RagdollController: Dynamic bones — {ragdollBones.Count} bodies from {dynBoneCount} bones");
+            goto skipHumanoidInit;
+        }
+
+        // --- Humanoid bone init (existing BoneDefs path) ---
+        var nameToIndex = new Dictionary<string, int>();
 
         foreach (var def in BoneDefs)
         {
@@ -1013,6 +1110,7 @@ public unsafe class RagdollController : IDisposable
             hairPhysics.Initialize(skel.CharBase, kaoBodyBoneIndex);
         }
 
+    skipHumanoidInit:
         return ragdollBones.Count > 0;
     }
 

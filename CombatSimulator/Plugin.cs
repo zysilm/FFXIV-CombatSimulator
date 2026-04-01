@@ -34,6 +34,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly AnimationController animationController;
     private readonly BoneTransformService boneTransformService;
     private readonly RagdollController ragdollController;
+    private readonly RagdollController mountRagdollController;
     private readonly CombatEngine combatEngine;
     private readonly NpcAiController npcAiController;
     private readonly MovementBlockHook movementBlockHook;
@@ -85,6 +86,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
         ragdollController = new RagdollController(boneTransformService, npcSelector, config, log);
+        mountRagdollController = new RagdollController(boneTransformService, npcSelector, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
         victorySequenceController = new Dev.VictorySequenceController(
@@ -92,7 +94,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             movementBlockHook, ragdollController, clientState, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
-            glamourerIpc, movementBlockHook, ragdollController,
+            glamourerIpc, movementBlockHook, ragdollController, mountRagdollController,
             config, npcSelector, clientState, log, deathCamController,
             victorySequenceController);
         npcAiController = new NpcAiController(combatEngine, animationController, movementBlockHook, clientState, config, log);
@@ -150,6 +152,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.Dispose();
         victorySequenceController.Dispose();
         ragdollController.Dispose();
+        mountRagdollController.Dispose();
         boneTransformService.Dispose();
         deathCamController.Dispose();
         activeCameraController.Dispose();

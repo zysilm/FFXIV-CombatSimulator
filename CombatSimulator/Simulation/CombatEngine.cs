@@ -55,6 +55,7 @@ public class CombatEngine : IDisposable
     private readonly IClientState clientState;
     private readonly IPluginLog log;
     private readonly RagdollController ragdollController;
+    private readonly RagdollController mountRagdollController;
     private readonly DeathCamController? deathCamController;
     private readonly Dev.VictorySequenceController? victorySequenceController;
     private bool playerDeathTriggered;
@@ -92,6 +93,7 @@ public class CombatEngine : IDisposable
         GlamourerIpc glamourerIpc,
         MovementBlockHook movementBlockHook,
         RagdollController ragdollController,
+        RagdollController mountRagdollController,
         Configuration config,
         NpcSelector npcSelector,
         IClientState clientState,
@@ -105,6 +107,7 @@ public class CombatEngine : IDisposable
         this.glamourerIpc = glamourerIpc;
         this.movementBlockHook = movementBlockHook;
         this.ragdollController = ragdollController;
+        this.mountRagdollController = mountRagdollController;
         this.config = config;
         this.npcSelector = npcSelector;
         this.clientState = clientState;
@@ -170,6 +173,7 @@ public class CombatEngine : IDisposable
         animationController.ResetPlayerDeathAnimation();
         movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
+        mountRagdollController.Deactivate();
         deathCamController?.Deactivate();
         RevertGlamourer();
 
@@ -212,6 +216,7 @@ public class CombatEngine : IDisposable
         animationController.ResetPlayerDeathAnimation();
         movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
+        mountRagdollController.Deactivate();
         RevertGlamourer();
         ApplyResetGlamourer();
 
@@ -690,7 +695,23 @@ public class CombatEngine : IDisposable
                     var player = clientState.LocalPlayer;
                     if (player != null)
                     {
-                        ragdollController.Activate(player.Address);
+                        unsafe
+                        {
+                            var character = (Character*)player.Address;
+                            if (config.EnableMountRagdoll && character->IsMounted()
+                                && character->Mount.MountObject != null)
+                            {
+                                // Mount ragdoll first (dynamic bones), player after delay
+                                mountRagdollController.Activate(
+                                    (nint)character->Mount.MountObject, dynamicBones: true);
+                                ragdollController.Activate(player.Address,
+                                    delayOverride: config.MountRagdollDelay);
+                            }
+                            else
+                            {
+                                ragdollController.Activate(player.Address);
+                            }
+                        }
                     }
                 }
             }

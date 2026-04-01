@@ -92,6 +92,8 @@ public class Configuration : IPluginConfiguration
     // Ragdoll physics (Experimental)
     public bool EnableRagdoll { get; set; } = false;
     public float RagdollActivationDelay { get; set; } = 1.0f;
+    public bool EnableMountRagdoll { get; set; } = false;
+    public float MountRagdollDelay { get; set; } = 2.0f;
     public float RagdollGravity { get; set; } = 9.8f;
     public float RagdollDamping { get; set; } = 0.97f;
     public int RagdollSolverIterations { get; set; } = 8;

@@ -1139,6 +1139,27 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Replace death animation with ragdoll physics after a configurable delay.");
 
+            var mountRagdoll = config.EnableMountRagdoll;
+            if (ImGui.Checkbox("Enable Mount Ragdoll##ragdoll", ref mountRagdoll))
+            {
+                config.EnableMountRagdoll = mountRagdoll;
+                config.Save();
+            }
+            HelpMarker("When mounted, the mount ragdolls first, then the player falls off after a delay.");
+
+            if (config.EnableMountRagdoll)
+            {
+                ImGui.Indent();
+                var mountDelay = config.MountRagdollDelay;
+                if (ImGui.SliderFloat("Mount Fall Delay (s)##ragdoll", ref mountDelay, 0.0f, 10.0f, "%.1f"))
+                {
+                    config.MountRagdollDelay = mountDelay;
+                    config.Save();
+                }
+                HelpMarker("Seconds after mount ragdolls before the player falls off.");
+                ImGui.Unindent();
+            }
+
             if (config.EnableRagdoll)
             {
                 ImGui.Indent();
