@@ -112,8 +112,6 @@ public class Configuration : IPluginConfiguration
     public float RagdollDamping { get; set; } = 0.97f;
     public int RagdollSolverIterations { get; set; } = 8;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
-    public bool RagdollNaturalPose { get; set; } = false; // AngularServo rest pose + anatomical limits (prevents hyperextension, guides settling)
-    public float RagdollServoStrength { get; set; } = 1.0f; // Multiplier for AngularServo MaxForce (0 = disabled, higher = stiffer pose)
     // Weapon drop physics
     public bool RagdollWeaponDrop { get; set; } = true; // Weapon detaches and falls on death (uses battle/dead instead of play-dead)
     // Hair physics

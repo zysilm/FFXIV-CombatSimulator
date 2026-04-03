@@ -205,8 +205,6 @@ public class MainWindow : IDisposable
                     config.RagdollDamping = 0.97f;
                     config.RagdollSolverIterations = 8;
                     config.RagdollSelfCollision = true;
-                    config.RagdollNaturalPose = true;
-                    config.RagdollServoStrength = 1.0f;
                     config.RagdollWeaponDrop = true;
                     config.RagdollHairPhysics = false;
                     config.RagdollHairGravityStrength = 0.5f;
@@ -1749,22 +1747,6 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Body parts collide with each other (arms vs torso, legs vs legs). Prevents clipping but may cause slight stretching. Takes effect on next ragdoll activation.");
-
-                var naturalPose = config.RagdollNaturalPose;
-                if (ImGui.Checkbox("Natural Pose##ragdoll", ref naturalPose))
-                {
-                    config.RagdollNaturalPose = naturalPose;
-                    config.Save();
-                }
-                HelpMarker("Use anatomical joint limits + angular servo motors that guide the ragdoll toward a natural resting pose. Prevents knee/elbow hyperextension, keeps hips from sticking up, and maintains spine curvature. Takes effect on next ragdoll activation.");
-
-                var servoStrength = config.RagdollServoStrength;
-                if (ImGui.SliderFloat("Servo Strength##ragdoll", ref servoStrength, 0.0f, 3.0f, "%.1fx"))
-                {
-                    config.RagdollServoStrength = servoStrength;
-                    config.Save();
-                }
-                HelpMarker("Multiplier for the angular servo force that pulls joints toward a natural rest pose. 0 = disabled (pure passive ragdoll), 1 = default, higher = stiffer/more guided settling. Requires Natural Pose enabled. Takes effect on next ragdoll activation.");
 
                 ImGui.Separator();
                 ImGui.Text("Weapon Drop");
