@@ -7,6 +7,7 @@ using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
+using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using Lumina.Excel.Sheets;
 
 // ActorVfxCreate — spawns a .avfx on an actor (same function VFXEditor / Brio use)
@@ -235,11 +236,52 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
-    /// No-op — VFX removal via actorVfxRemove is disabled because the same plugins
-    /// that hook actorVfxCreate also hook actorVfxRemove and crash on our NPC actors.
-    /// VFX expire naturally via their built-in .avfx durations.
+    /// Remove all VFX attached to the player character by enumerating child DrawObjects.
+    /// VFX are child objects of type VfxObject in the scene graph — this catches ALL VFX
+    /// regardless of how they were spawned (actorVfxCreate, ActionEffectHandler, etc.).
     /// </summary>
-    public void RemoveAllActiveVfx() { }
+    public void RemoveAllActiveVfx()
+    {
+        try
+        {
+            var player = clientState.LocalPlayer;
+            if (player == null) return;
+
+            var gameObj = (GameObject*)player.Address;
+            if (gameObj->DrawObject == null) return;
+
+            var drawObj = (DrawObject*)gameObj->DrawObject;
+
+            // Collect VfxObject children first (can't modify linked list while iterating)
+            var vfxToRemove = new List<nint>();
+            foreach (var child in drawObj->ChildObjects)
+            {
+                if (child->GetObjectType() == ObjectType.VfxObject)
+                    vfxToRemove.Add((nint)child);
+            }
+
+            if (vfxToRemove.Count == 0) return;
+
+            // Remove each VFX via actorVfxRemove (properly cleans up scene graph)
+            if (actorVfxRemove != null)
+            {
+                foreach (var ptr in vfxToRemove)
+                {
+                    try
+                    {
+                        actorVfxRemove(ptr, (char)1);
+                    }
+                    catch { }
+                }
+            }
+
+            log.Info($"RemoveAllActiveVfx: Removed {vfxToRemove.Count} VFX from player");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "RemoveAllActiveVfx: Failed to enumerate/remove VFX");
+        }
+    }
 
     /// <summary>
     /// Play attack animation + VFX + hit reaction via ActionEffectHandler.Receive().
