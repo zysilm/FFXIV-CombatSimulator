@@ -4,7 +4,6 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
-using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
@@ -73,7 +72,6 @@ public unsafe class AnimationController : IDisposable
 
     private ActorVfxCreateDelegate? actorVfxCreate;
     private nint actorVfxCreateAddr;
-    private Hook<ActorVfxCreateDelegate>? actorVfxCreateHook;
 
     // ActorVfxRemove — removes a spawned VFX by pointer (same function VFXEditor uses)
     private delegate nint ActorVfxRemoveDelegate(nint vfx, char a2);
@@ -81,16 +79,21 @@ public unsafe class AnimationController : IDisposable
     private ActorVfxRemoveDelegate? actorVfxRemove;
     private nint actorVfxRemoveAddr;
 
-    // VFX tracking — active for the entire combat sim duration to capture async VFX
-    // (animation TMB keyframes spawn VFX in later frames, not during Receive())
-    private bool vfxTrackingActive;
-    private readonly List<nint> trackedVfxPointers = new();
-    private readonly HashSet<nint> trackedActorAddresses = new();
-
     /// <summary>Resolved address of the native ActorVfxCreate function (0 if unresolved).</summary>
     public nint ActorVfxCreateAddress => actorVfxCreateAddr;
     /// <summary>Resolved address of the native ActorVfxRemove function (0 if unresolved).</summary>
     public nint ActorVfxRemoveAddress => actorVfxRemoveAddr;
+
+    // Track active VFX instances for timed removal
+    private readonly List<ActiveVfx> activeVfxList = new();
+    private const float VfxLifetime = 2.0f; // seconds before auto-removal
+
+    private struct ActiveVfx
+    {
+        public nint Pointer;
+        public float TimeRemaining;
+        public uint OwnerEntityId;
+    }
 
     // Default hit VFX path candidates (tried in order until one sticks)
     public static readonly string[] HitVfxCandidates =
@@ -104,7 +107,6 @@ public unsafe class AnimationController : IDisposable
         IClientState clientState,
         IDataManager dataManager,
         ISigScanner sigScanner,
-        IGameInteropProvider gameInterop,
         ChatCommandExecutor commandExecutor,
         Configuration config)
     {
@@ -116,13 +118,13 @@ public unsafe class AnimationController : IDisposable
 
         ResolvePlayDeadTimelines(dataManager);
         ResolveBattleDeadTimeline(dataManager);
-        ResolveActorVfxCreate(sigScanner, gameInterop);
+        ResolveActorVfxCreate(sigScanner);
         ResolveActorVfxRemove(sigScanner);
 
         log.Info("AnimationController: Initialized with ActionEffectHandler + emote timeline system.");
     }
 
-    private void ResolveActorVfxCreate(ISigScanner sigScanner, IGameInteropProvider gameInterop)
+    private void ResolveActorVfxCreate(ISigScanner sigScanner)
     {
         try
         {
@@ -130,28 +132,12 @@ public unsafe class AnimationController : IDisposable
                 "40 53 55 56 57 48 81 EC ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 0F B6 AC 24 ?? ?? ?? ?? 0F 28 F3 49 8B F8");
             actorVfxCreateAddr = addr;
             actorVfxCreate = Marshal.GetDelegateForFunctionPointer<ActorVfxCreateDelegate>(addr);
-
-            actorVfxCreateHook = gameInterop.HookFromAddress<ActorVfxCreateDelegate>(addr, ActorVfxCreateDetour);
-            actorVfxCreateHook.Enable();
-            log.Info($"AnimationController: ActorVfxCreate resolved + hooked at 0x{addr:X}");
+            log.Info($"AnimationController: ActorVfxCreate resolved at 0x{addr:X}");
         }
         catch (Exception ex)
         {
             log.Warning(ex, "AnimationController: Could not resolve ActorVfxCreate — hit VFX will be unavailable.");
         }
-    }
-
-    private nint ActorVfxCreateDetour(string path, nint a2, nint a3, float a4, char a5, ushort a6, char a7)
-    {
-        var result = actorVfxCreateHook!.Original(path, a2, a3, a4, a5, a6, a7);
-
-        // Only track VFX during combat sim, and only on our tracked actors
-        if (vfxTrackingActive && result != nint.Zero && trackedActorAddresses.Contains(a2))
-        {
-            trackedVfxPointers.Add(result);
-        }
-
-        return result;
     }
 
     private void ResolveActorVfxRemove(ISigScanner sigScanner)
@@ -257,46 +243,69 @@ public unsafe class AnimationController : IDisposable
     public void Tick(float deltaTime)
     {
         commandExecutor.Tick(deltaTime);
+        TickActiveVfx(deltaTime);
     }
 
-    /// <summary>
-    /// Start tracking VFX for the given actors (player + NPCs).
-    /// Called at combat sim start. The hook captures all actorVfxCreate calls
-    /// on these actors for the entire sim duration (async TMB VFX included).
-    /// </summary>
-    public void StartVfxTracking(nint playerAddress, IEnumerable<nint> npcAddresses)
+    private void TickActiveVfx(float deltaTime)
     {
-        trackedActorAddresses.Clear();
-        trackedVfxPointers.Clear();
-        if (playerAddress != nint.Zero)
-            trackedActorAddresses.Add(playerAddress);
-        foreach (var addr in npcAddresses)
-            if (addr != nint.Zero)
-                trackedActorAddresses.Add(addr);
-        vfxTrackingActive = true;
-        log.Info($"VFX tracking started for {trackedActorAddresses.Count} actors");
+        if (activeVfxList.Count == 0) return;
+
+        for (int i = activeVfxList.Count - 1; i >= 0; i--)
+        {
+            var vfx = activeVfxList[i];
+            vfx.TimeRemaining -= deltaTime;
+            activeVfxList[i] = vfx;
+
+            if (vfx.TimeRemaining <= 0)
+            {
+                SafeRemoveVfx(vfx);
+                activeVfxList.RemoveAt(i);
+            }
+        }
     }
 
     /// <summary>
-    /// Remove all tracked VFX and stop tracking. Called on death/sim stop.
+    /// Immediately remove all tracked active VFX (called on death, combat stop, etc.).
     /// </summary>
     public void RemoveAllActiveVfx()
     {
-        vfxTrackingActive = false;
-
-        if (actorVfxRemove != null && trackedVfxPointers.Count > 0)
+        if (actorVfxRemove != null)
         {
-            var count = trackedVfxPointers.Count;
-            foreach (var ptr in trackedVfxPointers)
-            {
-                try { actorVfxRemove(ptr, (char)1); }
-                catch { }
-            }
-            log.Info($"RemoveAllActiveVfx: Removed {count} tracked VFX");
+            foreach (var vfx in activeVfxList)
+                SafeRemoveVfx(vfx);
         }
+        activeVfxList.Clear();
+    }
 
-        trackedVfxPointers.Clear();
-        trackedActorAddresses.Clear();
+    private void SafeRemoveVfx(ActiveVfx vfx)
+    {
+        if (actorVfxRemove == null || vfx.Pointer == 0) return;
+
+        try
+        {
+            if (!IsEntityAlive(vfx.OwnerEntityId))
+                return;
+
+            actorVfxRemove(vfx.Pointer, (char)1);
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"Failed to remove VFX @{vfx.Pointer:X}");
+        }
+    }
+
+    private bool IsEntityAlive(uint entityId)
+    {
+        var player = clientState.LocalPlayer;
+        if (player != null && player.EntityId == entityId)
+            return true;
+
+        foreach (var obj in Core.Services.ObjectTable)
+        {
+            if (obj.EntityId == entityId)
+                return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -437,7 +446,16 @@ public unsafe class AnimationController : IDisposable
     {
         try
         {
-            actorVfxCreate!(path, attachTo, orientTo, -1, (char)0, 0, (char)0);
+            var ptr = actorVfxCreate!(path, attachTo, orientTo, -1, (char)0, 0, (char)0);
+            if (ptr != 0)
+            {
+                activeVfxList.Add(new ActiveVfx
+                {
+                    Pointer = ptr,
+                    TimeRemaining = VfxLifetime,
+                    OwnerEntityId = ownerEntityId,
+                });
+            }
         }
         catch (Exception ex)
         {
@@ -876,7 +894,5 @@ public unsafe class AnimationController : IDisposable
 
     public void Dispose()
     {
-        RemoveAllActiveVfx();
-        actorVfxCreateHook?.Dispose();
     }
 }

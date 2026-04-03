@@ -127,14 +127,6 @@ public class CombatEngine : IDisposable
         glamourerApplied = false;
         pendingDeaths.Clear();
 
-        // Start VFX tracking on player + NPC actors for cleanup on death/stop
-        var player = clientState.LocalPlayer;
-        var npcAddrs = new List<nint>();
-        foreach (var npc in npcSelector.SelectedNpcs)
-            if (npc.Address != nint.Zero)
-                npcAddrs.Add(npc.Address);
-        animationController.StartVfxTracking(player?.Address ?? nint.Zero, npcAddrs);
-
         // Apply glamourer combat-ready preset on start
         ApplyResetGlamourer();
 

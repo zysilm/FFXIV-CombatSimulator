@@ -83,7 +83,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         chatCommandExecutor = new ChatCommandExecutor(log);
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
-        animationController = new AnimationController(log, clientState, dataManager, sigScanner, gameInterop, chatCommandExecutor, config);
+        animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
         ragdollController = new RagdollController(boneTransformService, npcSelector, config, log);
