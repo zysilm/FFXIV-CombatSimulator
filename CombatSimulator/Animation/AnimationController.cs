@@ -204,6 +204,14 @@ public unsafe class AnimationController : IDisposable
             var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ActionTimeline>();
             if (sheet != null)
             {
+                // Verify by ID → key
+                var introRow = sheet.GetRow(battleDeadIntroTimeline);
+                var introKey = introRow.Key.ToString();
+                var loopRow = sheet.GetRow(battleDeadLoopTimeline);
+                var loopKey = loopRow.Key.ToString();
+                log.Info($"AnimationController: Battle dead verify — id {battleDeadIntroTimeline} = '{introKey}', id {battleDeadLoopTimeline} = '{loopKey}'");
+
+                // Also search by key to find IDs (in case they change between patches)
                 foreach (var row in sheet)
                 {
                     var key = row.Key.ToString();
@@ -219,7 +227,6 @@ public unsafe class AnimationController : IDisposable
             log.Warning(ex, "AnimationController: Failed to search ActionTimeline sheet, using hardcoded IDs.");
         }
 
-        // Always resolved — hardcoded defaults (8935/8936) are set as field initializers
         battleDeadResolved = battleDeadIntroTimeline != 0 && battleDeadLoopTimeline != 0;
         log.Info($"AnimationController: Battle dead timelines — intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}, resolved={battleDeadResolved}");
     }
