@@ -1101,7 +1101,12 @@ public unsafe class RagdollController : IDisposable
 
         var count = (weaponMainHandBody.HasValue ? 1 : 0) + (weaponOffHandBody.HasValue ? 1 : 0);
         if (count > 0)
+        {
+            // Force weapons visible — the death animation hides them by default.
+            // We need the weapon DrawObjects to render so they can follow the physics body.
+            ForceWeaponVisible();
             log.Info($"RagdollController: Weapon drop initialized — {count} weapon(s)");
+        }
     }
 
     private BodyHandle? TryCreateWeaponBody(
@@ -1190,14 +1195,43 @@ public unsafe class RagdollController : IDisposable
         BoneModificationResult result)
     {
         if (simulation == null) return;
+        bool hasWeapon = false;
 
         if (weaponMainHandBody.HasValue && weaponMainHandBoneIndex >= 0)
+        {
             WriteWeaponBone(skel, result, weaponMainHandBody.Value,
                 weaponMainHandBoneIndex, weaponMainHandCapsuleToBone, weaponMainHandSegHalf);
+            hasWeapon = true;
+        }
 
         if (weaponOffHandBody.HasValue && weaponOffHandBoneIndex >= 0)
+        {
             WriteWeaponBone(skel, result, weaponOffHandBody.Value,
                 weaponOffHandBoneIndex, weaponOffHandCapsuleToBone, weaponOffHandSegHalf);
+            hasWeapon = true;
+        }
+
+        // Force weapon visible every frame — the game's animation system may keep trying
+        // to hide weapons during death/emote playback.
+        if (hasWeapon)
+            ForceWeaponVisible();
+    }
+
+    /// <summary>
+    /// Force weapon DrawObjects to stay visible by overriding the game's weapon hide flags.
+    /// The death animation and play-dead emote both hide weapons; we need them visible
+    /// so the weapon mesh follows the physics body.
+    /// </summary>
+    private void ForceWeaponVisible()
+    {
+        if (targetCharacterAddress == nint.Zero) return;
+        try
+        {
+            var character = (Character*)targetCharacterAddress;
+            character->Timeline.IsWeaponDrawn = true;
+            character->DrawData.IsWeaponHidden = false;
+        }
+        catch { /* character may be invalid during cleanup */ }
     }
 
     private void WriteWeaponBone(SkeletonAccess skel,
