@@ -7,6 +7,20 @@ using Dalamud.Plugin;
 namespace CombatSimulator;
 
 [Serializable]
+public class RagdollBoneConfig
+{
+    public string Name { get; set; } = "";
+    public string? ParentName { get; set; }
+    public float CapsuleRadius { get; set; }
+    public float CapsuleHalfLength { get; set; }
+    public float Mass { get; set; }
+    public float SwingLimit { get; set; }
+    public int JointType { get; set; } // 0=Ball, 1=Hinge
+    public float TwistMinAngle { get; set; }
+    public float TwistMaxAngle { get; set; }
+}
+
+[Serializable]
 public class DeathCamPreset
 {
     public string Name { get; set; } = "";
@@ -105,6 +119,10 @@ public class Configuration : IPluginConfiguration
     public float RagdollHairGravityStrength { get; set; } = 0.5f;
     public float RagdollHairDamping { get; set; } = 0.92f;
     public float RagdollHairStiffness { get; set; } = 0.1f;
+    // Ragdoll bone configs (Advanced) — per-bone physics parameters
+    // Empty = use built-in defaults from RagdollController.DefaultBoneDefs
+    public List<RagdollBoneConfig> RagdollBoneConfigs { get; set; } = new();
+
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollVerboseLog { get; set; } = false;
     public bool EnableVictorySequence { get; set; } = false;

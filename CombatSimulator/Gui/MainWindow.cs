@@ -113,6 +113,7 @@ public class MainWindow : IDisposable
         "Animation",
         "Camera",
         "Ragdoll",
+        "Ragdoll (Adv)",
         "Settings",
         "Diagnose",
     };
@@ -212,11 +213,14 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 break;
-            case 5: // Settings
+            case 5: // Ragdoll (Advanced)
+                DrawRagdollAdvancedSection();
+                break;
+            case 6: // Settings
                 DrawGuiSettingsSection();
                 DrawDevSection();
                 break;
-            case 6: // Diagnose
+            case 7: // Diagnose
                 DrawDiagnoseSection();
                 break;
         }
@@ -272,7 +276,7 @@ public class MainWindow : IDisposable
                 ImGui.EndTooltip();
             }
             if (ImGui.IsItemClicked())
-                selectedTab = 6; // Jump to Diagnose tab
+                selectedTab = 7; // Jump to Diagnose tab
         }
 
         if (simActive && combatEngine.State.CombatDuration > 0)
@@ -732,7 +736,7 @@ public class MainWindow : IDisposable
             ImGui.SameLine();
             if (ImGui.Button("Go to Diagnose", new Vector2(120, 0)))
             {
-                selectedTab = 6;
+                selectedTab = 7;
                 ImGui.CloseCurrentPopup();
             }
 
@@ -744,6 +748,119 @@ public class MainWindow : IDisposable
 
             ImGui.EndPopup();
         }
+    }
+
+    private void DrawRagdollAdvancedSection()
+    {
+        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Per-Bone Physics Parameters");
+        ImGui.TextWrapped("Adjust rotation limits, capsule volume, and mass for each ragdoll bone. Changes take effect on next ragdoll activation.");
+        ImGui.Spacing();
+
+        // Initialize config from defaults if empty
+        if (config.RagdollBoneConfigs.Count == 0)
+        {
+            foreach (var def in RagdollController.DefaultBoneDefs)
+            {
+                config.RagdollBoneConfigs.Add(new RagdollBoneConfig
+                {
+                    Name = def.Name,
+                    ParentName = def.ParentName,
+                    CapsuleRadius = def.CapsuleRadius,
+                    CapsuleHalfLength = def.CapsuleHalfLength,
+                    Mass = def.Mass,
+                    SwingLimit = def.SwingLimit,
+                    JointType = (int)def.Joint,
+                    TwistMinAngle = def.TwistMinAngle,
+                    TwistMaxAngle = def.TwistMaxAngle,
+                });
+            }
+            config.Save();
+        }
+
+        if (ImGui.Button("Reset All to Defaults##boneconfigs"))
+        {
+            config.RagdollBoneConfigs.Clear();
+            config.Save();
+        }
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // Bone table
+        var jointTypes = new[] { "Ball", "Hinge" };
+        var changed = false;
+
+        for (int i = 0; i < config.RagdollBoneConfigs.Count; i++)
+        {
+            var bone = config.RagdollBoneConfigs[i];
+            var id = $"##{bone.Name}";
+
+            if (ImGui.CollapsingHeader($"{bone.Name} ({(bone.JointType == 0 ? "Ball" : "Hinge")}){id}"))
+            {
+                ImGui.Indent(10);
+
+                if (bone.ParentName != null)
+                    ImGui.TextDisabled($"Parent: {bone.ParentName}");
+
+                // Joint type
+                var jt = bone.JointType;
+                if (ImGui.Combo($"Joint Type{id}", ref jt, jointTypes, jointTypes.Length))
+                { bone.JointType = jt; changed = true; }
+
+                // Capsule
+                var radius = bone.CapsuleRadius;
+                if (ImGui.SliderFloat($"Capsule Radius{id}", ref radius, 0.01f, 0.3f, "%.3f"))
+                { bone.CapsuleRadius = radius; changed = true; }
+
+                var halfLen = bone.CapsuleHalfLength;
+                if (ImGui.SliderFloat($"Capsule Half-Length{id}", ref halfLen, 0.0f, 0.3f, "%.3f"))
+                { bone.CapsuleHalfLength = halfLen; changed = true; }
+
+                // Mass
+                var mass = bone.Mass;
+                if (ImGui.SliderFloat($"Mass{id}", ref mass, 0.1f, 15.0f, "%.1f"))
+                { bone.Mass = mass; changed = true; }
+
+                // Rotation limits
+                var swing = bone.SwingLimit;
+                if (ImGui.SliderFloat($"Swing Limit (rad){id}", ref swing, 0.0f, MathF.PI, "%.2f"))
+                { bone.SwingLimit = swing; changed = true; }
+
+                if (bone.JointType == 0) // Ball joint — twist limits
+                {
+                    var twistMin = bone.TwistMinAngle;
+                    if (ImGui.SliderFloat($"Twist Min (rad){id}", ref twistMin, -MathF.PI, 0f, "%.2f"))
+                    { bone.TwistMinAngle = twistMin; changed = true; }
+
+                    var twistMax = bone.TwistMaxAngle;
+                    if (ImGui.SliderFloat($"Twist Max (rad){id}", ref twistMax, 0f, MathF.PI, "%.2f"))
+                    { bone.TwistMaxAngle = twistMax; changed = true; }
+                }
+
+                // Reset this bone
+                if (i < RagdollController.DefaultBoneDefs.Length)
+                {
+                    if (ImGui.SmallButton($"Reset{id}"))
+                    {
+                        var def = RagdollController.DefaultBoneDefs[i];
+                        bone.CapsuleRadius = def.CapsuleRadius;
+                        bone.CapsuleHalfLength = def.CapsuleHalfLength;
+                        bone.Mass = def.Mass;
+                        bone.SwingLimit = def.SwingLimit;
+                        bone.JointType = (int)def.Joint;
+                        bone.TwistMinAngle = def.TwistMinAngle;
+                        bone.TwistMaxAngle = def.TwistMaxAngle;
+                        changed = true;
+                    }
+                }
+
+                ImGui.Unindent(10);
+                ImGui.Spacing();
+            }
+        }
+
+        if (changed)
+            config.Save();
     }
 
     private void DrawDiagnoseSection()

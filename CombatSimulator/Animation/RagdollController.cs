@@ -79,6 +79,34 @@ public unsafe class RagdollController : IDisposable
 
     public bool IsActive => isActive;
 
+    /// <summary>
+    /// Get effective bone definitions: from config overrides if populated, otherwise defaults.
+    /// </summary>
+    private RagdollBoneDef[] GetBoneDefs()
+    {
+        if (config.RagdollBoneConfigs.Count == 0)
+            return DefaultBoneDefs;
+
+        var defs = new RagdollBoneDef[config.RagdollBoneConfigs.Count];
+        for (int i = 0; i < config.RagdollBoneConfigs.Count; i++)
+        {
+            var c = config.RagdollBoneConfigs[i];
+            defs[i] = new RagdollBoneDef
+            {
+                Name = c.Name,
+                ParentName = c.ParentName,
+                CapsuleRadius = c.CapsuleRadius,
+                CapsuleHalfLength = c.CapsuleHalfLength,
+                Mass = c.Mass,
+                SwingLimit = c.SwingLimit,
+                Joint = (JointType)c.JointType,
+                TwistMinAngle = c.TwistMinAngle,
+                TwistMaxAngle = c.TwistMaxAngle,
+            };
+        }
+        return defs;
+    }
+
     // Joint type determines which BEPU constraints are used:
     // Ball = BallSocket + SwingLimit + TwistLimit + AngularMotor (full 3-DOF rotation)
     // Hinge = Hinge + SwingLimit (bending range) + AngularMotor (1-DOF rotation)
@@ -87,10 +115,10 @@ public unsafe class RagdollController : IDisposable
     //   using it on the hinge axis can fight the Hinge constraint and prevent bending.
     //   SwingLimit compares two direction vectors and limits the angle between them,
     //   which naturally limits hinge bending when the axes are chosen correctly.
-    private enum JointType { Ball, Hinge }
+    public enum JointType { Ball, Hinge }
 
     // Ragdoll bone definition
-    private struct RagdollBoneDef
+    public struct RagdollBoneDef
     {
         public string Name;
         public string? ParentName;
@@ -127,7 +155,8 @@ public unsafe class RagdollController : IDisposable
     //   segment axis. At full extension (straight limb) these are perpendicular.
     //   As the joint flexes, the angle decreases (allowed). Hyperextension would
     //   increase the angle beyond 90° (blocked by MaximumSwingAngle).
-    private static readonly RagdollBoneDef[] BoneDefs = new[]
+    /// <summary>Default bone definitions. Exposed for the advanced UI to read/reset.</summary>
+    public static readonly RagdollBoneDef[] DefaultBoneDefs = new[]
     {
         new RagdollBoneDef { Name = "j_kosi",    ParentName = null,       CapsuleRadius = 0.12f, CapsuleHalfLength = 0.06f, Mass = 8.0f,  SwingLimit = 0.2f,  Joint = JointType.Ball,  TwistMinAngle = 0f,     TwistMaxAngle = 0f    }, // pelvis — ~24cm diameter (hip volume)
         new RagdollBoneDef { Name = "j_sebo_a",  ParentName = "j_kosi",   CapsuleRadius = 0.10f, CapsuleHalfLength = 0.05f, Mass = 5.0f,  SwingLimit = 0.2f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // lower spine — ~20cm diameter (waist volume)
@@ -353,6 +382,7 @@ public unsafe class RagdollController : IDisposable
         var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
         if (skelNullable == null) return false;
         var skel = skelNullable.Value;
+        var BoneDefs = GetBoneDefs();
 
         // Get skeleton transform for proper world↔model conversion
         // This is the authoritative transform — NOT GameObject.Rotation (which is just a float yaw).
@@ -1200,6 +1230,7 @@ public unsafe class RagdollController : IDisposable
         var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
         if (skelNullable == null) return;
         var skel = skelNullable.Value;
+        var BoneDefs = GetBoneDefs();
 
         // Keep animation frozen (game may recalculate OverallSpeed each frame)
         var character = (Character*)targetCharacterAddress;
