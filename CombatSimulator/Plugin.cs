@@ -45,6 +45,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly MainWindow mainWindow;
     private readonly HpBarOverlay hpBarOverlay;
     private readonly CombatLogWindow combatLogWindow;
+    private readonly RagdollDebugOverlay ragdollDebugOverlay;
     private bool hookSafetyScanned;
 
     public CombatSimulatorPlugin(
@@ -126,6 +127,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
+        ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, config, gameGui);
 
         // Register
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -236,7 +238,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             if (config.ShowCombatLog)
                 combatLogWindow.Draw();
         }
-        else
+
+        ragdollDebugOverlay.Draw();
+
+        if (!combatEngine.IsActive)
         {
             // Restore native HP bar when sim is not active
             hpBarOverlay.RestoreNativeHpBar();

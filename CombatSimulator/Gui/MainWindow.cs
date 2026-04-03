@@ -756,6 +756,16 @@ public class MainWindow : IDisposable
         ImGui.TextWrapped("Adjust rotation limits, capsule volume, and mass for each ragdoll bone.");
         ImGui.Spacing();
 
+        var debugOverlay = config.RagdollDebugOverlay;
+        if (ImGui.Checkbox("Show Debug Overlay##ragdollAdv", ref debugOverlay))
+        {
+            config.RagdollDebugOverlay = debugOverlay;
+            config.Save();
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled("Renders capsules and joints in 3D.");
+        ImGui.Spacing();
+
         // Reactivate button — reinitializes ragdoll with current config values
         if (ragdollController.IsActive)
         {

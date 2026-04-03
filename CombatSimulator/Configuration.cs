@@ -119,6 +119,8 @@ public class Configuration : IPluginConfiguration
     public float RagdollHairGravityStrength { get; set; } = 0.5f;
     public float RagdollHairDamping { get; set; } = 0.92f;
     public float RagdollHairStiffness { get; set; } = 0.1f;
+    // Ragdoll debug overlay — renders capsules and joint limits in 3D
+    public bool RagdollDebugOverlay { get; set; } = false;
     // Ragdoll bone configs (Advanced) — per-bone physics parameters
     // Empty = use built-in defaults from RagdollController.DefaultBoneDefs
     public List<RagdollBoneConfig> RagdollBoneConfigs { get; set; } = new();

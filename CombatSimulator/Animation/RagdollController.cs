@@ -80,6 +80,51 @@ public unsafe class RagdollController : IDisposable
     public bool IsActive => isActive;
     public nint TargetCharacterAddress => targetCharacterAddress;
 
+    /// <summary>Debug draw data for a single ragdoll capsule body.</summary>
+    public struct DebugCapsule
+    {
+        public Vector3 Position;      // capsule center (world space)
+        public Quaternion Orientation; // capsule rotation
+        public float Radius;
+        public float HalfLength;      // half of the segment length (capsule extends along Y)
+        public string Name;
+        public JointType Joint;
+        public float SwingLimit;
+    }
+
+    /// <summary>
+    /// Get current capsule positions/sizes for debug rendering.
+    /// Returns empty if ragdoll is not active.
+    /// </summary>
+    public List<DebugCapsule> GetDebugCapsules()
+    {
+        var result = new List<DebugCapsule>();
+        if (!isActive || simulation == null) return result;
+
+        var BoneDefs = GetBoneDefs();
+        foreach (var rb in ragdollBones)
+        {
+            var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+
+            // Find matching bone def for capsule dimensions
+            RagdollBoneDef boneDef = default;
+            foreach (var def in BoneDefs)
+                if (def.Name == rb.Name) { boneDef = def; break; }
+
+            result.Add(new DebugCapsule
+            {
+                Position = bodyRef.Pose.Position,
+                Orientation = bodyRef.Pose.Orientation,
+                Radius = boneDef.CapsuleRadius,
+                HalfLength = boneDef.CapsuleHalfLength,
+                Name = rb.Name,
+                Joint = boneDef.Joint,
+                SwingLimit = boneDef.SwingLimit,
+            });
+        }
+        return result;
+    }
+
     /// <summary>
     /// Get effective bone definitions: from config overrides if populated, otherwise defaults.
     /// </summary>
