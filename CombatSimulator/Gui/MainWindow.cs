@@ -5,6 +5,7 @@ using CombatSimulator.Animation;
 using CombatSimulator.Camera;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
+using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using Dalamud.Interface;
 using Dalamud.Interface.Utility.Raii;
@@ -24,10 +25,14 @@ public class MainWindow : IDisposable
     private readonly RagdollController ragdollController;
     private readonly DeathCamController deathCamController;
     private readonly ActiveCameraController activeCameraController;
+    private readonly HookSafetyChecker hookSafetyChecker;
     private readonly IClientState clientState;
     private readonly IChatGui chatGui;
     private readonly Dev.VictorySequenceGui victorySequenceGui;
     private readonly IPluginLog log;
+
+    // Unsafe start confirmation popup
+    private bool showUnsafeConfirmPopup;
 
     // Model override state
     private int modelOverrideId = 0;
@@ -79,6 +84,7 @@ public class MainWindow : IDisposable
         RagdollController ragdollController,
         DeathCamController deathCamController,
         ActiveCameraController activeCameraController,
+        HookSafetyChecker hookSafetyChecker,
         IClientState clientState,
         IChatGui chatGui,
         IPluginLog log)
@@ -91,6 +97,7 @@ public class MainWindow : IDisposable
         this.ragdollController = ragdollController;
         this.deathCamController = deathCamController;
         this.activeCameraController = activeCameraController;
+        this.hookSafetyChecker = hookSafetyChecker;
         this.clientState = clientState;
         this.chatGui = chatGui;
         this.log = log;
@@ -107,6 +114,7 @@ public class MainWindow : IDisposable
         "Camera",
         "Ragdoll",
         "Settings",
+        "Diagnose",
     };
 
     public void Draw()
@@ -207,8 +215,14 @@ public class MainWindow : IDisposable
                 DrawGuiSettingsSection();
                 DrawDevSection();
                 break;
+            case 6: // Diagnose
+                DrawDiagnoseSection();
+                break;
         }
         ImGui.EndChild();
+
+        // Unsafe confirmation popup (must be at window scope, not inside a child)
+        DrawUnsafeConfirmPopup();
 
         ImGui.End();
     }
@@ -216,12 +230,51 @@ public class MainWindow : IDisposable
     private void DrawStatusSection()
     {
         var simActive = combatEngine.IsActive;
-        var statusColor = simActive ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0.3f, 0.3f, 1);
-        var statusText = simActive ? "Active" : "Inactive";
+        var isUnsafe = hookSafetyChecker.IsUnsafe;
 
+        // Status: Active / Active UNSAFE / Inactive / Inactive UNSAFE
         ImGui.Text("Status:");
         ImGui.SameLine();
-        ImGui.TextColored(statusColor, statusText);
+        if (simActive && isUnsafe)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "Active UNSAFE");
+        }
+        else if (simActive)
+        {
+            ImGui.TextColored(new Vector4(0, 1, 0, 1), "Active");
+        }
+        else if (isUnsafe)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "Inactive UNSAFE");
+        }
+        else
+        {
+            ImGui.TextColored(new Vector4(1, 0.3f, 0.3f, 1), "Inactive");
+        }
+
+        // (?) icon with tooltip when unsafe
+        if (isUnsafe)
+        {
+            ImGui.SameLine();
+            using (ImRaii.PushFont(UiBuilder.IconFont))
+            {
+                ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), FontAwesomeIcon.ExclamationTriangle.ToIconString());
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.PushTextWrapPos(ImGui.GetFontSize() * 25.0f);
+                ImGui.TextUnformatted(
+                    "Other plugins are hooking native functions used by Combat Simulator. " +
+                    "This may cause crashes during combat.\n\n" +
+                    "Go to the Diagnose tab to see which functions are affected and " +
+                    "consider deactivating conflicting plugins.");
+                ImGui.PopTextWrapPos();
+                ImGui.EndTooltip();
+            }
+            if (ImGui.IsItemClicked())
+                selectedTab = 6; // Jump to Diagnose tab
+        }
 
         if (simActive && combatEngine.State.CombatDuration > 0)
         {
@@ -411,8 +464,15 @@ public class MainWindow : IDisposable
             {
                 if (ImGui.Button("Start Combat", new Vector2(150, 0)))
                 {
-                    combatEngine.StartSimulation();
-                    chatGui.Print("[CombatSim] Combat simulation started.");
+                    if (hookSafetyChecker.IsUnsafe)
+                    {
+                        showUnsafeConfirmPopup = true;
+                    }
+                    else
+                    {
+                        combatEngine.StartSimulation();
+                        chatGui.Print("[CombatSim] Combat simulation started.");
+                    }
                 }
             }
             else
@@ -614,6 +674,175 @@ public class MainWindow : IDisposable
         if (ImGui.CollapsingHeader("Glamourer Integration"))
         {
             DrawGlamourerSection();
+        }
+    }
+
+    private void DrawUnsafeConfirmPopup()
+    {
+        if (showUnsafeConfirmPopup)
+        {
+            ImGui.OpenPopup("##UnsafeConfirm");
+            showUnsafeConfirmPopup = false;
+        }
+
+        ImGui.SetNextWindowSize(new Vector2(420, 0));
+        var popupOpen = true;
+        if (ImGui.BeginPopupModal("##UnsafeConfirm", ref popupOpen, ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoTitleBar))
+        {
+            using (ImRaii.PushFont(UiBuilder.IconFont))
+            {
+                ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), FontAwesomeIcon.ExclamationTriangle.ToIconString());
+            }
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "Hook Conflict Detected");
+
+            ImGui.Spacing();
+            ImGui.TextWrapped(
+                "Other plugins are hooking native functions used by Combat Simulator. " +
+                "Starting combat may cause the game to crash.\n\n" +
+                "Go to the Diagnose tab to see which functions are affected " +
+                "and consider deactivating conflicting plugins.");
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            if (ImGui.Button("Start Anyway", new Vector2(120, 0)))
+            {
+                combatEngine.StartSimulation();
+                chatGui.Print("[CombatSim] Combat simulation started (UNSAFE mode).");
+                ImGui.CloseCurrentPopup();
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("Go to Diagnose", new Vector2(120, 0)))
+            {
+                selectedTab = 6;
+                ImGui.CloseCurrentPopup();
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel", new Vector2(120, 0)))
+            {
+                ImGui.CloseCurrentPopup();
+            }
+
+            ImGui.EndPopup();
+        }
+    }
+
+    private void DrawDiagnoseSection()
+    {
+        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Hook Conflict Diagnostics");
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // Overall status
+        if (hookSafetyChecker.IsUnsafe)
+        {
+            using (ImRaii.PushFont(UiBuilder.IconFont))
+            {
+                ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), FontAwesomeIcon.ExclamationTriangle.ToIconString());
+            }
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "UNSAFE — hook conflicts detected");
+            ImGui.Spacing();
+            ImGui.TextWrapped(
+                "One or more native game functions that Combat Simulator calls are hooked by other plugins. " +
+                "When Combat Simulator invokes these functions, the other plugin's hook code runs inside our call " +
+                "and may crash if it encounters our simulated NPC actors.");
+        }
+        else
+        {
+            using (ImRaii.PushFont(UiBuilder.IconFont))
+            {
+                ImGui.TextColored(new Vector4(0.4f, 1f, 0.4f, 1f), FontAwesomeIcon.Check.ToIconString());
+            }
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.4f, 1f, 0.4f, 1f), "SAFE — no hook conflicts detected");
+        }
+
+        ImGui.Spacing();
+
+        // Re-scan button
+        if (ImGui.Button("Re-scan"))
+            hookSafetyChecker.Scan();
+        ImGui.SameLine();
+        ImGui.TextDisabled("Re-check after enabling/disabling plugins.");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // Function table
+        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Native Functions");
+        ImGui.Spacing();
+
+        if (ImGui.BeginTable("##HookTable", 3, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg))
+        {
+            ImGui.TableSetupColumn("Function", ImGuiTableColumnFlags.WidthFixed, 150);
+            ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 80);
+            ImGui.TableSetupColumn("Details", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableHeadersRow();
+
+            foreach (var func in hookSafetyChecker.Functions)
+            {
+                ImGui.TableNextRow();
+
+                ImGui.TableNextColumn();
+                ImGui.Text(func.Name);
+
+                ImGui.TableNextColumn();
+                if (func.IsHooked)
+                {
+                    ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), "HOOKED");
+                }
+                else
+                {
+                    ImGui.TextColored(new Vector4(0.4f, 1f, 0.4f, 1f), "Clean");
+                }
+
+                ImGui.TableNextColumn();
+                if (func.IsHooked)
+                {
+                    ImGui.TextWrapped(func.Description + "\n" + func.DetourInfo);
+                }
+                else
+                {
+                    ImGui.TextDisabled(func.Description);
+                }
+            }
+
+            ImGui.EndTable();
+        }
+
+        if (hookSafetyChecker.Functions.Count == 0)
+        {
+            ImGui.TextDisabled("No native functions registered for checking.");
+        }
+
+        // Skill VFX toggle
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Risky Features");
+        ImGui.Spacing();
+
+        var skillVfx = config.EnableSkillVfx;
+        if (ImGui.Checkbox("Enable Skill VFX", ref skillVfx))
+        {
+            config.EnableSkillVfx = skillVfx;
+            config.Save();
+        }
+        HelpMarker(
+            "Spawn per-skill visual effects (cast circles, impact particles) during combat. " +
+            "This calls ActorVfxCreate which is commonly hooked by other plugins. " +
+            "If ActorVfxCreate is hooked (shown above), enabling this WILL crash the game.");
+
+        if (config.EnableSkillVfx && hookSafetyChecker.IsUnsafe)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), "!! Crash risk — ActorVfxCreate is hooked");
         }
     }
 
