@@ -780,6 +780,21 @@ public class MainWindow : IDisposable
         if (ImGui.Button("Reset All to Defaults##boneconfigs"))
         {
             config.RagdollBoneConfigs.Clear();
+            foreach (var def in RagdollController.DefaultBoneDefs)
+            {
+                config.RagdollBoneConfigs.Add(new RagdollBoneConfig
+                {
+                    Name = def.Name,
+                    ParentName = def.ParentName,
+                    CapsuleRadius = def.CapsuleRadius,
+                    CapsuleHalfLength = def.CapsuleHalfLength,
+                    Mass = def.Mass,
+                    SwingLimit = def.SwingLimit,
+                    JointType = (int)def.Joint,
+                    TwistMinAngle = def.TwistMinAngle,
+                    TwistMaxAngle = def.TwistMaxAngle,
+                });
+            }
             config.Save();
         }
         ImGui.Spacing();
