@@ -84,6 +84,17 @@ public unsafe class AnimationController : IDisposable
     /// <summary>Resolved address of the native ActorVfxRemove function (0 if unresolved).</summary>
     public nint ActorVfxRemoveAddress => actorVfxRemoveAddr;
 
+    // Track active VFX instances for timed removal
+    private readonly List<ActiveVfx> activeVfxList = new();
+    private const float VfxLifetime = 2.0f;
+
+    private struct ActiveVfx
+    {
+        public nint Pointer;
+        public float TimeRemaining;
+        public uint OwnerEntityId;
+    }
+
     // Default hit VFX path candidates (tried in order until one sticks)
     public static readonly string[] HitVfxCandidates =
     {
@@ -232,14 +243,70 @@ public unsafe class AnimationController : IDisposable
     public void Tick(float deltaTime)
     {
         commandExecutor.Tick(deltaTime);
+        TickActiveVfx(deltaTime);
+    }
+
+    private void TickActiveVfx(float deltaTime)
+    {
+        if (activeVfxList.Count == 0) return;
+
+        for (int i = activeVfxList.Count - 1; i >= 0; i--)
+        {
+            var vfx = activeVfxList[i];
+            vfx.TimeRemaining -= deltaTime;
+            activeVfxList[i] = vfx;
+
+            if (vfx.TimeRemaining <= 0)
+            {
+                SafeRemoveVfx(vfx);
+                activeVfxList.RemoveAt(i);
+            }
+        }
     }
 
     /// <summary>
-    /// No-op — VFX removal via actorVfxRemove is disabled because the same plugins
-    /// that hook actorVfxCreate also hook actorVfxRemove and crash on our NPC actors.
-    /// VFX expire naturally via their built-in .avfx durations.
+    /// Immediately remove all tracked active VFX (called on death, combat stop, etc.).
     /// </summary>
-    public void RemoveAllActiveVfx() { }
+    public void RemoveAllActiveVfx()
+    {
+        if (actorVfxRemove != null)
+        {
+            foreach (var vfx in activeVfxList)
+                SafeRemoveVfx(vfx);
+        }
+        activeVfxList.Clear();
+    }
+
+    private void SafeRemoveVfx(ActiveVfx vfx)
+    {
+        if (actorVfxRemove == null || vfx.Pointer == 0) return;
+
+        try
+        {
+            if (!IsEntityAlive(vfx.OwnerEntityId))
+                return;
+
+            actorVfxRemove(vfx.Pointer, (char)1);
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"Failed to remove VFX @{vfx.Pointer:X}");
+        }
+    }
+
+    private bool IsEntityAlive(uint entityId)
+    {
+        var player = clientState.LocalPlayer;
+        if (player != null && player.EntityId == entityId)
+            return true;
+
+        foreach (var obj in Core.Services.ObjectTable)
+        {
+            if (obj.EntityId == entityId)
+                return true;
+        }
+        return false;
+    }
 
     /// <summary>
     /// Play attack animation + VFX + hit reaction via ActionEffectHandler.Receive().
@@ -379,7 +446,16 @@ public unsafe class AnimationController : IDisposable
     {
         try
         {
-            actorVfxCreate!(path, attachTo, orientTo, -1, (char)0, 0, (char)0);
+            var ptr = actorVfxCreate!(path, attachTo, orientTo, -1, (char)0, 0, (char)0);
+            if (ptr != 0)
+            {
+                activeVfxList.Add(new ActiveVfx
+                {
+                    Pointer = ptr,
+                    TimeRemaining = VfxLifetime,
+                    OwnerEntityId = ownerEntityId,
+                });
+            }
         }
         catch (Exception ex)
         {
