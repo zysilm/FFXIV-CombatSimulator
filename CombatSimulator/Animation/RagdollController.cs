@@ -632,7 +632,7 @@ public unsafe class RagdollController : IDisposable
         bufferPool = new BufferPool();
         simulation = BepuSimulation.Create(
             bufferPool,
-            new RagdollNarrowPhaseCallbacks { ConnectedPairs = connectedPairs },
+            new RagdollNarrowPhaseCallbacks { ConnectedPairs = connectedPairs, Friction = config.RagdollFriction },
             new RagdollPoseIntegratorCallbacks(
                 new Vector3(0, -config.RagdollGravity, 0),
                 config.RagdollDamping),
@@ -1815,6 +1815,8 @@ public unsafe class RagdollController : IDisposable
 
 struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 {
+    public float Friction;
+
     // Connected body pairs that should NOT collide (parent-child joints).
     // All other body-body pairs DO collide (arms vs torso, etc.).
     public HashSet<(int, int)> ConnectedPairs;
@@ -1849,7 +1851,7 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     public bool ConfigureContactManifold<TManifold>(int workerIndex, CollidablePair pair, ref TManifold manifold,
         out PairMaterialProperties pairMaterial) where TManifold : unmanaged, IContactManifold<TManifold>
     {
-        pairMaterial.FrictionCoefficient = 1f;
+        pairMaterial.FrictionCoefficient = Friction;
         pairMaterial.MaximumRecoveryVelocity = 2f;
         pairMaterial.SpringSettings = new SpringSettings(30, 1);
         return true;

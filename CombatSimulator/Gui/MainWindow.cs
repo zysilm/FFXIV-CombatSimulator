@@ -1748,6 +1748,14 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Body parts collide with each other (arms vs torso, legs vs legs). Prevents clipping but may cause slight stretching. Takes effect on next ragdoll activation.");
 
+                var friction = config.RagdollFriction;
+                if (ImGui.SliderFloat("Friction##ragdoll", ref friction, 0.0f, 2.0f, "%.2f"))
+                {
+                    config.RagdollFriction = friction;
+                    config.Save();
+                }
+                HelpMarker("Surface friction for all ragdoll contacts. 0 = ice (limbs slide freely), 1 = grippy (default). Lower values make the body slide more realistically. Takes effect on next ragdoll activation.");
+
                 ImGui.Separator();
                 ImGui.Text("Weapon Drop");
 

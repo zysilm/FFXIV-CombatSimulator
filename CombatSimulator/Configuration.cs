@@ -112,6 +112,7 @@ public class Configuration : IPluginConfiguration
     public float RagdollDamping { get; set; } = 0.97f;
     public int RagdollSolverIterations { get; set; } = 8;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
+    public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
     // Weapon drop physics
     public bool RagdollWeaponDrop { get; set; } = true; // Weapon detaches and falls on death (uses battle/dead instead of play-dead)
     // Hair physics
