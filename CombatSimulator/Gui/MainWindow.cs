@@ -811,6 +811,15 @@ public class MainWindow : IDisposable
                 });
             }
             config.Save();
+
+            // Reactivate ragdoll if active so defaults take effect immediately
+            if (ragdollController.IsActive)
+            {
+                var addr = ragdollController.TargetCharacterAddress;
+                ragdollController.Deactivate();
+                if (addr != nint.Zero)
+                    ragdollController.Activate(addr);
+            }
         }
         ImGui.Spacing();
         ImGui.Separator();
