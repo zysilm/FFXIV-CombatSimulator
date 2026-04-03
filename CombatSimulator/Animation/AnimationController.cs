@@ -605,9 +605,6 @@ public unsafe class AnimationController : IDisposable
             // play-dead emote. Battle death keeps weapons drawn (no sheathing).
             if (config.RagdollWeaponDrop && battleDeadResolved)
             {
-                // Set dead mode to stop breathing/idle overlays (like real game death)
-                character->SetMode(CharacterModes.Dead, 0);
-                // Override with battle/dead timeline for the visual animation
                 emotePlayer.PlayLoopedEmote(character, battleDeadLoopTimeline, battleDeadIntroTimeline);
                 log.Info($"Player death via battle/dead (intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}).");
                 return;
@@ -656,11 +653,6 @@ public unsafe class AnimationController : IDisposable
             if (player == null) return;
 
             var character = (Character*)player.Address;
-
-            // Restore normal mode if we set Dead mode for weapon drop
-            if (config.RagdollWeaponDrop)
-                character->SetMode(CharacterModes.Normal, 0);
-
             emotePlayer.ResetEmote(character);
         }
         catch (Exception ex)
