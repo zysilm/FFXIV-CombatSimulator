@@ -873,7 +873,6 @@ public class MainWindow : IDisposable
 
             if (isOpen)
             {
-                EditingBoneName = bone.Name;
                 ImGui.Indent(10);
 
                 if (bone.SkeletonParent != null)
