@@ -376,7 +376,7 @@ public class MainWindow : IDisposable
         if (ImGui.CollapsingHeader("NPC Defaults"))
         {
             var defaultLevel = config.DefaultNpcLevel;
-            if (ImGui.SliderInt("Default NPC Level", ref defaultLevel, 1, 100))
+            if (ImGui.SliderInt("Default NPC Level", ref defaultLevel, 1, 200))
             {
                 config.DefaultNpcLevel = defaultLevel;
                 config.Save();

@@ -16,7 +16,7 @@ public class DamageCalculator
     private readonly Random rng = new();
 
     // Level mod table: (level) -> (base main, base sub, divisor)
-    private static readonly (int baseMain, int baseSub, int div)[] LevelMods = new (int, int, int)[101];
+    private static readonly (int baseMain, int baseSub, int div)[] LevelMods = new (int, int, int)[201];
 
     static DamageCalculator()
     {
@@ -35,7 +35,7 @@ public class DamageCalculator
 
     private static void SetLevelMod(int level, int baseMain, int baseSub, int div)
     {
-        if (level is >= 0 and <= 100)
+        if (level is >= 0 and <= 200)
             LevelMods[level] = (baseMain, baseSub, div);
     }
 
@@ -62,6 +62,19 @@ public class DamageCalculator
                 );
             }
         }
+
+        // Extrapolate 101-200 from the 90→100 trend
+        var lv90 = LevelMods[90];
+        var lv100 = LevelMods[100];
+        for (int lvl = 101; lvl <= 200; lvl++)
+        {
+            float t = (float)(lvl - 90) / 10;
+            LevelMods[lvl] = (
+                (int)(lv90.baseMain + (lv100.baseMain - lv90.baseMain) * t),
+                (int)(lv90.baseSub + (lv100.baseSub - lv90.baseSub) * t),
+                (int)(lv90.div + (lv100.div - lv90.div) * t)
+            );
+        }
     }
 
     public DamageResult Calculate(
@@ -85,7 +98,7 @@ public class DamageCalculator
             return result;
         }
 
-        int level = Math.Clamp(source.Level, 1, 100);
+        int level = Math.Clamp(source.Level, 1, 200);
         var mod = LevelMods[level];
 
         // f(MainStat)
