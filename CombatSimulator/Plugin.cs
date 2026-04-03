@@ -76,7 +76,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         config.Initialize(pluginInterface);
 
         // Simulation
-        actionDataProvider = new ActionDataProvider(dataManager);
+        actionDataProvider = new ActionDataProvider(dataManager, log);
         damageCalculator = new DamageCalculator();
         chatCommandExecutor = new ChatCommandExecutor(log);
         glamourerIpc = new GlamourerIpc(pluginInterface, log);

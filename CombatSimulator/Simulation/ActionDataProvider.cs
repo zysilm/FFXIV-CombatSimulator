@@ -1,7 +1,11 @@
+using System;
 using System.Collections.Generic;
+using System.Text;
+using System.Text.RegularExpressions;
 using Dalamud.Plugin.Services;
 using Lumina.Excel;
 using Lumina.Excel.Sheets;
+using Action = Lumina.Excel.Sheets.Action;
 
 namespace CombatSimulator.Simulation;
 
@@ -29,16 +33,28 @@ public class ActionData
     public int ComboPotency { get; set; }
     public float AnimationLock { get; set; } = 0.6f;
     public bool IsPlayerAction { get; set; } = true;
+
+    // VFX paths resolved from Lumina data + TMB files
+    public string CastVfxPath { get; set; } = string.Empty;
+    public string StartVfxPath { get; set; } = string.Empty;
+    public List<string> CasterVfxPaths { get; set; } = new();
+    public List<string> TargetVfxPaths { get; set; } = new();
 }
 
-public class ActionDataProvider
+public partial class ActionDataProvider
 {
     private readonly IDataManager dataManager;
+    private readonly IPluginLog log;
     private readonly Dictionary<uint, ActionData> cache = new();
 
-    public ActionDataProvider(IDataManager dataManager)
+    // Same regex VFXEditor uses to extract .avfx paths from TMB binary data
+    [GeneratedRegex(@"\u0000([a-zA-Z0-9\/_]*?)\.avfx", RegexOptions.Compiled)]
+    private static partial Regex AvfxPathRegex();
+
+    public ActionDataProvider(IDataManager dataManager, IPluginLog log)
     {
         this.dataManager = dataManager;
+        this.log = log;
     }
 
     public ActionData? GetActionData(uint actionId)
@@ -85,6 +101,9 @@ public class ActionDataProvider
         // For MVP, use a reasonable default based on recast.
         data.Potency = EstimatePotency(data);
 
+        // Resolve VFX paths (same approach as VFXEditor)
+        ResolveVfxPaths(action, data);
+
         // Combo
         if (action.ActionCombo.RowId != 0)
         {
@@ -118,5 +137,74 @@ public class ActionDataProvider
     public void ClearCache()
     {
         cache.Clear();
+    }
+
+    /// <summary>
+    /// Resolve VFX paths for an action using the same data chain as VFXEditor:
+    /// 1. CastVfxPath: Action.VFX → ActionCastVFX.VFX → VFX.Location
+    /// 2. StartVfxPath: Action.AnimationStart → ActionTimeline.VFX → VFX.Location
+    /// 3. CasterVfxPaths: AnimationEnd TMB file → regex-extract embedded .avfx paths
+    /// 4. TargetVfxPaths: ActionTimelineHit TMB file → regex-extract embedded .avfx paths
+    /// </summary>
+    private void ResolveVfxPaths(Action action, ActionData data)
+    {
+        try
+        {
+            // Cast VFX (casting circle / channeling effect)
+            var castLoc = action.VFX.ValueNullable?.VFX.ValueNullable?.Location.ExtractText();
+            if (!string.IsNullOrEmpty(castLoc))
+                data.CastVfxPath = $"vfx/common/eff/{castLoc}.avfx";
+
+            // Start VFX (effect when action begins)
+            var startLoc = action.AnimationStart.ValueNullable?.VFX.ValueNullable?.Location.ExtractText();
+            if (!string.IsNullOrEmpty(startLoc))
+                data.StartVfxPath = $"vfx/common/eff/{startLoc}.avfx";
+
+            // Caster VFX from AnimationEnd TMB (main skill effects)
+            var endKey = action.AnimationEnd.ValueNullable?.Key.ExtractText();
+            if (!string.IsNullOrEmpty(endKey) && !endKey.Contains("[SKL_ID]"))
+                data.CasterVfxPaths = ExtractVfxFromTmb($"chara/action/{endKey}.tmb");
+
+            // Target VFX from ActionTimelineHit TMB (hit/impact effects)
+            var hitKey = action.ActionTimelineHit.ValueNullable?.Key.ExtractText();
+            if (!string.IsNullOrEmpty(hitKey) && !hitKey.Contains("[SKL_ID]") && !hitKey.Contains("normal_hit"))
+                data.TargetVfxPaths = ExtractVfxFromTmb($"chara/action/{hitKey}.tmb");
+
+            log.Info($"[VFX] Action {data.ActionId} '{data.Name}': " +
+                     $"cast='{data.CastVfxPath}', start='{data.StartVfxPath}', " +
+                     $"casterTmb={data.CasterVfxPaths.Count} paths, targetTmb={data.TargetVfxPaths.Count} paths");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"[VFX] Failed to resolve VFX paths for action {data.ActionId}");
+        }
+    }
+
+    /// <summary>
+    /// Read a TMB (timeline) binary file and extract all embedded .avfx paths via regex.
+    /// This is the same approach VFXEditor uses (ParsedPaths + AvfxRegex).
+    /// </summary>
+    private List<string> ExtractVfxFromTmb(string tmbPath)
+    {
+        var paths = new List<string>();
+        try
+        {
+            if (!dataManager.FileExists(tmbPath))
+                return paths;
+
+            var file = dataManager.GetFile(tmbPath);
+            if (file?.Data == null)
+                return paths;
+
+            var text = Encoding.UTF8.GetString(file.Data);
+            var matches = AvfxPathRegex().Matches(text);
+            foreach (Match m in matches)
+                paths.Add(m.Value.Trim('\0'));
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"[VFX] Failed to parse TMB: {tmbPath}");
+        }
+        return paths;
     }
 }

@@ -23,12 +23,20 @@ public class ActionEffectRequest
     public float SourceRotation { get; set; }
     public bool IsSourcePlayer { get; set; }
     public bool IsRanged { get; set; }
+
+    // VFX paths resolved from Lumina + TMB data
+    public string CastVfxPath { get; set; } = string.Empty;
+    public string StartVfxPath { get; set; } = string.Empty;
+    public List<string> CasterVfxPaths { get; set; } = new();
+    public List<string> TargetVfxPaths { get; set; } = new();
+
     public List<TargetEffect> Targets { get; set; } = new();
 }
 
 public class TargetEffect
 {
     public ulong TargetId { get; set; }
+    public nint TargetAddress { get; set; }
     public int Damage { get; set; }
     public int Healing { get; set; }
     public bool IsCritical { get; set; }
@@ -186,12 +194,94 @@ public unsafe class AnimationController : IDisposable
                 }
             }
 
-            // Use ActionEffectHandler.Receive() for the real combat pipeline
+            // Spawn skill VFX via ActorVfxCreate
+            SpawnActionVfx(request);
+
+            // Use ActionEffectHandler.Receive() for flytext + damage numbers
             CallActionEffectReceive(request);
         }
         catch (Exception ex)
         {
             log.Error(ex, "Failed to play action effect.");
+        }
+    }
+
+    /// <summary>
+    /// Spawn action-specific VFX using paths extracted from Lumina data + TMB files.
+    /// Handles caster VFX (skill effects) and target VFX (hit/impact effects).
+    /// </summary>
+    private void SpawnActionVfx(ActionEffectRequest request)
+    {
+        if (actorVfxCreate == null) return;
+
+        try
+        {
+            // Resolve caster address
+            nint casterAddr = 0;
+            if (request.IsSourcePlayer)
+            {
+                var player = clientState.LocalPlayer;
+                if (player != null) casterAddr = player.Address;
+            }
+            else
+            {
+                Character* casterPtr = FindCharacter(request.SourceEntityId, false);
+                if (casterPtr != null) casterAddr = (nint)casterPtr;
+            }
+
+            // Spawn caster VFX (cast circle, skill effects from TMB)
+            if (casterAddr != 0)
+            {
+                if (!string.IsNullOrEmpty(request.CastVfxPath))
+                {
+                    actorVfxCreate(request.CastVfxPath, casterAddr, casterAddr, -1, (char)0, 0, (char)0);
+                    log.Info($"[VFX] Cast VFX: {request.CastVfxPath}");
+                }
+
+                if (!string.IsNullOrEmpty(request.StartVfxPath))
+                {
+                    actorVfxCreate(request.StartVfxPath, casterAddr, casterAddr, -1, (char)0, 0, (char)0);
+                    log.Info($"[VFX] Start VFX: {request.StartVfxPath}");
+                }
+
+                foreach (var path in request.CasterVfxPaths)
+                {
+                    actorVfxCreate(path, casterAddr, casterAddr, -1, (char)0, 0, (char)0);
+                    log.Info($"[VFX] Caster TMB VFX: {path}");
+                }
+            }
+
+            // Spawn target VFX (hit/impact effects from TMB)
+            foreach (var target in request.Targets)
+            {
+                if (target.Damage <= 0 && target.Healing <= 0) continue;
+
+                nint targetAddr = target.TargetAddress;
+                if (targetAddr == 0) continue;
+
+                if (request.TargetVfxPaths.Count > 0)
+                {
+                    foreach (var path in request.TargetVfxPaths)
+                    {
+                        actorVfxCreate(path, targetAddr, casterAddr != 0 ? casterAddr : targetAddr, -1, (char)0, 0, (char)0);
+                        log.Info($"[VFX] Target TMB VFX: {path}");
+                    }
+                }
+                else if (config.EnableHitVfx)
+                {
+                    // Fallback: use configured generic hit VFX
+                    var vfxPath = config.HitVfxPath;
+                    if (!string.IsNullOrWhiteSpace(vfxPath))
+                    {
+                        actorVfxCreate(vfxPath, targetAddr, casterAddr != 0 ? casterAddr : targetAddr, -1, (char)0, 0, (char)0);
+                        log.Verbose($"[VFX] Fallback hit VFX: {vfxPath}");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Failed to spawn action VFX.");
         }
     }
 
