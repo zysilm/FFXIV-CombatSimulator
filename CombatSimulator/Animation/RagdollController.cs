@@ -1228,8 +1228,15 @@ public unsafe class RagdollController : IDisposable
         try
         {
             var character = (Character*)targetCharacterAddress;
+
+            // Must use the game function HideWeapons(false) — it does internal bookkeeping
+            // to re-enable weapon DrawObjects. Just setting bitflags is not sufficient because
+            // the play dead emote hides weapons at the DrawObject render level.
+            character->DrawData.HideWeapons(false);
+
+            // Also force the timeline weapon-drawn flag so the weapon stays in the
+            // "drawn" position (in hand) rather than sheathed (on back/hip).
             character->Timeline.IsWeaponDrawn = true;
-            character->DrawData.IsWeaponHidden = false;
         }
         catch { /* character may be invalid during cleanup */ }
     }
