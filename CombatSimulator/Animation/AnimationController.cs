@@ -496,11 +496,11 @@ public unsafe class AnimationController : IDisposable
             NativeMemory.Clear(targetIdsPtr, (nuint)idsSize);
 
             // Fill header
-            // When skill VFX is disabled, use ActionId 7 (auto-attack) to suppress the
-            // action's animation + VFX while still processing damage/flytext from effects.
-            // The elaborate skill VFX (cast circles, ground effects) are triggered by the
-            // animation TMB keyframes — using a benign ActionId prevents them from spawning.
-            var effectiveActionId = config.EnableSkillVfx ? request.ActionId : 7u;
+            // Always use ActionId 7 (auto-attack) in Receive to suppress the game's
+            // internal VFX pipeline. Damage/flytext comes from per-target effect entries
+            // (not ActionId), so they still work. Our own VFX from SpawnActionVfx are
+            // spawned separately and tracked for cleanup — they're the only skill VFX.
+            var effectiveActionId = 7u;
             var seq = globalSequence++;
             headerPtr->AnimationTargetId = request.Targets[0].TargetId;
             headerPtr->ActionId = effectiveActionId;
