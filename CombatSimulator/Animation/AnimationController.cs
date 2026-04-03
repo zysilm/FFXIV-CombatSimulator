@@ -60,11 +60,10 @@ public unsafe class AnimationController : IDisposable
     private ushort playDeadIntroTimeline;
     private bool playDeadResolved;
 
-    // Battle dead ActionTimeline IDs (resolved from ActionTimeline sheet)
-    // Used instead of play-dead emote when ragdoll weapon drop is enabled,
-    // because play-dead sheathes weapons and the game engine fights visibility overrides.
-    private ushort battleDeadIntroTimeline;  // "battle/dead" (8935) — falling animation
-    private ushort battleDeadLoopTimeline;   // "battle/dead_pose" (8936) — settled on ground
+    // Battle dead ActionTimeline IDs — keeps weapons drawn (no sheathing).
+    // Known IDs: battle/dead = 8935 (falling), battle/dead_pose = 8936 (settled).
+    private ushort battleDeadIntroTimeline = 8935;
+    private ushort battleDeadLoopTimeline = 8936;
     private bool battleDeadResolved;
 
     // ActorVfxCreate — spawns a .avfx particle effect attached to an actor
@@ -203,27 +202,26 @@ public unsafe class AnimationController : IDisposable
         try
         {
             var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ActionTimeline>();
-            if (sheet == null) return;
-
-            foreach (var row in sheet)
+            if (sheet != null)
             {
-                var key = row.Key.ToString();
-                if (key == "battle/dead")
-                    battleDeadIntroTimeline = (ushort)row.RowId;
-                else if (key == "battle/dead_pose")
-                    battleDeadLoopTimeline = (ushort)row.RowId;
+                foreach (var row in sheet)
+                {
+                    var key = row.Key.ToString();
+                    if (key == "battle/dead")
+                        battleDeadIntroTimeline = (ushort)row.RowId;
+                    else if (key == "battle/dead_pose")
+                        battleDeadLoopTimeline = (ushort)row.RowId;
+                }
             }
-
-            battleDeadResolved = battleDeadIntroTimeline != 0 && battleDeadLoopTimeline != 0;
-            if (battleDeadResolved)
-                log.Info($"AnimationController: Resolved battle dead timelines — intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}");
-            else
-                log.Warning($"AnimationController: Could not resolve battle dead timelines (intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}).");
         }
         catch (Exception ex)
         {
-            log.Error(ex, "AnimationController: Failed to resolve battle/dead timelines.");
+            log.Warning(ex, "AnimationController: Failed to search ActionTimeline sheet, using hardcoded IDs.");
         }
+
+        // Always resolved — hardcoded defaults (8935/8936) are set as field initializers
+        battleDeadResolved = battleDeadIntroTimeline != 0 && battleDeadLoopTimeline != 0;
+        log.Info($"AnimationController: Battle dead timelines — intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}, resolved={battleDeadResolved}");
     }
 
     public void Tick(float deltaTime)
