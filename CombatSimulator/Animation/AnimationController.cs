@@ -60,6 +60,12 @@ public unsafe class AnimationController : IDisposable
     private ushort playDeadIntroTimeline;
     private bool playDeadResolved;
 
+    // Battle dead ActionTimeline IDs — keeps weapons drawn (no sheathing).
+    // Known IDs: battle/dead = 8935 (falling), battle/dead_pose = 8936 (settled).
+    private ushort battleDeadIntroTimeline = 8935;
+    private ushort battleDeadLoopTimeline = 8936;
+    private bool battleDeadResolved;
+
     // ActorVfxCreate — spawns a .avfx particle effect attached to an actor
     private delegate nint ActorVfxCreateDelegate(
         string path, nint a2, nint a3, float a4, char a5, ushort a6, char a7);
@@ -100,6 +106,7 @@ public unsafe class AnimationController : IDisposable
         this.emotePlayer = new EmoteTimelinePlayer(log);
 
         ResolvePlayDeadTimelines(dataManager);
+        ResolveBattleDeadTimeline(dataManager);
         ResolveActorVfxCreate(sigScanner);
         ResolveActorVfxRemove(sigScanner);
 
@@ -188,6 +195,38 @@ public unsafe class AnimationController : IDisposable
         {
             log.Error(ex, "AnimationController: Failed to resolve Play Dead emote timelines.");
         }
+    }
+
+    private void ResolveBattleDeadTimeline(IDataManager dataManager)
+    {
+        // Search by key first (survives patch ID shifts)
+        ushort foundIntro = 0, foundLoop = 0;
+        try
+        {
+            var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ActionTimeline>();
+            if (sheet != null)
+            {
+                foreach (var row in sheet)
+                {
+                    var key = row.Key.ToString();
+                    if (key == "battle/dead")
+                        foundIntro = (ushort)row.RowId;
+                    else if (key == "battle/dead_pose")
+                        foundLoop = (ushort)row.RowId;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "AnimationController: ActionTimeline sheet search failed.");
+        }
+
+        // Use key search results, fall back to hardcoded IDs (8935/8936)
+        if (foundIntro != 0) battleDeadIntroTimeline = foundIntro;
+        if (foundLoop != 0) battleDeadLoopTimeline = foundLoop;
+
+        battleDeadResolved = battleDeadIntroTimeline != 0 && battleDeadLoopTimeline != 0;
+        log.Info($"AnimationController: Battle dead timelines — intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}, resolved={battleDeadResolved} (key search: intro={foundIntro}, loop={foundLoop})");
     }
 
     public void Tick(float deltaTime)
@@ -541,6 +580,9 @@ public unsafe class AnimationController : IDisposable
     /// <summary>
     /// Play death animation on the player character.
     /// If a custom command is configured, uses that. Otherwise uses BypassEmote-style timeline.
+    /// When ragdoll weapon drop is enabled, uses battle/dead ActionTimeline via BaseOverride
+    /// instead of the play-dead emote — play-dead sheathes weapons and the game engine
+    /// actively fights any attempt to keep them visible.
     /// </summary>
     public void PlayPlayerDeath()
     {
@@ -555,16 +597,24 @@ public unsafe class AnimationController : IDisposable
                 return;
             }
 
-            // Use BypassEmote-style timeline (no emote unlock needed)
+            var player = clientState.LocalPlayer;
+            if (player == null) return;
+            var character = (Character*)player.Address;
+
+            // When weapon drop is enabled, use battle/dead ActionTimeline instead of
+            // play-dead emote. Battle death keeps weapons drawn (no sheathing).
+            if (config.RagdollWeaponDrop && battleDeadResolved)
+            {
+                emotePlayer.PlayLoopedEmote(character, battleDeadLoopTimeline, battleDeadIntroTimeline);
+                log.Info($"Player death via battle/dead (intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}).");
+                return;
+            }
+
+            // Default: play-dead emote (may sheath weapons)
             if (playDeadResolved)
             {
-                var player = clientState.LocalPlayer;
-                if (player != null)
-                {
-                    var character = (Character*)player.Address;
-                    emotePlayer.PlayLoopedEmote(character, playDeadLoopTimeline, playDeadIntroTimeline);
-                    log.Info("Player death emote (timeline) triggered.");
-                }
+                emotePlayer.PlayLoopedEmote(character, playDeadLoopTimeline, playDeadIntroTimeline);
+                log.Info("Player death emote (timeline) triggered.");
             }
         }
         catch (Exception ex)
@@ -603,8 +653,7 @@ public unsafe class AnimationController : IDisposable
             if (player == null) return;
 
             var character = (Character*)player.Address;
-            if (playDeadResolved)
-                emotePlayer.ResetEmote(character);
+            emotePlayer.ResetEmote(character);
         }
         catch (Exception ex)
         {

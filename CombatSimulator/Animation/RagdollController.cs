@@ -53,6 +53,17 @@ public unsafe class RagdollController : IDisposable
     private float savedOverallSpeed = 1.0f;
     private readonly HashSet<int> ragdollBoneIndices = new();
 
+    // Weapon drop physics
+    private BodyHandle? weaponMainHandBody;
+    private BodyHandle? weaponOffHandBody;
+    private int weaponMainHandBoneIndex = -1;
+    private int weaponOffHandBoneIndex = -1;
+    private Quaternion weaponMainHandCapsuleToBone;
+    private Quaternion weaponOffHandCapsuleToBone;
+    private float weaponMainHandSegHalf;
+    private float weaponOffHandSegHalf;
+    private static readonly string[] WeaponMainHandBones = { "n_buki_r", "j_buki_r", "n_hte_r" };
+    private static readonly string[] WeaponOffHandBones = { "n_buki_l", "j_buki_l", "n_hte_l" };
 
     // Ancestor bone index — n_hara must follow j_kosi to prevent mesh tearing
     private int nHaraIndex = -1;
@@ -120,22 +131,27 @@ public unsafe class RagdollController : IDisposable
     {
         new RagdollBoneDef { Name = "j_kosi",    ParentName = null,       CapsuleRadius = 0.12f, CapsuleHalfLength = 0.06f, Mass = 8.0f,  SwingLimit = 0.2f,  Joint = JointType.Ball,  TwistMinAngle = 0f,     TwistMaxAngle = 0f    }, // pelvis — ~24cm diameter (hip volume)
         new RagdollBoneDef { Name = "j_sebo_a",  ParentName = "j_kosi",   CapsuleRadius = 0.10f, CapsuleHalfLength = 0.05f, Mass = 5.0f,  SwingLimit = 0.2f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // lower spine — ~20cm diameter (waist volume)
-        new RagdollBoneDef { Name = "j_sebo_b",  ParentName = "j_sebo_a", CapsuleRadius = 0.10f, CapsuleHalfLength = 0.05f, Mass = 5.0f,  SwingLimit = 0.15f, Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // mid spine — ~20cm diameter (abdomen volume)
-        new RagdollBoneDef { Name = "j_sebo_c",  ParentName = "j_sebo_b", CapsuleRadius = 0.10f, CapsuleHalfLength = 0.05f, Mass = 4.0f,  SwingLimit = 0.15f, Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // chest — ~20cm diameter (ribcage volume)
+        new RagdollBoneDef { Name = "j_sebo_b",  ParentName = "j_sebo_a", CapsuleRadius = 0.20f, CapsuleHalfLength = 0.05f, Mass = 5.0f,  SwingLimit = 0.15f, Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // mid spine — ~40cm diameter (abdomen + breast/pectoral volume)
+        new RagdollBoneDef { Name = "j_sebo_c",  ParentName = "j_sebo_b", CapsuleRadius = 0.20f, CapsuleHalfLength = 0.05f, Mass = 4.0f,  SwingLimit = 0.15f, Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // chest — ~40cm diameter (ribcage + breast/pectoral volume)
         new RagdollBoneDef { Name = "j_kubi",    ParentName = "j_sebo_c", CapsuleRadius = 0.04f, CapsuleHalfLength = 0.03f, Mass = 2.0f,  SwingLimit = 0.25f, Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // neck
         new RagdollBoneDef { Name = "j_kao",     ParentName = "j_kubi",   CapsuleRadius = 0.08f, CapsuleHalfLength = 0.04f, Mass = 3.0f,  SwingLimit = 0.3f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // head
-        new RagdollBoneDef { Name = "j_ude_a_l", ParentName = "j_sebo_c", CapsuleRadius = 0.03f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,  Joint = JointType.Ball,  TwistMinAngle = -0.8f,  TwistMaxAngle = 0.8f  }, // shoulder
-        new RagdollBoneDef { Name = "j_ude_a_r", ParentName = "j_sebo_c", CapsuleRadius = 0.03f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,  Joint = JointType.Ball,  TwistMinAngle = -0.8f,  TwistMaxAngle = 0.8f  }, // shoulder
+        // Clavicles — intermediate bones between chest and upper arms (j_sebo_c → j_sako → j_ude_a)
+        new RagdollBoneDef { Name = "j_sako_l",  ParentName = "j_sebo_c", CapsuleRadius = 0.025f,CapsuleHalfLength = 0.04f, Mass = 1.5f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // left clavicle
+        new RagdollBoneDef { Name = "j_sako_r",  ParentName = "j_sebo_c", CapsuleRadius = 0.025f,CapsuleHalfLength = 0.04f, Mass = 1.5f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // right clavicle
+        new RagdollBoneDef { Name = "j_ude_a_l", ParentName = "j_sako_l", CapsuleRadius = 0.03f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,  Joint = JointType.Ball,  TwistMinAngle = -0.8f,  TwistMaxAngle = 0.8f  }, // upper arm
+        new RagdollBoneDef { Name = "j_ude_a_r", ParentName = "j_sako_r", CapsuleRadius = 0.03f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,  Joint = JointType.Ball,  TwistMinAngle = -0.8f,  TwistMaxAngle = 0.8f  }, // upper arm
         new RagdollBoneDef { Name = "j_ude_b_l", ParentName = "j_ude_a_l",CapsuleRadius = 0.025f,CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = MathF.PI / 2,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // elbow
         new RagdollBoneDef { Name = "j_ude_b_r", ParentName = "j_ude_a_r",CapsuleRadius = 0.025f,CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = MathF.PI / 2,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // elbow
         new RagdollBoneDef { Name = "j_te_l",   ParentName = "j_ude_b_l",CapsuleRadius = 0.02f, CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.8f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // left wrist
         new RagdollBoneDef { Name = "j_te_r",   ParentName = "j_ude_b_r",CapsuleRadius = 0.02f, CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.8f,  Joint = JointType.Ball,  TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f  }, // right wrist
-        new RagdollBoneDef { Name = "j_asi_a_l", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 1.3f,  Joint = JointType.Ball,  TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f  }, // hip — wide cone for death settling
-        new RagdollBoneDef { Name = "j_asi_a_r", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 1.3f,  Joint = JointType.Ball,  TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f  }, // hip — wide cone for death settling
-        new RagdollBoneDef { Name = "j_asi_b_l", ParentName = "j_asi_a_l",CapsuleRadius = 0.035f,CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // knee
-        new RagdollBoneDef { Name = "j_asi_b_r", ParentName = "j_asi_a_r",CapsuleRadius = 0.035f,CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // knee
-        new RagdollBoneDef { Name = "j_asi_c_l", ParentName = "j_asi_b_l",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // foot
-        new RagdollBoneDef { Name = "j_asi_c_r", ParentName = "j_asi_b_r",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // foot
+        new RagdollBoneDef { Name = "j_asi_a_l", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 1.3f,  Joint = JointType.Ball,  TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f  }, // thigh — wide cone for death settling
+        new RagdollBoneDef { Name = "j_asi_a_r", ParentName = "j_kosi",   CapsuleRadius = 0.04f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 1.3f,  Joint = JointType.Ball,  TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f  }, // thigh — wide cone for death settling
+        new RagdollBoneDef { Name = "j_asi_b_l", ParentName = "j_asi_a_l",CapsuleRadius = 0.035f,CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // upper shin (knee)
+        new RagdollBoneDef { Name = "j_asi_b_r", ParentName = "j_asi_a_r",CapsuleRadius = 0.035f,CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,  Joint = JointType.Hinge, TwistMinAngle = 0f, TwistMaxAngle = 0f }, // upper shin (knee)
+        new RagdollBoneDef { Name = "j_asi_c_l", ParentName = "j_asi_b_l",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.15f, Joint = JointType.Ball,  TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f  }, // lower shin (calf) — tight limit, continuation of shin
+        new RagdollBoneDef { Name = "j_asi_c_r", ParentName = "j_asi_b_r",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.15f, Joint = JointType.Ball,  TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f  }, // lower shin (calf) — tight limit, continuation of shin
+        new RagdollBoneDef { Name = "j_asi_d_l", ParentName = "j_asi_c_l",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 0.5f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // left foot (ankle)
+        new RagdollBoneDef { Name = "j_asi_d_r", ParentName = "j_asi_c_r",CapsuleRadius = 0.03f, CapsuleHalfLength = 0.04f, Mass = 0.5f,  SwingLimit = 0.4f,  Joint = JointType.Ball,  TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f  }, // right foot (ankle)
     };
 
     // Per-bone static collision body for an NPC (dynamically created from skeleton)
@@ -209,6 +225,10 @@ public unsafe class RagdollController : IDisposable
         ragdollBoneIndices.Clear();
         nHaraIndex = -1;
         kaoBodyBoneIndex = -1;
+        weaponMainHandBody = null;
+        weaponOffHandBody = null;
+        weaponMainHandBoneIndex = -1;
+        weaponOffHandBoneIndex = -1;
         hairPhysics?.Reset();
         hairPhysics = null;
 
@@ -1028,6 +1048,14 @@ public unsafe class RagdollController : IDisposable
             totalNpcStatics += s.IsFallback ? 1 : s.BoneStatics.Count;
         log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, {npcCollisionStates.Count} NPCs ({totalNpcStatics} collision volumes), ground={groundY:F3}");
 
+        // Initialize weapon drop physics
+        weaponMainHandBody = null;
+        weaponOffHandBody = null;
+        weaponMainHandBoneIndex = -1;
+        weaponOffHandBoneIndex = -1;
+        if (config.RagdollWeaponDrop)
+            InitializeWeaponDrop(skel, pose);
+
         // Initialize hair physics
         if (config.RagdollHairPhysics && kaoBodyBoneIndex >= 0)
         {
@@ -1036,6 +1064,114 @@ public unsafe class RagdollController : IDisposable
         }
 
         return ragdollBones.Count > 0;
+    }
+
+    private void InitializeWeaponDrop(SkeletonAccess skel, FFXIVClientStructs.Havok.Animation.Rig.hkaPose* pose)
+    {
+        if (simulation == null) return;
+
+        const float weaponRadius = 0.025f;
+        const float weaponHalfLength = 0.4f;
+        const float weaponMass = 1.5f;
+        var weaponShape = new Capsule(weaponRadius, weaponHalfLength * 2f);
+        var weaponShapeIndex = simulation.Shapes.Add(weaponShape);
+        var weaponInertia = weaponShape.ComputeInertia(weaponMass);
+
+        weaponMainHandBody = TryCreateWeaponBody(skel, pose, WeaponMainHandBones, "j_te_r",
+            weaponShapeIndex, weaponInertia, weaponHalfLength,
+            out weaponMainHandBoneIndex, out weaponMainHandCapsuleToBone, out weaponMainHandSegHalf);
+
+        weaponOffHandBody = TryCreateWeaponBody(skel, pose, WeaponOffHandBones, "j_te_l",
+            weaponShapeIndex, weaponInertia, weaponHalfLength,
+            out weaponOffHandBoneIndex, out weaponOffHandCapsuleToBone, out weaponOffHandSegHalf);
+
+        var count = (weaponMainHandBody.HasValue ? 1 : 0) + (weaponOffHandBody.HasValue ? 1 : 0);
+        if (count > 0)
+        {
+            ForceWeaponVisible();
+            log.Info($"RagdollController: Weapon drop initialized — {count} weapon(s)");
+        }
+    }
+
+    private BodyHandle? TryCreateWeaponBody(SkeletonAccess skel, FFXIVClientStructs.Havok.Animation.Rig.hkaPose* pose,
+        string[] boneCandidates, string handBoneName, TypedIndex shapeIndex, BodyInertia inertia, float segHalf,
+        out int boneIndex, out Quaternion capsuleToBone, out float segHalfOut)
+    {
+        boneIndex = -1;
+        capsuleToBone = Quaternion.Identity;
+        segHalfOut = segHalf;
+
+        foreach (var name in boneCandidates)
+        {
+            var idx = boneService.ResolveBoneIndex(skel, name);
+            if (idx >= 0) { boneIndex = idx; break; }
+        }
+        if (boneIndex < 0) return null;
+
+        ref var mt = ref pose->ModelPose.Data[boneIndex];
+        var boneWorldPos = ModelToWorld(new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z));
+        var boneWorldRot = ModelRotToWorld(new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W));
+        capsuleToBone = Quaternion.Normalize(Quaternion.Inverse(boneWorldRot) * boneWorldRot);
+
+        var initVelocity = new BodyVelocity();
+        foreach (var rb in ragdollBones)
+            if (rb.Name == handBoneName)
+            {
+                var h = simulation!.Bodies.GetBodyReference(rb.BodyHandle);
+                initVelocity.Linear = h.Velocity.Linear;
+                initVelocity.Angular = h.Velocity.Angular;
+                break;
+            }
+
+        var rng = new Random();
+        initVelocity.Linear += new Vector3((float)(rng.NextDouble()-0.5)*0.5f, (float)rng.NextDouble()*0.3f, (float)(rng.NextDouble()-0.5)*0.5f);
+        initVelocity.Angular += new Vector3((float)(rng.NextDouble()-0.5)*4f, (float)(rng.NextDouble()-0.5)*2f, (float)(rng.NextDouble()-0.5)*4f);
+
+        var handle = simulation!.Bodies.Add(BodyDescription.CreateDynamic(
+            new RigidPose(boneWorldPos, boneWorldRot), initVelocity, inertia,
+            new CollidableDescription(shapeIndex, 0.04f), new BodyActivityDescription(0.01f)));
+
+        log.Info($"RagdollController: Weapon body created at ({boneWorldPos.X:F2},{boneWorldPos.Y:F2},{boneWorldPos.Z:F2})");
+        return handle;
+    }
+
+    private void WriteWeaponBoneTransforms(SkeletonAccess skel, BoneModificationResult result)
+    {
+        if (simulation == null) return;
+        bool hasWeapon = false;
+
+        if (weaponMainHandBody.HasValue && weaponMainHandBoneIndex >= 0)
+        {
+            WriteWeaponBone(skel, result, weaponMainHandBody.Value, weaponMainHandBoneIndex, weaponMainHandCapsuleToBone);
+            hasWeapon = true;
+        }
+        if (weaponOffHandBody.HasValue && weaponOffHandBoneIndex >= 0)
+        {
+            WriteWeaponBone(skel, result, weaponOffHandBody.Value, weaponOffHandBoneIndex, weaponOffHandCapsuleToBone);
+            hasWeapon = true;
+        }
+        if (hasWeapon) ForceWeaponVisible();
+    }
+
+    private void ForceWeaponVisible()
+    {
+        if (targetCharacterAddress == nint.Zero) return;
+        try
+        {
+            var character = (Character*)targetCharacterAddress;
+            character->DrawData.HideWeapons(false);
+            character->Timeline.IsWeaponDrawn = true;
+        }
+        catch { }
+    }
+
+    private void WriteWeaponBone(SkeletonAccess skel, BoneModificationResult result,
+        BodyHandle bodyHandle, int boneIdx, Quaternion capsuleToBone)
+    {
+        var bodyRef = simulation!.Bodies.GetBodyReference(bodyHandle);
+        var boneWorldRot = Quaternion.Normalize(bodyRef.Pose.Orientation * capsuleToBone);
+        boneService.WriteBoneTransform(skel, boneIdx,
+            WorldToModel(bodyRef.Pose.Position), WorldRotToModel(boneWorldRot), result);
     }
 
     /// <summary>
@@ -1343,6 +1479,9 @@ public unsafe class RagdollController : IDisposable
 
             boneService.WriteBoneTransform(skel, i, newPos, newRot, result);
         }
+
+        // Write weapon physics body transforms (after descendant propagation)
+        WriteWeaponBoneTransforms(skel, result);
 
         // Propagate j_kao changes to face/hair partial skeletons
         if (kaoBodyBoneIndex >= 0 && result.HasAccumulated[kaoBodyBoneIndex])

@@ -98,6 +98,8 @@ public class Configuration : IPluginConfiguration
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public bool RagdollNaturalPose { get; set; } = true; // AngularServo rest pose + anatomical limits (prevents hyperextension, guides settling)
     public float RagdollServoStrength { get; set; } = 1.0f; // Multiplier for AngularServo MaxForce (0 = disabled, higher = stiffer pose)
+    // Weapon drop physics
+    public bool RagdollWeaponDrop { get; set; } = true; // Weapon detaches and falls on death (uses battle/dead instead of play-dead)
     // Hair physics
     public bool RagdollHairPhysics { get; set; } = false;
     public float RagdollHairGravityStrength { get; set; } = 0.5f;
@@ -125,7 +127,7 @@ public class Configuration : IPluginConfiguration
     public bool ActiveCameraPreventFade { get; set; } = false;
 
     // Skill VFX on combat actions (cast circles, impact particles)
-    public bool EnableSkillVfx { get; set; } = true;
+    public bool EnableSkillVfx { get; set; } = false;
 
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
