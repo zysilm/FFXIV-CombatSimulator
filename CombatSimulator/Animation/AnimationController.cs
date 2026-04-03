@@ -65,22 +65,18 @@ public unsafe class AnimationController : IDisposable
         string path, nint a2, nint a3, float a4, char a5, ushort a6, char a7);
 
     private ActorVfxCreateDelegate? actorVfxCreate;
+    private nint actorVfxCreateAddr;
 
     // ActorVfxRemove — removes a spawned VFX by pointer (same function VFXEditor uses)
     private delegate nint ActorVfxRemoveDelegate(nint vfx, char a2);
 
     private ActorVfxRemoveDelegate? actorVfxRemove;
+    private nint actorVfxRemoveAddr;
 
-    // Track active VFX instances for timed removal
-    private readonly List<ActiveVfx> activeVfxList = new();
-    private const float VfxLifetime = 2.0f; // seconds before auto-removal
-
-    private struct ActiveVfx
-    {
-        public nint Pointer;
-        public float TimeRemaining;
-        public uint OwnerEntityId; // entity the VFX is attached to (for validity check)
-    }
+    /// <summary>Resolved address of the native ActorVfxCreate function (0 if unresolved).</summary>
+    public nint ActorVfxCreateAddress => actorVfxCreateAddr;
+    /// <summary>Resolved address of the native ActorVfxRemove function (0 if unresolved).</summary>
+    public nint ActorVfxRemoveAddress => actorVfxRemoveAddr;
 
     // Default hit VFX path candidates (tried in order until one sticks)
     public static readonly string[] HitVfxCandidates =
@@ -116,6 +112,7 @@ public unsafe class AnimationController : IDisposable
         {
             var addr = sigScanner.ScanText(
                 "40 53 55 56 57 48 81 EC ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 0F B6 AC 24 ?? ?? ?? ?? 0F 28 F3 49 8B F8");
+            actorVfxCreateAddr = addr;
             actorVfxCreate = Marshal.GetDelegateForFunctionPointer<ActorVfxCreateDelegate>(addr);
             log.Info($"AnimationController: ActorVfxCreate resolved at 0x{addr:X}");
         }
@@ -132,6 +129,7 @@ public unsafe class AnimationController : IDisposable
             // Same signature + pointer chase as VFXEditor (Constants.ActorVfxRemoveSig)
             var tempAddr = sigScanner.ScanText("0F 11 48 10 48 8D 05") + 7;
             var addr = Marshal.ReadIntPtr(tempAddr + Marshal.ReadInt32(tempAddr) + 4);
+            actorVfxRemoveAddr = addr;
             actorVfxRemove = Marshal.GetDelegateForFunctionPointer<ActorVfxRemoveDelegate>(addr);
             log.Info($"AnimationController: ActorVfxRemove resolved at 0x{addr:X}");
         }
@@ -195,81 +193,14 @@ public unsafe class AnimationController : IDisposable
     public void Tick(float deltaTime)
     {
         commandExecutor.Tick(deltaTime);
-        TickActiveVfx(deltaTime);
-    }
-
-    private void TickActiveVfx(float deltaTime)
-    {
-        if (activeVfxList.Count == 0)
-            return;
-
-        for (int i = activeVfxList.Count - 1; i >= 0; i--)
-        {
-            var vfx = activeVfxList[i];
-            vfx.TimeRemaining -= deltaTime;
-            activeVfxList[i] = vfx;
-
-            if (vfx.TimeRemaining <= 0)
-            {
-                SafeRemoveVfx(vfx);
-                activeVfxList.RemoveAt(i);
-            }
-        }
     }
 
     /// <summary>
-    /// Immediately remove all tracked active VFX (called on death, combat stop, etc.).
+    /// No-op — VFX removal via actorVfxRemove is disabled because the same plugins
+    /// that hook actorVfxCreate also hook actorVfxRemove and crash on our NPC actors.
+    /// VFX expire naturally via their built-in .avfx durations.
     /// </summary>
-    public void RemoveAllActiveVfx()
-    {
-        if (actorVfxRemove != null)
-        {
-            foreach (var vfx in activeVfxList)
-                SafeRemoveVfx(vfx);
-        }
-        activeVfxList.Clear();
-    }
-
-    /// <summary>
-    /// Remove a VFX only if its owning actor still exists in the ObjectTable.
-    /// If the actor is gone, the game already cleaned up its VFX — calling remove
-    /// on a freed pointer would crash.
-    /// </summary>
-    private void SafeRemoveVfx(ActiveVfx vfx)
-    {
-        if (actorVfxRemove == null || vfx.Pointer == 0) return;
-
-        try
-        {
-            // Verify the owning actor still exists
-            if (!IsEntityAlive(vfx.OwnerEntityId))
-                return;
-
-            actorVfxRemove(vfx.Pointer, (char)1);
-        }
-        catch (Exception ex)
-        {
-            log.Warning(ex, $"Failed to remove VFX @{vfx.Pointer:X}");
-        }
-    }
-
-    /// <summary>
-    /// Check if an entity ID is still present in the ObjectTable (managed, safe).
-    /// </summary>
-    private bool IsEntityAlive(uint entityId)
-    {
-        // Player is always valid while logged in
-        var player = clientState.LocalPlayer;
-        if (player != null && player.EntityId == entityId)
-            return true;
-
-        foreach (var obj in Core.Services.ObjectTable)
-        {
-            if (obj.EntityId == entityId)
-                return true;
-        }
-        return false;
-    }
+    public void RemoveAllActiveVfx() { }
 
     /// <summary>
     /// Play attack animation + VFX + hit reaction via ActionEffectHandler.Receive().
@@ -300,8 +231,10 @@ public unsafe class AnimationController : IDisposable
                 }
             }
 
-            // Spawn skill VFX via ActorVfxCreate
-            SpawnActionVfx(request);
+            // Spawn skill VFX via ActorVfxCreate (off by default — other plugins that
+            // hook this function may crash when accessing our modified NPC actors)
+            if (config.EnableSkillVfx)
+                SpawnActionVfx(request);
 
             // Use ActionEffectHandler.Receive() for flytext + damage numbers
             CallActionEffectReceive(request);
@@ -399,22 +332,15 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
-    /// Spawn a VFX via ActorVfxCreate and track the pointer for timed removal.
+    /// Spawn a VFX via ActorVfxCreate. The VFX is NOT tracked for manual removal —
+    /// actorVfxRemove is hooked by the same plugins that hook actorVfxCreate and
+    /// crashes on our NPC actors. VFX expire naturally via their built-in .avfx duration.
     /// </summary>
     private void SpawnAndTrack(string path, nint attachTo, nint orientTo, uint ownerEntityId)
     {
         try
         {
-            var ptr = actorVfxCreate!(path, attachTo, orientTo, -1, (char)0, 0, (char)0);
-            if (ptr != 0)
-            {
-                activeVfxList.Add(new ActiveVfx
-                {
-                    Pointer = ptr,
-                    TimeRemaining = VfxLifetime,
-                    OwnerEntityId = ownerEntityId,
-                });
-            }
+            actorVfxCreate!(path, attachTo, orientTo, -1, (char)0, 0, (char)0);
         }
         catch (Exception ex)
         {

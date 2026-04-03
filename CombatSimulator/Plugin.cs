@@ -41,9 +41,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly DeathCamController deathCamController;
     private readonly ActiveCameraController activeCameraController;
     private readonly Dev.VictorySequenceController victorySequenceController;
+    private readonly HookSafetyChecker hookSafetyChecker;
     private readonly MainWindow mainWindow;
     private readonly HpBarOverlay hpBarOverlay;
     private readonly CombatLogWindow combatLogWindow;
+    private bool hookSafetyScanned;
 
     public CombatSimulatorPlugin(
         IDalamudPluginInterface pluginInterface,
@@ -97,6 +99,20 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             victorySequenceController);
         npcAiController = new NpcAiController(combatEngine, animationController, movementBlockHook, clientState, config, log);
 
+        // Hook safety checker — register native functions we CALL (not hook) that other plugins may hook.
+        // We check for JMP detours at each address to detect third-party hooks.
+        hookSafetyChecker = new HookSafetyChecker(pluginInterface, log);
+        // expectedFirstByte from each function's signature pattern (fallback if JMP pattern is unrecognized)
+        hookSafetyChecker.Register("ActorVfxCreate",
+            "Spawns VFX on actors. Hooked by VFXEditor, RotationSolver.",
+            animationController.ActorVfxCreateAddress, expectedFirstByte: 0x40); // sig: "40 53 55 56 57..."
+        hookSafetyChecker.Register("ActorVfxRemove",
+            "Removes VFX from actors. Hooked by VFX-related plugins.",
+            animationController.ActorVfxRemoveAddress); // resolved via pointer chase — no expected byte
+        hookSafetyChecker.Register("ActionEffectHandler.Receive",
+            "Processes combat effects (damage, flytext, animations). Hooked by ACT, combat log plugins.",
+            (nint)FFXIVClientStructs.FFXIV.Client.Game.Character.ActionEffectHandler.MemberFunctionPointers.Receive);
+
         // Safety — enable hooks immediately; they gate on internal state
         useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, config, clientState, log);
         useActionHook.Enable();
@@ -107,7 +123,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             activeCameraController.SetActive(true);
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, ragdollController, deathCamController, activeCameraController, clientState, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
 
@@ -243,6 +259,13 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     {
         try
         {
+            // Scan for hook conflicts once after all plugins have loaded
+            if (!hookSafetyScanned)
+            {
+                hookSafetyScanned = true;
+                hookSafetyChecker.Scan();
+            }
+
             // Validate selected NPCs still exist
             npcSelector.Tick();
 

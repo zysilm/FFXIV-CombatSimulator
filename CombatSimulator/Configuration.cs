@@ -126,6 +126,9 @@ public class Configuration : IPluginConfiguration
     public float ActiveCameraMinZoomDistance { get; set; } = 1.0f;
     public bool ActiveCameraPreventFade { get; set; } = false;
 
+    // Skill VFX on combat actions (cast circles, impact particles)
+    public bool EnableSkillVfx { get; set; } = true;
+
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
     public bool EnableHitVfx { get; set; } = true;
