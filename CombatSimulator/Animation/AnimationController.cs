@@ -60,6 +60,12 @@ public unsafe class AnimationController : IDisposable
     private ushort playDeadIntroTimeline;
     private bool playDeadResolved;
 
+    // Battle dead ActionTimeline ID (resolved from ActionTimeline sheet, key "battle/dead")
+    // Used instead of play-dead emote when ragdoll weapon drop is enabled,
+    // because play-dead sheathes weapons and the game engine fights visibility overrides.
+    private ushort battleDeadTimeline;
+    private bool battleDeadResolved;
+
     // ActorVfxCreate — spawns a .avfx particle effect attached to an actor
     private delegate nint ActorVfxCreateDelegate(
         string path, nint a2, nint a3, float a4, char a5, ushort a6, char a7);
@@ -100,6 +106,7 @@ public unsafe class AnimationController : IDisposable
         this.emotePlayer = new EmoteTimelinePlayer(log);
 
         ResolvePlayDeadTimelines(dataManager);
+        ResolveBattleDeadTimeline(dataManager);
         ResolveActorVfxCreate(sigScanner);
         ResolveActorVfxRemove(sigScanner);
 
@@ -187,6 +194,33 @@ public unsafe class AnimationController : IDisposable
         catch (Exception ex)
         {
             log.Error(ex, "AnimationController: Failed to resolve Play Dead emote timelines.");
+        }
+    }
+
+    private void ResolveBattleDeadTimeline(IDataManager dataManager)
+    {
+        try
+        {
+            var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ActionTimeline>();
+            if (sheet == null) return;
+
+            foreach (var row in sheet)
+            {
+                var key = row.Key.ToString();
+                if (key == "battle/dead")
+                {
+                    battleDeadTimeline = (ushort)row.RowId;
+                    battleDeadResolved = true;
+                    log.Info($"AnimationController: Resolved 'battle/dead' ActionTimeline → id={battleDeadTimeline}");
+                    return;
+                }
+            }
+
+            log.Warning("AnimationController: Could not find 'battle/dead' ActionTimeline.");
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "AnimationController: Failed to resolve battle/dead timeline.");
         }
     }
 
@@ -541,6 +575,9 @@ public unsafe class AnimationController : IDisposable
     /// <summary>
     /// Play death animation on the player character.
     /// If a custom command is configured, uses that. Otherwise uses BypassEmote-style timeline.
+    /// When ragdoll weapon drop is enabled, uses battle/dead ActionTimeline via BaseOverride
+    /// instead of the play-dead emote — play-dead sheathes weapons and the game engine
+    /// actively fights any attempt to keep them visible.
     /// </summary>
     public void PlayPlayerDeath()
     {
@@ -555,16 +592,24 @@ public unsafe class AnimationController : IDisposable
                 return;
             }
 
-            // Use BypassEmote-style timeline (no emote unlock needed)
+            var player = clientState.LocalPlayer;
+            if (player == null) return;
+            var character = (Character*)player.Address;
+
+            // When weapon drop is enabled, use battle/dead ActionTimeline instead of
+            // play-dead emote. Battle death keeps weapons drawn (no sheathing).
+            if (config.RagdollWeaponDrop && battleDeadResolved)
+            {
+                character->Timeline.BaseOverride = battleDeadTimeline;
+                log.Info($"Player death via battle/dead timeline ({battleDeadTimeline}).");
+                return;
+            }
+
+            // Default: play-dead emote (may sheath weapons)
             if (playDeadResolved)
             {
-                var player = clientState.LocalPlayer;
-                if (player != null)
-                {
-                    var character = (Character*)player.Address;
-                    emotePlayer.PlayLoopedEmote(character, playDeadLoopTimeline, playDeadIntroTimeline);
-                    log.Info("Player death emote (timeline) triggered.");
-                }
+                emotePlayer.PlayLoopedEmote(character, playDeadLoopTimeline, playDeadIntroTimeline);
+                log.Info("Player death emote (timeline) triggered.");
             }
         }
         catch (Exception ex)
