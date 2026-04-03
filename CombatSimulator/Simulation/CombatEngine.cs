@@ -549,7 +549,7 @@ public class CombatEngine : IDisposable
         return result;
     }
 
-    private unsafe void TriggerActionEffect(
+    private void TriggerActionEffect(
         SimulatedEntityState source,
         SimulatedEntityState target,
         ActionData actionData,
@@ -562,25 +562,6 @@ public class CombatEngine : IDisposable
 
             bool isRanged = actionData.DamageType == SimDamageType.Magical ||
                             actionData.Range > 5.0f;
-
-            // Resolve target address (avoids ObjectTable lookup issues with fabricated entity IDs)
-            nint targetAddress = 0;
-            if (target.IsPlayer)
-            {
-                var player = clientState.LocalPlayer;
-                if (player != null) targetAddress = player.Address;
-            }
-            else
-            {
-                foreach (var npc in npcSelector.SelectedNpcs)
-                {
-                    if (npc.SimulatedEntityId == target.EntityId && npc.BattleChara != null)
-                    {
-                        targetAddress = (nint)npc.BattleChara;
-                        break;
-                    }
-                }
-            }
 
             animationController.PlayActionEffect(new ActionEffectRequest
             {
@@ -600,7 +581,6 @@ public class CombatEngine : IDisposable
                     new TargetEffect
                     {
                         TargetId = target.EntityId,
-                        TargetAddress = targetAddress,
                         Damage = dmgResult.Damage,
                         IsCritical = dmgResult.IsCritical,
                         IsDirectHit = dmgResult.IsDirectHit,

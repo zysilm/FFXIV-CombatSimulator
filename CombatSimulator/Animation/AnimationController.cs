@@ -36,7 +36,6 @@ public class ActionEffectRequest
 public class TargetEffect
 {
     public ulong TargetId { get; set; }
-    public nint TargetAddress { get; set; }
     public int Damage { get; set; }
     public int Healing { get; set; }
     public bool IsCritical { get; set; }
@@ -80,6 +79,7 @@ public unsafe class AnimationController : IDisposable
     {
         public nint Pointer;
         public float TimeRemaining;
+        public uint OwnerEntityId; // entity the VFX is attached to (for validity check)
     }
 
     // Default hit VFX path candidates (tried in order until one sticks)
@@ -200,7 +200,7 @@ public unsafe class AnimationController : IDisposable
 
     private void TickActiveVfx(float deltaTime)
     {
-        if (actorVfxRemove == null || activeVfxList.Count == 0)
+        if (activeVfxList.Count == 0)
             return;
 
         for (int i = activeVfxList.Count - 1; i >= 0; i--)
@@ -211,14 +211,7 @@ public unsafe class AnimationController : IDisposable
 
             if (vfx.TimeRemaining <= 0)
             {
-                try
-                {
-                    actorVfxRemove(vfx.Pointer, (char)1);
-                }
-                catch (Exception ex)
-                {
-                    log.Warning(ex, $"Failed to remove VFX @{vfx.Pointer:X}");
-                }
+                SafeRemoveVfx(vfx);
                 activeVfxList.RemoveAt(i);
             }
         }
@@ -229,24 +222,53 @@ public unsafe class AnimationController : IDisposable
     /// </summary>
     public void RemoveAllActiveVfx()
     {
-        if (actorVfxRemove == null)
+        if (actorVfxRemove != null)
         {
-            activeVfxList.Clear();
-            return;
-        }
-
-        foreach (var vfx in activeVfxList)
-        {
-            try
-            {
-                actorVfxRemove(vfx.Pointer, (char)1);
-            }
-            catch (Exception ex)
-            {
-                log.Warning(ex, $"Failed to remove VFX @{vfx.Pointer:X}");
-            }
+            foreach (var vfx in activeVfxList)
+                SafeRemoveVfx(vfx);
         }
         activeVfxList.Clear();
+    }
+
+    /// <summary>
+    /// Remove a VFX only if its owning actor still exists in the ObjectTable.
+    /// If the actor is gone, the game already cleaned up its VFX — calling remove
+    /// on a freed pointer would crash.
+    /// </summary>
+    private void SafeRemoveVfx(ActiveVfx vfx)
+    {
+        if (actorVfxRemove == null || vfx.Pointer == 0) return;
+
+        try
+        {
+            // Verify the owning actor still exists
+            if (!IsEntityAlive(vfx.OwnerEntityId))
+                return;
+
+            actorVfxRemove(vfx.Pointer, (char)1);
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"Failed to remove VFX @{vfx.Pointer:X}");
+        }
+    }
+
+    /// <summary>
+    /// Check if an entity ID is still present in the ObjectTable (managed, safe).
+    /// </summary>
+    private bool IsEntityAlive(uint entityId)
+    {
+        // Player is always valid while logged in
+        var player = clientState.LocalPlayer;
+        if (player != null && player.EntityId == entityId)
+            return true;
+
+        foreach (var obj in Core.Services.ObjectTable)
+        {
+            if (obj.EntityId == entityId)
+                return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -292,9 +314,8 @@ public unsafe class AnimationController : IDisposable
 
     /// <summary>
     /// Spawn action-specific VFX using paths extracted from Lumina data + TMB files.
-    /// Caster VFX (from AnimationEnd TMB): spawned on caster, oriented toward first target.
-    /// Target VFX (from ActionTimelineHit TMB): spawned on target, oriented from caster.
-    /// All VFX are tracked and auto-removed after VfxLifetime seconds.
+    /// All actor addresses are resolved via managed ObjectTable at the moment of use
+    /// to prevent stale pointer crashes.
     /// </summary>
     private void SpawnActionVfx(ActionEffectRequest request)
     {
@@ -302,61 +323,49 @@ public unsafe class AnimationController : IDisposable
 
         try
         {
-            // Resolve caster address
-            nint casterAddr = 0;
-            if (request.IsSourcePlayer)
-            {
-                var player = clientState.LocalPlayer;
-                if (player != null) casterAddr = player.Address;
-            }
-            else
-            {
-                Character* casterPtr = FindCharacter(request.SourceEntityId, false);
-                if (casterPtr != null) casterAddr = (nint)casterPtr;
-            }
+            // Resolve caster address via managed ObjectTable (fresh lookup, never cached)
+            var (casterAddr, casterEntityId) = ResolveActorAddress(request.SourceEntityId, request.IsSourcePlayer);
+            if (casterAddr == 0) return;
 
-            // Resolve first target address for orientation
+            // Resolve first target for orientation
             nint firstTargetAddr = 0;
+            uint firstTargetEntityId = 0;
             if (request.Targets.Count > 0)
-                firstTargetAddr = request.Targets[0].TargetAddress;
+            {
+                (firstTargetAddr, firstTargetEntityId) = ResolveActorAddress((uint)request.Targets[0].TargetId, false);
+            }
 
             // Spawn caster VFX (cast circle, skill effects from AnimationEnd TMB)
-            // a2=caster (VFX attaches here), a3=target (orientation/direction)
-            if (casterAddr != 0)
-            {
-                nint orientAddr = firstTargetAddr != 0 ? firstTargetAddr : casterAddr;
+            nint orientAddr = firstTargetAddr != 0 ? firstTargetAddr : casterAddr;
 
-                if (!string.IsNullOrEmpty(request.CastVfxPath))
-                    SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, "Cast");
+            if (!string.IsNullOrEmpty(request.CastVfxPath))
+                SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, casterEntityId);
 
-                if (!string.IsNullOrEmpty(request.StartVfxPath))
-                    SpawnAndTrack(request.StartVfxPath, casterAddr, orientAddr, "Start");
+            if (!string.IsNullOrEmpty(request.StartVfxPath))
+                SpawnAndTrack(request.StartVfxPath, casterAddr, orientAddr, casterEntityId);
 
-                foreach (var path in request.CasterVfxPaths)
-                    SpawnAndTrack(path, casterAddr, orientAddr, "CasterTMB");
-            }
+            foreach (var path in request.CasterVfxPaths)
+                SpawnAndTrack(path, casterAddr, orientAddr, casterEntityId);
 
             // Spawn target VFX (hit/impact effects from ActionTimelineHit TMB)
-            // a2=target (VFX attaches here), a3=caster (direction VFX comes from)
             foreach (var target in request.Targets)
             {
                 if (target.Damage <= 0 && target.Healing <= 0) continue;
 
-                nint targetAddr = target.TargetAddress;
+                // Fresh resolve for each target
+                var (targetAddr, targetEntityId) = ResolveActorAddress((uint)target.TargetId, false);
                 if (targetAddr == 0) continue;
-
-                nint sourceAddr = casterAddr != 0 ? casterAddr : targetAddr;
 
                 if (request.TargetVfxPaths.Count > 0)
                 {
                     foreach (var path in request.TargetVfxPaths)
-                        SpawnAndTrack(path, targetAddr, sourceAddr, "TargetTMB");
+                        SpawnAndTrack(path, targetAddr, casterAddr, targetEntityId);
                 }
                 else if (config.EnableHitVfx)
                 {
                     var vfxPath = config.HitVfxPath;
                     if (!string.IsNullOrWhiteSpace(vfxPath))
-                        SpawnAndTrack(vfxPath, targetAddr, sourceAddr, "Fallback");
+                        SpawnAndTrack(vfxPath, targetAddr, casterAddr, targetEntityId);
                 }
             }
         }
@@ -367,15 +376,49 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
+    /// Resolve an entity ID to its current address via managed Dalamud APIs.
+    /// Returns (0, 0) if the entity is no longer present.
+    /// </summary>
+    private (nint address, uint entityId) ResolveActorAddress(uint entityId, bool isPlayer)
+    {
+        if (isPlayer)
+        {
+            var player = clientState.LocalPlayer;
+            if (player != null)
+                return (player.Address, player.EntityId);
+        }
+        else
+        {
+            foreach (var obj in Core.Services.ObjectTable)
+            {
+                if (obj.EntityId == entityId)
+                    return (obj.Address, obj.EntityId);
+            }
+        }
+        return (0, 0);
+    }
+
+    /// <summary>
     /// Spawn a VFX via ActorVfxCreate and track the pointer for timed removal.
     /// </summary>
-    private void SpawnAndTrack(string path, nint attachTo, nint orientTo, string label)
+    private void SpawnAndTrack(string path, nint attachTo, nint orientTo, uint ownerEntityId)
     {
-        var ptr = actorVfxCreate!(path, attachTo, orientTo, -1, (char)0, 0, (char)0);
-        if (ptr != 0)
+        try
         {
-            activeVfxList.Add(new ActiveVfx { Pointer = ptr, TimeRemaining = VfxLifetime });
-            log.Info($"[VFX] {label}: {path} → @{ptr:X}");
+            var ptr = actorVfxCreate!(path, attachTo, orientTo, -1, (char)0, 0, (char)0);
+            if (ptr != 0)
+            {
+                activeVfxList.Add(new ActiveVfx
+                {
+                    Pointer = ptr,
+                    TimeRemaining = VfxLifetime,
+                    OwnerEntityId = ownerEntityId,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"[VFX] actorVfxCreate crashed for '{path}' — skipping");
         }
     }
 
