@@ -883,33 +883,33 @@ public class MainWindow : IDisposable
                 {
                     var jt = bone.JointType;
                     if (ImGui.Combo($"Joint Type{id}", ref jt, jointTypes, jointTypes.Length))
-                    { bone.JointType = jt; changed = true; }
+                    { bone.JointType = jt; changed = true; EditingBoneName = bone.Name; }
 
                     var radius = bone.CapsuleRadius;
                     if (ImGui.SliderFloat($"Capsule Radius{id}", ref radius, 0.01f, 0.3f, "%.3f"))
-                    { bone.CapsuleRadius = radius; changed = true; }
+                    { bone.CapsuleRadius = radius; changed = true; EditingBoneName = bone.Name; }
 
                     var halfLen = bone.CapsuleHalfLength;
                     if (ImGui.SliderFloat($"Capsule Half-Length{id}", ref halfLen, 0.0f, 0.3f, "%.3f"))
-                    { bone.CapsuleHalfLength = halfLen; changed = true; }
+                    { bone.CapsuleHalfLength = halfLen; changed = true; EditingBoneName = bone.Name; }
 
                     var mass = bone.Mass;
                     if (ImGui.SliderFloat($"Mass{id}", ref mass, 0.1f, 15.0f, "%.1f"))
-                    { bone.Mass = mass; changed = true; }
+                    { bone.Mass = mass; changed = true; EditingBoneName = bone.Name; }
 
                     var swing = bone.SwingLimit;
                     if (ImGui.SliderFloat($"Swing Limit (rad){id}", ref swing, 0.0f, MathF.PI, "%.2f"))
-                    { bone.SwingLimit = swing; changed = true; }
+                    { bone.SwingLimit = swing; changed = true; EditingBoneName = bone.Name; }
 
                     if (bone.JointType == 0)
                     {
                         var twistMin = bone.TwistMinAngle;
                         if (ImGui.SliderFloat($"Twist Min (rad){id}", ref twistMin, -MathF.PI, 0f, "%.2f"))
-                        { bone.TwistMinAngle = twistMin; changed = true; }
+                        { bone.TwistMinAngle = twistMin; changed = true; EditingBoneName = bone.Name; }
 
                         var twistMax = bone.TwistMaxAngle;
                         if (ImGui.SliderFloat($"Twist Max (rad){id}", ref twistMax, 0f, MathF.PI, "%.2f"))
-                        { bone.TwistMaxAngle = twistMax; changed = true; }
+                        { bone.TwistMaxAngle = twistMax; changed = true; EditingBoneName = bone.Name; }
                     }
 
                     // Reset this bone to its default
@@ -927,6 +927,7 @@ public class MainWindow : IDisposable
                             bone.TwistMaxAngle = def.TwistMaxAngle;
                             bone.Enabled = def.Enabled;
                             changed = true;
+                            EditingBoneName = bone.Name;
                         }
                     }
                 }
