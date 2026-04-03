@@ -32,22 +32,9 @@ public class RagdollDebugOverlay
 
     public void Draw()
     {
-        if (!config.RagdollDebugOverlay) return;
+        if (!config.RagdollDebugOverlay || !ragdollController.IsActive) return;
 
-        List<RagdollController.DebugCapsule> capsules;
-
-        if (ragdollController.IsActive)
-        {
-            capsules = ragdollController.GetDebugCapsules();
-        }
-        else
-        {
-            // Read from live skeleton pose when ragdoll is off
-            var player = clientState.LocalPlayer;
-            if (player == null) return;
-            capsules = ragdollController.GetDebugCapsulesFromSkeleton(player.Address);
-        }
-
+        var capsules = ragdollController.GetDebugCapsules();
         if (capsules.Count == 0) return;
 
         var drawList = ImGui.GetForegroundDrawList();

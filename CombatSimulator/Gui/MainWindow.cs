@@ -832,7 +832,7 @@ public class MainWindow : IDisposable
 
         var jointTypes = new[] { "Ball", "Hinge" };
         var changed = false;
-        EditingBoneName = null;
+        // EditingBoneName persists — only updated on value/toggle change
 
         for (int i = 0; i < config.RagdollBoneConfigs.Count; i++)
         {
@@ -845,6 +845,7 @@ public class MainWindow : IDisposable
             {
                 bone.Enabled = enabled;
                 changed = true;
+                EditingBoneName = bone.Name;
                 // Auto-reactivate so overlay updates immediately
                 if (ragdollController.IsActive)
                 {
