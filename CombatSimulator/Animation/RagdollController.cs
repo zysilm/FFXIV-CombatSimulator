@@ -645,7 +645,10 @@ public unsafe class RagdollController : IDisposable
             boneIdxToBodyHandle[rb.BoneIndex] = rb.BodyHandle;
 
         var jointSpring = new SpringSettings(30, 1);
-        var limitSpring = new SpringSettings(15, 1);
+        var naturalPose = config.RagdollNaturalPose;
+        var limitSpring = new SpringSettings(naturalPose ? 10 : 15, 1);
+        var servoSpring = new SpringSettings(2f, 1f); // gentle rest-pose bias
+        var servoStrength = config.RagdollServoStrength;
         var motorDamping = 0.01f;
 
         for (int i = 0; i < ragdollBones.Count; i++)
@@ -750,11 +753,7 @@ public unsafe class RagdollController : IDisposable
                     var swingAxisLocalChild = Vector3.Normalize(Vector3.Transform(
                         segDirWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
 
-                    // When tight knee limits are enabled, use a reduced swing angle
-                    // that locks joints near their init pose (guided bend mode).
                     var effectiveSwingLimit = boneDef.SwingLimit;
-                    if (config.RagdollTightKneeLimits)
-                        effectiveSwingLimit = MathF.Min(effectiveSwingLimit, 0.5f);
 
                     simulation.Solver.Add(rb.BodyHandle, parentHandle,
                         new SwingLimit
@@ -780,21 +779,22 @@ public unsafe class RagdollController : IDisposable
                     var twistBasisLocalParent = Quaternion.Normalize(
                         Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis);
 
-                    // Min = -0.1 (allow tiny backward motion beyond init)
-                    // Max = init angle + 0.1 (block further hyperextension)
+                    // Min = near zero (block hyperextension). Max = allow full flexion.
                     // At init: angle ≈ initAngle. Flexion moves toward 0 (allowed).
                     // Hyperextension moves beyond initAngle (blocked by Max).
+                    var twistMin = naturalPose ? -0.03f : -0.1f;
+                    var twistMax = initAngle + 0.15f;
                     simulation.Solver.Add(rb.BodyHandle, parentHandle,
                         new TwistLimit
                         {
                             LocalBasisA = twistBasisLocalChild,
                             LocalBasisB = twistBasisLocalParent,
-                            MinimumAngle = -0.1f,
-                            MaximumAngle = initAngle + 0.15f,
+                            MinimumAngle = twistMin,
+                            MaximumAngle = twistMax,
                             SpringSettings = limitSpring,
                         });
 
-                    log.Info($"[Ragdoll Constraint] '{rb.Name}' TwistLimit: initAngle={initAngle:F2}rad min={-0.1f:F2} max={initAngle + 0.15f:F2}");
+                    log.Info($"[Ragdoll Constraint] '{rb.Name}' TwistLimit: initAngle={initAngle:F2}rad min={twistMin:F2} max={twistMax:F2}");
                 }
 
                 log.Info($"[Ragdoll Constraint] '{rb.Name}' Hinge axis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3})");
@@ -818,12 +818,18 @@ public unsafe class RagdollController : IDisposable
                     var axisParentLocal = Vector3.Transform(segDirWorld,
                         Quaternion.Inverse(parentBodyRef.Pose.Orientation));
 
+                    // Reduce hip cone when naturalPose is active (1.3→1.0 rad)
+                    var effectiveSwing = boneDef.SwingLimit;
+                    bool isHip = rb.Name is "j_asi_a_l" or "j_asi_a_r";
+                    if (naturalPose && isHip)
+                        effectiveSwing = MathF.Min(effectiveSwing, 1.0f);
+
                     simulation.Solver.Add(rb.BodyHandle, parentHandle,
                         new SwingLimit
                         {
                             AxisLocalA = axisChildLocal,
                             AxisLocalB = axisParentLocal,
-                            MaximumSwingAngle = boneDef.SwingLimit,
+                            MaximumSwingAngle = effectiveSwing,
                             SpringSettings = limitSpring,
                         });
                 }
@@ -850,15 +856,43 @@ public unsafe class RagdollController : IDisposable
                 }
             }
 
-            // --- AngularMotor: damp relative angular velocity ---
-            // Damping 0.01 matches BEPU RagdollDemo. Higher values (like 1.0) make joints
-            // almost rigid, preventing natural articulation and causing uniform-fall behavior.
-            simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                new AngularMotor
-                {
-                    TargetVelocityLocalA = Vector3.Zero,
-                    Settings = new MotorSettings(float.MaxValue, motorDamping),
-                });
+            // --- Angular constraint: servo (rest pose targeting) or motor (velocity damping) ---
+            if (naturalPose && servoStrength > 0)
+            {
+                // AngularServo: targets the init relative rotation (death pose) with weak springs.
+                // This gently guides joints toward a natural resting position without fighting
+                // gravity during the active fall. Per-joint MaxForce scales by body role:
+                // spine/hip need more force (support more mass), extremities need less.
+                bool isSpine = rb.Name is "j_sebo_a" or "j_sebo_b" or "j_sebo_c" or "j_kubi" or "j_kao";
+                bool isHipBone = rb.Name is "j_asi_a_l" or "j_asi_a_r";
+                bool isKnee = rb.Name is "j_asi_b_l" or "j_asi_b_r";
+                bool isElbow = rb.Name is "j_ude_b_l" or "j_ude_b_r";
+
+                float baseForce = isSpine ? 20f : isHipBone ? 12f : isKnee ? 8f : isElbow ? 6f : 4f;
+                float maxForce = baseForce * servoStrength;
+
+                // Capture the current relative rotation as the rest pose target
+                var restRelativeRotation = Quaternion.Normalize(
+                    Quaternion.Inverse(parentBodyRef.Pose.Orientation) * childBodyRef.Pose.Orientation);
+
+                simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                    new AngularServo
+                    {
+                        TargetRelativeRotationLocalA = restRelativeRotation,
+                        ServoSettings = new ServoSettings(float.MaxValue, 0f, maxForce),
+                        SpringSettings = servoSpring,
+                    });
+            }
+            else
+            {
+                // Fallback: AngularMotor (velocity damping only, no pose targeting)
+                simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                    new AngularMotor
+                    {
+                        TargetVelocityLocalA = Vector3.Zero,
+                        Settings = new MotorSettings(float.MaxValue, motorDamping),
+                    });
+            }
         }
 
         // Build ragdoll bone index set for fast lookup during propagation

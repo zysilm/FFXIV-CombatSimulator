@@ -189,7 +189,8 @@ public class MainWindow : IDisposable
                     config.RagdollDamping = 0.97f;
                     config.RagdollSolverIterations = 8;
                     config.RagdollSelfCollision = true;
-                    config.RagdollTightKneeLimits = false;
+                    config.RagdollNaturalPose = true;
+                    config.RagdollServoStrength = 1.0f;
                     config.RagdollHairPhysics = false;
                     config.RagdollHairGravityStrength = 0.5f;
                     config.RagdollHairDamping = 0.92f;
@@ -1198,13 +1199,21 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Body parts collide with each other (arms vs torso, legs vs legs). Prevents clipping but may cause slight stretching. Takes effect on next ragdoll activation.");
 
-                var tightKnees = config.RagdollTightKneeLimits;
-                if (ImGui.Checkbox("Tight Knee Limits##ragdoll", ref tightKnees))
+                var naturalPose = config.RagdollNaturalPose;
+                if (ImGui.Checkbox("Natural Pose##ragdoll", ref naturalPose))
                 {
-                    config.RagdollTightKneeLimits = tightKnees;
+                    config.RagdollNaturalPose = naturalPose;
                     config.Save();
                 }
-                HelpMarker("Use tight swing limits on knees and elbows. Prevents hyperextension but reduces range of motion (guided bend). Takes effect on next ragdoll activation.");
+                HelpMarker("Use anatomical joint limits + angular servo motors that guide the ragdoll toward a natural resting pose. Prevents knee/elbow hyperextension, keeps hips from sticking up, and maintains spine curvature. Takes effect on next ragdoll activation.");
+
+                var servoStrength = config.RagdollServoStrength;
+                if (ImGui.SliderFloat("Servo Strength##ragdoll", ref servoStrength, 0.0f, 3.0f, "%.1fx"))
+                {
+                    config.RagdollServoStrength = servoStrength;
+                    config.Save();
+                }
+                HelpMarker("Multiplier for the angular servo force that pulls joints toward a natural rest pose. 0 = disabled (pure passive ragdoll), 1 = default, higher = stiffer/more guided settling. Requires Natural Pose enabled. Takes effect on next ragdoll activation.");
 
                 ImGui.Separator();
                 ImGui.Text("Hair Physics");
