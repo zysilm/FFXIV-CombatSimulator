@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation;
 using Dalamud.Bindings.ImGui;
@@ -8,7 +9,8 @@ namespace CombatSimulator.Gui;
 
 /// <summary>
 /// Renders ragdoll capsules and joint limits as a 3D wireframe overlay.
-/// Only draws enabled physics bones. Highlights the bone being edited in the UI.
+/// Works both when ragdoll is active (reads physics bodies) and inactive (reads skeleton pose).
+/// Highlights the bone being edited in the UI.
 /// </summary>
 public class RagdollDebugOverlay
 {
@@ -16,41 +18,58 @@ public class RagdollDebugOverlay
     private readonly MainWindow mainWindow;
     private readonly Configuration config;
     private readonly IGameGui gameGui;
+    private readonly IClientState clientState;
 
     public RagdollDebugOverlay(RagdollController ragdollController, MainWindow mainWindow,
-        Configuration config, IGameGui gameGui)
+        Configuration config, IGameGui gameGui, IClientState clientState)
     {
         this.ragdollController = ragdollController;
         this.mainWindow = mainWindow;
         this.config = config;
         this.gameGui = gameGui;
+        this.clientState = clientState;
     }
 
     public void Draw()
     {
-        if (!config.RagdollDebugOverlay || !ragdollController.IsActive) return;
+        if (!config.RagdollDebugOverlay) return;
+
+        List<RagdollController.DebugCapsule> capsules;
+
+        if (ragdollController.IsActive)
+        {
+            capsules = ragdollController.GetDebugCapsules();
+        }
+        else
+        {
+            // Read from live skeleton pose when ragdoll is off
+            var player = clientState.LocalPlayer;
+            if (player == null) return;
+            capsules = ragdollController.GetDebugCapsulesFromSkeleton(player.Address);
+        }
+
+        if (capsules.Count == 0) return;
 
         var drawList = ImGui.GetForegroundDrawList();
-        var capsules = ragdollController.GetDebugCapsules();
         var editingBone = mainWindow.EditingBoneName;
 
         foreach (var cap in capsules)
         {
-            var isEditing = cap.Name == editingBone;
+            var isEditing = editingBone != null && cap.Name == editingBone;
 
-            // Colors: bright for editing bone, visible but muted for others
-            float alpha = isEditing ? 1.0f : 0.7f;
-            float thickness = isEditing ? 2.5f : 1.2f;
+            // Colors: bright highlighted for editing, solid green for others
+            float alpha = isEditing ? 1.0f : 0.8f;
+            float thickness = isEditing ? 3.0f : 1.5f;
             var colorCapsule = ImGui.GetColorU32(isEditing
-                ? new Vector4(0.3f, 1f, 0.5f, alpha)
-                : new Vector4(0.15f, 0.6f, 0.25f, alpha));
+                ? new Vector4(1f, 1f, 0.2f, alpha)
+                : new Vector4(0.2f, 0.8f, 0.3f, alpha));
             var jointColor = ImGui.GetColorU32(
                 cap.Joint == RagdollController.JointType.Hinge
-                    ? new Vector4(1f, 0.6f, 0.2f, alpha)
-                    : new Vector4(0.4f, 0.6f, 1f, alpha));
+                    ? new Vector4(1f, 0.5f, 0.1f, alpha)
+                    : new Vector4(0.3f, 0.5f, 1f, alpha));
             var colorLabel = ImGui.GetColorU32(isEditing
-                ? new Vector4(1f, 1f, 0.3f, 1f)
-                : new Vector4(0.6f, 0.85f, 0.6f, 0.8f));
+                ? new Vector4(1f, 1f, 0.2f, 1f)
+                : new Vector4(0.7f, 0.9f, 0.7f, 0.9f));
 
             // Capsule axes
             var yAxis = Vector3.Transform(Vector3.UnitY, cap.Orientation);
@@ -77,12 +96,11 @@ public class RagdollDebugOverlay
             // Joint indicator
             DrawCircle3D(drawList, cap.Position, xAxis, zAxis, cap.Radius * 0.5f, jointColor, thickness + 0.5f);
 
-            // Swing limit cone
+            // Swing limit cone (editing bone only)
             if (cap.SwingLimit > 0.01f && isEditing)
             {
                 var coneRadius = MathF.Min(cap.HalfLength * MathF.Tan(cap.SwingLimit), 0.3f);
                 DrawCircle3D(drawList, top + yAxis * 0.05f, xAxis, zAxis, coneRadius, jointColor, 1.5f);
-                // Cone lines from center to cone edge
                 for (int i = 0; i < 4; i++)
                 {
                     float angle = i * MathF.PI / 2;

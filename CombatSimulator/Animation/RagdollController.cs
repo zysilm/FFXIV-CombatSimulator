@@ -126,6 +126,52 @@ public unsafe class RagdollController : IDisposable
     }
 
     /// <summary>
+    /// Get capsule positions from the live skeleton pose (for overlay when ragdoll is OFF).
+    /// Reads bone world positions from the character's current animation pose.
+    /// </summary>
+    public List<DebugCapsule> GetDebugCapsulesFromSkeleton(nint characterAddress)
+    {
+        var result = new List<DebugCapsule>();
+        var skelNullable = boneService.TryGetSkeleton(characterAddress);
+        if (skelNullable == null) return result;
+        var skel = skelNullable.Value;
+
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton == null) return result;
+        var skelPos = new Vector3(skeleton->Transform.Position.X, skeleton->Transform.Position.Y, skeleton->Transform.Position.Z);
+        var skelRot = new Quaternion(skeleton->Transform.Rotation.X, skeleton->Transform.Rotation.Y, skeleton->Transform.Rotation.Z, skeleton->Transform.Rotation.W);
+
+        var BoneDefs = GetBoneDefs();
+        var pose = skel.Pose;
+
+        foreach (var def in BoneDefs)
+        {
+            var idx = boneService.ResolveBoneIndex(skel, def.Name);
+            if (idx < 0 || idx >= skel.BoneCount) continue;
+
+            ref var mt = ref pose->ModelPose.Data[idx];
+            var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+            var modelRot = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
+
+            // Convert to world space
+            var worldPos = skelPos + Vector3.Transform(modelPos, skelRot);
+            var worldRot = Quaternion.Normalize(skelRot * modelRot);
+
+            result.Add(new DebugCapsule
+            {
+                Position = worldPos,
+                Orientation = worldRot,
+                Radius = def.CapsuleRadius,
+                HalfLength = def.CapsuleHalfLength,
+                Name = def.Name,
+                Joint = def.Joint,
+                SwingLimit = def.SwingLimit,
+            });
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Get effective bone definitions: from config if populated, otherwise defaults.
     /// Filters to enabled bones and computes physics parents.
     /// </summary>
