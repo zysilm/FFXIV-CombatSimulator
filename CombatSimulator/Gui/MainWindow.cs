@@ -42,6 +42,11 @@ public class MainWindow : IDisposable
     private int glamourerSelectedIndex = -1;
     private int glamourerResetSelectedIndex = -1;
 
+    // Skeleton bone cache for ragdoll advanced UI
+    private string[] skeletonBoneNames = Array.Empty<string>();
+    private Dictionary<string, string?> skeletonBoneParents = new();
+    private bool skeletonBonesLoaded;
+
     private static readonly string[] BehaviorNames = { "Training Dummy", "Basic Melee", "Basic Ranged", "Boss" };
 
     // Emote list cache for target victory dropdown
@@ -782,18 +787,30 @@ public class MainWindow : IDisposable
             ImGui.Spacing();
         }
 
-        // Initialize config from AllBoneDefaults if empty
+        // Read skeleton bones from player character (once, or on refresh)
+        if (!skeletonBonesLoaded)
+            RefreshSkeletonBones();
+
+        if (ImGui.Button("Refresh Bones"))
+            RefreshSkeletonBones();
+        ImGui.SameLine();
+        ImGui.TextDisabled($"{skeletonBoneNames.Length} bones in skeleton");
+        ImGui.Spacing();
+
+        // Populate config from C# defaults + skeleton if empty
         if (config.RagdollBoneConfigs.Count == 0)
-        {
-            foreach (var def in RagdollController.AllBoneDefaults)
-                config.RagdollBoneConfigs.Add(CloneBoneConfig(def));
-            config.Save();
-        }
+            PopulateBoneConfigsFromDefaults();
+
+        // Sync: add any skeleton bones not yet in config (new bones get disabled defaults)
+        SyncConfigWithSkeleton();
 
         if (ImGui.Button("Reset All to Defaults##boneconfigs"))
         {
+            // Clear JSON → GetBoneDefs falls back to C# DefaultBoneDefs
             config.RagdollBoneConfigs.Clear();
             config.Save();
+            // Re-populate UI from C# defaults
+            PopulateBoneConfigsFromDefaults();
             if (ragdollController.IsActive)
             {
                 var addr = ragdollController.TargetCharacterAddress;
@@ -821,7 +838,6 @@ public class MainWindow : IDisposable
         {
             var bone = config.RagdollBoneConfigs[i];
             var id = $"##{bone.Name}";
-            var desc = bone.Description ?? bone.Name;
 
             // Enable/disable checkbox
             var enabled = bone.Enabled;
@@ -829,6 +845,15 @@ public class MainWindow : IDisposable
             {
                 bone.Enabled = enabled;
                 changed = true;
+                // Auto-reactivate so overlay updates immediately
+                if (ragdollController.IsActive)
+                {
+                    config.Save();
+                    var addr = ragdollController.TargetCharacterAddress;
+                    ragdollController.Deactivate();
+                    if (addr != nint.Zero)
+                        ragdollController.Activate(addr);
+                }
             }
             ImGui.SameLine();
 
@@ -839,8 +864,8 @@ public class MainWindow : IDisposable
             ImGui.PushStyleColor(ImGuiCol.Text, headerColor);
 
             var headerLabel = bone.Enabled
-                ? $"{desc} ({(bone.JointType == 0 ? "Ball" : "Hinge")}){id}"
-                : $"{desc} (off){id}";
+                ? $"{bone.Name} ({(bone.JointType == 0 ? "Ball" : "Hinge")}){id}"
+                : $"{bone.Name} (off){id}";
 
             var isOpen = ImGui.CollapsingHeader(headerLabel);
             ImGui.PopStyleColor();
@@ -916,6 +941,105 @@ public class MainWindow : IDisposable
 
         if (changed)
             config.Save();
+    }
+
+    private unsafe void RefreshSkeletonBones()
+    {
+        skeletonBonesLoaded = true;
+        var player = clientState.LocalPlayer;
+        if (player == null) return;
+
+        var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;
+        if (gameObj->DrawObject == null) return;
+        var charBase = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)gameObj->DrawObject;
+        var skeleton = charBase->Skeleton;
+        if (skeleton == null || skeleton->PartialSkeletonCount < 1) return;
+        var partial = &skeleton->PartialSkeletons[0];
+        var pose = partial->GetHavokPose(0);
+        if (pose == null || pose->Skeleton == null) return;
+
+        var havokBones = pose->Skeleton->Bones;
+        var parentIndices = pose->Skeleton->ParentIndices;
+        var names = new List<string>();
+        var parents = new Dictionary<string, string?>();
+
+        for (int i = 0; i < havokBones.Length; i++)
+        {
+            var name = havokBones[i].Name.String;
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            names.Add(name);
+
+            string? parentName = null;
+            if (i < parentIndices.Length)
+            {
+                var pi = parentIndices[i];
+                if (pi >= 0 && pi < havokBones.Length)
+                    parentName = havokBones[pi].Name.String;
+            }
+            parents[name] = parentName;
+        }
+
+        skeletonBoneNames = names.ToArray();
+        skeletonBoneParents = parents;
+    }
+
+    /// <summary>Populate config from C# AllBoneDefaults (source of truth).</summary>
+    private void PopulateBoneConfigsFromDefaults()
+    {
+        config.RagdollBoneConfigs.Clear();
+        foreach (var def in RagdollController.AllBoneDefaults)
+            config.RagdollBoneConfigs.Add(CloneBoneConfig(def));
+        config.Save();
+    }
+
+    /// <summary>Add skeleton bones not yet in config. Never modifies existing entries.</summary>
+    private void SyncConfigWithSkeleton()
+    {
+        if (skeletonBoneNames.Length == 0) return;
+
+        var existing = new HashSet<string>();
+        foreach (var c in config.RagdollBoneConfigs)
+            existing.Add(c.Name);
+
+        bool added = false;
+        foreach (var boneName in skeletonBoneNames)
+        {
+            if (existing.Contains(boneName)) continue;
+
+            skeletonBoneParents.TryGetValue(boneName, out var skelParent);
+
+            // Check AllBoneDefaults for known defaults
+            RagdollBoneConfig? known = null;
+            foreach (var def in RagdollController.AllBoneDefaults)
+                if (def.Name == boneName) { known = CloneBoneConfig(def); break; }
+
+            if (known != null)
+            {
+                // Update skeleton parent from live data
+                known.SkeletonParent = skelParent;
+                config.RagdollBoneConfigs.Add(known);
+            }
+            else
+            {
+                // Unknown bone — safe disabled defaults
+                config.RagdollBoneConfigs.Add(new RagdollBoneConfig
+                {
+                    Name = boneName,
+                    SkeletonParent = skelParent,
+                    Enabled = false,
+                    CapsuleRadius = 0.03f,
+                    CapsuleHalfLength = 0.03f,
+                    Mass = 1.0f,
+                    SwingLimit = 0.3f,
+                    JointType = 0,
+                    TwistMinAngle = -0.2f,
+                    TwistMaxAngle = 0.2f,
+                });
+            }
+            added = true;
+        }
+
+        if (added) config.Save();
     }
 
     private static RagdollBoneConfig CloneBoneConfig(RagdollBoneConfig src)

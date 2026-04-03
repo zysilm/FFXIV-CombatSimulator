@@ -255,6 +255,11 @@ public unsafe class RagdollController : IDisposable
     /// </summary>
     public static RagdollBoneDef[] BuildBoneDefsFromConfigs(RagdollBoneConfig[] configs)
     {
+        // Build lookup of known skeleton parents from AllBoneDefaults (fallback)
+        var defaultParents = new Dictionary<string, string?>();
+        foreach (var d in AllBoneDefaults)
+            defaultParents[d.Name] = d.SkeletonParent;
+
         var enabledNames = new HashSet<string>();
         foreach (var c in configs)
             if (c.Enabled) enabledNames.Add(c.Name);
@@ -268,9 +273,12 @@ public unsafe class RagdollController : IDisposable
         {
             if (!c.Enabled) continue;
 
-            // Walk up skeleton tree to find nearest enabled parent
+            // Walk up skeleton tree to find nearest enabled parent.
+            // Use SkeletonParent from config, fall back to AllBoneDefaults if null.
             string? physicsParent = null;
-            var current = c.SkeletonParent;
+            var skelParent = c.SkeletonParent;
+            if (skelParent == null) defaultParents.TryGetValue(c.Name, out skelParent);
+            var current = skelParent;
             while (current != null)
             {
                 if (enabledNames.Contains(current))
@@ -278,8 +286,13 @@ public unsafe class RagdollController : IDisposable
                     physicsParent = current;
                     break;
                 }
-                physicsParent = null;
-                current = configByName.TryGetValue(current, out var parentConfig) ? parentConfig.SkeletonParent : null;
+                // Walk further up: check config, then default
+                string? nextParent = null;
+                if (configByName.TryGetValue(current, out var parentConfig))
+                    nextParent = parentConfig.SkeletonParent;
+                if (nextParent == null)
+                    defaultParents.TryGetValue(current, out nextParent);
+                current = nextParent;
             }
 
             result.Add(new RagdollBoneDef
