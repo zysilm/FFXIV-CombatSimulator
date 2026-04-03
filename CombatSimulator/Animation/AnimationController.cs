@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
+using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
@@ -72,6 +73,8 @@ public unsafe class AnimationController : IDisposable
 
     private ActorVfxCreateDelegate? actorVfxCreate;
     private nint actorVfxCreateAddr;
+    private Hook<ActorVfxCreateDelegate>? actorVfxCreateHook;
+    private bool vfxTrackingActive;
 
     // ActorVfxRemove — removes a spawned VFX by pointer (same function VFXEditor uses)
     private delegate nint ActorVfxRemoveDelegate(nint vfx, char a2);
@@ -107,6 +110,7 @@ public unsafe class AnimationController : IDisposable
         IClientState clientState,
         IDataManager dataManager,
         ISigScanner sigScanner,
+        IGameInteropProvider gameInterop,
         ChatCommandExecutor commandExecutor,
         Configuration config)
     {
@@ -118,13 +122,13 @@ public unsafe class AnimationController : IDisposable
 
         ResolvePlayDeadTimelines(dataManager);
         ResolveBattleDeadTimeline(dataManager);
-        ResolveActorVfxCreate(sigScanner);
+        ResolveActorVfxCreate(sigScanner, gameInterop);
         ResolveActorVfxRemove(sigScanner);
 
         log.Info("AnimationController: Initialized with ActionEffectHandler + emote timeline system.");
     }
 
-    private void ResolveActorVfxCreate(ISigScanner sigScanner)
+    private void ResolveActorVfxCreate(ISigScanner sigScanner, IGameInteropProvider gameInterop)
     {
         try
         {
@@ -132,12 +136,33 @@ public unsafe class AnimationController : IDisposable
                 "40 53 55 56 57 48 81 EC ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 0F B6 AC 24 ?? ?? ?? ?? 0F 28 F3 49 8B F8");
             actorVfxCreateAddr = addr;
             actorVfxCreate = Marshal.GetDelegateForFunctionPointer<ActorVfxCreateDelegate>(addr);
-            log.Info($"AnimationController: ActorVfxCreate resolved at 0x{addr:X}");
+
+            // Hook to capture VFX spawned by game internals (ActionEffectHandler.Receive)
+            actorVfxCreateHook = gameInterop.HookFromAddress<ActorVfxCreateDelegate>(addr, ActorVfxCreateDetour);
+            actorVfxCreateHook.Enable();
+            log.Info($"AnimationController: ActorVfxCreate resolved + hooked at 0x{addr:X}");
         }
         catch (Exception ex)
         {
             log.Warning(ex, "AnimationController: Could not resolve ActorVfxCreate — hit VFX will be unavailable.");
         }
+    }
+
+    private nint ActorVfxCreateDetour(string path, nint a2, nint a3, float a4, char a5, ushort a6, char a7)
+    {
+        var result = actorVfxCreateHook!.Original(path, a2, a3, a4, a5, a6, a7);
+
+        if (vfxTrackingActive && result != nint.Zero)
+        {
+            activeVfxList.Add(new ActiveVfx
+            {
+                Pointer = result,
+                TimeRemaining = VfxLifetime,
+                OwnerEntityId = 0,
+            });
+        }
+
+        return result;
     }
 
     private void ResolveActorVfxRemove(ISigScanner sigScanner)
@@ -283,7 +308,8 @@ public unsafe class AnimationController : IDisposable
 
         try
         {
-            if (!IsEntityAlive(vfx.OwnerEntityId))
+            // OwnerEntityId == 0 = hook-captured (game-spawned), always try removal
+            if (vfx.OwnerEntityId != 0 && !IsEntityAlive(vfx.OwnerEntityId))
                 return;
 
             actorVfxRemove(vfx.Pointer, (char)1);
@@ -337,13 +363,19 @@ public unsafe class AnimationController : IDisposable
                 }
             }
 
-            // Spawn skill VFX via ActorVfxCreate (off by default — other plugins that
-            // hook this function may crash when accessing our modified NPC actors)
-            if (config.EnableSkillVfx)
-                SpawnActionVfx(request);
+            // Track all VFX spawned during this action (both manual and game-internal)
+            vfxTrackingActive = true;
+            try
+            {
+                if (config.EnableSkillVfx)
+                    SpawnActionVfx(request);
 
-            // Use ActionEffectHandler.Receive() for flytext + damage numbers
-            CallActionEffectReceive(request);
+                CallActionEffectReceive(request);
+            }
+            finally
+            {
+                vfxTrackingActive = false;
+            }
         }
         catch (Exception ex)
         {
@@ -894,5 +926,7 @@ public unsafe class AnimationController : IDisposable
 
     public void Dispose()
     {
+        RemoveAllActiveVfx();
+        actorVfxCreateHook?.Dispose();
     }
 }
