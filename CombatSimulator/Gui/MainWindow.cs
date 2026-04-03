@@ -105,6 +105,8 @@ public class MainWindow : IDisposable
     }
 
     private int selectedTab = 0;
+    /// <summary>Name of the bone currently being edited in the advanced UI (for overlay highlighting).</summary>
+    public string? EditingBoneName { get; private set; }
 
     private static readonly string[] TabNames = new[]
     {
@@ -753,7 +755,7 @@ public class MainWindow : IDisposable
     private void DrawRagdollAdvancedSection()
     {
         ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Per-Bone Physics Parameters");
-        ImGui.TextWrapped("Adjust rotation limits, capsule volume, and mass for each ragdoll bone.");
+        ImGui.TextWrapped("Toggle bones on/off for physics. Adjust rotation limits, capsule volume, and mass.");
         ImGui.Spacing();
 
         var debugOverlay = config.RagdollDebugOverlay;
@@ -766,7 +768,6 @@ public class MainWindow : IDisposable
         ImGui.TextDisabled("Renders capsules and joints in 3D.");
         ImGui.Spacing();
 
-        // Reactivate button — reinitializes ragdoll with current config values
         if (ragdollController.IsActive)
         {
             if (ImGui.Button("Apply Changes (Reactivate Ragdoll)"))
@@ -777,52 +778,22 @@ public class MainWindow : IDisposable
                     ragdollController.Activate(addr);
             }
             ImGui.SameLine();
-            ImGui.TextDisabled("Ragdoll is active — press to apply changes.");
+            ImGui.TextDisabled("Press to apply.");
             ImGui.Spacing();
         }
 
-        // Initialize config from defaults if empty
+        // Initialize config from AllBoneDefaults if empty
         if (config.RagdollBoneConfigs.Count == 0)
         {
-            foreach (var def in RagdollController.DefaultBoneDefs)
-            {
-                config.RagdollBoneConfigs.Add(new RagdollBoneConfig
-                {
-                    Name = def.Name,
-                    ParentName = def.ParentName,
-                    CapsuleRadius = def.CapsuleRadius,
-                    CapsuleHalfLength = def.CapsuleHalfLength,
-                    Mass = def.Mass,
-                    SwingLimit = def.SwingLimit,
-                    JointType = (int)def.Joint,
-                    TwistMinAngle = def.TwistMinAngle,
-                    TwistMaxAngle = def.TwistMaxAngle,
-                });
-            }
+            foreach (var def in RagdollController.AllBoneDefaults)
+                config.RagdollBoneConfigs.Add(CloneBoneConfig(def));
             config.Save();
         }
 
         if (ImGui.Button("Reset All to Defaults##boneconfigs"))
         {
             config.RagdollBoneConfigs.Clear();
-            foreach (var def in RagdollController.DefaultBoneDefs)
-            {
-                config.RagdollBoneConfigs.Add(new RagdollBoneConfig
-                {
-                    Name = def.Name,
-                    ParentName = def.ParentName,
-                    CapsuleRadius = def.CapsuleRadius,
-                    CapsuleHalfLength = def.CapsuleHalfLength,
-                    Mass = def.Mass,
-                    SwingLimit = def.SwingLimit,
-                    JointType = (int)def.Joint,
-                    TwistMinAngle = def.TwistMinAngle,
-                    TwistMaxAngle = def.TwistMaxAngle,
-                });
-            }
             config.Save();
-
-            // Reactivate ragdoll if active so defaults take effect immediately
             if (ragdollController.IsActive)
             {
                 var addr = ragdollController.TargetCharacterAddress;
@@ -831,76 +802,111 @@ public class MainWindow : IDisposable
                     ragdollController.Activate(addr);
             }
         }
+
+        var enabledCount = 0;
+        foreach (var b in config.RagdollBoneConfigs)
+            if (b.Enabled) enabledCount++;
+        ImGui.SameLine();
+        ImGui.TextDisabled($"{enabledCount}/{config.RagdollBoneConfigs.Count} bones active");
+
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
 
-        // Bone table
         var jointTypes = new[] { "Ball", "Hinge" };
         var changed = false;
+        EditingBoneName = null;
 
         for (int i = 0; i < config.RagdollBoneConfigs.Count; i++)
         {
             var bone = config.RagdollBoneConfigs[i];
             var id = $"##{bone.Name}";
+            var desc = bone.Description ?? bone.Name;
 
-            if (ImGui.CollapsingHeader($"{bone.Name} ({(bone.JointType == 0 ? "Ball" : "Hinge")}){id}"))
+            // Enable/disable checkbox
+            var enabled = bone.Enabled;
+            if (ImGui.Checkbox($"##en{bone.Name}", ref enabled))
             {
+                bone.Enabled = enabled;
+                changed = true;
+            }
+            ImGui.SameLine();
+
+            // Header color: bright for enabled, dim for disabled
+            var headerColor = bone.Enabled
+                ? new Vector4(0.9f, 0.95f, 1f, 1f)
+                : new Vector4(0.5f, 0.5f, 0.5f, 1f);
+            ImGui.PushStyleColor(ImGuiCol.Text, headerColor);
+
+            var headerLabel = bone.Enabled
+                ? $"{desc} ({(bone.JointType == 0 ? "Ball" : "Hinge")}){id}"
+                : $"{desc} (off){id}";
+
+            var isOpen = ImGui.CollapsingHeader(headerLabel);
+            ImGui.PopStyleColor();
+
+            if (isOpen)
+            {
+                EditingBoneName = bone.Name;
                 ImGui.Indent(10);
 
-                if (bone.ParentName != null)
-                    ImGui.TextDisabled($"Parent: {bone.ParentName}");
+                if (bone.SkeletonParent != null)
+                    ImGui.TextDisabled($"Skeleton parent: {bone.SkeletonParent}");
 
-                // Joint type
-                var jt = bone.JointType;
-                if (ImGui.Combo($"Joint Type{id}", ref jt, jointTypes, jointTypes.Length))
-                { bone.JointType = jt; changed = true; }
-
-                // Capsule
-                var radius = bone.CapsuleRadius;
-                if (ImGui.SliderFloat($"Capsule Radius{id}", ref radius, 0.01f, 0.3f, "%.3f"))
-                { bone.CapsuleRadius = radius; changed = true; }
-
-                var halfLen = bone.CapsuleHalfLength;
-                if (ImGui.SliderFloat($"Capsule Half-Length{id}", ref halfLen, 0.0f, 0.3f, "%.3f"))
-                { bone.CapsuleHalfLength = halfLen; changed = true; }
-
-                // Mass
-                var mass = bone.Mass;
-                if (ImGui.SliderFloat($"Mass{id}", ref mass, 0.1f, 15.0f, "%.1f"))
-                { bone.Mass = mass; changed = true; }
-
-                // Rotation limits
-                var swing = bone.SwingLimit;
-                if (ImGui.SliderFloat($"Swing Limit (rad){id}", ref swing, 0.0f, MathF.PI, "%.2f"))
-                { bone.SwingLimit = swing; changed = true; }
-
-                if (bone.JointType == 0) // Ball joint — twist limits
+                if (bone.Enabled)
                 {
-                    var twistMin = bone.TwistMinAngle;
-                    if (ImGui.SliderFloat($"Twist Min (rad){id}", ref twistMin, -MathF.PI, 0f, "%.2f"))
-                    { bone.TwistMinAngle = twistMin; changed = true; }
+                    var jt = bone.JointType;
+                    if (ImGui.Combo($"Joint Type{id}", ref jt, jointTypes, jointTypes.Length))
+                    { bone.JointType = jt; changed = true; }
 
-                    var twistMax = bone.TwistMaxAngle;
-                    if (ImGui.SliderFloat($"Twist Max (rad){id}", ref twistMax, 0f, MathF.PI, "%.2f"))
-                    { bone.TwistMaxAngle = twistMax; changed = true; }
-                }
+                    var radius = bone.CapsuleRadius;
+                    if (ImGui.SliderFloat($"Capsule Radius{id}", ref radius, 0.01f, 0.3f, "%.3f"))
+                    { bone.CapsuleRadius = radius; changed = true; }
 
-                // Reset this bone
-                if (i < RagdollController.DefaultBoneDefs.Length)
-                {
-                    if (ImGui.SmallButton($"Reset{id}"))
+                    var halfLen = bone.CapsuleHalfLength;
+                    if (ImGui.SliderFloat($"Capsule Half-Length{id}", ref halfLen, 0.0f, 0.3f, "%.3f"))
+                    { bone.CapsuleHalfLength = halfLen; changed = true; }
+
+                    var mass = bone.Mass;
+                    if (ImGui.SliderFloat($"Mass{id}", ref mass, 0.1f, 15.0f, "%.1f"))
+                    { bone.Mass = mass; changed = true; }
+
+                    var swing = bone.SwingLimit;
+                    if (ImGui.SliderFloat($"Swing Limit (rad){id}", ref swing, 0.0f, MathF.PI, "%.2f"))
+                    { bone.SwingLimit = swing; changed = true; }
+
+                    if (bone.JointType == 0)
                     {
-                        var def = RagdollController.DefaultBoneDefs[i];
-                        bone.CapsuleRadius = def.CapsuleRadius;
-                        bone.CapsuleHalfLength = def.CapsuleHalfLength;
-                        bone.Mass = def.Mass;
-                        bone.SwingLimit = def.SwingLimit;
-                        bone.JointType = (int)def.Joint;
-                        bone.TwistMinAngle = def.TwistMinAngle;
-                        bone.TwistMaxAngle = def.TwistMaxAngle;
-                        changed = true;
+                        var twistMin = bone.TwistMinAngle;
+                        if (ImGui.SliderFloat($"Twist Min (rad){id}", ref twistMin, -MathF.PI, 0f, "%.2f"))
+                        { bone.TwistMinAngle = twistMin; changed = true; }
+
+                        var twistMax = bone.TwistMaxAngle;
+                        if (ImGui.SliderFloat($"Twist Max (rad){id}", ref twistMax, 0f, MathF.PI, "%.2f"))
+                        { bone.TwistMaxAngle = twistMax; changed = true; }
                     }
+
+                    // Reset this bone to its default
+                    if (i < RagdollController.AllBoneDefaults.Length)
+                    {
+                        if (ImGui.SmallButton($"Reset{id}"))
+                        {
+                            var def = RagdollController.AllBoneDefaults[i];
+                            bone.CapsuleRadius = def.CapsuleRadius;
+                            bone.CapsuleHalfLength = def.CapsuleHalfLength;
+                            bone.Mass = def.Mass;
+                            bone.SwingLimit = def.SwingLimit;
+                            bone.JointType = def.JointType;
+                            bone.TwistMinAngle = def.TwistMinAngle;
+                            bone.TwistMaxAngle = def.TwistMaxAngle;
+                            bone.Enabled = def.Enabled;
+                            changed = true;
+                        }
+                    }
+                }
+                else
+                {
+                    ImGui.TextDisabled("Enable this bone to edit parameters.");
                 }
 
                 ImGui.Unindent(10);
@@ -910,6 +916,24 @@ public class MainWindow : IDisposable
 
         if (changed)
             config.Save();
+    }
+
+    private static RagdollBoneConfig CloneBoneConfig(RagdollBoneConfig src)
+    {
+        return new RagdollBoneConfig
+        {
+            Name = src.Name,
+            SkeletonParent = src.SkeletonParent,
+            Enabled = src.Enabled,
+            CapsuleRadius = src.CapsuleRadius,
+            CapsuleHalfLength = src.CapsuleHalfLength,
+            Mass = src.Mass,
+            SwingLimit = src.SwingLimit,
+            JointType = src.JointType,
+            TwistMinAngle = src.TwistMinAngle,
+            TwistMaxAngle = src.TwistMaxAngle,
+            Description = src.Description,
+        };
     }
 
     private void DrawDiagnoseSection()

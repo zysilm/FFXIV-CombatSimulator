@@ -127,7 +127,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
-        ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, config, gameGui);
+        ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, mainWindow, config, gameGui);
 
         // Register
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)

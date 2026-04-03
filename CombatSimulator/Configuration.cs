@@ -10,7 +10,8 @@ namespace CombatSimulator;
 public class RagdollBoneConfig
 {
     public string Name { get; set; } = "";
-    public string? ParentName { get; set; }
+    public string? SkeletonParent { get; set; }  // real skeleton parent (for computing physics parent chain)
+    public bool Enabled { get; set; } = true;     // whether this bone participates in physics
     public float CapsuleRadius { get; set; }
     public float CapsuleHalfLength { get; set; }
     public float Mass { get; set; }
@@ -18,6 +19,7 @@ public class RagdollBoneConfig
     public int JointType { get; set; } // 0=Ball, 1=Hinge
     public float TwistMinAngle { get; set; }
     public float TwistMaxAngle { get; set; }
+    public string? Description { get; set; }      // human-readable label for UI
 }
 
 [Serializable]
