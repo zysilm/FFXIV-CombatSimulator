@@ -65,11 +65,18 @@ public unsafe class AnimationController : IDisposable
         string path, nint a2, nint a3, float a4, char a5, ushort a6, char a7);
 
     private ActorVfxCreateDelegate? actorVfxCreate;
+    private nint actorVfxCreateAddr;
 
     // ActorVfxRemove — removes a spawned VFX by pointer (same function VFXEditor uses)
     private delegate nint ActorVfxRemoveDelegate(nint vfx, char a2);
 
     private ActorVfxRemoveDelegate? actorVfxRemove;
+    private nint actorVfxRemoveAddr;
+
+    /// <summary>Resolved address of the native ActorVfxCreate function (0 if unresolved).</summary>
+    public nint ActorVfxCreateAddress => actorVfxCreateAddr;
+    /// <summary>Resolved address of the native ActorVfxRemove function (0 if unresolved).</summary>
+    public nint ActorVfxRemoveAddress => actorVfxRemoveAddr;
 
     // Track active VFX instances for timed removal
     private readonly List<ActiveVfx> activeVfxList = new();
@@ -116,6 +123,7 @@ public unsafe class AnimationController : IDisposable
         {
             var addr = sigScanner.ScanText(
                 "40 53 55 56 57 48 81 EC ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 0F B6 AC 24 ?? ?? ?? ?? 0F 28 F3 49 8B F8");
+            actorVfxCreateAddr = addr;
             actorVfxCreate = Marshal.GetDelegateForFunctionPointer<ActorVfxCreateDelegate>(addr);
             log.Info($"AnimationController: ActorVfxCreate resolved at 0x{addr:X}");
         }
@@ -132,6 +140,7 @@ public unsafe class AnimationController : IDisposable
             // Same signature + pointer chase as VFXEditor (Constants.ActorVfxRemoveSig)
             var tempAddr = sigScanner.ScanText("0F 11 48 10 48 8D 05") + 7;
             var addr = Marshal.ReadIntPtr(tempAddr + Marshal.ReadInt32(tempAddr) + 4);
+            actorVfxRemoveAddr = addr;
             actorVfxRemove = Marshal.GetDelegateForFunctionPointer<ActorVfxRemoveDelegate>(addr);
             log.Info($"AnimationController: ActorVfxRemove resolved at 0x{addr:X}");
         }
@@ -300,8 +309,10 @@ public unsafe class AnimationController : IDisposable
                 }
             }
 
-            // Spawn skill VFX via ActorVfxCreate
-            SpawnActionVfx(request);
+            // Spawn skill VFX via ActorVfxCreate (off by default — other plugins that
+            // hook this function may crash when accessing our modified NPC actors)
+            if (config.EnableSkillVfx)
+                SpawnActionVfx(request);
 
             // Use ActionEffectHandler.Receive() for flytext + damage numbers
             CallActionEffectReceive(request);

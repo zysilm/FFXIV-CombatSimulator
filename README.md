@@ -69,6 +69,10 @@ Requires .NET 8.0 SDK and Dalamud.
 - Camera system (Active Camera, Death Cam) inspired by [Cammy](https://github.com/UnknownX7/Cammy) by UnknownX7
 - Ragdoll physics powered by [BEPUphysics2](https://github.com/bepu/bepuphysics2) by Ross Nordby
 
+## Known Issues
+
+- **Skill VFX disabled** — Per-skill visual effects (cast circles, impact particles) extracted from game data are currently disabled. When `actorVfxCreate` is called on simulated NPC actors, other plugins that hook this native function (notably **RotationSolver** and **VFXEditor**) attempt to access character fields on our modified NPCs, causing an `AccessViolationException` crash. Per-player hit VFX (`SpawnHitVfxOnPlayer`) is unaffected since it only passes the local player's address. This is a plugin ecosystem compatibility issue — not fixable without cooperation from the hooking plugins.
+
 ## Safety
 
 The plugin never sends combat data to the FFXIV server:

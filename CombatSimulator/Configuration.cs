@@ -124,6 +124,9 @@ public class Configuration : IPluginConfiguration
     public float ActiveCameraMinZoomDistance { get; set; } = 1.0f;
     public bool ActiveCameraPreventFade { get; set; } = false;
 
+    // Skill VFX on combat actions (off by default — may conflict with other plugins)
+    public bool EnableSkillVfx { get; set; } = false;
+
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
     public bool EnableHitVfx { get; set; } = true;
