@@ -7,6 +7,22 @@ using Dalamud.Plugin;
 namespace CombatSimulator;
 
 [Serializable]
+public class RagdollBoneConfig
+{
+    public string Name { get; set; } = "";
+    public string? SkeletonParent { get; set; }  // real skeleton parent (for computing physics parent chain)
+    public bool Enabled { get; set; } = true;     // whether this bone participates in physics
+    public float CapsuleRadius { get; set; }
+    public float CapsuleHalfLength { get; set; }
+    public float Mass { get; set; }
+    public float SwingLimit { get; set; }
+    public int JointType { get; set; } // 0=Ball, 1=Hinge
+    public float TwistMinAngle { get; set; }
+    public float TwistMaxAngle { get; set; }
+    public string? Description { get; set; }      // human-readable label for UI
+}
+
+[Serializable]
 public class DeathCamPreset
 {
     public string Name { get; set; } = "";
@@ -96,8 +112,7 @@ public class Configuration : IPluginConfiguration
     public float RagdollDamping { get; set; } = 0.97f;
     public int RagdollSolverIterations { get; set; } = 8;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
-    public bool RagdollNaturalPose { get; set; } = true; // AngularServo rest pose + anatomical limits (prevents hyperextension, guides settling)
-    public float RagdollServoStrength { get; set; } = 1.0f; // Multiplier for AngularServo MaxForce (0 = disabled, higher = stiffer pose)
+    public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
     // Weapon drop physics
     public bool RagdollWeaponDrop { get; set; } = true; // Weapon detaches and falls on death (uses battle/dead instead of play-dead)
     // Hair physics
@@ -105,6 +120,12 @@ public class Configuration : IPluginConfiguration
     public float RagdollHairGravityStrength { get; set; } = 0.5f;
     public float RagdollHairDamping { get; set; } = 0.92f;
     public float RagdollHairStiffness { get; set; } = 0.1f;
+    // Ragdoll debug overlay — renders capsules and joint limits in 3D
+    public bool RagdollDebugOverlay { get; set; } = false;
+    // Ragdoll bone configs (Advanced) — per-bone physics parameters
+    // Empty = use built-in defaults from RagdollController.DefaultBoneDefs
+    public List<RagdollBoneConfig> RagdollBoneConfigs { get; set; } = new();
+
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollVerboseLog { get; set; } = false;
     public bool EnableVictorySequence { get; set; } = false;
