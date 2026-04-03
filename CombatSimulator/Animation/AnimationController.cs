@@ -199,36 +199,34 @@ public unsafe class AnimationController : IDisposable
 
     private void ResolveBattleDeadTimeline(IDataManager dataManager)
     {
+        // Search by key first (survives patch ID shifts)
+        ushort foundIntro = 0, foundLoop = 0;
         try
         {
             var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ActionTimeline>();
             if (sheet != null)
             {
-                // Verify by ID → key
-                var introRow = sheet.GetRow(battleDeadIntroTimeline);
-                var introKey = introRow.Key.ToString();
-                var loopRow = sheet.GetRow(battleDeadLoopTimeline);
-                var loopKey = loopRow.Key.ToString();
-                log.Info($"AnimationController: Battle dead verify — id {battleDeadIntroTimeline} = '{introKey}', id {battleDeadLoopTimeline} = '{loopKey}'");
-
-                // Also search by key to find IDs (in case they change between patches)
                 foreach (var row in sheet)
                 {
                     var key = row.Key.ToString();
                     if (key == "battle/dead")
-                        battleDeadIntroTimeline = (ushort)row.RowId;
+                        foundIntro = (ushort)row.RowId;
                     else if (key == "battle/dead_pose")
-                        battleDeadLoopTimeline = (ushort)row.RowId;
+                        foundLoop = (ushort)row.RowId;
                 }
             }
         }
         catch (Exception ex)
         {
-            log.Warning(ex, "AnimationController: Failed to search ActionTimeline sheet, using hardcoded IDs.");
+            log.Warning(ex, "AnimationController: ActionTimeline sheet search failed.");
         }
 
+        // Use key search results, fall back to hardcoded IDs (8935/8936)
+        if (foundIntro != 0) battleDeadIntroTimeline = foundIntro;
+        if (foundLoop != 0) battleDeadLoopTimeline = foundLoop;
+
         battleDeadResolved = battleDeadIntroTimeline != 0 && battleDeadLoopTimeline != 0;
-        log.Info($"AnimationController: Battle dead timelines — intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}, resolved={battleDeadResolved}");
+        log.Info($"AnimationController: Battle dead timelines — intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}, resolved={battleDeadResolved} (key search: intro={foundIntro}, loop={foundLoop})");
     }
 
     public void Tick(float deltaTime)
@@ -607,6 +605,9 @@ public unsafe class AnimationController : IDisposable
             // play-dead emote. Battle death keeps weapons drawn (no sheathing).
             if (config.RagdollWeaponDrop && battleDeadResolved)
             {
+                // Set dead mode to stop breathing/idle overlays (like real game death)
+                character->SetMode(CharacterModes.Dead, 0);
+                // Override with battle/dead timeline for the visual animation
                 emotePlayer.PlayLoopedEmote(character, battleDeadLoopTimeline, battleDeadIntroTimeline);
                 log.Info($"Player death via battle/dead (intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}).");
                 return;
@@ -655,8 +656,12 @@ public unsafe class AnimationController : IDisposable
             if (player == null) return;
 
             var character = (Character*)player.Address;
-            if (playDeadResolved)
-                emotePlayer.ResetEmote(character);
+
+            // Restore normal mode if we set Dead mode for weapon drop
+            if (config.RagdollWeaponDrop)
+                character->SetMode(CharacterModes.Normal, 0);
+
+            emotePlayer.ResetEmote(character);
         }
         catch (Exception ex)
         {
