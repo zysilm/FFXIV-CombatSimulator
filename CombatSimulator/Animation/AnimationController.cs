@@ -5,7 +5,6 @@ using System.Runtime.InteropServices;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
-using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using Lumina.Excel.Sheets;
@@ -84,10 +83,6 @@ public unsafe class AnimationController : IDisposable
     public nint ActorVfxCreateAddress => actorVfxCreateAddr;
     /// <summary>Resolved address of the native ActorVfxRemove function (0 if unresolved).</summary>
     public nint ActorVfxRemoveAddress => actorVfxRemoveAddr;
-
-    // Status snapshot — captures player's statuses at sim start so we can
-    // remove sim-applied statuses (and their VFX) on death/stop.
-    private readonly HashSet<ushort> preSimStatusIds = new();
 
     // Default hit VFX path candidates (tried in order until one sticks)
     public static readonly string[] HitVfxCandidates =
@@ -245,68 +240,6 @@ public unsafe class AnimationController : IDisposable
     /// VFX expire naturally via their built-in .avfx durations.
     /// </summary>
     public void RemoveAllActiveVfx() { }
-
-    /// <summary>
-    /// Snapshot the player's current statuses at sim start.
-    /// Statuses added after this point are assumed to be from the sim.
-    /// </summary>
-    public void SnapshotPlayerStatuses()
-    {
-        preSimStatusIds.Clear();
-        try
-        {
-            var player = clientState.LocalPlayer;
-            if (player == null) return;
-
-            var battleChara = (BattleChara*)player.Address;
-            for (int i = 0; i < 60; i++)
-            {
-                var statusId = battleChara->StatusManager.GetStatusId(i);
-                if (statusId != 0)
-                    preSimStatusIds.Add((ushort)statusId);
-            }
-            log.Info($"AnimationController: Snapshot {preSimStatusIds.Count} pre-sim statuses");
-        }
-        catch (Exception ex)
-        {
-            log.Warning(ex, "AnimationController: Failed to snapshot statuses");
-        }
-    }
-
-    /// <summary>
-    /// Remove statuses that were added during the sim (not in the pre-sim snapshot).
-    /// The game automatically cleans up VFX when their associated status is removed.
-    /// </summary>
-    public void ClearSimStatuses()
-    {
-        try
-        {
-            var player = clientState.LocalPlayer;
-            if (player == null) return;
-
-            var battleChara = (BattleChara*)player.Address;
-            var removed = 0;
-
-            // Iterate backwards — removing shifts indices
-            for (int i = 59; i >= 0; i--)
-            {
-                var statusId = battleChara->StatusManager.GetStatusId(i);
-                if (statusId != 0 && !preSimStatusIds.Contains((ushort)statusId))
-                {
-                    battleChara->StatusManager.RemoveStatus(i);
-                    removed++;
-                }
-            }
-
-            if (removed > 0)
-                log.Info($"AnimationController: Removed {removed} sim-applied statuses");
-        }
-        catch (Exception ex)
-        {
-            log.Warning(ex, "AnimationController: Failed to clear sim statuses");
-        }
-        preSimStatusIds.Clear();
-    }
 
     /// <summary>
     /// Play attack animation + VFX + hit reaction via ActionEffectHandler.Receive().
