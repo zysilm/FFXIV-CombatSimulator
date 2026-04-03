@@ -375,21 +375,16 @@ public unsafe class AnimationController : IDisposable
             }
 
             // Spawn caster VFX (cast circle, skill effects from AnimationEnd TMB)
-            // Skip caster VFX on the player — these linger and can't be reliably removed.
-            // Only spawn caster VFX when the source is an NPC.
-            if (!request.IsSourcePlayer)
-            {
-                nint orientAddr = firstTargetAddr != 0 ? firstTargetAddr : casterAddr;
+            nint orientAddr = firstTargetAddr != 0 ? firstTargetAddr : casterAddr;
 
-                if (!string.IsNullOrEmpty(request.CastVfxPath))
-                    SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, casterEntityId);
+            if (!string.IsNullOrEmpty(request.CastVfxPath))
+                SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, casterEntityId);
 
-                if (!string.IsNullOrEmpty(request.StartVfxPath))
-                    SpawnAndTrack(request.StartVfxPath, casterAddr, orientAddr, casterEntityId);
+            if (!string.IsNullOrEmpty(request.StartVfxPath))
+                SpawnAndTrack(request.StartVfxPath, casterAddr, orientAddr, casterEntityId);
 
-                foreach (var path in request.CasterVfxPaths)
-                    SpawnAndTrack(path, casterAddr, orientAddr, casterEntityId);
-            }
+            foreach (var path in request.CasterVfxPaths)
+                SpawnAndTrack(path, casterAddr, orientAddr, casterEntityId);
 
             // Spawn target VFX (hit/impact effects from ActionTimelineHit TMB)
             foreach (var target in request.Targets)
