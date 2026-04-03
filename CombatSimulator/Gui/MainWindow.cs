@@ -205,6 +205,7 @@ public class MainWindow : IDisposable
                     config.RagdollDamping = 0.97f;
                     config.RagdollSolverIterations = 8;
                     config.RagdollSelfCollision = true;
+                    config.RagdollFriction = 1.0f;
                     config.RagdollWeaponDrop = true;
                     config.RagdollHairPhysics = false;
                     config.RagdollHairGravityStrength = 0.5f;
