@@ -54,6 +54,23 @@ public unsafe class RagdollController : IDisposable
     private readonly HashSet<int> ragdollBoneIndices = new();
 
 
+    // Weapon drop physics — weapon detaches from hand and falls as a physics body.
+    // We override the n_buki_r/n_buki_l bone each frame with the weapon body's transform,
+    // and the game's Attach deformer automatically repositions the weapon DrawObject.
+    private BodyHandle? weaponMainHandBody;
+    private BodyHandle? weaponOffHandBody;
+    private int weaponMainHandBoneIndex = -1;
+    private int weaponOffHandBoneIndex = -1;
+    private Quaternion weaponMainHandCapsuleToBone;
+    private Quaternion weaponOffHandCapsuleToBone;
+    private float weaponMainHandSegHalf;
+    private float weaponOffHandSegHalf;
+
+    // Weapon bone names — these are the attachment point bones in FFXIV's skeleton.
+    // The game's Attach deformer reads these to position weapon DrawObjects.
+    private static readonly string[] WeaponMainHandBones = { "n_buki_r", "j_buki_r", "n_hte_r" };
+    private static readonly string[] WeaponOffHandBones = { "n_buki_l", "j_buki_l", "n_hte_l" };
+
     // Ancestor bone index — n_hara must follow j_kosi to prevent mesh tearing
     private int nHaraIndex = -1;
     // Head bone index (j_kao) — used for hair physics and partial skeleton propagation
@@ -209,6 +226,10 @@ public unsafe class RagdollController : IDisposable
         ragdollBoneIndices.Clear();
         nHaraIndex = -1;
         kaoBodyBoneIndex = -1;
+        weaponMainHandBody = null;
+        weaponOffHandBody = null;
+        weaponMainHandBoneIndex = -1;
+        weaponOffHandBoneIndex = -1;
         hairPhysics?.Reset();
         hairPhysics = null;
 
@@ -1028,6 +1049,15 @@ public unsafe class RagdollController : IDisposable
             totalNpcStatics += s.IsFallback ? 1 : s.BoneStatics.Count;
         log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, {npcCollisionStates.Count} NPCs ({totalNpcStatics} collision volumes), ground={groundY:F3}");
 
+        // Initialize weapon drop physics
+        weaponMainHandBody = null;
+        weaponOffHandBody = null;
+        weaponMainHandBoneIndex = -1;
+        weaponOffHandBoneIndex = -1;
+
+        if (config.RagdollWeaponDrop)
+            InitializeWeaponDrop(skel, pose);
+
         // Initialize hair physics
         if (config.RagdollHairPhysics && kaoBodyBoneIndex >= 0)
         {
@@ -1036,6 +1066,157 @@ public unsafe class RagdollController : IDisposable
         }
 
         return ragdollBones.Count > 0;
+    }
+
+    /// <summary>
+    /// Create weapon physics bodies that detach from hands and fall independently.
+    /// Resolves weapon attachment bone (n_buki_r/n_buki_l), creates a capsule body
+    /// at the bone's current world position with the hand ragdoll body's velocity.
+    /// </summary>
+    private void InitializeWeaponDrop(SkeletonAccess skel,
+        FFXIVClientStructs.Havok.Animation.Rig.hkaPose* pose)
+    {
+        if (simulation == null) return;
+
+        // Generic weapon capsule: reasonable for swords, staves, etc.
+        const float weaponRadius = 0.025f;
+        const float weaponHalfLength = 0.4f;
+        const float weaponMass = 1.5f;
+
+        var weaponShape = new Capsule(weaponRadius, weaponHalfLength * 2f);
+        var weaponShapeIndex = simulation.Shapes.Add(weaponShape);
+        var weaponInertia = weaponShape.ComputeInertia(weaponMass);
+
+        // Try main hand
+        weaponMainHandBody = TryCreateWeaponBody(
+            skel, pose, WeaponMainHandBones, "j_te_r",
+            weaponShapeIndex, weaponInertia, weaponHalfLength,
+            out weaponMainHandBoneIndex, out weaponMainHandCapsuleToBone, out weaponMainHandSegHalf);
+
+        // Try off hand
+        weaponOffHandBody = TryCreateWeaponBody(
+            skel, pose, WeaponOffHandBones, "j_te_l",
+            weaponShapeIndex, weaponInertia, weaponHalfLength,
+            out weaponOffHandBoneIndex, out weaponOffHandCapsuleToBone, out weaponOffHandSegHalf);
+
+        var count = (weaponMainHandBody.HasValue ? 1 : 0) + (weaponOffHandBody.HasValue ? 1 : 0);
+        if (count > 0)
+            log.Info($"RagdollController: Weapon drop initialized — {count} weapon(s)");
+    }
+
+    private BodyHandle? TryCreateWeaponBody(
+        SkeletonAccess skel,
+        FFXIVClientStructs.Havok.Animation.Rig.hkaPose* pose,
+        string[] boneCandidates, string handBoneName,
+        TypedIndex shapeIndex, BodyInertia inertia, float segHalf,
+        out int boneIndex, out Quaternion capsuleToBone, out float segHalfOut)
+    {
+        boneIndex = -1;
+        capsuleToBone = Quaternion.Identity;
+        segHalfOut = segHalf;
+
+        // Resolve weapon bone index — try candidates in order
+        foreach (var name in boneCandidates)
+        {
+            var idx = boneService.ResolveBoneIndex(skel, name);
+            if (idx >= 0)
+            {
+                boneIndex = idx;
+                log.Info($"RagdollController: Weapon bone '{name}' resolved at index {idx}");
+                break;
+            }
+        }
+
+        if (boneIndex < 0)
+        {
+            log.Verbose("RagdollController: No weapon bone found, skipping weapon drop");
+            return null;
+        }
+
+        // Read weapon bone's current world position and rotation
+        ref var mt = ref pose->ModelPose.Data[boneIndex];
+        var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+        var modelRot = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
+        var boneWorldPos = ModelToWorld(modelPos);
+        var boneWorldRot = ModelRotToWorld(modelRot);
+
+        // Capsule orientation: align Y-axis with the bone's forward direction
+        // (same pattern as ragdoll bone capsule alignment)
+        var capsuleWorldRot = boneWorldRot; // use bone's own rotation as capsule orientation
+        capsuleToBone = Quaternion.Normalize(Quaternion.Inverse(capsuleWorldRot) * boneWorldRot);
+
+        // Get hand ragdoll body velocity for initial weapon velocity
+        var initVelocity = new BodyVelocity();
+        foreach (var rb in ragdollBones)
+        {
+            if (rb.Name == handBoneName)
+            {
+                var handBody = simulation!.Bodies.GetBodyReference(rb.BodyHandle);
+                initVelocity.Linear = handBody.Velocity.Linear;
+                initVelocity.Angular = handBody.Velocity.Angular;
+                break;
+            }
+        }
+
+        // Add a small random perturbation for visual variety
+        var rng = new Random();
+        initVelocity.Linear += new Vector3(
+            (float)(rng.NextDouble() - 0.5) * 0.5f,
+            (float)rng.NextDouble() * 0.3f,
+            (float)(rng.NextDouble() - 0.5) * 0.5f);
+        initVelocity.Angular += new Vector3(
+            (float)(rng.NextDouble() - 0.5) * 4f,
+            (float)(rng.NextDouble() - 0.5) * 2f,
+            (float)(rng.NextDouble() - 0.5) * 4f);
+
+        var bodyDesc = BodyDescription.CreateDynamic(
+            new RigidPose(boneWorldPos, capsuleWorldRot),
+            initVelocity,
+            inertia,
+            new CollidableDescription(shapeIndex, 0.04f),
+            new BodyActivityDescription(0.01f));
+
+        var handle = simulation!.Bodies.Add(bodyDesc);
+        log.Info($"RagdollController: Weapon body created at ({boneWorldPos.X:F2},{boneWorldPos.Y:F2},{boneWorldPos.Z:F2})");
+        return handle;
+    }
+
+    /// <summary>
+    /// Write weapon physics body transforms back to weapon attachment bones.
+    /// Called each frame after ragdoll bone write-back and descendant propagation.
+    /// The game's Attach deformer reads these bones to position weapon DrawObjects.
+    /// </summary>
+    private void WriteWeaponBoneTransforms(SkeletonAccess skel,
+        BoneModificationResult result)
+    {
+        if (simulation == null) return;
+
+        if (weaponMainHandBody.HasValue && weaponMainHandBoneIndex >= 0)
+            WriteWeaponBone(skel, result, weaponMainHandBody.Value,
+                weaponMainHandBoneIndex, weaponMainHandCapsuleToBone, weaponMainHandSegHalf);
+
+        if (weaponOffHandBody.HasValue && weaponOffHandBoneIndex >= 0)
+            WriteWeaponBone(skel, result, weaponOffHandBody.Value,
+                weaponOffHandBoneIndex, weaponOffHandCapsuleToBone, weaponOffHandSegHalf);
+    }
+
+    private void WriteWeaponBone(SkeletonAccess skel,
+        BoneModificationResult result,
+        BodyHandle bodyHandle, int boneIdx, Quaternion capsuleToBone, float segHalf)
+    {
+        var bodyRef = simulation!.Bodies.GetBodyReference(bodyHandle);
+        var physPos = bodyRef.Pose.Position;
+        var physRot = bodyRef.Pose.Orientation;
+
+        // Convert capsule center to bone origin (offset by segment half-length along capsule Y)
+        // For weapons this is typically 0 since the bone is at the grip point
+        var boneWorldPos = physPos;
+        var boneWorldRot = Quaternion.Normalize(physRot * capsuleToBone);
+
+        var modelPos = WorldToModel(boneWorldPos);
+        var modelRot = WorldRotToModel(boneWorldRot);
+
+        boneService.WriteBoneTransform(skel, boneIdx, modelPos, modelRot, result);
     }
 
     /// <summary>
@@ -1343,6 +1524,10 @@ public unsafe class RagdollController : IDisposable
 
             boneService.WriteBoneTransform(skel, i, newPos, newRot, result);
         }
+
+        // Write weapon physics body transforms to weapon attachment bones.
+        // Must be after descendant propagation so the weapon bone override takes precedence.
+        WriteWeaponBoneTransforms(skel, result);
 
         // Propagate j_kao changes to face/hair partial skeletons
         if (kaoBodyBoneIndex >= 0 && result.HasAccumulated[kaoBodyBoneIndex])

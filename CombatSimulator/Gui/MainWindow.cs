@@ -191,6 +191,7 @@ public class MainWindow : IDisposable
                     config.RagdollSelfCollision = true;
                     config.RagdollNaturalPose = true;
                     config.RagdollServoStrength = 1.0f;
+                    config.RagdollWeaponDrop = true;
                     config.RagdollHairPhysics = false;
                     config.RagdollHairGravityStrength = 0.5f;
                     config.RagdollHairDamping = 0.92f;
@@ -1214,6 +1215,17 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Multiplier for the angular servo force that pulls joints toward a natural rest pose. 0 = disabled (pure passive ragdoll), 1 = default, higher = stiffer/more guided settling. Requires Natural Pose enabled. Takes effect on next ragdoll activation.");
+
+                ImGui.Separator();
+                ImGui.Text("Weapon Drop");
+
+                var weaponDrop = config.RagdollWeaponDrop;
+                if (ImGui.Checkbox("Enable Weapon Drop##ragdoll", ref weaponDrop))
+                {
+                    config.RagdollWeaponDrop = weaponDrop;
+                    config.Save();
+                }
+                HelpMarker("Weapon detaches from the hand and falls with physics on death. Collides with the ground, NPCs, and the character's own ragdoll body. Takes effect on next ragdoll activation.");
 
                 ImGui.Separator();
                 ImGui.Text("Hair Physics");
