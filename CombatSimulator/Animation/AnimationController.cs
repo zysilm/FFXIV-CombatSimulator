@@ -496,14 +496,19 @@ public unsafe class AnimationController : IDisposable
             NativeMemory.Clear(targetIdsPtr, (nuint)idsSize);
 
             // Fill header
+            // When skill VFX is disabled, use ActionId 7 (auto-attack) to suppress the
+            // action's animation + VFX while still processing damage/flytext from effects.
+            // The elaborate skill VFX (cast circles, ground effects) are triggered by the
+            // animation TMB keyframes — using a benign ActionId prevents them from spawning.
+            var effectiveActionId = config.EnableSkillVfx ? request.ActionId : 7u;
             var seq = globalSequence++;
             headerPtr->AnimationTargetId = request.Targets[0].TargetId;
-            headerPtr->ActionId = request.ActionId;
+            headerPtr->ActionId = effectiveActionId;
             headerPtr->GlobalSequence = seq;
             headerPtr->AnimationLock = request.AnimationLock;
             headerPtr->SourceSequence = 0; // Not client-initiated (prevents the game from expecting a server response)
             headerPtr->RotationInt = QuantizeRotation(request.SourceRotation);
-            headerPtr->SpellId = (ushort)(request.ActionId & 0xFFFF);
+            headerPtr->SpellId = (ushort)(effectiveActionId & 0xFFFF);
             headerPtr->ActionType = 1; // Action
             headerPtr->NumTargets = (byte)targetCount;
             headerPtr->ShowInLog = false; // Don't pollute the real action log
