@@ -753,8 +753,23 @@ public class MainWindow : IDisposable
     private void DrawRagdollAdvancedSection()
     {
         ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Per-Bone Physics Parameters");
-        ImGui.TextWrapped("Adjust rotation limits, capsule volume, and mass for each ragdoll bone. Changes take effect on next ragdoll activation.");
+        ImGui.TextWrapped("Adjust rotation limits, capsule volume, and mass for each ragdoll bone.");
         ImGui.Spacing();
+
+        // Reactivate button — reinitializes ragdoll with current config values
+        if (ragdollController.IsActive)
+        {
+            if (ImGui.Button("Apply Changes (Reactivate Ragdoll)"))
+            {
+                var addr = ragdollController.TargetCharacterAddress;
+                ragdollController.Deactivate();
+                if (addr != nint.Zero)
+                    ragdollController.Activate(addr);
+            }
+            ImGui.SameLine();
+            ImGui.TextDisabled("Ragdoll is active — press to apply changes.");
+            ImGui.Spacing();
+        }
 
         // Initialize config from defaults if empty
         if (config.RagdollBoneConfigs.Count == 0)

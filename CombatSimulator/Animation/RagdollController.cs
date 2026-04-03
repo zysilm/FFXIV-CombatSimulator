@@ -78,6 +78,7 @@ public unsafe class RagdollController : IDisposable
 
 
     public bool IsActive => isActive;
+    public nint TargetCharacterAddress => targetCharacterAddress;
 
     /// <summary>
     /// Get effective bone definitions: from config overrides if populated, otherwise defaults.
