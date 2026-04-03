@@ -60,10 +60,11 @@ public unsafe class AnimationController : IDisposable
     private ushort playDeadIntroTimeline;
     private bool playDeadResolved;
 
-    // Battle dead ActionTimeline ID (resolved from ActionTimeline sheet, key "battle/dead")
+    // Battle dead ActionTimeline IDs (resolved from ActionTimeline sheet)
     // Used instead of play-dead emote when ragdoll weapon drop is enabled,
     // because play-dead sheathes weapons and the game engine fights visibility overrides.
-    private ushort battleDeadTimeline;
+    private ushort battleDeadIntroTimeline;  // "battle/dead" (8935) — falling animation
+    private ushort battleDeadLoopTimeline;   // "battle/dead_pose" (8936) — settled on ground
     private bool battleDeadResolved;
 
     // ActorVfxCreate — spawns a .avfx particle effect attached to an actor
@@ -208,19 +209,20 @@ public unsafe class AnimationController : IDisposable
             {
                 var key = row.Key.ToString();
                 if (key == "battle/dead")
-                {
-                    battleDeadTimeline = (ushort)row.RowId;
-                    battleDeadResolved = true;
-                    log.Info($"AnimationController: Resolved 'battle/dead' ActionTimeline → id={battleDeadTimeline}");
-                    return;
-                }
+                    battleDeadIntroTimeline = (ushort)row.RowId;
+                else if (key == "battle/dead_pose")
+                    battleDeadLoopTimeline = (ushort)row.RowId;
             }
 
-            log.Warning("AnimationController: Could not find 'battle/dead' ActionTimeline.");
+            battleDeadResolved = battleDeadIntroTimeline != 0 && battleDeadLoopTimeline != 0;
+            if (battleDeadResolved)
+                log.Info($"AnimationController: Resolved battle dead timelines — intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}");
+            else
+                log.Warning($"AnimationController: Could not resolve battle dead timelines (intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}).");
         }
         catch (Exception ex)
         {
-            log.Error(ex, "AnimationController: Failed to resolve battle/dead timeline.");
+            log.Error(ex, "AnimationController: Failed to resolve battle/dead timelines.");
         }
     }
 
@@ -600,8 +602,8 @@ public unsafe class AnimationController : IDisposable
             // play-dead emote. Battle death keeps weapons drawn (no sheathing).
             if (config.RagdollWeaponDrop && battleDeadResolved)
             {
-                character->Timeline.BaseOverride = battleDeadTimeline;
-                log.Info($"Player death via battle/dead timeline ({battleDeadTimeline}).");
+                emotePlayer.PlayLoopedEmote(character, battleDeadLoopTimeline, battleDeadIntroTimeline);
+                log.Info($"Player death via battle/dead (intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}).");
                 return;
             }
 
