@@ -38,19 +38,19 @@ public class RagdollDebugOverlay
         {
             var isEditing = cap.Name == editingBone;
 
-            // Colors: bright for editing bone, dim for others
-            float alpha = isEditing ? 1.0f : 0.35f;
-            float thickness = isEditing ? 2.5f : 1.0f;
+            // Colors: bright for editing bone, visible but muted for others
+            float alpha = isEditing ? 1.0f : 0.7f;
+            float thickness = isEditing ? 2.5f : 1.2f;
             var colorCapsule = ImGui.GetColorU32(isEditing
                 ? new Vector4(0.3f, 1f, 0.5f, alpha)
-                : new Vector4(0.5f, 0.5f, 0.5f, alpha));
+                : new Vector4(0.15f, 0.6f, 0.25f, alpha));
             var jointColor = ImGui.GetColorU32(
                 cap.Joint == RagdollController.JointType.Hinge
                     ? new Vector4(1f, 0.6f, 0.2f, alpha)
                     : new Vector4(0.4f, 0.6f, 1f, alpha));
             var colorLabel = ImGui.GetColorU32(isEditing
                 ? new Vector4(1f, 1f, 0.3f, 1f)
-                : new Vector4(0.7f, 0.7f, 0.7f, 0.6f));
+                : new Vector4(0.6f, 0.85f, 0.6f, 0.8f));
 
             // Capsule axes
             var yAxis = Vector3.Transform(Vector3.UnitY, cap.Orientation);
