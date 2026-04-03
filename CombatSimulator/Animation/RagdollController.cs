@@ -489,15 +489,6 @@ public unsafe class RagdollController : IDisposable
         // Store real terrain level before any offset
         realGroundY = groundY;
 
-        // Lower physics ground to avoid joints starting at floor level, which causes
-        // degenerate constraint solving (many simultaneous ground penetrations).
-        // The visual correction in StepAndApply compensates so the character doesn't sink.
-        if (config.RagdollFloorOffset > 0)
-        {
-            groundY -= config.RagdollFloorOffset;
-            log.Info($"RagdollController: Floor offset applied, physics ground Y={groundY:F3} (real={realGroundY:F3}, offset={config.RagdollFloorOffset:F2})");
-        }
-
         // --- Pass 2: Create physics bodies ---
         // Capsule center is offset from bone origin (joint) along the segment direction.
         // Capsule half-length is clamped to not exceed half the actual segment distance
@@ -616,7 +607,7 @@ public unsafe class RagdollController : IDisposable
             var sleepThreshold = (config.RagdollNpcSettleCollision && config.RagdollNpcCollision) ? -1f : 0.01f;
             var bodyDesc = BodyDescription.CreateDynamic(
                 new RigidPose(capsuleCenter, capsuleWorldRot),
-                capsule.ComputeInertia(def.Mass * config.RagdollMassScale),
+                capsule.ComputeInertia(def.Mass),
                 new CollidableDescription(shapeIndex, 0.04f),
                 new BodyActivityDescription(sleepThreshold));
 
@@ -653,12 +644,9 @@ public unsafe class RagdollController : IDisposable
         foreach (var rb in ragdollBones)
             boneIdxToBodyHandle[rb.BoneIndex] = rb.BodyHandle;
 
-        // Joint stiffness: multiply constraint spring frequencies and motor damping.
-        // Higher = stiffer joints, body resists twisting. 1.0 = default ragdoll behavior.
-        var stiffness = config.RagdollJointStiffness;
-        var jointSpring = new SpringSettings(30 * stiffness, 1);
-        var limitSpring = new SpringSettings(15 * stiffness, 1);
-        var motorDamping = 0.01f * stiffness;
+        var jointSpring = new SpringSettings(30, 1);
+        var limitSpring = new SpringSettings(15, 1);
+        var motorDamping = 0.01f;
 
         for (int i = 0; i < ragdollBones.Count; i++)
         {
@@ -1072,7 +1060,7 @@ public unsafe class RagdollController : IDisposable
                         50f))
                 {
                     realGroundY = hitInfo.Point.Y;
-                    groundY = realGroundY - config.RagdollFloorOffset;
+                    groundY = realGroundY;
                     if (config.RagdollVerboseLog)
                         log.Info($"[Ragdoll F{frameCount}] Ground re-raycast: realY={realGroundY:F3} physicsY={groundY:F3}");
                 }
@@ -1248,14 +1236,6 @@ public unsafe class RagdollController : IDisposable
         // may extend below realGroundY even though the character is above the ground.
         // Applying correction immediately causes a visible upward bounce.
         float yCorrection = 0f;
-        if (frameCount > 30 && config.RagdollFloorOffset > 0 && lowestCapsuleBottomY < realGroundY)
-        {
-            yCorrection = realGroundY - lowestCapsuleBottomY;
-            // Cap at the offset amount — any sinkage beyond the offset is genuine physics
-            // (e.g., slopes), not an artifact of the lowered ground.
-            if (yCorrection > config.RagdollFloorOffset)
-                yCorrection = config.RagdollFloorOffset;
-        }
 
         // --- Frame summary (once per log frame, before per-bone data) ---
         if (logThisFrame)

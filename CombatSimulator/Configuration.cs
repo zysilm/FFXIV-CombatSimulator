@@ -95,12 +95,10 @@ public class Configuration : IPluginConfiguration
     public float RagdollGravity { get; set; } = 9.8f;
     public float RagdollDamping { get; set; } = 0.97f;
     public int RagdollSolverIterations { get; set; } = 8;
-    public float RagdollFloorOffset { get; set; } = 0f;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public bool RagdollTightKneeLimits { get; set; } = false; // Tight swing limits on knees/elbows (prevents hyperextension but reduces range of motion)
-    public float RagdollJointStiffness { get; set; } = 1.0f; // Multiplier for joint constraint strength
     // Hair physics
-    public bool RagdollHairPhysics { get; set; } = true;
+    public bool RagdollHairPhysics { get; set; } = false;
     public float RagdollHairGravityStrength { get; set; } = 0.5f;
     public float RagdollHairDamping { get; set; } = 0.92f;
     public float RagdollHairStiffness { get; set; } = 0.1f;
@@ -109,10 +107,9 @@ public class Configuration : IPluginConfiguration
     public bool EnableVictorySequence { get; set; } = false;
     public List<VictorySequenceStage> VictorySequenceStages { get; set; } = new();
     public List<VictoryCinematicPreset> VictoryCinematicPresets { get; set; } = new();
-    public bool RagdollNpcCollision { get; set; } = false;
+    public bool RagdollNpcCollision { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
-    public bool RagdollNpcSettleCollision { get; set; } = false;
-    public float RagdollMassScale { get; set; } = 1.0f;
+    public bool RagdollNpcSettleCollision { get; set; } = true;
 
     // Active Camera — camera tracks a bone with free orbital control
     public bool ShowActiveCamToolbar { get; set; } = false;

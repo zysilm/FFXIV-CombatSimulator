@@ -188,20 +188,17 @@ public class MainWindow : IDisposable
                     config.RagdollGravity = 9.8f;
                     config.RagdollDamping = 0.97f;
                     config.RagdollSolverIterations = 8;
-                    config.RagdollFloorOffset = 0f;
                     config.RagdollSelfCollision = true;
                     config.RagdollTightKneeLimits = false;
-                    config.RagdollJointStiffness = 1.0f;
-                    config.RagdollHairPhysics = true;
+                    config.RagdollHairPhysics = false;
                     config.RagdollHairGravityStrength = 0.5f;
                     config.RagdollHairDamping = 0.92f;
                     config.RagdollHairStiffness = 0.1f;
-                    config.RagdollMassScale = 1.0f;
                     // NPC Collision
-                    config.RagdollNpcCollision = false;
+                    config.RagdollNpcCollision = true;
                     config.RagdollNpcCollisionScale = 0.0001f;
                     // NPC Collision (Settle)
-                    config.RagdollNpcSettleCollision = false;
+                    config.RagdollNpcSettleCollision = true;
                     config.Save();
                 }
                 break;
@@ -1193,14 +1190,6 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("BEPU2 constraint solver iterations per timestep. Higher = more stable/accurate joints but costs performance. Default 8. Takes effect on next ragdoll activation.");
 
-                var floorOffset = config.RagdollFloorOffset;
-                if (ImGui.SliderFloat("Floor Offset##ragdoll", ref floorOffset, 0.0f, 0.5f, "%.2f"))
-                {
-                    config.RagdollFloorOffset = floorOffset;
-                    config.Save();
-                }
-                HelpMarker("Lower the terrain ground by this amount. Prevents joints from starting at floor level, which causes bad constraint solving.");
-
                 var selfCollision = config.RagdollSelfCollision;
                 if (ImGui.Checkbox("Self Collision##ragdoll", ref selfCollision))
                 {
@@ -1216,22 +1205,6 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Use tight swing limits on knees and elbows. Prevents hyperextension but reduces range of motion (guided bend). Takes effect on next ragdoll activation.");
-
-                var stiffness = config.RagdollJointStiffness;
-                if (ImGui.SliderFloat("Joint Stiffness##ragdoll", ref stiffness, 1.0f, 20.0f, "%.1fx"))
-                {
-                    config.RagdollJointStiffness = stiffness;
-                    config.Save();
-                }
-                HelpMarker("Multiplier for joint constraint strength. Higher = stiffer joints, body resists twisting. Takes effect on next ragdoll activation.");
-
-                var massScale = config.RagdollMassScale;
-                if (ImGui.SliderFloat("Mass Scale##ragdoll", ref massScale, 0.1f, 100.0f, "%.1fx"))
-                {
-                    config.RagdollMassScale = massScale;
-                    config.Save();
-                }
-                HelpMarker("Body mass multiplier. Higher = heavier (resists being pushed, falls faster). Lower = lighter (flies on impact). Takes effect on next ragdoll activation.");
 
                 ImGui.Separator();
                 ImGui.Text("Hair Physics");
