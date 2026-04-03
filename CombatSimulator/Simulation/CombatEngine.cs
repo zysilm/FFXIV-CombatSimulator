@@ -168,6 +168,7 @@ public class CombatEngine : IDisposable
         }
         npcSelector.DeselectAll();
         animationController.ResetPlayerDeathAnimation();
+        animationController.RemoveAllActiveVfx();
         movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
         deathCamController?.Deactivate();
@@ -684,6 +685,7 @@ public class CombatEngine : IDisposable
             {
                 playerDeathTriggered = true;
                 movementBlockHook.IsBlocking = true;
+                animationController.RemoveAllActiveVfx();
                 animationController.PlayPlayerDeath();
                 // Try cinematic victory sequence first; fall back to normal emotes
                 SimulatedNpc? cinematicNpc = null;

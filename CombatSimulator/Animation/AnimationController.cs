@@ -67,6 +67,21 @@ public unsafe class AnimationController : IDisposable
 
     private ActorVfxCreateDelegate? actorVfxCreate;
 
+    // ActorVfxRemove — removes a spawned VFX by pointer (same function VFXEditor uses)
+    private delegate nint ActorVfxRemoveDelegate(nint vfx, char a2);
+
+    private ActorVfxRemoveDelegate? actorVfxRemove;
+
+    // Track active VFX instances for timed removal
+    private readonly List<ActiveVfx> activeVfxList = new();
+    private const float VfxLifetime = 2.0f; // seconds before auto-removal
+
+    private struct ActiveVfx
+    {
+        public nint Pointer;
+        public float TimeRemaining;
+    }
+
     // Default hit VFX path candidates (tried in order until one sticks)
     public static readonly string[] HitVfxCandidates =
     {
@@ -90,6 +105,7 @@ public unsafe class AnimationController : IDisposable
 
         ResolvePlayDeadTimelines(dataManager);
         ResolveActorVfxCreate(sigScanner);
+        ResolveActorVfxRemove(sigScanner);
 
         log.Info("AnimationController: Initialized with ActionEffectHandler + emote timeline system.");
     }
@@ -106,6 +122,22 @@ public unsafe class AnimationController : IDisposable
         catch (Exception ex)
         {
             log.Warning(ex, "AnimationController: Could not resolve ActorVfxCreate — hit VFX will be unavailable.");
+        }
+    }
+
+    private void ResolveActorVfxRemove(ISigScanner sigScanner)
+    {
+        try
+        {
+            // Same signature + pointer chase as VFXEditor (Constants.ActorVfxRemoveSig)
+            var tempAddr = sigScanner.ScanText("0F 11 48 10 48 8D 05") + 7;
+            var addr = Marshal.ReadIntPtr(tempAddr + Marshal.ReadInt32(tempAddr) + 4);
+            actorVfxRemove = Marshal.GetDelegateForFunctionPointer<ActorVfxRemoveDelegate>(addr);
+            log.Info($"AnimationController: ActorVfxRemove resolved at 0x{addr:X}");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "AnimationController: Could not resolve ActorVfxRemove — VFX cleanup unavailable.");
         }
     }
 
@@ -163,6 +195,58 @@ public unsafe class AnimationController : IDisposable
     public void Tick(float deltaTime)
     {
         commandExecutor.Tick(deltaTime);
+        TickActiveVfx(deltaTime);
+    }
+
+    private void TickActiveVfx(float deltaTime)
+    {
+        if (actorVfxRemove == null || activeVfxList.Count == 0)
+            return;
+
+        for (int i = activeVfxList.Count - 1; i >= 0; i--)
+        {
+            var vfx = activeVfxList[i];
+            vfx.TimeRemaining -= deltaTime;
+            activeVfxList[i] = vfx;
+
+            if (vfx.TimeRemaining <= 0)
+            {
+                try
+                {
+                    actorVfxRemove(vfx.Pointer, (char)1);
+                }
+                catch (Exception ex)
+                {
+                    log.Warning(ex, $"Failed to remove VFX @{vfx.Pointer:X}");
+                }
+                activeVfxList.RemoveAt(i);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Immediately remove all tracked active VFX (called on death, combat stop, etc.).
+    /// </summary>
+    public void RemoveAllActiveVfx()
+    {
+        if (actorVfxRemove == null)
+        {
+            activeVfxList.Clear();
+            return;
+        }
+
+        foreach (var vfx in activeVfxList)
+        {
+            try
+            {
+                actorVfxRemove(vfx.Pointer, (char)1);
+            }
+            catch (Exception ex)
+            {
+                log.Warning(ex, $"Failed to remove VFX @{vfx.Pointer:X}");
+            }
+        }
+        activeVfxList.Clear();
     }
 
     /// <summary>
@@ -208,7 +292,9 @@ public unsafe class AnimationController : IDisposable
 
     /// <summary>
     /// Spawn action-specific VFX using paths extracted from Lumina data + TMB files.
-    /// Handles caster VFX (skill effects) and target VFX (hit/impact effects).
+    /// Caster VFX (from AnimationEnd TMB): spawned on caster, oriented toward first target.
+    /// Target VFX (from ActionTimelineHit TMB): spawned on target, oriented from caster.
+    /// All VFX are tracked and auto-removed after VfxLifetime seconds.
     /// </summary>
     private void SpawnActionVfx(ActionEffectRequest request)
     {
@@ -229,29 +315,29 @@ public unsafe class AnimationController : IDisposable
                 if (casterPtr != null) casterAddr = (nint)casterPtr;
             }
 
-            // Spawn caster VFX (cast circle, skill effects from TMB)
+            // Resolve first target address for orientation
+            nint firstTargetAddr = 0;
+            if (request.Targets.Count > 0)
+                firstTargetAddr = request.Targets[0].TargetAddress;
+
+            // Spawn caster VFX (cast circle, skill effects from AnimationEnd TMB)
+            // a2=caster (VFX attaches here), a3=target (orientation/direction)
             if (casterAddr != 0)
             {
+                nint orientAddr = firstTargetAddr != 0 ? firstTargetAddr : casterAddr;
+
                 if (!string.IsNullOrEmpty(request.CastVfxPath))
-                {
-                    actorVfxCreate(request.CastVfxPath, casterAddr, casterAddr, -1, (char)0, 0, (char)0);
-                    log.Info($"[VFX] Cast VFX: {request.CastVfxPath}");
-                }
+                    SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, "Cast");
 
                 if (!string.IsNullOrEmpty(request.StartVfxPath))
-                {
-                    actorVfxCreate(request.StartVfxPath, casterAddr, casterAddr, -1, (char)0, 0, (char)0);
-                    log.Info($"[VFX] Start VFX: {request.StartVfxPath}");
-                }
+                    SpawnAndTrack(request.StartVfxPath, casterAddr, orientAddr, "Start");
 
                 foreach (var path in request.CasterVfxPaths)
-                {
-                    actorVfxCreate(path, casterAddr, casterAddr, -1, (char)0, 0, (char)0);
-                    log.Info($"[VFX] Caster TMB VFX: {path}");
-                }
+                    SpawnAndTrack(path, casterAddr, orientAddr, "CasterTMB");
             }
 
-            // Spawn target VFX (hit/impact effects from TMB)
+            // Spawn target VFX (hit/impact effects from ActionTimelineHit TMB)
+            // a2=target (VFX attaches here), a3=caster (direction VFX comes from)
             foreach (var target in request.Targets)
             {
                 if (target.Damage <= 0 && target.Healing <= 0) continue;
@@ -259,29 +345,37 @@ public unsafe class AnimationController : IDisposable
                 nint targetAddr = target.TargetAddress;
                 if (targetAddr == 0) continue;
 
+                nint sourceAddr = casterAddr != 0 ? casterAddr : targetAddr;
+
                 if (request.TargetVfxPaths.Count > 0)
                 {
                     foreach (var path in request.TargetVfxPaths)
-                    {
-                        actorVfxCreate(path, targetAddr, casterAddr != 0 ? casterAddr : targetAddr, -1, (char)0, 0, (char)0);
-                        log.Info($"[VFX] Target TMB VFX: {path}");
-                    }
+                        SpawnAndTrack(path, targetAddr, sourceAddr, "TargetTMB");
                 }
                 else if (config.EnableHitVfx)
                 {
-                    // Fallback: use configured generic hit VFX
                     var vfxPath = config.HitVfxPath;
                     if (!string.IsNullOrWhiteSpace(vfxPath))
-                    {
-                        actorVfxCreate(vfxPath, targetAddr, casterAddr != 0 ? casterAddr : targetAddr, -1, (char)0, 0, (char)0);
-                        log.Verbose($"[VFX] Fallback hit VFX: {vfxPath}");
-                    }
+                        SpawnAndTrack(vfxPath, targetAddr, sourceAddr, "Fallback");
                 }
             }
         }
         catch (Exception ex)
         {
             log.Error(ex, "Failed to spawn action VFX.");
+        }
+    }
+
+    /// <summary>
+    /// Spawn a VFX via ActorVfxCreate and track the pointer for timed removal.
+    /// </summary>
+    private void SpawnAndTrack(string path, nint attachTo, nint orientTo, string label)
+    {
+        var ptr = actorVfxCreate!(path, attachTo, orientTo, -1, (char)0, 0, (char)0);
+        if (ptr != 0)
+        {
+            activeVfxList.Add(new ActiveVfx { Pointer = ptr, TimeRemaining = VfxLifetime });
+            log.Info($"[VFX] {label}: {path} → @{ptr:X}");
         }
     }
 
