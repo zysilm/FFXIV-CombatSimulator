@@ -1200,15 +1200,6 @@ public unsafe class RagdollController : IDisposable
         var character = (Character*)targetCharacterAddress;
         character->Timeline.OverallSpeed = 0f;
 
-        // Freeze breathing/idle overlay slots — OverallSpeed=0 doesn't stop these.
-        // Slot 3 = Additive, Slot 7 = Lips, Slot 12 = Overlay
-        if (config.RagdollWeaponDrop)
-        {
-            character->Timeline.TimelineSequencer.SetSlotSpeed(3, 0f);
-            character->Timeline.TimelineSequencer.SetSlotSpeed(7, 0f);
-            character->Timeline.TimelineSequencer.SetSlotSpeed(12, 0f);
-        }
-
         // Update skeleton transform for WorldToModel conversion.
         // The game may reposition the character root (e.g., dismount, death transition).
         // Physics bodies stay at correct world positions; we just need the current
