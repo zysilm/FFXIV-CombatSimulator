@@ -1,6 +1,6 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
-using System.Runtime.InteropServices;
 using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
@@ -12,49 +12,57 @@ namespace CombatSimulator.Safety;
 /// transforms during ragdoll weapon drop. The Attach deformer calls this to position
 /// weapon DrawObjects — without this hook, it reads from the frozen death animation
 /// instead of our physics-driven bone positions.
+///
+/// Hook creation is deferred to first use (EnsureHook) because the player's DrawObject
+/// is needed to resolve the virtual function address, and it's not available at plugin
+/// construction time (not on main thread).
 /// </summary>
 public unsafe class WeaponAttachHook : IDisposable
 {
+    private readonly IGameInteropProvider gameInterop;
+    private readonly IClientState clientState;
     private readonly IPluginLog log;
 
     private delegate Matrix4x4* GetAttachBoneWorldTransformDelegate(
         DrawObject* thisPtr, Matrix4x4* outTransform, int attachBoneIndex);
     private Hook<GetAttachBoneWorldTransformDelegate>? hook;
+    private bool hookAttempted;
 
-    /// <summary>Address of the hooked function (for diagnostics).</summary>
+    /// <summary>Address of the hooked function (for diagnostics). 0 until hook is created.</summary>
     public nint HookedAddress { get; private set; }
 
     /// <summary>
     /// When set, the hook overrides weapon bone transforms for this DrawObject.
-    /// Key = attachBoneIndex, Value = world-space 4x4 transform matrix.
     /// </summary>
     public nint BlockedDrawObject { get; set; }
-    private readonly System.Collections.Generic.Dictionary<int, Matrix4x4> overrideTransforms = new();
+    private readonly Dictionary<int, Matrix4x4> overrideTransforms = new();
 
     public WeaponAttachHook(IGameInteropProvider gameInterop, IClientState clientState, IPluginLog log)
     {
+        this.gameInterop = gameInterop;
+        this.clientState = clientState;
         this.log = log;
+    }
+
+    /// <summary>
+    /// Lazily create the hook on first call. Must be called from the main thread
+    /// (e.g., from framework update or ragdoll activation).
+    /// </summary>
+    public void EnsureHook()
+    {
+        if (hook != null || hookAttempted) return;
+        hookAttempted = true;
 
         try
         {
-            // Resolve vf17 from a live CharacterBase instance (player's DrawObject)
             var player = clientState.LocalPlayer;
-            if (player == null)
-            {
-                log.Warning("WeaponAttachHook: No local player — deferring hook creation.");
-                return;
-            }
+            if (player == null) return;
 
             var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;
-            if (gameObj->DrawObject == null)
-            {
-                log.Warning("WeaponAttachHook: No DrawObject — deferring hook creation.");
-                return;
-            }
+            if (gameObj->DrawObject == null) return;
 
-            // Read vtable pointer from the DrawObject, then read vf17 entry
             var vtablePtr = *(nint*)gameObj->DrawObject;
-            var vf17Addr = *(nint*)(vtablePtr + 17 * 8); // 8 bytes per vtable entry (x64)
+            var vf17Addr = *(nint*)(vtablePtr + 17 * 8);
             HookedAddress = vf17Addr;
 
             hook = gameInterop.HookFromAddress<GetAttachBoneWorldTransformDelegate>(
@@ -71,10 +79,10 @@ public unsafe class WeaponAttachHook : IDisposable
 
     /// <summary>
     /// Set override transform for a weapon attachment bone index.
-    /// Call each frame from the ragdoll's weapon bone write-back.
     /// </summary>
     public void SetOverride(int attachBoneIndex, Vector3 worldPos, Quaternion worldRot)
     {
+        EnsureHook();
         var mat = Matrix4x4.CreateFromQuaternion(worldRot);
         mat.M41 = worldPos.X;
         mat.M42 = worldPos.Y;
@@ -92,7 +100,6 @@ public unsafe class WeaponAttachHook : IDisposable
     private Matrix4x4* GetAttachBoneWorldTransformDetour(
         DrawObject* thisPtr, Matrix4x4* outTransform, int attachBoneIndex)
     {
-        // Only override for the target DrawObject and if we have an override for this bone
         if (BlockedDrawObject != nint.Zero &&
             (nint)thisPtr == BlockedDrawObject &&
             overrideTransforms.TryGetValue(attachBoneIndex, out var overrideMat))

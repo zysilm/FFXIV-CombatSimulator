@@ -115,10 +115,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         hookSafetyChecker.Register("ActionEffectHandler.Receive",
             "Processes combat effects (damage, flytext, animations). Hooked by ACT, combat log plugins.",
             (nint)FFXIVClientStructs.FFXIV.Client.Game.Character.ActionEffectHandler.MemberFunctionPointers.Receive);
-        if (weaponAttachHook.HookedAddress != nint.Zero)
-            hookSafetyChecker.Register("GetAttachBoneWorldTransform",
-                "Returns bone world transform for Attach deformer. Hooked for weapon drop physics.",
-                weaponAttachHook.HookedAddress);
+        // WeaponAttachHook registers lazily — diagnose entry added when hook is created
 
         // Safety — enable hooks immediately; they gate on internal state
         useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, config, clientState, log);

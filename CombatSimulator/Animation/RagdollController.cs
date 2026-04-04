@@ -1398,6 +1398,7 @@ public unsafe class RagdollController : IDisposable
             // Activate weapon attach hook to override the Attach deformer's bone reads
             if (weaponAttachHook != null && targetCharacterAddress != nint.Zero)
             {
+                weaponAttachHook.EnsureHook();
                 var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress;
                 if (gameObj->DrawObject != null)
                     weaponAttachHook.BlockedDrawObject = (nint)gameObj->DrawObject;
