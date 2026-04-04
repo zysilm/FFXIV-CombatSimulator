@@ -112,6 +112,9 @@ public class MainWindow : IDisposable
     private int selectedTab = 0;
     /// <summary>Name of the bone currently being edited in the advanced UI (for overlay highlighting).</summary>
     public string? EditingBoneName { get; private set; }
+    /// <summary>Which parameter is being actively dragged (for joint limit visualization).</summary>
+    public enum EditParam { None, Swing, TwistMin, TwistMax }
+    public EditParam EditingParameter { get; private set; }
 
     private static readonly string[] TabNames = new[]
     {
@@ -772,6 +775,32 @@ public class MainWindow : IDisposable
         ImGui.TextDisabled("Renders capsules and joints in 3D.");
         ImGui.Spacing();
 
+        // Quick toggle for weapon holster/sheathe bones
+        {
+            var bukiBones = new[] { "j_buki_kosi_l", "j_buki_kosi_r", "j_buki2_kosi_l", "j_buki2_kosi_r", "j_buki_sebo_l", "j_buki_sebo_r" };
+            bool anyOn = false;
+            foreach (var b in config.RagdollBoneConfigs)
+                if (Array.IndexOf(bukiBones, b.Name) >= 0 && b.Enabled) { anyOn = true; break; }
+
+            var bukiEnabled = anyOn;
+            if (ImGui.Checkbox("Sheathed Weapon Physics##ragdollAdv", ref bukiEnabled))
+            {
+                foreach (var b in config.RagdollBoneConfigs)
+                    if (Array.IndexOf(bukiBones, b.Name) >= 0)
+                        b.Enabled = bukiEnabled;
+                config.Save();
+                if (ragdollController.IsActive)
+                {
+                    var addr = ragdollController.TargetCharacterAddress;
+                    ragdollController.Deactivate();
+                    if (addr != nint.Zero) ragdollController.Activate(addr);
+                }
+            }
+            ImGui.SameLine();
+            ImGui.TextDisabled("Toggle all j_buki holster/scabbard bones.");
+        }
+        ImGui.Spacing();
+
         if (ragdollController.IsActive)
         {
             if (ImGui.Button("Apply Changes (Reactivate Ragdoll)"))
@@ -881,33 +910,56 @@ public class MainWindow : IDisposable
                 {
                     var jt = bone.JointType;
                     if (ImGui.Combo($"Joint Type{id}", ref jt, jointTypes, jointTypes.Length))
-                    { bone.JointType = jt; changed = true; EditingBoneName = bone.Name; }
+                    { bone.JointType = jt; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
 
                     var radius = bone.CapsuleRadius;
                     if (ImGui.SliderFloat($"Capsule Radius{id}", ref radius, 0.01f, 0.3f, "%.3f"))
-                    { bone.CapsuleRadius = radius; changed = true; EditingBoneName = bone.Name; }
+                    { bone.CapsuleRadius = radius; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
 
                     var halfLen = bone.CapsuleHalfLength;
                     if (ImGui.SliderFloat($"Capsule Half-Length{id}", ref halfLen, 0.0f, 0.3f, "%.3f"))
-                    { bone.CapsuleHalfLength = halfLen; changed = true; EditingBoneName = bone.Name; }
+                    { bone.CapsuleHalfLength = halfLen; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
 
                     var mass = bone.Mass;
                     if (ImGui.SliderFloat($"Mass{id}", ref mass, 0.1f, 15.0f, "%.1f"))
-                    { bone.Mass = mass; changed = true; EditingBoneName = bone.Name; }
+                    { bone.Mass = mass; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
 
                     var swing = bone.SwingLimit;
                     if (ImGui.SliderFloat($"Swing Limit (rad){id}", ref swing, 0.0f, MathF.PI, "%.2f"))
-                    { bone.SwingLimit = swing; changed = true; EditingBoneName = bone.Name; }
+                    { bone.SwingLimit = swing; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
 
-                    if (bone.JointType == 0)
+                    var twistMin = bone.TwistMinAngle;
+                    if (ImGui.SliderFloat($"Twist Min (rad){id}", ref twistMin, -MathF.PI, 0f, "%.2f"))
+                    { bone.TwistMinAngle = twistMin; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.TwistMin; }
+
+                    var twistMax = bone.TwistMaxAngle;
+                    if (ImGui.SliderFloat($"Twist Max (rad){id}", ref twistMax, 0f, MathF.PI, "%.2f"))
+                    { bone.TwistMaxAngle = twistMax; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.TwistMax; }
+
+                    // Soft body settings
+                    var softBody = bone.SoftBody;
+                    if (ImGui.Checkbox($"Soft Body##soft{bone.Name}", ref softBody))
+                    { bone.SoftBody = softBody; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+                    ImGui.SameLine();
+                    ImGui.TextDisabled("Bouncy spring physics (breast/jiggle)");
+
+                    if (bone.SoftBody)
                     {
-                        var twistMin = bone.TwistMinAngle;
-                        if (ImGui.SliderFloat($"Twist Min (rad){id}", ref twistMin, -MathF.PI, 0f, "%.2f"))
-                        { bone.TwistMinAngle = twistMin; changed = true; EditingBoneName = bone.Name; }
+                        var ssFreq = bone.SoftSpringFreq;
+                        if (ImGui.SliderFloat($"Spring Freq (Hz){id}", ref ssFreq, 1f, 30f, "%.1f"))
+                        { bone.SoftSpringFreq = ssFreq; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
 
-                        var twistMax = bone.TwistMaxAngle;
-                        if (ImGui.SliderFloat($"Twist Max (rad){id}", ref twistMax, 0f, MathF.PI, "%.2f"))
-                        { bone.TwistMaxAngle = twistMax; changed = true; EditingBoneName = bone.Name; }
+                        var ssDamp = bone.SoftSpringDamp;
+                        if (ImGui.SliderFloat($"Spring Damping{id}", ref ssDamp, 0.05f, 1.0f, "%.2f"))
+                        { bone.SoftSpringDamp = ssDamp; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                        var svFreq = bone.SoftServoFreq;
+                        if (ImGui.SliderFloat($"Servo Freq (Hz){id}", ref svFreq, 1f, 20f, "%.1f"))
+                        { bone.SoftServoFreq = svFreq; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                        var svDamp = bone.SoftServoDamp;
+                        if (ImGui.SliderFloat($"Servo Damping{id}", ref svDamp, 0.05f, 1.0f, "%.2f"))
+                        { bone.SoftServoDamp = svDamp; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
                     }
 
                     // Reset this bone to its default
@@ -924,6 +976,11 @@ public class MainWindow : IDisposable
                             bone.TwistMinAngle = def.TwistMinAngle;
                             bone.TwistMaxAngle = def.TwistMaxAngle;
                             bone.Enabled = def.Enabled;
+                            bone.SoftBody = def.SoftBody;
+                            bone.SoftSpringFreq = def.SoftSpringFreq;
+                            bone.SoftSpringDamp = def.SoftSpringDamp;
+                            bone.SoftServoFreq = def.SoftServoFreq;
+                            bone.SoftServoDamp = def.SoftServoDamp;
                             changed = true;
                             EditingBoneName = bone.Name;
                         }
@@ -1057,6 +1114,11 @@ public class MainWindow : IDisposable
             TwistMinAngle = src.TwistMinAngle,
             TwistMaxAngle = src.TwistMaxAngle,
             Description = src.Description,
+            SoftBody = src.SoftBody,
+            SoftSpringFreq = src.SoftSpringFreq,
+            SoftSpringDamp = src.SoftSpringDamp,
+            SoftServoFreq = src.SoftServoFreq,
+            SoftServoDamp = src.SoftServoDamp,
         };
     }
 
@@ -1887,6 +1949,14 @@ public class MainWindow : IDisposable
                 config.RagdollVerboseLog = ragdollLog;
                 config.Save();
             }
+
+            var followPos = config.RagdollFollowPosition;
+            if (ImGui.Checkbox("Ragdoll Follow Position##dev", ref followPos))
+            {
+                config.RagdollFollowPosition = followPos;
+                config.Save();
+            }
+            HelpMarker("Update GameObject.Position to follow the ragdoll root bone each frame. Prevents character model from unloading on long falls (e.g., off cliffs). May have side effects.");
 
             victorySequenceGui.Draw();
 

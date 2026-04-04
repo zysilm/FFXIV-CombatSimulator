@@ -18,6 +18,7 @@ public unsafe class RagdollController : IDisposable
 {
     private readonly BoneTransformService boneService;
     private readonly Npcs.NpcSelector npcSelector;
+    private readonly Safety.MovementBlockHook movementBlockHook;
     private readonly Configuration config;
     private readonly IPluginLog log;
 
@@ -90,6 +91,91 @@ public unsafe class RagdollController : IDisposable
         public string Name;
         public JointType Joint;
         public float SwingLimit;
+    }
+
+    /// <summary>Debug data for visualizing joint rotation limits.</summary>
+    public struct DebugJointVis
+    {
+        public bool Valid;
+        public Vector3 JointPosition;    // world-space joint point (where parent meets child)
+        public Vector3 ParentAxis;       // parent bone segment direction (world)
+        public Vector3 ChildAxis;        // child bone segment direction (world)
+        public Vector3 ParentRight;      // perpendicular axis for drawing arcs
+        public Vector3 ParentForward;    // perpendicular axis for drawing arcs
+        public JointType Joint;
+        public float SwingLimit;
+        public float TwistMinAngle;
+        public float TwistMaxAngle;
+    }
+
+    /// <summary>
+    /// Get joint visualization data for a specific bone (computed from live physics bodies).
+    /// Returns Invalid if bone not found or ragdoll not active.
+    /// </summary>
+    public DebugJointVis GetDebugJointVis(string boneName)
+    {
+        var result = new DebugJointVis { Valid = false };
+        if (!isActive || simulation == null) return result;
+
+        // Find the bone and its parent
+        RagdollBone? childBone = null;
+        int childIndex = -1;
+        for (int i = 0; i < ragdollBones.Count; i++)
+        {
+            if (ragdollBones[i].Name == boneName)
+            {
+                childBone = ragdollBones[i];
+                childIndex = i;
+                break;
+            }
+        }
+        if (childBone == null || childBone.Value.ParentBoneIndex < 0) return result;
+
+        // Find parent ragdoll bone
+        RagdollBone? parentBone = null;
+        foreach (var rb in ragdollBones)
+        {
+            if (rb.BoneIndex == childBone.Value.ParentBoneIndex)
+            {
+                parentBone = rb;
+                break;
+            }
+        }
+        if (parentBone == null) return result;
+
+        // Find bone def for limits
+        var BoneDefs = GetBoneDefs();
+        RagdollBoneDef boneDef = default;
+        foreach (var def in BoneDefs)
+            if (def.Name == boneName) { boneDef = def; break; }
+
+        // Read live physics body poses
+        var childBody = simulation.Bodies.GetBodyReference(childBone.Value.BodyHandle);
+        var parentBody = simulation.Bodies.GetBodyReference(parentBone.Value.BodyHandle);
+
+        // Segment directions (capsule Y-axis in world space)
+        var childAxis = Vector3.Transform(Vector3.UnitY, childBody.Pose.Orientation);
+        var parentAxis = Vector3.Transform(Vector3.UnitY, parentBody.Pose.Orientation);
+
+        // Joint position: bottom of child capsule (= top of parent towards child)
+        var jointPos = childBody.Pose.Position - childAxis * childBone.Value.SegmentHalfLength;
+
+        // Build perpendicular axes from parent direction (for drawing cones/arcs)
+        var up = MathF.Abs(Vector3.Dot(parentAxis, Vector3.UnitY)) > 0.9f ? Vector3.UnitX : Vector3.UnitY;
+        var parentRight = Vector3.Normalize(Vector3.Cross(parentAxis, up));
+        var parentForward = Vector3.Normalize(Vector3.Cross(parentRight, parentAxis));
+
+        result.Valid = true;
+        result.JointPosition = jointPos;
+        result.ParentAxis = parentAxis;
+        result.ChildAxis = childAxis;
+        result.ParentRight = parentRight;
+        result.ParentForward = parentForward;
+        result.Joint = boneDef.Joint;
+        result.SwingLimit = boneDef.SwingLimit;
+        result.TwistMinAngle = boneDef.TwistMinAngle;
+        result.TwistMaxAngle = boneDef.TwistMaxAngle;
+        return result;
     }
 
     /// <summary>
@@ -201,10 +287,15 @@ public unsafe class RagdollController : IDisposable
         public float CapsuleRadius;
         public float CapsuleHalfLength;
         public float Mass;
-        public float SwingLimit;      // Ball: cone angle (radians). Hinge: max bending angle (radians).
-        public JointType Joint;       // constraint type
-        public float TwistMinAngle;   // Ball: min axial twist (radians). Hinge: unused.
-        public float TwistMaxAngle;   // Ball: max axial twist (radians). Hinge: unused.
+        public float SwingLimit;
+        public JointType Joint;
+        public float TwistMinAngle;
+        public float TwistMaxAngle;
+        public bool SoftBody;          // use soft springs + AngularServo (for breast/jiggle)
+        public float SoftSpringFreq;   // BallSocket frequency (Hz)
+        public float SoftSpringDamp;   // BallSocket damping ratio
+        public float SoftServoFreq;    // AngularServo frequency (Hz)
+        public float SoftServoDamp;    // AngularServo damping ratio
     }
 
     // Runtime bone with physics body
@@ -248,59 +339,67 @@ public unsafe class RagdollController : IDisposable
     {
         // === SPINE CHAIN === (all enabled by default — core of ragdoll)
         new RagdollBoneConfig { Name = "j_kosi",    SkeletonParent = null,       Enabled = true,  CapsuleRadius = 0.105f, CapsuleHalfLength = 0.06f, Mass = 8.0f,  SwingLimit = 0.2f,                JointType = 0, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Pelvis" },
-        new RagdollBoneConfig { Name = "j_sebo_a",  SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.10f,  CapsuleHalfLength = 0.05f, Mass = 5.0f,  SwingLimit = 0.2f,                JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Lower Spine" },
-        new RagdollBoneConfig { Name = "j_sebo_b",  SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.09f,  CapsuleHalfLength = 0.05f, Mass = 5.0f,  SwingLimit = 0.15f,               JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Mid Spine" },
-        new RagdollBoneConfig { Name = "j_sebo_c",  SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.09f,  CapsuleHalfLength = 0.05f, Mass = 4.0f,  SwingLimit = 0.15f,               JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Chest" },
+        new RagdollBoneConfig { Name = "j_sebo_a",  SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.10f,  CapsuleHalfLength = 0.05f, Mass = 10.0f, SwingLimit = 0.2f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Lower Spine" },
+        new RagdollBoneConfig { Name = "j_sebo_b",  SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.09f,  CapsuleHalfLength = 0.05f, Mass = 5.0f,  SwingLimit = 0.15f,               JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Mid Spine" },
+        new RagdollBoneConfig { Name = "j_sebo_c",  SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.09f,  CapsuleHalfLength = 0.05f, Mass = 6.0f,  SwingLimit = 0.15f,               JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Chest" },
         new RagdollBoneConfig { Name = "j_kubi",    SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.03f, Mass = 2.0f,  SwingLimit = 0.25f,               JointType = 0, TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f,  Description = "Neck" },
-        new RagdollBoneConfig { Name = "j_kao",     SkeletonParent = "j_kubi",   Enabled = true,  CapsuleRadius = 0.08f,  CapsuleHalfLength = 0.04f, Mass = 3.0f,  SwingLimit = 0.3f,                JointType = 0, TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f,  Description = "Head" },
+        new RagdollBoneConfig { Name = "j_kao",     SkeletonParent = "j_kubi",   Enabled = true,  CapsuleRadius = 0.08f,  CapsuleHalfLength = 0.04f, Mass = 3.5f,  SwingLimit = 0.25f,               JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Head" },
 
         // === CLOTH/SKIRT BONES === (3 tiers: A→j_sebo_a, B→j_sebo_b, C→j_sebo_c; b=back, f=front, s=side)
-        new RagdollBoneConfig { Name = "j_sk_b_a_l", SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back A L" },
-        new RagdollBoneConfig { Name = "j_sk_b_a_r", SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back A R" },
-        new RagdollBoneConfig { Name = "j_sk_f_a_l", SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front A L" },
-        new RagdollBoneConfig { Name = "j_sk_f_a_r", SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front A R" },
-        new RagdollBoneConfig { Name = "j_sk_s_a_l", SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side A L" },
-        new RagdollBoneConfig { Name = "j_sk_s_a_r", SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side A R" },
-        new RagdollBoneConfig { Name = "j_sk_b_b_l", SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back B L" },
-        new RagdollBoneConfig { Name = "j_sk_b_b_r", SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back B R" },
-        new RagdollBoneConfig { Name = "j_sk_f_b_l", SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front B L" },
-        new RagdollBoneConfig { Name = "j_sk_f_b_r", SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front B R" },
-        new RagdollBoneConfig { Name = "j_sk_s_b_l", SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side B L" },
-        new RagdollBoneConfig { Name = "j_sk_s_b_r", SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side B R" },
-        new RagdollBoneConfig { Name = "j_sk_b_c_l", SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back C L" },
-        new RagdollBoneConfig { Name = "j_sk_b_c_r", SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back C R" },
-        new RagdollBoneConfig { Name = "j_sk_f_c_l", SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front C L" },
-        new RagdollBoneConfig { Name = "j_sk_f_c_r", SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front C R" },
-        new RagdollBoneConfig { Name = "j_sk_s_c_l", SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side C L" },
-        new RagdollBoneConfig { Name = "j_sk_s_c_r", SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 1, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side C R" },
+        new RagdollBoneConfig { Name = "j_sk_b_a_l", SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back A L" },
+        new RagdollBoneConfig { Name = "j_sk_b_a_r", SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back A R" },
+        new RagdollBoneConfig { Name = "j_sk_f_a_l", SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front A L" },
+        new RagdollBoneConfig { Name = "j_sk_f_a_r", SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front A R" },
+        new RagdollBoneConfig { Name = "j_sk_s_a_l", SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side A L" },
+        new RagdollBoneConfig { Name = "j_sk_s_a_r", SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side A R" },
+        new RagdollBoneConfig { Name = "j_sk_b_b_l", SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back B L" },
+        new RagdollBoneConfig { Name = "j_sk_b_b_r", SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back B R" },
+        new RagdollBoneConfig { Name = "j_sk_f_b_l", SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front B L" },
+        new RagdollBoneConfig { Name = "j_sk_f_b_r", SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front B R" },
+        new RagdollBoneConfig { Name = "j_sk_s_b_l", SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side B L" },
+        new RagdollBoneConfig { Name = "j_sk_s_b_r", SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side B R" },
+        new RagdollBoneConfig { Name = "j_sk_b_c_l", SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back C L" },
+        new RagdollBoneConfig { Name = "j_sk_b_c_r", SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back C R" },
+        new RagdollBoneConfig { Name = "j_sk_f_c_l", SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front C L" },
+        new RagdollBoneConfig { Name = "j_sk_f_c_r", SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front C R" },
+        new RagdollBoneConfig { Name = "j_sk_s_c_l", SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side C L" },
+        new RagdollBoneConfig { Name = "j_sk_s_c_r", SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side C R" },
+
+        // === WEAPON HOLSTER/SHEATHE === (disabled by default — enable for sheathed weapon physics)
+        new RagdollBoneConfig { Name = "j_buki_kosi_l",  SkeletonParent = "j_kosi",   Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Hip Sheathe" },
+        new RagdollBoneConfig { Name = "j_buki_kosi_r",  SkeletonParent = "j_kosi",   Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Hip Sheathe" },
+        new RagdollBoneConfig { Name = "j_buki2_kosi_l", SkeletonParent = "j_kosi",   Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Hip Holster" },
+        new RagdollBoneConfig { Name = "j_buki2_kosi_r", SkeletonParent = "j_kosi",   Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Hip Holster" },
+        new RagdollBoneConfig { Name = "j_buki_sebo_l",  SkeletonParent = "j_sebo_c", Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Back Scabbard" },
+        new RagdollBoneConfig { Name = "j_buki_sebo_r",  SkeletonParent = "j_sebo_c", Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Back Scabbard" },
 
         // === BREAST === (child of j_sebo_b, disabled by default — cosmetic)
-        new RagdollBoneConfig { Name = "j_mune_l",  SkeletonParent = "j_sebo_b", Enabled = false, CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.02f, Mass = 0.5f,  SwingLimit = 0.2f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Breast" },
-        new RagdollBoneConfig { Name = "j_mune_r",  SkeletonParent = "j_sebo_b", Enabled = false, CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.02f, Mass = 0.5f,  SwingLimit = 0.2f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Breast" },
+        new RagdollBoneConfig { Name = "j_mune_l",  SkeletonParent = "j_sebo_b", Enabled = false, CapsuleRadius = 0.06f,  CapsuleHalfLength = 0.02f, Mass = 0.1f,  SwingLimit = 0.25f,               JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Left Breast",  SoftBody = true, SoftSpringFreq = 1f, SoftSpringDamp = 0.05f, SoftServoFreq = 4f, SoftServoDamp = 0.35f },
+        new RagdollBoneConfig { Name = "j_mune_r",  SkeletonParent = "j_sebo_b", Enabled = false, CapsuleRadius = 0.06f,  CapsuleHalfLength = 0.02f, Mass = 0.1f,  SwingLimit = 0.25f,               JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Right Breast",  SoftBody = true, SoftSpringFreq = 1f, SoftSpringDamp = 0.05f, SoftServoFreq = 4f, SoftServoDamp = 0.35f },
 
         // === CLAVICLE === (child of j_sebo_c, inserts between chest and arms)
-        new RagdollBoneConfig { Name = "j_sako_l",  SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.04f, Mass = 1.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f,  Description = "Left Clavicle" },
-        new RagdollBoneConfig { Name = "j_sako_r",  SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.04f, Mass = 1.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f,  Description = "Right Clavicle" },
+        new RagdollBoneConfig { Name = "j_sako_l",  SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.04f, Mass = 0.5f,  SwingLimit = 0.15f,               JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Left Clavicle" },
+        new RagdollBoneConfig { Name = "j_sako_r",  SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.04f, Mass = 0.5f,  SwingLimit = 0.15f,               JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Right Clavicle" },
 
         // === ARM CHAIN === (all enabled — skeleton: j_sako → j_ude_a → j_ude_b → j_te)
         new RagdollBoneConfig { Name = "j_ude_a_l", SkeletonParent = "j_sako_l", Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,                JointType = 0, TwistMinAngle = -0.8f,  TwistMaxAngle = 0.8f,  Description = "Left Upper Arm" },
         new RagdollBoneConfig { Name = "j_ude_a_r", SkeletonParent = "j_sako_r", Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,                JointType = 0, TwistMinAngle = -0.8f,  TwistMaxAngle = 0.8f,  Description = "Right Upper Arm" },
-        new RagdollBoneConfig { Name = "j_ude_b_l", SkeletonParent = "j_ude_a_l",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Left Forearm" },
-        new RagdollBoneConfig { Name = "j_ude_b_r", SkeletonParent = "j_ude_a_r",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Right Forearm" },
-        new RagdollBoneConfig { Name = "j_te_l",    SkeletonParent = "j_ude_b_l",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.8f,                JointType = 0, TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f,  Description = "Left Hand" },
-        new RagdollBoneConfig { Name = "j_te_r",    SkeletonParent = "j_ude_b_r",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.8f,                JointType = 0, TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f,  Description = "Right Hand" },
+        new RagdollBoneConfig { Name = "j_ude_b_l", SkeletonParent = "j_ude_a_l",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.2f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Forearm" },
+        new RagdollBoneConfig { Name = "j_ude_b_r", SkeletonParent = "j_ude_a_r",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.2f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Forearm" },
+        new RagdollBoneConfig { Name = "j_te_l",    SkeletonParent = "j_ude_b_l",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Left Hand" },
+        new RagdollBoneConfig { Name = "j_te_r",    SkeletonParent = "j_ude_b_r",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Right Hand" },
 
         // === LEG CHAIN === (j_asi_a/b/c enabled, j_asi_d/e disabled by default)
-        new RagdollBoneConfig { Name = "j_asi_a_l", SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.045f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 1.3f,                JointType = 0, TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f,  Description = "Left Thigh" },
-        new RagdollBoneConfig { Name = "j_asi_a_r", SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.045f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 1.3f,                JointType = 0, TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f,  Description = "Right Thigh" },
-        new RagdollBoneConfig { Name = "j_asi_b_l", SkeletonParent = "j_asi_a_l",Enabled = true,  CapsuleRadius = 0.035f, CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Left Shin (Knee)" },
-        new RagdollBoneConfig { Name = "j_asi_b_r", SkeletonParent = "j_asi_a_r",Enabled = true,  CapsuleRadius = 0.035f, CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Right Shin (Knee)" },
-        new RagdollBoneConfig { Name = "j_asi_c_l", SkeletonParent = "j_asi_b_l",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Left Calf" },
-        new RagdollBoneConfig { Name = "j_asi_c_r", SkeletonParent = "j_asi_b_r",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Right Calf" },
-        new RagdollBoneConfig { Name = "j_asi_d_l", SkeletonParent = "j_asi_c_l",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 0.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Left Foot (Ankle)" },
-        new RagdollBoneConfig { Name = "j_asi_d_r", SkeletonParent = "j_asi_c_r",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 0.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Right Foot (Ankle)" },
-        new RagdollBoneConfig { Name = "j_asi_e_l", SkeletonParent = "j_asi_d_l",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.02f, Mass = 0.2f,  SwingLimit = 0.3f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Toes" },
-        new RagdollBoneConfig { Name = "j_asi_e_r", SkeletonParent = "j_asi_d_r",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.02f, Mass = 0.2f,  SwingLimit = 0.3f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Toes" },
+        new RagdollBoneConfig { Name = "j_asi_a_l", SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.045f, CapsuleHalfLength = 0.12f, Mass = 10.0f, SwingLimit = 1.3f,                JointType = 0, TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f,  Description = "Left Thigh" },
+        new RagdollBoneConfig { Name = "j_asi_a_r", SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.045f, CapsuleHalfLength = 0.12f, Mass = 10.0f, SwingLimit = 1.3f,                JointType = 0, TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f,  Description = "Right Thigh" },
+        new RagdollBoneConfig { Name = "j_asi_b_l", SkeletonParent = "j_asi_a_l",Enabled = true,  CapsuleRadius = 0.035f, CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Shin (Knee)" },
+        new RagdollBoneConfig { Name = "j_asi_b_r", SkeletonParent = "j_asi_a_r",Enabled = true,  CapsuleRadius = 0.035f, CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Shin (Knee)" },
+        new RagdollBoneConfig { Name = "j_asi_c_l", SkeletonParent = "j_asi_b_l",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.1f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Calf" },
+        new RagdollBoneConfig { Name = "j_asi_c_r", SkeletonParent = "j_asi_b_r",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.1f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Calf" },
+        new RagdollBoneConfig { Name = "j_asi_d_l", SkeletonParent = "j_asi_c_l",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Left Foot (Ankle)" },
+        new RagdollBoneConfig { Name = "j_asi_d_r", SkeletonParent = "j_asi_c_r",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Right Foot (Ankle)" },
+        new RagdollBoneConfig { Name = "j_asi_e_l", SkeletonParent = "j_asi_d_l",Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.02f, Mass = 0.2f,  SwingLimit = 0.3f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Toes" },
+        new RagdollBoneConfig { Name = "j_asi_e_r", SkeletonParent = "j_asi_d_r",Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.02f, Mass = 0.2f,  SwingLimit = 0.3f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Toes" },
     };
 
     /// <summary>
@@ -372,6 +471,11 @@ public unsafe class RagdollController : IDisposable
                 Joint = (JointType)c.JointType,
                 TwistMinAngle = c.TwistMinAngle,
                 TwistMaxAngle = c.TwistMaxAngle,
+                SoftBody = c.SoftBody,
+                SoftSpringFreq = c.SoftSpringFreq,
+                SoftSpringDamp = c.SoftSpringDamp,
+                SoftServoFreq = c.SoftServoFreq,
+                SoftServoDamp = c.SoftServoDamp,
             });
         }
         return result.ToArray();
@@ -400,10 +504,12 @@ public unsafe class RagdollController : IDisposable
         public bool IsFallback;
     }
 
-    public RagdollController(BoneTransformService boneService, Npcs.NpcSelector npcSelector, Configuration config, IPluginLog log)
+    public RagdollController(BoneTransformService boneService, Npcs.NpcSelector npcSelector,
+        Safety.MovementBlockHook movementBlockHook, Configuration config, IPluginLog log)
     {
         this.boneService = boneService;
         this.npcSelector = npcSelector;
+        this.movementBlockHook = movementBlockHook;
         this.config = config;
         this.log = log;
 
@@ -889,7 +995,7 @@ public unsafe class RagdollController : IDisposable
             boneIdxToBodyHandle[rb.BoneIndex] = rb.BodyHandle;
 
         var jointSpring = new SpringSettings(30, 1);
-        var limitSpring = new SpringSettings(15, 1);
+        var limitSpring = new SpringSettings(60, 1);
         var motorDamping = 0.01f;
 
         for (int i = 0; i < ragdollBones.Count; i++)
@@ -1007,48 +1113,44 @@ public unsafe class RagdollController : IDisposable
 
                     log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad dot={Vector3.Dot(forwardWorld, segDirWorld):F3}");
 
-                    // TwistLimit as one-sided anti-hyperextension constraint.
-                    // Twist axis = hinge axis. Reference direction = forwardWorld (flexion direction).
-                    // The current angle between child segment and forwardWorld is the "init angle".
-                    // Allow full flexion (angle can decrease toward 0) but block hyperextension
-                    // (angle cannot increase much beyond the init value).
-                    var initAngle = MathF.Acos(Math.Clamp(
-                        Vector3.Dot(segDirWorld, forwardWorld), -1f, 1f));
-                    var twistBasis = CreateTwistBasis(hingeAxisWorld, forwardWorld);
-                    var twistBasisLocalChild = Quaternion.Normalize(
-                        Quaternion.Inverse(childBodyRef.Pose.Orientation) * twistBasis);
-                    var twistBasisLocalParent = Quaternion.Normalize(
-                        Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis);
+                    // TwistLimit for hinge: anti-hyperextension constraint.
+                    // Uses config TwistMin/Max (same as Ball joints — no hardcoded values).
+                    if (boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0)
+                    {
+                        var twistBasis = CreateTwistBasis(hingeAxisWorld, forwardWorld);
+                        var twistBasisLocalChild = Quaternion.Normalize(
+                            Quaternion.Inverse(childBodyRef.Pose.Orientation) * twistBasis);
+                        var twistBasisLocalParent = Quaternion.Normalize(
+                            Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis);
 
-                    // Min = near zero (block hyperextension). Max = allow full flexion.
-                    // At init: angle ≈ initAngle. Flexion moves toward 0 (allowed).
-                    // Hyperextension moves beyond initAngle (blocked by Max).
-                    var twistMin = -0.1f;
-                    var twistMax = initAngle + 0.15f;
-                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                        new TwistLimit
-                        {
-                            LocalBasisA = twistBasisLocalChild,
-                            LocalBasisB = twistBasisLocalParent,
-                            MinimumAngle = twistMin,
-                            MaximumAngle = twistMax,
-                            SpringSettings = limitSpring,
-                        });
+                        simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                            new TwistLimit
+                            {
+                                LocalBasisA = twistBasisLocalChild,
+                                LocalBasisB = twistBasisLocalParent,
+                                MinimumAngle = boneDef.TwistMinAngle,
+                                MaximumAngle = boneDef.TwistMaxAngle,
+                                SpringSettings = limitSpring,
+                            });
 
-                    log.Info($"[Ragdoll Constraint] '{rb.Name}' TwistLimit: initAngle={initAngle:F2}rad min={twistMin:F2} max={twistMax:F2}");
+                        log.Info($"[Ragdoll Constraint] '{rb.Name}' TwistLimit: min={boneDef.TwistMinAngle:F2} max={boneDef.TwistMaxAngle:F2}");
+                    }
                 }
 
                 log.Info($"[Ragdoll Constraint] '{rb.Name}' Hinge axis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3})");
             }
             else
             {
-                // BallSocket: positional connection, allows full rotation
+                // BallSocket: positional connection
+                // Soft bodies use low frequency + low damping for jiggle
                 simulation.Solver.Add(rb.BodyHandle, parentHandle,
                     new BallSocket
                     {
                         LocalOffsetA = childLocalAnchor,
                         LocalOffsetB = parentLocalAnchor,
-                        SpringSettings = jointSpring,
+                        SpringSettings = boneDef.SoftBody
+                            ? new SpringSettings(boneDef.SoftSpringFreq, boneDef.SoftSpringDamp)
+                            : jointSpring,
                     });
 
                 // SwingLimit: symmetric cone limiting deviation from initial direction
@@ -1065,7 +1167,7 @@ public unsafe class RagdollController : IDisposable
                             AxisLocalA = axisChildLocal,
                             AxisLocalB = axisParentLocal,
                             MaximumSwingAngle = boneDef.SwingLimit,
-                            SpringSettings = limitSpring,
+                            SpringSettings = limitSpring, // stiff wall even for soft bodies
                         });
                 }
 
@@ -1091,13 +1193,27 @@ public unsafe class RagdollController : IDisposable
                 }
             }
 
-            // Angular motor: velocity damping (reduces oscillation during settling)
-            simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                new AngularMotor
-                {
-                    TargetVelocityLocalA = Vector3.Zero,
-                    Settings = new MotorSettings(float.MaxValue, motorDamping),
-                });
+            // Angular constraint: soft bodies use AngularServo (spring return to rest pose),
+            // rigid bodies use AngularMotor (velocity damping only)
+            if (boneDef.SoftBody)
+            {
+                simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                    new AngularServo
+                    {
+                        TargetRelativeRotationLocalA = Quaternion.Identity,
+                        ServoSettings = new ServoSettings(float.MaxValue, 0f, float.MaxValue),
+                        SpringSettings = new SpringSettings(boneDef.SoftServoFreq, boneDef.SoftServoDamp),
+                    });
+            }
+            else
+            {
+                simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                    new AngularMotor
+                    {
+                        TargetVelocityLocalA = Vector3.Zero,
+                        Settings = new MotorSettings(float.MaxValue, motorDamping),
+                    });
+            }
         }
 
         // Build ragdoll bone index set for fast lookup during propagation
@@ -1682,6 +1798,20 @@ public unsafe class RagdollController : IDisposable
                 skel.CharBase, kaoBodyBoneIndex,
                 skelWorldPos, skelWorldRot, skelWorldRotInv,
                 1.0f / 60.0f);
+        }
+
+        // (Dev) Update GameObject.Position to follow ragdoll root bone.
+        // Prevents model unload when ragdoll falls far from the frozen position.
+        if (config.RagdollFollowPosition && ragdollBones.Count > 0 && targetCharacterAddress != nint.Zero)
+        {
+            try
+            {
+                var rootBody = simulation.Bodies.GetBodyReference(ragdollBones[0].BodyHandle);
+                var rootPos = rootBody.Pose.Position;
+                var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress;
+                movementBlockHook.SetApproachPosition(gameObj, rootPos.X, rootPos.Y, rootPos.Z);
+            }
+            catch { }
         }
     }
 

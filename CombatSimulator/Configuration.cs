@@ -20,6 +20,12 @@ public class RagdollBoneConfig
     public float TwistMinAngle { get; set; }
     public float TwistMaxAngle { get; set; }
     public string? Description { get; set; }      // human-readable label for UI
+    // Soft body spring settings (for breast/jiggle bones)
+    public bool SoftBody { get; set; }             // use soft springs + AngularServo instead of rigid + AngularMotor
+    public float SoftSpringFreq { get; set; } = 6f;    // BallSocket spring frequency (Hz), lower = bouncier
+    public float SoftSpringDamp { get; set; } = 0.4f;  // BallSocket damping ratio, lower = more oscillation
+    public float SoftServoFreq { get; set; } = 4f;     // AngularServo spring frequency (Hz), controls return speed
+    public float SoftServoDamp { get; set; } = 0.35f;  // AngularServo damping ratio, controls bounce on return
 }
 
 [Serializable]
@@ -128,6 +134,7 @@ public class Configuration : IPluginConfiguration
 
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollVerboseLog { get; set; } = false;
+    public bool RagdollFollowPosition { get; set; } = false; // Update GameObject.Position to follow ragdoll root (prevents model unload on long falls)
     public bool EnableVictorySequence { get; set; } = false;
     public List<VictorySequenceStage> VictorySequenceStages { get; set; } = new();
     public List<VictoryCinematicPreset> VictoryCinematicPresets { get; set; } = new();

@@ -87,7 +87,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
-        ragdollController = new RagdollController(boneTransformService, npcSelector, config, log);
+        ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
         victorySequenceController = new Dev.VictorySequenceController(
