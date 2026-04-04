@@ -14,6 +14,7 @@
       "other"
     ],
     "LoadPriority": 0,
+    "IconUrl": "https://raw.githubusercontent.com/zysilm/FFXIV-CombatSimulator/main/images/logo.png",
     "AssemblyVersion": "1.8.0",
     "InternalName": "CombatSimulator",
     "DownloadLinkInstall": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v1.8.0/CombatSimulator.zip",
