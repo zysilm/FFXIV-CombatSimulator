@@ -775,6 +775,32 @@ public class MainWindow : IDisposable
         ImGui.TextDisabled("Renders capsules and joints in 3D.");
         ImGui.Spacing();
 
+        // Quick toggle for weapon holster/sheathe bones
+        {
+            var bukiBones = new[] { "j_buki_kosi_l", "j_buki_kosi_r", "j_buki2_kosi_l", "j_buki2_kosi_r", "j_buki_sebo_l", "j_buki_sebo_r" };
+            bool anyOn = false;
+            foreach (var b in config.RagdollBoneConfigs)
+                if (Array.IndexOf(bukiBones, b.Name) >= 0 && b.Enabled) { anyOn = true; break; }
+
+            var bukiEnabled = anyOn;
+            if (ImGui.Checkbox("Sheathed Weapon Physics##ragdollAdv", ref bukiEnabled))
+            {
+                foreach (var b in config.RagdollBoneConfigs)
+                    if (Array.IndexOf(bukiBones, b.Name) >= 0)
+                        b.Enabled = bukiEnabled;
+                config.Save();
+                if (ragdollController.IsActive)
+                {
+                    var addr = ragdollController.TargetCharacterAddress;
+                    ragdollController.Deactivate();
+                    if (addr != nint.Zero) ragdollController.Activate(addr);
+                }
+            }
+            ImGui.SameLine();
+            ImGui.TextDisabled("Toggle all j_buki holster/scabbard bones.");
+        }
+        ImGui.Spacing();
+
         if (ragdollController.IsActive)
         {
             if (ImGui.Button("Apply Changes (Reactivate Ragdoll)"))
