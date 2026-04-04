@@ -4,7 +4,6 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
-using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
@@ -73,7 +72,6 @@ public unsafe class AnimationController : IDisposable
 
     private ActorVfxCreateDelegate? actorVfxCreate;
     private nint actorVfxCreateAddr;
-    private Hook<ActorVfxCreateDelegate>? actorVfxCreateHook;
 
     // ActorVfxRemove — removes a spawned VFX by pointer (same function VFXEditor uses)
     private delegate nint ActorVfxRemoveDelegate(nint vfx, char a2);
@@ -85,18 +83,6 @@ public unsafe class AnimationController : IDisposable
     public nint ActorVfxCreateAddress => actorVfxCreateAddr;
     /// <summary>Resolved address of the native ActorVfxRemove function (0 if unresolved).</summary>
     public nint ActorVfxRemoveAddress => actorVfxRemoveAddr;
-
-    // GCD-based VFX tracking: hook captures actorVfxCreate pointers during the GCD
-    // window after each player action, then removes them when the window expires.
-    private const float VfxCleanupDelay = 2.5f;
-    private float vfxTrackingTimer; // counts down from VfxCleanupDelay, 0 = not tracking
-    private readonly List<TrackedVfx> trackedVfxList = new();
-
-    private struct TrackedVfx
-    {
-        public nint Pointer;
-        public float TimeRemaining;
-    }
 
     // Default hit VFX path candidates (tried in order until one sticks)
     public static readonly string[] HitVfxCandidates =
@@ -110,7 +96,6 @@ public unsafe class AnimationController : IDisposable
         IClientState clientState,
         IDataManager dataManager,
         ISigScanner sigScanner,
-        IGameInteropProvider gameInterop,
         ChatCommandExecutor commandExecutor,
         Configuration config)
     {
@@ -122,13 +107,13 @@ public unsafe class AnimationController : IDisposable
 
         ResolvePlayDeadTimelines(dataManager);
         ResolveBattleDeadTimeline(dataManager);
-        ResolveActorVfxCreate(sigScanner, gameInterop);
+        ResolveActorVfxCreate(sigScanner);
         ResolveActorVfxRemove(sigScanner);
 
         log.Info("AnimationController: Initialized with ActionEffectHandler + emote timeline system.");
     }
 
-    private void ResolveActorVfxCreate(ISigScanner sigScanner, IGameInteropProvider gameInterop)
+    private void ResolveActorVfxCreate(ISigScanner sigScanner)
     {
         try
         {
@@ -136,33 +121,12 @@ public unsafe class AnimationController : IDisposable
                 "40 53 55 56 57 48 81 EC ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 0F B6 AC 24 ?? ?? ?? ?? 0F 28 F3 49 8B F8");
             actorVfxCreateAddr = addr;
             actorVfxCreate = Marshal.GetDelegateForFunctionPointer<ActorVfxCreateDelegate>(addr);
-
-            // Hook to capture VFX pointers for GCD-based cleanup
-            actorVfxCreateHook = gameInterop.HookFromAddress<ActorVfxCreateDelegate>(addr, ActorVfxCreateDetour);
-            actorVfxCreateHook.Enable();
-            log.Info($"AnimationController: ActorVfxCreate resolved + hooked at 0x{addr:X}");
+            log.Info($"AnimationController: ActorVfxCreate resolved at 0x{addr:X}");
         }
         catch (Exception ex)
         {
             log.Warning(ex, "AnimationController: Could not resolve ActorVfxCreate — hit VFX will be unavailable.");
         }
-    }
-
-    private nint ActorVfxCreateDetour(string path, nint a2, nint a3, float a4, char a5, ushort a6, char a7)
-    {
-        var result = actorVfxCreateHook!.Original(path, a2, a3, a4, a5, a6, a7);
-
-        // During the GCD window after a player action, capture ALL created VFX pointers
-        if (vfxTrackingTimer > 0 && result != nint.Zero)
-        {
-            trackedVfxList.Add(new TrackedVfx
-            {
-                Pointer = result,
-                TimeRemaining = vfxTrackingTimer, // remove when the GCD window expires
-            });
-        }
-
-        return result;
     }
 
     private void ResolveActorVfxRemove(ISigScanner sigScanner)
@@ -268,32 +232,6 @@ public unsafe class AnimationController : IDisposable
     public void Tick(float deltaTime)
     {
         commandExecutor.Tick(deltaTime);
-
-        // Decrement the GCD tracking window
-        if (vfxTrackingTimer > 0)
-            vfxTrackingTimer = MathF.Max(0, vfxTrackingTimer - deltaTime);
-
-        // Remove expired tracked VFX
-        TickTrackedVfx(deltaTime);
-    }
-
-    private void TickTrackedVfx(float deltaTime)
-    {
-        if (trackedVfxList.Count == 0 || actorVfxRemove == null) return;
-
-        for (int i = trackedVfxList.Count - 1; i >= 0; i--)
-        {
-            var vfx = trackedVfxList[i];
-            vfx.TimeRemaining -= deltaTime;
-            trackedVfxList[i] = vfx;
-
-            if (vfx.TimeRemaining <= 0)
-            {
-                try { actorVfxRemove(vfx.Pointer, (char)1); }
-                catch { }
-                trackedVfxList.RemoveAt(i);
-            }
-        }
     }
 
     /// <summary>
@@ -301,19 +239,7 @@ public unsafe class AnimationController : IDisposable
     /// that hook actorVfxCreate also hook actorVfxRemove and crash on our NPC actors.
     /// VFX expire naturally via their built-in .avfx durations.
     /// </summary>
-    public void RemoveAllActiveVfx()
-    {
-        vfxTrackingTimer = 0;
-        if (actorVfxRemove != null)
-        {
-            foreach (var vfx in trackedVfxList)
-            {
-                try { actorVfxRemove(vfx.Pointer, (char)1); }
-                catch { }
-            }
-        }
-        trackedVfxList.Clear();
-    }
+    public void RemoveAllActiveVfx() { }
 
     /// <summary>
     /// Play attack animation + VFX + hit reaction via ActionEffectHandler.Receive().
@@ -351,11 +277,6 @@ public unsafe class AnimationController : IDisposable
 
             // Use ActionEffectHandler.Receive() for flytext + damage numbers
             CallActionEffectReceive(request);
-
-            // Start GCD tracking window — the hook captures all VFX created
-            // by the animation system over the next 2.5s, then removes them
-            if (request.IsSourcePlayer)
-                vfxTrackingTimer = VfxCleanupDelay;
         }
         catch (Exception ex)
         {
@@ -897,7 +818,5 @@ public unsafe class AnimationController : IDisposable
 
     public void Dispose()
     {
-        RemoveAllActiveVfx();
-        actorVfxCreateHook?.Dispose();
     }
 }
