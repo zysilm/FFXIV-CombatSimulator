@@ -287,10 +287,15 @@ public unsafe class RagdollController : IDisposable
         public float CapsuleRadius;
         public float CapsuleHalfLength;
         public float Mass;
-        public float SwingLimit;      // Ball: cone angle (radians). Hinge: max bending angle (radians).
-        public JointType Joint;       // constraint type
-        public float TwistMinAngle;   // Ball: min axial twist (radians). Hinge: unused.
-        public float TwistMaxAngle;   // Ball: max axial twist (radians). Hinge: unused.
+        public float SwingLimit;
+        public JointType Joint;
+        public float TwistMinAngle;
+        public float TwistMaxAngle;
+        public bool SoftBody;          // use soft springs + AngularServo (for breast/jiggle)
+        public float SoftSpringFreq;   // BallSocket frequency (Hz)
+        public float SoftSpringDamp;   // BallSocket damping ratio
+        public float SoftServoFreq;    // AngularServo frequency (Hz)
+        public float SoftServoDamp;    // AngularServo damping ratio
     }
 
     // Runtime bone with physics body
@@ -369,8 +374,8 @@ public unsafe class RagdollController : IDisposable
         new RagdollBoneConfig { Name = "j_buki_sebo_r",  SkeletonParent = "j_sebo_c", Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Back Scabbard" },
 
         // === BREAST === (child of j_sebo_b, disabled by default — cosmetic)
-        new RagdollBoneConfig { Name = "j_mune_l",  SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.02f, Mass = 0.5f,  SwingLimit = 1.25f,               JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Breast" },
-        new RagdollBoneConfig { Name = "j_mune_r",  SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.02f, Mass = 0.5f,  SwingLimit = 1.25f,               JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Breast" },
+        new RagdollBoneConfig { Name = "j_mune_l",  SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.02f, Mass = 0.5f,  SwingLimit = 0.25f,               JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Breast",  SoftBody = true },
+        new RagdollBoneConfig { Name = "j_mune_r",  SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.02f, Mass = 0.5f,  SwingLimit = 0.25f,               JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Breast",  SoftBody = true },
 
         // === CLAVICLE === (child of j_sebo_c, inserts between chest and arms)
         new RagdollBoneConfig { Name = "j_sako_l",  SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.04f, Mass = 0.5f,  SwingLimit = 0.15f,               JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Left Clavicle" },
@@ -466,6 +471,11 @@ public unsafe class RagdollController : IDisposable
                 Joint = (JointType)c.JointType,
                 TwistMinAngle = c.TwistMinAngle,
                 TwistMaxAngle = c.TwistMaxAngle,
+                SoftBody = c.SoftBody,
+                SoftSpringFreq = c.SoftSpringFreq,
+                SoftSpringDamp = c.SoftSpringDamp,
+                SoftServoFreq = c.SoftServoFreq,
+                SoftServoDamp = c.SoftServoDamp,
             });
         }
         return result.ToArray();
@@ -1131,9 +1141,6 @@ public unsafe class RagdollController : IDisposable
             }
             else
             {
-                // Detect soft body bones (breasts) — use bouncy spring constraints
-                bool isSoftBody = rb.Name is "j_mune_l" or "j_mune_r";
-
                 // BallSocket: positional connection
                 // Soft bodies use low frequency + low damping for jiggle
                 simulation.Solver.Add(rb.BodyHandle, parentHandle,
@@ -1141,9 +1148,9 @@ public unsafe class RagdollController : IDisposable
                     {
                         LocalOffsetA = childLocalAnchor,
                         LocalOffsetB = parentLocalAnchor,
-                        SpringSettings = isSoftBody
-                            ? new SpringSettings(6, 0.4f)   // soft, bouncy
-                            : jointSpring,                    // stiff, rigid
+                        SpringSettings = boneDef.SoftBody
+                            ? new SpringSettings(boneDef.SoftSpringFreq, boneDef.SoftSpringDamp)
+                            : jointSpring,
                     });
 
                 // SwingLimit: symmetric cone limiting deviation from initial direction
@@ -1188,20 +1195,18 @@ public unsafe class RagdollController : IDisposable
 
             // Angular constraint: soft bodies use AngularServo (spring return to rest pose),
             // rigid bodies use AngularMotor (velocity damping only)
-            if (rb.Name is "j_mune_l" or "j_mune_r")
+            if (boneDef.SoftBody)
             {
-                // AngularServo: bouncy spring back to rest orientation
                 simulation.Solver.Add(rb.BodyHandle, parentHandle,
                     new AngularServo
                     {
                         TargetRelativeRotationLocalA = Quaternion.Identity,
                         ServoSettings = new ServoSettings(float.MaxValue, 0f, float.MaxValue),
-                        SpringSettings = new SpringSettings(4, 0.35f), // soft, bouncy return
+                        SpringSettings = new SpringSettings(boneDef.SoftServoFreq, boneDef.SoftServoDamp),
                     });
             }
             else
             {
-                // AngularMotor: velocity damping (reduces oscillation during settling)
                 simulation.Solver.Add(rb.BodyHandle, parentHandle,
                     new AngularMotor
                     {

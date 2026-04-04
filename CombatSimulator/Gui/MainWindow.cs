@@ -936,6 +936,32 @@ public class MainWindow : IDisposable
                     if (ImGui.SliderFloat($"Twist Max (rad){id}", ref twistMax, 0f, MathF.PI, "%.2f"))
                     { bone.TwistMaxAngle = twistMax; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.TwistMax; }
 
+                    // Soft body settings
+                    var softBody = bone.SoftBody;
+                    if (ImGui.Checkbox($"Soft Body##soft{bone.Name}", ref softBody))
+                    { bone.SoftBody = softBody; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+                    ImGui.SameLine();
+                    ImGui.TextDisabled("Bouncy spring physics (breast/jiggle)");
+
+                    if (bone.SoftBody)
+                    {
+                        var ssFreq = bone.SoftSpringFreq;
+                        if (ImGui.SliderFloat($"Spring Freq (Hz){id}", ref ssFreq, 1f, 30f, "%.1f"))
+                        { bone.SoftSpringFreq = ssFreq; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                        var ssDamp = bone.SoftSpringDamp;
+                        if (ImGui.SliderFloat($"Spring Damping{id}", ref ssDamp, 0.05f, 1.0f, "%.2f"))
+                        { bone.SoftSpringDamp = ssDamp; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                        var svFreq = bone.SoftServoFreq;
+                        if (ImGui.SliderFloat($"Servo Freq (Hz){id}", ref svFreq, 1f, 20f, "%.1f"))
+                        { bone.SoftServoFreq = svFreq; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                        var svDamp = bone.SoftServoDamp;
+                        if (ImGui.SliderFloat($"Servo Damping{id}", ref svDamp, 0.05f, 1.0f, "%.2f"))
+                        { bone.SoftServoDamp = svDamp; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+                    }
+
                     // Reset this bone to its default
                     if (i < RagdollController.AllBoneDefaults.Length)
                     {
@@ -950,6 +976,11 @@ public class MainWindow : IDisposable
                             bone.TwistMinAngle = def.TwistMinAngle;
                             bone.TwistMaxAngle = def.TwistMaxAngle;
                             bone.Enabled = def.Enabled;
+                            bone.SoftBody = def.SoftBody;
+                            bone.SoftSpringFreq = def.SoftSpringFreq;
+                            bone.SoftSpringDamp = def.SoftSpringDamp;
+                            bone.SoftServoFreq = def.SoftServoFreq;
+                            bone.SoftServoDamp = def.SoftServoDamp;
                             changed = true;
                             EditingBoneName = bone.Name;
                         }
@@ -1083,6 +1114,11 @@ public class MainWindow : IDisposable
             TwistMinAngle = src.TwistMinAngle,
             TwistMaxAngle = src.TwistMaxAngle,
             Description = src.Description,
+            SoftBody = src.SoftBody,
+            SoftSpringFreq = src.SoftSpringFreq,
+            SoftSpringDamp = src.SoftSpringDamp,
+            SoftServoFreq = src.SoftServoFreq,
+            SoftServoDamp = src.SoftServoDamp,
         };
     }
 
