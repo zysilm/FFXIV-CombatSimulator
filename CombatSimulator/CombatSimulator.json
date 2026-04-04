@@ -12,5 +12,6 @@
     "CategoryTags": [
         "other"
     ],
-    "LoadPriority": 0
+    "LoadPriority": 0,
+    "IconUrl": "https://raw.githubusercontent.com/zysilm/FFXIV-CombatSimulator/main/images/logo.png"
 }
