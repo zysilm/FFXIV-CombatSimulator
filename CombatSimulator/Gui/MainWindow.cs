@@ -112,6 +112,9 @@ public class MainWindow : IDisposable
     private int selectedTab = 0;
     /// <summary>Name of the bone currently being edited in the advanced UI (for overlay highlighting).</summary>
     public string? EditingBoneName { get; private set; }
+    /// <summary>Which parameter is being actively dragged (for joint limit visualization).</summary>
+    public enum EditParam { None, Swing, TwistMin, TwistMax }
+    public EditParam EditingParameter { get; private set; }
 
     private static readonly string[] TabNames = new[]
     {
@@ -881,33 +884,33 @@ public class MainWindow : IDisposable
                 {
                     var jt = bone.JointType;
                     if (ImGui.Combo($"Joint Type{id}", ref jt, jointTypes, jointTypes.Length))
-                    { bone.JointType = jt; changed = true; EditingBoneName = bone.Name; }
+                    { bone.JointType = jt; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
 
                     var radius = bone.CapsuleRadius;
                     if (ImGui.SliderFloat($"Capsule Radius{id}", ref radius, 0.01f, 0.3f, "%.3f"))
-                    { bone.CapsuleRadius = radius; changed = true; EditingBoneName = bone.Name; }
+                    { bone.CapsuleRadius = radius; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
 
                     var halfLen = bone.CapsuleHalfLength;
                     if (ImGui.SliderFloat($"Capsule Half-Length{id}", ref halfLen, 0.0f, 0.3f, "%.3f"))
-                    { bone.CapsuleHalfLength = halfLen; changed = true; EditingBoneName = bone.Name; }
+                    { bone.CapsuleHalfLength = halfLen; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
 
                     var mass = bone.Mass;
                     if (ImGui.SliderFloat($"Mass{id}", ref mass, 0.1f, 15.0f, "%.1f"))
-                    { bone.Mass = mass; changed = true; EditingBoneName = bone.Name; }
+                    { bone.Mass = mass; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
 
                     var swing = bone.SwingLimit;
                     if (ImGui.SliderFloat($"Swing Limit (rad){id}", ref swing, 0.0f, MathF.PI, "%.2f"))
-                    { bone.SwingLimit = swing; changed = true; EditingBoneName = bone.Name; }
+                    { bone.SwingLimit = swing; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
 
                     if (bone.JointType == 0)
                     {
                         var twistMin = bone.TwistMinAngle;
                         if (ImGui.SliderFloat($"Twist Min (rad){id}", ref twistMin, -MathF.PI, 0f, "%.2f"))
-                        { bone.TwistMinAngle = twistMin; changed = true; EditingBoneName = bone.Name; }
+                        { bone.TwistMinAngle = twistMin; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.TwistMin; }
 
                         var twistMax = bone.TwistMaxAngle;
                         if (ImGui.SliderFloat($"Twist Max (rad){id}", ref twistMax, 0f, MathF.PI, "%.2f"))
-                        { bone.TwistMaxAngle = twistMax; changed = true; EditingBoneName = bone.Name; }
+                        { bone.TwistMaxAngle = twistMax; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.TwistMax; }
                     }
 
                     // Reset this bone to its default

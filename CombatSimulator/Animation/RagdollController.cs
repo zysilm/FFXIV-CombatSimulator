@@ -93,6 +93,91 @@ public unsafe class RagdollController : IDisposable
         public float SwingLimit;
     }
 
+    /// <summary>Debug data for visualizing joint rotation limits.</summary>
+    public struct DebugJointVis
+    {
+        public bool Valid;
+        public Vector3 JointPosition;    // world-space joint point (where parent meets child)
+        public Vector3 ParentAxis;       // parent bone segment direction (world)
+        public Vector3 ChildAxis;        // child bone segment direction (world)
+        public Vector3 ParentRight;      // perpendicular axis for drawing arcs
+        public Vector3 ParentForward;    // perpendicular axis for drawing arcs
+        public JointType Joint;
+        public float SwingLimit;
+        public float TwistMinAngle;
+        public float TwistMaxAngle;
+    }
+
+    /// <summary>
+    /// Get joint visualization data for a specific bone (computed from live physics bodies).
+    /// Returns Invalid if bone not found or ragdoll not active.
+    /// </summary>
+    public DebugJointVis GetDebugJointVis(string boneName)
+    {
+        var result = new DebugJointVis { Valid = false };
+        if (!isActive || simulation == null) return result;
+
+        // Find the bone and its parent
+        RagdollBone? childBone = null;
+        int childIndex = -1;
+        for (int i = 0; i < ragdollBones.Count; i++)
+        {
+            if (ragdollBones[i].Name == boneName)
+            {
+                childBone = ragdollBones[i];
+                childIndex = i;
+                break;
+            }
+        }
+        if (childBone == null || childBone.Value.ParentBoneIndex < 0) return result;
+
+        // Find parent ragdoll bone
+        RagdollBone? parentBone = null;
+        foreach (var rb in ragdollBones)
+        {
+            if (rb.BoneIndex == childBone.Value.ParentBoneIndex)
+            {
+                parentBone = rb;
+                break;
+            }
+        }
+        if (parentBone == null) return result;
+
+        // Find bone def for limits
+        var BoneDefs = GetBoneDefs();
+        RagdollBoneDef boneDef = default;
+        foreach (var def in BoneDefs)
+            if (def.Name == boneName) { boneDef = def; break; }
+
+        // Read live physics body poses
+        var childBody = simulation.Bodies.GetBodyReference(childBone.Value.BodyHandle);
+        var parentBody = simulation.Bodies.GetBodyReference(parentBone.Value.BodyHandle);
+
+        // Segment directions (capsule Y-axis in world space)
+        var childAxis = Vector3.Transform(Vector3.UnitY, childBody.Pose.Orientation);
+        var parentAxis = Vector3.Transform(Vector3.UnitY, parentBody.Pose.Orientation);
+
+        // Joint position: bottom of child capsule (= top of parent towards child)
+        var jointPos = childBody.Pose.Position - childAxis * childBone.Value.SegmentHalfLength;
+
+        // Build perpendicular axes from parent direction (for drawing cones/arcs)
+        var up = MathF.Abs(Vector3.Dot(parentAxis, Vector3.UnitY)) > 0.9f ? Vector3.UnitX : Vector3.UnitY;
+        var parentRight = Vector3.Normalize(Vector3.Cross(parentAxis, up));
+        var parentForward = Vector3.Normalize(Vector3.Cross(parentRight, parentAxis));
+
+        result.Valid = true;
+        result.JointPosition = jointPos;
+        result.ParentAxis = parentAxis;
+        result.ChildAxis = childAxis;
+        result.ParentRight = parentRight;
+        result.ParentForward = parentForward;
+        result.Joint = boneDef.Joint;
+        result.SwingLimit = boneDef.SwingLimit;
+        result.TwistMinAngle = boneDef.TwistMinAngle;
+        result.TwistMaxAngle = boneDef.TwistMaxAngle;
+        return result;
+    }
+
     /// <summary>
     /// Get current capsule positions/sizes for debug rendering.
     /// Returns empty if ragdoll is not active.
