@@ -47,13 +47,6 @@ public unsafe class ActiveCameraController : IDisposable
 
     public bool IsActive { get; private set; }
 
-    /// <summary>
-    /// When true, ShouldDrawGameObject hook stays active regardless of camera state.
-    /// Set by ragdoll controller to prevent character model from disappearing when
-    /// the ragdoll falls far from the game's expected camera position.
-    /// </summary>
-    public bool ForcePreventFade { get; set; }
-
     public ActiveCameraController(IGameInteropProvider gameInterop, IClientState clientState,
         ISigScanner sigScanner, Configuration config, IPluginLog log)
     {
@@ -216,8 +209,7 @@ public unsafe class ActiveCameraController : IDisposable
             DisableCollisionPatch();
 
         // ShouldDrawGameObject hook: enable when prevent fade is wanted
-        // ForcePreventFade is set by ragdoll to keep model visible during long falls
-        bool wantPreventFade = ForcePreventFade || (IsActive && config.ActiveCameraPreventFade);
+        bool wantPreventFade = IsActive && config.ActiveCameraPreventFade;
         if (wantPreventFade && !shouldDrawHookActive && shouldDrawHook != null)
         {
             shouldDrawHook.Enable();
