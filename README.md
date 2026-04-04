@@ -16,35 +16,17 @@ Open Dalamud Settings in-game (`/xlsettings`) and follow these steps:
 
 ## Features
 
-- **Target Selection** — Select any visible NPC as a combat target via normal targeting + attack
-- **Full Combat Simulation** — Damage calculation, cooldowns, combos, auto-attacks, status effects
-- **NPC AI** — Configurable behavior presets: Training Dummy, Basic Melee, Basic Ranged, Boss
-- **Combat Animations** — Real FFXIV animations via ActionEffectHandler (attack swings, damage flytext, death)
-- **Battle Stance** — Active targets visually enter combat-ready "drawn weapon" state
-- **Target Approach** — NPCs automatically move to stay near your character with configurable distance
-- **Aggro Propagation** — Nearby idle targets join the fight when one is attacked (configurable range)
-- **HP Bar Overlays** — Enemy and player simulated HP bars rendered in-world
-- **Combat Log** — Scrollable log of all combat events
-- **Shortcuts Bar** — Optional floating bar with Start, Reset All, and Reboot buttons
-- **Death Effects** — Ragdoll physics (BEPUphysics2) on character death with 18-bone capsule ragdoll, per-joint anatomical limits, one-sided knee hyperextension prevention, self-collision, and ground contact
-- **Hair Physics** — Pendulum gravity simulation for hair bone chains during ragdoll, with configurable gravity strength, damping, and stiffness
-- **NPC Bone Collision** — Dynamic skeleton-based collision volumes for NPC targets (works with any model: humanoid, monster, dragon). Settle collision keeps ragdoll reactive after settling
-- **NPC Targeting** — Active NPCs visually target the player during combat (head tracking, emote interactions)
-- **Target Victory Emote** — NPCs play a selected emote toward the player on death (scrollable emote list from game data)
-- **Active Camera** — Camera tracks a selected bone with free orbital control, height/side offsets, vertical angle lock, collision disable, and close zoom with configurable minimum distance. Floating toolbar for quick adjustments. Camera system inspired by [Cammy](https://github.com/UnknownX7/Cammy)
-- **Victory Cinematic** — (Dev) Multi-stage choreographed NPC victory sequence with timeline editor, emote/action selection, distance/time interpolation, infinite walk mode, BEPU2 physics grab constraint, dynamic bone targeting, and preset save/load system
-- **Death Cam** — Cinematic camera that smoothly transitions to an anchored position on player death, with configurable height/side offsets, bone tracking, and smooth follow. Camera system inspired by [Cammy](https://github.com/UnknownX7/Cammy)
-- **Hit VFX** — Configurable visual effects on player when taking damage
-- **Glamourer Integration** — Apply glamourer presets on death and on reset
-- **Sidebar UI** — Tabbed layout with draggable sidebar for easy navigation
-- **Network Safe** — All combat is client-side only; UseAction hook prevents any server packets
+- **Combat System** — Full damage calculation, NPC AI (melee/ranged/boss presets), aggro propagation, HP overlays, and combat log. NPC levels up to 200.
+- **Ragdoll Physics** — BEPUphysics2-powered ragdoll on death with 42 configurable bones (spine, arms, legs, clavicles, cloth/skirt). Per-bone editor for capsule volume, joint type, rotation limits. Adjustable friction, self-collision, and 3D debug overlay.
+- **Camera** — Customizable death cam and active camera with bone tracking, free orbital control, height/side offsets, and smooth transitions.
+
+All combat is client-side only — no data is sent to the server.
 
 ## Usage
 
 1. Open the plugin window with `/combatsim`
 2. Target an NPC and attack it to register as a combat target
 3. Use **Start Combat** to begin the simulation
-4. Configure NPC behavior, damage multipliers, and target behaviors in the settings
 
 ### Commands
 
@@ -66,17 +48,5 @@ Requires .NET 8.0 SDK and Dalamud.
 
 ## Credits
 
-- Camera system (Active Camera, Death Cam) inspired by [Cammy](https://github.com/UnknownX7/Cammy) by UnknownX7
+- Camera system inspired by [Cammy](https://github.com/UnknownX7/Cammy) by UnknownX7
 - Ragdoll physics powered by [BEPUphysics2](https://github.com/bepu/bepuphysics2) by Ross Nordby
-
-## Known Issues
-
-- **Skill VFX disabled** — Per-skill visual effects (cast circles, impact particles) extracted from game data are currently disabled. When `actorVfxCreate` is called on simulated NPC actors, other plugins that hook this native function (notably **RotationSolver** and **VFXEditor**) attempt to access character fields on our modified NPCs, causing an `AccessViolationException` crash. Per-player hit VFX (`SpawnHitVfxOnPlayer`) is unaffected since it only passes the local player's address. This is a plugin ecosystem compatibility issue — not fixable without cooperation from the hooking plugins.
-
-## Safety
-
-The plugin never sends combat data to the FFXIV server:
-- UseAction hook intercepts all actions targeting simulated NPCs
-- All HP/damage/state is tracked in plugin memory, not game memory
-- NPC positions are client-side direct memory writes
-- ActionEffectHandler.Receive triggers animations locally only
