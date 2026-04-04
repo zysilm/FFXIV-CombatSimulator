@@ -371,16 +371,16 @@ public unsafe class RagdollController : IDisposable
         // === ARM CHAIN === (all enabled — skeleton: j_sako → j_ude_a → j_ude_b → j_te)
         new RagdollBoneConfig { Name = "j_ude_a_l", SkeletonParent = "j_sako_l", Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,                JointType = 0, TwistMinAngle = -0.8f,  TwistMaxAngle = 0.8f,  Description = "Left Upper Arm" },
         new RagdollBoneConfig { Name = "j_ude_a_r", SkeletonParent = "j_sako_r", Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.8f,                JointType = 0, TwistMinAngle = -0.8f,  TwistMaxAngle = 0.8f,  Description = "Right Upper Arm" },
-        new RagdollBoneConfig { Name = "j_ude_b_l", SkeletonParent = "j_ude_a_l",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Left Forearm" },
-        new RagdollBoneConfig { Name = "j_ude_b_r", SkeletonParent = "j_ude_a_r",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Right Forearm" },
+        new RagdollBoneConfig { Name = "j_ude_b_l", SkeletonParent = "j_ude_a_l",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 1.6f,  Description = "Left Forearm" },
+        new RagdollBoneConfig { Name = "j_ude_b_r", SkeletonParent = "j_ude_a_r",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.5f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 1.6f,  Description = "Right Forearm" },
         new RagdollBoneConfig { Name = "j_te_l",    SkeletonParent = "j_ude_b_l",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.8f,                JointType = 0, TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f,  Description = "Left Hand" },
         new RagdollBoneConfig { Name = "j_te_r",    SkeletonParent = "j_ude_b_r",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.8f,                JointType = 0, TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f,  Description = "Right Hand" },
 
         // === LEG CHAIN === (j_asi_a/b/c enabled, j_asi_d/e disabled by default)
         new RagdollBoneConfig { Name = "j_asi_a_l", SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.045f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 1.3f,                JointType = 0, TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f,  Description = "Left Thigh" },
         new RagdollBoneConfig { Name = "j_asi_a_r", SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.045f, CapsuleHalfLength = 0.12f, Mass = 4.0f,  SwingLimit = 1.3f,                JointType = 0, TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f,  Description = "Right Thigh" },
-        new RagdollBoneConfig { Name = "j_asi_b_l", SkeletonParent = "j_asi_a_l",Enabled = true,  CapsuleRadius = 0.035f, CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Left Shin (Knee)" },
-        new RagdollBoneConfig { Name = "j_asi_b_r", SkeletonParent = "j_asi_a_r",Enabled = true,  CapsuleRadius = 0.035f, CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Right Shin (Knee)" },
+        new RagdollBoneConfig { Name = "j_asi_b_l", SkeletonParent = "j_asi_a_l",Enabled = true,  CapsuleRadius = 0.035f, CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 1.6f,  Description = "Left Shin (Knee)" },
+        new RagdollBoneConfig { Name = "j_asi_b_r", SkeletonParent = "j_asi_a_r",Enabled = true,  CapsuleRadius = 0.035f, CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 1.6f,  Description = "Right Shin (Knee)" },
         new RagdollBoneConfig { Name = "j_asi_c_l", SkeletonParent = "j_asi_b_l",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Left Calf" },
         new RagdollBoneConfig { Name = "j_asi_c_r", SkeletonParent = "j_asi_b_r",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Right Calf" },
         new RagdollBoneConfig { Name = "j_asi_d_l", SkeletonParent = "j_asi_c_l",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 0.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Left Foot (Ankle)" },
@@ -1095,35 +1095,28 @@ public unsafe class RagdollController : IDisposable
 
                     log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad dot={Vector3.Dot(forwardWorld, segDirWorld):F3}");
 
-                    // TwistLimit as one-sided anti-hyperextension constraint.
-                    // Twist axis = hinge axis. Reference direction = forwardWorld (flexion direction).
-                    // The current angle between child segment and forwardWorld is the "init angle".
-                    // Allow full flexion (angle can decrease toward 0) but block hyperextension
-                    // (angle cannot increase much beyond the init value).
-                    var initAngle = MathF.Acos(Math.Clamp(
-                        Vector3.Dot(segDirWorld, forwardWorld), -1f, 1f));
-                    var twistBasis = CreateTwistBasis(hingeAxisWorld, forwardWorld);
-                    var twistBasisLocalChild = Quaternion.Normalize(
-                        Quaternion.Inverse(childBodyRef.Pose.Orientation) * twistBasis);
-                    var twistBasisLocalParent = Quaternion.Normalize(
-                        Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis);
+                    // TwistLimit for hinge: anti-hyperextension constraint.
+                    // Uses config TwistMin/Max (same as Ball joints — no hardcoded values).
+                    if (boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0)
+                    {
+                        var twistBasis = CreateTwistBasis(hingeAxisWorld, forwardWorld);
+                        var twistBasisLocalChild = Quaternion.Normalize(
+                            Quaternion.Inverse(childBodyRef.Pose.Orientation) * twistBasis);
+                        var twistBasisLocalParent = Quaternion.Normalize(
+                            Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis);
 
-                    // Min = near zero (block hyperextension). Max = allow full flexion.
-                    // At init: angle ≈ initAngle. Flexion moves toward 0 (allowed).
-                    // Hyperextension moves beyond initAngle (blocked by Max).
-                    var twistMin = -0.1f;
-                    var twistMax = initAngle + 0.15f;
-                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                        new TwistLimit
-                        {
-                            LocalBasisA = twistBasisLocalChild,
-                            LocalBasisB = twistBasisLocalParent,
-                            MinimumAngle = twistMin,
-                            MaximumAngle = twistMax,
-                            SpringSettings = limitSpring,
-                        });
+                        simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                            new TwistLimit
+                            {
+                                LocalBasisA = twistBasisLocalChild,
+                                LocalBasisB = twistBasisLocalParent,
+                                MinimumAngle = boneDef.TwistMinAngle,
+                                MaximumAngle = boneDef.TwistMaxAngle,
+                                SpringSettings = limitSpring,
+                            });
 
-                    log.Info($"[Ragdoll Constraint] '{rb.Name}' TwistLimit: initAngle={initAngle:F2}rad min={twistMin:F2} max={twistMax:F2}");
+                        log.Info($"[Ragdoll Constraint] '{rb.Name}' TwistLimit: min={boneDef.TwistMinAngle:F2} max={boneDef.TwistMaxAngle:F2}");
+                    }
                 }
 
                 log.Info($"[Ragdoll Constraint] '{rb.Name}' Hinge axis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3})");
