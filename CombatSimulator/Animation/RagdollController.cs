@@ -977,7 +977,7 @@ public unsafe class RagdollController : IDisposable
             boneIdxToBodyHandle[rb.BoneIndex] = rb.BodyHandle;
 
         var jointSpring = new SpringSettings(30, 1);
-        var limitSpring = new SpringSettings(30, 1);
+        var limitSpring = new SpringSettings(60, 1);
         var motorDamping = 0.01f;
 
         for (int i = 0; i < ragdollBones.Count; i++)
