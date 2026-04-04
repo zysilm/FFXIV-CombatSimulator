@@ -276,6 +276,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             var deltaTime = (float)(1.0 / 60.0);
 
+            // Keep character model visible when ragdoll is active (prevents fade on long falls)
+            activeCameraController.ForcePreventFade = ragdollController.IsActive;
+
             // Camera controllers run independently of combat
             deathCamController.Tick(deltaTime);
             activeCameraController.Tick(deltaTime);
