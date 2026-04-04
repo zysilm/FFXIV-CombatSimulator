@@ -7,6 +7,7 @@ using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
+using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using Lumina.Excel.Sheets;
 
 // ActorVfxCreate — spawns a .avfx on an actor (same function VFXEditor / Brio use)
@@ -83,6 +84,11 @@ public unsafe class AnimationController : IDisposable
     public nint ActorVfxCreateAddress => actorVfxCreateAddr;
     /// <summary>Resolved address of the native ActorVfxRemove function (0 if unresolved).</summary>
     public nint ActorVfxRemoveAddress => actorVfxRemoveAddr;
+
+    // GCD-based VFX cleanup: after each action, queue a cleanup to remove
+    // lingering cast/skill VFX from the player after the GCD expires.
+    private readonly List<float> pendingVfxCleanups = new(); // remaining time for each pending cleanup
+    private const float VfxCleanupDelay = 2.5f; // default GCD (~2.5s)
 
     // Default hit VFX path candidates (tried in order until one sticks)
     public static readonly string[] HitVfxCandidates =
@@ -232,6 +238,67 @@ public unsafe class AnimationController : IDisposable
     public void Tick(float deltaTime)
     {
         commandExecutor.Tick(deltaTime);
+        TickVfxCleanups(deltaTime);
+    }
+
+    private void TickVfxCleanups(float deltaTime)
+    {
+        if (pendingVfxCleanups.Count == 0) return;
+
+        for (int i = pendingVfxCleanups.Count - 1; i >= 0; i--)
+        {
+            pendingVfxCleanups[i] -= deltaTime;
+            if (pendingVfxCleanups[i] <= 0)
+            {
+                RemovePlayerVfxObjects();
+                pendingVfxCleanups.RemoveAt(i);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Remove all VfxObject children from the player's DrawObject.
+    /// Called after GCD expires to clean up lingering cast/skill VFX.
+    /// </summary>
+    private void RemovePlayerVfxObjects()
+    {
+        try
+        {
+            var player = clientState.LocalPlayer;
+            if (player == null) return;
+
+            var gameObj = (GameObject*)player.Address;
+            if (gameObj->DrawObject == null) return;
+
+            var drawObj = (DrawObject*)gameObj->DrawObject;
+
+            // Collect VfxObject children (can't modify linked list while iterating)
+            var vfxToRemove = new List<nint>();
+            foreach (var child in drawObj->ChildObjects)
+            {
+                if (child->GetObjectType() == ObjectType.VfxObject)
+                    vfxToRemove.Add((nint)child);
+            }
+
+            if (vfxToRemove.Count == 0) return;
+
+            // Remove via actorVfxRemove if available, otherwise try Dtor
+            foreach (var ptr in vfxToRemove)
+            {
+                try
+                {
+                    if (actorVfxRemove != null)
+                        actorVfxRemove(ptr, (char)1);
+                }
+                catch { }
+            }
+
+            log.Verbose($"VFX cleanup: removed {vfxToRemove.Count} VfxObjects from player");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "VFX cleanup failed");
+        }
     }
 
     /// <summary>
@@ -239,7 +306,11 @@ public unsafe class AnimationController : IDisposable
     /// that hook actorVfxCreate also hook actorVfxRemove and crash on our NPC actors.
     /// VFX expire naturally via their built-in .avfx durations.
     /// </summary>
-    public void RemoveAllActiveVfx() { }
+    public void RemoveAllActiveVfx()
+    {
+        pendingVfxCleanups.Clear();
+        RemovePlayerVfxObjects();
+    }
 
     /// <summary>
     /// Play attack animation + VFX + hit reaction via ActionEffectHandler.Receive().
@@ -277,6 +348,10 @@ public unsafe class AnimationController : IDisposable
 
             // Use ActionEffectHandler.Receive() for flytext + damage numbers
             CallActionEffectReceive(request);
+
+            // Queue GCD-based VFX cleanup for player-sourced actions
+            if (request.IsSourcePlayer)
+                pendingVfxCleanups.Add(VfxCleanupDelay);
         }
         catch (Exception ex)
         {
