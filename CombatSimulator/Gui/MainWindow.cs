@@ -1888,6 +1888,14 @@ public class MainWindow : IDisposable
                 config.Save();
             }
 
+            var followPos = config.RagdollFollowPosition;
+            if (ImGui.Checkbox("Ragdoll Follow Position##dev", ref followPos))
+            {
+                config.RagdollFollowPosition = followPos;
+                config.Save();
+            }
+            HelpMarker("Update GameObject.Position to follow the ragdoll root bone each frame. Prevents character model from unloading on long falls (e.g., off cliffs). May have side effects.");
+
             victorySequenceGui.Draw();
 
             ImGui.Unindent();

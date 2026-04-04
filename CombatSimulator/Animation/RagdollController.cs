@@ -18,6 +18,7 @@ public unsafe class RagdollController : IDisposable
 {
     private readonly BoneTransformService boneService;
     private readonly Npcs.NpcSelector npcSelector;
+    private readonly Safety.MovementBlockHook movementBlockHook;
     private readonly Configuration config;
     private readonly IPluginLog log;
 
@@ -400,10 +401,12 @@ public unsafe class RagdollController : IDisposable
         public bool IsFallback;
     }
 
-    public RagdollController(BoneTransformService boneService, Npcs.NpcSelector npcSelector, Configuration config, IPluginLog log)
+    public RagdollController(BoneTransformService boneService, Npcs.NpcSelector npcSelector,
+        Safety.MovementBlockHook movementBlockHook, Configuration config, IPluginLog log)
     {
         this.boneService = boneService;
         this.npcSelector = npcSelector;
+        this.movementBlockHook = movementBlockHook;
         this.config = config;
         this.log = log;
 
@@ -1682,6 +1685,20 @@ public unsafe class RagdollController : IDisposable
                 skel.CharBase, kaoBodyBoneIndex,
                 skelWorldPos, skelWorldRot, skelWorldRotInv,
                 1.0f / 60.0f);
+        }
+
+        // (Dev) Update GameObject.Position to follow ragdoll root bone.
+        // Prevents model unload when ragdoll falls far from the frozen position.
+        if (config.RagdollFollowPosition && ragdollBones.Count > 0 && targetCharacterAddress != nint.Zero)
+        {
+            try
+            {
+                var rootBody = simulation.Bodies.GetBodyReference(ragdollBones[0].BodyHandle);
+                var rootPos = rootBody.Pose.Position;
+                var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress;
+                movementBlockHook.SetApproachPosition(gameObj, rootPos.X, rootPos.Y, rootPos.Z);
+            }
+            catch { }
         }
     }
 

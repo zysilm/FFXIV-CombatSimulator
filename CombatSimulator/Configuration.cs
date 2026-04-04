@@ -128,6 +128,7 @@ public class Configuration : IPluginConfiguration
 
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollVerboseLog { get; set; } = false;
+    public bool RagdollFollowPosition { get; set; } = false; // Update GameObject.Position to follow ragdoll root (prevents model unload on long falls)
     public bool EnableVictorySequence { get; set; } = false;
     public List<VictorySequenceStage> VictorySequenceStages { get; set; } = new();
     public List<VictoryCinematicPreset> VictoryCinematicPresets { get; set; } = new();
