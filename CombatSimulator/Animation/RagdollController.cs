@@ -1436,19 +1436,19 @@ public unsafe class RagdollController : IDisposable
         return handle;
     }
 
-    private void WriteWeaponBoneTransforms(SkeletonAccess skel, BoneModificationResult result, float yCorrection)
+    private void WriteWeaponBoneTransforms(SkeletonAccess skel, BoneModificationResult result)
     {
         if (simulation == null) return;
         bool hasWeapon = false;
 
         if (weaponMainHandBody.HasValue && weaponMainHandBoneIndex >= 0)
         {
-            WriteWeaponBone(skel, result, weaponMainHandBody.Value, weaponMainHandBoneIndex, weaponMainHandCapsuleToBone, yCorrection);
+            WriteWeaponBone(skel, result, weaponMainHandBody.Value, weaponMainHandBoneIndex, weaponMainHandCapsuleToBone);
             hasWeapon = true;
         }
         if (weaponOffHandBody.HasValue && weaponOffHandBoneIndex >= 0)
         {
-            WriteWeaponBone(skel, result, weaponOffHandBody.Value, weaponOffHandBoneIndex, weaponOffHandCapsuleToBone, yCorrection);
+            WriteWeaponBone(skel, result, weaponOffHandBody.Value, weaponOffHandBoneIndex, weaponOffHandCapsuleToBone);
             hasWeapon = true;
         }
         if (hasWeapon) ForceWeaponVisible();
@@ -1467,14 +1467,12 @@ public unsafe class RagdollController : IDisposable
     }
 
     private void WriteWeaponBone(SkeletonAccess skel, BoneModificationResult result,
-        BodyHandle bodyHandle, int boneIdx, Quaternion capsuleToBone, float yCorrection)
+        BodyHandle bodyHandle, int boneIdx, Quaternion capsuleToBone)
     {
         var bodyRef = simulation!.Bodies.GetBodyReference(bodyHandle);
-        var weaponPos = bodyRef.Pose.Position;
-        weaponPos.Y += yCorrection; // same floor correction as body bones
         var boneWorldRot = Quaternion.Normalize(bodyRef.Pose.Orientation * capsuleToBone);
         boneService.WriteBoneTransform(skel, boneIdx,
-            WorldToModel(weaponPos), WorldRotToModel(boneWorldRot), result);
+            WorldToModel(bodyRef.Pose.Position), WorldRotToModel(boneWorldRot), result);
     }
 
     /// <summary>
@@ -1785,7 +1783,7 @@ public unsafe class RagdollController : IDisposable
         }
 
         // Write weapon physics body transforms (after descendant propagation)
-        WriteWeaponBoneTransforms(skel, result, yCorrection);
+        WriteWeaponBoneTransforms(skel, result);
 
         // Propagate j_kao changes to face/hair partial skeletons
         if (kaoBodyBoneIndex >= 0 && result.HasAccumulated[kaoBodyBoneIndex])
