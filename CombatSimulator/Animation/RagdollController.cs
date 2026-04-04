@@ -1785,13 +1785,6 @@ public unsafe class RagdollController : IDisposable
         // Write weapon physics body transforms (after descendant propagation)
         WriteWeaponBoneTransforms(skel, result);
 
-        // Propagate weapon bone changes to weapon partial skeletons
-        // (weapon DrawObjects read from their own partial skeleton, not body skeleton 0)
-        if (weaponMainHandBody.HasValue && weaponMainHandBoneIndex >= 0 && result.HasAccumulated[weaponMainHandBoneIndex])
-            boneService.PropagateToPartialSkeletons(skel, weaponMainHandBoneIndex, "n_buki_r", result);
-        if (weaponOffHandBody.HasValue && weaponOffHandBoneIndex >= 0 && result.HasAccumulated[weaponOffHandBoneIndex])
-            boneService.PropagateToPartialSkeletons(skel, weaponOffHandBoneIndex, "n_buki_l", result);
-
         // Propagate j_kao changes to face/hair partial skeletons
         if (kaoBodyBoneIndex >= 0 && result.HasAccumulated[kaoBodyBoneIndex])
         {
