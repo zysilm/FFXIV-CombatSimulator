@@ -37,6 +37,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly CombatEngine combatEngine;
     private readonly NpcAiController npcAiController;
     private readonly MovementBlockHook movementBlockHook;
+    private readonly WeaponAttachHook weaponAttachHook;
     private readonly UseActionHook useActionHook;
     private readonly DeathCamController deathCamController;
     private readonly ActiveCameraController activeCameraController;
@@ -84,10 +85,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         chatCommandExecutor = new ChatCommandExecutor(log);
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
+        weaponAttachHook = new WeaponAttachHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
-        ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log);
+        ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, weaponAttachHook, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
         victorySequenceController = new Dev.VictorySequenceController(
@@ -113,6 +115,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         hookSafetyChecker.Register("ActionEffectHandler.Receive",
             "Processes combat effects (damage, flytext, animations). Hooked by ACT, combat log plugins.",
             (nint)FFXIVClientStructs.FFXIV.Client.Game.Character.ActionEffectHandler.MemberFunctionPointers.Receive);
+        if (weaponAttachHook.HookedAddress != nint.Zero)
+            hookSafetyChecker.Register("GetAttachBoneWorldTransform",
+                "Returns bone world transform for Attach deformer. Hooked for weapon drop physics.",
+                weaponAttachHook.HookedAddress);
 
         // Safety — enable hooks immediately; they gate on internal state
         useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, config, clientState, log);
@@ -160,6 +166,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcSelector.DeselectAll();
 
         useActionHook.Dispose();
+        weaponAttachHook.Dispose();
         movementBlockHook.Dispose();
         combatLogWindow.Dispose();
         hpBarOverlay.Dispose();

@@ -19,6 +19,7 @@ public unsafe class RagdollController : IDisposable
     private readonly BoneTransformService boneService;
     private readonly Npcs.NpcSelector npcSelector;
     private readonly Safety.MovementBlockHook movementBlockHook;
+    private readonly Safety.WeaponAttachHook? weaponAttachHook;
     private readonly Configuration config;
     private readonly IPluginLog log;
 
@@ -505,11 +506,13 @@ public unsafe class RagdollController : IDisposable
     }
 
     public RagdollController(BoneTransformService boneService, Npcs.NpcSelector npcSelector,
-        Safety.MovementBlockHook movementBlockHook, Configuration config, IPluginLog log)
+        Safety.MovementBlockHook movementBlockHook, Safety.WeaponAttachHook? weaponAttachHook,
+        Configuration config, IPluginLog log)
     {
         this.boneService = boneService;
         this.npcSelector = npcSelector;
         this.movementBlockHook = movementBlockHook;
+        this.weaponAttachHook = weaponAttachHook;
         this.config = config;
         this.log = log;
 
@@ -558,6 +561,7 @@ public unsafe class RagdollController : IDisposable
         weaponOffHandBody = null;
         weaponMainHandBoneIndex = -1;
         weaponOffHandBoneIndex = -1;
+        weaponAttachHook?.ClearOverrides();
         hairPhysics?.Reset();
         hairPhysics = null;
 
@@ -1390,6 +1394,15 @@ public unsafe class RagdollController : IDisposable
         if (count > 0)
         {
             ForceWeaponVisible();
+
+            // Activate weapon attach hook to override the Attach deformer's bone reads
+            if (weaponAttachHook != null && targetCharacterAddress != nint.Zero)
+            {
+                var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress;
+                if (gameObj->DrawObject != null)
+                    weaponAttachHook.BlockedDrawObject = (nint)gameObj->DrawObject;
+            }
+
             log.Info($"RagdollController: Weapon drop initialized — {count} weapon(s)");
         }
     }
@@ -1470,9 +1483,14 @@ public unsafe class RagdollController : IDisposable
         BodyHandle bodyHandle, int boneIdx, Quaternion capsuleToBone)
     {
         var bodyRef = simulation!.Bodies.GetBodyReference(bodyHandle);
+        var weaponWorldPos = bodyRef.Pose.Position;
         var boneWorldRot = Quaternion.Normalize(bodyRef.Pose.Orientation * capsuleToBone);
         boneService.WriteBoneTransform(skel, boneIdx,
-            WorldToModel(bodyRef.Pose.Position), WorldRotToModel(boneWorldRot), result);
+            WorldToModel(weaponWorldPos), WorldRotToModel(boneWorldRot), result);
+
+        // Override the Attach deformer's bone read so the weapon DrawObject
+        // gets our physics position instead of the frozen animation position.
+        weaponAttachHook?.SetOverride(boneIdx, weaponWorldPos, boneWorldRot);
     }
 
     /// <summary>
