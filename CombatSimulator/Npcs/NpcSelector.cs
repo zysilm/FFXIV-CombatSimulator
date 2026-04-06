@@ -275,6 +275,8 @@ public unsafe class NpcSelector : IDisposable
 
     /// <summary>
     /// Validate selected NPCs still exist. Called each framework update.
+    /// AccessViolationException from reading native memory on a freed object is
+    /// uncatchable — we must validate the pointer before touching any property.
     /// </summary>
     public void Tick()
     {
@@ -282,21 +284,26 @@ public unsafe class NpcSelector : IDisposable
         {
             var npc = selectedNpcs[i];
 
-            // Verify the game object ref is still valid
-            if (npc.GameObjectRef == null)
+            if (npc.GameObjectRef == null || npc.GameObjectRef.Address == nint.Zero)
             {
                 log.Warning($"Combat target '{npc.Name}' lost reference.");
                 selectedNpcs.RemoveAt(i);
                 continue;
             }
 
-            try
+            // Verify the game object is still in the object table before reading native fields.
+            bool found = false;
+            foreach (var obj in objectTable)
             {
-                _ = npc.GameObjectRef.EntityId;
+                if (obj.Address == npc.GameObjectRef.Address)
+                {
+                    found = true;
+                    break;
+                }
             }
-            catch
+            if (!found)
             {
-                log.Warning($"Combat target '{npc.Name}' reference invalidated (despawned?).");
+                log.Warning($"Combat target '{npc.Name}' no longer in object table.");
                 selectedNpcs.RemoveAt(i);
             }
         }

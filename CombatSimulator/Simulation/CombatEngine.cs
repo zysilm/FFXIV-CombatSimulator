@@ -231,6 +231,9 @@ public class CombatEngine : IDisposable
 
         State.SimulationTime += deltaTime;
 
+        // Track player's current target for victory sequence
+        victorySequenceController?.TrackTarget(npcSelector.SelectedNpcs);
+
         // Tick animation cooldowns
         animationController.Tick(deltaTime);
 
@@ -424,6 +427,7 @@ public class CombatEngine : IDisposable
                 npc.AiState == Ai.NpcAiState.Idle)
             {
                 npc.AiState = Ai.NpcAiState.Combat;
+                Ai.NpcAiController.StaggerTimers(npc);
                 AddLogEntry($"{npc.Name} engages!", CombatLogType.Info);
                 engagedNpcPos = GetEntityPosition(npc.State);
                 didEngage = true;
@@ -445,6 +449,7 @@ public class CombatEngine : IDisposable
                 if (Vector3.Distance(npcPos, engagedNpcPos) <= aggroRange)
                 {
                     npc.AiState = Ai.NpcAiState.Combat;
+                    Ai.NpcAiController.StaggerTimers(npc);
                     AddLogEntry($"{npc.Name} joins the fight!", CombatLogType.Info);
                 }
             }
@@ -459,6 +464,7 @@ public class CombatEngine : IDisposable
             {
                 RegisterNpcEntity(newNpc);
                 newNpc.AiState = Ai.NpcAiState.Combat;
+                Ai.NpcAiController.StaggerTimers(newNpc);
                 AddLogEntry($"{newNpc.Name} joins the fight!", CombatLogType.Info);
             }
         }
@@ -674,19 +680,9 @@ public class CombatEngine : IDisposable
                     var (started, cNpc) = victorySequenceController.TryStart(npcSelector.SelectedNpcs);
                     if (started) cinematicNpc = cNpc;
                 }
-                // Play normal victory emote on all NPCs (or all except cinematic one)
-                if (cinematicNpc != null)
-                {
-                    var otherNpcs = new List<SimulatedNpc>();
-                    foreach (var npc in npcSelector.SelectedNpcs)
-                        if (npc != cinematicNpc && npc.State.IsAlive) otherNpcs.Add(npc);
-                    if (otherNpcs.Count > 0)
-                        animationController.PlayVictory(isPlayerVictory: false, otherNpcs);
-                }
-                else
-                {
+                // Play normal victory emote on NPCs not managed by the victory sequence
+                if (cinematicNpc == null)
                     animationController.PlayVictory(isPlayerVictory: false, npcSelector.SelectedNpcs);
-                }
                 ApplyGlamourer();
                 deathCamController?.Activate();
 

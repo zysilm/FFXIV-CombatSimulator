@@ -29,6 +29,8 @@ public unsafe class RagdollController : IDisposable
     // State
     private bool isActive;
     private nint targetCharacterAddress;
+    private Vector3 savedCharacterPosition; // original position before follow moved it
+    private bool followWasActive;           // tracks toggle-off to restore position
     private float elapsed;
     private float activationDelay;
     private bool physicsStarted;
@@ -389,17 +391,17 @@ public unsafe class RagdollController : IDisposable
         new RagdollBoneConfig { Name = "j_te_l",    SkeletonParent = "j_ude_b_l",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Left Hand" },
         new RagdollBoneConfig { Name = "j_te_r",    SkeletonParent = "j_ude_b_r",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Right Hand" },
 
-        // === LEG CHAIN === (j_asi_a/b/c enabled, j_asi_d/e disabled by default)
+        // === LEG CHAIN === (j_asi_a/b/c/d enabled, j_asi_e disabled by default)
         new RagdollBoneConfig { Name = "j_asi_a_l", SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.045f, CapsuleHalfLength = 0.12f, Mass = 10.0f, SwingLimit = 1.3f,                JointType = 0, TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f,  Description = "Left Thigh" },
         new RagdollBoneConfig { Name = "j_asi_a_r", SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.045f, CapsuleHalfLength = 0.12f, Mass = 10.0f, SwingLimit = 1.3f,                JointType = 0, TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f,  Description = "Right Thigh" },
         new RagdollBoneConfig { Name = "j_asi_b_l", SkeletonParent = "j_asi_a_l",Enabled = true,  CapsuleRadius = 0.035f, CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Shin (Knee)" },
         new RagdollBoneConfig { Name = "j_asi_b_r", SkeletonParent = "j_asi_a_r",Enabled = true,  CapsuleRadius = 0.035f, CapsuleHalfLength = 0.11f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Shin (Knee)" },
         new RagdollBoneConfig { Name = "j_asi_c_l", SkeletonParent = "j_asi_b_l",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.1f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Calf" },
         new RagdollBoneConfig { Name = "j_asi_c_r", SkeletonParent = "j_asi_b_r",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.1f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Calf" },
-        new RagdollBoneConfig { Name = "j_asi_d_l", SkeletonParent = "j_asi_c_l",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Left Foot (Ankle)" },
-        new RagdollBoneConfig { Name = "j_asi_d_r", SkeletonParent = "j_asi_c_r",Enabled = true,  CapsuleRadius = 0.03f,  CapsuleHalfLength = 0.04f, Mass = 1.0f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Right Foot (Ankle)" },
-        new RagdollBoneConfig { Name = "j_asi_e_l", SkeletonParent = "j_asi_d_l",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.02f, Mass = 0.2f,  SwingLimit = 0.3f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Toes" },
-        new RagdollBoneConfig { Name = "j_asi_e_r", SkeletonParent = "j_asi_d_r",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.02f, Mass = 0.2f,  SwingLimit = 0.3f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Toes" },
+        new RagdollBoneConfig { Name = "j_asi_d_l", SkeletonParent = "j_asi_c_l",Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.0f,  Mass = 1.0f,  SwingLimit = 0.29f,               JointType = 0, TwistMinAngle = -0.64f, TwistMaxAngle = 0.65f, Description = "Left Foot (Ankle)" },
+        new RagdollBoneConfig { Name = "j_asi_d_r", SkeletonParent = "j_asi_c_r",Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.0f,  Mass = 1.0f,  SwingLimit = 0.3f,                JointType = 0, TwistMinAngle = -0.65f, TwistMaxAngle = 0.65f, Description = "Right Foot (Ankle)" },
+        new RagdollBoneConfig { Name = "j_asi_e_l", SkeletonParent = "j_asi_d_l",Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.02f, Mass = 0.2f,  SwingLimit = 0.3f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Toes" },
+        new RagdollBoneConfig { Name = "j_asi_e_r", SkeletonParent = "j_asi_d_r",Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.02f, Mass = 0.2f,  SwingLimit = 0.3f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Toes" },
     };
 
     /// <summary>
@@ -524,7 +526,12 @@ public unsafe class RagdollController : IDisposable
         activationDelay = config.RagdollActivationDelay;
         elapsed = 0f;
         physicsStarted = false;
+        followWasActive = false;
         isActive = true;
+
+        // Save original position so we can restore if FollowPosition is toggled off
+        var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)characterAddress;
+        savedCharacterPosition = go->Position;
 
         log.Info($"RagdollController: Activated (delay={activationDelay:F1}s)");
     }
@@ -1550,11 +1557,33 @@ public unsafe class RagdollController : IDisposable
         // Update NPC collision volumes to track their current animated bone positions.
         // Must call UpdateBounds() after repositioning — BEPU2 doesn't auto-update
         // broad phase AABBs for statics, so without it collisions are never detected.
+        // The grabbing NPC's collision is parked far away so the player body can pass through.
+        var npcCollisionParkPos = new Vector3(0, -9999, 0);
         for (int i = 0; i < npcCollisionStates.Count; i++)
         {
             var npcState = npcCollisionStates[i];
             try
             {
+                if (suspendedNpcAddress != nint.Zero && npcState.NpcAddress == suspendedNpcAddress)
+                {
+                    if (npcState.IsFallback)
+                    {
+                        var staticRef = simulation.Statics.GetStaticReference(npcState.FallbackHandle);
+                        staticRef.Pose.Position = npcCollisionParkPos;
+                        staticRef.UpdateBounds();
+                    }
+                    else
+                    {
+                        for (int b = 0; b < npcState.BoneStatics.Count; b++)
+                        {
+                            var staticRef = simulation.Statics.GetStaticReference(npcState.BoneStatics[b].Handle);
+                            staticRef.Pose.Position = npcCollisionParkPos;
+                            staticRef.UpdateBounds();
+                        }
+                    }
+                    continue;
+                }
+
                 if (npcState.IsFallback)
                 {
                     // Simple single-capsule position update
@@ -1812,6 +1841,19 @@ public unsafe class RagdollController : IDisposable
                 movementBlockHook.SetApproachPosition(gameObj, rootPos.X, rootPos.Y, rootPos.Z);
             }
             catch { }
+            followWasActive = true;
+        }
+        else if (followWasActive && targetCharacterAddress != nint.Zero)
+        {
+            // Toggled off — restore original position
+            try
+            {
+                var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress;
+                movementBlockHook.SetApproachPosition(gameObj,
+                    savedCharacterPosition.X, savedCharacterPosition.Y, savedCharacterPosition.Z);
+            }
+            catch { }
+            followWasActive = false;
         }
     }
 
@@ -1819,13 +1861,15 @@ public unsafe class RagdollController : IDisposable
     private ConstraintHandle grabConstraintHandle;
     private bool grabConstraintActive;
     private BodyHandle grabBodyHandle;
+    // Address of the grabbing NPC whose collision is parked during grab (0 = none)
+    private nint suspendedNpcAddress;
 
     /// <summary>
     /// Create a OneBodyLinearServo constraint that pins a ragdoll bone to a world-space
     /// target position. The target is updated each frame via UpdateGrabTarget().
     /// Also ensures all ragdoll bodies stay awake (SleepThreshold = -1).
     /// </summary>
-    public bool CreateGrabConstraint(string boneName, Vector3 initialTarget, float maxForce = 1000f, float maxSpeed = 50f, float springFreq = 120f)
+    public bool CreateGrabConstraint(string boneName, Vector3 initialTarget, nint grabbingNpcAddress = 0, float maxForce = 1000f, float maxSpeed = 50f, float springFreq = 120f)
     {
         if (simulation == null || !isActive) return false;
 
@@ -1865,7 +1909,9 @@ public unsafe class RagdollController : IDisposable
             });
 
         grabConstraintActive = true;
-        log.Info($"RagdollController: Grab constraint created on '{boneName}' → ({initialTarget.X:F2},{initialTarget.Y:F2},{initialTarget.Z:F2})");
+        suspendedNpcAddress = grabbingNpcAddress;
+
+        log.Info($"RagdollController: Grab constraint created on '{boneName}' → ({initialTarget.X:F2},{initialTarget.Y:F2},{initialTarget.Z:F2}), suspend NPC 0x{grabbingNpcAddress:X}");
         return true;
     }
 
@@ -1920,12 +1966,17 @@ public unsafe class RagdollController : IDisposable
         }
 
         grabConstraintActive = false;
+        suspendedNpcAddress = nint.Zero;
+
         log.Info("RagdollController: Grab constraint removed");
     }
+
+
 
     private void DestroySimulation()
     {
         grabConstraintActive = false;
+        suspendedNpcAddress = nint.Zero;
         ragdollBones.Clear();
         npcCollisionStates.Clear();
         simulation?.Dispose();

@@ -18,6 +18,7 @@ public unsafe class VictorySequenceController : IDisposable
     private readonly MovementBlockHook movementBlockHook;
     private readonly RagdollController ragdollController;
     private readonly IClientState clientState;
+    private readonly ITargetManager targetManager;
     private readonly Configuration config;
     private readonly IPluginLog log;
 
@@ -26,6 +27,7 @@ public unsafe class VictorySequenceController : IDisposable
     private float elapsed;
     private SimulatedNpc? cinematicNpc;
     private Vector3 npcOriginalPos;
+    private Vector3 stageStartPos;           // NPC's position at the start of current stage
     private int currentStageIndex = -1;
     private bool stageAnimPlayed;
     private uint lastPlayedEmoteId;
@@ -36,6 +38,22 @@ public unsafe class VictorySequenceController : IDisposable
     private Vector3 playerDeathPos;
     private float playerFacingAngle;
     private ulong playerObjId;
+
+    // Track last targeted NPC during combat (before death)
+    private ulong lastTargetedNpcId;
+
+    // Other NPCs (non-cinematic) — separate animation sequence with per-NPC time offset
+    private struct OtherNpcState
+    {
+        public SimulatedNpc Npc;
+        public float TimeOffset;      // random stagger so they don't all transition at once
+        public int StageIndex;
+        public bool AnimPlayed;
+        public uint LastEmoteId;
+        public uint LastActionTimelineId;
+        public bool LastUseEmote;
+    }
+    private readonly List<OtherNpcState> otherNpcStates = new();
 
     // Grab bone indices (resolved per stage)
     private bool grabActive;
@@ -50,6 +68,7 @@ public unsafe class VictorySequenceController : IDisposable
         MovementBlockHook movementBlockHook,
         RagdollController ragdollController,
         IClientState clientState,
+        ITargetManager targetManager,
         Configuration config,
         IPluginLog log)
     {
@@ -58,8 +77,28 @@ public unsafe class VictorySequenceController : IDisposable
         this.movementBlockHook = movementBlockHook;
         this.ragdollController = ragdollController;
         this.clientState = clientState;
+        this.targetManager = targetManager;
         this.config = config;
         this.log = log;
+    }
+
+    /// <summary>
+    /// Call each frame during active combat to track the player's current target.
+    /// The last targeted NPC is used as the cinematic NPC when the player dies.
+    /// </summary>
+    public void TrackTarget(IReadOnlyList<SimulatedNpc> npcs)
+    {
+        var target = targetManager.Target;
+        if (target == null) return;
+        var targetId = target.EntityId;
+        foreach (var npc in npcs)
+        {
+            if (npc.SimulatedEntityId == targetId && npc.State.IsAlive && npc.BattleChara != null)
+            {
+                lastTargetedNpcId = targetId;
+                return;
+            }
+        }
     }
 
     /// <summary>
@@ -71,18 +110,32 @@ public unsafe class VictorySequenceController : IDisposable
         if (!config.EnableVictorySequence || config.VictorySequenceStages.Count == 0)
             return (false, null);
 
-        // Collect surviving NPCs
-        var survivors = new List<SimulatedNpc>();
+        // Find the last targeted NPC (must be alive with valid BattleChara)
+        SimulatedNpc? candidate = null;
         foreach (var npc in npcs)
         {
-            if (npc.State.IsAlive && npc.BattleChara != null)
-                survivors.Add(npc);
+            if (npc.SimulatedEntityId == lastTargetedNpcId && npc.State.IsAlive && npc.BattleChara != null)
+            {
+                candidate = npc;
+                break;
+            }
         }
-        if (survivors.Count == 0)
+        // Fallback: first alive NPC if last target is gone
+        if (candidate == null)
+        {
+            foreach (var npc in npcs)
+            {
+                if (npc.State.IsAlive && npc.BattleChara != null)
+                {
+                    candidate = npc;
+                    break;
+                }
+            }
+        }
+        if (candidate == null)
             return (false, null);
 
-        // Pick random NPC for the cinematic
-        cinematicNpc = survivors[Random.Shared.Next(survivors.Count)];
+        cinematicNpc = candidate;
 
         // Capture player state at death
         var player = clientState.LocalPlayer;
@@ -104,11 +157,31 @@ public unsafe class VictorySequenceController : IDisposable
         // Save NPC's true original position (before any plugin manipulation)
         npcOriginalPos = cinematicNpc.SpawnPosition;
 
+        // Capture NPC's current world position as the initial stage start point
+        var npcObj = (GameObject*)cinematicNpc.BattleChara;
+        stageStartPos = new Vector3(npcObj->Position.X, npcObj->Position.Y, npcObj->Position.Z);
+
         // Register NPC for approach movement (bypass server overrides)
         movementBlockHook.AddApproachNpc(cinematicNpc.Address);
 
         // Subscribe to render frame for bone constraints
         boneService.OnRenderFrame += OnRenderFrame;
+
+        // Collect other alive NPCs with random time offsets for stagger
+        otherNpcStates.Clear();
+        foreach (var npc in npcs)
+        {
+            if (npc != cinematicNpc && npc.State.IsAlive && npc.BattleChara != null)
+            {
+                otherNpcStates.Add(new OtherNpcState
+                {
+                    Npc = npc,
+                    TimeOffset = Random.Shared.NextSingle() * 0.25f, // 0-0.25s random delay
+                    StageIndex = -1,
+                });
+                movementBlockHook.AddApproachNpc(npc.Address);
+            }
+        }
 
         isActive = true;
         elapsed = 0;
@@ -116,7 +189,8 @@ public unsafe class VictorySequenceController : IDisposable
         stageAnimPlayed = false;
         grabActive = false;
 
-        log.Info($"VictorySequence: Started with NPC '{cinematicNpc.Name}', {config.VictorySequenceStages.Count} stages");
+        var otherCount = config.VictorySequenceOtherStages.Count;
+        log.Info($"VictorySequence: Started with NPC '{cinematicNpc.Name}' (lastTarget={lastTargetedNpcId:X}), start={stageStartPos}, {config.VictorySequenceStages.Count} stages, {otherNpcStates.Count} other NPCs with {otherCount} stages");
         return (true, cinematicNpc);
     }
 
@@ -155,12 +229,17 @@ public unsafe class VictorySequenceController : IDisposable
             return;
         }
 
-        // Stage transition
+        // Stage transition — snapshot NPC's current position as the new stage start
         if (newStageIdx != currentStageIndex && newStageIdx >= 0)
         {
+            if (currentStageIndex >= 0 && cinematicNpc.BattleChara != null)
+            {
+                var obj = (GameObject*)cinematicNpc.BattleChara;
+                stageStartPos = new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z);
+            }
             currentStageIndex = newStageIdx;
             stageAnimPlayed = false;
-            log.Info($"VictorySequence: Entering stage {newStageIdx} (emote={stages[newStageIdx].EmoteId})");
+            log.Info($"VictorySequence: Entering stage {newStageIdx}, stageStart={stageStartPos}");
         }
 
         if (currentStageIndex < 0 || currentStageIndex >= stages.Count)
@@ -168,13 +247,33 @@ public unsafe class VictorySequenceController : IDisposable
 
         var stage = stages[currentStageIndex];
 
-        // Calculate NPC distance
-        float dist;
-        if (stage.InfiniteWalk)
+        // Calculate target endpoint: EndDistance along player's facing direction
+        var facingDir = new Vector3(MathF.Sin(playerFacingAngle), 0, MathF.Cos(playerFacingAngle));
+        var endPos = playerDeathPos + facingDir * stage.EndDistance;
+        endPos.Y = playerDeathPos.Y + stage.HeightOffset;
+
+        // Lerp NPC from stage start position to the endpoint
+        Vector3 targetPos;
+        if (stage.KeepPosition)
         {
-            // Constant speed walk: distance decreases over time
+            targetPos = stageStartPos;
+        }
+        else if (stage.InfiniteWalk)
+        {
+            // Constant speed walk from stage start toward endpoint
             var timeInStage = elapsed - stage.StartTime;
-            dist = stage.StartDistance - stage.WalkSpeed * timeInStage;
+            var toEnd = endPos - stageStartPos;
+            var totalDist = toEnd.Length();
+            if (totalDist > 0.001f)
+            {
+                var dir = toEnd / totalDist;
+                var traveled = stage.WalkSpeed * timeInStage;
+                targetPos = stageStartPos + dir * traveled;
+            }
+            else
+            {
+                targetPos = endPos;
+            }
         }
         else
         {
@@ -182,13 +281,8 @@ public unsafe class VictorySequenceController : IDisposable
             var progress = duration > 0.001f
                 ? Math.Clamp((elapsed - stage.StartTime) / duration, 0f, 1f)
                 : 1f;
-            dist = stage.StartDistance + (stage.EndDistance - stage.StartDistance) * progress;
+            targetPos = Vector3.Lerp(stageStartPos, endPos, progress);
         }
-
-        // Position along player's facing direction
-        var facingDir = new Vector3(MathF.Sin(playerFacingAngle), 0, MathF.Cos(playerFacingAngle));
-        var targetPos = playerDeathPos + facingDir * dist;
-        targetPos.Y = playerDeathPos.Y + stage.HeightOffset;
 
         // Move NPC via approach bypass
         var gameObj = (GameObject*)cinematicNpc.BattleChara;
@@ -207,8 +301,8 @@ public unsafe class VictorySequenceController : IDisposable
         }
         else if (stage.InfiniteWalk)
         {
-            // Lock to initial approach direction (never flips)
-            var walkDir = -facingDir;
+            // Lock to initial approach direction (stage start → endpoint)
+            var walkDir = endPos - stageStartPos;
             rotAngle = MathF.Atan2(walkDir.X, walkDir.Z);
         }
         else
@@ -293,7 +387,7 @@ public unsafe class VictorySequenceController : IDisposable
                 if (npcHandWorld != null)
                 {
                     grabActive = ragdollController.CreateGrabConstraint(
-                        stage.PlayerBoneName, npcHandWorld.Value,
+                        stage.PlayerBoneName, npcHandWorld.Value, cinematicNpc!.Address,
                         stage.GrabForce, stage.GrabSpeed, stage.GrabSpringFreq);
                     if (grabActive)
                     {
@@ -306,10 +400,126 @@ public unsafe class VictorySequenceController : IDisposable
         }
         else if (!stage.GrabEnabled && grabActive)
         {
-            // Deactivate grab
+            // Deactivate grab (NPC collision restored internally by RagdollController)
             ragdollController.RemoveGrabConstraint();
             grabActive = false;
             log.Info("VictorySequence: Grab constraint deactivated");
+        }
+
+        // --- Tick other NPCs' animation sequence ---
+        TickOtherNpcs();
+    }
+
+    private void TickOtherNpcs()
+    {
+        var otherStages = config.VictorySequenceOtherStages;
+        if (otherStages.Count == 0 || otherNpcStates.Count == 0) return;
+
+        // Resolve emote timelines once (shared across all NPCs)
+        foreach (var os in otherStages)
+        {
+            if (os.UseEmote && os.EmoteId > 0 && os.ResolvedIntroTimeline == 0 && os.ResolvedLoopTimeline == 0)
+            {
+                try
+                {
+                    var emoteSheet = Core.Services.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>();
+                    if (emoteSheet != null)
+                    {
+                        var emote = emoteSheet.GetRow(os.EmoteId);
+                        os.ResolvedLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
+                        os.ResolvedIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
+                    }
+                }
+                catch { }
+            }
+        }
+
+        // Head bone for lock facing (shared)
+        Vector3? headPos = null;
+        bool headResolved = false;
+
+        // Tick each NPC independently with its own time offset
+        for (int ni = 0; ni < otherNpcStates.Count; ni++)
+        {
+            var state = otherNpcStates[ni];
+            if (state.Npc.BattleChara == null) continue;
+
+            var npcElapsed = elapsed - state.TimeOffset;
+            if (npcElapsed < 0) continue; // not started yet
+
+            // Find stage for this NPC's shifted time
+            int newIdx = -1;
+            for (int i = 0; i < otherStages.Count; i++)
+            {
+                var isInfinite = otherStages[i].EndTime < 0;
+                var stageStart = otherStages[i].StartTime;
+                var stageEnd = otherStages[i].EndTime;
+                if (npcElapsed >= stageStart && (isInfinite || npcElapsed < stageEnd))
+                {
+                    newIdx = i;
+                    break;
+                }
+            }
+
+            if (newIdx != state.StageIndex && newIdx >= 0)
+            {
+                state.StageIndex = newIdx;
+                state.AnimPlayed = false;
+            }
+
+            if (state.StageIndex < 0 || state.StageIndex >= otherStages.Count)
+            {
+                otherNpcStates[ni] = state;
+                continue;
+            }
+
+            var os = otherStages[state.StageIndex];
+
+            // Play animation on stage enter or config change
+            bool changed = state.AnimPlayed && (
+                os.UseEmote != state.LastUseEmote ||
+                os.EmoteId != state.LastEmoteId ||
+                os.ActionTimelineId != state.LastActionTimelineId);
+            if (!state.AnimPlayed || changed)
+            {
+                var character = (Character*)state.Npc.BattleChara;
+                if (changed) emotePlayer.ResetEmote(character);
+
+                if (os.UseEmote && os.EmoteId > 0)
+                {
+                    if (os.ResolvedIntroTimeline != 0 || os.ResolvedLoopTimeline != 0)
+                        emotePlayer.PlayLoopedEmote(character, os.ResolvedLoopTimeline, os.ResolvedIntroTimeline, playerObjId);
+                }
+                else if (!os.UseEmote && os.ActionTimelineId > 0)
+                {
+                    character->Timeline.BaseOverride = (ushort)os.ActionTimelineId;
+                }
+
+                state.AnimPlayed = true;
+                state.LastUseEmote = os.UseEmote;
+                state.LastEmoteId = os.EmoteId;
+                state.LastActionTimelineId = os.ActionTimelineId;
+            }
+
+            // Lock facing: track player's head bone
+            if (os.LockFacing)
+            {
+                if (!headResolved)
+                {
+                    var player = clientState.LocalPlayer;
+                    headPos = player != null ? GetBoneWorldPos(player.Address, "j_kao") : null;
+                    headResolved = true;
+                }
+                var faceTarget = headPos ?? playerDeathPos;
+                var gameObj = (GameObject*)state.Npc.BattleChara;
+                var npcPos = new Vector3(gameObj->Position.X, gameObj->Position.Y, gameObj->Position.Z);
+                movementBlockHook.SetApproachPosition(gameObj, npcPos.X, npcPos.Y, npcPos.Z);
+                var toHead = faceTarget - npcPos;
+                if (toHead.LengthSquared() > 0.001f)
+                    movementBlockHook.SetApproachRotation(gameObj, MathF.Atan2(toHead.X, toHead.Z));
+            }
+
+            otherNpcStates[ni] = state;
         }
     }
 
@@ -404,7 +614,7 @@ public unsafe class VictorySequenceController : IDisposable
 
         boneService.OnRenderFrame -= OnRenderFrame;
 
-        // Remove BEPU2 grab constraint
+        // Remove BEPU2 grab constraint (NPC collision restored internally by RagdollController)
         if (grabActive)
         {
             ragdollController.RemoveGrabConstraint();
@@ -419,6 +629,17 @@ public unsafe class VictorySequenceController : IDisposable
             movementBlockHook.RemoveApproachNpc(cinematicNpc.Address);
             emotePlayer.ResetEmote((Character*)cinematicNpc.BattleChara);
         }
+
+        // Reset emotes and remove approach registration for other NPCs
+        foreach (var state in otherNpcStates)
+        {
+            if (state.Npc.BattleChara != null)
+            {
+                emotePlayer.ResetEmote((Character*)state.Npc.BattleChara);
+                movementBlockHook.RemoveApproachNpc(state.Npc.Address);
+            }
+        }
+        otherNpcStates.Clear();
 
         isActive = false;
         cinematicNpc = null;

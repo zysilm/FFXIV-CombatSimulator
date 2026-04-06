@@ -127,8 +127,20 @@ public unsafe class NpcAiController : IDisposable
         if (npc.AiState == NpcAiState.Idle)
         {
             npc.AiState = NpcAiState.Engaging;
-            log.Verbose($"NPC '{npc.Name}' engaging.");
+            StaggerTimers(npc);
+            log.Verbose($"NPC '{npc.Name}' engaging (auto-attack in {npc.AutoAttackTimer:F1}s).");
         }
+    }
+
+    /// <summary>
+    /// Randomize initial auto-attack and skill timers so NPCs don't all attack on the same frame.
+    /// Call this whenever an NPC first enters combat.
+    /// </summary>
+    public static void StaggerTimers(SimulatedNpc npc)
+    {
+        npc.AutoAttackTimer = Random.Shared.NextSingle() * npc.Behavior.AutoAttackDelay;
+        foreach (var skill in npc.Behavior.Skills)
+            skill.CooldownRemaining = Random.Shared.NextSingle() * skill.Cooldown;
     }
 
     private void TickNpc(SimulatedNpc npc, float deltaTime, Vector3 playerPos, uint playerEntityId)

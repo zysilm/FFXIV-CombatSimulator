@@ -7,8 +7,8 @@ public class VictorySequenceStage
 {
     public float StartTime { get; set; }
     public float EndTime { get; set; } = 3.0f;       // -1 = infinite time
-    public float StartDistance { get; set; } = 3.0f;
     public float EndDistance { get; set; } = 3.0f;
+    public bool KeepPosition { get; set; }            // stay at current position (ignore EndDistance)
     public bool UseEmote { get; set; }
     public uint EmoteId { get; set; }
     public uint ActionTimelineId { get; set; }
