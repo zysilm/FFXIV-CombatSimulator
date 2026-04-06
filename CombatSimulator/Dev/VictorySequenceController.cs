@@ -62,6 +62,7 @@ public unsafe class VictorySequenceController : IDisposable
 
     public bool IsActive => isActive;
     public nint CinematicNpcAddress => cinematicNpc?.Address ?? nint.Zero;
+    public int CurrentStageIndex => currentStageIndex;
 
     public VictorySequenceController(
         BoneTransformService boneService,

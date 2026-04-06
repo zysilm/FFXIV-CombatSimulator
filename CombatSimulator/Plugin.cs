@@ -234,6 +234,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         if (config.ShowActiveCamToolbar)
             mainWindow.DrawActiveCamToolbar();
 
+        if (config.ShowGrabToolbar)
+            mainWindow.DrawGrabToolbar(victorySequenceController);
+
         if (config.ShowMainWindow)
             mainWindow.Draw();
 

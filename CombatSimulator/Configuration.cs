@@ -140,6 +140,7 @@ public class Configuration : IPluginConfiguration
     public List<VictorySequenceStage> VictorySequenceOtherStages { get; set; } = new();
     public List<VictoryCinematicPreset> VictoryCinematicPresets { get; set; } = new();
     public float DevNpcScale { get; set; } = 1.0f;
+    public bool ShowGrabToolbar { get; set; } = false;
     public bool DevNpcOcclusionHide { get; set; } = false;
     public float DevNpcOcclusionRadius { get; set; } = 1.0f;
     public bool RagdollNpcCollision { get; set; } = true;
