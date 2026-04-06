@@ -1241,6 +1241,25 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Display a floating HP bar above enemy targets during combat.");
 
+            var hpOcclusion = config.HpBarOcclusion;
+            if (ImGui.Checkbox("Hide HP Bar Behind Player", ref hpOcclusion))
+            {
+                config.HpBarOcclusion = hpOcclusion;
+                config.Save();
+            }
+            HelpMarker("Hide enemy HP bars when the player's body is between the camera and the HP bar.");
+
+            if (config.ShowEnemyHpBar)
+            {
+                var enemyYOff = config.EnemyHpBarYOffset;
+                if (ImGui.DragFloat("Enemy HP Bar Y Offset", ref enemyYOff, 0.05f, -2f, 5f, "%.2f"))
+                {
+                    config.EnemyHpBarYOffset = enemyYOff;
+                    config.Save();
+                }
+                HelpMarker("Vertical offset from the enemy's head bone. Higher = bar floats higher.");
+            }
+
             var showPlayerHp = config.ShowPlayerHpBar;
             if (ImGui.Checkbox("Show Player HP Bar", ref showPlayerHp))
             {
@@ -1305,7 +1324,15 @@ public class MainWindow : IDisposable
                 config.PlayerHpBarYOffset = hpYOffset;
                 config.Save();
             }
-            HelpMarker("Vertical offset for the player HP bar in world space. Higher values move the bar up.");
+            HelpMarker("Vertical offset from the player's head bone. Higher values move the bar up.");
+
+            var hpXOffset = config.PlayerHpBarXOffset;
+            if (ImGui.SliderFloat("Player HP Bar X Offset", ref hpXOffset, -500f, 500f, "%.0f"))
+            {
+                config.PlayerHpBarXOffset = hpXOffset;
+                config.Save();
+            }
+            HelpMarker("Horizontal screen offset for the player HP bar. Positive = right, negative = left.");
         }
     }
 
@@ -1965,6 +1992,26 @@ public class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Scale all active target NPCs. Applied live each frame.");
+
+            var occlusionHide = config.DevNpcOcclusionHide;
+            if (ImGui.Checkbox("Hide Blocking NPCs##dev", ref occlusionHide))
+            {
+                config.DevNpcOcclusionHide = occlusionHide;
+                config.Save();
+            }
+            HelpMarker("Hide active target NPCs that block the camera's view of the player. Only works with Active Camera enabled. Never hides the cinematic (grabbing) NPC.");
+            if (config.DevNpcOcclusionHide)
+            {
+                ImGui.Indent();
+                var occRadius = config.DevNpcOcclusionRadius;
+                if (ImGui.SliderFloat("Occlusion Radius##dev", ref occRadius, 0.2f, 3.0f, "%.1f"))
+                {
+                    config.DevNpcOcclusionRadius = occRadius;
+                    config.Save();
+                }
+                HelpMarker("How close an NPC must be to the camera-to-player line to be considered blocking.");
+                ImGui.Unindent();
+            }
 
             victorySequenceGui.Draw();
 

@@ -61,6 +61,7 @@ public unsafe class VictorySequenceController : IDisposable
     private int playerNeckBoneIdx = -1;
 
     public bool IsActive => isActive;
+    public nint CinematicNpcAddress => cinematicNpc?.Address ?? nint.Zero;
 
     public VictorySequenceController(
         BoneTransformService boneService,

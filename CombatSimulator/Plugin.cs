@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Numerics;
 using CombatSimulator.Ai;
 using CombatSimulator.Animation;
 using CombatSimulator.Camera;
@@ -11,6 +13,7 @@ using CombatSimulator.Simulation;
 using Dalamud.Game.Command;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager;
 
 namespace CombatSimulator;
 
@@ -42,6 +45,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly ActiveCameraController activeCameraController;
     private readonly Dev.VictorySequenceController victorySequenceController;
     private readonly HookSafetyChecker hookSafetyChecker;
+
+    // Dev: NPCs hidden by occlusion check (need to restore visibility on cleanup)
+    private readonly HashSet<nint> occlusionHiddenNpcs = new();
     private readonly MainWindow mainWindow;
     private readonly HpBarOverlay hpBarOverlay;
     private readonly CombatLogWindow combatLogWindow;
@@ -125,7 +131,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         // GUI
         mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, chatGui, log);
-        hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, gameGui, clientState, config);
+        hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, mainWindow, config, gameGui, clientState);
 
@@ -156,6 +162,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         pluginInterface.UiBuilder.OpenConfigUi -= OnOpenConfig;
         commandManager.RemoveHandler(CommandName);
 
+        RestoreOcclusionHiddenNpcs();
         combatEngine.StopSimulation();
         npcSelector.DeselectAll();
 
@@ -306,16 +313,112 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                     if (npc.BattleChara == null) continue;
                     var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
                     if (gameObj->DrawObject == null) continue;
-                    gameObj->DrawObject->Scale = new System.Numerics.Vector3(s, s, s);
+                    gameObj->DrawObject->Scale = new Vector3(s, s, s);
                     gameObj->DrawObject->NotifyTransformChanged();
                 }
             }
+
+            // Dev: hide NPCs that block the active camera's view of the player
+            TickNpcOcclusionHide();
         }
         catch (Exception ex)
         {
             log.Error(ex, "Error in framework update, stopping simulation.");
             combatEngine.StopSimulation();
         }
+    }
+
+    private void TickNpcOcclusionHide()
+    {
+        if (!config.DevNpcOcclusionHide || !config.EnableActiveCamera)
+        {
+            // Feature disabled — restore any hidden NPCs
+            RestoreOcclusionHiddenNpcs();
+            return;
+        }
+
+        var camMgr = GameCameraManager.Instance();
+        if (camMgr == null || camMgr->Camera == null)
+        {
+            RestoreOcclusionHiddenNpcs();
+            return;
+        }
+
+        var cp = camMgr->Camera->LastPosition;
+        var la = camMgr->Camera->LastLookAtVector;
+        var camPos = new Vector3(cp.X, cp.Y, cp.Z);
+        var lookAt = new Vector3(la.X, la.Y, la.Z);
+        var camToTarget = lookAt - camPos;
+        var lineLen = camToTarget.Length();
+        if (lineLen < 0.01f) return;
+        var lineDir = camToTarget / lineLen;
+
+        var cinematicAddr = victorySequenceController.CinematicNpcAddress;
+        var threshold = config.DevNpcOcclusionRadius;
+
+        foreach (var npc in npcSelector.SelectedNpcs)
+        {
+            if (npc.BattleChara == null) continue;
+            var addr = npc.Address;
+
+            // Never hide the cinematic (grabbing) NPC
+            if (addr == cinematicAddr) continue;
+
+            var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
+            if (gameObj->DrawObject == null) continue;
+
+            // Check multiple heights along the NPC body (feet, knees, chest, head)
+            var baseX = gameObj->Position.X;
+            var baseY = gameObj->Position.Y;
+            var baseZ = gameObj->Position.Z;
+            bool blocking = false;
+
+            for (float yOff = 0.0f; yOff <= 1.8f; yOff += 0.45f)
+            {
+                var samplePos = new Vector3(baseX, baseY + yOff, baseZ);
+                var camToSample = samplePos - camPos;
+                var t = Vector3.Dot(camToSample, lineDir);
+
+                if (t < 0f || t > lineLen)
+                    continue;
+
+                var closestPoint = camPos + lineDir * t;
+                var perpDist = Vector3.Distance(samplePos, closestPoint);
+
+                if (perpDist < threshold)
+                {
+                    blocking = true;
+                    break;
+                }
+            }
+
+            if (blocking)
+            {
+                // Blocking — hide
+                if (occlusionHiddenNpcs.Add(addr))
+                    gameObj->DrawObject->IsVisible = false;
+            }
+            else
+            {
+                // Not blocking — restore if hidden
+                if (occlusionHiddenNpcs.Remove(addr))
+                    gameObj->DrawObject->IsVisible = true;
+            }
+        }
+    }
+
+    private void RestoreOcclusionHiddenNpcs()
+    {
+        if (occlusionHiddenNpcs.Count == 0) return;
+        foreach (var npc in npcSelector.SelectedNpcs)
+        {
+            if (npc.BattleChara == null) continue;
+            if (!occlusionHiddenNpcs.Contains(npc.Address)) continue;
+            var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
+            if (gameObj->DrawObject != null)
+                gameObj->DrawObject->IsVisible = true;
+        }
+        occlusionHiddenNpcs.Clear();
     }
 
     private void OnTerritoryChanged(ushort territoryId)

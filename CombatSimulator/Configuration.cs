@@ -140,6 +140,8 @@ public class Configuration : IPluginConfiguration
     public List<VictorySequenceStage> VictorySequenceOtherStages { get; set; } = new();
     public List<VictoryCinematicPreset> VictoryCinematicPresets { get; set; } = new();
     public float DevNpcScale { get; set; } = 1.0f;
+    public bool DevNpcOcclusionHide { get; set; } = false;
+    public float DevNpcOcclusionRadius { get; set; } = 1.0f;
     public bool RagdollNpcCollision { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcSettleCollision { get; set; } = true;
@@ -163,8 +165,11 @@ public class Configuration : IPluginConfiguration
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
     public bool EnableHitVfx { get; set; } = true;
 
-    // Player HP Bar
+    // HP Bar bone tracking
     public float PlayerHpBarYOffset { get; set; } = 0.3f;
+    public float PlayerHpBarXOffset { get; set; } = 0f;
+    public float EnemyHpBarYOffset { get; set; } = 0.3f;
+    public bool HpBarOcclusion { get; set; } = true;
     public string CustomPlayerName { get; set; } = "";
 
     // Death Cam (Experimental)
