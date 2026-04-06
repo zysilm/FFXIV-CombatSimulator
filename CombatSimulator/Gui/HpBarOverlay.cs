@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using CombatSimulator.Animation;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
+using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using FFXIVClientStructs.FFXIV.Component.GUI;
+using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager;
 
 namespace CombatSimulator.Gui;
 
@@ -13,6 +16,7 @@ public class HpBarOverlay : IDisposable
 {
     private readonly NpcSelector npcSelector;
     private readonly CombatEngine combatEngine;
+    private readonly BoneTransformService boneService;
     private readonly IGameGui gameGui;
     private readonly IClientState clientState;
     private readonly Configuration config;
@@ -40,12 +44,14 @@ public class HpBarOverlay : IDisposable
     public HpBarOverlay(
         NpcSelector npcSelector,
         CombatEngine combatEngine,
+        BoneTransformService boneService,
         IGameGui gameGui,
         IClientState clientState,
         Configuration config)
     {
         this.npcSelector = npcSelector;
         this.combatEngine = combatEngine;
+        this.boneService = boneService;
         this.gameGui = gameGui;
         this.clientState = clientState;
         this.config = config;
@@ -58,6 +64,21 @@ public class HpBarOverlay : IDisposable
 
         var drawList = ImGui.GetBackgroundDrawList();
 
+        // Get camera + player bone positions for NPC HP bar occlusion
+        Vector3 camPos = default;
+        Vector3[] playerBodyPoints = null;
+        if (config.HpBarOcclusion)
+        {
+            var player = clientState.LocalPlayer;
+            var camMgr = GameCameraManager.Instance();
+            if (player != null && camMgr != null && camMgr->Camera != null)
+            {
+                var cp = camMgr->Camera->LastPosition;
+                camPos = new Vector3(cp.X, cp.Y, cp.Z);
+                playerBodyPoints = GetPlayerBodyPoints(player.Address);
+            }
+        }
+
         // Draw enemy HP bars
         if (config.ShowEnemyHpBar)
         {
@@ -66,9 +87,21 @@ public class HpBarOverlay : IDisposable
                 if (!npc.IsSpawned || npc.BattleChara == null)
                     continue;
 
-                var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
-                var worldPos = gameObj->Position;
-                worldPos.Y += gameObj->Height + 0.5f;
+                var headPos = GetBoneWorldPos(npc.Address, "j_kao");
+                Vector3 worldPos;
+                if (headPos != null)
+                {
+                    worldPos = headPos.Value;
+                    worldPos.Y += config.EnemyHpBarYOffset;
+                }
+                else
+                {
+                    var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
+                    worldPos = new Vector3(gameObj->Position.X, gameObj->Position.Y + gameObj->Height + 0.5f, gameObj->Position.Z);
+                }
+
+                if (playerBodyPoints != null && IsOccludedByPlayer(camPos, worldPos, playerBodyPoints))
+                    continue;
 
                 if (!gameGui.WorldToScreen(worldPos, out var screenPos))
                     continue;
@@ -77,17 +110,28 @@ public class HpBarOverlay : IDisposable
             }
         }
 
-        // Draw player HP bar (world overlay, lower position near feet)
+        // Draw player HP bar (world overlay — never occluded)
         if (config.ShowPlayerHpBar)
         {
             var player = clientState.LocalPlayer;
             if (player != null)
             {
-                var worldPos = player.Position;
-                worldPos.Y += config.PlayerHpBarYOffset;
+                var headPos = GetBoneWorldPos(player.Address, "j_kao");
+                Vector3 worldPos;
+                if (headPos != null)
+                {
+                    worldPos = headPos.Value;
+                    worldPos.Y += config.PlayerHpBarYOffset;
+                }
+                else
+                {
+                    worldPos = player.Position;
+                    worldPos.Y += config.PlayerHpBarYOffset;
+                }
 
                 if (gameGui.WorldToScreen(worldPos, out var screenPos))
                 {
+                    screenPos.X += config.PlayerHpBarXOffset;
                     DrawPlayerHpBar(drawList, screenPos);
                 }
             }
@@ -423,6 +467,92 @@ public class HpBarOverlay : IDisposable
         {
             // Silently ignore — addons may not exist in all contexts
         }
+    }
+
+    // Bones to sample for player body occlusion (spread across the skeleton)
+    private static readonly string[] OcclusionBones = {
+        "j_kosi", "j_sebo_a", "j_sebo_b", "j_sebo_c", "j_kubi", "j_kao",
+        "j_asi_a_l", "j_asi_a_r", "j_asi_b_l", "j_asi_b_r",
+        "j_ude_a_l", "j_ude_a_r",
+    };
+
+    private unsafe Vector3[] GetPlayerBodyPoints(nint playerAddress)
+    {
+        var points = new List<Vector3>();
+        var skel = boneService.TryGetSkeleton(playerAddress);
+        if (skel == null) return points.ToArray();
+        var ns = skel.Value;
+        var skeleton = ns.CharBase->Skeleton;
+        if (skeleton == null) return points.ToArray();
+
+        var skelPos = new Vector3(
+            skeleton->Transform.Position.X,
+            skeleton->Transform.Position.Y,
+            skeleton->Transform.Position.Z);
+        var skelRot = new Quaternion(
+            skeleton->Transform.Rotation.X,
+            skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z,
+            skeleton->Transform.Rotation.W);
+
+        foreach (var boneName in OcclusionBones)
+        {
+            var idx = boneService.ResolveBoneIndex(ns, boneName);
+            if (idx < 0 || idx >= ns.BoneCount) continue;
+            ref var mt = ref ns.Pose->ModelPose.Data[idx];
+            var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+            points.Add(skelPos + Vector3.Transform(modelPos, skelRot));
+        }
+        return points.ToArray();
+    }
+
+    /// <summary>
+    /// Check if any of the player's bone positions are between the camera and the HP bar.
+    /// </summary>
+    private static bool IsOccludedByPlayer(Vector3 camPos, Vector3 hpBarWorldPos, Vector3[] bodyPoints)
+    {
+        var camToBar = hpBarWorldPos - camPos;
+        var lineLen = camToBar.Length();
+        if (lineLen < 0.01f) return false;
+        var lineDir = camToBar / lineLen;
+
+        foreach (var bodyPoint in bodyPoints)
+        {
+            var camToBody = bodyPoint - camPos;
+            var t = Vector3.Dot(camToBody, lineDir);
+            if (t < 0f || t > lineLen) continue;
+
+            var closest = camPos + lineDir * t;
+            var dist = Vector3.Distance(bodyPoint, closest);
+            if (dist < 0.2f) return true;
+        }
+        return false;
+    }
+
+    private unsafe Vector3? GetBoneWorldPos(nint characterAddress, string boneName)
+    {
+        if (characterAddress == nint.Zero) return null;
+        var skel = boneService.TryGetSkeleton(characterAddress);
+        if (skel == null) return null;
+        var ns = skel.Value;
+        var idx = boneService.ResolveBoneIndex(ns, boneName);
+        if (idx < 0 || idx >= ns.BoneCount) return null;
+        var skeleton = ns.CharBase->Skeleton;
+        if (skeleton == null) return null;
+
+        var skelPos = new Vector3(
+            skeleton->Transform.Position.X,
+            skeleton->Transform.Position.Y,
+            skeleton->Transform.Position.Z);
+        var skelRot = new Quaternion(
+            skeleton->Transform.Rotation.X,
+            skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z,
+            skeleton->Transform.Rotation.W);
+
+        ref var mt = ref ns.Pose->ModelPose.Data[idx];
+        var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+        return skelPos + Vector3.Transform(modelPos, skelRot);
     }
 
     public void Dispose()
