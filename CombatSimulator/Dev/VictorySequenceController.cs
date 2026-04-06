@@ -370,7 +370,7 @@ public unsafe class VictorySequenceController : IDisposable
         }
         else if (!stage.GrabEnabled && grabActive)
         {
-            // Deactivate grab
+            // Deactivate grab (NPC collision restored internally by RagdollController)
             ragdollController.RemoveGrabConstraint();
             grabActive = false;
             log.Info("VictorySequence: Grab constraint deactivated");
@@ -468,7 +468,7 @@ public unsafe class VictorySequenceController : IDisposable
 
         boneService.OnRenderFrame -= OnRenderFrame;
 
-        // Remove BEPU2 grab constraint
+        // Remove BEPU2 grab constraint (NPC collision restored internally by RagdollController)
         if (grabActive)
         {
             ragdollController.RemoveGrabConstraint();
