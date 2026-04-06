@@ -231,6 +231,9 @@ public class CombatEngine : IDisposable
 
         State.SimulationTime += deltaTime;
 
+        // Track player's current target for victory sequence
+        victorySequenceController?.TrackTarget(npcSelector.SelectedNpcs);
+
         // Tick animation cooldowns
         animationController.Tick(deltaTime);
 
@@ -424,6 +427,7 @@ public class CombatEngine : IDisposable
                 npc.AiState == Ai.NpcAiState.Idle)
             {
                 npc.AiState = Ai.NpcAiState.Combat;
+                Ai.NpcAiController.StaggerTimers(npc);
                 AddLogEntry($"{npc.Name} engages!", CombatLogType.Info);
                 engagedNpcPos = GetEntityPosition(npc.State);
                 didEngage = true;
@@ -445,6 +449,7 @@ public class CombatEngine : IDisposable
                 if (Vector3.Distance(npcPos, engagedNpcPos) <= aggroRange)
                 {
                     npc.AiState = Ai.NpcAiState.Combat;
+                    Ai.NpcAiController.StaggerTimers(npc);
                     AddLogEntry($"{npc.Name} joins the fight!", CombatLogType.Info);
                 }
             }
@@ -459,6 +464,7 @@ public class CombatEngine : IDisposable
             {
                 RegisterNpcEntity(newNpc);
                 newNpc.AiState = Ai.NpcAiState.Combat;
+                Ai.NpcAiController.StaggerTimers(newNpc);
                 AddLogEntry($"{newNpc.Name} joins the fight!", CombatLogType.Info);
             }
         }

@@ -2227,6 +2227,17 @@ public class MainWindow : IDisposable
             config.Save();
         }
 
+        // Min zoom distance
+        ImGui.SameLine();
+        ImGui.Text("Min");
+        ImGui.SameLine();
+        var minDist = config.ActiveCameraMinZoomDistance;
+        ImGui.SetNextItemWidth(60);
+        if (ImGui.DragFloat("##acMin", ref minDist, 0.01f, 0.0f, 2.0f, "%.2f"))
+        {
+            config.ActiveCameraMinZoomDistance = minDist;
+            config.Save();
+        }
 
         ImGui.End();
     }

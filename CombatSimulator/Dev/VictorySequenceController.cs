@@ -18,6 +18,7 @@ public unsafe class VictorySequenceController : IDisposable
     private readonly MovementBlockHook movementBlockHook;
     private readonly RagdollController ragdollController;
     private readonly IClientState clientState;
+    private readonly ITargetManager targetManager;
     private readonly Configuration config;
     private readonly IPluginLog log;
 
@@ -26,6 +27,7 @@ public unsafe class VictorySequenceController : IDisposable
     private float elapsed;
     private SimulatedNpc? cinematicNpc;
     private Vector3 npcOriginalPos;
+    private Vector3 stageStartPos;           // NPC's position at the start of current stage
     private int currentStageIndex = -1;
     private bool stageAnimPlayed;
     private uint lastPlayedEmoteId;
@@ -36,6 +38,9 @@ public unsafe class VictorySequenceController : IDisposable
     private Vector3 playerDeathPos;
     private float playerFacingAngle;
     private ulong playerObjId;
+
+    // Track last targeted NPC during combat (before death)
+    private ulong lastTargetedNpcId;
 
     // Grab bone indices (resolved per stage)
     private bool grabActive;
@@ -50,6 +55,7 @@ public unsafe class VictorySequenceController : IDisposable
         MovementBlockHook movementBlockHook,
         RagdollController ragdollController,
         IClientState clientState,
+        ITargetManager targetManager,
         Configuration config,
         IPluginLog log)
     {
@@ -58,8 +64,28 @@ public unsafe class VictorySequenceController : IDisposable
         this.movementBlockHook = movementBlockHook;
         this.ragdollController = ragdollController;
         this.clientState = clientState;
+        this.targetManager = targetManager;
         this.config = config;
         this.log = log;
+    }
+
+    /// <summary>
+    /// Call each frame during active combat to track the player's current target.
+    /// The last targeted NPC is used as the cinematic NPC when the player dies.
+    /// </summary>
+    public void TrackTarget(IReadOnlyList<SimulatedNpc> npcs)
+    {
+        var target = targetManager.Target;
+        if (target == null) return;
+        var targetId = target.EntityId;
+        foreach (var npc in npcs)
+        {
+            if (npc.SimulatedEntityId == targetId && npc.State.IsAlive && npc.BattleChara != null)
+            {
+                lastTargetedNpcId = targetId;
+                return;
+            }
+        }
     }
 
     /// <summary>
@@ -71,18 +97,32 @@ public unsafe class VictorySequenceController : IDisposable
         if (!config.EnableVictorySequence || config.VictorySequenceStages.Count == 0)
             return (false, null);
 
-        // Collect surviving NPCs
-        var survivors = new List<SimulatedNpc>();
+        // Find the last targeted NPC (must be alive with valid BattleChara)
+        SimulatedNpc? candidate = null;
         foreach (var npc in npcs)
         {
-            if (npc.State.IsAlive && npc.BattleChara != null)
-                survivors.Add(npc);
+            if (npc.SimulatedEntityId == lastTargetedNpcId && npc.State.IsAlive && npc.BattleChara != null)
+            {
+                candidate = npc;
+                break;
+            }
         }
-        if (survivors.Count == 0)
+        // Fallback: first alive NPC if last target is gone
+        if (candidate == null)
+        {
+            foreach (var npc in npcs)
+            {
+                if (npc.State.IsAlive && npc.BattleChara != null)
+                {
+                    candidate = npc;
+                    break;
+                }
+            }
+        }
+        if (candidate == null)
             return (false, null);
 
-        // Pick random NPC for the cinematic
-        cinematicNpc = survivors[Random.Shared.Next(survivors.Count)];
+        cinematicNpc = candidate;
 
         // Capture player state at death
         var player = clientState.LocalPlayer;
@@ -104,6 +144,10 @@ public unsafe class VictorySequenceController : IDisposable
         // Save NPC's true original position (before any plugin manipulation)
         npcOriginalPos = cinematicNpc.SpawnPosition;
 
+        // Capture NPC's current world position as the initial stage start point
+        var npcObj = (GameObject*)cinematicNpc.BattleChara;
+        stageStartPos = new Vector3(npcObj->Position.X, npcObj->Position.Y, npcObj->Position.Z);
+
         // Register NPC for approach movement (bypass server overrides)
         movementBlockHook.AddApproachNpc(cinematicNpc.Address);
 
@@ -116,7 +160,7 @@ public unsafe class VictorySequenceController : IDisposable
         stageAnimPlayed = false;
         grabActive = false;
 
-        log.Info($"VictorySequence: Started with NPC '{cinematicNpc.Name}', {config.VictorySequenceStages.Count} stages");
+        log.Info($"VictorySequence: Started with NPC '{cinematicNpc.Name}' (lastTarget={lastTargetedNpcId:X}), start={stageStartPos}, {config.VictorySequenceStages.Count} stages");
         return (true, cinematicNpc);
     }
 
@@ -155,12 +199,17 @@ public unsafe class VictorySequenceController : IDisposable
             return;
         }
 
-        // Stage transition
+        // Stage transition — snapshot NPC's current position as the new stage start
         if (newStageIdx != currentStageIndex && newStageIdx >= 0)
         {
+            if (currentStageIndex >= 0 && cinematicNpc.BattleChara != null)
+            {
+                var obj = (GameObject*)cinematicNpc.BattleChara;
+                stageStartPos = new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z);
+            }
             currentStageIndex = newStageIdx;
             stageAnimPlayed = false;
-            log.Info($"VictorySequence: Entering stage {newStageIdx} (emote={stages[newStageIdx].EmoteId})");
+            log.Info($"VictorySequence: Entering stage {newStageIdx}, stageStart={stageStartPos}");
         }
 
         if (currentStageIndex < 0 || currentStageIndex >= stages.Count)
@@ -168,13 +217,33 @@ public unsafe class VictorySequenceController : IDisposable
 
         var stage = stages[currentStageIndex];
 
-        // Calculate NPC distance
-        float dist;
-        if (stage.InfiniteWalk)
+        // Calculate target endpoint: EndDistance along player's facing direction
+        var facingDir = new Vector3(MathF.Sin(playerFacingAngle), 0, MathF.Cos(playerFacingAngle));
+        var endPos = playerDeathPos + facingDir * stage.EndDistance;
+        endPos.Y = playerDeathPos.Y + stage.HeightOffset;
+
+        // Lerp NPC from stage start position to the endpoint
+        Vector3 targetPos;
+        if (stage.KeepPosition)
         {
-            // Constant speed walk: distance decreases over time
+            targetPos = stageStartPos;
+        }
+        else if (stage.InfiniteWalk)
+        {
+            // Constant speed walk from stage start toward endpoint
             var timeInStage = elapsed - stage.StartTime;
-            dist = stage.StartDistance - stage.WalkSpeed * timeInStage;
+            var toEnd = endPos - stageStartPos;
+            var totalDist = toEnd.Length();
+            if (totalDist > 0.001f)
+            {
+                var dir = toEnd / totalDist;
+                var traveled = stage.WalkSpeed * timeInStage;
+                targetPos = stageStartPos + dir * traveled;
+            }
+            else
+            {
+                targetPos = endPos;
+            }
         }
         else
         {
@@ -182,13 +251,8 @@ public unsafe class VictorySequenceController : IDisposable
             var progress = duration > 0.001f
                 ? Math.Clamp((elapsed - stage.StartTime) / duration, 0f, 1f)
                 : 1f;
-            dist = stage.StartDistance + (stage.EndDistance - stage.StartDistance) * progress;
+            targetPos = Vector3.Lerp(stageStartPos, endPos, progress);
         }
-
-        // Position along player's facing direction
-        var facingDir = new Vector3(MathF.Sin(playerFacingAngle), 0, MathF.Cos(playerFacingAngle));
-        var targetPos = playerDeathPos + facingDir * dist;
-        targetPos.Y = playerDeathPos.Y + stage.HeightOffset;
 
         // Move NPC via approach bypass
         var gameObj = (GameObject*)cinematicNpc.BattleChara;
@@ -207,8 +271,8 @@ public unsafe class VictorySequenceController : IDisposable
         }
         else if (stage.InfiniteWalk)
         {
-            // Lock to initial approach direction (never flips)
-            var walkDir = -facingDir;
+            // Lock to initial approach direction (stage start → endpoint)
+            var walkDir = endPos - stageStartPos;
             rotAngle = MathF.Atan2(walkDir.X, walkDir.Z);
         }
         else

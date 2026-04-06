@@ -205,7 +205,7 @@ public class VictorySequenceGui
             config.EnableVictorySequence = enabled;
             config.Save();
         }
-        HelpMarker("Cinematic multi-stage victory sequence when the player dies. One random NPC performs choreographed approach with animations and optional grab constraint.");
+        HelpMarker("Cinematic multi-stage victory sequence when the player dies. The last targeted NPC moves from its current position to the configured distance, with animations and optional grab constraint.");
 
         if (!config.EnableVictorySequence) return;
 
@@ -238,7 +238,7 @@ public class VictorySequenceGui
                 ImGui.Text(s.EndTime < 0 ? $"{s.StartTime:F1}-∞" : $"{s.StartTime:F1}-{s.EndTime:F1}s");
 
                 ImGui.TableNextColumn();
-                ImGui.Text($"{s.StartDistance:F1}→{s.EndDistance:F1}");
+                ImGui.Text(s.KeepPosition ? "keep" : $"→{s.EndDistance:F1}");
 
                 ImGui.TableNextColumn();
                 var behaviorName = s.UseEmote
@@ -289,7 +289,6 @@ public class VictorySequenceGui
                 var prevEnd = prev.EndTime < 0 ? prev.StartTime + 5f : prev.EndTime;
                 newStage.StartTime = prevEnd;
                 newStage.EndTime = prevEnd; // user adjusts end time
-                newStage.StartDistance = prev.EndDistance;
                 newStage.EndDistance = prev.EndDistance;
             }
             stages.Add(newStage);
@@ -384,41 +383,43 @@ public class VictorySequenceGui
             // === Movement ===
             ImGui.TextDisabled("Movement");
 
-            var sd2 = s.StartDistance;
-            if (ImGui.DragFloat("Start Distance##d", ref sd2, 0.1f, -30, 30, "%.1f"))
+            var keepPos = s.KeepPosition;
+            if (ImGui.Checkbox("Keep Position##vsd", ref keepPos))
             {
-                s.StartDistance = sd2;
-                if (idx > 0) stages[idx - 1].EndDistance = sd2;
+                s.KeepPosition = keepPos;
                 config.Save();
             }
+            HelpMarker("Stay at current position (where the previous stage ended). No movement.");
 
-            if (!s.InfiniteWalk)
+            if (!s.KeepPosition)
             {
-                var ed = s.EndDistance;
-                if (ImGui.DragFloat("End Distance##d", ref ed, 0.1f, -30, 30, "%.1f"))
+                if (!s.InfiniteWalk)
                 {
-                    s.EndDistance = ed;
-                    if (idx < stages.Count - 1) stages[idx + 1].StartDistance = ed;
+                    var ed = s.EndDistance;
+                    if (ImGui.DragFloat("End Distance##d", ref ed, 0.1f, -30, 30, "%.1f"))
+                    {
+                        s.EndDistance = ed;
+                        config.Save();
+                    }
+                }
+                else
+                {
+                    var ws = s.WalkSpeed;
+                    if (ImGui.DragFloat("Walk Speed (y/s)##walk", ref ws, 0.1f, -20f, 20f, "%.1f"))
+                    { s.WalkSpeed = ws; config.Save(); }
+                }
+
+                var ho = s.HeightOffset;
+                if (ImGui.DragFloat("Height Offset##h", ref ho, 0.01f, -5, 5, "%.2f"))
+                { s.HeightOffset = ho; config.Save(); }
+
+                var infWalk = s.InfiniteWalk;
+                if (ImGui.Checkbox("Infinite Walk##vsd", ref infWalk))
+                {
+                    s.InfiniteWalk = infWalk;
+                    if (infWalk) s.EndTime = -1f;
                     config.Save();
                 }
-            }
-            else
-            {
-                var ws = s.WalkSpeed;
-                if (ImGui.DragFloat("Walk Speed (y/s)##walk", ref ws, 0.1f, -20f, 20f, "%.1f"))
-                { s.WalkSpeed = ws; config.Save(); }
-            }
-
-            var ho = s.HeightOffset;
-            if (ImGui.DragFloat("Height Offset##h", ref ho, 0.01f, -5, 5, "%.2f"))
-            { s.HeightOffset = ho; config.Save(); }
-
-            var infWalk = s.InfiniteWalk;
-            if (ImGui.Checkbox("Infinite Walk##vsd", ref infWalk))
-            {
-                s.InfiniteWalk = infWalk;
-                if (infWalk) s.EndTime = -1f;
-                config.Save();
             }
 
             var lockFace = s.LockFacing;
