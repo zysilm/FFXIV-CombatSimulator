@@ -1970,6 +1970,14 @@ public class MainWindow : IDisposable
 
             ImGui.Indent();
 
+            var showGrabToolbar = config.ShowGrabToolbar;
+            if (ImGui.Checkbox("Show Grab Toolbar##dev", ref showGrabToolbar))
+            {
+                config.ShowGrabToolbar = showGrabToolbar;
+                config.Save();
+            }
+            HelpMarker("Floating toolbar to toggle grab and tweak force/speed on the current victory cinema stage.");
+
             var ragdollLog = config.RagdollVerboseLog;
             if (ImGui.Checkbox("Ragdoll Verbose Log##dev", ref ragdollLog))
             {
@@ -2292,6 +2300,62 @@ public class MainWindow : IDisposable
         {
             config.ActiveCameraMinZoomDistance = minDist;
             config.Save();
+        }
+
+        ImGui.End();
+    }
+
+    public void DrawGrabToolbar(Dev.VictorySequenceController victorySequenceController)
+    {
+        if (!ImGui.Begin("Grab", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.End();
+            return;
+        }
+
+        var stages = config.VictorySequenceStages;
+        var idx = victorySequenceController.CurrentStageIndex;
+
+        if (!victorySequenceController.IsActive || idx < 0 || idx >= stages.Count)
+        {
+            ImGui.TextDisabled("No active stage");
+            ImGui.End();
+            return;
+        }
+
+        var s = stages[idx];
+        ImGui.Text($"Stage {idx}");
+
+        ImGui.SameLine();
+        var grab = s.GrabEnabled;
+        if (ImGui.Checkbox("Grab##tb", ref grab))
+        { s.GrabEnabled = grab; config.Save(); }
+
+        if (s.GrabEnabled)
+        {
+            ImGui.SameLine();
+            ImGui.Text("F");
+            ImGui.SameLine();
+            var gf = s.GrabForce;
+            ImGui.SetNextItemWidth(60);
+            if (ImGui.DragFloat("##tbGF", ref gf, 10f, 10, 5000, "%.0f"))
+            { s.GrabForce = gf; config.Save(); }
+
+            ImGui.SameLine();
+            ImGui.Text("S");
+            ImGui.SameLine();
+            var gs = s.GrabSpeed;
+            ImGui.SetNextItemWidth(60);
+            if (ImGui.DragFloat("##tbGS", ref gs, 1f, 1, 200, "%.0f"))
+            { s.GrabSpeed = gs; config.Save(); }
+
+            ImGui.SameLine();
+            ImGui.Text("Hz");
+            ImGui.SameLine();
+            var gsf = s.GrabSpringFreq;
+            ImGui.SetNextItemWidth(60);
+            if (ImGui.DragFloat("##tbGHz", ref gsf, 5f, 10, 500, "%.0f"))
+            { s.GrabSpringFreq = gsf; config.Save(); }
         }
 
         ImGui.End();
