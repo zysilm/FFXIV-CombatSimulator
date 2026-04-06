@@ -296,6 +296,20 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             combatEngine.Tick(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
             victorySequenceController.Tick(deltaTime);
+
+            // Dev: apply NPC scale override via DrawObject transform
+            if (config.DevNpcScale != 1.0f)
+            {
+                var s = config.DevNpcScale;
+                foreach (var npc in npcSelector.SelectedNpcs)
+                {
+                    if (npc.BattleChara == null) continue;
+                    var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
+                    if (gameObj->DrawObject == null) continue;
+                    gameObj->DrawObject->Scale = new System.Numerics.Vector3(s, s, s);
+                    gameObj->DrawObject->NotifyTransformChanged();
+                }
+            }
         }
         catch (Exception ex)
         {

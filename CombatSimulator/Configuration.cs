@@ -137,7 +137,9 @@ public class Configuration : IPluginConfiguration
     public bool RagdollFollowPosition { get; set; } = false; // Update GameObject.Position to follow ragdoll root (prevents model unload on long falls)
     public bool EnableVictorySequence { get; set; } = false;
     public List<VictorySequenceStage> VictorySequenceStages { get; set; } = new();
+    public List<VictorySequenceStage> VictorySequenceOtherStages { get; set; } = new();
     public List<VictoryCinematicPreset> VictoryCinematicPresets { get; set; } = new();
+    public float DevNpcScale { get; set; } = 1.0f;
     public bool RagdollNpcCollision { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcSettleCollision { get; set; } = true;

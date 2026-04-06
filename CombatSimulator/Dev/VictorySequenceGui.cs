@@ -13,6 +13,7 @@ public class VictorySequenceGui
     private readonly IPluginLog log;
     private readonly Npcs.NpcSelector npcSelector;
     private int selectedStageIndex = -1;
+    private int selectedOtherStageIndex = -1;
     private string newPresetName = "";
     private int selectedPresetIdx = -1;
 
@@ -232,7 +233,10 @@ public class VictorySequenceGui
 
                 ImGui.TableNextColumn();
                 if (ImGui.Selectable($"{i}##sel{i}", selectedStageIndex == i))
+                {
                     selectedStageIndex = i;
+                    selectedOtherStageIndex = -1;
+                }
 
                 ImGui.TableNextColumn();
                 ImGui.Text(s.EndTime < 0 ? $"{s.StartTime:F1}-∞" : $"{s.StartTime:F1}-{s.EndTime:F1}s");
@@ -296,12 +300,157 @@ public class VictorySequenceGui
             config.Save();
         }
 
-        // --- Presets ---
+        // ============================================================
+        // OTHER NPCs SEQUENCE
+        // ============================================================
+        ImGui.Separator();
+        ImGui.Text("Other NPCs Sequence");
+        HelpMarker("Animation stages for all non-cinematic NPCs (those not doing the grab). Uses the same timeline as the cinematic NPC.");
+
+        var otherStages = config.VictorySequenceOtherStages;
+
+        if (ImGui.BeginTable("##vseqother", 4, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+        {
+            ImGui.TableSetupColumn("#", ImGuiTableColumnFlags.WidthFixed, 20);
+            ImGui.TableSetupColumn("Time", ImGuiTableColumnFlags.WidthFixed, 90);
+            ImGui.TableSetupColumn("Behavior", ImGuiTableColumnFlags.WidthFixed, 100);
+            ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 70);
+            ImGui.TableHeadersRow();
+
+            int oDeleteIdx = -1;
+            for (int i = 0; i < otherStages.Count; i++)
+            {
+                var s = otherStages[i];
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                if (ImGui.Selectable($"{i}##osel{i}", selectedOtherStageIndex == i))
+                {
+                    selectedOtherStageIndex = i;
+                    selectedStageIndex = -1;
+                }
+                ImGui.TableNextColumn();
+                ImGui.Text(s.EndTime < 0 ? $"{s.StartTime:F1}-∞" : $"{s.StartTime:F1}-{s.EndTime:F1}s");
+                ImGui.TableNextColumn();
+                var oBehavior = s.UseEmote
+                    ? (s.EmoteId > 0 ? FindEmoteName(s.EmoteId) : "-")
+                    : (s.ActionTimelineId > 0 ? FindActionTimelineName(s.ActionTimelineId) : "-");
+                ImGui.Text(oBehavior);
+                ImGui.TableNextColumn();
+                if (ImGui.SmallButton($"X##o{i}")) oDeleteIdx = i;
+            }
+            ImGui.EndTable();
+            if (oDeleteIdx >= 0)
+            {
+                otherStages.RemoveAt(oDeleteIdx);
+                if (selectedOtherStageIndex >= otherStages.Count) selectedOtherStageIndex = otherStages.Count - 1;
+                config.Save();
+            }
+        }
+
+        if (ImGui.Button("+ Add Stage##other"))
+        {
+            var newStage = new VictorySequenceStage();
+            if (otherStages.Count > 0)
+            {
+                var prev = otherStages[^1];
+                var prevEnd = prev.EndTime < 0 ? prev.StartTime + 5f : prev.EndTime;
+                newStage.StartTime = prevEnd;
+                newStage.EndTime = prevEnd;
+            }
+            otherStages.Add(newStage);
+            selectedOtherStageIndex = otherStages.Count - 1;
+            config.Save();
+        }
+
+        // Selected other stage editor
+        if (selectedOtherStageIndex >= 0 && selectedOtherStageIndex < otherStages.Count)
+        {
+            ImGui.Separator();
+            var os = otherStages[selectedOtherStageIndex];
+            var oidx = selectedOtherStageIndex;
+
+            ImGui.TextDisabled($"Other Stage {oidx} — Timing");
+            var ost = os.StartTime;
+            if (ImGui.DragFloat("Start Time (s)##ot", ref ost, 0.1f, 0, 120, "%.1f"))
+            {
+                os.StartTime = ost;
+                if (oidx > 0 && otherStages[oidx - 1].EndTime >= 0) otherStages[oidx - 1].EndTime = ost;
+                config.Save();
+            }
+            if (os.EndTime >= 0)
+            {
+                var oet = os.EndTime;
+                if (ImGui.DragFloat("End Time (s)##ot", ref oet, 0.1f, 0, 120, "%.1f"))
+                {
+                    os.EndTime = oet;
+                    if (oidx < otherStages.Count - 1) otherStages[oidx + 1].StartTime = oet;
+                    config.Save();
+                }
+            }
+            var oInfTime = os.EndTime < 0;
+            if (ImGui.Checkbox("Infinite Time##ovsd", ref oInfTime))
+            { os.EndTime = oInfTime ? -1f : os.StartTime + 3f; config.Save(); }
+
+            ImGui.TextDisabled("Behavior");
+            var oUseEmote = os.UseEmote;
+            if (oUseEmote)
+            {
+                var emoteIdx = FindEmoteIndex(os.EmoteId);
+                var emoteName = emoteIdx < emoteCache!.Count ? emoteCache[emoteIdx].Name : "(None)";
+                ImGui.SetNextItemWidth(500);
+                if (ImGui.BeginCombo("##obehavvsd", emoteName))
+                {
+                    for (int i = 0; i < emoteCache.Count; i++)
+                    {
+                        if (ImGui.Selectable(emoteCache[i].Name, i == emoteIdx))
+                        { os.EmoteId = emoteCache[i].Id; os.ActionTimelineId = 0; ResolveEmoteTimelines(os); config.Save(); }
+                        if (i == emoteIdx) ImGui.SetItemDefaultFocus();
+                    }
+                    ImGui.EndCombo();
+                }
+                ImGui.SameLine();
+                if (ImGui.SmallButton("<##oem")) { var n = emoteIdx - 1; if (n >= 0) { os.EmoteId = emoteCache[n].Id; os.ActionTimelineId = 0; ResolveEmoteTimelines(os); config.Save(); } }
+                ImGui.SameLine();
+                if (ImGui.SmallButton(">##oem")) { var n = emoteIdx + 1; if (n < emoteCache.Count) { os.EmoteId = emoteCache[n].Id; os.ActionTimelineId = 0; ResolveEmoteTimelines(os); config.Save(); } }
+            }
+            else
+            {
+                if (actionTimelinePrefixes != null && actionTimelinePrefixes.Length > 0)
+                    ImGui.Combo("Filter##oatfilt", ref selectedPrefixIndex, actionTimelinePrefixes, actionTimelinePrefixes.Length);
+                var atList = GetCurrentActionTimelineList();
+                int atIdx = 0;
+                for (int i = 0; i < atList.Count; i++) if (atList[i].Id == os.ActionTimelineId) { atIdx = i; break; }
+                var atName = atIdx < atList.Count ? atList[atIdx].Name : "(None)";
+                ImGui.SetNextItemWidth(500);
+                if (ImGui.BeginCombo("Action##obehavvsd", atName))
+                {
+                    for (int i = 0; i < atList.Count; i++)
+                    {
+                        if (ImGui.Selectable(atList[i].Name, i == atIdx))
+                        { os.ActionTimelineId = atList[i].Id; os.EmoteId = 0; os.ResolvedIntroTimeline = 0; os.ResolvedLoopTimeline = 0; config.Save(); }
+                        if (i == atIdx) ImGui.SetItemDefaultFocus();
+                    }
+                    ImGui.EndCombo();
+                }
+                ImGui.SameLine();
+                if (ImGui.SmallButton("<##oat")) { var n = atIdx - 1; if (n >= 0) { os.ActionTimelineId = atList[n].Id; os.EmoteId = 0; os.ResolvedIntroTimeline = 0; os.ResolvedLoopTimeline = 0; config.Save(); } }
+                ImGui.SameLine();
+                if (ImGui.SmallButton(">##oat")) { var n = atIdx + 1; if (n < atList.Count) { os.ActionTimelineId = atList[n].Id; os.EmoteId = 0; os.ResolvedIntroTimeline = 0; os.ResolvedLoopTimeline = 0; config.Save(); } }
+            }
+            ImGui.SameLine();
+            if (ImGui.Checkbox("Emote##omode", ref oUseEmote))
+            { os.UseEmote = oUseEmote; config.Save(); }
+
+            var oLockFace = os.LockFacing;
+            if (ImGui.Checkbox("Lock Facing##ovsd", ref oLockFace))
+            { os.LockFacing = oLockFace; config.Save(); }
+        }
+
+        // --- Presets (stores both cinematic + other NPC stages) ---
         ImGui.Separator();
         ImGui.TextDisabled("Presets");
         var presets = config.VictoryCinematicPresets;
 
-        // Save current stages as a new preset
         ImGui.SetNextItemWidth(120);
         ImGui.InputText("##presetname", ref newPresetName, 32);
         ImGui.SameLine();
@@ -311,12 +460,12 @@ public class VictorySequenceGui
             {
                 Name = newPresetName,
                 Stages = VictoryCinematicPreset.CloneStages(stages),
+                OtherStages = VictoryCinematicPreset.CloneStages(otherStages),
             });
             newPresetName = "";
             config.Save();
         }
 
-        // Load / Delete preset
         if (presets.Count > 0)
         {
             var presetNames = new string[presets.Count];
@@ -328,9 +477,13 @@ public class VictorySequenceGui
             ImGui.SameLine();
             if (ImGui.Button("Load##preset"))
             {
+                var preset = presets[selectedPresetIdx];
                 stages.Clear();
-                stages.AddRange(VictoryCinematicPreset.CloneStages(presets[selectedPresetIdx].Stages));
+                stages.AddRange(VictoryCinematicPreset.CloneStages(preset.Stages));
+                otherStages.Clear();
+                otherStages.AddRange(VictoryCinematicPreset.CloneStages(preset.OtherStages));
                 selectedStageIndex = -1;
+                selectedOtherStageIndex = -1;
                 config.Save();
             }
             ImGui.SameLine();

@@ -29,6 +29,8 @@ public unsafe class RagdollController : IDisposable
     // State
     private bool isActive;
     private nint targetCharacterAddress;
+    private Vector3 savedCharacterPosition; // original position before follow moved it
+    private bool followWasActive;           // tracks toggle-off to restore position
     private float elapsed;
     private float activationDelay;
     private bool physicsStarted;
@@ -524,7 +526,12 @@ public unsafe class RagdollController : IDisposable
         activationDelay = config.RagdollActivationDelay;
         elapsed = 0f;
         physicsStarted = false;
+        followWasActive = false;
         isActive = true;
+
+        // Save original position so we can restore if FollowPosition is toggled off
+        var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)characterAddress;
+        savedCharacterPosition = go->Position;
 
         log.Info($"RagdollController: Activated (delay={activationDelay:F1}s)");
     }
@@ -1550,16 +1557,15 @@ public unsafe class RagdollController : IDisposable
         // Update NPC collision volumes to track their current animated bone positions.
         // Must call UpdateBounds() after repositioning — BEPU2 doesn't auto-update
         // broad phase AABBs for statics, so without it collisions are never detected.
-        // When suspended (grab active), park all statics far away so they can't collide.
+        // The grabbing NPC's collision is parked far away so the player body can pass through.
         var npcCollisionParkPos = new Vector3(0, -9999, 0);
         for (int i = 0; i < npcCollisionStates.Count; i++)
         {
             var npcState = npcCollisionStates[i];
             try
             {
-                if (npcCollisionSuspended)
+                if (suspendedNpcAddress != nint.Zero && npcState.NpcAddress == suspendedNpcAddress)
                 {
-                    // Park all statics far below — keeps handles valid
                     if (npcState.IsFallback)
                     {
                         var staticRef = simulation.Statics.GetStaticReference(npcState.FallbackHandle);
@@ -1835,6 +1841,19 @@ public unsafe class RagdollController : IDisposable
                 movementBlockHook.SetApproachPosition(gameObj, rootPos.X, rootPos.Y, rootPos.Z);
             }
             catch { }
+            followWasActive = true;
+        }
+        else if (followWasActive && targetCharacterAddress != nint.Zero)
+        {
+            // Toggled off — restore original position
+            try
+            {
+                var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress;
+                movementBlockHook.SetApproachPosition(gameObj,
+                    savedCharacterPosition.X, savedCharacterPosition.Y, savedCharacterPosition.Z);
+            }
+            catch { }
+            followWasActive = false;
         }
     }
 
@@ -1842,13 +1861,15 @@ public unsafe class RagdollController : IDisposable
     private ConstraintHandle grabConstraintHandle;
     private bool grabConstraintActive;
     private BodyHandle grabBodyHandle;
+    // Address of the grabbing NPC whose collision is parked during grab (0 = none)
+    private nint suspendedNpcAddress;
 
     /// <summary>
     /// Create a OneBodyLinearServo constraint that pins a ragdoll bone to a world-space
     /// target position. The target is updated each frame via UpdateGrabTarget().
     /// Also ensures all ragdoll bodies stay awake (SleepThreshold = -1).
     /// </summary>
-    public bool CreateGrabConstraint(string boneName, Vector3 initialTarget, float maxForce = 1000f, float maxSpeed = 50f, float springFreq = 120f)
+    public bool CreateGrabConstraint(string boneName, Vector3 initialTarget, nint grabbingNpcAddress = 0, float maxForce = 1000f, float maxSpeed = 50f, float springFreq = 120f)
     {
         if (simulation == null || !isActive) return false;
 
@@ -1888,13 +1909,9 @@ public unsafe class RagdollController : IDisposable
             });
 
         grabConstraintActive = true;
+        suspendedNpcAddress = grabbingNpcAddress;
 
-        // Suspend NPC collision so the player body can translate through
-        // the NPC without being blocked by its collision volume.
-        // We just park the statics far away — no handle removal needed.
-        npcCollisionSuspended = true;
-
-        log.Info($"RagdollController: Grab constraint created on '{boneName}' → ({initialTarget.X:F2},{initialTarget.Y:F2},{initialTarget.Z:F2})");
+        log.Info($"RagdollController: Grab constraint created on '{boneName}' → ({initialTarget.X:F2},{initialTarget.Y:F2},{initialTarget.Z:F2}), suspend NPC 0x{grabbingNpcAddress:X}");
         return true;
     }
 
@@ -1949,21 +1966,17 @@ public unsafe class RagdollController : IDisposable
         }
 
         grabConstraintActive = false;
-
-        // Restore NPC collision — statics will resume tracking bones on next frame
-        npcCollisionSuspended = false;
+        suspendedNpcAddress = nint.Zero;
 
         log.Info("RagdollController: Grab constraint removed");
     }
 
-    // When true, NPC collision statics are parked far away instead of tracking bones.
-    // Handles stay valid — no removal/re-creation needed.
-    private bool npcCollisionSuspended;
+
 
     private void DestroySimulation()
     {
         grabConstraintActive = false;
-        npcCollisionSuspended = false;
+        suspendedNpcAddress = nint.Zero;
         ragdollBones.Clear();
         npcCollisionStates.Clear();
         simulation?.Dispose();

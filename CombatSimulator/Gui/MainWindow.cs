@@ -1958,6 +1958,14 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Update GameObject.Position to follow the ragdoll root bone each frame. Prevents character model from unloading on long falls (e.g., off cliffs). May have side effects.");
 
+            var npcScale = config.DevNpcScale;
+            if (ImGui.SliderFloat("NPC Scale##dev", ref npcScale, 0.1f, 3.0f, "%.2f"))
+            {
+                config.DevNpcScale = npcScale;
+                config.Save();
+            }
+            HelpMarker("Scale all active target NPCs. Applied live each frame.");
+
             victorySequenceGui.Draw();
 
             ImGui.Unindent();

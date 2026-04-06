@@ -680,19 +680,9 @@ public class CombatEngine : IDisposable
                     var (started, cNpc) = victorySequenceController.TryStart(npcSelector.SelectedNpcs);
                     if (started) cinematicNpc = cNpc;
                 }
-                // Play normal victory emote on all NPCs (or all except cinematic one)
-                if (cinematicNpc != null)
-                {
-                    var otherNpcs = new List<SimulatedNpc>();
-                    foreach (var npc in npcSelector.SelectedNpcs)
-                        if (npc != cinematicNpc && npc.State.IsAlive) otherNpcs.Add(npc);
-                    if (otherNpcs.Count > 0)
-                        animationController.PlayVictory(isPlayerVictory: false, otherNpcs);
-                }
-                else
-                {
+                // Play normal victory emote on NPCs not managed by the victory sequence
+                if (cinematicNpc == null)
                     animationController.PlayVictory(isPlayerVictory: false, npcSelector.SelectedNpcs);
-                }
                 ApplyGlamourer();
                 deathCamController?.Activate();
 

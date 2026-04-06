@@ -9,6 +9,7 @@ public class VictoryCinematicPreset
 {
     public string Name { get; set; } = "Preset";
     public List<VictorySequenceStage> Stages { get; set; } = new();
+    public List<VictorySequenceStage> OtherStages { get; set; } = new();
 
     /// <summary>Deep clone the stages from a source list.</summary>
     public static List<VictorySequenceStage> CloneStages(List<VictorySequenceStage> source)
