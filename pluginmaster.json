@@ -21,27 +21,5 @@
     "DownloadLinkUpdate": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v1.9.1/CombatSimulator.zip",
     "DownloadLinkTesting": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v1.9.1/CombatSimulator.zip",
     "DalamudApiLevel": 14
-  },
-  {
-    "Name": "Ragdoll System",
-    "Author": "zysilm",
-    "Punchline": "Ragdoll physics on character death.",
-    "Description": "Applies ragdoll physics to characters when they die in-game. Features per-bone physics configuration, hair physics simulation, terrain collision, and optional NPC death ragdoll support. Non-humanoid NPCs are handled gracefully with automatic bone-set detection.",
-    "RepoUrl": "https://github.com/zysilm/RagdollSystem",
-    "Tags": [
-      "ragdoll",
-      "physics",
-      "death"
-    ],
-    "CategoryTags": [
-      "other"
-    ],
-    "LoadPriority": 0,
-    "AssemblyVersion": "1.0.0",
-    "InternalName": "RagdollSystem",
-    "DownloadLinkInstall": "https://github.com/zysilm/RagdollSystem/releases/download/v1.0.0/RagdollSystem.zip",
-    "DownloadLinkUpdate": "https://github.com/zysilm/RagdollSystem/releases/download/v1.0.0/RagdollSystem.zip",
-    "DownloadLinkTesting": "https://github.com/zysilm/RagdollSystem/releases/download/v1.0.0/RagdollSystem.zip",
-    "DalamudApiLevel": 14
   }
 ]
