@@ -53,7 +53,7 @@ jobs:
       - name: Generate pluginmaster.json
         run: |
           python3 -c "
-          import json
+          import json, os
           with open('${{ env.SOLUTION_DIR }}/${{ env.PLUGIN_NAME }}.json') as f:
               data = json.load(f)
           data['AssemblyVersion'] = '${{ steps.version.outputs.version }}'
@@ -64,7 +64,14 @@ jobs:
           data['DownloadLinkUpdate'] = dl
           data['DownloadLinkTesting'] = dl
           data['DalamudApiLevel'] = 14
-          print(json.dumps([data], indent=2))
+          # Merge into existing pluginmaster.json so other plugins are preserved
+          master = []
+          if os.path.exists('pluginmaster.json'):
+              with open('pluginmaster.json') as f:
+                  master = json.load(f)
+          master = [e for e in master if e.get('InternalName') != '${{ env.PLUGIN_NAME }}']
+          master.append(data)
+          print(json.dumps(master, indent=2))
           " > release/pluginmaster.json
 
       - name: Upload artifact
