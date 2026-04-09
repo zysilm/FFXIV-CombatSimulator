@@ -390,20 +390,17 @@ public unsafe class NpcSpawner : IDisposable
         try
         {
             var character = (Character*)chara;
-            if (pending.MainHandWeapon != 0)
-            {
-                var mh = pending.MainHandWeapon;
-                var weaponId = *(WeaponModelId*)&mh;
-                character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, weaponId, 0, 0, 0, 0);
-                log.Verbose($"Loaded MainHand weapon: {weaponId.Id}/{weaponId.Type}/{weaponId.Variant}");
-            }
-            if (pending.OffHandWeapon != 0)
-            {
-                var oh = pending.OffHandWeapon;
-                var weaponId = *(WeaponModelId*)&oh;
-                character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, weaponId, 0, 0, 0, 0);
-                log.Verbose($"Loaded OffHand weapon: {weaponId.Id}/{weaponId.Type}/{weaponId.Variant}");
-            }
+
+            // Both hands must be loaded together for the weapon system to initialize
+            var mh = pending.MainHandWeapon;
+            var oh = pending.OffHandWeapon;
+            var mhId = *(WeaponModelId*)&mh;
+            var ohId = *(WeaponModelId*)&oh;
+
+            character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, mhId, 0, 0, 0, 0);
+            character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, ohId, 0, 0, 0, 0);
+
+            log.Verbose($"Loaded weapons: MH={mhId.Id}/{mhId.Type}/{mhId.Variant}, OH={ohId.Id}/{ohId.Type}/{ohId.Variant}");
         }
         catch (Exception ex)
         {
