@@ -572,9 +572,14 @@ public class CombatEngine : IDisposable
             bool isRanged = actionData.DamageType == SimDamageType.Magical ||
                             actionData.Range > 5.0f;
 
+            // Map simulated entity IDs to real game object IDs for native calls.
+            // ActionEffectHandler.Receive needs IDs the game engine can resolve.
+            var gameSourceId = GetGameEntityId(source);
+            var gameTargetId = GetGameEntityId(target);
+
             animationController.PlayActionEffect(new ActionEffectRequest
             {
-                SourceEntityId = source.EntityId,
+                SourceEntityId = gameSourceId,
                 SourcePosition = sourcePos,
                 ActionId = actionData.ActionId,
                 AnimationLock = actionData.AnimationLock,
@@ -589,7 +594,7 @@ public class CombatEngine : IDisposable
                 {
                     new TargetEffect
                     {
-                        TargetId = target.EntityId,
+                        TargetId = gameTargetId,
                         Damage = dmgResult.Damage,
                         IsCritical = dmgResult.IsCritical,
                         IsDirectHit = dmgResult.IsDirectHit,
@@ -602,6 +607,36 @@ public class CombatEngine : IDisposable
         {
             log.Error(ex, "Failed to trigger action effect animation.");
         }
+    }
+
+    /// <summary>
+    /// Maps a SimulatedEntityState's EntityId to the real game object EntityId.
+    /// For player, returns the player's real EntityId.
+    /// For spawned NPCs, reads the EntityId from the BattleChara game object
+    /// (which differs from our internally assigned SimulatedEntityId).
+    /// Native code like ActionEffectHandler.Receive needs real game IDs, not our fake ones.
+    /// </summary>
+    private unsafe uint GetGameEntityId(SimulatedEntityState entity)
+    {
+        if (entity.IsPlayer)
+        {
+            var player = clientState.LocalPlayer;
+            if (player != null)
+                return player.EntityId;
+        }
+        else
+        {
+            foreach (var npc in npcSelector.SelectedNpcs)
+            {
+                if (npc.SimulatedEntityId == entity.EntityId && npc.BattleChara != null)
+                {
+                    var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
+                    return go->GetGameObjectId().ObjectId;
+                }
+            }
+        }
+
+        return entity.EntityId;
     }
 
     private unsafe Vector3 GetEntityPosition(SimulatedEntityState entity)
