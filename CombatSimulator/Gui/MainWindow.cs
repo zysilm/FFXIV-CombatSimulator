@@ -398,7 +398,7 @@ public class MainWindow : IDisposable
 
     private void DrawVirtualEnemiesTab()
     {
-        // 6-click activation gate
+        // 6-click activation gate (resets every time mode is turned off or plugin loads)
         if (!virtualEnemiesUnlocked)
         {
             ImGui.TextWrapped("Virtual Enemies allows you to spawn client-side enemies to practice combat against.");
@@ -408,31 +408,42 @@ public class MainWindow : IDisposable
             var dummy = false;
             ImGui.Checkbox("Enable Virtual Enemies Mode", ref dummy);
             ImGui.EndDisabled();
-            HelpMarker(
-                "EXPERIMENTAL: This feature spawns client-side objects and intercepts " +
-                "combat actions. It modifies game memory in ways that may cause crashes " +
-                "or unexpected behavior.\n\n" +
-                "Click the checkbox 6 times to acknowledge and unlock.");
 
-            // Track clicks on the disabled checkbox area
-            var min = ImGui.GetItemRectMin();
-            var max = ImGui.GetItemRectMax();
-            if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            // The (!) icon IS the click target
+            ImGui.SameLine();
+            using (ImRaii.PushFont(UiBuilder.IconFont))
             {
-                var mousePos = ImGui.GetMousePos();
-                if (mousePos.X >= min.X && mousePos.X <= max.X &&
-                    mousePos.Y >= min.Y && mousePos.Y <= max.Y)
-                {
-                    virtualEnemiesClickCount++;
-                    if (virtualEnemiesClickCount >= 6)
-                        virtualEnemiesUnlocked = true;
-                }
+                ImGui.TextColored(new Vector4(1f, 0.7f, 0f, 1f), FontAwesomeIcon.ExclamationTriangle.ToIconString());
+            }
+            // Track clicks on the (!) icon
+            if (ImGui.IsItemClicked())
+            {
+                virtualEnemiesClickCount++;
+                if (virtualEnemiesClickCount >= 6)
+                    virtualEnemiesUnlocked = true;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.PushTextWrapPos(ImGui.GetFontSize() * 20.0f);
+                ImGui.TextUnformatted(
+                    "EXPERIMENTAL: This feature spawns client-side objects and intercepts " +
+                    "combat actions. It modifies game memory in ways that may cause crashes " +
+                    "or unexpected behavior.\n\n" +
+                    "Click this icon 6 times to acknowledge the risk and unlock.");
+                ImGui.PopTextWrapPos();
+                ImGui.EndTooltip();
             }
 
             if (virtualEnemiesClickCount > 0 && virtualEnemiesClickCount < 6)
             {
                 ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
                     $"({virtualEnemiesClickCount}/6)");
+            }
+            else if (virtualEnemiesClickCount == 0)
+            {
+                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
+                    "Click the warning icon to unlock.");
             }
 
             return;
@@ -466,6 +477,10 @@ public class MainWindow : IDisposable
                     combatEngine.StopSimulation();
                     chatGui.Print("[CombatSim] Virtual Enemies mode OFF. All enemies despawned.");
                 }
+
+                // Re-lock: require 6 clicks again next time
+                virtualEnemiesUnlocked = false;
+                virtualEnemiesClickCount = 0;
             }
         }
         HelpMarker(
