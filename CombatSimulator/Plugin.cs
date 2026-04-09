@@ -30,6 +30,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private readonly Configuration config;
     private readonly NpcSelector npcSelector;
+    private readonly NpcSpawner npcSpawner;
     private readonly ActionDataProvider actionDataProvider;
     private readonly DamageCalculator damageCalculator;
     private readonly ChatCommandExecutor chatCommandExecutor;
@@ -93,6 +94,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
+        npcSpawner = new NpcSpawner(objectTable, dataManager, log);
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
@@ -105,6 +107,30 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             config, npcSelector, clientState, log, deathCamController,
             victorySequenceController);
         npcAiController = new NpcAiController(combatEngine, animationController, movementBlockHook, clientState, config, log);
+
+        // Wire NpcSpawner callbacks
+        npcSpawner.OnNpcSpawnComplete = (npc) =>
+        {
+            npcSelector.RegisterSpawnedNpc(npc);
+            log.Info($"Spawned NPC '{npc.Name}' registered as combat target.");
+        };
+        npcSpawner.OnSpawnError = (msg) =>
+        {
+            chatGui.PrintError($"[CombatSim] Spawn error: {msg}");
+        };
+
+        // Re-register alive spawned NPCs when simulation starts
+        // (they get removed from npcSelector on StopSimulation via DeselectAll)
+        combatEngine.OnSimulationStarted = () =>
+        {
+            foreach (var npc in npcSpawner.SpawnedNpcs)
+            {
+                if (npc.IsSpawned && npc.BattleChara != null)
+                {
+                    npcSelector.RegisterSpawnedNpc(npc);
+                }
+            }
+        };
 
         // Hook safety checker — register native functions we CALL (not hook) that other plugins may hook.
         // We check for JMP detours at each address to detect third-party hooks.
@@ -130,7 +156,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             activeCameraController.SetActive(true);
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, combatEngine, glamourerIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, npcSpawner, combatEngine, glamourerIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, mainWindow, config, gameGui, clientState);
@@ -163,6 +189,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         commandManager.RemoveHandler(CommandName);
 
         RestoreOcclusionHiddenNpcs();
+        npcSpawner.DespawnAll();
+        npcSpawner.Dispose();
         combatEngine.StopSimulation();
         npcSelector.DeselectAll();
 
@@ -283,6 +311,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             // Validate selected NPCs still exist
             npcSelector.Tick();
+
+            // Process queued spawns and pending draw enables (works outside combat)
+            npcSpawner.Tick();
 
             var deltaTime = (float)(1.0 / 60.0);
 
@@ -426,6 +457,13 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnTerritoryChanged(ushort territoryId)
     {
+        // Despawn client-spawned NPCs first (they don't survive zone changes)
+        if (npcSpawner.SpawnedNpcs.Count > 0)
+        {
+            npcSpawner.DespawnAll();
+            log.Info("Despawned all client NPCs on zone change.");
+        }
+
         if (combatEngine.IsActive)
         {
             log.Info($"Territory changed to {territoryId} — auto-stopping combat simulation.");

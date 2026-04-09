@@ -104,8 +104,45 @@ public unsafe class NpcSelector : IDisposable
         return (npc, null);
     }
 
+    /// <summary>
+    /// Register a client-spawned NPC into the active targets list.
+    /// Called from NpcSpawner.OnNpcSpawnComplete.
+    /// </summary>
+    public bool RegisterSpawnedNpc(SimulatedNpc npc)
+    {
+        if (selectedNpcs.Count >= MaxTargets)
+            return false;
+
+        foreach (var existing in selectedNpcs)
+        {
+            if (existing.SimulatedEntityId == npc.SimulatedEntityId)
+                return false;
+        }
+
+        npc.IsClientControlled = true;
+        selectedNpcs.Add(npc);
+        log.Info($"Registered spawned NPC '{npc.Name}' (EntityId=0x{npc.SimulatedEntityId:X}).");
+        return true;
+    }
+
+    /// <summary>
+    /// Remove a client-spawned NPC from the active targets list without restoring game state.
+    /// </summary>
+    public void UnregisterSpawnedNpc(SimulatedNpc npc)
+    {
+        selectedNpcs.Remove(npc);
+        log.Info($"Unregistered spawned NPC '{npc.Name}'.");
+    }
+
     public void DeselectNpc(SimulatedNpc npc)
     {
+        if (npc.IsClientControlled)
+        {
+            // Client-spawned NPC: just remove from list, don't restore game state
+            selectedNpcs.Remove(npc);
+            return;
+        }
+
         if (npc.BattleChara != null)
         {
             try
@@ -283,6 +320,17 @@ public unsafe class NpcSelector : IDisposable
         for (int i = selectedNpcs.Count - 1; i >= 0; i--)
         {
             var npc = selectedNpcs[i];
+
+            // Client-spawned NPCs: validate via spawner state, not object table
+            if (npc.IsClientControlled)
+            {
+                if (npc.BattleChara == null || !npc.IsSpawned)
+                {
+                    log.Warning($"Spawned NPC '{npc.Name}' lost reference.");
+                    selectedNpcs.RemoveAt(i);
+                }
+                continue;
+            }
 
             if (npc.GameObjectRef == null || npc.GameObjectRef.Address == nint.Zero)
             {

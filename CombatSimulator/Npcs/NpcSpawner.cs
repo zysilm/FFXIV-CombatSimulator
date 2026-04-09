@@ -81,35 +81,20 @@ public unsafe class NpcSpawner : IDisposable
             var spawnPos = request.Position ?? CalculateSpawnPosition();
             var spawnRot = request.Rotation ?? CalculateSpawnRotation(spawnPos);
 
-            // Look up ModelCharaId and scale from BNpcBase sheet
-            int modelCharaId = 0;
-            float npcScale = 1.0f;
-            if (request.BNpcBaseId > 0)
-            {
-                var baseSheet = dataManager.GetExcelSheet<BNpcBase>();
-                if (baseSheet != null)
-                {
-                    var baseRow = baseSheet.GetRowOrDefault(request.BNpcBaseId);
-                    if (baseRow != null)
-                    {
-                        modelCharaId = (int)baseRow.Value.ModelChara.RowId;
-                        var scale = baseRow.Value.Scale;
-                        if (scale > 0)
-                            npcScale = scale / 100f;
-                        log.Info($"BNpcBase {request.BNpcBaseId}: ModelCharaId={modelCharaId}, scale={npcScale}");
-                    }
-                    else
-                    {
-                        log.Warning($"BNpcBase row {request.BNpcBaseId} not found.");
-                    }
-                }
-            }
-
             var clientObjMgr = ClientObjectManager.Instance();
             if (clientObjMgr == null)
             {
                 log.Error("ClientObjectManager is null.");
                 OnSpawnError?.Invoke("ClientObjectManager is null. Are you logged in?");
+                return;
+            }
+
+            // Get local player for initial character setup
+            var localPlayer = objectTable[0];
+            if (localPlayer == null)
+            {
+                log.Error("Local player is null.");
+                OnSpawnError?.Invoke("Local player not found. Are you logged in?");
                 return;
             }
 
@@ -135,33 +120,42 @@ public unsafe class NpcSpawner : IDisposable
             }
 
             var chara = (BattleChara*)obj;
+            var character = (Character*)chara;
             log.Info($"Got BattleChara at index {index}, address=0x{(nint)chara:X}");
 
-            // Step 2: Configure properties (matching RaidsRewritten order exactly)
-            // ObjectKind
+            // Step 2: Configure properties
             obj->ObjectKind = ObjectKind.BattleNpc;
-            obj->TargetableStatus = 0; // RaidsRewritten: untargetable during setup
+            obj->SubKind = (byte)BattleNpcSubKind.Combatant;
+            obj->TargetableStatus = 0; // Untargetable during setup
 
-            // Position, rotation, scale
+            // Position, rotation
             obj->Position = spawnPos;
             obj->Rotation = spawnRot;
-            obj->Scale = npcScale;
 
-            // Step 3: Set ModelCharaId directly on ModelContainer (NOT SetupBNpc)
-            var character = (Character*)chara;
-            character->ModelContainer.ModelCharaId = modelCharaId;
-            log.Info($"Set ModelCharaId={modelCharaId}");
-
-            // Step 4: Set name
+            // Step 3: Set name
             var nameBytes = Encoding.UTF8.GetBytes(npcName);
             for (int j = 0; j < 64; j++)
                 obj->Name[j] = j < nameBytes.Length && j < 63 ? nameBytes[j] : (byte)0;
 
-            // Step 5: RenderFlags = 0 (needed for actor VFX, per RaidsRewritten)
+            // Step 4: RenderFlags = 0 (needed for actor VFX)
             obj->RenderFlags = VisibilityFlags.None;
 
-            // Step 6: Create managed object reference (RaidsRewritten does this)
-            // This registers the object with Dalamud's tracking
+            // Step 5: Initialize rendering by copying from local player (Brio approach)
+            // This sets up valid character data so the rendering pipeline can work.
+            var playerChara = (Character*)localPlayer.Address;
+            character->CharacterSetup.CopyFromCharacter(
+                playerChara, CharacterSetupContainer.CopyFlags.None);
+            log.Info("CopyFromCharacter from local player done.");
+
+            // Step 6: Use SetupBNpc to properly initialize the NPC model
+            // This is the native FFXIV API that handles ModelCharaId, scale, and model loading.
+            if (request.BNpcBaseId > 0)
+            {
+                character->CharacterSetup.SetupBNpc(request.BNpcBaseId, request.BNpcNameId);
+                log.Info($"SetupBNpc({request.BNpcBaseId}, {request.BNpcNameId}) done.");
+            }
+
+            // Step 7: Create managed object reference
             IGameObject? gameObjectRef = null;
             try
             {
@@ -172,13 +166,6 @@ public unsafe class NpcSpawner : IDisposable
             {
                 log.Warning(ex, "CreateObjectReference failed (non-fatal).");
             }
-
-            // Step 7: CopyFromCharacter self-copy (CRITICAL - triggers model loading pipeline)
-            // RaidsRewritten: "needed to get idle/movement sounds working (must be called after model id is assigned)"
-            // Both RaidsRewritten and Brio do this self-copy - without it IsReadyToDraw may never return true
-            character->CharacterSetup.CopyFromCharacter(
-                character, CharacterSetupContainer.CopyFlags.None);
-            log.Info("CopyFromCharacter self-copy done.");
 
             // Set entity ID
             var entityId = nextEntityId++;

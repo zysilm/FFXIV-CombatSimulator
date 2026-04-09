@@ -19,6 +19,7 @@ public class MainWindow : IDisposable
 {
     private readonly Configuration config;
     private readonly NpcSelector npcSelector;
+    private readonly NpcSpawner npcSpawner;
     private readonly CombatEngine combatEngine;
     private readonly GlamourerIpc glamourerIpc;
     private readonly AnimationController animationController;
@@ -27,6 +28,7 @@ public class MainWindow : IDisposable
     private readonly ActiveCameraController activeCameraController;
     private readonly HookSafetyChecker hookSafetyChecker;
     private readonly IClientState clientState;
+    private readonly IDataManager dataManager;
     private readonly IChatGui chatGui;
     private readonly Dev.VictorySequenceGui victorySequenceGui;
     private readonly IPluginLog log;
@@ -63,6 +65,16 @@ public class MainWindow : IDisposable
     private int devClickCount = 0;
     private bool devUnlocked = false;
 
+    // Spawn Enemy section state
+    private NpcCatalog? npcCatalog;
+    private string spawnSearchFilter = "";
+    private int spawnCategoryIndex = 0; // 0=Popular, 1=Recent, 2=All
+    private int selectedCatalogIndex = -1;
+    private NpcCatalogEntry? selectedCatalogEntry;
+
+    private static readonly string[] SpawnDirectionNames = { "Front", "Behind", "Left", "Right" };
+    private static readonly string[] SpawnCategoryNames = { "Popular", "Recent", "All" };
+
     private static void HelpMarker(string desc)
     {
         ImGui.SameLine();
@@ -83,6 +95,7 @@ public class MainWindow : IDisposable
     public MainWindow(
         Configuration config,
         NpcSelector npcSelector,
+        NpcSpawner npcSpawner,
         CombatEngine combatEngine,
         GlamourerIpc glamourerIpc,
         AnimationController animationController,
@@ -91,11 +104,13 @@ public class MainWindow : IDisposable
         ActiveCameraController activeCameraController,
         HookSafetyChecker hookSafetyChecker,
         IClientState clientState,
+        IDataManager dataManager,
         IChatGui chatGui,
         IPluginLog log)
     {
         this.config = config;
         this.npcSelector = npcSelector;
+        this.npcSpawner = npcSpawner;
         this.combatEngine = combatEngine;
         this.glamourerIpc = glamourerIpc;
         this.animationController = animationController;
@@ -104,6 +119,7 @@ public class MainWindow : IDisposable
         this.activeCameraController = activeCameraController;
         this.hookSafetyChecker = hookSafetyChecker;
         this.clientState = clientState;
+        this.dataManager = dataManager;
         this.chatGui = chatGui;
         this.log = log;
         this.victorySequenceGui = new Dev.VictorySequenceGui(config, npcSelector, log);
@@ -183,6 +199,7 @@ public class MainWindow : IDisposable
                 break;
             case 1: // Targets
                 DrawActiveTargetsSection();
+                DrawSpawnEnemySection();
                 DrawNpcDefaultsSection();
                 DrawTargetBehaviorsSection();
                 break;
@@ -372,6 +389,211 @@ public class MainWindow : IDisposable
                 ImGui.PopID();
             }
         }
+    }
+
+    private void DrawSpawnEnemySection()
+    {
+        if (!ImGui.CollapsingHeader("Spawn Enemy"))
+            return;
+
+        // Lazy-load catalog on first open
+        npcCatalog ??= new NpcCatalog(dataManager, log);
+
+        // Category tabs: Popular / Recent / All
+        for (int c = 0; c < SpawnCategoryNames.Length; c++)
+        {
+            if (c > 0) ImGui.SameLine();
+            bool selected = spawnCategoryIndex == c;
+            if (selected) ImGui.PushStyleColor(ImGuiCol.Button, ImGui.GetStyle().Colors[(int)ImGuiCol.ButtonActive]);
+            if (ImGui.SmallButton(SpawnCategoryNames[c]))
+            {
+                spawnCategoryIndex = c;
+                selectedCatalogIndex = -1;
+                selectedCatalogEntry = null;
+            }
+            if (selected) ImGui.PopStyleColor();
+        }
+
+        // Search filter (All mode)
+        if (spawnCategoryIndex == 2)
+        {
+            ImGui.SetNextItemWidth(-1);
+            ImGui.InputTextWithHint("##npcSearch", "Search NPC name...", ref spawnSearchFilter, 256);
+        }
+
+        // Get entries for current category
+        IReadOnlyList<NpcCatalogEntry> entries = spawnCategoryIndex switch
+        {
+            0 => npcCatalog.GetPopularEntries(),
+            1 => npcCatalog.GetRecentEntries(config.RecentNpcEntries),
+            2 => npcCatalog.Search(spawnSearchFilter),
+            _ => Array.Empty<NpcCatalogEntry>(),
+        };
+
+        // NPC list box
+        var listHeight = ImGui.GetTextLineHeightWithSpacing() * 8;
+        if (ImGui.BeginListBox("##npcList", new Vector2(-1, listHeight)))
+        {
+            if (entries.Count == 0)
+            {
+                ImGui.TextDisabled(spawnCategoryIndex == 1 ? "No recent NPCs." : "No results.");
+            }
+            else
+            {
+                for (int i = 0; i < entries.Count; i++)
+                {
+                    var entry = entries[i];
+                    bool isSelected = selectedCatalogEntry != null && selectedCatalogEntry.BNpcBaseId == entry.BNpcBaseId;
+                    if (ImGui.Selectable($"{entry.Name}##cat{entry.BNpcBaseId}", isSelected))
+                    {
+                        selectedCatalogIndex = i;
+                        selectedCatalogEntry = entry;
+                    }
+                }
+            }
+            ImGui.EndListBox();
+        }
+
+        // Spawn settings
+        ImGui.Spacing();
+        var dir = config.SpawnDirection;
+        ImGui.SetNextItemWidth(120);
+        if (ImGui.Combo("Direction", ref dir, SpawnDirectionNames, SpawnDirectionNames.Length))
+        {
+            config.SpawnDirection = dir;
+            config.Save();
+        }
+        HelpMarker("Direction relative to your character's facing.");
+
+        ImGui.SameLine();
+        var dist = config.SpawnDistance;
+        ImGui.SetNextItemWidth(-1);
+        if (ImGui.SliderFloat("##spawnDist", ref dist, 1.0f, 15.0f, "%.1f yalms"))
+        {
+            config.SpawnDistance = dist;
+            config.Save();
+        }
+
+        // Behavior (reuses existing BehaviorNames array)
+        var behaviorIdx = config.DefaultNpcBehaviorType;
+        ImGui.SetNextItemWidth(-1);
+        if (ImGui.Combo("Behavior##spawn", ref behaviorIdx, BehaviorNames, BehaviorNames.Length))
+        {
+            config.DefaultNpcBehaviorType = behaviorIdx;
+            config.Save();
+        }
+
+        // Spawn button + counter
+        ImGui.Spacing();
+        bool canSpawn = selectedCatalogEntry != null && npcSpawner.TotalCount < npcSpawner.MaxNpcs;
+        if (!canSpawn) ImGui.BeginDisabled();
+        if (ImGui.Button("Spawn", new Vector2(80, 0)))
+        {
+            var entry = selectedCatalogEntry!;
+            var pos = CalculateSpawnPosition(config.SpawnDirection, config.SpawnDistance);
+
+            npcSpawner.QueueSpawn(new NpcSpawnRequest
+            {
+                BNpcBaseId = entry.BNpcBaseId,
+                BNpcNameId = entry.BNpcNameId,
+                Level = config.DefaultNpcLevel,
+                HpMultiplier = config.DefaultNpcHpMultiplier,
+                Position = pos,
+                BehaviorType = (NpcBehaviorType)config.DefaultNpcBehaviorType,
+            });
+
+            // Track in recent list (avoid duplicates, keep last 20)
+            config.RecentNpcEntries.RemoveAll(r => r.BNpcBaseId == entry.BNpcBaseId);
+            config.RecentNpcEntries.Insert(0, new RecentNpcEntry
+            {
+                BNpcBaseId = entry.BNpcBaseId,
+                BNpcNameId = entry.BNpcNameId,
+            });
+            if (config.RecentNpcEntries.Count > 20)
+                config.RecentNpcEntries.RemoveRange(20, config.RecentNpcEntries.Count - 20);
+            config.Save();
+
+            chatGui.Print($"[CombatSim] Spawning {entry.Name}...");
+        }
+        if (!canSpawn) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        ImGui.TextDisabled($"{npcSpawner.SpawnedNpcs.Count}/{npcSpawner.MaxNpcs} spawned");
+
+        if (npcSpawner.PendingCount > 0)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(1f, 0.8f, 0f, 1f), $"({npcSpawner.PendingCount} pending...)");
+        }
+
+        // Spawned NPCs list with despawn buttons
+        if (npcSpawner.SpawnedNpcs.Count > 0)
+        {
+            ImGui.Separator();
+            ImGui.TextDisabled("Spawned:");
+
+            for (int i = npcSpawner.SpawnedNpcs.Count - 1; i >= 0; i--)
+            {
+                var npc = npcSpawner.SpawnedNpcs[i];
+                ImGui.PushID($"spawned_{i}");
+
+                // Show HP if in combat
+                if (combatEngine.IsActive && npc.State.MaxHp > 0)
+                {
+                    float hp = (float)npc.State.CurrentHp / npc.State.MaxHp;
+                    var hpColor = hp > 0.5f ? new Vector4(0, 0.8f, 0, 1)
+                        : hp > 0.25f ? new Vector4(0.8f, 0.8f, 0, 1)
+                        : new Vector4(0.8f, 0, 0, 1);
+                    ImGui.PushStyleColor(ImGuiCol.PlotHistogram, hpColor);
+                    ImGui.ProgressBar(hp, new Vector2(ImGui.GetContentRegionAvail().X - 70, 0),
+                        $"{npc.State.CurrentHp:N0}/{npc.State.MaxHp:N0}");
+                    ImGui.PopStyleColor();
+                    ImGui.SameLine();
+                }
+
+                ImGui.Text(npc.Name);
+                ImGui.SameLine(ImGui.GetContentRegionAvail().X - 55);
+                if (ImGui.SmallButton("Despawn"))
+                {
+                    npcSelector.UnregisterSpawnedNpc(npc);
+                    npcSpawner.DespawnNpc(npc);
+                }
+
+                ImGui.PopID();
+            }
+
+            if (npcSpawner.SpawnedNpcs.Count > 1)
+            {
+                if (ImGui.SmallButton("Despawn All"))
+                {
+                    foreach (var npc in new List<SimulatedNpc>(npcSpawner.SpawnedNpcs))
+                        npcSelector.UnregisterSpawnedNpc(npc);
+                    npcSpawner.DespawnAll();
+                }
+            }
+        }
+    }
+
+    private Vector3 CalculateSpawnPosition(int directionIndex, float distance)
+    {
+        var player = clientState.LocalPlayer;
+        if (player == null) return Vector3.Zero;
+
+        var playerPos = player.Position;
+        var playerRot = player.Rotation;
+
+        // FFXIV: -Sin(rot) = forward X, -Cos(rot) = forward Z
+        float angle = directionIndex switch
+        {
+            0 => playerRot,                    // Front
+            1 => playerRot + MathF.PI,          // Behind
+            2 => playerRot + MathF.PI / 2f,     // Left
+            3 => playerRot - MathF.PI / 2f,     // Right
+            _ => playerRot,
+        };
+
+        var dir = new Vector3(-MathF.Sin(angle), 0, -MathF.Cos(angle));
+        return playerPos + dir * distance;
     }
 
     private void DrawNpcDefaultsSection()

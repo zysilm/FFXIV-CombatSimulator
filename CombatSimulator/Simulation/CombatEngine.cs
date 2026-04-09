@@ -64,6 +64,7 @@ public class CombatEngine : IDisposable
     public SimulationState State { get; } = new();
     public bool IsActive => State.IsActive;
     public List<CombatLogEntry> CombatLog { get; } = new();
+    public Action? OnSimulationStarted { get; set; }
 
     // Configuration (set from plugin config)
     public float DamageMultiplier { get; set; } = 1.0f;
@@ -132,6 +133,8 @@ public class CombatEngine : IDisposable
 
         AddLogEntry("Combat simulation started.", CombatLogType.Info);
         log.Info("Combat simulation started.");
+
+        OnSimulationStarted?.Invoke();
     }
 
     public void StopSimulation()
