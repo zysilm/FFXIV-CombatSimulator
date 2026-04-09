@@ -11,7 +11,8 @@ namespace CombatSimulator.Npcs;
 public enum NpcCatalogType
 {
     BNpc,  // Monster/creature — spawned via SetupBNpc
-    ENpc,  // Humanoid NPC — spawned via customize data from ENpcBase
+    ENpc,  // Non-human NPC from ENpcBase (creature model)
+    Human, // Humanoid NPC from ENpcBase (race/face/hair customize)
 }
 
 public class NpcCatalogEntry
@@ -93,6 +94,18 @@ public class NpcCatalog
             }
         }
 
+        // Build set of ENpcBase IDs that are truly humanoid (ModelChara=0, Race>0)
+        var humanENpcIds = new HashSet<uint>();
+        var eNpcSheet = dataManager.GetExcelSheet<ENpcBase>();
+        if (eNpcSheet != null)
+        {
+            foreach (var row in eNpcSheet)
+            {
+                if ((int)row.ModelChara.RowId == 0 && (byte)row.Race.RowId > 0)
+                    humanENpcIds.Add(row.RowId);
+            }
+        }
+
         // NpcNames.json: curated BNpcBase→name mapping (Anamnesis-sourced, verified)
         var npcNamesJson = LoadEmbeddedNpcNames();
         if (npcNamesJson == null)
@@ -143,13 +156,14 @@ public class NpcCatalog
             }
             else if (key.StartsWith("E:") && uint.TryParse(key.AsSpan(2), out var eNpcBaseId))
             {
-                // ENpcBase entry (humanoid NPC)
+                // ENpcBase entry — classify as Human (has race/face) or ENpc (creature model)
+                var isHuman = humanENpcIds.Contains(eNpcBaseId);
                 allEntries.Add(new NpcCatalogEntry
                 {
                     Id = eNpcBaseId,
                     BNpcNameId = 0,
                     Name = displayName,
-                    Type = NpcCatalogType.ENpc,
+                    Type = isHuman ? NpcCatalogType.Human : NpcCatalogType.ENpc,
                 });
                 eCount++;
             }
