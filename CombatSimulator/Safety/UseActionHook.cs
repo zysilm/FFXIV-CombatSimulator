@@ -12,6 +12,7 @@ public unsafe class UseActionHook : IDisposable
 {
     private readonly CombatEngine combatEngine;
     private readonly NpcSelector npcSelector;
+    private readonly NpcSpawner npcSpawner;
     private readonly Configuration config;
     private readonly IClientState clientState;
     private readonly IPluginLog log;
@@ -40,12 +41,14 @@ public unsafe class UseActionHook : IDisposable
         IGameInteropProvider gameInterop,
         CombatEngine combatEngine,
         NpcSelector npcSelector,
+        NpcSpawner npcSpawner,
         Configuration config,
         IClientState clientState,
         IPluginLog log)
     {
         this.combatEngine = combatEngine;
         this.npcSelector = npcSelector;
+        this.npcSpawner = npcSpawner;
         this.config = config;
         this.clientState = clientState;
         this.log = log;
@@ -105,6 +108,18 @@ public unsafe class UseActionHook : IDisposable
             if (actionType != ActionType.Action)
                 return useActionHook!.Original(actionManager, actionType, actionId,
                     targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
+
+            // Spawn mode: when active, route all combat actions to the last alive
+            // spawned NPC. No game target needed — bypasses TargetSystem entirely.
+            if (npcSpawner.SpawnModeActive && (targetId == 0 || targetId == 0xE0000000))
+            {
+                var spawnTarget = npcSpawner.GetLastAliveSpawnedNpc();
+                if (spawnTarget != null)
+                {
+                    targetId = spawnTarget.SimulatedEntityId;
+                    log.Debug($"Spawn mode: routing action to '{spawnTarget.Name}' (0x{targetId:X}).");
+                }
+            }
 
             var isSelected = IsSelectedTarget(targetId);
 

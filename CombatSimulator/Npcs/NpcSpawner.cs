@@ -26,6 +26,7 @@ public unsafe class NpcSpawner : IDisposable
     private readonly List<SimulatedNpc> spawnedNpcs = new();
     private readonly List<PendingSpawn> pendingSpawns = new();
     private readonly ConcurrentQueue<NpcSpawnRequest> spawnQueue = new();
+    private readonly HashSet<int> allocatedIndices = new();
     private uint nextEntityId = 0xF0000001;
 
     private const int MaxPendingFrames = 120;
@@ -37,6 +38,25 @@ public unsafe class NpcSpawner : IDisposable
 
     public Action<SimulatedNpc>? OnNpcSpawnComplete { get; set; }
     public Action<string>? OnSpawnError { get; set; }
+
+    /// <summary>
+    /// When true, spawn mode is active: all player actions are routed to spawned NPCs
+    /// and the game's target system is bypassed for combat.
+    /// </summary>
+    public bool SpawnModeActive { get; set; }
+
+    /// <summary>
+    /// Returns the last alive spawned NPC, used as the automatic attack target in spawn mode.
+    /// </summary>
+    public SimulatedNpc? GetLastAliveSpawnedNpc()
+    {
+        for (int i = spawnedNpcs.Count - 1; i >= 0; i--)
+        {
+            if (spawnedNpcs[i].IsSpawned && spawnedNpcs[i].IsAlive)
+                return spawnedNpcs[i];
+        }
+        return null;
+    }
 
     public NpcSpawner(IObjectTable objectTable, IDataManager dataManager, IPluginLog log)
     {
@@ -81,30 +101,6 @@ public unsafe class NpcSpawner : IDisposable
             var spawnPos = request.Position ?? CalculateSpawnPosition();
             var spawnRot = request.Rotation ?? CalculateSpawnRotation(spawnPos);
 
-            // Look up ModelCharaId and scale from BNpcBase sheet
-            int modelCharaId = 0;
-            float npcScale = 1.0f;
-            if (request.BNpcBaseId > 0)
-            {
-                var baseSheet = dataManager.GetExcelSheet<BNpcBase>();
-                if (baseSheet != null)
-                {
-                    var baseRow = baseSheet.GetRowOrDefault(request.BNpcBaseId);
-                    if (baseRow != null)
-                    {
-                        modelCharaId = (int)baseRow.Value.ModelChara.RowId;
-                        var scale = baseRow.Value.Scale;
-                        if (scale > 0)
-                            npcScale = scale / 100f;
-                        log.Info($"BNpcBase {request.BNpcBaseId}: ModelCharaId={modelCharaId}, scale={npcScale}");
-                    }
-                    else
-                    {
-                        log.Warning($"BNpcBase row {request.BNpcBaseId} not found.");
-                    }
-                }
-            }
-
             var clientObjMgr = ClientObjectManager.Instance();
             if (clientObjMgr == null)
             {
@@ -113,9 +109,14 @@ public unsafe class NpcSpawner : IDisposable
                 return;
             }
 
-            // Step 1: Create BattleCharacter (auto-find available slot)
-            log.Info("Calling CreateBattleCharacter()...");
-            var createResult = clientObjMgr->CreateBattleCharacter();
+            // Step 1: Create BattleCharacter with explicit index hint.
+            // Default (0xFFFFFFFF) rescans from 0 and may reuse occupied slots.
+            // Pass an incrementing hint so each spawn gets a unique pool slot.
+            uint hint = 0;
+            while (allocatedIndices.Contains((int)hint) && hint < 200)
+                hint++;
+            log.Info($"Calling CreateBattleCharacter(hint={hint})...");
+            var createResult = clientObjMgr->CreateBattleCharacter(hint);
             log.Info($"CreateBattleCharacter returned: {createResult} (0x{createResult:X})");
 
             if (createResult == 0xFFFFFFFF)
@@ -126,6 +127,7 @@ public unsafe class NpcSpawner : IDisposable
             }
 
             var index = (int)createResult;
+            allocatedIndices.Add(index);
             var obj = clientObjMgr->GetObjectByIndex((ushort)index);
             if (obj == null)
             {
@@ -135,33 +137,42 @@ public unsafe class NpcSpawner : IDisposable
             }
 
             var chara = (BattleChara*)obj;
+            var character = (Character*)chara;
             log.Info($"Got BattleChara at index {index}, address=0x{(nint)chara:X}");
 
-            // Step 2: Configure properties (matching RaidsRewritten order exactly)
-            // ObjectKind
+            // Step 2: Configure properties
             obj->ObjectKind = ObjectKind.BattleNpc;
-            obj->TargetableStatus = 0; // RaidsRewritten: untargetable during setup
+            obj->SubKind = (byte)BattleNpcSubKind.Combatant;
+            obj->TargetableStatus = 0; // Untargetable during setup
 
-            // Position, rotation, scale
+            // Position, rotation
             obj->Position = spawnPos;
             obj->Rotation = spawnRot;
-            obj->Scale = npcScale;
 
-            // Step 3: Set ModelCharaId directly on ModelContainer (NOT SetupBNpc)
-            var character = (Character*)chara;
-            character->ModelContainer.ModelCharaId = modelCharaId;
-            log.Info($"Set ModelCharaId={modelCharaId}");
-
-            // Step 4: Set name
+            // Step 3: Set name
             var nameBytes = Encoding.UTF8.GetBytes(npcName);
             for (int j = 0; j < 64; j++)
                 obj->Name[j] = j < nameBytes.Length && j < 63 ? nameBytes[j] : (byte)0;
 
-            // Step 5: RenderFlags = 0 (needed for actor VFX, per RaidsRewritten)
+            // Step 4: RenderFlags = 0 (needed for actor VFX)
             obj->RenderFlags = VisibilityFlags.None;
 
-            // Step 6: Create managed object reference (RaidsRewritten does this)
-            // This registers the object with Dalamud's tracking
+            // Step 5: SetupBNpc FIRST — sets ModelCharaId, customize, equipment from BNpcBase.
+            // Must be called BEFORE CopyFromCharacter so the model data is correct
+            // when the rendering pipeline is triggered.
+            if (request.BNpcBaseId > 0)
+            {
+                character->CharacterSetup.SetupBNpc(request.BNpcBaseId, request.BNpcNameId);
+                log.Info($"SetupBNpc({request.BNpcBaseId}, {request.BNpcNameId}) done. ModelCharaId={character->ModelContainer.ModelCharaId}");
+            }
+
+            // Step 6: Self-copy to trigger model loading pipeline.
+            // SetupBNpc configured the NPC data; this copy kicks off the actual render.
+            character->CharacterSetup.CopyFromCharacter(
+                character, CharacterSetupContainer.CopyFlags.None);
+            log.Info("CopyFromCharacter self-copy done.");
+
+            // Step 7: Create managed object reference
             IGameObject? gameObjectRef = null;
             try
             {
@@ -173,15 +184,12 @@ public unsafe class NpcSpawner : IDisposable
                 log.Warning(ex, "CreateObjectReference failed (non-fatal).");
             }
 
-            // Step 7: CopyFromCharacter self-copy (CRITICAL - triggers model loading pipeline)
-            // RaidsRewritten: "needed to get idle/movement sounds working (must be called after model id is assigned)"
-            // Both RaidsRewritten and Brio do this self-copy - without it IsReadyToDraw may never return true
-            character->CharacterSetup.CopyFromCharacter(
-                character, CharacterSetupContainer.CopyFlags.None);
-            log.Info("CopyFromCharacter self-copy done.");
-
-            // Set entity ID
+            // Set entity ID — write to game object so native systems
+            // (ActionEffectHandler.Receive, FindCharacter, etc.) can resolve it.
+            // Without this, EntityId defaults to 0xE0000000 and native combat
+            // animations (hit reactions, damage numbers) won't find the target.
             var entityId = nextEntityId++;
+            obj->EntityId = entityId;
 
             // Calculate HP
             int maxHp = CalculateNpcHp(npcLevel, request.HpMultiplier);
@@ -245,7 +253,6 @@ public unsafe class NpcSpawner : IDisposable
             {
                 var chara = npc.BattleChara;
 
-                // Match RaidsRewritten: check IsReadyToDraw then EnableDraw
                 if (chara->IsReadyToDraw())
                 {
                     chara->EnableDraw();
@@ -311,6 +318,7 @@ public unsafe class NpcSpawner : IDisposable
             npc.BattleChara = null;
             npc.IsSpawned = false;
             spawnedNpcs.Remove(npc);
+            allocatedIndices.Remove(npc.ObjectIndex);
 
             log.Info($"Despawned NPC '{npc.Name}' from index {npc.ObjectIndex}.");
         }
@@ -340,6 +348,7 @@ public unsafe class NpcSpawner : IDisposable
             }
         }
         pendingSpawns.Clear();
+        allocatedIndices.Clear();
 
         var npcsToRemove = new List<SimulatedNpc>(spawnedNpcs);
         foreach (var npc in npcsToRemove)

@@ -45,6 +45,13 @@ public class DeathCamPreset
 }
 
 [Serializable]
+public class RecentNpcEntry
+{
+    public uint BNpcBaseId { get; set; }
+    public uint BNpcNameId { get; set; }
+}
+
+[Serializable]
 public class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
@@ -190,8 +197,13 @@ public class Configuration : IPluginConfiguration
     // Death Cam Presets
     public List<DeathCamPreset> DeathCamPresets { get; set; } = new();
 
-    // Recent NPCs
+    // Spawn Enemy defaults
+    public int SpawnDirection { get; set; } = 0;       // 0=Front, 1=Behind, 2=Left, 3=Right
+    public float SpawnDistance { get; set; } = 5.0f;    // yalms from player
+
+    // Recent NPCs (for spawn enemy UI)
     public List<uint> RecentNpcIds { get; set; } = new();
+    public List<RecentNpcEntry> RecentNpcEntries { get; set; } = new();
 
     [NonSerialized]
     private IDalamudPluginInterface? pluginInterface;
