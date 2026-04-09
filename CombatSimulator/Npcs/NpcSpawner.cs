@@ -225,9 +225,28 @@ public unsafe class NpcSpawner : IDisposable
                 },
             };
 
+            // Read weapon data for deferred loading after EnableDraw
+            ulong mainHandWeapon = 0, offHandWeapon = 0;
+            if (request.ENpcBaseId > 0)
+            {
+                var eSheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ENpcBase>();
+                var eRow = eSheet?.GetRowOrDefault(request.ENpcBaseId);
+                if (eRow != null)
+                {
+                    mainHandWeapon = eRow.Value.ModelMainHand;
+                    offHandWeapon = eRow.Value.ModelOffHand;
+                }
+            }
+
             // Step 8: Add to pending - delay EnableDraw to next frame
             // (RaidsRewritten does this to allow file replacements to run)
-            pendingSpawns.Add(new PendingSpawn { Npc = npc, FramesWaited = 0 });
+            pendingSpawns.Add(new PendingSpawn
+            {
+                Npc = npc,
+                FramesWaited = 0,
+                MainHandWeapon = mainHandWeapon,
+                OffHandWeapon = offHandWeapon,
+            });
             log.Info($"NPC '{npcName}' created at index {index}, entityId={entityId:X}. Pending draw...");
         }
         catch (Exception ex)
@@ -262,6 +281,9 @@ public unsafe class NpcSpawner : IDisposable
                 {
                     chara->EnableDraw();
 
+                    // Load weapons AFTER EnableDraw (self-copy resets DrawData weapons)
+                    LoadPendingWeapons(chara, pending);
+
                     // Now make targetable (was 0 during setup)
                     var obj = (GameObject*)chara;
                     obj->TargetableStatus = ObjectTargetableFlags.IsTargetable;
@@ -278,6 +300,7 @@ public unsafe class NpcSpawner : IDisposable
                     // Timeout - force enable draw
                     log.Warning($"NPC '{npc.Name}' timed out after {pending.FramesWaited} frames. Force enabling.");
                     chara->EnableDraw();
+                    LoadPendingWeapons(chara, pending);
 
                     var obj = (GameObject*)chara;
                     obj->TargetableStatus = ObjectTargetableFlags.IsTargetable;
@@ -360,6 +383,34 @@ public unsafe class NpcSpawner : IDisposable
             DespawnNpc(npc);
     }
 
+    private void LoadPendingWeapons(BattleChara* chara, PendingSpawn pending)
+    {
+        if (pending.MainHandWeapon == 0 && pending.OffHandWeapon == 0) return;
+
+        try
+        {
+            var character = (Character*)chara;
+            if (pending.MainHandWeapon != 0)
+            {
+                var mh = pending.MainHandWeapon;
+                var weaponId = *(WeaponModelId*)&mh;
+                character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, weaponId, 0, 0, 0, 0);
+                log.Verbose($"Loaded MainHand weapon: {weaponId.Id}/{weaponId.Type}/{weaponId.Variant}");
+            }
+            if (pending.OffHandWeapon != 0)
+            {
+                var oh = pending.OffHandWeapon;
+                var weaponId = *(WeaponModelId*)&oh;
+                character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, weaponId, 0, 0, 0, 0);
+                log.Verbose($"Loaded OffHand weapon: {weaponId.Id}/{weaponId.Type}/{weaponId.Variant}");
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"Failed to load weapons for '{pending.Npc.Name}'.");
+        }
+    }
+
     /// <summary>
     /// Read ENpcBase customize data and equipment, write to character's DrawData.
     /// ENpcBase stores humanoid appearance at known offsets (from Anamnesis research):
@@ -438,19 +489,8 @@ public unsafe class NpcSpawner : IDisposable
         character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.LFinger).Value =
             (ulong)enpc.ModelLeftRing;
 
-        // Weapons: MainHand (offset 128) and OffHand (offset 136)
-        var mainHand = enpc.ModelMainHand;
-        var offHand = enpc.ModelOffHand;
-        if (mainHand != 0)
-        {
-            var weaponId = *(WeaponModelId*)&mainHand;
-            character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, weaponId, 0, 0, 0, 0);
-        }
-        if (offHand != 0)
-        {
-            var weaponId = *(WeaponModelId*)&offHand;
-            character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, weaponId, 0, 0, 0, 0);
-        }
+        // Weapons are loaded AFTER EnableDraw — the self-copy resets DrawData weapons.
+        // Store on PendingSpawn and apply in TickPendingSpawns after draw is enabled.
 
         log.Info($"ENpc {eNpcBaseId}: humanoid, Race={customizePtr[0]}, Gender={customizePtr[1]}, Face={customizePtr[5]}");
     }
@@ -550,5 +590,7 @@ public unsafe class NpcSpawner : IDisposable
     {
         public SimulatedNpc Npc { get; set; } = null!;
         public int FramesWaited { get; set; }
+        public ulong MainHandWeapon { get; set; }
+        public ulong OffHandWeapon { get; set; }
     }
 }
