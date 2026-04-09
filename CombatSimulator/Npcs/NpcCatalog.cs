@@ -169,8 +169,42 @@ public class NpcCatalog
             }
         }
 
+        // Source 2: Direct ENpcBase × ENpcResident scan for ALL humanoid NPCs.
+        // NpcNames.json only has ~1043 E: entries. The game has thousands more
+        // humanoid NPCs (imperial soldiers, dungeon NPCs, etc.) that are missing.
+        // Scan ENpcBase for humanoid entries (ModelChara=0, Race>0) and get names
+        // from ENpcResident (same RowId).
+        var addedIds = new HashSet<(NpcCatalogType, uint)>();
+        foreach (var entry in allEntries)
+            addedIds.Add((entry.Type, entry.Id));
+
+        int humanScanCount = 0;
+        var residentSheet = dataManager.GetExcelSheet<ENpcResident>();
+        if (eNpcSheet != null && residentSheet != null)
+        {
+            foreach (var eNpcId in humanENpcIds)
+            {
+                if (addedIds.Contains((NpcCatalogType.Human, eNpcId))) continue;
+
+                var resident = residentSheet.GetRowOrDefault(eNpcId);
+                if (resident == null) continue;
+
+                var name = resident.Value.Singular.ExtractText();
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                allEntries.Add(new NpcCatalogEntry
+                {
+                    Id = eNpcId,
+                    BNpcNameId = 0,
+                    Name = name,
+                    Type = NpcCatalogType.Human,
+                });
+                humanScanCount++;
+            }
+        }
+
         allEntries.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
-        log.Info($"NPC catalog loaded: {bCount} monsters + {eCount} humanoids = {allEntries.Count} entries.");
+        log.Info($"NPC catalog loaded: {bCount} monsters + {eCount} from NpcNames + {humanScanCount} humanoids from ENpc scan = {allEntries.Count} total.");
     }
 
     private Dictionary<string, string>? LoadEmbeddedNpcNames()
