@@ -26,6 +26,7 @@ public unsafe class NpcSpawner : IDisposable
     private readonly List<SimulatedNpc> spawnedNpcs = new();
     private readonly List<PendingSpawn> pendingSpawns = new();
     private readonly ConcurrentQueue<NpcSpawnRequest> spawnQueue = new();
+    private readonly HashSet<int> allocatedIndices = new();
     private uint nextEntityId = 0xF0000001;
 
     private const int MaxPendingFrames = 120;
@@ -117,9 +118,14 @@ public unsafe class NpcSpawner : IDisposable
                 return;
             }
 
-            // Step 1: Create BattleCharacter (auto-find available slot)
-            log.Info("Calling CreateBattleCharacter()...");
-            var createResult = clientObjMgr->CreateBattleCharacter();
+            // Step 1: Create BattleCharacter with explicit index hint.
+            // Default (0xFFFFFFFF) rescans from 0 and may reuse occupied slots.
+            // Pass an incrementing hint so each spawn gets a unique pool slot.
+            uint hint = 0;
+            while (allocatedIndices.Contains((int)hint) && hint < 200)
+                hint++;
+            log.Info($"Calling CreateBattleCharacter(hint={hint})...");
+            var createResult = clientObjMgr->CreateBattleCharacter(hint);
             log.Info($"CreateBattleCharacter returned: {createResult} (0x{createResult:X})");
 
             if (createResult == 0xFFFFFFFF)
@@ -130,6 +136,7 @@ public unsafe class NpcSpawner : IDisposable
             }
 
             var index = (int)createResult;
+            allocatedIndices.Add(index);
             var obj = clientObjMgr->GetObjectByIndex((ushort)index);
             if (obj == null)
             {
@@ -321,6 +328,7 @@ public unsafe class NpcSpawner : IDisposable
             npc.BattleChara = null;
             npc.IsSpawned = false;
             spawnedNpcs.Remove(npc);
+            allocatedIndices.Remove(npc.ObjectIndex);
 
             log.Info($"Despawned NPC '{npc.Name}' from index {npc.ObjectIndex}.");
         }
@@ -350,6 +358,7 @@ public unsafe class NpcSpawner : IDisposable
             }
         }
         pendingSpawns.Clear();
+        allocatedIndices.Clear();
 
         var npcsToRemove = new List<SimulatedNpc>(spawnedNpcs);
         foreach (var npc in npcsToRemove)
