@@ -231,7 +231,7 @@ public unsafe class NpcSpawner : IDisposable
 
             // Step 8: Add to pending - delay EnableDraw to next frame
             // (RaidsRewritten does this to allow file replacements to run)
-            pendingSpawns.Add(new PendingSpawn { Npc = npc, FramesWaited = 0 });
+            pendingSpawns.Add(new PendingSpawn { Npc = npc, FramesWaited = 0, BNpcBaseId = request.BNpcBaseId });
             log.Info($"NPC '{npcName}' created at index {index}, entityId={entityId:X}. Pending draw...");
         }
         catch (Exception ex)
@@ -261,9 +261,21 @@ public unsafe class NpcSpawner : IDisposable
             try
             {
                 var chara = npc.BattleChara;
+                var character = (Character*)chara;
 
-                // Match RaidsRewritten: check IsReadyToDraw then EnableDraw
-                if (chara->IsReadyToDraw())
+                // Wait minimum frames for SetupBNpc to initiate the model swap.
+                // CopyFromCharacter(player) makes IsReadyToDraw true immediately
+                // with the player model; SetupBNpc needs time to load the monster.
+                if (pending.FramesWaited < PendingSpawn.MinFramesBeforeReady)
+                    continue;
+
+                // Check that the monster model has actually loaded.
+                // ModelCharaId > 0 means a non-humanoid model is set.
+                // If still 0 after CopyFromCharacter, SetupBNpc hasn't finished.
+                bool modelReady = character->ModelContainer.ModelCharaId > 0
+                                  || pending.BNpcBaseId == 0; // no BNpcBase = humanoid, allow immediately
+
+                if (modelReady && chara->IsReadyToDraw())
                 {
                     chara->EnableDraw();
 
@@ -275,13 +287,13 @@ public unsafe class NpcSpawner : IDisposable
                     spawnedNpcs.Add(npc);
                     pendingSpawns.RemoveAt(i);
 
-                    log.Info($"NPC '{npc.Name}' draw enabled after {pending.FramesWaited} frames.");
+                    log.Info($"NPC '{npc.Name}' draw enabled after {pending.FramesWaited} frames (ModelCharaId={character->ModelContainer.ModelCharaId}).");
                     OnNpcSpawnComplete?.Invoke(npc);
                 }
                 else if (pending.FramesWaited >= MaxPendingFrames)
                 {
                     // Timeout - force enable draw
-                    log.Warning($"NPC '{npc.Name}' timed out after {pending.FramesWaited} frames. Force enabling.");
+                    log.Warning($"NPC '{npc.Name}' timed out after {pending.FramesWaited} frames (ModelCharaId={character->ModelContainer.ModelCharaId}). Force enabling.");
                     chara->EnableDraw();
 
                     var obj = (GameObject*)chara;
@@ -441,5 +453,11 @@ public unsafe class NpcSpawner : IDisposable
     {
         public SimulatedNpc Npc { get; set; } = null!;
         public int FramesWaited { get; set; }
+        public uint BNpcBaseId { get; set; }
+
+        /// <summary>Minimum frames to wait before accepting IsReadyToDraw.
+        /// CopyFromCharacter(player) makes it true immediately with the player model;
+        /// SetupBNpc needs a few frames to swap to the monster model.</summary>
+        public const int MinFramesBeforeReady = 5;
     }
 }
