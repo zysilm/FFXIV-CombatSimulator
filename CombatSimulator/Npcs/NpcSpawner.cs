@@ -39,10 +39,23 @@ public unsafe class NpcSpawner : IDisposable
     public Action<string>? OnSpawnError { get; set; }
 
     /// <summary>
-    /// The spawned NPC currently targeted by the player for combat.
-    /// Used to substitute the target in UseAction when no game target is selected.
+    /// When true, spawn mode is active: all player actions are routed to spawned NPCs
+    /// and the game's target system is bypassed for combat.
     /// </summary>
-    public SimulatedNpc? SimulatedTarget { get; set; }
+    public bool SpawnModeActive { get; set; }
+
+    /// <summary>
+    /// Returns the last alive spawned NPC, used as the automatic attack target in spawn mode.
+    /// </summary>
+    public SimulatedNpc? GetLastAliveSpawnedNpc()
+    {
+        for (int i = spawnedNpcs.Count - 1; i >= 0; i--)
+        {
+            if (spawnedNpcs[i].IsSpawned && spawnedNpcs[i].IsAlive)
+                return spawnedNpcs[i];
+        }
+        return null;
+    }
 
     public NpcSpawner(IObjectTable objectTable, IDataManager dataManager, IPluginLog log)
     {
@@ -305,10 +318,6 @@ public unsafe class NpcSpawner : IDisposable
             npc.IsSpawned = false;
             spawnedNpcs.Remove(npc);
 
-            // Clear simulated target if it was this NPC
-            if (SimulatedTarget == npc)
-                SimulatedTarget = spawnedNpcs.Count > 0 ? spawnedNpcs[0] : null;
-
             log.Info($"Despawned NPC '{npc.Name}' from index {npc.ObjectIndex}.");
         }
         catch (Exception ex)
@@ -321,7 +330,6 @@ public unsafe class NpcSpawner : IDisposable
 
     public void DespawnAll()
     {
-        SimulatedTarget = null;
         while (spawnQueue.TryDequeue(out _)) { }
 
         foreach (var pending in pendingSpawns)

@@ -109,16 +109,15 @@ public unsafe class UseActionHook : IDisposable
                 return useActionHook!.Original(actionManager, actionType, actionId,
                     targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
 
-            // Substitute simulated target when no game target is selected.
-            // targetId 0xE0000000 means no target in FFXIV. If we have a spawned
-            // NPC as our simulated target, route the action there instead.
-            if ((targetId == 0 || targetId == 0xE0000000) && npcSpawner.SimulatedTarget != null)
+            // Spawn mode: when active, route all combat actions to the last alive
+            // spawned NPC. No game target needed — bypasses TargetSystem entirely.
+            if (npcSpawner.SpawnModeActive && (targetId == 0 || targetId == 0xE0000000))
             {
-                var simTarget = npcSpawner.SimulatedTarget;
-                if (simTarget.IsSpawned && simTarget.IsAlive)
+                var spawnTarget = npcSpawner.GetLastAliveSpawnedNpc();
+                if (spawnTarget != null)
                 {
-                    targetId = simTarget.SimulatedEntityId;
-                    log.Info($"Substituted simulated target '{simTarget.Name}' (0x{targetId:X}).");
+                    targetId = spawnTarget.SimulatedEntityId;
+                    log.Debug($"Spawn mode: routing action to '{spawnTarget.Name}' (0x{targetId:X}).");
                 }
             }
 

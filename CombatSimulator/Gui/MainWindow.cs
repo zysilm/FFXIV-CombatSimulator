@@ -140,6 +140,7 @@ public class MainWindow : IDisposable
         "Camera",
         "Ragdoll",
         "Ragdoll (Adv)",
+        "Spawn Enemies",
         "Settings",
         "Diagnose",
     };
@@ -199,7 +200,6 @@ public class MainWindow : IDisposable
                 break;
             case 1: // Targets
                 DrawActiveTargetsSection();
-                DrawSpawnEnemySection();
                 DrawNpcDefaultsSection();
                 DrawTargetBehaviorsSection();
                 break;
@@ -242,11 +242,14 @@ public class MainWindow : IDisposable
             case 5: // Ragdoll (Advanced)
                 DrawRagdollAdvancedSection();
                 break;
-            case 6: // Settings
+            case 6: // Spawn Enemies
+                DrawSpawnEnemiesTab();
+                break;
+            case 7: // Settings
                 DrawGuiSettingsSection();
                 DrawDevSection();
                 break;
-            case 7: // Diagnose
+            case 8: // Diagnose
                 DrawDiagnoseSection();
                 break;
         }
@@ -302,7 +305,7 @@ public class MainWindow : IDisposable
                 ImGui.EndTooltip();
             }
             if (ImGui.IsItemClicked())
-                selectedTab = 7; // Jump to Diagnose tab
+                selectedTab = 8; // Jump to Diagnose tab
         }
 
         if (simActive && combatEngine.State.CombatDuration > 0)
@@ -391,13 +394,53 @@ public class MainWindow : IDisposable
         }
     }
 
-    private void DrawSpawnEnemySection()
+    private void DrawSpawnEnemiesTab()
     {
-        if (!ImGui.CollapsingHeader("Spawn Enemy"))
-            return;
-
         // Lazy-load catalog on first open
         npcCatalog ??= new NpcCatalog(dataManager, log);
+
+        // On/Off toggle
+        var spawnMode = npcSpawner.SpawnModeActive;
+        if (ImGui.Checkbox("Spawn Mode", ref spawnMode))
+        {
+            npcSpawner.SpawnModeActive = spawnMode;
+            if (spawnMode)
+            {
+                // Auto-start combat sim when spawn mode turns on
+                if (!combatEngine.IsActive)
+                {
+                    combatEngine.StartSimulation();
+                    chatGui.Print("[CombatSim] Spawn mode ON. Combat simulation started.");
+                }
+            }
+            else
+            {
+                // Despawn all and stop combat when turning off
+                foreach (var npc in new List<SimulatedNpc>(npcSpawner.SpawnedNpcs))
+                    npcSelector.UnregisterSpawnedNpc(npc);
+                npcSpawner.DespawnAll();
+                if (combatEngine.IsActive)
+                {
+                    combatEngine.StopSimulation();
+                    chatGui.Print("[CombatSim] Spawn mode OFF. All enemies despawned.");
+                }
+            }
+        }
+        HelpMarker("When ON, spawned enemies are automatically targeted.\nAll your skills will hit the last spawned enemy.\nTurning OFF despawns all enemies and stops combat.");
+
+        ImGui.SameLine();
+        if (spawnMode)
+            ImGui.TextColored(new Vector4(0, 1, 0, 1), "Active");
+        else
+            ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1), "Inactive");
+
+        if (!spawnMode)
+        {
+            ImGui.TextDisabled("Enable Spawn Mode to spawn and fight enemies.");
+            return;
+        }
+
+        ImGui.Separator();
 
         // Category tabs: Popular / Recent / All
         for (int c = 0; c < SpawnCategoryNames.Length; c++)
@@ -474,12 +517,30 @@ public class MainWindow : IDisposable
             config.Save();
         }
 
-        // Behavior (reuses existing BehaviorNames array)
+        // Behavior
         var behaviorIdx = config.DefaultNpcBehaviorType;
         ImGui.SetNextItemWidth(-1);
         if (ImGui.Combo("Behavior##spawn", ref behaviorIdx, BehaviorNames, BehaviorNames.Length))
         {
             config.DefaultNpcBehaviorType = behaviorIdx;
+            config.Save();
+        }
+
+        // Level + HP multiplier (inline)
+        var defaultLevel = config.DefaultNpcLevel;
+        ImGui.SetNextItemWidth(120);
+        if (ImGui.InputInt("Level", ref defaultLevel))
+        {
+            config.DefaultNpcLevel = Math.Clamp(defaultLevel, 1, 200);
+            config.Save();
+        }
+
+        ImGui.SameLine();
+        var hpMult = config.DefaultNpcHpMultiplier;
+        ImGui.SetNextItemWidth(-1);
+        if (ImGui.SliderFloat("HP Mult", ref hpMult, 0.1f, 10.0f, "%.1f"))
+        {
+            config.DefaultNpcHpMultiplier = hpMult;
             config.Save();
         }
 
@@ -526,25 +587,25 @@ public class MainWindow : IDisposable
             ImGui.TextColored(new Vector4(1f, 0.8f, 0f, 1f), $"({npcSpawner.PendingCount} pending...)");
         }
 
-        // Spawned NPCs list with target selection and despawn buttons
+        // Spawned NPCs list with HP bars and despawn buttons
         if (npcSpawner.SpawnedNpcs.Count > 0)
         {
             ImGui.Separator();
-            ImGui.TextDisabled("Spawned (click to target):");
+            ImGui.TextDisabled("Spawned:");
 
             for (int i = npcSpawner.SpawnedNpcs.Count - 1; i >= 0; i--)
             {
                 var npc = npcSpawner.SpawnedNpcs[i];
-                bool isTarget = npcSpawner.SimulatedTarget == npc;
                 ImGui.PushID($"spawned_{i}");
 
-                // Show HP if in combat
-                if (combatEngine.IsActive && npc.State.MaxHp > 0)
+                // HP bar
+                if (npc.State.MaxHp > 0)
                 {
                     float hp = (float)npc.State.CurrentHp / npc.State.MaxHp;
                     var hpColor = hp > 0.5f ? new Vector4(0, 0.8f, 0, 1)
                         : hp > 0.25f ? new Vector4(0.8f, 0.8f, 0, 1)
                         : new Vector4(0.8f, 0, 0, 1);
+                    if (!npc.IsAlive) hpColor = new Vector4(0.4f, 0.4f, 0.4f, 1);
                     ImGui.PushStyleColor(ImGuiCol.PlotHistogram, hpColor);
                     ImGui.ProgressBar(hp, new Vector2(ImGui.GetContentRegionAvail().X - 70, 0),
                         $"{npc.State.CurrentHp:N0}/{npc.State.MaxHp:N0}");
@@ -552,18 +613,7 @@ public class MainWindow : IDisposable
                     ImGui.SameLine();
                 }
 
-                // Target indicator + clickable name
-                var label = isTarget ? $"> {npc.Name}" : $"  {npc.Name}";
-                if (isTarget)
-                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.9f, 0.3f, 1f));
-                if (ImGui.Selectable(label, isTarget, ImGuiSelectableFlags.None,
-                    new Vector2(ImGui.GetContentRegionAvail().X - 65, 0)))
-                {
-                    npcSpawner.SimulatedTarget = npc;
-                }
-                if (isTarget)
-                    ImGui.PopStyleColor();
-
+                ImGui.Text(npc.Name);
                 ImGui.SameLine(ImGui.GetContentRegionAvail().X - 55);
                 if (ImGui.SmallButton("Despawn"))
                 {
@@ -979,7 +1029,7 @@ public class MainWindow : IDisposable
             ImGui.SameLine();
             if (ImGui.Button("Go to Diagnose", new Vector2(120, 0)))
             {
-                selectedTab = 7;
+                selectedTab = 8;
                 ImGui.CloseCurrentPopup();
             }
 

@@ -113,10 +113,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         {
             npcSelector.RegisterSpawnedNpc(npc);
             combatEngine.RegisterNpcEntity(npc);
-
-            // Auto-select as simulated target (always pick the latest spawn)
-            npcSpawner.SimulatedTarget = npc;
-            log.Info($"Spawned NPC '{npc.Name}' registered and set as simulated target.");
+            log.Info($"Spawned NPC '{npc.Name}' registered as combat target.");
         };
         npcSpawner.OnSpawnError = (msg) =>
         {
@@ -193,6 +190,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         commandManager.RemoveHandler(CommandName);
 
         RestoreOcclusionHiddenNpcs();
+        npcSpawner.SpawnModeActive = false;
         npcSpawner.DespawnAll();
         npcSpawner.Dispose();
         combatEngine.StopSimulation();
@@ -342,9 +340,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
             victorySequenceController.Tick(deltaTime);
 
-            // Set player look-at to simulated target (visual head-tracking/body rotation)
-            UpdatePlayerSimulatedTarget();
-
             // Dev: apply NPC scale override via DrawObject transform
             if (config.DevNpcScale != 1.0f)
             {
@@ -367,24 +362,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             log.Error(ex, "Error in framework update, stopping simulation.");
             combatEngine.StopSimulation();
         }
-    }
-
-    private void UpdatePlayerSimulatedTarget()
-    {
-        var simTarget = npcSpawner.SimulatedTarget;
-        if (simTarget == null || !simTarget.IsSpawned || simTarget.BattleChara == null)
-            return;
-
-        var player = clientState.LocalPlayer;
-        if (player == null)
-            return;
-
-        // Set the player's Character.TargetId to the spawned NPC's GameObjectId.
-        // This is a client-side visual field that controls head-tracking and body rotation.
-        // NpcAiController already uses the same approach for NPC->player targeting.
-        var playerChara = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)player.Address;
-        var npcObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)simTarget.BattleChara;
-        playerChara->TargetId = npcObj->GetGameObjectId();
     }
 
     private void TickNpcOcclusionHide()
@@ -483,6 +460,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private void OnTerritoryChanged(ushort territoryId)
     {
         // Despawn client-spawned NPCs first (they don't survive zone changes)
+        npcSpawner.SpawnModeActive = false;
         if (npcSpawner.SpawnedNpcs.Count > 0)
         {
             npcSpawner.DespawnAll();
