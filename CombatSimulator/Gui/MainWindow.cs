@@ -547,8 +547,8 @@ public class MainWindow : IDisposable
                 for (int i = 0; i < entries.Count; i++)
                 {
                     var entry = entries[i];
-                    bool isSelected = selectedCatalogEntry != null && selectedCatalogEntry.BNpcBaseId == entry.BNpcBaseId;
-                    if (ImGui.Selectable($"{entry.Name}##cat{entry.BNpcBaseId}", isSelected))
+                    bool isSelected = selectedCatalogEntry != null && selectedCatalogEntry.Id == entry.Id && selectedCatalogEntry.Type == entry.Type;
+                    if (ImGui.Selectable($"{entry.Name}##cat{entry.Type}{entry.Id}", isSelected))
                     {
                         selectedCatalogIndex = i;
                         selectedCatalogEntry = entry;
@@ -616,8 +616,9 @@ public class MainWindow : IDisposable
 
             npcSpawner.QueueSpawn(new NpcSpawnRequest
             {
-                BNpcBaseId = entry.BNpcBaseId,
+                BNpcBaseId = entry.Type == NpcCatalogType.BNpc ? entry.Id : 0,
                 BNpcNameId = entry.BNpcNameId,
+                ENpcBaseId = entry.Type == NpcCatalogType.ENpc ? entry.Id : 0,
                 Level = config.DefaultNpcLevel,
                 HpMultiplier = config.DefaultNpcHpMultiplier,
                 Position = pos,
@@ -625,10 +626,10 @@ public class MainWindow : IDisposable
             });
 
             // Track in recent list (avoid duplicates, keep last 20)
-            config.RecentNpcEntries.RemoveAll(r => r.BNpcBaseId == entry.BNpcBaseId);
+            config.RecentNpcEntries.RemoveAll(r => r.BNpcBaseId == entry.Id);
             config.RecentNpcEntries.Insert(0, new RecentNpcEntry
             {
-                BNpcBaseId = entry.BNpcBaseId,
+                BNpcBaseId = entry.Id,
                 BNpcNameId = entry.BNpcNameId,
             });
             if (config.RecentNpcEntries.Count > 20)

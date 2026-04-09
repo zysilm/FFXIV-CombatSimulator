@@ -96,7 +96,7 @@ public unsafe class NpcSpawner : IDisposable
     {
         try
         {
-            var npcName = GetNpcName(request.BNpcNameId, request.BNpcBaseId);
+            var npcName = GetNpcName(request);
             var npcLevel = request.Level;
             var spawnPos = request.Position ?? CalculateSpawnPosition();
             var spawnRot = request.Rotation ?? CalculateSpawnRotation(spawnPos);
@@ -157,17 +157,22 @@ public unsafe class NpcSpawner : IDisposable
             // Step 4: RenderFlags = 0 (needed for actor VFX)
             obj->RenderFlags = VisibilityFlags.None;
 
-            // Step 5: SetupBNpc FIRST — sets ModelCharaId, customize, equipment from BNpcBase.
-            // Must be called BEFORE CopyFromCharacter so the model data is correct
-            // when the rendering pipeline is triggered.
-            if (request.BNpcBaseId > 0)
+            // Step 5: Initialize model — either BNpc (monster) or ENpc (humanoid)
+            if (request.ENpcBaseId > 0)
             {
+                // Humanoid NPC: read customize data from ENpcBase and write to DrawData.
+                // ENpcBase stores appearance bytes (race, face, hair, etc.) and equipment.
+                ApplyENpcAppearance(character, request.ENpcBaseId);
+                log.Info($"Applied ENpc appearance for ENpcBase {request.ENpcBaseId}.");
+            }
+            else if (request.BNpcBaseId > 0)
+            {
+                // Monster/creature: use native SetupBNpc API
                 character->CharacterSetup.SetupBNpc(request.BNpcBaseId, request.BNpcNameId);
                 log.Info($"SetupBNpc({request.BNpcBaseId}, {request.BNpcNameId}) done. ModelCharaId={character->ModelContainer.ModelCharaId}");
             }
 
-            // Step 6: Self-copy to trigger model loading pipeline.
-            // SetupBNpc configured the NPC data; this copy kicks off the actual render.
+            // Step 6: Self-copy to trigger model loading/rendering pipeline.
             character->CharacterSetup.CopyFromCharacter(
                 character, CharacterSetupContainer.CopyFlags.None);
             log.Info("CopyFromCharacter self-copy done.");
@@ -355,14 +360,110 @@ public unsafe class NpcSpawner : IDisposable
             DespawnNpc(npc);
     }
 
-    private string GetNpcName(uint bNpcNameId, uint bNpcBaseId)
+    /// <summary>
+    /// Read ENpcBase customize data and equipment, write to character's DrawData.
+    /// ENpcBase stores humanoid appearance at known offsets (from Anamnesis research):
+    /// customize bytes at 202-227, equipment models at 128-184, NpcEquip ref at 192.
+    /// </summary>
+    private void ApplyENpcAppearance(Character* character, uint eNpcBaseId)
     {
-        if (bNpcNameId > 0)
+        var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ENpcBase>();
+        if (sheet == null) return;
+
+        var row = sheet.GetRowOrDefault(eNpcBaseId);
+        if (row == null) return;
+
+        var enpc = row.Value;
+
+        // Read ModelChara — if > 0, this ENpc uses a monster model, not humanoid
+        var modelCharaId = (int)enpc.ModelChara.RowId;
+        if (modelCharaId > 0)
+        {
+            character->ModelContainer.ModelCharaId = modelCharaId;
+            log.Info($"ENpc {eNpcBaseId}: monster model ModelCharaId={modelCharaId}");
+            return;
+        }
+
+        // Humanoid: write customize data to DrawData.
+        // CustomizeData is a 26-byte struct at a known layout matching ENpcBase offsets.
+        // Write directly via pointer for the packed bit-field bytes.
+        var customizePtr = (byte*)&character->DrawData.CustomizeData;
+        customizePtr[0x00] = (byte)enpc.Race.RowId;       // Race
+        customizePtr[0x01] = enpc.Gender;                   // Sex
+        customizePtr[0x02] = enpc.BodyType;                 // BodyType
+        customizePtr[0x03] = enpc.Height;                   // Height
+        customizePtr[0x04] = (byte)enpc.Tribe.RowId;       // Tribe
+        customizePtr[0x05] = enpc.Face;                     // Face
+        customizePtr[0x06] = enpc.HairStyle;                // Hairstyle
+        customizePtr[0x07] = enpc.HairHighlight;            // Highlights (bit 7 = enabled)
+        customizePtr[0x08] = enpc.SkinColor;                // SkinColor
+        customizePtr[0x09] = enpc.EyeHeterochromia;         // EyeColorRight
+        customizePtr[0x0A] = enpc.HairColor;                // HairColor
+        customizePtr[0x0B] = enpc.HairHighlightColor;       // HighlightsColor
+        customizePtr[0x0C] = enpc.FacialFeature;            // FacialFeatures (packed bits)
+        customizePtr[0x0D] = enpc.FacialFeatureColor;       // TattooColor
+        customizePtr[0x0E] = enpc.Eyebrows;                 // Eyebrows
+        customizePtr[0x0F] = enpc.EyeColor;                 // EyeColorLeft
+        customizePtr[0x10] = enpc.EyeShape;                 // EyeShape (packed)
+        customizePtr[0x11] = enpc.Nose;                     // Nose
+        customizePtr[0x12] = enpc.Jaw;                      // Jaw
+        customizePtr[0x13] = enpc.Mouth;                    // Mouth (packed)
+        customizePtr[0x14] = enpc.LipColor;                 // LipColorFurPattern
+        customizePtr[0x15] = enpc.BustOrTone1;              // MuscleMass
+        customizePtr[0x16] = enpc.ExtraFeature1;            // TailShape
+        customizePtr[0x17] = enpc.ExtraFeature2OrBust;      // BustSize
+        customizePtr[0x18] = enpc.FacePaint;                // FacePaint (packed)
+        customizePtr[0x19] = enpc.FacePaintColor;           // FacePaintColor
+
+        // Equipment: read from ENpcBase inline model values
+        // Head=offset 148, Body=152, Hands=156, Legs=160, Feet=164
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Head).Value =
+            (ulong)enpc.ModelHead;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Body).Value =
+            (ulong)enpc.ModelBody;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Hands).Value =
+            (ulong)enpc.ModelHands;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Legs).Value =
+            (ulong)enpc.ModelLegs;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Feet).Value =
+            (ulong)enpc.ModelFeet;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Ears).Value =
+            (ulong)enpc.ModelEars;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Neck).Value =
+            (ulong)enpc.ModelNeck;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Wrists).Value =
+            (ulong)enpc.ModelWrists;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.RFinger).Value =
+            (ulong)enpc.ModelRightRing;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.LFinger).Value =
+            (ulong)enpc.ModelLeftRing;
+
+        // Weapons: MainHand (offset 128) and OffHand (offset 136)
+        var mainHand = enpc.ModelMainHand;
+        var offHand = enpc.ModelOffHand;
+        if (mainHand != 0)
+        {
+            var weaponId = *(WeaponModelId*)&mainHand;
+            character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, weaponId, 0, 0, 0, 0);
+        }
+        if (offHand != 0)
+        {
+            var weaponId = *(WeaponModelId*)&offHand;
+            character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, weaponId, 0, 0, 0, 0);
+        }
+
+        log.Info($"ENpc {eNpcBaseId}: humanoid, Race={customizePtr[0]}, Gender={customizePtr[1]}, Face={customizePtr[5]}");
+    }
+
+    private string GetNpcName(NpcSpawnRequest request)
+    {
+        // Try BNpcName first (for BNpc entries)
+        if (request.BNpcNameId > 0)
         {
             var nameSheet = dataManager.GetExcelSheet<BNpcName>();
             if (nameSheet != null)
             {
-                var nameRow = nameSheet.GetRowOrDefault(bNpcNameId);
+                var nameRow = nameSheet.GetRowOrDefault(request.BNpcNameId);
                 if (nameRow != null)
                 {
                     var name = nameRow.Value.Singular.ExtractText();
@@ -372,8 +473,26 @@ public unsafe class NpcSpawner : IDisposable
             }
         }
 
-        if (bNpcBaseId > 0)
-            return $"Enemy #{bNpcBaseId}";
+        // Try ENpcResident for humanoid NPCs (same RowId as ENpcBase)
+        if (request.ENpcBaseId > 0)
+        {
+            var residentSheet = dataManager.GetExcelSheet<ENpcResident>();
+            if (residentSheet != null)
+            {
+                var row = residentSheet.GetRowOrDefault(request.ENpcBaseId);
+                if (row != null)
+                {
+                    var name = row.Value.Singular.ExtractText();
+                    if (!string.IsNullOrEmpty(name))
+                        return name;
+                }
+            }
+        }
+
+        if (request.BNpcBaseId > 0)
+            return $"Enemy #{request.BNpcBaseId}";
+        if (request.ENpcBaseId > 0)
+            return $"NPC #{request.ENpcBaseId}";
 
         return "Simulated Enemy";
     }
