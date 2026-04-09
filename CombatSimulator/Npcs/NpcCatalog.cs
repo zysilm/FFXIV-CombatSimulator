@@ -150,23 +150,19 @@ public class NpcCatalog
     /// Search NPCs by name (case-insensitive substring match).
     /// Returns at most maxResults entries.
     /// </summary>
-    public IReadOnlyList<NpcCatalogEntry> Search(string filter, int maxResults = 100)
+    public IReadOnlyList<NpcCatalogEntry> Search(string filter)
     {
         EnsureLoaded();
         if (allEntries == null) return Array.Empty<NpcCatalogEntry>();
 
         if (string.IsNullOrWhiteSpace(filter))
-            return allEntries.Count <= maxResults ? allEntries : allEntries.GetRange(0, maxResults);
+            return allEntries;
 
         var results = new List<NpcCatalogEntry>();
         foreach (var entry in allEntries)
         {
             if (entry.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
-            {
                 results.Add(entry);
-                if (results.Count >= maxResults)
-                    break;
-            }
         }
 
         return results;

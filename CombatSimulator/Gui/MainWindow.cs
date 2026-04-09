@@ -535,7 +535,7 @@ public class MainWindow : IDisposable
         };
 
         // NPC list box
-        var listHeight = ImGui.GetTextLineHeightWithSpacing() * 8;
+        var listHeight = ImGui.GetTextLineHeightWithSpacing() * 15;
         if (ImGui.BeginListBox("##npcList", new Vector2(-1, listHeight)))
         {
             if (entries.Count == 0)
