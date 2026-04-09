@@ -186,8 +186,12 @@ public unsafe class NpcSpawner : IDisposable
                 log.Warning(ex, "CreateObjectReference failed (non-fatal).");
             }
 
-            // Set entity ID
+            // Set entity ID — write to game object so native systems
+            // (ActionEffectHandler.Receive, FindCharacter, etc.) can resolve it.
+            // Without this, EntityId defaults to 0xE0000000 and native combat
+            // animations (hit reactions, damage numbers) won't find the target.
             var entityId = nextEntityId++;
+            obj->EntityId = entityId;
 
             // Calculate HP
             int maxHp = CalculateNpcHp(npcLevel, request.HpMultiplier);
