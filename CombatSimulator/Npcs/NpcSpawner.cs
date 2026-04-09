@@ -38,6 +38,12 @@ public unsafe class NpcSpawner : IDisposable
     public Action<SimulatedNpc>? OnNpcSpawnComplete { get; set; }
     public Action<string>? OnSpawnError { get; set; }
 
+    /// <summary>
+    /// The spawned NPC currently targeted by the player for combat.
+    /// Used to substitute the target in UseAction when no game target is selected.
+    /// </summary>
+    public SimulatedNpc? SimulatedTarget { get; set; }
+
     public NpcSpawner(IObjectTable objectTable, IDataManager dataManager, IPluginLog log)
     {
         this.objectTable = objectTable;
@@ -299,6 +305,10 @@ public unsafe class NpcSpawner : IDisposable
             npc.IsSpawned = false;
             spawnedNpcs.Remove(npc);
 
+            // Clear simulated target if it was this NPC
+            if (SimulatedTarget == npc)
+                SimulatedTarget = spawnedNpcs.Count > 0 ? spawnedNpcs[0] : null;
+
             log.Info($"Despawned NPC '{npc.Name}' from index {npc.ObjectIndex}.");
         }
         catch (Exception ex)
@@ -311,6 +321,7 @@ public unsafe class NpcSpawner : IDisposable
 
     public void DespawnAll()
     {
+        SimulatedTarget = null;
         while (spawnQueue.TryDequeue(out _)) { }
 
         foreach (var pending in pendingSpawns)

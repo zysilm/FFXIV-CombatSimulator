@@ -526,15 +526,16 @@ public class MainWindow : IDisposable
             ImGui.TextColored(new Vector4(1f, 0.8f, 0f, 1f), $"({npcSpawner.PendingCount} pending...)");
         }
 
-        // Spawned NPCs list with despawn buttons
+        // Spawned NPCs list with target selection and despawn buttons
         if (npcSpawner.SpawnedNpcs.Count > 0)
         {
             ImGui.Separator();
-            ImGui.TextDisabled("Spawned:");
+            ImGui.TextDisabled("Spawned (click to target):");
 
             for (int i = npcSpawner.SpawnedNpcs.Count - 1; i >= 0; i--)
             {
                 var npc = npcSpawner.SpawnedNpcs[i];
+                bool isTarget = npcSpawner.SimulatedTarget == npc;
                 ImGui.PushID($"spawned_{i}");
 
                 // Show HP if in combat
@@ -551,7 +552,18 @@ public class MainWindow : IDisposable
                     ImGui.SameLine();
                 }
 
-                ImGui.Text(npc.Name);
+                // Target indicator + clickable name
+                var label = isTarget ? $"> {npc.Name}" : $"  {npc.Name}";
+                if (isTarget)
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.9f, 0.3f, 1f));
+                if (ImGui.Selectable(label, isTarget, ImGuiSelectableFlags.None,
+                    new Vector2(ImGui.GetContentRegionAvail().X - 65, 0)))
+                {
+                    npcSpawner.SimulatedTarget = npc;
+                }
+                if (isTarget)
+                    ImGui.PopStyleColor();
+
                 ImGui.SameLine(ImGui.GetContentRegionAvail().X - 55);
                 if (ImGui.SmallButton("Despawn"))
                 {

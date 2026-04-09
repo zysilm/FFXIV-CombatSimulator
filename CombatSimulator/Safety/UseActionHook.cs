@@ -12,6 +12,7 @@ public unsafe class UseActionHook : IDisposable
 {
     private readonly CombatEngine combatEngine;
     private readonly NpcSelector npcSelector;
+    private readonly NpcSpawner npcSpawner;
     private readonly Configuration config;
     private readonly IClientState clientState;
     private readonly IPluginLog log;
@@ -40,12 +41,14 @@ public unsafe class UseActionHook : IDisposable
         IGameInteropProvider gameInterop,
         CombatEngine combatEngine,
         NpcSelector npcSelector,
+        NpcSpawner npcSpawner,
         Configuration config,
         IClientState clientState,
         IPluginLog log)
     {
         this.combatEngine = combatEngine;
         this.npcSelector = npcSelector;
+        this.npcSpawner = npcSpawner;
         this.config = config;
         this.clientState = clientState;
         this.log = log;
@@ -105,6 +108,19 @@ public unsafe class UseActionHook : IDisposable
             if (actionType != ActionType.Action)
                 return useActionHook!.Original(actionManager, actionType, actionId,
                     targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
+
+            // Substitute simulated target when no game target is selected.
+            // targetId 0xE0000000 means no target in FFXIV. If we have a spawned
+            // NPC as our simulated target, route the action there instead.
+            if ((targetId == 0 || targetId == 0xE0000000) && npcSpawner.SimulatedTarget != null)
+            {
+                var simTarget = npcSpawner.SimulatedTarget;
+                if (simTarget.IsSpawned && simTarget.IsAlive)
+                {
+                    targetId = simTarget.SimulatedEntityId;
+                    log.Info($"Substituted simulated target '{simTarget.Name}' (0x{targetId:X}).");
+                }
+            }
 
             var isSelected = IsSelectedTarget(targetId);
 
