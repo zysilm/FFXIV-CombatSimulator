@@ -75,7 +75,7 @@ public class MainWindow : IDisposable
     private bool virtualEnemiesUnlocked = false;
 
     private static readonly string[] SpawnDirectionNames = { "Front", "Behind", "Left", "Right" };
-    private static readonly string[] SpawnCategoryNames = { "Popular", "Recent", "All" };
+    private static readonly string[] SpawnCategoryNames = { "Popular", "Recent", "Monster", "Humanoid", "All" };
 
     private static void HelpMarker(string desc)
     {
@@ -518,8 +518,8 @@ public class MainWindow : IDisposable
             if (selected) ImGui.PopStyleColor();
         }
 
-        // Search filter (All mode)
-        if (spawnCategoryIndex == 2)
+        // Search filter (shown for Monster, Humanoid, All)
+        if (spawnCategoryIndex >= 2)
         {
             ImGui.SetNextItemWidth(-1);
             ImGui.InputTextWithHint("##npcSearch", "Search NPC name...", ref spawnSearchFilter, 256);
@@ -530,7 +530,9 @@ public class MainWindow : IDisposable
         {
             0 => npcCatalog.GetPopularEntries(),
             1 => npcCatalog.GetRecentEntries(config.RecentNpcEntries),
-            2 => npcCatalog.Search(spawnSearchFilter),
+            2 => npcCatalog.Search(spawnSearchFilter, NpcCatalogType.BNpc),
+            3 => npcCatalog.Search(spawnSearchFilter, NpcCatalogType.ENpc),
+            4 => npcCatalog.Search(spawnSearchFilter),
             _ => Array.Empty<NpcCatalogEntry>(),
         };
 

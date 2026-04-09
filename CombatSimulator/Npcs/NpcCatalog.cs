@@ -173,22 +173,25 @@ public class NpcCatalog
     }
 
     /// <summary>
-    /// Search NPCs by name (case-insensitive substring match).
-    /// Returns at most maxResults entries.
+    /// Search NPCs by name, optionally filtered by type.
     /// </summary>
-    public IReadOnlyList<NpcCatalogEntry> Search(string filter)
+    public IReadOnlyList<NpcCatalogEntry> Search(string filter, NpcCatalogType? typeFilter = null)
     {
         EnsureLoaded();
         if (allEntries == null) return Array.Empty<NpcCatalogEntry>();
 
-        if (string.IsNullOrWhiteSpace(filter))
+        bool noFilter = string.IsNullOrWhiteSpace(filter);
+        bool noType = typeFilter == null;
+
+        if (noFilter && noType)
             return allEntries;
 
         var results = new List<NpcCatalogEntry>();
         foreach (var entry in allEntries)
         {
-            if (entry.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
-                results.Add(entry);
+            if (!noType && entry.Type != typeFilter) continue;
+            if (!noFilter && !entry.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
+            results.Add(entry);
         }
 
         return results;
