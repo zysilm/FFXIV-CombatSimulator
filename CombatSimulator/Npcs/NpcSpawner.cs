@@ -109,15 +109,6 @@ public unsafe class NpcSpawner : IDisposable
                 return;
             }
 
-            // Get local player for initial character setup
-            var localPlayer = objectTable[0];
-            if (localPlayer == null)
-            {
-                log.Error("Local player is null.");
-                OnSpawnError?.Invoke("Local player not found. Are you logged in?");
-                return;
-            }
-
             // Step 1: Create BattleCharacter with explicit index hint.
             // Default (0xFFFFFFFF) rescans from 0 and may reuse occupied slots.
             // Pass an incrementing hint so each spawn gets a unique pool slot.
@@ -166,20 +157,20 @@ public unsafe class NpcSpawner : IDisposable
             // Step 4: RenderFlags = 0 (needed for actor VFX)
             obj->RenderFlags = VisibilityFlags.None;
 
-            // Step 5: Initialize rendering by copying from local player (Brio approach)
-            // This sets up valid character data so the rendering pipeline can work.
-            var playerChara = (Character*)localPlayer.Address;
-            character->CharacterSetup.CopyFromCharacter(
-                playerChara, CharacterSetupContainer.CopyFlags.None);
-            log.Info("CopyFromCharacter from local player done.");
-
-            // Step 6: Use SetupBNpc to properly initialize the NPC model
-            // This is the native FFXIV API that handles ModelCharaId, scale, and model loading.
+            // Step 5: SetupBNpc FIRST — sets ModelCharaId, customize, equipment from BNpcBase.
+            // Must be called BEFORE CopyFromCharacter so the model data is correct
+            // when the rendering pipeline is triggered.
             if (request.BNpcBaseId > 0)
             {
                 character->CharacterSetup.SetupBNpc(request.BNpcBaseId, request.BNpcNameId);
-                log.Info($"SetupBNpc({request.BNpcBaseId}, {request.BNpcNameId}) done.");
+                log.Info($"SetupBNpc({request.BNpcBaseId}, {request.BNpcNameId}) done. ModelCharaId={character->ModelContainer.ModelCharaId}");
             }
+
+            // Step 6: Self-copy to trigger model loading pipeline.
+            // SetupBNpc configured the NPC data; this copy kicks off the actual render.
+            character->CharacterSetup.CopyFromCharacter(
+                character, CharacterSetupContainer.CopyFlags.None);
+            log.Info("CopyFromCharacter self-copy done.");
 
             // Step 7: Create managed object reference
             IGameObject? gameObjectRef = null;
@@ -231,7 +222,7 @@ public unsafe class NpcSpawner : IDisposable
 
             // Step 8: Add to pending - delay EnableDraw to next frame
             // (RaidsRewritten does this to allow file replacements to run)
-            pendingSpawns.Add(new PendingSpawn { Npc = npc, FramesWaited = 0, BNpcBaseId = request.BNpcBaseId });
+            pendingSpawns.Add(new PendingSpawn { Npc = npc, FramesWaited = 0 });
             log.Info($"NPC '{npcName}' created at index {index}, entityId={entityId:X}. Pending draw...");
         }
         catch (Exception ex)
@@ -261,21 +252,8 @@ public unsafe class NpcSpawner : IDisposable
             try
             {
                 var chara = npc.BattleChara;
-                var character = (Character*)chara;
 
-                // Wait minimum frames for SetupBNpc to initiate the model swap.
-                // CopyFromCharacter(player) makes IsReadyToDraw true immediately
-                // with the player model; SetupBNpc needs time to load the monster.
-                if (pending.FramesWaited < PendingSpawn.MinFramesBeforeReady)
-                    continue;
-
-                // Check that the monster model has actually loaded.
-                // ModelCharaId > 0 means a non-humanoid model is set.
-                // If still 0 after CopyFromCharacter, SetupBNpc hasn't finished.
-                bool modelReady = character->ModelContainer.ModelCharaId > 0
-                                  || pending.BNpcBaseId == 0; // no BNpcBase = humanoid, allow immediately
-
-                if (modelReady && chara->IsReadyToDraw())
+                if (chara->IsReadyToDraw())
                 {
                     chara->EnableDraw();
 
@@ -287,13 +265,13 @@ public unsafe class NpcSpawner : IDisposable
                     spawnedNpcs.Add(npc);
                     pendingSpawns.RemoveAt(i);
 
-                    log.Info($"NPC '{npc.Name}' draw enabled after {pending.FramesWaited} frames (ModelCharaId={character->ModelContainer.ModelCharaId}).");
+                    log.Info($"NPC '{npc.Name}' draw enabled after {pending.FramesWaited} frames.");
                     OnNpcSpawnComplete?.Invoke(npc);
                 }
                 else if (pending.FramesWaited >= MaxPendingFrames)
                 {
                     // Timeout - force enable draw
-                    log.Warning($"NPC '{npc.Name}' timed out after {pending.FramesWaited} frames (ModelCharaId={character->ModelContainer.ModelCharaId}). Force enabling.");
+                    log.Warning($"NPC '{npc.Name}' timed out after {pending.FramesWaited} frames. Force enabling.");
                     chara->EnableDraw();
 
                     var obj = (GameObject*)chara;
@@ -453,11 +431,5 @@ public unsafe class NpcSpawner : IDisposable
     {
         public SimulatedNpc Npc { get; set; } = null!;
         public int FramesWaited { get; set; }
-        public uint BNpcBaseId { get; set; }
-
-        /// <summary>Minimum frames to wait before accepting IsReadyToDraw.
-        /// CopyFromCharacter(player) makes it true immediately with the player model;
-        /// SetupBNpc needs a few frames to swap to the monster model.</summary>
-        public const int MinFramesBeforeReady = 5;
     }
 }
