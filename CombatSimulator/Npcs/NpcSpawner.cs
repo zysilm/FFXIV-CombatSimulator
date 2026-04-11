@@ -529,7 +529,17 @@ public unsafe class NpcSpawner : IDisposable
         var customizePtr = (byte*)&character->DrawData.CustomizeData;
         customizePtr[0x00] = (byte)enpc.Race.RowId;
         customizePtr[0x01] = enpc.Gender;
-        customizePtr[0x02] = enpc.BodyType;
+
+        // BodyType is the child/adult discriminator at draw time. ENpcBase
+        // BodyType=3 produces RaceSexId=c0X04 (child) which has no walk /
+        // battle-stance / emote animations. Force it to 1 (standard adult)
+        // so the derivation gives the adult model path. This is the only
+        // byte we deliberately override — everything else comes from ENpcBase.
+        byte bodyType = enpc.BodyType == 1 ? enpc.BodyType : (byte)1;
+        if (bodyType != enpc.BodyType)
+            log.Info($"[SpawnDbg] Child body detected (ENpc BodyType={enpc.BodyType}), forcing BodyType=1 (adult) for animation support.");
+        customizePtr[0x02] = bodyType;
+
         customizePtr[0x03] = enpc.Height;
         customizePtr[0x04] = (byte)enpc.Tribe.RowId;
         customizePtr[0x05] = enpc.Face;
