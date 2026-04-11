@@ -28,6 +28,11 @@ public unsafe class NpcSpawner : IDisposable
     private readonly List<PendingSpawn> pendingSpawns = new();
     private readonly ConcurrentQueue<NpcSpawnRequest> spawnQueue = new();
     private readonly HashSet<int> allocatedIndices = new();
+    // Original spawn request per live NPC — keyed by the NPC's object index.
+    // Used by RespawnAllInPlace to reconstruct fresh spawns after a sim reset,
+    // since cloned humanoid Character state gets left in a broken blend-lock
+    // state by the cinema → cinema-stop path.
+    private readonly Dictionary<int, NpcSpawnRequest> requestByObjectIndex = new();
     private uint nextEntityId = 0xF0000001;
 
     private const int MaxPendingFrames = 120;
@@ -276,6 +281,7 @@ public unsafe class NpcSpawner : IDisposable
                 MainHandWeapon = mainHandWeapon,
                 OffHandWeapon = offHandWeapon,
             });
+            requestByObjectIndex[index] = CloneRequest(request);
             log.Info($"NPC '{npcName}' created at index {index}, entityId={entityId:X}. Pending draw...");
         }
         catch (Exception ex)
@@ -380,6 +386,7 @@ public unsafe class NpcSpawner : IDisposable
             npc.IsSpawned = false;
             spawnedNpcs.Remove(npc);
             allocatedIndices.Remove(npc.ObjectIndex);
+            requestByObjectIndex.Remove(npc.ObjectIndex);
 
             log.Info($"Despawned NPC '{npc.Name}' from index {npc.ObjectIndex}.");
         }
@@ -410,10 +417,63 @@ public unsafe class NpcSpawner : IDisposable
         }
         pendingSpawns.Clear();
         allocatedIndices.Clear();
+        requestByObjectIndex.Clear();
 
         var npcsToRemove = new List<SimulatedNpc>(spawnedNpcs);
         foreach (var npc in npcsToRemove)
             DespawnNpc(npc);
+    }
+
+    /// <summary>
+    /// Despawn every currently-spawned NPC and queue fresh spawns with the
+    /// same original request parameters and current world positions. Used
+    /// on sim reset to recover humanoid spawns whose animation state got
+    /// trashed by the cinema → cinema-stop path — a fresh clone from the
+    /// player is the only known way to restore a clean animation pipeline.
+    /// </summary>
+    public void RespawnAllInPlace()
+    {
+        if (spawnedNpcs.Count == 0) return;
+
+        // Capture each live NPC's original request, using its current world
+        // position so the respawn lands where the old NPC stood.
+        var toRespawn = new List<NpcSpawnRequest>();
+        foreach (var npc in spawnedNpcs)
+        {
+            if (!requestByObjectIndex.TryGetValue(npc.ObjectIndex, out var orig))
+                continue;
+
+            var cloned = CloneRequest(orig);
+            if (npc.BattleChara != null)
+            {
+                var gameObj = (GameObject*)npc.BattleChara;
+                cloned.Position = gameObj->Position;
+                cloned.Rotation = gameObj->Rotation;
+            }
+            toRespawn.Add(cloned);
+        }
+
+        log.Info($"[SpawnDbg] RespawnAllInPlace: capturing {toRespawn.Count} NPCs for reset respawn.");
+
+        DespawnAll();
+
+        foreach (var req in toRespawn)
+            QueueSpawn(req);
+    }
+
+    private static NpcSpawnRequest CloneRequest(NpcSpawnRequest src)
+    {
+        return new NpcSpawnRequest
+        {
+            BNpcNameId = src.BNpcNameId,
+            BNpcBaseId = src.BNpcBaseId,
+            ENpcBaseId = src.ENpcBaseId,
+            Level = src.Level,
+            HpMultiplier = src.HpMultiplier,
+            Position = src.Position,
+            Rotation = src.Rotation,
+            BehaviorType = src.BehaviorType,
+        };
     }
 
     private void LoadPendingWeapons(BattleChara* chara, PendingSpawn pending)

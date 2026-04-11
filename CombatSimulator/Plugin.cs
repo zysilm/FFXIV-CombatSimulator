@@ -120,17 +120,38 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             chatGui.PrintError($"[CombatSim] Spawn error: {msg}");
         };
 
-        // Re-register alive spawned NPCs when simulation starts
-        // (they get removed from npcSelector on StopSimulation via DeselectAll)
+        // Re-register alive spawned NPCs on sim start (they're removed from
+        // npcSelector by DeselectAll during StopSimulation). For real
+        // first-time starts this just re-populates the selector so
+        // NpcAiController can tick the existing spawns.
         combatEngine.OnSimulationStarted = () =>
         {
             foreach (var npc in npcSpawner.SpawnedNpcs)
             {
                 if (npc.IsSpawned && npc.BattleChara != null)
-                {
                     npcSelector.RegisterSpawnedNpc(npc);
-                }
             }
+        };
+
+        // On sim stop or reset: despawn every virtual enemy and queue a
+        // fresh spawn with the same params at the same world position.
+        // Reason — humanoid clone state gets left in a broken blend-lock
+        // state by the cinema cleanup (see RespawnAllInPlace doc), and a
+        // fresh CopyFromCharacter clone is the only known fix.
+        //
+        // ResetState doesn't call DeselectAll so the selector still holds
+        // references to NPCs we're about to despawn. Explicitly unregister
+        // them first to avoid dangling pointers.
+        combatEngine.OnSimulationReset = () =>
+        {
+            if (npcSpawner.SpawnedNpcs.Count == 0) return;
+
+            log.Info($"Sim reset — despawning and re-queuing {npcSpawner.SpawnedNpcs.Count} virtual enemies.");
+
+            foreach (var npc in new List<SimulatedNpc>(npcSpawner.SpawnedNpcs))
+                npcSelector.UnregisterSpawnedNpc(npc);
+
+            npcSpawner.RespawnAllInPlace();
         };
 
         // Hook safety checker — register native functions we CALL (not hook) that other plugins may hook.
