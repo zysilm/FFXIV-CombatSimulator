@@ -21,6 +21,7 @@ public unsafe class NpcSpawner : IDisposable
 {
     private readonly IObjectTable objectTable;
     private readonly IDataManager dataManager;
+    private readonly IClientState clientState;
     private readonly IPluginLog log;
 
     private readonly List<SimulatedNpc> spawnedNpcs = new();
@@ -58,10 +59,15 @@ public unsafe class NpcSpawner : IDisposable
         return null;
     }
 
-    public NpcSpawner(IObjectTable objectTable, IDataManager dataManager, IPluginLog log)
+    public NpcSpawner(
+        IObjectTable objectTable,
+        IDataManager dataManager,
+        IClientState clientState,
+        IPluginLog log)
     {
         this.objectTable = objectTable;
         this.dataManager = dataManager;
+        this.clientState = clientState;
         this.log = log;
     }
 
@@ -160,22 +166,45 @@ public unsafe class NpcSpawner : IDisposable
             // Step 5: Initialize model — either BNpc (monster) or ENpc (humanoid)
             if (request.ENpcBaseId > 0)
             {
-                // Humanoid NPC: read customize data from ENpcBase and write to DrawData.
-                // ENpcBase stores appearance bytes (race, face, hair, etc.) and equipment.
-                ApplyENpcAppearance(character, request.ENpcBaseId);
-                log.Info($"Applied ENpc appearance for ENpcBase {request.ENpcBaseId}.");
+                // Humanoid path (Brio-style clone-from-player bootstrap).
+                // There is NO native SetupENpc API — the only way to initialize
+                // a working humanoid Character is to CopyFromCharacter() from an
+                // already-working humanoid, then overwrite appearance on top.
+                // Without this, Mode/ClassJob/TimelineContainer are uninitialized
+                // and the game refuses to run humanoid draw/animation logic, so
+                // the NPC has no facing update, no battle stance, and no walk anim.
+                if (!BootstrapHumanoidFromPlayer(character, request.ENpcBaseId))
+                {
+                    log.Error($"[SpawnDbg] Humanoid bootstrap failed for ENpcBase {request.ENpcBaseId}. Aborting spawn.");
+                    // Roll back the allocation so the slot is reusable
+                    clientObjMgr->DeleteObjectByIndex((ushort)index, 0);
+                    allocatedIndices.Remove(index);
+                    OnSpawnError?.Invoke("Humanoid spawn needs a valid local player as clone source.");
+                    return;
+                }
             }
             else if (request.BNpcBaseId > 0)
             {
                 // Monster/creature: use native SetupBNpc API
                 character->CharacterSetup.SetupBNpc(request.BNpcBaseId, request.BNpcNameId);
-                log.Info($"SetupBNpc({request.BNpcBaseId}, {request.BNpcNameId}) done. ModelCharaId={character->ModelContainer.ModelCharaId}");
+                log.Info($"[SpawnDbg] SetupBNpc({request.BNpcBaseId}, {request.BNpcNameId}) done. ModelCharaId={character->ModelContainer.ModelCharaId}");
             }
 
-            // Step 6: Self-copy to trigger model loading/rendering pipeline.
+            // Step 6: Self-copy to trigger the DrawData refresh pipeline.
+            // Brio's "double copy" pattern — the first CopyFromCharacter populates
+            // the target (for BNpc it's SetupBNpc that already did the work; for
+            // humanoids it's BootstrapHumanoidFromPlayer above). This self-copy is
+            // the trigger that tools like Glamourer/Penumbra expect to see.
             character->CharacterSetup.CopyFromCharacter(
                 character, CharacterSetupContainer.CopyFlags.None);
-            log.Info("CopyFromCharacter self-copy done.");
+            log.Info("[SpawnDbg] Self-copy CopyFromCharacter(self, None) done.");
+
+            // Step 6b: Force Mode to Normal so the walk/run animation state machine
+            // is active. CreateBattleCharacter leaves Mode at 0 (None) which makes
+            // the game skip all animation dispatch for that character.
+            var preModeDbg = character->Mode;
+            character->SetMode(CharacterModes.Normal, 0);
+            log.Info($"[SpawnDbg] SetMode Normal done (was {preModeDbg}, now {character->Mode}).");
 
             // Step 7: Create managed object reference
             IGameObject? gameObjectRef = null;
@@ -279,7 +308,11 @@ public unsafe class NpcSpawner : IDisposable
 
                 if (chara->IsReadyToDraw())
                 {
+                    var character = (Character*)chara;
+                    log.Info($"[SpawnDbg] '{npc.Name}' IsReadyToDraw=true @ frame {pending.FramesWaited}. Mode={character->Mode}, ClassJob={character->CharacterData.ClassJob}, ModelCharaId={character->ModelContainer.ModelCharaId}");
+
                     chara->EnableDraw();
+                    log.Info($"[SpawnDbg] '{npc.Name}' EnableDraw called. DrawObject={(nint)((GameObject*)chara)->DrawObject:X}");
 
                     // Load weapons AFTER EnableDraw (self-copy resets DrawData weapons)
                     LoadPendingWeapons(chara, pending);
@@ -292,7 +325,7 @@ public unsafe class NpcSpawner : IDisposable
                     spawnedNpcs.Add(npc);
                     pendingSpawns.RemoveAt(i);
 
-                    log.Info($"NPC '{npc.Name}' draw enabled after {pending.FramesWaited} frames.");
+                    log.Info($"[SpawnDbg] '{npc.Name}' draw enabled after {pending.FramesWaited} frames.");
                     OnNpcSpawnComplete?.Invoke(npc);
                 }
                 else if (pending.FramesWaited >= MaxPendingFrames)
@@ -409,87 +442,130 @@ public unsafe class NpcSpawner : IDisposable
     }
 
     /// <summary>
-    /// Read ENpcBase customize data and equipment, write to character's DrawData.
-    /// ENpcBase stores humanoid appearance at known offsets (from Anamnesis research):
-    /// customize bytes at 202-227, equipment models at 128-184, NpcEquip ref at 192.
+    /// Clone the local player's Character onto the freshly-created BattleChara so
+    /// the game's humanoid pipeline is fully initialized (Mode / ClassJob / draw
+    /// object / Timeline state), then overwrite customize bytes and equipment
+    /// from the ENpcBase row. This is Brio's spawn pattern — the only known way
+    /// to get a spawned humanoid to actually animate.
+    ///
+    /// Returns false if the local player isn't a valid clone source (e.g. we're
+    /// between zones, in a cutscene, dead, or not logged in).
     /// </summary>
-    private void ApplyENpcAppearance(Character* character, uint eNpcBaseId)
+    private bool BootstrapHumanoidFromPlayer(Character* target, uint eNpcBaseId)
     {
+        // First verify the ENpcBase actually represents a humanoid.
+        // If ModelChara > 0 this ENpc uses a monster model and should not
+        // go through the clone path at all — fall back to ModelCharaId set.
         var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ENpcBase>();
-        if (sheet == null) return;
-
+        if (sheet == null)
+        {
+            log.Error("[SpawnDbg] ENpcBase sheet not available.");
+            return false;
+        }
         var row = sheet.GetRowOrDefault(eNpcBaseId);
-        if (row == null) return;
-
+        if (row == null)
+        {
+            log.Error($"[SpawnDbg] ENpcBase {eNpcBaseId} not found.");
+            return false;
+        }
         var enpc = row.Value;
-
-        // Read ModelChara — if > 0, this ENpc uses a monster model, not humanoid
         var modelCharaId = (int)enpc.ModelChara.RowId;
         if (modelCharaId > 0)
         {
-            character->ModelContainer.ModelCharaId = modelCharaId;
-            log.Info($"ENpc {eNpcBaseId}: monster model ModelCharaId={modelCharaId}");
-            return;
+            // Monster-model ENpc — no clone needed. Treat like a BNpc model set.
+            target->ModelContainer.ModelCharaId = modelCharaId;
+            log.Info($"[SpawnDbg] ENpc {eNpcBaseId}: monster model, ModelCharaId={modelCharaId}");
+            return true;
         }
 
-        // Humanoid: write customize data to DrawData.
-        // CustomizeData is a 26-byte struct at a known layout matching ENpcBase offsets.
-        // Write directly via pointer for the packed bit-field bytes.
+        // Humanoid ENpc path — need a valid local player as clone source.
+        var localPlayer = clientState.LocalPlayer;
+        if (localPlayer == null || localPlayer.Address == nint.Zero)
+        {
+            log.Error("[SpawnDbg] Local player not available as clone source.");
+            return false;
+        }
+
+        var source = (Character*)localPlayer.Address;
+
+        // Sanity: make sure the source is itself a humanoid (has Race > 0 and
+        // ModelCharaId == 0). If the player is currently in a monster form —
+        // say, fantasia'd or on a special mount — this would blow up.
+        var sourceRace = ((byte*)&source->DrawData.CustomizeData)[0];
+        if (sourceRace == 0)
+        {
+            log.Error($"[SpawnDbg] Local player has Race=0 (not humanoid right now). Cannot use as clone source.");
+            return false;
+        }
+
+        log.Info($"[SpawnDbg] Cloning humanoid from local player addr=0x{(nint)source:X}, sourceRace={sourceRace}");
+
+        // Step A: Full clone from player. Include ClassJob (animation timelines
+        // are gated on having a valid ClassJob) and WeaponHiding (matches Brio).
+        // We deliberately do NOT copy Mode — that's an Emote loop flag and we'll
+        // force Mode=Normal explicitly later. We do NOT copy Position/Target/Name
+        // either; those are set manually in ProcessSpawnRequest.
+        const CharacterSetupContainer.CopyFlags flags =
+            CharacterSetupContainer.CopyFlags.ClassJob |
+            CharacterSetupContainer.CopyFlags.WeaponHiding;
+        target->CharacterSetup.CopyFromCharacter(source, flags);
+        log.Info($"[SpawnDbg] CopyFromCharacter(player, ClassJob|WeaponHiding) done.");
+
+        // Step B: Overwrite customize bytes + equipment from ENpcBase so the
+        // cloned player actually looks like the requested NPC. Weapons are
+        // loaded later via LoadPendingWeapons after EnableDraw.
+        OverwriteCustomizeFromENpc(target, enpc);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Overwrite the 26 customize bytes + 10 equipment slots from an ENpcBase row.
+    /// Called after BootstrapHumanoidFromPlayer so the base Character already has
+    /// a working humanoid pipeline from the clone.
+    /// </summary>
+    private void OverwriteCustomizeFromENpc(Character* character, Lumina.Excel.Sheets.ENpcBase enpc)
+    {
         var customizePtr = (byte*)&character->DrawData.CustomizeData;
-        customizePtr[0x00] = (byte)enpc.Race.RowId;       // Race
-        customizePtr[0x01] = enpc.Gender;                   // Sex
-        customizePtr[0x02] = enpc.BodyType;                 // BodyType
-        customizePtr[0x03] = enpc.Height;                   // Height
-        customizePtr[0x04] = (byte)enpc.Tribe.RowId;       // Tribe
-        customizePtr[0x05] = enpc.Face;                     // Face
-        customizePtr[0x06] = enpc.HairStyle;                // Hairstyle
-        customizePtr[0x07] = enpc.HairHighlight;            // Highlights (bit 7 = enabled)
-        customizePtr[0x08] = enpc.SkinColor;                // SkinColor
-        customizePtr[0x09] = enpc.EyeHeterochromia;         // EyeColorRight
-        customizePtr[0x0A] = enpc.HairColor;                // HairColor
-        customizePtr[0x0B] = enpc.HairHighlightColor;       // HighlightsColor
-        customizePtr[0x0C] = enpc.FacialFeature;            // FacialFeatures (packed bits)
-        customizePtr[0x0D] = enpc.FacialFeatureColor;       // TattooColor
-        customizePtr[0x0E] = enpc.Eyebrows;                 // Eyebrows
-        customizePtr[0x0F] = enpc.EyeColor;                 // EyeColorLeft
-        customizePtr[0x10] = enpc.EyeShape;                 // EyeShape (packed)
-        customizePtr[0x11] = enpc.Nose;                     // Nose
-        customizePtr[0x12] = enpc.Jaw;                      // Jaw
-        customizePtr[0x13] = enpc.Mouth;                    // Mouth (packed)
-        customizePtr[0x14] = enpc.LipColor;                 // LipColorFurPattern
-        customizePtr[0x15] = enpc.BustOrTone1;              // MuscleMass
-        customizePtr[0x16] = enpc.ExtraFeature1;            // TailShape
-        customizePtr[0x17] = enpc.ExtraFeature2OrBust;      // BustSize
-        customizePtr[0x18] = enpc.FacePaint;                // FacePaint (packed)
-        customizePtr[0x19] = enpc.FacePaintColor;           // FacePaintColor
+        customizePtr[0x00] = (byte)enpc.Race.RowId;
+        customizePtr[0x01] = enpc.Gender;
+        customizePtr[0x02] = enpc.BodyType;
+        customizePtr[0x03] = enpc.Height;
+        customizePtr[0x04] = (byte)enpc.Tribe.RowId;
+        customizePtr[0x05] = enpc.Face;
+        customizePtr[0x06] = enpc.HairStyle;
+        customizePtr[0x07] = enpc.HairHighlight;
+        customizePtr[0x08] = enpc.SkinColor;
+        customizePtr[0x09] = enpc.EyeHeterochromia;
+        customizePtr[0x0A] = enpc.HairColor;
+        customizePtr[0x0B] = enpc.HairHighlightColor;
+        customizePtr[0x0C] = enpc.FacialFeature;
+        customizePtr[0x0D] = enpc.FacialFeatureColor;
+        customizePtr[0x0E] = enpc.Eyebrows;
+        customizePtr[0x0F] = enpc.EyeColor;
+        customizePtr[0x10] = enpc.EyeShape;
+        customizePtr[0x11] = enpc.Nose;
+        customizePtr[0x12] = enpc.Jaw;
+        customizePtr[0x13] = enpc.Mouth;
+        customizePtr[0x14] = enpc.LipColor;
+        customizePtr[0x15] = enpc.BustOrTone1;
+        customizePtr[0x16] = enpc.ExtraFeature1;
+        customizePtr[0x17] = enpc.ExtraFeature2OrBust;
+        customizePtr[0x18] = enpc.FacePaint;
+        customizePtr[0x19] = enpc.FacePaintColor;
 
-        // Equipment: read from ENpcBase inline model values
-        // Head=offset 148, Body=152, Hands=156, Legs=160, Feet=164
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Head).Value =
-            (ulong)enpc.ModelHead;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Body).Value =
-            (ulong)enpc.ModelBody;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Hands).Value =
-            (ulong)enpc.ModelHands;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Legs).Value =
-            (ulong)enpc.ModelLegs;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Feet).Value =
-            (ulong)enpc.ModelFeet;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Ears).Value =
-            (ulong)enpc.ModelEars;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Neck).Value =
-            (ulong)enpc.ModelNeck;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Wrists).Value =
-            (ulong)enpc.ModelWrists;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.RFinger).Value =
-            (ulong)enpc.ModelRightRing;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.LFinger).Value =
-            (ulong)enpc.ModelLeftRing;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Head).Value = (ulong)enpc.ModelHead;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Body).Value = (ulong)enpc.ModelBody;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Hands).Value = (ulong)enpc.ModelHands;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Legs).Value = (ulong)enpc.ModelLegs;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Feet).Value = (ulong)enpc.ModelFeet;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Ears).Value = (ulong)enpc.ModelEars;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Neck).Value = (ulong)enpc.ModelNeck;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Wrists).Value = (ulong)enpc.ModelWrists;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.RFinger).Value = (ulong)enpc.ModelRightRing;
+        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.LFinger).Value = (ulong)enpc.ModelLeftRing;
 
-        // Weapons are loaded AFTER EnableDraw — the self-copy resets DrawData weapons.
-        // Store on PendingSpawn and apply in TickPendingSpawns after draw is enabled.
-
-        log.Info($"ENpc {eNpcBaseId}: humanoid, Race={customizePtr[0]}, Gender={customizePtr[1]}, Face={customizePtr[5]}");
+        log.Info($"[SpawnDbg] Overwrote customize/equipment from ENpcBase: Race={customizePtr[0]}, Tribe={customizePtr[4]}, Gender={customizePtr[1]}, Face={customizePtr[5]}, Body=0x{(ulong)enpc.ModelBody:X}");
     }
 
     private string GetNpcName(NpcSpawnRequest request)

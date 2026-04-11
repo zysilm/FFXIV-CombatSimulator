@@ -94,7 +94,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
-        npcSpawner = new NpcSpawner(objectTable, dataManager, log);
+        npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, log);
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
@@ -177,7 +177,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         framework.Update += OnFrameworkUpdate;
         clientState.TerritoryChanged += OnTerritoryChanged;
 
-        log.Info("Combat Simulator loaded.");
+        log.Info("Combat Simulator loaded. [virtual-enemies: humanoid clone-from-player bootstrap]");
     }
 
     public void Dispose()
