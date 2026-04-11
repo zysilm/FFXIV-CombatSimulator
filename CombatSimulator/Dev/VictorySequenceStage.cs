@@ -22,6 +22,16 @@ public class VictorySequenceStage
     public float GrabForce { get; set; } = 1000f;
     public float GrabSpeed { get; set; } = 50f;
     public float GrabSpringFreq { get; set; } = 120f;
+
+    // Shoulder rotation override — tweaks the grabbing NPC's upper arm so the
+    // arm pose matches the grab position. Manual pitch/yaw/roll (degrees, local
+    // bone space). Applied every render frame via BoneTransformService.
+    // ApplyRotationDeltas, which propagates the delta down the arm chain.
+    public bool ShoulderRotationEnabled { get; set; }
+    public string ShoulderBoneName { get; set; } = "j_ude_a_r";
+    public float ShoulderPitch { get; set; } // X rotation, degrees
+    public float ShoulderYaw { get; set; }   // Y rotation, degrees
+    public float ShoulderRoll { get; set; }  // Z rotation, degrees
     // Infinite walk: NPC walks toward player at constant speed forever
     public bool InfiniteWalk { get; set; }
     public float WalkSpeed { get; set; } = 0f;          // yalms per second (negative = walk away)
