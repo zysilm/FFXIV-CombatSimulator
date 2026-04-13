@@ -548,6 +548,11 @@ public unsafe class VictorySequenceController : IDisposable
 
     /// <summary>
     /// Read any character's bone world position from its current skeleton.
+    /// Applies the DrawObject's scale to the model-space bone offset so the
+    /// returned world position matches what's actually rendered — otherwise
+    /// grab targets land at the unscaled (rest-pose) distance from the root
+    /// even though the visible bone is at a scaled distance, and the BEPU
+    /// grab constraint pulls the victim to empty space.
     /// </summary>
     private Vector3? GetBoneWorldPos(nint characterAddress, string boneName)
     {
@@ -573,8 +578,23 @@ public unsafe class VictorySequenceController : IDisposable
             npcSkeleton->Transform.Rotation.Z,
             npcSkeleton->Transform.Rotation.W);
 
+        // Read the visual scale applied to the DrawObject (DevNpcScale, or
+        // the native scale of a BNpc via SetupBNpc). ModelPose offsets are
+        // stored in unscaled rest-pose space, so we have to multiply them
+        // through manually to get the actual rendered world position.
+        var gameObj = (GameObject*)characterAddress;
+        var nScale = new Vector3(1f, 1f, 1f);
+        if (gameObj->DrawObject != null)
+        {
+            var ds = gameObj->DrawObject->Scale;
+            nScale = new Vector3(ds.X, ds.Y, ds.Z);
+        }
+
         ref var mt = ref ns.Pose->ModelPose.Data[idx];
-        var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+        var modelPos = new Vector3(
+            mt.Translation.X * nScale.X,
+            mt.Translation.Y * nScale.Y,
+            mt.Translation.Z * nScale.Z);
         return nSkelPos + Vector3.Transform(modelPos, nSkelRot);
     }
 
