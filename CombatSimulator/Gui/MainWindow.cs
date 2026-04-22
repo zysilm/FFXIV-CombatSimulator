@@ -2241,6 +2241,44 @@ public class MainWindow : IDisposable
                     HelpMarker("Resistance to gravity. Higher = stiffer hair that holds its shape.");
                 }
 
+                ImGui.Separator();
+                ImGui.Text("NPC Death Ragdoll");
+
+                var npcRagdoll = config.EnableNpcDeathRagdoll;
+                if (ImGui.Checkbox("Enable NPC Death Ragdoll##npcragdoll", ref npcRagdoll))
+                {
+                    config.EnableNpcDeathRagdoll = npcRagdoll;
+                    config.Save();
+                }
+                HelpMarker("Apply ragdoll physics to enemy NPCs when they die in combat.");
+
+                if (config.EnableNpcDeathRagdoll)
+                {
+                    var npcDelay = config.NpcRagdollActivationDelay;
+                    if (ImGui.SliderFloat("NPC Activation Delay (s)##npcragdoll", ref npcDelay, 0.0f, 5.0f, "%.1f"))
+                    {
+                        config.NpcRagdollActivationDelay = npcDelay;
+                        config.Save();
+                    }
+                    HelpMarker("Seconds after NPC death before ragdoll physics take over.");
+
+                    var maxNpc = config.MaxNpcRagdolls;
+                    if (ImGui.SliderInt("Max Concurrent##npcragdoll", ref maxNpc, 1, 20))
+                    {
+                        config.MaxNpcRagdolls = maxNpc;
+                        config.Save();
+                    }
+                    HelpMarker("Maximum number of NPC ragdolls active at once. Oldest is removed when the limit is reached.");
+
+                    var duration = config.NpcRagdollDuration;
+                    if (ImGui.SliderFloat("Duration (s)##npcragdoll", ref duration, 5.0f, 120.0f, "%.0f"))
+                    {
+                        config.NpcRagdollDuration = duration;
+                        config.Save();
+                    }
+                    HelpMarker("Seconds before an NPC ragdoll is automatically cleaned up.");
+                }
+
                 ImGui.Unindent();
             }
         }

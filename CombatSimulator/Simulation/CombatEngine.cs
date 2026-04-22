@@ -75,6 +75,12 @@ public class CombatEngine : IDisposable
     /// </summary>
     public Action? OnSimulationReset { get; set; }
 
+    /// <summary>
+    /// Fired when a simulated NPC dies, passing the NPC's character address.
+    /// Used by the plugin to activate ragdoll physics on the dead NPC.
+    /// </summary>
+    public Action<nint>? OnNpcDeathRagdoll { get; set; }
+
     // Configuration (set from plugin config)
     public float DamageMultiplier { get; set; } = 1.0f;
     public bool EnableCriticalHits { get; set; } = true;
@@ -755,6 +761,11 @@ public class CombatEngine : IDisposable
                 if (npc.SimulatedEntityId == entityId)
                 {
                     animationController.PlayDeathAnimation(npc);
+
+                    // Trigger NPC death ragdoll
+                    if (npc.Address != nint.Zero)
+                        OnNpcDeathRagdoll?.Invoke(npc.Address);
+
                     break;
                 }
             }

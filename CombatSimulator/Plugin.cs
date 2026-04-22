@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using CombatSimulator.Ai;
 using CombatSimulator.Animation;
@@ -46,6 +47,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly ActiveCameraController activeCameraController;
     private readonly Dev.VictorySequenceController victorySequenceController;
     private readonly HookSafetyChecker hookSafetyChecker;
+
+    // NPC ragdoll controllers (multiple concurrent)
+    private readonly Dictionary<nint, RagdollController> npcRagdolls = new();
+    private readonly Dictionary<nint, float> npcRagdollTimers = new();
 
     // Dev: NPCs hidden by occlusion check (need to restore visibility on cleanup)
     private readonly HashSet<nint> occlusionHiddenNpcs = new();
@@ -154,6 +159,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             npcSpawner.RespawnAllInPlace();
         };
 
+        // Wire NPC death ragdoll
+        combatEngine.OnNpcDeathRagdoll = OnNpcDeathRagdoll;
+
         // Hook safety checker — register native functions we CALL (not hook) that other plugins may hook.
         // We check for JMP detours at each address to detect third-party hooks.
         hookSafetyChecker = new HookSafetyChecker(pluginInterface, log);
@@ -211,6 +219,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         commandManager.RemoveHandler(CommandName);
 
         RestoreOcclusionHiddenNpcs();
+        DeactivateAllNpcRagdolls();
         npcSpawner.SpawnModeActive = false;
         npcSpawner.DespawnAll();
         npcSpawner.Dispose();
@@ -360,6 +369,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             combatEngine.Tick(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
             victorySequenceController.Tick(deltaTime);
+            TickNpcRagdolls(deltaTime);
 
             // Dev: apply NPC scale override via DrawObject transform
             if (config.DevNpcScale != 1.0f)
@@ -383,6 +393,61 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             log.Error(ex, "Error in framework update, stopping simulation.");
             combatEngine.StopSimulation();
         }
+    }
+
+    private void OnNpcDeathRagdoll(nint address)
+    {
+        if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll) return;
+
+        // Cap concurrent NPC ragdolls — evict the oldest
+        if (npcRagdolls.Count >= config.MaxNpcRagdolls)
+        {
+            var oldest = npcRagdollTimers.OrderByDescending(kvp => kvp.Value).First().Key;
+            RemoveNpcRagdoll(oldest);
+        }
+
+        if (npcRagdolls.ContainsKey(address)) return;
+
+        log.Info($"NPC death ragdoll: activating for 0x{address:X}");
+
+        var controller = new RagdollController(boneTransformService, config, log);
+        controller.Activate(address, config.NpcRagdollActivationDelay);
+        npcRagdolls[address] = controller;
+        npcRagdollTimers[address] = 0f;
+    }
+
+    private void TickNpcRagdolls(float deltaTime)
+    {
+        if (npcRagdolls.Count == 0) return;
+
+        var toRemove = new List<nint>();
+        foreach (var kvp in npcRagdollTimers)
+        {
+            var newTime = kvp.Value + deltaTime;
+            npcRagdollTimers[kvp.Key] = newTime;
+            if (newTime >= config.NpcRagdollDuration)
+                toRemove.Add(kvp.Key);
+        }
+        foreach (var addr in toRemove)
+            RemoveNpcRagdoll(addr);
+    }
+
+    private void RemoveNpcRagdoll(nint address)
+    {
+        if (npcRagdolls.TryGetValue(address, out var controller))
+        {
+            controller.Dispose();
+            npcRagdolls.Remove(address);
+            npcRagdollTimers.Remove(address);
+        }
+    }
+
+    private void DeactivateAllNpcRagdolls()
+    {
+        foreach (var controller in npcRagdolls.Values)
+            controller.Dispose();
+        npcRagdolls.Clear();
+        npcRagdollTimers.Clear();
     }
 
     private void TickNpcOcclusionHide()
@@ -487,6 +552,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             npcSpawner.DespawnAll();
             log.Info("Despawned all client NPCs on zone change.");
         }
+
+        DeactivateAllNpcRagdolls();
 
         if (combatEngine.IsActive)
         {
