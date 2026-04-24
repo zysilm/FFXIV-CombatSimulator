@@ -66,6 +66,21 @@ public class CombatEngine : IDisposable
     public List<CombatLogEntry> CombatLog { get; } = new();
     public Action? OnSimulationStarted { get; set; }
 
+    /// <summary>
+    /// Fired at the end of StopSimulation and ResetState — i.e. whenever the
+    /// combat session is ended or cleared. Used by the plugin to despawn
+    /// virtual enemies and re-queue them fresh, because humanoid clone state
+    /// gets broken by the cinema cleanup path and the only reliable fix is
+    /// a fresh CopyFromCharacter on the next spawn.
+    /// </summary>
+    public Action? OnSimulationReset { get; set; }
+
+    /// <summary>
+    /// Fired when a simulated NPC dies, passing the NPC's character address.
+    /// Used by the plugin to activate ragdoll physics on the dead NPC.
+    /// </summary>
+    public Action<nint>? OnNpcDeathRagdoll { get; set; }
+
     // Configuration (set from plugin config)
     public float DamageMultiplier { get; set; } = 1.0f;
     public bool EnableCriticalHits { get; set; } = true;
@@ -179,6 +194,8 @@ public class CombatEngine : IDisposable
 
         AddLogEntry("Combat simulation stopped.", CombatLogType.Info);
         log.Info("Combat simulation stopped.");
+
+        OnSimulationReset?.Invoke();
     }
 
     public void ResetState()
@@ -225,6 +242,8 @@ public class CombatEngine : IDisposable
         pendingDeaths.Clear();
 
         AddLogEntry("Combat state reset.", CombatLogType.Info);
+
+        OnSimulationReset?.Invoke();
     }
 
     public void Tick(float deltaTime)
@@ -742,6 +761,11 @@ public class CombatEngine : IDisposable
                 if (npc.SimulatedEntityId == entityId)
                 {
                     animationController.PlayDeathAnimation(npc);
+
+                    // Trigger NPC death ragdoll
+                    if (npc.Address != nint.Zero)
+                        OnNpcDeathRagdoll?.Invoke(npc.Address);
+
                     break;
                 }
             }

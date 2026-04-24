@@ -8,11 +8,19 @@ using Lumina.Excel.Sheets;
 
 namespace CombatSimulator.Npcs;
 
+public enum NpcCatalogType
+{
+    BNpc,  // Monster/creature — spawned via SetupBNpc
+    ENpc,  // Non-human NPC from ENpcBase (creature model)
+    Human, // Humanoid NPC from ENpcBase (race/face/hair customize)
+}
+
 public class NpcCatalogEntry
 {
-    public uint BNpcBaseId { get; set; }
-    public uint BNpcNameId { get; set; }
+    public uint Id { get; set; }           // BNpcBaseId for BNpc, ENpcBaseId for ENpc
+    public uint BNpcNameId { get; set; }   // For BNpc name display
     public string Name { get; set; } = string.Empty;
+    public NpcCatalogType Type { get; set; }
 }
 
 /// <summary>
@@ -70,7 +78,11 @@ public class NpcCatalog
             }
         }
 
-        // Load BNpcBase sheet to verify entries have valid monster models
+        // Collect valid BNpcBase RowIds with monster models (ModelChara > 0).
+        // BNpcBase and BNpcName are independent sheets — RowIds do NOT correspond.
+        // The pairing only exists in per-spawn game data, so we rely on NpcNames.json
+        // for accurate base→name mapping. Humanoid enemies (ENpcBase) need a separate
+        // spawn pipeline and are not yet supported.
         var baseSheet = dataManager.GetExcelSheet<BNpcBase>();
         var validBaseIds = new HashSet<uint>();
         if (baseSheet != null)
@@ -82,7 +94,19 @@ public class NpcCatalog
             }
         }
 
-        // Load NpcNames.json embedded resource (Anamnesis-sourced BNpcBase→name mapping)
+        // Build set of ENpcBase IDs that are truly humanoid (ModelChara=0, Race>0)
+        var humanENpcIds = new HashSet<uint>();
+        var eNpcSheet = dataManager.GetExcelSheet<ENpcBase>();
+        if (eNpcSheet != null)
+        {
+            foreach (var row in eNpcSheet)
+            {
+                if ((int)row.ModelChara.RowId == 0 && (byte)row.Race.RowId > 0)
+                    humanENpcIds.Add(row.RowId);
+            }
+        }
+
+        // NpcNames.json: curated BNpcBase→name mapping (Anamnesis-sourced, verified)
         var npcNamesJson = LoadEmbeddedNpcNames();
         if (npcNamesJson == null)
         {
@@ -90,17 +114,14 @@ public class NpcCatalog
             return;
         }
 
+        int bCount = 0, eCount = 0;
+
         foreach (var kvp in npcNamesJson)
         {
-            // Key format: "B:0000002" → BNpcBase RowId
-            if (!kvp.Key.StartsWith("B:")) continue;
-            if (!uint.TryParse(kvp.Key.AsSpan(2), out var bNpcBaseId)) continue;
-
-            // Only include entries with a valid monster model (filters out humanoid NPCs)
-            if (!validBaseIds.Contains(bNpcBaseId)) continue;
-
-            // Resolve name: either direct string or "N:XXXXXX" BNpcName reference
+            var key = kvp.Key;
             var nameValue = kvp.Value;
+
+            // Resolve display name (direct string or "N:XXXXXX" BNpcName reference)
             string displayName;
             uint bNpcNameId = 0;
 
@@ -108,29 +129,82 @@ public class NpcCatalog
             {
                 bNpcNameId = nameRefId;
                 if (!bNpcNameLookup.TryGetValue(nameRefId, out var resolvedName))
-                    continue; // Can't resolve name, skip
+                    continue;
                 displayName = resolvedName;
             }
             else
             {
-                // Direct name string — use BNpcBaseId as the BNpcNameId
-                // (SetupBNpc will use whatever name is set, the nameId is secondary)
                 displayName = nameValue;
-                bNpcNameId = bNpcBaseId;
             }
 
             if (string.IsNullOrWhiteSpace(displayName)) continue;
 
-            allEntries.Add(new NpcCatalogEntry
+            if (key.StartsWith("B:") && uint.TryParse(key.AsSpan(2), out var bNpcBaseId))
             {
-                BNpcBaseId = bNpcBaseId,
-                BNpcNameId = bNpcNameId,
-                Name = displayName,
-            });
+                // BNpcBase entry (monster/creature)
+                if (!validBaseIds.Contains(bNpcBaseId)) continue;
+                if (bNpcNameId == 0) bNpcNameId = bNpcBaseId;
+
+                allEntries.Add(new NpcCatalogEntry
+                {
+                    Id = bNpcBaseId,
+                    BNpcNameId = bNpcNameId,
+                    Name = displayName,
+                    Type = NpcCatalogType.BNpc,
+                });
+                bCount++;
+            }
+            else if (key.StartsWith("E:") && uint.TryParse(key.AsSpan(2), out var eNpcBaseId))
+            {
+                // ENpcBase entry — classify as Human (has race/face) or ENpc (creature model)
+                var isHuman = humanENpcIds.Contains(eNpcBaseId);
+                allEntries.Add(new NpcCatalogEntry
+                {
+                    Id = eNpcBaseId,
+                    BNpcNameId = 0,
+                    Name = displayName,
+                    Type = isHuman ? NpcCatalogType.Human : NpcCatalogType.ENpc,
+                });
+                eCount++;
+            }
+        }
+
+        // Source 2: Direct ENpcBase × ENpcResident scan for ALL humanoid NPCs.
+        // NpcNames.json only has ~1043 E: entries. The game has thousands more
+        // humanoid NPCs (imperial soldiers, dungeon NPCs, etc.) that are missing.
+        // Scan ENpcBase for humanoid entries (ModelChara=0, Race>0) and get names
+        // from ENpcResident (same RowId).
+        var addedIds = new HashSet<(NpcCatalogType, uint)>();
+        foreach (var entry in allEntries)
+            addedIds.Add((entry.Type, entry.Id));
+
+        int humanScanCount = 0;
+        var residentSheet = dataManager.GetExcelSheet<ENpcResident>();
+        if (eNpcSheet != null && residentSheet != null)
+        {
+            foreach (var eNpcId in humanENpcIds)
+            {
+                if (addedIds.Contains((NpcCatalogType.Human, eNpcId))) continue;
+
+                var resident = residentSheet.GetRowOrDefault(eNpcId);
+                if (resident == null) continue;
+
+                var name = resident.Value.Singular.ExtractText();
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                allEntries.Add(new NpcCatalogEntry
+                {
+                    Id = eNpcId,
+                    BNpcNameId = 0,
+                    Name = name,
+                    Type = NpcCatalogType.Human,
+                });
+                humanScanCount++;
+            }
         }
 
         allEntries.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
-        log.Info($"NPC catalog loaded: {allEntries.Count} entries from NpcNames.json.");
+        log.Info($"NPC catalog loaded: {bCount} monsters + {eCount} from NpcNames + {humanScanCount} humanoids from ENpc scan = {allEntries.Count} total.");
     }
 
     private Dictionary<string, string>? LoadEmbeddedNpcNames()
@@ -147,22 +221,25 @@ public class NpcCatalog
     }
 
     /// <summary>
-    /// Search NPCs by name (case-insensitive substring match).
-    /// Returns at most maxResults entries.
+    /// Search NPCs by name, optionally filtered by type.
     /// </summary>
-    public IReadOnlyList<NpcCatalogEntry> Search(string filter)
+    public IReadOnlyList<NpcCatalogEntry> Search(string filter, NpcCatalogType? typeFilter = null)
     {
         EnsureLoaded();
         if (allEntries == null) return Array.Empty<NpcCatalogEntry>();
 
-        if (string.IsNullOrWhiteSpace(filter))
+        bool noFilter = string.IsNullOrWhiteSpace(filter);
+        bool noType = typeFilter == null;
+
+        if (noFilter && noType)
             return allEntries;
 
         var results = new List<NpcCatalogEntry>();
         foreach (var entry in allEntries)
         {
-            if (entry.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
-                results.Add(entry);
+            if (!noType && entry.Type != typeFilter) continue;
+            if (!noFilter && !entry.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
+            results.Add(entry);
         }
 
         return results;
@@ -179,32 +256,33 @@ public class NpcCatalog
         EnsureLoaded();
         popularEntries = new List<NpcCatalogEntry>();
 
-        // Curated popular enemies with verified BNpcBaseId/BNpcNameId pairs
-        var popularIds = new (uint BaseId, uint NameId, string FallbackName)[]
+        var popularIds = new (uint Id, uint NameId, NpcCatalogType Type, string FallbackName)[]
         {
-            // Training
-            (541, 541, "Striking Dummy"),
+            // Monsters
+            (541, 541, NpcCatalogType.BNpc, "Striking Dummy"),
+            (3, 3, NpcCatalogType.BNpc, "Cactuar"),
+            (15, 15, NpcCatalogType.BNpc, "Hog"),
+            (21, 21, NpcCatalogType.BNpc, "Imp"),
+            (23, 23, NpcCatalogType.BNpc, "Flytrap"),
+            (30, 30, NpcCatalogType.BNpc, "Mudestone Golem"),
+            (34, 34, NpcCatalogType.BNpc, "Tortoise"),
+            (38, 38, NpcCatalogType.BNpc, "Bat"),
+            (45, 45, NpcCatalogType.BNpc, "Wisp"),
+            (48, 48, NpcCatalogType.BNpc, "Myconid"),
 
-            // Common overworld mobs (verified matching IDs)
-            (3, 3, "Cactuar"),
-            (15, 15, "Hog"),
-            (21, 21, "Imp"),
-            (23, 23, "Flytrap"),
-            (30, 30, "Mudestone Golem"),
-            (34, 34, "Tortoise"),
-            (38, 38, "Bat"),
-            (45, 45, "Wisp"),
-            (48, 48, "Myconid"),
+            // Humanoid enemies (ENpcBase)
+            (1028802, 0, NpcCatalogType.ENpc, "Zenos"),
+            (1018510, 0, NpcCatalogType.ENpc, "Zenos yae Galvus (No Helm)"),
         };
 
-        foreach (var (baseId, nameId, fallback) in popularIds)
+        foreach (var (id, nameId, type, fallback) in popularIds)
         {
             NpcCatalogEntry? found = null;
             if (allEntries != null)
             {
                 foreach (var e in allEntries)
                 {
-                    if (e.BNpcBaseId == baseId)
+                    if (e.Id == id && e.Type == type)
                     {
                         found = e;
                         break;
@@ -214,9 +292,10 @@ public class NpcCatalog
 
             popularEntries.Add(found ?? new NpcCatalogEntry
             {
-                BNpcBaseId = baseId,
+                Id = id,
                 BNpcNameId = nameId,
                 Name = fallback,
+                Type = type,
             });
         }
 
@@ -238,7 +317,7 @@ public class NpcCatalog
             {
                 foreach (var e in allEntries)
                 {
-                    if (e.BNpcBaseId == recent.BNpcBaseId)
+                    if (e.Id == recent.BNpcBaseId)
                     {
                         found = e;
                         break;
@@ -248,7 +327,7 @@ public class NpcCatalog
 
             results.Add(found ?? new NpcCatalogEntry
             {
-                BNpcBaseId = recent.BNpcBaseId,
+                Id = recent.BNpcBaseId,
                 BNpcNameId = recent.BNpcNameId,
                 Name = $"NPC #{recent.BNpcBaseId}",
             });

@@ -17,8 +17,8 @@ namespace CombatSimulator.Animation;
 public unsafe class RagdollController : IDisposable
 {
     private readonly BoneTransformService boneService;
-    private readonly Npcs.NpcSelector npcSelector;
-    private readonly Safety.MovementBlockHook movementBlockHook;
+    private readonly Npcs.NpcSelector? npcSelector;
+    private readonly Safety.MovementBlockHook? movementBlockHook;
     private readonly Configuration config;
     private readonly IPluginLog log;
 
@@ -518,12 +518,29 @@ public unsafe class RagdollController : IDisposable
         boneService.OnRenderFrame += OnRenderFrame;
     }
 
+    /// <summary>Lightweight constructor for NPC ragdolls (no NPC collision volumes or movement blocking).</summary>
+    public RagdollController(BoneTransformService boneService, Configuration config, IPluginLog log)
+    {
+        this.boneService = boneService;
+        this.npcSelector = null;
+        this.movementBlockHook = null;
+        this.config = config;
+        this.log = log;
+
+        boneService.OnRenderFrame += OnRenderFrame;
+    }
+
     public void Activate(nint characterAddress)
+    {
+        Activate(characterAddress, config.RagdollActivationDelay);
+    }
+
+    public void Activate(nint characterAddress, float delayOverride)
     {
         if (isActive) Deactivate();
 
         targetCharacterAddress = characterAddress;
-        activationDelay = config.RagdollActivationDelay;
+        activationDelay = delayOverride;
         elapsed = 0f;
         physicsStarted = false;
         followWasActive = false;
@@ -533,7 +550,7 @@ public unsafe class RagdollController : IDisposable
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)characterAddress;
         savedCharacterPosition = go->Position;
 
-        log.Info($"RagdollController: Activated (delay={activationDelay:F1}s)");
+        log.Info($"RagdollController: Activated for 0x{characterAddress:X} (delay={activationDelay:F1}s)");
     }
 
     public void Deactivate()
@@ -1245,7 +1262,7 @@ public unsafe class RagdollController : IDisposable
         // Create NPC collision volumes — dynamically discover bones from each NPC's skeleton.
         // Works for any model (humanoid, monster, dragon) — no hardcoded bone names.
         npcCollisionStates.Clear();
-        if (config.RagdollNpcCollision)
+        if (config.RagdollNpcCollision && npcSelector != null)
         {
             var scale = config.RagdollNpcCollisionScale;
             var capsuleRadius = NpcDefaultBoneRadius * scale;
@@ -1831,7 +1848,7 @@ public unsafe class RagdollController : IDisposable
 
         // (Dev) Update GameObject.Position to follow ragdoll root bone.
         // Prevents model unload when ragdoll falls far from the frozen position.
-        if (config.RagdollFollowPosition && ragdollBones.Count > 0 && targetCharacterAddress != nint.Zero)
+        if (config.RagdollFollowPosition && movementBlockHook != null && ragdollBones.Count > 0 && targetCharacterAddress != nint.Zero)
         {
             try
             {
@@ -1843,7 +1860,7 @@ public unsafe class RagdollController : IDisposable
             catch { }
             followWasActive = true;
         }
-        else if (followWasActive && targetCharacterAddress != nint.Zero)
+        else if (followWasActive && movementBlockHook != null && targetCharacterAddress != nint.Zero)
         {
             // Toggled off — restore original position
             try

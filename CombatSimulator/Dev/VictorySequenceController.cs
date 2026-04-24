@@ -580,22 +580,66 @@ public unsafe class VictorySequenceController : IDisposable
 
     private void OnRenderFrame()
     {
-        // Update BEPU2 grab target each render frame with NPC hand world position
-        if (!isActive || !grabActive || cinematicNpc?.BattleChara == null) return;
+        if (!isActive || cinematicNpc?.BattleChara == null) return;
 
         try
         {
             var stages = config.VictorySequenceStages;
             if (currentStageIndex < 0 || currentStageIndex >= stages.Count) return;
+            var stage = stages[currentStageIndex];
 
-            var npcHandWorld = GetBoneWorldPos(cinematicNpc!.Address,stages[currentStageIndex].NpcBoneName);
-            if (npcHandWorld != null)
-                ragdollController.UpdateGrabTarget(npcHandWorld.Value);
+            // Apply shoulder rotation FIRST. The rotation writes propagate to
+            // hand/finger bones in ModelPose, so when we read the hand world
+            // position below it reflects the new rotated location. Without
+            // this ordering, BEPU gets the animation-default hand position,
+            // pulls the victim's neck there, and then our rotation swings the
+            // hand off into empty air — producing the "grabbing on air" bug.
+            if (stage.ShoulderRotationEnabled && stage.GrabEnabled)
+            {
+                ApplyShoulderRotation(stage);
+            }
+
+            // Update BEPU2 grab target each render frame. This now sees the
+            // post-rotation hand position (when shoulder override is on).
+            if (grabActive)
+            {
+                var npcHandWorld = GetBoneWorldPos(cinematicNpc!.Address, stage.NpcBoneName);
+                if (npcHandWorld != null)
+                    ragdollController.UpdateGrabTarget(npcHandWorld.Value);
+            }
         }
         catch (Exception ex)
         {
-            log.Warning(ex, "VictorySequence: Error updating grab target");
+            log.Warning(ex, "VictorySequence: Error in render frame");
         }
+    }
+
+    /// <summary>
+    /// Apply a manual delta rotation to the grabber's shoulder/upper-arm bone
+    /// in ModelPose. BoneTransformService.ApplyRotationDeltas handles the
+    /// descendant propagation so elbow/forearm/wrist/hand/fingers rotate with
+    /// the shoulder — same approach Customize+ uses.
+    /// </summary>
+    private void ApplyShoulderRotation(VictorySequenceStage stage)
+    {
+        if (cinematicNpc?.BattleChara == null) return;
+        if (stage.ShoulderPitch == 0f && stage.ShoulderYaw == 0f && stage.ShoulderRoll == 0f)
+            return;
+
+        var skel = boneService.TryGetSkeleton(cinematicNpc.Address);
+        if (skel == null) return;
+
+        var shoulderIdx = boneService.ResolveBoneIndex(skel.Value, stage.ShoulderBoneName);
+        if (shoulderIdx < 0) return;
+
+        const float Deg2Rad = MathF.PI / 180f;
+        var delta = Quaternion.CreateFromYawPitchRoll(
+            stage.ShoulderYaw * Deg2Rad,
+            stage.ShoulderPitch * Deg2Rad,
+            stage.ShoulderRoll * Deg2Rad);
+
+        var deltas = new Dictionary<int, Quaternion> { [shoulderIdx] = delta };
+        boneService.ApplyRotationDeltas(skel.Value, deltas);
     }
 
     public void Stop()

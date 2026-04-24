@@ -68,14 +68,14 @@ public class MainWindow : IDisposable
     // Virtual Enemies section state
     private NpcCatalog? npcCatalog;
     private string spawnSearchFilter = "";
-    private int spawnCategoryIndex = 0; // 0=Popular, 1=Recent, 2=All
+    private int spawnCategoryIndex = 0; // 0=Popular, 1=Recent, 2=Human, 3=Monsters, 4=All
     private int selectedCatalogIndex = -1;
     private NpcCatalogEntry? selectedCatalogEntry;
     private int virtualEnemiesClickCount = 0;
     private bool virtualEnemiesUnlocked = false;
 
     private static readonly string[] SpawnDirectionNames = { "Front", "Behind", "Left", "Right" };
-    private static readonly string[] SpawnCategoryNames = { "Popular", "Recent", "All" };
+    private static readonly string[] SpawnCategoryNames = { "Popular", "Recent", "Human", "Monsters", "All" };
 
     private static void HelpMarker(string desc)
     {
@@ -518,8 +518,8 @@ public class MainWindow : IDisposable
             if (selected) ImGui.PopStyleColor();
         }
 
-        // Search filter (All mode)
-        if (spawnCategoryIndex == 2)
+        // Search filter (Human / Monsters / All)
+        if (spawnCategoryIndex >= 2)
         {
             ImGui.SetNextItemWidth(-1);
             ImGui.InputTextWithHint("##npcSearch", "Search NPC name...", ref spawnSearchFilter, 256);
@@ -530,7 +530,9 @@ public class MainWindow : IDisposable
         {
             0 => npcCatalog.GetPopularEntries(),
             1 => npcCatalog.GetRecentEntries(config.RecentNpcEntries),
-            2 => npcCatalog.Search(spawnSearchFilter),
+            2 => npcCatalog.Search(spawnSearchFilter, NpcCatalogType.Human),
+            3 => npcCatalog.Search(spawnSearchFilter, NpcCatalogType.BNpc),
+            4 => npcCatalog.Search(spawnSearchFilter),
             _ => Array.Empty<NpcCatalogEntry>(),
         };
 
@@ -547,8 +549,8 @@ public class MainWindow : IDisposable
                 for (int i = 0; i < entries.Count; i++)
                 {
                     var entry = entries[i];
-                    bool isSelected = selectedCatalogEntry != null && selectedCatalogEntry.BNpcBaseId == entry.BNpcBaseId;
-                    if (ImGui.Selectable($"{entry.Name}##cat{entry.BNpcBaseId}", isSelected))
+                    bool isSelected = selectedCatalogEntry != null && selectedCatalogEntry.Id == entry.Id && selectedCatalogEntry.Type == entry.Type;
+                    if (ImGui.Selectable($"{entry.Name}##cat{entry.Type}{entry.Id}", isSelected))
                     {
                         selectedCatalogIndex = i;
                         selectedCatalogEntry = entry;
@@ -616,8 +618,9 @@ public class MainWindow : IDisposable
 
             npcSpawner.QueueSpawn(new NpcSpawnRequest
             {
-                BNpcBaseId = entry.BNpcBaseId,
+                BNpcBaseId = entry.Type == NpcCatalogType.BNpc ? entry.Id : 0,
                 BNpcNameId = entry.BNpcNameId,
+                ENpcBaseId = entry.Type is NpcCatalogType.ENpc or NpcCatalogType.Human ? entry.Id : 0,
                 Level = config.DefaultNpcLevel,
                 HpMultiplier = config.DefaultNpcHpMultiplier,
                 Position = pos,
@@ -625,10 +628,10 @@ public class MainWindow : IDisposable
             });
 
             // Track in recent list (avoid duplicates, keep last 20)
-            config.RecentNpcEntries.RemoveAll(r => r.BNpcBaseId == entry.BNpcBaseId);
+            config.RecentNpcEntries.RemoveAll(r => r.BNpcBaseId == entry.Id);
             config.RecentNpcEntries.Insert(0, new RecentNpcEntry
             {
-                BNpcBaseId = entry.BNpcBaseId,
+                BNpcBaseId = entry.Id,
                 BNpcNameId = entry.BNpcNameId,
             });
             if (config.RecentNpcEntries.Count > 20)
@@ -2145,7 +2148,7 @@ public class MainWindow : IDisposable
                 ImGui.Separator();
 
                 var delay = config.RagdollActivationDelay;
-                if (ImGui.SliderFloat("Activation Delay (s)##ragdoll", ref delay, 0.0f, 10.0f, "%.1f"))
+                if (ImGui.SliderFloat("Activation Delay (s)##ragdoll", ref delay, 0.0f, 100.0f, "%.1f"))
                 {
                     config.RagdollActivationDelay = delay;
                     config.Save();
@@ -2236,6 +2239,36 @@ public class MainWindow : IDisposable
                         config.Save();
                     }
                     HelpMarker("Resistance to gravity. Higher = stiffer hair that holds its shape.");
+                }
+
+                ImGui.Separator();
+                ImGui.Text("NPC Death Ragdoll");
+
+                var npcRagdoll = config.EnableNpcDeathRagdoll;
+                if (ImGui.Checkbox("Enable NPC Death Ragdoll##npcragdoll", ref npcRagdoll))
+                {
+                    config.EnableNpcDeathRagdoll = npcRagdoll;
+                    config.Save();
+                }
+                HelpMarker("Apply ragdoll physics to enemy NPCs when they die in combat.");
+
+                if (config.EnableNpcDeathRagdoll)
+                {
+                    var npcDelay = config.NpcRagdollActivationDelay;
+                    if (ImGui.SliderFloat("NPC Activation Delay (s)##npcragdoll", ref npcDelay, 0.0f, 5.0f, "%.1f"))
+                    {
+                        config.NpcRagdollActivationDelay = npcDelay;
+                        config.Save();
+                    }
+                    HelpMarker("Seconds after NPC death before ragdoll physics take over.");
+
+                    var maxNpc = config.MaxNpcRagdolls;
+                    if (ImGui.SliderInt("Max Concurrent##npcragdoll", ref maxNpc, 1, 20))
+                    {
+                        config.MaxNpcRagdolls = maxNpc;
+                        config.Save();
+                    }
+                    HelpMarker("Maximum number of NPC ragdolls active at once. Oldest is removed when the limit is reached.");
                 }
 
                 ImGui.Unindent();

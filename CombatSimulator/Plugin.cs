@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using CombatSimulator.Ai;
 using CombatSimulator.Animation;
@@ -46,6 +47,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly ActiveCameraController activeCameraController;
     private readonly Dev.VictorySequenceController victorySequenceController;
     private readonly HookSafetyChecker hookSafetyChecker;
+
+    // NPC ragdoll controllers (multiple concurrent, persist until sim stop/reset/zone change)
+    private readonly Dictionary<nint, RagdollController> npcRagdolls = new();
 
     // Dev: NPCs hidden by occlusion check (need to restore visibility on cleanup)
     private readonly HashSet<nint> occlusionHiddenNpcs = new();
@@ -94,7 +98,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
-        npcSpawner = new NpcSpawner(objectTable, dataManager, log);
+        npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, log);
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
@@ -120,18 +124,42 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             chatGui.PrintError($"[CombatSim] Spawn error: {msg}");
         };
 
-        // Re-register alive spawned NPCs when simulation starts
-        // (they get removed from npcSelector on StopSimulation via DeselectAll)
+        // Re-register alive spawned NPCs on sim start (they're removed from
+        // npcSelector by DeselectAll during StopSimulation). For real
+        // first-time starts this just re-populates the selector so
+        // NpcAiController can tick the existing spawns.
         combatEngine.OnSimulationStarted = () =>
         {
             foreach (var npc in npcSpawner.SpawnedNpcs)
             {
                 if (npc.IsSpawned && npc.BattleChara != null)
-                {
                     npcSelector.RegisterSpawnedNpc(npc);
-                }
             }
         };
+
+        // On sim stop or reset: despawn every virtual enemy and queue a
+        // fresh spawn with the same params at the same world position.
+        // Reason — humanoid clone state gets left in a broken blend-lock
+        // state by the cinema cleanup (see RespawnAllInPlace doc), and a
+        // fresh CopyFromCharacter clone is the only known fix.
+        //
+        // ResetState doesn't call DeselectAll so the selector still holds
+        // references to NPCs we're about to despawn. Explicitly unregister
+        // them first to avoid dangling pointers.
+        combatEngine.OnSimulationReset = () =>
+        {
+            if (npcSpawner.SpawnedNpcs.Count == 0) return;
+
+            log.Info($"Sim reset — despawning and re-queuing {npcSpawner.SpawnedNpcs.Count} virtual enemies.");
+
+            foreach (var npc in new List<SimulatedNpc>(npcSpawner.SpawnedNpcs))
+                npcSelector.UnregisterSpawnedNpc(npc);
+
+            npcSpawner.RespawnAllInPlace();
+        };
+
+        // Wire NPC death ragdoll
+        combatEngine.OnNpcDeathRagdoll = OnNpcDeathRagdoll;
 
         // Hook safety checker — register native functions we CALL (not hook) that other plugins may hook.
         // We check for JMP detours at each address to detect third-party hooks.
@@ -177,7 +205,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         framework.Update += OnFrameworkUpdate;
         clientState.TerritoryChanged += OnTerritoryChanged;
 
-        log.Info("Combat Simulator loaded.");
+        log.Info("Combat Simulator loaded. [virtual-enemies: humanoid clone-from-player bootstrap]");
     }
 
     public void Dispose()
@@ -190,6 +218,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         commandManager.RemoveHandler(CommandName);
 
         RestoreOcclusionHiddenNpcs();
+        DeactivateAllNpcRagdolls();
         npcSpawner.SpawnModeActive = false;
         npcSpawner.DespawnAll();
         npcSpawner.Dispose();
@@ -364,6 +393,42 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         }
     }
 
+    private void OnNpcDeathRagdoll(nint address)
+    {
+        if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll) return;
+
+        // Cap concurrent NPC ragdolls — evict the oldest
+        if (npcRagdolls.Count >= config.MaxNpcRagdolls)
+        {
+            var oldest = npcRagdolls.Keys.First();
+            RemoveNpcRagdoll(oldest);
+        }
+
+        if (npcRagdolls.ContainsKey(address)) return;
+
+        log.Info($"NPC death ragdoll: activating for 0x{address:X}");
+
+        var controller = new RagdollController(boneTransformService, config, log);
+        controller.Activate(address, config.NpcRagdollActivationDelay);
+        npcRagdolls[address] = controller;
+    }
+
+    private void RemoveNpcRagdoll(nint address)
+    {
+        if (npcRagdolls.TryGetValue(address, out var controller))
+        {
+            controller.Dispose();
+            npcRagdolls.Remove(address);
+        }
+    }
+
+    private void DeactivateAllNpcRagdolls()
+    {
+        foreach (var controller in npcRagdolls.Values)
+            controller.Dispose();
+        npcRagdolls.Clear();
+    }
+
     private void TickNpcOcclusionHide()
     {
         if (!config.DevNpcOcclusionHide || !config.EnableActiveCamera)
@@ -466,6 +531,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             npcSpawner.DespawnAll();
             log.Info("Despawned all client NPCs on zone change.");
         }
+
+        DeactivateAllNpcRagdolls();
 
         if (combatEngine.IsActive)
         {

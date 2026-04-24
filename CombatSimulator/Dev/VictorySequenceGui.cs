@@ -722,6 +722,37 @@ public class VictorySequenceGui
                 if (ImGui.SmallButton("Reset Defaults##grst"))
                 { s.GrabForce = 1000; s.GrabSpeed = 50; s.GrabSpringFreq = 120; config.Save(); }
 
+                // --- Shoulder rotation override ---
+                ImGui.Separator();
+                var shoulder = s.ShoulderRotationEnabled;
+                if (ImGui.Checkbox("Shoulder rotation##shldr", ref shoulder))
+                { s.ShoulderRotationEnabled = shoulder; config.Save(); }
+                if (s.ShoulderRotationEnabled)
+                {
+                    ImGui.Indent();
+
+                    var shoulderIdx = FindBoneIndex(npcBoneList, s.ShoulderBoneName);
+                    if (ImGui.Combo("Shoulder Bone##shb", ref shoulderIdx, npcBoneList, npcBoneList.Length))
+                    { s.ShoulderBoneName = npcBoneList[shoulderIdx]; config.Save(); }
+
+                    var pitch = s.ShoulderPitch;
+                    if (ImGui.DragFloat("Pitch##shp", ref pitch, 0.5f, -180f, 180f, "%.1f"))
+                    { s.ShoulderPitch = pitch; config.Save(); }
+
+                    var yaw = s.ShoulderYaw;
+                    if (ImGui.DragFloat("Yaw##shy", ref yaw, 0.5f, -180f, 180f, "%.1f"))
+                    { s.ShoulderYaw = yaw; config.Save(); }
+
+                    var roll = s.ShoulderRoll;
+                    if (ImGui.DragFloat("Roll##shr", ref roll, 0.5f, -180f, 180f, "%.1f"))
+                    { s.ShoulderRoll = roll; config.Save(); }
+
+                    if (ImGui.SmallButton("Reset##shrst"))
+                    { s.ShoulderPitch = 0; s.ShoulderYaw = 0; s.ShoulderRoll = 0; config.Save(); }
+
+                    ImGui.Unindent();
+                }
+
                 ImGui.Unindent();
             }
         }
