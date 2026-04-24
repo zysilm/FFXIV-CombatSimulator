@@ -2148,7 +2148,7 @@ public class MainWindow : IDisposable
                 ImGui.Separator();
 
                 var delay = config.RagdollActivationDelay;
-                if (ImGui.SliderFloat("Activation Delay (s)##ragdoll", ref delay, 0.0f, 10.0f, "%.1f"))
+                if (ImGui.SliderFloat("Activation Delay (s)##ragdoll", ref delay, 0.0f, 100.0f, "%.1f"))
                 {
                     config.RagdollActivationDelay = delay;
                     config.Save();
@@ -2269,14 +2269,6 @@ public class MainWindow : IDisposable
                         config.Save();
                     }
                     HelpMarker("Maximum number of NPC ragdolls active at once. Oldest is removed when the limit is reached.");
-
-                    var duration = config.NpcRagdollDuration;
-                    if (ImGui.SliderFloat("Duration (s)##npcragdoll", ref duration, 5.0f, 120.0f, "%.0f"))
-                    {
-                        config.NpcRagdollDuration = duration;
-                        config.Save();
-                    }
-                    HelpMarker("Seconds before an NPC ragdoll is automatically cleaned up.");
                 }
 
                 ImGui.Unindent();

@@ -48,9 +48,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly Dev.VictorySequenceController victorySequenceController;
     private readonly HookSafetyChecker hookSafetyChecker;
 
-    // NPC ragdoll controllers (multiple concurrent)
+    // NPC ragdoll controllers (multiple concurrent, persist until sim stop/reset/zone change)
     private readonly Dictionary<nint, RagdollController> npcRagdolls = new();
-    private readonly Dictionary<nint, float> npcRagdollTimers = new();
 
     // Dev: NPCs hidden by occlusion check (need to restore visibility on cleanup)
     private readonly HashSet<nint> occlusionHiddenNpcs = new();
@@ -369,7 +368,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             combatEngine.Tick(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
             victorySequenceController.Tick(deltaTime);
-            TickNpcRagdolls(deltaTime);
 
             // Dev: apply NPC scale override via DrawObject transform
             if (config.DevNpcScale != 1.0f)
@@ -402,7 +400,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // Cap concurrent NPC ragdolls — evict the oldest
         if (npcRagdolls.Count >= config.MaxNpcRagdolls)
         {
-            var oldest = npcRagdollTimers.OrderByDescending(kvp => kvp.Value).First().Key;
+            var oldest = npcRagdolls.Keys.First();
             RemoveNpcRagdoll(oldest);
         }
 
@@ -413,23 +411,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         var controller = new RagdollController(boneTransformService, config, log);
         controller.Activate(address, config.NpcRagdollActivationDelay);
         npcRagdolls[address] = controller;
-        npcRagdollTimers[address] = 0f;
-    }
-
-    private void TickNpcRagdolls(float deltaTime)
-    {
-        if (npcRagdolls.Count == 0) return;
-
-        var toRemove = new List<nint>();
-        foreach (var kvp in npcRagdollTimers)
-        {
-            var newTime = kvp.Value + deltaTime;
-            npcRagdollTimers[kvp.Key] = newTime;
-            if (newTime >= config.NpcRagdollDuration)
-                toRemove.Add(kvp.Key);
-        }
-        foreach (var addr in toRemove)
-            RemoveNpcRagdoll(addr);
     }
 
     private void RemoveNpcRagdoll(nint address)
@@ -438,7 +419,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         {
             controller.Dispose();
             npcRagdolls.Remove(address);
-            npcRagdollTimers.Remove(address);
         }
     }
 
@@ -447,7 +427,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         foreach (var controller in npcRagdolls.Values)
             controller.Dispose();
         npcRagdolls.Clear();
-        npcRagdollTimers.Clear();
     }
 
     private void TickNpcOcclusionHide()

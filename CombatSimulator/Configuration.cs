@@ -125,7 +125,6 @@ public class Configuration : IPluginConfiguration
     public bool EnableNpcDeathRagdoll { get; set; } = true;
     public float NpcRagdollActivationDelay { get; set; } = 0.5f;
     public int MaxNpcRagdolls { get; set; } = 5;
-    public float NpcRagdollDuration { get; set; } = 30.0f;
     public float RagdollGravity { get; set; } = 9.8f;
     public float RagdollDamping { get; set; } = 0.97f;
     public int RagdollSolverIterations { get; set; } = 8;
