@@ -601,8 +601,9 @@ public class MainWindow : IDisposable
         ImGui.SameLine();
         var hpMult = config.DefaultNpcHpMultiplier;
         ImGui.SetNextItemWidth(-1);
-        if (ImGui.SliderFloat("HP Mult", ref hpMult, 0.1f, 10.0f, "%.1f"))
+        if (ImGui.InputFloat("HP Mult", ref hpMult, 0.0001f, 0.01f, "%.4f"))
         {
+            if (hpMult < 0.0001f) hpMult = 0.0001f;
             config.DefaultNpcHpMultiplier = hpMult;
             config.Save();
         }
@@ -702,7 +703,7 @@ public class MainWindow : IDisposable
 
     private Vector3 CalculateSpawnPosition(int directionIndex, float distance)
     {
-        var player = clientState.LocalPlayer;
+        var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null) return Vector3.Zero;
 
         var playerPos = player.Position;
@@ -735,12 +736,13 @@ public class MainWindow : IDisposable
             HelpMarker("Level assigned to newly selected NPC targets.");
 
             var hpMult = config.DefaultNpcHpMultiplier;
-            if (ImGui.SliderFloat("Default HP Multiplier", ref hpMult, 0.1f, 10.0f, "%.1f"))
+            if (ImGui.InputFloat("Default HP Multiplier", ref hpMult, 0.0001f, 0.01f, "%.4f"))
             {
+                if (hpMult < 0.0001f) hpMult = 0.0001f;
                 config.DefaultNpcHpMultiplier = hpMult;
                 config.Save();
             }
-            HelpMarker("Multiplier applied to base NPC HP. Higher = tankier enemies.");
+            HelpMarker("Multiplier applied to base NPC HP. Higher = tankier enemies. Use +/- buttons for fine 0.0001 steps.");
 
             var behaviorType = config.DefaultNpcBehaviorType;
             if (ImGui.Combo("Default NPC Behavior", ref behaviorType, BehaviorNames, BehaviorNames.Length))
@@ -1351,7 +1353,7 @@ public class MainWindow : IDisposable
     private unsafe void RefreshSkeletonBones()
     {
         skeletonBonesLoaded = true;
-        var player = clientState.LocalPlayer;
+        var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null) return;
 
         var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;
@@ -2134,7 +2136,7 @@ public class MainWindow : IDisposable
                 {
                     if (ragdollActive)
                     {
-                        var player = clientState.LocalPlayer;
+                        var player = Core.Services.ObjectTable.LocalPlayer;
                         if (player != null)
                             ragdollController.Activate(player.Address);
                     }
@@ -2148,7 +2150,7 @@ public class MainWindow : IDisposable
                 ImGui.Separator();
 
                 var delay = config.RagdollActivationDelay;
-                if (ImGui.SliderFloat("Activation Delay (s)##ragdoll", ref delay, 0.0f, 100.0f, "%.1f"))
+                if (ImGui.SliderFloat("Activation Delay (s)##ragdoll", ref delay, 0.0f, 20.0f, "%.1f"))
                 {
                     config.RagdollActivationDelay = delay;
                     config.Save();

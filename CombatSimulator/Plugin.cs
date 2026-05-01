@@ -148,6 +148,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // them first to avoid dangling pointers.
         combatEngine.OnSimulationReset = () =>
         {
+            DeactivateAllNpcRagdolls();
+
             if (npcSpawner.SpawnedNpcs.Count == 0) return;
 
             log.Info($"Sim reset — despawning and re-queuing {npcSpawner.SpawnedNpcs.Count} virtual enemies.");
