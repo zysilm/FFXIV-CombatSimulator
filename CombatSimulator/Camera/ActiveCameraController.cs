@@ -20,12 +20,15 @@ public unsafe class ActiveCameraController : IDisposable
 
     private readonly IClientState clientState;
     private readonly IGameInteropProvider gameInterop;
+    private readonly ISigScanner sigScanner;
     private readonly Configuration config;
     private readonly IPluginLog log;
 
-    // getCameraPosition hook (vtable index 15) — replaces orbit center
+    // getCameraPosition hook (resolved by sig-anchoring against setCameraLookAt) — replaces orbit center
     private delegate void GetCameraPositionDelegate(nint camera, nint target, Vector3* position, nint swapPerson);
     private Hook<GetCameraPositionDelegate>? getCameraPosHook;
+    // Hypostasis-known signature for Camera::SetCameraLookAt — getCameraPosition lives at vtable[setLookAtIdx + 1]
+    private const string SetCameraLookAtSig = "40 53 48 83 EC 30 44 8B 89 ?? ?? ?? ?? 48 8B DA";
 
     // Camera collision patch (same mechanism as DeathCamController, independent instance)
     private nint collisionPatchAddress;
@@ -52,6 +55,7 @@ public unsafe class ActiveCameraController : IDisposable
     {
         this.gameInterop = gameInterop;
         this.clientState = clientState;
+        this.sigScanner = sigScanner;
         this.config = config;
         this.log = log;
 
@@ -129,6 +133,11 @@ public unsafe class ActiveCameraController : IDisposable
 
     /// <summary>
     /// Lazily create the getCameraPosition hook once the camera is available.
+    /// Resolution is sig-anchored, not by hardcoded vtable index — SE shifts the
+    /// Camera vtable on game patches (most recently 7.5 inserted a new virtual
+    /// before the orbit fns, pushing getCameraPosition from vtable[15] to [16]).
+    /// We sig-scan setCameraLookAt's body to locate it in the vtable, then take
+    /// the next slot.
     /// </summary>
     public void EnsureHook()
     {
@@ -141,14 +150,37 @@ public unsafe class ActiveCameraController : IDisposable
             if (camMgr == null || camMgr->Camera == null)
                 return;
 
+            var setLookAtAddr = sigScanner.ScanText(SetCameraLookAtSig);
+            if (setLookAtAddr == nint.Zero)
+            {
+                log.Error("ActiveCamera: setCameraLookAt sig not found — cannot resolve getCameraPosition.");
+                return;
+            }
+
             var camera = (nint)camMgr->Camera;
             var vtable = *(nint**)camera;
-            var getCamPosAddr = vtable[15];
+
+            int setLookAtIdx = -1;
+            for (int i = 0; i < 64; i++)
+            {
+                if (vtable[i] == setLookAtAddr)
+                {
+                    setLookAtIdx = i;
+                    break;
+                }
+            }
+            if (setLookAtIdx < 0)
+            {
+                log.Error($"ActiveCamera: setCameraLookAt (0x{setLookAtAddr:X}) not found in camera vtable.");
+                return;
+            }
+
+            var getCamPosAddr = vtable[setLookAtIdx + 1];
 
             getCameraPosHook = gameInterop.HookFromAddress<GetCameraPositionDelegate>(getCamPosAddr, GetCameraPositionDetour);
             getCameraPosHook.Enable();
 
-            log.Info($"ActiveCamera: getCameraPosition hook at 0x{getCamPosAddr:X}");
+            log.Info($"ActiveCamera: setCameraLookAt resolved at vtable[{setLookAtIdx}] → getCameraPosition hook at 0x{getCamPosAddr:X}");
         }
         catch (Exception ex)
         {
