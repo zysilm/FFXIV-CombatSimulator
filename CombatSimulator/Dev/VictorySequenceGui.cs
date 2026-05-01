@@ -63,7 +63,7 @@ public class VictorySequenceGui
     private unsafe void RefreshNpcBones()
     {
         // Read from game's current target (not combat sim target list)
-        var target = Core.Services.ClientState.LocalPlayer?.TargetObject;
+        var target = Core.Services.ObjectTable.LocalPlayer?.TargetObject;
         if (target != null)
         {
             npcBoneList = ReadBonesFromCharacter(target.Address);
@@ -91,7 +91,7 @@ public class VictorySequenceGui
     private unsafe void EnsurePlayerBones()
     {
         if (playerBonesLoaded) return;
-        var player = Core.Services.ClientState.LocalPlayer;
+        var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null) return;
         playerBoneList = ReadBonesFromCharacter(player.Address);
         if (playerBoneList.Length > 0)

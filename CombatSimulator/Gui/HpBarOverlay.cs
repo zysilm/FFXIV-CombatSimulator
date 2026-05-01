@@ -69,7 +69,7 @@ public class HpBarOverlay : IDisposable
         Vector3[] playerBodyPoints = null;
         if (config.HpBarOcclusion)
         {
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             var camMgr = GameCameraManager.Instance();
             if (player != null && camMgr != null && camMgr->Camera != null)
             {
@@ -113,7 +113,7 @@ public class HpBarOverlay : IDisposable
         // Draw player HP bar (world overlay — never occluded)
         if (config.ShowPlayerHpBar)
         {
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             if (player != null)
             {
                 var headPos = GetBoneWorldPos(player.Address, "j_kao");

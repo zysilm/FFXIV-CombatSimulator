@@ -39,7 +39,7 @@ public unsafe class NpcAiController : IDisposable
 
     public void Tick(float deltaTime, IReadOnlyList<SimulatedNpc> npcs)
     {
-        var player = clientState.LocalPlayer;
+        var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null)
             return;
 
@@ -435,7 +435,7 @@ public unsafe class NpcAiController : IDisposable
             // Single NPC: approach from its current direction
             if (distToPlayer < 0.1f)
             {
-                var player = clientState.LocalPlayer;
+                var player = Core.Services.ObjectTable.LocalPlayer;
                 float playerRot = player?.Rotation ?? 0;
                 var forward = new Vector3(-MathF.Sin(playerRot), 0, -MathF.Cos(playerRot));
                 targetPos = playerPos + forward * targetDist;
@@ -450,7 +450,7 @@ public unsafe class NpcAiController : IDisposable
         {
             // Multiple NPCs: distribute evenly in front of the player
             // In FFXIV, playerRot points forward; NPC at angle playerRot is in front of the player
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             float playerRot = player?.Rotation ?? 0;
 
             // The center of the arc is the player's forward direction

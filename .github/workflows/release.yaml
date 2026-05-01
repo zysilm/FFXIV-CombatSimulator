@@ -20,7 +20,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.0.x
 
       - name: Setup Dalamud
         run: |
@@ -63,7 +63,7 @@ jobs:
           data['DownloadLinkInstall'] = dl
           data['DownloadLinkUpdate'] = dl
           data['DownloadLinkTesting'] = dl
-          data['DalamudApiLevel'] = 14
+          data['DalamudApiLevel'] = 15
           # Merge into existing pluginmaster.json so other plugins are preserved
           master = []
           if os.path.exists('pluginmaster.json'):

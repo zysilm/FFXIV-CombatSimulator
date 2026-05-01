@@ -128,7 +128,7 @@ public unsafe class MovementBlockHook : IDisposable
 
     private bool IsLocalPlayer(GameObject* obj)
     {
-        var player = clientState.LocalPlayer;
+        var player = CombatSimulator.Core.Services.ObjectTable.LocalPlayer;
         return player != null && (nint)obj == player.Address;
     }
 

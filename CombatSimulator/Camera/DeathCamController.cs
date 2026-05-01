@@ -217,7 +217,7 @@ public unsafe class DeathCamController : IDisposable
                 var bonePos = GetBoneWorldPosition(config.DeathCamBoneName);
                 if (bonePos == null)
                 {
-                    var player = clientState.LocalPlayer;
+                    var player = Core.Services.ObjectTable.LocalPlayer;
                     if (player != null)
                         bonePos = player.Position;
                 }
@@ -291,7 +291,7 @@ public unsafe class DeathCamController : IDisposable
     {
         try
         {
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             if (player == null) return null;
 
             var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;
@@ -360,7 +360,7 @@ public unsafe class DeathCamController : IDisposable
     {
         try
         {
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             if (player == null) return 0;
 
             var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;

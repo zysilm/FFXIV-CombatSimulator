@@ -270,7 +270,7 @@ public unsafe class ActiveCameraController : IDisposable
     {
         try
         {
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             if (player == null) return null;
 
             var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;

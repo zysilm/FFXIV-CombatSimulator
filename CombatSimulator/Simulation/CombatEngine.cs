@@ -639,7 +639,7 @@ public class CombatEngine : IDisposable
     {
         if (entity.IsPlayer)
         {
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             if (player != null)
                 return player.EntityId;
         }
@@ -662,7 +662,7 @@ public class CombatEngine : IDisposable
     {
         if (entity.IsPlayer)
         {
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             if (player != null)
                 return player.Position;
         }
@@ -685,7 +685,7 @@ public class CombatEngine : IDisposable
     {
         if (entity.IsPlayer)
         {
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             if (player != null)
                 return player.Rotation;
         }
@@ -746,7 +746,7 @@ public class CombatEngine : IDisposable
                 // Activate ragdoll physics on player death
                 if (config.EnableRagdoll)
                 {
-                    var player = clientState.LocalPlayer;
+                    var player = Core.Services.ObjectTable.LocalPlayer;
                     if (player != null)
                     {
                         ragdollController.Activate(player.Address);
@@ -841,7 +841,7 @@ public class CombatEngine : IDisposable
 
     private unsafe void InitializePlayerState()
     {
-        var player = clientState.LocalPlayer;
+        var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null)
             return;
 

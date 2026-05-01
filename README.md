@@ -44,7 +44,7 @@ git clone --recursive https://github.com/zysilm/FFXIV-CombatSimulator.git
 dotnet build CombatSimulator/CombatSimulator.csproj -c Release
 ```
 
-Requires .NET 8.0 SDK and Dalamud.
+Requires .NET 10.0 SDK and Dalamud.
 
 ## Credits
 

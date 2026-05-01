@@ -355,7 +355,7 @@ public unsafe class AnimationController : IDisposable
     {
         if (isPlayer)
         {
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             if (player != null)
                 return (player.Address, player.EntityId);
         }
@@ -597,7 +597,7 @@ public unsafe class AnimationController : IDisposable
                 return;
             }
 
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             if (player == null) return;
             var character = (Character*)player.Address;
 
@@ -649,7 +649,7 @@ public unsafe class AnimationController : IDisposable
     {
         try
         {
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             if (player == null) return;
 
             var character = (Character*)player.Address;
@@ -685,7 +685,7 @@ public unsafe class AnimationController : IDisposable
                 {
                     // Get player's object ID so the emote targets the player (facing, height adjust)
                     ulong playerObjId = 0;
-                    var player = clientState.LocalPlayer;
+                    var player = Core.Services.ObjectTable.LocalPlayer;
                     if (player != null)
                     {
                         var playerObj = (GameObject*)player.Address;
@@ -753,7 +753,7 @@ public unsafe class AnimationController : IDisposable
 
         try
         {
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             if (player == null) return;
 
             var vfxPath = config.HitVfxPath;
@@ -773,7 +773,7 @@ public unsafe class AnimationController : IDisposable
     {
         if (isPlayer)
         {
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             if (player != null)
                 return (Character*)player.Address;
         }

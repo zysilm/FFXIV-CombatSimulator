@@ -140,7 +140,7 @@ public unsafe class VictorySequenceController : IDisposable
         cinematicNpc = candidate;
 
         // Capture player state at death
-        var player = clientState.LocalPlayer;
+        var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null)
             return (false, null);
 
@@ -295,7 +295,7 @@ public unsafe class VictorySequenceController : IDisposable
         if (stage.LockFacing)
         {
             // Track player's head bone (j_kao) in real time
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             var headPos = player != null ? GetBoneWorldPos(player.Address, "j_kao") : null;
             var faceTarget = headPos ?? playerDeathPos;
             var toHead = faceTarget - targetPos;
@@ -508,7 +508,7 @@ public unsafe class VictorySequenceController : IDisposable
             {
                 if (!headResolved)
                 {
-                    var player = clientState.LocalPlayer;
+                    var player = Core.Services.ObjectTable.LocalPlayer;
                     headPos = player != null ? GetBoneWorldPos(player.Address, "j_kao") : null;
                     headResolved = true;
                 }
@@ -535,7 +535,7 @@ public unsafe class VictorySequenceController : IDisposable
         if (npcSkel != null)
             npcHandBoneIdx = boneService.ResolveBoneIndex(npcSkel.Value, stage.NpcBoneName);
 
-        var player = clientState.LocalPlayer;
+        var player = Core.Services.ObjectTable.LocalPlayer;
         if (player != null)
         {
             var playerSkel = boneService.TryGetSkeleton(player.Address);
@@ -649,7 +649,7 @@ public unsafe class VictorySequenceController : IDisposable
         // Restore player Y position
         try
         {
-            var player = clientState.LocalPlayer;
+            var player = Core.Services.ObjectTable.LocalPlayer;
             if (player != null)
             {
                 var playerObj = (GameObject*)player.Address;

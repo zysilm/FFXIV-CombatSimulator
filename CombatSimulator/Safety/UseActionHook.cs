@@ -155,7 +155,7 @@ public unsafe class UseActionHook : IDisposable
         try
         {
             // Don't auto-select self
-            var localPlayer = clientState.LocalPlayer;
+            var localPlayer = CombatSimulator.Core.Services.ObjectTable.LocalPlayer;
             if (localPlayer == null || targetId == localPlayer.EntityId)
                 return false;
 

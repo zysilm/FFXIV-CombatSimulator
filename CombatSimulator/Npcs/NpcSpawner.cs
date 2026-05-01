@@ -539,7 +539,7 @@ public unsafe class NpcSpawner : IDisposable
         }
 
         // Humanoid ENpc path — need a valid local player as clone source.
-        var localPlayer = clientState.LocalPlayer;
+        var localPlayer = CombatSimulator.Core.Services.ObjectTable.LocalPlayer;
         if (localPlayer == null || localPlayer.Address == nint.Zero)
         {
             log.Error("[SpawnDbg] Local player not available as clone source.");
