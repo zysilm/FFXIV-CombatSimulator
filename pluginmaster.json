@@ -14,7 +14,7 @@
       "other"
     ],
     "LoadPriority": 0,
-    "AssemblyVersion": "1.1.0",
+    "AssemblyVersion": "1.1.0.0",
     "InternalName": "RagdollSystem",
     "DownloadLinkInstall": "https://github.com/zysilm/RagdollSystem/releases/download/v1.1.0/RagdollSystem.zip",
     "DownloadLinkUpdate": "https://github.com/zysilm/RagdollSystem/releases/download/v1.1.0/RagdollSystem.zip",
@@ -37,7 +37,7 @@
     ],
     "LoadPriority": 0,
     "IconUrl": "https://raw.githubusercontent.com/zysilm/FFXIV-CombatSimulator/main/images/logo.png",
-    "AssemblyVersion": "1.9.4",
+    "AssemblyVersion": "1.9.4.0",
     "InternalName": "CombatSimulator",
     "DownloadLinkInstall": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v1.9.4/CombatSimulator.zip",
     "DownloadLinkUpdate": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v1.9.4/CombatSimulator.zip",
