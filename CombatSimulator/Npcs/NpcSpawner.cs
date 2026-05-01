@@ -490,8 +490,8 @@ public unsafe class NpcSpawner : IDisposable
             var mhId = *(WeaponModelId*)&mh;
             var ohId = *(WeaponModelId*)&oh;
 
-            character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, mhId, 0, 0, 0, 0);
-            character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, ohId, 0, 0, 0, 0);
+            character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, mhId, 0, 0, 0, 0, false);
+            character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, ohId, 0, 0, 0, 0, false);
 
             log.Verbose($"Loaded weapons: MH={mhId.Id}/{mhId.Type}/{mhId.Variant}, OH={ohId.Id}/{ohId.Type}/{ohId.Variant}");
         }

@@ -524,7 +524,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         occlusionHiddenNpcs.Clear();
     }
 
-    private void OnTerritoryChanged(ushort territoryId)
+    private void OnTerritoryChanged(uint territoryId)
     {
         // Despawn client-spawned NPCs first (they don't survive zone changes)
         npcSpawner.SpawnModeActive = false;
