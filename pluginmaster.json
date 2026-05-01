@@ -14,11 +14,11 @@
       "other"
     ],
     "LoadPriority": 0,
-    "AssemblyVersion": "1.1.0.0",
+    "AssemblyVersion": "1.2.0.0",
     "InternalName": "RagdollSystem",
-    "DownloadLinkInstall": "https://github.com/zysilm/RagdollSystem/releases/download/v1.1.0/RagdollSystem.zip",
-    "DownloadLinkUpdate": "https://github.com/zysilm/RagdollSystem/releases/download/v1.1.0/RagdollSystem.zip",
-    "DownloadLinkTesting": "https://github.com/zysilm/RagdollSystem/releases/download/v1.1.0/RagdollSystem.zip",
+    "DownloadLinkInstall": "https://github.com/zysilm/RagdollSystem/releases/download/v1.2.0/RagdollSystem.zip",
+    "DownloadLinkUpdate": "https://github.com/zysilm/RagdollSystem/releases/download/v1.2.0/RagdollSystem.zip",
+    "DownloadLinkTesting": "https://github.com/zysilm/RagdollSystem/releases/download/v1.2.0/RagdollSystem.zip",
     "DalamudApiLevel": 15
   },
   {
