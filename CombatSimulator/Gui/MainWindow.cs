@@ -228,7 +228,15 @@ public class MainWindow : IDisposable
                     config.RagdollSolverIterations = 8;
                     config.RagdollSelfCollision = true;
                     config.RagdollFriction = 1.0f;
-                    config.RagdollWeaponDrop = true;
+                    config.WeaponDropEnabled = true;
+                    config.WeaponDropGravity = 9.8f;
+                    config.WeaponDropDamping = 0.99f;
+                    config.WeaponDropMass = 1.5f;
+                    config.WeaponDropRadius = 0.025f;
+                    config.WeaponDropHalfLength = 0.4f;
+                    config.WeaponDropBounce = 1.5f;
+                    config.WeaponDropFriction = 0.6f;
+                    config.WeaponDropSolverIterations = 4;
                     config.RagdollHairPhysics = false;
                     config.RagdollHairGravityStrength = 0.5f;
                     config.RagdollHairDamping = 0.92f;
@@ -2197,15 +2205,77 @@ public class MainWindow : IDisposable
                 HelpMarker("Surface friction for all ragdoll contacts. 0 = ice (limbs slide freely), 1 = grippy (default). Lower values make the body slide more realistically. Takes effect on next ragdoll activation.");
 
                 ImGui.Separator();
-                ImGui.Text("Weapon Drop");
+                ImGui.Text("Weapon Drop (independent physics)");
 
-                var weaponDrop = config.RagdollWeaponDrop;
-                if (ImGui.Checkbox("Enable Weapon Drop##ragdoll", ref weaponDrop))
+                var weaponDrop = config.WeaponDropEnabled;
+                if (ImGui.Checkbox("Enable Weapon Drop##weapondrop", ref weaponDrop))
                 {
-                    config.RagdollWeaponDrop = weaponDrop;
+                    config.WeaponDropEnabled = weaponDrop;
                     config.Save();
                 }
-                HelpMarker("Weapon detaches from the hand and falls with physics on death. Uses battle/dead animation instead of play-dead emote to keep weapons drawn. Takes effect on next ragdoll activation.");
+                HelpMarker("Weapon detaches from the hand and falls with physics immediately on death. Independent of ragdoll — works on player and NPCs even with ragdoll disabled. Forces battle/dead animation so weapons stay drawn.");
+
+                if (config.WeaponDropEnabled)
+                {
+                    var wdGravity = config.WeaponDropGravity;
+                    if (ImGui.SliderFloat("Gravity##weapondrop", ref wdGravity, 0.0f, 30.0f, "%.2f"))
+                    {
+                        config.WeaponDropGravity = wdGravity;
+                        config.Save();
+                    }
+
+                    var wdDamping = config.WeaponDropDamping;
+                    if (ImGui.SliderFloat("Damping##weapondrop", ref wdDamping, 0.80f, 1.00f, "%.3f"))
+                    {
+                        config.WeaponDropDamping = wdDamping;
+                        config.Save();
+                    }
+                    HelpMarker("Per-frame velocity multiplier. 1.0 = no damping, lower values settle faster.");
+
+                    var wdBounce = config.WeaponDropBounce;
+                    if (ImGui.SliderFloat("Bounce##weapondrop", ref wdBounce, 0.0f, 5.0f, "%.2f"))
+                    {
+                        config.WeaponDropBounce = wdBounce;
+                        config.Save();
+                    }
+                    HelpMarker("BepuPhysics MaximumRecoveryVelocity — higher = bouncier weapons.");
+
+                    var wdFriction = config.WeaponDropFriction;
+                    if (ImGui.SliderFloat("Friction##weapondrop", ref wdFriction, 0.0f, 2.0f, "%.2f"))
+                    {
+                        config.WeaponDropFriction = wdFriction;
+                        config.Save();
+                    }
+
+                    var wdMass = config.WeaponDropMass;
+                    if (ImGui.SliderFloat("Mass (kg)##weapondrop", ref wdMass, 0.1f, 10.0f, "%.2f"))
+                    {
+                        config.WeaponDropMass = wdMass;
+                        config.Save();
+                    }
+
+                    var wdRadius = config.WeaponDropRadius;
+                    if (ImGui.SliderFloat("Capsule Radius##weapondrop", ref wdRadius, 0.005f, 0.2f, "%.3f"))
+                    {
+                        config.WeaponDropRadius = wdRadius;
+                        config.Save();
+                    }
+
+                    var wdHalf = config.WeaponDropHalfLength;
+                    if (ImGui.SliderFloat("Capsule Half-Length##weapondrop", ref wdHalf, 0.1f, 1.5f, "%.2f"))
+                    {
+                        config.WeaponDropHalfLength = wdHalf;
+                        config.Save();
+                    }
+
+                    var wdSolver = config.WeaponDropSolverIterations;
+                    if (ImGui.SliderInt("Solver Iterations##weapondrop", ref wdSolver, 1, 64))
+                    {
+                        config.WeaponDropSolverIterations = wdSolver;
+                        config.Save();
+                    }
+                    HelpMarker("Higher = more stable contact resolution, more CPU. Changing physics params clears all currently-dropped weapons.");
+                }
 
                 ImGui.Separator();
                 ImGui.Text("Hair Physics");

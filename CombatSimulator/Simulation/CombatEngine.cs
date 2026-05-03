@@ -77,9 +77,15 @@ public class CombatEngine : IDisposable
 
     /// <summary>
     /// Fired when a simulated NPC dies, passing the NPC's character address.
-    /// Used by the plugin to activate ragdoll physics on the dead NPC.
+    /// Subscribers handle ragdoll physics and weapon drop (both with the ragdoll-activation delay).
     /// </summary>
     public Action<nint>? OnNpcDeathRagdoll { get; set; }
+
+    /// <summary>
+    /// Fired when the local player dies in the simulation, passing the player's address.
+    /// Subscribers handle ragdoll physics and weapon drop (both with the ragdoll-activation delay).
+    /// </summary>
+    public Action<nint>? OnPlayerDeath { get; set; }
 
     // Configuration (set from plugin config)
     public float DamageMultiplier { get; set; } = 1.0f;
@@ -743,15 +749,17 @@ public class CombatEngine : IDisposable
                 ApplyGlamourer();
                 deathCamController?.Activate();
 
-                // Activate ragdoll physics on player death
-                if (config.EnableRagdoll)
+                // Activate ragdoll physics on player death + fire weapon-drop hook
                 {
                     var player = Core.Services.ObjectTable.LocalPlayer;
-                    if (player != null)
+                    if (player != null && player.Address != nint.Zero)
                     {
-                        ragdollController.Activate(player.Address);
+                        if (config.EnableRagdoll)
+                            ragdollController.Activate(player.Address);
+                        OnPlayerDeath?.Invoke(player.Address);
                     }
                 }
+
             }
         }
         else

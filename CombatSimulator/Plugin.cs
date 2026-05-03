@@ -39,6 +39,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly AnimationController animationController;
     private readonly BoneTransformService boneTransformService;
     private readonly RagdollController ragdollController;
+    private readonly WeaponDropController weaponDropController;
     private readonly CombatEngine combatEngine;
     private readonly NpcAiController npcAiController;
     private readonly MovementBlockHook movementBlockHook;
@@ -100,6 +101,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
         npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, log);
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log);
+        weaponDropController = new WeaponDropController(boneTransformService, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
         victorySequenceController = new Dev.VictorySequenceController(
@@ -149,6 +151,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnSimulationReset = () =>
         {
             DeactivateAllNpcRagdolls();
+            weaponDropController.RemoveAll();
 
             if (npcSpawner.SpawnedNpcs.Count == 0) return;
 
@@ -160,8 +163,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             npcSpawner.RespawnAllInPlace();
         };
 
-        // Wire NPC death ragdoll
+        // Weapon drop is co-triggered with ragdoll (same delay), so writes survive while animation is frozen
         combatEngine.OnNpcDeathRagdoll = OnNpcDeathRagdoll;
+        combatEngine.OnPlayerDeath = addr => weaponDropController.SpawnFor(addr, config.RagdollActivationDelay);
 
         // Hook safety checker — register native functions we CALL (not hook) that other plugins may hook.
         // We check for JMP detours at each address to detect third-party hooks.
@@ -236,6 +240,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.Dispose();
         victorySequenceController.Dispose();
         ragdollController.Dispose();
+        weaponDropController.Dispose();
         boneTransformService.Dispose();
         deathCamController.Dispose();
         activeCameraController.Dispose();
@@ -397,6 +402,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnNpcDeathRagdoll(nint address)
     {
+        // Weapon drop runs alongside ragdoll using the same activation delay
+        weaponDropController.SpawnFor(address, config.NpcRagdollActivationDelay);
+
         if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll) return;
 
         // Cap concurrent NPC ragdolls — evict the oldest
@@ -535,6 +543,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         }
 
         DeactivateAllNpcRagdolls();
+        weaponDropController.RemoveAll();
 
         if (combatEngine.IsActive)
         {
