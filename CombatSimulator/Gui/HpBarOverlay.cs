@@ -265,7 +265,7 @@ public class HpBarOverlay : IDisposable
 
         // Name label
         var displayName = !string.IsNullOrEmpty(config.CustomPlayerName) ? config.CustomPlayerName : ps.Name;
-        var nameText = isDead ? $"[DEAD] {displayName}" : $"[Sim] {displayName}";
+        var nameText = BuildPlayerNameLabel(isDead, displayName);
         var nameColor = isDead
             ? new Vector4(1f, 0.2f, 0.2f, 1)
             : new Vector4(0.4f, 0.7f, 1f, 1);
@@ -276,7 +276,7 @@ public class HpBarOverlay : IDisposable
             nameText);
 
         // HP text
-        var hpText = isDead ? "DEFEATED" : $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
+        var hpText = (isDead && config.ShowDefeatedText) ? config.DefeatedText : $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
         var hpSize = ImGui.CalcTextSize(hpText);
         drawList.AddText(
             barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
@@ -335,7 +335,7 @@ public class HpBarOverlay : IDisposable
             var hudDisplayName = !string.IsNullOrEmpty(config.CustomPlayerName) ? config.CustomPlayerName : ps.Name;
             if (isDead)
             {
-                ImGui.TextColored(new Vector4(1f, 0.2f, 0.2f, 1), $"[DEAD] {hudDisplayName}");
+                ImGui.TextColored(new Vector4(1f, 0.2f, 0.2f, 1), BuildPlayerNameLabel(true, hudDisplayName));
                 ImGui.SameLine();
 
                 float pulse = (MathF.Sin((float)ImGui.GetTime() * 4f) + 1f) / 2f;
@@ -354,7 +354,7 @@ public class HpBarOverlay : IDisposable
             }
             else
             {
-                ImGui.TextColored(new Vector4(0.4f, 0.7f, 1f, 1), $"[Sim] {hudDisplayName}");
+                ImGui.TextColored(new Vector4(0.4f, 0.7f, 1f, 1), BuildPlayerNameLabel(false, hudDisplayName));
             }
 
             // HP bar
@@ -367,11 +367,27 @@ public class HpBarOverlay : IDisposable
                         : new Vector4(0.8f, 0.1f, 0.1f, 1);
 
             ImGui.PushStyleColor(ImGuiCol.PlotHistogram, fillColor);
-            var hpText = isDead ? "DEFEATED" : $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
+            var hpText = (isDead && config.ShowDefeatedText) ? config.DefeatedText : $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
             ImGui.ProgressBar(hpPercent, new Vector2(-1, 0), hpText);
             ImGui.PopStyleColor();
         }
         ImGui.End();
+    }
+
+    private string BuildPlayerNameLabel(bool isDead, string displayName)
+    {
+        string? prefix = null;
+        if (isDead)
+        {
+            if (config.ShowDeadLabel && !string.IsNullOrEmpty(config.DeadLabelText))
+                prefix = $"[{config.DeadLabelText}]";
+        }
+        else
+        {
+            if (config.ShowSimLabel && !string.IsNullOrEmpty(config.SimLabelText))
+                prefix = $"[{config.SimLabelText}]";
+        }
+        return prefix is null ? displayName : $"{prefix} {displayName}";
     }
 
     private void DrawResetPopup()

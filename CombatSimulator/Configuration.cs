@@ -202,6 +202,14 @@ public class Configuration : IPluginConfiguration
     public bool HpBarOcclusion { get; set; } = true;
     public string CustomPlayerName { get; set; } = "";
 
+    // Player HP bar label customization
+    public bool ShowSimLabel { get; set; } = true;
+    public string SimLabelText { get; set; } = "Sim";
+    public bool ShowDeadLabel { get; set; } = true;
+    public string DeadLabelText { get; set; } = "DEAD";
+    public bool ShowDefeatedText { get; set; } = true;
+    public string DefeatedText { get; set; } = "DEFEATED";
+
     // Death Cam (Experimental)
     public bool EnableDeathCam { get; set; } = false;
     public string DeathCamBoneName { get; set; } = "n_hara";

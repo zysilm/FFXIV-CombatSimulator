@@ -1675,31 +1675,87 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Show a floating toolbar to quickly adjust active camera bone, zoom, and offsets.");
 
-            // Custom player name
-            var customName = config.CustomPlayerName;
-            if (ImGui.InputText("Custom Player Name", ref customName, 64))
+            if (ImGui.TreeNode("Player HP Bar Labels & Offsets"))
             {
-                config.CustomPlayerName = customName;
-                config.Save();
-            }
-            HelpMarker("Custom name shown on the sim HP bar. Leave empty to use your character's actual name.");
+                var customName = config.CustomPlayerName;
+                if (ImGui.InputText("Custom Player Name", ref customName, 64))
+                {
+                    config.CustomPlayerName = customName;
+                    config.Save();
+                }
+                HelpMarker("Custom name shown on the sim HP bar. Leave empty to use your character's actual name.");
 
-            // Player HP bar Y offset
-            var hpYOffset = config.PlayerHpBarYOffset;
-            if (ImGui.SliderFloat("Player HP Bar Y Offset", ref hpYOffset, -3.0f, 5.0f, "%.2f"))
-            {
-                config.PlayerHpBarYOffset = hpYOffset;
-                config.Save();
-            }
-            HelpMarker("Vertical offset from the player's head bone. Higher values move the bar up.");
+                var hpYOffset = config.PlayerHpBarYOffset;
+                if (ImGui.SliderFloat("Player HP Bar Y Offset", ref hpYOffset, -3.0f, 5.0f, "%.2f"))
+                {
+                    config.PlayerHpBarYOffset = hpYOffset;
+                    config.Save();
+                }
+                HelpMarker("Vertical offset from the player's head bone. Higher values move the bar up.");
 
-            var hpXOffset = config.PlayerHpBarXOffset;
-            if (ImGui.SliderFloat("Player HP Bar X Offset", ref hpXOffset, -500f, 500f, "%.0f"))
-            {
-                config.PlayerHpBarXOffset = hpXOffset;
-                config.Save();
+                var hpXOffset = config.PlayerHpBarXOffset;
+                if (ImGui.SliderFloat("Player HP Bar X Offset", ref hpXOffset, -500f, 500f, "%.0f"))
+                {
+                    config.PlayerHpBarXOffset = hpXOffset;
+                    config.Save();
+                }
+                HelpMarker("Horizontal screen offset for the player HP bar. Positive = right, negative = left.");
+
+                ImGui.Separator();
+
+                var showSim = config.ShowSimLabel;
+                if (ImGui.Checkbox("Show Sim Label", ref showSim))
+                {
+                    config.ShowSimLabel = showSim;
+                    config.Save();
+                }
+                HelpMarker("Show the [Sim] prefix on the live HP bar.");
+                if (showSim)
+                {
+                    var simText = config.SimLabelText;
+                    if (ImGui.InputText("Sim Label Text", ref simText, 32))
+                    {
+                        config.SimLabelText = simText;
+                        config.Save();
+                    }
+                }
+
+                var showDead = config.ShowDeadLabel;
+                if (ImGui.Checkbox("Show Dead Label", ref showDead))
+                {
+                    config.ShowDeadLabel = showDead;
+                    config.Save();
+                }
+                HelpMarker("Show the [DEAD] prefix on the HP bar when the player is defeated.");
+                if (showDead)
+                {
+                    var deadText = config.DeadLabelText;
+                    if (ImGui.InputText("Dead Label Text", ref deadText, 32))
+                    {
+                        config.DeadLabelText = deadText;
+                        config.Save();
+                    }
+                }
+
+                var showDefeated = config.ShowDefeatedText;
+                if (ImGui.Checkbox("Show Defeated HP Text", ref showDefeated))
+                {
+                    config.ShowDefeatedText = showDefeated;
+                    config.Save();
+                }
+                HelpMarker("Replace the HP numbers with a 'DEFEATED' label inside the bar when dead. Off = keep showing 0 / Max.");
+                if (showDefeated)
+                {
+                    var defeatedText = config.DefeatedText;
+                    if (ImGui.InputText("Defeated Text", ref defeatedText, 32))
+                    {
+                        config.DefeatedText = defeatedText;
+                        config.Save();
+                    }
+                }
+
+                ImGui.TreePop();
             }
-            HelpMarker("Horizontal screen offset for the player HP bar. Positive = right, negative = left.");
         }
     }
 
