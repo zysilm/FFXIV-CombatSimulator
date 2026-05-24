@@ -627,10 +627,33 @@ public class CombatEngine : IDisposable
                     }
                 }
             });
+
+            // ActionEffectHandler.Receive's internal target lookup typically fails for
+            // client-spawned NPCs (0xF000xxxx EntityIds aren't in CharacterManager),
+            // so the natural hit reaction never fires. Play the damage timeline
+            // directly on the target so it visibly flinches when hit.
+            PlayHitReactionOnTarget(target, dmgResult.Damage > 0);
         }
         catch (Exception ex)
         {
             log.Error(ex, "Failed to trigger action effect animation.");
+        }
+    }
+
+    private unsafe void PlayHitReactionOnTarget(SimulatedEntityState target, bool isDamage)
+    {
+        if (!isDamage || target.IsPlayer) return;
+
+        foreach (var npc in npcSelector.SelectedNpcs)
+        {
+            if (npc.SimulatedEntityId != target.EntityId || npc.BattleChara == null)
+                continue;
+
+            var character = (Character*)npc.BattleChara;
+            // ActionTimeline row 78 = damage_lt (left-side flinch). Generic and
+            // reliable across most race/job combinations.
+            character->Timeline.PlayActionTimeline(78);
+            return;
         }
     }
 
