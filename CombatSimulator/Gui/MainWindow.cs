@@ -61,6 +61,12 @@ public class MainWindow : IDisposable
     private bool overwritePopupOpen = false;
     private string overwriteTargetName = "";
 
+    // Ragdoll bone profile state (Advanced page — per-bone configs)
+    private string newBoneProfileName = "";
+    private int selectedBoneProfileIndex = -1;
+    private bool boneProfileOverwritePopupOpen = false;
+    private string boneProfileOverwriteTarget = "";
+
     // Dev easter egg state
     private int devClickCount = 0;
     private bool devUnlocked = false;
@@ -1123,6 +1129,9 @@ public class MainWindow : IDisposable
         ImGui.TextWrapped("Toggle bones on/off for physics. Adjust rotation limits, capsule volume, and mass.");
         ImGui.Spacing();
 
+        DrawRagdollBoneProfilesSection();
+        ImGui.Spacing();
+
         var debugOverlay = config.RagdollDebugOverlay;
         if (ImGui.Checkbox("Show Debug Overlay##ragdollAdv", ref debugOverlay))
         {
@@ -2120,6 +2129,146 @@ public class MainWindow : IDisposable
 
             ImGui.Unindent();
         }
+    }
+
+    private void DrawRagdollBoneProfilesSection()
+    {
+        if (!ImGui.CollapsingHeader("Bone Profiles", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        var profiles = config.RagdollBoneProfiles;
+        var profileNames = new string[profiles.Count];
+        for (int i = 0; i < profiles.Count; i++)
+            profileNames[i] = profiles[i].Name;
+
+        var hasSelection = selectedBoneProfileIndex >= 0 && selectedBoneProfileIndex < profiles.Count;
+
+        if (ImGui.BeginListBox("##BoneProfileSelect",
+                new Vector2(250, ImGui.GetTextLineHeightWithSpacing() * 6 + ImGui.GetStyle().FramePadding.Y * 2)))
+        {
+            for (int i = 0; i < profileNames.Length; i++)
+            {
+                bool isSelected = selectedBoneProfileIndex == i;
+                if (ImGui.Selectable(profileNames[i], isSelected))
+                    selectedBoneProfileIndex = i;
+                if (isSelected)
+                    ImGui.SetItemDefaultFocus();
+            }
+            ImGui.EndListBox();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Load##boneprofile") && hasSelection)
+            LoadBoneProfile(profiles[selectedBoneProfileIndex]);
+
+        ImGui.SameLine();
+        if (ImGui.Button("Overwrite##boneprofile") && hasSelection)
+        {
+            boneProfileOverwriteTarget = profiles[selectedBoneProfileIndex].Name;
+            boneProfileOverwritePopupOpen = true;
+            ImGui.OpenPopup("Confirm Overwrite##BoneProfileOverwrite");
+        }
+
+        ImGui.SameLine();
+        var io = ImGui.GetIO();
+        bool ctrlShiftHeld = io.KeyCtrl && io.KeyShift;
+        if (!ctrlShiftHeld)
+        {
+            ImGui.BeginDisabled();
+            ImGui.Button("Delete##boneprofile");
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip("Hold Ctrl+Shift to enable delete.");
+        }
+        else if (ImGui.Button("Delete##boneprofile") && hasSelection)
+        {
+            profiles.RemoveAt(selectedBoneProfileIndex);
+            selectedBoneProfileIndex = Math.Min(selectedBoneProfileIndex, profiles.Count - 1);
+            config.Save();
+        }
+
+        ImGui.SetNextItemWidth(250);
+        ImGui.InputText("##BoneProfileName", ref newBoneProfileName, 64);
+        ImGui.SameLine();
+        if (ImGui.Button("Save Profile##boneprofile") && newBoneProfileName.Length > 0)
+        {
+            var existingIdx = profiles.FindIndex(p =>
+                p.Name.Equals(newBoneProfileName, StringComparison.OrdinalIgnoreCase));
+            if (existingIdx >= 0)
+            {
+                boneProfileOverwriteTarget = newBoneProfileName;
+                boneProfileOverwritePopupOpen = true;
+                ImGui.OpenPopup("Confirm Overwrite##BoneProfileOverwrite");
+            }
+            else
+            {
+                SaveBoneProfile(newBoneProfileName);
+                newBoneProfileName = "";
+            }
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Reset to Defaults##boneprofile"))
+            LoadBoneDefaults();
+        HelpMarker("Replace the live per-bone config list with built-in defaults from RagdollController.AllBoneDefaults. Does not modify saved profiles.");
+
+        // Overwrite confirmation popup
+        if (ImGui.BeginPopupModal("Confirm Overwrite##BoneProfileOverwrite", ref boneProfileOverwritePopupOpen,
+                ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoMove))
+        {
+            ImGui.Text($"Overwrite profile \"{boneProfileOverwriteTarget}\"?");
+            ImGui.Spacing();
+
+            if (ImGui.Button("Yes", new Vector2(80, 0)))
+            {
+                SaveBoneProfile(boneProfileOverwriteTarget);
+                newBoneProfileName = "";
+                boneProfileOverwritePopupOpen = false;
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("No", new Vector2(80, 0)))
+            {
+                boneProfileOverwritePopupOpen = false;
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.EndPopup();
+        }
+    }
+
+    private void SaveBoneProfile(string name)
+    {
+        // Deep-copy the live bone configs into the snapshot
+        var snapshot = new RagdollBoneProfile { Name = name };
+        foreach (var b in config.RagdollBoneConfigs)
+            snapshot.Bones.Add(CloneBoneConfig(b));
+
+        var existing = config.RagdollBoneProfiles.FindIndex(p => p.Name == name);
+        if (existing >= 0)
+            config.RagdollBoneProfiles[existing] = snapshot;
+        else
+            config.RagdollBoneProfiles.Add(snapshot);
+
+        config.Save();
+        chatGui.Print($"[CombatSim] Bone profile '{name}' saved ({snapshot.Bones.Count} bones).");
+    }
+
+    private void LoadBoneProfile(RagdollBoneProfile p)
+    {
+        config.RagdollBoneConfigs.Clear();
+        foreach (var b in p.Bones)
+            config.RagdollBoneConfigs.Add(CloneBoneConfig(b));
+        config.Save();
+        chatGui.Print($"[CombatSim] Bone profile '{p.Name}' loaded ({p.Bones.Count} bones). Reactivate ragdoll to apply.");
+    }
+
+    private void LoadBoneDefaults()
+    {
+        config.RagdollBoneConfigs.Clear();
+        foreach (var def in RagdollController.AllBoneDefaults)
+            config.RagdollBoneConfigs.Add(CloneBoneConfig(def));
+        config.Save();
+        chatGui.Print("[CombatSim] Bone configs reset to defaults. Reactivate ragdoll to apply.");
     }
 
     private void DrawRagdollSection()

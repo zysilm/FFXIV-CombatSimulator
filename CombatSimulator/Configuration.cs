@@ -29,6 +29,13 @@ public class RagdollBoneConfig
 }
 
 [Serializable]
+public class RagdollBoneProfile
+{
+    public string Name { get; set; } = "";
+    public List<RagdollBoneConfig> Bones { get; set; } = new();
+}
+
+[Serializable]
 public class DeathCamPreset
 {
     public string Name { get; set; } = "";
@@ -150,6 +157,9 @@ public class Configuration : IPluginConfiguration
     // Ragdoll bone configs (Advanced) — per-bone physics parameters
     // Empty = use built-in defaults from RagdollController.DefaultBoneDefs
     public List<RagdollBoneConfig> RagdollBoneConfigs { get; set; } = new();
+
+    // Saved ragdoll bone profiles (snapshots of the per-bone advanced configs)
+    public List<RagdollBoneProfile> RagdollBoneProfiles { get; set; } = new();
 
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollVerboseLog { get; set; } = false;
