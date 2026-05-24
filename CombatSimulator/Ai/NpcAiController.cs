@@ -464,8 +464,12 @@ public unsafe class NpcAiController : IDisposable
             targetPos = playerPos + dir * targetDist;
         }
 
-        // Approximate terrain following: use player Y
-        targetPos.Y = playerPos.Y;
+        // Approximate terrain following: use player Y, with the configured
+        // height offset stacked on top. The offset lives on the approach
+        // logic because approach is the only flow that writes Y every frame —
+        // raw direct-Y writes outside this flow fight the game's own position
+        // updates and break the rest of approach movement.
+        targetPos.Y = playerPos.Y + config.DefaultNpcHeightOffset;
 
         // Already close enough — just face the player
         if (Vector3.Distance(npcPos, targetPos) <= 0.3f)

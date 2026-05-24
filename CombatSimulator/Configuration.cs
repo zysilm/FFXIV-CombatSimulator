@@ -79,6 +79,7 @@ public class Configuration : IPluginConfiguration
     // NPC Defaults
     public int DefaultNpcLevel { get; set; } = 90;
     public float DefaultNpcHpMultiplier { get; set; } = 1.0f;
+    public float DefaultNpcHeightOffset { get; set; } = 0f; // Y offset added to spawn position
 
     // Default behavior for auto-selected NPCs (0=Dummy, 1=BasicMelee, 2=BasicRanged, 3=Boss)
     public int DefaultNpcBehaviorType { get; set; } = 1;

@@ -797,6 +797,14 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("How close (in yalms) targets are moved to the player.");
+
+                var heightOffset = config.DefaultNpcHeightOffset;
+                if (ImGui.SliderFloat("Approach Height Offset", ref heightOffset, -5f, 5f, "%.2f"))
+                {
+                    config.DefaultNpcHeightOffset = heightOffset;
+                    config.Save();
+                }
+                HelpMarker("Vertical (Y) offset applied to NPC positions while approach is active. 0 = at player's floor level, positive = above, negative = below. Updates live as you drag the slider.");
             }
 
             ImGui.Spacing();

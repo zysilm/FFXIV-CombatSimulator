@@ -22,6 +22,7 @@ public unsafe class NpcSpawner : IDisposable
     private readonly IObjectTable objectTable;
     private readonly IDataManager dataManager;
     private readonly IClientState clientState;
+    private readonly Configuration config;
     private readonly IPluginLog log;
 
     private readonly List<SimulatedNpc> spawnedNpcs = new();
@@ -68,11 +69,13 @@ public unsafe class NpcSpawner : IDisposable
         IObjectTable objectTable,
         IDataManager dataManager,
         IClientState clientState,
+        Configuration config,
         IPluginLog log)
     {
         this.objectTable = objectTable;
         this.dataManager = dataManager;
         this.clientState = clientState;
+        this.config = config;
         this.log = log;
     }
 

@@ -99,7 +99,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, log);
-        npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, log);
+        npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, log);
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log);
         weaponDropController = new WeaponDropController(boneTransformService, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
