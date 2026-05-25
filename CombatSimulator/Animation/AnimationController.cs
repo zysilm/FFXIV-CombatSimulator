@@ -558,7 +558,14 @@ public unsafe class AnimationController : IDisposable
 
             var character = (Character*)npc.BattleChara;
 
-            if (playDeadResolved)
+            // When weapon drop is enabled, use battle/dead ActionTimeline so weapons
+            // stay drawn (play-dead would sheath them and fight visibility hacks).
+            if (config.WeaponDropEnabled && battleDeadResolved)
+            {
+                emotePlayer.PlayLoopedEmote(character, battleDeadLoopTimeline, battleDeadIntroTimeline);
+                log.Verbose($"Death battle/dead triggered for NPC '{npc.Name}'.");
+            }
+            else if (playDeadResolved)
             {
                 // Use BypassEmote-style timeline: plays playdead on any character (no unlock needed)
                 emotePlayer.PlayLoopedEmote(character, playDeadLoopTimeline, playDeadIntroTimeline);
@@ -603,7 +610,7 @@ public unsafe class AnimationController : IDisposable
 
             // When weapon drop is enabled, use battle/dead ActionTimeline instead of
             // play-dead emote. Battle death keeps weapons drawn (no sheathing).
-            if (config.RagdollWeaponDrop && battleDeadResolved)
+            if (config.WeaponDropEnabled && battleDeadResolved)
             {
                 emotePlayer.PlayLoopedEmote(character, battleDeadLoopTimeline, battleDeadIntroTimeline);
                 log.Info($"Player death via battle/dead (intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}).");

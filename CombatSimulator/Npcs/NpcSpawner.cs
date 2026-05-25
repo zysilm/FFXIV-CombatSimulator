@@ -22,6 +22,7 @@ public unsafe class NpcSpawner : IDisposable
     private readonly IObjectTable objectTable;
     private readonly IDataManager dataManager;
     private readonly IClientState clientState;
+    private readonly Configuration config;
     private readonly IPluginLog log;
 
     private readonly List<SimulatedNpc> spawnedNpcs = new();
@@ -68,11 +69,13 @@ public unsafe class NpcSpawner : IDisposable
         IObjectTable objectTable,
         IDataManager dataManager,
         IClientState clientState,
+        Configuration config,
         IPluginLog log)
     {
         this.objectTable = objectTable;
         this.dataManager = dataManager;
         this.clientState = clientState;
+        this.config = config;
         this.log = log;
     }
 
@@ -243,6 +246,7 @@ public unsafe class NpcSpawner : IDisposable
                 SpawnPosition = spawnPos,
                 Behavior = NpcBehavior.Create(request.BehaviorType),
                 IsSpawned = false, // Will become true when draw is enabled
+                IsRanged = request.IsRanged, // Carried through respawn via NpcSpawnRequest
                 State = new SimulatedEntityState
                 {
                     EntityId = entityId,
@@ -450,6 +454,9 @@ public unsafe class NpcSpawner : IDisposable
                 cloned.Position = gameObj->Position;
                 cloned.Rotation = gameObj->Rotation;
             }
+            // Capture the live ranged-toggle state so a user-set "Ranged"
+            // flag survives the reset's despawn → respawn cycle.
+            cloned.IsRanged = npc.IsRanged;
             toRespawn.Add(cloned);
         }
 
@@ -473,6 +480,7 @@ public unsafe class NpcSpawner : IDisposable
             Position = src.Position,
             Rotation = src.Rotation,
             BehaviorType = src.BehaviorType,
+            IsRanged = src.IsRanged,
         };
     }
 
@@ -589,16 +597,11 @@ public unsafe class NpcSpawner : IDisposable
         var customizePtr = (byte*)&character->DrawData.CustomizeData;
         customizePtr[0x00] = (byte)enpc.Race.RowId;
         customizePtr[0x01] = enpc.Gender;
-
-        // BodyType is the child/adult discriminator at draw time. ENpcBase
-        // BodyType=3 produces RaceSexId=c0X04 (child) which has no walk /
-        // battle-stance / emote animations. Force it to 1 (standard adult)
-        // so the derivation gives the adult model path. This is the only
-        // byte we deliberately override — everything else comes from ENpcBase.
-        byte bodyType = enpc.BodyType == 1 ? enpc.BodyType : (byte)1;
-        if (bodyType != enpc.BodyType)
-            log.Info($"[SpawnDbg] Child body detected (ENpc BodyType={enpc.BodyType}), forcing BodyType=1 (adult) for animation support.");
-        customizePtr[0x02] = bodyType;
+        // Keep BodyType from ENpcBase so child / elder / special body NPCs
+        // render with their real proportions and face data. Non-adult bodies
+        // lack full walk / battle-stance / emote animations, so those NPCs
+        // will mostly idle — accepted in exchange for correct appearance.
+        customizePtr[0x02] = enpc.BodyType;
 
         customizePtr[0x03] = enpc.Height;
         customizePtr[0x04] = (byte)enpc.Tribe.RowId;

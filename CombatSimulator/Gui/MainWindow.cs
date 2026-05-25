@@ -61,6 +61,12 @@ public class MainWindow : IDisposable
     private bool overwritePopupOpen = false;
     private string overwriteTargetName = "";
 
+    // Ragdoll bone profile state (Advanced page — per-bone configs)
+    private string newBoneProfileName = "";
+    private int selectedBoneProfileIndex = -1;
+    private bool boneProfileOverwritePopupOpen = false;
+    private string boneProfileOverwriteTarget = "";
+
     // Dev easter egg state
     private int devClickCount = 0;
     private bool devUnlocked = false;
@@ -228,7 +234,15 @@ public class MainWindow : IDisposable
                     config.RagdollSolverIterations = 8;
                     config.RagdollSelfCollision = true;
                     config.RagdollFriction = 1.0f;
-                    config.RagdollWeaponDrop = true;
+                    config.WeaponDropEnabled = true;
+                    config.WeaponDropGravity = 9.8f;
+                    config.WeaponDropDamping = 0.99f;
+                    config.WeaponDropMass = 1.5f;
+                    config.WeaponDropRadius = 0.025f;
+                    config.WeaponDropHalfLength = 0.4f;
+                    config.WeaponDropBounce = 1.5f;
+                    config.WeaponDropFriction = 0.6f;
+                    config.WeaponDropSolverIterations = 4;
                     config.RagdollHairPhysics = false;
                     config.RagdollHairGravityStrength = 0.5f;
                     config.RagdollHairDamping = 0.92f;
@@ -672,13 +686,27 @@ public class MainWindow : IDisposable
                         : new Vector4(0.8f, 0, 0, 1);
                     if (!npc.IsAlive) hpColor = new Vector4(0.4f, 0.4f, 0.4f, 1);
                     ImGui.PushStyleColor(ImGuiCol.PlotHistogram, hpColor);
-                    ImGui.ProgressBar(hp, new Vector2(ImGui.GetContentRegionAvail().X - 70, 0),
+                    // 75% of the leftover row width — leaves a clear gap before
+                    // the name / ranged checkbox / despawn cluster on the right.
+                    float hpBarWidth = (ImGui.GetContentRegionAvail().X - 120) * 0.75f;
+                    ImGui.ProgressBar(hp, new Vector2(hpBarWidth, 0),
                         $"{npc.State.CurrentHp:N0}/{npc.State.MaxHp:N0}");
                     ImGui.PopStyleColor();
                     ImGui.SameLine();
                 }
 
                 ImGui.Text(npc.Name);
+
+                // Ranged toggle — when on, this NPC's actions play the ranged
+                // attack motion (bow/gun draw + projectile) instead of melee.
+                // Label hidden via ##id; tooltip on hover explains what it does.
+                ImGui.SameLine(ImGui.GetContentRegionAvail().X - 145);
+                bool ranged = npc.IsRanged;
+                if (ImGui.Checkbox("##ranged", ref ranged))
+                    npc.IsRanged = ranged;
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Ranged: force ranged attack animation for this NPC (use for archers / casters whose default action animation is melee).");
+
                 ImGui.SameLine(ImGui.GetContentRegionAvail().X - 55);
                 if (ImGui.SmallButton("Despawn"))
                 {
@@ -783,6 +811,14 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("How close (in yalms) targets are moved to the player.");
+
+                var heightOffset = config.DefaultNpcHeightOffset;
+                if (ImGui.SliderFloat("Approach Height Offset", ref heightOffset, -5f, 5f, "%.2f"))
+                {
+                    config.DefaultNpcHeightOffset = heightOffset;
+                    config.Save();
+                }
+                HelpMarker("Vertical (Y) offset applied to NPC positions while approach is active. 0 = at player's floor level, positive = above, negative = below. Updates live as you drag the slider.");
             }
 
             ImGui.Spacing();
@@ -1113,6 +1149,9 @@ public class MainWindow : IDisposable
     {
         ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Per-Bone Physics Parameters");
         ImGui.TextWrapped("Toggle bones on/off for physics. Adjust rotation limits, capsule volume, and mass.");
+        ImGui.Spacing();
+
+        DrawRagdollBoneProfilesSection();
         ImGui.Spacing();
 
         var debugOverlay = config.RagdollDebugOverlay;
@@ -1658,31 +1697,87 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Show a floating toolbar to quickly adjust active camera bone, zoom, and offsets.");
 
-            // Custom player name
-            var customName = config.CustomPlayerName;
-            if (ImGui.InputText("Custom Player Name", ref customName, 64))
+            if (ImGui.TreeNode("Player HP Bar Labels & Offsets"))
             {
-                config.CustomPlayerName = customName;
-                config.Save();
-            }
-            HelpMarker("Custom name shown on the sim HP bar. Leave empty to use your character's actual name.");
+                var customName = config.CustomPlayerName;
+                if (ImGui.InputText("Custom Player Name", ref customName, 64))
+                {
+                    config.CustomPlayerName = customName;
+                    config.Save();
+                }
+                HelpMarker("Custom name shown on the sim HP bar. Leave empty to use your character's actual name.");
 
-            // Player HP bar Y offset
-            var hpYOffset = config.PlayerHpBarYOffset;
-            if (ImGui.SliderFloat("Player HP Bar Y Offset", ref hpYOffset, -3.0f, 5.0f, "%.2f"))
-            {
-                config.PlayerHpBarYOffset = hpYOffset;
-                config.Save();
-            }
-            HelpMarker("Vertical offset from the player's head bone. Higher values move the bar up.");
+                var hpYOffset = config.PlayerHpBarYOffset;
+                if (ImGui.SliderFloat("Player HP Bar Y Offset", ref hpYOffset, -3.0f, 5.0f, "%.2f"))
+                {
+                    config.PlayerHpBarYOffset = hpYOffset;
+                    config.Save();
+                }
+                HelpMarker("Vertical offset from the player's head bone. Higher values move the bar up.");
 
-            var hpXOffset = config.PlayerHpBarXOffset;
-            if (ImGui.SliderFloat("Player HP Bar X Offset", ref hpXOffset, -500f, 500f, "%.0f"))
-            {
-                config.PlayerHpBarXOffset = hpXOffset;
-                config.Save();
+                var hpXOffset = config.PlayerHpBarXOffset;
+                if (ImGui.SliderFloat("Player HP Bar X Offset", ref hpXOffset, -500f, 500f, "%.0f"))
+                {
+                    config.PlayerHpBarXOffset = hpXOffset;
+                    config.Save();
+                }
+                HelpMarker("Horizontal screen offset for the player HP bar. Positive = right, negative = left.");
+
+                ImGui.Separator();
+
+                var showSim = config.ShowSimLabel;
+                if (ImGui.Checkbox("Show Sim Label", ref showSim))
+                {
+                    config.ShowSimLabel = showSim;
+                    config.Save();
+                }
+                HelpMarker("Show the [Sim] prefix on the live HP bar.");
+                if (showSim)
+                {
+                    var simText = config.SimLabelText;
+                    if (ImGui.InputText("Sim Label Text", ref simText, 32))
+                    {
+                        config.SimLabelText = simText;
+                        config.Save();
+                    }
+                }
+
+                var showDead = config.ShowDeadLabel;
+                if (ImGui.Checkbox("Show Dead Label", ref showDead))
+                {
+                    config.ShowDeadLabel = showDead;
+                    config.Save();
+                }
+                HelpMarker("Show the [DEAD] prefix on the HP bar when the player is defeated.");
+                if (showDead)
+                {
+                    var deadText = config.DeadLabelText;
+                    if (ImGui.InputText("Dead Label Text", ref deadText, 32))
+                    {
+                        config.DeadLabelText = deadText;
+                        config.Save();
+                    }
+                }
+
+                var showDefeated = config.ShowDefeatedText;
+                if (ImGui.Checkbox("Show Defeated HP Text", ref showDefeated))
+                {
+                    config.ShowDefeatedText = showDefeated;
+                    config.Save();
+                }
+                HelpMarker("Replace the HP numbers with a 'DEFEATED' label inside the bar when dead. Off = keep showing 0 / Max.");
+                if (showDefeated)
+                {
+                    var defeatedText = config.DefeatedText;
+                    if (ImGui.InputText("Defeated Text", ref defeatedText, 32))
+                    {
+                        config.DefeatedText = defeatedText;
+                        config.Save();
+                    }
+                }
+
+                ImGui.TreePop();
             }
-            HelpMarker("Horizontal screen offset for the player HP bar. Positive = right, negative = left.");
         }
     }
 
@@ -2114,6 +2209,146 @@ public class MainWindow : IDisposable
         }
     }
 
+    private void DrawRagdollBoneProfilesSection()
+    {
+        if (!ImGui.CollapsingHeader("Bone Profiles", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        var profiles = config.RagdollBoneProfiles;
+        var profileNames = new string[profiles.Count];
+        for (int i = 0; i < profiles.Count; i++)
+            profileNames[i] = profiles[i].Name;
+
+        var hasSelection = selectedBoneProfileIndex >= 0 && selectedBoneProfileIndex < profiles.Count;
+
+        if (ImGui.BeginListBox("##BoneProfileSelect",
+                new Vector2(250, ImGui.GetTextLineHeightWithSpacing() * 6 + ImGui.GetStyle().FramePadding.Y * 2)))
+        {
+            for (int i = 0; i < profileNames.Length; i++)
+            {
+                bool isSelected = selectedBoneProfileIndex == i;
+                if (ImGui.Selectable(profileNames[i], isSelected))
+                    selectedBoneProfileIndex = i;
+                if (isSelected)
+                    ImGui.SetItemDefaultFocus();
+            }
+            ImGui.EndListBox();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Load##boneprofile") && hasSelection)
+            LoadBoneProfile(profiles[selectedBoneProfileIndex]);
+
+        ImGui.SameLine();
+        if (ImGui.Button("Overwrite##boneprofile") && hasSelection)
+        {
+            boneProfileOverwriteTarget = profiles[selectedBoneProfileIndex].Name;
+            boneProfileOverwritePopupOpen = true;
+            ImGui.OpenPopup("Confirm Overwrite##BoneProfileOverwrite");
+        }
+
+        ImGui.SameLine();
+        var io = ImGui.GetIO();
+        bool ctrlShiftHeld = io.KeyCtrl && io.KeyShift;
+        if (!ctrlShiftHeld)
+        {
+            ImGui.BeginDisabled();
+            ImGui.Button("Delete##boneprofile");
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip("Hold Ctrl+Shift to enable delete.");
+        }
+        else if (ImGui.Button("Delete##boneprofile") && hasSelection)
+        {
+            profiles.RemoveAt(selectedBoneProfileIndex);
+            selectedBoneProfileIndex = Math.Min(selectedBoneProfileIndex, profiles.Count - 1);
+            config.Save();
+        }
+
+        ImGui.SetNextItemWidth(250);
+        ImGui.InputText("##BoneProfileName", ref newBoneProfileName, 64);
+        ImGui.SameLine();
+        if (ImGui.Button("Save Profile##boneprofile") && newBoneProfileName.Length > 0)
+        {
+            var existingIdx = profiles.FindIndex(p =>
+                p.Name.Equals(newBoneProfileName, StringComparison.OrdinalIgnoreCase));
+            if (existingIdx >= 0)
+            {
+                boneProfileOverwriteTarget = newBoneProfileName;
+                boneProfileOverwritePopupOpen = true;
+                ImGui.OpenPopup("Confirm Overwrite##BoneProfileOverwrite");
+            }
+            else
+            {
+                SaveBoneProfile(newBoneProfileName);
+                newBoneProfileName = "";
+            }
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Reset to Defaults##boneprofile"))
+            LoadBoneDefaults();
+        HelpMarker("Replace the live per-bone config list with built-in defaults from RagdollController.AllBoneDefaults. Does not modify saved profiles.");
+
+        // Overwrite confirmation popup
+        if (ImGui.BeginPopupModal("Confirm Overwrite##BoneProfileOverwrite", ref boneProfileOverwritePopupOpen,
+                ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoMove))
+        {
+            ImGui.Text($"Overwrite profile \"{boneProfileOverwriteTarget}\"?");
+            ImGui.Spacing();
+
+            if (ImGui.Button("Yes", new Vector2(80, 0)))
+            {
+                SaveBoneProfile(boneProfileOverwriteTarget);
+                newBoneProfileName = "";
+                boneProfileOverwritePopupOpen = false;
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("No", new Vector2(80, 0)))
+            {
+                boneProfileOverwritePopupOpen = false;
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.EndPopup();
+        }
+    }
+
+    private void SaveBoneProfile(string name)
+    {
+        // Deep-copy the live bone configs into the snapshot
+        var snapshot = new RagdollBoneProfile { Name = name };
+        foreach (var b in config.RagdollBoneConfigs)
+            snapshot.Bones.Add(CloneBoneConfig(b));
+
+        var existing = config.RagdollBoneProfiles.FindIndex(p => p.Name == name);
+        if (existing >= 0)
+            config.RagdollBoneProfiles[existing] = snapshot;
+        else
+            config.RagdollBoneProfiles.Add(snapshot);
+
+        config.Save();
+        chatGui.Print($"[CombatSim] Bone profile '{name}' saved ({snapshot.Bones.Count} bones).");
+    }
+
+    private void LoadBoneProfile(RagdollBoneProfile p)
+    {
+        config.RagdollBoneConfigs.Clear();
+        foreach (var b in p.Bones)
+            config.RagdollBoneConfigs.Add(CloneBoneConfig(b));
+        config.Save();
+        chatGui.Print($"[CombatSim] Bone profile '{p.Name}' loaded ({p.Bones.Count} bones). Reactivate ragdoll to apply.");
+    }
+
+    private void LoadBoneDefaults()
+    {
+        config.RagdollBoneConfigs.Clear();
+        foreach (var def in RagdollController.AllBoneDefaults)
+            config.RagdollBoneConfigs.Add(CloneBoneConfig(def));
+        config.Save();
+        chatGui.Print("[CombatSim] Bone configs reset to defaults. Reactivate ragdoll to apply.");
+    }
+
     private void DrawRagdollSection()
     {
         if (ImGui.CollapsingHeader("Ragdoll"))
@@ -2197,15 +2432,77 @@ public class MainWindow : IDisposable
                 HelpMarker("Surface friction for all ragdoll contacts. 0 = ice (limbs slide freely), 1 = grippy (default). Lower values make the body slide more realistically. Takes effect on next ragdoll activation.");
 
                 ImGui.Separator();
-                ImGui.Text("Weapon Drop");
+                ImGui.Text("Weapon Drop (independent physics)");
 
-                var weaponDrop = config.RagdollWeaponDrop;
-                if (ImGui.Checkbox("Enable Weapon Drop##ragdoll", ref weaponDrop))
+                var weaponDrop = config.WeaponDropEnabled;
+                if (ImGui.Checkbox("Enable Weapon Drop##weapondrop", ref weaponDrop))
                 {
-                    config.RagdollWeaponDrop = weaponDrop;
+                    config.WeaponDropEnabled = weaponDrop;
                     config.Save();
                 }
-                HelpMarker("Weapon detaches from the hand and falls with physics on death. Uses battle/dead animation instead of play-dead emote to keep weapons drawn. Takes effect on next ragdoll activation.");
+                HelpMarker("Weapon detaches from the hand and falls with physics immediately on death. Independent of ragdoll — works on player and NPCs even with ragdoll disabled. Forces battle/dead animation so weapons stay drawn.");
+
+                if (config.WeaponDropEnabled)
+                {
+                    var wdGravity = config.WeaponDropGravity;
+                    if (ImGui.SliderFloat("Gravity##weapondrop", ref wdGravity, 0.0f, 30.0f, "%.2f"))
+                    {
+                        config.WeaponDropGravity = wdGravity;
+                        config.Save();
+                    }
+
+                    var wdDamping = config.WeaponDropDamping;
+                    if (ImGui.SliderFloat("Damping##weapondrop", ref wdDamping, 0.80f, 1.00f, "%.3f"))
+                    {
+                        config.WeaponDropDamping = wdDamping;
+                        config.Save();
+                    }
+                    HelpMarker("Per-frame velocity multiplier. 1.0 = no damping, lower values settle faster.");
+
+                    var wdBounce = config.WeaponDropBounce;
+                    if (ImGui.SliderFloat("Bounce##weapondrop", ref wdBounce, 0.0f, 5.0f, "%.2f"))
+                    {
+                        config.WeaponDropBounce = wdBounce;
+                        config.Save();
+                    }
+                    HelpMarker("BepuPhysics MaximumRecoveryVelocity — higher = bouncier weapons.");
+
+                    var wdFriction = config.WeaponDropFriction;
+                    if (ImGui.SliderFloat("Friction##weapondrop", ref wdFriction, 0.0f, 2.0f, "%.2f"))
+                    {
+                        config.WeaponDropFriction = wdFriction;
+                        config.Save();
+                    }
+
+                    var wdMass = config.WeaponDropMass;
+                    if (ImGui.SliderFloat("Mass (kg)##weapondrop", ref wdMass, 0.1f, 10.0f, "%.2f"))
+                    {
+                        config.WeaponDropMass = wdMass;
+                        config.Save();
+                    }
+
+                    var wdRadius = config.WeaponDropRadius;
+                    if (ImGui.SliderFloat("Capsule Radius##weapondrop", ref wdRadius, 0.005f, 0.2f, "%.3f"))
+                    {
+                        config.WeaponDropRadius = wdRadius;
+                        config.Save();
+                    }
+
+                    var wdHalf = config.WeaponDropHalfLength;
+                    if (ImGui.SliderFloat("Capsule Half-Length##weapondrop", ref wdHalf, 0.1f, 1.5f, "%.2f"))
+                    {
+                        config.WeaponDropHalfLength = wdHalf;
+                        config.Save();
+                    }
+
+                    var wdSolver = config.WeaponDropSolverIterations;
+                    if (ImGui.SliderInt("Solver Iterations##weapondrop", ref wdSolver, 1, 64))
+                    {
+                        config.WeaponDropSolverIterations = wdSolver;
+                        config.Save();
+                    }
+                    HelpMarker("Higher = more stable contact resolution, more CPU. Changing physics params clears all currently-dropped weapons.");
+                }
 
                 ImGui.Separator();
                 ImGui.Text("Hair Physics");

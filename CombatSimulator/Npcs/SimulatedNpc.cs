@@ -44,4 +44,10 @@ public unsafe class SimulatedNpc
     // Lifecycle
     public bool IsAlive => State.CurrentHp > 0;
     public bool IsSpawned { get; set; }
+
+    // When true, every action this NPC takes is rendered with the ranged
+    // attack motion (bow/gun draw + projectile) instead of the action's
+    // default melee animation. Per-NPC override so e.g. an archer model
+    // never plays a sword swing.
+    public bool IsRanged { get; set; }
 }

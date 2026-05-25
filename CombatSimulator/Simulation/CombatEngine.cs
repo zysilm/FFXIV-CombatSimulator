@@ -77,9 +77,15 @@ public class CombatEngine : IDisposable
 
     /// <summary>
     /// Fired when a simulated NPC dies, passing the NPC's character address.
-    /// Used by the plugin to activate ragdoll physics on the dead NPC.
+    /// Subscribers handle ragdoll physics and weapon drop (both with the ragdoll-activation delay).
     /// </summary>
     public Action<nint>? OnNpcDeathRagdoll { get; set; }
+
+    /// <summary>
+    /// Fired when the local player dies in the simulation, passing the player's address.
+    /// Subscribers handle ragdoll physics and weapon drop (both with the ragdoll-activation delay).
+    /// </summary>
+    public Action<nint>? OnPlayerDeath { get; set; }
 
     // Configuration (set from plugin config)
     public float DamageMultiplier { get; set; } = 1.0f;
@@ -591,6 +597,20 @@ public class CombatEngine : IDisposable
             bool isRanged = actionData.DamageType == SimDamageType.Magical ||
                             actionData.Range > 5.0f;
 
+            // Per-NPC ranged override: an NPC marked IsRanged in the spawned list
+            // always plays the ranged attack motion regardless of action data.
+            if (!source.IsPlayer)
+            {
+                foreach (var sourceNpc in npcSelector.SelectedNpcs)
+                {
+                    if (sourceNpc.SimulatedEntityId == source.EntityId && sourceNpc.IsRanged)
+                    {
+                        isRanged = true;
+                        break;
+                    }
+                }
+            }
+
             // Map simulated entity IDs to real game object IDs for native calls.
             // ActionEffectHandler.Receive needs IDs the game engine can resolve.
             var gameSourceId = GetGameEntityId(source);
@@ -621,10 +641,33 @@ public class CombatEngine : IDisposable
                     }
                 }
             });
+
+            // ActionEffectHandler.Receive's internal target lookup typically fails for
+            // client-spawned NPCs (0xF000xxxx EntityIds aren't in CharacterManager),
+            // so the natural hit reaction never fires. Play the damage timeline
+            // directly on the target so it visibly flinches when hit.
+            PlayHitReactionOnTarget(target, dmgResult.Damage > 0);
         }
         catch (Exception ex)
         {
             log.Error(ex, "Failed to trigger action effect animation.");
+        }
+    }
+
+    private unsafe void PlayHitReactionOnTarget(SimulatedEntityState target, bool isDamage)
+    {
+        if (!isDamage || target.IsPlayer) return;
+
+        foreach (var npc in npcSelector.SelectedNpcs)
+        {
+            if (npc.SimulatedEntityId != target.EntityId || npc.BattleChara == null)
+                continue;
+
+            var character = (Character*)npc.BattleChara;
+            // ActionTimeline row 78 = damage_lt (left-side flinch). Generic and
+            // reliable across most race/job combinations.
+            character->Timeline.PlayActionTimeline(78);
+            return;
         }
     }
 
@@ -743,15 +786,17 @@ public class CombatEngine : IDisposable
                 ApplyGlamourer();
                 deathCamController?.Activate();
 
-                // Activate ragdoll physics on player death
-                if (config.EnableRagdoll)
+                // Activate ragdoll physics on player death + fire weapon-drop hook
                 {
                     var player = Core.Services.ObjectTable.LocalPlayer;
-                    if (player != null)
+                    if (player != null && player.Address != nint.Zero)
                     {
-                        ragdollController.Activate(player.Address);
+                        if (config.EnableRagdoll)
+                            ragdollController.Activate(player.Address);
+                        OnPlayerDeath?.Invoke(player.Address);
                     }
                 }
+
             }
         }
         else
