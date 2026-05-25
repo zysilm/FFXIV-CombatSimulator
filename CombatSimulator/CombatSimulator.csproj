@@ -1,6 +1,6 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>1.9.5</Version>
+    <Version>1.10.0</Version>
     <Authors>zysilm</Authors>
     <Description>Client-side combat simulation with existing battle NPCs</Description>
     <IsPackable>false</IsPackable>
@@ -11,5 +11,6 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Npcs\NpcNames.json" />
+    <EmbeddedResource Include="Resources\BuiltInBoneProfiles.json" />
   </ItemGroup>
 </Project>

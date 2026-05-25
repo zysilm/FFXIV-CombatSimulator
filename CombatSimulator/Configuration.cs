@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using CombatSimulator.Dev;
 using Dalamud.Configuration;
 using Dalamud.Plugin;
@@ -243,6 +244,8 @@ public class Configuration : IPluginConfiguration
     {
         pluginInterface = pi;
         MigrateSkirtParentChains();
+        RenameLegacyBoneProfiles();
+        SeedBuiltInBoneProfiles();
     }
 
     public void Save()
@@ -295,5 +298,56 @@ public class Configuration : IPluginConfiguration
         if (tier == "b" && oldParent == "j_sebo_b") return $"j_sk_{pos}_a_{side}";
         if (tier == "c" && oldParent == "j_sebo_c") return $"j_sk_{pos}_b_{side}";
         return oldParent;
+    }
+
+    private static readonly Dictionary<string, string> LegacyBoneProfileNameMap = new()
+    {
+        { "Thickness",     "Default"            },
+        { "Flatter",       "Thinner Volumes I"  },
+        { "Complete Flat", "Thinner Volumes II" },
+    };
+
+    private void RenameLegacyBoneProfiles()
+    {
+        bool changed = false;
+        foreach (var profile in RagdollBoneProfiles)
+        {
+            if (LegacyBoneProfileNameMap.TryGetValue(profile.Name, out var newName))
+            {
+                profile.Name = newName;
+                changed = true;
+            }
+        }
+        if (changed) Save();
+    }
+
+    private void SeedBuiltInBoneProfiles()
+    {
+        List<RagdollBoneProfile>? builtIns;
+        try
+        {
+            var asm = System.Reflection.Assembly.GetExecutingAssembly();
+            using var stream = asm.GetManifestResourceStream("CombatSimulator.Resources.BuiltInBoneProfiles.json");
+            if (stream == null) return;
+            using var reader = new System.IO.StreamReader(stream);
+            var json = reader.ReadToEnd();
+            builtIns = System.Text.Json.JsonSerializer.Deserialize<List<RagdollBoneProfile>>(json);
+        }
+        catch
+        {
+            return;
+        }
+        if (builtIns == null) return;
+
+        bool changed = false;
+        foreach (var seed in builtIns)
+        {
+            if (RagdollBoneProfiles.Any(p =>
+                    p.Name.Equals(seed.Name, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            RagdollBoneProfiles.Add(seed);
+            changed = true;
+        }
+        if (changed) Save();
     }
 }
