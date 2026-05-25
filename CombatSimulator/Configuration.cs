@@ -242,10 +242,58 @@ public class Configuration : IPluginConfiguration
     public void Initialize(IDalamudPluginInterface pi)
     {
         pluginInterface = pi;
+        MigrateSkirtParentChains();
     }
 
     public void Save()
     {
         pluginInterface?.SavePluginConfig(this);
+    }
+
+    /// <summary>
+    /// Rewrites legacy skirt-bone parent references in the live RagdollBoneConfigs
+    /// list and all saved RagdollBoneProfiles to use the chained per-radial-slot
+    /// parenting (B-tier under matching A, C-tier under matching B) introduced
+    /// when the spine-anchored layout was replaced. Saves only if something
+    /// actually changed so this is cheap on every load.
+    /// </summary>
+    private void MigrateSkirtParentChains()
+    {
+        bool changed = false;
+        if (MigrateBoneList(RagdollBoneConfigs)) changed = true;
+        foreach (var profile in RagdollBoneProfiles)
+            if (MigrateBoneList(profile.Bones)) changed = true;
+        if (changed) Save();
+    }
+
+    private static bool MigrateBoneList(List<RagdollBoneConfig> bones)
+    {
+        bool changed = false;
+        foreach (var bone in bones)
+        {
+            var remapped = RemapLegacySkirtParent(bone.Name, bone.SkeletonParent);
+            if (remapped != bone.SkeletonParent)
+            {
+                bone.SkeletonParent = remapped;
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    private static string? RemapLegacySkirtParent(string boneName, string? oldParent)
+    {
+        // Bones named j_sk_<pos>_<tier>_<side>. Tier 'b' under j_sebo_b and tier 'c'
+        // under j_sebo_c are the legacy flat-to-spine parents we replaced.
+        if (oldParent == null) return null;
+        if (!boneName.StartsWith("j_sk_")) return oldParent;
+        var parts = boneName.Split('_');
+        if (parts.Length != 5) return oldParent;
+        string pos = parts[2];
+        string tier = parts[3];
+        string side = parts[4];
+        if (tier == "b" && oldParent == "j_sebo_b") return $"j_sk_{pos}_a_{side}";
+        if (tier == "c" && oldParent == "j_sebo_c") return $"j_sk_{pos}_b_{side}";
+        return oldParent;
     }
 }

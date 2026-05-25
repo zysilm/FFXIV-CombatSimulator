@@ -933,6 +933,30 @@ public unsafe class RagdollController : IDisposable
                     capsuleWorldRot = boneWorldRot;
                 }
             }
+            else if (def.ParentName != null &&
+                     boneWorldPositions.TryGetValue(def.ParentName, out var parentForLeafWorldPos))
+            {
+                // Leaf bone with no children in either BoneDefs or skeleton, but with
+                // a parent in BoneDefs (e.g., terminal skirt C-tier under chained
+                // parenting). Use parent→bone direction so the capsule extends along
+                // the chain instead of inheriting the rest-pose rotation, which for
+                // some radial slots points upward and produces "skirt floats in air".
+                var fromParent = boneWorldPos - parentForLeafWorldPos;
+                var fromParentLen = fromParent.Length();
+                if (fromParentLen > 0.01f)
+                {
+                    var dir = fromParent / fromParentLen;
+                    capsuleCenter = boneWorldPos + effectiveHalfLength * dir;
+                    segmentHalfLength = effectiveHalfLength;
+                    capsuleWorldRot = RotationFromYToDirection(fromParent);
+                }
+                else
+                {
+                    capsuleCenter = boneWorldPos;
+                    segmentHalfLength = 0f;
+                    capsuleWorldRot = boneWorldRot;
+                }
+            }
             else
             {
                 // True root with no parent: keep at bone position
