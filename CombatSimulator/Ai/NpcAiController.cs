@@ -21,6 +21,10 @@ public unsafe class NpcAiController : IDisposable
     private readonly Configuration config;
     private readonly IPluginLog log;
 
+    // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
+    // 0 we call EngageNpc on each selected NPC. Negative = inactive.
+    private float pendingAutoEngageDelay = -1f;
+
     public NpcAiController(
         CombatEngine combatEngine,
         AnimationController animationController,
@@ -35,6 +39,24 @@ public unsafe class NpcAiController : IDisposable
         this.clientState = clientState;
         this.config = config;
         this.log = log;
+
+        combatEngine.OnSimulationStarted += ScheduleAutoEngage;
+        combatEngine.OnSimulationReset += OnSimulationResetOrStop;
+    }
+
+    private void ScheduleAutoEngage()
+    {
+        if (!config.EnableNpcAutoEngage) { pendingAutoEngageDelay = -1f; return; }
+        pendingAutoEngageDelay = Math.Clamp(config.NpcAutoEngageDelay, 0f, 20f);
+    }
+
+    private void OnSimulationResetOrStop()
+    {
+        // OnSimulationReset fires from both StopSimulation and ResetState.
+        // StopSimulation flips IsActive false before invoking — skip auto-engage
+        // there since there are no selected NPCs left to engage.
+        if (!combatEngine.State.IsActive) { pendingAutoEngageDelay = -1f; return; }
+        ScheduleAutoEngage();
     }
 
     public void Tick(float deltaTime, IReadOnlyList<SimulatedNpc> npcs)
@@ -42,6 +64,19 @@ public unsafe class NpcAiController : IDisposable
         var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null)
             return;
+
+        // Auto-engage countdown — when it expires, force every selected NPC
+        // from Idle into Engaging so attacks start without player aggro.
+        if (pendingAutoEngageDelay >= 0f)
+        {
+            pendingAutoEngageDelay -= deltaTime;
+            if (pendingAutoEngageDelay <= 0f)
+            {
+                pendingAutoEngageDelay = -1f;
+                foreach (var npc in npcs)
+                    EngageNpc(npc);
+            }
+        }
 
         var playerPos = player.Position;
         var playerEntityId = player.EntityId;
@@ -535,6 +570,8 @@ public unsafe class NpcAiController : IDisposable
 
     public void Dispose()
     {
+        combatEngine.OnSimulationStarted -= ScheduleAutoEngage;
+        combatEngine.OnSimulationReset -= OnSimulationResetOrStop;
         movementBlockHook.ClearApproachNpcs();
     }
 }

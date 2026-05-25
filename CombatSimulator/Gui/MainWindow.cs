@@ -2698,6 +2698,26 @@ public class MainWindow : IDisposable
                 ImGui.Unindent();
             }
 
+            var autoEngage = config.EnableNpcAutoEngage;
+            if (ImGui.Checkbox("NPC Auto Engage##dev", ref autoEngage))
+            {
+                config.EnableNpcAutoEngage = autoEngage;
+                config.Save();
+            }
+            HelpMarker("Selected enemy NPCs start attacking the player automatically on Start / Reset / Reboot, without the player having to attack them first.");
+            if (config.EnableNpcAutoEngage)
+            {
+                ImGui.Indent();
+                var autoEngageDelay = config.NpcAutoEngageDelay;
+                if (ImGui.SliderFloat("Engage Delay##dev", ref autoEngageDelay, 0f, 20f, "%.1f s"))
+                {
+                    config.NpcAutoEngageDelay = autoEngageDelay;
+                    config.Save();
+                }
+                HelpMarker("Seconds to wait after Start / Reset / Reboot before NPCs start attacking.");
+                ImGui.Unindent();
+            }
+
             victorySequenceGui.Draw();
 
             ImGui.Unindent();
