@@ -686,13 +686,27 @@ public class MainWindow : IDisposable
                         : new Vector4(0.8f, 0, 0, 1);
                     if (!npc.IsAlive) hpColor = new Vector4(0.4f, 0.4f, 0.4f, 1);
                     ImGui.PushStyleColor(ImGuiCol.PlotHistogram, hpColor);
-                    ImGui.ProgressBar(hp, new Vector2(ImGui.GetContentRegionAvail().X - 70, 0),
+                    // 75% of the leftover row width — leaves a clear gap before
+                    // the name / ranged checkbox / despawn cluster on the right.
+                    float hpBarWidth = (ImGui.GetContentRegionAvail().X - 120) * 0.75f;
+                    ImGui.ProgressBar(hp, new Vector2(hpBarWidth, 0),
                         $"{npc.State.CurrentHp:N0}/{npc.State.MaxHp:N0}");
                     ImGui.PopStyleColor();
                     ImGui.SameLine();
                 }
 
                 ImGui.Text(npc.Name);
+
+                // Ranged toggle — when on, this NPC's actions play the ranged
+                // attack motion (bow/gun draw + projectile) instead of melee.
+                // Label hidden via ##id; tooltip on hover explains what it does.
+                ImGui.SameLine(ImGui.GetContentRegionAvail().X - 145);
+                bool ranged = npc.IsRanged;
+                if (ImGui.Checkbox("##ranged", ref ranged))
+                    npc.IsRanged = ranged;
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Ranged: force ranged attack animation for this NPC (use for archers / casters whose default action animation is melee).");
+
                 ImGui.SameLine(ImGui.GetContentRegionAvail().X - 55);
                 if (ImGui.SmallButton("Despawn"))
                 {

@@ -246,6 +246,7 @@ public unsafe class NpcSpawner : IDisposable
                 SpawnPosition = spawnPos,
                 Behavior = NpcBehavior.Create(request.BehaviorType),
                 IsSpawned = false, // Will become true when draw is enabled
+                IsRanged = request.IsRanged, // Carried through respawn via NpcSpawnRequest
                 State = new SimulatedEntityState
                 {
                     EntityId = entityId,
@@ -453,6 +454,9 @@ public unsafe class NpcSpawner : IDisposable
                 cloned.Position = gameObj->Position;
                 cloned.Rotation = gameObj->Rotation;
             }
+            // Capture the live ranged-toggle state so a user-set "Ranged"
+            // flag survives the reset's despawn → respawn cycle.
+            cloned.IsRanged = npc.IsRanged;
             toRespawn.Add(cloned);
         }
 
@@ -476,6 +480,7 @@ public unsafe class NpcSpawner : IDisposable
             Position = src.Position,
             Rotation = src.Rotation,
             BehaviorType = src.BehaviorType,
+            IsRanged = src.IsRanged,
         };
     }
 

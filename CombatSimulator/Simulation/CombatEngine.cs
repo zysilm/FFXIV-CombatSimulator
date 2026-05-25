@@ -597,6 +597,20 @@ public class CombatEngine : IDisposable
             bool isRanged = actionData.DamageType == SimDamageType.Magical ||
                             actionData.Range > 5.0f;
 
+            // Per-NPC ranged override: an NPC marked IsRanged in the spawned list
+            // always plays the ranged attack motion regardless of action data.
+            if (!source.IsPlayer)
+            {
+                foreach (var sourceNpc in npcSelector.SelectedNpcs)
+                {
+                    if (sourceNpc.SimulatedEntityId == source.EntityId && sourceNpc.IsRanged)
+                    {
+                        isRanged = true;
+                        break;
+                    }
+                }
+            }
+
             // Map simulated entity IDs to real game object IDs for native calls.
             // ActionEffectHandler.Receive needs IDs the game engine can resolve.
             var gameSourceId = GetGameEntityId(source);
