@@ -178,6 +178,11 @@ public class Configuration : IPluginConfiguration
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcSettleCollision { get; set; } = true;
 
+    // Auto-engage: NPC enemy targets attack the player automatically on
+    // simulation start / reset / reboot without the player attacking first.
+    public bool EnableNpcAutoEngage { get; set; } = false;
+    public float NpcAutoEngageDelay { get; set; } = 2.0f;
+
     // Active Camera — camera tracks a bone with free orbital control
     public bool ShowActiveCamToolbar { get; set; } = false;
     public bool EnableActiveCamera { get; set; } = false;

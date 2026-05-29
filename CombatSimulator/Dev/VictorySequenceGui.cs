@@ -719,8 +719,22 @@ public class VictorySequenceGui
                 if (ImGui.DragFloat("Spring Freq##gf2", ref gsf, 5f, 10, 500, "%.0f"))
                 { s.GrabSpringFreq = gsf; config.Save(); }
 
+                // Per-stage offset in the NPC bone's LOCAL axes — shifts the
+                // grab attach point off the bone origin. For long-armed enemies
+                // where j_te_r sits at the wrist, +Y typically lands the player
+                // on the palm instead of dangling off the wrist joint.
+                var gox = s.GrabOffsetX;
+                if (ImGui.DragFloat("Offset X##gox", ref gox, 0.005f, -0.5f, 0.5f, "%.3f m"))
+                { s.GrabOffsetX = gox; config.Save(); }
+                var goy = s.GrabOffsetY;
+                if (ImGui.DragFloat("Offset Y##goy", ref goy, 0.005f, -0.5f, 0.5f, "%.3f m"))
+                { s.GrabOffsetY = goy; config.Save(); }
+                var goz = s.GrabOffsetZ;
+                if (ImGui.DragFloat("Offset Z##goz", ref goz, 0.005f, -0.5f, 0.5f, "%.3f m"))
+                { s.GrabOffsetZ = goz; config.Save(); }
+
                 if (ImGui.SmallButton("Reset Defaults##grst"))
-                { s.GrabForce = 1000; s.GrabSpeed = 50; s.GrabSpringFreq = 120; config.Save(); }
+                { s.GrabForce = 1000; s.GrabSpeed = 50; s.GrabSpringFreq = 120; s.GrabOffsetX = 0; s.GrabOffsetY = 0; s.GrabOffsetZ = 0; config.Save(); }
 
                 // --- Shoulder rotation override ---
                 ImGui.Separator();

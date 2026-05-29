@@ -130,7 +130,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // npcSelector by DeselectAll during StopSimulation). For real
         // first-time starts this just re-populates the selector so
         // NpcAiController can tick the existing spawns.
-        combatEngine.OnSimulationStarted = () =>
+        combatEngine.OnSimulationStarted += () =>
         {
             foreach (var npc in npcSpawner.SpawnedNpcs)
             {
@@ -148,7 +148,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // ResetState doesn't call DeselectAll so the selector still holds
         // references to NPCs we're about to despawn. Explicitly unregister
         // them first to avoid dangling pointers.
-        combatEngine.OnSimulationReset = () =>
+        combatEngine.OnSimulationReset += () =>
         {
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();

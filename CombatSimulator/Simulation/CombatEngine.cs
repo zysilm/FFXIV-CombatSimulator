@@ -59,6 +59,11 @@ public class CombatEngine : IDisposable
     private readonly Dev.VictorySequenceController? victorySequenceController;
     private bool playerDeathTriggered;
     private bool victoryTriggered;
+    // Player auto-attack is gated on this — when NPCs auto-engage (Dev option),
+    // the player does NOT swing back until they manually use an action.
+    // Set by ProcessPlayerAction when the player lands a real action; cleared
+    // on Start / Reset / Stop.
+    private bool playerInitiatedCombat;
     private bool glamourerApplied;
 
     public SimulationState State { get; } = new();
@@ -147,6 +152,7 @@ public class CombatEngine : IDisposable
         playerDeathTriggered = false;
         victoryTriggered = false;
         glamourerApplied = false;
+        playerInitiatedCombat = false;
         pendingDeaths.Clear();
 
         // Apply glamourer combat-ready preset on start
@@ -197,6 +203,7 @@ public class CombatEngine : IDisposable
         ragdollController.Deactivate();
         deathCamController?.Deactivate();
         RevertGlamourer();
+        playerInitiatedCombat = false;
 
         AddLogEntry("Combat simulation stopped.", CombatLogType.Info);
         log.Info("Combat simulation stopped.");
@@ -245,6 +252,7 @@ public class CombatEngine : IDisposable
         playerDeathTriggered = false;
         victoryTriggered = false;
         glamourerApplied = false;
+        playerInitiatedCombat = false;
         pendingDeaths.Clear();
 
         AddLogEntry("Combat state reset.", CombatLogType.Info);
@@ -434,6 +442,9 @@ public class CombatEngine : IDisposable
         result.IsCritical = dmgResult.IsCritical;
         result.IsDirectHit = dmgResult.IsDirectHit;
         result.IsCombo = isCombo;
+
+        // Player chose to fight back — let TickAutoAttack swing from now on.
+        playerInitiatedCombat = true;
 
         // Trigger animation
         TriggerActionEffect(State.PlayerState, target, actionData, dmgResult);
@@ -1008,6 +1019,12 @@ public class CombatEngine : IDisposable
     {
         var ps = State.PlayerState;
         if (!ps.IsAlive)
+            return;
+
+        // Don't auto-swing back just because something engaged us — wait until
+        // the player chooses to fight (matches real-game aggro: mob hits you,
+        // you decide whether to retaliate).
+        if (!playerInitiatedCombat)
             return;
 
         ps.AutoAttackTimer -= deltaTime;
