@@ -22,6 +22,13 @@ public class VictorySequenceStage
     public float GrabForce { get; set; } = 1000f;
     public float GrabSpeed { get; set; } = 50f;
     public float GrabSpringFreq { get; set; } = 120f;
+    // Offset of the grab target in the NPC bone's LOCAL axes (meters).
+    // For long-armed enemies where j_te_r sits at the wrist, +Y typically
+    // shifts the player toward the fingertips so they land on the palm
+    // instead of dangling off the wrist joint.
+    public float GrabOffsetX { get; set; }
+    public float GrabOffsetY { get; set; }
+    public float GrabOffsetZ { get; set; }
 
     // Shoulder rotation override — tweaks the grabbing NPC's upper arm so the
     // arm pose matches the grab position. Manual pitch/yaw/roll (degrees, local

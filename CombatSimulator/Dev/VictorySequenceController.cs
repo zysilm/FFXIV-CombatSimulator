@@ -379,13 +379,14 @@ public unsafe class VictorySequenceController : IDisposable
             log.Info("VictorySequence: Grab bones changed, re-creating constraint");
         }
 
+        var grabOffset = new Vector3(stage.GrabOffsetX, stage.GrabOffsetY, stage.GrabOffsetZ);
         if (stage.GrabEnabled && !grabActive)
         {
             // Activate grab: create physics constraint on player's ragdoll bone
             ResolveBoneIndices(stage);
             if (npcHandBoneIdx >= 0 && ragdollController.IsActive)
             {
-                var npcHandWorld = GetBoneWorldPos(cinematicNpc!.Address, stage.NpcBoneName);
+                var npcHandWorld = GetBoneWorldPos(cinematicNpc!.Address, stage.NpcBoneName, grabOffset);
                 if (npcHandWorld != null)
                 {
                     grabActive = ragdollController.CreateGrabConstraint(
@@ -549,7 +550,7 @@ public unsafe class VictorySequenceController : IDisposable
     /// <summary>
     /// Read any character's bone world position from its current skeleton.
     /// </summary>
-    private Vector3? GetBoneWorldPos(nint characterAddress, string boneName)
+    private Vector3? GetBoneWorldPos(nint characterAddress, string boneName, Vector3 localOffset = default)
     {
         if (characterAddress == nint.Zero) return null;
 
@@ -575,7 +576,18 @@ public unsafe class VictorySequenceController : IDisposable
 
         ref var mt = ref ns.Pose->ModelPose.Data[idx];
         var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
-        return nSkelPos + Vector3.Transform(modelPos, nSkelRot);
+        var worldPos = nSkelPos + Vector3.Transform(modelPos, nSkelRot);
+
+        // Apply caller-supplied offset in the bone's local axes (e.g., shift the
+        // grab attach from wrist toward fingertips). Bone's world rotation is
+        // the skeleton's world rotation composed with its model-space rotation.
+        if (localOffset != Vector3.Zero)
+        {
+            var modelRot = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
+            var boneWorldRot = nSkelRot * modelRot;
+            worldPos += Vector3.Transform(localOffset, boneWorldRot);
+        }
+        return worldPos;
     }
 
     private void OnRenderFrame()
@@ -603,7 +615,8 @@ public unsafe class VictorySequenceController : IDisposable
             // post-rotation hand position (when shoulder override is on).
             if (grabActive)
             {
-                var npcHandWorld = GetBoneWorldPos(cinematicNpc!.Address, stage.NpcBoneName);
+                var grabOffset = new Vector3(stage.GrabOffsetX, stage.GrabOffsetY, stage.GrabOffsetZ);
+                var npcHandWorld = GetBoneWorldPos(cinematicNpc!.Address, stage.NpcBoneName, grabOffset);
                 if (npcHandWorld != null)
                     ragdollController.UpdateGrabTarget(npcHandWorld.Value);
             }
