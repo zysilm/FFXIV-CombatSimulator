@@ -33,6 +33,8 @@ public class ActionData
     public int ComboPotency { get; set; }
     public float AnimationLock { get; set; } = 0.6f;
     public bool IsPlayerAction { get; set; } = true;
+    public ushort AnimationStartTimelineId { get; set; }
+    public ushort AnimationEndTimelineId { get; set; }
 
     // VFX paths resolved from Lumina data + TMB files
     public string CastVfxPath { get; set; } = string.Empty;
@@ -83,6 +85,8 @@ public partial class ActionDataProvider
             MpCost = action.PrimaryCostValue,
             AnimationLock = 0.6f,
             IsPlayerAction = action.IsPlayerAction,
+            AnimationStartTimelineId = (ushort)action.AnimationStart.RowId,
+            AnimationEndTimelineId = (ushort)action.AnimationEnd.RowId,
         };
 
         // Damage type from AttackType

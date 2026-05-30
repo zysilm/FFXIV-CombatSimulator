@@ -24,6 +24,8 @@ public class ActionEffectRequest
     public bool IsSourcePlayer { get; set; }
     public bool IsRanged { get; set; }
     public NpcAttackStyle AttackStyle { get; set; } = NpcAttackStyle.Auto;
+    public ushort AnimationStartTimelineId { get; set; }
+    public ushort AnimationEndTimelineId { get; set; }
 
     // VFX paths resolved from Lumina + TMB data
     public string CastVfxPath { get; set; } = string.Empty;
@@ -269,6 +271,9 @@ public unsafe class AnimationController : IDisposable
             // Use ActionEffectHandler.Receive() for flytext + damage numbers
             CallActionEffectReceive(request);
 
+            if (request.IsSourcePlayer)
+                PlayPlayerActionTimeline(request);
+
             if (!request.IsSourcePlayer && request.AttackStyle == NpcAttackStyle.Ranged)
                 PlayMonsterRangedAttackTimeline(request.SourceEntityId);
         }
@@ -332,7 +337,8 @@ public unsafe class AnimationController : IDisposable
                         foreach (var path in request.TargetVfxPaths)
                             SpawnAndTrack(path, targetAddr, casterAddr, targetEntityId);
                     }
-                    else if (config.EnableHitVfx)
+
+                    if ((request.TargetVfxPaths.Count == 0 || request.IsSourcePlayer) && config.EnableHitVfx)
                     {
                         var vfxPath = config.HitVfxPath;
                         if (!string.IsNullOrWhiteSpace(vfxPath))
@@ -345,6 +351,25 @@ public unsafe class AnimationController : IDisposable
         {
             log.Error(ex, "Failed to spawn action VFX.");
         }
+    }
+
+    private void PlayPlayerActionTimeline(ActionEffectRequest request)
+    {
+        if (request.AttackStyle != NpcAttackStyle.Magic && !request.IsRanged)
+            return;
+
+        var timelineId = request.AnimationEndTimelineId != 0
+            ? request.AnimationEndTimelineId
+            : request.AnimationStartTimelineId;
+        if (timelineId == 0)
+            return;
+
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null)
+            return;
+
+        var targetObjId = request.Targets.Count > 0 ? request.Targets[0].TargetId : 0;
+        emotePlayer.PlayOneShot((Character*)player.Address, timelineId, targetObjId);
     }
 
     /// <summary>

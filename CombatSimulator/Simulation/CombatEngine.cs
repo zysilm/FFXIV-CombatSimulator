@@ -642,6 +642,8 @@ public class CombatEngine : IDisposable
             ComboPotency = source.ComboPotency,
             AnimationLock = source.AnimationLock,
             IsPlayerAction = source.IsPlayerAction,
+            AnimationStartTimelineId = source.AnimationStartTimelineId,
+            AnimationEndTimelineId = source.AnimationEndTimelineId,
             CastVfxPath = source.CastVfxPath,
             StartVfxPath = source.StartVfxPath,
             CasterVfxPaths = new List<string>(source.CasterVfxPaths),
@@ -715,6 +717,8 @@ public class CombatEngine : IDisposable
                     : isRanged
                         ? NpcAttackStyle.Ranged
                         : NpcAttackStyle.Melee,
+                AnimationStartTimelineId = actionData.AnimationStartTimelineId,
+                AnimationEndTimelineId = actionData.AnimationEndTimelineId,
                 CastVfxPath = actionData.CastVfxPath,
                 StartVfxPath = actionData.StartVfxPath,
                 CasterVfxPaths = actionData.CasterVfxPaths,

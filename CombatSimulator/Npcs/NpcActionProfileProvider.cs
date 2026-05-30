@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
 
@@ -110,7 +111,15 @@ public class NpcActionProfileProvider
     {
         behavior.AutoAttackRange = Math.Max(behavior.AutoAttackRange, 25f);
         behavior.AutoAttackPotency = Math.Min(behavior.AutoAttackPotency, 100);
+        if (behavior.AutoAttackActionId == 97 || behavior.AutoAttackActionId == 98)
+            behavior.AutoAttackActionId = 7;
         behavior.AutoAttackStyle = NpcAttackStyle.Magic;
+
+        if (behavior.Skills.Count == 0 || HasPhysicalRangedActionCarriers(behavior))
+        {
+            behavior.Skills = CreateMagicSkillSet();
+            return;
+        }
 
         foreach (var skill in behavior.Skills)
         {
@@ -118,6 +127,46 @@ public class NpcActionProfileProvider
             if (skill.AttackStyle == NpcAttackStyle.Auto || skill.AttackStyle == NpcAttackStyle.Melee)
                 skill.AttackStyle = NpcAttackStyle.Magic;
         }
+    }
+
+    private static bool HasPhysicalRangedActionCarriers(NpcBehavior behavior)
+    {
+        foreach (var skill in behavior.Skills)
+        {
+            if (skill.ActionId is 97 or 98)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static List<NpcSkill> CreateMagicSkillSet()
+    {
+        return new List<NpcSkill>
+        {
+            new()
+            {
+                Name = "Fire",
+                ActionId = 141,
+                Potency = 300,
+                Cooldown = 8.0f,
+                CastTime = 2.5f,
+                Range = 25.0f,
+                AttackStyle = NpcAttackStyle.Magic,
+                Priority = 2,
+            },
+            new()
+            {
+                Name = "Thunder",
+                ActionId = 144,
+                Potency = 150,
+                Cooldown = 30.0f,
+                CastTime = 0f,
+                Range = 25.0f,
+                AttackStyle = NpcAttackStyle.Magic,
+                Priority = 1,
+            },
+        };
     }
 
     private static void ApplyKnownProfile(NpcBehavior behavior, string npcName, uint bNpcBaseId, uint eNpcBaseId)
