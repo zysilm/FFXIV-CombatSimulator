@@ -271,9 +271,6 @@ public class CombatEngine : IDisposable
         // Track player's current target for victory sequence
         victorySequenceController?.TrackTarget(npcSelector.SelectedNpcs);
 
-        // Tick animation cooldowns
-        animationController.Tick(deltaTime);
-
         // Process queued player actions
         ProcessActionQueue();
 

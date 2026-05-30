@@ -35,7 +35,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly ActionDataProvider actionDataProvider;
     private readonly NpcActionProfileProvider npcActionProfileProvider;
     private readonly DamageCalculator damageCalculator;
-    private readonly ChatCommandExecutor chatCommandExecutor;
     private readonly GlamourerIpc glamourerIpc;
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly AnimationController animationController;
@@ -96,11 +95,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         actionDataProvider = new ActionDataProvider(dataManager, log);
         npcActionProfileProvider = new NpcActionProfileProvider(actionDataProvider, log);
         damageCalculator = new DamageCalculator();
-        chatCommandExecutor = new ChatCommandExecutor(log);
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         vnavmeshIpc = new VNavmeshIpc(pluginInterface, log);
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
-        animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
+        animationController = new AnimationController(log, clientState, dataManager, sigScanner, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, npcActionProfileProvider, log);
         npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, npcActionProfileProvider, log);

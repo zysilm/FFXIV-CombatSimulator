@@ -11,7 +11,6 @@ using Dalamud.Interface;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
-using Lumina.Excel.Sheets;
 
 namespace CombatSimulator.Gui;
 
@@ -51,10 +50,6 @@ public class MainWindow : IDisposable
     private bool skeletonBonesLoaded;
 
     private static readonly string[] BehaviorNames = { "Training Dummy", "Basic Melee", "Basic Ranged", "Boss" };
-
-    // Emote list cache for target victory dropdown
-    private List<(uint Id, string Name)>? emoteListCache;
-    private int targetVictoryEmoteIndex = -1;
 
     // Death cam preset state
     private string newPresetName = "";
@@ -147,7 +142,7 @@ public class MainWindow : IDisposable
     {
         "Combat",
         "Targets",
-        "Animation",
+        "Effects",
         "Camera",
         "Ragdoll",
         "Ragdoll (Adv)",
@@ -214,8 +209,7 @@ public class MainWindow : IDisposable
                 DrawNpcDefaultsSection();
                 DrawTargetBehaviorsSection();
                 break;
-            case 2: // Animation
-                DrawAnimationCommandsSection();
+            case 2: // Effects
                 DrawHitVfxSection();
                 DrawGlamourerHeaderSection();
                 break;
@@ -961,110 +955,6 @@ public class MainWindow : IDisposable
                     $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}");
                 ImGui.PopStyleColor();
             }
-        }
-    }
-
-    private void DrawAnimationCommandsSection()
-    {
-        if (ImGui.CollapsingHeader("Animation Commands"))
-        {
-            var meleeCmd = config.PlayerMeleeAttackCommand;
-            if (ImGui.InputText("Melee Attack", ref meleeCmd, 64))
-            {
-                config.PlayerMeleeAttackCommand = meleeCmd;
-                config.Save();
-            }
-            HelpMarker("Chat command to execute for melee attack animation. Empty = use default timeline.");
-
-            var rangedCmd = config.PlayerRangedAttackCommand;
-            if (ImGui.InputText("Ranged Attack", ref rangedCmd, 64))
-            {
-                config.PlayerRangedAttackCommand = rangedCmd;
-                config.Save();
-            }
-            HelpMarker("Chat command to execute for ranged attack animation. Empty = use default timeline.");
-
-            ImGui.Separator();
-
-            var deathCmd = config.PlayerDeathCommand;
-            if (ImGui.InputText("Player Death", ref deathCmd, 64))
-            {
-                config.PlayerDeathCommand = deathCmd;
-                config.Save();
-            }
-            HelpMarker("Chat command on player death (e.g. /playdead). Empty = bypass emote timeline.");
-
-            var deathEmoteId = (int)config.DeathEmoteId;
-            if (ImGui.InputInt("Death Emote ID", ref deathEmoteId))
-            {
-                config.DeathEmoteId = (uint)Math.Max(0, deathEmoteId);
-                config.Save();
-            }
-            HelpMarker("Emote ID for the death animation. 0 = auto-detect 'Play Dead' from emote sheet.");
-
-            ImGui.Separator();
-
-            var victoryCmd = config.PlayerVictoryCommand;
-            if (ImGui.InputText("Player Victory", ref victoryCmd, 64))
-            {
-                config.PlayerVictoryCommand = victoryCmd;
-                config.Save();
-            }
-            HelpMarker("Chat command when the player wins (e.g. /victory).");
-
-            // Target Victory: emote played on each surviving NPC when the player dies
-            if (emoteListCache == null)
-            {
-                emoteListCache = new List<(uint, string)> { (0, "(None)") };
-                try
-                {
-                    var emoteSheet = Core.Services.DataManager.GetExcelSheet<Emote>();
-                    if (emoteSheet != null)
-                    {
-                        var emotes = new List<(uint Id, string Name)>();
-                        foreach (var emote in emoteSheet)
-                        {
-                            var name = emote.Name.ToString();
-                            if (!string.IsNullOrWhiteSpace(name))
-                                emotes.Add((emote.RowId, $"{name} [{emote.RowId}]"));
-                        }
-                        emotes.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
-                        emoteListCache.AddRange(emotes);
-                    }
-                }
-                catch { }
-            }
-
-            // Find current selection index
-            if (targetVictoryEmoteIndex < 0)
-            {
-                targetVictoryEmoteIndex = 0;
-                for (int i = 0; i < emoteListCache.Count; i++)
-                {
-                    if (emoteListCache[i].Id == config.TargetVictoryEmoteId)
-                    { targetVictoryEmoteIndex = i; break; }
-                }
-            }
-
-            var currentEmoteName = targetVictoryEmoteIndex < emoteListCache.Count
-                ? emoteListCache[targetVictoryEmoteIndex].Name : "(None)";
-            if (ImGui.BeginCombo("Target Victory", currentEmoteName))
-            {
-                for (int i = 0; i < emoteListCache.Count; i++)
-                {
-                    var isSelected = i == targetVictoryEmoteIndex;
-                    if (ImGui.Selectable(emoteListCache[i].Name, isSelected))
-                    {
-                        targetVictoryEmoteIndex = i;
-                        config.TargetVictoryEmoteId = emoteListCache[i].Id;
-                        config.Save();
-                    }
-                    if (isSelected)
-                        ImGui.SetItemDefaultFocus();
-                }
-                ImGui.EndCombo();
-            }
-            HelpMarker("Emote played on each surviving NPC when the player dies. NPCs perform this emote toward the player.");
         }
     }
 

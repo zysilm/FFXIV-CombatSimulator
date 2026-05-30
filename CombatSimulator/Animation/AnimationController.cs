@@ -48,7 +48,6 @@ public unsafe class AnimationController : IDisposable
 {
     private readonly IPluginLog log;
     private readonly IClientState clientState;
-    private readonly ChatCommandExecutor commandExecutor;
     private readonly EmoteTimelinePlayer emotePlayer;
     public EmoteTimelinePlayer EmotePlayer => emotePlayer;
     private readonly Configuration config;
@@ -98,12 +97,10 @@ public unsafe class AnimationController : IDisposable
         IClientState clientState,
         IDataManager dataManager,
         ISigScanner sigScanner,
-        ChatCommandExecutor commandExecutor,
         Configuration config)
     {
         this.log = log;
         this.clientState = clientState;
-        this.commandExecutor = commandExecutor;
         this.config = config;
         this.emotePlayer = new EmoteTimelinePlayer(log);
 
@@ -162,19 +159,6 @@ public unsafe class AnimationController : IDisposable
             if (emoteSheet == null)
             {
                 log.Warning("AnimationController: Emote sheet not found.");
-                return;
-            }
-
-            // If user specified a custom emote ID, use that
-            uint targetEmoteId = config.DeathEmoteId;
-
-            if (targetEmoteId > 0)
-            {
-                var emote = emoteSheet.GetRow(targetEmoteId);
-                playDeadLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
-                playDeadIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
-                playDeadResolved = playDeadLoopTimeline != 0 || playDeadIntroTimeline != 0;
-                log.Info($"AnimationController: Custom death emote {targetEmoteId} → loop={playDeadLoopTimeline}, intro={playDeadIntroTimeline}");
                 return;
             }
 
@@ -258,11 +242,6 @@ public unsafe class AnimationController : IDisposable
         }
     }
 
-    public void Tick(float deltaTime)
-    {
-        commandExecutor.Tick(deltaTime);
-    }
-
     /// <summary>
     /// No-op — VFX removal via actorVfxRemove is disabled because the same plugins
     /// that hook actorVfxCreate also hook actorVfxRemove and crash on our NPC actors.
@@ -274,7 +253,6 @@ public unsafe class AnimationController : IDisposable
     /// Play attack animation + VFX + hit reaction via ActionEffectHandler.Receive().
     /// This triggers the game's full combat visual pipeline: caster animation, target hit
     /// reaction, VFX particles, damage flytext, and sound effects — all in one call.
-    /// If custom commands are configured for the player, those are used instead.
     /// </summary>
     public void PlayActionEffect(ActionEffectRequest request)
     {
@@ -283,22 +261,6 @@ public unsafe class AnimationController : IDisposable
 
         try
         {
-            // Check for custom command override (player only)
-            if (request.IsSourcePlayer)
-            {
-                var customCommand = request.IsRanged
-                    ? config.PlayerRangedAttackCommand
-                    : config.PlayerMeleeAttackCommand;
-
-                if (!string.IsNullOrWhiteSpace(customCommand))
-                {
-                    // Use custom chat command instead of ActionEffect pipeline
-                    commandExecutor.ExecuteCommand(customCommand, cooldown: 0.8f);
-                    log.Verbose($"Custom attack command: {customCommand}");
-                    return;
-                }
-            }
-
             // Spawn skill VFX via ActorVfxCreate (off by default — other plugins that
             // hook this function may crash when accessing our modified NPC actors)
             if (config.EnableSkillVfx)
@@ -637,7 +599,7 @@ public unsafe class AnimationController : IDisposable
 
     /// <summary>
     /// Play death animation on the player character.
-    /// If a custom command is configured, uses that. Otherwise uses BypassEmote-style timeline.
+    /// Uses BypassEmote-style timeline.
     /// When ragdoll weapon drop is enabled, uses battle/dead ActionTimeline via BaseOverride
     /// instead of the play-dead emote — play-dead sheathes weapons and the game engine
     /// actively fights any attempt to keep them visible.
@@ -646,15 +608,6 @@ public unsafe class AnimationController : IDisposable
     {
         try
         {
-            // If a custom command is set, use it
-            var command = config.PlayerDeathCommand;
-            if (!string.IsNullOrWhiteSpace(command))
-            {
-                commandExecutor.ExecuteCommand(command);
-                log.Info($"Player death command executed: {command}");
-                return;
-            }
-
             var player = Core.Services.ObjectTable.LocalPlayer;
             if (player == null) return;
             var character = (Character*)player.Address;
@@ -720,59 +673,10 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
-    /// Execute victory animation/command.
+    /// Execute victory animation.
     /// </summary>
     public void PlayVictory(bool isPlayerVictory, IReadOnlyList<SimulatedNpc>? npcs = null)
     {
-        if (isPlayerVictory)
-        {
-            var command = config.PlayerVictoryCommand;
-            if (!string.IsNullOrWhiteSpace(command))
-            {
-                commandExecutor.ExecuteCommand(command);
-                log.Info($"Player victory command executed: {command}");
-            }
-        }
-        else
-        {
-            // Play emote on each surviving NPC via timeline (bypasses unlock checks)
-            var emoteId = config.TargetVictoryEmoteId;
-            if (emoteId > 0 && npcs != null)
-            {
-                try
-                {
-                    // Get player's object ID so the emote targets the player (facing, height adjust)
-                    ulong playerObjId = 0;
-                    var player = Core.Services.ObjectTable.LocalPlayer;
-                    if (player != null)
-                    {
-                        var playerObj = (GameObject*)player.Address;
-                        playerObjId = playerObj->GetGameObjectId().Id;
-                    }
-
-                    var emoteSheet = Core.Services.DataManager.GetExcelSheet<Emote>();
-                    if (emoteSheet != null)
-                    {
-                        var emote = emoteSheet.GetRow(emoteId);
-                        var loopTimeline = (ushort)emote.ActionTimeline[0].RowId;
-                        var introTimeline = (ushort)emote.ActionTimeline[1].RowId;
-
-                        foreach (var npc in npcs)
-                        {
-                            if (npc.BattleChara == null || !npc.State.IsAlive) continue;
-                            var character = (Character*)npc.BattleChara;
-                            if (introTimeline != 0 || loopTimeline != 0)
-                                emotePlayer.PlayLoopedEmote(character, loopTimeline, introTimeline, playerObjId);
-                            log.Info($"NPC '{npc.Name}' playing victory emote {emoteId} toward player 0x{playerObjId:X}");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    log.Warning(ex, $"Failed to play target victory emote {emoteId}");
-                }
-            }
-        }
     }
 
     /// <summary>
