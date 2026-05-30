@@ -16,6 +16,8 @@ namespace CombatSimulator.Ai;
 
 public unsafe class NpcAiController : IDisposable
 {
+    public const float PlayerTriggeredEngageDelay = 0.5f;
+
     private readonly CombatEngine combatEngine;
     private readonly AnimationController animationController;
     private readonly MovementBlockHook movementBlockHook;
@@ -251,6 +253,11 @@ public unsafe class NpcAiController : IDisposable
             case NpcAiState.Engaging:
                 if (npc.IsClientControlled)
                     RotateTowardPlayer(npc, playerPos, deltaTime);
+                if (npc.EngageDelayTimer > 0)
+                {
+                    npc.EngageDelayTimer = Math.Max(0, npc.EngageDelayTimer - deltaTime);
+                    break;
+                }
                 npc.AiState = NpcAiState.Combat;
                 break;
 
