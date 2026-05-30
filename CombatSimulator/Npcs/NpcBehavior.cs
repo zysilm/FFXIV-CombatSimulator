@@ -10,6 +10,14 @@ public enum NpcBehaviorType
     Boss,
 }
 
+public enum NpcAttackStyle
+{
+    Auto,
+    Melee,
+    Ranged,
+    Magic,
+}
+
 public class NpcBehavior
 {
     public float AutoAttackDelay { get; set; } = 3.0f;
@@ -19,6 +27,7 @@ public class NpcBehavior
     public float AggroRange { get; set; } = 0f;
     public float LeashDistance { get; set; } = 40f;
     public float MoveSpeed { get; set; } = 6f;
+    public NpcAttackStyle AutoAttackStyle { get; set; } = NpcAttackStyle.Melee;
     public List<NpcSkill> Skills { get; set; } = new();
 
     public static NpcBehavior Create(NpcBehaviorType type)
@@ -57,6 +66,8 @@ public class NpcBehavior
                 AutoAttackDelay = 3.0f,
                 AutoAttackRange = 25.0f,
                 AutoAttackPotency = 80,
+                AutoAttackActionId = 97,
+                AutoAttackStyle = NpcAttackStyle.Ranged,
                 MoveSpeed = 5.0f,
                 LeashDistance = 40.0f,
                 Skills = new()
@@ -69,6 +80,7 @@ public class NpcBehavior
                         Cooldown = 8.0f,
                         CastTime = 2.5f,
                         Range = 25.0f,
+                        AttackStyle = NpcAttackStyle.Magic,
                         Priority = 2,
                     },
                     new NpcSkill
@@ -79,6 +91,7 @@ public class NpcBehavior
                         Cooldown = 30.0f,
                         CastTime = 0f,
                         Range = 25.0f,
+                        AttackStyle = NpcAttackStyle.Magic,
                         Priority = 1,
                     },
                 },
@@ -143,6 +156,7 @@ public class NpcSkill
     public bool Interruptible { get; set; } = true;
     public int Priority { get; set; }
     public float HpThreshold { get; set; } = 1.0f;
+    public NpcAttackStyle AttackStyle { get; set; } = NpcAttackStyle.Auto;
 
     // Runtime state
     public float CooldownRemaining { get; set; }

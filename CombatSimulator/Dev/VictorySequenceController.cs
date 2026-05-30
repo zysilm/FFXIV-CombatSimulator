@@ -64,6 +64,21 @@ public unsafe class VictorySequenceController : IDisposable
     public nint CinematicNpcAddress => cinematicNpc?.Address ?? nint.Zero;
     public int CurrentStageIndex => currentStageIndex;
 
+    public bool ControlsNpc(nint address)
+    {
+        if (!isActive || address == nint.Zero)
+            return false;
+
+        if (cinematicNpc?.Address == address)
+            return true;
+
+        foreach (var state in otherNpcStates)
+            if (state.Npc.Address == address)
+                return true;
+
+        return false;
+    }
+
     public VictorySequenceController(
         BoneTransformService boneService,
         EmoteTimelinePlayer emotePlayer,

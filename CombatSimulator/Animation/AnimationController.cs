@@ -23,6 +23,9 @@ public class ActionEffectRequest
     public float SourceRotation { get; set; }
     public bool IsSourcePlayer { get; set; }
     public bool IsRanged { get; set; }
+    public NpcAttackStyle AttackStyle { get; set; } = NpcAttackStyle.Auto;
+    public ushort AnimationStartTimelineId { get; set; }
+    public ushort AnimationEndTimelineId { get; set; }
 
     // VFX paths resolved from Lumina + TMB data
     public string CastVfxPath { get; set; } = string.Empty;
@@ -47,7 +50,6 @@ public unsafe class AnimationController : IDisposable
 {
     private readonly IPluginLog log;
     private readonly IClientState clientState;
-    private readonly ChatCommandExecutor commandExecutor;
     private readonly EmoteTimelinePlayer emotePlayer;
     public EmoteTimelinePlayer EmotePlayer => emotePlayer;
     private readonly Configuration config;
@@ -65,6 +67,7 @@ public unsafe class AnimationController : IDisposable
     private ushort battleDeadIntroTimeline = 8935;
     private ushort battleDeadLoopTimeline = 8936;
     private bool battleDeadResolved;
+    private ushort monsterRangedAutoAttackTimeline;
 
     // ActorVfxCreate — spawns a .avfx particle effect attached to an actor
     private delegate nint ActorVfxCreateDelegate(
@@ -96,17 +99,16 @@ public unsafe class AnimationController : IDisposable
         IClientState clientState,
         IDataManager dataManager,
         ISigScanner sigScanner,
-        ChatCommandExecutor commandExecutor,
         Configuration config)
     {
         this.log = log;
         this.clientState = clientState;
-        this.commandExecutor = commandExecutor;
         this.config = config;
         this.emotePlayer = new EmoteTimelinePlayer(log);
 
         ResolvePlayDeadTimelines(dataManager);
         ResolveBattleDeadTimeline(dataManager);
+        ResolveMonsterRangedAttackTimeline(dataManager);
         ResolveActorVfxCreate(sigScanner);
         ResolveActorVfxRemove(sigScanner);
 
@@ -159,19 +161,6 @@ public unsafe class AnimationController : IDisposable
             if (emoteSheet == null)
             {
                 log.Warning("AnimationController: Emote sheet not found.");
-                return;
-            }
-
-            // If user specified a custom emote ID, use that
-            uint targetEmoteId = config.DeathEmoteId;
-
-            if (targetEmoteId > 0)
-            {
-                var emote = emoteSheet.GetRow(targetEmoteId);
-                playDeadLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
-                playDeadIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
-                playDeadResolved = playDeadLoopTimeline != 0 || playDeadIntroTimeline != 0;
-                log.Info($"AnimationController: Custom death emote {targetEmoteId} → loop={playDeadLoopTimeline}, intro={playDeadIntroTimeline}");
                 return;
             }
 
@@ -229,9 +218,30 @@ public unsafe class AnimationController : IDisposable
         log.Info($"AnimationController: Battle dead timelines — intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}, resolved={battleDeadResolved} (key search: intro={foundIntro}, loop={foundLoop})");
     }
 
-    public void Tick(float deltaTime)
+    private void ResolveMonsterRangedAttackTimeline(IDataManager dataManager)
     {
-        commandExecutor.Tick(deltaTime);
+        try
+        {
+            var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ActionTimeline>();
+            if (sheet == null)
+                return;
+
+            foreach (var row in sheet)
+            {
+                if (row.Key.ToString() == "battle/auto_attack_shot1_mon")
+                {
+                    monsterRangedAutoAttackTimeline = (ushort)row.RowId;
+                    log.Info($"AnimationController: Resolved monster ranged auto-attack timeline battle/auto_attack_shot1_mon -> {monsterRangedAutoAttackTimeline}.");
+                    return;
+                }
+            }
+
+            log.Warning("AnimationController: Could not find ActionTimeline key battle/auto_attack_shot1_mon.");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "AnimationController: Failed to resolve monster ranged auto-attack timeline.");
+        }
     }
 
     /// <summary>
@@ -245,7 +255,6 @@ public unsafe class AnimationController : IDisposable
     /// Play attack animation + VFX + hit reaction via ActionEffectHandler.Receive().
     /// This triggers the game's full combat visual pipeline: caster animation, target hit
     /// reaction, VFX particles, damage flytext, and sound effects — all in one call.
-    /// If custom commands are configured for the player, those are used instead.
     /// </summary>
     public void PlayActionEffect(ActionEffectRequest request)
     {
@@ -254,29 +263,19 @@ public unsafe class AnimationController : IDisposable
 
         try
         {
-            // Check for custom command override (player only)
-            if (request.IsSourcePlayer)
-            {
-                var customCommand = request.IsRanged
-                    ? config.PlayerRangedAttackCommand
-                    : config.PlayerMeleeAttackCommand;
-
-                if (!string.IsNullOrWhiteSpace(customCommand))
-                {
-                    // Use custom chat command instead of ActionEffect pipeline
-                    commandExecutor.ExecuteCommand(customCommand, cooldown: 0.8f);
-                    log.Verbose($"Custom attack command: {customCommand}");
-                    return;
-                }
-            }
-
             // Spawn skill VFX via ActorVfxCreate (off by default — other plugins that
             // hook this function may crash when accessing our modified NPC actors)
-            if (config.EnableSkillVfx)
+            if (config.EnableCharacterVfx || config.EnableTargetVfx)
                 SpawnActionVfx(request);
 
             // Use ActionEffectHandler.Receive() for flytext + damage numbers
             CallActionEffectReceive(request);
+
+            if (request.IsSourcePlayer)
+                PlayPlayerActionTimeline(request);
+
+            if (!request.IsSourcePlayer && request.AttackStyle == NpcAttackStyle.Ranged)
+                PlayMonsterRangedAttackTimeline(request.SourceEntityId);
         }
         catch (Exception ex)
         {
@@ -310,34 +309,41 @@ public unsafe class AnimationController : IDisposable
             // Spawn caster VFX (cast circle, skill effects from AnimationEnd TMB)
             nint orientAddr = firstTargetAddr != 0 ? firstTargetAddr : casterAddr;
 
-            if (!string.IsNullOrEmpty(request.CastVfxPath))
-                SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, casterEntityId);
+            if (config.EnableCharacterVfx)
+            {
+                if (!string.IsNullOrEmpty(request.CastVfxPath))
+                    SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, casterEntityId);
 
-            if (!string.IsNullOrEmpty(request.StartVfxPath))
-                SpawnAndTrack(request.StartVfxPath, casterAddr, orientAddr, casterEntityId);
+                if (!string.IsNullOrEmpty(request.StartVfxPath))
+                    SpawnAndTrack(request.StartVfxPath, casterAddr, orientAddr, casterEntityId);
 
-            foreach (var path in request.CasterVfxPaths)
-                SpawnAndTrack(path, casterAddr, orientAddr, casterEntityId);
+                foreach (var path in request.CasterVfxPaths)
+                    SpawnAndTrack(path, casterAddr, orientAddr, casterEntityId);
+            }
 
             // Spawn target VFX (hit/impact effects from ActionTimelineHit TMB)
-            foreach (var target in request.Targets)
+            if (config.EnableTargetVfx)
             {
-                if (target.Damage <= 0 && target.Healing <= 0) continue;
-
-                // Fresh resolve for each target
-                var (targetAddr, targetEntityId) = ResolveActorAddress((uint)target.TargetId, false);
-                if (targetAddr == 0) continue;
-
-                if (request.TargetVfxPaths.Count > 0)
+                foreach (var target in request.Targets)
                 {
-                    foreach (var path in request.TargetVfxPaths)
-                        SpawnAndTrack(path, targetAddr, casterAddr, targetEntityId);
-                }
-                else if (config.EnableHitVfx)
-                {
-                    var vfxPath = config.HitVfxPath;
-                    if (!string.IsNullOrWhiteSpace(vfxPath))
-                        SpawnAndTrack(vfxPath, targetAddr, casterAddr, targetEntityId);
+                    if (target.Damage <= 0 && target.Healing <= 0) continue;
+
+                    // Fresh resolve for each target
+                    var (targetAddr, targetEntityId) = ResolveActorAddress((uint)target.TargetId, false);
+                    if (targetAddr == 0) continue;
+
+                    if (request.TargetVfxPaths.Count > 0)
+                    {
+                        foreach (var path in request.TargetVfxPaths)
+                            SpawnAndTrack(path, targetAddr, casterAddr, targetEntityId);
+                    }
+
+                    if ((request.TargetVfxPaths.Count == 0 || request.IsSourcePlayer) && config.EnableHitVfx)
+                    {
+                        var vfxPath = config.HitVfxPath;
+                        if (!string.IsNullOrWhiteSpace(vfxPath))
+                            SpawnAndTrack(vfxPath, targetAddr, casterAddr, targetEntityId);
+                    }
                 }
             }
         }
@@ -345,6 +351,25 @@ public unsafe class AnimationController : IDisposable
         {
             log.Error(ex, "Failed to spawn action VFX.");
         }
+    }
+
+    private void PlayPlayerActionTimeline(ActionEffectRequest request)
+    {
+        if (request.AttackStyle != NpcAttackStyle.Magic && !request.IsRanged)
+            return;
+
+        var timelineId = request.AnimationEndTimelineId != 0
+            ? request.AnimationEndTimelineId
+            : request.AnimationStartTimelineId;
+        if (timelineId == 0)
+            return;
+
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null)
+            return;
+
+        var targetObjId = request.Targets.Count > 0 ? request.Targets[0].TargetId : 0;
+        emotePlayer.PlayOneShot((Character*)player.Address, timelineId, targetObjId);
     }
 
     /// <summary>
@@ -492,6 +517,25 @@ public unsafe class AnimationController : IDisposable
         }
     }
 
+    private void PlayMonsterRangedAttackTimeline(uint sourceEntityId)
+    {
+        if (monsterRangedAutoAttackTimeline == 0)
+        {
+            log.Warning("Monster ranged auto-attack timeline is unresolved; cannot play battle/auto_attack_shot1_mon.");
+            return;
+        }
+
+        var casterPtr = FindCharacter(sourceEntityId, isPlayer: false);
+        if (casterPtr == null)
+        {
+            log.Warning($"Monster ranged auto-attack timeline: caster 0x{sourceEntityId:X} not found.");
+            return;
+        }
+
+        log.Info($"Playing monster ranged auto-attack timeline {monsterRangedAutoAttackTimeline} for caster 0x{sourceEntityId:X}.");
+        emotePlayer.PlayOneShot(casterPtr, monsterRangedAutoAttackTimeline);
+    }
+
     /// <summary>
     /// Put an NPC into "battle ready" visual state — weapon drawn, combat stance.
     /// Sets InCombat, IsHostile, IsWeaponDrawn flags, and switches to combat animation set.
@@ -586,7 +630,7 @@ public unsafe class AnimationController : IDisposable
 
     /// <summary>
     /// Play death animation on the player character.
-    /// If a custom command is configured, uses that. Otherwise uses BypassEmote-style timeline.
+    /// Uses BypassEmote-style timeline.
     /// When ragdoll weapon drop is enabled, uses battle/dead ActionTimeline via BaseOverride
     /// instead of the play-dead emote — play-dead sheathes weapons and the game engine
     /// actively fights any attempt to keep them visible.
@@ -595,15 +639,6 @@ public unsafe class AnimationController : IDisposable
     {
         try
         {
-            // If a custom command is set, use it
-            var command = config.PlayerDeathCommand;
-            if (!string.IsNullOrWhiteSpace(command))
-            {
-                commandExecutor.ExecuteCommand(command);
-                log.Info($"Player death command executed: {command}");
-                return;
-            }
-
             var player = Core.Services.ObjectTable.LocalPlayer;
             if (player == null) return;
             var character = (Character*)player.Address;
@@ -669,59 +704,10 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
-    /// Execute victory animation/command.
+    /// Execute victory animation.
     /// </summary>
     public void PlayVictory(bool isPlayerVictory, IReadOnlyList<SimulatedNpc>? npcs = null)
     {
-        if (isPlayerVictory)
-        {
-            var command = config.PlayerVictoryCommand;
-            if (!string.IsNullOrWhiteSpace(command))
-            {
-                commandExecutor.ExecuteCommand(command);
-                log.Info($"Player victory command executed: {command}");
-            }
-        }
-        else
-        {
-            // Play emote on each surviving NPC via timeline (bypasses unlock checks)
-            var emoteId = config.TargetVictoryEmoteId;
-            if (emoteId > 0 && npcs != null)
-            {
-                try
-                {
-                    // Get player's object ID so the emote targets the player (facing, height adjust)
-                    ulong playerObjId = 0;
-                    var player = Core.Services.ObjectTable.LocalPlayer;
-                    if (player != null)
-                    {
-                        var playerObj = (GameObject*)player.Address;
-                        playerObjId = playerObj->GetGameObjectId().Id;
-                    }
-
-                    var emoteSheet = Core.Services.DataManager.GetExcelSheet<Emote>();
-                    if (emoteSheet != null)
-                    {
-                        var emote = emoteSheet.GetRow(emoteId);
-                        var loopTimeline = (ushort)emote.ActionTimeline[0].RowId;
-                        var introTimeline = (ushort)emote.ActionTimeline[1].RowId;
-
-                        foreach (var npc in npcs)
-                        {
-                            if (npc.BattleChara == null || !npc.State.IsAlive) continue;
-                            var character = (Character*)npc.BattleChara;
-                            if (introTimeline != 0 || loopTimeline != 0)
-                                emotePlayer.PlayLoopedEmote(character, loopTimeline, introTimeline, playerObjId);
-                            log.Info($"NPC '{npc.Name}' playing victory emote {emoteId} toward player 0x{playerObjId:X}");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    log.Warning(ex, $"Failed to play target victory emote {emoteId}");
-                }
-            }
-        }
     }
 
     /// <summary>

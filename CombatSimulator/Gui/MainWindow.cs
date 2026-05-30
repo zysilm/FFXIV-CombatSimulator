@@ -11,7 +11,6 @@ using Dalamud.Interface;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
-using Lumina.Excel.Sheets;
 
 namespace CombatSimulator.Gui;
 
@@ -51,10 +50,6 @@ public class MainWindow : IDisposable
     private bool skeletonBonesLoaded;
 
     private static readonly string[] BehaviorNames = { "Training Dummy", "Basic Melee", "Basic Ranged", "Boss" };
-
-    // Emote list cache for target victory dropdown
-    private List<(uint Id, string Name)>? emoteListCache;
-    private int targetVictoryEmoteIndex = -1;
 
     // Death cam preset state
     private string newPresetName = "";
@@ -147,7 +142,7 @@ public class MainWindow : IDisposable
     {
         "Combat",
         "Targets",
-        "Animation",
+        "Effects",
         "Camera",
         "Ragdoll",
         "Ragdoll (Adv)",
@@ -214,8 +209,7 @@ public class MainWindow : IDisposable
                 DrawNpcDefaultsSection();
                 DrawTargetBehaviorsSection();
                 break;
-            case 2: // Animation
-                DrawAnimationCommandsSection();
+            case 2: // Effects
                 DrawHitVfxSection();
                 DrawGlamourerHeaderSection();
                 break;
@@ -964,123 +958,19 @@ public class MainWindow : IDisposable
         }
     }
 
-    private void DrawAnimationCommandsSection()
-    {
-        if (ImGui.CollapsingHeader("Animation Commands"))
-        {
-            var meleeCmd = config.PlayerMeleeAttackCommand;
-            if (ImGui.InputText("Melee Attack", ref meleeCmd, 64))
-            {
-                config.PlayerMeleeAttackCommand = meleeCmd;
-                config.Save();
-            }
-            HelpMarker("Chat command to execute for melee attack animation. Empty = use default timeline.");
-
-            var rangedCmd = config.PlayerRangedAttackCommand;
-            if (ImGui.InputText("Ranged Attack", ref rangedCmd, 64))
-            {
-                config.PlayerRangedAttackCommand = rangedCmd;
-                config.Save();
-            }
-            HelpMarker("Chat command to execute for ranged attack animation. Empty = use default timeline.");
-
-            ImGui.Separator();
-
-            var deathCmd = config.PlayerDeathCommand;
-            if (ImGui.InputText("Player Death", ref deathCmd, 64))
-            {
-                config.PlayerDeathCommand = deathCmd;
-                config.Save();
-            }
-            HelpMarker("Chat command on player death (e.g. /playdead). Empty = bypass emote timeline.");
-
-            var deathEmoteId = (int)config.DeathEmoteId;
-            if (ImGui.InputInt("Death Emote ID", ref deathEmoteId))
-            {
-                config.DeathEmoteId = (uint)Math.Max(0, deathEmoteId);
-                config.Save();
-            }
-            HelpMarker("Emote ID for the death animation. 0 = auto-detect 'Play Dead' from emote sheet.");
-
-            ImGui.Separator();
-
-            var victoryCmd = config.PlayerVictoryCommand;
-            if (ImGui.InputText("Player Victory", ref victoryCmd, 64))
-            {
-                config.PlayerVictoryCommand = victoryCmd;
-                config.Save();
-            }
-            HelpMarker("Chat command when the player wins (e.g. /victory).");
-
-            // Target Victory: emote played on each surviving NPC when the player dies
-            if (emoteListCache == null)
-            {
-                emoteListCache = new List<(uint, string)> { (0, "(None)") };
-                try
-                {
-                    var emoteSheet = Core.Services.DataManager.GetExcelSheet<Emote>();
-                    if (emoteSheet != null)
-                    {
-                        var emotes = new List<(uint Id, string Name)>();
-                        foreach (var emote in emoteSheet)
-                        {
-                            var name = emote.Name.ToString();
-                            if (!string.IsNullOrWhiteSpace(name))
-                                emotes.Add((emote.RowId, $"{name} [{emote.RowId}]"));
-                        }
-                        emotes.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
-                        emoteListCache.AddRange(emotes);
-                    }
-                }
-                catch { }
-            }
-
-            // Find current selection index
-            if (targetVictoryEmoteIndex < 0)
-            {
-                targetVictoryEmoteIndex = 0;
-                for (int i = 0; i < emoteListCache.Count; i++)
-                {
-                    if (emoteListCache[i].Id == config.TargetVictoryEmoteId)
-                    { targetVictoryEmoteIndex = i; break; }
-                }
-            }
-
-            var currentEmoteName = targetVictoryEmoteIndex < emoteListCache.Count
-                ? emoteListCache[targetVictoryEmoteIndex].Name : "(None)";
-            if (ImGui.BeginCombo("Target Victory", currentEmoteName))
-            {
-                for (int i = 0; i < emoteListCache.Count; i++)
-                {
-                    var isSelected = i == targetVictoryEmoteIndex;
-                    if (ImGui.Selectable(emoteListCache[i].Name, isSelected))
-                    {
-                        targetVictoryEmoteIndex = i;
-                        config.TargetVictoryEmoteId = emoteListCache[i].Id;
-                        config.Save();
-                    }
-                    if (isSelected)
-                        ImGui.SetItemDefaultFocus();
-                }
-                ImGui.EndCombo();
-            }
-            HelpMarker("Emote played on each surviving NPC when the player dies. NPCs perform this emote toward the player.");
-        }
-    }
-
     private void DrawHitVfxSection()
     {
         if (ImGui.CollapsingHeader("VFX"))
         {
-            var skillVfx = config.EnableSkillVfx;
-            if (ImGui.Checkbox("Enable Skill VFX", ref skillVfx))
+            var characterVfx = config.EnableCharacterVfx;
+            if (ImGui.Checkbox("Enable Character VFX", ref characterVfx))
             {
-                config.EnableSkillVfx = skillVfx;
+                config.EnableCharacterVfx = characterVfx;
                 config.Save();
             }
-            HelpMarker("Spawn per-skill visual effects (cast circles, impact particles) during combat.");
+            HelpMarker("Spawn caster/character-side action effects such as cast circles, start effects, and caster timeline VFX.");
 
-            if (config.EnableSkillVfx && hookSafetyChecker.HasConflicts)
+            if (config.EnableCharacterVfx && hookSafetyChecker.HasConflicts)
             {
                 ImGui.SameLine();
                 ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "! Check Diagnose");
@@ -1088,13 +978,30 @@ public class MainWindow : IDisposable
 
             ImGui.Spacing();
 
+            var targetVfx = config.EnableTargetVfx;
+            if (ImGui.Checkbox("Enable Target VFX", ref targetVfx))
+            {
+                config.EnableTargetVfx = targetVfx;
+                config.Save();
+            }
+            HelpMarker("Spawn target-side impact effects. If an action has no target VFX, the fallback hit VFX below can be used.");
+
+            if (config.EnableTargetVfx && hookSafetyChecker.HasConflicts)
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "! Check Diagnose");
+            }
+
+            if (!config.EnableTargetVfx)
+                ImGui.BeginDisabled();
+
             var enableVfx = config.EnableHitVfx;
-            if (ImGui.Checkbox("Enable Hit VFX on Player", ref enableVfx))
+            if (ImGui.Checkbox("Use Fallback Hit VFX", ref enableVfx))
             {
                 config.EnableHitVfx = enableVfx;
                 config.Save();
             }
-            HelpMarker("Spawn a visual effect on your character when hit by NPC attacks.");
+            HelpMarker("When target-side action VFX are unavailable, spawn this configured hit effect on the damaged target.");
 
             var vfxPath = config.HitVfxPath;
             if (ImGui.InputText("VFX Path (.avfx)", ref vfxPath, 256))
@@ -1103,6 +1010,9 @@ public class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Game VFX path to spawn on hit. Uses FFXIV's internal .avfx format.\nDefault: vfx/common/eff/dk05th_stdn0t.avfx");
+
+            if (!config.EnableTargetVfx)
+                ImGui.EndDisabled();
 
             if (!animationController.HitVfxAvailable)
             {
@@ -1819,7 +1729,7 @@ public class MainWindow : IDisposable
                 config.EnableDeathCam = enabled;
                 config.Save();
             }
-            HelpMarker("On player death, smoothly transition camera to an anchored position following a bone.");
+            HelpMarker("On player death, smoothly transition the camera orbit center to a bone. Rotation and zoom remain under normal camera control.");
 
             if (!enabled)
                 return;
@@ -1958,19 +1868,19 @@ public class MainWindow : IDisposable
                 config.DeathCamTransitionDuration = duration;
                 config.Save();
             }
-            HelpMarker("How long the camera takes to interpolate to the anchor on death.");
+            HelpMarker("How long the camera takes to interpolate to the selected bone on death.");
 
             // --- Actions ---
             ImGui.Separator();
 
-            if (ImGui.Button("Set Anchor"))
+            if (ImGui.Button("Set Preset Orbit"))
             {
                 if (deathCamController.SetAnchor())
-                    chatGui.Print("[CombatSim] Death cam anchor set.");
+                    chatGui.Print("[CombatSim] Death cam preset orbit set.");
                 else
-                    chatGui.PrintError("[CombatSim] Failed to set anchor. Make sure you have a character loaded.");
+                    chatGui.PrintError("[CombatSim] Failed to set preset orbit. Make sure you have a character loaded.");
             }
-            HelpMarker("Capture the current camera angle and distance as the death cam target.");
+            HelpMarker("Capture the current camera angle and distance as an optional preset starting orbit.");
 
             ImGui.SameLine();
             var preview = deathCamController.IsPreviewActive;
@@ -1983,10 +1893,10 @@ public class MainWindow : IDisposable
             }
             if (preview)
                 ImGui.PopStyleColor();
-            HelpMarker("Toggle live preview. Opens camera control window for intuitive tweaking.");
+            HelpMarker("Toggle live preview. The camera tracks the selected bone while you keep normal rotation and zoom control.");
 
             ImGui.SameLine();
-            if (config.DeathCamAnchorSet && ImGui.SmallButton("Clear Anchor"))
+            if (config.DeathCamAnchorSet && ImGui.SmallButton("Clear Preset Orbit"))
             {
                 config.DeathCamAnchorSet = false;
                 config.Save();
@@ -1995,11 +1905,11 @@ public class MainWindow : IDisposable
             // Anchor status
             if (config.DeathCamAnchorSet)
             {
-                ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.4f, 1.0f), "Anchor is set.");
+                ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.4f, 1.0f), "Preset orbit is set.");
             }
             else
             {
-                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "No anchor set. Position camera and click Set Anchor.");
+                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "No preset orbit set. Death cam still tracks the selected bone.");
             }
 
             // Show current state
@@ -2055,6 +1965,8 @@ public class MainWindow : IDisposable
         config.DeathCamTransitionDuration = preset.TransitionDuration;
         config.DeathCamAnchorSet = true;
         config.Save();
+        if (deathCamController.IsPreviewActive || deathCamController.State != DeathCamState.Inactive)
+            deathCamController.ApplyAnchorToCamera();
         chatGui.Print($"[CombatSim] Preset '{preset.Name}' loaded.");
     }
 
@@ -2069,21 +1981,22 @@ public class MainWindow : IDisposable
 
         bool changed = false;
 
-        // --- Orbit ---
-        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Orbit");
+        // --- Preset Orbit ---
+        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Preset Orbit");
         ImGui.Separator();
 
-        var distance = config.DeathCamAnchorDistance;
-        if (ImGui.DragFloat("Distance", ref distance, 0.05f, 0.0f, 30.0f, "%.2f"))
-        { config.DeathCamAnchorDistance = distance; changed = true; }
-
-        var dirH = config.DeathCamAnchorDirH;
-        if (ImGui.DragFloat("Horizontal", ref dirH, 0.01f, -MathF.PI, MathF.PI, "%.2f rad"))
-        { config.DeathCamAnchorDirH = dirH; changed = true; }
-
-        var dirV = config.DeathCamAnchorDirV;
-        if (ImGui.DragFloat("Vertical", ref dirV, 0.01f, -MathF.PI / 2f, MathF.PI / 2f, "%.2f rad"))
-        { config.DeathCamAnchorDirV = dirV; changed = true; }
+        if (ImGui.Button("Capture Current Orbit"))
+        {
+            if (!deathCamController.SetAnchor())
+                chatGui.PrintError("[CombatSim] Failed to capture death cam orbit.");
+        }
+        ImGui.SameLine();
+        if (!config.DeathCamAnchorSet)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Apply Preset Orbit"))
+            deathCamController.ApplyAnchorToCamera();
+        if (!config.DeathCamAnchorSet)
+            ImGui.EndDisabled();
 
         ImGui.Spacing();
 

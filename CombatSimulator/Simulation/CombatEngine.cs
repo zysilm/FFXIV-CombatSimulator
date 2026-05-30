@@ -271,9 +271,6 @@ public class CombatEngine : IDisposable
         // Track player's current target for victory sequence
         victorySequenceController?.TrackTarget(npcSelector.SelectedNpcs);
 
-        // Tick animation cooldowns
-        animationController.Tick(deltaTime);
-
         // Process queued player actions
         ProcessActionQueue();
 
@@ -522,7 +519,12 @@ public class CombatEngine : IDisposable
         return result;
     }
 
-    public SimulatedActionResult ProcessNpcAction(SimulatedNpc npc, uint actionId, ulong targetId, int potency = 0)
+    public SimulatedActionResult ProcessNpcAction(
+        SimulatedNpc npc,
+        uint actionId,
+        ulong targetId,
+        int potency = 0,
+        NpcAttackStyle attackStyle = NpcAttackStyle.Auto)
     {
         var result = new SimulatedActionResult
         {
@@ -538,6 +540,8 @@ public class CombatEngine : IDisposable
             return result;
         }
 
+        var resolvedActionData = actionDataProvider.GetActionData(actionId);
+
         // Calculate damage
         DamageResult dmgResult;
         if (potency > 0)
@@ -546,10 +550,9 @@ public class CombatEngine : IDisposable
         }
         else
         {
-            var actionData = actionDataProvider.GetActionData(actionId);
-            if (actionData != null)
+            if (resolvedActionData != null)
             {
-                dmgResult = damageCalculator.CalculateNpcAutoAttack(npc.State, target, actionData.Potency);
+                dmgResult = damageCalculator.CalculateNpcAutoAttack(npc.State, target, resolvedActionData.Potency);
             }
             else
             {
@@ -561,21 +564,23 @@ public class CombatEngine : IDisposable
         target.CurrentHp = Math.Max(0, target.CurrentHp - dmgResult.Damage);
         State.TotalDamageTaken += dmgResult.Damage;
 
-        // Trigger animation (NPC → Player)
-        // Always use ActionId 7 (auto-attack) — player skill ActionIds (31, 141, etc.)
-        // animate inconsistently on monster models
-        var actionData2 = new ActionData
+        // Trigger animation (NPC -> Player). Preserve the selected action id
+        // so ranged/caster skills can use their own timelines/VFX instead of
+        // every enemy action collapsing to ActionId 7.
+        var visualAction = resolvedActionData != null ? CloneActionData(resolvedActionData) : new ActionData
         {
-            ActionId = 7,
+            ActionId = actionId == 0 ? 7 : actionId,
+            Name = actionId == 7 ? "Auto-attack" : $"Action #{actionId}",
             Potency = potency > 0 ? potency : 110,
             DamageType = SimDamageType.Physical,
+            Range = npc.Behavior.AutoAttackRange,
             AnimationLock = 0.6f,
         };
-        TriggerActionEffect(npc.State, target, actionData2, dmgResult);
+        if (potency > 0)
+            visualAction.Potency = potency;
 
-        // Spawn hit VFX on player (independent of action pipeline since ActionId 7 has no VFX)
-        if (config.EnableHitVfx && target.IsPlayer)
-            animationController.SpawnHitVfxOnPlayer();
+        ApplyNpcAttackStyle(visualAction, attackStyle == NpcAttackStyle.Auto ? npc.Behavior.AutoAttackStyle : attackStyle);
+        TriggerActionEffect(npc.State, target, visualAction, dmgResult);
 
         result.Success = true;
         result.Damage = dmgResult.Damage;
@@ -583,7 +588,9 @@ public class CombatEngine : IDisposable
         result.IsDirectHit = dmgResult.IsDirectHit;
 
         // Log
-        var actionName = actionId == 7 ? "auto-attacks" : $"uses action";
+        var actionName = actionId == 7
+            ? "auto-attacks"
+            : $"uses {(!string.IsNullOrWhiteSpace(visualAction.Name) ? visualAction.Name : "action")}";
         AddLogEntry(
             $"{npc.Name} {actionName} → You: {dmgResult.Damage:N0} damage",
             CombatLogType.DamageTaken);
@@ -596,6 +603,52 @@ public class CombatEngine : IDisposable
         }
 
         return result;
+    }
+
+    private static void ApplyNpcAttackStyle(ActionData actionData, NpcAttackStyle attackStyle)
+    {
+        switch (attackStyle)
+        {
+            case NpcAttackStyle.Ranged:
+                actionData.Range = Math.Max(actionData.Range, 20f);
+                break;
+            case NpcAttackStyle.Magic:
+                actionData.Range = Math.Max(actionData.Range, 20f);
+                actionData.DamageType = SimDamageType.Magical;
+                break;
+            case NpcAttackStyle.Melee:
+                if (actionData.Range <= 0 || actionData.Range > 5f)
+                    actionData.Range = 3f;
+                break;
+        }
+    }
+
+    private static ActionData CloneActionData(ActionData source)
+    {
+        return new ActionData
+        {
+            ActionId = source.ActionId,
+            Name = source.Name,
+            Potency = source.Potency,
+            CastTime = source.CastTime,
+            RecastTime = source.RecastTime,
+            RecastGroup = source.RecastGroup,
+            Range = source.Range,
+            Radius = source.Radius,
+            DamageType = source.DamageType,
+            MpCost = source.MpCost,
+            IsComboAction = source.IsComboAction,
+            ComboFrom = source.ComboFrom,
+            ComboPotency = source.ComboPotency,
+            AnimationLock = source.AnimationLock,
+            IsPlayerAction = source.IsPlayerAction,
+            AnimationStartTimelineId = source.AnimationStartTimelineId,
+            AnimationEndTimelineId = source.AnimationEndTimelineId,
+            CastVfxPath = source.CastVfxPath,
+            StartVfxPath = source.StartVfxPath,
+            CasterVfxPaths = new List<string>(source.CasterVfxPaths),
+            TargetVfxPaths = new List<string>(source.TargetVfxPaths),
+        };
     }
 
     private void TriggerActionEffect(
@@ -618,9 +671,28 @@ public class CombatEngine : IDisposable
             {
                 foreach (var sourceNpc in npcSelector.SelectedNpcs)
                 {
-                    if (sourceNpc.SimulatedEntityId == source.EntityId && sourceNpc.IsRanged)
+                    if (sourceNpc.SimulatedEntityId != source.EntityId)
+                        continue;
+
+                    NpcAttackStyle weaponStyle;
+                    unsafe
+                    {
+                        weaponStyle = sourceNpc.BattleChara != null
+                            ? NpcWeaponClassifier.DetectFromCharacter((Character*)sourceNpc.BattleChara, log, sourceNpc.Name)
+                            : NpcAttackStyle.Auto;
+                    }
+
+                    if (weaponStyle == NpcAttackStyle.Ranged)
                     {
                         isRanged = true;
+                        actionData.Range = Math.Max(actionData.Range, 20f);
+                        break;
+                    }
+
+                    if (sourceNpc.IsRanged)
+                    {
+                        isRanged = true;
+                        actionData.Range = Math.Max(actionData.Range, 20f);
                         break;
                     }
                 }
@@ -640,6 +712,13 @@ public class CombatEngine : IDisposable
                 SourceRotation = GetEntityRotation(source),
                 IsSourcePlayer = source.IsPlayer,
                 IsRanged = isRanged,
+                AttackStyle = actionData.DamageType == SimDamageType.Magical
+                    ? NpcAttackStyle.Magic
+                    : isRanged
+                        ? NpcAttackStyle.Ranged
+                        : NpcAttackStyle.Melee,
+                AnimationStartTimelineId = actionData.AnimationStartTimelineId,
+                AnimationEndTimelineId = actionData.AnimationEndTimelineId,
                 CastVfxPath = actionData.CastVfxPath,
                 StartVfxPath = actionData.StartVfxPath,
                 CasterVfxPaths = actionData.CasterVfxPaths,

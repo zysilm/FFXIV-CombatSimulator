@@ -85,22 +85,6 @@ public class Configuration : IPluginConfiguration
     // Default behavior for auto-selected NPCs (0=Dummy, 1=BasicMelee, 2=BasicRanged, 3=Boss)
     public int DefaultNpcBehaviorType { get; set; } = 1;
 
-    // Animation Commands
-    // Attack: empty = use ActionTimeline defaults; set a command (e.g., "/gsit") for custom
-    public string PlayerMeleeAttackCommand { get; set; } = "";
-    public string PlayerRangedAttackCommand { get; set; } = "";
-
-    // Death: empty = use BypassEmote-style timeline (works on both player + NPC, no unlock needed)
-    //        set a command (e.g., "/playdead") to use that instead (player only; NPC always uses timeline)
-    public string PlayerDeathCommand { get; set; } = "";
-
-    // Death emote ID override (0 = auto-detect "Play Dead" from Emote sheet)
-    public uint DeathEmoteId { get; set; } = 0;
-
-    // Victory: command executed when one party wins
-    public string PlayerVictoryCommand { get; set; } = "";
-    public uint TargetVictoryEmoteId { get; set; } = 0; // 0 = none, otherwise Emote sheet RowId
-
     // Glamourer: apply a preset on player death
     public bool ApplyGlamourerOnDeath { get; set; } = false;
     public string DeathGlamourerDesignId { get; set; } = "";
@@ -196,8 +180,10 @@ public class Configuration : IPluginConfiguration
     public float ActiveCameraMinZoomDistance { get; set; } = 1.0f;
     public bool ActiveCameraPreventFade { get; set; } = false;
 
-    // Skill VFX on combat actions (cast circles, impact particles)
+    // Legacy combined skill VFX toggle. Migrated to the split toggles below.
     public bool EnableSkillVfx { get; set; } = false;
+    public bool EnableCharacterVfx { get; set; } = false;
+    public bool EnableTargetVfx { get; set; } = false;
 
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
@@ -249,6 +235,7 @@ public class Configuration : IPluginConfiguration
     public void Initialize(IDalamudPluginInterface pi)
     {
         pluginInterface = pi;
+        MigrateSplitVfxToggles();
         MigrateSkirtParentChains();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
@@ -257,6 +244,20 @@ public class Configuration : IPluginConfiguration
     public void Save()
     {
         pluginInterface?.SavePluginConfig(this);
+    }
+
+    private void MigrateSplitVfxToggles()
+    {
+        if (!EnableSkillVfx)
+            return;
+
+        var changed = !EnableCharacterVfx || !EnableTargetVfx;
+        EnableCharacterVfx = true;
+        EnableTargetVfx = true;
+        EnableSkillVfx = false;
+
+        if (changed)
+            Save();
     }
 
     /// <summary>

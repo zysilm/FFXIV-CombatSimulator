@@ -43,9 +43,7 @@ public unsafe class DeathCamController : IDisposable
     private float startDirH;
     private float startDirV;
     private float startDistance;
-    private float startFoV;
     private Vector3 startLookAt;
-    private Vector3 anchoredLookAt;
 
     // Saved original camera limits — restored on deactivation
     private float savedMinDistance;
@@ -181,7 +179,9 @@ public unsafe class DeathCamController : IDisposable
 
     /// <summary>
     /// Hook detour: called when the game updates the camera.
-    /// Calls the original (game computes camera position), then applies our offsets.
+    /// Calls the original, then shifts the camera orbit center to the selected bone.
+    /// This mirrors ActiveCameraController's behavior while keeping the existing
+    /// death-cam transition and preset entry points.
     /// </summary>
     private void CameraUpdateDetour(CameraBase* thisPtr)
     {
@@ -205,69 +205,73 @@ public unsafe class DeathCamController : IDisposable
 
         try
         {
-            var gameCam = (FFXIVClientStructs.FFXIV.Client.Game.Camera*)thisPtr;
             var sceneCam = &thisPtr->SceneCamera;
 
-            float camH = gameCam->DirH;
-            var offset = ComputeOffsetFromCameraAngle(camH);
+            var targetLookAt = GetDeathCamLookAt();
+            if (targetLookAt == null)
+                return;
+
+            var sceneLookAt = sceneCam->LookAtVector;
+            var oldLookAt = new Vector3(sceneLookAt.X, sceneLookAt.Y, sceneLookAt.Z);
+            var desiredLookAt = targetLookAt.Value;
 
             if (state != DeathCamState.Inactive)
             {
-                // Death cam: track bone position smoothly (like ActiveCamera).
-                var bonePos = GetBoneWorldPosition(config.DeathCamBoneName);
-                if (bonePos == null)
+                if (state == DeathCamState.Interpolating)
                 {
-                    var player = Core.Services.ObjectTable.LocalPlayer;
-                    if (player != null)
-                        bonePos = player.Position;
-                }
-
-                if (bonePos != null)
-                {
-                    var targetLookAt = bonePos.Value + offset;
-
-                    if (state == DeathCamState.Interpolating)
-                    {
-                        float t = Math.Clamp(interpElapsed / config.DeathCamTransitionDuration, 0f, 1f);
-                        float smooth = t * t * (3f - 2f * t);
-                        Vector3 lookAt = Vector3.Lerp(startLookAt, targetLookAt, smooth);
-                        sceneCam->LookAtVector = lookAt;
-                        anchoredLookAt = lookAt;
-                    }
-                    else
-                    {
-                        // Anchored: smoothly follow bone position to avoid jitter
-                        // from ragdoll bone movement.
-                        anchoredLookAt = Vector3.Lerp(anchoredLookAt, targetLookAt, 0.05f);
-                        sceneCam->LookAtVector = anchoredLookAt;
-                    }
+                    float duration = Math.Max(config.DeathCamTransitionDuration, 0.01f);
+                    float t = Math.Clamp(interpElapsed / duration, 0f, 1f);
+                    float smooth = SmoothStep(t);
+                    desiredLookAt = Vector3.Lerp(startLookAt, desiredLookAt, smooth);
                 }
             }
-            else
-            {
-                // Preview mode: shift the look-at by the same offset so view direction is preserved
-                Vector3 lookAt = sceneCam->LookAtVector;
-                sceneCam->LookAtVector = lookAt + offset;
-            }
 
-            // Apply position offset to the computed camera eye position
-            Vector3 pos = sceneCam->Position;
-            sceneCam->Position = pos + offset;
+            var cameraShift = desiredLookAt - oldLookAt;
+            if (cameraShift.LengthSquared() < 0.000001f)
+                return;
+
+            sceneCam->LookAtVector = desiredLookAt;
+            var scenePos = sceneCam->Position;
+            sceneCam->Position = new Vector3(
+                scenePos.X + cameraShift.X,
+                scenePos.Y + cameraShift.Y,
+                scenePos.Z + cameraShift.Z);
 
             if (sceneCam->RenderCamera != null)
             {
-                Vector3 origin = sceneCam->RenderCamera->Origin;
-                sceneCam->RenderCamera->Origin = origin + offset;
-
-                ApplyOffsetToViewMatrix(ref sceneCam->RenderCamera->ViewMatrix, offset);
+                var renderOrigin = sceneCam->RenderCamera->Origin;
+                sceneCam->RenderCamera->Origin = new Vector3(
+                    renderOrigin.X + cameraShift.X,
+                    renderOrigin.Y + cameraShift.Y,
+                    renderOrigin.Z + cameraShift.Z);
+                ApplyOffsetToViewMatrix(ref sceneCam->RenderCamera->ViewMatrix, cameraShift);
             }
 
-            ApplyOffsetToViewMatrix(ref sceneCam->ViewMatrix, offset);
+            ApplyOffsetToViewMatrix(ref sceneCam->ViewMatrix, cameraShift);
         }
         catch (Exception ex)
         {
             log.Warning(ex, "DeathCam: Error in camera update detour.");
         }
+    }
+
+    private Vector3? GetDeathCamLookAt()
+    {
+        var bonePos = GetBoneWorldPosition(config.DeathCamBoneName);
+        if (bonePos == null)
+        {
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            if (player == null)
+                return null;
+
+            bonePos = player.Position;
+        }
+
+        var camMgr = GameCameraManager.Instance();
+        if (camMgr == null || camMgr->Camera == null)
+            return bonePos.Value + new Vector3(0, config.DeathCamHeightOffset, 0);
+
+        return bonePos.Value + ComputeOffsetFromCameraAngle(camMgr->Camera->DirH);
     }
 
     /// <summary>
@@ -415,12 +419,40 @@ public unsafe class DeathCamController : IDisposable
         }
     }
 
+    public bool ApplyAnchorToCamera()
+    {
+        if (!config.DeathCamAnchorSet)
+            return false;
+
+        try
+        {
+            var camMgr = GameCameraManager.Instance();
+            if (camMgr == null || camMgr->Camera == null)
+                return false;
+
+            var gameCam = camMgr->Camera;
+            var facing = GetCharacterFacing();
+
+            WriteCameraOrbit(gameCam,
+                config.DeathCamAnchorDirH + facing,
+                config.DeathCamAnchorDirV,
+                config.DeathCamAnchorDistance);
+            ApplyLens(gameCam, config.DeathCamFoV);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "DeathCam: Failed to apply anchor to camera.");
+            return false;
+        }
+    }
+
     /// <summary>
     /// Activate the death cam. Called when the player dies in simulation.
     /// </summary>
     public void Activate()
     {
-        if (!config.EnableDeathCam || !config.DeathCamAnchorSet)
+        if (!config.EnableDeathCam)
             return;
 
         try
@@ -435,7 +467,6 @@ public unsafe class DeathCamController : IDisposable
             startDirH = gameCam->DirH;
             startDirV = gameCam->DirV;
             startDistance = gameCam->Distance;
-            startFoV = gameCam->FoV;
             startLookAt = gameCam->CameraBase.SceneCamera.LookAtVector;
 
             state = DeathCamState.Interpolating;
@@ -506,6 +537,7 @@ public unsafe class DeathCamController : IDisposable
         IsPreviewActive = on;
         if (on)
         {
+            ApplyAnchorToCamera();
             log.Info("DeathCam: Preview ON.");
         }
         else
@@ -516,37 +548,24 @@ public unsafe class DeathCamController : IDisposable
     }
 
     /// <summary>
-    /// Helper to uncap camera limits and write orbital params + FoV directly to the game camera.
+    /// Helper to uncap camera limits and write orbital params directly to the game camera.
     /// </summary>
-    private void WriteCameraParams(FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam,
-        float dirH, float dirV, float distance, float fov)
+    private void WriteCameraOrbit(FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam,
+        float dirH, float dirV, float distance)
     {
-        // Save original limits before overriding (only once)
-        if (!limitsOverridden)
-        {
-            savedMinDistance = gameCam->MinDistance;
-            savedMaxDistance = gameCam->MaxDistance;
-            savedDirVMin = gameCam->DirVMin;
-            savedDirVMax = gameCam->DirVMax;
-            savedMinFoV = gameCam->MinFoV;
-            savedMaxFoV = gameCam->MaxFoV;
-            limitsOverridden = true;
-        }
+        EnsureCameraLimits(gameCam);
 
         // Temporarily widen limits so our values aren't clamped
         gameCam->MinDistance = 0f;
         gameCam->MaxDistance = savedMaxDistance; // never exceed original max
         gameCam->DirVMin = -MathF.PI / 2f;
         gameCam->DirVMax = MathF.PI / 2f;
-        gameCam->MinFoV = 0.01f;
-        gameCam->MaxFoV = 3.0f;
 
         // Write orbital parameters
         gameCam->DirH = dirH;
         gameCam->DirV = dirV;
         gameCam->Distance = distance;
         gameCam->InterpDistance = distance;
-        gameCam->FoV = fov;
 
         // Write tilt (roll) — native game camera field at offset 0x170 (same as Cammy)
         // The game engine reads this and applies the roll rotation when building the view matrix
@@ -559,25 +578,55 @@ public unsafe class DeathCamController : IDisposable
         gameCam->InputDeltaVAdjusted = 0;
     }
 
+    private void ApplyLens(FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam, float fov)
+    {
+        EnsureCameraLimits(gameCam);
+
+        gameCam->MinFoV = 0.01f;
+        gameCam->MaxFoV = 3.0f;
+        gameCam->FoV = fov;
+        *(float*)((byte*)gameCam + 0x170) = config.DeathCamTilt;
+    }
+
+    private void ClearCameraInput(FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam)
+    {
+        gameCam->InputDeltaH = 0;
+        gameCam->InputDeltaV = 0;
+        gameCam->InputDeltaHAdjusted = 0;
+        gameCam->InputDeltaVAdjusted = 0;
+    }
+
+    private void EnsureCameraLimits(FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam)
+    {
+        if (limitsOverridden)
+            return;
+
+        savedMinDistance = gameCam->MinDistance;
+        savedMaxDistance = gameCam->MaxDistance;
+        savedDirVMin = gameCam->DirVMin;
+        savedDirVMax = gameCam->DirVMax;
+        savedMinFoV = gameCam->MinFoV;
+        savedMaxFoV = gameCam->MaxFoV;
+        limitsOverridden = true;
+    }
+
     /// <summary>
-    /// Called in Framework.Update. Advances interpolation timers and writes
-    /// Game Camera orbital fields (DirH, DirV, Distance, FoV) which feed into the
-    /// game's camera pipeline. Also lazily creates the camera update hook.
+    /// Called in Framework.Update. Advances interpolation timers, applies lens
+    /// settings, and lazily creates the camera update hook.
     /// </summary>
     public void Tick(float deltaTime)
     {
         // Lazily create the camera hook once the camera is available
         EnsureHook();
 
-        // Manage collision patch: enable when death cam active + config on, disable otherwise
-        bool wantCollisionDisabled = config.DeathCamDisableCollision && state != DeathCamState.Inactive;
+        // Manage collision patch: enable when death cam/preview active + config on, disable otherwise
+        bool wantCollisionDisabled = config.DeathCamDisableCollision && (state != DeathCamState.Inactive || IsPreviewActive);
         if (wantCollisionDisabled && !collisionPatchActive)
             EnableCollisionPatch();
         else if (!wantCollisionDisabled && collisionPatchActive)
             DisableCollisionPatch();
 
-        // Preview mode: lock camera to anchor values
-        if (IsPreviewActive && state == DeathCamState.Inactive && config.DeathCamAnchorSet)
+        if (IsPreviewActive && state == DeathCamState.Inactive)
         {
             try
             {
@@ -585,14 +634,7 @@ public unsafe class DeathCamController : IDisposable
                 if (camMgr == null || camMgr->Camera == null)
                     return;
 
-                var gameCam = camMgr->Camera;
-                var facing = GetCharacterFacing();
-
-                WriteCameraParams(gameCam,
-                    config.DeathCamAnchorDirH + facing,
-                    config.DeathCamAnchorDirV,
-                    config.DeathCamAnchorDistance,
-                    config.DeathCamFoV);
+                ApplyLens(camMgr->Camera, config.DeathCamFoV);
             }
             catch (Exception ex)
             {
@@ -621,27 +663,29 @@ public unsafe class DeathCamController : IDisposable
             float anchorDistance = config.DeathCamAnchorDistance;
             float anchorFoV = config.DeathCamFoV;
 
+            ApplyLens(gameCam, anchorFoV);
+
             if (state == DeathCamState.Interpolating)
             {
                 interpElapsed += deltaTime;
-                float t = Math.Clamp(interpElapsed / config.DeathCamTransitionDuration, 0f, 1f);
-                float smooth = t * t * (3f - 2f * t); // smoothstep
+                float duration = Math.Max(config.DeathCamTransitionDuration, 0.01f);
+                float t = Math.Clamp(interpElapsed / duration, 0f, 1f);
+                float smooth = SmoothStep(t);
 
-                WriteCameraParams(gameCam,
-                    AngleLerp(startDirH, anchorDirH, smooth),
-                    Lerp(startDirV, anchorDirV, smooth),
-                    Lerp(startDistance, anchorDistance, smooth),
-                    Lerp(startFoV, anchorFoV, smooth));
+                if (config.DeathCamAnchorSet)
+                {
+                    WriteCameraOrbit(gameCam,
+                        AngleLerp(startDirH, anchorDirH, smooth),
+                        Lerp(startDirV, anchorDirV, smooth),
+                        Lerp(startDistance, anchorDistance, smooth));
+                    ClearCameraInput(gameCam);
+                }
 
                 if (t >= 1f)
                 {
                     state = DeathCamState.Following;
                     log.Info("DeathCam: Interpolation complete — now following bone.");
                 }
-            }
-            else if (state == DeathCamState.Following)
-            {
-                WriteCameraParams(gameCam, anchorDirH, anchorDirV, anchorDistance, anchorFoV);
             }
         }
         catch (Exception ex)
@@ -685,6 +729,11 @@ public unsafe class DeathCamController : IDisposable
     private static float Lerp(float a, float b, float t)
     {
         return a + (b - a) * t;
+    }
+
+    private static float SmoothStep(float t)
+    {
+        return t * t * (3f - 2f * t);
     }
 
     public void Dispose()

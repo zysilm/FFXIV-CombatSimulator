@@ -25,10 +25,12 @@ public unsafe class NpcAiController : IDisposable
     private readonly IClientState clientState;
     private readonly Configuration config;
     private readonly IPluginLog log;
+    private readonly Func<nint, bool> isExternallyControlled;
     private readonly Dictionary<nint, ApproachPathState> approachPaths = new();
     private const float VNavmeshRepathDistance = 1.5f;
     private const float VNavmeshRepathInterval = 1.0f;
     private const float VNavmeshPathTolerance = 0.5f;
+    private const float VNavmeshFloorResnapInterval = 0.25f;
     private const ushort NormalRunTimelineId = 22;
 
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
@@ -47,6 +49,10 @@ public unsafe class NpcAiController : IDisposable
         public float FloorYOffset { get; set; }
         public float ConfiguredHeightOffset { get; set; }
         public bool HasFloorYOffset { get; set; }
+        public float FloorResnapTimer { get; set; }
+        public float LastFloorY { get; set; }
+        public bool HasLastFloorY { get; set; }
+        public int LastCorrectedWaypointIndex { get; set; } = -1;
         public bool MoveAnimActive { get; set; }
     }
 
@@ -57,7 +63,8 @@ public unsafe class NpcAiController : IDisposable
         VNavmeshIpc vnavmeshIpc,
         IClientState clientState,
         Configuration config,
-        IPluginLog log)
+        IPluginLog log,
+        Func<nint, bool>? isExternallyControlled = null)
     {
         this.combatEngine = combatEngine;
         this.animationController = animationController;
@@ -66,6 +73,7 @@ public unsafe class NpcAiController : IDisposable
         this.clientState = clientState;
         this.config = config;
         this.log = log;
+        this.isExternallyControlled = isExternallyControlled ?? (_ => false);
 
         combatEngine.OnSimulationStarted += ScheduleAutoEngage;
         combatEngine.OnSimulationReset += OnSimulationResetOrStop;
@@ -152,6 +160,8 @@ public unsafe class NpcAiController : IDisposable
             foreach (var npc in npcs)
             {
                 if (!npc.IsSpawned || npc.BattleChara == null)
+                    continue;
+                if (isExternallyControlled(npc.Address))
                     continue;
                 if (npc.AiState != NpcAiState.Dead)
                     approachNpcs.Add(npc);
@@ -341,7 +351,7 @@ public unsafe class NpcAiController : IDisposable
                 if (npc.CurrentCastSkill != null)
                 {
                     combatEngine.ProcessNpcAction(npc, npc.CurrentCastSkill.ActionId,
-                        playerEntityId, npc.CurrentCastSkill.Potency);
+                        playerEntityId, npc.CurrentCastSkill.Potency, npc.CurrentCastSkill.AttackStyle);
                     npc.CurrentCastSkill.CooldownRemaining = npc.CurrentCastSkill.Cooldown;
                     npc.CurrentCastSkill = null;
                 }
@@ -383,7 +393,7 @@ public unsafe class NpcAiController : IDisposable
             }
             else
             {
-                combatEngine.ProcessNpcAction(npc, skill.ActionId, playerEntityId, skill.Potency);
+                combatEngine.ProcessNpcAction(npc, skill.ActionId, playerEntityId, skill.Potency, skill.AttackStyle);
                 skill.CooldownRemaining = skill.Cooldown;
                 npc.State.AnimationLock = 0.6f;
             }
@@ -396,7 +406,7 @@ public unsafe class NpcAiController : IDisposable
         {
             npc.AutoAttackTimer = npc.Behavior.AutoAttackDelay;
             combatEngine.ProcessNpcAction(npc, npc.Behavior.AutoAttackActionId,
-                playerEntityId, npc.Behavior.AutoAttackPotency);
+                playerEntityId, npc.Behavior.AutoAttackPotency, npc.Behavior.AutoAttackStyle);
             npc.State.AnimationLock = 0.6f;
         }
     }
@@ -650,6 +660,9 @@ public unsafe class NpcAiController : IDisposable
                     var floor = SnapToNavmesh(npcPos);
                     state.FloorYOffset = floor.HasValue ? npcPos.Y - floor.Value.Y : 0f;
                     state.HasFloorYOffset = true;
+                    state.HasLastFloorY = false;
+                    state.LastCorrectedWaypointIndex = -1;
+                    state.FloorResnapTimer = 0;
                 }
                 state.ConfiguredHeightOffset = config.DefaultNpcHeightOffset;
                 state.LastError = "";
@@ -700,6 +713,7 @@ public unsafe class NpcAiController : IDisposable
             return false;
 
         moveTarget = ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex]);
+        moveTarget = CorrectMoveTargetFloor(state, moveTarget, deltaTime);
         return true;
     }
 
@@ -708,6 +722,31 @@ public unsafe class NpcAiController : IDisposable
         return state.HasFloorYOffset
             ? point with { Y = point.Y + state.FloorYOffset + state.ConfiguredHeightOffset }
             : point;
+    }
+
+    private Vector3 CorrectMoveTargetFloor(ApproachPathState state, Vector3 moveTarget, float deltaTime)
+    {
+        if (!state.HasFloorYOffset)
+            return moveTarget;
+
+        state.FloorResnapTimer = Math.Max(0, state.FloorResnapTimer - deltaTime);
+        var waypointChanged = state.LastCorrectedWaypointIndex != state.WaypointIndex;
+
+        if (waypointChanged || !state.HasLastFloorY || state.FloorResnapTimer <= 0)
+        {
+            var floor = SnapToNavmesh(moveTarget);
+            if (floor.HasValue)
+            {
+                state.LastFloorY = floor.Value.Y;
+                state.HasLastFloorY = true;
+                state.LastCorrectedWaypointIndex = state.WaypointIndex;
+                state.FloorResnapTimer = VNavmeshFloorResnapInterval;
+            }
+        }
+
+        return state.HasLastFloorY
+            ? moveTarget with { Y = state.LastFloorY + state.FloorYOffset + state.ConfiguredHeightOffset }
+            : moveTarget;
     }
 
     private Vector3? SnapToNavmesh(Vector3 point)

@@ -14,6 +14,7 @@ public unsafe class NpcSelector : IDisposable
     private readonly IObjectTable objectTable;
     private readonly ITargetManager targetManager;
     private readonly Configuration config;
+    private readonly NpcActionProfileProvider actionProfileProvider;
     private readonly IPluginLog log;
 
     private readonly List<SimulatedNpc> selectedNpcs = new();
@@ -21,11 +22,17 @@ public unsafe class NpcSelector : IDisposable
     public IReadOnlyList<SimulatedNpc> SelectedNpcs => selectedNpcs;
     public int MaxTargets => config.MaxTargets;
 
-    public NpcSelector(IObjectTable objectTable, ITargetManager targetManager, Configuration config, IPluginLog log)
+    public NpcSelector(
+        IObjectTable objectTable,
+        ITargetManager targetManager,
+        Configuration config,
+        NpcActionProfileProvider actionProfileProvider,
+        IPluginLog log)
     {
         this.objectTable = objectTable;
         this.targetManager = targetManager;
         this.config = config;
+        this.actionProfileProvider = actionProfileProvider;
         this.log = log;
     }
 
@@ -63,6 +70,7 @@ public unsafe class NpcSelector : IDisposable
 
         // Calculate HP
         int maxHp = CalculateNpcHp(level, hpMultiplier);
+        var weaponStyle = NpcWeaponClassifier.DetectFromCharacter(character, log, target.Name.TextValue);
 
         var npc = new SimulatedNpc
         {
@@ -72,9 +80,10 @@ public unsafe class NpcSelector : IDisposable
             BattleChara = battleChara,
             GameObjectRef = target,
             SpawnPosition = target.Position,
-            Behavior = NpcBehavior.Create(behaviorType),
+            Behavior = actionProfileProvider.CreateForSelectedTarget(target.Name.TextValue, behaviorType, weaponStyle),
             IsSpawned = true,
             IsClientControlled = false,
+            IsRanged = weaponStyle == NpcAttackStyle.Ranged,
             OriginalModelCharaId = originalModelCharaId,
             OriginalObjectKind = originalObjectKind,
             OriginalSubKind = originalSubKind,
@@ -267,6 +276,7 @@ public unsafe class NpcSelector : IDisposable
             byte originalSubKind = gameObj->SubKind;
 
             int maxHp = CalculateNpcHp(level, hpMultiplier);
+            var weaponStyle = NpcWeaponClassifier.DetectFromCharacter(character, log, obj.Name.TextValue);
 
             var npc = new SimulatedNpc
             {
@@ -276,9 +286,10 @@ public unsafe class NpcSelector : IDisposable
                 BattleChara = battleChara,
                 GameObjectRef = obj,
                 SpawnPosition = obj.Position,
-                Behavior = NpcBehavior.Create(behaviorType),
+                Behavior = actionProfileProvider.CreateForSelectedTarget(obj.Name.TextValue, behaviorType, weaponStyle),
                 IsSpawned = true,
                 IsClientControlled = false,
+                IsRanged = weaponStyle == NpcAttackStyle.Ranged,
                 OriginalModelCharaId = originalModelCharaId,
                 OriginalObjectKind = originalObjectKind,
                 OriginalSubKind = originalSubKind,

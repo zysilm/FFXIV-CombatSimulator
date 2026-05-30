@@ -77,14 +77,14 @@ public unsafe class EmoteTimelinePlayer
     /// <summary>
     /// Play a one-shot emote animation via blend.
     /// </summary>
-    public void PlayOneShot(Character* native, ushort timelineId)
+    public void PlayOneShot(Character* native, ushort timelineId, ulong targetObjId = 0)
     {
         if (native == null || timelineId == 0) return;
 
         try
         {
-            BlendTimeline(native, timelineId, priority: -1);
-            log.Verbose($"EmoteTimelinePlayer: Played one-shot timeline {timelineId}.");
+            BlendTimeline(native, timelineId, priority: -1, targetObjId: targetObjId);
+            log.Verbose($"EmoteTimelinePlayer: Played one-shot timeline {timelineId} target=0x{targetObjId:X}.");
         }
         catch (Exception ex)
         {
