@@ -93,6 +93,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         // Simulation
         actionDataProvider = new ActionDataProvider(dataManager, log);
+        NpcWeaponClassifier.Initialize(dataManager, log);
         npcActionProfileProvider = new NpcActionProfileProvider(actionDataProvider, log);
         damageCalculator = new DamageCalculator();
         glamourerIpc = new GlamourerIpc(pluginInterface, log);

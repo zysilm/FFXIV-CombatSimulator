@@ -1,6 +1,8 @@
+using System;
 using System.Collections.Generic;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using Lumina.Excel.Sheets;
 
 namespace CombatSimulator.Npcs;
 
@@ -8,31 +10,48 @@ public static unsafe class NpcWeaponClassifier
 {
     private readonly record struct WeaponModelKey(ushort Id, ushort Type, ushort Variant);
 
-    // WeaponModelId.Type values follow the weapon model category, not item row ids.
-    // Known ranged/caster categories are intentionally conservative; unknown types
-    // fall back to template behavior and are logged so we can extend this safely.
-    private static readonly HashSet<ushort> PhysicalRangedWeaponTypes = new()
+    private static readonly HashSet<uint> PhysicalRangedItemCategories = new()
     {
-        5,  // Bow
-        10, // Firearm
-        17, // Throwing weapons
+        4,   // Archer's Arm
+        88,  // Machinist's Arm
+        107, // Dancer's Arm
     };
 
-    private static readonly HashSet<ushort> MagicalRangedWeaponTypes = new()
+    private static readonly HashSet<uint> MagicalRangedItemCategories = new()
     {
-        6,  // Cane
-        7,  // Staff / scepter
-        8,  // Grimoire
-        13, // Star globe
-        16, // Rapier / focus
-        20, // Nouliths
+        6,   // One-handed thaumaturge's arm
+        7,   // Two-handed thaumaturge's arm
+        8,   // One-handed conjurer's arm
+        9,   // Two-handed conjurer's arm
+        10,  // Arcanist's grimoire
+        89,  // Astrologian's arm
+        97,  // Red mage's arm
+        98,  // Scholar's arm
+        105, // Blue mage's arm
+        109, // Sage's arm
     };
 
     private static readonly HashSet<WeaponModelKey> PhysicalRangedWeaponModels = new()
     {
         // Coeurlclaw Hunter bow.
         new(601, 1, 4),
+
+        // Amalj'aa Scavenger ranged weapon.
+        new(601, 3, 8),
     };
+
+    private static readonly Dictionary<WeaponModelKey, NpcAttackStyle> itemCategoryCache = new();
+    private static IDataManager? dataManager;
+    private static IPluginLog? pluginLog;
+    private static bool cacheBuilt;
+
+    public static void Initialize(IDataManager dataManager, IPluginLog log)
+    {
+        NpcWeaponClassifier.dataManager = dataManager;
+        pluginLog = log;
+        itemCategoryCache.Clear();
+        cacheBuilt = false;
+    }
 
     public static NpcAttackStyle DetectFromCharacter(Character* character, IPluginLog? log = null, string? name = null)
     {
@@ -60,18 +79,92 @@ public static unsafe class NpcWeaponClassifier
 
     private static NpcAttackStyle DetectFromWeapon(ushort id, ushort type, ushort variant)
     {
+        var key = new WeaponModelKey(id, type, variant);
+
+        if (TryDetectFromItemCategory(key, out var itemStyle))
+            return itemStyle;
+
         if (PhysicalRangedWeaponModels.Contains(new WeaponModelKey(id, type, variant)))
             return NpcAttackStyle.Ranged;
 
-        return DetectFromWeaponType(type);
+        return NpcAttackStyle.Auto;
     }
 
-    private static NpcAttackStyle DetectFromWeaponType(ushort type)
+    private static bool TryDetectFromItemCategory(WeaponModelKey key, out NpcAttackStyle style)
     {
-        if (PhysicalRangedWeaponTypes.Contains(type))
+        EnsureItemCategoryCache();
+        if (!itemCategoryCache.TryGetValue(key, out style))
+            return false;
+
+        return style != NpcAttackStyle.Auto;
+    }
+
+    private static void EnsureItemCategoryCache()
+    {
+        if (cacheBuilt)
+            return;
+
+        cacheBuilt = true;
+
+        if (dataManager == null)
+            return;
+
+        try
+        {
+            var sheet = dataManager.GetExcelSheet<Item>();
+            if (sheet == null)
+                return;
+
+            foreach (var item in sheet)
+            {
+                var style = ClassifyItemCategory(item.ItemUICategory.RowId);
+                if (style == NpcAttackStyle.Auto)
+                    continue;
+
+                AddModel(item.ModelMain, style);
+                AddModel(item.ModelSub, style);
+            }
+
+            pluginLog?.Info($"NPC weapon item-category cache built: {itemCategoryCache.Count} model mappings.");
+        }
+        catch (Exception ex)
+        {
+            pluginLog?.Warning(ex, "Failed to build NPC weapon item-category cache.");
+        }
+    }
+
+    private static void AddModel(ulong packedModel, NpcAttackStyle style)
+    {
+        var key = UnpackModel(packedModel);
+        if (key.Id == 0)
+            return;
+
+        if (itemCategoryCache.TryGetValue(key, out var existing))
+        {
+            if (existing == style)
+                return;
+
+            itemCategoryCache[key] = NpcAttackStyle.Auto;
+            return;
+        }
+
+        itemCategoryCache[key] = style;
+    }
+
+    private static WeaponModelKey UnpackModel(ulong packedModel)
+    {
+        return new WeaponModelKey(
+            (ushort)packedModel,
+            (ushort)(packedModel >> 16),
+            (ushort)(packedModel >> 32));
+    }
+
+    private static NpcAttackStyle ClassifyItemCategory(uint itemUiCategoryId)
+    {
+        if (PhysicalRangedItemCategories.Contains(itemUiCategoryId))
             return NpcAttackStyle.Ranged;
 
-        if (MagicalRangedWeaponTypes.Contains(type))
+        if (MagicalRangedItemCategories.Contains(itemUiCategoryId))
             return NpcAttackStyle.Magic;
 
         return NpcAttackStyle.Auto;
