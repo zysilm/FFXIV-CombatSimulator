@@ -227,6 +227,7 @@ public class CombatEngine : IDisposable
             npc.State.Reset();
             npc.AiState = Ai.NpcAiState.Idle;
             npc.AutoAttackTimer = 0;
+            npc.EngageDelayTimer = 0;
             npc.DeadTimer = 0;
             npc.CurrentCastSkill = null;
 
@@ -465,7 +466,8 @@ public class CombatEngine : IDisposable
             if (npc.SimulatedEntityId == (uint)targetId &&
                 npc.AiState == Ai.NpcAiState.Idle)
             {
-                npc.AiState = Ai.NpcAiState.Combat;
+                npc.AiState = Ai.NpcAiState.Engaging;
+                npc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
                 Ai.NpcAiController.StaggerTimers(npc);
                 AddLogEntry($"{npc.Name} engages!", CombatLogType.Info);
                 engagedNpcPos = GetEntityPosition(npc.State);
@@ -487,7 +489,8 @@ public class CombatEngine : IDisposable
                 var npcPos = GetEntityPosition(npc.State);
                 if (Vector3.Distance(npcPos, engagedNpcPos) <= aggroRange)
                 {
-                    npc.AiState = Ai.NpcAiState.Combat;
+                    npc.AiState = Ai.NpcAiState.Engaging;
+                    npc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
                     Ai.NpcAiController.StaggerTimers(npc);
                     AddLogEntry($"{npc.Name} joins the fight!", CombatLogType.Info);
                 }
@@ -502,7 +505,8 @@ public class CombatEngine : IDisposable
             foreach (var newNpc in newNpcs)
             {
                 RegisterNpcEntity(newNpc);
-                newNpc.AiState = Ai.NpcAiState.Combat;
+                newNpc.AiState = Ai.NpcAiState.Engaging;
+                newNpc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
                 Ai.NpcAiController.StaggerTimers(newNpc);
                 AddLogEntry($"{newNpc.Name} joins the fight!", CombatLogType.Info);
             }

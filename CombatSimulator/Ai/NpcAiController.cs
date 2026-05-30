@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Threading.Tasks;
 using CombatSimulator.Animation;
+using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
@@ -14,21 +16,45 @@ namespace CombatSimulator.Ai;
 
 public unsafe class NpcAiController : IDisposable
 {
+    public const float PlayerTriggeredEngageDelay = 0.5f;
+
     private readonly CombatEngine combatEngine;
     private readonly AnimationController animationController;
     private readonly MovementBlockHook movementBlockHook;
+    private readonly VNavmeshIpc vnavmeshIpc;
     private readonly IClientState clientState;
     private readonly Configuration config;
     private readonly IPluginLog log;
+    private readonly Dictionary<nint, ApproachPathState> approachPaths = new();
+    private const float VNavmeshRepathDistance = 1.5f;
+    private const float VNavmeshRepathInterval = 1.0f;
+    private const float VNavmeshPathTolerance = 0.5f;
+    private const ushort NormalRunTimelineId = 22;
 
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
     private float pendingAutoEngageDelay = -1f;
 
+    private class ApproachPathState
+    {
+        public List<Vector3> Waypoints { get; set; } = new();
+        public int WaypointIndex { get; set; }
+        public Vector3 RequestedTarget { get; set; }
+        public float RepathTimer { get; set; }
+        public Task<List<Vector3>>? PendingPath { get; set; }
+        public Vector3 PendingTarget { get; set; }
+        public string LastError { get; set; } = "";
+        public float FloorYOffset { get; set; }
+        public float ConfiguredHeightOffset { get; set; }
+        public bool HasFloorYOffset { get; set; }
+        public bool MoveAnimActive { get; set; }
+    }
+
     public NpcAiController(
         CombatEngine combatEngine,
         AnimationController animationController,
         MovementBlockHook movementBlockHook,
+        VNavmeshIpc vnavmeshIpc,
         IClientState clientState,
         Configuration config,
         IPluginLog log)
@@ -36,6 +62,7 @@ public unsafe class NpcAiController : IDisposable
         this.combatEngine = combatEngine;
         this.animationController = animationController;
         this.movementBlockHook = movementBlockHook;
+        this.vnavmeshIpc = vnavmeshIpc;
         this.clientState = clientState;
         this.config = config;
         this.log = log;
@@ -52,6 +79,9 @@ public unsafe class NpcAiController : IDisposable
 
     private void OnSimulationResetOrStop()
     {
+        StopAllApproachMoveAnims();
+        approachPaths.Clear();
+
         // OnSimulationReset fires from both StopSimulation and ResetState.
         // StopSimulation flips IsActive false before invoking — skip auto-engage
         // there since there are no selected NPCs left to engage.
@@ -114,6 +144,9 @@ public unsafe class NpcAiController : IDisposable
         // Target approach: move active targets near the player
         if (config.EnableTargetApproach)
         {
+            if (config.UseVNavmeshTargetApproach)
+                vnavmeshIpc.RefreshStatus();
+
             // Count live approach-eligible NPCs for spread calculation
             var approachNpcs = new List<SimulatedNpc>();
             foreach (var npc in npcs)
@@ -122,6 +155,16 @@ public unsafe class NpcAiController : IDisposable
                     continue;
                 if (npc.AiState != NpcAiState.Dead)
                     approachNpcs.Add(npc);
+            }
+
+            var liveAddresses = new HashSet<nint>(approachNpcs.Select(n => n.Address));
+            foreach (var address in approachPaths.Keys.ToList())
+            {
+                if (!liveAddresses.Contains(address))
+                {
+                    StopApproachMoveAnim(address, approachPaths[address]);
+                    approachPaths.Remove(address);
+                }
             }
 
             for (int i = 0; i < approachNpcs.Count; i++)
@@ -143,6 +186,8 @@ public unsafe class NpcAiController : IDisposable
         {
             // Clear all approach blocks when feature is disabled
             movementBlockHook.ClearApproachNpcs();
+            StopAllApproachMoveAnims();
+            approachPaths.Clear();
         }
     }
 
@@ -152,6 +197,8 @@ public unsafe class NpcAiController : IDisposable
     public void ClearApproachState()
     {
         movementBlockHook.ClearApproachNpcs();
+        StopAllApproachMoveAnims();
+        approachPaths.Clear();
     }
 
     public void EngageNpc(SimulatedNpc npc)
@@ -206,6 +253,11 @@ public unsafe class NpcAiController : IDisposable
             case NpcAiState.Engaging:
                 if (npc.IsClientControlled)
                     RotateTowardPlayer(npc, playerPos, deltaTime);
+                if (npc.EngageDelayTimer > 0)
+                {
+                    npc.EngageDelayTimer = Math.Max(0, npc.EngageDelayTimer - deltaTime);
+                    break;
+                }
                 npc.AiState = NpcAiState.Combat;
                 break;
 
@@ -452,10 +504,18 @@ public unsafe class NpcAiController : IDisposable
     private void TickApproach(SimulatedNpc npc, float deltaTime, Vector3 playerPos, int npcIndex, int totalNpcs)
     {
         if (npc.BattleChara == null) return;
-        if (npc.AiState == NpcAiState.Dead) return;
+        if (npc.AiState == NpcAiState.Dead)
+        {
+            StopApproachMoveAnim(npc);
+            return;
+        }
 
         // Don't move NPCs when the player is dead — they stay in place
-        if (!combatEngine.State.PlayerState.IsAlive) return;
+        if (!combatEngine.State.PlayerState.IsAlive)
+        {
+            StopApproachMoveAnim(npc);
+            return;
+        }
 
         var gameObj = (GameObject*)npc.BattleChara;
         var npcPos = (Vector3)gameObj->Position;
@@ -507,34 +567,211 @@ public unsafe class NpcAiController : IDisposable
         targetPos.Y = playerPos.Y + config.DefaultNpcHeightOffset;
 
         // Already close enough — just face the player
-        if (Vector3.Distance(npcPos, targetPos) <= 0.3f)
+        var moveTarget = targetPos;
+        var hasVnavmeshTarget = TryUpdateVNavmeshPath(npc, deltaTime, npcPos, targetPos, out var pathTarget);
+        if (hasVnavmeshTarget)
+            moveTarget = pathTarget;
+
+        if (config.UseVNavmeshTargetApproach && !hasVnavmeshTarget)
         {
+            StopApproachMoveAnim(npc);
+            ForceRotateToward(npc, playerPos, deltaTime);
+            return;
+        }
+
+        if (Vector3.Distance(npcPos, moveTarget) <= 0.3f)
+        {
+            StopApproachMoveAnim(npc);
             ForceRotateToward(npc, playerPos, deltaTime);
             return;
         }
 
         // Smooth movement toward the target position
         float speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;
-        float remainingDist = Vector3.Distance(npcPos, targetPos);
+        float remainingDist = Vector3.Distance(npcPos, moveTarget);
         float moveDist = speed * deltaTime;
 
         Vector3 newPos;
         if (remainingDist <= moveDist)
         {
-            newPos = targetPos;
+            newPos = moveTarget;
         }
         else
         {
-            var moveDir = Vector3.Normalize(targetPos - npcPos);
+            var moveDir = Vector3.Normalize(moveTarget - npcPos);
             newPos = npcPos + moveDir * moveDist;
         }
 
         // Call the real SetPosition via the hook bypass — this updates both
         // the struct field AND the DrawObject (3D model position).
+        StartApproachMoveAnim(npc);
         movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
 
         // Face the player
         ForceRotateToward(npc, playerPos, deltaTime);
+    }
+
+    private bool TryUpdateVNavmeshPath(
+        SimulatedNpc npc,
+        float deltaTime,
+        Vector3 npcPos,
+        Vector3 targetPos,
+        out Vector3 moveTarget)
+    {
+        moveTarget = targetPos;
+
+        if (!config.UseVNavmeshTargetApproach)
+        {
+            approachPaths.Remove(npc.Address);
+            return false;
+        }
+
+        if (!vnavmeshIpc.CanPathfind)
+            return false;
+
+        if (!approachPaths.TryGetValue(npc.Address, out var state))
+        {
+            state = new ApproachPathState();
+            approachPaths[npc.Address] = state;
+        }
+        state.ConfiguredHeightOffset = config.DefaultNpcHeightOffset;
+
+        state.RepathTimer = Math.Max(0, state.RepathTimer - deltaTime);
+
+        if (state.PendingPath != null && state.PendingPath.IsCompleted)
+        {
+            try
+            {
+                state.Waypoints = state.PendingPath.GetAwaiter().GetResult();
+                state.WaypointIndex = 0;
+                state.RequestedTarget = state.PendingTarget;
+                if (!state.HasFloorYOffset)
+                {
+                    var floor = SnapToNavmesh(npcPos);
+                    state.FloorYOffset = floor.HasValue ? npcPos.Y - floor.Value.Y : 0f;
+                    state.HasFloorYOffset = true;
+                }
+                state.ConfiguredHeightOffset = config.DefaultNpcHeightOffset;
+                state.LastError = "";
+            }
+            catch (Exception ex)
+            {
+                log.Verbose($"vnavmesh path request failed for '{npc.Name}': {ex.Message}");
+                state.Waypoints.Clear();
+                state.WaypointIndex = 0;
+                state.LastError = ex.Message;
+            }
+            finally
+            {
+                state.PendingPath = null;
+            }
+        }
+
+        var targetMoved = state.Waypoints.Count == 0 ||
+                          Vector3.Distance(state.RequestedTarget, targetPos) >= VNavmeshRepathDistance;
+
+        if (targetMoved && state.PendingPath == null && state.RepathTimer <= 0)
+        {
+            try
+            {
+                var from = SnapToNavmesh(npcPos) ?? npcPos;
+                var to = SnapToNavmesh(targetPos) ?? targetPos;
+
+                state.PendingTarget = to;
+                state.PendingPath = vnavmeshIpc.Pathfind(from, to, VNavmeshPathTolerance);
+                state.RepathTimer = VNavmeshRepathInterval;
+            }
+            catch (Exception ex)
+            {
+                log.Verbose($"vnavmesh unavailable while requesting path for '{npc.Name}': {ex.Message}");
+                state.PendingPath = null;
+                state.LastError = ex.Message;
+                return false;
+            }
+        }
+
+        while (state.WaypointIndex < state.Waypoints.Count &&
+               Vector3.Distance(npcPos, ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex])) <= 0.45f)
+        {
+            state.WaypointIndex++;
+        }
+
+        if (state.WaypointIndex >= state.Waypoints.Count)
+            return false;
+
+        moveTarget = ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex]);
+        return true;
+    }
+
+    private static Vector3 ApplyFloorYOffset(ApproachPathState state, Vector3 point)
+    {
+        return state.HasFloorYOffset
+            ? point with { Y = point.Y + state.FloorYOffset + state.ConfiguredHeightOffset }
+            : point;
+    }
+
+    private Vector3? SnapToNavmesh(Vector3 point)
+    {
+        try
+        {
+            return vnavmeshIpc.NearestPointReachable(point)
+                   ?? vnavmeshIpc.PointOnFloor(point + new Vector3(0, 10f, 0));
+        }
+        catch (Exception ex)
+        {
+            log.Verbose($"vnavmesh snap failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    private void StartApproachMoveAnim(SimulatedNpc npc)
+    {
+        if (npc.BattleChara == null)
+            return;
+
+        if (!approachPaths.TryGetValue(npc.Address, out var state))
+        {
+            state = new ApproachPathState();
+            approachPaths[npc.Address] = state;
+        }
+
+        if (state.MoveAnimActive)
+            return;
+
+        var character = (Character*)npc.BattleChara;
+        character->Timeline.BaseOverride = NormalRunTimelineId;
+        if (character->Timeline.TimelineSequencer.Parent != null)
+            character->Timeline.PlayActionTimeline(NormalRunTimelineId);
+        state.MoveAnimActive = true;
+    }
+
+    private void StopApproachMoveAnim(SimulatedNpc npc)
+    {
+        if (!approachPaths.TryGetValue(npc.Address, out var state))
+            return;
+
+        StopApproachMoveAnim(npc.Address, state);
+    }
+
+    private void StopApproachMoveAnim(nint address, ApproachPathState state)
+    {
+        if (!state.MoveAnimActive)
+            return;
+
+        try
+        {
+            var character = (Character*)address;
+            character->Timeline.BaseOverride = 0;
+        }
+        catch { }
+
+        state.MoveAnimActive = false;
+    }
+
+    private void StopAllApproachMoveAnims()
+    {
+        foreach (var pair in approachPaths)
+            StopApproachMoveAnim(pair.Key, pair.Value);
     }
 
     /// <summary>
@@ -573,5 +810,7 @@ public unsafe class NpcAiController : IDisposable
         combatEngine.OnSimulationStarted -= ScheduleAutoEngage;
         combatEngine.OnSimulationReset -= OnSimulationResetOrStop;
         movementBlockHook.ClearApproachNpcs();
+        StopAllApproachMoveAnims();
+        approachPaths.Clear();
     }
 }

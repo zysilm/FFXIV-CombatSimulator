@@ -35,6 +35,7 @@ public unsafe class SimulatedNpc
     public NpcBehavior Behavior { get; set; } = new();
     public Vector3 SpawnPosition { get; set; }
     public float AutoAttackTimer { get; set; }
+    public float EngageDelayTimer { get; set; }
     public float DeadTimer { get; set; }
     public bool IsEngaged => AiState is NpcAiState.Engaging or NpcAiState.Combat or NpcAiState.Chasing;
 

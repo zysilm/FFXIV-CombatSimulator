@@ -36,6 +36,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly DamageCalculator damageCalculator;
     private readonly ChatCommandExecutor chatCommandExecutor;
     private readonly GlamourerIpc glamourerIpc;
+    private readonly VNavmeshIpc vnavmeshIpc;
     private readonly AnimationController animationController;
     private readonly BoneTransformService boneTransformService;
     private readonly RagdollController ragdollController;
@@ -95,6 +96,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         damageCalculator = new DamageCalculator();
         chatCommandExecutor = new ChatCommandExecutor(log);
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
+        vnavmeshIpc = new VNavmeshIpc(pluginInterface, log);
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
@@ -112,7 +114,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             glamourerIpc, movementBlockHook, ragdollController,
             config, npcSelector, clientState, log, deathCamController,
             victorySequenceController);
-        npcAiController = new NpcAiController(combatEngine, animationController, movementBlockHook, clientState, config, log);
+        npcAiController = new NpcAiController(combatEngine, animationController, movementBlockHook, vnavmeshIpc, clientState, config, log);
 
         // Wire NpcSpawner callbacks
         npcSpawner.OnNpcSpawnComplete = (npc) =>
@@ -191,7 +193,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             activeCameraController.SetActive(true);
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, npcSpawner, combatEngine, glamourerIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, npcSpawner, combatEngine, glamourerIpc, vnavmeshIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, mainWindow, config, gameGui, clientState);

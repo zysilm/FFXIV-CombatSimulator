@@ -119,6 +119,7 @@ public class Configuration : IPluginConfiguration
     public bool EnableNpcTargetPlayer { get; set; } = true;
     public bool EnableTargetApproach { get; set; } = false;
     public float TargetApproachDistance { get; set; } = 3.0f;
+    public bool UseVNavmeshTargetApproach { get; set; } = false;
 
     // Aggro propagation: nearby BattleNpcs auto-added as targets when one is engaged
     public bool EnableAggroPropagation { get; set; } = false;
