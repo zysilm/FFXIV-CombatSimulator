@@ -1819,7 +1819,7 @@ public class MainWindow : IDisposable
                 config.EnableDeathCam = enabled;
                 config.Save();
             }
-            HelpMarker("On player death, smoothly transition camera to an anchored position following a bone.");
+            HelpMarker("On player death, smoothly transition the camera orbit center to a bone. Rotation and zoom remain under normal camera control.");
 
             if (!enabled)
                 return;
@@ -1958,19 +1958,19 @@ public class MainWindow : IDisposable
                 config.DeathCamTransitionDuration = duration;
                 config.Save();
             }
-            HelpMarker("How long the camera takes to interpolate to the anchor on death.");
+            HelpMarker("How long the camera takes to interpolate to the selected bone on death.");
 
             // --- Actions ---
             ImGui.Separator();
 
-            if (ImGui.Button("Set Anchor"))
+            if (ImGui.Button("Set Preset Orbit"))
             {
                 if (deathCamController.SetAnchor())
-                    chatGui.Print("[CombatSim] Death cam anchor set.");
+                    chatGui.Print("[CombatSim] Death cam preset orbit set.");
                 else
-                    chatGui.PrintError("[CombatSim] Failed to set anchor. Make sure you have a character loaded.");
+                    chatGui.PrintError("[CombatSim] Failed to set preset orbit. Make sure you have a character loaded.");
             }
-            HelpMarker("Capture the current camera angle and distance as the death cam target.");
+            HelpMarker("Capture the current camera angle and distance as an optional preset starting orbit.");
 
             ImGui.SameLine();
             var preview = deathCamController.IsPreviewActive;
@@ -1983,10 +1983,10 @@ public class MainWindow : IDisposable
             }
             if (preview)
                 ImGui.PopStyleColor();
-            HelpMarker("Toggle live preview. Opens camera control window for intuitive tweaking.");
+            HelpMarker("Toggle live preview. The camera tracks the selected bone while you keep normal rotation and zoom control.");
 
             ImGui.SameLine();
-            if (config.DeathCamAnchorSet && ImGui.SmallButton("Clear Anchor"))
+            if (config.DeathCamAnchorSet && ImGui.SmallButton("Clear Preset Orbit"))
             {
                 config.DeathCamAnchorSet = false;
                 config.Save();
@@ -1995,11 +1995,11 @@ public class MainWindow : IDisposable
             // Anchor status
             if (config.DeathCamAnchorSet)
             {
-                ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.4f, 1.0f), "Anchor is set.");
+                ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.4f, 1.0f), "Preset orbit is set.");
             }
             else
             {
-                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "No anchor set. Position camera and click Set Anchor.");
+                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "No preset orbit set. Death cam still tracks the selected bone.");
             }
 
             // Show current state
@@ -2055,6 +2055,8 @@ public class MainWindow : IDisposable
         config.DeathCamTransitionDuration = preset.TransitionDuration;
         config.DeathCamAnchorSet = true;
         config.Save();
+        if (deathCamController.IsPreviewActive || deathCamController.State != DeathCamState.Inactive)
+            deathCamController.ApplyAnchorToCamera();
         chatGui.Print($"[CombatSim] Preset '{preset.Name}' loaded.");
     }
 
@@ -2069,21 +2071,22 @@ public class MainWindow : IDisposable
 
         bool changed = false;
 
-        // --- Orbit ---
-        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Orbit");
+        // --- Preset Orbit ---
+        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Preset Orbit");
         ImGui.Separator();
 
-        var distance = config.DeathCamAnchorDistance;
-        if (ImGui.DragFloat("Distance", ref distance, 0.05f, 0.0f, 30.0f, "%.2f"))
-        { config.DeathCamAnchorDistance = distance; changed = true; }
-
-        var dirH = config.DeathCamAnchorDirH;
-        if (ImGui.DragFloat("Horizontal", ref dirH, 0.01f, -MathF.PI, MathF.PI, "%.2f rad"))
-        { config.DeathCamAnchorDirH = dirH; changed = true; }
-
-        var dirV = config.DeathCamAnchorDirV;
-        if (ImGui.DragFloat("Vertical", ref dirV, 0.01f, -MathF.PI / 2f, MathF.PI / 2f, "%.2f rad"))
-        { config.DeathCamAnchorDirV = dirV; changed = true; }
+        if (ImGui.Button("Capture Current Orbit"))
+        {
+            if (!deathCamController.SetAnchor())
+                chatGui.PrintError("[CombatSim] Failed to capture death cam orbit.");
+        }
+        ImGui.SameLine();
+        if (!config.DeathCamAnchorSet)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Apply Preset Orbit"))
+            deathCamController.ApplyAnchorToCamera();
+        if (!config.DeathCamAnchorSet)
+            ImGui.EndDisabled();
 
         ImGui.Spacing();
 
