@@ -33,6 +33,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly NpcSelector npcSelector;
     private readonly NpcSpawner npcSpawner;
     private readonly ActionDataProvider actionDataProvider;
+    private readonly NpcActionProfileProvider npcActionProfileProvider;
     private readonly DamageCalculator damageCalculator;
     private readonly ChatCommandExecutor chatCommandExecutor;
     private readonly GlamourerIpc glamourerIpc;
@@ -93,6 +94,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         // Simulation
         actionDataProvider = new ActionDataProvider(dataManager, log);
+        npcActionProfileProvider = new NpcActionProfileProvider(actionDataProvider, log);
         damageCalculator = new DamageCalculator();
         chatCommandExecutor = new ChatCommandExecutor(log);
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
@@ -100,8 +102,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, sigScanner, chatCommandExecutor, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
-        npcSelector = new NpcSelector(objectTable, targetManager, config, log);
-        npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, log);
+        npcSelector = new NpcSelector(objectTable, targetManager, config, npcActionProfileProvider, log);
+        npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, npcActionProfileProvider, log);
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log);
         weaponDropController = new WeaponDropController(boneTransformService, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);

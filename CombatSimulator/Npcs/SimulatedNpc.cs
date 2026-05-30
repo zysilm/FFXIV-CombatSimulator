@@ -12,6 +12,9 @@ public unsafe class SimulatedNpc
     public uint SimulatedEntityId { get; set; }
     public int ObjectIndex { get; set; }
     public string Name { get; set; } = string.Empty;
+    public uint BNpcBaseId { get; set; }
+    public uint BNpcNameId { get; set; }
+    public uint ENpcBaseId { get; set; }
 
     // Game object reference
     public BattleChara* BattleChara { get; set; }

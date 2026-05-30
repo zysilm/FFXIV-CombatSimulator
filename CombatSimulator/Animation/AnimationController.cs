@@ -23,6 +23,7 @@ public class ActionEffectRequest
     public float SourceRotation { get; set; }
     public bool IsSourcePlayer { get; set; }
     public bool IsRanged { get; set; }
+    public NpcAttackStyle AttackStyle { get; set; } = NpcAttackStyle.Auto;
 
     // VFX paths resolved from Lumina + TMB data
     public string CastVfxPath { get; set; } = string.Empty;
@@ -65,6 +66,7 @@ public unsafe class AnimationController : IDisposable
     private ushort battleDeadIntroTimeline = 8935;
     private ushort battleDeadLoopTimeline = 8936;
     private bool battleDeadResolved;
+    private ushort monsterRangedAutoAttackTimeline;
 
     // ActorVfxCreate — spawns a .avfx particle effect attached to an actor
     private delegate nint ActorVfxCreateDelegate(
@@ -107,6 +109,7 @@ public unsafe class AnimationController : IDisposable
 
         ResolvePlayDeadTimelines(dataManager);
         ResolveBattleDeadTimeline(dataManager);
+        ResolveMonsterRangedAttackTimeline(dataManager);
         ResolveActorVfxCreate(sigScanner);
         ResolveActorVfxRemove(sigScanner);
 
@@ -229,6 +232,32 @@ public unsafe class AnimationController : IDisposable
         log.Info($"AnimationController: Battle dead timelines — intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}, resolved={battleDeadResolved} (key search: intro={foundIntro}, loop={foundLoop})");
     }
 
+    private void ResolveMonsterRangedAttackTimeline(IDataManager dataManager)
+    {
+        try
+        {
+            var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ActionTimeline>();
+            if (sheet == null)
+                return;
+
+            foreach (var row in sheet)
+            {
+                if (row.Key.ToString() == "battle/auto_attack_shot1_mon")
+                {
+                    monsterRangedAutoAttackTimeline = (ushort)row.RowId;
+                    log.Info($"AnimationController: Resolved monster ranged auto-attack timeline battle/auto_attack_shot1_mon -> {monsterRangedAutoAttackTimeline}.");
+                    return;
+                }
+            }
+
+            log.Warning("AnimationController: Could not find ActionTimeline key battle/auto_attack_shot1_mon.");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "AnimationController: Failed to resolve monster ranged auto-attack timeline.");
+        }
+    }
+
     public void Tick(float deltaTime)
     {
         commandExecutor.Tick(deltaTime);
@@ -277,6 +306,9 @@ public unsafe class AnimationController : IDisposable
 
             // Use ActionEffectHandler.Receive() for flytext + damage numbers
             CallActionEffectReceive(request);
+
+            if (!request.IsSourcePlayer && request.AttackStyle == NpcAttackStyle.Ranged)
+                PlayMonsterRangedAttackTimeline(request.SourceEntityId);
         }
         catch (Exception ex)
         {
@@ -490,6 +522,25 @@ public unsafe class AnimationController : IDisposable
             Marshal.FreeHGlobal((nint)effectsPtr);
             Marshal.FreeHGlobal((nint)targetIdsPtr);
         }
+    }
+
+    private void PlayMonsterRangedAttackTimeline(uint sourceEntityId)
+    {
+        if (monsterRangedAutoAttackTimeline == 0)
+        {
+            log.Warning("Monster ranged auto-attack timeline is unresolved; cannot play battle/auto_attack_shot1_mon.");
+            return;
+        }
+
+        var casterPtr = FindCharacter(sourceEntityId, isPlayer: false);
+        if (casterPtr == null)
+        {
+            log.Warning($"Monster ranged auto-attack timeline: caster 0x{sourceEntityId:X} not found.");
+            return;
+        }
+
+        log.Info($"Playing monster ranged auto-attack timeline {monsterRangedAutoAttackTimeline} for caster 0x{sourceEntityId:X}.");
+        emotePlayer.PlayOneShot(casterPtr, monsterRangedAutoAttackTimeline);
     }
 
     /// <summary>

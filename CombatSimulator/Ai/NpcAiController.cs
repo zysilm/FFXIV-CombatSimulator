@@ -341,7 +341,7 @@ public unsafe class NpcAiController : IDisposable
                 if (npc.CurrentCastSkill != null)
                 {
                     combatEngine.ProcessNpcAction(npc, npc.CurrentCastSkill.ActionId,
-                        playerEntityId, npc.CurrentCastSkill.Potency);
+                        playerEntityId, npc.CurrentCastSkill.Potency, npc.CurrentCastSkill.AttackStyle);
                     npc.CurrentCastSkill.CooldownRemaining = npc.CurrentCastSkill.Cooldown;
                     npc.CurrentCastSkill = null;
                 }
@@ -383,7 +383,7 @@ public unsafe class NpcAiController : IDisposable
             }
             else
             {
-                combatEngine.ProcessNpcAction(npc, skill.ActionId, playerEntityId, skill.Potency);
+                combatEngine.ProcessNpcAction(npc, skill.ActionId, playerEntityId, skill.Potency, skill.AttackStyle);
                 skill.CooldownRemaining = skill.Cooldown;
                 npc.State.AnimationLock = 0.6f;
             }
@@ -396,7 +396,7 @@ public unsafe class NpcAiController : IDisposable
         {
             npc.AutoAttackTimer = npc.Behavior.AutoAttackDelay;
             combatEngine.ProcessNpcAction(npc, npc.Behavior.AutoAttackActionId,
-                playerEntityId, npc.Behavior.AutoAttackPotency);
+                playerEntityId, npc.Behavior.AutoAttackPotency, npc.Behavior.AutoAttackStyle);
             npc.State.AnimationLock = 0.6f;
         }
     }

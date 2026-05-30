@@ -23,6 +23,7 @@ public unsafe class NpcSpawner : IDisposable
     private readonly IDataManager dataManager;
     private readonly IClientState clientState;
     private readonly Configuration config;
+    private readonly NpcActionProfileProvider actionProfileProvider;
     private readonly IPluginLog log;
 
     private readonly List<SimulatedNpc> spawnedNpcs = new();
@@ -70,12 +71,14 @@ public unsafe class NpcSpawner : IDisposable
         IDataManager dataManager,
         IClientState clientState,
         Configuration config,
+        NpcActionProfileProvider actionProfileProvider,
         IPluginLog log)
     {
         this.objectTable = objectTable;
         this.dataManager = dataManager;
         this.clientState = clientState;
         this.config = config;
+        this.actionProfileProvider = actionProfileProvider;
         this.log = log;
     }
 
@@ -236,17 +239,47 @@ public unsafe class NpcSpawner : IDisposable
             // Calculate HP
             int maxHp = CalculateNpcHp(npcLevel, request.HpMultiplier);
 
+            // Read weapon data for deferred loading after EnableDraw and for
+            // classifying humanoid NPCs as melee/ranged/caster.
+            ulong mainHandWeapon = 0, offHandWeapon = 0;
+            if (request.ENpcBaseId > 0)
+            {
+                var eSheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ENpcBase>();
+                var eRow = eSheet?.GetRowOrDefault(request.ENpcBaseId);
+                if (eRow != null)
+                {
+                    mainHandWeapon = eRow.Value.ModelMainHand;
+                    offHandWeapon = eRow.Value.ModelOffHand;
+                }
+            }
+
+            var behavior = actionProfileProvider.CreateForSpawn(request, npcName);
+            var weaponStyle = NpcWeaponClassifier.DetectFromPackedWeapon(mainHandWeapon);
+            if (weaponStyle == NpcAttackStyle.Ranged)
+            {
+                behavior = actionProfileProvider.CreateForSelectedTarget(npcName, request.BehaviorType, weaponStyle);
+                log.Info($"NPC weapon classify '{npcName}' from ENpcBase: packedMainHand=0x{mainHandWeapon:X} -> {weaponStyle}");
+            }
+            else if (weaponStyle == NpcAttackStyle.Magic)
+            {
+                behavior = actionProfileProvider.CreateForSelectedTarget(npcName, request.BehaviorType, weaponStyle);
+                log.Info($"NPC weapon classify '{npcName}' from ENpcBase: packedMainHand=0x{mainHandWeapon:X} -> {weaponStyle}");
+            }
+
             var npc = new SimulatedNpc
             {
                 SimulatedEntityId = entityId,
                 ObjectIndex = index,
                 Name = npcName,
+                BNpcBaseId = request.BNpcBaseId,
+                BNpcNameId = request.BNpcNameId,
+                ENpcBaseId = request.ENpcBaseId,
                 BattleChara = chara,
                 GameObjectRef = gameObjectRef,
                 SpawnPosition = spawnPos,
-                Behavior = NpcBehavior.Create(request.BehaviorType),
+                Behavior = behavior,
                 IsSpawned = false, // Will become true when draw is enabled
-                IsRanged = request.IsRanged, // Carried through respawn via NpcSpawnRequest
+                IsRanged = request.IsRanged || behavior.AutoAttackStyle == NpcAttackStyle.Ranged,
                 State = new SimulatedEntityState
                 {
                     EntityId = entityId,
@@ -262,19 +295,6 @@ public unsafe class NpcSpawner : IDisposable
                     MagicDefense = 100 + npcLevel * 5,
                 },
             };
-
-            // Read weapon data for deferred loading after EnableDraw
-            ulong mainHandWeapon = 0, offHandWeapon = 0;
-            if (request.ENpcBaseId > 0)
-            {
-                var eSheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ENpcBase>();
-                var eRow = eSheet?.GetRowOrDefault(request.ENpcBaseId);
-                if (eRow != null)
-                {
-                    mainHandWeapon = eRow.Value.ModelMainHand;
-                    offHandWeapon = eRow.Value.ModelOffHand;
-                }
-            }
 
             // Step 8: Add to pending - delay EnableDraw to next frame
             // (RaidsRewritten does this to allow file replacements to run)
