@@ -13,5 +13,6 @@
         "other"
     ],
     "LoadPriority": 0,
+    "AssemblyVersion": "1.11.0.0",
     "IconUrl": "https://raw.githubusercontent.com/zysilm/FFXIV-CombatSimulator/main/images/logo.png"
 }
