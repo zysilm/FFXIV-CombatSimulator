@@ -962,15 +962,15 @@ public class MainWindow : IDisposable
     {
         if (ImGui.CollapsingHeader("VFX"))
         {
-            var skillVfx = config.EnableSkillVfx;
-            if (ImGui.Checkbox("Enable Skill VFX", ref skillVfx))
+            var characterVfx = config.EnableCharacterVfx;
+            if (ImGui.Checkbox("Enable Character VFX", ref characterVfx))
             {
-                config.EnableSkillVfx = skillVfx;
+                config.EnableCharacterVfx = characterVfx;
                 config.Save();
             }
-            HelpMarker("Spawn per-skill visual effects (cast circles, impact particles) during combat.");
+            HelpMarker("Spawn caster/character-side action effects such as cast circles, start effects, and caster timeline VFX.");
 
-            if (config.EnableSkillVfx && hookSafetyChecker.HasConflicts)
+            if (config.EnableCharacterVfx && hookSafetyChecker.HasConflicts)
             {
                 ImGui.SameLine();
                 ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "! Check Diagnose");
@@ -978,13 +978,30 @@ public class MainWindow : IDisposable
 
             ImGui.Spacing();
 
+            var targetVfx = config.EnableTargetVfx;
+            if (ImGui.Checkbox("Enable Target VFX", ref targetVfx))
+            {
+                config.EnableTargetVfx = targetVfx;
+                config.Save();
+            }
+            HelpMarker("Spawn target-side impact effects. If an action has no target VFX, the fallback hit VFX below can be used.");
+
+            if (config.EnableTargetVfx && hookSafetyChecker.HasConflicts)
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "! Check Diagnose");
+            }
+
+            if (!config.EnableTargetVfx)
+                ImGui.BeginDisabled();
+
             var enableVfx = config.EnableHitVfx;
-            if (ImGui.Checkbox("Enable Hit VFX on Player", ref enableVfx))
+            if (ImGui.Checkbox("Use Fallback Hit VFX", ref enableVfx))
             {
                 config.EnableHitVfx = enableVfx;
                 config.Save();
             }
-            HelpMarker("Spawn a visual effect on your character when hit by NPC attacks.");
+            HelpMarker("When target-side action VFX are unavailable, spawn this configured hit effect on the damaged target.");
 
             var vfxPath = config.HitVfxPath;
             if (ImGui.InputText("VFX Path (.avfx)", ref vfxPath, 256))
@@ -993,6 +1010,9 @@ public class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Game VFX path to spawn on hit. Uses FFXIV's internal .avfx format.\nDefault: vfx/common/eff/dk05th_stdn0t.avfx");
+
+            if (!config.EnableTargetVfx)
+                ImGui.EndDisabled();
 
             if (!animationController.HitVfxAvailable)
             {

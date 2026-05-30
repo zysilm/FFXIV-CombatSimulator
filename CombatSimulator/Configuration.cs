@@ -180,8 +180,10 @@ public class Configuration : IPluginConfiguration
     public float ActiveCameraMinZoomDistance { get; set; } = 1.0f;
     public bool ActiveCameraPreventFade { get; set; } = false;
 
-    // Skill VFX on combat actions (cast circles, impact particles)
+    // Legacy combined skill VFX toggle. Migrated to the split toggles below.
     public bool EnableSkillVfx { get; set; } = false;
+    public bool EnableCharacterVfx { get; set; } = false;
+    public bool EnableTargetVfx { get; set; } = false;
 
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
@@ -233,6 +235,7 @@ public class Configuration : IPluginConfiguration
     public void Initialize(IDalamudPluginInterface pi)
     {
         pluginInterface = pi;
+        MigrateSplitVfxToggles();
         MigrateSkirtParentChains();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
@@ -241,6 +244,20 @@ public class Configuration : IPluginConfiguration
     public void Save()
     {
         pluginInterface?.SavePluginConfig(this);
+    }
+
+    private void MigrateSplitVfxToggles()
+    {
+        if (!EnableSkillVfx)
+            return;
+
+        var changed = !EnableCharacterVfx || !EnableTargetVfx;
+        EnableCharacterVfx = true;
+        EnableTargetVfx = true;
+        EnableSkillVfx = false;
+
+        if (changed)
+            Save();
     }
 
     /// <summary>

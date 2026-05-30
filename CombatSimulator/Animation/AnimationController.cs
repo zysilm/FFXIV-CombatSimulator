@@ -263,7 +263,7 @@ public unsafe class AnimationController : IDisposable
         {
             // Spawn skill VFX via ActorVfxCreate (off by default — other plugins that
             // hook this function may crash when accessing our modified NPC actors)
-            if (config.EnableSkillVfx)
+            if (config.EnableCharacterVfx || config.EnableTargetVfx)
                 SpawnActionVfx(request);
 
             // Use ActionEffectHandler.Receive() for flytext + damage numbers
@@ -304,34 +304,40 @@ public unsafe class AnimationController : IDisposable
             // Spawn caster VFX (cast circle, skill effects from AnimationEnd TMB)
             nint orientAddr = firstTargetAddr != 0 ? firstTargetAddr : casterAddr;
 
-            if (!string.IsNullOrEmpty(request.CastVfxPath))
-                SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, casterEntityId);
+            if (config.EnableCharacterVfx)
+            {
+                if (!string.IsNullOrEmpty(request.CastVfxPath))
+                    SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, casterEntityId);
 
-            if (!string.IsNullOrEmpty(request.StartVfxPath))
-                SpawnAndTrack(request.StartVfxPath, casterAddr, orientAddr, casterEntityId);
+                if (!string.IsNullOrEmpty(request.StartVfxPath))
+                    SpawnAndTrack(request.StartVfxPath, casterAddr, orientAddr, casterEntityId);
 
-            foreach (var path in request.CasterVfxPaths)
-                SpawnAndTrack(path, casterAddr, orientAddr, casterEntityId);
+                foreach (var path in request.CasterVfxPaths)
+                    SpawnAndTrack(path, casterAddr, orientAddr, casterEntityId);
+            }
 
             // Spawn target VFX (hit/impact effects from ActionTimelineHit TMB)
-            foreach (var target in request.Targets)
+            if (config.EnableTargetVfx)
             {
-                if (target.Damage <= 0 && target.Healing <= 0) continue;
-
-                // Fresh resolve for each target
-                var (targetAddr, targetEntityId) = ResolveActorAddress((uint)target.TargetId, false);
-                if (targetAddr == 0) continue;
-
-                if (request.TargetVfxPaths.Count > 0)
+                foreach (var target in request.Targets)
                 {
-                    foreach (var path in request.TargetVfxPaths)
-                        SpawnAndTrack(path, targetAddr, casterAddr, targetEntityId);
-                }
-                else if (config.EnableHitVfx)
-                {
-                    var vfxPath = config.HitVfxPath;
-                    if (!string.IsNullOrWhiteSpace(vfxPath))
-                        SpawnAndTrack(vfxPath, targetAddr, casterAddr, targetEntityId);
+                    if (target.Damage <= 0 && target.Healing <= 0) continue;
+
+                    // Fresh resolve for each target
+                    var (targetAddr, targetEntityId) = ResolveActorAddress((uint)target.TargetId, false);
+                    if (targetAddr == 0) continue;
+
+                    if (request.TargetVfxPaths.Count > 0)
+                    {
+                        foreach (var path in request.TargetVfxPaths)
+                            SpawnAndTrack(path, targetAddr, casterAddr, targetEntityId);
+                    }
+                    else if (config.EnableHitVfx)
+                    {
+                        var vfxPath = config.HitVfxPath;
+                        if (!string.IsNullOrWhiteSpace(vfxPath))
+                            SpawnAndTrack(vfxPath, targetAddr, casterAddr, targetEntityId);
+                    }
                 }
             }
         }

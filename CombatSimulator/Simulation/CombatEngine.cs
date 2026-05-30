@@ -582,10 +582,6 @@ public class CombatEngine : IDisposable
         ApplyNpcAttackStyle(visualAction, attackStyle == NpcAttackStyle.Auto ? npc.Behavior.AutoAttackStyle : attackStyle);
         TriggerActionEffect(npc.State, target, visualAction, dmgResult);
 
-        // Spawn hit VFX on player (independent of action pipeline since ActionId 7 has no VFX)
-        if (config.EnableHitVfx && target.IsPlayer)
-            animationController.SpawnHitVfxOnPlayer();
-
         result.Success = true;
         result.Damage = dmgResult.Damage;
         result.IsCritical = dmgResult.IsCritical;
