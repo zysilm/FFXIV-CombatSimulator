@@ -22,6 +22,7 @@ public class MainWindow : IDisposable
     private readonly NpcSpawner npcSpawner;
     private readonly CombatEngine combatEngine;
     private readonly GlamourerIpc glamourerIpc;
+    private readonly VNavmeshIpc vnavmeshIpc;
     private readonly AnimationController animationController;
     private readonly RagdollController ragdollController;
     private readonly DeathCamController deathCamController;
@@ -106,6 +107,7 @@ public class MainWindow : IDisposable
         NpcSpawner npcSpawner,
         CombatEngine combatEngine,
         GlamourerIpc glamourerIpc,
+        VNavmeshIpc vnavmeshIpc,
         AnimationController animationController,
         RagdollController ragdollController,
         DeathCamController deathCamController,
@@ -121,6 +123,7 @@ public class MainWindow : IDisposable
         this.npcSpawner = npcSpawner;
         this.combatEngine = combatEngine;
         this.glamourerIpc = glamourerIpc;
+        this.vnavmeshIpc = vnavmeshIpc;
         this.animationController = animationController;
         this.ragdollController = ragdollController;
         this.deathCamController = deathCamController;
@@ -804,6 +807,8 @@ public class MainWindow : IDisposable
 
             if (approach)
             {
+                vnavmeshIpc.RefreshStatus();
+
                 var dist = config.TargetApproachDistance;
                 if (ImGui.SliderFloat("Approach Distance", ref dist, 0.1f, 5.0f, "%.1f yalms"))
                 {
@@ -819,6 +824,29 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Vertical (Y) offset applied to NPC positions while approach is active. 0 = at player's floor level, positive = above, negative = below. Updates live as you drag the slider.");
+
+                ImGui.Separator();
+
+                var useVnavmesh = config.UseVNavmeshTargetApproach;
+                if (!vnavmeshIpc.IsAvailable)
+                    ImGui.BeginDisabled();
+                if (ImGui.Checkbox("Use vnavmesh Pathfinding", ref useVnavmesh))
+                {
+                    config.UseVNavmeshTargetApproach = useVnavmesh;
+                    config.Save();
+                }
+                if (!vnavmeshIpc.IsAvailable)
+                    ImGui.EndDisabled();
+                HelpMarker("Use vnavmesh IPC to calculate terrain-aware waypoint paths. If enabled but unavailable or not ready, targets wait instead of using linear movement.");
+
+                if (config.UseVNavmeshTargetApproach || !vnavmeshIpc.IsAvailable)
+                {
+                    var color = vnavmeshIpc.CanPathfind
+                        ? new Vector4(0.5f, 0.8f, 0.5f, 1)
+                        : new Vector4(1f, 0.65f, 0.25f, 1);
+                    ImGui.TextColored(color, vnavmeshIpc.StatusText);
+                }
+
             }
 
             ImGui.Spacing();
