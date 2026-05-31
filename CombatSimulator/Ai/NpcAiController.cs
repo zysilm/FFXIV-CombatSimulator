@@ -303,8 +303,10 @@ public unsafe class NpcAiController : IDisposable
                 ? BuildApproachTerrainCache(playerPos, approachNpcs)
                 : null;
 
-            foreach (var npc in approachNpcs)
+            for (int i = 0; i < approachNpcs.Count; i++)
             {
+                var npc = approachNpcs[i];
+
                 // Register NPC in the SetPosition block list so server can't override us
                 if (!npc.IsClientControlled)
                     movementBlockHook.AddApproachNpc(npc.Address);
@@ -313,13 +315,19 @@ public unsafe class NpcAiController : IDisposable
                 if (npc.AiState == NpcAiState.Resetting)
                     npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
 
+                if (!hasLivingCompanions)
+                {
+                    TickSoloApproach(npc, deltaTime, playerPos, i, approachNpcs.Count, terrainCache);
+                    continue;
+                }
+
                 if (!targetByNpcId.TryGetValue(npc.SimulatedEntityId, out var target))
                 {
                     var state = combatEngine.GetNpcTarget(npc);
                     target = (state, combatEngine.GetSimulatedEntityPosition(state));
                 }
 
-                TickApproach(npc, deltaTime, playerPos, target.State, target.Position, terrainCache);
+                TickPartyApproach(npc, deltaTime, playerPos, target.State, target.Position, terrainCache);
             }
         }
         else
@@ -718,14 +726,115 @@ public unsafe class NpcAiController : IDisposable
         return at; // fully crowded -> accept overlap rather than loop forever
     }
 
+    private void TickSoloApproach(
+        SimulatedNpc npc,
+        float deltaTime,
+        Vector3 playerPos,
+        int npcIndex,
+        int totalNpcs,
+        ApproachTerrainCache? terrainCache)
+    {
+        if (npc.BattleChara == null) return;
+        if (npc.AiState == NpcAiState.Dead)
+        {
+            StopApproachMoveAnim(npc);
+            return;
+        }
+
+        if (!combatEngine.State.PlayerState.IsAlive)
+        {
+            StopApproachMoveAnim(npc);
+            return;
+        }
+
+        var gameObj = (GameObject*)npc.BattleChara;
+        var npcPos = (Vector3)gameObj->Position;
+
+        float distToPlayer = Vector3.Distance(npcPos, playerPos);
+        float targetDist = config.TargetApproachDistance;
+
+        Vector3 targetPos;
+        if (totalNpcs <= 1)
+        {
+            if (distToPlayer < 0.1f)
+            {
+                var player = Core.Services.ObjectTable.LocalPlayer;
+                float playerRot = player?.Rotation ?? 0;
+                var forward = new Vector3(-MathF.Sin(playerRot), 0, -MathF.Cos(playerRot));
+                targetPos = playerPos + forward * targetDist;
+            }
+            else
+            {
+                var dirFromPlayer = (npcPos - playerPos) / distToPlayer;
+                targetPos = playerPos + dirFromPlayer * targetDist;
+            }
+        }
+        else
+        {
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            float playerRot = player?.Rotation ?? 0;
+
+            float arcSpan = MathF.PI * 4f / 3f;
+            float angleStep = totalNpcs > 1 ? arcSpan / (totalNpcs - 1) : 0;
+            float startAngle = playerRot - arcSpan / 2f;
+            float angle = startAngle + angleStep * npcIndex;
+
+            var dir = new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle));
+            targetPos = playerPos + dir * targetDist;
+        }
+
+        targetPos.Y = playerPos.Y + config.DefaultNpcHeightOffset;
+
+        var moveTarget = targetPos;
+        var hasVnavmeshTarget = TryUpdateVNavmeshPath(npc, deltaTime, npcPos, targetPos, out var pathTarget, useLookahead: false);
+        if (hasVnavmeshTarget)
+            moveTarget = pathTarget;
+
+        if (config.UseVNavmeshTargetApproach && !hasVnavmeshTarget)
+        {
+            if (terrainCache != null && approachPaths.TryGetValue(npc.Address, out var noPathState))
+                CorrectStableRootHeight(gameObj, npcPos, terrainCache, noPathState, deltaTime, preserveInitialClearance: true);
+
+            StopApproachMoveAnim(npc);
+            ForceRotateToward(npc, playerPos, deltaTime);
+            return;
+        }
+
+        if (Vector3.Distance(npcPos, moveTarget) <= 0.3f)
+        {
+            if (hasVnavmeshTarget && terrainCache != null &&
+                approachPaths.TryGetValue(npc.Address, out var arrivedPathState))
+                CorrectStableRootHeight(gameObj, npcPos, terrainCache, arrivedPathState, deltaTime, preserveInitialClearance: true);
+
+            StopApproachMoveAnim(npc);
+            ForceRotateToward(npc, playerPos, deltaTime);
+            return;
+        }
+
+        float speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;
+        float remainingDist = Vector3.Distance(npcPos, moveTarget);
+        float moveDist = speed * deltaTime;
+
+        Vector3 newPos = remainingDist <= moveDist
+            ? moveTarget
+            : npcPos + Vector3.Normalize(moveTarget - npcPos) * moveDist;
+
+        if (hasVnavmeshTarget && terrainCache != null &&
+            approachPaths.TryGetValue(npc.Address, out var pathState))
+        {
+            newPos = CorrectMovingRootHeight(newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: true);
+        }
+
+        StartApproachMoveAnim(npc);
+        movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
+        ForceRotateToward(npc, playerPos, deltaTime);
+    }
+
     /// <summary>
-    /// Move an active target NPC toward the player, stopping at the configured
-    /// distance. Each enemy walks straight in along its own direction; once it
-    /// reaches the keep-distance ring its angle is locked and de-stacked from its
-    /// neighbours so it settles without orbiting or stacking. Works for both real
-    /// and client-controlled NPCs, independent of the player's facing.
+    /// Party-mode target-aware enemy movement. Solo/no-party movement is kept in
+    /// TickSoloApproach as the pre-party baseline.
     /// </summary>
-    private void TickApproach(
+    private void TickPartyApproach(
         SimulatedNpc npc,
         float deltaTime,
         Vector3 playerPos,
@@ -796,7 +905,7 @@ public unsafe class NpcAiController : IDisposable
         {
             if (hasVnavmeshTarget && terrainCache != null &&
                 approachPaths.TryGetValue(npc.Address, out var arrivedPathState))
-                CorrectStableRootHeight(gameObj, npcPos, terrainCache, arrivedPathState, deltaTime);
+                CorrectStableRootHeight(gameObj, npcPos, terrainCache, arrivedPathState, deltaTime, preserveInitialClearance: false);
 
             StopApproachMoveAnim(npc);
             ForceRotateToward(npc, facePos, deltaTime);
@@ -822,7 +931,7 @@ public unsafe class NpcAiController : IDisposable
         if (hasVnavmeshTarget && terrainCache != null &&
             approachPaths.TryGetValue(npc.Address, out var pathState))
         {
-            newPos = CorrectMovingRootHeight(newPos, terrainCache, pathState, deltaTime);
+            newPos = CorrectMovingRootHeight(newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: false);
         }
 
         // Call the real SetPosition via the hook bypass — this updates both
@@ -838,7 +947,8 @@ public unsafe class NpcAiController : IDisposable
         float deltaTime,
         Vector3 npcPos,
         Vector3 targetPos,
-        out Vector3 moveTarget)
+        out Vector3 moveTarget,
+        bool useLookahead = true)
     {
         moveTarget = targetPos;
 
@@ -925,9 +1035,13 @@ public unsafe class NpcAiController : IDisposable
         if (state.WaypointIndex >= state.Waypoints.Count)
             return false;
 
-        var lookaheadIndex = SelectLookaheadWaypoint(state, npcPos);
-        state.WaypointIndex = lookaheadIndex;
-        moveTarget = ApplyFloorYOffset(state, state.Waypoints[lookaheadIndex]);
+        if (useLookahead)
+        {
+            var lookaheadIndex = SelectLookaheadWaypoint(state, npcPos);
+            state.WaypointIndex = lookaheadIndex;
+        }
+
+        moveTarget = ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex]);
         moveTarget = CorrectMoveTargetFloor(state, moveTarget, deltaTime);
         return true;
     }
@@ -1065,14 +1179,17 @@ public unsafe class NpcAiController : IDisposable
         Vector3 rootPosition,
         ApproachTerrainCache terrainCache,
         ApproachPathState state,
-        float deltaTime)
+        float deltaTime,
+        bool preserveInitialClearance)
     {
         if (!terrainCache.TrySample(rootPosition.X, rootPosition.Z, out var terrainY))
             return rootPosition;
 
         if (!state.HasStableRootTerrainClearance)
         {
-            state.StableRootTerrainClearance = 0f;
+            state.StableRootTerrainClearance = preserveInitialClearance
+                ? rootPosition.Y - terrainY - config.DefaultNpcHeightOffset
+                : 0f;
             state.HasStableRootTerrainClearance = true;
         }
 
@@ -1092,9 +1209,10 @@ public unsafe class NpcAiController : IDisposable
         Vector3 rootPosition,
         ApproachTerrainCache terrainCache,
         ApproachPathState state,
-        float deltaTime)
+        float deltaTime,
+        bool preserveInitialClearance)
     {
-        var corrected = CorrectMovingRootHeight(rootPosition, terrainCache, state, deltaTime);
+        var corrected = CorrectMovingRootHeight(rootPosition, terrainCache, state, deltaTime, preserveInitialClearance);
         if (MathF.Abs(corrected.Y - rootPosition.Y) < 0.001f)
             return;
 
