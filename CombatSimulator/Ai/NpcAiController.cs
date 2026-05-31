@@ -39,6 +39,8 @@ public unsafe class NpcAiController : IDisposable
     private const float VNavmeshRepathInterval = 1.0f;
     private const float VNavmeshPathTolerance = 0.5f;
     private const float VNavmeshFloorResnapInterval = 0.25f;
+    private const float VNavmeshWaypointReachDistance = 0.45f;
+    private const float VNavmeshLookaheadDistance = 2.5f;
     private const float TerrainGridStep = 0.5f;
     private const int TerrainGridMaxSize = 33;
     private const ushort NormalRunTimelineId = 22;
@@ -919,7 +921,7 @@ public unsafe class NpcAiController : IDisposable
         }
 
         while (state.WaypointIndex < state.Waypoints.Count &&
-               Vector3.Distance(npcPos, ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex])) <= 0.45f)
+               Vector3.Distance(npcPos, ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex])) <= VNavmeshWaypointReachDistance)
         {
             state.WaypointIndex++;
         }
@@ -927,9 +929,29 @@ public unsafe class NpcAiController : IDisposable
         if (state.WaypointIndex >= state.Waypoints.Count)
             return false;
 
-        moveTarget = ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex]);
+        var lookaheadIndex = SelectLookaheadWaypoint(state, npcPos);
+        moveTarget = ApplyFloorYOffset(state, state.Waypoints[lookaheadIndex]);
         moveTarget = CorrectMoveTargetFloor(state, moveTarget, deltaTime);
         return true;
+    }
+
+    private static int SelectLookaheadWaypoint(ApproachPathState state, Vector3 current)
+    {
+        var selected = state.WaypointIndex;
+        var accumulated = 0f;
+        var previous = current;
+
+        for (var i = state.WaypointIndex; i < state.Waypoints.Count; i++)
+        {
+            var point = ApplyFloorYOffset(state, state.Waypoints[i]);
+            accumulated += Vector3.Distance(previous, point);
+            selected = i;
+            if (accumulated >= VNavmeshLookaheadDistance)
+                break;
+            previous = point;
+        }
+
+        return selected;
     }
 
     private static Vector3 ApplyFloorYOffset(ApproachPathState state, Vector3 point)

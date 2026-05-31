@@ -49,6 +49,8 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float RepathInterval = 1.0f;
     private const float RepathDistance = 1.5f;
     private const float VNavmeshFloorResnapInterval = 0.25f;
+    private const float VNavmeshWaypointReachDistance = 0.5f;
+    private const float VNavmeshLookaheadDistance = 2.5f;
     private const float TerrainGridStep = 0.5f;
     private const int TerrainGridMaxSize = 33;
     private const float RecentDpsWindowSeconds = 8.0f;
@@ -1049,13 +1051,32 @@ public unsafe class CombatCompanionManager : IDisposable
         }
 
         while (state.WaypointIndex < state.Waypoints.Count &&
-               Vector3.Distance(current, ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex])) < 0.5f)
+               Vector3.Distance(current, ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex])) < VNavmeshWaypointReachDistance)
             state.WaypointIndex++;
 
         var moveTarget = state.WaypointIndex < state.Waypoints.Count
-            ? ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex])
+            ? ApplyFloorYOffset(state, state.Waypoints[SelectLookaheadWaypoint(state, current)])
             : target;
         return CorrectMoveTargetFloor(state, moveTarget, deltaTime);
+    }
+
+    private static int SelectLookaheadWaypoint(PathState state, Vector3 current)
+    {
+        var selected = state.WaypointIndex;
+        var accumulated = 0f;
+        var previous = current;
+
+        for (var i = state.WaypointIndex; i < state.Waypoints.Count; i++)
+        {
+            var point = ApplyFloorYOffset(state, state.Waypoints[i]);
+            accumulated += Vector3.Distance(previous, point);
+            selected = i;
+            if (accumulated >= VNavmeshLookaheadDistance)
+                break;
+            previous = point;
+        }
+
+        return selected;
     }
 
     private static Vector3 ApplyFloorYOffset(PathState state, Vector3 point)
