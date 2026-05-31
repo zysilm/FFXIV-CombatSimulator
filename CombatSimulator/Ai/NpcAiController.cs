@@ -663,22 +663,18 @@ public unsafe class NpcAiController : IDisposable
             approachLockedGoals.Remove(npc.Address);
         }
 
-        // Approaching: head straight in along the enemy's current direction.
+        // Reserve a de-stacked world spot before arrival so pathing is planned
+        // toward different ring positions instead of funneling every enemy into
+        // the same point and separating only at the end.
         var flat = npcPos - playerPos;
         flat.Y = 0;
         var distToPlayer = flat.Length();
         var angle = distToPlayer < 0.1f
             ? Core.Services.ObjectTable.LocalPlayer?.Rotation ?? 0f
             : MathF.Atan2(flat.X, flat.Z);
-        var goal = playerPos + new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * targetDist;
 
-        // Reached the ring -> lock a de-stacked world spot and hold it from now on.
-        if (distToPlayer <= targetDist + ApproachLockBuffer)
-        {
-            goal = ResolveFreeApproachGoal(npc.Address, playerPos, angle, targetDist);
-            approachLockedGoals[npc.Address] = goal;
-        }
-
+        var goal = ResolveFreeApproachGoal(npc.Address, playerPos, angle, targetDist);
+        approachLockedGoals[npc.Address] = goal;
         return goal;
     }
 
