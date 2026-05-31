@@ -824,14 +824,14 @@ public class MainWindow : IDisposable
                 var useVnavmesh = config.UseVNavmeshTargetApproach;
                 if (!vnavmeshIpc.IsAvailable)
                     ImGui.BeginDisabled();
-                if (ImGui.Checkbox("Use vnavmesh Pathfinding", ref useVnavmesh))
+                if (ImGui.Checkbox("Natural Moving", ref useVnavmesh))
                 {
                     config.UseVNavmeshTargetApproach = useVnavmesh;
                     config.Save();
                 }
                 if (!vnavmeshIpc.IsAvailable)
                     ImGui.EndDisabled();
-                HelpMarker("Use vnavmesh IPC to calculate terrain-aware waypoint paths. If enabled but unavailable or not ready, targets wait instead of using linear movement.");
+                HelpMarker("Use vnavmesh IPC to calculate terrain-aware waypoint paths with stable terrain height following. If enabled but unavailable or not ready, targets wait instead of using linear movement.");
 
                 if (config.UseVNavmeshTargetApproach || !vnavmeshIpc.IsAvailable)
                 {

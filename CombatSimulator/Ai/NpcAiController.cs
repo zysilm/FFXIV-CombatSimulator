@@ -21,7 +21,6 @@ public unsafe class NpcAiController : IDisposable
 
     private readonly CombatEngine combatEngine;
     private readonly AnimationController animationController;
-    private readonly BoneTransformService boneTransformService;
     private readonly MovementBlockHook movementBlockHook;
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly IClientState clientState;
@@ -36,11 +35,6 @@ public unsafe class NpcAiController : IDisposable
     private const float TerrainGridStep = 0.5f;
     private const int TerrainGridMaxSize = 33;
     private const ushort NormalRunTimelineId = 22;
-
-    private static readonly string[] FootBoneCandidates =
-    {
-        "j_asi_e_l", "j_asi_e_r",
-    };
 
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
@@ -139,7 +133,6 @@ public unsafe class NpcAiController : IDisposable
     public NpcAiController(
         CombatEngine combatEngine,
         AnimationController animationController,
-        BoneTransformService boneTransformService,
         MovementBlockHook movementBlockHook,
         VNavmeshIpc vnavmeshIpc,
         IClientState clientState,
@@ -149,7 +142,6 @@ public unsafe class NpcAiController : IDisposable
     {
         this.combatEngine = combatEngine;
         this.animationController = animationController;
-        this.boneTransformService = boneTransformService;
         this.movementBlockHook = movementBlockHook;
         this.vnavmeshIpc = vnavmeshIpc;
         this.clientState = clientState;
@@ -676,8 +668,8 @@ public unsafe class NpcAiController : IDisposable
 
         if (config.UseVNavmeshTargetApproach && !hasVnavmeshTarget)
         {
-            if (terrainCache != null)
-                CorrectStationaryRootHeightFromTerrainAndFeet(npc, gameObj, npcPos, terrainCache);
+            if (terrainCache != null && approachPaths.TryGetValue(npc.Address, out var noPathState))
+                CorrectStableRootHeight(gameObj, npcPos, terrainCache, noPathState, deltaTime);
 
             StopApproachMoveAnim(npc);
             ForceRotateToward(npc, playerPos, deltaTime);
@@ -686,8 +678,9 @@ public unsafe class NpcAiController : IDisposable
 
         if (Vector3.Distance(npcPos, moveTarget) <= 0.3f)
         {
-            if (hasVnavmeshTarget && terrainCache != null)
-                CorrectStationaryRootHeightFromTerrainAndFeet(npc, gameObj, npcPos, terrainCache);
+            if (hasVnavmeshTarget && terrainCache != null &&
+                approachPaths.TryGetValue(npc.Address, out var arrivedPathState))
+                CorrectStableRootHeight(gameObj, npcPos, terrainCache, arrivedPathState, deltaTime);
 
             StopApproachMoveAnim(npc);
             ForceRotateToward(npc, playerPos, deltaTime);
@@ -713,7 +706,7 @@ public unsafe class NpcAiController : IDisposable
         if (hasVnavmeshTarget && terrainCache != null &&
             approachPaths.TryGetValue(npc.Address, out var pathState))
         {
-            newPos = CorrectMovingRootHeight(npc, newPos, terrainCache, pathState, deltaTime);
+            newPos = CorrectMovingRootHeight(newPos, terrainCache, pathState, deltaTime);
         }
 
         // Call the real SetPosition via the hook bypass — this updates both
@@ -932,35 +925,7 @@ public unsafe class NpcAiController : IDisposable
         };
     }
 
-    private Vector3 CorrectRootHeightFromTerrainAndFeet(
-        SimulatedNpc npc,
-        Vector3 rootPosition,
-        ApproachTerrainCache terrainCache,
-        ApproachPathState? state = null)
-    {
-        if (!terrainCache.TrySample(rootPosition.X, rootPosition.Z, out var terrainY))
-            return rootPosition;
-        if (!TryGetLowestFootClearance(npc, out var footClearance))
-            return rootPosition;
-
-        var corrected = rootPosition with
-        {
-            Y = terrainY - footClearance + config.DefaultNpcHeightOffset,
-        };
-
-        if (state != null)
-        {
-            state.StableRootTerrainClearance = corrected.Y - terrainY - config.DefaultNpcHeightOffset;
-            state.HasStableRootTerrainClearance = true;
-            state.LastMoveRootY = corrected.Y;
-            state.HasLastMoveRootY = true;
-        }
-
-        return corrected;
-    }
-
     private Vector3 CorrectMovingRootHeight(
-        SimulatedNpc npc,
         Vector3 rootPosition,
         ApproachTerrainCache terrainCache,
         ApproachPathState state,
@@ -986,65 +951,18 @@ public unsafe class NpcAiController : IDisposable
         return rootPosition with { Y = y };
     }
 
-    private void CorrectStationaryRootHeightFromTerrainAndFeet(
-        SimulatedNpc npc,
+    private void CorrectStableRootHeight(
         GameObject* gameObj,
         Vector3 rootPosition,
-        ApproachTerrainCache terrainCache)
+        ApproachTerrainCache terrainCache,
+        ApproachPathState state,
+        float deltaTime)
     {
-        approachPaths.TryGetValue(npc.Address, out var state);
-        var corrected = CorrectRootHeightFromTerrainAndFeet(npc, rootPosition, terrainCache, state);
+        var corrected = CorrectMovingRootHeight(rootPosition, terrainCache, state, deltaTime);
         if (MathF.Abs(corrected.Y - rootPosition.Y) < 0.001f)
             return;
 
         movementBlockHook.SetApproachPosition(gameObj, corrected.X, corrected.Y, corrected.Z);
-    }
-
-    private bool TryGetLowestFootClearance(SimulatedNpc npc, out float clearance)
-    {
-        clearance = 0f;
-        if (npc.BattleChara == null)
-            return false;
-
-        var skelNullable = boneTransformService.TryGetSkeleton(npc.Address);
-        if (skelNullable == null)
-            return false;
-
-        var skel = skelNullable.Value;
-        var skeleton = skel.CharBase->Skeleton;
-        if (skeleton == null)
-            return false;
-
-        var skelPos = new Vector3(
-            skeleton->Transform.Position.X,
-            skeleton->Transform.Position.Y,
-            skeleton->Transform.Position.Z);
-        var skelRot = new Quaternion(
-            skeleton->Transform.Rotation.X,
-            skeleton->Transform.Rotation.Y,
-            skeleton->Transform.Rotation.Z,
-            skeleton->Transform.Rotation.W);
-
-        var lowestY = float.MaxValue;
-        foreach (var boneName in FootBoneCandidates)
-        {
-            var idx = boneTransformService.ResolveBoneIndex(skel, boneName);
-            if (idx < 0 || idx >= skel.BoneCount)
-                continue;
-
-            ref var mt = ref skel.Pose->ModelPose.Data[idx];
-            var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
-            var worldPos = skelPos + Vector3.Transform(modelPos, skelRot);
-            if (worldPos.Y < lowestY)
-                lowestY = worldPos.Y;
-        }
-
-        if (lowestY == float.MaxValue)
-            return false;
-
-        var gameObj = (GameObject*)npc.BattleChara;
-        clearance = lowestY - gameObj->Position.Y;
-        return true;
     }
 
     private void StartApproachMoveAnim(SimulatedNpc npc)
