@@ -40,7 +40,7 @@ public unsafe class NpcAiController : IDisposable
     private const float VNavmeshPathTolerance = 0.5f;
     private const float VNavmeshFloorResnapInterval = 0.25f;
     private const float VNavmeshWaypointReachDistance = 0.45f;
-    private const float VNavmeshLookaheadDistance = 2.5f;
+    private const float VNavmeshLookaheadDistance = 1.25f;
     private const float TerrainGridStep = 0.5f;
     private const int TerrainGridMaxSize = 33;
     private const ushort NormalRunTimelineId = 22;
@@ -930,6 +930,7 @@ public unsafe class NpcAiController : IDisposable
             return false;
 
         var lookaheadIndex = SelectLookaheadWaypoint(state, npcPos);
+        state.WaypointIndex = lookaheadIndex;
         moveTarget = ApplyFloorYOffset(state, state.Waypoints[lookaheadIndex]);
         moveTarget = CorrectMoveTargetFloor(state, moveTarget, deltaTime);
         return true;

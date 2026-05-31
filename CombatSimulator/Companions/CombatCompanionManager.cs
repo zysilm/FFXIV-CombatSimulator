@@ -50,7 +50,7 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float RepathDistance = 1.5f;
     private const float VNavmeshFloorResnapInterval = 0.25f;
     private const float VNavmeshWaypointReachDistance = 0.5f;
-    private const float VNavmeshLookaheadDistance = 2.5f;
+    private const float VNavmeshLookaheadDistance = 1.25f;
     private const float TerrainGridStep = 0.5f;
     private const int TerrainGridMaxSize = 33;
     private const float RecentDpsWindowSeconds = 8.0f;
@@ -1054,9 +1054,18 @@ public unsafe class CombatCompanionManager : IDisposable
                Vector3.Distance(current, ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex])) < VNavmeshWaypointReachDistance)
             state.WaypointIndex++;
 
-        var moveTarget = state.WaypointIndex < state.Waypoints.Count
-            ? ApplyFloorYOffset(state, state.Waypoints[SelectLookaheadWaypoint(state, current)])
-            : target;
+        Vector3 moveTarget;
+        if (state.WaypointIndex < state.Waypoints.Count)
+        {
+            var lookaheadIndex = SelectLookaheadWaypoint(state, current);
+            state.WaypointIndex = lookaheadIndex;
+            moveTarget = ApplyFloorYOffset(state, state.Waypoints[lookaheadIndex]);
+        }
+        else
+        {
+            moveTarget = target;
+        }
+
         return CorrectMoveTargetFloor(state, moveTarget, deltaTime);
     }
 
