@@ -649,6 +649,17 @@ public class CombatEngine : IDisposable
         targetNpc.State.CurrentHp = Math.Max(0, targetNpc.State.CurrentHp - dmgResult.Damage);
         State.TotalDamageDealt += dmgResult.Damage;
 
+        // Companion aggro: a companion attacking an idle enemy makes it fight back,
+        // mirroring how the player's attack engages a target. Without this, enemies
+        // stay idle until the player personally attacks them.
+        if (targetNpc.AiState == Ai.NpcAiState.Idle)
+        {
+            targetNpc.AiState = Ai.NpcAiState.Engaging;
+            targetNpc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
+            Ai.NpcAiController.StaggerTimers(targetNpc);
+            AddLogEntry($"{targetNpc.Name} engages!", CombatLogType.Info);
+        }
+
         var visualAction = resolvedActionData != null ? CloneActionData(resolvedActionData) : new ActionData
         {
             ActionId = actionId == 0 ? 7 : actionId,
