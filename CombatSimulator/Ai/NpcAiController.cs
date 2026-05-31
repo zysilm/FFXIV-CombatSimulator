@@ -28,6 +28,12 @@ public unsafe class NpcAiController : IDisposable
     private readonly IPluginLog log;
     private readonly Func<nint, bool> isExternallyControlled;
     private readonly Dictionary<nint, ApproachPathState> approachPaths = new();
+    // Per-enemy locked standing position (world-space). While far, an enemy walks
+    // straight in toward the player; once it reaches the keep-distance ring it locks
+    // a fixed world spot (de-stacked) and holds it — it does NOT glide along with
+    // the player. The lock only releases when the player wanders far enough away
+    // that the enemy must walk in again.
+    private readonly Dictionary<nint, Vector3> approachLockedGoals = new();
     private const float VNavmeshRepathDistance = 1.5f;
     private const float VNavmeshRepathInterval = 1.0f;
     private const float VNavmeshPathTolerance = 0.5f;
@@ -35,6 +41,10 @@ public unsafe class NpcAiController : IDisposable
     private const float TerrainGridStep = 0.5f;
     private const int TerrainGridMaxSize = 33;
     private const ushort NormalRunTimelineId = 22;
+    // Within (approach distance + lock buffer) an enemy locks its angle and stops;
+    // it only unlocks to re-approach if pushed beyond (approach distance + unlock).
+    private const float ApproachLockBuffer = 1.5f;
+    private const float ApproachUnlockBuffer = 5.0f;
 
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
@@ -163,6 +173,7 @@ public unsafe class NpcAiController : IDisposable
     {
         StopAllApproachMoveAnims();
         approachPaths.Clear();
+        approachLockedGoals.Clear();
 
         // OnSimulationReset fires from both StopSimulation and ResetState.
         // StopSimulation flips IsActive false before invoking — skip auto-engage
@@ -254,15 +265,18 @@ public unsafe class NpcAiController : IDisposable
                     approachPaths.Remove(address);
                 }
             }
+            foreach (var address in approachLockedGoals.Keys.ToList())
+            {
+                if (!liveAddresses.Contains(address))
+                    approachLockedGoals.Remove(address);
+            }
 
             var terrainCache = config.UseVNavmeshTargetApproach
                 ? BuildApproachTerrainCache(playerPos, approachNpcs)
                 : null;
 
-            for (int i = 0; i < approachNpcs.Count; i++)
+            foreach (var npc in approachNpcs)
             {
-                var npc = approachNpcs[i];
-
                 // Register NPC in the SetPosition block list so server can't override us
                 if (!npc.IsClientControlled)
                     movementBlockHook.AddApproachNpc(npc.Address);
@@ -271,7 +285,7 @@ public unsafe class NpcAiController : IDisposable
                 if (npc.AiState == NpcAiState.Resetting)
                     npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
 
-                TickApproach(npc, deltaTime, playerPos, i, approachNpcs.Count, terrainCache);
+                TickApproach(npc, deltaTime, playerPos, terrainCache);
             }
         }
         else
@@ -280,6 +294,7 @@ public unsafe class NpcAiController : IDisposable
             movementBlockHook.ClearApproachNpcs();
             StopAllApproachMoveAnims();
             approachPaths.Clear();
+            approachLockedGoals.Clear();
         }
     }
 
@@ -291,6 +306,7 @@ public unsafe class NpcAiController : IDisposable
         movementBlockHook.ClearApproachNpcs();
         StopAllApproachMoveAnims();
         approachPaths.Clear();
+        approachLockedGoals.Clear();
     }
 
     public void EngageNpc(SimulatedNpc npc)
@@ -590,16 +606,99 @@ public unsafe class NpcAiController : IDisposable
     }
 
     /// <summary>
-    /// Move an active target NPC toward the player, stopping at the configured distance.
-    /// Each NPC gets a unique angular slot around the player so they spread out naturally.
-    /// Works for both real and client-controlled NPCs.
+    /// Returns the standing goal for an approaching enemy. While farther than the
+    /// keep-distance ring it heads straight in along its current direction (the
+    /// goal is dynamic). Once it reaches the ring its angle is locked and de-stacked
+    /// from neighbours so it settles and stops; the lock only releases if it gets
+    /// pushed well outside again. Independent of the player's facing.
+    /// </summary>
+    private Vector3 ComputeApproachGoal(SimulatedNpc npc, Vector3 npcPos, Vector3 playerPos)
+    {
+        var targetDist = MathF.Max(0.5f, config.TargetApproachDistance);
+
+        // Hold a locked world spot — the enemy stands its ground and does NOT glide
+        // with the player. Only re-approach once the player has wandered away from
+        // that spot by more than the unlock buffer.
+        if (approachLockedGoals.TryGetValue(npc.Address, out var lockedGoal))
+        {
+            var ldx = lockedGoal.X - playerPos.X;
+            var ldz = lockedGoal.Z - playerPos.Z;
+            var unlock = targetDist + ApproachUnlockBuffer;
+            if (ldx * ldx + ldz * ldz <= unlock * unlock)
+                return lockedGoal;
+            approachLockedGoals.Remove(npc.Address);
+        }
+
+        // Approaching: head straight in along the enemy's current direction.
+        var flat = npcPos - playerPos;
+        flat.Y = 0;
+        var distToPlayer = flat.Length();
+        var angle = distToPlayer < 0.1f
+            ? Core.Services.ObjectTable.LocalPlayer?.Rotation ?? 0f
+            : MathF.Atan2(flat.X, flat.Z);
+        var goal = playerPos + new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * targetDist;
+
+        // Reached the ring -> lock a de-stacked world spot and hold it from now on.
+        if (distToPlayer <= targetDist + ApproachLockBuffer)
+        {
+            goal = ResolveFreeApproachGoal(npc.Address, playerPos, angle, targetDist);
+            approachLockedGoals[npc.Address] = goal;
+        }
+
+        return goal;
+    }
+
+    /// <summary>
+    /// Finds a standing spot near the enemy's natural approach angle that clears
+    /// every other enemy's locked spot by a minimum distance, so a newly-arriving
+    /// enemy fans out instead of stacking. Searched once, at lock time, so locked
+    /// spots never shuffle frame to frame.
+    /// </summary>
+    private Vector3 ResolveFreeApproachGoal(nint self, Vector3 playerPos, float desiredAngle, float targetDist)
+    {
+        const float minSpacing = 2.0f;
+        var minGap = Math.Clamp(minSpacing / targetDist, 0.2f, MathF.PI / 2f);
+
+        Vector3 At(float a) => playerPos + new Vector3(MathF.Sin(a), 0, MathF.Cos(a)) * targetDist;
+
+        bool Clear(Vector3 p)
+        {
+            foreach (var (addr, g) in approachLockedGoals)
+            {
+                if (addr == self) continue;
+                var dx = p.X - g.X;
+                var dz = p.Z - g.Z;
+                if (dx * dx + dz * dz < minSpacing * minSpacing)
+                    return false;
+            }
+            return true;
+        }
+
+        var at = At(desiredAngle);
+        if (Clear(at)) return at;
+
+        for (int i = 1; i <= 18; i++)
+        {
+            var plus = At(desiredAngle + i * minGap);
+            if (Clear(plus)) return plus;
+            var minus = At(desiredAngle - i * minGap);
+            if (Clear(minus)) return minus;
+        }
+
+        return at; // fully crowded -> accept overlap rather than loop forever
+    }
+
+    /// <summary>
+    /// Move an active target NPC toward the player, stopping at the configured
+    /// distance. Each enemy walks straight in along its own direction; once it
+    /// reaches the keep-distance ring its angle is locked and de-stacked from its
+    /// neighbours so it settles without orbiting or stacking. Works for both real
+    /// and client-controlled NPCs, independent of the player's facing.
     /// </summary>
     private void TickApproach(
         SimulatedNpc npc,
         float deltaTime,
         Vector3 playerPos,
-        int npcIndex,
-        int totalNpcs,
         ApproachTerrainCache? terrainCache)
     {
         if (npc.BattleChara == null) return;
@@ -619,50 +718,12 @@ public unsafe class NpcAiController : IDisposable
         var gameObj = (GameObject*)npc.BattleChara;
         var npcPos = (Vector3)gameObj->Position;
 
-        float distToPlayer = Vector3.Distance(npcPos, playerPos);
-        float targetDist = config.TargetApproachDistance;
+        var targetPos = ComputeApproachGoal(npc, npcPos, playerPos);
 
-        // Calculate the angular slot for this NPC so they spread around the player
-        Vector3 targetPos;
-        if (totalNpcs <= 1)
-        {
-            // Single NPC: approach from its current direction
-            if (distToPlayer < 0.1f)
-            {
-                var player = Core.Services.ObjectTable.LocalPlayer;
-                float playerRot = player?.Rotation ?? 0;
-                var forward = new Vector3(-MathF.Sin(playerRot), 0, -MathF.Cos(playerRot));
-                targetPos = playerPos + forward * targetDist;
-            }
-            else
-            {
-                var dirFromPlayer = (npcPos - playerPos) / distToPlayer;
-                targetPos = playerPos + dirFromPlayer * targetDist;
-            }
-        }
-        else
-        {
-            // Multiple NPCs: distribute evenly in front of the player
-            // In FFXIV, playerRot points forward; NPC at angle playerRot is in front of the player
-            var player = Core.Services.ObjectTable.LocalPlayer;
-            float playerRot = player?.Rotation ?? 0;
-
-            // The center of the arc is the player's forward direction
-            // Index 0 is always dead center (directly facing the player)
-            float arcSpan = MathF.PI * 4f / 3f; // 240 degrees
-            float angleStep = totalNpcs > 1 ? arcSpan / (totalNpcs - 1) : 0;
-            float startAngle = playerRot - arcSpan / 2f;
-            float angle = startAngle + angleStep * npcIndex;
-
-            var dir = new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle));
-            targetPos = playerPos + dir * targetDist;
-        }
-
-        // Approximate terrain following: use player Y, with the configured
-        // height offset stacked on top. The offset lives on the approach
-        // logic because approach is the only flow that writes Y every frame —
-        // raw direct-Y writes outside this flow fight the game's own position
-        // updates and break the rest of approach movement.
+        // Approximate terrain following: use player Y, with the configured height
+        // offset stacked on top. The offset lives on the approach logic because
+        // approach is the only flow that writes Y every frame — raw direct-Y writes
+        // outside this flow fight the game's own position updates and break movement.
         targetPos.Y = playerPos.Y + config.DefaultNpcHeightOffset;
 
         // Already close enough — just face the player
@@ -1055,5 +1116,6 @@ public unsafe class NpcAiController : IDisposable
         movementBlockHook.ClearApproachNpcs();
         StopAllApproachMoveAnims();
         approachPaths.Clear();
+        approachLockedGoals.Clear();
     }
 }
