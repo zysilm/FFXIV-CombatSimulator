@@ -57,6 +57,7 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float RetargetDpsLead = 1.20f;
     private const float FollowDistance = 3.0f;
     private const float FollowStopDistance = 0.6f;
+    private const float MeleeAttackRangeBuffer = 0.25f;
     private const float SenseInterval = 1.0f;
     private const ushort NormalRunTimelineId = 22;
     private const float SelectedTargetBonus = 130f;
@@ -733,7 +734,7 @@ public unsafe class CombatCompanionManager : IDisposable
         var targetPos = (Vector3)targetObj->Position;
         var sourcePos = (Vector3)sourceObj->Position;
         var dist = Vector3.Distance(sourcePos, targetPos);
-        var effectiveRange = companion.Behavior.AutoAttackRange + 0.75f;
+        var effectiveRange = companion.Behavior.AutoAttackRange + MeleeAttackRangeBuffer;
 
         if (dist > effectiveRange)
         {
@@ -1428,6 +1429,8 @@ public unsafe class CombatCompanionManager : IDisposable
         behavior.AutoAttackStyle = style == NpcAttackStyle.Auto ? behavior.AutoAttackStyle : style;
         if (style == NpcAttackStyle.Ranged || style == NpcAttackStyle.Magic)
             behavior.AutoAttackRange = 25.0f;
+        else
+            behavior.AutoAttackRange = 1.0f;
         return behavior;
     }
 

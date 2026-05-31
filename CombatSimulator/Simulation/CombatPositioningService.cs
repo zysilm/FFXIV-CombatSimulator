@@ -16,7 +16,7 @@ public enum CombatSide
 
 public sealed unsafe class CombatPositioningService
 {
-    private const float DefaultMeleeRange = 3.0f;
+    private const float DefaultMeleeRange = 1.0f;
     private const float MinSlotSpacing = 1.8f;
     private const float PlayerPersonalSpace = 1.4f;
     private const float OccupiedSlotPenalty = 80.0f;
