@@ -971,10 +971,7 @@ public unsafe class NpcAiController : IDisposable
 
         if (!state.HasStableRootTerrainClearance)
         {
-            if (!TryGetLowestFootClearance(npc, out var footClearance))
-                return rootPosition;
-
-            state.StableRootTerrainClearance = -footClearance;
+            state.StableRootTerrainClearance = rootPosition.Y - terrainY - config.DefaultNpcHeightOffset;
             state.HasStableRootTerrainClearance = true;
         }
 
