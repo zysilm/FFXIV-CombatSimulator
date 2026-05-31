@@ -671,15 +671,12 @@ public unsafe class NpcAiController : IDisposable
         if (hasVnavmeshTarget)
             moveTarget = pathTarget;
 
+        // vnavmesh requested but no usable path (plugin unavailable, navmesh not
+        // built for this zone, or the async path is still pending). Fall back to
+        // direct movement toward the player instead of freezing in place — Y just
+        // tracks the player's height, same as the pre-vnavmesh approximation.
         if (config.UseVNavmeshTargetApproach && !hasVnavmeshTarget)
-        {
-            if (terrainCache != null && approachPaths.TryGetValue(npc.Address, out var noPathState))
-                CorrectStableRootHeight(gameObj, npcPos, terrainCache, noPathState, deltaTime);
-
-            StopApproachMoveAnim(npc);
-            ForceRotateToward(npc, playerPos, deltaTime);
-            return;
-        }
+            moveTarget = targetPos;
 
         if (Vector3.Distance(npcPos, moveTarget) <= 0.3f)
         {
