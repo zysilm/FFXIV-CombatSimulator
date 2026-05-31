@@ -28,6 +28,7 @@ public unsafe class CombatCompanionManager : IDisposable
     private readonly AnimationController animationController;
     private readonly MovementBlockHook movementBlockHook;
     private readonly VNavmeshIpc vnavmeshIpc;
+    private readonly ITargetManager targetManager;
     private readonly IPluginLog log;
 
     private readonly List<CombatCompanion> companions = new();
@@ -39,6 +40,7 @@ public unsafe class CombatCompanionManager : IDisposable
     private uint nextEntityId = 0xF1000001;
     private float playerRecentDamage;
     private float playerRecentDps;
+    private uint lastPlayerTargetId;
 
     private const int MaxPendingFrames = 120;
     private const float TargetRange = 3.0f;
@@ -51,10 +53,13 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float RetargetDpsLead = 1.20f;
     private const float FollowDistance = 3.0f;
     private const float FollowStopDistance = 0.6f;
+    private const float CombatLeashDistance = 15.0f;
     private const ushort NormalRunTimelineId = 22;
 
     public IReadOnlyList<CombatCompanion> Companions => companions;
     public int PendingCount => pendingSpawns.Count + spawnQueue.Count;
+    public bool HasActiveCompanions => config.EnableCombatCompanions && companions.Any(c => c.IsSpawned && c.State.IsAlive);
+    public bool HasLivingCompanions => config.EnableCombatCompanions && companions.Any(c => c.IsSpawned && c.State.IsAlive);
 
     public Action<CombatCompanion>? OnCompanionSpawnComplete { get; set; }
     public Action<string>? OnSpawnError { get; set; }
@@ -67,6 +72,7 @@ public unsafe class CombatCompanionManager : IDisposable
         AnimationController animationController,
         MovementBlockHook movementBlockHook,
         VNavmeshIpc vnavmeshIpc,
+        ITargetManager targetManager,
         IPluginLog log)
     {
         this.objectTable = objectTable;
@@ -76,6 +82,7 @@ public unsafe class CombatCompanionManager : IDisposable
         this.animationController = animationController;
         this.movementBlockHook = movementBlockHook;
         this.vnavmeshIpc = vnavmeshIpc;
+        this.targetManager = targetManager;
         this.log = log;
     }
 
@@ -150,6 +157,12 @@ public unsafe class CombatCompanionManager : IDisposable
         playerRecentDps = Math.Max(playerRecentDps, playerRecentDamage / RecentDpsWindowSeconds);
     }
 
+    public void RegisterPlayerDamage(uint targetId, int damage)
+    {
+        lastPlayerTargetId = targetId;
+        RegisterPlayerDamage(damage);
+    }
+
     public SimulatedEntityState? SelectEnemyTarget(SimulatedNpc enemy)
     {
         if (!config.EnableCombatCompanions)
@@ -198,6 +211,9 @@ public unsafe class CombatCompanionManager : IDisposable
 
     public nint? ResolveAddress(uint entityId)
         => GetCompanion(entityId)?.Address;
+
+    public uint GetEnemyTargetId(uint enemyId)
+        => enemyTargetByEnemyId.GetValueOrDefault(enemyId);
 
     public void DespawnAll()
     {
@@ -406,11 +422,12 @@ public unsafe class CombatCompanionManager : IDisposable
             {
                 animationController.PlayDeathAnimation(ToSimulatedNpcView(companion));
                 companion.DeathAnimationPlayed = true;
+                combatEngine.TriggerEnemyVictoryIfPartyDefeated();
             }
             return;
         }
 
-        var target = enemies.FirstOrDefault(e => e.IsSpawned && e.State.IsAlive);
+        var target = SelectCompanionTarget(companion, enemies);
         if (target == null || target.BattleChara == null)
         {
             companion.CurrentTargetId = 0;
@@ -425,6 +442,14 @@ public unsafe class CombatCompanionManager : IDisposable
         var sourceObj = (GameObject*)companion.BattleChara;
         var targetPos = (Vector3)targetObj->Position;
         var sourcePos = (Vector3)sourceObj->Position;
+        var player = objectTable.LocalPlayer;
+        if (player != null && combatEngine.State.PlayerState.IsAlive &&
+            Vector3.Distance(sourcePos, player.Position) > CombatLeashDistance)
+        {
+            FollowPlayer(companion, deltaTime, companionIndex, companionCount, terrainCache);
+            return;
+        }
+
         var dist = Vector3.Distance(sourcePos, targetPos);
         var effectiveRange = companion.Behavior.AutoAttackRange + 0.75f;
 
@@ -475,6 +500,58 @@ public unsafe class CombatCompanionManager : IDisposable
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
             companion.State.AnimationLock = 0.6f;
         }
+    }
+
+    private SimulatedNpc? SelectCompanionTarget(CombatCompanion companion, IReadOnlyList<SimulatedNpc> enemies)
+    {
+        var aliveEnemies = enemies
+            .Where(e => e.IsSpawned && e.State.IsAlive && e.BattleChara != null)
+            .ToList();
+        if (aliveEnemies.Count == 0)
+            return null;
+
+        var currentTarget = targetManager.Target;
+        if (currentTarget != null)
+        {
+            var selected = aliveEnemies.FirstOrDefault(e => e.SimulatedEntityId == currentTarget.EntityId);
+            if (selected != null)
+                return selected;
+        }
+
+        if (lastPlayerTargetId != 0)
+        {
+            var lastPlayerTarget = aliveEnemies.FirstOrDefault(e => e.SimulatedEntityId == lastPlayerTargetId);
+            if (lastPlayerTarget != null)
+                return lastPlayerTarget;
+        }
+
+        var playerId = combatEngine.State.PlayerState.EntityId;
+        var attackingPlayer = aliveEnemies
+            .Where(e => GetEnemyTargetId(e.SimulatedEntityId) == playerId)
+            .OrderBy(e => DistanceToPlayer(e))
+            .FirstOrDefault();
+        if (attackingPlayer != null)
+            return attackingPlayer;
+
+        if (companion.CurrentTargetId != 0)
+        {
+            var previous = aliveEnemies.FirstOrDefault(e => e.SimulatedEntityId == companion.CurrentTargetId);
+            if (previous != null)
+                return previous;
+        }
+
+        var nearestToPlayer = aliveEnemies.OrderBy(DistanceToPlayer).FirstOrDefault();
+        return nearestToPlayer ?? aliveEnemies[0];
+    }
+
+    private float DistanceToPlayer(SimulatedNpc enemy)
+    {
+        var player = objectTable.LocalPlayer;
+        if (player == null || enemy.BattleChara == null)
+            return float.MaxValue;
+
+        var enemyPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;
+        return Vector3.Distance(player.Position, enemyPos);
     }
 
     private void MoveToward(

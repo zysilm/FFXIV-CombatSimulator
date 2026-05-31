@@ -27,6 +27,7 @@ public unsafe class NpcAiController : IDisposable
     private readonly Configuration config;
     private readonly IPluginLog log;
     private readonly Func<nint, bool> isExternallyControlled;
+    private readonly Func<bool> hasPartyTargets;
     private readonly Dictionary<nint, ApproachPathState> approachPaths = new();
     private const float VNavmeshRepathDistance = 1.5f;
     private const float VNavmeshRepathInterval = 1.0f;
@@ -138,7 +139,8 @@ public unsafe class NpcAiController : IDisposable
         IClientState clientState,
         Configuration config,
         IPluginLog log,
-        Func<nint, bool>? isExternallyControlled = null)
+        Func<nint, bool>? isExternallyControlled = null,
+        Func<bool>? hasPartyTargets = null)
     {
         this.combatEngine = combatEngine;
         this.animationController = animationController;
@@ -148,6 +150,7 @@ public unsafe class NpcAiController : IDisposable
         this.config = config;
         this.log = log;
         this.isExternallyControlled = isExternallyControlled ?? (_ => false);
+        this.hasPartyTargets = hasPartyTargets ?? (() => false);
 
         combatEngine.OnSimulationStarted += ScheduleAutoEngage;
         combatEngine.OnSimulationReset += OnSimulationResetOrStop;
@@ -255,6 +258,7 @@ public unsafe class NpcAiController : IDisposable
                 }
             }
 
+            var partyPresent = hasPartyTargets();
             var terrainCache = config.UseVNavmeshTargetApproach
                 ? BuildApproachTerrainCache(playerPos, approachNpcs)
                 : null;
@@ -271,7 +275,16 @@ public unsafe class NpcAiController : IDisposable
                 if (npc.AiState == NpcAiState.Resetting)
                     npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
 
-                TickApproach(npc, deltaTime, playerPos, i, approachNpcs.Count, terrainCache);
+                if (partyPresent)
+                {
+                    var targetState = combatEngine.GetNpcTarget(npc);
+                    var targetPos = combatEngine.GetSimulatedEntityPosition(targetState);
+                    TickDirectApproach(npc, deltaTime, targetPos, terrainCache);
+                }
+                else
+                {
+                    TickApproach(npc, deltaTime, playerPos, i, approachNpcs.Count, terrainCache);
+                }
             }
         }
         else
@@ -610,12 +623,6 @@ public unsafe class NpcAiController : IDisposable
         }
 
         // Don't move NPCs when the player is dead — they stay in place
-        if (!combatEngine.State.PlayerState.IsAlive)
-        {
-            StopApproachMoveAnim(npc);
-            return;
-        }
-
         var gameObj = (GameObject*)npc.BattleChara;
         var npcPos = (Vector3)gameObj->Position;
 
@@ -721,6 +728,91 @@ public unsafe class NpcAiController : IDisposable
 
         // Face the player
         ForceRotateToward(npc, playerPos, deltaTime);
+    }
+
+    private void TickDirectApproach(
+        SimulatedNpc npc,
+        float deltaTime,
+        Vector3 targetCenter,
+        ApproachTerrainCache? terrainCache)
+    {
+        if (npc.BattleChara == null) return;
+        if (npc.AiState == NpcAiState.Dead)
+        {
+            StopApproachMoveAnim(npc);
+            return;
+        }
+
+        var gameObj = (GameObject*)npc.BattleChara;
+        var npcPos = (Vector3)gameObj->Position;
+        var targetDist = config.TargetApproachDistance;
+
+        var flatDelta = npcPos - targetCenter;
+        flatDelta.Y = 0;
+        Vector3 targetPos;
+        if (flatDelta.LengthSquared() < 0.01f)
+        {
+            targetPos = targetCenter + new Vector3(0, 0, targetDist);
+        }
+        else
+        {
+            var dirFromTarget = Vector3.Normalize(flatDelta);
+            targetPos = targetCenter + dirFromTarget * targetDist;
+        }
+        targetPos.Y = targetCenter.Y + config.DefaultNpcHeightOffset;
+
+        var moveTarget = targetPos;
+        var hasVnavmeshTarget = TryUpdateVNavmeshPath(npc, deltaTime, npcPos, targetPos, out var pathTarget);
+        if (hasVnavmeshTarget)
+            moveTarget = pathTarget;
+
+        if (config.UseVNavmeshTargetApproach && !hasVnavmeshTarget)
+        {
+            if (terrainCache != null && approachPaths.TryGetValue(npc.Address, out var noPathState))
+                CorrectStableRootHeight(gameObj, npcPos, terrainCache, noPathState, deltaTime);
+
+            // Direct target approach is used when party members are present.
+            // Do not freeze while the first async vnavmesh path is pending;
+            // move toward the desired ring position immediately, then switch
+            // to path waypoints when TryUpdateVNavmeshPath completes.
+            moveTarget = targetPos;
+        }
+
+        if (Vector3.Distance(npcPos, moveTarget) <= 0.3f)
+        {
+            if (hasVnavmeshTarget && terrainCache != null &&
+                approachPaths.TryGetValue(npc.Address, out var arrivedPathState))
+                CorrectStableRootHeight(gameObj, npcPos, terrainCache, arrivedPathState, deltaTime);
+
+            StopApproachMoveAnim(npc);
+            ForceRotateToward(npc, targetCenter, deltaTime);
+            return;
+        }
+
+        var speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;
+        var remainingDist = Vector3.Distance(npcPos, moveTarget);
+        var moveDist = speed * deltaTime;
+
+        Vector3 newPos;
+        if (remainingDist <= moveDist)
+        {
+            newPos = moveTarget;
+        }
+        else
+        {
+            var moveDir = Vector3.Normalize(moveTarget - npcPos);
+            newPos = npcPos + moveDir * moveDist;
+        }
+
+        if (hasVnavmeshTarget && terrainCache != null &&
+            approachPaths.TryGetValue(npc.Address, out var pathState))
+        {
+            newPos = CorrectMovingRootHeight(newPos, terrainCache, pathState, deltaTime);
+        }
+
+        StartApproachMoveAnim(npc);
+        movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
+        ForceRotateToward(npc, newPos, deltaTime);
     }
 
     private bool TryUpdateVNavmeshPath(
