@@ -201,6 +201,15 @@ public unsafe class NpcAiController : IDisposable
             }
         }
 
+        // Party mode: when companions are fighting alongside the player, every
+        // enemy should be engaged — not just the one that was attacked. Idle
+        // enemies are pulled into combat each tick (EngageNpc no-ops once engaged).
+        if (combatEngine.HasLivingCompanions?.Invoke() == true)
+        {
+            foreach (var npc in npcs)
+                EngageNpc(npc);
+        }
+
         var playerPos = player.Position;
         var playerEntityId = player.EntityId;
 
