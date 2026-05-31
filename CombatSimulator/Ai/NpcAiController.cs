@@ -205,10 +205,12 @@ public unsafe class NpcAiController : IDisposable
             }
         }
 
+        var hasLivingCompanions = combatEngine.HasLivingCompanions?.Invoke() == true;
+
         // Party mode: when companions are fighting alongside the player, every
         // enemy should be engaged — not just the one that was attacked. Idle
         // enemies are pulled into combat each tick (EngageNpc no-ops once engaged).
-        if (combatEngine.HasLivingCompanions?.Invoke() == true)
+        if (hasLivingCompanions)
         {
             foreach (var npc in npcs)
                 EngageNpc(npc);
@@ -259,8 +261,11 @@ public unsafe class NpcAiController : IDisposable
             TickNpc(npc, deltaTime, targetPos, targetEntityId);
         }
 
-        // Target approach: move active targets near the player
-        if (config.EnableTargetApproach)
+        // In solo play this is controlled by EnableTargetApproach. In party
+        // mode, enemy movement is always needed because real NPCs have no
+        // natural client-side chase path in our simulation; TickApproach uses
+        // the resolved combat target instead of the solo player ring.
+        if (config.EnableTargetApproach || hasLivingCompanions)
         {
             if (config.UseVNavmeshTargetApproach)
                 vnavmeshIpc.RefreshStatus();
@@ -758,7 +763,10 @@ public unsafe class NpcAiController : IDisposable
             existingPathState.PendingPath = null;
         }
 
-        var usePartyPositioning = combatEngine.HasLivingCompanions?.Invoke() == true;
+        var usePartyPositioning = combatEngine.HasLivingCompanions?.Invoke() == true && !npcTarget.IsPlayer;
+        if (!usePartyPositioning)
+            combatPositioningService.Release(npc.SimulatedEntityId);
+
         var targetPos = usePartyPositioning &&
                         combatPositioningService.TryGetEnemyCombatPosition(npc, npcTarget, npcTargetPos, out var partyTargetPos)
             ? partyTargetPos
