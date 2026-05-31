@@ -28,17 +28,20 @@ public unsafe class CombatCompanionManager : IDisposable
     private readonly AnimationController animationController;
     private readonly MovementBlockHook movementBlockHook;
     private readonly VNavmeshIpc vnavmeshIpc;
+    private readonly ITargetManager targetManager;
     private readonly IPluginLog log;
 
     private readonly List<CombatCompanion> companions = new();
     private readonly List<PendingSpawn> pendingSpawns = new();
-    private readonly ConcurrentQueue<IPlayerCharacter> spawnQueue = new();
+    private readonly ConcurrentQueue<CompanionSpawnSource> spawnQueue = new();
     private readonly HashSet<int> allocatedIndices = new();
     private readonly Dictionary<nint, PathState> pathStates = new();
     private readonly Dictionary<uint, uint> enemyTargetByEnemyId = new();
     private uint nextEntityId = 0xF1000001;
     private float playerRecentDamage;
     private float playerRecentDps;
+    private uint lastPlayerTargetId;
+    private float senseTimer;
 
     private const int MaxPendingFrames = 120;
     private const float TargetRange = 3.0f;
@@ -51,10 +54,13 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float RetargetDpsLead = 1.20f;
     private const float FollowDistance = 3.0f;
     private const float FollowStopDistance = 0.6f;
+    private const float SenseInterval = 1.0f;
     private const ushort NormalRunTimelineId = 22;
 
     public IReadOnlyList<CombatCompanion> Companions => companions;
     public int PendingCount => pendingSpawns.Count + spawnQueue.Count;
+    public bool HasActiveCompanions => config.EnableCombatCompanions && companions.Any(c => c.IsSpawned && c.State.IsAlive);
+    public bool HasLivingCompanions => config.EnableCombatCompanions && companions.Any(c => c.IsSpawned && c.State.IsAlive);
 
     public Action<CombatCompanion>? OnCompanionSpawnComplete { get; set; }
     public Action<string>? OnSpawnError { get; set; }
@@ -67,6 +73,7 @@ public unsafe class CombatCompanionManager : IDisposable
         AnimationController animationController,
         MovementBlockHook movementBlockHook,
         VNavmeshIpc vnavmeshIpc,
+        ITargetManager targetManager,
         IPluginLog log)
     {
         this.objectTable = objectTable;
@@ -76,6 +83,7 @@ public unsafe class CombatCompanionManager : IDisposable
         this.animationController = animationController;
         this.movementBlockHook = movementBlockHook;
         this.vnavmeshIpc = vnavmeshIpc;
+        this.targetManager = targetManager;
         this.log = log;
     }
 
@@ -90,7 +98,7 @@ public unsafe class CombatCompanionManager : IDisposable
             return 0;
 
         var queued = 0;
-        var seenSources = new HashSet<uint>(companions.Select(c => c.SourceEntityId));
+        var seenSources = BuildSeenSourceSet();
         foreach (var obj in objectTable)
         {
             if (queued >= availableSlots)
@@ -104,11 +112,39 @@ public unsafe class CombatCompanionManager : IDisposable
             if (!seenSources.Add(player.EntityId))
                 continue;
 
-            spawnQueue.Enqueue(player);
+            spawnQueue.Enqueue(CompanionSpawnSource.FromObject(player));
             queued++;
         }
 
         return queued;
+    }
+
+    public bool SpawnRandomVisibleHumanoidEnemy()
+    {
+        if (!config.EnableCombatCompanions)
+            return false;
+
+        var max = Math.Clamp(config.CombatCompanionMaxCount, 0, 10);
+        if (companions.Count + PendingCount >= max)
+            return false;
+
+        var seenSources = BuildSeenSourceSet();
+        var candidates = new List<IGameObject>();
+        foreach (var obj in objectTable)
+        {
+            if (!IsHumanoidEnemySource(obj))
+                continue;
+            if (!seenSources.Add(obj.EntityId))
+                continue;
+            candidates.Add(obj);
+        }
+
+        if (candidates.Count == 0)
+            return false;
+
+        var picked = candidates[Random.Shared.Next(candidates.Count)];
+        spawnQueue.Enqueue(CompanionSpawnSource.FromObject(picked));
+        return true;
     }
 
     public void Tick(float deltaTime, IReadOnlyList<SimulatedNpc> enemies)
@@ -120,6 +156,8 @@ public unsafe class CombatCompanionManager : IDisposable
 
         if (!config.EnableCombatCompanions)
             return;
+
+        TickSensing(deltaTime);
 
         vnavmeshIpc.RefreshStatus();
         var terrainCache = BuildCompanionTerrainCache(enemies);
@@ -148,6 +186,12 @@ public unsafe class CombatCompanionManager : IDisposable
     {
         playerRecentDamage += Math.Max(0, damage);
         playerRecentDps = Math.Max(playerRecentDps, playerRecentDamage / RecentDpsWindowSeconds);
+    }
+
+    public void RegisterPlayerDamage(uint targetId, int damage)
+    {
+        lastPlayerTargetId = targetId;
+        RegisterPlayerDamage(damage);
     }
 
     public SimulatedEntityState? SelectEnemyTarget(SimulatedNpc enemy)
@@ -199,6 +243,9 @@ public unsafe class CombatCompanionManager : IDisposable
     public nint? ResolveAddress(uint entityId)
         => GetCompanion(entityId)?.Address;
 
+    public uint GetEnemyTargetId(uint enemyId)
+        => enemyTargetByEnemyId.GetValueOrDefault(enemyId);
+
     public void DespawnAll()
     {
         while (spawnQueue.TryDequeue(out _)) { }
@@ -221,18 +268,103 @@ public unsafe class CombatCompanionManager : IDisposable
         playerRecentDps = 0;
     }
 
-    private void ProcessSpawnRequest(IPlayerCharacter sourcePlayer)
+    private void TickSensing(float deltaTime)
+    {
+        if (!config.SensePartyMembers)
+            return;
+
+        senseTimer = Math.Max(0, senseTimer - deltaTime);
+        if (senseTimer > 0)
+            return;
+
+        senseTimer = SenseInterval;
+        FillFromVisibleSources();
+    }
+
+    private int FillFromVisibleSources()
+    {
+        var max = Math.Clamp(config.CombatCompanionMaxCount, 0, 10);
+        var availableSlots = Math.Max(0, max - companions.Count - PendingCount);
+        if (availableSlots == 0)
+            return 0;
+
+        var queued = 0;
+        var seenSources = BuildSeenSourceSet();
+
+        foreach (var obj in objectTable)
+        {
+            if (queued >= availableSlots)
+                break;
+            if (obj is not IPlayerCharacter player)
+                continue;
+            if (objectTable.LocalPlayer != null && player.EntityId == objectTable.LocalPlayer.EntityId)
+                continue;
+            if (player.Address == nint.Zero || !seenSources.Add(player.EntityId))
+                continue;
+
+            spawnQueue.Enqueue(CompanionSpawnSource.FromObject(player));
+            queued++;
+        }
+
+        if (!config.AllowSensingHumanoidEnemies)
+            return queued;
+
+        foreach (var obj in objectTable)
+        {
+            if (queued >= availableSlots)
+                break;
+            if (!IsHumanoidEnemySource(obj))
+                continue;
+            if (!seenSources.Add(obj.EntityId))
+                continue;
+
+            spawnQueue.Enqueue(CompanionSpawnSource.FromObject(obj));
+            queued++;
+        }
+
+        return queued;
+    }
+
+    private HashSet<uint> BuildSeenSourceSet()
+    {
+        var seen = new HashSet<uint>(companions.Select(c => c.SourceEntityId));
+        foreach (var pending in pendingSpawns)
+            seen.Add(pending.Companion.SourceEntityId);
+        foreach (var queued in spawnQueue)
+            seen.Add(queued.EntityId);
+        return seen;
+    }
+
+    private bool IsHumanoidEnemySource(IGameObject obj)
+    {
+        if (obj.Address == nint.Zero)
+            return false;
+        if ((byte)obj.ObjectKind != (byte)ObjectKind.BattleNpc &&
+            (byte)obj.ObjectKind != (byte)ObjectKind.EventNpc)
+            return false;
+        if (objectTable.LocalPlayer != null && obj.EntityId == objectTable.LocalPlayer.EntityId)
+            return false;
+
+        var character = (Character*)obj.Address;
+        if (character->ModelContainer.ModelCharaId != 0)
+            return false;
+
+        var customizePtr = (byte*)&character->DrawData.CustomizeData;
+        return customizePtr[0] != 0;
+    }
+
+    private void ProcessSpawnRequest(CompanionSpawnSource sourceInfo)
     {
         try
         {
-            if (sourcePlayer.Address == nint.Zero)
+            if (sourceInfo.Address == nint.Zero)
                 return;
 
-            var source = (Character*)sourcePlayer.Address;
+            var source = (Character*)sourceInfo.Address;
             var sourceRace = ((byte*)&source->DrawData.CustomizeData)[0];
             if (sourceRace == 0)
             {
-                OnSpawnError?.Invoke($"Cannot clone {sourcePlayer.Name}: source is not a humanoid player model.");
+                OnSpawnError?.Invoke($"Cannot clone {sourceInfo.Name}: source is not a humanoid model.");
                 return;
             }
 
@@ -274,7 +406,7 @@ public unsafe class CombatCompanionManager : IDisposable
             obj->Position = spawnPos;
             obj->Rotation = CalculateSpawnRotation(spawnPos);
 
-            var name = sourcePlayer.Name.TextValue;
+            var name = sourceInfo.Name;
             var nameBytes = Encoding.UTF8.GetBytes(name);
             for (int j = 0; j < 64; j++)
                 obj->Name[j] = j < nameBytes.Length && j < 63 ? nameBytes[j] : (byte)0;
@@ -284,6 +416,8 @@ public unsafe class CombatCompanionManager : IDisposable
                 CharacterSetupContainer.CopyFlags.WeaponHiding;
             character->CharacterSetup.CopyFromCharacter(source, flags);
             character->CharacterSetup.CopyFromCharacter(character, CharacterSetupContainer.CopyFlags.None);
+            if (config.RandomizeCompanionAppearance)
+                RandomizeAppearancePreservingWeapons(character);
             character->SetMode(CharacterModes.Normal, 0);
 
             IGameObject? gameObjectRef = null;
@@ -295,7 +429,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
             var level = Math.Clamp(config.CombatCompanionLevelOverride, 1, 300);
             var maxHp = CalculateCompanionHp(level);
-            var classJobId = sourcePlayer.ClassJob.RowId;
+            var classJobId = sourceInfo.ClassJobId;
             var weaponStyle = NpcWeaponClassifier.DetectFromCharacter(character, log, name);
             var behavior = CreateCompanionBehavior(weaponStyle);
 
@@ -303,7 +437,7 @@ public unsafe class CombatCompanionManager : IDisposable
             {
                 SimulatedEntityId = entityId,
                 ObjectIndex = index,
-                SourceEntityId = sourcePlayer.EntityId,
+                SourceEntityId = sourceInfo.EntityId,
                 Name = name,
                 BattleChara = chara,
                 GameObjectRef = gameObjectRef,
@@ -388,6 +522,82 @@ public unsafe class CombatCompanionManager : IDisposable
         }
     }
 
+    private void RandomizeAppearancePreservingWeapons(Character* character)
+    {
+        try
+        {
+            var customize = (byte*)&character->DrawData.CustomizeData;
+            var race = Random.Shared.Next(1, 9);
+            var gender = Random.Shared.Next(0, 2);
+
+            customize[0x00] = (byte)race;
+            customize[0x01] = (byte)gender;
+            customize[0x02] = 1;
+            customize[0x03] = (byte)Random.Shared.Next(20, 101);
+            customize[0x04] = (byte)GetRandomTribeForRace(race);
+            customize[0x05] = (byte)Random.Shared.Next(1, 5);
+            customize[0x06] = (byte)Random.Shared.Next(1, 160);
+            customize[0x07] = (byte)Random.Shared.Next(0, 2);
+            customize[0x08] = (byte)Random.Shared.Next(1, 193);
+            customize[0x09] = (byte)Random.Shared.Next(1, 193);
+            customize[0x0A] = (byte)Random.Shared.Next(1, 193);
+            customize[0x0B] = (byte)Random.Shared.Next(1, 193);
+            customize[0x0C] = (byte)Random.Shared.Next(0, 32);
+            customize[0x0D] = (byte)Random.Shared.Next(1, 193);
+            customize[0x0E] = (byte)Random.Shared.Next(1, 7);
+            customize[0x0F] = (byte)Random.Shared.Next(1, 193);
+            customize[0x10] = (byte)Random.Shared.Next(1, 7);
+            customize[0x11] = (byte)Random.Shared.Next(1, 7);
+            customize[0x12] = (byte)Random.Shared.Next(1, 7);
+            customize[0x13] = (byte)Random.Shared.Next(1, 7);
+            customize[0x14] = (byte)Random.Shared.Next(1, 193);
+            customize[0x15] = (byte)Random.Shared.Next(0, 101);
+            customize[0x16] = (byte)Random.Shared.Next(0, 2);
+            customize[0x17] = (byte)Random.Shared.Next(0, 2);
+            customize[0x18] = (byte)Random.Shared.Next(0, 65);
+            customize[0x19] = (byte)Random.Shared.Next(1, 193);
+
+            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Head);
+            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Body);
+            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Hands);
+            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Legs);
+            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Feet);
+            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Ears);
+            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Neck);
+            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Wrists);
+            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.RFinger);
+            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.LFinger);
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Failed to randomize companion appearance.");
+        }
+    }
+
+    private static int GetRandomTribeForRace(int race)
+        => race switch
+        {
+            1 => Random.Shared.Next(1, 3),
+            2 => Random.Shared.Next(3, 5),
+            3 => Random.Shared.Next(5, 7),
+            4 => Random.Shared.Next(7, 9),
+            5 => Random.Shared.Next(9, 11),
+            6 => Random.Shared.Next(11, 13),
+            7 => Random.Shared.Next(13, 15),
+            8 => Random.Shared.Next(15, 17),
+            _ => 1,
+        };
+
+    private static void RandomizeEquipmentSlot(Character* character, DrawDataContainer.EquipmentSlot slot)
+    {
+        ref var equipment = ref character->DrawData.Equipment(slot);
+        var current = equipment.Value;
+        var model = current == 0
+            ? (ulong)Random.Shared.Next(1, 1200)
+            : (current & 0xFFFFFFFFFFFF0000UL) | (ushort)Random.Shared.Next(1, 1200);
+        equipment.Value = model;
+    }
+
     private void TickCompanion(
         CombatCompanion companion,
         float deltaTime,
@@ -406,11 +616,12 @@ public unsafe class CombatCompanionManager : IDisposable
             {
                 animationController.PlayDeathAnimation(ToSimulatedNpcView(companion));
                 companion.DeathAnimationPlayed = true;
+                combatEngine.TriggerEnemyVictoryIfPartyDefeated();
             }
             return;
         }
 
-        var target = enemies.FirstOrDefault(e => e.IsSpawned && e.State.IsAlive);
+        var target = SelectCompanionTarget(companion, enemies);
         if (target == null || target.BattleChara == null)
         {
             companion.CurrentTargetId = 0;
@@ -475,6 +686,58 @@ public unsafe class CombatCompanionManager : IDisposable
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
             companion.State.AnimationLock = 0.6f;
         }
+    }
+
+    private SimulatedNpc? SelectCompanionTarget(CombatCompanion companion, IReadOnlyList<SimulatedNpc> enemies)
+    {
+        var aliveEnemies = enemies
+            .Where(e => e.IsSpawned && e.State.IsAlive && e.BattleChara != null)
+            .ToList();
+        if (aliveEnemies.Count == 0)
+            return null;
+
+        var currentTarget = targetManager.Target;
+        if (currentTarget != null)
+        {
+            var selected = aliveEnemies.FirstOrDefault(e => e.SimulatedEntityId == currentTarget.EntityId);
+            if (selected != null)
+                return selected;
+        }
+
+        if (lastPlayerTargetId != 0)
+        {
+            var lastPlayerTarget = aliveEnemies.FirstOrDefault(e => e.SimulatedEntityId == lastPlayerTargetId);
+            if (lastPlayerTarget != null)
+                return lastPlayerTarget;
+        }
+
+        var playerId = combatEngine.State.PlayerState.EntityId;
+        var attackingPlayer = aliveEnemies
+            .Where(e => GetEnemyTargetId(e.SimulatedEntityId) == playerId)
+            .OrderBy(e => DistanceToPlayer(e))
+            .FirstOrDefault();
+        if (attackingPlayer != null)
+            return attackingPlayer;
+
+        if (companion.CurrentTargetId != 0)
+        {
+            var previous = aliveEnemies.FirstOrDefault(e => e.SimulatedEntityId == companion.CurrentTargetId);
+            if (previous != null)
+                return previous;
+        }
+
+        var nearestToPlayer = aliveEnemies.OrderBy(DistanceToPlayer).FirstOrDefault();
+        return nearestToPlayer ?? aliveEnemies[0];
+    }
+
+    private float DistanceToPlayer(SimulatedNpc enemy)
+    {
+        var player = objectTable.LocalPlayer;
+        if (player == null || enemy.BattleChara == null)
+            return float.MaxValue;
+
+        var enemyPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;
+        return Vector3.Distance(player.Position, enemyPos);
     }
 
     private void MoveToward(
@@ -997,6 +1260,23 @@ public unsafe class CombatCompanionManager : IDisposable
     {
         public CombatCompanion Companion { get; set; } = null!;
         public int FramesWaited { get; set; }
+    }
+
+    private readonly record struct CompanionSpawnSource(
+        uint EntityId,
+        nint Address,
+        string Name,
+        uint ClassJobId)
+    {
+        public static CompanionSpawnSource FromObject(IGameObject obj)
+        {
+            var classJobId = obj is IPlayerCharacter player ? player.ClassJob.RowId : 0;
+            return new CompanionSpawnSource(
+                obj.EntityId,
+                obj.Address,
+                obj.Name.TextValue,
+                classJobId);
+        }
     }
 
     private class PathState

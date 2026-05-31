@@ -82,6 +82,9 @@ public class Configuration : IPluginConfiguration
     public bool EnableCombatCompanions { get; set; } = false;
     public int CombatCompanionMaxCount { get; set; } = 3;
     public int CombatCompanionLevelOverride { get; set; } = 100;
+    public bool SensePartyMembers { get; set; } = false;
+    public bool AllowSensingHumanoidEnemies { get; set; } = false;
+    public bool RandomizeCompanionAppearance { get; set; } = false;
 
     // NPC Defaults
     public int DefaultNpcLevel { get; set; } = 90;

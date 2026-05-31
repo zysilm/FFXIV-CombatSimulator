@@ -75,7 +75,9 @@ public class CombatEngine : IDisposable
     public Action? OnSimulationStarted { get; set; }
     public Func<SimulatedNpc, SimulatedEntityState?>? ResolveNpcTarget { get; set; }
     public Func<uint, nint?>? ResolveExternalEntityAddress { get; set; }
+    public Func<bool>? HasLivingCompanions { get; set; }
     public Action<int>? OnPlayerDamageDealt { get; set; }
+    public Action<uint, int>? OnPlayerDamageDealtToTarget { get; set; }
 
     /// <summary>
     /// Fired at the end of StopSimulation and ResetState — i.e. whenever the
@@ -440,6 +442,7 @@ public class CombatEngine : IDisposable
         // Update stats
         State.TotalDamageDealt += dmgResult.Damage;
         OnPlayerDamageDealt?.Invoke(dmgResult.Damage);
+        OnPlayerDamageDealtToTarget?.Invoke(target.EntityId, dmgResult.Damage);
 
         // Build result
         result.Success = true;
@@ -977,16 +980,7 @@ public class CombatEngine : IDisposable
                 movementBlockHook.IsBlocking = true;
                 animationController.RemoveAllActiveVfx();
                 animationController.PlayPlayerDeath();
-                // Try cinematic victory sequence first; fall back to normal emotes
-                SimulatedNpc? cinematicNpc = null;
-                if (victorySequenceController != null)
-                {
-                    var (started, cNpc) = victorySequenceController.TryStart(npcSelector.SelectedNpcs);
-                    if (started) cinematicNpc = cNpc;
-                }
-                // Play normal victory emote on NPCs not managed by the victory sequence
-                if (cinematicNpc == null)
-                    animationController.PlayVictory(isPlayerVictory: false, npcSelector.SelectedNpcs);
+                TriggerEnemyVictoryIfPartyDefeated();
                 ApplyGlamourer();
                 deathCamController?.Activate();
 
@@ -1038,12 +1032,38 @@ public class CombatEngine : IDisposable
         }
     }
 
+    public void TriggerEnemyVictoryIfPartyDefeated()
+    {
+        if (victoryTriggered)
+            return;
+        if (State.PlayerState.IsAlive)
+            return;
+        if (HasLivingCompanions?.Invoke() == true)
+            return;
+
+        victoryTriggered = true;
+
+        // Try cinematic victory sequence first; fall back to normal emotes.
+        SimulatedNpc? cinematicNpc = null;
+        if (victorySequenceController != null)
+        {
+            var (started, cNpc) = victorySequenceController.TryStart(npcSelector.SelectedNpcs);
+            if (started) cinematicNpc = cNpc;
+        }
+
+        if (cinematicNpc == null)
+            animationController.PlayVictory(isPlayerVictory: false, npcSelector.SelectedNpcs);
+    }
+
     private void OnEntityDeath(SimulatedEntityState entity)
     {
         AddLogEntry($"{entity.Name} is defeated!", CombatLogType.Death);
 
         if (entity.IsCompanion)
+        {
+            TriggerEnemyVictoryIfPartyDefeated();
             return;
+        }
 
         // Queue death animation with a short delay so the killing blow plays first
         pendingDeaths.Add(new PendingDeath
@@ -1264,6 +1284,7 @@ public class CombatEngine : IDisposable
                     npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
                     State.TotalDamageDealt += dmg.Damage;
                     OnPlayerDamageDealt?.Invoke(dmg.Damage);
+                    OnPlayerDamageDealtToTarget?.Invoke(npc.State.EntityId, dmg.Damage);
 
                     // Trigger auto-attack animation + VFX
                     var autoAttackData = new ActionData

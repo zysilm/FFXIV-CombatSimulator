@@ -119,10 +119,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             victorySequenceController);
         companionManager = new CombatCompanionManager(
             objectTable, clientState, config, combatEngine, animationController,
-            movementBlockHook, vnavmeshIpc, log);
+            movementBlockHook, vnavmeshIpc, targetManager, log);
         combatEngine.ResolveNpcTarget = companionManager.SelectEnemyTarget;
         combatEngine.ResolveExternalEntityAddress = companionManager.ResolveAddress;
+        combatEngine.HasLivingCompanions = () => companionManager.HasLivingCompanions;
         combatEngine.OnPlayerDamageDealt = companionManager.RegisterPlayerDamage;
+        combatEngine.OnPlayerDamageDealtToTarget = companionManager.RegisterPlayerDamage;
         npcAiController = new NpcAiController(
             combatEngine, animationController, movementBlockHook, vnavmeshIpc,
             clientState, config, log, victorySequenceController.ControlsNpc);
