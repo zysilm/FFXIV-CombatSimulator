@@ -677,7 +677,7 @@ public unsafe class NpcAiController : IDisposable
         if (config.UseVNavmeshTargetApproach && !hasVnavmeshTarget)
         {
             if (terrainCache != null)
-                CorrectStationaryRootHeightFromTerrainAndFeet(npc, gameObj, npcPos, terrainCache, deltaTime);
+                CorrectStationaryRootHeightFromTerrainAndFeet(npc, gameObj, npcPos, terrainCache);
 
             StopApproachMoveAnim(npc);
             ForceRotateToward(npc, playerPos, deltaTime);
@@ -687,7 +687,7 @@ public unsafe class NpcAiController : IDisposable
         if (Vector3.Distance(npcPos, moveTarget) <= 0.3f)
         {
             if (hasVnavmeshTarget && terrainCache != null)
-                CorrectStationaryRootHeightFromTerrainAndFeet(npc, gameObj, npcPos, terrainCache, deltaTime);
+                CorrectStationaryRootHeightFromTerrainAndFeet(npc, gameObj, npcPos, terrainCache);
 
             StopApproachMoveAnim(npc);
             ForceRotateToward(npc, playerPos, deltaTime);
@@ -938,12 +938,14 @@ public unsafe class NpcAiController : IDisposable
         ApproachTerrainCache terrainCache,
         ApproachPathState? state = null)
     {
-        if (!TryGetDesiredFootRootY(npc, rootPosition, terrainCache, out var desiredY, out var terrainY))
+        if (!terrainCache.TrySample(rootPosition.X, rootPosition.Z, out var terrainY))
+            return rootPosition;
+        if (!TryGetLowestFootClearance(npc, out var footClearance))
             return rootPosition;
 
         var corrected = rootPosition with
         {
-            Y = desiredY,
+            Y = terrainY - footClearance + config.DefaultNpcHeightOffset,
         };
 
         if (state != null)
@@ -991,51 +993,14 @@ public unsafe class NpcAiController : IDisposable
         SimulatedNpc npc,
         GameObject* gameObj,
         Vector3 rootPosition,
-        ApproachTerrainCache terrainCache,
-        float deltaTime)
+        ApproachTerrainCache terrainCache)
     {
         approachPaths.TryGetValue(npc.Address, out var state);
-        if (!TryGetDesiredFootRootY(npc, rootPosition, terrainCache, out var desiredY, out var terrainY))
+        var corrected = CorrectRootHeightFromTerrainAndFeet(npc, rootPosition, terrainCache, state);
+        if (MathF.Abs(corrected.Y - rootPosition.Y) < 0.001f)
             return;
 
-        // The live toe bones can be high during the run-to-idle transition. If we
-        // follow that downward, the target visibly dips below terrain before the
-        // next idle pose pulls it back up. Stationary correction is therefore
-        // upward-only: it fixes sinking, but never creates a new downward snap.
-        if (desiredY <= rootPosition.Y + 0.001f)
-            return;
-
-        var maxUpStep = MathF.Max(0.03f, 8.0f * deltaTime);
-        var correctedY = rootPosition.Y + MathF.Min(desiredY - rootPosition.Y, maxUpStep);
-
-        if (state != null)
-        {
-            state.StableRootTerrainClearance = correctedY - terrainY - config.DefaultNpcHeightOffset;
-            state.HasStableRootTerrainClearance = true;
-            state.LastMoveRootY = correctedY;
-            state.HasLastMoveRootY = true;
-        }
-
-        movementBlockHook.SetApproachPosition(gameObj, rootPosition.X, correctedY, rootPosition.Z);
-    }
-
-    private bool TryGetDesiredFootRootY(
-        SimulatedNpc npc,
-        Vector3 rootPosition,
-        ApproachTerrainCache terrainCache,
-        out float desiredY,
-        out float terrainY)
-    {
-        desiredY = rootPosition.Y;
-        terrainY = 0f;
-
-        if (!terrainCache.TrySample(rootPosition.X, rootPosition.Z, out terrainY))
-            return false;
-        if (!TryGetLowestFootClearance(npc, out var footClearance))
-            return false;
-
-        desiredY = terrainY - footClearance + config.DefaultNpcHeightOffset;
-        return true;
+        movementBlockHook.SetApproachPosition(gameObj, corrected.X, corrected.Y, corrected.Z);
     }
 
     private bool TryGetLowestFootClearance(SimulatedNpc npc, out float clearance)
