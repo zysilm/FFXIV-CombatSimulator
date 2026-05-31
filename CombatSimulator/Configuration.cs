@@ -77,6 +77,12 @@ public class Configuration : IPluginConfiguration
     public bool EnableCriticalHits { get; set; } = true;
     public bool EnableDirectHits { get; set; } = true;
 
+    // Party companions: client-side clones of visible players that fight
+    // simulated enemies as friendly actors.
+    public bool EnableCombatCompanions { get; set; } = false;
+    public int CombatCompanionMaxCount { get; set; } = 3;
+    public int CombatCompanionLevelOverride { get; set; } = 100;
+
     // NPC Defaults
     public int DefaultNpcLevel { get; set; } = 90;
     public float DefaultNpcHpMultiplier { get; set; } = 1.0f;

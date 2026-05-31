@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation;
 using CombatSimulator.Camera;
+using CombatSimulator.Companions;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
@@ -19,6 +20,7 @@ public class MainWindow : IDisposable
     private readonly Configuration config;
     private readonly NpcSelector npcSelector;
     private readonly NpcSpawner npcSpawner;
+    private readonly CombatCompanionManager companionManager;
     private readonly CombatEngine combatEngine;
     private readonly GlamourerIpc glamourerIpc;
     private readonly VNavmeshIpc vnavmeshIpc;
@@ -100,6 +102,7 @@ public class MainWindow : IDisposable
         Configuration config,
         NpcSelector npcSelector,
         NpcSpawner npcSpawner,
+        CombatCompanionManager companionManager,
         CombatEngine combatEngine,
         GlamourerIpc glamourerIpc,
         VNavmeshIpc vnavmeshIpc,
@@ -116,6 +119,7 @@ public class MainWindow : IDisposable
         this.config = config;
         this.npcSelector = npcSelector;
         this.npcSpawner = npcSpawner;
+        this.companionManager = companionManager;
         this.combatEngine = combatEngine;
         this.glamourerIpc = glamourerIpc;
         this.vnavmeshIpc = vnavmeshIpc;
@@ -142,6 +146,7 @@ public class MainWindow : IDisposable
     {
         "Combat",
         "Targets",
+        "Party",
         "Effects",
         "Camera",
         "Ragdoll",
@@ -209,15 +214,18 @@ public class MainWindow : IDisposable
                 DrawNpcDefaultsSection();
                 DrawTargetBehaviorsSection();
                 break;
-            case 2: // Effects
+            case 2: // Party
+                DrawPartyTab();
+                break;
+            case 3: // Effects
                 DrawHitVfxSection();
                 DrawGlamourerHeaderSection();
                 break;
-            case 3: // Camera
+            case 4: // Camera
                 DrawActiveCamSection();
                 DrawDeathCamSection();
                 break;
-            case 4: // Ragdoll
+            case 5: // Ragdoll
                 DrawRagdollSection();
                 DrawNpcCollisionSection();
                 DrawNpcSettleCollisionSection();
@@ -252,17 +260,17 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 break;
-            case 5: // Ragdoll (Advanced)
+            case 6: // Ragdoll (Advanced)
                 DrawRagdollAdvancedSection();
                 break;
-            case 6: // Virtual Enemies
+            case 7: // Virtual Enemies
                 DrawVirtualEnemiesTab();
                 break;
-            case 7: // Settings
+            case 8: // Settings
                 DrawGuiSettingsSection();
                 DrawDevSection();
                 break;
-            case 8: // Diagnose
+            case 9: // Diagnose
                 DrawDiagnoseSection();
                 break;
         }
@@ -318,7 +326,7 @@ public class MainWindow : IDisposable
                 ImGui.EndTooltip();
             }
             if (ImGui.IsItemClicked())
-                selectedTab = 8; // Jump to Diagnose tab
+                selectedTab = 9; // Jump to Diagnose tab
         }
 
         if (simActive && combatEngine.State.CombatDuration > 0)
@@ -333,6 +341,76 @@ public class MainWindow : IDisposable
             ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1),
                 "Start combat and attack any NPC to begin.\n" +
                 "Targets are auto-registered on first attack.");
+        }
+    }
+
+    private void DrawPartyTab()
+    {
+        var enabled = config.EnableCombatCompanions;
+        if (ImGui.Checkbox("Enable Combat Companions", ref enabled))
+        {
+            config.EnableCombatCompanions = enabled;
+            config.Save();
+        }
+
+        var maxCount = Math.Clamp(config.CombatCompanionMaxCount, 0, 10);
+        if (ImGui.SliderInt("Max cloned players", ref maxCount, 0, 10))
+        {
+            config.CombatCompanionMaxCount = maxCount;
+            config.Save();
+        }
+
+        var level = Math.Clamp(config.CombatCompanionLevelOverride, 1, 300);
+        if (ImGui.SliderInt("Simulated level", ref level, 1, 300))
+        {
+            config.CombatCompanionLevelOverride = level;
+            config.Save();
+        }
+
+        ImGui.Separator();
+
+        using (ImRaii.Disabled(!config.EnableCombatCompanions))
+        {
+            if (ImGui.Button("Clone visible players"))
+            {
+                var queued = companionManager.SpawnFromVisiblePlayers();
+                chatGui.Print($"[CombatSim] Queued {queued} companion clone(s).");
+            }
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Clear companions"))
+            companionManager.DespawnAll();
+
+        ImGui.Text($"Active: {companionManager.Companions.Count}  Pending: {companionManager.PendingCount}");
+
+        if (companionManager.Companions.Count == 0)
+        {
+            ImGui.TextDisabled("No companion clones spawned.");
+            return;
+        }
+
+        if (ImGui.BeginTable("##companions", 4, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg))
+        {
+            ImGui.TableSetupColumn("Name");
+            ImGui.TableSetupColumn("Level");
+            ImGui.TableSetupColumn("HP");
+            ImGui.TableSetupColumn("Recent DPS");
+            ImGui.TableHeadersRow();
+
+            foreach (var companion in companionManager.Companions)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(companion.Name);
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(companion.State.Level.ToString());
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted($"{companion.State.CurrentHp:N0} / {companion.State.MaxHp:N0}");
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted($"{companion.RecentDps:N0}");
+            }
+
+            ImGui.EndTable();
         }
     }
 
@@ -605,7 +683,7 @@ public class MainWindow : IDisposable
         ImGui.SetNextItemWidth(120);
         if (ImGui.InputInt("Level", ref defaultLevel))
         {
-            config.DefaultNpcLevel = Math.Clamp(defaultLevel, 1, 200);
+            config.DefaultNpcLevel = Math.Clamp(defaultLevel, 1, 300);
             config.Save();
         }
 
@@ -753,7 +831,7 @@ public class MainWindow : IDisposable
         if (ImGui.CollapsingHeader("NPC Defaults"))
         {
             var defaultLevel = config.DefaultNpcLevel;
-            if (ImGui.SliderInt("Default NPC Level", ref defaultLevel, 1, 200))
+            if (ImGui.SliderInt("Default NPC Level", ref defaultLevel, 1, 300))
             {
                 config.DefaultNpcLevel = defaultLevel;
                 config.Save();

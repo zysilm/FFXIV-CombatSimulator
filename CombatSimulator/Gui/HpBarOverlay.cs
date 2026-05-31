@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation;
+using CombatSimulator.Companions;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
@@ -15,6 +16,7 @@ namespace CombatSimulator.Gui;
 public class HpBarOverlay : IDisposable
 {
     private readonly NpcSelector npcSelector;
+    private readonly CombatCompanionManager companionManager;
     private readonly CombatEngine combatEngine;
     private readonly BoneTransformService boneService;
     private readonly IGameGui gameGui;
@@ -43,6 +45,7 @@ public class HpBarOverlay : IDisposable
 
     public HpBarOverlay(
         NpcSelector npcSelector,
+        CombatCompanionManager companionManager,
         CombatEngine combatEngine,
         BoneTransformService boneService,
         IGameGui gameGui,
@@ -50,6 +53,7 @@ public class HpBarOverlay : IDisposable
         Configuration config)
     {
         this.npcSelector = npcSelector;
+        this.companionManager = companionManager;
         this.combatEngine = combatEngine;
         this.boneService = boneService;
         this.gameGui = gameGui;
@@ -134,6 +138,28 @@ public class HpBarOverlay : IDisposable
                     screenPos.X += config.PlayerHpBarXOffset;
                     DrawPlayerHpBar(drawList, screenPos);
                 }
+            }
+
+            foreach (var companion in companionManager.Companions)
+            {
+                if (!companion.IsSpawned || companion.BattleChara == null)
+                    continue;
+
+                var headPos = GetBoneWorldPos(companion.Address, "j_kao");
+                Vector3 worldPos;
+                if (headPos != null)
+                {
+                    worldPos = headPos.Value;
+                    worldPos.Y += config.PlayerHpBarYOffset;
+                }
+                else
+                {
+                    var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)companion.BattleChara;
+                    worldPos = new Vector3(gameObj->Position.X, gameObj->Position.Y + gameObj->Height + 0.5f, gameObj->Position.Z);
+                }
+
+                if (gameGui.WorldToScreen(worldPos, out var screenPos))
+                    DrawCompanionHpBar(drawList, companion, screenPos);
             }
         }
 
@@ -317,6 +343,54 @@ public class HpBarOverlay : IDisposable
                 ImGui.End();
             }
         }
+    }
+
+    private void DrawCompanionHpBar(ImDrawListPtr drawList, CombatCompanion companion, Vector2 screenPos)
+    {
+        var state = companion.State;
+        var hpPercent = state.MaxHp > 0 ? (float)state.CurrentHp / state.MaxHp : 0;
+        var isDead = !state.IsAlive;
+        var barPos = screenPos - new Vector2(BarWidth / 2, 0);
+
+        drawList.AddRectFilled(
+            barPos,
+            barPos + new Vector2(BarWidth, BarHeight),
+            ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.1f, 0.85f)));
+
+        var fillColor = isDead
+            ? new Vector4(0.3f, 0f, 0f, 1)
+            : hpPercent > 0.5f
+                ? new Vector4(0.1f, 0.6f, 0.9f, 1)
+                : hpPercent > 0.25f
+                    ? new Vector4(0.8f, 0.8f, 0.1f, 1)
+                    : new Vector4(0.8f, 0.1f, 0.1f, 1);
+
+        if (hpPercent > 0)
+        {
+            drawList.AddRectFilled(
+                barPos,
+                barPos + new Vector2(BarWidth * hpPercent, BarHeight),
+                ImGui.ColorConvertFloat4ToU32(fillColor));
+        }
+
+        drawList.AddRect(
+            barPos,
+            barPos + new Vector2(BarWidth, BarHeight),
+            ImGui.ColorConvertFloat4ToU32(new Vector4(0.6f, 0.6f, 0.6f, 0.8f)));
+
+        var nameText = $"Lv.{state.Level} {state.Name}";
+        var nameSize = ImGui.CalcTextSize(nameText);
+        drawList.AddText(
+            screenPos - new Vector2(nameSize.X / 2, nameSize.Y + 4),
+            ImGui.ColorConvertFloat4ToU32(new Vector4(0.4f, 0.7f, 1f, 1)),
+            nameText);
+
+        var hpText = isDead && config.ShowDefeatedText ? config.DefeatedText : $"{state.CurrentHp:N0} / {state.MaxHp:N0}";
+        var hpSize = ImGui.CalcTextSize(hpText);
+        drawList.AddText(
+            barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
+            0xFFFFFFFF,
+            hpText);
     }
 
     private void DrawHudPlayerHpBar()

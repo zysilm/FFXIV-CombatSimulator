@@ -8,6 +8,7 @@ public class SimulatedEntityState
     public uint EntityId { get; set; }
     public string Name { get; set; } = string.Empty;
     public bool IsPlayer { get; set; }
+    public bool IsCompanion { get; set; }
 
     // Vitals
     public int CurrentHp { get; set; }

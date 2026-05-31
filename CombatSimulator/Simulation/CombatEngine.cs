@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation;
 using CombatSimulator.Camera;
+using CombatSimulator.Companions;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
@@ -72,6 +73,9 @@ public class CombatEngine : IDisposable
     public bool IsActive => State.IsActive;
     public List<CombatLogEntry> CombatLog { get; } = new();
     public Action? OnSimulationStarted { get; set; }
+    public Func<SimulatedNpc, SimulatedEntityState?>? ResolveNpcTarget { get; set; }
+    public Func<uint, nint?>? ResolveExternalEntityAddress { get; set; }
+    public Action<int>? OnPlayerDamageDealt { get; set; }
 
     /// <summary>
     /// Fired at the end of StopSimulation and ResetState — i.e. whenever the
@@ -435,6 +439,7 @@ public class CombatEngine : IDisposable
 
         // Update stats
         State.TotalDamageDealt += dmgResult.Damage;
+        OnPlayerDamageDealt?.Invoke(dmgResult.Damage);
 
         // Build result
         result.Success = true;
@@ -562,9 +567,10 @@ public class CombatEngine : IDisposable
             }
         }
 
-        // Apply damage to target (player)
+        // Apply damage to target
         target.CurrentHp = Math.Max(0, target.CurrentHp - dmgResult.Damage);
-        State.TotalDamageTaken += dmgResult.Damage;
+        if (target.IsPlayer)
+            State.TotalDamageTaken += dmgResult.Damage;
 
         // Trigger animation (NPC -> Player). Preserve the selected action id
         // so ranged/caster skills can use their own timelines/VFX instead of
@@ -593,6 +599,7 @@ public class CombatEngine : IDisposable
         var actionName = actionId == 7
             ? "auto-attacks"
             : $"uses {(!string.IsNullOrWhiteSpace(visualAction.Name) ? visualAction.Name : "action")}";
+        // TODO: companion targets still render as "You" in this legacy log line.
         AddLogEntry(
             $"{npc.Name} {actionName} → You: {dmgResult.Damage:N0} damage",
             CombatLogType.DamageTaken);
@@ -606,6 +613,80 @@ public class CombatEngine : IDisposable
 
         return result;
     }
+
+    public SimulatedActionResult ProcessCompanionAction(
+        CombatCompanion companion,
+        SimulatedNpc targetNpc,
+        uint actionId,
+        int potency = 0,
+        NpcAttackStyle attackStyle = NpcAttackStyle.Auto)
+    {
+        var result = new SimulatedActionResult
+        {
+            ActionId = actionId,
+            SourceId = companion.SimulatedEntityId,
+            TargetId = targetNpc.SimulatedEntityId,
+        };
+
+        if (!companion.State.IsAlive || !targetNpc.State.IsAlive)
+        {
+            result.FailReason = "Invalid target or source dead.";
+            return result;
+        }
+
+        var resolvedActionData = actionDataProvider.GetActionData(actionId);
+        DamageResult dmgResult;
+        if (potency > 0)
+            dmgResult = damageCalculator.CalculateNpcAutoAttack(companion.State, targetNpc.State, potency);
+        else if (resolvedActionData != null)
+            dmgResult = damageCalculator.Calculate(companion.State, targetNpc.State, resolvedActionData, false, EnableCriticalHits, EnableDirectHits, DamageMultiplier);
+        else
+            dmgResult = damageCalculator.CalculateNpcAutoAttack(companion.State, targetNpc.State);
+
+        targetNpc.State.CurrentHp = Math.Max(0, targetNpc.State.CurrentHp - dmgResult.Damage);
+        State.TotalDamageDealt += dmgResult.Damage;
+
+        var visualAction = resolvedActionData != null ? CloneActionData(resolvedActionData) : new ActionData
+        {
+            ActionId = actionId == 0 ? 7 : actionId,
+            Name = actionId == 7 ? "Auto-attack" : $"Action #{actionId}",
+            Potency = potency > 0 ? potency : 110,
+            DamageType = SimDamageType.Physical,
+            Range = companion.Behavior.AutoAttackRange,
+            AnimationLock = 0.6f,
+        };
+        if (potency > 0)
+            visualAction.Potency = potency;
+
+        ApplyNpcAttackStyle(visualAction, attackStyle == NpcAttackStyle.Auto ? companion.Behavior.AutoAttackStyle : attackStyle);
+        TriggerActionEffect(companion.State, targetNpc.State, visualAction, dmgResult);
+
+        result.Success = true;
+        result.Damage = dmgResult.Damage;
+        result.IsCritical = dmgResult.IsCritical;
+        result.IsDirectHit = dmgResult.IsDirectHit;
+
+        var actionName = actionId == 7
+            ? "auto-attacks"
+            : $"uses {(!string.IsNullOrWhiteSpace(visualAction.Name) ? visualAction.Name : "action")}";
+        AddLogEntry(
+            $"{companion.Name} {actionName} -> {targetNpc.Name}: {dmgResult.Damage:N0} damage",
+            CombatLogType.DamageDealt);
+
+        if (!targetNpc.State.IsAlive)
+        {
+            result.TargetKilled = true;
+            OnEntityDeath(targetNpc.State);
+        }
+
+        return result;
+    }
+
+    public SimulatedEntityState GetNpcTarget(SimulatedNpc npc)
+        => ResolveNpcTarget?.Invoke(npc) ?? State.PlayerState;
+
+    public Vector3 GetSimulatedEntityPosition(SimulatedEntityState entity)
+        => GetEntityPosition(entity);
 
     private static void ApplyNpcAttackStyle(ActionData actionData, NpcAttackStyle attackStyle)
     {
@@ -782,6 +863,15 @@ public class CombatEngine : IDisposable
             if (player != null)
                 return player.EntityId;
         }
+        else if (entity.IsCompanion)
+        {
+            var addr = ResolveExternalEntityAddress?.Invoke(entity.EntityId);
+            if (addr.HasValue && addr.Value != nint.Zero)
+            {
+                var obj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)addr.Value;
+                return obj->GetGameObjectId().ObjectId;
+            }
+        }
         else
         {
             foreach (var npc in npcSelector.SelectedNpcs)
@@ -805,6 +895,15 @@ public class CombatEngine : IDisposable
             if (player != null)
                 return player.Position;
         }
+        else if (entity.IsCompanion)
+        {
+            var addr = ResolveExternalEntityAddress?.Invoke(entity.EntityId);
+            if (addr.HasValue && addr.Value != nint.Zero)
+            {
+                var obj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)addr.Value;
+                return obj->Position;
+            }
+        }
         else
         {
             foreach (var npc in npcSelector.SelectedNpcs)
@@ -827,6 +926,15 @@ public class CombatEngine : IDisposable
             var player = Core.Services.ObjectTable.LocalPlayer;
             if (player != null)
                 return player.Rotation;
+        }
+        else if (entity.IsCompanion)
+        {
+            var addr = ResolveExternalEntityAddress?.Invoke(entity.EntityId);
+            if (addr.HasValue && addr.Value != nint.Zero)
+            {
+                var obj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)addr.Value;
+                return obj->Rotation;
+            }
         }
         else
         {
@@ -933,6 +1041,9 @@ public class CombatEngine : IDisposable
     private void OnEntityDeath(SimulatedEntityState entity)
     {
         AddLogEntry($"{entity.Name} is defeated!", CombatLogType.Death);
+
+        if (entity.IsCompanion)
+            return;
 
         // Queue death animation with a short delay so the killing blow plays first
         pendingDeaths.Add(new PendingDeath
@@ -1152,6 +1263,7 @@ public class CombatEngine : IDisposable
                     var dmg = damageCalculator.CalculateNpcAutoAttack(ps, npc.State, 110);
                     npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
                     State.TotalDamageDealt += dmg.Damage;
+                    OnPlayerDamageDealt?.Invoke(dmg.Damage);
 
                     // Trigger auto-attack animation + VFX
                     var autoAttackData = new ActionData
@@ -1185,6 +1297,11 @@ public class CombatEngine : IDisposable
     public void RegisterNpcEntity(SimulatedNpc npc)
     {
         State.Entities[npc.SimulatedEntityId] = npc.State;
+    }
+
+    public void RegisterCompanionEntity(CombatCompanion companion)
+    {
+        State.Entities[companion.SimulatedEntityId] = companion.State;
     }
 
     public void UnregisterNpcEntity(uint entityId)

@@ -70,7 +70,7 @@ public class DamageCalculator
         if (potency <= 0)
             return result;
 
-        var level = Math.Clamp(source.Level > 0 ? source.Level : 90, 1, 200);
+        var level = Math.Clamp(source.Level > 0 ? source.Level : 90, 1, 300);
         var mods = statProvider.GetLevelModifiers(level);
 
         var attackStat = ResolveAttackStat(source, damageType, mods);
@@ -120,7 +120,7 @@ public class DamageCalculator
         if (rawDamage <= 0)
             return 0;
 
-        var level = Math.Clamp(target.Level > 0 ? target.Level : 90, 1, 200);
+        var level = Math.Clamp(target.Level > 0 ? target.Level : 90, 1, 300);
         var mods = statProvider.GetLevelModifiers(level);
         var defense = damageType == SimDamageType.Magical
             ? ResolveStat(target.MagicDefense, mods.Sub)

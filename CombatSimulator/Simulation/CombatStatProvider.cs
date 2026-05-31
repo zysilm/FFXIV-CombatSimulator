@@ -34,7 +34,7 @@ public class CombatStatProvider
 
     public LevelModifiers GetLevelModifiers(int level)
     {
-        level = Math.Clamp(level, 1, 200);
+        level = Math.Clamp(level, 1, 300);
         if (levelCache.TryGetValue(level, out var cached))
             return cached;
 

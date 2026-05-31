@@ -5,6 +5,7 @@ using System.Numerics;
 using CombatSimulator.Ai;
 using CombatSimulator.Animation;
 using CombatSimulator.Camera;
+using CombatSimulator.Companions;
 using CombatSimulator.Core;
 using CombatSimulator.Gui;
 using CombatSimulator.Integration;
@@ -42,6 +43,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly RagdollController ragdollController;
     private readonly WeaponDropController weaponDropController;
     private readonly CombatEngine combatEngine;
+    private readonly CombatCompanionManager companionManager;
     private readonly NpcAiController npcAiController;
     private readonly MovementBlockHook movementBlockHook;
     private readonly UseActionHook useActionHook;
@@ -115,9 +117,25 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             glamourerIpc, movementBlockHook, ragdollController,
             config, npcSelector, clientState, log, deathCamController,
             victorySequenceController);
+        companionManager = new CombatCompanionManager(
+            objectTable, clientState, config, combatEngine, animationController,
+            movementBlockHook, vnavmeshIpc, log);
+        combatEngine.ResolveNpcTarget = companionManager.SelectEnemyTarget;
+        combatEngine.ResolveExternalEntityAddress = companionManager.ResolveAddress;
+        combatEngine.OnPlayerDamageDealt = companionManager.RegisterPlayerDamage;
         npcAiController = new NpcAiController(
             combatEngine, animationController, movementBlockHook, vnavmeshIpc,
             clientState, config, log, victorySequenceController.ControlsNpc);
+
+        companionManager.OnCompanionSpawnComplete = companion =>
+        {
+            combatEngine.RegisterCompanionEntity(companion);
+            log.Info($"Spawned companion '{companion.Name}' registered as friendly combatant.");
+        };
+        companionManager.OnSpawnError = msg =>
+        {
+            chatGui.PrintError($"[CombatSim] Party error: {msg}");
+        };
 
         // Wire NpcSpawner callbacks
         npcSpawner.OnNpcSpawnComplete = (npc) =>
@@ -157,6 +175,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         {
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
+            companionManager.DespawnAll();
 
             if (npcSpawner.SpawnedNpcs.Count == 0) return;
 
@@ -196,8 +215,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             activeCameraController.SetActive(true);
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, npcSpawner, combatEngine, glamourerIpc, vnavmeshIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
-        hpBarOverlay = new HpBarOverlay(npcSelector, combatEngine, boneTransformService, gameGui, clientState, config);
+        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, glamourerIpc, vnavmeshIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
+        hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, mainWindow, config, gameGui, clientState);
 
@@ -231,6 +250,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         RestoreOcclusionHiddenNpcs();
         DeactivateAllNpcRagdolls();
         npcSpawner.SpawnModeActive = false;
+        companionManager.DespawnAll();
+        companionManager.Dispose();
         npcSpawner.DespawnAll();
         npcSpawner.Dispose();
         combatEngine.StopSimulation();
@@ -357,6 +378,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             // Process queued spawns and pending draw enables (works outside combat)
             npcSpawner.Tick();
+            companionManager.Tick(1.0f / 60.0f, npcSelector.SelectedNpcs);
 
             var deltaTime = (float)(1.0 / 60.0);
 

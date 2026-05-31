@@ -206,10 +206,14 @@ public unsafe class NpcAiController : IDisposable
             if (npc.BattleChara != null && npc.AiState != NpcAiState.Dead)
                 animationController.SetBattleStance(npc);
 
+            var targetState = combatEngine.GetNpcTarget(npc);
+            var targetPos = combatEngine.GetSimulatedEntityPosition(targetState);
+            var targetEntityId = targetState.EntityId;
+
             // Set NPC's target to the player (client-side only).
             // NPCs target the player during combat AND when player is dead (standing over corpse).
             // Only clear when NPC itself is dead or resetting.
-            if (config.EnableNpcTargetPlayer && npc.BattleChara != null)
+            if (config.EnableNpcTargetPlayer && npc.BattleChara != null && targetState.IsPlayer)
             {
                 var character = (Character*)npc.BattleChara;
                 bool shouldTarget = npc.AiState != NpcAiState.Dead
@@ -220,7 +224,7 @@ public unsafe class NpcAiController : IDisposable
                     character->TargetId = default;
             }
 
-            TickNpc(npc, deltaTime, playerPos, playerEntityId);
+            TickNpc(npc, deltaTime, targetPos, targetEntityId);
         }
 
         // Target approach: move active targets near the player
@@ -413,7 +417,8 @@ public unsafe class NpcAiController : IDisposable
         }
 
         // Check if player is alive — NPCs stop attacking when player is dead
-        if (!combatEngine.State.PlayerState.IsAlive)
+        var simulatedTarget = combatEngine.State.GetEntity(playerEntityId);
+        if (simulatedTarget == null || !simulatedTarget.IsAlive)
         {
             npc.AiState = NpcAiState.Idle;
             return;

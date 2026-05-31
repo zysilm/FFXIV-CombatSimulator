@@ -1,0 +1,1088 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+using System.Numerics;
+using System.Text;
+using System.Threading.Tasks;
+using CombatSimulator.Animation;
+using CombatSimulator.Integration;
+using CombatSimulator.Npcs;
+using CombatSimulator.Safety;
+using CombatSimulator.Simulation;
+using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Game.Object;
+using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
+
+namespace CombatSimulator.Companions;
+
+public unsafe class CombatCompanionManager : IDisposable
+{
+    private readonly IObjectTable objectTable;
+    private readonly IClientState clientState;
+    private readonly Configuration config;
+    private readonly CombatEngine combatEngine;
+    private readonly AnimationController animationController;
+    private readonly MovementBlockHook movementBlockHook;
+    private readonly VNavmeshIpc vnavmeshIpc;
+    private readonly IPluginLog log;
+
+    private readonly List<CombatCompanion> companions = new();
+    private readonly List<PendingSpawn> pendingSpawns = new();
+    private readonly ConcurrentQueue<IPlayerCharacter> spawnQueue = new();
+    private readonly HashSet<int> allocatedIndices = new();
+    private readonly Dictionary<nint, PathState> pathStates = new();
+    private readonly Dictionary<uint, uint> enemyTargetByEnemyId = new();
+    private uint nextEntityId = 0xF1000001;
+    private float playerRecentDamage;
+    private float playerRecentDps;
+
+    private const int MaxPendingFrames = 120;
+    private const float TargetRange = 3.0f;
+    private const float RepathInterval = 1.0f;
+    private const float RepathDistance = 1.5f;
+    private const float VNavmeshFloorResnapInterval = 0.25f;
+    private const float TerrainGridStep = 0.5f;
+    private const int TerrainGridMaxSize = 33;
+    private const float RecentDpsWindowSeconds = 8.0f;
+    private const float RetargetDpsLead = 1.20f;
+    private const float FollowDistance = 3.0f;
+    private const float FollowStopDistance = 0.6f;
+    private const ushort NormalRunTimelineId = 22;
+
+    public IReadOnlyList<CombatCompanion> Companions => companions;
+    public int PendingCount => pendingSpawns.Count + spawnQueue.Count;
+
+    public Action<CombatCompanion>? OnCompanionSpawnComplete { get; set; }
+    public Action<string>? OnSpawnError { get; set; }
+
+    public CombatCompanionManager(
+        IObjectTable objectTable,
+        IClientState clientState,
+        Configuration config,
+        CombatEngine combatEngine,
+        AnimationController animationController,
+        MovementBlockHook movementBlockHook,
+        VNavmeshIpc vnavmeshIpc,
+        IPluginLog log)
+    {
+        this.objectTable = objectTable;
+        this.clientState = clientState;
+        this.config = config;
+        this.combatEngine = combatEngine;
+        this.animationController = animationController;
+        this.movementBlockHook = movementBlockHook;
+        this.vnavmeshIpc = vnavmeshIpc;
+        this.log = log;
+    }
+
+    public int SpawnFromVisiblePlayers()
+    {
+        if (!config.EnableCombatCompanions)
+            return 0;
+
+        var max = Math.Clamp(config.CombatCompanionMaxCount, 0, 10);
+        var availableSlots = Math.Max(0, max - companions.Count - PendingCount);
+        if (availableSlots == 0)
+            return 0;
+
+        var queued = 0;
+        var seenSources = new HashSet<uint>(companions.Select(c => c.SourceEntityId));
+        foreach (var obj in objectTable)
+        {
+            if (queued >= availableSlots)
+                break;
+            if (obj is not IPlayerCharacter player)
+                continue;
+            if (objectTable.LocalPlayer != null && player.EntityId == objectTable.LocalPlayer.EntityId)
+                continue;
+            if (player.Address == nint.Zero)
+                continue;
+            if (!seenSources.Add(player.EntityId))
+                continue;
+
+            spawnQueue.Enqueue(player);
+            queued++;
+        }
+
+        return queued;
+    }
+
+    public void Tick(float deltaTime, IReadOnlyList<SimulatedNpc> enemies)
+    {
+        while (spawnQueue.TryDequeue(out var source))
+            ProcessSpawnRequest(source);
+
+        TickPendingSpawns();
+
+        if (!config.EnableCombatCompanions)
+            return;
+
+        vnavmeshIpc.RefreshStatus();
+        var terrainCache = BuildCompanionTerrainCache(enemies);
+
+        var index = 0;
+        foreach (var companion in companions.ToList())
+        {
+            TickRecentDps(companion, deltaTime);
+            TickCompanion(companion, deltaTime, enemies, index++, companions.Count, terrainCache);
+        }
+
+        TickPlayerRecentDps(deltaTime);
+    }
+
+    public void RegisterDamage(uint companionEntityId, int damage)
+    {
+        var companion = companions.FirstOrDefault(c => c.SimulatedEntityId == companionEntityId);
+        if (companion == null)
+            return;
+
+        companion.RecentDamage += Math.Max(0, damage);
+        companion.RecentDps = Math.Max(companion.RecentDps, companion.RecentDamage / RecentDpsWindowSeconds);
+    }
+
+    public void RegisterPlayerDamage(int damage)
+    {
+        playerRecentDamage += Math.Max(0, damage);
+        playerRecentDps = Math.Max(playerRecentDps, playerRecentDamage / RecentDpsWindowSeconds);
+    }
+
+    public SimulatedEntityState? SelectEnemyTarget(SimulatedNpc enemy)
+    {
+        if (!config.EnableCombatCompanions)
+            return combatEngine.State.PlayerState;
+
+        var candidates = new List<(uint EntityId, SimulatedEntityState State, float Dps)>
+        {
+            (combatEngine.State.PlayerState.EntityId, combatEngine.State.PlayerState, playerRecentDps),
+        };
+
+        foreach (var companion in companions)
+        {
+            if (companion.IsSpawned && companion.State.IsAlive)
+                candidates.Add((companion.SimulatedEntityId, companion.State, companion.RecentDps));
+        }
+
+        candidates.RemoveAll(c => !c.State.IsAlive);
+        if (candidates.Count == 0)
+            return combatEngine.State.PlayerState;
+
+        var best = candidates.OrderByDescending(c => c.Dps).First();
+        if (!enemyTargetByEnemyId.TryGetValue(enemy.SimulatedEntityId, out var currentId))
+        {
+            enemyTargetByEnemyId[enemy.SimulatedEntityId] = best.EntityId;
+            return best.State;
+        }
+
+        var current = candidates.FirstOrDefault(c => c.EntityId == currentId);
+        if (current.State == null)
+        {
+            enemyTargetByEnemyId[enemy.SimulatedEntityId] = best.EntityId;
+            return best.State;
+        }
+
+        if (best.EntityId != current.EntityId && best.Dps > current.Dps * RetargetDpsLead)
+        {
+            enemyTargetByEnemyId[enemy.SimulatedEntityId] = best.EntityId;
+            return best.State;
+        }
+
+        return current.State;
+    }
+
+    public CombatCompanion? GetCompanion(uint entityId)
+        => companions.FirstOrDefault(c => c.SimulatedEntityId == entityId);
+
+    public nint? ResolveAddress(uint entityId)
+        => GetCompanion(entityId)?.Address;
+
+    public void DespawnAll()
+    {
+        while (spawnQueue.TryDequeue(out _)) { }
+
+        var clientObjMgr = ClientObjectManager.Instance();
+        foreach (var pending in pendingSpawns)
+        {
+            if (clientObjMgr != null && pending.Companion.ObjectIndex >= 0)
+                clientObjMgr->DeleteObjectByIndex((ushort)pending.Companion.ObjectIndex, 0);
+        }
+        pendingSpawns.Clear();
+
+        foreach (var companion in companions.ToList())
+            Despawn(companion);
+
+        allocatedIndices.Clear();
+        pathStates.Clear();
+        enemyTargetByEnemyId.Clear();
+        playerRecentDamage = 0;
+        playerRecentDps = 0;
+    }
+
+    private void ProcessSpawnRequest(IPlayerCharacter sourcePlayer)
+    {
+        try
+        {
+            if (sourcePlayer.Address == nint.Zero)
+                return;
+
+            var source = (Character*)sourcePlayer.Address;
+            var sourceRace = ((byte*)&source->DrawData.CustomizeData)[0];
+            if (sourceRace == 0)
+            {
+                OnSpawnError?.Invoke($"Cannot clone {sourcePlayer.Name}: source is not a humanoid player model.");
+                return;
+            }
+
+            var clientObjMgr = ClientObjectManager.Instance();
+            if (clientObjMgr == null)
+            {
+                OnSpawnError?.Invoke("ClientObjectManager is null. Are you logged in?");
+                return;
+            }
+
+            var hint = FindFreeObjectHint();
+            var createResult = clientObjMgr->CreateBattleCharacter(hint);
+            if (createResult == 0xFFFFFFFF)
+            {
+                OnSpawnError?.Invoke("CreateBattleCharacter failed - no available slot.");
+                return;
+            }
+
+            var index = (int)createResult;
+            allocatedIndices.Add(index);
+            var obj = clientObjMgr->GetObjectByIndex((ushort)index);
+            if (obj == null)
+            {
+                allocatedIndices.Remove(index);
+                OnSpawnError?.Invoke($"Object null at index {index} after creation.");
+                return;
+            }
+
+            var chara = (BattleChara*)obj;
+            var character = (Character*)chara;
+
+            obj->ObjectKind = ObjectKind.Pc;
+            obj->SubKind = 0;
+            obj->TargetableStatus = 0;
+            obj->RenderFlags = VisibilityFlags.None;
+
+            var spawnPos = CalculateSpawnPosition(companions.Count + pendingSpawns.Count);
+            spawnPos = SnapToTerrain(spawnPos) ?? spawnPos;
+            obj->Position = spawnPos;
+            obj->Rotation = CalculateSpawnRotation(spawnPos);
+
+            var name = sourcePlayer.Name.TextValue;
+            var nameBytes = Encoding.UTF8.GetBytes(name);
+            for (int j = 0; j < 64; j++)
+                obj->Name[j] = j < nameBytes.Length && j < 63 ? nameBytes[j] : (byte)0;
+
+            const CharacterSetupContainer.CopyFlags flags =
+                CharacterSetupContainer.CopyFlags.ClassJob |
+                CharacterSetupContainer.CopyFlags.WeaponHiding;
+            character->CharacterSetup.CopyFromCharacter(source, flags);
+            character->CharacterSetup.CopyFromCharacter(character, CharacterSetupContainer.CopyFlags.None);
+            character->SetMode(CharacterModes.Normal, 0);
+
+            IGameObject? gameObjectRef = null;
+            try { gameObjectRef = objectTable.CreateObjectReference((nint)obj); }
+            catch (Exception ex) { log.Warning(ex, "CreateObjectReference failed for companion clone."); }
+
+            var entityId = nextEntityId++;
+            obj->EntityId = entityId;
+
+            var level = Math.Clamp(config.CombatCompanionLevelOverride, 1, 300);
+            var maxHp = CalculateCompanionHp(level);
+            var classJobId = sourcePlayer.ClassJob.RowId;
+            var weaponStyle = NpcWeaponClassifier.DetectFromCharacter(character, log, name);
+            var behavior = CreateCompanionBehavior(weaponStyle);
+
+            var companion = new CombatCompanion
+            {
+                SimulatedEntityId = entityId,
+                ObjectIndex = index,
+                SourceEntityId = sourcePlayer.EntityId,
+                Name = name,
+                BattleChara = chara,
+                GameObjectRef = gameObjectRef,
+                SpawnPosition = spawnPos,
+                Behavior = behavior,
+                IsRanged = weaponStyle == NpcAttackStyle.Ranged,
+                IsSpawned = false,
+                AutoAttackTimer = Random.Shared.NextSingle() * behavior.AutoAttackDelay,
+                State = new SimulatedEntityState
+                {
+                    EntityId = entityId,
+                    Name = name,
+                    IsPlayer = false,
+                    IsCompanion = true,
+                    Level = level,
+                    MaxHp = maxHp,
+                    CurrentHp = maxHp,
+                    MaxMp = 10000,
+                    CurrentMp = 10000,
+                    ClassJobId = classJobId,
+                    IsTank = IsTankJob(classJobId),
+                    MainStat = 100 + level * 10,
+                    AttackPower = 100 + level * 10,
+                    AttackMagicPotency = 100 + level * 10,
+                    Determination = 100 + level * 8,
+                    CriticalHit = 100 + level * 8,
+                    DirectHit = 100 + level * 8,
+                    Defense = 100 + level * 8,
+                    MagicDefense = 100 + level * 8,
+                    Tenacity = 100 + level * 4,
+                    SkillSpeed = 100 + level * 6,
+                    SpellSpeed = 100 + level * 6,
+                    WeaponDamage = Math.Max(1, 20 + level),
+                    MagicWeaponDamage = Math.Max(1, 20 + level),
+                    WeaponDelayMs = 3000,
+                    DamageTraitPct = 100,
+                },
+            };
+
+            pendingSpawns.Add(new PendingSpawn { Companion = companion });
+            log.Info($"Companion clone '{name}' created at index {index}, entityId={entityId:X}. Pending draw...");
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Exception in companion spawn.");
+            OnSpawnError?.Invoke($"Companion spawn failed: {ex.Message}");
+        }
+    }
+
+    private void TickPendingSpawns()
+    {
+        for (int i = pendingSpawns.Count - 1; i >= 0; i--)
+        {
+            var pending = pendingSpawns[i];
+            var companion = pending.Companion;
+            pending.FramesWaited++;
+
+            try
+            {
+                if (companion.BattleChara == null)
+                {
+                    pendingSpawns.RemoveAt(i);
+                    continue;
+                }
+
+                if (companion.BattleChara->IsReadyToDraw() || pending.FramesWaited >= MaxPendingFrames)
+                {
+                    companion.BattleChara->EnableDraw();
+                    var obj = (GameObject*)companion.BattleChara;
+                    obj->TargetableStatus = ObjectTargetableFlags.IsTargetable;
+                    companion.IsSpawned = true;
+                    companions.Add(companion);
+                    pendingSpawns.RemoveAt(i);
+                    OnCompanionSpawnComplete?.Invoke(companion);
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Error(ex, $"Error while enabling companion '{companion.Name}'.");
+                pendingSpawns.RemoveAt(i);
+            }
+        }
+    }
+
+    private void TickCompanion(
+        CombatCompanion companion,
+        float deltaTime,
+        IReadOnlyList<SimulatedNpc> enemies,
+        int companionIndex,
+        int companionCount,
+        CompanionTerrainCache? terrainCache)
+    {
+        if (!companion.IsSpawned || companion.BattleChara == null)
+            return;
+
+        if (!companion.State.IsAlive)
+        {
+            StopMove(companion);
+            if (!companion.DeathAnimationPlayed)
+            {
+                animationController.PlayDeathAnimation(ToSimulatedNpcView(companion));
+                companion.DeathAnimationPlayed = true;
+            }
+            return;
+        }
+
+        var target = enemies.FirstOrDefault(e => e.IsSpawned && e.State.IsAlive);
+        if (target == null || target.BattleChara == null)
+        {
+            companion.CurrentTargetId = 0;
+            FollowPlayer(companion, deltaTime, companionIndex, companionCount, terrainCache);
+            return;
+        }
+
+        companion.CurrentTargetId = target.SimulatedEntityId;
+        animationController.SetBattleStance(ToSimulatedNpcView(companion));
+
+        var targetObj = (GameObject*)target.BattleChara;
+        var sourceObj = (GameObject*)companion.BattleChara;
+        var targetPos = (Vector3)targetObj->Position;
+        var sourcePos = (Vector3)sourceObj->Position;
+        var dist = Vector3.Distance(sourcePos, targetPos);
+        var effectiveRange = companion.Behavior.AutoAttackRange + 0.75f;
+
+        if (dist > effectiveRange)
+        {
+            MoveToward(companion, targetPos, deltaTime, terrainCache);
+            return;
+        }
+
+        StopMove(companion);
+        RotateToward(companion, targetPos, deltaTime);
+
+        if (companion.State.AnimationLock > 0)
+        {
+            companion.State.AnimationLock = Math.Max(0, companion.State.AnimationLock - deltaTime);
+            return;
+        }
+
+        foreach (var skill in companion.Behavior.Skills.OrderByDescending(s => s.Priority))
+        {
+            if (skill.CooldownRemaining > 0)
+            {
+                skill.CooldownRemaining = Math.Max(0, skill.CooldownRemaining - deltaTime);
+                continue;
+            }
+            if (dist > skill.Range)
+                continue;
+
+            var result = combatEngine.ProcessCompanionAction(companion, target, skill.ActionId, skill.Potency, skill.AttackStyle);
+            if (result.Success)
+                RegisterDamage(companion.SimulatedEntityId, result.Damage);
+
+            skill.CooldownRemaining = skill.Cooldown;
+            companion.State.AnimationLock = 0.6f;
+            return;
+        }
+
+        companion.AutoAttackTimer -= deltaTime;
+        if (companion.AutoAttackTimer <= 0)
+        {
+            companion.AutoAttackTimer = companion.Behavior.AutoAttackDelay;
+            var result = combatEngine.ProcessCompanionAction(
+                companion, target,
+                companion.Behavior.AutoAttackActionId,
+                companion.Behavior.AutoAttackPotency,
+                companion.Behavior.AutoAttackStyle);
+            if (result.Success)
+                RegisterDamage(companion.SimulatedEntityId, result.Damage);
+            companion.State.AnimationLock = 0.6f;
+        }
+    }
+
+    private void MoveToward(
+        CombatCompanion companion,
+        Vector3 targetPos,
+        float deltaTime,
+        CompanionTerrainCache? terrainCache)
+    {
+        var obj = (GameObject*)companion.BattleChara;
+        var current = (Vector3)obj->Position;
+        var moveTarget = GetPathMoveTarget(companion, current, targetPos, deltaTime);
+        var dir = moveTarget - current;
+        dir.Y = 0;
+        if (dir.LengthSquared() < 0.01f)
+        {
+            StopMove(companion);
+            return;
+        }
+
+        dir = Vector3.Normalize(dir);
+        var speed = companion.Behavior.MoveSpeed > 0 ? companion.Behavior.MoveSpeed : 6f;
+        var remainingDist = Vector3.Distance(new Vector3(current.X, 0, current.Z), new Vector3(moveTarget.X, 0, moveTarget.Z));
+        var moveDist = speed * deltaTime;
+        var next = remainingDist <= moveDist
+            ? moveTarget
+            : current + dir * moveDist;
+
+        RotateToward(companion, moveTarget, deltaTime);
+        if (terrainCache != null && pathStates.TryGetValue(companion.Address, out var terrainState))
+        {
+            next = CorrectMovingRootHeight(next, terrainCache, terrainState, deltaTime);
+        }
+        else if (vnavmeshIpc.CanPathfind)
+        {
+            var floor = vnavmeshIpc.PointOnFloor(next, false, 3f);
+            if (floor.HasValue)
+                next.Y = floor.Value.Y;
+        }
+        else
+        {
+            next.Y = targetPos.Y;
+        }
+
+        movementBlockHook.AddApproachNpc(companion.Address);
+        StartMoveAnim(companion);
+        movementBlockHook.SetApproachPosition(obj, next.X, next.Y, next.Z);
+    }
+
+    private void FollowPlayer(
+        CombatCompanion companion,
+        float deltaTime,
+        int companionIndex,
+        int companionCount,
+        CompanionTerrainCache? terrainCache)
+    {
+        var player = objectTable.LocalPlayer;
+        if (player == null || companion.BattleChara == null)
+        {
+            StopMove(companion);
+            return;
+        }
+
+        animationController.ClearBattleStance(ToSimulatedNpcView(companion));
+
+        var obj = (GameObject*)companion.BattleChara;
+        var current = (Vector3)obj->Position;
+        var target = CalculateFollowPosition(player.Position, player.Rotation, companionIndex, companionCount);
+        var distance = Vector3.Distance(current, target);
+        if (distance <= FollowStopDistance)
+        {
+            if (terrainCache != null && pathStates.TryGetValue(companion.Address, out var stableState))
+                CorrectStableRootHeight(obj, current, terrainCache, stableState, deltaTime);
+            StopMove(companion);
+            RotateToward(companion, player.Position, deltaTime);
+            return;
+        }
+
+        MoveToward(companion, target, deltaTime, terrainCache);
+    }
+
+    private static Vector3 CalculateFollowPosition(Vector3 playerPos, float playerRot, int index, int count)
+    {
+        var clampedCount = Math.Max(1, count);
+        var row = index / 4;
+        var slot = index % 4;
+        var spacing = 1.6f;
+        var lateral = (slot - Math.Min(3, clampedCount - 1) / 2.0f) * spacing;
+        var backward = FollowDistance + row * 1.5f;
+
+        var back = new Vector3(MathF.Sin(playerRot + MathF.PI), 0, MathF.Cos(playerRot + MathF.PI));
+        var right = new Vector3(MathF.Sin(playerRot - MathF.PI / 2f), 0, MathF.Cos(playerRot - MathF.PI / 2f));
+        return playerPos + back * backward + right * lateral;
+    }
+
+    private Vector3 GetPathMoveTarget(CombatCompanion companion, Vector3 current, Vector3 target, float deltaTime)
+    {
+        if (!vnavmeshIpc.CanPathfind)
+            return target;
+
+        if (!pathStates.TryGetValue(companion.Address, out var state))
+        {
+            state = new PathState();
+            pathStates[companion.Address] = state;
+        }
+
+        state.RepathTimer = Math.Max(0, state.RepathTimer - deltaTime);
+        if (state.PendingPath != null && state.PendingPath.IsCompleted)
+        {
+            try
+            {
+                state.Waypoints = state.PendingPath.GetAwaiter().GetResult();
+                state.WaypointIndex = 0;
+                state.RequestedTarget = state.PendingTarget;
+                if (!state.HasFloorYOffset)
+                {
+                    var floor = SnapToNavmesh(current);
+                    state.FloorYOffset = floor.HasValue ? current.Y - floor.Value.Y : 0f;
+                    state.HasFloorYOffset = true;
+                    state.HasLastFloorY = false;
+                    state.LastCorrectedWaypointIndex = -1;
+                    state.FloorResnapTimer = 0;
+                }
+                state.HasLastMoveRootY = false;
+            }
+            catch (Exception ex)
+            {
+                log.Verbose($"Companion path failed: {ex.Message}");
+                state.Waypoints.Clear();
+            }
+            state.PendingPath = null;
+        }
+
+        var shouldRepath = state.PendingPath == null &&
+            (state.Waypoints.Count == 0 ||
+             state.RepathTimer <= 0 ||
+             Vector3.Distance(state.RequestedTarget, target) > RepathDistance);
+
+        if (shouldRepath)
+        {
+            state.RepathTimer = RepathInterval;
+            var from = SnapToNavmesh(current) ?? current;
+            var to = SnapToNavmesh(target) ?? target;
+            state.PendingTarget = to;
+            state.PendingPath = vnavmeshIpc.Pathfind(from, to, 0.75f);
+        }
+
+        while (state.WaypointIndex < state.Waypoints.Count &&
+               Vector3.Distance(current, ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex])) < 0.5f)
+            state.WaypointIndex++;
+
+        var moveTarget = state.WaypointIndex < state.Waypoints.Count
+            ? ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex])
+            : target;
+        return CorrectMoveTargetFloor(state, moveTarget, deltaTime);
+    }
+
+    private static Vector3 ApplyFloorYOffset(PathState state, Vector3 point)
+        => state.HasFloorYOffset ? point with { Y = point.Y + state.FloorYOffset } : point;
+
+    private Vector3 CorrectMoveTargetFloor(PathState state, Vector3 moveTarget, float deltaTime)
+    {
+        if (!state.HasFloorYOffset)
+            return moveTarget;
+
+        state.FloorResnapTimer = Math.Max(0, state.FloorResnapTimer - deltaTime);
+        var waypointChanged = state.LastCorrectedWaypointIndex != state.WaypointIndex;
+        if (waypointChanged || !state.HasLastFloorY || state.FloorResnapTimer <= 0)
+        {
+            var floor = SnapToNavmesh(moveTarget);
+            if (floor.HasValue)
+            {
+                state.LastFloorY = floor.Value.Y;
+                state.HasLastFloorY = true;
+                state.LastCorrectedWaypointIndex = state.WaypointIndex;
+                state.FloorResnapTimer = VNavmeshFloorResnapInterval;
+            }
+        }
+
+        return state.HasLastFloorY
+            ? moveTarget with { Y = state.LastFloorY + state.FloorYOffset }
+            : moveTarget;
+    }
+
+    private Vector3? SnapToNavmesh(Vector3 point)
+    {
+        try
+        {
+            return vnavmeshIpc.NearestPointReachable(point)
+                   ?? vnavmeshIpc.PointOnFloor(point + new Vector3(0, 10f, 0));
+        }
+        catch (Exception ex)
+        {
+            log.Verbose($"Companion vnavmesh snap failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    private Vector3? SnapToTerrain(Vector3 point)
+    {
+        try
+        {
+            if (BGCollisionModule.RaycastMaterialFilter(
+                    point + new Vector3(0, 10f, 0),
+                    new Vector3(0, -1, 0),
+                    out var hit,
+                    80f))
+            {
+                return point with { Y = hit.Point.Y };
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Verbose($"Companion terrain snap failed: {ex.Message}");
+        }
+
+        return SnapToNavmesh(point);
+    }
+
+    private Vector3 CorrectMovingRootHeight(
+        Vector3 rootPosition,
+        CompanionTerrainCache terrainCache,
+        PathState state,
+        float deltaTime)
+    {
+        if (!terrainCache.TrySample(rootPosition.X, rootPosition.Z, out var terrainY))
+            return rootPosition;
+
+        if (!state.HasStableRootTerrainClearance)
+        {
+            state.StableRootTerrainClearance = 0f;
+            state.HasStableRootTerrainClearance = true;
+        }
+
+        var desiredY = terrainY + state.StableRootTerrainClearance;
+        var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
+        var maxStep = MathF.Max(0.03f, 6.0f * deltaTime);
+        var deltaY = Math.Clamp(desiredY - fromY, -maxStep, maxStep);
+        var y = fromY + deltaY;
+
+        state.LastMoveRootY = y;
+        state.HasLastMoveRootY = true;
+        return rootPosition with { Y = y };
+    }
+
+    private void CorrectStableRootHeight(
+        GameObject* gameObj,
+        Vector3 rootPosition,
+        CompanionTerrainCache terrainCache,
+        PathState state,
+        float deltaTime)
+    {
+        var corrected = CorrectMovingRootHeight(rootPosition, terrainCache, state, deltaTime);
+        if (MathF.Abs(corrected.Y - rootPosition.Y) < 0.001f)
+            return;
+
+        movementBlockHook.SetApproachPosition(gameObj, corrected.X, corrected.Y, corrected.Z);
+    }
+
+    private void StopMove(CombatCompanion companion)
+    {
+        movementBlockHook.RemoveApproachNpc(companion.Address);
+        StopMoveAnim(companion);
+        pathStates.Remove(companion.Address);
+    }
+
+    private void StartMoveAnim(CombatCompanion companion)
+    {
+        if (companion.BattleChara == null || companion.MoveAnimActive)
+            return;
+
+        var character = (Character*)companion.BattleChara;
+        character->Timeline.BaseOverride = NormalRunTimelineId;
+        if (character->Timeline.TimelineSequencer.Parent != null)
+            character->Timeline.PlayActionTimeline(NormalRunTimelineId);
+        companion.MoveAnimActive = true;
+    }
+
+    private void StopMoveAnim(CombatCompanion companion)
+    {
+        if (!companion.MoveAnimActive || companion.BattleChara == null)
+            return;
+
+        try
+        {
+            var character = (Character*)companion.BattleChara;
+            character->Timeline.BaseOverride = 0;
+        }
+        catch { }
+
+        companion.MoveAnimActive = false;
+    }
+
+    private void RotateToward(CombatCompanion companion, Vector3 targetPos, float deltaTime)
+    {
+        var obj = (GameObject*)companion.BattleChara;
+        var pos = (Vector3)obj->Position;
+        var dir = targetPos - pos;
+        if (dir.LengthSquared() < 0.001f)
+            return;
+
+        var targetRot = MathF.Atan2(dir.X, dir.Z);
+        var currentRot = obj->Rotation;
+        var diff = targetRot - currentRot;
+        while (diff > MathF.PI) diff -= 2 * MathF.PI;
+        while (diff < -MathF.PI) diff += 2 * MathF.PI;
+
+        var rotStep = 6.0f * deltaTime;
+        var nextRot = MathF.Abs(diff) < rotStep ? targetRot : currentRot + MathF.Sign(diff) * rotStep;
+        movementBlockHook.SetApproachRotation(obj, nextRot);
+    }
+
+    private void TickRecentDps(CombatCompanion companion, float deltaTime)
+    {
+        if (companion.RecentDamage <= 0)
+        {
+            companion.RecentDps = 0;
+            return;
+        }
+
+        var decayPerSecond = companion.RecentDamage / RecentDpsWindowSeconds;
+        companion.RecentDamage = Math.Max(0, companion.RecentDamage - decayPerSecond * deltaTime);
+        companion.RecentDps = companion.RecentDamage / RecentDpsWindowSeconds;
+    }
+
+    private CompanionTerrainCache? BuildCompanionTerrainCache(IReadOnlyList<SimulatedNpc> enemies)
+    {
+        if (companions.Count == 0)
+            return null;
+
+        var player = objectTable.LocalPlayer;
+        var hasBounds = false;
+        var minX = 0f;
+        var maxX = 0f;
+        var minZ = 0f;
+        var maxZ = 0f;
+        var maxY = 0f;
+
+        void Include(Vector3 pos, float pad)
+        {
+            if (!hasBounds)
+            {
+                minX = pos.X - pad;
+                maxX = pos.X + pad;
+                minZ = pos.Z - pad;
+                maxZ = pos.Z + pad;
+                maxY = pos.Y;
+                hasBounds = true;
+                return;
+            }
+
+            minX = MathF.Min(minX, pos.X - pad);
+            maxX = MathF.Max(maxX, pos.X + pad);
+            minZ = MathF.Min(minZ, pos.Z - pad);
+            maxZ = MathF.Max(maxZ, pos.Z + pad);
+            maxY = MathF.Max(maxY, pos.Y);
+        }
+
+        if (player != null)
+            Include(player.Position, FollowDistance + 2f);
+
+        foreach (var companion in companions)
+        {
+            if (companion.BattleChara == null)
+                continue;
+            Include((Vector3)((GameObject*)companion.BattleChara)->Position, 2f);
+        }
+
+        foreach (var enemy in enemies)
+        {
+            if (enemy.BattleChara == null || !enemy.State.IsAlive)
+                continue;
+            Include((Vector3)((GameObject*)enemy.BattleChara)->Position, TargetRange + 2f);
+        }
+
+        if (!hasBounds)
+            return null;
+
+        var widthWorld = MathF.Max(maxX - minX, TerrainGridStep);
+        var depthWorld = MathF.Max(maxZ - minZ, TerrainGridStep);
+        var step = MathF.Max(TerrainGridStep,
+            MathF.Max(widthWorld, depthWorld) / MathF.Max(1, TerrainGridMaxSize - 1));
+        var width = Math.Clamp((int)MathF.Ceiling(widthWorld / step) + 1, 2, TerrainGridMaxSize);
+        var depth = Math.Clamp((int)MathF.Ceiling(depthWorld / step) + 1, 2, TerrainGridMaxSize);
+
+        var heights = new float[width, depth];
+        var valid = new bool[width, depth];
+        var originY = maxY + 10f;
+        const float rayDistance = 80f;
+
+        for (var z = 0; z < depth; z++)
+        for (var x = 0; x < width; x++)
+        {
+            var wx = minX + x * step;
+            var wz = minZ + z * step;
+            if (BGCollisionModule.RaycastMaterialFilter(
+                    new Vector3(wx, originY, wz),
+                    new Vector3(0, -1, 0),
+                    out var hit,
+                    rayDistance))
+            {
+                heights[x, z] = hit.Point.Y;
+                valid[x, z] = true;
+            }
+        }
+
+        return new CompanionTerrainCache
+        {
+            OriginX = minX,
+            OriginZ = minZ,
+            Step = step,
+            Width = width,
+            Depth = depth,
+            Heights = heights,
+            Valid = valid,
+        };
+    }
+
+    private void TickPlayerRecentDps(float deltaTime)
+    {
+        if (playerRecentDamage <= 0)
+        {
+            playerRecentDps = 0;
+            return;
+        }
+
+        var decayPerSecond = playerRecentDamage / RecentDpsWindowSeconds;
+        playerRecentDamage = Math.Max(0, playerRecentDamage - decayPerSecond * deltaTime);
+        playerRecentDps = playerRecentDamage / RecentDpsWindowSeconds;
+    }
+
+    private void Despawn(CombatCompanion companion)
+    {
+        try
+        {
+            movementBlockHook.RemoveApproachNpc(companion.Address);
+            var clientObjMgr = ClientObjectManager.Instance();
+            if (clientObjMgr != null && companion.ObjectIndex >= 0)
+            {
+                if (companion.BattleChara != null)
+                    ((GameObject*)companion.BattleChara)->DisableDraw();
+                clientObjMgr->DeleteObjectByIndex((ushort)companion.ObjectIndex, 0);
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"Failed to despawn companion '{companion.Name}'.");
+        }
+
+        combatEngine.UnregisterNpcEntity(companion.SimulatedEntityId);
+        allocatedIndices.Remove(companion.ObjectIndex);
+        companions.Remove(companion);
+    }
+
+    private uint FindFreeObjectHint()
+    {
+        uint hint = 100;
+        while (hint < 200 && allocatedIndices.Contains((int)hint))
+            hint++;
+        return hint;
+    }
+
+    private Vector3 CalculateSpawnPosition(int index)
+    {
+        var player = objectTable.LocalPlayer;
+        if (player == null)
+            return Vector3.Zero;
+
+        var angle = player.Rotation + MathF.PI + (index - 1) * 0.7f;
+        var offset = new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * 3.0f;
+        return player.Position + offset;
+    }
+
+    private float CalculateSpawnRotation(Vector3 spawnPos)
+    {
+        var player = objectTable.LocalPlayer;
+        if (player == null)
+            return 0;
+        var dir = player.Position - spawnPos;
+        return MathF.Atan2(dir.X, dir.Z);
+    }
+
+    private static int CalculateCompanionHp(int level)
+        => level <= 50 ? 2000 + level * 500 :
+           level <= 80 ? 30000 + level * 2000 :
+           level <= 90 ? 80000 + level * 3000 :
+           150000 + level * 5000;
+
+    private static NpcBehavior CreateCompanionBehavior(NpcAttackStyle style)
+    {
+        var type = style == NpcAttackStyle.Ranged || style == NpcAttackStyle.Magic
+            ? NpcBehaviorType.BasicRanged
+            : NpcBehaviorType.BasicMelee;
+        var behavior = NpcBehavior.Create(type);
+        behavior.AutoAttackStyle = style == NpcAttackStyle.Auto ? behavior.AutoAttackStyle : style;
+        if (style == NpcAttackStyle.Ranged || style == NpcAttackStyle.Magic)
+            behavior.AutoAttackRange = 25.0f;
+        return behavior;
+    }
+
+    private SimulatedNpc ToSimulatedNpcView(CombatCompanion companion) => new()
+    {
+        SimulatedEntityId = companion.SimulatedEntityId,
+        ObjectIndex = companion.ObjectIndex,
+        Name = companion.Name,
+        BattleChara = companion.BattleChara,
+        GameObjectRef = companion.GameObjectRef,
+        State = companion.State,
+        Behavior = companion.Behavior,
+        IsSpawned = companion.IsSpawned,
+        IsClientControlled = true,
+        IsRanged = companion.IsRanged,
+    };
+
+    private static bool IsTankJob(uint classJobId)
+        => classJobId is 19 or 21 or 32 or 37;
+
+    public void Dispose() => DespawnAll();
+
+    private class PendingSpawn
+    {
+        public CombatCompanion Companion { get; set; } = null!;
+        public int FramesWaited { get; set; }
+    }
+
+    private class PathState
+    {
+        public List<Vector3> Waypoints { get; set; } = new();
+        public int WaypointIndex { get; set; }
+        public Vector3 RequestedTarget { get; set; }
+        public Vector3 PendingTarget { get; set; }
+        public float RepathTimer { get; set; }
+        public Task<List<Vector3>>? PendingPath { get; set; }
+        public float FloorYOffset { get; set; }
+        public bool HasFloorYOffset { get; set; }
+        public float FloorResnapTimer { get; set; }
+        public float LastFloorY { get; set; }
+        public bool HasLastFloorY { get; set; }
+        public int LastCorrectedWaypointIndex { get; set; } = -1;
+        public float StableRootTerrainClearance { get; set; }
+        public bool HasStableRootTerrainClearance { get; set; }
+        public float LastMoveRootY { get; set; }
+        public bool HasLastMoveRootY { get; set; }
+    }
+
+    private sealed class CompanionTerrainCache
+    {
+        public float OriginX { get; init; }
+        public float OriginZ { get; init; }
+        public float Step { get; init; }
+        public int Width { get; init; }
+        public int Depth { get; init; }
+        public float[,] Heights { get; init; } = new float[0, 0];
+        public bool[,] Valid { get; init; } = new bool[0, 0];
+
+        public bool TrySample(float x, float z, out float y)
+        {
+            y = 0;
+            if (Width <= 0 || Depth <= 0 || Step <= 0)
+                return false;
+
+            var gx = (x - OriginX) / Step;
+            var gz = (z - OriginZ) / Step;
+            var ix = (int)MathF.Floor(gx);
+            var iz = (int)MathF.Floor(gz);
+
+            if (ix < 0 || iz < 0 || ix >= Width || iz >= Depth)
+                return false;
+
+            if (ix < Width - 1 && iz < Depth - 1)
+            {
+                var tx = gx - ix;
+                var tz = gz - iz;
+                if (Valid[ix, iz] && Valid[ix + 1, iz] && Valid[ix, iz + 1] && Valid[ix + 1, iz + 1])
+                {
+                    var y0 = Lerp(Heights[ix, iz], Heights[ix + 1, iz], tx);
+                    var y1 = Lerp(Heights[ix, iz + 1], Heights[ix + 1, iz + 1], tx);
+                    y = Lerp(y0, y1, tz);
+                    return true;
+                }
+            }
+
+            var bestDistSq = float.MaxValue;
+            var bestY = 0f;
+            for (var dz = -1; dz <= 1; dz++)
+            for (var dx = -1; dx <= 1; dx++)
+            {
+                var sx = ix + dx;
+                var sz = iz + dz;
+                if (sx < 0 || sz < 0 || sx >= Width || sz >= Depth || !Valid[sx, sz])
+                    continue;
+
+                var wx = OriginX + sx * Step;
+                var wz = OriginZ + sz * Step;
+                var distSq = (wx - x) * (wx - x) + (wz - z) * (wz - z);
+                if (distSq < bestDistSq)
+                {
+                    bestDistSq = distSq;
+                    bestY = Heights[sx, sz];
+                }
+            }
+
+            if (bestDistSq == float.MaxValue)
+                return false;
+
+            y = bestY;
+            return true;
+        }
+
+        private static float Lerp(float a, float b, float t) => a + (b - a) * t;
+    }
+}
