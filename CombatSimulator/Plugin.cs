@@ -177,7 +177,14 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         {
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
-            companionManager.DespawnAll();
+
+            // Keep companions across a combat *reset* (IsActive stays true) when the
+            // option is set — revive/heal them instead of despawning. Stopping the
+            // simulation (IsActive false) always despawns.
+            if (config.KeepCompanionsOnReset && combatEngine.State.IsActive)
+                companionManager.ResetForCombatReset();
+            else
+                companionManager.DespawnAll();
 
             if (npcSpawner.SpawnedNpcs.Count == 0) return;
 

@@ -85,6 +85,9 @@ public class Configuration : IPluginConfiguration
     public bool SensePartyMembers { get; set; } = false;
     public bool AllowSensingHumanoidEnemies { get; set; } = false;
     public bool RandomizeCompanionAppearance { get; set; } = false;
+    // When true, resetting combat keeps existing companions (revived + healed)
+    // instead of despawning them. Stopping the simulation always despawns.
+    public bool KeepCompanionsOnReset { get; set; } = false;
 
     // NPC Defaults
     public int DefaultNpcLevel { get; set; } = 90;

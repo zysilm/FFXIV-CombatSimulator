@@ -388,6 +388,15 @@ public class MainWindow : IDisposable
             config.Save();
         }
 
+        var keepOnReset = config.KeepCompanionsOnReset;
+        if (ImGui.Checkbox("Keep companions on reset", ref keepOnReset))
+        {
+            config.KeepCompanionsOnReset = keepOnReset;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Resetting combat revives and heals existing companions\ninstead of despawning them. Stopping always despawns.");
+
         ImGui.Separator();
 
         using (ImRaii.Disabled(!config.EnableCombatCompanions))

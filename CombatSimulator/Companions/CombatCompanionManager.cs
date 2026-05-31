@@ -246,6 +246,43 @@ public unsafe class CombatCompanionManager : IDisposable
     public uint GetEnemyTargetId(uint enemyId)
         => enemyTargetByEnemyId.GetValueOrDefault(enemyId);
 
+    /// <summary>
+    /// Combat reset while keeping companions: revive + heal each one and clear its
+    /// combat state so it is battle-ready again, without despawning/re-cloning.
+    /// </summary>
+    public void ResetForCombatReset()
+    {
+        enemyTargetByEnemyId.Clear();
+        playerRecentDamage = 0;
+        playerRecentDps = 0;
+
+        foreach (var companion in companions)
+        {
+            companion.State.CurrentHp = companion.State.MaxHp;
+            companion.State.AnimationLock = 0;
+            companion.DeathAnimationPlayed = false;
+            companion.AutoAttackTimer = 0;
+            companion.CurrentTargetId = 0;
+            companion.RecentDamage = 0;
+            companion.RecentDps = 0;
+
+            if (companion.BattleChara == null)
+                continue;
+
+            try
+            {
+                animationController.ResetDeathAnimation(companion.BattleChara);
+                var character = (Character*)companion.BattleChara;
+                character->Mode = CharacterModes.Normal;
+                character->ModeParam = 0;
+            }
+            catch (Exception ex)
+            {
+                log.Warning(ex, $"Failed to revive companion '{companion.Name}' on reset.");
+            }
+        }
+    }
+
     public void DespawnAll()
     {
         while (spawnQueue.TryDequeue(out _)) { }
