@@ -1053,7 +1053,7 @@ public unsafe class NpcAiController : IDisposable
 
         if (!state.HasStableRootTerrainClearance)
         {
-            state.StableRootTerrainClearance = rootPosition.Y - terrainY - config.DefaultNpcHeightOffset;
+            state.StableRootTerrainClearance = 0f;
             state.HasStableRootTerrainClearance = true;
         }
 
