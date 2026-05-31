@@ -47,6 +47,7 @@ public partial class ActionDataProvider
 {
     private readonly IDataManager dataManager;
     private readonly IPluginLog log;
+    private readonly ActionPotencyProvider potencyProvider;
     private readonly Dictionary<uint, ActionData> cache = new();
 
     // Same regex VFXEditor uses to extract .avfx paths from TMB binary data
@@ -57,6 +58,7 @@ public partial class ActionDataProvider
     {
         this.dataManager = dataManager;
         this.log = log;
+        potencyProvider = new ActionPotencyProvider(log);
     }
 
     public ActionData? GetActionData(uint actionId)
@@ -100,10 +102,10 @@ public partial class ActionDataProvider
             _ => SimDamageType.Unique,
         };
 
-        // Potency: not directly in the sheet in a simple field;
-        // we approximate from the action description or use defaults.
-        // For MVP, use a reasonable default based on recast.
-        data.Potency = EstimatePotency(data);
+        if (potencyProvider.TryGet(actionId, out var potencyEntry))
+            data.Potency = potencyEntry.Potency;
+        else
+            data.Potency = EstimatePotency(data);
 
         // Resolve VFX paths (same approach as VFXEditor)
         ResolveVfxPaths(action, data);
@@ -113,7 +115,9 @@ public partial class ActionDataProvider
         {
             data.IsComboAction = true;
             data.ComboFrom = action.ActionCombo.RowId;
-            data.ComboPotency = (int)(data.Potency * 1.5f); // Combo bonus estimate
+            data.ComboPotency = potencyProvider.TryGet(actionId, out var comboPotencyEntry) && comboPotencyEntry.ComboPotency > 0
+                ? comboPotencyEntry.ComboPotency
+                : (int)(data.Potency * 1.5f);
         }
 
         cache[actionId] = data;

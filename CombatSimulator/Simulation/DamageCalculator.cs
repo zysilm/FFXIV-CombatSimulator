@@ -14,67 +14,15 @@ public class DamageResult
 public class DamageCalculator
 {
     private readonly Random rng = new();
+    private readonly CombatStatProvider statProvider;
 
-    // Level mod table: (level) -> (base main, base sub, divisor)
-    private static readonly (int baseMain, int baseSub, int div)[] LevelMods = new (int, int, int)[201];
-
-    static DamageCalculator()
+    public DamageCalculator() : this(new CombatStatProvider())
     {
-        // Populate key levels (interpolate for others)
-        SetLevelMod(1, 20, 56, 56);
-        SetLevelMod(50, 202, 341, 341);
-        SetLevelMod(60, 218, 354, 600);
-        SetLevelMod(70, 292, 364, 900);
-        SetLevelMod(80, 340, 380, 1900);
-        SetLevelMod(90, 390, 400, 1900);
-        SetLevelMod(100, 440, 420, 2780);
-
-        // Interpolate missing levels
-        InterpolateLevels();
     }
 
-    private static void SetLevelMod(int level, int baseMain, int baseSub, int div)
+    public DamageCalculator(CombatStatProvider statProvider)
     {
-        if (level is >= 0 and <= 200)
-            LevelMods[level] = (baseMain, baseSub, div);
-    }
-
-    private static void InterpolateLevels()
-    {
-        // Key level breakpoints
-        int[] keys = { 1, 50, 60, 70, 80, 90, 100 };
-
-        for (int i = 0; i < keys.Length - 1; i++)
-        {
-            int fromLvl = keys[i];
-            int toLvl = keys[i + 1];
-            var from = LevelMods[fromLvl];
-            var to = LevelMods[toLvl];
-            int range = toLvl - fromLvl;
-
-            for (int lvl = fromLvl + 1; lvl < toLvl; lvl++)
-            {
-                float t = (float)(lvl - fromLvl) / range;
-                LevelMods[lvl] = (
-                    (int)(from.baseMain + (to.baseMain - from.baseMain) * t),
-                    (int)(from.baseSub + (to.baseSub - from.baseSub) * t),
-                    (int)(from.div + (to.div - from.div) * t)
-                );
-            }
-        }
-
-        // Extrapolate 101-200 from the 90→100 trend
-        var lv90 = LevelMods[90];
-        var lv100 = LevelMods[100];
-        for (int lvl = 101; lvl <= 200; lvl++)
-        {
-            float t = (float)(lvl - 90) / 10;
-            LevelMods[lvl] = (
-                (int)(lv90.baseMain + (lv100.baseMain - lv90.baseMain) * t),
-                (int)(lv90.baseSub + (lv100.baseSub - lv90.baseSub) * t),
-                (int)(lv90.div + (lv100.div - lv90.div) * t)
-            );
-        }
+        this.statProvider = statProvider;
     }
 
     public DamageResult Calculate(
@@ -86,118 +34,194 @@ public class DamageCalculator
         bool enableDh = true,
         float damageMultiplier = 1.0f)
     {
-        var result = new DamageResult { DamageType = actionData.DamageType };
-
-        int potency = isCombo && actionData.ComboPotency > 0
-            ? actionData.ComboPotency
-            : actionData.Potency;
-
-        if (potency <= 0)
-        {
-            result.Damage = 0;
+        var potency = ResolvePotency(actionData, isCombo);
+        var result = CalculateDirectDamage(source, potency, actionData.DamageType, enableCrit, enableDh, applyVariance: true);
+        if (result.Damage <= 0)
             return result;
-        }
 
-        int level = Math.Clamp(source.Level, 1, 200);
-        var mod = LevelMods[level];
+        var damage = result.Damage;
+        damage = ApplyLevelCorrection(damage, source.Level, target.Level);
+        damage = ApplyStatusDamageModifiers(damage, source, target);
+        damage = (int)MathF.Floor(damage * MathF.Max(0f, damageMultiplier));
 
-        // f(MainStat)
-        int mainStat = source.MainStat > 0 ? source.MainStat : mod.baseMain + 100;
-        float fMain = (float)Math.Floor(195.0 * (mainStat - mod.baseMain) / mod.div + 100) / 100f;
-
-        // f(Determination)
-        int det = source.Determination > 0 ? source.Determination : mod.baseSub;
-        float fDet = (float)Math.Floor(140.0 * (det - mod.baseMain) / mod.div + 1000) / 1000f;
-
-        // Base damage
-        float baseDamage = potency * fMain * fDet;
-
-        // Defense mitigation
-        int defense = actionData.DamageType == SimDamageType.Magical
-            ? target.MagicDefense
-            : target.Defense;
-        if (defense <= 0)
-            defense = mod.div / 10; // Default defense based on level
-
-        float defMitigation = (float)Math.Floor(15.0 * mod.div / defense + 85) / 100f;
-        defMitigation = Math.Clamp(defMitigation, 0.1f, 1.5f);
-
-        float damage = baseDamage * defMitigation;
-
-        // Critical hit
-        int critStat = source.CriticalHit > 0 ? source.CriticalHit : mod.baseSub;
-        float critRate = (float)Math.Floor(200.0 * (critStat - mod.baseSub) / mod.div + 50) / 1000f;
-        float critMult = (float)Math.Floor(200.0 * (critStat - mod.baseSub) / mod.div + 1400) / 1000f;
-        critRate = Math.Clamp(critRate, 0.05f, 1.0f);
-
-        if (enableCrit && rng.NextDouble() < critRate)
-        {
-            result.IsCritical = true;
-            damage *= critMult;
-        }
-
-        // Direct hit
-        int dhStat = source.DirectHit > 0 ? source.DirectHit : mod.baseSub;
-        float dhRate = (float)Math.Floor(550.0 * (dhStat - mod.baseSub) / mod.div) / 1000f;
-        dhRate = Math.Clamp(dhRate, 0.0f, 1.0f);
-
-        if (enableDh && rng.NextDouble() < dhRate)
-        {
-            result.IsDirectHit = true;
-            damage *= 1.25f;
-        }
-
-        // RNG variance +-5%
-        float variance = 0.95f + (float)rng.NextDouble() * 0.10f;
-        damage *= variance;
-
-        // Damage multiplier (user config)
-        damage *= damageMultiplier;
-
-        // Apply status effect modifiers
-        foreach (var status in source.StatusEffects)
-        {
-            if (status.StatusId == 1000001) // Damage Up placeholder
-                damage *= 1.1f;
-        }
-
-        foreach (var status in target.StatusEffects)
-        {
-            if (status.StatusId == 1000002) // Vulnerability placeholder
-                damage *= 1.1f;
-        }
-
-        result.Damage = Math.Max(1, (int)Math.Floor(damage));
+        result.Damage = Math.Max(1, damage);
         return result;
     }
 
     public DamageResult CalculateNpcAutoAttack(SimulatedEntityState npc, SimulatedEntityState target, int potency = 110)
     {
-        int npcLevel = npc.Level;
-        int targetLevel = target.Level > 0 ? target.Level : 90;
+        var raw = CalculateDirectDamage(npc, potency, SimDamageType.Physical, enableCrit: false, enableDh: false, applyVariance: false);
+        var mitigated = ApplyDamageTaken(raw.Damage, target, SimDamageType.Physical);
 
-        // Base damage scales quadratically with NPC level for meaningful numbers
-        float baseDamage = potency * (1.0f + npcLevel * 0.1f + npcLevel * npcLevel * 0.002f);
+        raw.Damage = Math.Max(1, ApplyLevelCorrection(mitigated, npc.Level, target.Level));
+        raw.DamageType = SimDamageType.Physical;
+        return raw;
+    }
 
-        // Level difference multiplier: each level the NPC is above the target
-        // increases damage significantly (and below reduces it)
-        int levelDiff = npcLevel - targetLevel;
-        float levelMultiplier = 1.0f + levelDiff * 0.08f;
-        if (levelDiff > 0)
-            levelMultiplier += levelDiff * levelDiff * 0.005f; // Extra scaling when NPC is higher
-        levelMultiplier = Math.Max(0.2f, levelMultiplier);
+    private DamageResult CalculateDirectDamage(
+        SimulatedEntityState source,
+        int potency,
+        SimDamageType damageType,
+        bool enableCrit,
+        bool enableDh,
+        bool applyVariance)
+    {
+        var result = new DamageResult { DamageType = damageType };
+        if (potency <= 0)
+            return result;
 
-        // Target defense mitigation (softened so defense doesn't negate everything)
-        int defense = target.Defense > 0 ? target.Defense : 500;
-        float mitigation = 2000f / (2000f + defense);
+        var level = Math.Clamp(source.Level > 0 ? source.Level : 90, 1, 200);
+        var mods = statProvider.GetLevelModifiers(level);
 
-        float variance = 0.90f + (float)rng.NextDouble() * 0.20f;
-        float damage = baseDamage * levelMultiplier * mitigation * variance;
+        var attackStat = ResolveAttackStat(source, damageType, mods);
+        var fAtk = FAttackPower(attackStat, mods.Main, source.IsTank);
+        var fDet = FDetermination(ResolveStat(source.Determination, mods.Main), mods);
+        var fTnc = source.IsTank ? FTenacity(ResolveStat(source.Tenacity, mods.Sub), mods) : 1000;
+        var fWd = FWeaponDamage(source, damageType, mods);
+        var traitPct = source.DamageTraitPct > 0 ? source.DamageTraitPct : 100;
 
-        return new DamageResult
+        var damage = (long)potency * fAtk;
+        damage = damage * fDet / 1000;
+        damage /= 100;
+        damage = damage * fTnc / 1000;
+        damage = damage * fWd / 100;
+        damage = damage * traitPct / 100;
+
+        var critStat = ResolveStat(source.CriticalHit, mods.Sub);
+        var critRate = Math.Clamp(FCritRate(critStat, mods), 0, 1000);
+        var critTerm = 1000;
+        if (enableCrit && rng.Next(1000) < critRate)
         {
-            Damage = Math.Max(1, (int)Math.Floor(damage)),
-            DamageType = SimDamageType.Physical,
+            result.IsCritical = true;
+            critTerm = FCritStrength(critStat, mods);
+        }
+
+        var dhStat = ResolveStat(source.DirectHit, mods.Sub);
+        var dhRate = Math.Clamp(FDirectHitRate(dhStat, mods), 0, 1000);
+        var dhTerm = 100;
+        if (enableDh && rng.Next(1000) < dhRate)
+        {
+            result.IsDirectHit = true;
+            dhTerm = 125;
+        }
+
+        damage = damage * critTerm / 1000;
+        damage = damage * dhTerm / 100;
+
+        if (applyVariance)
+            damage = damage * rng.Next(95, 106) / 100;
+
+        result.Damage = Math.Max(0, (int)Math.Min(int.MaxValue, damage));
+        return result;
+    }
+
+    private int ApplyDamageTaken(int rawDamage, SimulatedEntityState target, SimDamageType damageType)
+    {
+        if (rawDamage <= 0)
+            return 0;
+
+        var level = Math.Clamp(target.Level > 0 ? target.Level : 90, 1, 200);
+        var mods = statProvider.GetLevelModifiers(level);
+        var defense = damageType == SimDamageType.Magical
+            ? ResolveStat(target.MagicDefense, mods.Sub)
+            : ResolveStat(target.Defense, mods.Sub);
+
+        var fDefense = FDefense(defense, mods);
+        var damage = (long)rawDamage * Math.Clamp(100 - fDefense, 1, 100) / 100;
+
+        var fTnc = target.IsTank ? FTenacity(ResolveStat(target.Tenacity, mods.Sub), mods) : 1000;
+        damage = damage * (2000 - fTnc) / 1000;
+        damage = damage * rng.Next(95, 106) / 100;
+
+        return Math.Max(1, (int)Math.Min(int.MaxValue, damage));
+    }
+
+    private int FWeaponDamage(SimulatedEntityState source, SimDamageType damageType, LevelModifiers mods)
+    {
+        var weaponDamage = damageType == SimDamageType.Magical && source.MagicWeaponDamage > 0
+            ? source.MagicWeaponDamage
+            : source.WeaponDamage;
+        if (weaponDamage <= 0)
+            weaponDamage = EstimateWeaponDamage(source.Level);
+
+        var jobMod = statProvider.GetPrimaryJobModifier(source.ClassJobId, damageType);
+        return (int)Math.Floor(mods.Main * jobMod / 1000.0) + weaponDamage;
+    }
+
+    private static int FAttackPower(int attackPower, int mainMod, bool isTank)
+    {
+        var coeff = isTank ? 115 : 165;
+        return (int)Math.Floor(coeff * (attackPower - mainMod) / (double)mainMod) + 100;
+    }
+
+    private static int FDetermination(int det, LevelModifiers mods)
+        => (int)Math.Floor(140.0 * (det - mods.Main) / mods.Div + 1000);
+
+    private static int FTenacity(int tenacity, LevelModifiers mods)
+        => (int)Math.Floor(100.0 * (tenacity - mods.Sub) / mods.Div + 1000);
+
+    private static int FCritRate(int crit, LevelModifiers mods)
+        => (int)Math.Floor(200.0 * (crit - mods.Sub) / mods.Div + 50);
+
+    private static int FCritStrength(int crit, LevelModifiers mods)
+        => (int)Math.Floor(200.0 * (crit - mods.Sub) / mods.Div) + 1400;
+
+    private static int FDirectHitRate(int directHit, LevelModifiers mods)
+        => (int)Math.Floor(550.0 * (directHit - mods.Sub) / mods.Div);
+
+    private static int FDefense(int defense, LevelModifiers mods)
+        => (int)Math.Floor(15.0 * defense / mods.Div);
+
+    private static int ResolvePotency(ActionData actionData, bool isCombo)
+        => isCombo && actionData.ComboPotency > 0 ? actionData.ComboPotency : actionData.Potency;
+
+    private static int ResolveAttackStat(SimulatedEntityState source, SimDamageType damageType, LevelModifiers mods)
+    {
+        if (damageType == SimDamageType.Magical && source.AttackMagicPotency > 0)
+            return source.AttackMagicPotency;
+        if (damageType != SimDamageType.Magical && source.AttackPower > 0)
+            return source.AttackPower;
+        return source.MainStat > 0 ? source.MainStat : mods.Main + 100;
+    }
+
+    private static int ResolveStat(int value, int fallback) => value > 0 ? value : fallback;
+
+    private static int EstimateWeaponDamage(int level)
+        => level switch
+        {
+            >= 100 => 132,
+            >= 90 => 120,
+            >= 80 => 104,
+            >= 70 => 92,
+            >= 60 => 75,
+            >= 50 => 59,
+            _ => Math.Max(5, 10 + level),
         };
+
+    private static int ApplyLevelCorrection(int damage, int sourceLevel, int targetLevel)
+    {
+        if (damage <= 0 || sourceLevel <= 0 || targetLevel <= 0 || sourceLevel >= targetLevel)
+            return damage;
+
+        var penaltyPct = Math.Clamp((targetLevel - sourceLevel) * 2.5f, 0f, 90f);
+        return (int)MathF.Floor(damage * (100f - penaltyPct) / 100f);
+    }
+
+    private static int ApplyStatusDamageModifiers(int damage, SimulatedEntityState source, SimulatedEntityState target)
+    {
+        var result = damage;
+        foreach (var status in source.StatusEffects)
+        {
+            if (status.StatusId == 1000001)
+                result = (int)MathF.Floor(result * 1.1f);
+        }
+
+        foreach (var status in target.StatusEffects)
+        {
+            if (status.StatusId == 1000002)
+                result = (int)MathF.Floor(result * 1.1f);
+        }
+
+        return result;
     }
 }

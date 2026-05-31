@@ -24,8 +24,18 @@ public class SimulatedEntityState
     public int DirectHit { get; set; }
     public int Defense { get; set; }
     public int MagicDefense { get; set; }
+    public int Tenacity { get; set; }
+    public int SkillSpeed { get; set; }
+    public int SpellSpeed { get; set; }
     public int AttackPower { get; set; }
     public int AttackMagicPotency { get; set; }
+    public int HealingMagicPotency { get; set; }
+    public int WeaponDamage { get; set; }
+    public int MagicWeaponDamage { get; set; }
+    public int WeaponDelayMs { get; set; } = 3000;
+    public uint ClassJobId { get; set; }
+    public bool IsTank { get; set; }
+    public int DamageTraitPct { get; set; } = 100;
 
     // Combat state
     public float AnimationLock { get; set; }

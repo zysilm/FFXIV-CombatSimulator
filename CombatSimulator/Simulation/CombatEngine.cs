@@ -8,6 +8,8 @@ using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
+using GamePlayerState = FFXIVClientStructs.FFXIV.Client.Game.UI.PlayerState;
 
 namespace CombatSimulator.Simulation;
 
@@ -997,24 +999,48 @@ public class CombatEngine : IDisposable
         // Read stats from the actual character
         try
         {
-            var battleChara = (BattleChara*)player.Address;
-            // These stat positions may vary; using safe defaults if reading fails
-            ps.MainStat = 3000; // Approximate for lv90 in decent gear
-            ps.Determination = 2000;
-            ps.CriticalHit = 2500;
-            ps.DirectHit = 1800;
-            ps.Defense = 3500;
-            ps.MagicDefense = 3500;
+            var playerState = GamePlayerState.Instance();
+            if (playerState == null)
+                throw new InvalidOperationException("PlayerState unavailable.");
+
+            ps.ClassJobId = player.ClassJob.RowId;
+            ps.AttackPower = playerState->GetAttributeByIndex(PlayerAttribute.AttackPower);
+            ps.AttackMagicPotency = playerState->GetAttributeByIndex(PlayerAttribute.AttackMagicPotency);
+            ps.HealingMagicPotency = playerState->GetAttributeByIndex(PlayerAttribute.HealingMagicPotency);
+            ps.Determination = playerState->GetAttributeByIndex(PlayerAttribute.Determination);
+            ps.CriticalHit = playerState->GetAttributeByIndex(PlayerAttribute.CriticalHit);
+            ps.DirectHit = playerState->GetAttributeByIndex(PlayerAttribute.DirectHitRate);
+            ps.Defense = playerState->GetAttributeByIndex(PlayerAttribute.Defense);
+            ps.MagicDefense = playerState->GetAttributeByIndex(PlayerAttribute.MagicDefense);
+            ps.Tenacity = playerState->GetAttributeByIndex(PlayerAttribute.Tenacity);
+            ps.SkillSpeed = playerState->GetAttributeByIndex(PlayerAttribute.SkillSpeed);
+            ps.SpellSpeed = playerState->GetAttributeByIndex(PlayerAttribute.SpellSpeed);
+            ps.WeaponDamage = playerState->GetAttributeByIndex(PlayerAttribute.PhysicalDamage);
+            ps.MagicWeaponDamage = playerState->GetAttributeByIndex(PlayerAttribute.MagicDamage);
+            ps.WeaponDelayMs = playerState->GetAttributeByIndex(PlayerAttribute.Delay);
+            ps.IsTank = IsTankJob(ps.ClassJobId);
+            ps.DamageTraitPct = 100;
+            ps.MainStat = Math.Max(ps.AttackPower, ps.AttackMagicPotency);
         }
         catch
         {
             // Fallback defaults
             ps.MainStat = 2000;
+            ps.AttackPower = ps.MainStat;
+            ps.AttackMagicPotency = ps.MainStat;
             ps.Determination = 1500;
             ps.CriticalHit = 2000;
             ps.DirectHit = 1500;
             ps.Defense = 3000;
             ps.MagicDefense = 3000;
+            ps.Tenacity = 400;
+            ps.SkillSpeed = 400;
+            ps.SpellSpeed = 400;
+            ps.WeaponDamage = 120;
+            ps.MagicWeaponDamage = 120;
+            ps.WeaponDelayMs = 3000;
+            ps.IsTank = false;
+            ps.DamageTraitPct = 100;
         }
 
         ps.Reset();
@@ -1023,6 +1049,9 @@ public class CombatEngine : IDisposable
         ps.MaxMp = (int)player.MaxMp;
         ps.CurrentMp = ps.MaxMp;
     }
+
+    private static bool IsTankJob(uint classJobId)
+        => classJobId is 19 or 21 or 32 or 37;
 
     private void ProcessActionQueue()
     {
