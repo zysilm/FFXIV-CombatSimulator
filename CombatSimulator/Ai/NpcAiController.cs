@@ -327,6 +327,12 @@ public unsafe class NpcAiController : IDisposable
                     target = (state, combatEngine.GetSimulatedEntityPosition(state));
                 }
 
+                if (target.State.IsPlayer)
+                {
+                    TickSoloApproach(npc, deltaTime, playerPos, i, approachNpcs.Count, terrainCache);
+                    continue;
+                }
+
                 TickPartyApproach(npc, deltaTime, playerPos, target.State, target.Position, terrainCache);
             }
         }
