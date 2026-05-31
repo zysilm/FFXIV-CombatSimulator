@@ -116,7 +116,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             config, npcSelector, clientState, log, deathCamController,
             victorySequenceController);
         npcAiController = new NpcAiController(
-            combatEngine, animationController, movementBlockHook, vnavmeshIpc,
+            combatEngine, animationController, boneTransformService, movementBlockHook, vnavmeshIpc,
             clientState, config, log, victorySequenceController.ControlsNpc);
 
         // Wire NpcSpawner callbacks
