@@ -63,6 +63,10 @@ public unsafe class NpcAiController : IDisposable
         public bool HasLastFloorY { get; set; }
         public int LastCorrectedWaypointIndex { get; set; } = -1;
         public bool MoveAnimActive { get; set; }
+        public float StableRootTerrainClearance { get; set; }
+        public bool HasStableRootTerrainClearance { get; set; }
+        public float LastMoveRootY { get; set; }
+        public bool HasLastMoveRootY { get; set; }
     }
 
     private sealed class ApproachTerrainCache
@@ -706,8 +710,11 @@ public unsafe class NpcAiController : IDisposable
             newPos = npcPos + moveDir * moveDist;
         }
 
-        if (hasVnavmeshTarget && terrainCache != null)
-            newPos = CorrectRootHeightFromTerrainAndFeet(npc, newPos, terrainCache);
+        if (hasVnavmeshTarget && terrainCache != null &&
+            approachPaths.TryGetValue(npc.Address, out var pathState))
+        {
+            newPos = CorrectMovingRootHeight(npc, newPos, terrainCache, pathState, deltaTime);
+        }
 
         // Call the real SetPosition via the hook bypass — this updates both
         // the struct field AND the DrawObject (3D model position).
@@ -763,6 +770,7 @@ public unsafe class NpcAiController : IDisposable
                 }
                 state.ConfiguredHeightOffset = config.DefaultNpcHeightOffset;
                 state.LastError = "";
+                state.HasLastMoveRootY = false;
             }
             catch (Exception ex)
             {
@@ -927,17 +935,58 @@ public unsafe class NpcAiController : IDisposable
     private Vector3 CorrectRootHeightFromTerrainAndFeet(
         SimulatedNpc npc,
         Vector3 rootPosition,
-        ApproachTerrainCache terrainCache)
+        ApproachTerrainCache terrainCache,
+        ApproachPathState? state = null)
     {
         if (!terrainCache.TrySample(rootPosition.X, rootPosition.Z, out var terrainY))
             return rootPosition;
         if (!TryGetLowestFootClearance(npc, out var footClearance))
             return rootPosition;
 
-        return rootPosition with
+        var corrected = rootPosition with
         {
             Y = terrainY - footClearance + config.DefaultNpcHeightOffset,
         };
+
+        if (state != null)
+        {
+            state.StableRootTerrainClearance = corrected.Y - terrainY - config.DefaultNpcHeightOffset;
+            state.HasStableRootTerrainClearance = true;
+            state.LastMoveRootY = corrected.Y;
+            state.HasLastMoveRootY = true;
+        }
+
+        return corrected;
+    }
+
+    private Vector3 CorrectMovingRootHeight(
+        SimulatedNpc npc,
+        Vector3 rootPosition,
+        ApproachTerrainCache terrainCache,
+        ApproachPathState state,
+        float deltaTime)
+    {
+        if (!terrainCache.TrySample(rootPosition.X, rootPosition.Z, out var terrainY))
+            return rootPosition;
+
+        if (!state.HasStableRootTerrainClearance)
+        {
+            if (!TryGetLowestFootClearance(npc, out var footClearance))
+                return rootPosition;
+
+            state.StableRootTerrainClearance = -footClearance;
+            state.HasStableRootTerrainClearance = true;
+        }
+
+        var desiredY = terrainY + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;
+        var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
+        var maxStep = MathF.Max(0.03f, 6.0f * deltaTime);
+        var deltaY = Math.Clamp(desiredY - fromY, -maxStep, maxStep);
+        var y = fromY + deltaY;
+
+        state.LastMoveRootY = y;
+        state.HasLastMoveRootY = true;
+        return rootPosition with { Y = y };
     }
 
     private void CorrectStationaryRootHeightFromTerrainAndFeet(
@@ -946,7 +995,8 @@ public unsafe class NpcAiController : IDisposable
         Vector3 rootPosition,
         ApproachTerrainCache terrainCache)
     {
-        var corrected = CorrectRootHeightFromTerrainAndFeet(npc, rootPosition, terrainCache);
+        approachPaths.TryGetValue(npc.Address, out var state);
+        var corrected = CorrectRootHeightFromTerrainAndFeet(npc, rootPosition, terrainCache, state);
         if (MathF.Abs(corrected.Y - rootPosition.Y) < 0.001f)
             return;
 
