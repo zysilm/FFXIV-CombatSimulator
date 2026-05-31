@@ -11,6 +11,7 @@ using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
+using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 
 namespace CombatSimulator.Ai;
 
@@ -31,6 +32,8 @@ public unsafe class NpcAiController : IDisposable
     private const float VNavmeshRepathInterval = 1.0f;
     private const float VNavmeshPathTolerance = 0.5f;
     private const float VNavmeshFloorResnapInterval = 0.25f;
+    private const float TerrainGridStep = 0.5f;
+    private const int TerrainGridMaxSize = 33;
     private const ushort NormalRunTimelineId = 22;
 
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
@@ -54,6 +57,77 @@ public unsafe class NpcAiController : IDisposable
         public bool HasLastFloorY { get; set; }
         public int LastCorrectedWaypointIndex { get; set; } = -1;
         public bool MoveAnimActive { get; set; }
+        public float StableRootTerrainClearance { get; set; }
+        public bool HasStableRootTerrainClearance { get; set; }
+        public float LastMoveRootY { get; set; }
+        public bool HasLastMoveRootY { get; set; }
+    }
+
+    private sealed class ApproachTerrainCache
+    {
+        public float OriginX { get; init; }
+        public float OriginZ { get; init; }
+        public float Step { get; init; }
+        public int Width { get; init; }
+        public int Depth { get; init; }
+        public float[,] Heights { get; init; } = new float[0, 0];
+        public bool[,] Valid { get; init; } = new bool[0, 0];
+
+        public bool TrySample(float x, float z, out float y)
+        {
+            y = 0;
+            if (Width <= 0 || Depth <= 0 || Step <= 0)
+                return false;
+
+            var gx = (x - OriginX) / Step;
+            var gz = (z - OriginZ) / Step;
+            var ix = (int)MathF.Floor(gx);
+            var iz = (int)MathF.Floor(gz);
+
+            if (ix < 0 || iz < 0 || ix >= Width || iz >= Depth)
+                return false;
+
+            if (ix < Width - 1 && iz < Depth - 1)
+            {
+                var tx = gx - ix;
+                var tz = gz - iz;
+                if (Valid[ix, iz] && Valid[ix + 1, iz] && Valid[ix, iz + 1] && Valid[ix + 1, iz + 1])
+                {
+                    var y0 = Lerp(Heights[ix, iz], Heights[ix + 1, iz], tx);
+                    var y1 = Lerp(Heights[ix, iz + 1], Heights[ix + 1, iz + 1], tx);
+                    y = Lerp(y0, y1, tz);
+                    return true;
+                }
+            }
+
+            var bestDistSq = float.MaxValue;
+            var bestY = 0f;
+            for (int dz = -1; dz <= 1; dz++)
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                var sx = ix + dx;
+                var sz = iz + dz;
+                if (sx < 0 || sz < 0 || sx >= Width || sz >= Depth || !Valid[sx, sz])
+                    continue;
+
+                var wx = OriginX + sx * Step;
+                var wz = OriginZ + sz * Step;
+                var distSq = (wx - x) * (wx - x) + (wz - z) * (wz - z);
+                if (distSq < bestDistSq)
+                {
+                    bestDistSq = distSq;
+                    bestY = Heights[sx, sz];
+                }
+            }
+
+            if (bestDistSq == float.MaxValue)
+                return false;
+
+            y = bestY;
+            return true;
+        }
+
+        private static float Lerp(float a, float b, float t) => a + (b - a) * t;
     }
 
     public NpcAiController(
@@ -177,6 +251,10 @@ public unsafe class NpcAiController : IDisposable
                 }
             }
 
+            var terrainCache = config.UseVNavmeshTargetApproach
+                ? BuildApproachTerrainCache(playerPos, approachNpcs)
+                : null;
+
             for (int i = 0; i < approachNpcs.Count; i++)
             {
                 var npc = approachNpcs[i];
@@ -189,7 +267,7 @@ public unsafe class NpcAiController : IDisposable
                 if (npc.AiState == NpcAiState.Resetting)
                     npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
 
-                TickApproach(npc, deltaTime, playerPos, i, approachNpcs.Count);
+                TickApproach(npc, deltaTime, playerPos, i, approachNpcs.Count, terrainCache);
             }
         }
         else
@@ -511,7 +589,13 @@ public unsafe class NpcAiController : IDisposable
     /// Each NPC gets a unique angular slot around the player so they spread out naturally.
     /// Works for both real and client-controlled NPCs.
     /// </summary>
-    private void TickApproach(SimulatedNpc npc, float deltaTime, Vector3 playerPos, int npcIndex, int totalNpcs)
+    private void TickApproach(
+        SimulatedNpc npc,
+        float deltaTime,
+        Vector3 playerPos,
+        int npcIndex,
+        int totalNpcs,
+        ApproachTerrainCache? terrainCache)
     {
         if (npc.BattleChara == null) return;
         if (npc.AiState == NpcAiState.Dead)
@@ -584,6 +668,9 @@ public unsafe class NpcAiController : IDisposable
 
         if (config.UseVNavmeshTargetApproach && !hasVnavmeshTarget)
         {
+            if (terrainCache != null && approachPaths.TryGetValue(npc.Address, out var noPathState))
+                CorrectStableRootHeight(gameObj, npcPos, terrainCache, noPathState, deltaTime);
+
             StopApproachMoveAnim(npc);
             ForceRotateToward(npc, playerPos, deltaTime);
             return;
@@ -591,6 +678,10 @@ public unsafe class NpcAiController : IDisposable
 
         if (Vector3.Distance(npcPos, moveTarget) <= 0.3f)
         {
+            if (hasVnavmeshTarget && terrainCache != null &&
+                approachPaths.TryGetValue(npc.Address, out var arrivedPathState))
+                CorrectStableRootHeight(gameObj, npcPos, terrainCache, arrivedPathState, deltaTime);
+
             StopApproachMoveAnim(npc);
             ForceRotateToward(npc, playerPos, deltaTime);
             return;
@@ -610,6 +701,12 @@ public unsafe class NpcAiController : IDisposable
         {
             var moveDir = Vector3.Normalize(moveTarget - npcPos);
             newPos = npcPos + moveDir * moveDist;
+        }
+
+        if (hasVnavmeshTarget && terrainCache != null &&
+            approachPaths.TryGetValue(npc.Address, out var pathState))
+        {
+            newPos = CorrectMovingRootHeight(newPos, terrainCache, pathState, deltaTime);
         }
 
         // Call the real SetPosition via the hook bypass — this updates both
@@ -666,6 +763,7 @@ public unsafe class NpcAiController : IDisposable
                 }
                 state.ConfiguredHeightOffset = config.DefaultNpcHeightOffset;
                 state.LastError = "";
+                state.HasLastMoveRootY = false;
             }
             catch (Exception ex)
             {
@@ -761,6 +859,110 @@ public unsafe class NpcAiController : IDisposable
             log.Verbose($"vnavmesh snap failed: {ex.Message}");
             return null;
         }
+    }
+
+    private ApproachTerrainCache? BuildApproachTerrainCache(Vector3 playerPos, IReadOnlyList<SimulatedNpc> npcs)
+    {
+        if (npcs.Count == 0)
+            return null;
+
+        var minX = playerPos.X - config.TargetApproachDistance - 2f;
+        var maxX = playerPos.X + config.TargetApproachDistance + 2f;
+        var minZ = playerPos.Z - config.TargetApproachDistance - 2f;
+        var maxZ = playerPos.Z + config.TargetApproachDistance + 2f;
+        var maxY = playerPos.Y;
+
+        foreach (var npc in npcs)
+        {
+            if (npc.BattleChara == null)
+                continue;
+
+            var pos = (Vector3)((GameObject*)npc.BattleChara)->Position;
+            minX = MathF.Min(minX, pos.X - 2f);
+            maxX = MathF.Max(maxX, pos.X + 2f);
+            minZ = MathF.Min(minZ, pos.Z - 2f);
+            maxZ = MathF.Max(maxZ, pos.Z + 2f);
+            maxY = MathF.Max(maxY, pos.Y);
+        }
+
+        var widthWorld = MathF.Max(maxX - minX, TerrainGridStep);
+        var depthWorld = MathF.Max(maxZ - minZ, TerrainGridStep);
+        var step = MathF.Max(TerrainGridStep,
+            MathF.Max(widthWorld, depthWorld) / MathF.Max(1, TerrainGridMaxSize - 1));
+        var width = Math.Clamp((int)MathF.Ceiling(widthWorld / step) + 1, 2, TerrainGridMaxSize);
+        var depth = Math.Clamp((int)MathF.Ceiling(depthWorld / step) + 1, 2, TerrainGridMaxSize);
+
+        var heights = new float[width, depth];
+        var valid = new bool[width, depth];
+        var originY = maxY + 10f;
+        const float rayDistance = 80f;
+
+        for (int z = 0; z < depth; z++)
+        for (int x = 0; x < width; x++)
+        {
+            var wx = minX + x * step;
+            var wz = minZ + z * step;
+            if (BGCollisionModule.RaycastMaterialFilter(
+                    new Vector3(wx, originY, wz),
+                    new Vector3(0, -1, 0),
+                    out var hit,
+                    rayDistance))
+            {
+                heights[x, z] = hit.Point.Y;
+                valid[x, z] = true;
+            }
+        }
+
+        return new ApproachTerrainCache
+        {
+            OriginX = minX,
+            OriginZ = minZ,
+            Step = step,
+            Width = width,
+            Depth = depth,
+            Heights = heights,
+            Valid = valid,
+        };
+    }
+
+    private Vector3 CorrectMovingRootHeight(
+        Vector3 rootPosition,
+        ApproachTerrainCache terrainCache,
+        ApproachPathState state,
+        float deltaTime)
+    {
+        if (!terrainCache.TrySample(rootPosition.X, rootPosition.Z, out var terrainY))
+            return rootPosition;
+
+        if (!state.HasStableRootTerrainClearance)
+        {
+            state.StableRootTerrainClearance = rootPosition.Y - terrainY - config.DefaultNpcHeightOffset;
+            state.HasStableRootTerrainClearance = true;
+        }
+
+        var desiredY = terrainY + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;
+        var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
+        var maxStep = MathF.Max(0.03f, 6.0f * deltaTime);
+        var deltaY = Math.Clamp(desiredY - fromY, -maxStep, maxStep);
+        var y = fromY + deltaY;
+
+        state.LastMoveRootY = y;
+        state.HasLastMoveRootY = true;
+        return rootPosition with { Y = y };
+    }
+
+    private void CorrectStableRootHeight(
+        GameObject* gameObj,
+        Vector3 rootPosition,
+        ApproachTerrainCache terrainCache,
+        ApproachPathState state,
+        float deltaTime)
+    {
+        var corrected = CorrectMovingRootHeight(rootPosition, terrainCache, state, deltaTime);
+        if (MathF.Abs(corrected.Y - rootPosition.Y) < 0.001f)
+            return;
+
+        movementBlockHook.SetApproachPosition(gameObj, corrected.X, corrected.Y, corrected.Z);
     }
 
     private void StartApproachMoveAnim(SimulatedNpc npc)
