@@ -25,6 +25,7 @@ public unsafe class NpcAiController : IDisposable
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly IClientState clientState;
     private readonly Configuration config;
+    private readonly CombatPositioningService combatPositioningService;
     private readonly IPluginLog log;
     private readonly Func<nint, bool> isExternallyControlled;
     private readonly Dictionary<nint, ApproachPathState> approachPaths = new();
@@ -71,6 +72,7 @@ public unsafe class NpcAiController : IDisposable
         public bool HasStableRootTerrainClearance { get; set; }
         public float LastMoveRootY { get; set; }
         public bool HasLastMoveRootY { get; set; }
+        public uint TargetEntityId { get; set; }
     }
 
     private sealed class ApproachTerrainCache
@@ -147,6 +149,7 @@ public unsafe class NpcAiController : IDisposable
         VNavmeshIpc vnavmeshIpc,
         IClientState clientState,
         Configuration config,
+        CombatPositioningService combatPositioningService,
         IPluginLog log,
         Func<nint, bool>? isExternallyControlled = null)
     {
@@ -156,6 +159,7 @@ public unsafe class NpcAiController : IDisposable
         this.vnavmeshIpc = vnavmeshIpc;
         this.clientState = clientState;
         this.config = config;
+        this.combatPositioningService = combatPositioningService;
         this.log = log;
         this.isExternallyControlled = isExternallyControlled ?? (_ => false);
 
@@ -216,6 +220,7 @@ public unsafe class NpcAiController : IDisposable
         // Read the player's actual GameObjectId from the game object (includes Type byte)
         var playerGameObj = (GameObject*)player.Address;
         var playerGameObjectId = playerGameObj->GetGameObjectId();
+        var targetByNpcId = new Dictionary<uint, (SimulatedEntityState State, Vector3 Position)>();
 
         foreach (var npc in npcs)
         {
@@ -229,6 +234,7 @@ public unsafe class NpcAiController : IDisposable
             var targetState = combatEngine.GetNpcTarget(npc);
             var targetPos = combatEngine.GetSimulatedEntityPosition(targetState);
             var targetEntityId = targetState.EntityId;
+            targetByNpcId[npc.SimulatedEntityId] = (targetState, targetPos);
 
             // Set NPC's target to the player (client-side only).
             // NPCs target the player during combat AND when player is dead (standing over corpse).
@@ -241,6 +247,12 @@ public unsafe class NpcAiController : IDisposable
                 if (shouldTarget)
                     character->TargetId = playerGameObjectId;
                 else if (character->TargetId.ObjectId == playerEntityId)
+                    character->TargetId = default;
+            }
+            else if (config.EnableNpcTargetPlayer && npc.BattleChara != null)
+            {
+                var character = (Character*)npc.BattleChara;
+                if (character->TargetId.ObjectId == playerEntityId)
                     character->TargetId = default;
             }
 
@@ -294,7 +306,13 @@ public unsafe class NpcAiController : IDisposable
                 if (npc.AiState == NpcAiState.Resetting)
                     npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
 
-                TickApproach(npc, deltaTime, playerPos, terrainCache);
+                if (!targetByNpcId.TryGetValue(npc.SimulatedEntityId, out var target))
+                {
+                    var state = combatEngine.GetNpcTarget(npc);
+                    target = (state, combatEngine.GetSimulatedEntityPosition(state));
+                }
+
+                TickApproach(npc, deltaTime, playerPos, target.State, target.Position, terrainCache);
             }
         }
         else
@@ -708,11 +726,14 @@ public unsafe class NpcAiController : IDisposable
         SimulatedNpc npc,
         float deltaTime,
         Vector3 playerPos,
+        SimulatedEntityState npcTarget,
+        Vector3 npcTargetPos,
         ApproachTerrainCache? terrainCache)
     {
         if (npc.BattleChara == null) return;
         if (npc.AiState == NpcAiState.Dead)
         {
+            combatPositioningService.Release(npc.SimulatedEntityId);
             StopApproachMoveAnim(npc);
             return;
         }
@@ -720,6 +741,7 @@ public unsafe class NpcAiController : IDisposable
         // Don't move NPCs when the player is dead — they stay in place
         if (!combatEngine.State.PlayerState.IsAlive)
         {
+            combatPositioningService.Release(npc.SimulatedEntityId);
             StopApproachMoveAnim(npc);
             return;
         }
@@ -727,17 +749,33 @@ public unsafe class NpcAiController : IDisposable
         var gameObj = (GameObject*)npc.BattleChara;
         var npcPos = (Vector3)gameObj->Position;
 
-        var targetPos = ComputeApproachGoal(npc, npcPos, playerPos);
+        if (approachPaths.TryGetValue(npc.Address, out var existingPathState) &&
+            existingPathState.TargetEntityId != 0 &&
+            existingPathState.TargetEntityId != npcTarget.EntityId)
+        {
+            existingPathState.Waypoints.Clear();
+            existingPathState.WaypointIndex = 0;
+            existingPathState.PendingPath = null;
+        }
+
+        var usePartyPositioning = combatEngine.HasLivingCompanions?.Invoke() == true;
+        var targetPos = usePartyPositioning &&
+                        combatPositioningService.TryGetEnemyCombatPosition(npc, npcTarget, npcTargetPos, out var partyTargetPos)
+            ? partyTargetPos
+            : ComputeApproachGoal(npc, npcPos, playerPos);
+        var facePos = usePartyPositioning ? npcTargetPos : playerPos;
 
         // Approximate terrain following: use player Y, with the configured height
         // offset stacked on top. The offset lives on the approach logic because
         // approach is the only flow that writes Y every frame — raw direct-Y writes
         // outside this flow fight the game's own position updates and break movement.
-        targetPos.Y = playerPos.Y + config.DefaultNpcHeightOffset;
+        targetPos.Y = (usePartyPositioning ? npcTargetPos.Y : playerPos.Y) + config.DefaultNpcHeightOffset;
 
         // Already close enough — just face the player
         var moveTarget = targetPos;
         var hasVnavmeshTarget = TryUpdateVNavmeshPath(npc, deltaTime, npcPos, targetPos, out var pathTarget);
+        if (approachPaths.TryGetValue(npc.Address, out var pathStateForTarget))
+            pathStateForTarget.TargetEntityId = npcTarget.EntityId;
         if (hasVnavmeshTarget)
             moveTarget = pathTarget;
 
@@ -755,7 +793,7 @@ public unsafe class NpcAiController : IDisposable
                 CorrectStableRootHeight(gameObj, npcPos, terrainCache, arrivedPathState, deltaTime);
 
             StopApproachMoveAnim(npc);
-            ForceRotateToward(npc, playerPos, deltaTime);
+            ForceRotateToward(npc, facePos, deltaTime);
             return;
         }
 
@@ -786,8 +824,7 @@ public unsafe class NpcAiController : IDisposable
         StartApproachMoveAnim(npc);
         movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
 
-        // Face the player
-        ForceRotateToward(npc, playerPos, deltaTime);
+        ForceRotateToward(npc, facePos, deltaTime);
     }
 
     private bool TryUpdateVNavmeshPath(

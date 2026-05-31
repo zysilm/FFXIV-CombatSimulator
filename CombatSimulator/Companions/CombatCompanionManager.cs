@@ -29,6 +29,7 @@ public unsafe class CombatCompanionManager : IDisposable
     private readonly MovementBlockHook movementBlockHook;
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly ITargetManager targetManager;
+    private readonly CombatPositioningService combatPositioningService;
     private readonly IPluginLog log;
 
     private readonly List<CombatCompanion> companions = new();
@@ -56,6 +57,20 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float FollowStopDistance = 0.6f;
     private const float SenseInterval = 1.0f;
     private const ushort NormalRunTimelineId = 22;
+    private const float SelectedTargetBonus = 130f;
+    private const float LastPlayerTargetBonus = 95f;
+    private const float AttackingPlayerBonus = 120f;
+    private const float PreviousTargetBonus = 35f;
+    private const float LowHpFinishBonus = 35f;
+    private const float AssignmentPenalty = 95f;
+    private const float PlayerFocusOvercapPenalty = 160f;
+    private const float DistancePenaltyPerYalm = 1.0f;
+    private const float TargetSwitchThreshold = 20f;
+    private const int MaxPlayerFocusAssistants = 2;
+    private const float EnemyTargetAssignmentPenalty = 80f;
+    private const float EnemyTargetCurrentBonus = 50f;
+    private const float EnemyTargetDpsWeight = 0.25f;
+    private const float EnemyTargetSwitchThreshold = 25f;
 
     public IReadOnlyList<CombatCompanion> Companions => companions;
     public int PendingCount => pendingSpawns.Count + spawnQueue.Count;
@@ -74,6 +89,7 @@ public unsafe class CombatCompanionManager : IDisposable
         MovementBlockHook movementBlockHook,
         VNavmeshIpc vnavmeshIpc,
         ITargetManager targetManager,
+        CombatPositioningService combatPositioningService,
         IPluginLog log)
     {
         this.objectTable = objectTable;
@@ -84,6 +100,7 @@ public unsafe class CombatCompanionManager : IDisposable
         this.movementBlockHook = movementBlockHook;
         this.vnavmeshIpc = vnavmeshIpc;
         this.targetManager = targetManager;
+        this.combatPositioningService = combatPositioningService;
         this.log = log;
     }
 
@@ -161,12 +178,13 @@ public unsafe class CombatCompanionManager : IDisposable
 
         vnavmeshIpc.RefreshStatus();
         var terrainCache = BuildCompanionTerrainCache(enemies);
+        var assignedTargets = new Dictionary<uint, int>();
 
         var index = 0;
         foreach (var companion in companions.ToList())
         {
             TickRecentDps(companion, deltaTime);
-            TickCompanion(companion, deltaTime, enemies, index++, companions.Count, terrainCache);
+            TickCompanion(companion, deltaTime, enemies, index++, companions.Count, terrainCache, assignedTargets);
         }
 
         TickPlayerRecentDps(deltaTime);
@@ -199,6 +217,10 @@ public unsafe class CombatCompanionManager : IDisposable
         if (!config.EnableCombatCompanions)
             return combatEngine.State.PlayerState;
 
+        var hasLivingCompanions = companions.Any(c => c.IsSpawned && c.State.IsAlive);
+        if (!hasLivingCompanions)
+            return combatEngine.State.PlayerState;
+
         var candidates = new List<(uint EntityId, SimulatedEntityState State, float Dps)>
         {
             (combatEngine.State.PlayerState.EntityId, combatEngine.State.PlayerState, playerRecentDps),
@@ -214,9 +236,9 @@ public unsafe class CombatCompanionManager : IDisposable
         if (candidates.Count == 0)
             return combatEngine.State.PlayerState;
 
-        var best = candidates.OrderByDescending(c => c.Dps).First();
         if (!enemyTargetByEnemyId.TryGetValue(enemy.SimulatedEntityId, out var currentId))
         {
+            var best = SelectBalancedEnemyTarget(enemy.SimulatedEntityId, 0, candidates);
             enemyTargetByEnemyId[enemy.SimulatedEntityId] = best.EntityId;
             return best.State;
         }
@@ -224,18 +246,50 @@ public unsafe class CombatCompanionManager : IDisposable
         var current = candidates.FirstOrDefault(c => c.EntityId == currentId);
         if (current.State == null)
         {
+            var best = SelectBalancedEnemyTarget(enemy.SimulatedEntityId, 0, candidates);
             enemyTargetByEnemyId[enemy.SimulatedEntityId] = best.EntityId;
             return best.State;
         }
 
-        if (best.EntityId != current.EntityId && best.Dps > current.Dps * RetargetDpsLead)
+        var balancedBest = SelectBalancedEnemyTarget(enemy.SimulatedEntityId, current.EntityId, candidates);
+        var currentScore = ScoreEnemyTargetCandidate(enemy.SimulatedEntityId, current.EntityId, current);
+        var bestScore = ScoreEnemyTargetCandidate(enemy.SimulatedEntityId, current.EntityId, balancedBest);
+        if (balancedBest.EntityId != current.EntityId && bestScore > currentScore + EnemyTargetSwitchThreshold)
         {
-            enemyTargetByEnemyId[enemy.SimulatedEntityId] = best.EntityId;
-            return best.State;
+            enemyTargetByEnemyId[enemy.SimulatedEntityId] = balancedBest.EntityId;
+            return balancedBest.State;
         }
 
         return current.State;
     }
+
+    private (uint EntityId, SimulatedEntityState State, float Dps) SelectBalancedEnemyTarget(
+        uint enemyId,
+        uint currentId,
+        IReadOnlyList<(uint EntityId, SimulatedEntityState State, float Dps)> candidates)
+        => candidates
+            .OrderByDescending(c => ScoreEnemyTargetCandidate(enemyId, currentId, c))
+            .ThenBy(c => StableTargetTieBreak(enemyId, c.EntityId))
+            .First();
+
+    private float ScoreEnemyTargetCandidate(
+        uint enemyId,
+        uint currentId,
+        (uint EntityId, SimulatedEntityState State, float Dps) candidate)
+    {
+        var assignedCount = enemyTargetByEnemyId
+            .Where(kv => kv.Key != enemyId)
+            .Count(kv => kv.Value == candidate.EntityId);
+
+        var score = candidate.Dps * EnemyTargetDpsWeight;
+        score -= assignedCount * EnemyTargetAssignmentPenalty;
+        if (candidate.EntityId == currentId)
+            score += EnemyTargetCurrentBonus;
+        return score;
+    }
+
+    private static uint StableTargetTieBreak(uint enemyId, uint targetId)
+        => (enemyId * 1103515245u + targetId * 2654435761u) & 0xFFFFu;
 
     public CombatCompanion? GetCompanion(uint entityId)
         => companions.FirstOrDefault(c => c.SimulatedEntityId == entityId);
@@ -641,13 +695,15 @@ public unsafe class CombatCompanionManager : IDisposable
         IReadOnlyList<SimulatedNpc> enemies,
         int companionIndex,
         int companionCount,
-        CompanionTerrainCache? terrainCache)
+        CompanionTerrainCache? terrainCache,
+        Dictionary<uint, int> assignedTargets)
     {
         if (!companion.IsSpawned || companion.BattleChara == null)
             return;
 
         if (!companion.State.IsAlive)
         {
+            combatPositioningService.Release(companion.SimulatedEntityId);
             StopMove(companion);
             if (!companion.DeathAnimationPlayed)
             {
@@ -658,10 +714,11 @@ public unsafe class CombatCompanionManager : IDisposable
             return;
         }
 
-        var target = SelectCompanionTarget(companion, enemies);
+        var target = SelectCompanionTarget(companion, enemies, assignedTargets);
         if (target == null || target.BattleChara == null)
         {
             companion.CurrentTargetId = 0;
+            combatPositioningService.Release(companion.SimulatedEntityId);
             FollowPlayer(companion, deltaTime, companionIndex, companionCount, terrainCache);
             return;
         }
@@ -678,7 +735,8 @@ public unsafe class CombatCompanionManager : IDisposable
 
         if (dist > effectiveRange)
         {
-            MoveToward(companion, targetPos, deltaTime, terrainCache);
+            combatPositioningService.Release(companion.SimulatedEntityId);
+            MoveToCombatFormation(companion, deltaTime, companionIndex, companionCount, targetPos, terrainCache);
             return;
         }
 
@@ -725,7 +783,10 @@ public unsafe class CombatCompanionManager : IDisposable
         }
     }
 
-    private SimulatedNpc? SelectCompanionTarget(CombatCompanion companion, IReadOnlyList<SimulatedNpc> enemies)
+    private SimulatedNpc? SelectCompanionTarget(
+        CombatCompanion companion,
+        IReadOnlyList<SimulatedNpc> enemies,
+        Dictionary<uint, int> assignedTargets)
     {
         var aliveEnemies = enemies
             .Where(e => e.IsSpawned && e.State.IsAlive && e.BattleChara != null)
@@ -733,38 +794,73 @@ public unsafe class CombatCompanionManager : IDisposable
         if (aliveEnemies.Count == 0)
             return null;
 
-        var currentTarget = targetManager.Target;
-        if (currentTarget != null)
-        {
-            var selected = aliveEnemies.FirstOrDefault(e => e.SimulatedEntityId == currentTarget.EntityId);
-            if (selected != null)
-                return selected;
-        }
-
-        if (lastPlayerTargetId != 0)
-        {
-            var lastPlayerTarget = aliveEnemies.FirstOrDefault(e => e.SimulatedEntityId == lastPlayerTargetId);
-            if (lastPlayerTarget != null)
-                return lastPlayerTarget;
-        }
-
+        var selectedTargetId = targetManager.Target?.EntityId ?? 0;
         var playerId = combatEngine.State.PlayerState.EntityId;
-        var attackingPlayer = aliveEnemies
-            .Where(e => GetEnemyTargetId(e.SimulatedEntityId) == playerId)
-            .OrderBy(e => DistanceToPlayer(e))
-            .FirstOrDefault();
-        if (attackingPlayer != null)
-            return attackingPlayer;
+        var current = companion.CurrentTargetId == 0
+            ? null
+            : aliveEnemies.FirstOrDefault(e => e.SimulatedEntityId == companion.CurrentTargetId);
 
-        if (companion.CurrentTargetId != 0)
+        var scoredTargets = aliveEnemies
+            .Select(enemy => (Enemy: enemy, Score: ScoreCompanionTarget(
+                companion, enemy, assignedTargets, selectedTargetId, playerId)))
+            .OrderByDescending(t => t.Score)
+            .ToList();
+
+        var best = scoredTargets[0];
+        if (current != null)
         {
-            var previous = aliveEnemies.FirstOrDefault(e => e.SimulatedEntityId == companion.CurrentTargetId);
-            if (previous != null)
-                return previous;
+            var currentScore = scoredTargets.First(t => t.Enemy.SimulatedEntityId == current.SimulatedEntityId).Score;
+            if (best.Enemy.SimulatedEntityId != current.SimulatedEntityId &&
+                best.Score < currentScore + TargetSwitchThreshold)
+            {
+                best = (current, currentScore);
+            }
         }
 
-        var nearestToPlayer = aliveEnemies.OrderBy(DistanceToPlayer).FirstOrDefault();
-        return nearestToPlayer ?? aliveEnemies[0];
+        assignedTargets[best.Enemy.SimulatedEntityId] =
+            assignedTargets.GetValueOrDefault(best.Enemy.SimulatedEntityId) + 1;
+        return best.Enemy;
+    }
+
+    private float ScoreCompanionTarget(
+        CombatCompanion companion,
+        SimulatedNpc enemy,
+        IReadOnlyDictionary<uint, int> assignedTargets,
+        uint selectedTargetId,
+        uint playerId)
+    {
+        var score = 0f;
+        var enemyId = enemy.SimulatedEntityId;
+        var assignedCount = assignedTargets.GetValueOrDefault(enemyId);
+        var isSelectedTarget = selectedTargetId != 0 && enemyId == selectedTargetId;
+        var isLastPlayerTarget = lastPlayerTargetId != 0 && enemyId == lastPlayerTargetId;
+        var isPlayerFocusTarget = isSelectedTarget || isLastPlayerTarget;
+
+        if (isSelectedTarget)
+            score += SelectedTargetBonus;
+        if (isLastPlayerTarget && !isSelectedTarget)
+            score += LastPlayerTargetBonus;
+        if (GetEnemyTargetId(enemyId) == playerId)
+            score += AttackingPlayerBonus;
+        if (companion.CurrentTargetId == enemyId)
+            score += PreviousTargetBonus;
+
+        var hpPercent = enemy.State.MaxHp > 0
+            ? (float)enemy.State.CurrentHp / enemy.State.MaxHp
+            : 1f;
+        score += (1f - Math.Clamp(hpPercent, 0f, 1f)) * LowHpFinishBonus;
+
+        var focusFreeAssignments = isPlayerFocusTarget ? MaxPlayerFocusAssistants : 0;
+        var penalizedAssignments = Math.Max(0, assignedCount - focusFreeAssignments);
+        score -= penalizedAssignments * AssignmentPenalty;
+        if (isPlayerFocusTarget && assignedCount >= MaxPlayerFocusAssistants)
+            score -= (assignedCount - MaxPlayerFocusAssistants + 1) * PlayerFocusOvercapPenalty;
+
+        var distance = DistanceToPlayer(enemy);
+        if (!float.IsInfinity(distance) && !float.IsNaN(distance))
+            score -= distance * DistancePenaltyPerYalm;
+
+        return score;
     }
 
     private float DistanceToPlayer(SimulatedNpc enemy)
@@ -849,6 +945,37 @@ public unsafe class CombatCompanionManager : IDisposable
                 CorrectStableRootHeight(obj, current, terrainCache, stableState, deltaTime);
             StopMove(companion);
             RotateToward(companion, player.Position, deltaTime);
+            return;
+        }
+
+        MoveToward(companion, target, deltaTime, terrainCache);
+    }
+
+    private void MoveToCombatFormation(
+        CombatCompanion companion,
+        float deltaTime,
+        int companionIndex,
+        int companionCount,
+        Vector3 facePos,
+        CompanionTerrainCache? terrainCache)
+    {
+        var player = objectTable.LocalPlayer;
+        if (player == null || companion.BattleChara == null)
+        {
+            StopMove(companion);
+            return;
+        }
+
+        var obj = (GameObject*)companion.BattleChara;
+        var current = (Vector3)obj->Position;
+        var target = CalculateFollowPosition(player.Position, player.Rotation, companionIndex, companionCount);
+        var distance = Vector3.Distance(current, target);
+        if (distance <= FollowStopDistance)
+        {
+            if (terrainCache != null && pathStates.TryGetValue(companion.Address, out var stableState))
+                CorrectStableRootHeight(obj, current, terrainCache, stableState, deltaTime);
+            StopMove(companion);
+            RotateToward(companion, facePos, deltaTime);
             return;
         }
 
