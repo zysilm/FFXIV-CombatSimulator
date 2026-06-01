@@ -43,6 +43,9 @@ public unsafe class CombatCompanionManager : IDisposable
     private float playerRecentDps;
     private uint lastPlayerTargetId;
     private float senseTimer;
+    private bool combatAnchorActive;
+    private Vector3 combatAnchorPosition;
+    private float combatAnchorRotation;
 
     private const int MaxPendingFrames = 120;
     private const float TargetRange = 3.0f;
@@ -57,6 +60,7 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float RetargetDpsLead = 1.20f;
     private const float FollowDistance = 3.0f;
     private const float FollowStopDistance = 0.6f;
+    private const float CombatAnchorRelocateDistance = 10.0f;
     private const float MeleeAttackRangeBuffer = 0.25f;
     private const float SenseInterval = 1.0f;
     private const ushort NormalRunTimelineId = 22;
@@ -182,6 +186,7 @@ public unsafe class CombatCompanionManager : IDisposable
         vnavmeshIpc.RefreshStatus();
         var terrainCache = BuildCompanionTerrainCache(enemies);
         var assignedTargets = new Dictionary<uint, int>();
+        TickCombatAnchor(enemies);
 
         var index = 0;
         foreach (var companion in companions.ToList())
@@ -360,6 +365,7 @@ public unsafe class CombatCompanionManager : IDisposable
         enemyTargetByEnemyId.Clear();
         playerRecentDamage = 0;
         playerRecentDps = 0;
+        combatAnchorActive = false;
     }
 
     private void TickSensing(float deltaTime)
@@ -954,6 +960,35 @@ public unsafe class CombatCompanionManager : IDisposable
         MoveToward(companion, target, deltaTime, terrainCache);
     }
 
+    private void TickCombatAnchor(IReadOnlyList<SimulatedNpc> enemies)
+    {
+        var player = objectTable.LocalPlayer;
+        var hasCombat = player != null &&
+                        companions.Any(c => c.IsSpawned && c.State.IsAlive) &&
+                        enemies.Any(e => e.IsSpawned && e.State.IsAlive);
+        if (!hasCombat)
+        {
+            combatAnchorActive = false;
+            return;
+        }
+
+        if (!combatAnchorActive)
+        {
+            combatAnchorPosition = player!.Position;
+            combatAnchorRotation = player.Rotation;
+            combatAnchorActive = true;
+            return;
+        }
+
+        var delta = player!.Position - combatAnchorPosition;
+        delta.Y = 0;
+        if (delta.Length() >= CombatAnchorRelocateDistance)
+        {
+            combatAnchorPosition = player.Position;
+            combatAnchorRotation = player.Rotation;
+        }
+    }
+
     private void MoveToCombatFormation(
         CombatCompanion companion,
         float deltaTime,
@@ -971,7 +1006,9 @@ public unsafe class CombatCompanionManager : IDisposable
 
         var obj = (GameObject*)companion.BattleChara;
         var current = (Vector3)obj->Position;
-        var target = CalculateFollowPosition(player.Position, player.Rotation, companionIndex, companionCount);
+        var anchorPos = combatAnchorActive ? combatAnchorPosition : player.Position;
+        var anchorRot = combatAnchorActive ? combatAnchorRotation : player.Rotation;
+        var target = CalculateFollowPosition(anchorPos, anchorRot, companionIndex, companionCount);
         var distance = Vector3.Distance(current, target);
         if (distance <= FollowStopDistance)
         {

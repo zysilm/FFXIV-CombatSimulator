@@ -123,7 +123,7 @@ public sealed unsafe class CombatPositioningService
 
         var actorPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;
         var direction = FlatNormalize(actorPos - targetPosition, enemyCenter - friendlyCenter);
-        var range = MathF.Max(DefaultMeleeRange, enemy.Behavior.AutoAttackRange);
+        var range = GetEnemyCombatRange(enemy);
 
         desiredPosition = ReserveBestSlot(
             enemy.SimulatedEntityId,
@@ -139,6 +139,11 @@ public sealed unsafe class CombatPositioningService
 
     public void Release(uint actorId)
         => reservations.Remove(actorId);
+
+    private static float GetEnemyCombatRange(SimulatedNpc enemy)
+        => enemy.Behavior.AutoAttackStyle is NpcAttackStyle.Ranged or NpcAttackStyle.Magic
+            ? MathF.Max(DefaultMeleeRange, enemy.Behavior.AutoAttackRange)
+            : DefaultMeleeRange;
 
     private Vector3 ReserveBestSlot(
         uint actorId,

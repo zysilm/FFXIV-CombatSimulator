@@ -44,6 +44,8 @@ public unsafe class NpcAiController : IDisposable
     private const float TerrainGridStep = 0.5f;
     private const int TerrainGridMaxSize = 33;
     private const ushort NormalRunTimelineId = 22;
+    private const float PartyMeleeAttackRange = 1.0f;
+    private const float PartyMeleeAttackRangeBuffer = 0.25f;
     // Within (approach distance + lock buffer) an enemy locks its angle and stops;
     // it only unlocks to re-approach if pushed beyond (approach distance + unlock).
     private const float ApproachLockBuffer = 1.5f;
@@ -451,6 +453,13 @@ public unsafe class NpcAiController : IDisposable
         Vector3 playerPos, uint playerEntityId,
         Vector3 npcPos, float distToPlayer)
     {
+        var simulatedTarget = combatEngine.State.GetEntity(playerEntityId);
+        if (simulatedTarget == null || !simulatedTarget.IsAlive)
+        {
+            npc.AiState = NpcAiState.Idle;
+            return;
+        }
+
         // Only rotate client-controlled NPCs
         if (npc.IsClientControlled)
             RotateTowardPlayer(npc, playerPos, deltaTime);
@@ -467,24 +476,13 @@ public unsafe class NpcAiController : IDisposable
             }
         }
 
-        // For real NPCs: use a generous range since we can't move them
-        float effectiveRange = npc.IsClientControlled
-            ? npc.Behavior.AutoAttackRange + 1.0f
-            : npc.Behavior.AutoAttackRange + 30.0f; // Large range for real NPCs
+        float effectiveRange = GetEffectiveNpcAttackRange(npc, simulatedTarget);
 
         if (distToPlayer > effectiveRange)
         {
             if (npc.IsClientControlled)
                 npc.AiState = NpcAiState.Chasing;
             // Real NPCs just wait
-            return;
-        }
-
-        // Check if player is alive — NPCs stop attacking when player is dead
-        var simulatedTarget = combatEngine.State.GetEntity(playerEntityId);
-        if (simulatedTarget == null || !simulatedTarget.IsAlive)
-        {
-            npc.AiState = NpcAiState.Idle;
             return;
         }
 
@@ -519,8 +517,8 @@ public unsafe class NpcAiController : IDisposable
         {
             if (skill.CooldownRemaining > 0)
                 continue;
-            // For real NPCs, skip range check (generous range already checked above)
-            if (npc.IsClientControlled && distToPlayer > skill.Range)
+            var skillRange = GetEffectiveNpcSkillRange(npc, simulatedTarget, skill.Range);
+            if ((npc.IsClientControlled || UsesPartyMeleeRange(npc, simulatedTarget)) && distToPlayer > skillRange)
                 continue;
             if (hpPercent > skill.HpThreshold)
                 continue;
@@ -945,8 +943,32 @@ public unsafe class NpcAiController : IDisposable
         StartApproachMoveAnim(npc);
         movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
 
-        ForceRotateToward(npc, facePos, deltaTime);
+        ForceRotateToward(npc, moveTarget, deltaTime);
     }
+
+    private float GetEffectiveNpcAttackRange(SimulatedNpc npc, SimulatedEntityState target)
+    {
+        if (UsesPartyMeleeRange(npc, target))
+            return PartyMeleeAttackRange + PartyMeleeAttackRangeBuffer;
+
+        // For real NPCs: use a generous range since we can't move them.
+        return npc.IsClientControlled
+            ? npc.Behavior.AutoAttackRange + 1.0f
+            : npc.Behavior.AutoAttackRange + 30.0f;
+    }
+
+    private float GetEffectiveNpcSkillRange(SimulatedNpc npc, SimulatedEntityState target, float skillRange)
+    {
+        if (UsesPartyMeleeRange(npc, target))
+            return MathF.Min(skillRange, PartyMeleeAttackRange + PartyMeleeAttackRangeBuffer);
+
+        return skillRange;
+    }
+
+    private bool UsesPartyMeleeRange(SimulatedNpc npc, SimulatedEntityState target)
+        => combatEngine.HasLivingCompanions?.Invoke() == true &&
+           !target.IsPlayer &&
+           npc.Behavior.AutoAttackStyle is not NpcAttackStyle.Ranged and not NpcAttackStyle.Magic;
 
     private bool TryUpdateVNavmeshPath(
         SimulatedNpc npc,
