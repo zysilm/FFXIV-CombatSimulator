@@ -19,6 +19,7 @@ public unsafe class RagdollController : IDisposable
     private readonly BoneTransformService boneService;
     private readonly Npcs.NpcSelector? npcSelector;
     private readonly Safety.MovementBlockHook? movementBlockHook;
+    private readonly IReadOnlyList<nint> extraCollisionAddresses;
     private readonly Configuration config;
     private readonly IPluginLog log;
 
@@ -497,11 +498,13 @@ public unsafe class RagdollController : IDisposable
     }
 
     public RagdollController(BoneTransformService boneService, Npcs.NpcSelector npcSelector,
-        Safety.MovementBlockHook movementBlockHook, Configuration config, IPluginLog log)
+        Safety.MovementBlockHook movementBlockHook, Configuration config, IPluginLog log,
+        IReadOnlyList<nint>? extraCollisionAddresses = null)
     {
         this.boneService = boneService;
         this.npcSelector = npcSelector;
         this.movementBlockHook = movementBlockHook;
+        this.extraCollisionAddresses = extraCollisionAddresses ?? Array.Empty<nint>();
         this.config = config;
         this.log = log;
 
@@ -514,6 +517,7 @@ public unsafe class RagdollController : IDisposable
         this.boneService = boneService;
         this.npcSelector = null;
         this.movementBlockHook = null;
+        this.extraCollisionAddresses = Array.Empty<nint>();
         this.config = config;
         this.log = log;
 
@@ -1284,6 +1288,14 @@ public unsafe class RagdollController : IDisposable
 
             log.Info($"RagdollController: NPC bone collision — {npcSelector.SelectedNpcs.Count} NPCs, scale={scale:F2}");
 
+            foreach (var address in extraCollisionAddresses)
+            {
+                if (address == nint.Zero || address == targetCharacterAddress)
+                    continue;
+
+                CreateFallbackCharacterCollision("extra actor", address);
+            }
+
             foreach (var npc in npcSelector.SelectedNpcs)
             {
                 if (npc.BattleChara == null)
@@ -1293,6 +1305,9 @@ public unsafe class RagdollController : IDisposable
                 }
 
                 var npcAddr = npc.Address;
+                if (npcAddr == targetCharacterAddress)
+                    continue;
+
                 var npcSkel = boneService.TryGetSkeleton(npcAddr);
 
                 if (npcSkel == null)
@@ -1397,19 +1412,22 @@ public unsafe class RagdollController : IDisposable
     /// Create a single fallback capsule for an NPC whose skeleton can't be read.
     /// </summary>
     private void CreateFallbackNpcCollision(Npcs.SimulatedNpc npc, nint npcAddr)
+        => CreateFallbackCharacterCollision($"NPC '{npc.Name}'", npcAddr);
+
+    private void CreateFallbackCharacterCollision(string label, nint address)
     {
-        var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
+        var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)address;
         var npcPos = new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z);
         var handle = simulation!.Statics.Add(new StaticDescription(
             npcPos, Quaternion.Identity, npcFallbackShapeIndex));
         npcCollisionStates.Add(new NpcCollisionState
         {
-            NpcAddress = npcAddr,
+            NpcAddress = address,
             BoneStatics = new List<NpcBoneStatic>(),
             FallbackHandle = handle,
             IsFallback = true,
         });
-        log.Info($"RagdollController: NPC '{npc.Name}' using fallback single capsule");
+        log.Info($"RagdollController: {label} using fallback single capsule");
     }
 
     private void StepAndApply()

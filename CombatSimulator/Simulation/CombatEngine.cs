@@ -849,6 +849,17 @@ public class CombatEngine : IDisposable
     {
         if (!isDamage || target.IsPlayer) return;
 
+        if (target.IsCompanion)
+        {
+            var addr = ResolveExternalEntityAddress?.Invoke(target.EntityId);
+            if (addr.HasValue && addr.Value != nint.Zero)
+            {
+                var character = (Character*)addr.Value;
+                character->Timeline.PlayActionTimeline(78);
+            }
+            return;
+        }
+
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             if (npc.SimulatedEntityId != target.EntityId || npc.BattleChara == null)

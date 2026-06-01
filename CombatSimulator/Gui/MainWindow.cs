@@ -413,6 +413,20 @@ public class MainWindow : IDisposable
             config.Save();
         }
 
+        var companionRagdoll = config.PartyCompanionDeathRagdoll;
+        if (ImGui.Checkbox("Ragdoll companions on death", ref companionRagdoll))
+        {
+            config.PartyCompanionDeathRagdoll = companionRagdoll;
+            config.Save();
+        }
+
+        var enemyRagdoll = config.PartyEnemyDeathRagdoll;
+        if (ImGui.Checkbox("Ragdoll enemies on death", ref enemyRagdoll))
+        {
+            config.PartyEnemyDeathRagdoll = enemyRagdoll;
+            config.Save();
+        }
+
         ImGui.Separator();
 
         using (ImRaii.Disabled(!config.EnableCombatCompanions))

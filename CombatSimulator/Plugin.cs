@@ -138,6 +138,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             combatEngine.RegisterCompanionEntity(companion);
             log.Info($"Spawned companion '{companion.Name}' registered as friendly combatant.");
         };
+        companionManager.OnCompanionDeathRagdoll = OnCompanionDeathRagdoll;
         companionManager.OnSpawnError = msg =>
         {
             chatGui.PrintError($"[CombatSim] Party error: {msg}");
@@ -451,7 +452,15 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // Weapon drop runs alongside ragdoll using the same activation delay
         weaponDropController.SpawnFor(address, config.NpcRagdollActivationDelay);
 
-        if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll) return;
+        var partyMode = companionManager.HasLivingCompanions;
+        if (partyMode)
+        {
+            if (!config.PartyEnemyDeathRagdoll) return;
+        }
+        else if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
+        {
+            return;
+        }
 
         // Cap concurrent NPC ragdolls — evict the oldest
         if (npcRagdolls.Count >= config.MaxNpcRagdolls)
@@ -464,9 +473,41 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         log.Info($"NPC death ragdoll: activating for 0x{address:X}");
 
-        var controller = new RagdollController(boneTransformService, config, log);
+        var playerCollision = GetLocalPlayerCollisionAddresses();
+        var controller = partyMode
+            ? new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, playerCollision)
+            : new RagdollController(boneTransformService, config, log);
         controller.Activate(address, config.NpcRagdollActivationDelay);
         npcRagdolls[address] = controller;
+    }
+
+    private void OnCompanionDeathRagdoll(nint address)
+    {
+        weaponDropController.SpawnFor(address, config.RagdollActivationDelay);
+
+        if (!config.PartyCompanionDeathRagdoll) return;
+
+        if (npcRagdolls.Count >= config.MaxNpcRagdolls)
+        {
+            var oldest = npcRagdolls.Keys.First();
+            RemoveNpcRagdoll(oldest);
+        }
+
+        if (npcRagdolls.ContainsKey(address)) return;
+
+        log.Info($"Companion death ragdoll: activating for 0x{address:X}");
+
+        var controller = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetLocalPlayerCollisionAddresses());
+        controller.Activate(address, config.RagdollActivationDelay);
+        npcRagdolls[address] = controller;
+    }
+
+    private IReadOnlyList<nint> GetLocalPlayerCollisionAddresses()
+    {
+        var player = Services.ObjectTable.LocalPlayer;
+        return player != null && player.Address != nint.Zero
+            ? new[] { player.Address }
+            : Array.Empty<nint>();
     }
 
     private void RemoveNpcRagdoll(nint address)

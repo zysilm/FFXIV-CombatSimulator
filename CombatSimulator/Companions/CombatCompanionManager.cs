@@ -86,6 +86,7 @@ public unsafe class CombatCompanionManager : IDisposable
     public bool HasLivingCompanions => config.EnableCombatCompanions && companions.Any(c => c.IsSpawned && c.State.IsAlive);
 
     public Action<CombatCompanion>? OnCompanionSpawnComplete { get; set; }
+    public Action<nint>? OnCompanionDeathRagdoll { get; set; }
     public Action<string>? OnSpawnError { get; set; }
 
     public CombatCompanionManager(
@@ -649,11 +650,15 @@ public unsafe class CombatCompanionManager : IDisposable
             if (!companion.DeathAnimationPlayed)
             {
                 animationController.PlayDeathAnimation(ToSimulatedNpcView(companion));
+                if (config.PartyCompanionDeathRagdoll && companion.Address != nint.Zero)
+                    OnCompanionDeathRagdoll?.Invoke(companion.Address);
                 companion.DeathAnimationPlayed = true;
                 combatEngine.TriggerEnemyVictoryIfPartyDefeated();
             }
             return;
         }
+
+        animationController.SetBattleStance(ToSimulatedNpcView(companion));
 
         if (!IsWithinCommandRange(companion))
         {
@@ -671,8 +676,6 @@ public unsafe class CombatCompanionManager : IDisposable
             MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
             return;
         }
-
-        animationController.SetBattleStance(ToSimulatedNpcView(companion));
 
         var targetObj = (GameObject*)target.BattleChara;
         var sourceObj = (GameObject*)companion.BattleChara;
@@ -787,7 +790,6 @@ public unsafe class CombatCompanionManager : IDisposable
         if (player == null || companion.BattleChara == null)
             return;
 
-        animationController.ClearBattleStance(ToSimulatedNpcView(companion));
         var obj = (GameObject*)companion.BattleChara;
         var current = (Vector3)obj->Position;
         var plan = partyEngagePlanner.BuildReturnPlan(
@@ -1005,8 +1007,6 @@ public unsafe class CombatCompanionManager : IDisposable
             StopMove(companion);
             return;
         }
-
-        animationController.ClearBattleStance(ToSimulatedNpcView(companion));
 
         var obj = (GameObject*)companion.BattleChara;
         var current = (Vector3)obj->Position;

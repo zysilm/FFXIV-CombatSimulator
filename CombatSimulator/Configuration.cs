@@ -90,6 +90,8 @@ public class Configuration : IPluginConfiguration
     public float PartyCommandRangeRandomness { get; set; } = 0.2f;
     public float PartyMeleeAttackRange { get; set; } = 1.5f;
     public float PartyRangedAttackRange { get; set; } = 9.5f;
+    public bool PartyCompanionDeathRagdoll { get; set; } = false;
+    public bool PartyEnemyDeathRagdoll { get; set; } = false;
 
     // NPC Defaults
     public int DefaultNpcLevel { get; set; } = 90;
