@@ -30,6 +30,7 @@ public unsafe class CombatCompanionManager : IDisposable
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly ITargetManager targetManager;
     private readonly CombatPositioningService combatPositioningService;
+    private readonly PartyEngagePlanner partyEngagePlanner;
     private readonly IPluginLog log;
 
     private readonly List<CombatCompanion> companions = new();
@@ -97,6 +98,7 @@ public unsafe class CombatCompanionManager : IDisposable
         VNavmeshIpc vnavmeshIpc,
         ITargetManager targetManager,
         CombatPositioningService combatPositioningService,
+        PartyEngagePlanner partyEngagePlanner,
         IPluginLog log)
     {
         this.objectTable = objectTable;
@@ -108,6 +110,7 @@ public unsafe class CombatCompanionManager : IDisposable
         this.vnavmeshIpc = vnavmeshIpc;
         this.targetManager = targetManager;
         this.combatPositioningService = combatPositioningService;
+        this.partyEngagePlanner = partyEngagePlanner;
         this.log = log;
     }
 
@@ -188,12 +191,55 @@ public unsafe class CombatCompanionManager : IDisposable
         var assignedTargets = new Dictionary<uint, int>();
         TickCombatAnchor(enemies);
 
-        var index = 0;
-        foreach (var companion in companions.ToList())
+        var liveCompanions = companions.ToList();
+        for (var i = 0; i < liveCompanions.Count; i++)
         {
+            var companion = liveCompanions[i];
             TickRecentDps(companion, deltaTime);
-            TickCompanion(companion, deltaTime, enemies, index++, companions.Count, terrainCache, assignedTargets);
+            AssignCompanionTarget(companion, enemies, assignedTargets);
         }
+
+        var enemyTargets = new Dictionary<uint, uint>();
+        foreach (var enemy in enemies)
+        {
+            if (!enemy.IsSpawned || !enemy.State.IsAlive)
+                continue;
+
+            var target = SelectEnemyTarget(enemy);
+            if (target != null)
+                enemyTargets[enemy.SimulatedEntityId] = target.EntityId;
+        }
+
+        var companionTargets = liveCompanions
+            .Where(c => c.IsSpawned && c.State.IsAlive && c.CurrentTargetId != 0)
+            .ToDictionary(c => c.SimulatedEntityId, c => c.CurrentTargetId);
+
+        var player = objectTable.LocalPlayer;
+        if (player != null)
+        {
+            var commandAnchorPos = combatAnchorActive ? combatAnchorPosition : player.Position;
+            var commandAnchorRot = combatAnchorActive ? combatAnchorRotation : player.Rotation;
+            partyEngagePlanner.Build(
+                deltaTime,
+                player.Position,
+                player.Rotation,
+                commandAnchorPos,
+                commandAnchorRot,
+                liveCompanions,
+                enemies,
+                companionTargets,
+                enemyTargets,
+                combatEngine.State.PlayerState.EntityId,
+                MathF.Max(1.0f, config.PartyCommandRange),
+                Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f));
+        }
+        else
+        {
+            partyEngagePlanner.Clear();
+        }
+
+        for (var i = 0; i < liveCompanions.Count; i++)
+            TickCompanion(liveCompanions[i], deltaTime, enemies, i, liveCompanions.Count, terrainCache);
 
         TickPlayerRecentDps(deltaTime);
     }
@@ -704,8 +750,7 @@ public unsafe class CombatCompanionManager : IDisposable
         IReadOnlyList<SimulatedNpc> enemies,
         int companionIndex,
         int companionCount,
-        CompanionTerrainCache? terrainCache,
-        Dictionary<uint, int> assignedTargets)
+        CompanionTerrainCache? terrainCache)
     {
         if (!companion.IsSpawned || companion.BattleChara == null)
             return;
@@ -723,16 +768,23 @@ public unsafe class CombatCompanionManager : IDisposable
             return;
         }
 
-        var target = SelectCompanionTarget(companion, enemies, assignedTargets);
+        if (!IsWithinCommandRange(companion))
+        {
+            companion.CurrentTargetId = 0;
+            combatPositioningService.Release(companion.SimulatedEntityId);
+            MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
+            return;
+        }
+
+        var target = GetCurrentCompanionTarget(companion, enemies);
         if (target == null || target.BattleChara == null)
         {
             companion.CurrentTargetId = 0;
             combatPositioningService.Release(companion.SimulatedEntityId);
-            FollowPlayer(companion, deltaTime, companionIndex, companionCount, terrainCache);
+            MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
             return;
         }
 
-        companion.CurrentTargetId = target.SimulatedEntityId;
         animationController.SetBattleStance(ToSimulatedNpcView(companion));
 
         var targetObj = (GameObject*)target.BattleChara;
@@ -740,12 +792,12 @@ public unsafe class CombatCompanionManager : IDisposable
         var targetPos = (Vector3)targetObj->Position;
         var sourcePos = (Vector3)sourceObj->Position;
         var dist = Vector3.Distance(sourcePos, targetPos);
-        var effectiveRange = companion.Behavior.AutoAttackRange + MeleeAttackRangeBuffer;
+        var effectiveRange = GetPartyAttackRange(companion.Behavior.AutoAttackStyle) + MeleeAttackRangeBuffer;
 
         if (dist > effectiveRange)
         {
             combatPositioningService.Release(companion.SimulatedEntityId);
-            MoveToCombatFormation(companion, deltaTime, companionIndex, companionCount, targetPos, terrainCache);
+            MoveByPartyPlan(companion, deltaTime, targetPos, terrainCache);
             return;
         }
 
@@ -765,7 +817,7 @@ public unsafe class CombatCompanionManager : IDisposable
                 skill.CooldownRemaining = Math.Max(0, skill.CooldownRemaining - deltaTime);
                 continue;
             }
-            if (dist > skill.Range)
+            if (dist > GetPartySkillRange(skill.Range, skill.AttackStyle))
                 continue;
 
             var result = combatEngine.ProcessCompanionAction(companion, target, skill.ActionId, skill.Potency, skill.AttackStyle);
@@ -790,6 +842,131 @@ public unsafe class CombatCompanionManager : IDisposable
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
             companion.State.AnimationLock = 0.6f;
         }
+    }
+
+    private void AssignCompanionTarget(
+        CombatCompanion companion,
+        IReadOnlyList<SimulatedNpc> enemies,
+        Dictionary<uint, int> assignedTargets)
+    {
+        if (!companion.IsSpawned || !companion.State.IsAlive || companion.BattleChara == null)
+            return;
+
+        if (!IsWithinCommandRange(companion))
+        {
+            companion.CurrentTargetId = 0;
+            return;
+        }
+
+        var target = SelectCompanionTarget(companion, enemies, assignedTargets);
+        companion.CurrentTargetId = target?.SimulatedEntityId ?? 0;
+    }
+
+    private SimulatedNpc? GetCurrentCompanionTarget(CombatCompanion companion, IReadOnlyList<SimulatedNpc> enemies)
+        => companion.CurrentTargetId == 0
+            ? null
+            : enemies.FirstOrDefault(e =>
+                e.SimulatedEntityId == companion.CurrentTargetId &&
+                e.IsSpawned &&
+                e.State.IsAlive &&
+                e.BattleChara != null);
+
+    private bool IsWithinCommandRange(CombatCompanion companion)
+    {
+        var player = objectTable.LocalPlayer;
+        if (player == null || companion.BattleChara == null)
+            return false;
+
+        var obj = (GameObject*)companion.BattleChara;
+        var current = (Vector3)obj->Position;
+        var commandAnchor = combatAnchorActive ? combatAnchorPosition : player.Position;
+        var delta = current - commandAnchor;
+        delta.Y = 0;
+        var limit = partyEngagePlanner.GetCommandLimit(
+            companion.SimulatedEntityId,
+            MathF.Max(1.0f, config.PartyCommandRange),
+            Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f));
+        return delta.Length() <= limit;
+    }
+
+    private void MoveToCommandRange(
+        CombatCompanion companion,
+        float deltaTime,
+        int companionIndex,
+        int companionCount,
+        CompanionTerrainCache? terrainCache)
+    {
+        var player = objectTable.LocalPlayer;
+        if (player == null || companion.BattleChara == null)
+            return;
+
+        animationController.ClearBattleStance(ToSimulatedNpcView(companion));
+        var obj = (GameObject*)companion.BattleChara;
+        var current = (Vector3)obj->Position;
+        var plan = partyEngagePlanner.BuildReturnPlan(
+            companion.SimulatedEntityId,
+            current,
+            combatAnchorActive ? combatAnchorPosition : player.Position,
+            combatAnchorActive ? combatAnchorRotation : player.Rotation,
+            companionIndex,
+            companionCount,
+            MathF.Max(1.0f, config.PartyCommandRange),
+            Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f));
+
+        MoveByPlan(companion, plan, deltaTime, terrainCache);
+    }
+
+    private void MoveByPartyPlan(
+        CombatCompanion companion,
+        float deltaTime,
+        Vector3 fallbackFaceTarget,
+        CompanionTerrainCache? terrainCache)
+    {
+        if (!partyEngagePlanner.TryGetPlan(companion.SimulatedEntityId, out var plan))
+        {
+            StopMove(companion);
+            return;
+        }
+
+        MoveByPlan(companion, plan, deltaTime, terrainCache);
+    }
+
+    private void MoveByPlan(
+        CombatCompanion companion,
+        PartyEngagePlan plan,
+        float deltaTime,
+        CompanionTerrainCache? terrainCache)
+    {
+        if (companion.BattleChara == null)
+            return;
+
+        var obj = (GameObject*)companion.BattleChara;
+        var current = (Vector3)obj->Position;
+        var distance = FlatDistance(current, plan.Goal);
+        if (distance > FollowStopDistance)
+        {
+            MoveToward(companion, plan.Goal, deltaTime, terrainCache);
+            return;
+        }
+
+        StopMove(companion);
+        if (plan.HasFaceTarget)
+            RotateToward(companion, plan.FaceTarget, deltaTime);
+    }
+
+    private float GetPartyAttackRange(NpcAttackStyle style)
+        => style is NpcAttackStyle.Ranged or NpcAttackStyle.Magic
+            ? MathF.Max(1.0f, config.PartyRangedAttackRange)
+            : MathF.Max(0.5f, config.PartyMeleeAttackRange);
+
+    private float GetPartySkillRange(float skillRange, NpcAttackStyle style)
+        => MathF.Min(skillRange, GetPartyAttackRange(style) + MeleeAttackRangeBuffer);
+
+    private static float FlatDistance(Vector3 a, Vector3 b)
+    {
+        var delta = a - b;
+        delta.Y = 0;
+        return delta.Length();
     }
 
     private SimulatedNpc? SelectCompanionTarget(

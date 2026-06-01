@@ -399,6 +399,36 @@ public class MainWindow : IDisposable
 
         ImGui.Separator();
 
+        var commandRange = Math.Clamp(config.PartyCommandRange, 3.0f, 50.0f);
+        if (ImGui.SliderFloat("Command range", ref commandRange, 3.0f, 50.0f, "%.1f yalms"))
+        {
+            config.PartyCommandRange = commandRange;
+            config.Save();
+        }
+
+        var commandRandomness = Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.6f);
+        if (ImGui.SliderFloat("Command range randomness", ref commandRandomness, 0.0f, 0.6f, "%.2f"))
+        {
+            config.PartyCommandRangeRandomness = commandRandomness;
+            config.Save();
+        }
+
+        var meleeRange = Math.Clamp(config.PartyMeleeAttackRange, 0.5f, 5.0f);
+        if (ImGui.SliderFloat("Melee attack range", ref meleeRange, 0.5f, 5.0f, "%.1f yalms"))
+        {
+            config.PartyMeleeAttackRange = meleeRange;
+            config.Save();
+        }
+
+        var rangedRange = Math.Clamp(config.PartyRangedAttackRange, 5.0f, 35.0f);
+        if (ImGui.SliderFloat("Ranged attack range", ref rangedRange, 5.0f, 35.0f, "%.1f yalms"))
+        {
+            config.PartyRangedAttackRange = rangedRange;
+            config.Save();
+        }
+
+        ImGui.Separator();
+
         using (ImRaii.Disabled(!config.EnableCombatCompanions))
         {
             if (ImGui.Button("Clone visible players"))

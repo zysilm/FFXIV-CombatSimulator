@@ -26,6 +26,7 @@ public unsafe class NpcAiController : IDisposable
     private readonly IClientState clientState;
     private readonly Configuration config;
     private readonly CombatPositioningService combatPositioningService;
+    private readonly PartyEngagePlanner partyEngagePlanner;
     private readonly IPluginLog log;
     private readonly Func<nint, bool> isExternallyControlled;
     private readonly Dictionary<nint, ApproachPathState> approachPaths = new();
@@ -44,7 +45,6 @@ public unsafe class NpcAiController : IDisposable
     private const float TerrainGridStep = 0.5f;
     private const int TerrainGridMaxSize = 33;
     private const ushort NormalRunTimelineId = 22;
-    private const float PartyMeleeAttackRange = 1.0f;
     private const float PartyMeleeAttackRangeBuffer = 0.25f;
     // Within (approach distance + lock buffer) an enemy locks its angle and stops;
     // it only unlocks to re-approach if pushed beyond (approach distance + unlock).
@@ -154,6 +154,7 @@ public unsafe class NpcAiController : IDisposable
         IClientState clientState,
         Configuration config,
         CombatPositioningService combatPositioningService,
+        PartyEngagePlanner partyEngagePlanner,
         IPluginLog log,
         Func<nint, bool>? isExternallyControlled = null)
     {
@@ -164,6 +165,7 @@ public unsafe class NpcAiController : IDisposable
         this.clientState = clientState;
         this.config = config;
         this.combatPositioningService = combatPositioningService;
+        this.partyEngagePlanner = partyEngagePlanner;
         this.log = log;
         this.isExternallyControlled = isExternallyControlled ?? (_ => false);
 
@@ -327,12 +329,6 @@ public unsafe class NpcAiController : IDisposable
                 {
                     var state = combatEngine.GetNpcTarget(npc);
                     target = (state, combatEngine.GetSimulatedEntityPosition(state));
-                }
-
-                if (target.State.IsPlayer)
-                {
-                    TickSoloApproach(npc, deltaTime, playerPos, i, approachNpcs.Count, terrainCache);
-                    continue;
                 }
 
                 TickPartyApproach(npc, deltaTime, playerPos, target.State, target.Position, terrainCache);
@@ -518,7 +514,7 @@ public unsafe class NpcAiController : IDisposable
             if (skill.CooldownRemaining > 0)
                 continue;
             var skillRange = GetEffectiveNpcSkillRange(npc, simulatedTarget, skill.Range);
-            if ((npc.IsClientControlled || UsesPartyMeleeRange(npc, simulatedTarget)) && distToPlayer > skillRange)
+            if ((npc.IsClientControlled || UsesPartyConfiguredRange(npc, simulatedTarget)) && distToPlayer > skillRange)
                 continue;
             if (hpPercent > skill.HpThreshold)
                 continue;
@@ -874,21 +870,25 @@ public unsafe class NpcAiController : IDisposable
             existingPathState.PendingPath = null;
         }
 
-        var usePartyPositioning = combatEngine.HasLivingCompanions?.Invoke() == true && !npcTarget.IsPlayer;
-        if (!usePartyPositioning)
-            combatPositioningService.Release(npc.SimulatedEntityId);
+        combatPositioningService.Release(npc.SimulatedEntityId);
 
-        var targetPos = usePartyPositioning &&
-                        combatPositioningService.TryGetEnemyCombatPosition(npc, npcTarget, npcTargetPos, out var partyTargetPos)
-            ? partyTargetPos
-            : ComputeApproachGoal(npc, npcPos, playerPos);
-        var facePos = usePartyPositioning ? npcTargetPos : playerPos;
+        if (!partyEngagePlanner.TryGetPlan(npc.SimulatedEntityId, out var partyPlan))
+        {
+            if (terrainCache != null && approachPaths.TryGetValue(npc.Address, out var holdPathState))
+                CorrectStableRootHeight(gameObj, npcPos, terrainCache, holdPathState, deltaTime, preserveInitialClearance: false);
+
+            StopApproachMoveAnim(npc);
+            return;
+        }
+
+        var targetPos = partyPlan.Goal;
+        var facePos = partyPlan.HasFaceTarget ? partyPlan.FaceTarget : npcPos;
 
         // Approximate terrain following: use player Y, with the configured height
         // offset stacked on top. The offset lives on the approach logic because
         // approach is the only flow that writes Y every frame — raw direct-Y writes
         // outside this flow fight the game's own position updates and break movement.
-        targetPos.Y = (usePartyPositioning ? npcTargetPos.Y : playerPos.Y) + config.DefaultNpcHeightOffset;
+        targetPos.Y += config.DefaultNpcHeightOffset;
 
         // Already close enough — just face the player
         var moveTarget = targetPos;
@@ -937,9 +937,14 @@ public unsafe class NpcAiController : IDisposable
         {
             newPos = CorrectMovingRootHeight(newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: false);
         }
+        else
+        {
+            newPos.Y = targetPos.Y;
+        }
 
         // Call the real SetPosition via the hook bypass — this updates both
         // the struct field AND the DrawObject (3D model position).
+        movementBlockHook.AddApproachNpc(npc.Address);
         StartApproachMoveAnim(npc);
         movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
 
@@ -948,8 +953,8 @@ public unsafe class NpcAiController : IDisposable
 
     private float GetEffectiveNpcAttackRange(SimulatedNpc npc, SimulatedEntityState target)
     {
-        if (UsesPartyMeleeRange(npc, target))
-            return PartyMeleeAttackRange + PartyMeleeAttackRangeBuffer;
+        if (UsesPartyConfiguredRange(npc, target))
+            return GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer;
 
         // For real NPCs: use a generous range since we can't move them.
         return npc.IsClientControlled
@@ -959,16 +964,19 @@ public unsafe class NpcAiController : IDisposable
 
     private float GetEffectiveNpcSkillRange(SimulatedNpc npc, SimulatedEntityState target, float skillRange)
     {
-        if (UsesPartyMeleeRange(npc, target))
-            return MathF.Min(skillRange, PartyMeleeAttackRange + PartyMeleeAttackRangeBuffer);
+        if (UsesPartyConfiguredRange(npc, target))
+            return MathF.Min(skillRange, GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer);
 
         return skillRange;
     }
 
-    private bool UsesPartyMeleeRange(SimulatedNpc npc, SimulatedEntityState target)
-        => combatEngine.HasLivingCompanions?.Invoke() == true &&
-           !target.IsPlayer &&
-           npc.Behavior.AutoAttackStyle is not NpcAttackStyle.Ranged and not NpcAttackStyle.Magic;
+    private bool UsesPartyConfiguredRange(SimulatedNpc npc, SimulatedEntityState target)
+        => combatEngine.HasLivingCompanions?.Invoke() == true;
+
+    private float GetPartyAttackRange(NpcAttackStyle style)
+        => style is NpcAttackStyle.Ranged or NpcAttackStyle.Magic
+            ? MathF.Max(1.0f, config.PartyRangedAttackRange)
+            : MathF.Max(0.5f, config.PartyMeleeAttackRange);
 
     private bool TryUpdateVNavmeshPath(
         SimulatedNpc npc,

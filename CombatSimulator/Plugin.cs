@@ -37,6 +37,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly NpcActionProfileProvider npcActionProfileProvider;
     private readonly DamageCalculator damageCalculator;
     private readonly CombatPositioningService combatPositioningService;
+    private readonly PartyEngagePlanner partyEngagePlanner;
     private readonly GlamourerIpc glamourerIpc;
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly AnimationController animationController;
@@ -102,6 +103,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatPositioningService = new CombatPositioningService();
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         vnavmeshIpc = new VNavmeshIpc(pluginInterface, log);
+        partyEngagePlanner = new PartyEngagePlanner(vnavmeshIpc);
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, sigScanner, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
@@ -121,7 +123,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             victorySequenceController);
         companionManager = new CombatCompanionManager(
             objectTable, clientState, config, combatEngine, animationController,
-            movementBlockHook, vnavmeshIpc, targetManager, combatPositioningService, log);
+            movementBlockHook, vnavmeshIpc, targetManager, combatPositioningService, partyEngagePlanner, log);
         combatEngine.ResolveNpcTarget = companionManager.SelectEnemyTarget;
         combatEngine.ResolveExternalEntityAddress = companionManager.ResolveAddress;
         combatEngine.HasLivingCompanions = () => companionManager.HasLivingCompanions;
@@ -129,7 +131,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnPlayerDamageDealtToTarget = companionManager.RegisterPlayerDamage;
         npcAiController = new NpcAiController(
             combatEngine, animationController, movementBlockHook, vnavmeshIpc,
-            clientState, config, combatPositioningService, log, victorySequenceController.ControlsNpc);
+            clientState, config, combatPositioningService, partyEngagePlanner, log, victorySequenceController.ControlsNpc);
 
         companionManager.OnCompanionSpawnComplete = companion =>
         {
