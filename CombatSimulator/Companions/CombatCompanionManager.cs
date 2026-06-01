@@ -48,6 +48,10 @@ public unsafe class CombatCompanionManager : IDisposable
     private Vector3 combatAnchorPosition;
     private float combatAnchorRotation;
 
+    /// <summary>Hard cap on simultaneous companions. The game's object table runs
+    /// out of slots before this in practice, which is handled gracefully at spawn.</summary>
+    public const int MaxCompanionCap = 50;
+
     private const int MaxPendingFrames = 120;
     private const float TargetRange = 3.0f;
     private const float RepathInterval = 1.0f;
@@ -120,7 +124,7 @@ public unsafe class CombatCompanionManager : IDisposable
         if (!config.EnableCombatCompanions)
             return 0;
 
-        var max = Math.Clamp(config.CombatCompanionMaxCount, 0, 10);
+        var max = Math.Clamp(config.CombatCompanionMaxCount, 0, MaxCompanionCap);
         var availableSlots = Math.Max(0, max - companions.Count - PendingCount);
         if (availableSlots == 0)
             return 0;
@@ -152,7 +156,7 @@ public unsafe class CombatCompanionManager : IDisposable
         if (!config.EnableCombatCompanions)
             return false;
 
-        var max = Math.Clamp(config.CombatCompanionMaxCount, 0, 10);
+        var max = Math.Clamp(config.CombatCompanionMaxCount, 0, MaxCompanionCap);
         if (companions.Count + PendingCount >= max)
             return false;
 
@@ -160,10 +164,8 @@ public unsafe class CombatCompanionManager : IDisposable
         if (player == null || player.Address == nint.Zero)
             return false;
 
-        var seenSources = BuildSeenSourceSet();
-        if (!seenSources.Add(player.EntityId))
-            return false;
-
+        // Intentionally no source-dedupe here: the player can be cloned many times
+        // (each click adds one self-clone) up to the max count / available game slots.
         spawnQueue.Enqueue(CompanionSpawnSource.FromObject(player));
         return true;
     }
@@ -429,7 +431,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
     private int FillFromVisibleSources()
     {
-        var max = Math.Clamp(config.CombatCompanionMaxCount, 0, 10);
+        var max = Math.Clamp(config.CombatCompanionMaxCount, 0, MaxCompanionCap);
         var availableSlots = Math.Max(0, max - companions.Count - PendingCount);
         if (availableSlots == 0)
             return 0;

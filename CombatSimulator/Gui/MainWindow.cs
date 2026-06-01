@@ -353,8 +353,8 @@ public class MainWindow : IDisposable
             config.Save();
         }
 
-        var maxCount = Math.Clamp(config.CombatCompanionMaxCount, 0, 10);
-        if (ImGui.SliderInt("Max cloned players", ref maxCount, 0, 10))
+        var maxCount = Math.Clamp(config.CombatCompanionMaxCount, 0, CombatCompanionManager.MaxCompanionCap);
+        if (ImGui.SliderInt("Max cloned players", ref maxCount, 0, CombatCompanionManager.MaxCompanionCap))
         {
             config.CombatCompanionMaxCount = maxCount;
             config.Save();
@@ -1010,7 +1010,7 @@ public class MainWindow : IDisposable
                 HelpMarker("Radius (in yalms) to scan for nearby BattleNpcs to auto-add.");
 
                 var maxTargets = config.MaxTargets;
-                if (ImGui.SliderInt("Aggro Max Targets", ref maxTargets, 1, 30))
+                if (ImGui.SliderInt("Aggro Max Targets", ref maxTargets, 1, 50))
                 {
                     config.MaxTargets = maxTargets;
                     config.Save();
