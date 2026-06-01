@@ -146,7 +146,7 @@ public unsafe class CombatCompanionManager : IDisposable
         return queued;
     }
 
-    public bool SpawnRandomVisibleHumanoidEnemy()
+    public bool SpawnSelfCharacter()
     {
         if (!config.EnableCombatCompanions)
             return false;
@@ -155,22 +155,15 @@ public unsafe class CombatCompanionManager : IDisposable
         if (companions.Count + PendingCount >= max)
             return false;
 
-        var seenSources = BuildSeenSourceSet();
-        var candidates = new List<IGameObject>();
-        foreach (var obj in objectTable)
-        {
-            if (!IsHumanoidEnemySource(obj))
-                continue;
-            if (!seenSources.Add(obj.EntityId))
-                continue;
-            candidates.Add(obj);
-        }
-
-        if (candidates.Count == 0)
+        var player = objectTable.LocalPlayer;
+        if (player == null || player.Address == nint.Zero)
             return false;
 
-        var picked = candidates[Random.Shared.Next(candidates.Count)];
-        spawnQueue.Enqueue(CompanionSpawnSource.FromObject(picked));
+        var seenSources = BuildSeenSourceSet();
+        if (!seenSources.Add(player.EntityId))
+            return false;
+
+        spawnQueue.Enqueue(CompanionSpawnSource.FromObject(player));
         return true;
     }
 
@@ -452,22 +445,6 @@ public unsafe class CombatCompanionManager : IDisposable
             queued++;
         }
 
-        if (!config.AllowSensingHumanoidEnemies)
-            return queued;
-
-        foreach (var obj in objectTable)
-        {
-            if (queued >= availableSlots)
-                break;
-            if (!IsHumanoidEnemySource(obj))
-                continue;
-            if (!seenSources.Add(obj.EntityId))
-                continue;
-
-            spawnQueue.Enqueue(CompanionSpawnSource.FromObject(obj));
-            queued++;
-        }
-
         return queued;
     }
 
@@ -479,24 +456,6 @@ public unsafe class CombatCompanionManager : IDisposable
         foreach (var queued in spawnQueue)
             seen.Add(queued.EntityId);
         return seen;
-    }
-
-    private bool IsHumanoidEnemySource(IGameObject obj)
-    {
-        if (obj.Address == nint.Zero)
-            return false;
-        if ((byte)obj.ObjectKind != (byte)ObjectKind.BattleNpc &&
-            (byte)obj.ObjectKind != (byte)ObjectKind.EventNpc)
-            return false;
-        if (objectTable.LocalPlayer != null && obj.EntityId == objectTable.LocalPlayer.EntityId)
-            return false;
-
-        var character = (Character*)obj.Address;
-        if (character->ModelContainer.ModelCharaId != 0)
-            return false;
-
-        var customizePtr = (byte*)&character->DrawData.CustomizeData;
-        return customizePtr[0] != 0;
     }
 
     private void ProcessSpawnRequest(CompanionSpawnSource sourceInfo)
@@ -562,8 +521,6 @@ public unsafe class CombatCompanionManager : IDisposable
                 CharacterSetupContainer.CopyFlags.WeaponHiding;
             character->CharacterSetup.CopyFromCharacter(source, flags);
             character->CharacterSetup.CopyFromCharacter(character, CharacterSetupContainer.CopyFlags.None);
-            if (config.RandomizeCompanionAppearance)
-                RandomizeAppearancePreservingWeapons(character);
             character->SetMode(CharacterModes.Normal, 0);
 
             IGameObject? gameObjectRef = null;
@@ -666,82 +623,6 @@ public unsafe class CombatCompanionManager : IDisposable
                 pendingSpawns.RemoveAt(i);
             }
         }
-    }
-
-    private void RandomizeAppearancePreservingWeapons(Character* character)
-    {
-        try
-        {
-            var customize = (byte*)&character->DrawData.CustomizeData;
-            var race = Random.Shared.Next(1, 9);
-            var gender = Random.Shared.Next(0, 2);
-
-            customize[0x00] = (byte)race;
-            customize[0x01] = (byte)gender;
-            customize[0x02] = 1;
-            customize[0x03] = (byte)Random.Shared.Next(20, 101);
-            customize[0x04] = (byte)GetRandomTribeForRace(race);
-            customize[0x05] = (byte)Random.Shared.Next(1, 5);
-            customize[0x06] = (byte)Random.Shared.Next(1, 160);
-            customize[0x07] = (byte)Random.Shared.Next(0, 2);
-            customize[0x08] = (byte)Random.Shared.Next(1, 193);
-            customize[0x09] = (byte)Random.Shared.Next(1, 193);
-            customize[0x0A] = (byte)Random.Shared.Next(1, 193);
-            customize[0x0B] = (byte)Random.Shared.Next(1, 193);
-            customize[0x0C] = (byte)Random.Shared.Next(0, 32);
-            customize[0x0D] = (byte)Random.Shared.Next(1, 193);
-            customize[0x0E] = (byte)Random.Shared.Next(1, 7);
-            customize[0x0F] = (byte)Random.Shared.Next(1, 193);
-            customize[0x10] = (byte)Random.Shared.Next(1, 7);
-            customize[0x11] = (byte)Random.Shared.Next(1, 7);
-            customize[0x12] = (byte)Random.Shared.Next(1, 7);
-            customize[0x13] = (byte)Random.Shared.Next(1, 7);
-            customize[0x14] = (byte)Random.Shared.Next(1, 193);
-            customize[0x15] = (byte)Random.Shared.Next(0, 101);
-            customize[0x16] = (byte)Random.Shared.Next(0, 2);
-            customize[0x17] = (byte)Random.Shared.Next(0, 2);
-            customize[0x18] = (byte)Random.Shared.Next(0, 65);
-            customize[0x19] = (byte)Random.Shared.Next(1, 193);
-
-            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Head);
-            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Body);
-            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Hands);
-            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Legs);
-            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Feet);
-            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Ears);
-            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Neck);
-            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.Wrists);
-            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.RFinger);
-            RandomizeEquipmentSlot(character, DrawDataContainer.EquipmentSlot.LFinger);
-        }
-        catch (Exception ex)
-        {
-            log.Warning(ex, "Failed to randomize companion appearance.");
-        }
-    }
-
-    private static int GetRandomTribeForRace(int race)
-        => race switch
-        {
-            1 => Random.Shared.Next(1, 3),
-            2 => Random.Shared.Next(3, 5),
-            3 => Random.Shared.Next(5, 7),
-            4 => Random.Shared.Next(7, 9),
-            5 => Random.Shared.Next(9, 11),
-            6 => Random.Shared.Next(11, 13),
-            7 => Random.Shared.Next(13, 15),
-            8 => Random.Shared.Next(15, 17),
-            _ => 1,
-        };
-
-    private static void RandomizeEquipmentSlot(Character* character, DrawDataContainer.EquipmentSlot slot)
-    {
-        ref var equipment = ref character->DrawData.Equipment(slot);
-        var current = equipment.Value;
-        var model = current == 0
-            ? (ulong)Random.Shared.Next(1, 1200)
-            : (current & 0xFFFFFFFFFFFF0000UL) | (ushort)Random.Shared.Next(1, 1200);
-        equipment.Value = model;
     }
 
     private void TickCompanion(

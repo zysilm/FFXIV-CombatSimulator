@@ -83,8 +83,6 @@ public class Configuration : IPluginConfiguration
     public int CombatCompanionMaxCount { get; set; } = 3;
     public int CombatCompanionLevelOverride { get; set; } = 100;
     public bool SensePartyMembers { get; set; } = false;
-    public bool AllowSensingHumanoidEnemies { get; set; } = false;
-    public bool RandomizeCompanionAppearance { get; set; } = false;
     // When true, resetting combat keeps existing companions (revived + healed)
     // instead of despawning them. Stopping the simulation always despawns.
     public bool KeepCompanionsOnReset { get; set; } = false;

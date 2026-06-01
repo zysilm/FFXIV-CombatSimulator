@@ -374,20 +374,6 @@ public class MainWindow : IDisposable
             config.Save();
         }
 
-        var allowEnemies = config.AllowSensingHumanoidEnemies;
-        if (ImGui.Checkbox("Allow sensing humanoid enemies", ref allowEnemies))
-        {
-            config.AllowSensingHumanoidEnemies = allowEnemies;
-            config.Save();
-        }
-
-        var randomizeLook = config.RandomizeCompanionAppearance;
-        if (ImGui.Checkbox("Randomize cloned look", ref randomizeLook))
-        {
-            config.RandomizeCompanionAppearance = randomizeLook;
-            config.Save();
-        }
-
         var keepOnReset = config.KeepCompanionsOnReset;
         if (ImGui.Checkbox("Keep companions on reset", ref keepOnReset))
         {
@@ -437,12 +423,12 @@ public class MainWindow : IDisposable
                 chatGui.Print($"[CombatSim] Queued {queued} companion clone(s).");
             }
             ImGui.SameLine();
-            if (ImGui.Button("Clone random humanoid enemy"))
+            if (ImGui.Button("Clone self character"))
             {
-                var queued = companionManager.SpawnRandomVisibleHumanoidEnemy();
+                var queued = companionManager.SpawnSelfCharacter();
                 chatGui.Print(queued
-                    ? "[CombatSim] Queued humanoid enemy companion clone."
-                    : "[CombatSim] No visible humanoid enemy available to clone.");
+                    ? "[CombatSim] Queued self companion clone."
+                    : "[CombatSim] Could not queue self companion clone.");
             }
         }
         ImGui.SameLine();
