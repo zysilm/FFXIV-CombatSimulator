@@ -34,13 +34,12 @@ public sealed unsafe class PartyEngagePlanner
     private const float RepathInterval = 0.75f;
     private const float PathTolerance = 0.75f;
     private const float ChainJoinRecomputeDistance = 1.25f;
+    private const float PlayerPursuitGoalUpdateDistance = 2.0f;
+    private const float PlayerPursuitGoalUpdateInterval = 0.65f;
 
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly Dictionary<uint, PartyEngagePlan> plans = new();
     private readonly Dictionary<string, PlannerPathState> pathStates = new();
-    private Vector3 lastPlayerPosition;
-    private Vector3 playerVelocity;
-    private bool hasLastPlayerPosition;
 
     public PartyEngagePlanner(VNavmeshIpc vnavmeshIpc)
     {
@@ -73,7 +72,7 @@ public sealed unsafe class PartyEngagePlanner
         float commandRandomness)
     {
         plans.Clear();
-        UpdatePlayerVelocity(playerPosition, deltaTime);
+        TickPathStateTimers(deltaTime);
 
         var nodes = BuildNodes(
             commandAnchorPosition,
@@ -285,8 +284,10 @@ public sealed unsafe class PartyEngagePlanner
         float commandRandomness,
         HashSet<string> livePathKeys)
     {
-        var predicted = playerPosition + playerVelocity * 0.45f + playerForward * MathF.Min(1.0f, commandRange * 0.1f);
-        var clamped = ClampToCommandAnchor(actor, predicted, commandRange, commandRandomness, out var leashed);
+        var key = $"player:{actor.Id}";
+        livePathKeys.Add(key);
+        var delayedGoal = GetDelayedPlayerGoal(key, playerPosition);
+        var clamped = ClampToCommandAnchor(actor, delayedGoal, commandRange, commandRandomness, out var leashed);
         if (leashed)
         {
             return new PartyEngagePlan
@@ -300,7 +301,6 @@ public sealed unsafe class PartyEngagePlanner
             };
         }
 
-        livePathKeys.Add($"player:{actor.Id}");
         var goal = AddStableJitter(actor.Id, clamped, commandRange * 0.035f);
         return new PartyEngagePlan
         {
@@ -386,8 +386,6 @@ public sealed unsafe class PartyEngagePlanner
             pathStates[key] = state;
         }
 
-        state.RepathTimer = Math.Max(0, state.RepathTimer - 1f / 60f);
-
         if (state.PendingPath is { IsCompleted: true })
         {
             try
@@ -451,6 +449,38 @@ public sealed unsafe class PartyEngagePlanner
         return state.StableChainGoal;
     }
 
+    private Vector3 GetDelayedPlayerGoal(string key, Vector3 playerPosition)
+    {
+        if (!pathStates.TryGetValue(key, out var state))
+        {
+            state = new PlannerPathState
+            {
+                DelayedPlayerGoal = playerPosition,
+                HasDelayedPlayerGoal = true,
+                PlayerGoalUpdateTimer = PlayerPursuitGoalUpdateInterval,
+            };
+            pathStates[key] = state;
+            return playerPosition;
+        }
+
+        if (!state.HasDelayedPlayerGoal)
+        {
+            state.DelayedPlayerGoal = playerPosition;
+            state.HasDelayedPlayerGoal = true;
+            state.PlayerGoalUpdateTimer = PlayerPursuitGoalUpdateInterval;
+            return playerPosition;
+        }
+
+        if (state.PlayerGoalUpdateTimer <= 0 &&
+            FlatDistance(state.DelayedPlayerGoal, playerPosition) >= PlayerPursuitGoalUpdateDistance)
+        {
+            state.DelayedPlayerGoal = playerPosition;
+            state.PlayerGoalUpdateTimer = PlayerPursuitGoalUpdateInterval;
+        }
+
+        return state.DelayedPlayerGoal;
+    }
+
     private Vector3 ClampToCommandAnchor(
         PartyNode actor,
         Vector3 goal,
@@ -493,21 +523,13 @@ public sealed unsafe class PartyEngagePlanner
         }
     }
 
-    private void UpdatePlayerVelocity(Vector3 playerPosition, float deltaTime)
+    private void TickPathStateTimers(float deltaTime)
     {
-        if (hasLastPlayerPosition && deltaTime > 0)
+        foreach (var state in pathStates.Values)
         {
-            var delta = playerPosition - lastPlayerPosition;
-            delta.Y = 0;
-            playerVelocity = delta / deltaTime;
+            state.RepathTimer = Math.Max(0, state.RepathTimer - deltaTime);
+            state.PlayerGoalUpdateTimer = Math.Max(0, state.PlayerGoalUpdateTimer - deltaTime);
         }
-        else
-        {
-            playerVelocity = Vector3.Zero;
-            hasLastPlayerPosition = true;
-        }
-
-        lastPlayerPosition = playerPosition;
     }
 
     private static List<uint> FindCycle(uint startId, IReadOnlyDictionary<uint, PartyNode> nodes)
@@ -648,6 +670,9 @@ public sealed unsafe class PartyEngagePlanner
         public float RepathTimer { get; set; }
         public Vector3 StableChainGoal { get; set; }
         public bool HasStableChainGoal { get; set; }
+        public Vector3 DelayedPlayerGoal { get; set; }
+        public bool HasDelayedPlayerGoal { get; set; }
+        public float PlayerGoalUpdateTimer { get; set; }
     }
 
     private readonly record struct PartyNode(
