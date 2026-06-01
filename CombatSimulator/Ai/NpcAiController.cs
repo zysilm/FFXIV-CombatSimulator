@@ -853,8 +853,8 @@ public unsafe class NpcAiController : IDisposable
             return;
         }
 
-        // Don't move NPCs when the player is dead — they stay in place
-        if (!combatEngine.State.PlayerState.IsAlive)
+        // Party mode continues after player death while companions are alive.
+        if (!npcTarget.IsAlive)
         {
             combatPositioningService.Release(npc.SimulatedEntityId);
             StopApproachMoveAnim(npc);

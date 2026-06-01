@@ -264,24 +264,30 @@ public unsafe class CombatCompanionManager : IDisposable
         if (!config.EnableCombatCompanions)
             return combatEngine.State.PlayerState;
 
-        var hasLivingCompanions = companions.Any(c => c.IsSpawned && c.State.IsAlive);
+        var livingCompanions = companions
+            .Where(c => c.IsSpawned && c.State.IsAlive)
+            .ToList();
+        var hasLivingCompanions = livingCompanions.Count > 0;
         if (!hasLivingCompanions)
             return combatEngine.State.PlayerState;
 
-        var candidates = new List<(uint EntityId, SimulatedEntityState State, float Dps)>
-        {
-            (combatEngine.State.PlayerState.EntityId, combatEngine.State.PlayerState, playerRecentDps),
-        };
+        var candidates = new List<(uint EntityId, SimulatedEntityState State, float Dps)>();
+        if (combatEngine.State.PlayerState.IsAlive)
+            candidates.Add((combatEngine.State.PlayerState.EntityId, combatEngine.State.PlayerState, playerRecentDps));
 
-        foreach (var companion in companions)
-        {
-            if (companion.IsSpawned && companion.State.IsAlive)
-                candidates.Add((companion.SimulatedEntityId, companion.State, companion.RecentDps));
-        }
+        foreach (var companion in livingCompanions)
+            candidates.Add((companion.SimulatedEntityId, companion.State, companion.RecentDps));
 
         candidates.RemoveAll(c => !c.State.IsAlive);
         if (candidates.Count == 0)
-            return combatEngine.State.PlayerState;
+            return null;
+
+        var validTargetIds = candidates.Select(c => c.EntityId).ToHashSet();
+        foreach (var kv in enemyTargetByEnemyId.ToList())
+        {
+            if (!validTargetIds.Contains(kv.Value))
+                enemyTargetByEnemyId.Remove(kv.Key);
+        }
 
         if (!enemyTargetByEnemyId.TryGetValue(enemy.SimulatedEntityId, out var currentId))
         {
