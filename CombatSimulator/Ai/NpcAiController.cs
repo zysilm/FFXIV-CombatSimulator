@@ -884,13 +884,6 @@ public unsafe class NpcAiController : IDisposable
         var targetPos = partyPlan.Goal;
         var facePos = partyPlan.HasFaceTarget ? partyPlan.FaceTarget : npcPos;
 
-        // Approximate terrain following: use player Y, with the configured height
-        // offset stacked on top. The offset lives on the approach logic because
-        // approach is the only flow that writes Y every frame — raw direct-Y writes
-        // outside this flow fight the game's own position updates and break movement.
-        targetPos.Y += config.DefaultNpcHeightOffset;
-
-        // Already close enough — just face the player
         var moveTarget = targetPos;
         var hasVnavmeshTarget = TryUpdateVNavmeshPath(npc, deltaTime, npcPos, targetPos, out var pathTarget);
         if (approachPaths.TryGetValue(npc.Address, out var pathStateForTarget))
@@ -905,10 +898,10 @@ public unsafe class NpcAiController : IDisposable
         if (config.UseVNavmeshTargetApproach && !hasVnavmeshTarget)
             moveTarget = targetPos;
 
-        if (Vector3.Distance(npcPos, moveTarget) <= 0.3f)
+        if (FlatDistance(npcPos, moveTarget) <= 0.3f)
         {
-            if (hasVnavmeshTarget && terrainCache != null &&
-                approachPaths.TryGetValue(npc.Address, out var arrivedPathState))
+            if (terrainCache != null &&
+                TryGetOrCreateApproachPathState(npc, out var arrivedPathState))
                 CorrectStableRootHeight(gameObj, npcPos, terrainCache, arrivedPathState, deltaTime, preserveInitialClearance: false);
 
             StopApproachMoveAnim(npc);
@@ -918,24 +911,32 @@ public unsafe class NpcAiController : IDisposable
 
         // Smooth movement toward the target position
         float speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;
-        float remainingDist = Vector3.Distance(npcPos, moveTarget);
+        var flatMove = moveTarget - npcPos;
+        flatMove.Y = 0;
+        float remainingDist = flatMove.Length();
         float moveDist = speed * deltaTime;
 
         Vector3 newPos;
         if (remainingDist <= moveDist)
         {
-            newPos = moveTarget;
+            newPos = npcPos with { X = moveTarget.X, Z = moveTarget.Z };
         }
         else
         {
-            var moveDir = Vector3.Normalize(moveTarget - npcPos);
+            var moveDir = flatMove / remainingDist;
             newPos = npcPos + moveDir * moveDist;
         }
 
-        if (hasVnavmeshTarget && terrainCache != null &&
-            approachPaths.TryGetValue(npc.Address, out var pathState))
+        if (terrainCache != null &&
+            TryGetOrCreateApproachPathState(npc, out var pathState))
         {
             newPos = CorrectMovingRootHeight(newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: false);
+        }
+        else if (vnavmeshIpc.CanPathfind)
+        {
+            var floor = vnavmeshIpc.PointOnFloor(newPos, false, 3f);
+            if (floor.HasValue)
+                newPos.Y = floor.Value.Y + config.DefaultNpcHeightOffset;
         }
         else
         {
@@ -949,6 +950,26 @@ public unsafe class NpcAiController : IDisposable
         movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
 
         ForceRotateToward(npc, moveTarget, deltaTime);
+    }
+
+    private bool TryGetOrCreateApproachPathState(SimulatedNpc npc, out ApproachPathState state)
+    {
+        if (approachPaths.TryGetValue(npc.Address, out state!))
+            return true;
+
+        state = new ApproachPathState
+        {
+            ConfiguredHeightOffset = config.DefaultNpcHeightOffset,
+        };
+        approachPaths[npc.Address] = state;
+        return true;
+    }
+
+    private static float FlatDistance(Vector3 a, Vector3 b)
+    {
+        var delta = a - b;
+        delta.Y = 0;
+        return delta.Length();
     }
 
     private float GetEffectiveNpcAttackRange(SimulatedNpc npc, SimulatedEntityState target)
