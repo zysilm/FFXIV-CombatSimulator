@@ -473,9 +473,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         log.Info($"NPC death ragdoll: activating for 0x{address:X}");
 
-        var playerCollision = GetLocalPlayerCollisionAddresses();
+        var partyCollision = GetPartyCollisionAddresses();
         var controller = partyMode
-            ? new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, playerCollision)
+            ? new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, partyCollision)
             : new RagdollController(boneTransformService, config, log);
         controller.Activate(address, config.NpcRagdollActivationDelay);
         npcRagdolls[address] = controller;
@@ -497,17 +497,32 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         log.Info($"Companion death ragdoll: activating for 0x{address:X}");
 
-        var controller = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetLocalPlayerCollisionAddresses());
+        var controller = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses());
         controller.Activate(address, config.RagdollActivationDelay);
         npcRagdolls[address] = controller;
     }
 
-    private IReadOnlyList<nint> GetLocalPlayerCollisionAddresses()
+    /// <summary>
+    /// Collision actors for a party-mode ragdoll: the local player plus every spawned
+    /// companion. Enemies are supplied separately via the NpcSelector, and each ragdoll
+    /// skips its own body, so this makes every ragdoll collide with every living
+    /// character (party↔party, party↔enemy, enemy↔party, and the player).
+    /// </summary>
+    private IReadOnlyList<nint> GetPartyCollisionAddresses()
     {
+        var list = new List<nint>();
+
         var player = Services.ObjectTable.LocalPlayer;
-        return player != null && player.Address != nint.Zero
-            ? new[] { player.Address }
-            : Array.Empty<nint>();
+        if (player != null && player.Address != nint.Zero)
+            list.Add(player.Address);
+
+        foreach (var companion in companionManager.Companions)
+        {
+            if (companion.IsSpawned && companion.Address != nint.Zero)
+                list.Add(companion.Address);
+        }
+
+        return list;
     }
 
     private void RemoveNpcRagdoll(nint address)
