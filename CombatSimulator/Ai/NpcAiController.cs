@@ -482,6 +482,9 @@ public unsafe class NpcAiController : IDisposable
             return;
         }
 
+        if (UsesPartyConfiguredRange(npc, simulatedTarget))
+            ForceRotateToward(npc, playerPos, deltaTime);
+
         // Handle casting
         if (npc.State.IsCasting)
         {
@@ -883,6 +886,17 @@ public unsafe class NpcAiController : IDisposable
 
         var targetPos = partyPlan.Goal;
         var facePos = partyPlan.HasFaceTarget ? partyPlan.FaceTarget : npcPos;
+
+        if (FlatDistance(npcPos, npcTargetPos) <= GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer)
+        {
+            if (terrainCache != null &&
+                TryGetOrCreateApproachPathState(npc, out var stableAttackState))
+                CorrectStableRootHeight(gameObj, npcPos, terrainCache, stableAttackState, deltaTime, preserveInitialClearance: false);
+
+            StopApproachMoveAnim(npc);
+            ForceRotateToward(npc, npcTargetPos, deltaTime);
+            return;
+        }
 
         var moveTarget = targetPos;
         var hasVnavmeshTarget = TryUpdateVNavmeshPath(npc, deltaTime, npcPos, targetPos, out var pathTarget);
