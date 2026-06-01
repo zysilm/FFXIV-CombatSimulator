@@ -79,17 +79,17 @@ public class Configuration : IPluginConfiguration
 
     // Party companions: client-side clones of visible players that fight
     // simulated enemies as friendly actors.
-    public bool EnableCombatCompanions { get; set; } = false;
-    public int CombatCompanionMaxCount { get; set; } = 3;
-    public int CombatCompanionLevelOverride { get; set; } = 100;
-    public bool SensePartyMembers { get; set; } = false;
+    public bool EnableCombatCompanions { get; set; } = true;
+    public int CombatCompanionMaxCount { get; set; } = 10;
+    public int CombatCompanionLevelOverride { get; set; } = 1;
+    public bool SensePartyMembers { get; set; } = true;
     // When true, resetting combat keeps existing companions (revived + healed)
     // instead of despawning them. Stopping the simulation always despawns.
-    public bool KeepCompanionsOnReset { get; set; } = false;
-    public float PartyCommandRange { get; set; } = 12.0f;
+    public bool KeepCompanionsOnReset { get; set; } = true;
+    public float PartyCommandRange { get; set; } = 8.0f;
     public float PartyCommandRangeRandomness { get; set; } = 0.2f;
-    public float PartyMeleeAttackRange { get; set; } = 1.0f;
-    public float PartyRangedAttackRange { get; set; } = 25.0f;
+    public float PartyMeleeAttackRange { get; set; } = 1.5f;
+    public float PartyRangedAttackRange { get; set; } = 9.5f;
 
     // NPC Defaults
     public int DefaultNpcLevel { get; set; } = 90;
