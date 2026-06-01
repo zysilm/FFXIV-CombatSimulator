@@ -749,6 +749,14 @@ public unsafe class RagdollController : IDisposable
         // (1-2 hops) while allowing distant body-body collisions (arms vs torso).
         // When disabled (null), only body-static collisions are allowed.
         var connectedPairs = config.RagdollSelfCollision ? new HashSet<(int, int)>() : null;
+
+        // Party ragdolls deal with many more colliding bodies/statics, so force a
+        // higher solver iteration count for stability while either party ragdoll
+        // option is enabled. Reverts to the GUI-configured value when both are off
+        // (each ragdoll re-reads config at activation).
+        var partyRagdollActive = config.PartyCompanionDeathRagdoll || config.PartyEnemyDeathRagdoll;
+        var solverIterations = partyRagdollActive ? 8 : config.RagdollSolverIterations;
+
         bufferPool = new BufferPool();
         simulation = BepuSimulation.Create(
             bufferPool,
@@ -756,7 +764,7 @@ public unsafe class RagdollController : IDisposable
             new RagdollPoseIntegratorCallbacks(
                 new Vector3(0, -config.RagdollGravity, 0),
                 config.RagdollDamping),
-            new SolveDescription(config.RagdollSolverIterations, 1));
+            new SolveDescription(solverIterations, 1));
 
         // Safety net: flat box well below the character prevents infinite falling
         // if the terrain mesh has gaps or winding issues.
