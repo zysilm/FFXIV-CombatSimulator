@@ -916,7 +916,13 @@ public unsafe class NpcAiController : IDisposable
         }
 
         var moveTarget = targetPos;
-        var hasVnavmeshTarget = TryUpdateVNavmeshPath(npc, deltaTime, npcPos, targetPos, out var pathTarget);
+        var hasVnavmeshTarget = TryUpdateVNavmeshPath(
+            npc,
+            deltaTime,
+            npcPos,
+            targetPos,
+            out var pathTarget,
+            discardStalePendingPath: true);
         if (approachPaths.TryGetValue(npc.Address, out var pathStateForTarget))
             pathStateForTarget.TargetEntityId = npcTarget.EntityId;
         if (hasVnavmeshTarget)
@@ -1037,7 +1043,8 @@ public unsafe class NpcAiController : IDisposable
         Vector3 npcPos,
         Vector3 targetPos,
         out Vector3 moveTarget,
-        bool useLookahead = true)
+        bool useLookahead = true,
+        bool discardStalePendingPath = false)
     {
         moveTarget = targetPos;
 
@@ -1059,12 +1066,32 @@ public unsafe class NpcAiController : IDisposable
 
         state.RepathTimer = Math.Max(0, state.RepathTimer - deltaTime);
 
+        if (discardStalePendingPath &&
+            state.PendingPath != null &&
+            !state.PendingPath.IsCompleted &&
+            FlatDistance(state.PendingTarget, targetPos) >= VNavmeshRepathDistance)
+        {
+            state.PendingPath = null;
+            state.RepathTimer = 0;
+        }
+
         if (state.PendingPath != null && state.PendingPath.IsCompleted)
         {
             try
             {
-                state.Waypoints = state.PendingPath.GetAwaiter().GetResult();
-                state.RequestedTarget = state.PendingTarget;
+                var completedTarget = state.PendingTarget;
+                var completedPath = state.PendingPath.GetAwaiter().GetResult();
+                if (discardStalePendingPath &&
+                    FlatDistance(completedTarget, targetPos) >= VNavmeshRepathDistance)
+                {
+                    state.Waypoints.Clear();
+                    state.WaypointIndex = 0;
+                    state.RepathTimer = 0;
+                    return false;
+                }
+
+                state.Waypoints = completedPath;
+                state.RequestedTarget = completedTarget;
                 if (!state.HasFloorYOffset)
                 {
                     var floor = SnapToNavmesh(npcPos);
