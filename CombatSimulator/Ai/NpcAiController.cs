@@ -1046,7 +1046,6 @@ public unsafe class NpcAiController : IDisposable
             try
             {
                 state.Waypoints = state.PendingPath.GetAwaiter().GetResult();
-                state.WaypointIndex = 0;
                 state.RequestedTarget = state.PendingTarget;
                 if (!state.HasFloorYOffset)
                 {
@@ -1058,6 +1057,8 @@ public unsafe class NpcAiController : IDisposable
                     state.FloorResnapTimer = 0;
                 }
                 state.ConfiguredHeightOffset = config.DefaultNpcHeightOffset;
+                state.WaypointIndex = SelectInitialWaypoint(state, npcPos);
+                state.LastCorrectedWaypointIndex = -1;
                 state.LastError = "";
                 state.HasLastMoveRootY = false;
             }
@@ -1115,6 +1116,66 @@ public unsafe class NpcAiController : IDisposable
         moveTarget = ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex]);
         moveTarget = CorrectMoveTargetFloor(state, moveTarget, deltaTime);
         return true;
+    }
+
+    private static int SelectInitialWaypoint(ApproachPathState state, Vector3 current)
+    {
+        if (state.Waypoints.Count == 0)
+            return 0;
+
+        if (state.Waypoints.Count == 1)
+            return FlatDistanceSquared(current, ApplyFloorYOffset(state, state.Waypoints[0])) <=
+                   VNavmeshWaypointReachDistance * VNavmeshWaypointReachDistance
+                ? 1
+                : 0;
+
+        var bestSegmentEnd = 1;
+        var bestDistSq = float.MaxValue;
+        var foundSegment = false;
+
+        for (var i = 0; i < state.Waypoints.Count - 1; i++)
+        {
+            var a = ApplyFloorYOffset(state, state.Waypoints[i]);
+            var b = ApplyFloorYOffset(state, state.Waypoints[i + 1]);
+            a.Y = 0;
+            b.Y = 0;
+            var c = current;
+            c.Y = 0;
+
+            var ab = b - a;
+            var lenSq = ab.LengthSquared();
+            if (lenSq <= 0.0001f)
+                continue;
+
+            var t = Math.Clamp(Vector3.Dot(c - a, ab) / lenSq, 0f, 1f);
+            var closest = a + ab * t;
+            var distSq = Vector3.DistanceSquared(c, closest);
+            if (distSq >= bestDistSq)
+                continue;
+
+            bestDistSq = distSq;
+            bestSegmentEnd = i + 1;
+            foundSegment = true;
+        }
+
+        if (!foundSegment)
+            return 0;
+
+        while (bestSegmentEnd < state.Waypoints.Count &&
+               FlatDistanceSquared(current, ApplyFloorYOffset(state, state.Waypoints[bestSegmentEnd])) <=
+               VNavmeshWaypointReachDistance * VNavmeshWaypointReachDistance)
+        {
+            bestSegmentEnd++;
+        }
+
+        return bestSegmentEnd;
+    }
+
+    private static float FlatDistanceSquared(Vector3 a, Vector3 b)
+    {
+        var delta = a - b;
+        delta.Y = 0;
+        return delta.LengthSquared();
     }
 
     private static int SelectLookaheadWaypoint(ApproachPathState state, Vector3 current)
