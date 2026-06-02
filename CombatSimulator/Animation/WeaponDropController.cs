@@ -160,8 +160,6 @@ public unsafe class WeaponDropController : IDisposable
                 var skelWorldRot = new Quaternion(sk->Transform.Rotation.X, sk->Transform.Rotation.Y, sk->Transform.Rotation.Z, sk->Transform.Rotation.W);
                 var skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
 
-                ForceWeaponVisible(addr);
-
                 if (entry.Main.HasValue && entry.MainBoneIndex >= 0)
                     WriteBone(skel, entry.Main.Value, entry.MainBoneIndex, skelWorldPos, skelWorldRotInv);
                 if (entry.Off.HasValue && entry.OffBoneIndex >= 0)
@@ -213,8 +211,6 @@ public unsafe class WeaponDropController : IDisposable
             groundTileShapeIndex));
 
         entries[characterAddress] = entry;
-        ForceWeaponVisible(characterAddress);
-
         var n = (entry.Main.HasValue ? 1 : 0) + (entry.Off.HasValue ? 1 : 0);
         log.Info($"WeaponDropController: spawned {n} weapon(s) for 0x{characterAddress:X} (groundY={groundY:F2})");
     }
@@ -265,17 +261,6 @@ public unsafe class WeaponDropController : IDisposable
         mt.Rotation.Y = modelRot.Y;
         mt.Rotation.Z = modelRot.Z;
         mt.Rotation.W = modelRot.W;
-    }
-
-    private void ForceWeaponVisible(nint characterAddress)
-    {
-        try
-        {
-            var character = (Character*)characterAddress;
-            character->DrawData.HideWeapons(false);
-            character->Timeline.IsWeaponDrawn = true;
-        }
-        catch { /* character may have despawned — silent skip */ }
     }
 
     private bool ConfigSnapshotChanged()

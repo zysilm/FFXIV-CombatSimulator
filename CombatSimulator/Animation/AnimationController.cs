@@ -602,12 +602,10 @@ public unsafe class AnimationController : IDisposable
 
             var character = (Character*)npc.BattleChara;
 
-            // When weapon drop is enabled, use battle/dead ActionTimeline so weapons
-            // stay drawn (play-dead would sheath them and fight visibility hacks).
-            if (config.WeaponDropEnabled && battleDeadResolved)
+            if (ShouldUseDrawnWeaponDeath(character) && battleDeadResolved)
             {
                 emotePlayer.PlayLoopedEmote(character, battleDeadLoopTimeline, battleDeadIntroTimeline);
-                log.Verbose($"Death battle/dead triggered for NPC '{npc.Name}'.");
+                log.Verbose($"Drawn-weapon death triggered for NPC '{npc.Name}'.");
             }
             else if (playDeadResolved)
             {
@@ -630,10 +628,7 @@ public unsafe class AnimationController : IDisposable
 
     /// <summary>
     /// Play death animation on the player character.
-    /// Uses BypassEmote-style timeline.
-    /// When ragdoll weapon drop is enabled, uses battle/dead ActionTimeline via BaseOverride
-    /// instead of the play-dead emote — play-dead sheathes weapons and the game engine
-    /// actively fights any attempt to keep them visible.
+    /// Uses a drawn-weapon death timeline only if the player was already in drawn-weapon state.
     /// </summary>
     public void PlayPlayerDeath()
     {
@@ -643,17 +638,12 @@ public unsafe class AnimationController : IDisposable
             if (player == null) return;
             var character = (Character*)player.Address;
 
-            // When weapon drop is enabled, use battle/dead ActionTimeline instead of
-            // play-dead emote. Battle death keeps weapons drawn (no sheathing).
-            if (config.WeaponDropEnabled && battleDeadResolved)
+            if (ShouldUseDrawnWeaponDeath(character) && battleDeadResolved)
             {
                 emotePlayer.PlayLoopedEmote(character, battleDeadLoopTimeline, battleDeadIntroTimeline);
-                log.Info($"Player death via battle/dead (intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}).");
-                return;
+                log.Info($"Player drawn-weapon death triggered (intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}).");
             }
-
-            // Default: play-dead emote (may sheath weapons)
-            if (playDeadResolved)
+            else if (playDeadResolved)
             {
                 emotePlayer.PlayLoopedEmote(character, playDeadLoopTimeline, playDeadIntroTimeline);
                 log.Info("Player death emote (timeline) triggered.");
@@ -664,6 +654,9 @@ public unsafe class AnimationController : IDisposable
             log.Error(ex, "Failed to play player death animation.");
         }
     }
+
+    private static bool ShouldUseDrawnWeaponDeath(Character* character)
+        => character->Timeline.IsWeaponDrawn || character->Timeline.ModelState == 1;
 
     /// <summary>
     /// Reset death animation on an NPC character (clear timeline override).
