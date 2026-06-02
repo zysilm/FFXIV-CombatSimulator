@@ -927,25 +927,26 @@ public class MainWindow : IDisposable
 
     private void DrawTargetBehaviorsSection()
     {
-        if (ImGui.CollapsingHeader("Target Behaviors"))
+        if (ImGui.CollapsingHeader("Target Formation"))
         {
-            var npcTarget = config.EnableNpcTargetPlayer;
-            if (ImGui.Checkbox("NPCs Target Player", ref npcTarget))
+            var formation = config.EnableNpcTargetPlayer && config.EnableTargetApproach;
+            if (ImGui.Checkbox("Enable Target Formation", ref formation))
             {
-                config.EnableNpcTargetPlayer = npcTarget;
+                config.EnableNpcTargetPlayer = formation;
+                config.EnableTargetApproach = formation;
                 config.Save();
             }
-            HelpMarker("Active NPCs visually target the player during combat. Affects head tracking, emote interactions, and combat stance direction.");
+            HelpMarker("Enable enemy target facing and formation movement together.");
 
-            var approach = config.EnableTargetApproach;
-            if (ImGui.Checkbox("Move Targets Near Player", ref approach))
+            var soloWhenEmpty = config.UseSoloTargetFormationWhenNoCompanions;
+            if (ImGui.Checkbox("Use solo formation when no companions", ref soloWhenEmpty))
             {
-                config.EnableTargetApproach = approach;
+                config.UseSoloTargetFormationWhenNoCompanions = soloWhenEmpty;
                 config.Save();
             }
-            HelpMarker("Teleport selected NPC targets close to the player when combat starts.");
+            HelpMarker("When Combat Companions is enabled but no companion clone is alive, use the old solo enemy ring formation instead of party-mode target formation.");
 
-            if (approach)
+            if (formation)
             {
                 vnavmeshIpc.RefreshStatus();
 

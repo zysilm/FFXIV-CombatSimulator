@@ -452,7 +452,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // Weapon drop runs alongside ragdoll using the same activation delay
         weaponDropController.SpawnFor(address, config.NpcRagdollActivationDelay);
 
-        var partyMode = companionManager.HasLivingCompanions;
+        var partyMode = config.EnableCombatCompanions;
         if (partyMode)
         {
             if (!config.PartyEnemyDeathRagdoll) return;

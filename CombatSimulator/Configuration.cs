@@ -115,9 +115,10 @@ public class Configuration : IPluginConfiguration
     // Death Cam toolbar
     public bool ShowDeathCamToolbar { get; set; } = false;
 
-    // Target Behaviors
+    // Target Formation
     public bool EnableNpcTargetPlayer { get; set; } = true;
     public bool EnableTargetApproach { get; set; } = false;
+    public bool UseSoloTargetFormationWhenNoCompanions { get; set; } = false;
     public float TargetApproachDistance { get; set; } = 3.0f;
     public bool UseVNavmeshTargetApproach { get; set; } = true;
 

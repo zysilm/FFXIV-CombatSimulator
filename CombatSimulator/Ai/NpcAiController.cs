@@ -49,6 +49,7 @@ public unsafe class NpcAiController : IDisposable
     // it only unlocks to re-approach if pushed beyond (approach distance + unlock).
     private const float ApproachLockBuffer = 1.5f;
     private const float ApproachUnlockBuffer = 5.0f;
+    private const float PartyAttackRangeUnlockBuffer = 0.6f;
 
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
@@ -76,6 +77,7 @@ public unsafe class NpcAiController : IDisposable
         public float LastMoveRootY { get; set; }
         public bool HasLastMoveRootY { get; set; }
         public uint TargetEntityId { get; set; }
+        public bool PartyAttackRangeLocked { get; set; }
     }
 
     private sealed class ApproachTerrainCache
@@ -210,12 +212,13 @@ public unsafe class NpcAiController : IDisposable
             }
         }
 
+        var partyMode = config.EnableCombatCompanions;
         var hasLivingCompanions = combatEngine.HasLivingCompanions?.Invoke() == true;
 
-        // Party mode: when companions are fighting alongside the player, every
-        // enemy should be engaged — not just the one that was attacked. Idle
-        // enemies are pulled into combat each tick (EngageNpc no-ops once engaged).
-        if (hasLivingCompanions)
+        // Party mode is controlled by the companion feature toggle. When it is
+        // active, all enemies join combat so party formation/targeting can run
+        // even before companion clones are spawned.
+        if (partyMode)
         {
             foreach (var npc in npcs)
                 EngageNpc(npc);
@@ -270,7 +273,7 @@ public unsafe class NpcAiController : IDisposable
         // mode, enemy movement is always needed because real NPCs have no
         // natural client-side chase path in our simulation; TickApproach uses
         // the resolved combat target instead of the solo player ring.
-        if (config.EnableTargetApproach || hasLivingCompanions)
+        if (config.EnableTargetApproach || partyMode)
         {
             if (config.UseVNavmeshTargetApproach)
                 vnavmeshIpc.RefreshStatus();
@@ -318,7 +321,7 @@ public unsafe class NpcAiController : IDisposable
                 if (npc.AiState == NpcAiState.Resetting)
                     npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
 
-                if (!hasLivingCompanions)
+                if (!partyMode || (!hasLivingCompanions && config.UseSoloTargetFormationWhenNoCompanions))
                 {
                     TickSoloApproach(npc, deltaTime, playerPos, i, approachNpcs.Count, terrainCache);
                     continue;
@@ -454,19 +457,23 @@ public unsafe class NpcAiController : IDisposable
         Vector3 playerPos, uint playerEntityId,
         Vector3 npcPos, float distToPlayer)
     {
-        var simulatedTarget = combatEngine.State.GetEntity(playerEntityId);
+        var simulatedTarget = combatEngine.GetNpcTarget(npc);
         if (simulatedTarget == null || !simulatedTarget.IsAlive)
         {
             npc.AiState = NpcAiState.Idle;
             return;
         }
 
+        var targetPos = combatEngine.GetSimulatedEntityPosition(simulatedTarget);
+        var distToTarget = Vector3.Distance(npcPos, targetPos);
+        var targetEntityId = simulatedTarget.EntityId;
+
         // Only rotate client-controlled NPCs
         if (npc.IsClientControlled)
-            RotateTowardPlayer(npc, playerPos, deltaTime);
+            ForceRotateToward(npc, targetPos, deltaTime);
 
-        // Skip leash check for real NPCs (they don't move) and when approach is active
-        if (npc.IsClientControlled && !config.EnableTargetApproach)
+        // Skip leash check for real NPCs (they don't move) and when formation approach is active.
+        if (npc.IsClientControlled && !config.EnableTargetApproach && !config.EnableCombatCompanions)
         {
             float distFromSpawn = Vector3.Distance(npcPos, npc.SpawnPosition);
             if (distFromSpawn > npc.Behavior.LeashDistance)
@@ -479,16 +486,16 @@ public unsafe class NpcAiController : IDisposable
 
         float effectiveRange = GetEffectiveNpcAttackRange(npc, simulatedTarget);
 
-        if (distToPlayer > effectiveRange)
+        if (distToTarget > effectiveRange)
         {
-            if (npc.IsClientControlled)
+            if (npc.IsClientControlled && !UsesPartyConfiguredRange(npc, simulatedTarget))
                 npc.AiState = NpcAiState.Chasing;
             // Real NPCs just wait
             return;
         }
 
         if (UsesPartyConfiguredRange(npc, simulatedTarget))
-            ForceRotateToward(npc, playerPos, deltaTime);
+            ForceRotateToward(npc, targetPos, deltaTime);
 
         // Handle casting
         if (npc.State.IsCasting)
@@ -502,7 +509,7 @@ public unsafe class NpcAiController : IDisposable
                 if (npc.CurrentCastSkill != null)
                 {
                     combatEngine.ProcessNpcAction(npc, npc.CurrentCastSkill.ActionId,
-                        playerEntityId, npc.CurrentCastSkill.Potency, npc.CurrentCastSkill.AttackStyle);
+                        npc.State.CastTargetId, npc.CurrentCastSkill.Potency, npc.CurrentCastSkill.AttackStyle);
                     npc.CurrentCastSkill.CooldownRemaining = npc.CurrentCastSkill.Cooldown;
                     npc.CurrentCastSkill = null;
                 }
@@ -529,7 +536,7 @@ public unsafe class NpcAiController : IDisposable
             if (skill.CooldownRemaining > 0)
                 continue;
             var skillRange = GetEffectiveNpcSkillRange(npc, simulatedTarget, skill.Range);
-            if ((npc.IsClientControlled || UsesPartyConfiguredRange(npc, simulatedTarget)) && distToPlayer > skillRange)
+            if ((npc.IsClientControlled || UsesPartyConfiguredRange(npc, simulatedTarget)) && distToTarget > skillRange)
                 continue;
             if (hpPercent > skill.HpThreshold)
                 continue;
@@ -540,7 +547,7 @@ public unsafe class NpcAiController : IDisposable
                 npc.State.CastActionId = skill.ActionId;
                 npc.State.CastTimeTotal = skill.CastTime;
                 npc.State.CastTimeElapsed = 0;
-                npc.State.CastTargetId = playerEntityId;
+                npc.State.CastTargetId = targetEntityId;
                 npc.CurrentCastSkill = skill;
 
                 combatEngine.AddLogEntry(
@@ -549,7 +556,7 @@ public unsafe class NpcAiController : IDisposable
             }
             else
             {
-                combatEngine.ProcessNpcAction(npc, skill.ActionId, playerEntityId, skill.Potency, skill.AttackStyle);
+                combatEngine.ProcessNpcAction(npc, skill.ActionId, targetEntityId, skill.Potency, skill.AttackStyle);
                 skill.CooldownRemaining = skill.Cooldown;
                 npc.State.AnimationLock = 0.6f;
             }
@@ -562,7 +569,7 @@ public unsafe class NpcAiController : IDisposable
         {
             npc.AutoAttackTimer = npc.Behavior.AutoAttackDelay;
             combatEngine.ProcessNpcAction(npc, npc.Behavior.AutoAttackActionId,
-                playerEntityId, npc.Behavior.AutoAttackPotency, npc.Behavior.AutoAttackStyle);
+                targetEntityId, npc.Behavior.AutoAttackPotency, npc.Behavior.AutoAttackStyle);
             npc.State.AnimationLock = 0.6f;
         }
     }
@@ -888,6 +895,7 @@ public unsafe class NpcAiController : IDisposable
             existingPathState.Waypoints.Clear();
             existingPathState.WaypointIndex = 0;
             existingPathState.PendingPath = null;
+            existingPathState.PartyAttackRangeLocked = false;
         }
 
         combatPositioningService.Release(npc.SimulatedEntityId);
@@ -904,11 +912,26 @@ public unsafe class NpcAiController : IDisposable
         var targetPos = partyPlan.Goal;
         var facePos = partyPlan.HasFaceTarget ? partyPlan.FaceTarget : npcPos;
 
-        if (FlatDistance(npcPos, npcTargetPos) <= GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer)
+        var partyAttackRange = GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer;
+        var distToTarget = FlatDistance(npcPos, npcTargetPos);
+        var hasAttackRangeState = TryGetOrCreateApproachPathState(npc, out var attackRangeState);
+        if (hasAttackRangeState)
         {
-            if (terrainCache != null &&
-                TryGetOrCreateApproachPathState(npc, out var stableAttackState))
-                CorrectStableRootHeight(gameObj, npcPos, terrainCache, stableAttackState, deltaTime, preserveInitialClearance: false);
+            if (attackRangeState.PartyAttackRangeLocked)
+            {
+                if (distToTarget > partyAttackRange + PartyAttackRangeUnlockBuffer)
+                    attackRangeState.PartyAttackRangeLocked = false;
+            }
+            else if (distToTarget <= partyAttackRange)
+            {
+                attackRangeState.PartyAttackRangeLocked = true;
+            }
+        }
+
+        if (hasAttackRangeState && attackRangeState.PartyAttackRangeLocked)
+        {
+            if (terrainCache != null)
+                CorrectStableRootHeight(gameObj, npcPos, terrainCache, attackRangeState, deltaTime, preserveInitialClearance: false);
 
             StopApproachMoveAnim(npc);
             ForceRotateToward(npc, npcTargetPos, deltaTime);
@@ -1030,7 +1053,9 @@ public unsafe class NpcAiController : IDisposable
     }
 
     private bool UsesPartyConfiguredRange(SimulatedNpc npc, SimulatedEntityState target)
-        => combatEngine.HasLivingCompanions?.Invoke() == true;
+        => config.EnableCombatCompanions &&
+           (combatEngine.HasLivingCompanions?.Invoke() == true ||
+            !config.UseSoloTargetFormationWhenNoCompanions);
 
     private float GetPartyAttackRange(NpcAttackStyle style)
         => style is NpcAttackStyle.Ranged or NpcAttackStyle.Magic
