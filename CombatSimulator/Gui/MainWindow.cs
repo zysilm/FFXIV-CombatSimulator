@@ -2786,6 +2786,14 @@ public class MainWindow : IDisposable
                 ImGui.Unindent();
             }
 
+            var companionAppearance = config.DevCompanionAppearanceVariant;
+            if (ImGui.Checkbox("Ripoff Parties##dev", ref companionAppearance))
+            {
+                config.DevCompanionAppearanceVariant = companionAppearance;
+                config.Save();
+            }
+            HelpMarker("Applies an alternate visual state to party companions after they are defeated. Reset restores the original appearance.");
+
             var autoEngage = config.EnableNpcAutoEngage;
             if (ImGui.Checkbox("NPC Auto Engage##dev", ref autoEngage))
             {

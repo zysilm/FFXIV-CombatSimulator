@@ -30,5 +30,7 @@ public unsafe class CombatCompanion
     public float RecentDps { get; set; }
     public ActorVisualState VisualState { get; set; } = new();
     public bool DeathAnimationPlayed { get; set; }
+    public ulong[]? OriginalEquipment { get; set; }
+    public bool EquipmentVariantApplied { get; set; }
     public bool IsAlive => State.IsAlive;
 }

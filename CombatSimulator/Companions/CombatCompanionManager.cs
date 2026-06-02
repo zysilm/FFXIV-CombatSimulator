@@ -82,6 +82,19 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float EnemyTargetCurrentBonus = 50f;
     private const float EnemyTargetDpsWeight = 0.25f;
     private const float EnemyTargetSwitchThreshold = 25f;
+    private static readonly DrawDataContainer.EquipmentSlot[] AppearanceEquipmentSlots =
+    {
+        DrawDataContainer.EquipmentSlot.Head,
+        DrawDataContainer.EquipmentSlot.Body,
+        DrawDataContainer.EquipmentSlot.Hands,
+        DrawDataContainer.EquipmentSlot.Legs,
+        DrawDataContainer.EquipmentSlot.Feet,
+        DrawDataContainer.EquipmentSlot.Ears,
+        DrawDataContainer.EquipmentSlot.Neck,
+        DrawDataContainer.EquipmentSlot.Wrists,
+        DrawDataContainer.EquipmentSlot.RFinger,
+        DrawDataContainer.EquipmentSlot.LFinger,
+    };
 
     public IReadOnlyList<CombatCompanion> Companions => companions;
     public int PendingCount => pendingSpawns.Count + spawnQueue.Count;
@@ -370,6 +383,7 @@ public unsafe class CombatCompanionManager : IDisposable
             companion.State.CurrentHp = companion.State.MaxHp;
             companion.State.AnimationLock = 0;
             companion.DeathAnimationPlayed = false;
+            companion.EquipmentVariantApplied = false;
             companion.AutoAttackTimer = 0;
             companion.CurrentTargetId = 0;
             companion.RecentDamage = 0;
@@ -381,6 +395,7 @@ public unsafe class CombatCompanionManager : IDisposable
             try
             {
                 animationController.ResetDeathAnimation(companion.BattleChara);
+                RestoreCompanionEquipment(companion);
                 var character = (Character*)companion.BattleChara;
                 character->Mode = CharacterModes.Normal;
                 character->ModeParam = 0;
@@ -587,6 +602,7 @@ public unsafe class CombatCompanionManager : IDisposable
                     DamageTraitPct = 100,
                 },
             };
+            CaptureCompanionEquipment(companion);
 
             pendingSpawns.Add(new PendingSpawn { Companion = companion });
             log.Info($"Companion clone '{name}' created at index {index}, entityId={entityId:X}. Pending draw...");
@@ -651,6 +667,7 @@ public unsafe class CombatCompanionManager : IDisposable
             EnterCompanionState(companion, CompanionAiState.Dead);
             if (!companion.DeathAnimationPlayed)
             {
+                ApplyCompanionDefeatAppearance(companion);
                 animationController.PlayDeathAnimation(ToSimulatedNpcView(companion));
                 if (config.PartyCompanionDeathRagdoll && companion.Address != nint.Zero)
                     OnCompanionDeathRagdoll?.Invoke(companion.Address);
@@ -1382,6 +1399,47 @@ public unsafe class CombatCompanionManager : IDisposable
     {
         if (companion.BattleChara != null)
             ActorVisualStateController.ClearMovement((Character*)companion.BattleChara, companion.VisualState);
+    }
+
+    private void CaptureCompanionEquipment(CombatCompanion companion)
+    {
+        if (companion.BattleChara == null)
+            return;
+
+        var character = (Character*)companion.BattleChara;
+        companion.OriginalEquipment = new ulong[AppearanceEquipmentSlots.Length];
+        for (var i = 0; i < AppearanceEquipmentSlots.Length; i++)
+            companion.OriginalEquipment[i] = character->DrawData.Equipment(AppearanceEquipmentSlots[i]).Value;
+    }
+
+    private void ApplyCompanionDefeatAppearance(CombatCompanion companion)
+    {
+        if (!config.DevCompanionAppearanceVariant ||
+            companion.BattleChara == null ||
+            companion.EquipmentVariantApplied)
+        {
+            return;
+        }
+
+        if (companion.OriginalEquipment == null)
+            CaptureCompanionEquipment(companion);
+
+        var character = (Character*)companion.BattleChara;
+        foreach (var slot in AppearanceEquipmentSlots)
+            character->DrawData.Equipment(slot).Value = 0;
+
+        companion.EquipmentVariantApplied = true;
+    }
+
+    private void RestoreCompanionEquipment(CombatCompanion companion)
+    {
+        if (companion.BattleChara == null || companion.OriginalEquipment == null)
+            return;
+
+        var character = (Character*)companion.BattleChara;
+        var count = Math.Min(AppearanceEquipmentSlots.Length, companion.OriginalEquipment.Length);
+        for (var i = 0; i < count; i++)
+            character->DrawData.Equipment(AppearanceEquipmentSlots[i]).Value = companion.OriginalEquipment[i];
     }
 
     private void EnterCompanionState(CombatCompanion companion, CompanionAiState state, float deltaTime = 0)
