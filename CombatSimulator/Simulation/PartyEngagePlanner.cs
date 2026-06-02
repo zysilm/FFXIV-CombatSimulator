@@ -36,10 +36,15 @@ public sealed unsafe class PartyEngagePlanner
     private const float ChainJoinRecomputeDistance = 1.25f;
     private const float PlayerPursuitGoalUpdateDistance = 2.0f;
     private const float PlayerPursuitGoalUpdateInterval = 0.65f;
+    private const float MeleeFormationRadius = 1.85f;
+    private const float RangedFormationRadius = 7.5f;
+    private const float FormationRingStep = 0.85f;
+    private const int FormationSlotsPerRing = 10;
 
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly Dictionary<uint, PartyEngagePlan> plans = new();
     private readonly Dictionary<string, PlannerPathState> pathStates = new();
+    private readonly Dictionary<uint, FormationSlotAssignment> formationSlots = new();
 
     public PartyEngagePlanner(VNavmeshIpc vnavmeshIpc)
     {
@@ -130,10 +135,19 @@ public sealed unsafe class PartyEngagePlanner
             }
         }
 
+        ApplyFormationSlots(nodes, playerPosition, playerForward, commandRange, commandRandomness);
+
         foreach (var key in pathStates.Keys.ToList())
         {
             if (!livePathKeys.Contains(key))
                 pathStates.Remove(key);
+        }
+
+        var liveActorIds = nodes.Keys.ToHashSet();
+        foreach (var actorId in formationSlots.Keys.ToList())
+        {
+            if (!liveActorIds.Contains(actorId))
+                formationSlots.Remove(actorId);
         }
     }
 
@@ -189,7 +203,8 @@ public sealed unsafe class PartyEngagePlanner
                 PartyNodeSide.Friendly,
                 position,
                 commandAnchorPosition,
-                companionTargets.GetValueOrDefault(companion.SimulatedEntityId));
+                companionTargets.GetValueOrDefault(companion.SimulatedEntityId),
+                GetFormationRadius(companion.Behavior));
         }
 
         foreach (var enemy in enemies)
@@ -203,7 +218,8 @@ public sealed unsafe class PartyEngagePlanner
                 PartyNodeSide.Enemy,
                 position,
                 enemy.SpawnPosition,
-                enemyTargets.GetValueOrDefault(enemy.SimulatedEntityId));
+                enemyTargets.GetValueOrDefault(enemy.SimulatedEntityId),
+                GetFormationRadius(enemy.Behavior));
         }
 
         return nodes;
@@ -622,6 +638,150 @@ public sealed unsafe class PartyEngagePlanner
         return point;
     }
 
+    private void ApplyFormationSlots(
+        IReadOnlyDictionary<uint, PartyNode> nodes,
+        Vector3 playerPosition,
+        Vector3 playerForward,
+        float commandRange,
+        float commandRandomness)
+    {
+        if (plans.Count <= 1)
+            return;
+
+        var updatedPlans = new Dictionary<uint, PartyEngagePlan>();
+        var groups = plans.Values
+            .Where(p => p.Kind != PartyEngagePlanKind.ReturnToCommand && p.TargetId != 0 && nodes.ContainsKey(p.ActorId))
+            .GroupBy(p => p.TargetId);
+
+        foreach (var group in groups)
+        {
+            var groupPlans = group
+                .OrderBy(p => StableUnit(p.ActorId, 0x5A11u))
+                .ToList();
+            if (groupPlans.Count == 0)
+                continue;
+
+            var center = GetFormationCenter(groupPlans, nodes, playerPosition);
+            var baseDirection = GetFormationDirection(groupPlans, nodes, center, playerForward);
+            var assignedSlots = AssignFormationSlots(group.Key, groupPlans);
+
+            foreach (var plan in groupPlans)
+            {
+                var node = nodes[plan.ActorId];
+                var slotIndex = assignedSlots[plan.ActorId];
+                var goal = BuildFormationGoal(center, baseDirection, node.FormationRadius, slotIndex);
+                goal = ClampToCommandAnchor(node, goal, commandRange, commandRandomness, out var leashed);
+                if (leashed)
+                    goal = plan.Goal;
+
+                formationSlots[plan.ActorId] = new FormationSlotAssignment(plan.TargetId, slotIndex);
+                updatedPlans[plan.ActorId] = WithGoal(plan, goal);
+            }
+        }
+
+        foreach (var (actorId, plan) in updatedPlans)
+            plans[actorId] = plan;
+    }
+
+    private Dictionary<uint, int> AssignFormationSlots(uint targetId, IReadOnlyList<PartyEngagePlan> groupPlans)
+    {
+        var assigned = new Dictionary<uint, int>();
+        var used = new HashSet<int>();
+
+        foreach (var plan in groupPlans)
+        {
+            if (!formationSlots.TryGetValue(plan.ActorId, out var slot) || slot.TargetId != targetId)
+                continue;
+
+            assigned[plan.ActorId] = slot.SlotIndex;
+            used.Add(slot.SlotIndex);
+        }
+
+        var nextSlot = 0;
+        foreach (var plan in groupPlans)
+        {
+            if (assigned.ContainsKey(plan.ActorId))
+                continue;
+
+            while (used.Contains(nextSlot))
+                nextSlot++;
+            assigned[plan.ActorId] = nextSlot;
+            used.Add(nextSlot);
+        }
+
+        return assigned;
+    }
+
+    private static Vector3 GetFormationCenter(
+        IReadOnlyList<PartyEngagePlan> groupPlans,
+        IReadOnlyDictionary<uint, PartyNode> nodes,
+        Vector3 playerPosition)
+    {
+        if (groupPlans[0].TargetId != 0 && groupPlans[0].HasFaceTarget)
+            return groupPlans[0].FaceTarget;
+
+        var sum = Vector3.Zero;
+        var count = 0;
+        foreach (var plan in groupPlans)
+        {
+            if (!nodes.TryGetValue(plan.ActorId, out var node))
+                continue;
+            sum += node.Position;
+            count++;
+        }
+
+        return count > 0 ? sum / count : playerPosition;
+    }
+
+    private static Vector3 GetFormationDirection(
+        IReadOnlyList<PartyEngagePlan> groupPlans,
+        IReadOnlyDictionary<uint, PartyNode> nodes,
+        Vector3 center,
+        Vector3 fallback)
+    {
+        var sum = Vector3.Zero;
+        foreach (var plan in groupPlans)
+        {
+            if (nodes.TryGetValue(plan.ActorId, out var node))
+                sum += node.Position - center;
+        }
+
+        return FlatNormalize(sum, fallback);
+    }
+
+    private static Vector3 BuildFormationGoal(Vector3 center, Vector3 baseDirection, float radius, int slotIndex)
+    {
+        var ring = slotIndex / FormationSlotsPerRing;
+        var slot = slotIndex % FormationSlotsPerRing;
+        var angleOffsets = new[] { 0f, -35f, 35f, -70f, 70f, -110f, 110f, 145f, -145f, 180f };
+        var baseAngle = MathF.Atan2(baseDirection.X, baseDirection.Z);
+        var angle = baseAngle + angleOffsets[slot] * MathF.PI / 180f;
+        var slotRadius = radius + ring * FormationRingStep;
+        var goal = center + new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * slotRadius;
+        goal.Y = center.Y;
+        return goal;
+    }
+
+    private static PartyEngagePlan WithGoal(PartyEngagePlan plan, Vector3 goal)
+    {
+        return new PartyEngagePlan
+        {
+            ActorId = plan.ActorId,
+            TargetId = plan.TargetId,
+            Kind = plan.Kind,
+            Goal = goal,
+            FaceTarget = plan.FaceTarget,
+            HasFaceTarget = plan.HasFaceTarget,
+        };
+    }
+
+    private static float GetFormationRadius(NpcBehavior behavior)
+    {
+        return behavior.AutoAttackStyle is NpcAttackStyle.Ranged or NpcAttackStyle.Magic
+            ? Math.Clamp(behavior.AutoAttackRange, RangedFormationRadius, 12.0f)
+            : MeleeFormationRadius;
+    }
+
     private static uint StableCycleKey(IReadOnlyList<uint> cycle)
     {
         var key = 2166136261u;
@@ -680,7 +840,10 @@ public sealed unsafe class PartyEngagePlanner
         PartyNodeSide Side,
         Vector3 Position,
         Vector3 CommandAnchor,
-        uint TargetId);
+        uint TargetId,
+        float FormationRadius);
+
+    private readonly record struct FormationSlotAssignment(uint TargetId, int SlotIndex);
 
     private enum PartyNodeSide
     {

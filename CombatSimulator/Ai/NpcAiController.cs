@@ -25,7 +25,6 @@ public unsafe class NpcAiController : IDisposable
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly IClientState clientState;
     private readonly Configuration config;
-    private readonly CombatPositioningService combatPositioningService;
     private readonly PartyEngagePlanner partyEngagePlanner;
     private readonly IPluginLog log;
     private readonly Func<nint, bool> isExternallyControlled;
@@ -154,7 +153,6 @@ public unsafe class NpcAiController : IDisposable
         VNavmeshIpc vnavmeshIpc,
         IClientState clientState,
         Configuration config,
-        CombatPositioningService combatPositioningService,
         PartyEngagePlanner partyEngagePlanner,
         IPluginLog log,
         Func<nint, bool>? isExternallyControlled = null)
@@ -165,7 +163,6 @@ public unsafe class NpcAiController : IDisposable
         this.vnavmeshIpc = vnavmeshIpc;
         this.clientState = clientState;
         this.config = config;
-        this.combatPositioningService = combatPositioningService;
         this.partyEngagePlanner = partyEngagePlanner;
         this.log = log;
         this.isExternallyControlled = isExternallyControlled ?? (_ => false);
@@ -872,7 +869,6 @@ public unsafe class NpcAiController : IDisposable
         if (npc.BattleChara == null) return;
         if (npc.AiState == NpcAiState.Dead)
         {
-            combatPositioningService.Release(npc.SimulatedEntityId);
             StopApproachMoveAnim(npc);
             return;
         }
@@ -880,7 +876,6 @@ public unsafe class NpcAiController : IDisposable
         // Party mode continues after player death while companions are alive.
         if (!npcTarget.IsAlive)
         {
-            combatPositioningService.Release(npc.SimulatedEntityId);
             StopApproachMoveAnim(npc);
             return;
         }
@@ -897,8 +892,6 @@ public unsafe class NpcAiController : IDisposable
             existingPathState.PendingPath = null;
             existingPathState.PartyAttackRangeLocked = false;
         }
-
-        combatPositioningService.Release(npc.SimulatedEntityId);
 
         if (!partyEngagePlanner.TryGetPlan(npc.SimulatedEntityId, out var partyPlan))
         {

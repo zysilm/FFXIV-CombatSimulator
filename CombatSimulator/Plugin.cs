@@ -36,7 +36,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly ActionDataProvider actionDataProvider;
     private readonly NpcActionProfileProvider npcActionProfileProvider;
     private readonly DamageCalculator damageCalculator;
-    private readonly CombatPositioningService combatPositioningService;
     private readonly PartyEngagePlanner partyEngagePlanner;
     private readonly GlamourerIpc glamourerIpc;
     private readonly VNavmeshIpc vnavmeshIpc;
@@ -100,7 +99,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         NpcWeaponClassifier.Initialize(dataManager, log);
         npcActionProfileProvider = new NpcActionProfileProvider(actionDataProvider, log);
         damageCalculator = new DamageCalculator(new CombatStatProvider(dataManager, log));
-        combatPositioningService = new CombatPositioningService();
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         vnavmeshIpc = new VNavmeshIpc(pluginInterface, log);
         partyEngagePlanner = new PartyEngagePlanner(vnavmeshIpc);
@@ -123,7 +121,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             victorySequenceController);
         companionManager = new CombatCompanionManager(
             objectTable, clientState, config, combatEngine, animationController,
-            movementBlockHook, vnavmeshIpc, targetManager, combatPositioningService, partyEngagePlanner, log);
+            movementBlockHook, vnavmeshIpc, targetManager, partyEngagePlanner, log);
         combatEngine.ResolveNpcTarget = companionManager.SelectEnemyTarget;
         combatEngine.ResolveExternalEntityAddress = companionManager.ResolveAddress;
         combatEngine.HasLivingCompanions = () => companionManager.HasLivingCompanions;
@@ -131,7 +129,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnPlayerDamageDealtToTarget = companionManager.RegisterPlayerDamage;
         npcAiController = new NpcAiController(
             combatEngine, animationController, movementBlockHook, vnavmeshIpc,
-            clientState, config, combatPositioningService, partyEngagePlanner, log, victorySequenceController.ControlsNpc);
+            clientState, config, partyEngagePlanner, log, victorySequenceController.ControlsNpc);
 
         companionManager.OnCompanionSpawnComplete = companion =>
         {
@@ -392,12 +390,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             // Process queued spawns and pending draw enables (works outside combat)
             npcSpawner.Tick();
-            if (Services.ObjectTable.LocalPlayer != null)
-                combatPositioningService.BeginFrame(
-                    Services.ObjectTable.LocalPlayer.Position,
-                    Services.ObjectTable.LocalPlayer.Rotation,
-                    companionManager.Companions,
-                    npcSelector.SelectedNpcs);
             companionManager.Tick(1.0f / 60.0f, npcSelector.SelectedNpcs);
 
             var deltaTime = (float)(1.0 / 60.0);
