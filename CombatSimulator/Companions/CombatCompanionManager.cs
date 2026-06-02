@@ -68,7 +68,6 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float CombatAnchorRelocateDistance = 10.0f;
     private const float MeleeAttackRangeBuffer = 0.25f;
     private const float SenseInterval = 1.0f;
-    private const ushort NormalRunTimelineId = 22;
     private const float SelectedTargetBonus = 130f;
     private const float LastPlayerTargetBonus = 95f;
     private const float AttackingPlayerBonus = 120f;
@@ -649,6 +648,7 @@ public unsafe class CombatCompanionManager : IDisposable
         {
             combatPositioningService.Release(companion.SimulatedEntityId);
             StopMove(companion);
+            EnterCompanionState(companion, CompanionAiState.Dead);
             if (!companion.DeathAnimationPlayed)
             {
                 animationController.PlayDeathAnimation(ToSimulatedNpcView(companion));
@@ -660,12 +660,11 @@ public unsafe class CombatCompanionManager : IDisposable
             return;
         }
 
-        animationController.SetBattleStance(ToSimulatedNpcView(companion));
-
         if (!IsWithinCommandRange(companion))
         {
             companion.CurrentTargetId = 0;
             combatPositioningService.Release(companion.SimulatedEntityId);
+            EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
             MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
             return;
         }
@@ -675,6 +674,7 @@ public unsafe class CombatCompanionManager : IDisposable
         {
             companion.CurrentTargetId = 0;
             combatPositioningService.Release(companion.SimulatedEntityId);
+            EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
             MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
             return;
         }
@@ -694,10 +694,12 @@ public unsafe class CombatCompanionManager : IDisposable
         }
 
         StopMove(companion);
+        EnterCompanionState(companion, CompanionAiState.CombatReady);
         RotateToward(companion, targetPos, deltaTime);
 
         if (companion.State.AnimationLock > 0)
         {
+            EnterCompanionState(companion, CompanionAiState.ActionLocked);
             companion.State.AnimationLock = Math.Max(0, companion.State.AnimationLock - deltaTime);
             return;
         }
@@ -816,6 +818,7 @@ public unsafe class CombatCompanionManager : IDisposable
         if (!partyEngagePlanner.TryGetPlan(companion.SimulatedEntityId, out var plan))
         {
             StopMove(companion);
+            EnterCompanionState(companion, CompanionAiState.CombatReady);
             return;
         }
 
@@ -841,6 +844,9 @@ public unsafe class CombatCompanionManager : IDisposable
         }
 
         StopMove(companion);
+        EnterCompanionState(
+            companion,
+            companion.CurrentTargetId == 0 ? CompanionAiState.Idle : CompanionAiState.CombatReady);
         if (plan.HasFaceTarget)
             RotateToward(companion, plan.FaceTarget, deltaTime);
     }
@@ -964,6 +970,9 @@ public unsafe class CombatCompanionManager : IDisposable
         if (dir.LengthSquared() < 0.01f)
         {
             StopMove(companion);
+            EnterCompanionState(
+                companion,
+                companion.CurrentTargetId == 0 ? CompanionAiState.Idle : CompanionAiState.CombatReady);
             return;
         }
 
@@ -992,7 +1001,10 @@ public unsafe class CombatCompanionManager : IDisposable
         }
 
         movementBlockHook.AddApproachNpc(companion.Address);
-        StartMoveAnim(companion);
+        EnterCompanionState(
+            companion,
+            companion.CurrentTargetId == 0 ? CompanionAiState.ReturningToCommandRange : CompanionAiState.MovingToTarget,
+            deltaTime);
         movementBlockHook.SetApproachPosition(obj, next.X, next.Y, next.Z);
     }
 
@@ -1007,6 +1019,7 @@ public unsafe class CombatCompanionManager : IDisposable
         if (player == null || companion.BattleChara == null)
         {
             StopMove(companion);
+            EnterCompanionState(companion, CompanionAiState.Idle);
             return;
         }
 
@@ -1019,6 +1032,7 @@ public unsafe class CombatCompanionManager : IDisposable
             if (terrainCache != null && pathStates.TryGetValue(companion.Address, out var stableState))
                 CorrectStableRootHeight(obj, current, terrainCache, stableState, deltaTime);
             StopMove(companion);
+            EnterCompanionState(companion, CompanionAiState.Idle);
             RotateToward(companion, player.Position, deltaTime);
             return;
         }
@@ -1067,6 +1081,7 @@ public unsafe class CombatCompanionManager : IDisposable
         if (player == null || companion.BattleChara == null)
         {
             StopMove(companion);
+            EnterCompanionState(companion, CompanionAiState.Idle);
             return;
         }
 
@@ -1081,6 +1096,7 @@ public unsafe class CombatCompanionManager : IDisposable
             if (terrainCache != null && pathStates.TryGetValue(companion.Address, out var stableState))
                 CorrectStableRootHeight(obj, current, terrainCache, stableState, deltaTime);
             StopMove(companion);
+            EnterCompanionState(companion, CompanionAiState.CombatReady);
             RotateToward(companion, facePos, deltaTime);
             return;
         }
@@ -1362,31 +1378,35 @@ public unsafe class CombatCompanionManager : IDisposable
         pathStates.Remove(companion.Address);
     }
 
-    private void StartMoveAnim(CombatCompanion companion)
+    private void StopMoveAnim(CombatCompanion companion)
     {
-        if (companion.BattleChara == null || companion.MoveAnimActive)
+        if (companion.BattleChara != null)
+            ActorVisualStateController.ClearMovement((Character*)companion.BattleChara, companion.VisualState);
+    }
+
+    private void EnterCompanionState(CombatCompanion companion, CompanionAiState state, float deltaTime = 0)
+    {
+        companion.AiState = state;
+        if (companion.BattleChara == null)
             return;
 
         var character = (Character*)companion.BattleChara;
-        character->Timeline.BaseOverride = NormalRunTimelineId;
-        if (character->Timeline.TimelineSequencer.Parent != null)
-            character->Timeline.PlayActionTimeline(NormalRunTimelineId);
-        companion.MoveAnimActive = true;
-    }
-
-    private void StopMoveAnim(CombatCompanion companion)
-    {
-        if (!companion.MoveAnimActive || companion.BattleChara == null)
-            return;
-
-        try
+        switch (state)
         {
-            var character = (Character*)companion.BattleChara;
-            character->Timeline.BaseOverride = 0;
+            case CompanionAiState.ReturningToCommandRange:
+            case CompanionAiState.MovingToTarget:
+                ActorVisualStateController.ApplyMoving(character, companion.VisualState, deltaTime);
+                break;
+            case CompanionAiState.ActionLocked:
+                ActorVisualStateController.ApplyActionLocked(character, companion.VisualState);
+                break;
+            case CompanionAiState.Dead:
+                ActorVisualStateController.ApplyDead(character, companion.VisualState);
+                break;
+            default:
+                ActorVisualStateController.ApplyCombatIdle(character, companion.VisualState);
+                break;
         }
-        catch { }
-
-        companion.MoveAnimActive = false;
     }
 
     private void RotateToward(CombatCompanion companion, Vector3 targetPos, float deltaTime)

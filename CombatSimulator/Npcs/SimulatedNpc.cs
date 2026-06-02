@@ -1,5 +1,6 @@
 using System.Numerics;
 using CombatSimulator.Ai;
+using CombatSimulator.Animation;
 using CombatSimulator.Simulation;
 using Dalamud.Game.ClientState.Objects.Types;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
@@ -41,6 +42,7 @@ public unsafe class SimulatedNpc
     public float EngageDelayTimer { get; set; }
     public float DeadTimer { get; set; }
     public bool IsEngaged => AiState is NpcAiState.Engaging or NpcAiState.Combat or NpcAiState.Chasing;
+    public ActorVisualState VisualState { get; set; } = new();
 
     // Casting
     public NpcSkill? CurrentCastSkill { get; set; }

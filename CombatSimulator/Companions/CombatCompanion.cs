@@ -1,4 +1,5 @@
 using System.Numerics;
+using CombatSimulator.Animation;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 using Dalamud.Game.ClientState.Objects.Types;
@@ -22,11 +23,12 @@ public unsafe class CombatCompanion
     public bool IsRanged { get; set; }
     public float AutoAttackTimer { get; set; }
     public float EngageDelayTimer { get; set; }
+    public CompanionAiState AiState { get; set; }
     public NpcSkill? CurrentCastSkill { get; set; }
     public uint CurrentTargetId { get; set; }
     public float RecentDamage { get; set; }
     public float RecentDps { get; set; }
-    public bool MoveAnimActive { get; set; }
+    public ActorVisualState VisualState { get; set; } = new();
     public bool DeathAnimationPlayed { get; set; }
     public bool IsAlive => State.IsAlive;
 }

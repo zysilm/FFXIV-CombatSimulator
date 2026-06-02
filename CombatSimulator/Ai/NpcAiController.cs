@@ -44,7 +44,6 @@ public unsafe class NpcAiController : IDisposable
     private const float VNavmeshLookaheadDistance = 1.25f;
     private const float TerrainGridStep = 0.5f;
     private const int TerrainGridMaxSize = 33;
-    private const ushort NormalRunTimelineId = 22;
     private const float PartyMeleeAttackRangeBuffer = 0.25f;
     // Within (approach distance + lock buffer) an enemy locks its angle and stops;
     // it only unlocks to re-approach if pushed beyond (approach distance + unlock).
@@ -71,7 +70,7 @@ public unsafe class NpcAiController : IDisposable
         public float LastFloorY { get; set; }
         public bool HasLastFloorY { get; set; }
         public int LastCorrectedWaypointIndex { get; set; } = -1;
-        public bool MoveAnimActive { get; set; }
+        public ActorVisualState VisualState { get; set; } = new();
         public float StableRootTerrainClearance { get; set; }
         public bool HasStableRootTerrainClearance { get; set; }
         public float LastMoveRootY { get; set; }
@@ -393,6 +392,8 @@ public unsafe class NpcAiController : IDisposable
         {
             npc.AiState = NpcAiState.Dead;
             npc.DeadTimer = 0;
+            if (npc.BattleChara != null)
+                ActorVisualStateController.ApplyDead((Character*)npc.BattleChara, npc.VisualState);
             return;
         }
 
@@ -402,6 +403,8 @@ public unsafe class NpcAiController : IDisposable
         switch (npc.AiState)
         {
             case NpcAiState.Idle:
+                if (npc.BattleChara != null)
+                    ActorVisualStateController.ApplyCombatIdle((Character*)npc.BattleChara, npc.VisualState);
                 break;
 
             case NpcAiState.Engaging:
@@ -428,6 +431,8 @@ public unsafe class NpcAiController : IDisposable
                 break;
 
             case NpcAiState.Dead:
+                if (npc.BattleChara != null)
+                    ActorVisualStateController.ApplyDead((Character*)npc.BattleChara, npc.VisualState);
                 npc.DeadTimer += deltaTime;
                 break;
 
@@ -488,6 +493,8 @@ public unsafe class NpcAiController : IDisposable
         // Handle casting
         if (npc.State.IsCasting)
         {
+            if (npc.BattleChara != null)
+                ActorVisualStateController.ApplyActionLocked((Character*)npc.BattleChara, npc.VisualState);
             npc.State.CastTimeElapsed += deltaTime;
             if (npc.State.CastTimeElapsed >= npc.State.CastTimeTotal)
             {
@@ -506,9 +513,14 @@ public unsafe class NpcAiController : IDisposable
         // Check animation lock
         if (npc.State.AnimationLock > 0)
         {
+            if (npc.BattleChara != null)
+                ActorVisualStateController.ApplyActionLocked((Character*)npc.BattleChara, npc.VisualState);
             npc.State.AnimationLock -= deltaTime;
             return;
         }
+
+        if (npc.BattleChara != null)
+            ActorVisualStateController.ApplyCombatIdle((Character*)npc.BattleChara, npc.VisualState);
 
         // Try skills
         float hpPercent = (float)npc.State.CurrentHp / npc.State.MaxHp;
@@ -564,6 +576,8 @@ public unsafe class NpcAiController : IDisposable
 
         var direction = Vector3.Normalize(playerPos - npcPos);
         var newPos = npcPos + direction * npc.Behavior.MoveSpeed * deltaTime;
+        if (npc.BattleChara != null)
+            ActorVisualStateController.ApplyMoving((Character*)npc.BattleChara, npc.VisualState, deltaTime);
         SetNpcPosition(npc, newPos);
 
         float newDist = Vector3.Distance(newPos, playerPos);
@@ -582,6 +596,8 @@ public unsafe class NpcAiController : IDisposable
     {
         var direction = Vector3.Normalize(npc.SpawnPosition - npcPos);
         var newPos = npcPos + direction * npc.Behavior.MoveSpeed * 1.5f * deltaTime;
+        if (npc.BattleChara != null)
+            ActorVisualStateController.ApplyMoving((Character*)npc.BattleChara, npc.VisualState, deltaTime);
         SetNpcPosition(npc, newPos);
 
         npc.State.CurrentHp = npc.State.MaxHp;
@@ -594,6 +610,7 @@ public unsafe class NpcAiController : IDisposable
             if (npc.BattleChara != null)
             {
                 var character = (Character*)npc.BattleChara;
+                ActorVisualStateController.ApplyCombatIdle(character, npc.VisualState);
                 character->Mode = CharacterModes.Normal;
             }
 
@@ -828,7 +845,7 @@ public unsafe class NpcAiController : IDisposable
             newPos = CorrectMovingRootHeight(newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: true);
         }
 
-        StartApproachMoveAnim(npc);
+        StartApproachMoveAnim(npc, deltaTime);
         movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
         ForceRotateToward(npc, playerPos, deltaTime);
     }
@@ -960,7 +977,7 @@ public unsafe class NpcAiController : IDisposable
         // Call the real SetPosition via the hook bypass — this updates both
         // the struct field AND the DrawObject (3D model position).
         movementBlockHook.AddApproachNpc(npc.Address);
-        StartApproachMoveAnim(npc);
+        StartApproachMoveAnim(npc, deltaTime);
         movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
 
         ForceRotateToward(npc, moveTarget, deltaTime);
@@ -974,6 +991,7 @@ public unsafe class NpcAiController : IDisposable
         state = new ApproachPathState
         {
             ConfiguredHeightOffset = config.DefaultNpcHeightOffset,
+            VisualState = npc.VisualState,
         };
         approachPaths[npc.Address] = state;
         return true;
@@ -1351,25 +1369,20 @@ public unsafe class NpcAiController : IDisposable
         movementBlockHook.SetApproachPosition(gameObj, corrected.X, corrected.Y, corrected.Z);
     }
 
-    private void StartApproachMoveAnim(SimulatedNpc npc)
+    private void StartApproachMoveAnim(SimulatedNpc npc, float deltaTime)
     {
         if (npc.BattleChara == null)
             return;
 
         if (!approachPaths.TryGetValue(npc.Address, out var state))
         {
-            state = new ApproachPathState();
+            state = new ApproachPathState { VisualState = npc.VisualState };
             approachPaths[npc.Address] = state;
         }
-
-        if (state.MoveAnimActive)
-            return;
+        state.VisualState = npc.VisualState;
 
         var character = (Character*)npc.BattleChara;
-        character->Timeline.BaseOverride = NormalRunTimelineId;
-        if (character->Timeline.TimelineSequencer.Parent != null)
-            character->Timeline.PlayActionTimeline(NormalRunTimelineId);
-        state.MoveAnimActive = true;
+        ActorVisualStateController.ApplyMoving(character, npc.VisualState, deltaTime);
     }
 
     private void StopApproachMoveAnim(SimulatedNpc npc)
@@ -1382,17 +1395,12 @@ public unsafe class NpcAiController : IDisposable
 
     private void StopApproachMoveAnim(nint address, ApproachPathState state)
     {
-        if (!state.MoveAnimActive)
-            return;
-
         try
         {
             var character = (Character*)address;
-            character->Timeline.BaseOverride = 0;
+            ActorVisualStateController.ClearMovement(character, state.VisualState);
         }
         catch { }
-
-        state.MoveAnimActive = false;
     }
 
     private void StopAllApproachMoveAnims()
