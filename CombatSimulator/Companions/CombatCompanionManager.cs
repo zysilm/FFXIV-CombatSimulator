@@ -29,6 +29,7 @@ public unsafe class CombatCompanionManager : IDisposable
     private readonly MovementBlockHook movementBlockHook;
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly ITargetManager targetManager;
+    private readonly CombatPositioningService combatPositioningService;
     private readonly PartyEngagePlanner partyEngagePlanner;
     private readonly IPluginLog log;
 
@@ -113,6 +114,7 @@ public unsafe class CombatCompanionManager : IDisposable
         MovementBlockHook movementBlockHook,
         VNavmeshIpc vnavmeshIpc,
         ITargetManager targetManager,
+        CombatPositioningService combatPositioningService,
         PartyEngagePlanner partyEngagePlanner,
         IPluginLog log)
     {
@@ -124,6 +126,7 @@ public unsafe class CombatCompanionManager : IDisposable
         this.movementBlockHook = movementBlockHook;
         this.vnavmeshIpc = vnavmeshIpc;
         this.targetManager = targetManager;
+        this.combatPositioningService = combatPositioningService;
         this.partyEngagePlanner = partyEngagePlanner;
         this.log = log;
     }
@@ -728,6 +731,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
         if (!companion.State.IsAlive)
         {
+            combatPositioningService.Release(companion.SimulatedEntityId);
             StopMove(companion);
             EnterCompanionState(companion, CompanionAiState.Dead);
             if (!companion.DeathAnimationPlayed)
@@ -745,6 +749,7 @@ public unsafe class CombatCompanionManager : IDisposable
         if (!IsWithinCommandRange(companion))
         {
             companion.CurrentTargetId = 0;
+            combatPositioningService.Release(companion.SimulatedEntityId);
             EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
             MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
             return;
@@ -754,6 +759,7 @@ public unsafe class CombatCompanionManager : IDisposable
         if (target == null || target.BattleChara == null)
         {
             companion.CurrentTargetId = 0;
+            combatPositioningService.Release(companion.SimulatedEntityId);
             EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
             MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
             return;
@@ -768,6 +774,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
         if (dist > effectiveRange)
         {
+            combatPositioningService.Release(companion.SimulatedEntityId);
             MoveByPartyPlan(companion, deltaTime, targetPos, terrainCache);
             return;
         }
