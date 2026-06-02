@@ -158,6 +158,9 @@ public class HpBarOverlay : IDisposable
                     worldPos = new Vector3(gameObj->Position.X, gameObj->Position.Y + gameObj->Height + 0.5f, gameObj->Position.Z);
                 }
 
+                if (playerBodyPoints != null && IsOccludedByPlayer(camPos, worldPos, playerBodyPoints))
+                    continue;
+
                 if (gameGui.WorldToScreen(worldPos, out var screenPos))
                     DrawCompanionHpBar(drawList, companion, screenPos);
             }

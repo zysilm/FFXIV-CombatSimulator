@@ -599,8 +599,6 @@ public unsafe class CombatCompanionManager : IDisposable
                     DamageTraitPct = 100,
                 },
             };
-            CaptureCompanionEquipment(companion);
-
             pendingSpawns.Add(new PendingSpawn { Companion = companion });
             log.Info($"Companion clone '{name}' created at index {index}, entityId={entityId:X}. Pending draw...");
         }
@@ -630,6 +628,7 @@ public unsafe class CombatCompanionManager : IDisposable
                 if (companion.BattleChara->IsReadyToDraw() || pending.FramesWaited >= MaxPendingFrames)
                 {
                     companion.BattleChara->EnableDraw();
+                    CaptureCompanionEquipment(companion);
                     var obj = (GameObject*)companion.BattleChara;
                     obj->TargetableStatus = ObjectTargetableFlags.IsTargetable;
                     companion.IsSpawned = true;
@@ -1419,7 +1418,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
         var character = (Character*)companion.BattleChara;
         foreach (var slot in AppearanceEquipmentSlots)
-            character->DrawData.Equipment(slot).Value = 0;
+            LoadCompanionEquipmentSlot(character, slot, 0);
 
         companion.EquipmentVariantApplied = true;
     }
@@ -1432,7 +1431,14 @@ public unsafe class CombatCompanionManager : IDisposable
         var character = (Character*)companion.BattleChara;
         var count = Math.Min(AppearanceEquipmentSlots.Length, companion.OriginalEquipment.Length);
         for (var i = 0; i < count; i++)
-            character->DrawData.Equipment(AppearanceEquipmentSlots[i]).Value = companion.OriginalEquipment[i];
+            LoadCompanionEquipmentSlot(character, AppearanceEquipmentSlots[i], companion.OriginalEquipment[i]);
+    }
+
+    private static void LoadCompanionEquipmentSlot(Character* character, DrawDataContainer.EquipmentSlot slot, ulong value)
+    {
+        var model = new EquipmentModelId { Value = value };
+        character->DrawData.Equipment(slot).Value = value;
+        character->DrawData.LoadEquipment(slot, &model, true);
     }
 
     private void EnterCompanionState(CombatCompanion companion, CompanionAiState state, float deltaTime = 0)
