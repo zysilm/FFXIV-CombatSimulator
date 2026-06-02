@@ -160,7 +160,7 @@ public unsafe class CombatCompanionManager : IDisposable
         return queued;
     }
 
-    public bool SpawnSelfCharacter()
+    public bool SpawnSelfCharacter(bool randomizeAppearance = false)
     {
         if (!config.EnableCombatCompanions)
             return false;
@@ -175,7 +175,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
         // Intentionally no source-dedupe here: the player can be cloned many times
         // (each click adds one self-clone) up to the max count / available game slots.
-        spawnQueue.Enqueue(CompanionSpawnSource.FromObject(player));
+        spawnQueue.Enqueue(CompanionSpawnSource.FromObject(player, randomizeAppearance));
         return true;
     }
 
@@ -541,6 +541,8 @@ public unsafe class CombatCompanionManager : IDisposable
                 CharacterSetupContainer.CopyFlags.WeaponHiding;
             character->CharacterSetup.CopyFromCharacter(source, flags);
             character->CharacterSetup.CopyFromCharacter(character, CharacterSetupContainer.CopyFlags.None);
+            if (sourceInfo.RandomizeAppearance)
+                RandomizeHairAndFace(character);
             character->SetMode(CharacterModes.Normal, 0);
 
             IGameObject? gameObjectRef = null;
@@ -606,6 +608,74 @@ public unsafe class CombatCompanionManager : IDisposable
         {
             log.Error(ex, "Exception in companion spawn.");
             OnSpawnError?.Invoke($"Companion spawn failed: {ex.Message}");
+        }
+    }
+
+    // Randomize only hair style, hair color, and face on a freshly cloned
+    // character, leaving race/gender/tribe and the rest of the appearance as
+    // copied from the source. Written before EnableDraw so the redraw picks up
+    // the new customize bytes.
+    private void RandomizeHairAndFace(Character* character)
+    {
+        try
+        {
+            var customize = (byte*)&character->DrawData.CustomizeData;
+            var race = customize[0x00];
+            var tribe = customize[0x04];
+            var gender = customize[0x01];
+
+            // Face: 1-4 is valid for every race/tribe/gender.
+            customize[0x05] = (byte)Random.Shared.Next(1, 5);
+            // Hair color: index into the race's color palette.
+            customize[0x0A] = (byte)Random.Shared.Next(1, 193);
+
+            // Hair style must be one actually valid for this race/tribe/gender,
+            // otherwise the model renders bald. If we can't resolve a valid set,
+            // leave the source's (already valid) hairstyle untouched.
+            var hairStyle = PickRandomHairStyle(race, tribe, gender);
+            if (hairStyle.HasValue)
+                customize[0x06] = hairStyle.Value;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Failed to randomize companion hair/face appearance.");
+        }
+    }
+
+    private byte? PickRandomHairStyle(byte race, byte tribe, byte gender)
+    {
+        try
+        {
+            var sheet = Core.Services.DataManager.GetExcelSheet<Resources.Sheets.HairMakeTypeSheet>();
+            if (sheet == null)
+                return null;
+
+            var styles = new List<byte>();
+            foreach (var entry in sheet)
+            {
+                if (entry.Race.RowId != race || entry.Tribe.RowId != tribe || entry.Gender != gender)
+                    continue;
+
+                foreach (var styleRef in entry.HairStyles)
+                {
+                    if (!styleRef.IsValid)
+                        continue;
+
+                    var featureId = styleRef.Value.FeatureID;
+                    if (featureId is > 0 and <= byte.MaxValue)
+                        styles.Add((byte)featureId);
+                }
+            }
+
+            if (styles.Count == 0)
+                return null;
+
+            return styles[Random.Shared.Next(styles.Count)];
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Failed to resolve valid hairstyles; keeping cloned hairstyle.");
+            return null;
         }
     }
 
@@ -1704,16 +1774,18 @@ public unsafe class CombatCompanionManager : IDisposable
         uint EntityId,
         nint Address,
         string Name,
-        uint ClassJobId)
+        uint ClassJobId,
+        bool RandomizeAppearance)
     {
-        public static CompanionSpawnSource FromObject(IGameObject obj)
+        public static CompanionSpawnSource FromObject(IGameObject obj, bool randomizeAppearance = false)
         {
             var classJobId = obj is IPlayerCharacter player ? player.ClassJob.RowId : 0;
             return new CompanionSpawnSource(
                 obj.EntityId,
                 obj.Address,
                 obj.Name.TextValue,
-                classJobId);
+                classJobId,
+                randomizeAppearance);
         }
     }
 

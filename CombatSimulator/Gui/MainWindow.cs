@@ -444,6 +444,14 @@ public class MainWindow : IDisposable
                     ? "[CombatSim] Queued self companion clone."
                     : "[CombatSim] Could not queue self companion clone.");
             }
+            ImGui.SameLine();
+            if (ImGui.Button("Clone self character with randomized look"))
+            {
+                var queued = companionManager.SpawnSelfCharacter(randomizeAppearance: true);
+                chatGui.Print(queued
+                    ? "[CombatSim] Queued randomized self companion clone."
+                    : "[CombatSim] Could not queue randomized self companion clone.");
+            }
         }
         ImGui.SameLine();
         if (ImGui.Button("Clear companions"))
