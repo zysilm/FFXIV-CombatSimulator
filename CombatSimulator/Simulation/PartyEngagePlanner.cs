@@ -44,6 +44,7 @@ public sealed unsafe class PartyEngagePlanner
     private const float ReservationReleaseDistance = 2.8f;
     private const float ReservationGoalUpdateDistance = 0.9f;
     private const float ReservationGoalUpdateInterval = 0.45f;
+    private const float ReservationAttackRangeMargin = 0.08f;
 
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly Dictionary<uint, PartyEngagePlan> plans = new();
@@ -390,7 +391,7 @@ public sealed unsafe class PartyEngagePlanner
         if (leashed)
             return false;
 
-        return FlatDistance(resolved, targetPosition) <= actor.PreferredEngageRange * 1.05f;
+        return FlatDistance(resolved, targetPosition) <= GetReservationAttackValidRange(actor);
     }
 
     private static float ScoreReservationCandidate(
@@ -811,6 +812,9 @@ public sealed unsafe class PartyEngagePlanner
             ? Math.Clamp(range * 0.82f, 4.5f, range * 0.95f)
             : Math.Clamp(range * 0.86f, 0.85f, range * 0.95f);
     }
+
+    private static float GetReservationAttackValidRange(PartyNode actor)
+        => MathF.Max(0.5f, actor.PreferredEngageRange - ReservationAttackRangeMargin);
 
     private static Vector3 BuildPolarGoal(Vector3 center, float angle, float radius)
     {
