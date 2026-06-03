@@ -709,12 +709,12 @@ public unsafe class NpcSpawner : IDisposable
         if (player != null)
         {
             var playerPos = player.Position;
-            var playerRot = player.Rotation;
+            var angle = Random.Shared.NextSingle() * MathF.Tau;
             var forward = new Vector3(
-                -MathF.Sin(playerRot),
+                -MathF.Sin(angle),
                 0,
-                -MathF.Cos(playerRot));
-            return playerPos + forward * 5.0f;
+                -MathF.Cos(angle));
+            return playerPos + forward * MathF.Max(1.0f, config.SpawnDistance);
         }
 
         return Vector3.Zero;

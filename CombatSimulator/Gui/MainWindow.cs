@@ -78,7 +78,6 @@ public class MainWindow : IDisposable
     private int virtualEnemiesClickCount = 0;
     private bool virtualEnemiesUnlocked = false;
 
-    private static readonly string[] SpawnDirectionNames = { "Front", "Behind", "Left", "Right" };
     private static readonly string[] SpawnCategoryNames = { "Popular", "Recent", "Human", "Monsters", "All" };
 
     private static void HelpMarker(string desc)
@@ -727,23 +726,14 @@ public class MainWindow : IDisposable
 
         // Spawn settings
         ImGui.Spacing();
-        var dir = config.SpawnDirection;
-        ImGui.SetNextItemWidth(120);
-        if (ImGui.Combo("Direction", ref dir, SpawnDirectionNames, SpawnDirectionNames.Length))
-        {
-            config.SpawnDirection = dir;
-            config.Save();
-        }
-        HelpMarker("Direction relative to your character's facing.");
-
-        ImGui.SameLine();
         var dist = config.SpawnDistance;
         ImGui.SetNextItemWidth(-1);
-        if (ImGui.SliderFloat("##spawnDist", ref dist, 1.0f, 15.0f, "%.1f yalms"))
+        if (ImGui.SliderFloat("Distance", ref dist, 1.0f, 15.0f, "%.1f yalms"))
         {
             config.SpawnDistance = dist;
             config.Save();
         }
+        HelpMarker("Spawn direction is randomized around your character.");
 
         // Behavior
         var behaviorIdx = config.DefaultNpcBehaviorType;
@@ -780,7 +770,7 @@ public class MainWindow : IDisposable
         if (ImGui.Button("Spawn", new Vector2(80, 0)))
         {
             var entry = selectedCatalogEntry!;
-            var pos = CalculateSpawnPosition(config.SpawnDirection, config.SpawnDistance);
+            var pos = CalculateSpawnPosition(config.SpawnDistance);
 
             npcSpawner.QueueSpawn(new NpcSpawnRequest
             {
@@ -880,24 +870,13 @@ public class MainWindow : IDisposable
         }
     }
 
-    private Vector3 CalculateSpawnPosition(int directionIndex, float distance)
+    private Vector3 CalculateSpawnPosition(float distance)
     {
         var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null) return Vector3.Zero;
 
         var playerPos = player.Position;
-        var playerRot = player.Rotation;
-
-        // FFXIV: -Sin(rot) = forward X, -Cos(rot) = forward Z
-        float angle = directionIndex switch
-        {
-            0 => playerRot,                    // Front
-            1 => playerRot + MathF.PI,          // Behind
-            2 => playerRot + MathF.PI / 2f,     // Left
-            3 => playerRot - MathF.PI / 2f,     // Right
-            _ => playerRot,
-        };
-
+        var angle = Random.Shared.NextSingle() * MathF.Tau;
         var dir = new Vector3(-MathF.Sin(angle), 0, -MathF.Cos(angle));
         return playerPos + dir * distance;
     }
