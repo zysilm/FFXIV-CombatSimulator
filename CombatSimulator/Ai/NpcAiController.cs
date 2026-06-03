@@ -49,7 +49,9 @@ public unsafe class NpcAiController : IDisposable
     // it only unlocks to re-approach if pushed beyond (approach distance + unlock).
     private const float ApproachLockBuffer = 1.5f;
     private const float ApproachUnlockBuffer = 5.0f;
-    private const float PartyAttackRangeUnlockBuffer = 0.6f;
+    private const float PartyAttackRangeUnlockBuffer = 1.2f;
+    private const float PartyAttackRangeLockMinTime = 0.65f;
+    private const float PartyAttackRangeForgivenessMax = 0.25f;
 
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
@@ -78,6 +80,8 @@ public unsafe class NpcAiController : IDisposable
         public bool HasLastMoveRootY { get; set; }
         public uint TargetEntityId { get; set; }
         public bool PartyAttackRangeLocked { get; set; }
+        public float PartyAttackRangeLockTimer { get; set; }
+        public float PartyAttackRangeForgiveness { get; set; } = -1f;
     }
 
     private sealed class ApproachTerrainCache
@@ -896,6 +900,7 @@ public unsafe class NpcAiController : IDisposable
             existingPathState.WaypointIndex = 0;
             existingPathState.PendingPath = null;
             existingPathState.PartyAttackRangeLocked = false;
+            existingPathState.PartyAttackRangeLockTimer = 0f;
         }
 
         combatPositioningService.Release(npc.SimulatedEntityId);
@@ -912,19 +917,26 @@ public unsafe class NpcAiController : IDisposable
         var targetPos = partyPlan.Goal;
         var facePos = partyPlan.HasFaceTarget ? partyPlan.FaceTarget : npcPos;
 
-        var partyAttackRange = GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer;
         var distToTarget = FlatDistance(npcPos, npcTargetPos);
         var hasAttackRangeState = TryGetOrCreateApproachPathState(npc, out var attackRangeState);
+        var partyAttackRange = GetPartyAttackRange(npc.Behavior.AutoAttackStyle) +
+                               PartyMeleeAttackRangeBuffer +
+                               (hasAttackRangeState ? GetPartyAttackRangeForgiveness(npc, attackRangeState) : 0f);
         if (hasAttackRangeState)
         {
+            attackRangeState.PartyAttackRangeLockTimer = Math.Max(0, attackRangeState.PartyAttackRangeLockTimer - deltaTime);
             if (attackRangeState.PartyAttackRangeLocked)
             {
-                if (distToTarget > partyAttackRange + PartyAttackRangeUnlockBuffer)
+                if (attackRangeState.PartyAttackRangeLockTimer <= 0 &&
+                    distToTarget > partyAttackRange + PartyAttackRangeUnlockBuffer)
+                {
                     attackRangeState.PartyAttackRangeLocked = false;
+                }
             }
             else if (distToTarget <= partyAttackRange)
             {
                 attackRangeState.PartyAttackRangeLocked = true;
+                attackRangeState.PartyAttackRangeLockTimer = PartyAttackRangeLockMinTime;
             }
         }
 
@@ -1061,6 +1073,21 @@ public unsafe class NpcAiController : IDisposable
         => style is NpcAttackStyle.Ranged or NpcAttackStyle.Magic
             ? MathF.Max(1.0f, config.PartyRangedAttackRange)
             : MathF.Max(0.5f, config.PartyMeleeAttackRange);
+
+    private static float GetPartyAttackRangeForgiveness(SimulatedNpc npc, ApproachPathState state)
+    {
+        if (state.PartyAttackRangeForgiveness >= 0)
+            return state.PartyAttackRangeForgiveness;
+
+        var x = npc.SimulatedEntityId ^ 0xA77A_CE11u;
+        x ^= x >> 16;
+        x *= 0x7feb352du;
+        x ^= x >> 15;
+        x *= 0x846ca68bu;
+        x ^= x >> 16;
+        state.PartyAttackRangeForgiveness = (x & 0xFFFF) / 65535f * PartyAttackRangeForgivenessMax;
+        return state.PartyAttackRangeForgiveness;
+    }
 
     private bool TryUpdateVNavmeshPath(
         SimulatedNpc npc,
