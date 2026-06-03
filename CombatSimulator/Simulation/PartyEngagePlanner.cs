@@ -36,15 +36,19 @@ public sealed unsafe class PartyEngagePlanner
     private const float ChainJoinRecomputeDistance = 1.25f;
     private const float PlayerPursuitGoalUpdateDistance = 2.0f;
     private const float PlayerPursuitGoalUpdateInterval = 0.65f;
-    private const float GoalOffsetSpacing = 1.15f;
-    private const float GoalOffsetMaxSpacing = 2.25f;
-    private const float StableGoalUpdateDistance = 0.9f;
-    private const float StableGoalTargetUpdateDistance = 1.1f;
+    private const float ReservationMinSpacing = 1.35f;
+    private const float ReservationSwitchPenalty = 45f;
+    private const float ReservationKeepBonus = 80f;
+    private const float ReservationSnapPenalty = 6f;
+    private const float ReservationAcquireDistance = 1.4f;
+    private const float ReservationReleaseDistance = 2.8f;
+    private const float ReservationGoalUpdateDistance = 0.9f;
+    private const float ReservationGoalUpdateInterval = 0.45f;
 
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly Dictionary<uint, PartyEngagePlan> plans = new();
     private readonly Dictionary<string, PlannerPathState> pathStates = new();
-    private readonly Dictionary<uint, EngageGoalOffsetState> goalOffsetStates = new();
+    private readonly Dictionary<uint, EngageReservationState> engageReservations = new();
 
     public PartyEngagePlanner(VNavmeshIpc vnavmeshIpc)
     {
@@ -60,7 +64,7 @@ public sealed unsafe class PartyEngagePlanner
     {
         plans.Clear();
         pathStates.Clear();
-        goalOffsetStates.Clear();
+        engageReservations.Clear();
     }
 
     public void Build(
@@ -75,17 +79,22 @@ public sealed unsafe class PartyEngagePlanner
         IReadOnlyDictionary<uint, uint> enemyTargets,
         uint playerEntityId,
         float commandRange,
-        float commandRandomness)
+        float commandRandomness,
+        float partyMeleeAttackRange,
+        float partyRangedAttackRange)
     {
         plans.Clear();
         TickPathStateTimers(deltaTime);
+        TickEngageReservationTimers(deltaTime);
 
         var nodes = BuildNodes(
             commandAnchorPosition,
             companions,
             enemies,
             companionTargets,
-            enemyTargets);
+            enemyTargets,
+            partyMeleeAttackRange,
+            partyRangedAttackRange);
 
         var livePathKeys = new HashSet<string>();
         var playerForward = FlatNormalize(new Vector3(MathF.Sin(playerRotation), 0, MathF.Cos(playerRotation)), Vector3.UnitZ);
@@ -136,8 +145,8 @@ public sealed unsafe class PartyEngagePlanner
             }
         }
 
-        ApplyStableGoalOffsets(nodes, commandRange, commandRandomness);
-        PruneGoalOffsetStates(nodes);
+        ApplyReservedEngageSlots(nodes, commandRange, commandRandomness);
+        PruneEngageReservations(nodes);
 
         foreach (var key in pathStates.Keys.ToList())
         {
@@ -183,7 +192,9 @@ public sealed unsafe class PartyEngagePlanner
         IReadOnlyList<CombatCompanion> companions,
         IReadOnlyList<SimulatedNpc> enemies,
         IReadOnlyDictionary<uint, uint> companionTargets,
-        IReadOnlyDictionary<uint, uint> enemyTargets)
+        IReadOnlyDictionary<uint, uint> enemyTargets,
+        float partyMeleeAttackRange,
+        float partyRangedAttackRange)
     {
         var nodes = new Dictionary<uint, PartyNode>();
 
@@ -199,7 +210,7 @@ public sealed unsafe class PartyEngagePlanner
                 position,
                 commandAnchorPosition,
                 companionTargets.GetValueOrDefault(companion.SimulatedEntityId),
-                companion.Behavior.AutoAttackRange);
+                GetPreferredEngageRange(companion.Behavior.AutoAttackStyle, partyMeleeAttackRange, partyRangedAttackRange));
         }
 
         foreach (var enemy in enemies)
@@ -214,147 +225,210 @@ public sealed unsafe class PartyEngagePlanner
                 position,
                 enemy.SpawnPosition,
                 enemyTargets.GetValueOrDefault(enemy.SimulatedEntityId),
-                enemy.Behavior.AutoAttackRange);
+                GetPreferredEngageRange(enemy.Behavior.AutoAttackStyle, partyMeleeAttackRange, partyRangedAttackRange));
         }
 
         return nodes;
     }
 
-    private void ApplyStableGoalOffsets(
+    private void ApplyReservedEngageSlots(
         IReadOnlyDictionary<uint, PartyNode> nodes,
         float commandRange,
         float commandRandomness)
     {
-        var groups = plans.Values
+        var activePlans = plans.Values
             .Where(p => p.TargetId != 0 && p.HasFaceTarget && nodes.ContainsKey(p.ActorId))
-            .GroupBy(p => p.TargetId);
+            .OrderByDescending(p => HasReusableReservation(p))
+            .ThenBy(p => StableTargetTieBreak(p.TargetId, p.ActorId))
+            .ToList();
 
-        foreach (var group in groups)
+        if (activePlans.Count < 2)
+            return;
+
+        var accepted = new Dictionary<uint, Vector3>();
+        foreach (var plan in activePlans)
         {
-            var groupPlans = group
-                .OrderBy(p => StableTargetTieBreak(group.Key, p.ActorId))
-                .ToList();
-            if (groupPlans.Count < 2)
-                continue;
-
-            var slots = AssignGoalOffsetSlots(group.Key, groupPlans);
-            foreach (var plan in groupPlans)
+            var actor = nodes[plan.ActorId];
+            if (!ShouldApplyEngageReservation(actor, plan))
             {
-                var actor = nodes[plan.ActorId];
-                var slot = slots[plan.ActorId];
-                plans[plan.ActorId] = ApplyStableGoalOffset(actor, plan, slot, commandRange, commandRandomness);
+                engageReservations.Remove(actor.Id);
+                continue;
             }
+
+            var candidates = BuildReservationCandidates(actor, plan);
+            if (candidates.Count == 0)
+                continue;
+
+            ReservationCandidate? best = null;
+            var bestScore = float.MaxValue;
+            foreach (var candidate in candidates)
+            {
+                if (!TryResolveReservationGoal(actor, plan.FaceTarget, candidate, commandRange, commandRandomness, out var resolved, out var snapDistance))
+                    continue;
+
+                var score = ScoreReservationCandidate(actor, plan, candidate, resolved, snapDistance, accepted);
+                if (score < bestScore)
+                {
+                    best = candidate with { Goal = resolved };
+                    bestScore = score;
+                }
+            }
+
+            if (best == null)
+            {
+                engageReservations.Remove(actor.Id);
+                continue;
+            }
+
+            var chosen = best.Value;
+            var targetPosition = plan.FaceTarget;
+            var updateTimer = ReservationGoalUpdateInterval;
+            if (chosen.IsCurrent &&
+                engageReservations.TryGetValue(actor.Id, out var previous) &&
+                previous.TargetId == plan.TargetId &&
+                FlatDistance(previous.Goal, chosen.Goal) < 0.05f)
+            {
+                targetPosition = previous.TargetPosition;
+                updateTimer = previous.UpdateTimer;
+            }
+
+            engageReservations[actor.Id] = new EngageReservationState
+            {
+                TargetId = plan.TargetId,
+                Angle = chosen.Angle,
+                Radius = chosen.Radius,
+                TargetPosition = targetPosition,
+                Goal = chosen.Goal,
+                UpdateTimer = updateTimer,
+            };
+
+            accepted[actor.Id] = chosen.Goal;
+            plans[actor.Id] = WithGoal(plan, chosen.Goal);
         }
     }
 
-    private Dictionary<uint, int> AssignGoalOffsetSlots(uint targetId, IReadOnlyList<PartyEngagePlan> groupPlans)
+    private bool HasReusableReservation(PartyEngagePlan plan)
     {
-        var assigned = new Dictionary<uint, int>();
-        var used = new HashSet<int>();
-
-        foreach (var plan in groupPlans)
-        {
-            if (!goalOffsetStates.TryGetValue(plan.ActorId, out var state) || state.TargetId != targetId)
-                continue;
-
-            assigned[plan.ActorId] = state.SlotIndex;
-            used.Add(state.SlotIndex);
-        }
-
-        var nextSlot = 0;
-        foreach (var plan in groupPlans)
-        {
-            if (assigned.ContainsKey(plan.ActorId))
-                continue;
-
-            while (used.Contains(nextSlot))
-                nextSlot++;
-            assigned[plan.ActorId] = nextSlot;
-            used.Add(nextSlot);
-        }
-
-        return assigned;
+        return engageReservations.TryGetValue(plan.ActorId, out var state) &&
+               state.TargetId == plan.TargetId;
     }
 
-    private PartyEngagePlan ApplyStableGoalOffset(
-        PartyNode actor,
-        PartyEngagePlan plan,
-        int slotIndex,
-        float commandRange,
-        float commandRandomness)
+    private bool ShouldApplyEngageReservation(PartyNode actor, PartyEngagePlan plan)
+    {
+        var distance = FlatDistance(actor.Position, plan.FaceTarget);
+        var threshold = engageReservations.TryGetValue(actor.Id, out var state) && state.TargetId == plan.TargetId
+            ? actor.PreferredEngageRange + ReservationReleaseDistance
+            : actor.PreferredEngageRange + ReservationAcquireDistance;
+        return distance <= threshold;
+    }
+
+    private List<ReservationCandidate> BuildReservationCandidates(PartyNode actor, PartyEngagePlan plan)
     {
         var targetPosition = plan.FaceTarget;
-        var baseGoal = plan.Goal;
-        var offsetDistance = GetSlotOffsetDistance(actor, slotIndex);
-        if (offsetDistance == 0)
-            return RememberGoalOffset(actor, plan, slotIndex, baseGoal, targetPosition, baseGoal);
+        var fallbackApproach = FlatNormalize(actor.Position - targetPosition, Vector3.UnitZ);
+        var approach = FlatNormalize(plan.Goal - targetPosition, fallbackApproach);
+        var baseAngle = MathF.Atan2(approach.X, approach.Z);
+        var radius = GetReservationRadius(actor);
+        var candidates = new List<ReservationCandidate>();
 
-        if (goalOffsetStates.TryGetValue(actor.Id, out var current) &&
-            current.TargetId == plan.TargetId &&
-            current.SlotIndex == slotIndex &&
-            FlatDistance(current.BaseGoal, baseGoal) < StableGoalUpdateDistance &&
-            FlatDistance(current.TargetPosition, targetPosition) < StableGoalTargetUpdateDistance)
+        if (engageReservations.TryGetValue(actor.Id, out var current) && current.TargetId == plan.TargetId)
         {
-            return WithGoal(plan, current.Goal);
+            var targetMoved = FlatDistance(current.TargetPosition, targetPosition);
+            var currentGoal = current.UpdateTimer <= 0 && targetMoved >= ReservationGoalUpdateDistance
+                ? BuildPolarGoal(targetPosition, current.Angle, current.Radius)
+                : current.Goal;
+            candidates.Add(new ReservationCandidate(current.Angle, current.Radius, currentGoal, true));
         }
 
-        var fallbackApproach = FlatNormalize(actor.Position - targetPosition, Vector3.UnitZ);
-        var approach = FlatNormalize(baseGoal - targetPosition, fallbackApproach);
-        var lateral = new Vector3(approach.Z, 0, -approach.X);
-        var goal = baseGoal + lateral * offsetDistance;
-        goal.Y = baseGoal.Y;
+        var angleJitter = (StableUnit(actor.Id, 0xE771u) - 0.5f) * 18f * MathF.PI / 180f;
+        var radiusJitter = (StableUnit(actor.Id, 0xE772u) - 0.5f) * MathF.Min(0.25f, radius * 0.12f);
+        var angleOffsets = new[] { 0f, -35f, 35f, -70f, 70f, -110f, 110f, -145f, 145f, 180f };
+        var radiusFactors = new[] { 1.0f, 0.9f, 1.08f };
 
-        var snappedGoal = SnapToNavmesh(goal);
-        if (snappedGoal.HasValue)
-            goal = snappedGoal.Value;
-        else if (vnavmeshIpc.CanPathfind)
-            goal = baseGoal;
+        foreach (var radiusFactor in radiusFactors)
+        {
+            var candidateRadius = Math.Clamp(
+                radius * radiusFactor + radiusJitter,
+                MathF.Min(0.8f, actor.PreferredEngageRange * 0.65f),
+                MathF.Max(0.85f, actor.PreferredEngageRange * 0.95f));
 
-        goal = ClampToCommandAnchor(actor, goal, commandRange, commandRandomness, out var leashed);
-        if (leashed)
-            goal = baseGoal;
+            foreach (var degrees in angleOffsets)
+            {
+                var angle = baseAngle + degrees * MathF.PI / 180f + angleJitter;
+                var goal = BuildPolarGoal(targetPosition, angle, candidateRadius);
+                candidates.Add(new ReservationCandidate(angle, candidateRadius, goal, false));
+            }
+        }
 
-        return RememberGoalOffset(actor, plan, slotIndex, baseGoal, targetPosition, goal);
+        return candidates;
     }
 
-    private PartyEngagePlan RememberGoalOffset(
+    private bool TryResolveReservationGoal(
+        PartyNode actor,
+        Vector3 targetPosition,
+        ReservationCandidate candidate,
+        float commandRange,
+        float commandRandomness,
+        out Vector3 resolved,
+        out float snapDistance)
+    {
+        resolved = candidate.Goal;
+        snapDistance = 0f;
+
+        var snapped = SnapToNavmesh(candidate.Goal);
+        if (snapped.HasValue)
+        {
+            snapDistance = FlatDistance(candidate.Goal, snapped.Value);
+            resolved = snapped.Value;
+        }
+        else if (vnavmeshIpc.CanPathfind)
+        {
+            return false;
+        }
+
+        resolved = ClampToCommandAnchor(actor, resolved, commandRange, commandRandomness, out var leashed);
+        if (leashed)
+            return false;
+
+        return FlatDistance(resolved, targetPosition) <= actor.PreferredEngageRange * 1.05f;
+    }
+
+    private static float ScoreReservationCandidate(
         PartyNode actor,
         PartyEngagePlan plan,
-        int slotIndex,
-        Vector3 baseGoal,
-        Vector3 targetPosition,
-        Vector3 goal)
+        ReservationCandidate candidate,
+        Vector3 resolved,
+        float snapDistance,
+        IReadOnlyDictionary<uint, Vector3> accepted)
     {
-        goalOffsetStates[actor.Id] = new EngageGoalOffsetState
+        var score = FlatDistance(actor.Position, resolved) * 0.25f;
+        score += FlatDistance(plan.Goal, resolved) * 0.65f;
+        score += snapDistance * ReservationSnapPenalty;
+        if (candidate.IsCurrent)
+            score -= ReservationKeepBonus;
+        else if (accepted.Count > 0)
+            score += ReservationSwitchPenalty;
+
+        foreach (var occupied in accepted.Values)
         {
-            TargetId = plan.TargetId,
-            SlotIndex = slotIndex,
-            BaseGoal = baseGoal,
-            TargetPosition = targetPosition,
-            Goal = goal,
-        };
+            var distance = FlatDistance(occupied, resolved);
+            if (distance < ReservationMinSpacing)
+                score += 180f * (1f - distance / ReservationMinSpacing);
+        }
 
-        return WithGoal(plan, goal);
+        return score;
     }
 
-    private static float GetSlotOffsetDistance(PartyNode actor, int slotIndex)
+    private void PruneEngageReservations(IReadOnlyDictionary<uint, PartyNode> nodes)
     {
-        var lane = slotIndex / 2 + 1;
-        var direction = slotIndex % 2 == 0 ? -1f : 1f;
-        var spacing = Math.Clamp(actor.PreferredEngageRange * 0.25f, GoalOffsetSpacing, GoalOffsetMaxSpacing);
-        return direction * lane * spacing;
-    }
-
-    private void PruneGoalOffsetStates(IReadOnlyDictionary<uint, PartyNode> nodes)
-    {
-        foreach (var actorId in goalOffsetStates.Keys.ToList())
+        foreach (var actorId in engageReservations.Keys.ToList())
         {
             if (!nodes.TryGetValue(actorId, out var node) ||
                 node.TargetId == 0 ||
                 !plans.TryGetValue(actorId, out var plan) ||
-                plan.TargetId != goalOffsetStates[actorId].TargetId)
+                plan.TargetId != engageReservations[actorId].TargetId)
             {
-                goalOffsetStates.Remove(actorId);
+                engageReservations.Remove(actorId);
             }
         }
     }
@@ -682,6 +756,12 @@ public sealed unsafe class PartyEngagePlanner
         }
     }
 
+    private void TickEngageReservationTimers(float deltaTime)
+    {
+        foreach (var state in engageReservations.Values)
+            state.UpdateTimer = Math.Max(0, state.UpdateTimer - deltaTime);
+    }
+
     private static List<uint> FindCycle(uint startId, IReadOnlyDictionary<uint, PartyNode> nodes)
     {
         var visitedAt = new Dictionary<uint, int>();
@@ -714,6 +794,29 @@ public sealed unsafe class PartyEngagePlanner
         var jitter = StableUnit(actorId, 0xBEEFu);
         var factor = 0.35f + 0.35f * jitter * (1.0f + Math.Clamp(commandRandomness, 0, 0.8f));
         return MathF.Max(1.5f, commandRange * Math.Clamp(factor, 0.25f, 0.85f));
+    }
+
+    private static float GetPreferredEngageRange(
+        NpcAttackStyle attackStyle,
+        float partyMeleeAttackRange,
+        float partyRangedAttackRange)
+        => attackStyle is NpcAttackStyle.Ranged or NpcAttackStyle.Magic
+            ? MathF.Max(1.0f, partyRangedAttackRange)
+            : MathF.Max(0.5f, partyMeleeAttackRange);
+
+    private static float GetReservationRadius(PartyNode actor)
+    {
+        var range = MathF.Max(0.5f, actor.PreferredEngageRange);
+        return actor.PreferredEngageRange > 5f
+            ? Math.Clamp(range * 0.82f, 4.5f, range * 0.95f)
+            : Math.Clamp(range * 0.86f, 0.85f, range * 0.95f);
+    }
+
+    private static Vector3 BuildPolarGoal(Vector3 center, float angle, float radius)
+    {
+        var goal = center + new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * radius;
+        goal.Y = center.Y;
+        return goal;
     }
 
     private static float PathLength(IReadOnlyList<Vector3> path)
@@ -841,13 +944,20 @@ public sealed unsafe class PartyEngagePlanner
         public float PlayerGoalUpdateTimer { get; set; }
     }
 
-    private sealed class EngageGoalOffsetState
+    private readonly record struct ReservationCandidate(
+        float Angle,
+        float Radius,
+        Vector3 Goal,
+        bool IsCurrent);
+
+    private sealed class EngageReservationState
     {
         public uint TargetId { get; init; }
-        public int SlotIndex { get; init; }
-        public Vector3 BaseGoal { get; init; }
+        public float Angle { get; init; }
+        public float Radius { get; init; }
         public Vector3 TargetPosition { get; init; }
         public Vector3 Goal { get; init; }
+        public float UpdateTimer { get; set; }
     }
 
     private readonly record struct PartyNode(
