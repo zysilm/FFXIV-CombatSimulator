@@ -19,7 +19,11 @@ public unsafe class RagdollController : IDisposable
     private readonly BoneTransformService boneService;
     private readonly Npcs.NpcSelector? npcSelector;
     private readonly Safety.MovementBlockHook? movementBlockHook;
-    private readonly IReadOnlyList<nint> extraCollisionAddresses;
+    // Evaluated lazily when collision is built (at Activate), not at construction —
+    // the player's persistent controller is created before any companions spawn, so
+    // a snapshot would always be empty. A provider lets the player ragdoll pick up
+    // the live party members.
+    private readonly Func<IReadOnlyList<nint>>? extraCollisionProvider;
     private readonly Configuration config;
     private readonly IPluginLog log;
 
@@ -499,12 +503,12 @@ public unsafe class RagdollController : IDisposable
 
     public RagdollController(BoneTransformService boneService, Npcs.NpcSelector npcSelector,
         Safety.MovementBlockHook movementBlockHook, Configuration config, IPluginLog log,
-        IReadOnlyList<nint>? extraCollisionAddresses = null)
+        Func<IReadOnlyList<nint>>? extraCollisionProvider = null)
     {
         this.boneService = boneService;
         this.npcSelector = npcSelector;
         this.movementBlockHook = movementBlockHook;
-        this.extraCollisionAddresses = extraCollisionAddresses ?? Array.Empty<nint>();
+        this.extraCollisionProvider = extraCollisionProvider;
         this.config = config;
         this.log = log;
 
@@ -517,7 +521,7 @@ public unsafe class RagdollController : IDisposable
         this.boneService = boneService;
         this.npcSelector = null;
         this.movementBlockHook = null;
-        this.extraCollisionAddresses = Array.Empty<nint>();
+        this.extraCollisionProvider = null;
         this.config = config;
         this.log = log;
 
@@ -1302,7 +1306,9 @@ public unsafe class RagdollController : IDisposable
 
             // Extra collision actors — in party mode the local player and every spawned
             // companion. They get the SAME full per-bone collision as enemies so every
-            // ragdoll collides with every living character, not just enemies.
+            // ragdoll collides with every living character, not just enemies. Evaluated
+            // here (at activation) so a dying player's ragdoll sees the live companions.
+            var extraCollisionAddresses = extraCollisionProvider?.Invoke() ?? Array.Empty<nint>();
             foreach (var address in extraCollisionAddresses)
             {
                 if (address == nint.Zero || address == targetCharacterAddress)

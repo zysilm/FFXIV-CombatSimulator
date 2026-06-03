@@ -109,7 +109,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, npcActionProfileProvider, log);
         npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, npcActionProfileProvider, log);
-        ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log);
+        ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
         weaponDropController = new WeaponDropController(boneTransformService, config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
@@ -473,9 +473,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         log.Info($"NPC death ragdoll: activating for 0x{address:X}");
 
-        var partyCollision = GetPartyCollisionAddresses();
         var controller = partyMode
-            ? new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, partyCollision)
+            ? new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses)
             : new RagdollController(boneTransformService, config, log);
         controller.Activate(address, config.NpcRagdollActivationDelay);
         npcRagdolls[address] = controller;
@@ -497,7 +496,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         log.Info($"Companion death ragdoll: activating for 0x{address:X}");
 
-        var controller = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses());
+        var controller = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
         controller.Activate(address, config.RagdollActivationDelay);
         npcRagdolls[address] = controller;
     }
