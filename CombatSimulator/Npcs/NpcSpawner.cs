@@ -31,7 +31,7 @@ public unsafe class NpcSpawner : IDisposable
     private readonly ConcurrentQueue<NpcSpawnRequest> spawnQueue = new();
     private readonly HashSet<int> allocatedIndices = new();
     // Original spawn request per live NPC — keyed by the NPC's object index.
-    // Used by RespawnAllInPlace to reconstruct fresh spawns after a sim reset,
+    // Used by RegenerateAll to reconstruct fresh spawns after a sim reset,
     // since cloned humanoid Character state gets left in a broken blend-lock
     // state by the cinema → cinema-stop path.
     private readonly Dictionary<int, NpcSpawnRequest> requestByObjectIndex = new();
@@ -449,18 +449,21 @@ public unsafe class NpcSpawner : IDisposable
     }
 
     /// <summary>
-    /// Despawn every currently-spawned NPC and queue fresh spawns with the
-    /// same original request parameters and current world positions. Used
-    /// on sim reset to recover humanoid spawns whose animation state got
-    /// trashed by the cinema → cinema-stop path — a fresh clone from the
-    /// player is the only known way to restore a clean animation pipeline.
+    /// Despawn every currently-spawned virtual enemy and queue fresh spawns with
+    /// the same original request parameters, but at NEW randomized positions
+    /// around the player (each from a random direction at the configured spawn
+    /// distance). On sim reset this regenerates the virtual enemies rather than
+    /// reviving them where they stood. A fresh clone from the player is also the
+    /// only known way to restore a clean animation pipeline after the
+    /// cinema → cinema-stop path.
     /// </summary>
-    public void RespawnAllInPlace()
+    public void RegenerateAll()
     {
         if (spawnedNpcs.Count == 0) return;
 
-        // Capture each live NPC's original request, using its current world
-        // position so the respawn lands where the old NPC stood.
+        // Capture each live enemy's original request. Positions are re-randomized
+        // (not captured) so they respawn scattered around the player; rotation is
+        // left null so the spawner makes each face the player, like a fresh spawn.
         var toRespawn = new List<NpcSpawnRequest>();
         foreach (var npc in spawnedNpcs)
         {
@@ -468,19 +471,15 @@ public unsafe class NpcSpawner : IDisposable
                 continue;
 
             var cloned = CloneRequest(orig);
-            if (npc.BattleChara != null)
-            {
-                var gameObj = (GameObject*)npc.BattleChara;
-                cloned.Position = gameObj->Position;
-                cloned.Rotation = gameObj->Rotation;
-            }
+            cloned.Position = CalculateSpawnPosition();
+            cloned.Rotation = null;
             // Capture the live ranged-toggle state so a user-set "Ranged"
             // flag survives the reset's despawn → respawn cycle.
             cloned.IsRanged = npc.IsRanged;
             toRespawn.Add(cloned);
         }
 
-        log.Info($"[SpawnDbg] RespawnAllInPlace: capturing {toRespawn.Count} NPCs for reset respawn.");
+        log.Info($"[SpawnDbg] RegenerateAll: regenerating {toRespawn.Count} virtual enemies at random positions.");
 
         DespawnAll();
 

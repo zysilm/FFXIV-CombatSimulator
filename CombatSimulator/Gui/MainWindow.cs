@@ -426,6 +426,49 @@ public class MainWindow : IDisposable
             config.Save();
         }
 
+        // Companion clone gear — apply a Glamourer design's equipment to spawned
+        // clones (equipment only, so customize/randomized look is preserved).
+        // "(None)" keeps each clone's own inherited gear and also works when
+        // Glamourer is not installed.
+        ImGui.Spacing();
+        ImGui.TextUnformatted("Companion clone gear (Glamourer, equipment only)");
+
+        var glamNames = new string[glamourerDesigns.Count + 1];
+        glamNames[0] = "(None - inherit own gear)";
+        for (int i = 0; i < glamourerDesigns.Count; i++)
+            glamNames[i + 1] = glamourerDesigns[i].Value;
+
+        var partyGlamSel = 0;
+        if (Guid.TryParse(config.PartyCompanionGlamourerDesignId, out var curPartyGlamId))
+        {
+            for (int i = 0; i < glamourerDesigns.Count; i++)
+            {
+                if (glamourerDesigns[i].Key == curPartyGlamId)
+                {
+                    partyGlamSel = i + 1;
+                    break;
+                }
+            }
+        }
+
+        ImGui.SetNextItemWidth(-90);
+        if (ImGui.Combo("##PartyCompanionGlam", ref partyGlamSel, glamNames, glamNames.Length))
+        {
+            config.PartyCompanionGlamourerDesignId = partyGlamSel <= 0
+                ? string.Empty
+                : glamourerDesigns[partyGlamSel - 1].Key.ToString();
+            config.Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Refresh##PartyGlam"))
+        {
+            glamourerDesigns = new List<KeyValuePair<Guid, string>>(glamourerIpc.GetDesignList());
+            glamourerDesigns.Sort((a, b) => string.Compare(a.Value, b.Value, StringComparison.OrdinalIgnoreCase));
+            chatGui.Print(glamourerDesigns.Count > 0
+                ? $"[CombatSim] Found {glamourerDesigns.Count} Glamourer designs."
+                : "[CombatSim] No Glamourer designs found. Is Glamourer installed?");
+        }
+
         ImGui.Separator();
 
         using (ImRaii.Disabled(!config.EnableCombatCompanions))
@@ -434,14 +477,6 @@ public class MainWindow : IDisposable
             {
                 var queued = companionManager.SpawnFromVisiblePlayers();
                 chatGui.Print($"[CombatSim] Queued {queued} companion clone(s).");
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("Clone self character"))
-            {
-                var queued = companionManager.SpawnSelfCharacter();
-                chatGui.Print(queued
-                    ? "[CombatSim] Queued self companion clone."
-                    : "[CombatSim] Could not queue self companion clone.");
             }
             ImGui.SameLine();
             if (ImGui.Button("Clone self character with randomized look"))

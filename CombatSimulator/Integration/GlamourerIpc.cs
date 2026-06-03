@@ -63,6 +63,45 @@ public class GlamourerIpc
         }
     }
 
+    // Glamourer ApplyFlags: Once=0x01, Equipment=0x02, Customization=0x04, Lock=0x08.
+    private const int ApplyFlagOnce = 0x01;
+    private const int ApplyFlagEquipment = 0x02;
+    private const int ApplyFlagCustomization = 0x04;
+
+    /// <summary>
+    /// Apply a Glamourer design to a specific game object (by object-table index).
+    /// When <paramref name="equipmentOnly"/> is true, only the equipment portion is
+    /// applied, leaving the actor's customize bytes (race/face/hair) untouched — so
+    /// companion clones keep their own/randomized appearance but wear the chosen gear.
+    ///
+    /// Note: the <c>Once</c> flag is intentionally NOT set. A freshly spawned companion
+    /// is still building its draw object when this runs, so a one-shot apply races the
+    /// redraw and gets overwritten by the cloned player gear. Without Once, Glamourer
+    /// retains the equipment state and re-applies it on the actor's redraw.
+    /// </summary>
+    public bool ApplyDesignToObject(Guid designId, int objectIndex, bool equipmentOnly = true)
+    {
+        if (objectIndex < 0)
+            return false;
+
+        try
+        {
+            var subscriber = pluginInterface.GetIpcSubscriber<Guid, int, uint, int, int>("Glamourer.ApplyDesign");
+            var flags = equipmentOnly
+                ? ApplyFlagEquipment
+                : ApplyFlagEquipment | ApplyFlagCustomization;
+            var result = subscriber.InvokeFunc(designId, objectIndex, 0u, flags);
+            log.Info($"GlamourerIpc: ApplyDesignToObject(design={designId}, idx={objectIndex}, flags={flags}) -> result={result}");
+            IsAvailable = true;
+            return result == 0;
+        }
+        catch (Exception ex)
+        {
+            log.Warning($"GlamourerIpc: Failed to apply design to object idx={objectIndex} ({ex.Message})");
+            return false;
+        }
+    }
+
     /// <summary>
     /// Revert the local player's Glamourer state back to normal.
     /// </summary>

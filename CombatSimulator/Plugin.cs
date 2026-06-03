@@ -136,6 +136,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         companionManager.OnCompanionSpawnComplete = companion =>
         {
             combatEngine.RegisterCompanionEntity(companion);
+            ApplyCompanionGlamourer(companion);
             log.Info($"Spawned companion '{companion.Name}' registered as friendly combatant.");
         };
         companionManager.OnCompanionDeathRagdoll = OnCompanionDeathRagdoll;
@@ -170,9 +171,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         };
 
         // On sim stop or reset: despawn every virtual enemy and queue a
-        // fresh spawn with the same params at the same world position.
+        // fresh spawn with the same params at a NEW randomized position
+        // around the player (regenerate, not revive-in-place).
         // Reason — humanoid clone state gets left in a broken blend-lock
-        // state by the cinema cleanup (see RespawnAllInPlace doc), and a
+        // state by the cinema cleanup (see RegenerateAll doc), and a
         // fresh CopyFromCharacter clone is the only known fix.
         //
         // ResetState doesn't call DeselectAll so the selector still holds
@@ -198,7 +200,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             foreach (var npc in new List<SimulatedNpc>(npcSpawner.SpawnedNpcs))
                 npcSelector.UnregisterSpawnedNpc(npc);
 
-            npcSpawner.RespawnAllInPlace();
+            npcSpawner.RegenerateAll();
         };
 
         // Weapon drop is co-triggered with ragdoll (same delay), so writes survive while animation is frozen
@@ -399,6 +401,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                     companionManager.Companions,
                     npcSelector.SelectedNpcs);
             companionManager.Tick(1.0f / 60.0f, npcSelector.SelectedNpcs);
+            ProcessPendingGlamourerApplies();
 
             var deltaTime = (float)(1.0 / 60.0);
 
@@ -478,6 +481,75 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             : new RagdollController(boneTransformService, config, log);
         controller.Activate(address, config.NpcRagdollActivationDelay);
         npcRagdolls[address] = controller;
+    }
+
+    private sealed class GlamourerApplyJob
+    {
+        public Companions.CombatCompanion Companion = null!;
+        public Guid DesignId;
+        public int FramesUntilNext;
+        public int AttemptsLeft;
+    }
+
+    private readonly List<GlamourerApplyJob> pendingGlamourerApplies = new();
+
+    // Queue the configured Glamourer equipment design for a freshly spawned companion
+    // clone. Equipment-only, so the clone keeps its own/randomized customize. A blank
+    // setting (None) or a missing/uninstalled Glamourer is a no-op — the clone then
+    // just wears its inherited equipment. We defer + retry (rather than apply inline)
+    // because the companion is still building its draw object at spawn-complete.
+    private void ApplyCompanionGlamourer(Companions.CombatCompanion companion)
+    {
+        if (string.IsNullOrEmpty(config.PartyCompanionGlamourerDesignId))
+            return;
+        if (!Guid.TryParse(config.PartyCompanionGlamourerDesignId, out var designId))
+            return;
+
+        pendingGlamourerApplies.Add(new GlamourerApplyJob
+        {
+            Companion = companion,
+            DesignId = designId,
+            FramesUntilNext = 1,
+            AttemptsLeft = 8,
+        });
+    }
+
+    private void ProcessPendingGlamourerApplies()
+    {
+        for (var i = pendingGlamourerApplies.Count - 1; i >= 0; i--)
+        {
+            var job = pendingGlamourerApplies[i];
+
+            // Drop if the companion despawned before we could apply.
+            if (!job.Companion.IsSpawned || job.Companion.BattleChara == null)
+            {
+                pendingGlamourerApplies.RemoveAt(i);
+                continue;
+            }
+
+            if (--job.FramesUntilNext > 0)
+                continue;
+
+            // Glamourer addresses actors by their GLOBAL object-table index, not the
+            // ClientObjectManager index we spawned with (companion.ObjectIndex), so use
+            // the live game object's index — otherwise Glamourer reports ActorNotFound.
+            var tableIndex = job.Companion.GameObjectRef?.ObjectIndex ?? ushort.MaxValue;
+            if (tableIndex == ushort.MaxValue)
+            {
+                if (--job.AttemptsLeft <= 0)
+                    pendingGlamourerApplies.RemoveAt(i);
+                else
+                    job.FramesUntilNext = 5;
+                continue;
+            }
+
+            var ok = glamourerIpc.ApplyDesignToObject(job.DesignId, tableIndex, equipmentOnly: true);
+            job.AttemptsLeft--;
+            if (ok || job.AttemptsLeft <= 0)
+                pendingGlamourerApplies.RemoveAt(i);
+            else
+                job.FramesUntilNext = 5; // retry in ~5 frames until the draw object resolves
+        }
     }
 
     private void OnCompanionDeathRagdoll(nint address)

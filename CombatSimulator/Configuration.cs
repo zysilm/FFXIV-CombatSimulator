@@ -109,6 +109,11 @@ public class Configuration : IPluginConfiguration
     public bool ApplyGlamourerOnReset { get; set; } = false;
     public string ResetGlamourerDesignId { get; set; } = "";
 
+    // Glamourer: equipment-only design applied to party companion clones on spawn.
+    // "" = None — the clone keeps its own (inherited) equipment. Also the effective
+    // behavior when Glamourer is not installed.
+    public string PartyCompanionGlamourerDesignId { get; set; } = "";
+
     // Shortcuts bar
     public bool ShowShortcuts { get; set; } = false;
 
