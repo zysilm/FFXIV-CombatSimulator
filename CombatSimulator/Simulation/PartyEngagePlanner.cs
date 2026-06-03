@@ -69,7 +69,9 @@ public sealed unsafe class PartyEngagePlanner
         IReadOnlyDictionary<uint, uint> enemyTargets,
         uint playerEntityId,
         float commandRange,
-        float commandRandomness)
+        float commandRandomness,
+        float partyMeleeAttackRange,
+        float partyRangedAttackRange)
     {
         plans.Clear();
         TickPathStateTimers(deltaTime);
@@ -79,7 +81,9 @@ public sealed unsafe class PartyEngagePlanner
             companions,
             enemies,
             companionTargets,
-            enemyTargets);
+            enemyTargets,
+            partyMeleeAttackRange,
+            partyRangedAttackRange);
 
         var livePathKeys = new HashSet<string>();
         var playerForward = FlatNormalize(new Vector3(MathF.Sin(playerRotation), 0, MathF.Cos(playerRotation)), Vector3.UnitZ);
@@ -110,9 +114,9 @@ public sealed unsafe class PartyEngagePlanner
                 continue;
             }
 
-            if (plans.TryGetValue(node.TargetId, out var targetPlan))
+            if (plans.ContainsKey(node.TargetId) && nodes.TryGetValue(node.TargetId, out var plannedTargetNode))
             {
-                plans[node.Id] = BuildChainPlan(node, targetPlan, commandRange, commandRandomness, livePathKeys);
+                plans[node.Id] = BuildChainPlan(node, plannedTargetNode, commandRange, commandRandomness, livePathKeys);
                 continue;
             }
 
@@ -174,7 +178,9 @@ public sealed unsafe class PartyEngagePlanner
         IReadOnlyList<CombatCompanion> companions,
         IReadOnlyList<SimulatedNpc> enemies,
         IReadOnlyDictionary<uint, uint> companionTargets,
-        IReadOnlyDictionary<uint, uint> enemyTargets)
+        IReadOnlyDictionary<uint, uint> enemyTargets,
+        float partyMeleeAttackRange,
+        float partyRangedAttackRange)
     {
         var nodes = new Dictionary<uint, PartyNode>();
 
@@ -189,6 +195,7 @@ public sealed unsafe class PartyEngagePlanner
                 PartyNodeSide.Friendly,
                 position,
                 commandAnchorPosition,
+                GetPreferredEngageRange(companion.Behavior.AutoAttackStyle, partyMeleeAttackRange, partyRangedAttackRange),
                 companionTargets.GetValueOrDefault(companion.SimulatedEntityId));
         }
 
@@ -203,6 +210,7 @@ public sealed unsafe class PartyEngagePlanner
                 PartyNodeSide.Enemy,
                 position,
                 enemy.SpawnPosition,
+                GetPreferredEngageRange(enemy.Behavior.AutoAttackStyle, partyMeleeAttackRange, partyRangedAttackRange),
                 enemyTargets.GetValueOrDefault(enemy.SimulatedEntityId));
         }
 
@@ -258,21 +266,20 @@ public sealed unsafe class PartyEngagePlanner
 
     private PartyEngagePlan BuildChainPlan(
         PartyNode node,
-        PartyEngagePlan targetPlan,
+        PartyNode targetNode,
         float commandRange,
         float commandRandomness,
         HashSet<string> livePathKeys)
     {
-        var key = $"chain:{node.Id}:{targetPlan.ActorId}";
-        livePathKeys.Add(key);
-        var stableGoal = GetStableChainGoal(key, targetPlan.Goal);
-        return BuildExplicitGoalPlan(
+        var key = $"chain:{node.Id}:{targetNode.Id}";
+        return BuildPathEngagePlan(
+            key,
             node,
-            node.TargetId,
-            targetPlan.Goal,
-            stableGoal,
+            targetNode.Position,
+            targetNode.Id,
             commandRange,
             commandRandomness,
+            livePathKeys,
             PartyEngagePlanKind.EngagePoint);
     }
 
@@ -338,9 +345,12 @@ public sealed unsafe class PartyEngagePlanner
         PartyEngagePlanKind kind)
     {
         var pathLength = PathLength(path);
-        var distance = MathF.Min(pathLength, GetEngageDistance(actor.Id, commandRange, commandRandomness));
+        var holdDistance = MathF.Max(0.25f, actor.PreferredEngageRange * 0.5f);
+        var distance = fromStart
+            ? MathF.Max(0, pathLength - holdDistance)
+            : MathF.Min(pathLength, holdDistance);
         var goal = PointAlongPath(path, fromStart ? distance : pathLength - distance);
-        goal = AddStableJitter(actor.Id, goal, commandRange * 0.04f);
+        goal = AddStableJitter(actor.Id, goal, MathF.Min(commandRange * 0.04f, actor.PreferredEngageRange * 0.15f));
         goal = ClampToCommandAnchor(actor, goal, commandRange, commandRandomness, out var leashed);
 
         return new PartyEngagePlan
@@ -566,6 +576,11 @@ public sealed unsafe class PartyEngagePlanner
         return MathF.Max(1.5f, commandRange * Math.Clamp(factor, 0.25f, 0.85f));
     }
 
+    private static float GetPreferredEngageRange(NpcAttackStyle style, float meleeRange, float rangedRange)
+        => style is NpcAttackStyle.Ranged or NpcAttackStyle.Magic
+            ? MathF.Max(1.0f, rangedRange)
+            : MathF.Max(0.5f, meleeRange);
+
     private static float PathLength(IReadOnlyList<Vector3> path)
     {
         var length = 0f;
@@ -680,6 +695,7 @@ public sealed unsafe class PartyEngagePlanner
         PartyNodeSide Side,
         Vector3 Position,
         Vector3 CommandAnchor,
+        float PreferredEngageRange,
         uint TargetId);
 
     private enum PartyNodeSide

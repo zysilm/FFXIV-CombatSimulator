@@ -394,15 +394,20 @@ public unsafe class NpcAiController : IDisposable
                 skill.CooldownRemaining = Math.Max(0, skill.CooldownRemaining - deltaTime);
         }
 
-        // Check if NPC should be dead
-        if (!npc.State.IsAlive && npc.AiState != NpcAiState.Dead)
+        if (!npc.State.IsAlive)
         {
-            npc.AiState = NpcAiState.Dead;
-            npc.DeadTimer = 0;
-            if (npc.BattleChara != null)
-                ActorVisualStateController.ApplyDead((Character*)npc.BattleChara, npc.VisualState);
+            ClearNpcActionState(npc);
+            if (npc.AiState != NpcAiState.Dead)
+            {
+                npc.AiState = NpcAiState.Dead;
+                npc.DeadTimer = 0;
+                if (npc.BattleChara != null)
+                    ActorVisualStateController.ApplyDead((Character*)npc.BattleChara, npc.VisualState);
+            }
             return;
         }
+
+        DiscardInvalidNpcActionState(npc);
 
         var npcPos = GetNpcPosition(npc);
         float distToPlayer = Vector3.Distance(npcPos, playerPos);
@@ -464,6 +469,7 @@ public unsafe class NpcAiController : IDisposable
         var simulatedTarget = combatEngine.GetNpcTarget(npc);
         if (simulatedTarget == null || !simulatedTarget.IsAlive)
         {
+            ClearNpcActionState(npc);
             npc.AiState = NpcAiState.Idle;
             return;
         }
@@ -471,6 +477,13 @@ public unsafe class NpcAiController : IDisposable
         var targetPos = combatEngine.GetSimulatedEntityPosition(simulatedTarget);
         var distToTarget = Vector3.Distance(npcPos, targetPos);
         var targetEntityId = simulatedTarget.EntityId;
+
+        if (npc.State.IsCasting && npc.State.CastTargetId != targetEntityId)
+        {
+            ClearNpcActionState(npc);
+            if (npc.BattleChara != null)
+                ActorVisualStateController.ApplyCombatIdle((Character*)npc.BattleChara, npc.VisualState);
+        }
 
         // Only rotate client-controlled NPCs
         if (npc.IsClientControlled)
@@ -504,6 +517,15 @@ public unsafe class NpcAiController : IDisposable
         // Handle casting
         if (npc.State.IsCasting)
         {
+            var castTarget = combatEngine.State.GetEntity(npc.State.CastTargetId);
+            if (castTarget == null || !castTarget.IsAlive)
+            {
+                ClearNpcActionState(npc);
+                if (npc.BattleChara != null)
+                    ActorVisualStateController.ApplyCombatIdle((Character*)npc.BattleChara, npc.VisualState);
+                return;
+            }
+
             if (npc.BattleChara != null)
                 ActorVisualStateController.ApplyActionLocked((Character*)npc.BattleChara, npc.VisualState);
             npc.State.CastTimeElapsed += deltaTime;
@@ -512,9 +534,10 @@ public unsafe class NpcAiController : IDisposable
                 npc.State.IsCasting = false;
                 if (npc.CurrentCastSkill != null)
                 {
-                    combatEngine.ProcessNpcAction(npc, npc.CurrentCastSkill.ActionId,
+                    var result = combatEngine.ProcessNpcAction(npc, npc.CurrentCastSkill.ActionId,
                         npc.State.CastTargetId, npc.CurrentCastSkill.Potency, npc.CurrentCastSkill.AttackStyle);
-                    npc.CurrentCastSkill.CooldownRemaining = npc.CurrentCastSkill.Cooldown;
+                    if (result.Success)
+                        npc.CurrentCastSkill.CooldownRemaining = npc.CurrentCastSkill.Cooldown;
                     npc.CurrentCastSkill = null;
                 }
             }
@@ -560,9 +583,12 @@ public unsafe class NpcAiController : IDisposable
             }
             else
             {
-                combatEngine.ProcessNpcAction(npc, skill.ActionId, targetEntityId, skill.Potency, skill.AttackStyle);
-                skill.CooldownRemaining = skill.Cooldown;
-                npc.State.AnimationLock = 0.6f;
+                var result = combatEngine.ProcessNpcAction(npc, skill.ActionId, targetEntityId, skill.Potency, skill.AttackStyle);
+                if (result.Success)
+                {
+                    skill.CooldownRemaining = skill.Cooldown;
+                    npc.State.AnimationLock = 0.6f;
+                }
             }
             return;
         }
@@ -572,9 +598,10 @@ public unsafe class NpcAiController : IDisposable
         if (npc.AutoAttackTimer <= 0)
         {
             npc.AutoAttackTimer = npc.Behavior.AutoAttackDelay;
-            combatEngine.ProcessNpcAction(npc, npc.Behavior.AutoAttackActionId,
+            var result = combatEngine.ProcessNpcAction(npc, npc.Behavior.AutoAttackActionId,
                 targetEntityId, npc.Behavior.AutoAttackPotency, npc.Behavior.AutoAttackStyle);
-            npc.State.AnimationLock = 0.6f;
+            if (result.Success)
+                npc.State.AnimationLock = 0.6f;
         }
     }
 
@@ -601,6 +628,42 @@ public unsafe class NpcAiController : IDisposable
             npc.AiState = NpcAiState.Resetting;
             combatEngine.AddLogEntry($"{npc.Name} is resetting.", CombatLogType.Info);
         }
+    }
+
+    private static void ClearNpcActionState(SimulatedNpc npc)
+    {
+        npc.State.IsCasting = false;
+        npc.State.CastActionId = 0;
+        npc.State.CastTimeElapsed = 0;
+        npc.State.CastTimeTotal = 0;
+        npc.State.CastTargetId = 0;
+        npc.State.AnimationLock = 0;
+        npc.CurrentCastSkill = null;
+    }
+
+    private void DiscardInvalidNpcActionState(SimulatedNpc npc)
+    {
+        if (!npc.State.IsCasting && npc.CurrentCastSkill == null)
+            return;
+
+        var target = combatEngine.State.GetEntity(npc.State.CastTargetId);
+        var selectedTarget = combatEngine.GetNpcTarget(npc);
+        var stateAllowsCast = npc.AiState is NpcAiState.Combat or NpcAiState.Chasing;
+        var invalid = npc.CurrentCastSkill == null ||
+                      npc.State.CastTargetId == 0 ||
+                      target == null ||
+                      !target.IsAlive ||
+                      selectedTarget == null ||
+                      !selectedTarget.IsAlive ||
+                      selectedTarget.EntityId != npc.State.CastTargetId ||
+                      !stateAllowsCast;
+
+        if (!invalid)
+            return;
+
+        ClearNpcActionState(npc);
+        if (npc.BattleChara != null && npc.AiState != NpcAiState.Dead)
+            ActorVisualStateController.ApplyCombatIdle((Character*)npc.BattleChara, npc.VisualState);
     }
 
     private void TickResetting(SimulatedNpc npc, float deltaTime, Vector3 npcPos)

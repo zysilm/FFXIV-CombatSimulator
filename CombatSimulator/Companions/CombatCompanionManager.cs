@@ -239,7 +239,9 @@ public unsafe class CombatCompanionManager : IDisposable
                 enemyTargets,
                 combatEngine.State.PlayerState.EntityId,
                 MathF.Max(1.0f, config.PartyCommandRange),
-                Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f));
+                Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f),
+                MathF.Max(0.5f, config.PartyMeleeAttackRange) + MeleeAttackRangeBuffer,
+                MathF.Max(1.0f, config.PartyRangedAttackRange) + MeleeAttackRangeBuffer);
         }
         else
         {
@@ -731,6 +733,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
         if (!companion.State.IsAlive)
         {
+            ClearCompanionActionState(companion);
             combatPositioningService.Release(companion.SimulatedEntityId);
             StopMove(companion);
             EnterCompanionState(companion, CompanionAiState.Dead);
@@ -748,6 +751,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
         if (!IsWithinCommandRange(companion))
         {
+            ClearCompanionActionState(companion);
             companion.CurrentTargetId = 0;
             combatPositioningService.Release(companion.SimulatedEntityId);
             EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
@@ -758,6 +762,7 @@ public unsafe class CombatCompanionManager : IDisposable
         var target = GetCurrentCompanionTarget(companion, enemies);
         if (target == null || target.BattleChara == null)
         {
+            ClearCompanionActionState(companion);
             companion.CurrentTargetId = 0;
             combatPositioningService.Release(companion.SimulatedEntityId);
             EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
@@ -802,10 +807,11 @@ public unsafe class CombatCompanionManager : IDisposable
 
             var result = combatEngine.ProcessCompanionAction(companion, target, skill.ActionId, skill.Potency, skill.AttackStyle);
             if (result.Success)
+            {
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
-
-            skill.CooldownRemaining = skill.Cooldown;
-            companion.State.AnimationLock = 0.6f;
+                skill.CooldownRemaining = skill.Cooldown;
+                companion.State.AnimationLock = 0.6f;
+            }
             return;
         }
 
@@ -819,9 +825,21 @@ public unsafe class CombatCompanionManager : IDisposable
                 companion.Behavior.AutoAttackPotency,
                 companion.Behavior.AutoAttackStyle);
             if (result.Success)
+            {
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
-            companion.State.AnimationLock = 0.6f;
+                companion.State.AnimationLock = 0.6f;
+            }
         }
+    }
+
+    private static void ClearCompanionActionState(CombatCompanion companion)
+    {
+        companion.State.IsCasting = false;
+        companion.State.CastActionId = 0;
+        companion.State.CastTimeElapsed = 0;
+        companion.State.CastTimeTotal = 0;
+        companion.State.CastTargetId = 0;
+        companion.State.AnimationLock = 0;
     }
 
     private void AssignCompanionTarget(
