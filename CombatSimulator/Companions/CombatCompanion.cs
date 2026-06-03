@@ -22,6 +22,7 @@ public unsafe class CombatCompanion
     public bool IsSpawned { get; set; }
     public bool IsRanged { get; set; }
     public float AutoAttackTimer { get; set; }
+    public float PartyAttackRangeForgiveness { get; set; } = -1f;
     public float EngageDelayTimer { get; set; }
     public CompanionAiState AiState { get; set; }
     public NpcSkill? CurrentCastSkill { get; set; }
