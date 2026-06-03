@@ -36,10 +36,15 @@ public sealed unsafe class PartyEngagePlanner
     private const float ChainJoinRecomputeDistance = 1.25f;
     private const float PlayerPursuitGoalUpdateDistance = 2.0f;
     private const float PlayerPursuitGoalUpdateInterval = 0.65f;
+    private const float GoalOffsetSpacing = 1.15f;
+    private const float GoalOffsetMaxSpacing = 2.25f;
+    private const float StableGoalUpdateDistance = 0.9f;
+    private const float StableGoalTargetUpdateDistance = 1.1f;
 
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly Dictionary<uint, PartyEngagePlan> plans = new();
     private readonly Dictionary<string, PlannerPathState> pathStates = new();
+    private readonly Dictionary<uint, EngageGoalOffsetState> goalOffsetStates = new();
 
     public PartyEngagePlanner(VNavmeshIpc vnavmeshIpc)
     {
@@ -55,6 +60,7 @@ public sealed unsafe class PartyEngagePlanner
     {
         plans.Clear();
         pathStates.Clear();
+        goalOffsetStates.Clear();
     }
 
     public void Build(
@@ -130,6 +136,9 @@ public sealed unsafe class PartyEngagePlanner
             }
         }
 
+        ApplyStableGoalOffsets(nodes, commandRange, commandRandomness);
+        PruneGoalOffsetStates(nodes);
+
         foreach (var key in pathStates.Keys.ToList())
         {
             if (!livePathKeys.Contains(key))
@@ -189,7 +198,8 @@ public sealed unsafe class PartyEngagePlanner
                 PartyNodeSide.Friendly,
                 position,
                 commandAnchorPosition,
-                companionTargets.GetValueOrDefault(companion.SimulatedEntityId));
+                companionTargets.GetValueOrDefault(companion.SimulatedEntityId),
+                companion.Behavior.AutoAttackRange);
         }
 
         foreach (var enemy in enemies)
@@ -203,10 +213,150 @@ public sealed unsafe class PartyEngagePlanner
                 PartyNodeSide.Enemy,
                 position,
                 enemy.SpawnPosition,
-                enemyTargets.GetValueOrDefault(enemy.SimulatedEntityId));
+                enemyTargets.GetValueOrDefault(enemy.SimulatedEntityId),
+                enemy.Behavior.AutoAttackRange);
         }
 
         return nodes;
+    }
+
+    private void ApplyStableGoalOffsets(
+        IReadOnlyDictionary<uint, PartyNode> nodes,
+        float commandRange,
+        float commandRandomness)
+    {
+        var groups = plans.Values
+            .Where(p => p.TargetId != 0 && p.HasFaceTarget && nodes.ContainsKey(p.ActorId))
+            .GroupBy(p => p.TargetId);
+
+        foreach (var group in groups)
+        {
+            var groupPlans = group
+                .OrderBy(p => StableTargetTieBreak(group.Key, p.ActorId))
+                .ToList();
+            if (groupPlans.Count < 2)
+                continue;
+
+            var slots = AssignGoalOffsetSlots(group.Key, groupPlans);
+            foreach (var plan in groupPlans)
+            {
+                var actor = nodes[plan.ActorId];
+                var slot = slots[plan.ActorId];
+                plans[plan.ActorId] = ApplyStableGoalOffset(actor, plan, slot, commandRange, commandRandomness);
+            }
+        }
+    }
+
+    private Dictionary<uint, int> AssignGoalOffsetSlots(uint targetId, IReadOnlyList<PartyEngagePlan> groupPlans)
+    {
+        var assigned = new Dictionary<uint, int>();
+        var used = new HashSet<int>();
+
+        foreach (var plan in groupPlans)
+        {
+            if (!goalOffsetStates.TryGetValue(plan.ActorId, out var state) || state.TargetId != targetId)
+                continue;
+
+            assigned[plan.ActorId] = state.SlotIndex;
+            used.Add(state.SlotIndex);
+        }
+
+        var nextSlot = 0;
+        foreach (var plan in groupPlans)
+        {
+            if (assigned.ContainsKey(plan.ActorId))
+                continue;
+
+            while (used.Contains(nextSlot))
+                nextSlot++;
+            assigned[plan.ActorId] = nextSlot;
+            used.Add(nextSlot);
+        }
+
+        return assigned;
+    }
+
+    private PartyEngagePlan ApplyStableGoalOffset(
+        PartyNode actor,
+        PartyEngagePlan plan,
+        int slotIndex,
+        float commandRange,
+        float commandRandomness)
+    {
+        var targetPosition = plan.FaceTarget;
+        var baseGoal = plan.Goal;
+        var offsetDistance = GetSlotOffsetDistance(actor, slotIndex);
+        if (offsetDistance == 0)
+            return RememberGoalOffset(actor, plan, slotIndex, baseGoal, targetPosition, baseGoal);
+
+        if (goalOffsetStates.TryGetValue(actor.Id, out var current) &&
+            current.TargetId == plan.TargetId &&
+            current.SlotIndex == slotIndex &&
+            FlatDistance(current.BaseGoal, baseGoal) < StableGoalUpdateDistance &&
+            FlatDistance(current.TargetPosition, targetPosition) < StableGoalTargetUpdateDistance)
+        {
+            return WithGoal(plan, current.Goal);
+        }
+
+        var fallbackApproach = FlatNormalize(actor.Position - targetPosition, Vector3.UnitZ);
+        var approach = FlatNormalize(baseGoal - targetPosition, fallbackApproach);
+        var lateral = new Vector3(approach.Z, 0, -approach.X);
+        var goal = baseGoal + lateral * offsetDistance;
+        goal.Y = baseGoal.Y;
+
+        var snappedGoal = SnapToNavmesh(goal);
+        if (snappedGoal.HasValue)
+            goal = snappedGoal.Value;
+        else if (vnavmeshIpc.CanPathfind)
+            goal = baseGoal;
+
+        goal = ClampToCommandAnchor(actor, goal, commandRange, commandRandomness, out var leashed);
+        if (leashed)
+            goal = baseGoal;
+
+        return RememberGoalOffset(actor, plan, slotIndex, baseGoal, targetPosition, goal);
+    }
+
+    private PartyEngagePlan RememberGoalOffset(
+        PartyNode actor,
+        PartyEngagePlan plan,
+        int slotIndex,
+        Vector3 baseGoal,
+        Vector3 targetPosition,
+        Vector3 goal)
+    {
+        goalOffsetStates[actor.Id] = new EngageGoalOffsetState
+        {
+            TargetId = plan.TargetId,
+            SlotIndex = slotIndex,
+            BaseGoal = baseGoal,
+            TargetPosition = targetPosition,
+            Goal = goal,
+        };
+
+        return WithGoal(plan, goal);
+    }
+
+    private static float GetSlotOffsetDistance(PartyNode actor, int slotIndex)
+    {
+        var lane = slotIndex / 2 + 1;
+        var direction = slotIndex % 2 == 0 ? -1f : 1f;
+        var spacing = Math.Clamp(actor.PreferredEngageRange * 0.25f, GoalOffsetSpacing, GoalOffsetMaxSpacing);
+        return direction * lane * spacing;
+    }
+
+    private void PruneGoalOffsetStates(IReadOnlyDictionary<uint, PartyNode> nodes)
+    {
+        foreach (var actorId in goalOffsetStates.Keys.ToList())
+        {
+            if (!nodes.TryGetValue(actorId, out var node) ||
+                node.TargetId == 0 ||
+                !plans.TryGetValue(actorId, out var plan) ||
+                plan.TargetId != goalOffsetStates[actorId].TargetId)
+            {
+                goalOffsetStates.Remove(actorId);
+            }
+        }
     }
 
     private void ApplyMutualPair(
@@ -622,6 +772,22 @@ public sealed unsafe class PartyEngagePlanner
         return point;
     }
 
+    private static PartyEngagePlan WithGoal(PartyEngagePlan plan, Vector3 goal)
+    {
+        return new PartyEngagePlan
+        {
+            ActorId = plan.ActorId,
+            TargetId = plan.TargetId,
+            Kind = plan.Kind,
+            Goal = goal,
+            FaceTarget = plan.FaceTarget,
+            HasFaceTarget = plan.HasFaceTarget,
+        };
+    }
+
+    private static float StableTargetTieBreak(uint targetId, uint actorId)
+        => StableUnit(actorId ^ (targetId * 16777619u), 0x51A7u);
+
     private static uint StableCycleKey(IReadOnlyList<uint> cycle)
     {
         var key = 2166136261u;
@@ -675,12 +841,22 @@ public sealed unsafe class PartyEngagePlanner
         public float PlayerGoalUpdateTimer { get; set; }
     }
 
+    private sealed class EngageGoalOffsetState
+    {
+        public uint TargetId { get; init; }
+        public int SlotIndex { get; init; }
+        public Vector3 BaseGoal { get; init; }
+        public Vector3 TargetPosition { get; init; }
+        public Vector3 Goal { get; init; }
+    }
+
     private readonly record struct PartyNode(
         uint Id,
         PartyNodeSide Side,
         Vector3 Position,
         Vector3 CommandAnchor,
-        uint TargetId);
+        uint TargetId,
+        float PreferredEngageRange);
 
     private enum PartyNodeSide
     {
