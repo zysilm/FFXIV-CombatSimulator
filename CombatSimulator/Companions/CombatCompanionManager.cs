@@ -67,7 +67,6 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float FollowStopDistance = 0.6f;
     private const float CombatAnchorRelocateDistance = 10.0f;
     private const float MeleeAttackRangeBuffer = 0.25f;
-    private const float PartyAttackRangeForgivenessMax = 0.25f;
     private const float SenseInterval = 1.0f;
     private const float SelectedTargetBonus = 130f;
     private const float LastPlayerTargetBonus = 95f;
@@ -771,9 +770,7 @@ public unsafe class CombatCompanionManager : IDisposable
         var targetPos = (Vector3)targetObj->Position;
         var sourcePos = (Vector3)sourceObj->Position;
         var dist = Vector3.Distance(sourcePos, targetPos);
-        var effectiveRange = GetPartyAttackRange(companion.Behavior.AutoAttackStyle) +
-                             MeleeAttackRangeBuffer +
-                             GetPartyAttackRangeForgiveness(companion);
+        var effectiveRange = GetPartyAttackRange(companion.Behavior.AutoAttackStyle) + MeleeAttackRangeBuffer;
 
         if (dist > effectiveRange)
         {
@@ -800,7 +797,7 @@ public unsafe class CombatCompanionManager : IDisposable
                 skill.CooldownRemaining = Math.Max(0, skill.CooldownRemaining - deltaTime);
                 continue;
             }
-            if (dist > GetPartySkillRange(skill.Range, skill.AttackStyle) + GetPartyAttackRangeForgiveness(companion))
+            if (dist > GetPartySkillRange(skill.Range, skill.AttackStyle))
                 continue;
 
             var result = combatEngine.ProcessCompanionAction(companion, target, skill.ActionId, skill.Potency, skill.AttackStyle);
@@ -947,21 +944,6 @@ public unsafe class CombatCompanionManager : IDisposable
 
     private float GetPartySkillRange(float skillRange, NpcAttackStyle style)
         => MathF.Min(skillRange, GetPartyAttackRange(style) + MeleeAttackRangeBuffer);
-
-    private static float GetPartyAttackRangeForgiveness(CombatCompanion companion)
-    {
-        if (companion.PartyAttackRangeForgiveness >= 0)
-            return companion.PartyAttackRangeForgiveness;
-
-        var x = companion.SimulatedEntityId ^ 0xC0FF_EE51u;
-        x ^= x >> 16;
-        x *= 0x7feb352du;
-        x ^= x >> 15;
-        x *= 0x846ca68bu;
-        x ^= x >> 16;
-        companion.PartyAttackRangeForgiveness = (x & 0xFFFF) / 65535f * PartyAttackRangeForgivenessMax;
-        return companion.PartyAttackRangeForgiveness;
-    }
 
     private static float FlatDistance(Vector3 a, Vector3 b)
     {

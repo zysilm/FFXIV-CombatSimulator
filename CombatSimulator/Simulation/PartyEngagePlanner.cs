@@ -36,7 +36,6 @@ public sealed unsafe class PartyEngagePlanner
     private const float ChainJoinRecomputeDistance = 1.25f;
     private const float PlayerPursuitGoalUpdateDistance = 2.0f;
     private const float PlayerPursuitGoalUpdateInterval = 0.65f;
-    private const float EngageSideBiasMaxDistance = 0.28f;
 
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly Dictionary<uint, PartyEngagePlan> plans = new();
@@ -303,7 +302,6 @@ public sealed unsafe class PartyEngagePlanner
         }
 
         var goal = AddStableJitter(actor.Id, clamped, commandRange * 0.035f);
-        goal = AddStableSideBias(actor, goal, playerPosition, EngageSideBiasMaxDistance);
         return new PartyEngagePlan
         {
             ActorId = actor.Id,
@@ -343,7 +341,6 @@ public sealed unsafe class PartyEngagePlanner
         var distance = MathF.Min(pathLength, GetEngageDistance(actor.Id, commandRange, commandRandomness));
         var goal = PointAlongPath(path, fromStart ? distance : pathLength - distance);
         goal = AddStableJitter(actor.Id, goal, commandRange * 0.04f);
-        goal = AddStableSideBias(actor, goal, faceTarget, EngageSideBiasMaxDistance);
         goal = ClampToCommandAnchor(actor, goal, commandRange, commandRandomness, out var leashed);
 
         return new PartyEngagePlan
@@ -367,7 +364,6 @@ public sealed unsafe class PartyEngagePlanner
         PartyEngagePlanKind kind)
     {
         var goal = AddStableJitter(actor.Id, sharedGoal, commandRange * 0.035f);
-        goal = AddStableSideBias(actor, goal, faceTarget, EngageSideBiasMaxDistance);
         goal = ClampToCommandAnchor(actor, goal, commandRange, commandRandomness, out var leashed);
 
         return new PartyEngagePlan
@@ -624,19 +620,6 @@ public sealed unsafe class PartyEngagePlanner
         point.X += MathF.Sin(angle) * distance;
         point.Z += MathF.Cos(angle) * distance;
         return point;
-    }
-
-    private static Vector3 AddStableSideBias(PartyNode actor, Vector3 goal, Vector3 faceTarget, float maxDistance)
-    {
-        if (maxDistance <= 0)
-            return goal;
-
-        var fallback = FlatNormalize(actor.Position - faceTarget, Vector3.UnitZ);
-        var approach = FlatNormalize(goal - faceTarget, fallback);
-        var lateral = new Vector3(approach.Z, 0, -approach.X);
-        var signed = (StableUnit(actor.Id, 0x51DEu) - 0.5f) * 2f;
-        goal += lateral * signed * maxDistance;
-        return goal;
     }
 
     private static uint StableCycleKey(IReadOnlyList<uint> cycle)
