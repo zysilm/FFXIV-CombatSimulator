@@ -239,9 +239,7 @@ public unsafe class CombatCompanionManager : IDisposable
                 enemyTargets,
                 combatEngine.State.PlayerState.EntityId,
                 MathF.Max(1.0f, config.PartyCommandRange),
-                Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f),
-                MathF.Max(0.5f, config.PartyMeleeAttackRange) + MeleeAttackRangeBuffer,
-                MathF.Max(1.0f, config.PartyRangedAttackRange) + MeleeAttackRangeBuffer);
+                Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f));
         }
         else
         {
