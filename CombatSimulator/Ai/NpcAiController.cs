@@ -983,8 +983,7 @@ public unsafe class NpcAiController : IDisposable
         var distToTarget = FlatDistance(npcPos, npcTargetPos);
         var hasAttackRangeState = TryGetOrCreateApproachPathState(npc, out var attackRangeState);
         var partyAttackRange = GetPartyAttackRange(npc.Behavior.AutoAttackStyle) +
-                               PartyMeleeAttackRangeBuffer +
-                               (hasAttackRangeState ? GetPartyAttackRangeForgiveness(npc, attackRangeState) : 0f);
+                               PartyMeleeAttackRangeBuffer;
         if (hasAttackRangeState)
         {
             attackRangeState.PartyAttackRangeLockTimer = Math.Max(0, attackRangeState.PartyAttackRangeLockTimer - deltaTime);
