@@ -667,31 +667,129 @@ function fallbackTacticalSlot(actorNode, targetNode){
   }
   return best || targetNode.position;
 }
+function minCostMaxFlow(nodeCount, source, sink, edges){
+  const graph = Array.from({length:nodeCount}, () => []);
+  function addEdge(from, to, cap, cost, meta=null){
+    const fwd = {to, rev:graph[to].length, cap, cost, meta};
+    const rev = {to:from, rev:graph[from].length, cap:0, cost:-cost, meta:null};
+    graph[from].push(fwd);
+    graph[to].push(rev);
+    return fwd;
+  }
+  for(const e of edges)
+    addEdge(e.from, e.to, e.cap, e.cost, e.meta||null);
+
+  const flowEdges = [];
+  while(true){
+    const dist = Array(nodeCount).fill(Infinity);
+    const inQueue = Array(nodeCount).fill(false);
+    const prevNode = Array(nodeCount).fill(-1);
+    const prevEdge = Array(nodeCount).fill(-1);
+    const q = [source];
+    dist[source] = 0;
+    inQueue[source] = true;
+
+    while(q.length){
+      const v = q.shift();
+      inQueue[v] = false;
+      for(let i=0;i<graph[v].length;i++){
+        const e = graph[v][i];
+        if(e.cap<=0) continue;
+        const nd = dist[v] + e.cost;
+        if(nd >= dist[e.to]) continue;
+        dist[e.to] = nd;
+        prevNode[e.to] = v;
+        prevEdge[e.to] = i;
+        if(!inQueue[e.to]){
+          q.push(e.to);
+          inQueue[e.to] = true;
+        }
+      }
+    }
+
+    if(!Number.isFinite(dist[sink]))
+      break;
+
+    let aug = Infinity;
+    for(let v=sink; v!==source; v=prevNode[v]){
+      if(v<0) { aug = 0; break; }
+      const e = graph[prevNode[v]][prevEdge[v]];
+      aug = Math.min(aug, e.cap);
+    }
+    if(aug<=0 || !Number.isFinite(aug))
+      break;
+
+    const pathMetas = [];
+    for(let v=sink; v!==source; v=prevNode[v]){
+      const e = graph[prevNode[v]][prevEdge[v]];
+      e.cap -= aug;
+      graph[e.to][e.rev].cap += aug;
+      if(e.meta) pathMetas.push(e.meta);
+    }
+    flowEdges.push(...pathMetas);
+  }
+  return flowEdges;
+}
 function buildSlotAssignments(nodes){
   assignedSlots.clear();
   slotReservations.clear();
-  const requests = [];
+  const actorIds = [];
+  const actorIndex = new Map();
+  const slotIndex = new Map();
+  const slots = [];
+  const actorSlotEdges = [];
+
   for(const node of nodes.values()){
     if(!node.targetId || !nodes.has(node.targetId) || node.targetId===pc.id) continue;
+    if(!actorIndex.has(node.id)){
+      actorIndex.set(node.id, actorIds.length);
+      actorIds.push(node.id);
+    }
     const targetNode = nodes.get(node.targetId);
     const candidates = tacticalSlotCandidates(node, targetNode).map(clampPointToArena);
     for(const c of candidates){
-      requests.push({
+      if(!slotIndex.has(c.slotId)){
+        slotIndex.set(c.slotId, slots.length);
+        slots.push(c);
+      }
+      actorSlotEdges.push({
         actorId: node.id,
-        targetId: targetNode.id,
+        slotId: c.slotId,
         slot: c,
         cost: scoreSlotCandidate(node, targetNode, c, candidates.length)
       });
     }
   }
-  requests.sort((a,b)=>a.cost-b.cost);
-  const assignedActors = new Set();
-  for(const r of requests){
-    if(assignedActors.has(r.actorId)) continue;
+
+  if(actorIds.length===0 || slots.length===0)
+    return;
+
+  const source = 0;
+  const actorBase = 1;
+  const slotBase = actorBase + actorIds.length;
+  const sink = slotBase + slots.length;
+  const edges = [];
+
+  for(let i=0;i<actorIds.length;i++)
+    edges.push({from:source, to:actorBase+i, cap:1, cost:0});
+  for(let i=0;i<slots.length;i++)
+    edges.push({from:slotBase+i, to:sink, cap:1, cost:0});
+  for(const r of actorSlotEdges){
+    edges.push({
+      from: actorBase + actorIndex.get(r.actorId),
+      to: slotBase + slotIndex.get(r.slotId),
+      cap: 1,
+      cost: r.cost,
+      meta: r
+    });
+  }
+
+  const assignments = minCostMaxFlow(sink+1, source, sink, edges);
+  for(const r of assignments){
+    if(assignedSlots.has(r.actorId)) continue;
     if(slotReservations.has(r.slot.slotId)) continue;
-    assignedActors.add(r.actorId);
-    slotReservations.set(r.slot.slotId, r.actorId);
     assignedSlots.set(r.actorId, r.slot);
+    slotReservations.set(r.slot.slotId, r.actorId);
     const actor = byId(r.actorId);
     if(actor) actor.reservedSlotId = r.slot.slotId;
   }
