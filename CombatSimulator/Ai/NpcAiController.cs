@@ -309,9 +309,7 @@ public unsafe class NpcAiController : IDisposable
                     approachLockedGoals.Remove(address);
             }
 
-            var terrainCache = config.UseVNavmeshTargetApproach
-                ? BuildApproachTerrainCache(playerPos, approachNpcs)
-                : null;
+            var terrainCache = BuildApproachTerrainCache(playerPos, approachNpcs);
 
             for (int i = 0; i < approachNpcs.Count; i++)
             {
