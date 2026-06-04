@@ -854,6 +854,8 @@ public unsafe class CombatCompanionManager : IDisposable
         if (!companion.IsSpawned || companion.BattleChara == null)
             return;
 
+        TickCompanionActionTimers(companion, deltaTime);
+
         if (!companion.State.IsAlive)
         {
             ClearCompanionActionState(companion);
@@ -950,17 +952,13 @@ public unsafe class CombatCompanionManager : IDisposable
         if (companion.State.AnimationLock > 0)
         {
             EnterCompanionState(companion, CompanionAiState.ActionLocked);
-            companion.State.AnimationLock = Math.Max(0, companion.State.AnimationLock - deltaTime);
             return;
         }
 
         foreach (var skill in companion.Behavior.Skills.OrderByDescending(s => s.Priority))
         {
             if (skill.CooldownRemaining > 0)
-            {
-                skill.CooldownRemaining = Math.Max(0, skill.CooldownRemaining - deltaTime);
                 continue;
-            }
             if (dist > GetPartySkillRange(skill.Range, skill.AttackStyle))
                 continue;
 
@@ -989,6 +987,13 @@ public unsafe class CombatCompanionManager : IDisposable
                 companion.State.AnimationLock = 0.6f;
             }
         }
+    }
+
+    private static void TickCompanionActionTimers(CombatCompanion companion, float deltaTime)
+    {
+        companion.State.AnimationLock = Math.Max(0, companion.State.AnimationLock - deltaTime);
+        foreach (var skill in companion.Behavior.Skills)
+            skill.CooldownRemaining = Math.Max(0, skill.CooldownRemaining - deltaTime);
     }
 
     private static void ClearCompanionActionState(CombatCompanion companion)
