@@ -272,6 +272,13 @@ const STEERING = {
   goalWeight: 1.0,
   maxInfluence: 1.4
 };
+const TARGET_GRAPH = {
+  maxPreferredDepth: 2,
+  chainDepthPenalty: 75,
+  mutualPairBonus: 45,
+  peelForPcBonus: 55,
+  breakLongChainBonus: 30
+};
 
 const Y2P = 9;                 // yalms -> pixels
 const ARENA = { w: 110, h: 80 };  // yalms
@@ -1000,6 +1007,45 @@ function targetPressurePenalty(map, targetId, lane, meleeCap, rangedCap, extraCa
   const count = pressureCount(map, targetId, lane);
   return count >= cap ? (count - cap + 1) * TARGET_PRESSURE.overCapPenalty : 0;
 }
+function graphTargetId(actorId, overrideActorId=0, overrideTargetId=0){
+  if(actorId===overrideActorId) return overrideTargetId;
+  const actor = byId(actorId);
+  return actor && actor.hp>0 ? actor.targetId : 0;
+}
+function targetChainDepth(fromId, toId){
+  let depth = 1;
+  const seen = new Set([fromId]);
+  let current = toId;
+  while(current && !seen.has(current)){
+    seen.add(current);
+    const next = graphTargetId(current, fromId, toId);
+    if(!next || next===pc.id) break;
+    depth++;
+    current = next;
+  }
+  return depth;
+}
+function targetGraphScore(actor, candidate){
+  let score = 0;
+  const depth = targetChainDepth(actor.id, candidate.id);
+  if(depth > TARGET_GRAPH.maxPreferredDepth)
+    score -= (depth - TARGET_GRAPH.maxPreferredDepth) * TARGET_GRAPH.chainDepthPenalty;
+
+  if(candidate.targetId === actor.id)
+    score += TARGET_GRAPH.mutualPairBonus;
+
+  if(candidate.faction==='enemy' && candidate.targetId===pc.id)
+    score += TARGET_GRAPH.peelForPcBonus;
+
+  const current = byId(actor.targetId);
+  if(current && current.hp>0){
+    const currentDepth = targetChainDepth(actor.id, current.id);
+    if(currentDepth > depth)
+      score += Math.min(2, currentDepth-depth) * TARGET_GRAPH.breakLongChainBonus;
+  }
+
+  return score;
+}
 
 // Enemy picks among PC + living companions. THREAT/DPS-driven (ScoreEnemyTargetCandidate):
 //   score = recentDps * 0.25  -  (#other enemies on it) * 80  +  (sticky bonus 50)
@@ -1015,6 +1061,7 @@ function enemyCandScore(enemy, ally, pressureMap=null){
       actorLane(enemy),
       TARGET_PRESSURE.enemyMeleeCap,
       TARGET_PRESSURE.enemyRangedCap);
+  s += targetGraphScore(enemy, ally);
   return s;
 }
 function selectEnemyTarget(enemy, pressureMap){
@@ -1057,6 +1104,7 @@ function scoreCompanionTarget(c, enemy, assignCount, enemyTargetOf, pressureMap=
       TARGET_PRESSURE.companionRangedCap,
       extraCap);
   }
+  s += targetGraphScore(c, enemy);
   s -= distP(enemy, pc.x, pc.y)*SC.DistancePenaltyPerYalm;          // 离PC越远越扣
   return s;
 }
