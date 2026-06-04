@@ -1,0 +1,1330 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Command Range Combat Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e14;
+    --panel:#10161f;
+    --panel-2:#0c1219;
+    --line:#1d2733;
+    --ink:#c6d2e0;
+    --ink-dim:#6b7c91;
+    --party:#37b6ff;      /* crystal blue */
+    --party-glow:#0a4a73;
+    --pc:#6df0c8;          /* PC accent */
+    --enemy:#ff5b4a;       /* crimson */
+    --enemy-glow:#5a1410;
+    --amber:#ffb454;
+    --return:#ffd35e;
+    --dead:#3a4456;
+    --grid:#121a24;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:
+      radial-gradient(1200px 700px at 70% -10%, #11202e 0%, transparent 55%),
+      radial-gradient(900px 600px at 0% 110%, #1a1224 0%, transparent 50%),
+      var(--bg);
+    color:var(--ink);
+    font-family:"IBM Plex Mono",monospace;
+    display:flex;flex-direction:column;height:100vh;overflow:hidden;
+  }
+  header{
+    display:flex;align-items:baseline;gap:14px;padding:12px 20px;
+    border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,rgba(20,30,42,.6),transparent);
+  }
+  header h1{
+    font-family:"Chakra Petch",sans-serif;font-weight:700;letter-spacing:.12em;
+    font-size:18px;text-transform:uppercase;
+    background:linear-gradient(90deg,var(--pc),var(--party));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  header .sub{color:var(--ink-dim);font-size:11px;letter-spacing:.18em;text-transform:uppercase}
+  .wrap{flex:1;display:flex;min-height:0}
+  .stage{flex:1;position:relative;min-width:0}
+  canvas{display:block;width:100%;height:100%}
+  .stage-overlay{
+    position:absolute;top:12px;left:14px;font-size:11px;color:var(--ink-dim);
+    letter-spacing:.05em;line-height:1.7;pointer-events:none;
+    text-shadow:0 1px 4px #000;
+  }
+  .stage-overlay b{color:var(--ink)}
+  kbd{
+    font-family:"Chakra Petch",sans-serif;background:#1a2430;border:1px solid var(--line);
+    border-bottom-width:2px;border-radius:4px;padding:1px 6px;color:var(--pc);font-size:10px;
+  }
+  .panel{
+    width:330px;flex-shrink:0;border-left:1px solid var(--line);
+    background:linear-gradient(180deg,var(--panel),var(--panel-2));
+    display:flex;flex-direction:column;overflow-y:auto;
+  }
+  .panel::-webkit-scrollbar{width:8px}
+  .panel::-webkit-scrollbar-thumb{background:#1c2733;border-radius:4px}
+  .sect{padding:16px 18px;border-bottom:1px solid var(--line)}
+  .sect h2{
+    font-family:"Chakra Petch",sans-serif;font-size:11px;letter-spacing:.2em;
+    text-transform:uppercase;color:var(--ink-dim);margin-bottom:12px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .sect h2::before{content:"";width:10px;height:1px;background:var(--party)}
+  .ctrl{margin-bottom:14px}
+  .ctrl:last-child{margin-bottom:0}
+  .ctrl label{display:flex;justify-content:space-between;font-size:11px;margin-bottom:6px}
+  .ctrl label .val{color:var(--pc);font-weight:600}
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;width:100%;height:3px;border-radius:2px;
+    background:#1f2a37;outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+    background:var(--pc);cursor:pointer;box-shadow:0 0 0 3px rgba(109,240,200,.15);
+  }
+  input[type=range].en::-webkit-slider-thumb{background:var(--enemy);box-shadow:0 0 0 3px rgba(255,91,74,.15)}
+  .btnrow{display:flex;gap:8px}
+  button{
+    flex:1;font-family:"Chakra Petch",sans-serif;font-weight:600;letter-spacing:.08em;
+    text-transform:uppercase;font-size:11px;padding:9px 8px;border-radius:6px;cursor:pointer;
+    background:#172230;color:var(--ink);border:1px solid var(--line);transition:.15s;
+  }
+  button:hover{border-color:var(--party);color:#fff}
+  button.primary{background:linear-gradient(180deg,#0e6aa0,#0a4a73);border-color:#1b7fbd;color:#fff}
+  button.primary:hover{filter:brightness(1.15)}
+  .legend{display:grid;grid-template-columns:1fr 1fr;gap:7px 10px;font-size:10.5px}
+  .legend .row{display:flex;align-items:center;gap:7px;color:var(--ink-dim)}
+  .dot{width:9px;height:9px;border-radius:2px;flex-shrink:0}
+  .stats{display:flex;gap:10px}
+  .stat{flex:1;background:#0c121a;border:1px solid var(--line);border-radius:6px;padding:8px 10px}
+  .stat .n{font-family:"Chakra Petch",sans-serif;font-size:20px;font-weight:700}
+  .stat .l{font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--ink-dim)}
+  .stat.party .n{color:var(--party)} .stat.enemy .n{color:var(--enemy)}
+  #log{
+    font-size:10.5px;line-height:1.65;height:150px;overflow-y:auto;
+    background:#080c11;border:1px solid var(--line);border-radius:6px;padding:8px 10px;
+  }
+  #log::-webkit-scrollbar{width:6px}
+  #log::-webkit-scrollbar-thumb{background:#1c2733}
+  #log .t{color:#3f4d5e;margin-right:6px}
+  .winner{
+    position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    flex-direction:column;gap:6px;background:rgba(6,9,14,.78);backdrop-filter:blur(3px);z-index:5;
+  }
+  .winner h3{font-family:"Chakra Petch",sans-serif;font-size:34px;letter-spacing:.1em;text-transform:uppercase}
+  .winner p{color:var(--ink-dim);font-size:12px;letter-spacing:.1em}
+  .toggle{display:flex;align-items:center;gap:9px;font-size:11px;cursor:pointer;user-select:none}
+  .toggle .box{width:16px;height:16px;border:1px solid var(--line);border-radius:4px;background:#0c121a;display:grid;place-items:center}
+  .toggle.on .box{background:var(--party);border-color:var(--party)}
+  .toggle.on .box::after{content:"✓";font-size:11px;color:#04121c;font-weight:700}
+</style>
+</head>
+<body>
+<header>
+  <h1>Command-Range Combat Sim</h1>
+  <span class="sub">party vs enemies · state-machine targeting</span>
+</header>
+
+<div class="wrap">
+  <div class="stage">
+    <canvas id="cv"></canvas>
+    <div class="stage-overlay">
+      移动 PC: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><br>
+      点击<b>敌人</b>设为 PC 集火目标（同伴会优先打它）<br>
+      <span style="color:var(--return)">虚线圈 = command range</span>：圈外同伴丢弃目标，归队
+    </div>
+    <div class="winner" id="winner"><h3 id="winnerTxt"></h3><p>按 RESET 再来一局</p></div>
+  </div>
+
+  <aside class="panel">
+    <div class="sect">
+      <div class="btnrow" style="margin-bottom:12px">
+        <button class="primary" id="btnPlay">▶ Start</button>
+        <button id="btnReset">⟲ Reset</button>
+      </div>
+    </div>
+
+    <div class="sect">
+      <h2>Force Composition</h2>
+      <div class="ctrl">
+        <label>友方同伴数 (+PC) <span class="val" id="vParty">3</span></label>
+        <input type="range" id="sParty" min="0" max="8" value="3" step="1">
+      </div>
+      <div class="ctrl">
+        <label>敌方人数 <span class="val" id="vEnemy">4</span></label>
+        <input type="range" id="sEnemy" class="en" min="1" max="10" value="4" step="1">
+      </div>
+      <div class="ctrl">
+        <label class="toggle on" id="tRanged"><span class="box"></span>同伴含远程职业</label>
+      </div>
+    </div>
+
+    <div class="sect">
+      <h2>Command Range</h2>
+      <div class="ctrl">
+        <label>Command range <span class="val" id="vCmd">14.0</span></label>
+        <input type="range" id="sCmd" min="4" max="40" value="14" step="0.5">
+      </div>
+      <div class="ctrl">
+        <label>Range randomness <span class="val" id="vRand">0.20</span></label>
+        <input type="range" id="sRand" min="0" max="0.6" value="0.2" step="0.05">
+      </div>
+    </div>
+
+    <div class="sect">
+      <h2>Battlefield</h2>
+      <div class="stats">
+        <div class="stat party"><div class="n" id="nParty">0</div><div class="l">Party alive</div></div>
+        <div class="stat enemy"><div class="n" id="nEnemy">0</div><div class="l">Enemy alive</div></div>
+      </div>
+    </div>
+
+    <div class="sect">
+      <h2>State Legend</h2>
+      <div class="legend">
+        <div class="row"><span class="dot" style="background:var(--pc)"></span>PC</div>
+        <div class="row"><span class="dot" style="background:var(--return)"></span>归队中</div>
+        <div class="row"><span class="dot" style="background:var(--party)"></span>战斗就绪</div>
+        <div class="row"><span class="dot" style="background:#9ad0ff"></span>移动至目标</div>
+        <div class="row"><span class="dot" style="background:var(--enemy)"></span>敌·交战</div>
+        <div class="row"><span class="dot" style="background:var(--amber)"></span>敌·追击/归位</div>
+        <div class="row"><span class="dot" style="background:var(--dead)"></span>阵亡</div>
+        <div class="row"><span class="dot" style="background:#6df0c8;outline:1px dashed #6df0c8;outline-offset:1px"></span>集火目标</div>
+      </div>
+    </div>
+
+    <div class="sect">
+      <h2>Combat Log</h2>
+      <div id="log"></div>
+    </div>
+  </aside>
+</div>
+
+<script>
+"use strict";
+/* =========================================================================
+   COMMAND-RANGE COMBAT SIMULATOR
+   Faithful reimplementation of the targeting / command-range mechanics from
+   zysilm/FFXIV-CombatSimulator (CombatCompanionManager, NpcAiController,
+   PartyEngagePlanner) in a top-down 2D sandbox.
+   World units are "yalms"; the arena is fixed and the camera does not move.
+   ========================================================================= */
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+// ---- tunables (mirrors of the C# config fields) ----------------------------
+const CFG = {
+  partyCount: 3,
+  enemyCount: 4,
+  hasRanged: true,
+  commandRange: 14.0,          // PartyCommandRange
+  commandRandomness: 0.20,     // PartyCommandRangeRandomness
+  partyMeleeAttackRange: 1.5,   // PartyMeleeAttackRange
+  partyRangedAttackRange: 9.5,  // PartyRangedAttackRange
+};
+// EXACT constants copied from CombatCompanionManager.cs (lines 71-84)
+const SC = {
+  SelectedTargetBonus: 130, LastPlayerTargetBonus: 95, AttackingPlayerBonus: 120,
+  PreviousTargetBonus: 35, LowHpFinishBonus: 35, AssignmentPenalty: 95,
+  DistancePenaltyPerYalm: 1.0, MaxFocusAssistants: 2, FocusOvercapPenalty: 160,
+  TargetSwitchThreshold: 20,
+  // enemy side (DPS / threat driven)
+  EnemyDpsWeight: 0.25, EnemyAssignPenalty: 80, EnemyCurrentBonus: 50, EnemySwitchThreshold: 25,
+};
+const COMBAT_ANCHOR_RELOCATE = 10.0;  // CombatAnchorRelocateDistance
+const MELEE_ATTACK_RANGE_BUFFER = 0.25;
+const FOLLOW_STOP_DISTANCE = 0.6;
+const PLAYER_PURSUIT_GOAL_UPDATE_DISTANCE = 2.0;
+const PLAYER_PURSUIT_GOAL_UPDATE_INTERVAL = 0.65;
+const MELEE_SLOT_SPACING = 1.8;
+const RANGED_BACKLINE_SPACING = 2.2;
+const TARGET_PRESSURE = {
+  companionMeleeCap: 2,
+  companionRangedCap: 3,
+  companionFocusBonus: 1,
+  enemyMeleeCap: 3,
+  enemyRangedCap: 2,
+  overCapPenalty: 260
+};
+
+const Y2P = 9;                 // yalms -> pixels
+const ARENA = { w: 110, h: 80 };  // yalms
+let DPR = 1, OX = 0, OY = 0;   // device px ratio + arena origin offset (px)
+
+// world<->screen
+function wx(x){ return OX + x*Y2P; }
+function wy(y){ return OY + y*Y2P; }
+
+function resize(){
+  DPR = Math.min(2, window.devicePixelRatio||1);
+  const r = cv.parentElement.getBoundingClientRect();
+  cv.width = r.width*DPR; cv.height = r.height*DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  // center arena
+  OX = (r.width - ARENA.w*Y2P)/2;
+  OY = (r.height - ARENA.h*Y2P)/2;
+}
+window.addEventListener('resize', resize);
+
+// ---- entities --------------------------------------------------------------
+let idc = 1;
+let actors = [];          // all actors
+let pc = null;
+let running = false;
+let focusId = 0;          // PC's selected enemy (companions focus-fire)
+let lastFocusId = 0;
+let combatAnchor = null;  // frozen command anchor once combat engaged
+
+const COMPANION_STATE = { Idle:'Idle', Returning:'Returning', MovingToTarget:'MoveToTarget', CombatReady:'CombatReady', ActionLocked:'ActionLocked', Dead:'Dead' };
+const ENEMY_STATE     = { Idle:'Idle', Engaging:'Engaging', Combat:'Combat', Chasing:'Chasing', Resetting:'Resetting', Dead:'Dead' };
+
+function stableUnit(id, salt){ // deterministic 0..1 hash, mirrors StableUnit(actorId,salt)
+  let x = (id ^ salt) >>> 0;
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x7feb352d) >>> 0;
+  x ^= x >>> 15;
+  x = Math.imul(x, 0x846ca68b) >>> 0;
+  x ^= x >>> 16;
+  return (x & 0xFFFFFF) / 16777215;
+}
+
+function makeActor(faction, isPC=false, ranged=false){
+  return {
+    id: idc++, faction, isPC, ranged,
+    x:0, y:0, rot:0, spawnX:0, spawnY:0,
+    maxHp: isPC?2600 : faction==='party'? (ranged?1600:2000) : 1750,
+    hp:    isPC?2600 : faction==='party'? (ranged?1600:2000) : 1750,
+    state: faction==='party' ? COMPANION_STATE.Idle : ENEMY_STATE.Idle,
+    targetId: 0,
+    aaTimer: Math.random()*2,
+    aaDelay: faction==='party' ? (ranged?2.6:2.4) : 2.8,
+    atkRange: ranged?20:3,
+    skillCd: 0, skillCdMax: ranged?9:7,
+    moveSpeed: 7.2,
+    animLock: 0,
+    dmgMin: isPC?180 : faction==='party'? (ranged?95:120) : 90,
+    dmgMax: isPC?260 : faction==='party'? (ranged?150:170) : 150,
+    flash: 0, recentDps: 0, dpsAccum: 0,
+    reservedSlotId: '',
+    deathT: 0,
+  };
+}
+
+function spawnAll(){
+  actors = []; idc = 1; focusId = 0; lastFocusId = 0; combatAnchor = null;
+  // PC center-left
+  pc = makeActor('party', true, false);
+  pc.x = ARENA.w*0.32; pc.y = ARENA.h*0.5; pc.rot = 0;
+  pc.spawnX=pc.x; pc.spawnY=pc.y;
+  actors.push(pc);
+  // companions clustered behind PC
+  for(let i=0;i<CFG.partyCount;i++){
+    const ranged = CFG.hasRanged && (i%2===1);
+    const c = makeActor('party', false, ranged);
+    const ang = Math.PI + (i-(CFG.partyCount-1)/2)*0.5;
+    c.x = pc.x + Math.sin(ang)*5 + (Math.random()-.5)*2;
+    c.y = pc.y + Math.cos(ang)*5 + (Math.random()-.5)*2;
+    c.spawnX=c.x; c.spawnY=c.y;
+    actors.push(c);
+  }
+  // enemies on the right, spread vertically
+  for(let i=0;i<CFG.enemyCount;i++){
+    const ranged = i%3===2;
+    const e = makeActor('enemy', false, ranged);
+    e.x = ARENA.w*0.72 + (Math.random()*0.16)*ARENA.w;
+    e.y = ARENA.h*(0.16 + 0.68*(CFG.enemyCount<=1?0.5:i/(CFG.enemyCount-1)));
+    e.spawnX=e.x; e.spawnY=e.y;
+    actors.push(e);
+  }
+  log('Forces deployed — PC + '+CFG.partyCount+' companions vs '+CFG.enemyCount+' enemies.');
+  updateCounts();
+}
+
+// ---- geometry helpers ------------------------------------------------------
+function dist(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
+function distP(a, x, y){ return Math.hypot(a.x-x, a.y-y); }
+function aliveEnemies(){ return actors.filter(a=>a.faction==='enemy' && a.hp>0); }
+function aliveParty(){ return actors.filter(a=>a.faction==='party' && a.hp>0); }
+function byId(id){ return actors.find(a=>a.id===id); }
+
+// command range limit for a companion (GetCommandLimit)
+function commandLimit(c){
+  const jitter = stableUnit(c.id, 0xC001);
+  const factor = 1 - Math.min(0.8, CFG.commandRandomness)*jitter;
+  return Math.max(1, CFG.commandRange*factor);
+}
+function commandAnchor(){ return combatAnchor || {x:pc.x, y:pc.y, rot:pc.rot}; }
+
+function rotToward(a, tx, ty, dt){
+  const want = Math.atan2(tx-a.x, ty-a.y);
+  let d = want - a.rot;
+  while(d> Math.PI) d-=2*Math.PI;
+  while(d<-Math.PI) d+=2*Math.PI;
+  const step = 7*dt;
+  a.rot = Math.abs(d)<step ? want : a.rot + Math.sign(d)*step;
+}
+function moveToward(a, tx, ty, dt, speed){
+  const dx=tx-a.x, dy=ty-a.y, len=Math.hypot(dx,dy);
+  if(len<0.05) return;
+  const md = speed*dt;
+  if(len<=md){ a.x=tx; a.y=ty; }
+  else { a.x += dx/len*md; a.y += dy/len*md; }
+  rotToward(a, tx, ty, dt);
+}
+function clampArena(a){
+  a.x=Math.max(1,Math.min(ARENA.w-1,a.x));
+  a.y=Math.max(1,Math.min(ARENA.h-1,a.y));
+}
+
+// ============================================================================
+//  PARTY ENGAGE PLANNER  (mirrors PartyEngagePlanner.cs)
+// ============================================================================
+const PLAN_KIND = { ReturnToCommand:'ReturnToCommand', EngagePoint:'EngagePoint', PlayerPursuit:'PlayerPursuit' };
+const NODE_SIDE = { Friendly:'Friendly', Enemy:'Enemy' };
+let partyPlans = new Map();
+let plannerPathStates = new Map();
+let slotReservations = new Map();
+
+function partyAttackRange(a){
+  return (a.ranged ? Math.max(1, CFG.partyRangedAttackRange) : Math.max(0.5, CFG.partyMeleeAttackRange)) + MELEE_ATTACK_RANGE_BUFFER;
+}
+function preferredEngageRange(a){
+  return a.ranged ? Math.max(1, CFG.partyRangedAttackRange) : Math.max(0.5, CFG.partyMeleeAttackRange);
+}
+function flatDistance(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+function spreadAngle(index,count){
+  if(count<=1) return 0;
+  return (index - (count-1)*0.5) * 0.45;
+}
+function addStableJitter(actorId, point, radius){
+  if(radius<=0) return {...point};
+  const angle = stableUnit(actorId, 0x5151) * Math.PI * 2;
+  const d = stableUnit(actorId, 0x7171) * radius;
+  return {x:point.x + Math.sin(angle)*d, y:point.y + Math.cos(angle)*d};
+}
+function getEngageDistance(actorId){
+  const jitter = (stableUnit(actorId, 0xA11CE) - 0.5) * Math.min(0.8, CFG.commandRandomness);
+  return Math.max(0.5, CFG.commandRange * Math.max(0.35, Math.min(0.95, 0.75 + jitter)));
+}
+function getCommandReturnDistance(actorId){
+  const jitter = stableUnit(actorId, 0xBEEF);
+  const factor = 0.35 + 0.35 * jitter * (1 + Math.min(0.8, CFG.commandRandomness));
+  return Math.max(1.5, CFG.commandRange * Math.max(0.25, Math.min(0.85, factor)));
+}
+function buildReturnPlan(actor, index, count){
+  const anchor = commandAnchor();
+  const radius = getCommandReturnDistance(actor.id);
+  const angle = anchor.rot + Math.PI + spreadAngle(index, count);
+  return {
+    actorId: actor.id,
+    targetId: 0,
+    kind: PLAN_KIND.ReturnToCommand,
+    goal: {x:anchor.x + Math.sin(angle)*radius, y:anchor.y + Math.cos(angle)*radius},
+    faceTarget: {x:actor.x, y:actor.y},
+    hasFaceTarget: false
+  };
+}
+function clampToCommandAnchor(node, goal){
+  if(node.side !== NODE_SIDE.Friendly)
+    return {goal:{...goal}, leashed:false};
+
+  const limit = commandLimit({id:node.id});
+  const anchor = node.commandAnchor;
+  const ox = goal.x - anchor.x, oy = goal.y - anchor.y;
+  const d = Math.hypot(ox, oy);
+  if(d <= limit) return {goal:{...goal}, leashed:false};
+
+  const k = Math.max(0.5, limit * 0.85) / (d > 0.001 ? d : 1);
+  return {goal:{x:anchor.x + ox*k, y:anchor.y + oy*k}, leashed:true};
+}
+function pathLength(path){
+  let len=0;
+  for(let i=1;i<path.length;i++) len += flatDistance(path[i-1], path[i]);
+  return len;
+}
+function pointAlongPath(path, distance){
+  if(path.length===0) return {x:0,y:0};
+  if(path.length===1 || distance<=0) return {...path[0]};
+  let remaining = distance;
+  for(let i=1;i<path.length;i++){
+    const a=path[i-1], b=path[i];
+    const seg=flatDistance(a,b);
+    if(seg<=0.001) continue;
+    if(remaining<=seg){
+      const t=remaining/seg;
+      return {x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t};
+    }
+    remaining-=seg;
+  }
+  return {...path[path.length-1]};
+}
+function getSharedPath(key, from, to, liveKeys){
+  liveKeys.add(key);
+  if(!plannerPathStates.has(key)) plannerPathStates.set(key, {});
+  // The HTML sandbox has no vnavmesh; paths are intentionally straight lines.
+  return [{x:from.x,y:from.y}, {x:to.x,y:to.y}];
+}
+function averagePosition(list, fallback){
+  if(list.length===0) return {...fallback};
+  let x=0, y=0;
+  for(const a of list){ x+=a.x; y+=a.y; }
+  return {x:x/list.length, y:y/list.length};
+}
+function normalize2(v, fallback={x:0,y:1}){
+  const len = Math.hypot(v.x, v.y);
+  if(len<0.0001) return {...fallback};
+  return {x:v.x/len, y:v.y/len};
+}
+function perpendicular(v){ return {x:-v.y, y:v.x}; }
+function battleAxis(){
+  const friendlies = aliveParty();
+  const enemies = aliveEnemies();
+  const anchor = commandAnchor();
+  const friendlyCenter = averagePosition(friendlies, {x:anchor.x,y:anchor.y});
+  const enemyCenter = averagePosition(enemies, {x:anchor.x + Math.sin(anchor.rot), y:anchor.y + Math.cos(anchor.rot)});
+  return normalize2({x:enemyCenter.x-friendlyCenter.x, y:enemyCenter.y-friendlyCenter.y}, {x:Math.sin(anchor.rot), y:Math.cos(anchor.rot)});
+}
+function tacticalSlotCandidates(actorNode, targetNode){
+  const axis = battleAxis();
+  const actorForward = actorNode.side===NODE_SIDE.Friendly ? axis : {x:-axis.x, y:-axis.y};
+  const right = perpendicular(actorForward);
+  const range = Math.max(0.5, actorNode.preferredEngageRange);
+  const target = targetNode.position;
+
+  if(actorNode.actor.ranged){
+    const back = {x:-actorForward.x, y:-actorForward.y};
+    const rowDistance = Math.max(range * 0.8, 5.0);
+    return [-2,-1,0,1,2].map((slot, i) => ({
+      x: target.x + back.x*rowDistance + right.x*slot*RANGED_BACKLINE_SPACING,
+      y: target.y + back.y*rowDistance + right.y*slot*RANGED_BACKLINE_SPACING,
+      slotId: `${actorNode.side}:${targetNode.id}:ranged:${i}`,
+      slotIndex: i
+    }));
+  }
+
+  const angles = [0, -32, 32, -64, 64, -105, 105, 180];
+  const base = Math.atan2(-actorForward.x, -actorForward.y);
+  return angles.map((deg, i) => {
+    const a = base + deg * Math.PI / 180;
+    return {
+      x: target.x + Math.sin(a)*range,
+      y: target.y + Math.cos(a)*range,
+      slotId: `${actorNode.side}:${targetNode.id}:melee:${i}`,
+      slotIndex: i
+    };
+  });
+}
+function clampPointToArena(point){
+  return {
+    x: Math.max(1, Math.min(ARENA.w-1, point.x)),
+    y: Math.max(1, Math.min(ARENA.h-1, point.y)),
+    slotId: point.slotId,
+    slotIndex: point.slotIndex
+  };
+}
+function slotCrowdingPenalty(actorId, candidate){
+  let penalty = 0;
+  for(const a of actors){
+    if(a.hp<=0 || a.id===actorId) continue;
+    const d = distP(a, candidate.x, candidate.y);
+    if(d < MELEE_SLOT_SPACING)
+      penalty += (MELEE_SLOT_SPACING - d) * 35;
+  }
+  return penalty;
+}
+function selectTacticalSlot(actorNode, targetNode){
+  const candidates = tacticalSlotCandidates(actorNode, targetNode).map(clampPointToArena);
+  let best = candidates[0], bestScore = Infinity;
+  const preferredSlot = Math.floor(stableUnit(actorNode.id, targetNode.id ^ 0x5107) * candidates.length);
+  for(const c of candidates){
+    const reservedBy = slotReservations.get(c.slotId);
+    const occupiedPenalty = reservedBy && reservedBy !== actorNode.id ? 1000 : 0;
+    const stickyBonus = actorNode.actor.reservedSlotId === c.slotId ? 45 : 0;
+    const score = flatDistance(actorNode.position, c)
+      + Math.abs(c.slotIndex - preferredSlot) * 0.35
+      + slotCrowdingPenalty(actorNode.id, c)
+      + occupiedPenalty
+      - stickyBonus;
+    if(score < bestScore){
+      best = c;
+      bestScore = score;
+    }
+  }
+  if(best?.slotId){
+    slotReservations.set(best.slotId, actorNode.id);
+    actorNode.actor.reservedSlotId = best.slotId;
+  }
+  return best || targetNode.position;
+}
+function buildPathPointPlan(node, targetId, faceTarget, path, fromStart, kind){
+  const len = pathLength(path);
+  const holdDistance = Math.max(0.25, node.preferredEngageRange * 0.5);
+  const distance = fromStart ? Math.max(0, len - holdDistance) : Math.min(len, holdDistance);
+  let goal = pointAlongPath(path, fromStart ? distance : len - distance);
+  goal = addStableJitter(node.id, goal, Math.min(CFG.commandRange * 0.04, node.preferredEngageRange * 0.15));
+  const clamped = clampToCommandAnchor(node, goal);
+  return {
+    actorId: node.id,
+    targetId: clamped.leashed ? 0 : targetId,
+    kind: clamped.leashed ? PLAN_KIND.ReturnToCommand : kind,
+    goal: clamped.goal,
+    faceTarget: {...faceTarget},
+    hasFaceTarget: !clamped.leashed
+  };
+}
+function buildExplicitGoalPlan(node, targetId, faceTarget, sharedGoal, kind){
+  let goal = addStableJitter(node.id, sharedGoal, CFG.commandRange * 0.035);
+  const clamped = clampToCommandAnchor(node, goal);
+  return {
+    actorId: node.id,
+    targetId: clamped.leashed ? 0 : targetId,
+    kind: clamped.leashed ? PLAN_KIND.ReturnToCommand : kind,
+    goal: clamped.goal,
+    faceTarget: {...faceTarget},
+    hasFaceTarget: !clamped.leashed
+  };
+}
+function buildPathEngagePlan(key, node, targetNode, liveKeys, kind){
+  const slot = selectTacticalSlot(node, targetNode);
+  const path = getSharedPath(key, node.position, slot, liveKeys);
+  return buildPathPointPlan(node, targetNode.id, targetNode.position, path, true, kind);
+}
+function getDelayedPlayerGoal(key, playerPosition, dt){
+  let st = plannerPathStates.get(key);
+  if(!st){
+    st = {delayedPlayerGoal:{...playerPosition}, hasDelayedPlayerGoal:true, playerGoalUpdateTimer:PLAYER_PURSUIT_GOAL_UPDATE_INTERVAL};
+    plannerPathStates.set(key, st);
+    return st.delayedPlayerGoal;
+  }
+  if(!st.hasDelayedPlayerGoal){
+    st.delayedPlayerGoal = {...playerPosition};
+    st.hasDelayedPlayerGoal = true;
+    st.playerGoalUpdateTimer = PLAYER_PURSUIT_GOAL_UPDATE_INTERVAL;
+    return st.delayedPlayerGoal;
+  }
+  st.playerGoalUpdateTimer = Math.max(0, (st.playerGoalUpdateTimer||0) - dt);
+  if(st.playerGoalUpdateTimer<=0 && flatDistance(st.delayedPlayerGoal, playerPosition)>=PLAYER_PURSUIT_GOAL_UPDATE_DISTANCE){
+    st.delayedPlayerGoal = {...playerPosition};
+    st.playerGoalUpdateTimer = PLAYER_PURSUIT_GOAL_UPDATE_INTERVAL;
+  }
+  return st.delayedPlayerGoal;
+}
+function buildPlayerPursuitPlan(node, liveKeys, dt){
+  const key = `player:${node.id}`;
+  liveKeys.add(key);
+  const delayedGoal = getDelayedPlayerGoal(key, {x:pc.x,y:pc.y}, dt);
+  const clamped = clampToCommandAnchor(node, delayedGoal);
+  if(clamped.leashed){
+    return {
+      actorId: node.id,
+      targetId: 0,
+      kind: PLAN_KIND.ReturnToCommand,
+      goal: clamped.goal,
+      faceTarget: {x:pc.x,y:pc.y},
+      hasFaceTarget: false
+    };
+  }
+  const goal = addStableJitter(node.id, clamped.goal, CFG.commandRange * 0.035);
+  return {
+    actorId: node.id,
+    targetId: node.targetId,
+    kind: PLAN_KIND.PlayerPursuit,
+    goal,
+    faceTarget: {x:pc.x,y:pc.y},
+    hasFaceTarget: true
+  };
+}
+function buildNodes(companionTargets, enemyTargets){
+  const nodes = new Map();
+  const anchor = commandAnchor();
+  for(const c of actors){
+    if(c.faction!=='party' || c.isPC || c.hp<=0) continue;
+    nodes.set(c.id, {
+      id:c.id, side:NODE_SIDE.Friendly, actor:c,
+      position:{x:c.x,y:c.y},
+      commandAnchor:{x:anchor.x,y:anchor.y},
+      preferredEngageRange:preferredEngageRange(c),
+      targetId:companionTargets.get(c.id)||0
+    });
+  }
+  for(const e of actors){
+    if(e.faction!=='enemy' || e.hp<=0) continue;
+    nodes.set(e.id, {
+      id:e.id, side:NODE_SIDE.Enemy, actor:e,
+      position:{x:e.x,y:e.y},
+      commandAnchor:{x:e.spawnX,y:e.spawnY},
+      preferredEngageRange:preferredEngageRange(e),
+      targetId:enemyTargets.get(e.id)||0
+    });
+  }
+  return nodes;
+}
+function findCycle(startId, nodes){
+  const visitedAt = new Map();
+  const order = [];
+  let currentId = startId;
+  while(nodes.has(currentId)){
+    const current = nodes.get(currentId);
+    if(!current.targetId || !nodes.has(current.targetId)) break;
+    if(visitedAt.has(currentId)) return order.slice(visitedAt.get(currentId));
+    visitedAt.set(currentId, order.length);
+    order.push(currentId);
+    currentId = current.targetId;
+  }
+  return [];
+}
+function stableCycleKey(cycle){
+  let key = 2166136261 >>> 0;
+  for(const id of [...cycle].sort((a,b)=>a-b)){
+    key ^= id;
+    key = Math.imul(key, 16777619) >>> 0;
+  }
+  return key;
+}
+function applyMutualPair(cycle, nodes, plans, liveKeys){
+  const a = nodes.get(cycle[0]), b = nodes.get(cycle[1]);
+  const key = `pair:${Math.min(a.id,b.id)}:${Math.max(a.id,b.id)}`;
+  const path = getSharedPath(key, a.position, b.position, liveKeys);
+  const len = pathLength(path);
+  const engageDistance = Math.min(len * 0.5, getEngageDistance(a.id ^ b.id));
+  const sharedPoint = pointAlongPath(path, engageDistance);
+  plans.set(a.id, buildExplicitGoalPlan(a, b.id, b.position, sharedPoint, PLAN_KIND.EngagePoint));
+  plans.set(b.id, buildExplicitGoalPlan(b, a.id, a.position, sharedPoint, PLAN_KIND.EngagePoint));
+}
+function applyCycle(cycle, nodes, plans, liveKeys){
+  let cx=0, cy=0;
+  for(const id of cycle){ const n=nodes.get(id); cx+=n.position.x; cy+=n.position.y; }
+  const centroid = {x:cx/cycle.length, y:cy/cycle.length};
+  const keyBase = stableCycleKey(cycle);
+  for(const id of cycle){
+    const node = nodes.get(id);
+    plans.set(id, buildPathEngagePlan(
+      `cycle:${keyBase}:${id}`,
+      node,
+      {id:node.targetId, position:centroid, side:node.side===NODE_SIDE.Friendly ? NODE_SIDE.Enemy : NODE_SIDE.Friendly, actor:{ranged:false}},
+      liveKeys,
+      PLAN_KIND.EngagePoint));
+  }
+}
+function buildPartyEngagePlans(dt, companionTargets, enemyTargets){
+  partyPlans.clear();
+  slotReservations.clear();
+  const nodes = buildNodes(companionTargets, enemyTargets);
+  const liveKeys = new Set();
+
+  for(const node of nodes.values()){
+    if(!node.targetId || node.targetId===pc.id || !nodes.has(node.targetId)) continue;
+    const cycle = findCycle(node.id, nodes);
+    if(cycle.length<2 || !cycle.includes(node.id)) continue;
+    if(cycle.length===2) applyMutualPair(cycle, nodes, partyPlans, liveKeys);
+    else applyCycle(cycle, nodes, partyPlans, liveKeys);
+  }
+
+  for(const node of nodes.values()){
+    if(partyPlans.has(node.id) || !node.targetId) continue;
+    if(node.targetId===pc.id){
+      partyPlans.set(node.id, buildPlayerPursuitPlan(node, liveKeys, dt));
+      continue;
+    }
+    if(partyPlans.has(node.targetId) && nodes.has(node.targetId)){
+      const targetNode = nodes.get(node.targetId);
+      partyPlans.set(node.id, buildPathEngagePlan(`chain:${node.id}:${targetNode.id}`, node, targetNode, liveKeys, PLAN_KIND.EngagePoint));
+      continue;
+    }
+    if(nodes.has(node.targetId)){
+      const targetNode = nodes.get(node.targetId);
+      partyPlans.set(node.id, buildPathEngagePlan(`open:${node.id}:${targetNode.id}`, node, targetNode, liveKeys, PLAN_KIND.EngagePoint));
+    }
+  }
+
+  for(const key of [...plannerPathStates.keys()])
+    if(!liveKeys.has(key)) plannerPathStates.delete(key);
+}
+
+// ============================================================================
+//  TARGET SELECTION  (mirrors SelectEnemyTarget + ScoreCompanionTarget)
+// ============================================================================
+function pressureKey(targetId, lane){
+  return `${targetId}:${lane}`;
+}
+function actorLane(actor){
+  return actor.ranged ? 'ranged' : 'melee';
+}
+function pressureCount(map, targetId, lane){
+  return map.get(pressureKey(targetId, lane)) || 0;
+}
+function addPressure(map, targetId, lane){
+  const key = pressureKey(targetId, lane);
+  map.set(key, (map.get(key)||0) + 1);
+}
+function targetPressurePenalty(map, targetId, lane, meleeCap, rangedCap, extraCap=0){
+  const cap = (lane==='ranged' ? rangedCap : meleeCap) + extraCap;
+  const count = pressureCount(map, targetId, lane);
+  return count >= cap ? (count - cap + 1) * TARGET_PRESSURE.overCapPenalty : 0;
+}
+
+// Enemy picks among PC + living companions. THREAT/DPS-driven (ScoreEnemyTargetCandidate):
+//   score = recentDps * 0.25  -  (#other enemies on it) * 80  +  (sticky bonus 50)
+// No distance term, no PC bias — enemies pile onto whoever deals the most damage.
+function enemyCandScore(enemy, ally, pressureMap=null){
+  const assigned = actors.filter(e=>e.faction==='enemy'&&e.hp>0&&e.id!==enemy.id&&e.targetId===ally.id).length;
+  let s = ally.recentDps*SC.EnemyDpsWeight - assigned*SC.EnemyAssignPenalty;
+  if(ally.id===enemy.targetId) s += SC.EnemyCurrentBonus;
+  if(pressureMap)
+    s -= targetPressurePenalty(
+      pressureMap,
+      ally.id,
+      actorLane(enemy),
+      TARGET_PRESSURE.enemyMeleeCap,
+      TARGET_PRESSURE.enemyRangedCap);
+  return s;
+}
+function selectEnemyTarget(enemy, pressureMap){
+  const cands = aliveParty();
+  if(cands.length===0) return null;
+  let best=cands[0], bestS=-1e9;
+  for(const a of cands){ const s=enemyCandScore(enemy,a,pressureMap); if(s>bestS){ bestS=s; best=a; } }
+  // hysteresis: keep current unless clearly beaten
+  const cur = byId(enemy.targetId);
+  if(cur && cur.hp>0 && cur.faction==='party' && best.id!==cur.id){
+    if(enemyCandScore(enemy,best,pressureMap) < enemyCandScore(enemy,cur,pressureMap) + SC.EnemySwitchThreshold) best=cur;
+  }
+  return best;
+}
+
+// Companion scores each enemy (ScoreCompanionTarget) then applies hysteresis.
+function scoreCompanionTarget(c, enemy, assignCount, enemyTargetOf, pressureMap=null){
+  let s=0;
+  if(enemy.id===focusId)      s += SC.SelectedTargetBonus;          // PC集火
+  else if(enemy.id===lastFocusId) s += SC.LastPlayerTargetBonus;
+  // bonus only if the enemy is attacking the PLAYER specifically (AttackingPlayerBonus)
+  const et = enemyTargetOf.get(enemy.id);
+  if(et===pc.id) s += SC.AttackingPlayerBonus;
+  if(c.targetId===enemy.id)   s += SC.PreviousTargetBonus;
+  const hpPct = enemy.hp/enemy.maxHp;
+  s += (1-hpPct)*SC.LowHpFinishBonus;                              // 补刀
+  const focus = (enemy.id===focusId||enemy.id===lastFocusId);
+  const assigned = assignCount.get(enemy.id)||0;
+  const free = focus ? SC.MaxFocusAssistants : 0;
+  s -= Math.max(0, assigned-free)*SC.AssignmentPenalty;
+  if(focus && assigned>=SC.MaxFocusAssistants)
+    s -= (assigned-SC.MaxFocusAssistants+1)*SC.FocusOvercapPenalty;
+  if(pressureMap){
+    const extraCap = focus ? TARGET_PRESSURE.companionFocusBonus : 0;
+    s -= targetPressurePenalty(
+      pressureMap,
+      enemy.id,
+      actorLane(c),
+      TARGET_PRESSURE.companionMeleeCap,
+      TARGET_PRESSURE.companionRangedCap,
+      extraCap);
+  }
+  s -= distP(enemy, pc.x, pc.y)*SC.DistancePenaltyPerYalm;          // 离PC越远越扣
+  return s;
+}
+
+function assignCompanionTarget(c, assignCount, enemyTargetOf, pressureMap){
+  // GATE: companions outside command range get NO target.
+  const anchor = commandAnchor();
+  if(distP(c, anchor.x, anchor.y) > commandLimit(c)){ c.targetId=0; return; }
+  const en = aliveEnemies();
+  if(en.length===0){ c.targetId=0; return; }
+  const scored = en.map(e=>({e, s:scoreCompanionTarget(c,e,assignCount,enemyTargetOf,pressureMap)}))
+                   .sort((a,b)=>b.s-a.s);
+  let best = scored[0];
+  const cur = c.targetId?scored.find(x=>x.e.id===c.targetId):null;
+  if(cur && best.e.id!==cur.e.id && best.s < cur.s + SC.TargetSwitchThreshold) best=cur;
+  c.targetId = best.e.id;
+  assignCount.set(best.e.id, (assignCount.get(best.e.id)||0)+1);
+  addPressure(pressureMap, best.e.id, actorLane(c));
+}
+
+// ============================================================================
+//  PER-FRAME TICK  (mirrors CombatCompanionManager.Tick ordering)
+// ============================================================================
+// TickCombatAnchor: combat is "joined" when at least one companion AND one enemy
+// are alive. The anchor latches at the PC's position then, and only jumps to the
+// PC again once the PC has drifted >= 10 yalms. This is what causes companions to
+// be "left behind" as you advance — the leash is pinned to where you engaged.
+function tickCombatAnchor(){
+  const hasCombat = pc && aliveParty().some(a=>!a.isPC) && aliveEnemies().length>0;
+  if(!hasCombat){ combatAnchor=null; return; }
+  if(!combatAnchor){ combatAnchor={x:pc.x, y:pc.y, rot:pc.rot}; return; }
+  if(distP(pc, combatAnchor.x, combatAnchor.y) >= COMBAT_ANCHOR_RELOCATE){
+    combatAnchor={x:pc.x, y:pc.y, rot:pc.rot};
+  }
+}
+
+function tick(dt){
+  if(!pc || pc.hp<=0) { /* PC down: party mode continues while companions live */ }
+
+  // TickCombatAnchor: anchor freezes when combat is joined and only relocates
+  // when the PC drifts >= 10 yalms from it. It does NOT continuously follow PC.
+  tickCombatAnchor();
+
+  // (1) build enemy->target map (who each enemy is hitting) for scoring
+  const enemyTargetOf = new Map();
+  for(const e of actors) if(e.faction==='enemy'&&e.hp>0&&e.targetId) enemyTargetOf.set(e.id, e.targetId);
+
+  // (2) companions pick targets (gated by command range)
+  const compAssign = new Map();
+  const companionPressure = new Map();
+  for(const c of actors) if(c.faction==='party'&&!c.isPC&&c.hp>0)
+    assignCompanionTarget(c, compAssign, enemyTargetOf, companionPressure);
+  const companionTargets = new Map();
+  for(const c of actors) if(c.faction==='party'&&!c.isPC&&c.hp>0&&c.targetId)
+    companionTargets.set(c.id, c.targetId);
+
+  // (3) enemies pick victims (DPS/threat-driven, decided sequentially so load
+  //     balancing sees prior picks via each enemy's updated targetId)
+  const enemyTargets = new Map();
+  const enemyPressure = new Map();
+  for(const e of actors) if(e.faction==='enemy'&&e.hp>0){
+    const t = selectEnemyTarget(e, enemyPressure);
+    e.targetId = t?t.id:0;
+    if(e.targetId){
+      enemyTargets.set(e.id, e.targetId);
+      addPressure(enemyPressure, e.targetId, actorLane(e));
+    }
+  }
+
+  // (4) build shared party/enemy engage plans
+  buildPartyEngagePlans(dt, companionTargets, enemyTargets);
+
+  // (5) execute state machines
+  for(const a of actors){
+    if(a.flash>0) a.flash-=dt;
+    if(a.hp<=0){
+      a.reservedSlotId = '';
+      if(a.state!==COMPANION_STATE.Dead && a.state!==ENEMY_STATE.Dead){
+        a.state = a.faction==='party'?COMPANION_STATE.Dead:ENEMY_STATE.Dead;
+        log((a.isPC?'PC':a.faction==='party'?'Companion':'Enemy')+' #'+a.id+' has fallen.',
+            a.faction==='party'?'p':'e');
+      }
+      continue;
+    }
+    if(a.skillCd>0) a.skillCd-=dt;
+    if(a.animLock>0) a.animLock-=dt;
+    if(a.isPC) continue; // PC is player-controlled
+    if(a.faction==='party') tickCompanion(a, dt);
+    else tickEnemy(a, dt);
+  }
+
+  // dps decay
+  for(const a of actors){ a.recentDps = a.dpsAccum/3; a.dpsAccum=Math.max(0,a.dpsAccum - a.dpsAccum/3*dt); }
+
+  checkWin();
+}
+
+// ---- companion FSM (TickCompanion) ----------------------------------------
+function companionReturnPlan(c){
+  const comps = aliveParty().filter(p=>!p.isPC);
+  return buildReturnPlan(c, comps.indexOf(c), comps.length);
+}
+function moveByPlan(a, plan, dt){
+  const d = distP(a, plan.goal.x, plan.goal.y);
+  if(d > FOLLOW_STOP_DISTANCE){
+    a.state = plan.kind===PLAN_KIND.ReturnToCommand
+      ? (a.faction==='party' ? COMPANION_STATE.Returning : ENEMY_STATE.Chasing)
+      : (a.faction==='party' ? COMPANION_STATE.MovingToTarget : ENEMY_STATE.Chasing);
+    moveToward(a, plan.goal.x, plan.goal.y, dt, a.moveSpeed);
+    clampArena(a);
+    return true;
+  }
+  if(plan.hasFaceTarget) rotToward(a, plan.faceTarget.x, plan.faceTarget.y, dt);
+  return false;
+}
+function tickCompanion(c, dt){
+  const anchor = commandAnchor();
+  // PRIORITY 1: outside command range -> drop target & return  (the headline)
+  if(distP(c, anchor.x, anchor.y) > commandLimit(c)){
+    c.targetId=0; c.state=COMPANION_STATE.Returning;
+    c.reservedSlotId = '';
+    moveByPlan(c, companionReturnPlan(c), dt);
+    return;
+  }
+  // PRIORITY 2: no valid target -> idle/return toward anchor
+  const t = byId(c.targetId);
+  if(!t || t.hp<=0){
+    c.targetId=0;
+    c.reservedSlotId = '';
+    const moving = moveByPlan(c, companionReturnPlan(c), dt);
+    if(!moving) c.state=COMPANION_STATE.Idle;
+    return;
+  }
+  // PRIORITY 3: out of attack range -> move to target
+  const d = dist(c,t);
+  if(d > partyAttackRange(c)){
+    const plan = partyPlans.get(c.id);
+    if(plan){
+      moveByPlan(c, plan, dt);
+    } else {
+      c.state=COMPANION_STATE.CombatReady;
+    }
+    return;
+  }
+  // PRIORITY 4: in range -> attack
+  rotToward(c, t.x, t.y, dt);
+  if(c.animLock>0){ c.state=COMPANION_STATE.ActionLocked; return; }
+  c.state=COMPANION_STATE.CombatReady;
+  // skill (priority over auto), then auto-attack
+  if(c.skillCd<=0){
+    dealDamage(c, t, rnd(c.dmgMin,c.dmgMax)*2.0, true);
+    c.skillCd=c.skillCdMax; c.animLock=0.6;
+  } else {
+    c.aaTimer-=dt;
+    if(c.aaTimer<=0){ c.aaTimer=c.aaDelay; dealDamage(c,t,rnd(c.dmgMin,c.dmgMax)); c.animLock=0.5; }
+  }
+}
+
+// ---- enemy FSM (NpcAiController) -------------------------------------------
+function tickEnemy(e, dt){
+  const t = byId(e.targetId);
+  if(!t || t.hp<=0){ e.state=ENEMY_STATE.Idle; e.reservedSlotId = ''; return; }
+  const d=dist(e,t);
+  if(d>partyAttackRange(e)){
+    const plan = partyPlans.get(e.id);
+    if(plan) moveByPlan(e, plan, dt);
+    else e.state=ENEMY_STATE.Combat;
+    return;
+  }
+  e.state=ENEMY_STATE.Combat;
+  rotToward(e, t.x, t.y, dt);
+  if(e.animLock>0) return;
+  if(e.skillCd<=0){ dealDamage(e,t,rnd(e.dmgMin,e.dmgMax)*1.8,true); e.skillCd=e.skillCdMax; e.animLock=0.6; }
+  else { e.aaTimer-=dt; if(e.aaTimer<=0){ e.aaTimer=e.aaDelay; dealDamage(e,t,rnd(e.dmgMin,e.dmgMax)); e.animLock=0.5; } }
+}
+
+function rnd(a,b){ return a+Math.random()*(b-a); }
+function dealDamage(src, tgt, amt, skill){
+  amt = Math.round(amt);
+  tgt.hp = Math.max(0, tgt.hp-amt);
+  tgt.flash = 0.18;
+  src.dpsAccum += amt;
+  spawnFloat(tgt, amt, skill, src.faction);
+}
+
+// ---- floating damage numbers ----------------------------------------------
+let floats=[];
+function spawnFloat(t, amt, skill, faction){
+  floats.push({x:t.x+(Math.random()-.5)*1.5, y:t.y-2, vy:-7, t:0.9, amt, skill,
+               col: faction==='party'?'#9be7ff':'#ffb0a6'});
+}
+function tickFloats(dt){ for(const f of floats){ f.y+=f.vy*dt; f.vy*=0.92; f.t-=dt; } floats=floats.filter(f=>f.t>0); }
+
+// ---- win check -------------------------------------------------------------
+let ended=false;
+function checkWin(){
+  if(ended) return;
+  const pa=aliveParty().length, ea=aliveEnemies().length;
+  if(ea===0){ endGame('Party Victory', 'var(--party)'); }
+  else if(pa===0){ endGame('Party Wiped', 'var(--enemy)'); }
+}
+function endGame(txt,col){
+  ended=true; running=false; document.getElementById('btnPlay').textContent='▶ Start';
+  const w=document.getElementById('winner'); w.style.display='flex';
+  const e=document.getElementById('winnerTxt'); e.textContent=txt; e.style.color=col;
+  log(txt+'.', col.includes('party')?'p':'e');
+}
+
+// ============================================================================
+//  RENDER
+// ============================================================================
+function draw(){
+  const r=cv.parentElement.getBoundingClientRect();
+  ctx.clearRect(0,0,r.width,r.height);
+
+  // arena floor
+  ctx.save();
+  ctx.fillStyle='#0b1119';
+  ctx.fillRect(wx(0),wy(0),ARENA.w*Y2P,ARENA.h*Y2P);
+  // grid
+  ctx.strokeStyle='#121c27'; ctx.lineWidth=1;
+  for(let x=0;x<=ARENA.w;x+=5){ ctx.beginPath();ctx.moveTo(wx(x),wy(0));ctx.lineTo(wx(x),wy(ARENA.h));ctx.stroke(); }
+  for(let y=0;y<=ARENA.h;y+=5){ ctx.beginPath();ctx.moveTo(wx(0),wy(y));ctx.lineTo(wx(ARENA.w),wy(y));ctx.stroke(); }
+  ctx.strokeStyle='#22303f'; ctx.lineWidth=1.5; ctx.strokeRect(wx(0),wy(0),ARENA.w*Y2P,ARENA.h*Y2P);
+  ctx.restore();
+
+  // command range circle (around anchor)
+  if(pc && pc.hp>0){
+    const anchor=commandAnchor();
+    ctx.save();
+    ctx.setLineDash([6,6]);
+    ctx.strokeStyle='rgba(255,211,94,.55)';
+    ctx.lineWidth=1.5;
+    ctx.beginPath();
+    ctx.arc(wx(anchor.x),wy(anchor.y), CFG.commandRange*Y2P,0,Math.PI*2);
+    ctx.stroke();
+    ctx.fillStyle='rgba(255,211,94,.035)';
+    ctx.fill();
+    ctx.setLineDash([]);
+    // frozen combat anchor marker (only when it has diverged from the PC)
+    if(combatAnchor && distP(pc, anchor.x, anchor.y) > 1.5){
+      const ax=wx(anchor.x), ay=wy(anchor.y);
+      ctx.strokeStyle='rgba(255,211,94,.7)'; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.moveTo(ax-6,ay);ctx.lineTo(ax+6,ay);ctx.moveTo(ax,ay-6);ctx.lineTo(ax,ay+6); ctx.stroke();
+      ctx.setLineDash([3,4]); ctx.strokeStyle='rgba(255,211,94,.3)';
+      ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(wx(pc.x),wy(pc.y)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle='rgba(255,211,94,.8)'; ctx.font='600 8px "Chakra Petch"'; ctx.textAlign='center';
+      ctx.fillText('ANCHOR', ax, ay-9);
+    }
+    ctx.restore();
+  }
+
+  // target lines
+  ctx.save();
+  ctx.lineWidth=1;
+  for(const a of actors){
+    if(a.hp<=0||!a.targetId) continue;
+    const t=byId(a.targetId); if(!t||t.hp<=0) continue;
+    ctx.strokeStyle = a.faction==='party'?'rgba(55,182,255,.18)':'rgba(255,91,74,.18)';
+    ctx.beginPath(); ctx.moveTo(wx(a.x),wy(a.y)); ctx.lineTo(wx(t.x),wy(t.y)); ctx.stroke();
+  }
+  ctx.restore();
+
+  // planned tactical slots
+  ctx.save();
+  for(const plan of partyPlans.values()){
+    const a = byId(plan.actorId);
+    if(!a || a.hp<=0 || plan.kind===PLAN_KIND.ReturnToCommand) continue;
+    ctx.strokeStyle = a.faction==='party'?'rgba(55,182,255,.28)':'rgba(255,91,74,.25)';
+    ctx.fillStyle = a.faction==='party'?'rgba(55,182,255,.16)':'rgba(255,91,74,.14)';
+    const x=wx(plan.goal.x), y=wy(plan.goal.y);
+    ctx.beginPath(); ctx.rect(x-3,y-3,6,6); ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+
+  // actors
+  for(const a of actors) drawActor(a);
+
+  // target pressure counters
+  ctx.save();
+  ctx.font='700 9px "Chakra Petch"';
+  ctx.textAlign='center';
+  for(const a of actors){
+    if(a.hp<=0) continue;
+    const incoming = actors.filter(x=>x.hp>0 && x.targetId===a.id).length;
+    if(incoming<=0) continue;
+    ctx.fillStyle = a.faction==='enemy' ? 'rgba(155,231,255,.9)' : 'rgba(255,176,166,.9)';
+    ctx.fillText(String(incoming), wx(a.x), wy(a.y)+18);
+  }
+  ctx.restore();
+
+  // floating numbers
+  ctx.save();
+  ctx.textAlign='center'; ctx.font='600 13px "IBM Plex Mono"';
+  for(const f of floats){
+    ctx.globalAlpha=Math.min(1,f.t*1.3);
+    ctx.fillStyle=f.col;
+    ctx.fillText((f.skill?'◆':'')+f.amt, wx(f.x), wy(f.y));
+  }
+  ctx.restore();
+}
+
+function actorColor(a){
+  if(a.hp<=0) return 'var';
+  if(a.isPC) return getC('--pc');
+  if(a.faction==='party'){
+    if(a.state===COMPANION_STATE.Returning) return getC('--return');
+    if(a.state===COMPANION_STATE.MovingToTarget) return '#9ad0ff';
+    return getC('--party');
+  } else {
+    if(a.state===ENEMY_STATE.Chasing||a.state===ENEMY_STATE.Resetting) return getC('--amber');
+    return getC('--enemy');
+  }
+}
+const _cc={};
+function getC(v){ if(!_cc[v]) _cc[v]=getComputedStyle(document.documentElement).getPropertyValue(v).trim(); return _cc[v]; }
+
+function drawActor(a){
+  const x=wx(a.x), y=wy(a.y);
+  const dead = a.hp<=0;
+  const rad = a.isPC?9: a.faction==='enemy'?8:7;
+  const col = dead? getC('--dead') : actorColor(a);
+
+  // attack-range ring for ranged in combat
+  if(!dead && a.ranged && (a.state===COMPANION_STATE.CombatReady||a.state===ENEMY_STATE.Combat)){
+    ctx.save(); ctx.setLineDash([3,5]); ctx.strokeStyle='rgba(255,255,255,.08)';
+    ctx.beginPath(); ctx.arc(x,y,partyAttackRange(a)*Y2P,0,Math.PI*2); ctx.stroke(); ctx.restore();
+  }
+
+  // focus-target highlight
+  if(a.id===focusId && !dead){
+    ctx.save(); ctx.setLineDash([4,4]); ctx.strokeStyle=getC('--pc'); ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(x,y,rad+7,0,Math.PI*2); ctx.stroke(); ctx.restore();
+  }
+
+  // glow
+  if(!dead){
+    ctx.save();
+    ctx.shadowBlur= a.flash>0?22:12; ctx.shadowColor=col;
+    ctx.fillStyle=col;
+    drawShape(x,y,rad,a,col);
+    ctx.restore();
+  } else {
+    ctx.save(); ctx.globalAlpha=0.5; ctx.fillStyle=col;
+    ctx.beginPath(); ctx.arc(x,y,rad*0.8,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#1b2330'; ctx.beginPath(); ctx.moveTo(x-rad,y-rad);ctx.lineTo(x+rad,y+rad);
+    ctx.moveTo(x+rad,y-rad);ctx.lineTo(x-rad,y+rad); ctx.stroke(); ctx.restore();
+  }
+
+  // facing tick
+  if(!dead){
+    ctx.save(); ctx.strokeStyle='#04121c'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(x,y);
+    ctx.lineTo(x+Math.sin(a.rot)*rad, y+Math.cos(a.rot)*rad); ctx.stroke(); ctx.restore();
+  }
+
+  // hp bar
+  if(!dead){
+    const bw=rad*2.4, bh=3, bx=x-bw/2, by=y-rad-8;
+    ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(bx-1,by-1,bw+2,bh+2);
+    ctx.fillStyle = a.faction==='party'? '#37b6ff' : '#ff5b4a';
+    ctx.fillRect(bx,by,bw*(a.hp/a.maxHp),bh);
+  }
+  if(a.isPC){
+    ctx.save(); ctx.fillStyle=getC('--pc'); ctx.font='700 9px "Chakra Petch"';
+    ctx.textAlign='center'; ctx.fillText('PC', x, y-rad-13); ctx.restore();
+  }
+}
+function drawShape(x,y,rad,a,col){
+  ctx.beginPath();
+  if(a.faction==='enemy'){          // enemies: diamonds
+    ctx.moveTo(x,y-rad);ctx.lineTo(x+rad,y);ctx.lineTo(x,y+rad);ctx.lineTo(x-rad,y);ctx.closePath();
+  } else if(a.isPC){                 // PC: ring
+    ctx.arc(x,y,rad,0,Math.PI*2);
+  } else if(a.ranged){               // ranged companions: triangle
+    ctx.moveTo(x,y-rad);ctx.lineTo(x+rad*0.9,y+rad*0.7);ctx.lineTo(x-rad*0.9,y+rad*0.7);ctx.closePath();
+  } else {                           // melee companions: circle
+    ctx.arc(x,y,rad,0,Math.PI*2);
+  }
+  ctx.fill();
+  if(a.isPC){ ctx.fillStyle='#0a0e14'; ctx.beginPath(); ctx.arc(x,y,rad*0.45,0,Math.PI*2); ctx.fill(); }
+}
+
+// ============================================================================
+//  INPUT  (WASD + click focus)
+// ============================================================================
+const keys={};
+window.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(['w','a','s','d'].includes(k)) e.preventDefault();
+  keys[k]=true;
+});
+window.addEventListener('keyup',e=>{
+  const k=e.key.toLowerCase(); keys[k]=false;
+});
+function tickPC(dt){
+  if(!pc||pc.hp<=0) return;
+  let dx=0,dy=0;
+  if(keys['w'])dy-=1; if(keys['s'])dy+=1; if(keys['a'])dx-=1; if(keys['d'])dx+=1;
+  if(dx||dy){
+    const l=Math.hypot(dx,dy); dx/=l; dy/=l;
+    pc.x+=dx*pc.moveSpeed*1.3*dt; pc.y+=dy*pc.moveSpeed*1.3*dt;
+    pc.rot=Math.atan2(dx,dy);
+    clampArena(pc);
+    // NOTE: the command anchor is handled by tickCombatAnchor (it only relocates
+    // after the PC drifts >=10y), so we deliberately do NOT reset it here.
+  }
+  // PC auto-attacks its focus / nearest enemy if adjacent
+  let t = focusId?byId(focusId):null;
+  if(!t||t.hp<=0){ const en=aliveEnemies().sort((p,q)=>dist(pc,p)-dist(pc,q)); t=en[0]||null; }
+  if(t && dist(pc,t)<=4){
+    pc.aaTimer-=dt; if(pc.aaTimer<=0){ pc.aaTimer=pc.aaDelay; dealDamage(pc,t,rnd(pc.dmgMin,pc.dmgMax)); }
+  }
+}
+
+cv.addEventListener('click', e=>{
+  const r=cv.getBoundingClientRect();
+  const mx=(e.clientX-r.left - OX)/Y2P, my=(e.clientY-r.top - OY)/Y2P;
+  let hit=null, best=3.5;
+  for(const a of aliveEnemies()){ const d=distP(a,mx,my); if(d<best){ best=d; hit=a; } }
+  if(hit){
+    lastFocusId = focusId;
+    focusId = (focusId===hit.id)?0:hit.id;
+    log(focusId? 'PC focus → Enemy #'+hit.id+' (companions will集火)' : 'Focus cleared.');
+  }
+});
+
+// ============================================================================
+//  UI WIRING
+// ============================================================================
+function log(msg, cls){
+  const el=document.getElementById('log');
+  const t=new Date(); const ts=String(t.getMinutes()).padStart(2,'0')+':'+String(t.getSeconds()).padStart(2,'0');
+  const col = cls==='p'?'#9be7ff':cls==='e'?'#ffb0a6':cls==='r'?'#ffe9a8':'var(--ink)';
+  el.innerHTML += `<div><span class="t">${ts}</span><span style="color:${col}">${msg}</span></div>`;
+  el.scrollTop=el.scrollHeight;
+}
+function updateCounts(){
+  document.getElementById('nParty').textContent=aliveParty().length;
+  document.getElementById('nEnemy').textContent=aliveEnemies().length;
+}
+
+function bindSlider(id, valId, key, fmt){
+  const s=document.getElementById(id), v=document.getElementById(valId);
+  s.addEventListener('input',()=>{
+    CFG[key]=parseFloat(s.value); v.textContent=fmt(CFG[key]);
+    if(['partyCount','enemyCount'].includes(key)){ reset(); }
+  });
+  v.textContent=fmt(CFG[key]);
+}
+bindSlider('sParty','vParty','partyCount',x=>x|0);
+bindSlider('sEnemy','vEnemy','enemyCount',x=>x|0);
+bindSlider('sCmd','vCmd','commandRange',x=>x.toFixed(1));
+bindSlider('sRand','vRand','commandRandomness',x=>x.toFixed(2));
+
+document.getElementById('tRanged').addEventListener('click',function(){
+  this.classList.toggle('on'); CFG.hasRanged=this.classList.contains('on'); reset();
+});
+
+document.getElementById('btnPlay').addEventListener('click',function(){
+  if(ended){ reset(); }
+  running=!running;
+  this.textContent=running?'❚❚ Pause':'▶ Start';
+  if(running) log('Simulation started.');
+});
+document.getElementById('btnReset').addEventListener('click',reset);
+
+function reset(){
+  running=false; ended=false;
+  document.getElementById('btnPlay').textContent='▶ Start';
+  document.getElementById('winner').style.display='none';
+  document.getElementById('log').innerHTML='';
+  floats=[];
+  spawnAll();
+}
+
+// ============================================================================
+//  MAIN LOOP
+// ============================================================================
+let last=performance.now();
+function loop(now){
+  let dt=(now-last)/1000; last=now;
+  dt=Math.min(dt,0.05);
+  if(running){
+    tickPC(dt);
+    tick(dt);
+    tickFloats(dt);
+    updateCounts();
+  } else {
+    // still allow PC to look around / position before start
+    if(pc&&pc.hp>0) tickPC(dt);
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+resize();
+spawnAll();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
