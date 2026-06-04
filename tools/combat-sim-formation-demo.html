@@ -279,6 +279,13 @@ const TARGET_GRAPH = {
   peelForPcBonus: 55,
   breakLongChainBonus: 30
 };
+const REACHABILITY = {
+  softPenaltyWeight: 55,
+  hardPenalty: 220,
+  unreachableDelay: 0.95,
+  recoveryDistance: 0.75,
+  currentStickySuppression: 0.25
+};
 
 const Y2P = 9;                 // yalms -> pixels
 const ARENA = { w: 110, h: 80 };  // yalms
@@ -339,6 +346,8 @@ function makeActor(faction, isPC=false, ranged=false){
     dmgMax: isPC?260 : faction==='party'? (ranged?150:170) : 150,
     flash: 0, recentDps: 0, dpsAccum: 0,
     reservedSlotId: '',
+    unreachableTargetId: 0,
+    unreachableTimer: 0,
     deathT: 0,
   };
 }
@@ -1046,6 +1055,45 @@ function targetGraphScore(actor, candidate){
 
   return score;
 }
+function companionReachability(c, enemy){
+  const anchor = commandAnchor();
+  const limit = commandLimit(c);
+  const node = {
+    id:c.id,
+    side:NODE_SIDE.Friendly,
+    actor:c,
+    position:{x:c.x,y:c.y},
+    commandAnchor:{x:anchor.x,y:anchor.y},
+    preferredEngageRange:preferredEngageRange(c),
+    targetId:enemy.id
+  };
+  const targetNode = {
+    id:enemy.id,
+    side:NODE_SIDE.Enemy,
+    actor:enemy,
+    position:{x:enemy.x,y:enemy.y}
+  };
+  let bestOverflow = Infinity;
+  let hasReachableSlot = false;
+  for(const slot of tacticalSlotCandidates(node, targetNode).map(clampPointToArena)){
+    const distFromCommand = Math.hypot(slot.x-anchor.x, slot.y-anchor.y);
+    const overflow = distFromCommand - limit;
+    bestOverflow = Math.min(bestOverflow, overflow);
+    if(overflow <= REACHABILITY.recoveryDistance){
+      hasReachableSlot = true;
+      break;
+    }
+  }
+  return {
+    reachable: hasReachableSlot,
+    overflow: Math.max(0, bestOverflow)
+  };
+}
+function reachabilityScore(c, enemy){
+  const r = companionReachability(c, enemy);
+  if(r.reachable) return 0;
+  return -REACHABILITY.hardPenalty - r.overflow * REACHABILITY.softPenaltyWeight;
+}
 
 // Enemy picks among PC + living companions. THREAT/DPS-driven (ScoreEnemyTargetCandidate):
 //   score = recentDps * 0.25  -  (#other enemies on it) * 80  +  (sticky bonus 50)
@@ -1085,7 +1133,10 @@ function scoreCompanionTarget(c, enemy, assignCount, enemyTargetOf, pressureMap=
   // bonus only if the enemy is attacking the PLAYER specifically (AttackingPlayerBonus)
   const et = enemyTargetOf.get(enemy.id);
   if(et===pc.id) s += SC.AttackingPlayerBonus;
-  if(c.targetId===enemy.id)   s += SC.PreviousTargetBonus;
+  if(c.targetId===enemy.id)
+    s += c.unreachableTargetId===enemy.id && c.unreachableTimer>=REACHABILITY.unreachableDelay
+      ? SC.PreviousTargetBonus * REACHABILITY.currentStickySuppression
+      : SC.PreviousTargetBonus;
   const hpPct = enemy.hp/enemy.maxHp;
   s += (1-hpPct)*SC.LowHpFinishBonus;                              // 补刀
   const focus = (enemy.id===focusId||enemy.id===lastFocusId);
@@ -1105,6 +1156,7 @@ function scoreCompanionTarget(c, enemy, assignCount, enemyTargetOf, pressureMap=
       extraCap);
   }
   s += targetGraphScore(c, enemy);
+  s += reachabilityScore(c, enemy);
   s -= distP(enemy, pc.x, pc.y)*SC.DistancePenaltyPerYalm;          // 离PC越远越扣
   return s;
 }
@@ -1112,14 +1164,33 @@ function scoreCompanionTarget(c, enemy, assignCount, enemyTargetOf, pressureMap=
 function assignCompanionTarget(c, assignCount, enemyTargetOf, pressureMap){
   // GATE: companions outside command range get NO target.
   const anchor = commandAnchor();
-  if(distP(c, anchor.x, anchor.y) > commandLimit(c)){ c.targetId=0; return; }
+  if(distP(c, anchor.x, anchor.y) > commandLimit(c)){
+    c.targetId=0;
+    c.unreachableTargetId = 0;
+    c.unreachableTimer = 0;
+    return;
+  }
   const en = aliveEnemies();
-  if(en.length===0){ c.targetId=0; return; }
+  if(en.length===0){
+    c.targetId=0;
+    c.unreachableTargetId = 0;
+    c.unreachableTimer = 0;
+    return;
+  }
   const scored = en.map(e=>({e, s:scoreCompanionTarget(c,e,assignCount,enemyTargetOf,pressureMap)}))
                    .sort((a,b)=>b.s-a.s);
   let best = scored[0];
   const cur = c.targetId?scored.find(x=>x.e.id===c.targetId):null;
-  if(cur && best.e.id!==cur.e.id && best.s < cur.s + SC.TargetSwitchThreshold) best=cur;
+  const currentUnreachable = c.unreachableTargetId===c.targetId &&
+    c.unreachableTimer>=REACHABILITY.unreachableDelay;
+  const switchThreshold = currentUnreachable
+    ? SC.TargetSwitchThreshold * REACHABILITY.currentStickySuppression
+    : SC.TargetSwitchThreshold;
+  if(cur && best.e.id!==cur.e.id && best.s < cur.s + switchThreshold) best=cur;
+  if(c.targetId!==best.e.id){
+    c.unreachableTargetId = 0;
+    c.unreachableTimer = 0;
+  }
   c.targetId = best.e.id;
   assignCount.set(best.e.id, (assignCount.get(best.e.id)||0)+1);
   addPressure(pressureMap, best.e.id, actorLane(c));
@@ -1226,6 +1297,8 @@ function tickCompanion(c, dt){
   if(distP(c, anchor.x, anchor.y) > commandLimit(c)){
     c.targetId=0; c.state=COMPANION_STATE.Returning;
     c.reservedSlotId = '';
+    c.unreachableTargetId = 0;
+    c.unreachableTimer = 0;
     moveByPlan(c, companionReturnPlan(c), dt);
     return;
   }
@@ -1234,18 +1307,36 @@ function tickCompanion(c, dt){
   if(!t || t.hp<=0){
     c.targetId=0;
     c.reservedSlotId = '';
+    c.unreachableTargetId = 0;
+    c.unreachableTimer = 0;
     const moving = moveByPlan(c, companionReturnPlan(c), dt);
     if(!moving) c.state=COMPANION_STATE.Idle;
     return;
   }
   // PRIORITY 3: out of attack range -> move to target
   const d = dist(c,t);
+  const reach = companionReachability(c, t);
+  if(reach.reachable || d <= partyAttackRange(c)){
+    c.unreachableTargetId = 0;
+    c.unreachableTimer = 0;
+  } else if(c.unreachableTargetId===t.id){
+    c.unreachableTimer += dt;
+  } else {
+    c.unreachableTargetId = t.id;
+    c.unreachableTimer = dt;
+  }
+  const currentUnreachable = c.unreachableTargetId===t.id &&
+    c.unreachableTimer>=REACHABILITY.unreachableDelay;
   if(d > partyAttackRange(c)){
     const plan = partyPlans.get(c.id);
-    if(plan){
-      moveByPlan(c, plan, dt);
+    if(plan && moveByPlan(c, plan, dt)) return;
+    if(currentUnreachable){
+      c.state=COMPANION_STATE.Returning;
+      moveByPlan(c, companionReturnPlan(c), dt);
+      rotToward(c, t.x, t.y, dt);
     } else {
       c.state=COMPANION_STATE.CombatReady;
+      rotToward(c, t.x, t.y, dt);
     }
     return;
   }
