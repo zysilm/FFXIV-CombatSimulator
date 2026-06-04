@@ -390,6 +390,7 @@ const NODE_SIDE = { Friendly:'Friendly', Enemy:'Enemy' };
 let partyPlans = new Map();
 let plannerPathStates = new Map();
 let slotReservations = new Map();
+let assignedSlots = new Map();
 
 function partyAttackRange(a){
   return (a.ranged ? Math.max(1, CFG.partyRangedAttackRange) : Math.max(0.5, CFG.partyMeleeAttackRange)) + MELEE_ATTACK_RANGE_BUFFER;
@@ -538,29 +539,54 @@ function slotCrowdingPenalty(actorId, candidate){
   }
   return penalty;
 }
-function selectTacticalSlot(actorNode, targetNode){
+function scoreSlotCandidate(actorNode, targetNode, candidate, candidateCount=8){
+  const preferredSlot = Math.floor(stableUnit(actorNode.id, targetNode.id ^ 0x5107) * candidateCount);
+  const stickyBonus = actorNode.actor.reservedSlotId === candidate.slotId ? 55 : 0;
+  return flatDistance(actorNode.position, candidate)
+    + Math.abs(candidate.slotIndex - preferredSlot) * 0.35
+    + slotCrowdingPenalty(actorNode.id, candidate)
+    - stickyBonus;
+}
+function fallbackTacticalSlot(actorNode, targetNode){
   const candidates = tacticalSlotCandidates(actorNode, targetNode).map(clampPointToArena);
   let best = candidates[0], bestScore = Infinity;
-  const preferredSlot = Math.floor(stableUnit(actorNode.id, targetNode.id ^ 0x5107) * candidates.length);
   for(const c of candidates){
-    const reservedBy = slotReservations.get(c.slotId);
-    const occupiedPenalty = reservedBy && reservedBy !== actorNode.id ? 1000 : 0;
-    const stickyBonus = actorNode.actor.reservedSlotId === c.slotId ? 45 : 0;
-    const score = flatDistance(actorNode.position, c)
-      + Math.abs(c.slotIndex - preferredSlot) * 0.35
-      + slotCrowdingPenalty(actorNode.id, c)
-      + occupiedPenalty
-      - stickyBonus;
+    const score = scoreSlotCandidate(actorNode, targetNode, c, candidates.length);
     if(score < bestScore){
       best = c;
       bestScore = score;
     }
   }
-  if(best?.slotId){
-    slotReservations.set(best.slotId, actorNode.id);
-    actorNode.actor.reservedSlotId = best.slotId;
-  }
   return best || targetNode.position;
+}
+function buildSlotAssignments(nodes){
+  assignedSlots.clear();
+  slotReservations.clear();
+  const requests = [];
+  for(const node of nodes.values()){
+    if(!node.targetId || !nodes.has(node.targetId) || node.targetId===pc.id) continue;
+    const targetNode = nodes.get(node.targetId);
+    const candidates = tacticalSlotCandidates(node, targetNode).map(clampPointToArena);
+    for(const c of candidates){
+      requests.push({
+        actorId: node.id,
+        targetId: targetNode.id,
+        slot: c,
+        cost: scoreSlotCandidate(node, targetNode, c, candidates.length)
+      });
+    }
+  }
+  requests.sort((a,b)=>a.cost-b.cost);
+  const assignedActors = new Set();
+  for(const r of requests){
+    if(assignedActors.has(r.actorId)) continue;
+    if(slotReservations.has(r.slot.slotId)) continue;
+    assignedActors.add(r.actorId);
+    slotReservations.set(r.slot.slotId, r.actorId);
+    assignedSlots.set(r.actorId, r.slot);
+    const actor = byId(r.actorId);
+    if(actor) actor.reservedSlotId = r.slot.slotId;
+  }
 }
 function buildPathPointPlan(node, targetId, faceTarget, path, fromStart, kind){
   const len = pathLength(path);
@@ -591,7 +617,7 @@ function buildExplicitGoalPlan(node, targetId, faceTarget, sharedGoal, kind){
   };
 }
 function buildPathEngagePlan(key, node, targetNode, liveKeys, kind){
-  const slot = selectTacticalSlot(node, targetNode);
+  const slot = assignedSlots.get(node.id) || fallbackTacticalSlot(node, targetNode);
   const path = getSharedPath(key, node.position, slot, liveKeys);
   return buildPathPointPlan(node, targetNode.id, targetNode.position, path, true, kind);
 }
@@ -714,8 +740,8 @@ function applyCycle(cycle, nodes, plans, liveKeys){
 }
 function buildPartyEngagePlans(dt, companionTargets, enemyTargets){
   partyPlans.clear();
-  slotReservations.clear();
   const nodes = buildNodes(companionTargets, enemyTargets);
+  buildSlotAssignments(nodes);
   const liveKeys = new Set();
 
   for(const node of nodes.values()){
