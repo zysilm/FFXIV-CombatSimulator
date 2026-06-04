@@ -252,6 +252,26 @@ const TARGET_PRESSURE = {
   enemyRangedCap: 2,
   overCapPenalty: 260
 };
+const INFLUENCE = {
+  allyDensityRadius: 4.0,
+  enemyDensityRadius: 3.0,
+  allyDensityWeight: 22,
+  enemyDensityWeight: 10,
+  overextensionWeight: 18,
+  commandRangeWeight: 35,
+  rangedBacklineWeight: 9,
+  meleeFrontWeight: 4,
+  isolationWeight: 8
+};
+const STEERING = {
+  separationRadius: 2.8,
+  allyWeight: 1.35,
+  enemyWeight: 0.75,
+  pcPersonalRadius: 3.6,
+  pcPersonalWeight: 1.45,
+  goalWeight: 1.0,
+  maxInfluence: 1.4
+};
 
 const Y2P = 9;                 // yalms -> pixels
 const ARENA = { w: 110, h: 80 };  // yalms
@@ -369,12 +389,47 @@ function rotToward(a, tx, ty, dt){
   const step = 7*dt;
   a.rot = Math.abs(d)<step ? want : a.rot + Math.sign(d)*step;
 }
+function steeringVector(a){
+  if(a.isPC) return {x:0,y:0};
+  let sx=0, sy=0;
+  for(const other of actors){
+    if(other.hp<=0 || other.id===a.id) continue;
+    const dx=a.x-other.x, dy=a.y-other.y;
+    const d=Math.hypot(dx,dy);
+    if(d<=0.001 || d>=STEERING.separationRadius) continue;
+    const laneWeight = other.faction===a.faction ? STEERING.allyWeight : STEERING.enemyWeight;
+    const t=(1 - d/STEERING.separationRadius) * laneWeight;
+    sx += dx/d * t;
+    sy += dy/d * t;
+  }
+  if(pc && pc.hp>0 && !a.isPC){
+    const dx=a.x-pc.x, dy=a.y-pc.y;
+    const d=Math.hypot(dx,dy);
+    if(d>0.001 && d<STEERING.pcPersonalRadius){
+      const t=(1 - d/STEERING.pcPersonalRadius) * STEERING.pcPersonalWeight;
+      sx += dx/d * t;
+      sy += dy/d * t;
+    }
+  }
+  const len=Math.hypot(sx,sy);
+  if(len>STEERING.maxInfluence){
+    sx=sx/len*STEERING.maxInfluence;
+    sy=sy/len*STEERING.maxInfluence;
+  }
+  return {x:sx,y:sy};
+}
 function moveToward(a, tx, ty, dt, speed){
   const dx=tx-a.x, dy=ty-a.y, len=Math.hypot(dx,dy);
   if(len<0.05) return;
+  let mx=dx/len*STEERING.goalWeight, my=dy/len*STEERING.goalWeight;
+  const steer = steeringVector(a);
+  mx += steer.x;
+  my += steer.y;
+  const moveLen = Math.hypot(mx,my);
+  if(moveLen<0.001) return;
   const md = speed*dt;
   if(len<=md){ a.x=tx; a.y=ty; }
-  else { a.x += dx/len*md; a.y += dy/len*md; }
+  else { a.x += mx/moveLen*md; a.y += my/moveLen*md; }
   rotToward(a, tx, ty, dt);
 }
 function clampArena(a){
@@ -539,12 +594,65 @@ function slotCrowdingPenalty(actorId, candidate){
   }
   return penalty;
 }
+function densityAround(point, filter, radius){
+  let density = 0;
+  for(const a of actors){
+    if(a.hp<=0 || !filter(a)) continue;
+    const d = distP(a, point.x, point.y);
+    if(d >= radius) continue;
+    const t = 1 - d / radius;
+    density += t * t;
+  }
+  return density;
+}
+function signedProgress(point, origin, axis){
+  return (point.x-origin.x)*axis.x + (point.y-origin.y)*axis.y;
+}
+function influenceCost(actorNode, targetNode, candidate){
+  const axis = battleAxis();
+  const sideForward = actorNode.side===NODE_SIDE.Friendly ? axis : {x:-axis.x, y:-axis.y};
+  const allies = a => a.id!==actorNode.id && a.faction===actorNode.actor.faction;
+  const enemies = a => a.faction!==actorNode.actor.faction;
+  const allyDensity = densityAround(candidate, allies, INFLUENCE.allyDensityRadius);
+  const enemyDensity = densityAround(candidate, enemies, INFLUENCE.enemyDensityRadius);
+
+  let cost = allyDensity * INFLUENCE.allyDensityWeight;
+  cost += enemyDensity * INFLUENCE.enemyDensityWeight;
+
+  const actorProgress = signedProgress(actorNode.position, targetNode.position, sideForward);
+  const slotProgress = signedProgress(candidate, targetNode.position, sideForward);
+  const overextend = Math.max(0, slotProgress - Math.max(actorProgress + 2.5, actorNode.preferredEngageRange * 0.4));
+  cost += overextend * INFLUENCE.overextensionWeight;
+
+  if(actorNode.side===NODE_SIDE.Friendly){
+    const limit = commandLimit({id:actorNode.id});
+    const anchor = actorNode.commandAnchor;
+    const distFromCommand = Math.hypot(candidate.x-anchor.x, candidate.y-anchor.y);
+    cost += Math.max(0, distFromCommand - limit * 0.85) * INFLUENCE.commandRangeWeight;
+  }
+
+  const targetToSlot = normalize2({x:candidate.x-targetNode.position.x, y:candidate.y-targetNode.position.y}, {x:-sideForward.x,y:-sideForward.y});
+  const behindTarget = Math.max(0, -(targetToSlot.x*sideForward.x + targetToSlot.y*sideForward.y));
+  const frontTarget = Math.max(0, targetToSlot.x*sideForward.x + targetToSlot.y*sideForward.y);
+  if(actorNode.actor.ranged)
+    cost -= behindTarget * INFLUENCE.rangedBacklineWeight;
+  else
+    cost -= frontTarget * INFLUENCE.meleeFrontWeight;
+
+  const friendlyCenter = averagePosition(
+    actors.filter(a=>a.hp>0 && a.faction===actorNode.actor.faction),
+    actorNode.position);
+  cost += Math.max(0, flatDistance(candidate, friendlyCenter) - CFG.commandRange * 0.8) * INFLUENCE.isolationWeight;
+
+  return cost;
+}
 function scoreSlotCandidate(actorNode, targetNode, candidate, candidateCount=8){
   const preferredSlot = Math.floor(stableUnit(actorNode.id, targetNode.id ^ 0x5107) * candidateCount);
   const stickyBonus = actorNode.actor.reservedSlotId === candidate.slotId ? 55 : 0;
   return flatDistance(actorNode.position, candidate)
     + Math.abs(candidate.slotIndex - preferredSlot) * 0.35
     + slotCrowdingPenalty(actorNode.id, candidate)
+    + influenceCost(actorNode, targetNode, candidate)
     - stickyBonus;
 }
 function fallbackTacticalSlot(actorNode, targetNode){
