@@ -82,6 +82,22 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float EnemyTargetCurrentBonus = 50f;
     private const float EnemyTargetDpsWeight = 0.25f;
     private const float EnemyTargetSwitchThreshold = 25f;
+    private const int CompanionMeleePressureCap = 2;
+    private const int CompanionRangedPressureCap = 3;
+    private const int CompanionFocusPressureBonus = 1;
+    private const int EnemyMeleePressureCap = 3;
+    private const int EnemyRangedPressureCap = 2;
+    private const float TargetPressureOverCapPenalty = 260f;
+    private const int TargetGraphMaxPreferredDepth = 2;
+    private const float TargetGraphChainDepthPenalty = 75f;
+    private const float TargetGraphMutualPairBonus = 45f;
+    private const float TargetGraphPeelForPlayerBonus = 55f;
+    private const float TargetGraphBreakLongChainBonus = 30f;
+    private const float ReachabilitySoftPenaltyWeight = 55f;
+    private const float ReachabilityHardPenalty = 220f;
+    private const float ReachabilityUnreachableDelay = 0.95f;
+    private const float ReachabilityRecoveryDistance = 0.75f;
+    private const float ReachabilityCurrentStickySuppression = 0.25f;
     private static readonly DrawDataContainer.EquipmentSlot[] AppearanceEquipmentSlots =
     {
         DrawDataContainer.EquipmentSlot.Head,
@@ -197,6 +213,7 @@ public unsafe class CombatCompanionManager : IDisposable
         vnavmeshIpc.RefreshStatus();
         var terrainCache = BuildCompanionTerrainCache(enemies);
         var assignedTargets = new Dictionary<uint, int>();
+        var companionPressure = new Dictionary<PressureKey, int>();
         TickCombatAnchor(enemies);
 
         var liveCompanions = companions.ToList();
@@ -204,18 +221,22 @@ public unsafe class CombatCompanionManager : IDisposable
         {
             var companion = liveCompanions[i];
             TickRecentDps(companion, deltaTime);
-            AssignCompanionTarget(companion, enemies, assignedTargets);
+            AssignCompanionTarget(companion, enemies, assignedTargets, companionPressure);
         }
 
         var enemyTargets = new Dictionary<uint, uint>();
+        var enemyPressure = new Dictionary<PressureKey, int>();
         foreach (var enemy in enemies)
         {
             if (!enemy.IsSpawned || !enemy.State.IsAlive)
                 continue;
 
-            var target = SelectEnemyTarget(enemy);
+            var target = SelectEnemyTargetInternal(enemy, enemyPressure);
             if (target != null)
+            {
                 enemyTargets[enemy.SimulatedEntityId] = target.EntityId;
+                AddPressure(enemyPressure, target.EntityId, IsRangedStyle(enemy.Behavior.AutoAttackStyle));
+            }
         }
 
         var companionTargets = liveCompanions
@@ -277,6 +298,11 @@ public unsafe class CombatCompanionManager : IDisposable
     }
 
     public SimulatedEntityState? SelectEnemyTarget(SimulatedNpc enemy)
+        => SelectEnemyTargetInternal(enemy, null);
+
+    private SimulatedEntityState? SelectEnemyTargetInternal(
+        SimulatedNpc enemy,
+        Dictionary<PressureKey, int>? pressureMap = null)
     {
         if (!config.EnableCombatCompanions)
             return combatEngine.State.PlayerState;
@@ -308,7 +334,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
         if (!enemyTargetByEnemyId.TryGetValue(enemy.SimulatedEntityId, out var currentId))
         {
-            var best = SelectBalancedEnemyTarget(enemy.SimulatedEntityId, 0, candidates);
+            var best = SelectBalancedEnemyTarget(enemy.SimulatedEntityId, 0, candidates, pressureMap, enemy.Behavior.AutoAttackStyle);
             enemyTargetByEnemyId[enemy.SimulatedEntityId] = best.EntityId;
             return best.State;
         }
@@ -316,14 +342,14 @@ public unsafe class CombatCompanionManager : IDisposable
         var current = candidates.FirstOrDefault(c => c.EntityId == currentId);
         if (current.State == null)
         {
-            var best = SelectBalancedEnemyTarget(enemy.SimulatedEntityId, 0, candidates);
+            var best = SelectBalancedEnemyTarget(enemy.SimulatedEntityId, 0, candidates, pressureMap, enemy.Behavior.AutoAttackStyle);
             enemyTargetByEnemyId[enemy.SimulatedEntityId] = best.EntityId;
             return best.State;
         }
 
-        var balancedBest = SelectBalancedEnemyTarget(enemy.SimulatedEntityId, current.EntityId, candidates);
-        var currentScore = ScoreEnemyTargetCandidate(enemy.SimulatedEntityId, current.EntityId, current);
-        var bestScore = ScoreEnemyTargetCandidate(enemy.SimulatedEntityId, current.EntityId, balancedBest);
+        var balancedBest = SelectBalancedEnemyTarget(enemy.SimulatedEntityId, current.EntityId, candidates, pressureMap, enemy.Behavior.AutoAttackStyle);
+        var currentScore = ScoreEnemyTargetCandidate(enemy.SimulatedEntityId, current.EntityId, current, pressureMap, enemy.Behavior.AutoAttackStyle);
+        var bestScore = ScoreEnemyTargetCandidate(enemy.SimulatedEntityId, current.EntityId, balancedBest, pressureMap, enemy.Behavior.AutoAttackStyle);
         if (balancedBest.EntityId != current.EntityId && bestScore > currentScore + EnemyTargetSwitchThreshold)
         {
             enemyTargetByEnemyId[enemy.SimulatedEntityId] = balancedBest.EntityId;
@@ -336,16 +362,20 @@ public unsafe class CombatCompanionManager : IDisposable
     private (uint EntityId, SimulatedEntityState State, float Dps) SelectBalancedEnemyTarget(
         uint enemyId,
         uint currentId,
-        IReadOnlyList<(uint EntityId, SimulatedEntityState State, float Dps)> candidates)
+        IReadOnlyList<(uint EntityId, SimulatedEntityState State, float Dps)> candidates,
+        IReadOnlyDictionary<PressureKey, int>? pressureMap,
+        NpcAttackStyle attackStyle)
         => candidates
-            .OrderByDescending(c => ScoreEnemyTargetCandidate(enemyId, currentId, c))
+            .OrderByDescending(c => ScoreEnemyTargetCandidate(enemyId, currentId, c, pressureMap, attackStyle))
             .ThenBy(c => StableTargetTieBreak(enemyId, c.EntityId))
             .First();
 
     private float ScoreEnemyTargetCandidate(
         uint enemyId,
         uint currentId,
-        (uint EntityId, SimulatedEntityState State, float Dps) candidate)
+        (uint EntityId, SimulatedEntityState State, float Dps) candidate,
+        IReadOnlyDictionary<PressureKey, int>? pressureMap,
+        NpcAttackStyle attackStyle)
     {
         var assignedCount = enemyTargetByEnemyId
             .Where(kv => kv.Key != enemyId)
@@ -355,11 +385,102 @@ public unsafe class CombatCompanionManager : IDisposable
         score -= assignedCount * EnemyTargetAssignmentPenalty;
         if (candidate.EntityId == currentId)
             score += EnemyTargetCurrentBonus;
+        if (pressureMap != null)
+            score -= TargetPressurePenalty(
+                pressureMap,
+                candidate.EntityId,
+                IsRangedStyle(attackStyle),
+                EnemyMeleePressureCap,
+                EnemyRangedPressureCap);
+        score += TargetGraphScore(enemyId, candidate.EntityId);
         return score;
     }
 
     private static uint StableTargetTieBreak(uint enemyId, uint targetId)
         => (enemyId * 1103515245u + targetId * 2654435761u) & 0xFFFFu;
+
+    private static bool IsRangedStyle(NpcAttackStyle style)
+        => style is NpcAttackStyle.Ranged or NpcAttackStyle.Magic;
+
+    private static int PressureCount(IReadOnlyDictionary<PressureKey, int> map, uint targetId, bool ranged)
+        => map.GetValueOrDefault(new PressureKey(targetId, ranged));
+
+    private static void AddPressure(Dictionary<PressureKey, int> map, uint targetId, bool ranged)
+    {
+        var key = new PressureKey(targetId, ranged);
+        map[key] = map.GetValueOrDefault(key) + 1;
+    }
+
+    private static float TargetPressurePenalty(
+        IReadOnlyDictionary<PressureKey, int> map,
+        uint targetId,
+        bool ranged,
+        int meleeCap,
+        int rangedCap,
+        int extraCap = 0)
+    {
+        var cap = (ranged ? rangedCap : meleeCap) + extraCap;
+        var count = PressureCount(map, targetId, ranged);
+        return count >= cap ? (count - cap + 1) * TargetPressureOverCapPenalty : 0f;
+    }
+
+    private uint GraphTargetId(uint actorId, uint overrideActorId = 0, uint overrideTargetId = 0)
+    {
+        if (actorId == overrideActorId)
+            return overrideTargetId;
+
+        var companion = companions.FirstOrDefault(c => c.SimulatedEntityId == actorId);
+        if (companion is { IsSpawned: true } && companion.State.IsAlive)
+            return companion.CurrentTargetId;
+
+        return enemyTargetByEnemyId.GetValueOrDefault(actorId);
+    }
+
+    private int TargetChainDepth(uint fromId, uint toId)
+    {
+        var playerId = combatEngine.State.PlayerState.EntityId;
+        var depth = 1;
+        var seen = new HashSet<uint> { fromId };
+        var current = toId;
+
+        while (current != 0 && !seen.Contains(current))
+        {
+            seen.Add(current);
+            var next = GraphTargetId(current, fromId, toId);
+            if (next == 0 || next == playerId)
+                break;
+
+            depth++;
+            current = next;
+        }
+
+        return depth;
+    }
+
+    private float TargetGraphScore(uint actorId, uint candidateId)
+    {
+        var score = 0f;
+        var depth = TargetChainDepth(actorId, candidateId);
+        if (depth > TargetGraphMaxPreferredDepth)
+            score -= (depth - TargetGraphMaxPreferredDepth) * TargetGraphChainDepthPenalty;
+
+        if (GraphTargetId(candidateId) == actorId)
+            score += TargetGraphMutualPairBonus;
+
+        if (enemyTargetByEnemyId.ContainsKey(candidateId) &&
+            GraphTargetId(candidateId) == combatEngine.State.PlayerState.EntityId)
+            score += TargetGraphPeelForPlayerBonus;
+
+        var current = GraphTargetId(actorId);
+        if (current != 0)
+        {
+            var currentDepth = TargetChainDepth(actorId, current);
+            if (currentDepth > depth)
+                score += Math.Min(2, currentDepth - depth) * TargetGraphBreakLongChainBonus;
+        }
+
+        return score;
+    }
 
     public CombatCompanion? GetCompanion(uint entityId)
         => companions.FirstOrDefault(c => c.SimulatedEntityId == entityId);
@@ -388,6 +509,8 @@ public unsafe class CombatCompanionManager : IDisposable
             companion.EquipmentVariantApplied = false;
             companion.AutoAttackTimer = 0;
             companion.CurrentTargetId = 0;
+            companion.UnreachableTargetId = 0;
+            companion.UnreachableTimer = 0;
             companion.RecentDamage = 0;
             companion.RecentDps = 0;
 
@@ -753,6 +876,8 @@ public unsafe class CombatCompanionManager : IDisposable
         {
             ClearCompanionActionState(companion);
             companion.CurrentTargetId = 0;
+            companion.UnreachableTargetId = 0;
+            companion.UnreachableTimer = 0;
             combatPositioningService.Release(companion.SimulatedEntityId);
             EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
             MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
@@ -764,6 +889,8 @@ public unsafe class CombatCompanionManager : IDisposable
         {
             ClearCompanionActionState(companion);
             companion.CurrentTargetId = 0;
+            companion.UnreachableTargetId = 0;
+            companion.UnreachableTimer = 0;
             combatPositioningService.Release(companion.SimulatedEntityId);
             EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
             MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
@@ -774,13 +901,45 @@ public unsafe class CombatCompanionManager : IDisposable
         var sourceObj = (GameObject*)companion.BattleChara;
         var targetPos = (Vector3)targetObj->Position;
         var sourcePos = (Vector3)sourceObj->Position;
-        var dist = Vector3.Distance(sourcePos, targetPos);
+        var dist = FlatDistance(sourcePos, targetPos);
         var effectiveRange = GetPartyAttackRange(companion.Behavior.AutoAttackStyle) + MeleeAttackRangeBuffer;
+        var reachability = EvaluateCompanionReachability(companion, target);
+        if (reachability.Reachable || dist <= effectiveRange)
+        {
+            companion.UnreachableTargetId = 0;
+            companion.UnreachableTimer = 0;
+        }
+        else if (companion.UnreachableTargetId == target.SimulatedEntityId)
+        {
+            companion.UnreachableTimer += deltaTime;
+        }
+        else
+        {
+            companion.UnreachableTargetId = target.SimulatedEntityId;
+            companion.UnreachableTimer = deltaTime;
+        }
+
+        var currentUnreachable = companion.UnreachableTargetId == target.SimulatedEntityId &&
+                                 companion.UnreachableTimer >= ReachabilityUnreachableDelay;
 
         if (dist > effectiveRange)
         {
             combatPositioningService.Release(companion.SimulatedEntityId);
-            MoveByPartyPlan(companion, deltaTime, targetPos, terrainCache);
+            if (MoveByPartyPlan(companion, deltaTime, targetPos, terrainCache))
+                return;
+
+            if (currentUnreachable)
+            {
+                EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
+                MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
+                RotateToward(companion, targetPos, deltaTime);
+            }
+            else
+            {
+                StopMove(companion);
+                EnterCompanionState(companion, CompanionAiState.CombatReady);
+                RotateToward(companion, targetPos, deltaTime);
+            }
             return;
         }
 
@@ -845,7 +1004,8 @@ public unsafe class CombatCompanionManager : IDisposable
     private void AssignCompanionTarget(
         CombatCompanion companion,
         IReadOnlyList<SimulatedNpc> enemies,
-        Dictionary<uint, int> assignedTargets)
+        Dictionary<uint, int> assignedTargets,
+        Dictionary<PressureKey, int> pressureMap)
     {
         if (!companion.IsSpawned || !companion.State.IsAlive || companion.BattleChara == null)
             return;
@@ -853,11 +1013,27 @@ public unsafe class CombatCompanionManager : IDisposable
         if (!IsWithinCommandRange(companion))
         {
             companion.CurrentTargetId = 0;
+            companion.UnreachableTargetId = 0;
+            companion.UnreachableTimer = 0;
             return;
         }
 
-        var target = SelectCompanionTarget(companion, enemies, assignedTargets);
+        var previousTargetId = companion.CurrentTargetId;
+        var target = SelectCompanionTarget(companion, enemies, assignedTargets, pressureMap);
+        if (target == null)
+        {
+            companion.UnreachableTargetId = 0;
+            companion.UnreachableTimer = 0;
+        }
+        else if (previousTargetId != target.SimulatedEntityId)
+        {
+            companion.UnreachableTargetId = 0;
+            companion.UnreachableTimer = 0;
+        }
+
         companion.CurrentTargetId = target?.SimulatedEntityId ?? 0;
+        if (target != null)
+            AddPressure(pressureMap, target.SimulatedEntityId, IsRangedStyle(companion.Behavior.AutoAttackStyle));
     }
 
     private SimulatedNpc? GetCurrentCompanionTarget(CombatCompanion companion, IReadOnlyList<SimulatedNpc> enemies)
@@ -913,7 +1089,7 @@ public unsafe class CombatCompanionManager : IDisposable
         MoveByPlan(companion, plan, deltaTime, terrainCache);
     }
 
-    private void MoveByPartyPlan(
+    private bool MoveByPartyPlan(
         CombatCompanion companion,
         float deltaTime,
         Vector3 fallbackFaceTarget,
@@ -923,20 +1099,21 @@ public unsafe class CombatCompanionManager : IDisposable
         {
             StopMove(companion);
             EnterCompanionState(companion, CompanionAiState.CombatReady);
-            return;
+            RotateToward(companion, fallbackFaceTarget, deltaTime);
+            return false;
         }
 
-        MoveByPlan(companion, plan, deltaTime, terrainCache);
+        return MoveByPlan(companion, plan, deltaTime, terrainCache);
     }
 
-    private void MoveByPlan(
+    private bool MoveByPlan(
         CombatCompanion companion,
         PartyEngagePlan plan,
         float deltaTime,
         CompanionTerrainCache? terrainCache)
     {
         if (companion.BattleChara == null)
-            return;
+            return false;
 
         var obj = (GameObject*)companion.BattleChara;
         var current = (Vector3)obj->Position;
@@ -944,7 +1121,7 @@ public unsafe class CombatCompanionManager : IDisposable
         if (distance > FollowStopDistance)
         {
             MoveToward(companion, plan.Goal, deltaTime, terrainCache);
-            return;
+            return true;
         }
 
         StopMove(companion);
@@ -953,6 +1130,7 @@ public unsafe class CombatCompanionManager : IDisposable
             companion.CurrentTargetId == 0 ? CompanionAiState.Idle : CompanionAiState.CombatReady);
         if (plan.HasFaceTarget)
             RotateToward(companion, plan.FaceTarget, deltaTime);
+        return false;
     }
 
     private float GetPartyAttackRange(NpcAttackStyle style)
@@ -973,7 +1151,8 @@ public unsafe class CombatCompanionManager : IDisposable
     private SimulatedNpc? SelectCompanionTarget(
         CombatCompanion companion,
         IReadOnlyList<SimulatedNpc> enemies,
-        Dictionary<uint, int> assignedTargets)
+        Dictionary<uint, int> assignedTargets,
+        IReadOnlyDictionary<PressureKey, int> pressureMap)
     {
         var aliveEnemies = enemies
             .Where(e => e.IsSpawned && e.State.IsAlive && e.BattleChara != null)
@@ -989,7 +1168,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
         var scoredTargets = aliveEnemies
             .Select(enemy => (Enemy: enemy, Score: ScoreCompanionTarget(
-                companion, enemy, assignedTargets, selectedTargetId, playerId)))
+                companion, enemy, assignedTargets, selectedTargetId, playerId, pressureMap)))
             .OrderByDescending(t => t.Score)
             .ToList();
 
@@ -997,8 +1176,13 @@ public unsafe class CombatCompanionManager : IDisposable
         if (current != null)
         {
             var currentScore = scoredTargets.First(t => t.Enemy.SimulatedEntityId == current.SimulatedEntityId).Score;
+            var currentUnreachable = companion.UnreachableTargetId == companion.CurrentTargetId &&
+                                     companion.UnreachableTimer >= ReachabilityUnreachableDelay;
+            var switchThreshold = currentUnreachable
+                ? TargetSwitchThreshold * ReachabilityCurrentStickySuppression
+                : TargetSwitchThreshold;
             if (best.Enemy.SimulatedEntityId != current.SimulatedEntityId &&
-                best.Score < currentScore + TargetSwitchThreshold)
+                best.Score < currentScore + switchThreshold)
             {
                 best = (current, currentScore);
             }
@@ -1014,7 +1198,8 @@ public unsafe class CombatCompanionManager : IDisposable
         SimulatedNpc enemy,
         IReadOnlyDictionary<uint, int> assignedTargets,
         uint selectedTargetId,
-        uint playerId)
+        uint playerId,
+        IReadOnlyDictionary<PressureKey, int> pressureMap)
     {
         var score = 0f;
         var enemyId = enemy.SimulatedEntityId;
@@ -1030,7 +1215,12 @@ public unsafe class CombatCompanionManager : IDisposable
         if (GetEnemyTargetId(enemyId) == playerId)
             score += AttackingPlayerBonus;
         if (companion.CurrentTargetId == enemyId)
-            score += PreviousTargetBonus;
+        {
+            score += companion.UnreachableTargetId == enemyId &&
+                     companion.UnreachableTimer >= ReachabilityUnreachableDelay
+                ? PreviousTargetBonus * ReachabilityCurrentStickySuppression
+                : PreviousTargetBonus;
+        }
 
         var hpPercent = enemy.State.MaxHp > 0
             ? (float)enemy.State.CurrentHp / enemy.State.MaxHp
@@ -1042,6 +1232,16 @@ public unsafe class CombatCompanionManager : IDisposable
         score -= penalizedAssignments * AssignmentPenalty;
         if (isPlayerFocusTarget && assignedCount >= MaxPlayerFocusAssistants)
             score -= (assignedCount - MaxPlayerFocusAssistants + 1) * PlayerFocusOvercapPenalty;
+
+        score -= TargetPressurePenalty(
+            pressureMap,
+            enemyId,
+            IsRangedStyle(companion.Behavior.AutoAttackStyle),
+            CompanionMeleePressureCap,
+            CompanionRangedPressureCap,
+            isPlayerFocusTarget ? CompanionFocusPressureBonus : 0);
+        score += TargetGraphScore(companion.SimulatedEntityId, enemyId);
+        score += ReachabilityScore(companion, enemy);
 
         var distance = DistanceToPlayer(enemy);
         if (!float.IsInfinity(distance) && !float.IsNaN(distance))
@@ -1058,6 +1258,36 @@ public unsafe class CombatCompanionManager : IDisposable
 
         var enemyPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;
         return Vector3.Distance(player.Position, enemyPos);
+    }
+
+    private float ReachabilityScore(CombatCompanion companion, SimulatedNpc enemy)
+    {
+        var reachability = EvaluateCompanionReachability(companion, enemy);
+        if (reachability.Reachable)
+            return 0f;
+
+        return -ReachabilityHardPenalty - reachability.Overflow * ReachabilitySoftPenaltyWeight;
+    }
+
+    private (bool Reachable, float Overflow) EvaluateCompanionReachability(CombatCompanion companion, SimulatedNpc enemy)
+    {
+        var player = objectTable.LocalPlayer;
+        if (player == null || companion.BattleChara == null || enemy.BattleChara == null)
+            return (true, 0f);
+
+        var companionPos = (Vector3)((GameObject*)companion.BattleChara)->Position;
+        var enemyPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;
+        return partyEngagePlanner.EvaluateCompanionReachability(
+            companion.SimulatedEntityId,
+            companionPos,
+            enemyPos,
+            combatAnchorActive ? combatAnchorPosition : player.Position,
+            companion.Behavior.AutoAttackStyle,
+            MathF.Max(1.0f, config.PartyCommandRange),
+            Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f),
+            MathF.Max(0.5f, config.PartyMeleeAttackRange) + MeleeAttackRangeBuffer,
+            MathF.Max(1.0f, config.PartyRangedAttackRange) + MeleeAttackRangeBuffer,
+            ReachabilityRecoveryDistance);
     }
 
     private void MoveToward(
@@ -1900,4 +2130,6 @@ public unsafe class CombatCompanionManager : IDisposable
 
         private static float Lerp(float a, float b, float t) => a + (b - a) * t;
     }
+
+    private readonly record struct PressureKey(uint TargetId, bool Ranged);
 }

@@ -475,7 +475,9 @@ public unsafe class NpcAiController : IDisposable
         }
 
         var targetPos = combatEngine.GetSimulatedEntityPosition(simulatedTarget);
-        var distToTarget = Vector3.Distance(npcPos, targetPos);
+        var distToTarget = UsesPartyConfiguredRange(npc, simulatedTarget)
+            ? FlatDistance(npcPos, targetPos)
+            : Vector3.Distance(npcPos, targetPos);
         var targetEntityId = simulatedTarget.EntityId;
 
         if (npc.State.IsCasting && npc.State.CastTargetId != targetEntityId)
