@@ -42,7 +42,7 @@ public unsafe class NpcSpawner : IDisposable
     public IReadOnlyList<SimulatedNpc> SpawnedNpcs => spawnedNpcs;
     public int PendingCount => pendingSpawns.Count + spawnQueue.Count;
     public int TotalCount => spawnedNpcs.Count + pendingSpawns.Count + spawnQueue.Count;
-    public int MaxNpcs => 10;
+    public int MaxNpcs => 150;
 
     public Action<SimulatedNpc>? OnNpcSpawnComplete { get; set; }
     public Action<string>? OnSpawnError { get; set; }
@@ -90,6 +90,11 @@ public unsafe class NpcSpawner : IDisposable
         if (TotalCount >= MaxNpcs)
         {
             OnSpawnError?.Invoke("Maximum NPC limit reached.");
+            return;
+        }
+        if (config.DevOnlyHumanoidEnemies && !IsHumanoidSpawnRequest(request))
+        {
+            OnSpawnError?.Invoke("Humanoid-only enemy filter is enabled.");
             return;
         }
 
@@ -606,6 +611,19 @@ public unsafe class NpcSpawner : IDisposable
         return true;
     }
 
+    private bool IsHumanoidSpawnRequest(NpcSpawnRequest request)
+    {
+        if (request.ENpcBaseId == 0)
+            return false;
+
+        var sheet = dataManager.GetExcelSheet<ENpcBase>();
+        var row = sheet?.GetRowOrDefault(request.ENpcBaseId);
+        if (row == null)
+            return false;
+
+        return (int)row.Value.ModelChara.RowId == 0 && (byte)row.Value.Race.RowId > 0;
+    }
+
     /// <summary>
     /// Overwrite the 26 customize bytes + 10 equipment slots from an ENpcBase row.
     /// Called after BootstrapHumanoidFromPlayer so the base Character already has
@@ -731,20 +749,7 @@ public unsafe class NpcSpawner : IDisposable
     }
 
     private int CalculateNpcHp(int level, float multiplier)
-    {
-        int baseHp = level switch
-        {
-            <= 10 => 200 + level * 50,
-            <= 30 => 500 + level * 150,
-            <= 50 => 2000 + level * 500,
-            <= 70 => 10000 + level * 1000,
-            <= 80 => 30000 + level * 2000,
-            <= 90 => 80000 + level * 3000,
-            _ => 150000 + level * 5000,
-        };
-
-        return (int)(baseHp * multiplier);
-    }
+        => NpcHpCalculator.CalculateNormalEnemyHp(level, multiplier);
 
     public void Dispose()
     {

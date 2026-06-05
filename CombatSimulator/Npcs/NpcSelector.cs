@@ -60,6 +60,8 @@ public unsafe class NpcSelector : IDisposable
         var battleChara = (BattleChara*)target.Address;
         var character = (Character*)battleChara;
         var gameObj = (GameObject*)battleChara;
+        if (config.DevOnlyHumanoidEnemies && !IsHumanoidCharacter(character))
+            return (null, $"'{target.Name}' is not a humanoid character.");
 
         // Read original model for potential restore
         int originalModelCharaId = character->ModelContainer.ModelCharaId;
@@ -120,6 +122,8 @@ public unsafe class NpcSelector : IDisposable
     public bool RegisterSpawnedNpc(SimulatedNpc npc)
     {
         if (selectedNpcs.Count >= MaxTargets)
+            return false;
+        if (config.DevOnlyHumanoidEnemies && (npc.BattleChara == null || !IsHumanoidCharacter((Character*)npc.BattleChara)))
             return false;
 
         foreach (var existing in selectedNpcs)
@@ -270,6 +274,8 @@ public unsafe class NpcSelector : IDisposable
             var battleChara = (BattleChara*)obj.Address;
             var character = (Character*)battleChara;
             var gameObj = (GameObject*)battleChara;
+            if (config.DevOnlyHumanoidEnemies && !IsHumanoidCharacter(character))
+                continue;
 
             int originalModelCharaId = character->ModelContainer.ModelCharaId;
             byte originalObjectKind = (byte)gameObj->ObjectKind;
@@ -321,6 +327,12 @@ public unsafe class NpcSelector : IDisposable
         return added;
     }
 
+    private static bool IsHumanoidCharacter(Character* character)
+    {
+        var customize = (byte*)&character->DrawData.CustomizeData;
+        return customize[0] > 0;
+    }
+
     /// <summary>
     /// Validate selected NPCs still exist. Called each framework update.
     /// AccessViolationException from reading native memory on a freed object is
@@ -369,21 +381,7 @@ public unsafe class NpcSelector : IDisposable
     }
 
     private int CalculateNpcHp(int level, float multiplier)
-    {
-        // Tuned so a same-level DPS player wins 1v1 with ~55% HP remaining,
-        // 1v2 is a toss-up, and 1v3 is near-certain loss.
-        int baseHp = level switch
-        {
-            <= 10 => 100 + level * 30,
-            <= 30 => 200 + level * 80,
-            <= 50 => 500 + level * 200,
-            <= 70 => 2000 + level * 550,
-            <= 80 => 5000 + level * 1000,
-            <= 90 => 15000 + level * 1500,
-            _ => 40000 + level * 2500,
-        };
-        return (int)(baseHp * multiplier);
-    }
+        => NpcHpCalculator.CalculateNormalEnemyHp(level, multiplier);
 
     public void Dispose()
     {

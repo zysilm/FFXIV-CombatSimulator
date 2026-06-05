@@ -26,6 +26,8 @@ public unsafe class CombatCompanion
     public CompanionAiState AiState { get; set; }
     public NpcSkill? CurrentCastSkill { get; set; }
     public uint CurrentTargetId { get; set; }
+    public uint UnreachableTargetId { get; set; }
+    public float UnreachableTimer { get; set; }
     public float RecentDamage { get; set; }
     public float RecentDps { get; set; }
     public ActorVisualState VisualState { get; set; } = new();
