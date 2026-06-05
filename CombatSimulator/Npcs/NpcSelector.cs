@@ -60,6 +60,8 @@ public unsafe class NpcSelector : IDisposable
         var battleChara = (BattleChara*)target.Address;
         var character = (Character*)battleChara;
         var gameObj = (GameObject*)battleChara;
+        if (config.DevOnlyHumanoidEnemies && !IsHumanoidCharacter(character))
+            return (null, $"'{target.Name}' is not a humanoid character.");
 
         // Read original model for potential restore
         int originalModelCharaId = character->ModelContainer.ModelCharaId;
@@ -120,6 +122,8 @@ public unsafe class NpcSelector : IDisposable
     public bool RegisterSpawnedNpc(SimulatedNpc npc)
     {
         if (selectedNpcs.Count >= MaxTargets)
+            return false;
+        if (config.DevOnlyHumanoidEnemies && (npc.BattleChara == null || !IsHumanoidCharacter((Character*)npc.BattleChara)))
             return false;
 
         foreach (var existing in selectedNpcs)
@@ -270,6 +274,8 @@ public unsafe class NpcSelector : IDisposable
             var battleChara = (BattleChara*)obj.Address;
             var character = (Character*)battleChara;
             var gameObj = (GameObject*)battleChara;
+            if (config.DevOnlyHumanoidEnemies && !IsHumanoidCharacter(character))
+                continue;
 
             int originalModelCharaId = character->ModelContainer.ModelCharaId;
             byte originalObjectKind = (byte)gameObj->ObjectKind;
@@ -319,6 +325,12 @@ public unsafe class NpcSelector : IDisposable
         }
 
         return added;
+    }
+
+    private static bool IsHumanoidCharacter(Character* character)
+    {
+        var customize = (byte*)&character->DrawData.CustomizeData;
+        return customize[0] > 0;
     }
 
     /// <summary>

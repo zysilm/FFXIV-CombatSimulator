@@ -182,6 +182,7 @@ public class Configuration : IPluginConfiguration
     public bool DevNpcOcclusionHide { get; set; } = false;
     public float DevNpcOcclusionRadius { get; set; } = 1.0f;
     public bool DevCompanionAppearanceVariant { get; set; } = false;
+    public bool DevOnlyHumanoidEnemies { get; set; } = false;
     public bool RagdollNpcCollision { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcSettleCollision { get; set; } = true;
