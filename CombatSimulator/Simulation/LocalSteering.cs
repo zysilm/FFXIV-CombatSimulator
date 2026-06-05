@@ -29,7 +29,8 @@ public static class LocalSteering
     public static Vector3 SteerFlatDirection(
         LocalSteeringActor actor,
         Vector3 goalFlatDirection,
-        IEnumerable<LocalSteeringActor> actors)
+        IEnumerable<LocalSteeringActor> actors,
+        uint ignoredObstacleId = 0)
     {
         goalFlatDirection.Y = 0;
         var goalLenSq = goalFlatDirection.LengthSquared();
@@ -37,7 +38,7 @@ public static class LocalSteering
             return Vector3.Zero;
 
         var goal = goalFlatDirection / MathF.Sqrt(goalLenSq) * GoalWeight;
-        var steer = SteeringVector(actor, actors);
+        var steer = SteeringVector(actor, actors, ignoredObstacleId);
         var move = goal + steer;
         move.Y = 0;
 
@@ -49,7 +50,8 @@ public static class LocalSteering
 
     public static Vector3 SteeringVector(
         LocalSteeringActor actor,
-        IEnumerable<LocalSteeringActor> actors)
+        IEnumerable<LocalSteeringActor> actors,
+        uint ignoredObstacleId = 0)
     {
         if (actor.IsPc)
             return Vector3.Zero;
@@ -60,7 +62,7 @@ public static class LocalSteering
 
         foreach (var other in actors)
         {
-            if (other.Id == actor.Id)
+            if (other.Id == actor.Id || other.Id == ignoredObstacleId)
                 continue;
 
             if (other.IsPc)
@@ -78,7 +80,7 @@ public static class LocalSteering
             sz += dz / d * t;
         }
 
-        if (pc is { } player)
+        if (pc is { } player && player.Id != ignoredObstacleId)
         {
             var dx = actor.Position.X - player.Position.X;
             var dz = actor.Position.Z - player.Position.Z;

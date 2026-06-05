@@ -1369,7 +1369,8 @@ public unsafe class CombatCompanionManager : IDisposable
             companion.SimulatedEntityId,
             LocalSteeringFaction.Party,
             current,
-            dir);
+            dir,
+            companion.CurrentTargetId);
         if (dir == Vector3.Zero)
             return;
         var speed = companion.Behavior.MoveSpeed > 0 ? companion.Behavior.MoveSpeed : 6f;
@@ -1407,10 +1408,11 @@ public unsafe class CombatCompanionManager : IDisposable
         uint actorId,
         LocalSteeringFaction faction,
         Vector3 actorPosition,
-        Vector3 goalFlatDirection)
+        Vector3 goalFlatDirection,
+        uint ignoredObstacleId = 0)
     {
         var actor = new LocalSteeringActor(actorId, faction, actorPosition, IsPc: false);
-        return LocalSteering.SteerFlatDirection(actor, goalFlatDirection, BuildLocalSteeringActors(actor));
+        return LocalSteering.SteerFlatDirection(actor, goalFlatDirection, BuildLocalSteeringActors(actor), ignoredObstacleId);
     }
 
     private List<LocalSteeringActor> BuildLocalSteeringActors(LocalSteeringActor currentActor)

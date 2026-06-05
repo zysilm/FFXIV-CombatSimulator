@@ -2833,6 +2833,14 @@ public class MainWindow : IDisposable
             }
             HelpMarker("When enabled, only humanoid characters can be added as enemy targets. Applies to world targets, aggro-added targets, and Virtual Enemies.");
 
+            var partyApproachDebug = config.DevPartyApproachDebugLog;
+            if (ImGui.Checkbox("Party Approach Debug Log##dev", ref partyApproachDebug))
+            {
+                config.DevPartyApproachDebugLog = partyApproachDebug;
+                config.Save();
+            }
+            HelpMarker("Logs enemy party-approach plan, waypoint, steering, and range state about twice per second per enemy. Use briefly for 1v10 debugging.");
+
             var autoEngage = config.EnableNpcAutoEngage;
             if (ImGui.Checkbox("NPC Auto Engage##dev", ref autoEngage))
             {
