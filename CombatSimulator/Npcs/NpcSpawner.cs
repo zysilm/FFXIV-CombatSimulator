@@ -749,20 +749,7 @@ public unsafe class NpcSpawner : IDisposable
     }
 
     private int CalculateNpcHp(int level, float multiplier)
-    {
-        int baseHp = level switch
-        {
-            <= 10 => 200 + level * 50,
-            <= 30 => 500 + level * 150,
-            <= 50 => 2000 + level * 500,
-            <= 70 => 10000 + level * 1000,
-            <= 80 => 30000 + level * 2000,
-            <= 90 => 80000 + level * 3000,
-            _ => 150000 + level * 5000,
-        };
-
-        return (int)(baseHp * multiplier);
-    }
+        => NpcHpCalculator.CalculateNormalEnemyHp(level, multiplier);
 
     public void Dispose()
     {

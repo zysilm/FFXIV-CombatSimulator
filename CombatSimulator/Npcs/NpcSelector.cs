@@ -381,21 +381,7 @@ public unsafe class NpcSelector : IDisposable
     }
 
     private int CalculateNpcHp(int level, float multiplier)
-    {
-        // Tuned so a same-level DPS player wins 1v1 with ~55% HP remaining,
-        // 1v2 is a toss-up, and 1v3 is near-certain loss.
-        int baseHp = level switch
-        {
-            <= 10 => 100 + level * 30,
-            <= 30 => 200 + level * 80,
-            <= 50 => 500 + level * 200,
-            <= 70 => 2000 + level * 550,
-            <= 80 => 5000 + level * 1000,
-            <= 90 => 15000 + level * 1500,
-            _ => 40000 + level * 2500,
-        };
-        return (int)(baseHp * multiplier);
-    }
+        => NpcHpCalculator.CalculateNormalEnemyHp(level, multiplier);
 
     public void Dispose()
     {
