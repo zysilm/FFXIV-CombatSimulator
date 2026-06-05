@@ -25,6 +25,8 @@ public static class LocalSteering
     public const float PcPersonalWeight = 1.45f;
     public const float GoalWeight = 1.0f;
     public const float MaxInfluence = 1.4f;
+    private const float MinGoalForwardWeight = 0.35f;
+    private const float BlockedSidewaysDamping = 0.6f;
 
     public static Vector3 SteerFlatDirection(
         LocalSteeringActor actor,
@@ -37,10 +39,19 @@ public static class LocalSteering
         if (goalLenSq <= 0.000001f)
             return Vector3.Zero;
 
-        var goal = goalFlatDirection / MathF.Sqrt(goalLenSq) * GoalWeight;
+        var goalDir = goalFlatDirection / MathF.Sqrt(goalLenSq);
+        var goal = goalDir * GoalWeight;
         var steer = SteeringVector(actor, actors, ignoredObstacleId);
         var move = goal + steer;
         move.Y = 0;
+
+        var forward = Vector3.Dot(move, goalDir);
+        if (forward < MinGoalForwardWeight)
+        {
+            var sideways = move - goalDir * forward;
+            move = goalDir * MinGoalForwardWeight + sideways * BlockedSidewaysDamping;
+            move.Y = 0;
+        }
 
         var moveLenSq = move.LengthSquared();
         return moveLenSq <= 0.000001f

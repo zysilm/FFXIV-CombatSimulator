@@ -47,6 +47,7 @@ public unsafe class NpcAiController : IDisposable
     private const float TerrainGridStep = 0.5f;
     private const int TerrainGridMaxSize = 33;
     private const float PartyMeleeAttackRangeBuffer = 0.25f;
+    private const float PartyApproachMovementEpsilon = 0.02f;
     private const float PartyApproachDebugInterval = 0.5f;
     // Within (approach distance + lock buffer) an enemy locks its angle and stops;
     // it only unlocks to re-approach if pushed beyond (approach distance + unlock).
@@ -1063,7 +1064,12 @@ public unsafe class NpcAiController : IDisposable
                 flatMove,
                 npcTarget.EntityId);
             if (moveDir == Vector3.Zero)
+            {
+                LogPartyApproachDebug(npc, "steering-blocked", npcPos, npcTargetPos, partyPlan, moveTarget, hasVnavmeshTarget, distToTarget, partyAttackRange);
+                StopApproachMoveAnim(npc);
+                ForceRotateToward(npc, facePos, deltaTime);
                 return;
+            }
             newPos = npcPos + moveDir * moveDist;
         }
 
@@ -1081,6 +1087,14 @@ public unsafe class NpcAiController : IDisposable
         else
         {
             newPos.Y = targetPos.Y;
+        }
+
+        if (FlatDistance(npcPos, newPos) <= PartyApproachMovementEpsilon)
+        {
+            LogPartyApproachDebug(npc, "settled-no-move", npcPos, npcTargetPos, partyPlan, moveTarget, hasVnavmeshTarget, distToTarget, partyAttackRange, moveDir, newPos);
+            StopApproachMoveAnim(npc);
+            ForceRotateToward(npc, facePos, deltaTime);
+            return;
         }
 
         // Call the real SetPosition via the hook bypass — this updates both

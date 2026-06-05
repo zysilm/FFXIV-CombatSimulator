@@ -62,6 +62,7 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float VNavmeshLookaheadDistance = 1.25f;
     private const float TerrainGridStep = 0.5f;
     private const int TerrainGridMaxSize = 33;
+    private const float CompanionMovementEpsilon = 0.02f;
     private const float RecentDpsWindowSeconds = 8.0f;
     private const float RetargetDpsLead = 1.20f;
     private const float FollowDistance = 3.0f;
@@ -1358,10 +1359,7 @@ public unsafe class CombatCompanionManager : IDisposable
         dir.Y = 0;
         if (dir.LengthSquared() < 0.01f)
         {
-            StopMove(companion);
-            EnterCompanionState(
-                companion,
-                companion.CurrentTargetId == 0 ? CompanionAiState.Idle : CompanionAiState.CombatReady);
+            StopCompanionAtMoveTarget(companion, moveTarget, deltaTime);
             return;
         }
 
@@ -1372,7 +1370,10 @@ public unsafe class CombatCompanionManager : IDisposable
             dir,
             companion.CurrentTargetId);
         if (dir == Vector3.Zero)
+        {
+            StopCompanionAtMoveTarget(companion, moveTarget, deltaTime);
             return;
+        }
         var speed = companion.Behavior.MoveSpeed > 0 ? companion.Behavior.MoveSpeed : 6f;
         var remainingDist = Vector3.Distance(new Vector3(current.X, 0, current.Z), new Vector3(moveTarget.X, 0, moveTarget.Z));
         var moveDist = speed * deltaTime;
@@ -1396,12 +1397,27 @@ public unsafe class CombatCompanionManager : IDisposable
             next.Y = targetPos.Y;
         }
 
+        if (FlatDistance(current, next) <= CompanionMovementEpsilon)
+        {
+            StopCompanionAtMoveTarget(companion, moveTarget, deltaTime);
+            return;
+        }
+
         movementBlockHook.AddApproachNpc(companion.Address);
         EnterCompanionState(
             companion,
             companion.CurrentTargetId == 0 ? CompanionAiState.ReturningToCommandRange : CompanionAiState.MovingToTarget,
             deltaTime);
         movementBlockHook.SetApproachPosition(obj, next.X, next.Y, next.Z);
+    }
+
+    private void StopCompanionAtMoveTarget(CombatCompanion companion, Vector3 faceTarget, float deltaTime)
+    {
+        StopMove(companion);
+        EnterCompanionState(
+            companion,
+            companion.CurrentTargetId == 0 ? CompanionAiState.Idle : CompanionAiState.CombatReady);
+        RotateToward(companion, faceTarget, deltaTime);
     }
 
     private Vector3 GetSteeredMoveDirection(
