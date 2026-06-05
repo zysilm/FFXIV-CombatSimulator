@@ -47,6 +47,7 @@ public unsafe class NpcAiController : IDisposable
     private const float TerrainGridStep = 0.5f;
     private const int TerrainGridMaxSize = 33;
     private const float PartyMeleeAttackRangeBuffer = 0.25f;
+    private const float PartyAttackRangeHysteresis = 0.15f;
     private const float PartyApproachMovementEpsilon = 0.02f;
     private const float PartyApproachDebugInterval = 0.5f;
     // Within (approach distance + lock buffer) an enemy locks its angle and stops;
@@ -980,7 +981,7 @@ public unsafe class NpcAiController : IDisposable
             if (terrainCache != null && approachPaths.TryGetValue(npc.Address, out var holdPathState))
                 CorrectStableRootHeight(gameObj, npcPos, terrainCache, holdPathState, deltaTime, preserveInitialClearance: false);
 
-            LogPartyApproachDebug(npc, "no-plan", npcPos, npcTargetPos, null, npcPos, false, distToTarget: FlatDistance(npcPos, npcTargetPos), attackRange: GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer);
+            LogPartyApproachDebug(npc, "no-plan", npcPos, npcTargetPos, null, npcPos, false, distToTarget: FlatDistance(npcPos, npcTargetPos), attackRange: GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis);
             StopApproachMoveAnim(npc);
             return;
         }
@@ -988,7 +989,7 @@ public unsafe class NpcAiController : IDisposable
         var targetPos = partyPlan.Goal;
         var facePos = partyPlan.HasFaceTarget ? partyPlan.FaceTarget : npcPos;
         var distToTarget = FlatDistance(npcPos, npcTargetPos);
-        var partyAttackRange = GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer;
+        var partyAttackRange = GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis;
         if (distToTarget <= partyAttackRange)
         {
             if (terrainCache != null && TryGetOrCreateApproachPathState(npc, out var attackRangeState))
@@ -1022,7 +1023,7 @@ public unsafe class NpcAiController : IDisposable
 
         if (FlatDistance(npcPos, moveTarget) <= 0.3f)
         {
-            if (partyPlan.Kind != PartyEngagePlanKind.ReturnToCommand &&
+            if (partyPlan.Kind == PartyEngagePlanKind.EngagePoint &&
                 FlatDistance(npcPos, npcTargetPos) > 0.3f)
             {
                 moveTarget = npcTargetPos;
@@ -1231,7 +1232,7 @@ public unsafe class NpcAiController : IDisposable
     private float GetEffectiveNpcAttackRange(SimulatedNpc npc, SimulatedEntityState target)
     {
         if (UsesPartyConfiguredRange(npc, target))
-            return GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer;
+            return GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis;
 
         // For real NPCs: use a generous range since we can't move them.
         return npc.IsClientControlled
@@ -1242,7 +1243,7 @@ public unsafe class NpcAiController : IDisposable
     private float GetEffectiveNpcSkillRange(SimulatedNpc npc, SimulatedEntityState target, float skillRange)
     {
         if (UsesPartyConfiguredRange(npc, target))
-            return MathF.Min(skillRange, GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer);
+            return MathF.Min(skillRange, GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis);
 
         return skillRange;
     }
