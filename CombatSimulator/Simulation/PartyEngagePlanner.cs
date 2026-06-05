@@ -198,6 +198,10 @@ public sealed unsafe class PartyEngagePlanner
         uint actorId,
         Vector3 actorPosition,
         Vector3 targetPosition,
+        IReadOnlyList<CombatCompanion> companions,
+        IReadOnlyList<SimulatedNpc> enemies,
+        IReadOnlyDictionary<uint, uint> companionTargets,
+        IReadOnlyDictionary<uint, uint> enemyTargets,
         Vector3 commandAnchorPosition,
         NpcAttackStyle attackStyle,
         float commandRange,
@@ -206,27 +210,43 @@ public sealed unsafe class PartyEngagePlanner
         float partyRangedAttackRange,
         float recoveryDistance)
     {
+        var nodes = BuildNodes(
+            commandAnchorPosition,
+            companions,
+            enemies,
+            companionTargets,
+            enemyTargets,
+            partyMeleeAttackRange,
+            partyRangedAttackRange);
         var node = new PartyNode(
             actorId,
             PartyNodeSide.Friendly,
             actorPosition,
             commandAnchorPosition,
             GetPreferredEngageRange(attackStyle, partyMeleeAttackRange, partyRangedAttackRange),
-            1,
+            0,
             IsRangedStyle(attackStyle));
+        nodes[actorId] = node;
         var target = new PartyNode(
-            1,
+            SyntheticTargetId(actorId, nodes),
             PartyNodeSide.Enemy,
             targetPosition,
             targetPosition,
             GetPreferredEngageRange(NpcAttackStyle.Melee, partyMeleeAttackRange, partyRangedAttackRange),
             0,
             false);
-        var nodes = new Dictionary<uint, PartyNode>
+        foreach (var existing in nodes.Values)
         {
-            [node.Id] = node,
-            [target.Id] = target,
-        };
+            if (existing.Side == PartyNodeSide.Enemy && FlatDistance(existing.Position, targetPosition) < 0.001f)
+            {
+                target = existing;
+                break;
+            }
+        }
+
+        if (!nodes.ContainsKey(target.Id))
+            nodes[target.Id] = target;
+
         var limit = GetCommandLimit(actorId, commandRange, commandRandomness);
         var bestOverflow = float.PositiveInfinity;
 
@@ -1082,6 +1102,14 @@ public sealed unsafe class PartyEngagePlanner
         x *= 0x846ca68bu;
         x ^= x >> 16;
         return (x & 0xFFFFFF) / 16777215.0f;
+    }
+
+    private static uint SyntheticTargetId(uint actorId, IReadOnlyDictionary<uint, PartyNode> nodes)
+    {
+        var id = actorId ^ 0x80000000u;
+        while (id == 0 || nodes.ContainsKey(id))
+            id++;
+        return id;
     }
 
     private static Vector3 FlatNormalize(Vector3 value, Vector3 fallback)
