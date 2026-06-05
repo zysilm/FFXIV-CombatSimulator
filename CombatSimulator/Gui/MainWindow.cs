@@ -233,6 +233,10 @@ public class MainWindow : IDisposable
                 {
                     // Ragdoll
                     config.RagdollActivationDelay = 1.0f;
+                    config.EnableNpcDeathRagdoll = true;
+                    config.NpcRagdollActivationDelay = 0.5f;
+                    config.PartyCompanionDeathRagdoll = true;
+                    config.PartyEnemyDeathRagdoll = true;
                     config.RagdollGravity = 9.8f;
                     config.RagdollDamping = 0.97f;
                     config.RagdollSolverIterations = 8;
@@ -409,20 +413,6 @@ public class MainWindow : IDisposable
         if (ImGui.SliderFloat("Ranged attack range", ref rangedRange, 5.0f, 35.0f, "%.1f yalms"))
         {
             config.PartyRangedAttackRange = rangedRange;
-            config.Save();
-        }
-
-        var companionRagdoll = config.PartyCompanionDeathRagdoll;
-        if (ImGui.Checkbox("Ragdoll companions on death", ref companionRagdoll))
-        {
-            config.PartyCompanionDeathRagdoll = companionRagdoll;
-            config.Save();
-        }
-
-        var enemyRagdoll = config.PartyEnemyDeathRagdoll;
-        if (ImGui.Checkbox("Ragdoll enemies on death", ref enemyRagdoll))
-        {
-            config.PartyEnemyDeathRagdoll = enemyRagdoll;
             config.Save();
         }
 
@@ -2660,34 +2650,35 @@ public class MainWindow : IDisposable
                 }
 
                 ImGui.Separator();
-                ImGui.Text("NPC Death Ragdoll");
+                ImGui.Text("Death Ragdoll");
 
                 var npcRagdoll = config.EnableNpcDeathRagdoll;
-                if (ImGui.Checkbox("Enable NPC Death Ragdoll##npcragdoll", ref npcRagdoll))
+                if (ImGui.Checkbox("Ragdoll enemies on death##npcragdoll", ref npcRagdoll))
                 {
                     config.EnableNpcDeathRagdoll = npcRagdoll;
+                    config.PartyEnemyDeathRagdoll = npcRagdoll;
                     config.Save();
                 }
-                HelpMarker("Apply ragdoll physics to enemy NPCs when they die in combat.");
+                HelpMarker("Apply ragdoll physics to enemy NPCs when they die in combat, including party mode enemies.");
 
                 if (config.EnableNpcDeathRagdoll)
                 {
                     var npcDelay = config.NpcRagdollActivationDelay;
-                    if (ImGui.SliderFloat("NPC Activation Delay (s)##npcragdoll", ref npcDelay, 0.0f, 5.0f, "%.1f"))
+                    if (ImGui.SliderFloat("Enemy activation delay (s)##npcragdoll", ref npcDelay, 0.0f, 5.0f, "%.1f"))
                     {
                         config.NpcRagdollActivationDelay = npcDelay;
                         config.Save();
                     }
-                    HelpMarker("Seconds after NPC death before ragdoll physics take over.");
-
-                    var maxNpc = config.MaxNpcRagdolls;
-                    if (ImGui.SliderInt("Max Concurrent##npcragdoll", ref maxNpc, 1, 20))
-                    {
-                        config.MaxNpcRagdolls = maxNpc;
-                        config.Save();
-                    }
-                    HelpMarker("Maximum number of NPC ragdolls active at once. Oldest is removed when the limit is reached.");
+                    HelpMarker("Seconds after enemy death before ragdoll physics take over.");
                 }
+
+                var companionRagdoll = config.PartyCompanionDeathRagdoll;
+                if (ImGui.Checkbox("Ragdoll companions on death##companionragdoll", ref companionRagdoll))
+                {
+                    config.PartyCompanionDeathRagdoll = companionRagdoll;
+                    config.Save();
+                }
+                HelpMarker("Apply ragdoll physics to party companion clones when they die.");
 
                 ImGui.Unindent();
             }

@@ -754,11 +754,11 @@ public unsafe class RagdollController : IDisposable
         // When disabled (null), only body-static collisions are allowed.
         var connectedPairs = config.RagdollSelfCollision ? new HashSet<(int, int)>() : null;
 
-        // Party ragdolls deal with many more colliding bodies/statics, so force a
-        // higher solver iteration count for stability while either party ragdoll
-        // option is enabled. Reverts to the GUI-configured value when both are off
-        // (each ragdoll re-reads config at activation).
-        var partyRagdollActive = config.PartyCompanionDeathRagdoll || config.PartyEnemyDeathRagdoll;
+        // Party combat ragdolls deal with many more colliding bodies/statics, so
+        // force a higher solver iteration count for stability while party combat
+        // ragdolls are enabled.
+        var partyRagdollActive = config.EnableCombatCompanions &&
+            (config.PartyCompanionDeathRagdoll || config.EnableNpcDeathRagdoll);
         var solverIterations = partyRagdollActive ? 8 : config.RagdollSolverIterations;
 
         bufferPool = new BufferPool();

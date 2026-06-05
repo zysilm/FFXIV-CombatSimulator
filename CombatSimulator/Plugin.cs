@@ -455,27 +455,16 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // Weapon drop runs alongside ragdoll using the same activation delay
         weaponDropController.SpawnFor(address, config.NpcRagdollActivationDelay);
 
-        var partyMode = config.EnableCombatCompanions;
-        if (partyMode)
-        {
-            if (!config.PartyEnemyDeathRagdoll) return;
-        }
-        else if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
+        if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
         {
             return;
-        }
-
-        // Cap concurrent NPC ragdolls — evict the oldest
-        if (npcRagdolls.Count >= config.MaxNpcRagdolls)
-        {
-            var oldest = npcRagdolls.Keys.First();
-            RemoveNpcRagdoll(oldest);
         }
 
         if (npcRagdolls.ContainsKey(address)) return;
 
         log.Info($"NPC death ragdoll: activating for 0x{address:X}");
 
+        var partyMode = config.EnableCombatCompanions;
         var controller = partyMode
             ? new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses)
             : new RagdollController(boneTransformService, config, log);
@@ -556,13 +545,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     {
         weaponDropController.SpawnFor(address, config.RagdollActivationDelay);
 
-        if (!config.PartyCompanionDeathRagdoll) return;
-
-        if (npcRagdolls.Count >= config.MaxNpcRagdolls)
-        {
-            var oldest = npcRagdolls.Keys.First();
-            RemoveNpcRagdoll(oldest);
-        }
+        if (!config.EnableRagdoll || !config.PartyCompanionDeathRagdoll) return;
 
         if (npcRagdolls.ContainsKey(address)) return;
 

@@ -90,8 +90,8 @@ public class Configuration : IPluginConfiguration
     public float PartyCommandRangeRandomness { get; set; } = 0.2f;
     public float PartyMeleeAttackRange { get; set; } = 1.5f;
     public float PartyRangedAttackRange { get; set; } = 9.5f;
-    public bool PartyCompanionDeathRagdoll { get; set; } = false;
-    public bool PartyEnemyDeathRagdoll { get; set; } = false;
+    public bool PartyCompanionDeathRagdoll { get; set; } = true;
+    public bool PartyEnemyDeathRagdoll { get; set; } = true; // Legacy: merged into EnableNpcDeathRagdoll.
 
     // NPC Defaults
     public int DefaultNpcLevel { get; set; } = 90;
@@ -122,9 +122,9 @@ public class Configuration : IPluginConfiguration
 
     // Target Formation
     public bool EnableNpcTargetPlayer { get; set; } = true;
-    public bool EnableTargetApproach { get; set; } = false;
+    public bool EnableTargetApproach { get; set; } = true;
     public bool UseSoloTargetFormationWhenNoCompanions { get; set; } = false;
-    public float TargetApproachDistance { get; set; } = 3.0f;
+    public float TargetApproachDistance { get; set; } = 1.5f;
     public bool UseVNavmeshTargetApproach { get; set; } = true;
 
     // Aggro propagation: nearby BattleNpcs auto-added as targets when one is engaged
