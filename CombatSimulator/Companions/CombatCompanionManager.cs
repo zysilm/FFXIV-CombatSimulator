@@ -1315,7 +1315,13 @@ public unsafe class CombatCompanionManager : IDisposable
             return;
         }
 
-        dir = Vector3.Normalize(dir);
+        dir = GetSteeredMoveDirection(
+            companion.SimulatedEntityId,
+            LocalSteeringFaction.Party,
+            current,
+            dir);
+        if (dir == Vector3.Zero)
+            return;
         var speed = companion.Behavior.MoveSpeed > 0 ? companion.Behavior.MoveSpeed : 6f;
         var remainingDist = Vector3.Distance(new Vector3(current.X, 0, current.Z), new Vector3(moveTarget.X, 0, moveTarget.Z));
         var moveDist = speed * deltaTime;
@@ -1345,6 +1351,51 @@ public unsafe class CombatCompanionManager : IDisposable
             companion.CurrentTargetId == 0 ? CompanionAiState.ReturningToCommandRange : CompanionAiState.MovingToTarget,
             deltaTime);
         movementBlockHook.SetApproachPosition(obj, next.X, next.Y, next.Z);
+    }
+
+    private Vector3 GetSteeredMoveDirection(
+        uint actorId,
+        LocalSteeringFaction faction,
+        Vector3 actorPosition,
+        Vector3 goalFlatDirection)
+    {
+        var actor = new LocalSteeringActor(actorId, faction, actorPosition, IsPc: false);
+        return LocalSteering.SteerFlatDirection(actor, goalFlatDirection, BuildLocalSteeringActors(actor));
+    }
+
+    private List<LocalSteeringActor> BuildLocalSteeringActors(LocalSteeringActor currentActor)
+    {
+        var actors = new List<LocalSteeringActor>();
+        var player = objectTable.LocalPlayer;
+        var playerState = combatEngine.State.PlayerState;
+        if (player != null && playerState.IsAlive)
+        {
+            actors.Add(new LocalSteeringActor(
+                playerState.EntityId,
+                LocalSteeringFaction.Party,
+                player.Position,
+                IsPc: true));
+        }
+
+        actors.Add(currentActor);
+
+        foreach (var entity in combatEngine.State.Entities.Values)
+        {
+            if (!entity.IsAlive || entity.EntityId == currentActor.Id)
+                continue;
+
+            var position = combatEngine.GetSimulatedEntityPosition(entity);
+            if (position == Vector3.Zero)
+                continue;
+
+            actors.Add(new LocalSteeringActor(
+                entity.EntityId,
+                entity.IsCompanion ? LocalSteeringFaction.Party : LocalSteeringFaction.Enemy,
+                position,
+                IsPc: false));
+        }
+
+        return actors;
     }
 
     private void FollowPlayer(
