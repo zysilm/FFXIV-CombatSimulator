@@ -72,6 +72,12 @@ public sealed unsafe class PartyEngagePlanner
         pathStates.Clear();
     }
 
+    public void ClearSlotReservation(uint actorId)
+    {
+        assignedSlots.Remove(actorId);
+        reservedSlotIds.Remove(actorId);
+    }
+
     public void Build(
         float deltaTime,
         Vector3 playerPosition,
@@ -402,30 +408,7 @@ public sealed unsafe class PartyEngagePlanner
             ? slot.Position
             : FallbackTacticalSlot(actor, target, commandRange, commandRandomness).Position;
         var path = GetSharedPath(key, actor.Position, goal, livePathKeys);
-        return BuildPathGoalPlan(actor, target.Id, target.Position, path, commandRange, commandRandomness, kind);
-    }
-
-    private PartyEngagePlan BuildPathGoalPlan(
-        PartyNode actor,
-        uint targetId,
-        Vector3 faceTarget,
-        IReadOnlyList<Vector3> path,
-        float commandRange,
-        float commandRandomness,
-        PartyEngagePlanKind kind)
-    {
-        var goal = path.Count > 0 ? path[^1] : actor.Position;
-        goal = ClampToCommandAnchor(actor, goal, commandRange, commandRandomness, out var leashed);
-
-        return new PartyEngagePlan
-        {
-            ActorId = actor.Id,
-            TargetId = leashed ? 0 : targetId,
-            Kind = leashed ? PartyEngagePlanKind.ReturnToCommand : kind,
-            Goal = goal,
-            FaceTarget = faceTarget,
-            HasFaceTarget = !leashed,
-        };
+        return BuildPathPointPlan(actor, target.Id, target.Position, path, true, commandRange, commandRandomness, kind);
     }
 
     private PartyEngagePlan BuildPathPointPlan(

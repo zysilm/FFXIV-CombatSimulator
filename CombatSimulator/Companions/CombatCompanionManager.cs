@@ -508,9 +508,7 @@ public unsafe class CombatCompanionManager : IDisposable
             companion.DeathAnimationPlayed = false;
             companion.EquipmentVariantApplied = false;
             companion.AutoAttackTimer = 0;
-            companion.CurrentTargetId = 0;
-            companion.UnreachableTargetId = 0;
-            companion.UnreachableTimer = 0;
+            ClearCompanionTargetState(companion);
             companion.RecentDamage = 0;
             companion.RecentDps = 0;
 
@@ -859,6 +857,7 @@ public unsafe class CombatCompanionManager : IDisposable
         if (!companion.State.IsAlive)
         {
             ClearCompanionActionState(companion);
+            ClearCompanionTargetState(companion);
             combatPositioningService.Release(companion.SimulatedEntityId);
             StopMove(companion);
             EnterCompanionState(companion, CompanionAiState.Dead);
@@ -877,9 +876,7 @@ public unsafe class CombatCompanionManager : IDisposable
         if (!IsWithinCommandRange(companion))
         {
             ClearCompanionActionState(companion);
-            companion.CurrentTargetId = 0;
-            companion.UnreachableTargetId = 0;
-            companion.UnreachableTimer = 0;
+            ClearCompanionTargetState(companion);
             combatPositioningService.Release(companion.SimulatedEntityId);
             EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
             MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
@@ -890,9 +887,7 @@ public unsafe class CombatCompanionManager : IDisposable
         if (target == null || target.BattleChara == null)
         {
             ClearCompanionActionState(companion);
-            companion.CurrentTargetId = 0;
-            companion.UnreachableTargetId = 0;
-            companion.UnreachableTimer = 0;
+            ClearCompanionTargetState(companion);
             combatPositioningService.Release(companion.SimulatedEntityId);
             EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
             MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
@@ -1006,6 +1001,14 @@ public unsafe class CombatCompanionManager : IDisposable
         companion.State.AnimationLock = 0;
     }
 
+    private void ClearCompanionTargetState(CombatCompanion companion)
+    {
+        companion.CurrentTargetId = 0;
+        companion.UnreachableTargetId = 0;
+        companion.UnreachableTimer = 0;
+        partyEngagePlanner.ClearSlotReservation(companion.SimulatedEntityId);
+    }
+
     private void AssignCompanionTarget(
         CombatCompanion companion,
         IReadOnlyList<SimulatedNpc> enemies,
@@ -1017,9 +1020,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
         if (!IsWithinCommandRange(companion))
         {
-            companion.CurrentTargetId = 0;
-            companion.UnreachableTargetId = 0;
-            companion.UnreachableTimer = 0;
+            ClearCompanionTargetState(companion);
             return;
         }
 
@@ -1027,8 +1028,8 @@ public unsafe class CombatCompanionManager : IDisposable
         var target = SelectCompanionTarget(companion, enemies, assignedTargets, pressureMap);
         if (target == null)
         {
-            companion.UnreachableTargetId = 0;
-            companion.UnreachableTimer = 0;
+            ClearCompanionTargetState(companion);
+            return;
         }
         else if (previousTargetId != target.SimulatedEntityId)
         {
