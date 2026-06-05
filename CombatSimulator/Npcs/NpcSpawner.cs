@@ -42,7 +42,7 @@ public unsafe class NpcSpawner : IDisposable
     public IReadOnlyList<SimulatedNpc> SpawnedNpcs => spawnedNpcs;
     public int PendingCount => pendingSpawns.Count + spawnQueue.Count;
     public int TotalCount => spawnedNpcs.Count + pendingSpawns.Count + spawnQueue.Count;
-    public int MaxNpcs => 10;
+    public int MaxNpcs => 150;
 
     public Action<SimulatedNpc>? OnNpcSpawnComplete { get; set; }
     public Action<string>? OnSpawnError { get; set; }
