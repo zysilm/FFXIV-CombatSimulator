@@ -49,6 +49,18 @@ public unsafe class RagdollController : IDisposable
     // Bone-to-body mapping
     private readonly List<RagdollBone> ragdollBones = new();
 
+    // Bone defs actually used for the active ragdoll, keyed by name. For humanoid
+    // skeletons these are the tuned human defs; for non-humanoid skeletons they are
+    // generated from the real skeleton topology (see BuildGenericSkeletonDefs).
+    // StepAndApply reads capsule extents from here instead of re-deriving the human set.
+    private readonly Dictionary<string, RagdollBoneDef> activeDefByName = new();
+
+    // Generic (non-humanoid) ragdoll generation tuning.
+    private const float GenericMinSegmentLength = 0.04f; // skip coincident/twig bones
+    private const int GenericMaxBodies = 40;             // cap solver load on large rigs
+    private const float GenericSwingLimit = 0.6f;        // ball cone half-angle (rad)
+    private const float GenericTwistLimit = 0.35f;       // ball axial twist (rad)
+
     // Ground height (physics ground may be lowered by floor offset)
     private float groundY;
     // Real terrain ground (before floor offset), used for visual correction
@@ -264,6 +276,153 @@ public unsafe class RagdollController : IDisposable
             return DefaultBoneDefs;
 
         return BuildBoneDefsFromConfigs(config.RagdollBoneConfigs.ToArray());
+    }
+
+    // Structural bones every humanoid skeleton has. If all resolve, the hand-tuned
+    // human profile fits and the existing passes run unchanged. If any is missing
+    // (bats, birds, dragons, quadrupeds, voidsent) the skeleton is treated as
+    // non-humanoid and gets a generated ragdoll instead.
+    private static readonly string[] HumanoidSignatureBones =
+    {
+        "j_kosi", "j_sebo_a", "j_kubi",
+        "j_ude_a_l", "j_ude_a_r",
+        "j_asi_a_l", "j_asi_a_r",
+    };
+
+    private bool IsHumanoidSkeleton(Dictionary<string, int> humanNameToIndex)
+    {
+        foreach (var bone in HumanoidSignatureBones)
+            if (!humanNameToIndex.ContainsKey(bone))
+                return false;
+        return true;
+    }
+
+    /// <summary>
+    /// Build a ragdoll bone definition set from a skeleton's real topology, for
+    /// non-humanoid characters where the human profile does not fit. Capsule size
+    /// and mass scale with actual bone lengths (so small rigs like bats do not get
+    /// oversized human capsules that explode), parents follow the real skeleton
+    /// hierarchy (no human-name mapping, so no orphaning), and all joints are loose
+    /// ball joints. The returned defs feed the same Pass 1/2/3 body/constraint build
+    /// and StepAndApply write-back as the human path.
+    /// </summary>
+    private (RagdollBoneDef[] Defs, Dictionary<string, int> NameToIndex) BuildGenericSkeletonDefs(SkeletonAccess skel)
+    {
+        var pose = skel.Pose;
+        int n = skel.BoneCount;
+        int pc = skel.ParentCount;
+
+        // World position of every bone in the current (death) pose.
+        var wpos = new Vector3[n];
+        for (int i = 0; i < n; i++)
+        {
+            ref var mt = ref pose->ModelPose.Data[i];
+            wpos[i] = ModelToWorld(new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z));
+        }
+
+        int ParentOf(int i) => (i >= 0 && i < pc) ? skel.HavokSkeleton->ParentIndices[i] : -1;
+
+        // Distance to direct parent, and the longest child segment a bone owns.
+        var distToParent = new float[n];
+        var longestChildLen = new float[n];
+        for (int i = 0; i < n; i++)
+        {
+            int p = ParentOf(i);
+            if (p < 0 || p >= n) continue;
+            var d = Vector3.Distance(wpos[i], wpos[p]);
+            distToParent[i] = d;
+            if (d > longestChildLen[p]) longestChildLen[p] = d;
+        }
+
+        // A bone gets a body if it owns a real forward segment. Coincident/twig bones
+        // (fingers, tips) are skipped and follow via StepAndApply propagation.
+        var significant = new bool[n];
+        int significantCount = 0;
+        for (int i = 0; i < n; i++)
+        {
+            if (longestChildLen[i] >= GenericMinSegmentLength)
+            {
+                significant[i] = true;
+                significantCount++;
+            }
+        }
+
+        // Cap body count on large rigs: keep the longest segments, but force-keep the
+        // significant ancestors of kept bones so the constraint tree stays connected
+        // (a kept bone whose ancestors were dropped would become a free-floating root).
+        if (significantCount > GenericMaxBodies)
+        {
+            var ranked = new List<int>();
+            for (int i = 0; i < n; i++)
+                if (significant[i]) ranked.Add(i);
+            ranked.Sort((a, b) => longestChildLen[b].CompareTo(longestChildLen[a]));
+
+            var keep = new bool[n];
+            for (int k = 0; k < GenericMaxBodies && k < ranked.Count; k++)
+            {
+                keep[ranked[k]] = true;
+                int p = ParentOf(ranked[k]);
+                while (p >= 0)
+                {
+                    if (significant[p]) keep[p] = true;
+                    p = ParentOf(p);
+                }
+            }
+            for (int i = 0; i < n; i++)
+                significant[i] = significant[i] && keep[i];
+        }
+
+        int SignificantAncestor(int i)
+        {
+            int p = ParentOf(i);
+            while (p >= 0)
+            {
+                if (significant[p]) return p;
+                p = ParentOf(p);
+            }
+            return -1;
+        }
+
+        string Name(int i) => "gen_" + i.ToString();
+
+        var simIndices = new List<int>();
+        for (int i = 0; i < n; i++)
+            if (significant[i]) simIndices.Add(i);
+
+        // Emit roots first, then longest-from-parent first, so boneToFirstChild picks
+        // each bone's longest child as its capsule axis (best rotational stability).
+        simIndices.Sort((a, b) =>
+        {
+            bool aRoot = SignificantAncestor(a) < 0;
+            bool bRoot = SignificantAncestor(b) < 0;
+            if (aRoot != bRoot) return aRoot ? -1 : 1;
+            return distToParent[b].CompareTo(distToParent[a]);
+        });
+
+        var nameToIndex = new Dictionary<string, int>();
+        foreach (var i in simIndices)
+            nameToIndex[Name(i)] = i;
+
+        var defs = new List<RagdollBoneDef>(simIndices.Count);
+        foreach (var i in simIndices)
+        {
+            float segLen = MathF.Max(longestChildLen[i], GenericMinSegmentLength);
+            int anc = SignificantAncestor(i);
+            defs.Add(new RagdollBoneDef
+            {
+                Name = Name(i),
+                ParentName = anc >= 0 ? Name(anc) : null,
+                CapsuleRadius = Math.Clamp(segLen * 0.28f, 0.02f, 0.18f),
+                CapsuleHalfLength = segLen * 0.45f,
+                Mass = Math.Clamp(segLen * 20f, 0.5f, 12f),
+                SwingLimit = GenericSwingLimit,
+                Joint = JointType.Ball,
+                TwistMinAngle = -GenericTwistLimit,
+                TwistMaxAngle = GenericTwistLimit,
+            });
+        }
+
+        return (defs.ToArray(), nameToIndex);
     }
 
     // Joint type determines which BEPU constraints are used:
@@ -574,6 +733,7 @@ public unsafe class RagdollController : IDisposable
         targetCharacterAddress = nint.Zero;
         physicsStarted = false;
         ragdollBoneIndices.Clear();
+        activeDefByName.Clear();
         nHaraIndex = -1;
         kaoBodyBoneIndex = -1;
         hairPhysics?.Reset();
@@ -740,6 +900,28 @@ public unsafe class RagdollController : IDisposable
             }
             nameToIndex[def.Name] = idx;
         }
+
+        // --- Humanoid vs non-humanoid dispatch ---
+        // Humanoid skeletons keep the hand-tuned human profile and existing passes,
+        // completely unchanged. Non-humanoid skeletons (bats, birds, dragons,
+        // quadrupeds) get a ragdoll generated from their real bone topology with
+        // adaptive capsule sizing and generic ball joints, then run the SAME passes.
+        if (!IsHumanoidSkeleton(nameToIndex))
+        {
+            var (genDefs, genNameToIndex) = BuildGenericSkeletonDefs(skel);
+            log.Info($"RagdollController: non-humanoid skeleton — generated {genDefs.Length} generic ragdoll bones (human matches were {nameToIndex.Count})");
+            BoneDefs = genDefs;
+            nameToIndex = genNameToIndex;
+            defByName.Clear();
+            foreach (var def in BoneDefs)
+                defByName[def.Name] = def;
+        }
+
+        // Record the active defs so StepAndApply reads capsule extents from the set
+        // actually in use (human or generated) rather than re-deriving the human set.
+        activeDefByName.Clear();
+        foreach (var def in BoneDefs)
+            activeDefByName[def.Name] = def;
 
         // Raycast for ground height
         groundY = skelWorldPos.Y;
@@ -1544,7 +1726,6 @@ public unsafe class RagdollController : IDisposable
         var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
         if (skelNullable == null) return;
         var skel = skelNullable.Value;
-        var BoneDefs = GetBoneDefs();
 
         // Keep animation frozen (game may recalculate OverallSpeed each frame)
         var character = (Character*)targetCharacterAddress;
@@ -1750,9 +1931,7 @@ public unsafe class RagdollController : IDisposable
 
             // Track lowest capsule bottom (not bone origin) for floor correction.
             // The capsule extends below its center by |capsuleY.Y| * halfLength + radius.
-            RagdollBoneDef boneDef = default;
-            foreach (var def in BoneDefs)
-                if (def.Name == rb.Name) { boneDef = def; break; }
+            activeDefByName.TryGetValue(rb.Name, out var boneDef);
             var capsuleYDir = Vector3.Transform(Vector3.UnitY, bodyRef.Pose.Orientation);
             var capsuleBottomY = bodyRef.Pose.Position.Y
                                  - MathF.Abs(capsuleYDir.Y) * boneDef.CapsuleHalfLength
