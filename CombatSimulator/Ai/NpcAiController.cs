@@ -50,6 +50,11 @@ public unsafe class NpcAiController : IDisposable
     private const float PartyAttackRangeHysteresis = 0.15f;
     private const float PartyApproachMovementEpsilon = 0.02f;
     private const float PartyApproachDebugInterval = 0.5f;
+    // Low-pass time constant (seconds) for the steered enemy approach heading.
+    // The per-frame steered direction can flip when enemies crowd a shared
+    // target; blending toward it filters that jitter while still turning within
+    // a few frames. Smaller = snappier/jitterier, larger = smoother/laggier.
+    private const float ApproachHeadingSmoothingTau = 0.16f;
     // Within (approach distance + lock buffer) an enemy locks its angle and stops;
     // it only unlocks to re-approach if pushed beyond (approach distance + unlock).
     private const float ApproachLockBuffer = 1.5f;
@@ -81,6 +86,8 @@ public unsafe class NpcAiController : IDisposable
         public float LastMoveRootY { get; set; }
         public bool HasLastMoveRootY { get; set; }
         public uint TargetEntityId { get; set; }
+        public Vector3 SmoothedMoveDir { get; set; }
+        public bool HasSmoothedMoveDir { get; set; }
     }
 
     private sealed class ApproachTerrainCache
@@ -1058,19 +1065,20 @@ public unsafe class NpcAiController : IDisposable
         }
         else
         {
-            moveDir = GetSteeredMoveDirection(
+            var rawDir = GetSteeredMoveDirection(
                 npc.SimulatedEntityId,
                 LocalSteeringFaction.Enemy,
                 npcPos,
                 flatMove,
                 npcTarget.EntityId);
-            if (moveDir == Vector3.Zero)
+            if (rawDir == Vector3.Zero)
             {
                 LogPartyApproachDebug(npc, "steering-blocked", npcPos, npcTargetPos, partyPlan, moveTarget, hasVnavmeshTarget, distToTarget, partyAttackRange);
                 StopApproachMoveAnim(npc);
                 ForceRotateToward(npc, facePos, deltaTime);
                 return;
             }
+            moveDir = SmoothApproachHeading(npc, rawDir, deltaTime);
             newPos = npcPos + moveDir * moveDist;
         }
 
@@ -1171,6 +1179,35 @@ public unsafe class NpcAiController : IDisposable
     {
         var actor = new LocalSteeringActor(actorId, faction, actorPosition, IsPc: false);
         return LocalSteering.SteerFlatDirection(actor, goalFlatDirection, BuildLocalSteeringActors(actor), ignoredObstacleId);
+    }
+
+    /// <summary>
+    /// Exponential low-pass on a steered approach heading. Filters the
+    /// frame-to-frame direction flips that crowding produces (which show up as
+    /// in-place jitter) while still turning toward a genuinely new heading within
+    /// a few frames. State is reset when the NPC stops moving.
+    /// </summary>
+    private Vector3 SmoothApproachHeading(SimulatedNpc npc, Vector3 rawDir, float deltaTime)
+    {
+        if (!TryGetOrCreateApproachPathState(npc, out var state))
+            return rawDir;
+
+        if (!state.HasSmoothedMoveDir)
+        {
+            state.SmoothedMoveDir = rawDir;
+            state.HasSmoothedMoveDir = true;
+            return rawDir;
+        }
+
+        var alpha = 1f - MathF.Exp(-deltaTime / MathF.Max(0.0001f, ApproachHeadingSmoothingTau));
+        var blended = Vector3.Lerp(state.SmoothedMoveDir, rawDir, alpha);
+        blended.Y = 0;
+        if (blended.LengthSquared() < 0.000001f)
+            blended = rawDir;
+
+        var smoothed = Vector3.Normalize(blended);
+        state.SmoothedMoveDir = smoothed;
+        return smoothed;
     }
 
     private List<LocalSteeringActor> BuildLocalSteeringActors(LocalSteeringActor currentActor)
@@ -1643,6 +1680,7 @@ public unsafe class NpcAiController : IDisposable
 
     private void StopApproachMoveAnim(nint address, ApproachPathState state)
     {
+        state.HasSmoothedMoveDir = false;
         try
         {
             var character = (Character*)address;
