@@ -140,11 +140,6 @@ public unsafe class UseActionHook : IDisposable
                     log.Debug("Custom targeting: no locked target; action ignored.");
                     return true;
                 }
-                if (lockedId == 0)
-                {
-                    log.Debug("Custom targeting: no locked target — action ignored.");
-                    return true;
-                }
 
                 log.Info($"INTERCEPTED (custom targeting): actionId={actionId} -> locked 0x{lockedId:X}");
                 combatEngine.EnqueuePlayerAction((uint)actionType, actionId, lockedId, extraParam);

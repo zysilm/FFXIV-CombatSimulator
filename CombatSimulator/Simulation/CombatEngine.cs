@@ -1403,6 +1403,56 @@ public class CombatEngine : IDisposable
         State.Entities[npc.SimulatedEntityId] = npc.State;
     }
 
+    /// <summary>
+    /// Free a slot in a full map-enemy pool by evicting the earliest-joined map
+    /// enemy that is already dead. The evicted enemy is fully recovered: its
+    /// ragdoll is cleared (if it was the ragdolled corpse), death animation reset,
+    /// mode restored, and the real BattleNpc returned to its original map position
+    /// and object kind. Returns true if an enemy was evicted, false when every map
+    /// enemy is still alive (the pool is genuinely full and the newcomer is refused).
+    /// </summary>
+    public bool TryEvictDeadMapEnemy()
+    {
+        SimulatedNpc? victim = null;
+        foreach (var npc in npcSelector.SelectedNpcs)
+        {
+            // Map enemies are real BattleNpcs (not client-controlled). Iteration is
+            // in join order, so the first dead one found is the earliest joined.
+            if (npc.IsClientControlled || npc.IsAlive)
+                continue;
+            victim = npc;
+            break;
+        }
+
+        if (victim == null)
+            return false;
+
+        UnregisterNpcEntity(victim.SimulatedEntityId);
+
+        unsafe
+        {
+            if (victim.BattleChara != null)
+            {
+                // Stop physics-driving the corpse before its position is restored.
+                if (ragdollController.IsActive && ragdollController.TargetCharacterAddress == victim.Address)
+                    ragdollController.Deactivate();
+
+                animationController.ResetDeathAnimation(victim.BattleChara);
+                animationController.ClearBattleStance(victim);
+                var character = (Character*)victim.BattleChara;
+                character->Mode = CharacterModes.Normal;
+                character->ModeParam = 0;
+            }
+        }
+
+        // Restores original position, ObjectKind/SubKind and clears the NPC's target.
+        npcSelector.DeselectNpc(victim);
+
+        AddLogEntry($"{victim.Name} leaves the fight.", CombatLogType.Info);
+        log.Info($"Evicted dead map enemy '{victim.Name}' to make room for a new one.");
+        return true;
+    }
+
     public void RegisterCompanionEntity(CombatCompanion companion)
     {
         State.Entities[companion.SimulatedEntityId] = companion.State;

@@ -41,9 +41,6 @@ public class MainWindow : IDisposable
     // Conflict confirmation popup
     private bool showConflictConfirmPopup;
 
-    // Model override state
-    private int modelOverrideId = 0;
-
     // Glamourer design list cache for combo box
     private List<KeyValuePair<Guid, string>> glamourerDesigns = new();
     private int glamourerSelectedIndex = -1;
@@ -534,7 +531,8 @@ public class MainWindow : IDisposable
 
         npcSpawner.SpawnModeActive = true;
         combatEngine.StartSimulation();
-        mapEnemyController.SetRecipeSettings(BuildRecipeMapEnemySettings(recipe));
+        var mapEnemySettings = BuildRecipeMapEnemySettings(recipe);
+        mapEnemyController.SetRecipeSettings(mapEnemySettings);
 
         var queuedCompanions = 0;
         foreach (var group in recipe.Companions)
@@ -576,7 +574,6 @@ public class MainWindow : IDisposable
             }
         }
 
-        var mapEnemySettings = BuildRecipeMapEnemySettings(recipe);
         var mapEnemyText = mapEnemySettings != null ? $", up to {mapEnemySettings.MaxCount} map enemy/enemies" : "";
         chatGui.Print($"[CombatSim] Started recipe '{recipe.Name}' ({queuedCompanions} companion(s), {queuedEnemies} enemy/enemies queued{mapEnemyText}).");
     }
@@ -820,77 +817,6 @@ public class MainWindow : IDisposable
         }
     }
 
-    private void DrawActiveTargetsSection()
-    {
-        if (ImGui.CollapsingHeader("Active Targets", ImGuiTreeNodeFlags.DefaultOpen))
-        {
-            if (npcSelector.SelectedNpcs.Count == 0)
-            {
-                ImGui.TextDisabled("No targets yet. Attack an NPC to register it.");
-                return;
-            }
-
-            for (int i = npcSelector.SelectedNpcs.Count - 1; i >= 0; i--)
-            {
-                var npc = npcSelector.SelectedNpcs[i];
-                ImGui.PushID(i);
-
-                // HP bar
-                float hpPercent = npc.State.MaxHp > 0
-                    ? (float)npc.State.CurrentHp / npc.State.MaxHp
-                    : 0;
-
-                var hpColor = hpPercent > 0.5f
-                    ? new Vector4(0, 0.8f, 0, 1)
-                    : hpPercent > 0.25f
-                        ? new Vector4(0.8f, 0.8f, 0, 1)
-                        : new Vector4(0.8f, 0, 0, 1);
-
-                var stateText = npc.AiState.ToString();
-                var label = $"[Lv.{npc.State.Level}] {npc.Name} ({stateText})";
-                var overlay = $"{npc.State.CurrentHp:N0} / {npc.State.MaxHp:N0}";
-
-                ImGui.PushStyleColor(ImGuiCol.PlotHistogram, hpColor);
-                ImGui.ProgressBar(hpPercent, new Vector2(-65, 0), overlay);
-                ImGui.PopStyleColor();
-
-                ImGui.SameLine();
-                ImGui.Text(label);
-
-                // Cast bar
-                if (npc.State.IsCasting && npc.CurrentCastSkill != null)
-                {
-                    float castPercent = npc.State.CastTimeTotal > 0
-                        ? npc.State.CastTimeElapsed / npc.State.CastTimeTotal
-                        : 0;
-                    ImGui.PushStyleColor(ImGuiCol.PlotHistogram, new Vector4(0.8f, 0.5f, 0, 1));
-                    ImGui.ProgressBar(castPercent, new Vector2(-65, 0), npc.CurrentCastSkill.Name);
-                    ImGui.PopStyleColor();
-                }
-
-                // Model override (collapsed by default)
-                if (ImGui.TreeNode("Model Override"))
-                {
-                    ImGui.InputInt("ModelCharaId", ref modelOverrideId);
-                    if (ImGui.SmallButton("Apply Model"))
-                    {
-                        npcSelector.ChangeModel(npc, modelOverrideId);
-                        chatGui.Print($"[CombatSim] Model changed to {modelOverrideId}.");
-                    }
-                    ImGui.SameLine();
-                    if (ImGui.SmallButton("Restore"))
-                    {
-                        npcSelector.RestoreModel(npc);
-                        chatGui.Print("[CombatSim] Model restored.");
-                    }
-                    ImGui.TreePop();
-                }
-
-                ImGui.PopID();
-            }
-        }
-    }
-
     private void DrawMapEnemiesSection()
     {
         if (!ImGui.CollapsingHeader("Map Enemies", ImGuiTreeNodeFlags.DefaultOpen))
@@ -946,34 +872,6 @@ public class MainWindow : IDisposable
         {
             config.DefaultNpcBehaviorType = behaviorType;
             config.Save();
-        }
-
-        ImGui.Separator();
-        DrawEnemyPoolStatus();
-    }
-
-    private void DrawEnemyPoolStatus()
-    {
-        ImGui.TextDisabled($"Enemy pool: {npcSelector.SelectedNpcs.Count} active, {npcSelector.MapEnemyCount} map");
-        if (npcSelector.SelectedNpcs.Count == 0)
-        {
-            ImGui.TextDisabled("No enemies in the current battle.");
-            return;
-        }
-
-        var shown = 0;
-        foreach (var npc in npcSelector.SelectedNpcs)
-        {
-            if (shown++ >= 8)
-            {
-                ImGui.TextDisabled($"... {npcSelector.SelectedNpcs.Count - shown + 1} more");
-                break;
-            }
-
-            var hpPercent = npc.State.MaxHp > 0
-                ? (float)npc.State.CurrentHp / npc.State.MaxHp
-                : 0;
-            ImGui.TextUnformatted($"[{npc.AiState}] {npc.Name}  {hpPercent:P0}");
         }
     }
 

@@ -241,40 +241,6 @@ public unsafe class NpcSelector : IDisposable
             DeselectNpc(npc);
     }
 
-    public void ChangeModel(SimulatedNpc npc, int modelCharaId)
-    {
-        if (npc.BattleChara == null) return;
-
-        try
-        {
-            var character = (Character*)npc.BattleChara;
-            character->ModelContainer.ModelCharaId = modelCharaId;
-            npc.ModelChanged = true;
-            log.Info($"Changed model of '{npc.Name}' to ModelCharaId={modelCharaId}.");
-        }
-        catch (Exception ex)
-        {
-            log.Error(ex, $"Failed to change model for '{npc.Name}'.");
-        }
-    }
-
-    public void RestoreModel(SimulatedNpc npc)
-    {
-        if (npc.BattleChara == null || !npc.ModelChanged) return;
-
-        try
-        {
-            var character = (Character*)npc.BattleChara;
-            character->ModelContainer.ModelCharaId = npc.OriginalModelCharaId;
-            npc.ModelChanged = false;
-            log.Info($"Restored model of '{npc.Name}'.");
-        }
-        catch (Exception ex)
-        {
-            log.Error(ex, $"Failed to restore model for '{npc.Name}'.");
-        }
-    }
-
     /// <summary>
     /// Validate selected NPCs still exist. Called each framework update.
     /// AccessViolationException from reading native memory on a freed object is

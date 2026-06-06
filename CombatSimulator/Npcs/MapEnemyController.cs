@@ -120,18 +120,14 @@ public sealed unsafe class MapEnemyController
 
     private void SenseMapEnemies(MapEnemySettings settings)
     {
-        if (npcSelector.MapEnemyCount >= settings.MaxCount)
-            return;
-
         var friendlies = FriendlyActors();
         if (friendlies.Count == 0)
             return;
 
+        // The pool limit (and dead-enemy eviction when full) is enforced inside
+        // RegisterObject, so we scan every in-range candidate here.
         foreach (var obj in objectTable)
         {
-            if (npcSelector.MapEnemyCount >= settings.MaxCount)
-                break;
-
             if (!IsValidMapEnemyCandidate(obj))
                 continue;
 
@@ -150,6 +146,19 @@ public sealed unsafe class MapEnemyController
     {
         if (!IsValidMapEnemyCandidate(obj))
             return null;
+
+        // Already in the battle: hand back the existing entry, never evict for it.
+        var existing = npcSelector.GetSelectedNpc(obj.EntityId);
+        if (existing != null)
+            return existing;
+
+        // Pool full: drop the earliest dead map enemy to make room. If every map
+        // enemy is still alive there is no room, so the newcomer is refused.
+        if (settings.MaxCount > 0 && npcSelector.MapEnemyCount >= settings.MaxCount)
+        {
+            if (!combatEngine.TryEvictDeadMapEnemy())
+                return null;
+        }
 
         var (npc, error) = npcSelector.RegisterMapEnemy(
             obj,
