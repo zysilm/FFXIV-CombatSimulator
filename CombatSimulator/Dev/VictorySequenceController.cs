@@ -10,8 +10,10 @@ using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
+using FFXIVClientStructs.FFXIV.Client.System.Input;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager;
+using GameFramework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework;
 
 namespace CombatSimulator.Dev;
 
@@ -67,6 +69,7 @@ public unsafe class VictorySequenceController : IDisposable
     // Manual grabber control (hidden): drive the grabber's movement + walk anim.
     private readonly ActorVisualState grabberVisualState = new();
     private bool grabberMoving;
+    private float grabberControlYaw;
 
     public bool IsActive => isActive;
     public nint CinematicNpcAddress => cinematicNpc?.Address ?? nint.Zero;
@@ -213,6 +216,7 @@ public unsafe class VictorySequenceController : IDisposable
         grabActive = false;
         grabberMoving = false;
         grabberVisualState.Kind = ActorVisualStateKind.None;
+        grabberControlYaw = 0f;
 
         var otherCount = config.VictorySequenceOtherStages.Count;
         log.Info($"VictorySequence: Started with NPC '{cinematicNpc.Name}' (lastTarget={lastTargetedNpcId:X}), {config.VictorySequenceStages.Count} stages, {otherNpcStates.Count} other NPCs with {otherCount} stages");
@@ -515,17 +519,19 @@ public unsafe class VictorySequenceController : IDisposable
     {
         var character = (Character*)gameObj;
         var curPos = new Vector3(gameObj->Position.X, gameObj->Position.Y, gameObj->Position.Z);
-        var moveDir = ReadMoveInputWorldDir();
+        var moveAxis = ReadMoveInputAxis();
 
-        if (moveDir != Vector3.Zero)
+        if (moveAxis != Vector2.Zero)
         {
             if (!grabberMoving)
             {
                 emotePlayer.ResetEmote(character);
                 character->SetMode(CharacterModes.Normal, 0);
                 grabberVisualState.Kind = ActorVisualStateKind.None;
+                grabberControlYaw = GetCameraYaw();
             }
 
+            var moveDir = AxisToWorldDir(moveAxis, grabberControlYaw);
             var speed = config.GrabberControlSpeed > 0f ? config.GrabberControlSpeed : 2.5f;
             var newPos = curPos + moveDir * speed * dt;
             newPos = SnapGrabberToFloor(newPos);
@@ -548,38 +554,51 @@ public unsafe class VictorySequenceController : IDisposable
         }
     }
 
-    /// <summary>Camera-relative planar move direction from the movement keybinds (0 if idle).</summary>
-    private Vector3 ReadMoveInputWorldDir()
+    /// <summary>Camera-relative planar move direction from movement input (0 if idle).</summary>
+    private Vector2 ReadMoveInputAxis()
     {
-        var im = InputManager.Instance();
-        if (im == null) return Vector3.Zero;
+        var input = ReadKeyboardMoveAxis();
 
-        float fwd = (im->GetInputStatus(InputCode.MOVE_FORE) ? 1f : 0f)
-                  - (im->GetInputStatus(InputCode.MOVE_BACK) ? 1f : 0f);
-        float strafe = (im->GetInputStatus(InputCode.MOVE_STRIFE_R) ? 1f : 0f)
-                     - (im->GetInputStatus(InputCode.MOVE_STRIFE_L) ? 1f : 0f);
-        strafe += (im->GetInputStatus(InputCode.MOVE_RIGHT) ? 1f : 0f)
-                - (im->GetInputStatus(InputCode.MOVE_LEFT) ? 1f : 0f);
-
-        if (fwd == 0f && strafe == 0f) return Vector3.Zero;
-        var input = new Vector2(strafe, fwd);
+        if (input == Vector2.Zero) return Vector2.Zero;
         if (input.LengthSquared() > 1f)
-        {
             input = Vector2.Normalize(input);
-            strafe = input.X;
-            fwd = input.Y;
-        }
 
+        return input;
+    }
+
+    private static float GetCameraYaw()
+    {
         float yaw = 0f;
         var camMgr = GameCameraManager.Instance();
         if (camMgr != null && camMgr->Camera != null)
             yaw = camMgr->Camera->DirH;
+        return yaw;
+    }
 
+    private static Vector3 AxisToWorldDir(Vector2 input, float yaw)
+    {
         var camFwd = new Vector3(-MathF.Sin(yaw), 0f, -MathF.Cos(yaw));
         var camRight = new Vector3(-camFwd.Z, 0f, camFwd.X);
-        var dir = camFwd * fwd + camRight * strafe;
+        var dir = camFwd * input.Y + camRight * input.X;
         return dir.LengthSquared() < 1e-6f ? Vector3.Zero : Vector3.Normalize(dir);
     }
+
+    private static Vector2 ReadKeyboardMoveAxis()
+    {
+        var fw = GameFramework.Instance();
+        if (fw == null)
+            return Vector2.Zero;
+
+        var keys = fw->KeyboardInputs;
+        float fwd = (IsKeyDown(keys, SeVirtualKey.W) ? 1f : 0f)
+                  - (IsKeyDown(keys, SeVirtualKey.S) ? 1f : 0f);
+        float strafe = (IsKeyDown(keys, SeVirtualKey.D) ? 1f : 0f)
+                     - (IsKeyDown(keys, SeVirtualKey.A) ? 1f : 0f);
+        return new Vector2(strafe, fwd);
+    }
+
+    private static bool IsKeyDown(KeyboardInputData keys, SeVirtualKey key)
+        => keys.KeyState[(int)key].HasFlag(KeyStateFlags.Down);
 
     /// <summary>Floor-snap the grabber's destination via vnavmesh, falling back to a raycast.</summary>
     private Vector3 SnapGrabberToFloor(Vector3 pos)
