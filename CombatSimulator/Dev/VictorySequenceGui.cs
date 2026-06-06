@@ -206,7 +206,7 @@ public class VictorySequenceGui
             config.EnableVictorySequence = enabled;
             config.Save();
         }
-        HelpMarker("Cinematic multi-stage victory sequence when the player dies. The last targeted NPC moves from its current position to the configured distance, with animations and optional grab constraint.");
+        HelpMarker("Cinematic multi-stage victory sequence when the player dies. The last targeted NPC stays in place with animations and optional grab constraint.");
 
         if (!config.EnableVictorySequence) return;
 
@@ -214,11 +214,10 @@ public class VictorySequenceGui
         var stages = config.VictorySequenceStages;
 
         // Stage list table
-        if (ImGui.BeginTable("##vseqstages", 6, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+        if (ImGui.BeginTable("##vseqstages", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
         {
             ImGui.TableSetupColumn("#", ImGuiTableColumnFlags.WidthFixed, 20);
             ImGui.TableSetupColumn("Time", ImGuiTableColumnFlags.WidthFixed, 90);
-            ImGui.TableSetupColumn("Distance", ImGuiTableColumnFlags.WidthFixed, 90);
             ImGui.TableSetupColumn("Behavior", ImGuiTableColumnFlags.WidthFixed, 100);
             ImGui.TableSetupColumn("Grab", ImGuiTableColumnFlags.WidthFixed, 35);
             ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 70);
@@ -241,8 +240,6 @@ public class VictorySequenceGui
                 ImGui.TableNextColumn();
                 ImGui.Text(s.EndTime < 0 ? $"{s.StartTime:F1}-∞" : $"{s.StartTime:F1}-{s.EndTime:F1}s");
 
-                ImGui.TableNextColumn();
-                ImGui.Text(s.KeepPosition ? "keep" : $"→{s.EndDistance:F1}");
 
                 ImGui.TableNextColumn();
                 var behaviorName = s.UseEmote
@@ -293,7 +290,6 @@ public class VictorySequenceGui
                 var prevEnd = prev.EndTime < 0 ? prev.StartTime + 5f : prev.EndTime;
                 newStage.StartTime = prevEnd;
                 newStage.EndTime = prevEnd; // user adjusts end time
-                newStage.EndDistance = prev.EndDistance;
             }
             stages.Add(newStage);
             selectedStageIndex = stages.Count - 1;
@@ -514,7 +510,7 @@ public class VictorySequenceGui
                 config.Save();
             }
 
-            if (!s.InfiniteWalk && s.EndTime >= 0)
+            if (s.EndTime >= 0)
             {
                 var et = s.EndTime;
                 if (ImGui.DragFloat("End Time (s)##t", ref et, 0.1f, 0, 120, "%.1f"))
@@ -529,50 +525,7 @@ public class VictorySequenceGui
             if (ImGui.Checkbox("Infinite Time##vsd", ref infTime))
             {
                 s.EndTime = infTime ? -1f : s.StartTime + 3f;
-                if (!infTime) s.InfiniteWalk = false;
                 config.Save();
-            }
-
-            // === Movement ===
-            ImGui.TextDisabled("Movement");
-
-            var keepPos = s.KeepPosition;
-            if (ImGui.Checkbox("Keep Position##vsd", ref keepPos))
-            {
-                s.KeepPosition = keepPos;
-                config.Save();
-            }
-            HelpMarker("Stay at current position (where the previous stage ended). No movement.");
-
-            if (!s.KeepPosition)
-            {
-                if (!s.InfiniteWalk)
-                {
-                    var ed = s.EndDistance;
-                    if (ImGui.DragFloat("End Distance##d", ref ed, 0.1f, -30, 30, "%.1f"))
-                    {
-                        s.EndDistance = ed;
-                        config.Save();
-                    }
-                }
-                else
-                {
-                    var ws = s.WalkSpeed;
-                    if (ImGui.DragFloat("Walk Speed (y/s)##walk", ref ws, 0.1f, -20f, 20f, "%.1f"))
-                    { s.WalkSpeed = ws; config.Save(); }
-                }
-
-                var ho = s.HeightOffset;
-                if (ImGui.DragFloat("Height Offset##h", ref ho, 0.01f, -5, 5, "%.2f"))
-                { s.HeightOffset = ho; config.Save(); }
-
-                var infWalk = s.InfiniteWalk;
-                if (ImGui.Checkbox("Infinite Walk##vsd", ref infWalk))
-                {
-                    s.InfiniteWalk = infWalk;
-                    if (infWalk) s.EndTime = -1f;
-                    config.Save();
-                }
             }
 
             var lockFace = s.LockFacing;
