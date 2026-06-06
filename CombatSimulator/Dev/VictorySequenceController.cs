@@ -592,9 +592,7 @@ public unsafe class VictorySequenceController : IDisposable
         if (fw == null)
             return Vector2.Zero;
 
-        var primary = StickAxis(fw->GamepadInputs);
-        var secondary = StickAxis(fw->GamepadInputs2);
-        return secondary.LengthSquared() > primary.LengthSquared() ? secondary : primary;
+        return StickAxis(fw->GamepadInputs);
     }
 
     private static Vector2 StickAxis(FFXIVClientStructs.FFXIV.Client.System.Input.GamepadInputData data)
