@@ -62,7 +62,13 @@ public unsafe class RagdollController : IDisposable
     private bool activeRagdollIsGeneric;
 
     // Generic (non-humanoid) ragdoll generation tuning.
-    private const float GenericMinSegmentLength = 0.08f; // skip coincident/twig bones; larger = fewer tiny near-sphere bodies that destabilize the solver
+    // The min-segment threshold is adaptive to skeleton size (see BuildGenericSkeletonDefs):
+    // large rigs (toads) use the cap so we don't simulate a dense cluster of tiny bodies;
+    // small rigs (bats) use the floor so their small bones (wings/limbs) still get bodies and
+    // the ragdoll actually articulates instead of falling as one rigid clump.
+    private const float GenericMinSegmentCap = 0.08f;    // upper bound for big skeletons
+    private const float GenericMinSegmentFloor = 0.02f;  // lower bound for small skeletons (bats)
+    private const float GenericMinSegmentFactor = 0.06f; // fraction of the skeleton's largest segment
     private const int GenericMaxBodies = 40;             // cap solver load on large rigs
     private const float GenericSwingLimit = 0.6f;        // ball cone half-angle (rad)
     private const float GenericTwistLimit = 0.35f;       // ball axial twist (rad)
@@ -343,13 +349,23 @@ public unsafe class RagdollController : IDisposable
             if (d > longestChildLen[p]) longestChildLen[p] = d;
         }
 
+        // Adaptive min-segment threshold scaled to the skeleton's own size: a fraction of
+        // its largest segment, clamped to [floor, cap]. Big rigs (toad, longest segment
+        // ~1.7m) land at the cap and stay sparse; small rigs (bat, ~0.2m) drop to the floor
+        // so their wing/limb bones are simulated instead of being skipped as "twigs".
+        float maxSegment = 0f;
+        for (int i = 0; i < n; i++)
+            if (longestChildLen[i] > maxSegment) maxSegment = longestChildLen[i];
+        float minSegment = Math.Clamp(maxSegment * GenericMinSegmentFactor, GenericMinSegmentFloor, GenericMinSegmentCap);
+        log.Info($"RagdollController: generic min-segment threshold {minSegment:F3}m (skeleton largest segment {maxSegment:F3}m)");
+
         // A bone gets a body if it owns a real forward segment. Coincident/twig bones
         // (fingers, tips) are skipped and follow via StepAndApply propagation.
         var significant = new bool[n];
         int significantCount = 0;
         for (int i = 0; i < n; i++)
         {
-            if (longestChildLen[i] >= GenericMinSegmentLength)
+            if (longestChildLen[i] >= minSegment)
             {
                 significant[i] = true;
                 significantCount++;
@@ -415,7 +431,7 @@ public unsafe class RagdollController : IDisposable
         var defs = new List<RagdollBoneDef>(simIndices.Count);
         foreach (var i in simIndices)
         {
-            float segLen = MathF.Max(longestChildLen[i], GenericMinSegmentLength);
+            float segLen = MathF.Max(longestChildLen[i], minSegment);
             int anc = SignificantAncestor(i);
             defs.Add(new RagdollBoneDef
             {
