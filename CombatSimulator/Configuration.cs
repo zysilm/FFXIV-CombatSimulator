@@ -81,7 +81,6 @@ public class Configuration : IPluginConfiguration
     // simulated enemies as friendly actors.
     public bool EnableCombatCompanions { get; set; } = true;
     public int CombatCompanionMaxCount { get; set; } = 10;
-    public int CombatCompanionLevelOverride { get; set; } = 1;
     public bool SensePartyMembers { get; set; } = true;
     // When true, resetting combat keeps existing companions (revived + healed)
     // instead of despawning them. Stopping the simulation always despawns.

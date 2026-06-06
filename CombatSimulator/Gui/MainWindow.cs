@@ -520,7 +520,6 @@ public class MainWindow : IDisposable
 
         config.EnableCombatCompanions = true;
         config.SensePartyMembers = recipe.Companions.Exists(c => c.Type == CompanionRecipeType.VisiblePlayers);
-        config.CombatCompanionLevelOverride = Math.Clamp(config.FastCombatLevel, 1, 300);
         config.CombatCompanionMaxCount = Math.Min(CombatCompanionManager.MaxCompanionCap, TotalRequestedCompanions(recipe));
 
         npcSpawner.SpawnModeActive = true;
@@ -639,13 +638,6 @@ public class MainWindow : IDisposable
         if (ImGui.SliderInt("Max cloned players", ref maxCount, 0, CombatCompanionManager.MaxCompanionCap))
         {
             config.CombatCompanionMaxCount = maxCount;
-            config.Save();
-        }
-
-        var level = Math.Clamp(config.CombatCompanionLevelOverride, 1, 300);
-        if (ImGui.SliderInt("Simulated level", ref level, 1, 300))
-        {
-            config.CombatCompanionLevelOverride = level;
             config.Save();
         }
 

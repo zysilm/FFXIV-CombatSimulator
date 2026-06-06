@@ -1170,6 +1170,18 @@ public class CombatEngine : IDisposable
         glamourerApplied = false;
     }
 
+    /// <summary>
+    /// Ensure the local player's combat stats have been read at least once.
+    /// Companions mirror these values, and in Professional Mode they can be
+    /// spawned before the simulation starts, so this lets callers populate
+    /// PlayerState on demand without starting combat.
+    /// </summary>
+    public void EnsurePlayerInitialized()
+    {
+        if (State.PlayerState.MaxHp <= 0)
+            InitializePlayerState();
+    }
+
     private unsafe void InitializePlayerState()
     {
         var player = Core.Services.ObjectTable.LocalPlayer;
