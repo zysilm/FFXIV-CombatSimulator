@@ -130,7 +130,14 @@ public class Configuration : IPluginConfiguration
     public float TargetApproachDistance { get; set; } = 1.5f;
     public bool UseVNavmeshTargetApproach { get; set; } = true;
 
-    // Aggro propagation: nearby BattleNpcs auto-added as targets when one is engaged
+    // Map enemies: real BattleNpc objects can join the mixed battle through
+    // sensing or first attack.
+    public bool EnableMapEnemySensing { get; set; } = false;
+    public float MapEnemySenseRange { get; set; } = 15.0f;
+    public int MapEnemyMaxCount { get; set; } = 10;
+
+    // Legacy aggro propagation. Kept for config compatibility; no longer shown
+    // in the main GUI once Map Enemies owns world-enemy joins.
     public bool EnableAggroPropagation { get; set; } = false;
     public float AggroPropagationRange { get; set; } = 15.0f;
 

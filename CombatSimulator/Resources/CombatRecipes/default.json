@@ -31,5 +31,17 @@
       { "type": "Human", "id": 0, "name": "imperial patrol", "occurrence": 2, "description": "Imperial patrol, second catalog match", "count": 15 },
       { "type": "Human", "id": 1018510, "name": "Zenos Yae Galvus (No Helm)", "occurrence": 1, "description": "Zenos Yae Galvus (No Helm)", "count": 1, "hpMultiplier": 8.0, "behavior": "Boss" }
     ]
+  },
+  {
+    "name": "Open World Skirmish",
+    "description": "10 randomized self companions and up to 10 visible players against nearby map enemies.",
+    "companions": [
+      { "type": "SelfRandomized", "count": 10 },
+      { "type": "VisiblePlayers", "count": 10 }
+    ],
+    "enemies": [],
+    "mapEnemies": [
+      { "enabled": true, "maxCount": 15, "senseRange": 18.0, "level": 90, "hpMultiplier": 1.0, "behavior": "BasicMelee" }
+    ]
   }
 ]

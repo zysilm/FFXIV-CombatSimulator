@@ -18,6 +18,7 @@ public unsafe class UseActionHook : IDisposable
     private readonly IClientState clientState;
     private readonly IPluginLog log;
     private readonly PlayerTargetController targetController;
+    private readonly MapEnemyController mapEnemyController;
 
     private delegate bool UseActionDelegate(
         ActionManager* actionManager,
@@ -47,7 +48,8 @@ public unsafe class UseActionHook : IDisposable
         Configuration config,
         IClientState clientState,
         IPluginLog log,
-        PlayerTargetController targetController)
+        PlayerTargetController targetController,
+        MapEnemyController mapEnemyController)
     {
         this.combatEngine = combatEngine;
         this.npcSelector = npcSelector;
@@ -56,6 +58,7 @@ public unsafe class UseActionHook : IDisposable
         this.clientState = clientState;
         this.log = log;
         this.targetController = targetController;
+        this.mapEnemyController = mapEnemyController;
 
         try
         {
@@ -120,6 +123,23 @@ public unsafe class UseActionHook : IDisposable
             if (config.EnableCustomTargeting)
             {
                 var lockedId = targetController.LockedTargetEntityId;
+                if (lockedId == 0)
+                {
+                    var selected = targetId is not 0 and not 0xE0000000
+                        ? npcSelector.GetSelectedNpc((uint)targetId)
+                        : null;
+                    selected ??= mapEnemyController.TryRegisterByEntityId(targetId);
+                    if (selected != null)
+                    {
+                        targetController.LockTarget(selected);
+                        log.Info($"INTERCEPTED (map enemy join): actionId={actionId} -> 0x{selected.SimulatedEntityId:X}");
+                        combatEngine.EnqueuePlayerAction((uint)actionType, actionId, selected.SimulatedEntityId, extraParam);
+                        return true;
+                    }
+
+                    log.Debug("Custom targeting: no locked target; action ignored.");
+                    return true;
+                }
                 if (lockedId == 0)
                 {
                     log.Debug("Custom targeting: no locked target — action ignored.");

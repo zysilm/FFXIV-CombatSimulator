@@ -90,7 +90,13 @@ public sealed unsafe class PlayerTargetController : IDisposable
             ? lockedTarget.SimulatedEntityId
             : 0u;
 
-    private bool ShouldTakeOver() => combatEngine.IsActive && config.EnableCustomTargeting;
+    public void LockTarget(SimulatedNpc npc)
+    {
+        lockedTarget = IsValidCandidate(npc) ? npc : null;
+    }
+
+    private bool ShouldTakeOver()
+        => combatEngine.IsActive && config.EnableCustomTargeting && npcSelector.SelectedNpcs.Count > 0;
 
     /// <summary>
     /// Per-frame driver from the framework update: drop the lock if the target died

@@ -23,6 +23,7 @@ public class MainWindow : IDisposable
     private readonly NpcSpawner npcSpawner;
     private readonly CombatCompanionManager companionManager;
     private readonly CombatEngine combatEngine;
+    private readonly MapEnemyController mapEnemyController;
     private readonly GlamourerIpc glamourerIpc;
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly AnimationController animationController;
@@ -106,6 +107,7 @@ public class MainWindow : IDisposable
         NpcSpawner npcSpawner,
         CombatCompanionManager companionManager,
         CombatEngine combatEngine,
+        MapEnemyController mapEnemyController,
         GlamourerIpc glamourerIpc,
         VNavmeshIpc vnavmeshIpc,
         AnimationController animationController,
@@ -123,6 +125,7 @@ public class MainWindow : IDisposable
         this.npcSpawner = npcSpawner;
         this.companionManager = companionManager;
         this.combatEngine = combatEngine;
+        this.mapEnemyController = mapEnemyController;
         this.glamourerIpc = glamourerIpc;
         this.vnavmeshIpc = vnavmeshIpc;
         this.animationController = animationController;
@@ -238,9 +241,7 @@ public class MainWindow : IDisposable
                 DrawSimulationSection();
                 break;
             case 1: // Targets
-                DrawActiveTargetsSection();
-                DrawNpcDefaultsSection();
-                DrawTargetBehaviorsSection();
+                DrawMapEnemiesSection();
                 break;
             case 2: // Party
                 DrawPartyTab();
@@ -533,6 +534,7 @@ public class MainWindow : IDisposable
 
         npcSpawner.SpawnModeActive = true;
         combatEngine.StartSimulation();
+        mapEnemyController.SetRecipeSettings(BuildRecipeMapEnemySettings(recipe));
 
         var queuedCompanions = 0;
         foreach (var group in recipe.Companions)
@@ -574,7 +576,30 @@ public class MainWindow : IDisposable
             }
         }
 
-        chatGui.Print($"[CombatSim] Started recipe '{recipe.Name}' ({queuedCompanions} companion(s), {queuedEnemies} enemy/enemies queued).");
+        var mapEnemySettings = BuildRecipeMapEnemySettings(recipe);
+        var mapEnemyText = mapEnemySettings != null ? $", up to {mapEnemySettings.MaxCount} map enemy/enemies" : "";
+        chatGui.Print($"[CombatSim] Started recipe '{recipe.Name}' ({queuedCompanions} companion(s), {queuedEnemies} enemy/enemies queued{mapEnemyText}).");
+    }
+
+    private static MapEnemySettings? BuildRecipeMapEnemySettings(CombatRecipe recipe)
+    {
+        foreach (var group in recipe.MapEnemies)
+        {
+            if (!group.Enabled || group.MaxCount <= 0)
+                continue;
+
+            return new MapEnemySettings
+            {
+                Enabled = true,
+                MaxCount = Math.Max(0, group.MaxCount),
+                SenseRange = Math.Max(0.1f, group.SenseRange),
+                Level = Math.Clamp(group.Level, 1, 300),
+                HpMultiplier = Math.Max(0.0001f, group.HpMultiplier),
+                BehaviorType = group.Behavior,
+            };
+        }
+
+        return null;
     }
 
     private NpcCatalogEntry? ResolveRecipeEnemy(CombatRecipeEnemyGroup group)
@@ -629,6 +654,7 @@ public class MainWindow : IDisposable
         npcSpawner.DespawnAll();
         companionManager.DespawnAll();
         npcSpawner.SpawnModeActive = false;
+        mapEnemyController.ClearRecipeSettings();
 
         if (print)
             chatGui.Print("[CombatSim] Fast combat stopped.");
@@ -862,6 +888,92 @@ public class MainWindow : IDisposable
 
                 ImGui.PopID();
             }
+        }
+    }
+
+    private void DrawMapEnemiesSection()
+    {
+        if (!ImGui.CollapsingHeader("Map Enemies", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        var sensing = config.EnableMapEnemySensing;
+        if (ImGui.Checkbox("Sense map enemies", ref sensing))
+        {
+            config.EnableMapEnemySensing = sensing;
+            config.Save();
+        }
+        HelpMarker("During normal mixed battles, nearby map BattleNpcs can join the enemy pool. Existing recipes only use this when the recipe explicitly enables Map Enemies.");
+
+        if (!sensing)
+            ImGui.BeginDisabled();
+
+        var range = Math.Clamp(config.MapEnemySenseRange, 1.0f, 80.0f);
+        if (ImGui.SliderFloat("Sense range", ref range, 1.0f, 80.0f, "%.1f yalms"))
+        {
+            config.MapEnemySenseRange = range;
+            config.Save();
+        }
+
+        var maxMapEnemies = Math.Clamp(config.MapEnemyMaxCount, 0, 100);
+        if (ImGui.SliderInt("Max map enemies", ref maxMapEnemies, 0, 100))
+        {
+            config.MapEnemyMaxCount = maxMapEnemies;
+            config.Save();
+        }
+
+        if (!sensing)
+            ImGui.EndDisabled();
+
+        ImGui.Separator();
+
+        var defaultLevel = config.DefaultNpcLevel;
+        if (ImGui.SliderInt("Enemy level", ref defaultLevel, 1, 300))
+        {
+            config.DefaultNpcLevel = defaultLevel;
+            config.Save();
+        }
+
+        var hpMult = config.DefaultNpcHpMultiplier;
+        if (ImGui.InputFloat("HP multiplier", ref hpMult, 0.0001f, 0.01f, "%.4f"))
+        {
+            if (hpMult < 0.0001f) hpMult = 0.0001f;
+            config.DefaultNpcHpMultiplier = hpMult;
+            config.Save();
+        }
+
+        var behaviorType = config.DefaultNpcBehaviorType;
+        if (ImGui.Combo("Behavior", ref behaviorType, BehaviorNames, BehaviorNames.Length))
+        {
+            config.DefaultNpcBehaviorType = behaviorType;
+            config.Save();
+        }
+
+        ImGui.Separator();
+        DrawEnemyPoolStatus();
+    }
+
+    private void DrawEnemyPoolStatus()
+    {
+        ImGui.TextDisabled($"Enemy pool: {npcSelector.SelectedNpcs.Count} active, {npcSelector.MapEnemyCount} map");
+        if (npcSelector.SelectedNpcs.Count == 0)
+        {
+            ImGui.TextDisabled("No enemies in the current battle.");
+            return;
+        }
+
+        var shown = 0;
+        foreach (var npc in npcSelector.SelectedNpcs)
+        {
+            if (shown++ >= 8)
+            {
+                ImGui.TextDisabled($"... {npcSelector.SelectedNpcs.Count - shown + 1} more");
+                break;
+            }
+
+            var hpPercent = npc.State.MaxHp > 0
+                ? (float)npc.State.CurrentHp / npc.State.MaxHp
+                : 0;
+            ImGui.TextUnformatted($"[{npc.AiState}] {npc.Name}  {hpPercent:P0}");
         }
     }
 
@@ -1185,133 +1297,6 @@ public class MainWindow : IDisposable
         var angle = Random.Shared.NextSingle() * MathF.Tau;
         var dir = new Vector3(-MathF.Sin(angle), 0, -MathF.Cos(angle));
         return playerPos + dir * distance;
-    }
-
-    private void DrawNpcDefaultsSection()
-    {
-        if (ImGui.CollapsingHeader("NPC Defaults"))
-        {
-            var defaultLevel = config.DefaultNpcLevel;
-            if (ImGui.SliderInt("Default NPC Level", ref defaultLevel, 1, 300))
-            {
-                config.DefaultNpcLevel = defaultLevel;
-                config.Save();
-            }
-            HelpMarker("Level assigned to newly selected NPC targets.");
-
-            var hpMult = config.DefaultNpcHpMultiplier;
-            if (ImGui.InputFloat("Default HP Multiplier", ref hpMult, 0.0001f, 0.01f, "%.4f"))
-            {
-                if (hpMult < 0.0001f) hpMult = 0.0001f;
-                config.DefaultNpcHpMultiplier = hpMult;
-                config.Save();
-            }
-            HelpMarker("Multiplier applied to base NPC HP. Higher = tankier enemies. Use +/- buttons for fine 0.0001 steps.");
-
-            var behaviorType = config.DefaultNpcBehaviorType;
-            if (ImGui.Combo("Default NPC Behavior", ref behaviorType, BehaviorNames, BehaviorNames.Length))
-            {
-                config.DefaultNpcBehaviorType = behaviorType;
-                config.Save();
-            }
-            HelpMarker("AI behavior for newly selected NPCs. Dummy = no attacks, Melee/Ranged = auto-attack, Boss = special patterns.");
-        }
-    }
-
-    private void DrawTargetBehaviorsSection()
-    {
-        if (ImGui.CollapsingHeader("Target Formation"))
-        {
-            var formation = config.EnableNpcTargetPlayer && config.EnableTargetApproach;
-            if (ImGui.Checkbox("Enable Target Formation", ref formation))
-            {
-                config.EnableNpcTargetPlayer = formation;
-                config.EnableTargetApproach = formation;
-                config.Save();
-            }
-            HelpMarker("Enable enemy target facing and formation movement together.");
-
-            var soloWhenEmpty = config.UseSoloTargetFormationWhenNoCompanions;
-            if (ImGui.Checkbox("Use solo formation when no companions", ref soloWhenEmpty))
-            {
-                config.UseSoloTargetFormationWhenNoCompanions = soloWhenEmpty;
-                config.Save();
-            }
-            HelpMarker("When Combat Companions is enabled but no companion clone is alive, use the old solo enemy ring formation instead of party-mode target formation.");
-
-            if (formation)
-            {
-                vnavmeshIpc.RefreshStatus();
-
-                var dist = config.TargetApproachDistance;
-                if (ImGui.SliderFloat("Approach Distance", ref dist, 0.1f, 5.0f, "%.1f yalms"))
-                {
-                    config.TargetApproachDistance = dist;
-                    config.Save();
-                }
-                HelpMarker("How close (in yalms) targets are moved to the player.");
-
-                var heightOffset = config.DefaultNpcHeightOffset;
-                if (ImGui.SliderFloat("Approach Height Offset", ref heightOffset, -5f, 5f, "%.2f"))
-                {
-                    config.DefaultNpcHeightOffset = heightOffset;
-                    config.Save();
-                }
-                HelpMarker("Vertical (Y) offset applied to NPC positions while approach is active. 0 = at player's floor level, positive = above, negative = below. Updates live as you drag the slider.");
-
-                ImGui.Separator();
-
-                var useVnavmesh = config.UseVNavmeshTargetApproach;
-                if (!vnavmeshIpc.IsAvailable)
-                    ImGui.BeginDisabled();
-                if (ImGui.Checkbox("Natural Moving", ref useVnavmesh))
-                {
-                    config.UseVNavmeshTargetApproach = useVnavmesh;
-                    config.Save();
-                }
-                if (!vnavmeshIpc.IsAvailable)
-                    ImGui.EndDisabled();
-                HelpMarker("Use vnavmesh IPC to calculate terrain-aware waypoint paths with stable terrain height following. If enabled but unavailable or not ready, targets wait instead of using linear movement.");
-
-                if (config.UseVNavmeshTargetApproach || !vnavmeshIpc.IsAvailable)
-                {
-                    var color = vnavmeshIpc.CanPathfind
-                        ? new Vector4(0.5f, 0.8f, 0.5f, 1)
-                        : new Vector4(1f, 0.65f, 0.25f, 1);
-                    ImGui.TextColored(color, vnavmeshIpc.StatusText);
-                }
-
-            }
-
-            ImGui.Spacing();
-
-            var aggro = config.EnableAggroPropagation;
-            if (ImGui.Checkbox("Aggro Propagation", ref aggro))
-            {
-                config.EnableAggroPropagation = aggro;
-                config.Save();
-            }
-            HelpMarker("Automatically add nearby BattleNpcs as combat targets when one is engaged.");
-
-            if (aggro)
-            {
-                var aggroRange = config.AggroPropagationRange;
-                if (ImGui.SliderFloat("Aggro Range", ref aggroRange, 1.0f, 50.0f, "%.1f yalms"))
-                {
-                    config.AggroPropagationRange = aggroRange;
-                    config.Save();
-                }
-                HelpMarker("Radius (in yalms) to scan for nearby BattleNpcs to auto-add.");
-
-                var maxTargets = config.MaxTargets;
-                if (ImGui.SliderInt("Aggro Max Targets", ref maxTargets, 1, 50))
-                {
-                    config.MaxTargets = maxTargets;
-                    config.Save();
-                }
-                HelpMarker("Maximum number of active combat targets (includes manually selected and auto-aggro'd).");
-            }
-        }
     }
 
     private void DrawSimulationSection()

@@ -527,6 +527,14 @@ public unsafe class CombatCompanionManager : IDisposable
     public uint GetEnemyTargetId(uint enemyId)
         => enemyTargetByEnemyId.GetValueOrDefault(enemyId);
 
+    public void ForceEnemyTarget(uint enemyId, uint targetId)
+    {
+        if (targetId == 0)
+            enemyTargetByEnemyId.Remove(enemyId);
+        else
+            enemyTargetByEnemyId[enemyId] = targetId;
+    }
+
     /// <summary>
     /// Combat reset while keeping companions: revive + heal each one and clear its
     /// combat state so it is battle-ready again, without despawning/re-cloning.

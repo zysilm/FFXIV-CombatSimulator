@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using CombatSimulator.Simulation;
+using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
@@ -21,6 +23,7 @@ public unsafe class NpcSelector : IDisposable
 
     public IReadOnlyList<SimulatedNpc> SelectedNpcs => selectedNpcs;
     public int MaxTargets => config.MaxTargets;
+    public int MapEnemyCount => selectedNpcs.Count(n => !n.IsClientControlled);
 
     public NpcSelector(
         IObjectTable objectTable,
@@ -134,6 +137,49 @@ public unsafe class NpcSelector : IDisposable
         return true;
     }
 
+    public SimulatedNpc? GetSelectedNpc(uint entityId)
+    {
+        foreach (var npc in selectedNpcs)
+        {
+            if (npc.SimulatedEntityId == entityId)
+                return npc;
+        }
+
+        return null;
+    }
+
+    public (SimulatedNpc? Npc, string? Error) RegisterMapEnemy(
+        IGameObject obj,
+        int level,
+        float hpMultiplier,
+        NpcBehaviorType behaviorType,
+        int mapEnemyLimit,
+        bool ignoreGlobalMaxTargets = false)
+    {
+        if (obj is IPlayerCharacter)
+            return (null, "Players cannot be registered as map enemies.");
+
+        if ((byte)obj.ObjectKind != (byte)ObjectKind.BattleNpc)
+            return (null, "Target is not a BattleNpc.");
+
+        foreach (var existing in selectedNpcs)
+        {
+            if (existing.SimulatedEntityId == obj.EntityId)
+                return (existing, null);
+        }
+
+        if (mapEnemyLimit >= 0 && MapEnemyCount >= mapEnemyLimit)
+            return (null, "Map enemy limit reached.");
+
+        if (!ignoreGlobalMaxTargets && selectedNpcs.Count >= MaxTargets)
+            return (null, "Maximum target limit reached.");
+
+        var npc = CreateMapEnemy(obj, level, hpMultiplier, behaviorType);
+        selectedNpcs.Add(npc);
+        log.Info($"Registered map enemy '{npc.Name}' (EntityId=0x{obj.EntityId:X}) as combat target. HP={npc.State.MaxHp}");
+        return (npc, null);
+    }
+
     /// <summary>
     /// Remove a client-spawned NPC from the active targets list without restoring game state.
     /// </summary>
@@ -230,98 +276,6 @@ public unsafe class NpcSelector : IDisposable
     }
 
     /// <summary>
-    /// Scan the object table for BattleNpc objects near the given position
-    /// and auto-register them as combat targets (aggro propagation).
-    /// Returns the list of newly added NPCs.
-    /// </summary>
-    public List<SimulatedNpc> SelectNearbyBattleNpcs(
-        Vector3 position, float range, int level, float hpMultiplier, NpcBehaviorType behaviorType)
-    {
-        var added = new List<SimulatedNpc>();
-
-        foreach (var obj in objectTable)
-        {
-            if (selectedNpcs.Count >= MaxTargets)
-                break;
-
-            // Only consider BattleNpc objects (use Dalamud's managed ObjectKind enum)
-            if ((byte)obj.ObjectKind != (byte)ObjectKind.BattleNpc)
-                continue;
-
-            // Skip if already selected
-            bool alreadySelected = false;
-            foreach (var existing in selectedNpcs)
-            {
-                if (existing.SimulatedEntityId == obj.EntityId)
-                {
-                    alreadySelected = true;
-                    break;
-                }
-            }
-            if (alreadySelected)
-                continue;
-
-            // Check distance
-            float dist = Vector3.Distance(obj.Position, position);
-            if (dist > range)
-                continue;
-
-            // Try to add this NPC as a target
-            var battleChara = (BattleChara*)obj.Address;
-            var character = (Character*)battleChara;
-            var gameObj = (GameObject*)battleChara;
-
-            int originalModelCharaId = character->ModelContainer.ModelCharaId;
-            byte originalObjectKind = (byte)gameObj->ObjectKind;
-            byte originalSubKind = gameObj->SubKind;
-
-            int maxHp = CalculateNpcHp(level, hpMultiplier);
-            var weaponStyle = NpcWeaponClassifier.DetectFromCharacter(character, log, obj.Name.TextValue);
-
-            var npc = new SimulatedNpc
-            {
-                SimulatedEntityId = obj.EntityId,
-                ObjectIndex = -1,
-                Name = obj.Name.TextValue,
-                BattleChara = battleChara,
-                GameObjectRef = obj,
-                SpawnPosition = obj.Position,
-                Behavior = actionProfileProvider.CreateForSelectedTarget(obj.Name.TextValue, behaviorType, weaponStyle),
-                IsSpawned = true,
-                IsClientControlled = false,
-                IsRanged = weaponStyle == NpcAttackStyle.Ranged,
-                OriginalModelCharaId = originalModelCharaId,
-                OriginalObjectKind = originalObjectKind,
-                OriginalSubKind = originalSubKind,
-                State = new SimulatedEntityState
-                {
-                    EntityId = obj.EntityId,
-                    Name = obj.Name.TextValue,
-                    IsPlayer = false,
-                    Level = level,
-                    MaxHp = maxHp,
-                    CurrentHp = maxHp,
-                    MaxMp = 10000,
-                    CurrentMp = 10000,
-                    MainStat = 100 + level * 10,
-                    Defense = 100 + level * 5,
-                    MagicDefense = 100 + level * 5,
-                },
-            };
-
-            // Make the NPC attackable
-            gameObj->ObjectKind = ObjectKind.BattleNpc;
-            gameObj->SubKind = (byte)BattleNpcSubKind.Combatant;
-
-            selectedNpcs.Add(npc);
-            added.Add(npc);
-            log.Info($"Aggro: Auto-selected '{npc.Name}' (EntityId=0x{obj.EntityId:X}) as combat target. HP={maxHp}");
-        }
-
-        return added;
-    }
-
-    /// <summary>
     /// Validate selected NPCs still exist. Called each framework update.
     /// AccessViolationException from reading native memory on a freed object is
     /// uncatchable — we must validate the pointer before touching any property.
@@ -370,6 +324,59 @@ public unsafe class NpcSelector : IDisposable
 
     private int CalculateNpcHp(int level, float multiplier)
         => NpcHpCalculator.CalculateNormalEnemyHp(level, multiplier);
+
+    private SimulatedNpc CreateMapEnemy(
+        IGameObject obj,
+        int level,
+        float hpMultiplier,
+        NpcBehaviorType behaviorType)
+    {
+        var battleChara = (BattleChara*)obj.Address;
+        var character = (Character*)battleChara;
+        var gameObj = (GameObject*)battleChara;
+
+        int originalModelCharaId = character->ModelContainer.ModelCharaId;
+        byte originalObjectKind = (byte)gameObj->ObjectKind;
+        byte originalSubKind = gameObj->SubKind;
+
+        int maxHp = CalculateNpcHp(level, hpMultiplier);
+        var weaponStyle = NpcWeaponClassifier.DetectFromCharacter(character, log, obj.Name.TextValue);
+
+        var npc = new SimulatedNpc
+        {
+            SimulatedEntityId = obj.EntityId,
+            ObjectIndex = -1,
+            Name = obj.Name.TextValue,
+            BattleChara = battleChara,
+            GameObjectRef = obj,
+            SpawnPosition = obj.Position,
+            Behavior = actionProfileProvider.CreateForSelectedTarget(obj.Name.TextValue, behaviorType, weaponStyle),
+            IsSpawned = true,
+            IsClientControlled = false,
+            IsRanged = weaponStyle == NpcAttackStyle.Ranged,
+            OriginalModelCharaId = originalModelCharaId,
+            OriginalObjectKind = originalObjectKind,
+            OriginalSubKind = originalSubKind,
+            State = new SimulatedEntityState
+            {
+                EntityId = obj.EntityId,
+                Name = obj.Name.TextValue,
+                IsPlayer = false,
+                Level = level,
+                MaxHp = maxHp,
+                CurrentHp = maxHp,
+                MaxMp = 10000,
+                CurrentMp = 10000,
+                MainStat = 100 + level * 10,
+                Defense = 100 + level * 5,
+                MagicDefense = 100 + level * 5,
+            },
+        };
+
+        gameObj->ObjectKind = ObjectKind.BattleNpc;
+        gameObj->SubKind = (byte)BattleNpcSubKind.Combatant;
+        return npc;
+    }
 
     public void Dispose()
     {

@@ -507,8 +507,6 @@ public class CombatEngine : IDisposable
             CombatLogType.DamageDealt);
 
         // Engage the NPC if it was idle
-        Vector3 engagedNpcPos = Vector3.Zero;
-        bool didEngage = false;
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             if (npc.SimulatedEntityId == (uint)targetId &&
@@ -518,45 +516,7 @@ public class CombatEngine : IDisposable
                 npc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
                 Ai.NpcAiController.StaggerTimers(npc);
                 AddLogEntry($"{npc.Name} engages!", CombatLogType.Info);
-                engagedNpcPos = GetEntityPosition(npc.State);
-                didEngage = true;
                 break;
-            }
-        }
-
-        // Aggro propagation: scan the game world for nearby BattleNpcs and add them as targets
-        if (didEngage && config.EnableAggroPropagation)
-        {
-            float aggroRange = config.AggroPropagationRange;
-
-            // First, activate any already-selected idle NPCs in range
-            foreach (var npc in npcSelector.SelectedNpcs)
-            {
-                if (npc.AiState != Ai.NpcAiState.Idle || !npc.IsSpawned)
-                    continue;
-                var npcPos = GetEntityPosition(npc.State);
-                if (Vector3.Distance(npcPos, engagedNpcPos) <= aggroRange)
-                {
-                    npc.AiState = Ai.NpcAiState.Engaging;
-                    npc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
-                    Ai.NpcAiController.StaggerTimers(npc);
-                    AddLogEntry($"{npc.Name} joins the fight!", CombatLogType.Info);
-                }
-            }
-
-            // Then, scan the object table for new BattleNpcs in range and auto-add them
-            var newNpcs = npcSelector.SelectNearbyBattleNpcs(
-                engagedNpcPos, aggroRange,
-                config.DefaultNpcLevel, config.DefaultNpcHpMultiplier,
-                (Npcs.NpcBehaviorType)config.DefaultNpcBehaviorType);
-
-            foreach (var newNpc in newNpcs)
-            {
-                RegisterNpcEntity(newNpc);
-                newNpc.AiState = Ai.NpcAiState.Engaging;
-                newNpc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
-                Ai.NpcAiController.StaggerTimers(newNpc);
-                AddLogEntry($"{newNpc.Name} joins the fight!", CombatLogType.Info);
             }
         }
 

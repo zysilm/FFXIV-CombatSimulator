@@ -49,6 +49,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly CombatCompanionManager companionManager;
     private readonly NpcAiController npcAiController;
     private readonly PlayerTargetController playerTargetController;
+    private readonly MapEnemyController mapEnemyController;
     private readonly MovementBlockHook movementBlockHook;
     private readonly UseActionHook useActionHook;
     private readonly DeathCamController deathCamController;
@@ -144,6 +145,16 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             gameInterop, combatEngine, npcSelector, config, objectTable, gameGui, log);
         combatEngine.GetLockedTargetId = () => playerTargetController.LockedTargetEntityId;
 
+        mapEnemyController = new MapEnemyController(
+            objectTable,
+            config,
+            npcSelector,
+            combatEngine,
+            () => companionManager.Companions,
+            companionManager.ForceEnemyTarget,
+            () => npcSpawner.SpawnModeActive,
+            log);
+
         companionManager.OnCompanionSpawnComplete = companion =>
         {
             combatEngine.RegisterCompanionEntity(companion);
@@ -233,7 +244,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             (nint)FFXIVClientStructs.FFXIV.Client.Game.Character.ActionEffectHandler.MemberFunctionPointers.Receive);
 
         // Safety — enable hooks immediately; they gate on internal state
-        useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, npcSpawner, config, clientState, log, playerTargetController);
+        useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, npcSpawner, config, clientState, log, playerTargetController, mapEnemyController);
         useActionHook.Enable();
         movementBlockHook.Enable();
 
@@ -242,7 +253,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             activeCameraController.SetActive(true);
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, glamourerIpc, vnavmeshIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, mainWindow, config, gameGui, clientState);
@@ -475,6 +486,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 return;
             }
 
+            mapEnemyController.Tick(deltaTime);
             combatEngine.Tick(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
             victorySequenceController.Tick(deltaTime);
