@@ -144,6 +144,23 @@ No changes to `Configuration`, GUI, or the human bone profile.
   (head/wing-tip) so they flop, or add a generic angular-velocity damp to calm
   residual shaking.
 
+### Iteration 2 — toad still exploded with self-collision off
+
+- In-game log (Toxic Toad, 32 generated bones, self-collision already off) showed
+  velocity growing **exponentially from frame 1** (1.8 → 116 → 4970 m/s over ~5s),
+  bodies ending hundreds of metres away. Monotonic growth with no body-body
+  collision ⇒ the **auto-built constraint network itself pumps energy**.
+- Cause: a dense cluster of **small near-spherical capsules** (half-length < 0.08m,
+  tiny inertia) joined by stiff ball joints that the 8-iteration solver can't
+  converge; residual error compounds. Angular velocity blows up fastest (tiny
+  inertia). Ants stay stable because their rig is sparse and elongated.
+- Fixes (generic-only): per-frame **velocity clamp** (12 m/s / 16 rad/s) as a hard
+  ceiling; raise `GenericMinSegmentLength` 0.04 → 0.08 to drop the tiny-body
+  cluster; bump generic solver iterations to ≥16.
+- Still to verify in-game: toad now settles instead of exploding; bat re-checked.
+  If residual jitter remains, next levers: inflate small-body inertia, soften
+  generic joint springs, or lower the velocity clamp.
+
 Note: scale was investigated and ruled out as the explosion cause —
 `ModelToWorld`/`WorldToModel` omit scale but are exact inverses, so the
 read→simulate→write round-trip stays self-consistent at any model scale.
