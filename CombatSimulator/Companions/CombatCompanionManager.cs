@@ -40,6 +40,14 @@ public unsafe class CombatCompanionManager : IDisposable
     private readonly Dictionary<nint, PathState> pathStates = new();
     private readonly Dictionary<uint, uint> enemyTargetByEnemyId = new();
     private uint nextEntityId = 0xF1000001;
+
+    // Floor for plugin-synthesised entity IDs. Spawned virtual enemies start at
+    // 0xF0000001 and companion clones at 0xF1000001; no real player's EntityId
+    // falls in this range. Used to keep our own spawned actors out of the
+    // "sense visible players" scan (otherwise a humanoid enemy that ends up as a
+    // Pc, or an existing companion clone, would be re-cloned into the party).
+    private const uint SimulatedEntityIdFloor = 0xF0000000;
+
     private float playerRecentDamage;
     private float playerRecentDps;
     private uint selectedFocusTargetId;
@@ -150,13 +158,14 @@ public unsafe class CombatCompanionManager : IDisposable
         this.log = log;
     }
 
-    public int SpawnFromVisiblePlayers()
+    public int SpawnFromVisiblePlayers(int maxToQueue = int.MaxValue)
     {
         if (!config.EnableCombatCompanions)
             return 0;
 
         var max = Math.Clamp(config.CombatCompanionMaxCount, 0, MaxCompanionCap);
         var availableSlots = Math.Max(0, max - companions.Count - PendingCount);
+        availableSlots = Math.Min(availableSlots, Math.Max(0, maxToQueue));
         if (availableSlots == 0)
             return 0;
 
@@ -170,6 +179,8 @@ public unsafe class CombatCompanionManager : IDisposable
                 continue;
             if (objectTable.LocalPlayer != null && player.EntityId == objectTable.LocalPlayer.EntityId)
                 continue;
+            if (player.EntityId >= SimulatedEntityIdFloor)
+                continue;
             if (player.Address == nint.Zero)
                 continue;
             if (!seenSources.Add(player.EntityId))
@@ -182,12 +193,34 @@ public unsafe class CombatCompanionManager : IDisposable
         return queued;
     }
 
-    public bool SpawnSelfCharacter(bool randomizeAppearance = false)
+    public int SpawnSelfCharacters(int count, bool randomizeAppearance, bool ignoreConfiguredMax = false)
+    {
+        if (!config.EnableCombatCompanions)
+            return 0;
+
+        var max = ignoreConfiguredMax
+            ? MaxCompanionCap
+            : Math.Clamp(config.CombatCompanionMaxCount, 0, MaxCompanionCap);
+        var availableSlots = Math.Max(0, max - companions.Count - PendingCount);
+        var toQueue = Math.Min(Math.Max(0, count), availableSlots);
+        var queued = 0;
+        for (var i = 0; i < toQueue; i++)
+        {
+            if (!SpawnSelfCharacter(randomizeAppearance, ignoreConfiguredMax))
+                break;
+            queued++;
+        }
+        return queued;
+    }
+
+    public bool SpawnSelfCharacter(bool randomizeAppearance = false, bool ignoreConfiguredMax = false)
     {
         if (!config.EnableCombatCompanions)
             return false;
 
-        var max = Math.Clamp(config.CombatCompanionMaxCount, 0, MaxCompanionCap);
+        var max = ignoreConfiguredMax
+            ? MaxCompanionCap
+            : Math.Clamp(config.CombatCompanionMaxCount, 0, MaxCompanionCap);
         if (companions.Count + PendingCount >= max)
             return false;
 
@@ -591,6 +624,8 @@ public unsafe class CombatCompanionManager : IDisposable
                 continue;
             if (objectTable.LocalPlayer != null && player.EntityId == objectTable.LocalPlayer.EntityId)
                 continue;
+            if (player.EntityId >= SimulatedEntityIdFloor)
+                continue;
             if (player.Address == nint.Zero || !seenSources.Add(player.EntityId))
                 continue;
 
@@ -685,11 +720,16 @@ public unsafe class CombatCompanionManager : IDisposable
             var entityId = nextEntityId++;
             obj->EntityId = entityId;
 
-            var level = Math.Clamp(config.CombatCompanionLevelOverride, 1, 300);
-            var maxHp = CalculateCompanionHp(level);
             var classJobId = sourceInfo.ClassJobId;
             var weaponStyle = NpcWeaponClassifier.DetectFromCharacter(character, log, name);
             var behavior = CreateCompanionBehavior(weaponStyle);
+
+            // A companion is "another me": HP, offense, and defenses all mirror
+            // the local player's real combat stats. Only appearance, job, and
+            // attack style stay per-source. EnsurePlayerInitialized covers the
+            // case where companions are spawned before the simulation starts.
+            combatEngine.EnsurePlayerInitialized();
+            var pp = combatEngine.State.PlayerState;
 
             var companion = new CombatCompanion
             {
@@ -710,28 +750,29 @@ public unsafe class CombatCompanionManager : IDisposable
                     Name = name,
                     IsPlayer = false,
                     IsCompanion = true,
-                    Level = level,
-                    MaxHp = maxHp,
-                    CurrentHp = maxHp,
-                    MaxMp = 10000,
-                    CurrentMp = 10000,
+                    Level = pp.Level,
+                    MaxHp = Math.Max(1, pp.MaxHp),
+                    CurrentHp = Math.Max(1, pp.MaxHp),
+                    MaxMp = pp.MaxMp > 0 ? pp.MaxMp : 10000,
+                    CurrentMp = pp.MaxMp > 0 ? pp.MaxMp : 10000,
                     ClassJobId = classJobId,
                     IsTank = IsTankJob(classJobId),
-                    MainStat = 100 + level * 10,
-                    AttackPower = 100 + level * 10,
-                    AttackMagicPotency = 100 + level * 10,
-                    Determination = 100 + level * 8,
-                    CriticalHit = 100 + level * 8,
-                    DirectHit = 100 + level * 8,
-                    Defense = 100 + level * 8,
-                    MagicDefense = 100 + level * 8,
-                    Tenacity = 100 + level * 4,
-                    SkillSpeed = 100 + level * 6,
-                    SpellSpeed = 100 + level * 6,
-                    WeaponDamage = Math.Max(1, 20 + level),
-                    MagicWeaponDamage = Math.Max(1, 20 + level),
-                    WeaponDelayMs = 3000,
-                    DamageTraitPct = 100,
+                    MainStat = pp.MainStat,
+                    AttackPower = pp.AttackPower,
+                    AttackMagicPotency = pp.AttackMagicPotency,
+                    HealingMagicPotency = pp.HealingMagicPotency,
+                    Determination = pp.Determination,
+                    CriticalHit = pp.CriticalHit,
+                    DirectHit = pp.DirectHit,
+                    Defense = pp.Defense,
+                    MagicDefense = pp.MagicDefense,
+                    Tenacity = pp.Tenacity,
+                    SkillSpeed = pp.SkillSpeed,
+                    SpellSpeed = pp.SpellSpeed,
+                    WeaponDamage = pp.WeaponDamage,
+                    MagicWeaponDamage = pp.MagicWeaponDamage,
+                    WeaponDelayMs = pp.WeaponDelayMs,
+                    DamageTraitPct = pp.DamageTraitPct,
                 },
             };
             pendingSpawns.Add(new PendingSpawn { Companion = companion });
@@ -2104,12 +2145,6 @@ public unsafe class CombatCompanionManager : IDisposable
         var dir = player.Position - spawnPos;
         return MathF.Atan2(dir.X, dir.Z);
     }
-
-    private static int CalculateCompanionHp(int level)
-        => level <= 50 ? 2000 + level * 500 :
-           level <= 80 ? 30000 + level * 2000 :
-           level <= 90 ? 80000 + level * 3000 :
-           150000 + level * 5000;
 
     private static NpcBehavior CreateCompanionBehavior(NpcAttackStyle style)
     {

@@ -9,6 +9,7 @@ using BepuUtilities;
 using BepuUtilities.Memory;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using BepuSimulation = BepuPhysics.Simulation;
 
@@ -42,6 +43,13 @@ public unsafe class WeaponDropController : IDisposable
     private float simFriction;
     private int simSolverIterations;
 
+    // Attach.ExecuteType: 4 = weapon (driven by the owner skeleton's hand bone),
+    // 0 = root object (positioned by its own DrawObject.Position). We flip the
+    // weapon DrawObject to 0 while it falls so the game stops re-parenting it to
+    // the hand, then drive its world transform directly from the rigid body.
+    private const int WeaponAttachExecuteType = 4;
+    private const int DetachedExecuteType = 0;
+
     private class Entry
     {
         public nint CharacterAddress;
@@ -49,6 +57,8 @@ public unsafe class WeaponDropController : IDisposable
         public BodyHandle? Off;
         public int MainBoneIndex = -1;
         public int OffBoneIndex = -1;
+        public int MainOrigExecuteType = WeaponAttachExecuteType;
+        public int OffOrigExecuteType = WeaponAttachExecuteType;
         public StaticHandle? GroundTile;
     }
     private readonly Dictionary<nint, Entry> entries = new();
@@ -80,7 +90,6 @@ public unsafe class WeaponDropController : IDisposable
     /// </summary>
     public void SpawnFor(nint characterAddress, float delay = 0f)
     {
-        if (!config.WeaponDropEnabled) return;
         if (characterAddress == nint.Zero) return;
         if (entries.ContainsKey(characterAddress)) return;
         if (pending.Exists(p => p.CharacterAddress == characterAddress)) return;
@@ -110,6 +119,20 @@ public unsafe class WeaponDropController : IDisposable
 
     private void DisposeEntry(Entry entry)
     {
+        // Re-attach the weapon to the hand (undo the decoupling) before dropping
+        // the rigid body, so a revived/reset character holds its weapon again.
+        try
+        {
+            if (entry.Main.HasValue)
+                ReattachWeapon(entry.CharacterAddress, DrawDataContainer.WeaponSlot.MainHand, entry.MainOrigExecuteType);
+            if (entry.Off.HasValue)
+                ReattachWeapon(entry.CharacterAddress, DrawDataContainer.WeaponSlot.OffHand, entry.OffOrigExecuteType);
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "WeaponDropController: failed to re-attach weapon on dispose");
+        }
+
         if (simulation == null) return;
         if (entry.Main.HasValue) simulation.Bodies.Remove(entry.Main.Value);
         if (entry.Off.HasValue) simulation.Bodies.Remove(entry.Off.Value);
@@ -150,20 +173,16 @@ public unsafe class WeaponDropController : IDisposable
 
             foreach (var (addr, entry) in entries)
             {
-                var skelN = boneService.TryGetSkeleton(addr);
-                if (skelN == null) continue;
-                var skel = skelN.Value;
-                var sk = skel.CharBase->Skeleton;
-                if (sk == null) continue;
-
-                var skelWorldPos = new Vector3(sk->Transform.Position.X, sk->Transform.Position.Y, sk->Transform.Position.Z);
-                var skelWorldRot = new Quaternion(sk->Transform.Rotation.X, sk->Transform.Rotation.Y, sk->Transform.Rotation.Z, sk->Transform.Rotation.W);
-                var skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
-
-                if (entry.Main.HasValue && entry.MainBoneIndex >= 0)
-                    WriteBone(skel, entry.Main.Value, entry.MainBoneIndex, skelWorldPos, skelWorldRotInv);
-                if (entry.Off.HasValue && entry.OffBoneIndex >= 0)
-                    WriteBone(skel, entry.Off.Value, entry.OffBoneIndex, skelWorldPos, skelWorldRotInv);
+                if (entry.Main.HasValue)
+                {
+                    var mainDraw = GetWeaponDrawObject(addr, DrawDataContainer.WeaponSlot.MainHand);
+                    if (mainDraw != null) DriveWeapon(mainDraw, entry.Main.Value);
+                }
+                if (entry.Off.HasValue)
+                {
+                    var offDraw = GetWeaponDrawObject(addr, DrawDataContainer.WeaponSlot.OffHand);
+                    if (offDraw != null) DriveWeapon(offDraw, entry.Off.Value);
+                }
             }
         }
         catch (Exception ex)
@@ -187,15 +206,29 @@ public unsafe class WeaponDropController : IDisposable
         var skelWorldPos = new Vector3(sk->Transform.Position.X, sk->Transform.Position.Y, sk->Transform.Position.Z);
         var skelWorldRot = new Quaternion(sk->Transform.Rotation.X, sk->Transform.Rotation.Y, sk->Transform.Rotation.Z, sk->Transform.Rotation.W);
 
+        // Only drop a weapon that is actually drawn (a separate DrawObject). An
+        // unarmed slot has no DrawObject, so there is nothing to decouple/fall.
+        var mainDraw = GetWeaponDrawObject(characterAddress, DrawDataContainer.WeaponSlot.MainHand);
+        var offDraw = GetWeaponDrawObject(characterAddress, DrawDataContainer.WeaponSlot.OffHand);
+
         var entry = new Entry { CharacterAddress = characterAddress };
-        entry.Main = TryCreateWeaponBody(skel, WeaponMainHandBones, skelWorldPos, skelWorldRot, out entry.MainBoneIndex);
-        entry.Off = TryCreateWeaponBody(skel, WeaponOffHandBones, skelWorldPos, skelWorldRot, out entry.OffBoneIndex);
+        if (mainDraw != null)
+            entry.Main = TryCreateWeaponBody(skel, WeaponMainHandBones, skelWorldPos, skelWorldRot, out entry.MainBoneIndex);
+        if (offDraw != null)
+            entry.Off = TryCreateWeaponBody(skel, WeaponOffHandBones, skelWorldPos, skelWorldRot, out entry.OffBoneIndex);
 
         if (!entry.Main.HasValue && !entry.Off.HasValue)
         {
-            log.Info($"WeaponDropController: no weapon bones found for 0x{characterAddress:X}");
+            log.Info($"WeaponDropController: no drawn weapon for 0x{characterAddress:X}");
             return;
         }
+
+        // Decouple the weapon DrawObject(s) from the owner skeleton so they fall
+        // freely instead of being re-parented to the hand every frame.
+        if (entry.Main.HasValue && mainDraw != null)
+            entry.MainOrigExecuteType = DetachWeapon(mainDraw);
+        if (entry.Off.HasValue && offDraw != null)
+            entry.OffOrigExecuteType = DetachWeapon(offDraw);
 
         // Per-entity ground tile under the spawn point
         var groundY = skelWorldPos.Y;
@@ -242,25 +275,64 @@ public unsafe class WeaponDropController : IDisposable
         return handle;
     }
 
-    private void WriteBone(SkeletonAccess skel, BodyHandle bodyHandle, int boneIndex,
-        Vector3 skelWorldPos, Quaternion skelWorldRotInv)
+    /// <summary>Resolve the drawn weapon DrawObject for a slot, or null if unarmed/unloaded.</summary>
+    private static DrawObject* GetWeaponDrawObject(nint characterAddress, DrawDataContainer.WeaponSlot slot)
     {
-        var bodyRef = simulation!.Bodies.GetBodyReference(bodyHandle);
-        var worldPos = bodyRef.Pose.Position;
-        var worldRot = bodyRef.Pose.Orientation;
+        if (characterAddress == nint.Zero) return null;
+        var character = (Character*)characterAddress;
+        return character->DrawData.Weapon(slot).DrawObject;
+    }
 
-        // World → model: modelPos = Rotate(worldPos - skelPos, skelRotInv); modelRot = skelRotInv * worldRot
-        var modelPos = Vector3.Transform(worldPos - skelWorldPos, skelWorldRotInv);
-        var modelRot = Quaternion.Normalize(skelWorldRotInv * worldRot);
+    /// <summary>Break the weapon's attach to the owner skeleton; returns the original ExecuteType.</summary>
+    private static int DetachWeapon(DrawObject* weaponDraw)
+    {
+        var cb = (CharacterBase*)weaponDraw;
+        var orig = cb->Attach.ExecuteType;
+        cb->Attach.ExecuteType = DetachedExecuteType;
+        return orig == DetachedExecuteType ? WeaponAttachExecuteType : orig;
+    }
 
-        ref var mt = ref skel.Pose->ModelPose.Data[boneIndex];
-        mt.Translation.X = modelPos.X;
-        mt.Translation.Y = modelPos.Y;
-        mt.Translation.Z = modelPos.Z;
-        mt.Rotation.X = modelRot.X;
-        mt.Rotation.Y = modelRot.Y;
-        mt.Rotation.Z = modelRot.Z;
-        mt.Rotation.W = modelRot.W;
+    /// <summary>Drive a decoupled weapon DrawObject's world transform from its rigid body.</summary>
+    private void DriveWeapon(DrawObject* weaponDraw, BodyHandle bodyHandle)
+    {
+        if (simulation == null) return;
+
+        // Keep it decoupled in case a redraw re-attached it to the hand.
+        var cb = (CharacterBase*)weaponDraw;
+        if (cb->Attach.ExecuteType != DetachedExecuteType)
+            cb->Attach.ExecuteType = DetachedExecuteType;
+
+        var bodyRef = simulation.Bodies.GetBodyReference(bodyHandle);
+        var pos = bodyRef.Pose.Position;
+        var rot = bodyRef.Pose.Orientation;
+
+        // The weapon mesh is skinned to its OWN skeleton; the attach normally
+        // writes that skeleton's root world Transform from the owner hand bone.
+        // Overwrite it here (after the attach ran this frame) so the rendered
+        // weapon follows the rigid body — the same way ragdoll overwrites body
+        // bone ModelPose. DrawObject.Position alone does NOT move the mesh.
+        var sk = cb->Skeleton;
+        if (sk != null)
+        {
+            sk->Transform.Position.X = pos.X;
+            sk->Transform.Position.Y = pos.Y;
+            sk->Transform.Position.Z = pos.Z;
+            sk->Transform.Rotation.X = rot.X;
+            sk->Transform.Rotation.Y = rot.Y;
+            sk->Transform.Rotation.Z = rot.Z;
+            sk->Transform.Rotation.W = rot.W;
+        }
+
+        weaponDraw->Position = pos;
+        weaponDraw->Rotation = rot;
+    }
+
+    /// <summary>Restore the weapon's attach so it re-parents to the hand.</summary>
+    private static void ReattachWeapon(nint characterAddress, DrawDataContainer.WeaponSlot slot, int origExecuteType)
+    {
+        var draw = GetWeaponDrawObject(characterAddress, slot);
+        if (draw == null) return;
+        ((CharacterBase*)draw)->Attach.ExecuteType = origExecuteType;
     }
 
     private bool ConfigSnapshotChanged()

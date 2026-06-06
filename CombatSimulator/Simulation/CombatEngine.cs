@@ -78,6 +78,7 @@ public class CombatEngine : IDisposable
     public Func<bool>? HasLivingCompanions { get; set; }
     public Action<int>? OnPlayerDamageDealt { get; set; }
     public Action<uint, int>? OnPlayerDamageDealtToTarget { get; set; }
+    public string LastPlayerDefeatedBy { get; private set; } = string.Empty;
 
     /// <summary>
     /// Fired at the end of StopSimulation and ResetState — i.e. whenever the
@@ -158,6 +159,7 @@ public class CombatEngine : IDisposable
         State.SimulationTime = 0;
         State.CombatStartTime = 0;
         playerDeathTriggered = false;
+        LastPlayerDefeatedBy = string.Empty;
         victoryTriggered = false;
         glamourerApplied = false;
         playerInitiatedCombat = false;
@@ -212,6 +214,7 @@ public class CombatEngine : IDisposable
         deathCamController?.Deactivate();
         RevertGlamourer();
         playerInitiatedCombat = false;
+        LastPlayerDefeatedBy = string.Empty;
 
         AddLogEntry("Combat simulation stopped.", CombatLogType.Info);
         log.Info("Combat simulation stopped.");
@@ -259,6 +262,7 @@ public class CombatEngine : IDisposable
         ApplyResetGlamourer();
 
         playerDeathTriggered = false;
+        LastPlayerDefeatedBy = string.Empty;
         victoryTriggered = false;
         glamourerApplied = false;
         playerInitiatedCombat = false;
@@ -267,6 +271,37 @@ public class CombatEngine : IDisposable
         AddLogEntry("Combat state reset.", CombatLogType.Info);
 
         OnSimulationReset?.Invoke();
+    }
+
+    public void RevivePlayerInPlace()
+    {
+        var ps = State.PlayerState;
+        if (ps.MaxHp <= 0)
+            InitializePlayerState();
+
+        ps.CurrentHp = ps.MaxHp;
+        ps.CurrentMp = ps.MaxMp;
+        ps.AnimationLock = 0;
+        ps.GcdRemaining = 0;
+        ps.AutoAttackTimer = 0;
+        ps.IsCasting = false;
+        ps.CastTimeElapsed = 0;
+        ps.CastTimeTotal = 0;
+        ps.CastActionId = 0;
+        ps.CastTargetId = 0;
+        ps.Cooldowns.Clear();
+        ps.StatusEffects.Clear();
+
+        playerDeathTriggered = false;
+        LastPlayerDefeatedBy = string.Empty;
+        animationController.ResetPlayerDeathAnimation();
+        movementBlockHook.IsBlocking = false;
+        ragdollController.Deactivate();
+        deathCamController?.Deactivate();
+        RevertGlamourer();
+        ApplyResetGlamourer();
+
+        AddLogEntry("Player revived in place.", CombatLogType.Info);
     }
 
     public void Tick(float deltaTime)
@@ -610,6 +645,8 @@ public class CombatEngine : IDisposable
         // Check player death
         if (!target.IsAlive)
         {
+            if (target.IsPlayer)
+                LastPlayerDefeatedBy = npc.Name;
             result.TargetKilled = true;
             OnEntityDeath(target);
         }
@@ -1011,9 +1048,13 @@ public class CombatEngine : IDisposable
                     var player = Core.Services.ObjectTable.LocalPlayer;
                     if (player != null && player.Address != nint.Zero)
                     {
+                        // Weapon drop is part of ragdoll, so only fire it (and the
+                        // ragdoll) when ragdoll is enabled.
                         if (config.EnableRagdoll)
+                        {
                             ragdollController.Activate(player.Address);
-                        OnPlayerDeath?.Invoke(player.Address);
+                            OnPlayerDeath?.Invoke(player.Address);
+                        }
                     }
                 }
 
@@ -1131,6 +1172,18 @@ public class CombatEngine : IDisposable
 
         glamourerIpc.RevertState();
         glamourerApplied = false;
+    }
+
+    /// <summary>
+    /// Ensure the local player's combat stats have been read at least once.
+    /// Companions mirror these values, and in Professional Mode they can be
+    /// spawned before the simulation starts, so this lets callers populate
+    /// PlayerState on demand without starting combat.
+    /// </summary>
+    public void EnsurePlayerInitialized()
+    {
+        if (State.PlayerState.MaxHp <= 0)
+            InitializePlayerState();
     }
 
     private unsafe void InitializePlayerState()

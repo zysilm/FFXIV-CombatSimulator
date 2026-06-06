@@ -81,7 +81,6 @@ public class Configuration : IPluginConfiguration
     // simulated enemies as friendly actors.
     public bool EnableCombatCompanions { get; set; } = true;
     public int CombatCompanionMaxCount { get; set; } = 10;
-    public int CombatCompanionLevelOverride { get; set; } = 1;
     public bool SensePartyMembers { get; set; } = true;
     // When true, resetting combat keeps existing companions (revived + healed)
     // instead of despawning them. Stopping the simulation always despawns.
@@ -116,6 +115,10 @@ public class Configuration : IPluginConfiguration
 
     // Shortcuts bar
     public bool ShowShortcuts { get; set; } = false;
+    public bool ShowProfessionalWindow { get; set; } = false;
+    public bool ShowFastCombatToolbar { get; set; } = false;
+    public bool ShowDefeatRevivePopup { get; set; } = true;
+    public int FastCombatLevel { get; set; } = 90;
 
     // Death Cam toolbar
     public bool ShowDeathCamToolbar { get; set; } = false;
@@ -146,8 +149,7 @@ public class Configuration : IPluginConfiguration
     public int RagdollSolverIterations { get; set; } = 8;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
-    // Weapon drop physics — independent simulation from ragdoll, drops immediately on death
-    public bool WeaponDropEnabled { get; set; } = true; // Experimental weapon-bone physics on death
+    // Weapon drop physics — runs as part of ragdoll; weapon detaches and falls on death
     public float WeaponDropGravity { get; set; } = 9.8f;
     public float WeaponDropDamping { get; set; } = 0.99f; // 1.0 = no damping, lower = settles faster
     public float WeaponDropMass { get; set; } = 1.5f;
@@ -182,7 +184,6 @@ public class Configuration : IPluginConfiguration
     public bool DevNpcOcclusionHide { get; set; } = false;
     public float DevNpcOcclusionRadius { get; set; } = 1.0f;
     public bool DevCompanionAppearanceVariant { get; set; } = false;
-    public bool DevOnlyHumanoidEnemies { get; set; } = false;
     public bool DevPartyApproachDebugLog { get; set; } = false;
     public bool RagdollNpcCollision { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;

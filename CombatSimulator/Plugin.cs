@@ -148,7 +148,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // Wire NpcSpawner callbacks
         npcSpawner.OnNpcSpawnComplete = (npc) =>
         {
-            npcSelector.RegisterSpawnedNpc(npc);
+            npcSelector.RegisterSpawnedNpc(npc, ignoreMaxTargets: npcSpawner.SpawnModeActive);
             combatEngine.RegisterNpcEntity(npc);
             log.Info($"Spawned NPC '{npc.Name}' registered as combat target.");
         };
@@ -166,7 +166,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             foreach (var npc in npcSpawner.SpawnedNpcs)
             {
                 if (npc.IsSpawned && npc.BattleChara != null)
-                    npcSelector.RegisterSpawnedNpc(npc);
+                    npcSelector.RegisterSpawnedNpc(npc, ignoreMaxTargets: npcSpawner.SpawnModeActive);
             }
         };
 
@@ -239,7 +239,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // Register
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open Combat Simulator configuration.\n" +
+            HelpMessage = "Open Combat Simulator.\n" +
+                          "/combatsim professional - Open Professional Mode settings\n" +
                           "/combatsim start - Start combat simulation\n" +
                           "/combatsim stop - Stop combat simulation\n" +
                           "/combatsim reset - Reset combat state",
@@ -324,6 +325,13 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 chatGui.Print("[CombatSim] Combat state reset.");
                 break;
 
+            case "professional":
+            case "pro":
+            case "settings":
+                config.ShowProfessionalWindow = true;
+                config.Save();
+                break;
+
             default:
                 config.ShowMainWindow = !config.ShowMainWindow;
                 config.Save();
@@ -336,6 +344,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         if (config.ShowShortcuts)
             mainWindow.DrawShortcutsBar();
 
+        if (config.ShowFastCombatToolbar)
+            mainWindow.DrawFastCombatToolbar();
+
         if (config.ShowDeathCamToolbar)
             mainWindow.DrawDeathCamToolbar();
 
@@ -347,6 +358,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         if (config.ShowMainWindow)
             mainWindow.Draw();
+
+        if (config.ShowProfessionalWindow)
+            mainWindow.DrawProfessional();
+
+        mainWindow.DrawDefeatRevivePopup();
 
         if (combatEngine.IsActive)
         {
@@ -374,7 +390,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnOpenConfig()
     {
-        config.ShowMainWindow = true;
+        config.ShowProfessionalWindow = true;
         config.Save();
     }
 
@@ -452,13 +468,13 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnNpcDeathRagdoll(nint address)
     {
-        // Weapon drop runs alongside ragdoll using the same activation delay
-        weaponDropController.SpawnFor(address, config.NpcRagdollActivationDelay);
-
         if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
         {
             return;
         }
+
+        // Weapon drop is part of ragdoll — same activation delay.
+        weaponDropController.SpawnFor(address, config.NpcRagdollActivationDelay);
 
         if (npcRagdolls.ContainsKey(address)) return;
 
@@ -543,9 +559,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnCompanionDeathRagdoll(nint address)
     {
-        weaponDropController.SpawnFor(address, config.RagdollActivationDelay);
-
         if (!config.EnableRagdoll || !config.PartyCompanionDeathRagdoll) return;
+
+        // Weapon drop is part of ragdoll — same activation delay.
+        weaponDropController.SpawnFor(address, config.RagdollActivationDelay);
 
         if (npcRagdolls.ContainsKey(address)) return;
 

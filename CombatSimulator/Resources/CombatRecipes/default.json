@@ -1,0 +1,35 @@
+[
+  {
+    "name": "Imperial Assault",
+    "description": "10 randomized self companions, up to 10 visible players, and 15 imperial patrol enemies.",
+    "companions": [
+      { "type": "SelfRandomized", "count": 10 },
+      { "type": "VisiblePlayers", "count": 10 }
+    ],
+    "enemies": [
+      { "type": "Human", "id": 0, "name": "imperial patrol", "occurrence": 2, "description": "Imperial patrol, second catalog match", "count": 15 }
+    ]
+  },
+  {
+    "name": "Imperial Frontline",
+    "description": "50 randomized self companions against 50 imperial patrol enemies.",
+    "companions": [
+      { "type": "SelfRandomized", "count": 50 }
+    ],
+    "enemies": [
+      { "type": "Human", "id": 0, "name": "imperial patrol", "occurrence": 2, "description": "Imperial patrol, second catalog match", "count": 50 }
+    ]
+  },
+  {
+    "name": "Imperial Decisive Battle",
+    "description": "10 randomized self companions, up to 10 visible players, 15 imperial patrol enemies, and Zenos.",
+    "companions": [
+      { "type": "SelfRandomized", "count": 10 },
+      { "type": "VisiblePlayers", "count": 10 }
+    ],
+    "enemies": [
+      { "type": "Human", "id": 0, "name": "imperial patrol", "occurrence": 2, "description": "Imperial patrol, second catalog match", "count": 15 },
+      { "type": "Human", "id": 1018510, "name": "Zenos Yae Galvus (No Helm)", "occurrence": 1, "description": "Zenos Yae Galvus (No Helm)", "count": 1, "hpMultiplier": 8.0, "behavior": "Boss" }
+    ]
+  }
+]

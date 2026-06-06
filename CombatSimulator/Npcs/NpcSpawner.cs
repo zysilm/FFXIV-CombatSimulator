@@ -92,11 +92,6 @@ public unsafe class NpcSpawner : IDisposable
             OnSpawnError?.Invoke("Maximum NPC limit reached.");
             return;
         }
-        if (config.DevOnlyHumanoidEnemies && !IsHumanoidSpawnRequest(request))
-        {
-            OnSpawnError?.Invoke("Humanoid-only enemy filter is enabled.");
-            return;
-        }
 
         spawnQueue.Enqueue(request);
     }
@@ -214,6 +209,15 @@ public unsafe class NpcSpawner : IDisposable
             character->CharacterSetup.CopyFromCharacter(
                 character, CharacterSetupContainer.CopyFlags.None);
             log.Info("[SpawnDbg] Self-copy CopyFromCharacter(self, None) done.");
+
+            // Step 6a: Re-assert ObjectKind. The humanoid bootstrap clones from the
+            // local player (a Pc), and CopyFromCharacter copies base GameObject
+            // fields including ObjectKind — silently turning this enemy into a Pc.
+            // If left as Pc, the party "sense visible players" scan treats the
+            // spawned enemy as a nearby player and clones it into the party. Force
+            // it back to a combatant BattleNpc after every copy.
+            obj->ObjectKind = ObjectKind.BattleNpc;
+            obj->SubKind = (byte)BattleNpcSubKind.Combatant;
 
             // Step 6b: Force Mode to Normal so the walk/run animation state machine
             // is active. CreateBattleCharacter leaves Mode at 0 (None) which makes
@@ -609,19 +613,6 @@ public unsafe class NpcSpawner : IDisposable
         OverwriteCustomizeFromENpc(target, enpc);
 
         return true;
-    }
-
-    private bool IsHumanoidSpawnRequest(NpcSpawnRequest request)
-    {
-        if (request.ENpcBaseId == 0)
-            return false;
-
-        var sheet = dataManager.GetExcelSheet<ENpcBase>();
-        var row = sheet?.GetRowOrDefault(request.ENpcBaseId);
-        if (row == null)
-            return false;
-
-        return (int)row.Value.ModelChara.RowId == 0 && (byte)row.Value.Race.RowId > 0;
     }
 
     /// <summary>
