@@ -92,11 +92,6 @@ public unsafe class NpcSpawner : IDisposable
             OnSpawnError?.Invoke("Maximum NPC limit reached.");
             return;
         }
-        if (config.DevOnlyHumanoidEnemies && !IsHumanoidSpawnRequest(request))
-        {
-            OnSpawnError?.Invoke("Humanoid-only enemy filter is enabled.");
-            return;
-        }
 
         spawnQueue.Enqueue(request);
     }
@@ -618,19 +613,6 @@ public unsafe class NpcSpawner : IDisposable
         OverwriteCustomizeFromENpc(target, enpc);
 
         return true;
-    }
-
-    private bool IsHumanoidSpawnRequest(NpcSpawnRequest request)
-    {
-        if (request.ENpcBaseId == 0)
-            return false;
-
-        var sheet = dataManager.GetExcelSheet<ENpcBase>();
-        var row = sheet?.GetRowOrDefault(request.ENpcBaseId);
-        if (row == null)
-            return false;
-
-        return (int)row.Value.ModelChara.RowId == 0 && (byte)row.Value.Race.RowId > 0;
     }
 
     /// <summary>
