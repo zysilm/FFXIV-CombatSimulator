@@ -636,7 +636,7 @@ public class MainWindow : IDisposable
         chatGui.Print($"[CombatSim] Started recipe '{recipe.Name}' ({queuedCompanions} companion(s), {queuedEnemies} enemy/enemies queued{mapEnemyText}).");
     }
 
-    private static MapEnemySettings? BuildRecipeMapEnemySettings(CombatRecipe recipe)
+    private MapEnemySettings? BuildRecipeMapEnemySettings(CombatRecipe recipe)
     {
         foreach (var group in recipe.MapEnemies)
         {
@@ -648,7 +648,7 @@ public class MainWindow : IDisposable
                 Enabled = true,
                 MaxCount = Math.Max(0, group.MaxCount),
                 SenseRange = Math.Max(0.1f, group.SenseRange),
-                Level = Math.Clamp(group.Level, 1, 300),
+                Level = Math.Clamp(config.FastCombatLevel, 1, 300),
                 HpMultiplier = Math.Max(0.0001f, group.HpMultiplier),
                 BehaviorType = group.Behavior,
             };
