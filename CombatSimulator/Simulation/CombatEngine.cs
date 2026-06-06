@@ -76,6 +76,12 @@ public class CombatEngine : IDisposable
     public Func<SimulatedNpc, SimulatedEntityState?>? ResolveNpcTarget { get; set; }
     public Func<uint, nint?>? ResolveExternalEntityAddress { get; set; }
     public Func<bool>? HasLivingCompanions { get; set; }
+    /// <summary>
+    /// Returns the simulated entity id of the player's currently locked target, or
+    /// 0 when none. Wired to PlayerTargetController. When custom targeting is on,
+    /// auto-attack only fires against this target.
+    /// </summary>
+    public Func<uint>? GetLockedTargetId { get; set; }
     public Action<int>? OnPlayerDamageDealt { get; set; }
     public Action<uint, int>? OnPlayerDamageDealtToTarget { get; set; }
     public string LastPlayerDefeatedBy { get; private set; } = string.Empty;
@@ -1339,9 +1345,47 @@ public class CombatEngine : IDisposable
         if (!ps.IsAlive)
             return;
 
-        // Don't auto-swing back just because something engaged us — wait until
-        // the player chooses to fight (matches real-game aggro: mob hits you,
-        // you decide whether to retaliate).
+        if (config.EnableCustomTargeting)
+        {
+            // Custom targeting: only auto-attack the locked target. No lock => no
+            // swings (matches "主角有目标时才发动攻击").
+            var lockedId = GetLockedTargetId?.Invoke() ?? 0u;
+            if (lockedId == 0u)
+                return;
+
+            SimulatedNpc? target = null;
+            foreach (var npc in npcSelector.SelectedNpcs)
+            {
+                if (npc.SimulatedEntityId == lockedId)
+                {
+                    target = npc;
+                    break;
+                }
+            }
+            if (target == null || !target.State.IsAlive)
+                return;
+
+            // Locking onto an enemy and swinging commits to the fight — engage it
+            // if it was still idle (mirrors ProcessPlayerAction).
+            if (target.AiState == Ai.NpcAiState.Idle)
+            {
+                target.AiState = Ai.NpcAiState.Engaging;
+                target.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
+                Ai.NpcAiController.StaggerTimers(target);
+                AddLogEntry($"{target.Name} engages!", CombatLogType.Info);
+            }
+
+            ps.AutoAttackTimer -= deltaTime;
+            if (ps.AutoAttackTimer <= 0)
+            {
+                ps.AutoAttackTimer = 2.56f; // Standard auto-attack delay
+                AutoAttackNpc(ps, target);
+            }
+            return;
+        }
+
+        // Legacy behavior (custom targeting disabled): don't auto-swing just because
+        // something engaged us — wait until the player chooses to fight.
         if (!playerInitiatedCombat)
             return;
 
@@ -1355,29 +1399,33 @@ public class CombatEngine : IDisposable
             {
                 if (npc.State.IsAlive && npc.IsEngaged)
                 {
-                    var dmg = damageCalculator.CalculateNpcAutoAttack(ps, npc.State, 110);
-                    npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
-                    State.TotalDamageDealt += dmg.Damage;
-                    OnPlayerDamageDealt?.Invoke(dmg.Damage);
-                    OnPlayerDamageDealtToTarget?.Invoke(npc.State.EntityId, dmg.Damage);
-
-                    // Trigger auto-attack animation + VFX
-                    var autoAttackData = new ActionData
-                    {
-                        ActionId = 7, // Auto-attack
-                        Potency = 110,
-                        DamageType = SimDamageType.Physical,
-                        AnimationLock = 0.6f,
-                    };
-                    TriggerActionEffect(ps, npc.State, autoAttackData, dmg);
-
-                    if (!npc.State.IsAlive)
-                        OnEntityDeath(npc.State);
-
+                    AutoAttackNpc(ps, npc);
                     break;
                 }
             }
         }
+    }
+
+    private void AutoAttackNpc(SimulatedEntityState ps, SimulatedNpc npc)
+    {
+        var dmg = damageCalculator.CalculateNpcAutoAttack(ps, npc.State, 110);
+        npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
+        State.TotalDamageDealt += dmg.Damage;
+        OnPlayerDamageDealt?.Invoke(dmg.Damage);
+        OnPlayerDamageDealtToTarget?.Invoke(npc.State.EntityId, dmg.Damage);
+
+        // Trigger auto-attack animation + VFX
+        var autoAttackData = new ActionData
+        {
+            ActionId = 7, // Auto-attack
+            Potency = 110,
+            DamageType = SimDamageType.Physical,
+            AnimationLock = 0.6f,
+        };
+        TriggerActionEffect(ps, npc.State, autoAttackData, dmg);
+
+        if (!npc.State.IsAlive)
+            OnEntityDeath(npc.State);
     }
 
     private void TickMpRegen(SimulatedEntityState entity, float deltaTime)

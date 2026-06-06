@@ -137,6 +137,21 @@ public class Configuration : IPluginConfiguration
     // Maximum number of active targets
     public int MaxTargets { get; set; } = 10;
 
+    // Custom in-sim targeting (综合提升): during an active simulation the plugin
+    // takes over the game's target keybinds (confirm acquires, cancel releases,
+    // next/prev cycle) and the player only attacks the locked target.
+    public bool EnableCustomTargeting { get; set; } = true;
+
+    // Combat-link arcs: blue arc = player → locked target, red arcs = every enemy
+    // currently attacking the player. Drawn above the head with a flowing animation
+    // from attacker toward the one being attacked.
+    public bool ShowCombatLinkArcs { get; set; } = true;
+    public bool ShowLockMarker { get; set; } = true;
+    public float CombatLinkHeightOffset { get; set; } = 0.3f; // extra Y above the head anchor
+    public float CombatLinkAlpha { get; set; } = 0.55f;       // base stroke opacity
+    public float CombatLinkThickness { get; set; } = 4.0f;    // core stroke thickness (px)
+    public float CombatLinkFlowSpeed { get; set; } = 0.6f;    // flow cycles per second
+
     // Ragdoll physics (Experimental)
     public bool EnableRagdoll { get; set; } = false;
     public float RagdollActivationDelay { get; set; } = 1.0f;
