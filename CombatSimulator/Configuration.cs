@@ -116,6 +116,10 @@ public class Configuration : IPluginConfiguration
 
     // Shortcuts bar
     public bool ShowShortcuts { get; set; } = false;
+    public bool ShowProfessionalWindow { get; set; } = false;
+    public bool ShowFastCombatToolbar { get; set; } = false;
+    public bool ShowDefeatRevivePopup { get; set; } = true;
+    public int FastCombatLevel { get; set; } = 90;
 
     // Death Cam toolbar
     public bool ShowDeathCamToolbar { get; set; } = false;

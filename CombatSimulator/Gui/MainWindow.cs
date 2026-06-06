@@ -6,6 +6,7 @@ using CombatSimulator.Camera;
 using CombatSimulator.Companions;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
+using CombatSimulator.Recipes;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using Dalamud.Interface;
@@ -33,6 +34,7 @@ public class MainWindow : IDisposable
     private readonly IDataManager dataManager;
     private readonly IChatGui chatGui;
     private readonly Dev.VictorySequenceGui victorySequenceGui;
+    private readonly CombatRecipeBook recipeBook;
     private readonly IPluginLog log;
 
     // Conflict confirmation popup
@@ -77,6 +79,7 @@ public class MainWindow : IDisposable
     private NpcCatalogEntry? selectedCatalogEntry;
     private int virtualEnemiesClickCount = 0;
     private bool virtualEnemiesUnlocked = false;
+    private int selectedRecipeIndex = 0;
 
     private static readonly string[] SpawnCategoryNames = { "Popular", "Recent", "Human", "Monsters", "All" };
 
@@ -132,6 +135,7 @@ public class MainWindow : IDisposable
         this.chatGui = chatGui;
         this.log = log;
         this.victorySequenceGui = new Dev.VictorySequenceGui(config, npcSelector, log);
+        this.recipeBook = new CombatRecipeBook(log);
     }
 
     private int selectedTab = 0;
@@ -157,7 +161,7 @@ public class MainWindow : IDisposable
 
     public void Draw()
     {
-        ImGui.SetNextWindowSize(new Vector2(560, 500), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(new Vector2(420, 230), ImGuiCond.FirstUseEver);
         var showWindow = config.ShowMainWindow;
         if (!ImGui.Begin("Combat Simulator", ref showWindow))
         {
@@ -166,6 +170,31 @@ public class MainWindow : IDisposable
             return;
         }
         config.ShowMainWindow = showWindow;
+
+        DrawFastCombatPanel(compact: false);
+
+        ImGui.Separator();
+        if (ImGui.Button("Professional Mode"))
+        {
+            config.ShowProfessionalWindow = true;
+            config.Save();
+        }
+        HelpMarker("Open the detailed configuration and advanced tools window.");
+
+        ImGui.End();
+    }
+
+    public void DrawProfessional()
+    {
+        ImGui.SetNextWindowSize(new Vector2(560, 500), ImGuiCond.FirstUseEver);
+        var showWindow = config.ShowProfessionalWindow;
+        if (!ImGui.Begin("Combat Simulator - Professional Mode", ref showWindow))
+        {
+            config.ShowProfessionalWindow = showWindow;
+            ImGui.End();
+            return;
+        }
+        config.ShowProfessionalWindow = showWindow;
 
         // Status bar at top (always visible)
         DrawStatusSection();
@@ -345,6 +374,253 @@ public class MainWindow : IDisposable
                 "Start combat and attack any NPC to begin.\n" +
                 "Targets are auto-registered on first attack.");
         }
+    }
+
+    private void DrawFastCombatPanel(bool compact)
+    {
+        var recipes = recipeBook.Recipes;
+        if (selectedRecipeIndex < 0 || selectedRecipeIndex >= recipes.Count)
+            selectedRecipeIndex = 0;
+
+        if (!compact)
+        {
+            ImGui.TextUnformatted("Combat Recipe");
+            HelpMarker("Recipes define companion and enemy groups for one-click skirmish setup. Recipes are loaded from embedded plugin JSON resources.");
+        }
+
+        DrawRecipeCombo("##CombatRecipe", compact ? 220f : -1f);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Choose the recipe used by Start and Reset.");
+
+        var recipe = recipes.Count > 0 ? recipes[selectedRecipeIndex] : null;
+        if (!compact && recipe != null && !string.IsNullOrWhiteSpace(recipe.Description))
+            ImGui.TextWrapped(recipe.Description);
+
+        if (!compact)
+        {
+            var level = Math.Clamp(config.FastCombatLevel, 1, 300);
+            if (ImGui.SliderInt("Enemy level", ref level, 1, 300))
+            {
+                config.FastCombatLevel = level;
+                config.Save();
+            }
+            HelpMarker("Enemy and companion simulated level used when starting a recipe. Default is 90.");
+        }
+
+        if (compact)
+            ImGui.SameLine();
+
+        using (ImRaii.Disabled(recipe == null))
+        {
+            if (ImGui.Button("Start", compact ? new Vector2(70, 0) : new Vector2(110, 0)) && recipe != null)
+                StartRecipe(recipe);
+        }
+        HelpMarker("Stop any existing recipe battle, spawn the selected companions and virtual enemies, then start combat.");
+
+        ImGui.SameLine();
+        if (ImGui.Button("Reset", compact ? new Vector2(70, 0) : new Vector2(110, 0)))
+            ResetFastCombat();
+        HelpMarker("Reset the current combat state. Existing recipe companions are revived and virtual enemies are regenerated using the current setup.");
+
+        ImGui.SameLine();
+        if (ImGui.Button("Stop", compact ? new Vector2(70, 0) : new Vector2(110, 0)))
+            StopFastCombat();
+        HelpMarker("Stop combat and clear all recipe companions and virtual enemies.");
+
+        if (!compact)
+        {
+            ImGui.TextDisabled($"Companions: {companionManager.Companions.Count} + {companionManager.PendingCount} pending");
+            ImGui.TextDisabled($"Enemies: {npcSpawner.SpawnedNpcs.Count} + {npcSpawner.PendingCount} pending");
+        }
+    }
+
+    private void DrawRecipeCombo(string id, float width)
+    {
+        var recipes = recipeBook.Recipes;
+        var preview = recipes.Count > 0 ? recipes[selectedRecipeIndex].Name : "(No recipes)";
+        if (width != 0)
+            ImGui.SetNextItemWidth(width);
+        ImGui.SetNextWindowSizeConstraints(
+            new Vector2(0, 0),
+            new Vector2(float.MaxValue, ImGui.GetTextLineHeightWithSpacing() * 9));
+        if (!ImGui.BeginCombo(id, preview))
+            return;
+
+        for (var i = 0; i < recipes.Count; i++)
+        {
+            var selected = i == selectedRecipeIndex;
+            if (ImGui.Selectable(recipes[i].Name, selected))
+                selectedRecipeIndex = i;
+            if (selected)
+                ImGui.SetItemDefaultFocus();
+        }
+
+        ImGui.EndCombo();
+    }
+
+    public void DrawFastCombatToolbar()
+    {
+        ImGui.SetNextWindowSize(new Vector2(620, 46), ImGuiCond.FirstUseEver);
+        var showToolbar = config.ShowFastCombatToolbar;
+        if (!ImGui.Begin("Combat Simulator Fast Combat", ref showToolbar,
+                ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            if (config.ShowFastCombatToolbar != showToolbar)
+            {
+                config.ShowFastCombatToolbar = showToolbar;
+                config.Save();
+            }
+            ImGui.End();
+            return;
+        }
+
+        if (config.ShowFastCombatToolbar != showToolbar)
+        {
+            config.ShowFastCombatToolbar = showToolbar;
+            config.Save();
+        }
+
+        DrawFastCombatPanel(compact: true);
+        ImGui.End();
+    }
+
+    public void DrawDefeatRevivePopup()
+    {
+        if (!config.ShowDefeatRevivePopup || !combatEngine.IsActive || combatEngine.State.PlayerState.IsAlive)
+            return;
+
+        ImGui.SetNextWindowSize(new Vector2(300, 110), ImGuiCond.Always);
+        ImGui.SetNextWindowPos(ImGui.GetMainViewport().GetCenter(), ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
+        var open = true;
+        if (!ImGui.Begin("Defeated##CombatSimDefeated", ref open,
+                ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.End();
+            return;
+        }
+
+        var defeatedBy = string.IsNullOrWhiteSpace(combatEngine.LastPlayerDefeatedBy)
+            ? "an enemy"
+            : combatEngine.LastPlayerDefeatedBy;
+        ImGui.TextWrapped($"You were defeated by {defeatedBy}.");
+        HelpMarker("Revive restores your simulated HP/MP in place without resetting enemies or companions.");
+
+        if (ImGui.Button("Revive", new Vector2(110, 0)))
+            combatEngine.RevivePlayerInPlace();
+
+        ImGui.End();
+    }
+
+    private void StartRecipe(CombatRecipe recipe)
+    {
+        StopFastCombat(print: false);
+
+        config.EnableCombatCompanions = true;
+        config.SensePartyMembers = recipe.Companions.Exists(c => c.Type == CompanionRecipeType.VisiblePlayers);
+        config.CombatCompanionLevelOverride = Math.Clamp(config.FastCombatLevel, 1, 300);
+        config.CombatCompanionMaxCount = Math.Min(CombatCompanionManager.MaxCompanionCap, TotalRequestedCompanions(recipe));
+
+        npcSpawner.SpawnModeActive = true;
+        combatEngine.StartSimulation();
+
+        var queuedCompanions = 0;
+        foreach (var group in recipe.Companions)
+        {
+            var count = Math.Max(0, group.Count);
+            queuedCompanions += group.Type switch
+            {
+                CompanionRecipeType.VisiblePlayers => companionManager.SpawnFromVisiblePlayers(count),
+                CompanionRecipeType.Self => companionManager.SpawnSelfCharacters(count, randomizeAppearance: false, ignoreConfiguredMax: true),
+                CompanionRecipeType.SelfRandomized => companionManager.SpawnSelfCharacters(count, randomizeAppearance: true, ignoreConfiguredMax: true),
+                _ => 0,
+            };
+        }
+
+        var queuedEnemies = 0;
+        npcCatalog ??= new NpcCatalog(dataManager, log);
+        foreach (var group in recipe.Enemies)
+        {
+            var entry = ResolveRecipeEnemy(group);
+            if (entry == null)
+            {
+                chatGui.PrintError($"[CombatSim] Recipe enemy not found: {group.Name} ({group.Type}:{group.Id}).");
+                continue;
+            }
+
+            var count = Math.Max(0, group.Count);
+            for (var i = 0; i < count; i++)
+            {
+                npcSpawner.QueueSpawn(new NpcSpawnRequest
+                {
+                    BNpcBaseId = entry.Type == NpcCatalogType.BNpc ? entry.Id : 0,
+                    BNpcNameId = entry.BNpcNameId,
+                    ENpcBaseId = entry.Type is NpcCatalogType.ENpc or NpcCatalogType.Human ? entry.Id : 0,
+                    Level = Math.Clamp(config.FastCombatLevel, 1, 300),
+                    HpMultiplier = Math.Max(0.0001f, group.HpMultiplier),
+                    BehaviorType = group.Behavior,
+                });
+                queuedEnemies++;
+            }
+        }
+
+        chatGui.Print($"[CombatSim] Started recipe '{recipe.Name}' ({queuedCompanions} companion(s), {queuedEnemies} enemy/enemies queued).");
+    }
+
+    private NpcCatalogEntry? ResolveRecipeEnemy(CombatRecipeEnemyGroup group)
+    {
+        npcCatalog ??= new NpcCatalog(dataManager, log);
+        if (group.Id != 0)
+        {
+            var byId = npcCatalog.FindById(group.Type, group.Id)
+                ?? (group.Type == NpcCatalogType.Human ? npcCatalog.FindById(NpcCatalogType.ENpc, group.Id) : null)
+                ?? (group.Type == NpcCatalogType.ENpc ? npcCatalog.FindById(NpcCatalogType.Human, group.Id) : null);
+            if (byId != null)
+                return byId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(group.Name))
+            return npcCatalog.FindByNameOccurrence(group.Name, group.Type, group.Occurrence)
+                ?? npcCatalog.FindByNameOccurrence(group.Name, null, group.Occurrence);
+
+        return null;
+    }
+
+    private static int TotalRequestedCompanions(CombatRecipe recipe)
+    {
+        var total = 0;
+        foreach (var group in recipe.Companions)
+            total += Math.Max(0, group.Count);
+        return Math.Max(1, total);
+    }
+
+    private void ResetFastCombat()
+    {
+        if (!combatEngine.IsActive)
+        {
+            var recipes = recipeBook.Recipes;
+            if (recipes.Count > 0)
+                StartRecipe(recipes[selectedRecipeIndex]);
+            return;
+        }
+
+        var keepCompanionsOnReset = config.KeepCompanionsOnReset;
+        config.KeepCompanionsOnReset = true;
+        combatEngine.ResetState();
+        config.KeepCompanionsOnReset = keepCompanionsOnReset;
+        chatGui.Print("[CombatSim] Fast combat reset.");
+    }
+
+    private void StopFastCombat(bool print = true)
+    {
+        combatEngine.StopSimulation();
+        foreach (var npc in new List<SimulatedNpc>(npcSpawner.SpawnedNpcs))
+            npcSelector.UnregisterSpawnedNpc(npc);
+        npcSpawner.DespawnAll();
+        companionManager.DespawnAll();
+        npcSpawner.SpawnModeActive = false;
+
+        if (print)
+            chatGui.Print("[CombatSim] Fast combat stopped.");
     }
 
     private void DrawPartyTab()
@@ -1786,6 +2062,22 @@ public class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Show a floating shortcuts bar for quick access to common actions.");
+
+            var showFastCombatToolbar = config.ShowFastCombatToolbar;
+            if (ImGui.Checkbox("Show Fast Combat Toolbar", ref showFastCombatToolbar))
+            {
+                config.ShowFastCombatToolbar = showFastCombatToolbar;
+                config.Save();
+            }
+            HelpMarker("Show a compact recipe selector with Start, Reset, and Stop controls.");
+
+            var showDefeatPopup = config.ShowDefeatRevivePopup;
+            if (ImGui.Checkbox("Show Defeat Revive Popup", ref showDefeatPopup))
+            {
+                config.ShowDefeatRevivePopup = showDefeatPopup;
+                config.Save();
+            }
+            HelpMarker("Show a small window on simulated player defeat with a Revive button. Revive restores only the player and keeps the fight running.");
 
             var showDcToolbar = config.ShowDeathCamToolbar;
             if (ImGui.Checkbox("Show Death Cam Toolbar", ref showDcToolbar))

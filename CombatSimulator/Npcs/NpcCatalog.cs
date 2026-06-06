@@ -245,6 +245,37 @@ public class NpcCatalog
         return results;
     }
 
+    public NpcCatalogEntry? FindById(NpcCatalogType type, uint id)
+    {
+        EnsureLoaded();
+        if (allEntries == null) return null;
+        foreach (var entry in allEntries)
+        {
+            if (entry.Type == type && entry.Id == id)
+                return entry;
+        }
+        return null;
+    }
+
+    public NpcCatalogEntry? FindByNameOccurrence(string name, NpcCatalogType? typeFilter, int occurrence)
+    {
+        EnsureLoaded();
+        if (allEntries == null) return null;
+        var desired = Math.Max(1, occurrence);
+        var seen = 0;
+        foreach (var entry in allEntries)
+        {
+            if (typeFilter != null && entry.Type != typeFilter.Value)
+                continue;
+            if (!entry.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
+                continue;
+            seen++;
+            if (seen == desired)
+                return entry;
+        }
+        return null;
+    }
+
     /// <summary>
     /// Get curated list of well-known combat enemies.
     /// </summary>

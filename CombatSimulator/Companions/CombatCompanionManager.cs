@@ -150,13 +150,14 @@ public unsafe class CombatCompanionManager : IDisposable
         this.log = log;
     }
 
-    public int SpawnFromVisiblePlayers()
+    public int SpawnFromVisiblePlayers(int maxToQueue = int.MaxValue)
     {
         if (!config.EnableCombatCompanions)
             return 0;
 
         var max = Math.Clamp(config.CombatCompanionMaxCount, 0, MaxCompanionCap);
         var availableSlots = Math.Max(0, max - companions.Count - PendingCount);
+        availableSlots = Math.Min(availableSlots, Math.Max(0, maxToQueue));
         if (availableSlots == 0)
             return 0;
 
@@ -182,12 +183,34 @@ public unsafe class CombatCompanionManager : IDisposable
         return queued;
     }
 
-    public bool SpawnSelfCharacter(bool randomizeAppearance = false)
+    public int SpawnSelfCharacters(int count, bool randomizeAppearance, bool ignoreConfiguredMax = false)
+    {
+        if (!config.EnableCombatCompanions)
+            return 0;
+
+        var max = ignoreConfiguredMax
+            ? MaxCompanionCap
+            : Math.Clamp(config.CombatCompanionMaxCount, 0, MaxCompanionCap);
+        var availableSlots = Math.Max(0, max - companions.Count - PendingCount);
+        var toQueue = Math.Min(Math.Max(0, count), availableSlots);
+        var queued = 0;
+        for (var i = 0; i < toQueue; i++)
+        {
+            if (!SpawnSelfCharacter(randomizeAppearance, ignoreConfiguredMax))
+                break;
+            queued++;
+        }
+        return queued;
+    }
+
+    public bool SpawnSelfCharacter(bool randomizeAppearance = false, bool ignoreConfiguredMax = false)
     {
         if (!config.EnableCombatCompanions)
             return false;
 
-        var max = Math.Clamp(config.CombatCompanionMaxCount, 0, MaxCompanionCap);
+        var max = ignoreConfiguredMax
+            ? MaxCompanionCap
+            : Math.Clamp(config.CombatCompanionMaxCount, 0, MaxCompanionCap);
         if (companions.Count + PendingCount >= max)
             return false;
 

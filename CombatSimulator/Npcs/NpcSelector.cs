@@ -119,9 +119,9 @@ public unsafe class NpcSelector : IDisposable
     /// Register a client-spawned NPC into the active targets list.
     /// Called from NpcSpawner.OnNpcSpawnComplete.
     /// </summary>
-    public bool RegisterSpawnedNpc(SimulatedNpc npc)
+    public bool RegisterSpawnedNpc(SimulatedNpc npc, bool ignoreMaxTargets = false)
     {
-        if (selectedNpcs.Count >= MaxTargets)
+        if (!ignoreMaxTargets && selectedNpcs.Count >= MaxTargets)
             return false;
         if (config.DevOnlyHumanoidEnemies && (npc.BattleChara == null || !IsHumanoidCharacter((Character*)npc.BattleChara)))
             return false;
