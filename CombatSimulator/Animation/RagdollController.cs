@@ -55,11 +55,20 @@ public unsafe class RagdollController : IDisposable
     // StepAndApply reads capsule extents from here instead of re-deriving the human set.
     private readonly Dictionary<string, RagdollBoneDef> activeDefByName = new();
 
+    // True while the active ragdoll was built by the generic (non-humanoid) path.
+    // Generic rigs get extra stabilization (more solver iterations + velocity clamp)
+    // because their auto-generated constraint network is stiffer/less conditioned
+    // than the hand-tuned human profile.
+    private bool activeRagdollIsGeneric;
+
     // Generic (non-humanoid) ragdoll generation tuning.
-    private const float GenericMinSegmentLength = 0.04f; // skip coincident/twig bones
+    private const float GenericMinSegmentLength = 0.08f; // skip coincident/twig bones; larger = fewer tiny near-sphere bodies that destabilize the solver
     private const int GenericMaxBodies = 40;             // cap solver load on large rigs
     private const float GenericSwingLimit = 0.6f;        // ball cone half-angle (rad)
     private const float GenericTwistLimit = 0.35f;       // ball axial twist (rad)
+    private const int GenericSolverIterations = 16;      // generic rigs need more iterations to converge
+    private const float GenericMaxLinearVelocity = 12f;  // m/s — clamp per frame to stop energy blow-up
+    private const float GenericMaxAngularVelocity = 16f; // rad/s — clamp per frame (tiny bodies spin up fastest)
 
     // Ground height (physics ground may be lowered by floor offset)
     private float groundY;
@@ -734,6 +743,7 @@ public unsafe class RagdollController : IDisposable
         physicsStarted = false;
         ragdollBoneIndices.Clear();
         activeDefByName.Clear();
+        activeRagdollIsGeneric = false;
         nHaraIndex = -1;
         kaoBodyBoneIndex = -1;
         hairPhysics?.Reset();
@@ -907,6 +917,7 @@ public unsafe class RagdollController : IDisposable
         // quadrupeds) get a ragdoll generated from their real bone topology with
         // adaptive capsule sizing and generic ball joints, then run the SAME passes.
         bool genericSkeleton = !IsHumanoidSkeleton(nameToIndex);
+        activeRagdollIsGeneric = genericSkeleton;
         if (genericSkeleton)
         {
             var (genDefs, genNameToIndex) = BuildGenericSkeletonDefs(skel);
@@ -954,6 +965,10 @@ public unsafe class RagdollController : IDisposable
         var partyRagdollActive = config.EnableCombatCompanions &&
             (config.PartyCompanionDeathRagdoll || config.EnableNpcDeathRagdoll);
         var solverIterations = partyRagdollActive ? 8 : config.RagdollSolverIterations;
+        // Generic rigs build a stiffer, less-conditioned constraint network — give the
+        // solver more iterations so it converges instead of pumping energy each frame.
+        if (genericSkeleton)
+            solverIterations = Math.Max(solverIterations, GenericSolverIterations);
 
         bufferPool = new BufferPool();
         simulation = BepuSimulation.Create(
@@ -1881,6 +1896,28 @@ public unsafe class RagdollController : IDisposable
 
         // Step physics
         simulation.Timestep(1.0f / 60.0f);
+
+        // Generic rigs can still inject energy through their stiff auto-built constraint
+        // network (small bodies + dense joints), building up over a second into a
+        // fly-across-the-map explosion. Clamp per-body velocity each frame as a hard
+        // ceiling: real ragdoll fall speeds stay well under these, so settling looks
+        // normal, but runaway growth is capped. Human rigs are hand-tuned and skip this.
+        if (activeRagdollIsGeneric)
+        {
+            foreach (var rb in ragdollBones)
+            {
+                var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+                if (!body.Awake) continue;
+                var lin = body.Velocity.Linear;
+                var linSpeed = lin.Length();
+                if (linSpeed > GenericMaxLinearVelocity)
+                    body.Velocity.Linear = lin * (GenericMaxLinearVelocity / linSpeed);
+                var ang = body.Velocity.Angular;
+                var angSpeed = ang.Length();
+                if (angSpeed > GenericMaxAngularVelocity)
+                    body.Velocity.Angular = ang * (GenericMaxAngularVelocity / angSpeed);
+            }
+        }
 
         var pose = skel.Pose;
 
