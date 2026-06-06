@@ -40,6 +40,14 @@ public unsafe class CombatCompanionManager : IDisposable
     private readonly Dictionary<nint, PathState> pathStates = new();
     private readonly Dictionary<uint, uint> enemyTargetByEnemyId = new();
     private uint nextEntityId = 0xF1000001;
+
+    // Floor for plugin-synthesised entity IDs. Spawned virtual enemies start at
+    // 0xF0000001 and companion clones at 0xF1000001; no real player's EntityId
+    // falls in this range. Used to keep our own spawned actors out of the
+    // "sense visible players" scan (otherwise a humanoid enemy that ends up as a
+    // Pc, or an existing companion clone, would be re-cloned into the party).
+    private const uint SimulatedEntityIdFloor = 0xF0000000;
+
     private float playerRecentDamage;
     private float playerRecentDps;
     private uint selectedFocusTargetId;
@@ -170,6 +178,8 @@ public unsafe class CombatCompanionManager : IDisposable
             if (obj is not IPlayerCharacter player)
                 continue;
             if (objectTable.LocalPlayer != null && player.EntityId == objectTable.LocalPlayer.EntityId)
+                continue;
+            if (player.EntityId >= SimulatedEntityIdFloor)
                 continue;
             if (player.Address == nint.Zero)
                 continue;
@@ -613,6 +623,8 @@ public unsafe class CombatCompanionManager : IDisposable
             if (obj is not IPlayerCharacter player)
                 continue;
             if (objectTable.LocalPlayer != null && player.EntityId == objectTable.LocalPlayer.EntityId)
+                continue;
+            if (player.EntityId >= SimulatedEntityIdFloor)
                 continue;
             if (player.Address == nint.Zero || !seenSources.Add(player.EntityId))
                 continue;

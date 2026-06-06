@@ -425,6 +425,16 @@ public class MainWindow : IDisposable
             HelpMarker("Reset the current combat state. Existing recipe companions are revived and virtual enemies are regenerated using the current setup.");
 
         ImGui.SameLine();
+        var canRevive = combatEngine.IsActive && !combatEngine.State.PlayerState.IsAlive;
+        using (ImRaii.Disabled(!canRevive))
+        {
+            if (ImGui.Button("Revive", compact ? new Vector2(70, 0) : new Vector2(110, 0)) && canRevive)
+                combatEngine.RevivePlayerInPlace();
+        }
+        if (!compact)
+            HelpMarker("Revive the player in place when defeated, restoring HP/MP without resetting enemies or companions. Disabled while the player is alive.");
+
+        ImGui.SameLine();
         if (ImGui.Button("Stop", compact ? new Vector2(70, 0) : new Vector2(110, 0)))
             StopFastCombat();
         if (!compact)
