@@ -3313,6 +3313,16 @@ public class MainWindow : IDisposable
             return;
         }
 
+        var enabled = config.EnableActiveCamera;
+        if (ImGui.Checkbox("##acEnable", ref enabled))
+        {
+            config.EnableActiveCamera = enabled;
+            config.Save();
+            activeCameraController.SetActive(enabled);
+        }
+
+        ImGui.SameLine();
+
         // Bone selector
         var bones = ActiveCameraController.CenterBones;
         int boneIdx = 0;
