@@ -34,10 +34,9 @@
   },
   {
     "name": "Open World Skirmish",
-    "description": "10 randomized self companions and up to 10 visible players against nearby map enemies.",
+    "description": "Up to 9 visible players against nearby map enemies.",
     "companions": [
-      { "type": "SelfRandomized", "count": 10 },
-      { "type": "VisiblePlayers", "count": 10 }
+      { "type": "VisiblePlayers", "count": 9 }
     ],
     "enemies": [],
     "mapEnemies": [
