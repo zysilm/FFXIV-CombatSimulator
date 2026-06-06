@@ -109,7 +109,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         vnavmeshIpc = new VNavmeshIpc(pluginInterface, log);
         partyEngagePlanner = new PartyEngagePlanner(vnavmeshIpc);
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
-        animationController = new AnimationController(log, clientState, dataManager, sigScanner, config);
+        animationController = new AnimationController(log, clientState, dataManager, gameInterop, sigScanner, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, npcActionProfileProvider, log);
         npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, npcActionProfileProvider, log);
@@ -452,6 +452,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             ProcessPendingGlamourerApplies();
 
             var deltaTime = (float)(1.0 / 60.0);
+            animationController.Tick(deltaTime);
 
             // Camera controllers run independently of combat
             deathCamController.Tick(deltaTime);
