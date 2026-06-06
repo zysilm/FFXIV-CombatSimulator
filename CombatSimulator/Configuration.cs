@@ -71,6 +71,7 @@ public class Configuration : IPluginConfiguration
     public bool ShowEnemyHpBar { get; set; } = true;
     public bool ShowPlayerHpBar { get; set; } = true;
     public bool ShowHudPlayerHpBar { get; set; } = false;
+    public bool AnonymousMode { get; set; } = false;
 
     // Simulation
     public float DamageMultiplier { get; set; } = 1.0f;
