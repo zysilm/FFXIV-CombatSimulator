@@ -103,6 +103,24 @@ public sealed unsafe class PlayerTargetController : IDisposable
         lockedTarget = IsValidCandidate(npc) ? npc : null;
     }
 
+    public uint TryAcquireTargetForAction()
+    {
+        if (!ShouldTakeOver())
+            return 0;
+
+        if (lockedTarget != null && !IsValidCandidate(lockedTarget))
+            lockedTarget = null;
+
+        if (lockedTarget == null)
+            AcquireTarget();
+
+        if (lockedTarget == null)
+            return 0;
+
+        autoCounterSuppressed = false;
+        return LockedTargetEntityId;
+    }
+
     /// <summary>
     /// Called by the combat engine when an enemy's attack lands on the living player.
     /// Queues the attacker for the auto-counter check on the next targeting tick.

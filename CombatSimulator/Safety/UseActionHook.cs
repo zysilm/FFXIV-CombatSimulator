@@ -125,6 +125,14 @@ public unsafe class UseActionHook : IDisposable
                 var lockedId = targetController.LockedTargetEntityId;
                 if (lockedId == 0)
                 {
+                    lockedId = targetController.TryAcquireTargetForAction();
+                    if (lockedId != 0)
+                    {
+                        log.Info($"INTERCEPTED (custom targeting acquired): actionId={actionId} -> locked 0x{lockedId:X}");
+                        combatEngine.EnqueuePlayerAction((uint)actionType, actionId, lockedId, extraParam);
+                        return true;
+                    }
+
                     var selected = targetId is not 0 and not 0xE0000000
                         ? npcSelector.GetSelectedNpc((uint)targetId)
                         : null;

@@ -1,6 +1,6 @@
 # Combat Simulator
 
-A [Dalamud](https://github.com/goatcorp/Dalamud) plugin for FFXIV that provides client-side combat simulation. Select existing NPCs as combat targets and fight them locally — no server interaction, no risk.
+A [Dalamud](https://github.com/goatcorp/Dalamud) plugin for FFXIV that provides client-side combat simulation. Build local battles with field enemies, companions, and NPC targets - no server interaction, no risk.
 
 ## Installation
 
@@ -16,17 +16,17 @@ Open Dalamud Settings in-game (`/xlsettings`) and follow these steps:
 
 ## Features
 
-- **Combat System** — Full damage calculation, NPC AI (melee/ranged/boss presets), aggro propagation, HP overlays, and combat log. NPC levels up to 200.
-- **Ragdoll Physics** — BEPUphysics2-powered ragdoll on death with 42 configurable bones (spine, arms, legs, clavicles, cloth/skirt). Per-bone editor for capsule volume, joint type, rotation limits. Adjustable friction, self-collision, and 3D debug overlay.
-- **Camera** — Customizable death cam and active camera with bone tracking, free orbital control, height/side offsets, and smooth transitions.
+- **Combat System** - Mixed battles with field enemies, spawned NPCs, target selection, full damage calculation, HP overlays, combat log, and melee/ranged/boss AI.
+- **Party Companions** - Clone visible players or configured companions into friendly combat actors with target planning, movement, and field skirmish recipes.
+- **Ragdoll & Camera** - High-precision BEPUphysics2 ragdolls with per-bone tuning, non-humanoid support, death cam, active camera, and smooth bone tracking.
 
-All combat is client-side only — no data is sent to the server.
+All combat is client-side only - no data is sent to the server.
 
 ## Usage
 
 1. Open the plugin window with `/combatsim`
-2. Target an NPC and attack it to register as a combat target
-3. Use **Start Combat** to begin the simulation
+2. Choose a combat recipe such as **Field Combat**
+3. Use **Start** to begin the local simulation
 
 ### Commands
 
