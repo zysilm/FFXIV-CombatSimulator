@@ -873,6 +873,16 @@ public class MainWindow : IDisposable
             config.DefaultNpcBehaviorType = behaviorType;
             config.Save();
         }
+
+        ImGui.Separator();
+
+        var autoCounter = config.EnableAutoCounter;
+        if (ImGui.Checkbox("Auto-counter", ref autoCounter))
+        {
+            config.EnableAutoCounter = autoCounter;
+            config.Save();
+        }
+        HelpMarker("When you have no locked target, being hit by an enemy auto-locks that attacker. Pressing cancel stops auto-counter (no auto-lock even when hit) until you press confirm to lock a target again. Requires custom targeting.");
     }
 
     private void DrawVirtualEnemiesTab()

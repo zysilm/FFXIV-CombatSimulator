@@ -45,6 +45,14 @@ public sealed unsafe class PlayerTargetController : IDisposable
 
     private SimulatedNpc? lockedTarget;
 
+    // Auto-counter state machine: armed by default; pressing cancel suppresses it
+    // (no auto-lock even when hit), confirm-locking re-arms it. Reset to armed when
+    // the controller goes inactive (combat stop/reset).
+    private bool autoCounterSuppressed;
+    // Attacker queued by the combat engine's "player was hit" callback (set on the
+    // engine tick, consumed on the next targeting tick — see Tick/TryAutoCounter).
+    private uint pendingAutoCounterAttackerId;
+
     // Rising-edge detection state for the polled input codes.
     private bool prevOk, prevCancel, prevNext, prevPrev, prevLeft, prevRight;
 
@@ -95,6 +103,15 @@ public sealed unsafe class PlayerTargetController : IDisposable
         lockedTarget = IsValidCandidate(npc) ? npc : null;
     }
 
+    /// <summary>
+    /// Called by the combat engine when an enemy's attack lands on the living player.
+    /// Queues the attacker for the auto-counter check on the next targeting tick.
+    /// </summary>
+    public void NotifyPlayerHitBy(uint attackerEntityId)
+    {
+        pendingAutoCounterAttackerId = attackerEntityId;
+    }
+
     private bool ShouldTakeOver()
         => combatEngine.IsActive && config.EnableCustomTargeting && npcSelector.SelectedNpcs.Count > 0;
 
@@ -109,6 +126,9 @@ public sealed unsafe class PlayerTargetController : IDisposable
         if (!ShouldTakeOver())
         {
             lockedTarget = null;
+            // Each fresh combat starts with auto-counter armed.
+            autoCounterSuppressed = false;
+            pendingAutoCounterAttackerId = 0;
             prevOk = prevCancel = prevNext = prevPrev = prevLeft = prevRight = false;
             return;
         }
@@ -117,6 +137,28 @@ public sealed unsafe class PlayerTargetController : IDisposable
             lockedTarget = null;
 
         HandleInput();
+        TryAutoCounter();
+    }
+
+    /// <summary>
+    /// Auto-counter: if armed and the player currently has no locked target, lock the
+    /// enemy that just hit the player. Runs after input so a same-frame cancel (which
+    /// suppresses) takes precedence over an incoming hit.
+    /// </summary>
+    private void TryAutoCounter()
+    {
+        uint attackerId = pendingAutoCounterAttackerId;
+        pendingAutoCounterAttackerId = 0;
+
+        if (attackerId == 0 || !config.EnableAutoCounter || autoCounterSuppressed || lockedTarget != null)
+            return;
+
+        var attacker = npcSelector.GetSelectedNpc(attackerId);
+        if (attacker != null && IsValidCandidate(attacker))
+        {
+            lockedTarget = attacker;
+            log.Info($"[AutoCounter] hit by 0x{attackerId:X} '{attacker.Name}' — auto-locked.");
+        }
     }
 
     // The keybind hook only suppresses the native targeting so it doesn't fight our
@@ -172,15 +214,21 @@ public sealed unsafe class PlayerTargetController : IDisposable
         if (lockedTarget != null && !IsValidCandidate(lockedTarget))
             lockedTarget = null;
 
-        if (cancelEdge && lockedTarget != null)
+        if (cancelEdge)
         {
+            // Manual cancel: drop the lock and suppress auto-counter until the player
+            // confirm-locks again (holds even when no target was locked).
             lockedTarget = null;
+            autoCounterSuppressed = true;
             return;
         }
 
         if (okEdge && lockedTarget == null)
         {
             AcquireTarget();
+            // A successful confirm-lock re-arms auto-counter.
+            if (lockedTarget != null)
+                autoCounterSuppressed = false;
             return;
         }
 

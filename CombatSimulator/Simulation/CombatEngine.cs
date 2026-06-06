@@ -84,6 +84,9 @@ public class CombatEngine : IDisposable
     public Func<uint>? GetLockedTargetId { get; set; }
     public Action<int>? OnPlayerDamageDealt { get; set; }
     public Action<uint, int>? OnPlayerDamageDealtToTarget { get; set; }
+    // Fired when an NPC's attack lands on the (still-alive) player; argument is the
+    // attacker's simulated entity id. Drives auto-counter target acquisition.
+    public Action<uint>? OnPlayerHitByNpc { get; set; }
     public string LastPlayerDefeatedBy { get; private set; } = string.Empty;
 
     /// <summary>
@@ -574,7 +577,12 @@ public class CombatEngine : IDisposable
         // Apply damage to target
         target.CurrentHp = Math.Max(0, target.CurrentHp - dmgResult.Damage);
         if (target.IsPlayer)
+        {
             State.TotalDamageTaken += dmgResult.Damage;
+            // Player was hit and survived → let auto-counter consider locking this attacker.
+            if (target.IsAlive)
+                OnPlayerHitByNpc?.Invoke(npc.SimulatedEntityId);
+        }
 
         // Trigger animation (NPC -> Player). Preserve the selected action id
         // so ranged/caster skills can use their own timelines/VFX instead of

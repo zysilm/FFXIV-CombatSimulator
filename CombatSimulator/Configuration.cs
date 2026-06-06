@@ -149,6 +149,11 @@ public class Configuration : IPluginConfiguration
     // next/prev cycle) and the player only attacks the locked target.
     public bool EnableCustomTargeting { get; set; } = true;
 
+    // Auto-counter: while custom targeting is active and the player has no locked
+    // target, being hit by an enemy auto-locks that attacker. Pressing cancel
+    // suppresses it (no auto-lock even when hit) until the player confirm-locks again.
+    public bool EnableAutoCounter { get; set; } = true;
+
     // Combat-link arcs: blue arc = player → locked target, red arcs = every enemy
     // currently attacking the player. Drawn above the head with a flowing animation
     // from attacker toward the one being attacked.

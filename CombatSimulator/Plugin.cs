@@ -144,6 +144,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         playerTargetController = new PlayerTargetController(
             gameInterop, combatEngine, npcSelector, config, objectTable, gameGui, log);
         combatEngine.GetLockedTargetId = () => playerTargetController.LockedTargetEntityId;
+        combatEngine.OnPlayerHitByNpc = playerTargetController.NotifyPlayerHitBy;
 
         mapEnemyController = new MapEnemyController(
             objectTable,
