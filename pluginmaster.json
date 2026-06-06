@@ -24,8 +24,8 @@
   {
     "Name": "Combat Simulator",
     "Author": "zysilm",
-    "Punchline": "Fight existing NPCs in client-side combat simulation.",
-    "Description": "A client-side combat simulator that lets you fight existing NPCs locally. Features NPC AI, combat animations, death effects (ragdoll physics), active camera (bone tracking), death cam, HP overlays, and glamourer integration. All combat is simulated locally - no data is sent to the server.",
+    "Punchline": "Run local party battles with NPCs and field enemies.",
+    "Description": "A client-side combat simulator for local field battles, NPC targets, and companion skirmishes. Features party-style combat, target selection, NPC AI, action VFX, HP overlays, death cam, active camera, and high-precision ragdoll physics. All combat is simulated locally - no data is sent to the server.",
     "RepoUrl": "https://github.com/zysilm/FFXIV-CombatSimulator",
     "Tags": [
       "combat",
@@ -36,12 +36,12 @@
       "other"
     ],
     "LoadPriority": 0,
-    "AssemblyVersion": "2.1.0.3",
+    "AssemblyVersion": "2.1.0.4",
     "IconUrl": "https://raw.githubusercontent.com/zysilm/FFXIV-CombatSimulator/main/images/logo.png",
     "InternalName": "CombatSimulator",
-    "DownloadLinkInstall": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v2.1.0.3/CombatSimulator.zip",
-    "DownloadLinkUpdate": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v2.1.0.3/CombatSimulator.zip",
-    "DownloadLinkTesting": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v2.1.0.3/CombatSimulator.zip",
+    "DownloadLinkInstall": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v2.1.0.4/CombatSimulator.zip",
+    "DownloadLinkUpdate": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v2.1.0.4/CombatSimulator.zip",
+    "DownloadLinkTesting": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v2.1.0.4/CombatSimulator.zip",
     "DalamudApiLevel": 15
   }
 ]
