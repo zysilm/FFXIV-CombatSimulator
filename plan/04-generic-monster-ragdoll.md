@@ -161,6 +161,21 @@ No changes to `Configuration`, GUI, or the human bone profile.
   If residual jitter remains, next levers: inflate small-body inertia, soften
   generic joint springs, or lower the velocity clamp.
 
+### Iteration 3 — bat: stable but too few bodies
+
+- New-DLL per-frame logs of a Sun Bat: it **settles cleanly** now (no explosion,
+  no fall-through; by ~F120 velocity ≈ 0, resting on the ground). So the
+  stabilization holds for small rigs too.
+- But it only generated **4–5 bodies**: the bat is ~0.5m, so almost all its bone
+  segments fall under the fixed 0.08m threshold → wing/limb bones skipped → it
+  drops as one rigid clump (no articulation). This is the "bat looks wrong".
+- Fix: **adaptive min-segment threshold** = `clamp(largestSegment * 0.06, 0.02,
+  0.08)`. Toad (largest ~1.7m) stays at the 0.08 cap (sparse/stable); bat
+  (~0.2m) drops to the 0.02 floor → more bodies incl. wings → articulates. The
+  velocity clamp + 16 iterations cover the extra small-body count.
+- To verify: bat now articulates (wings flop) without re-introducing jitter;
+  toad unchanged.
+
 Note: scale was investigated and ruled out as the explosion cause —
 `ModelToWorld`/`WorldToModel` omit scale but are exact inverses, so the
 read→simulate→write round-trip stays self-consistent at any model scale.
