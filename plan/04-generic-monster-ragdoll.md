@@ -124,3 +124,26 @@ No changes to `Configuration`, GUI, or the human bone profile.
 - Non-humanoid skeletons build an adaptive, topology-correct ragdoll.
 - No human-profile, config, or GUI changes.
 - Release build succeeds.
+
+## Iteration Log
+
+### Iteration 1 — base generic builder + ancestor walk
+
+- **Good:** elongated, well-separated rigs (e.g. ants) improved significantly.
+- **Bad:** compact / fat-bellied bodies (a large prone toad-like reptile) shook
+  violently, deformed, and flew across the screen — a physics explosion.
+- **Cause:** `RagdollSelfCollision` defaults ON. Generated capsules on fat bodies
+  overlap heavily; body-body contact on overlapping capsules creates explosive
+  separation impulses (amplified by the model's render scale).
+- **Fix:** force self-collision OFF for generic ragdolls (humanoid path keeps it).
+- **Still open: bat.** Needs in-game diagnosis with `RagdollVerboseLog` — unclear
+  whether it explodes (should now be fixed), stays too stiff (its small bones may
+  fall under `GenericMinSegmentLength` = 0.04m and only rigid-follow), or deforms a
+  specific way. Candidate follow-ups once observed: lower the segment threshold for
+  small rigs (safer now that body-body collision is off), simulate leaf tip bones
+  (head/wing-tip) so they flop, or add a generic angular-velocity damp to calm
+  residual shaking.
+
+Note: scale was investigated and ruled out as the explosion cause —
+`ModelToWorld`/`WorldToModel` omit scale but are exact inverses, so the
+read→simulate→write round-trip stays self-consistent at any model scale.
