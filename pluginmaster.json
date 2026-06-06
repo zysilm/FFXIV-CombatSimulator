@@ -42,6 +42,7 @@
     "DownloadLinkInstall": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v2.1.0.0/CombatSimulator.zip",
     "DownloadLinkUpdate": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v2.1.0.0/CombatSimulator.zip",
     "DownloadLinkTesting": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v2.1.0.0/CombatSimulator.zip",
-    "DalamudApiLevel": 15
+    "DalamudApiLevel": 15,
+    "ApplicableVersion": "any"
   }
 ]
