@@ -7,7 +7,7 @@
     ],
     "enemies": [],
     "mapEnemies": [
-      { "enabled": true, "maxCount": 50, "senseRange": 18.0, "level": 90, "hpMultiplier": 1.0, "behavior": "BasicMelee" }
+      { "enabled": true, "maxCount": 15, "senseRange": 18.0, "level": 90, "hpMultiplier": 1.0, "behavior": "BasicMelee" }
     ]
   },
   {
