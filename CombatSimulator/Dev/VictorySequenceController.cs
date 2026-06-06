@@ -2,12 +2,17 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation;
+using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
+using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
+using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager;
+using GameFramework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework;
 
 namespace CombatSimulator.Dev;
 
@@ -17,6 +22,7 @@ public unsafe class VictorySequenceController : IDisposable
     private readonly EmoteTimelinePlayer emotePlayer;
     private readonly MovementBlockHook movementBlockHook;
     private readonly RagdollController ragdollController;
+    private readonly VNavmeshIpc vnavmeshIpc;
     private readonly IClientState clientState;
     private readonly ITargetManager targetManager;
     private readonly Configuration config;
@@ -27,7 +33,6 @@ public unsafe class VictorySequenceController : IDisposable
     private float elapsed;
     private SimulatedNpc? cinematicNpc;
     private Vector3 npcOriginalPos;
-    private Vector3 stageStartPos;           // NPC's position at the start of current stage
     private int currentStageIndex = -1;
     private bool stageAnimPlayed;
     private uint lastPlayedEmoteId;
@@ -60,6 +65,10 @@ public unsafe class VictorySequenceController : IDisposable
     private int npcHandBoneIdx = -1;
     private int playerNeckBoneIdx = -1;
 
+    // Manual grabber control (hidden): drive the grabber's movement + walk anim.
+    private readonly ActorVisualState grabberVisualState = new();
+    private bool grabberMoving;
+
     public bool IsActive => isActive;
     public nint CinematicNpcAddress => cinematicNpc?.Address ?? nint.Zero;
     public int CurrentStageIndex => currentStageIndex;
@@ -84,6 +93,7 @@ public unsafe class VictorySequenceController : IDisposable
         EmoteTimelinePlayer emotePlayer,
         MovementBlockHook movementBlockHook,
         RagdollController ragdollController,
+        VNavmeshIpc vnavmeshIpc,
         IClientState clientState,
         ITargetManager targetManager,
         Configuration config,
@@ -93,6 +103,7 @@ public unsafe class VictorySequenceController : IDisposable
         this.emotePlayer = emotePlayer;
         this.movementBlockHook = movementBlockHook;
         this.ragdollController = ragdollController;
+        this.vnavmeshIpc = vnavmeshIpc;
         this.clientState = clientState;
         this.targetManager = targetManager;
         this.config = config;
@@ -174,10 +185,6 @@ public unsafe class VictorySequenceController : IDisposable
         // Save NPC's true original position (before any plugin manipulation)
         npcOriginalPos = cinematicNpc.SpawnPosition;
 
-        // Capture NPC's current world position as the initial stage start point
-        var npcObj = (GameObject*)cinematicNpc.BattleChara;
-        stageStartPos = new Vector3(npcObj->Position.X, npcObj->Position.Y, npcObj->Position.Z);
-
         // Register NPC for approach movement (bypass server overrides)
         movementBlockHook.AddApproachNpc(cinematicNpc.Address);
 
@@ -205,9 +212,11 @@ public unsafe class VictorySequenceController : IDisposable
         currentStageIndex = -1;
         stageAnimPlayed = false;
         grabActive = false;
+        grabberMoving = false;
+        grabberVisualState.Kind = ActorVisualStateKind.None;
 
         var otherCount = config.VictorySequenceOtherStages.Count;
-        log.Info($"VictorySequence: Started with NPC '{cinematicNpc.Name}' (lastTarget={lastTargetedNpcId:X}), start={stageStartPos}, {config.VictorySequenceStages.Count} stages, {otherNpcStates.Count} other NPCs with {otherCount} stages");
+        log.Info($"VictorySequence: Started with NPC '{cinematicNpc.Name}' (lastTarget={lastTargetedNpcId:X}), {config.VictorySequenceStages.Count} stages, {otherNpcStates.Count} other NPCs with {otherCount} stages");
         return (true, cinematicNpc);
     }
 
@@ -249,93 +258,50 @@ public unsafe class VictorySequenceController : IDisposable
         // Stage transition — snapshot NPC's current position as the new stage start
         if (newStageIdx != currentStageIndex && newStageIdx >= 0)
         {
-            if (currentStageIndex >= 0 && cinematicNpc.BattleChara != null)
-            {
-                var obj = (GameObject*)cinematicNpc.BattleChara;
-                stageStartPos = new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z);
-            }
             currentStageIndex = newStageIdx;
             stageAnimPlayed = false;
-            log.Info($"VictorySequence: Entering stage {newStageIdx}, stageStart={stageStartPos}");
+            log.Info($"VictorySequence: Entering stage {newStageIdx}");
         }
 
         if (currentStageIndex < 0 || currentStageIndex >= stages.Count)
             return;
 
         var stage = stages[currentStageIndex];
-
-        // Calculate target endpoint: EndDistance along player's facing direction
-        var facingDir = new Vector3(MathF.Sin(playerFacingAngle), 0, MathF.Cos(playerFacingAngle));
-        var endPos = playerDeathPos + facingDir * stage.EndDistance;
-        endPos.Y = playerDeathPos.Y + stage.HeightOffset;
-
-        // Lerp NPC from stage start position to the endpoint
-        Vector3 targetPos;
-        if (stage.KeepPosition)
-        {
-            targetPos = stageStartPos;
-        }
-        else if (stage.InfiniteWalk)
-        {
-            // Constant speed walk from stage start toward endpoint
-            var timeInStage = elapsed - stage.StartTime;
-            var toEnd = endPos - stageStartPos;
-            var totalDist = toEnd.Length();
-            if (totalDist > 0.001f)
-            {
-                var dir = toEnd / totalDist;
-                var traveled = stage.WalkSpeed * timeInStage;
-                targetPos = stageStartPos + dir * traveled;
-            }
-            else
-            {
-                targetPos = endPos;
-            }
-        }
-        else
-        {
-            var duration = stage.EndTime - stage.StartTime;
-            var progress = duration > 0.001f
-                ? Math.Clamp((elapsed - stage.StartTime) / duration, 0f, 1f)
-                : 1f;
-            targetPos = Vector3.Lerp(stageStartPos, endPos, progress);
-        }
-
-        // Move NPC via approach bypass
         var gameObj = (GameObject*)cinematicNpc.BattleChara;
-        movementBlockHook.SetApproachPosition(gameObj, targetPos.X, targetPos.Y, targetPos.Z);
 
-        // Rotate NPC facing direction
-        float rotAngle;
-        if (stage.LockFacing)
+        // When manual grabber control is on for a grab stage, the player drives the
+        // grabber's movement (walk anim + floor-snapped) instead of the scripted
+        // path. The grab constraint keeps tracking the moving hand bone, so the
+        // carried body comes along.
+        bool control = config.ControlGrabber && stage.GrabEnabled;
+        if (control)
         {
-            // Track player's head bone (j_kao) in real time
-            var player = Core.Services.ObjectTable.LocalPlayer;
-            var headPos = player != null ? GetBoneWorldPos(player.Address, "j_kao") : null;
-            var faceTarget = headPos ?? playerDeathPos;
-            var toHead = faceTarget - targetPos;
-            rotAngle = MathF.Atan2(toHead.X, toHead.Z);
-        }
-        else if (stage.InfiniteWalk)
-        {
-            // Lock to initial approach direction (stage start → endpoint)
-            var walkDir = endPos - stageStartPos;
-            rotAngle = MathF.Atan2(walkDir.X, walkDir.Z);
+            TickGrabberControl(stage, gameObj, deltaTime);
         }
         else
         {
-            // Recalculate each frame from NPC→player position (flips at negative distance)
-            var toPlayer = playerDeathPos - targetPos;
-            rotAngle = MathF.Atan2(toPlayer.X, toPlayer.Z);
-        }
-        movementBlockHook.SetApproachRotation(gameObj, rotAngle);
+            var npcPos = new Vector3(gameObj->Position.X, gameObj->Position.Y, gameObj->Position.Z);
+            movementBlockHook.SetApproachPosition(gameObj, npcPos.X, npcPos.Y, npcPos.Z);
 
-        // Play animation on stage enter, or re-play if user changed config live
+            if (stage.LockFacing)
+            {
+                var player = Core.Services.ObjectTable.LocalPlayer;
+                var headPos = player != null ? GetBoneWorldPos(player.Address, "j_kao") : null;
+                var faceTarget = headPos ?? playerDeathPos;
+                var toHead = faceTarget - npcPos;
+                if (toHead.LengthSquared() > 0.001f)
+                    movementBlockHook.SetApproachRotation(gameObj, MathF.Atan2(toHead.X, toHead.Z));
+            }
+        }
+
+        // Play animation on stage enter, or re-play if user changed config live.
+        // Skip while actively walking under manual control (the walk anim owns the
+        // timeline then; the stage's carry pose is restored once the player stops).
         bool configChanged = stageAnimPlayed && (
             stage.UseEmote != lastPlayedUseEmote ||
             stage.EmoteId != lastPlayedEmoteId ||
             stage.ActionTimelineId != lastPlayedActionTimelineId);
-        if (!stageAnimPlayed || configChanged)
+        if ((!stageAnimPlayed || configChanged) && !(control && grabberMoving))
         {
             if (configChanged)
             {
@@ -541,6 +507,137 @@ public unsafe class VictorySequenceController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Player-driven movement for the grabber: move in the camera-relative input
+    /// direction, snap to the floor, face the movement direction, and play the walk
+    /// animation. When stopped, hold position and restore the stage's carry pose.
+    /// </summary>
+    private void TickGrabberControl(VictorySequenceStage stage, GameObject* gameObj, float dt)
+    {
+        var character = (Character*)gameObj;
+        var curPos = new Vector3(gameObj->Position.X, gameObj->Position.Y, gameObj->Position.Z);
+        var moveDir = ReadMoveInputWorldDir();
+
+        if (moveDir != Vector3.Zero)
+        {
+            if (!grabberMoving)
+            {
+                emotePlayer.ResetEmote(character);
+                character->SetMode(CharacterModes.Normal, 0);
+                grabberVisualState.Kind = ActorVisualStateKind.None;
+            }
+
+            var speed = config.GrabberControlSpeed > 0f ? config.GrabberControlSpeed : 2.5f;
+            var newPos = curPos + moveDir * speed * dt;
+            newPos = SnapGrabberToFloor(newPos);
+            movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
+            movementBlockHook.SetApproachRotation(gameObj, MathF.Atan2(moveDir.X, moveDir.Z));
+            ActorVisualStateController.ApplyMoving(character, grabberVisualState, dt);
+            grabberMoving = true;
+        }
+        else
+        {
+            movementBlockHook.SetApproachPosition(gameObj, curPos.X, curPos.Y, curPos.Z);
+            if (grabberMoving)
+            {
+                // Just stopped — drop the walk anim and let the stage carry pose replay.
+                ActorVisualStateController.ClearMovement(character, grabberVisualState);
+                emotePlayer.ResetEmote(character);
+                stageAnimPlayed = false;
+                grabberMoving = false;
+            }
+        }
+    }
+
+    /// <summary>Camera-relative planar move direction from the movement keybinds (0 if idle).</summary>
+    private Vector3 ReadMoveInputWorldDir()
+    {
+        var im = InputManager.Instance();
+        if (im == null) return Vector3.Zero;
+
+        float fwd = (im->GetInputStatus(InputCode.MOVE_FORE) ? 1f : 0f)
+                  - (im->GetInputStatus(InputCode.MOVE_BACK) ? 1f : 0f);
+        float strafe = (im->GetInputStatus(InputCode.MOVE_STRIFE_R) ? 1f : 0f)
+                     - (im->GetInputStatus(InputCode.MOVE_STRIFE_L) ? 1f : 0f);
+        strafe += (im->GetInputStatus(InputCode.MOVE_RIGHT) ? 1f : 0f)
+                - (im->GetInputStatus(InputCode.MOVE_LEFT) ? 1f : 0f);
+
+        var pad = ReadLeftStickMoveAxis();
+        strafe += pad.X;
+        fwd += pad.Y;
+
+        if (fwd == 0f && strafe == 0f) return Vector3.Zero;
+        var input = new Vector2(strafe, fwd);
+        if (input.LengthSquared() > 1f)
+        {
+            input = Vector2.Normalize(input);
+            strafe = input.X;
+            fwd = input.Y;
+        }
+
+        float yaw = 0f;
+        var camMgr = GameCameraManager.Instance();
+        if (camMgr != null && camMgr->Camera != null)
+            yaw = camMgr->Camera->DirH;
+
+        var camFwd = new Vector3(-MathF.Sin(yaw), 0f, -MathF.Cos(yaw));
+        var camRight = new Vector3(-camFwd.Z, 0f, camFwd.X);
+        var dir = camFwd * fwd + camRight * strafe;
+        return dir.LengthSquared() < 1e-6f ? Vector3.Zero : Vector3.Normalize(dir);
+    }
+
+    private static Vector2 ReadLeftStickMoveAxis()
+    {
+        var fw = GameFramework.Instance();
+        if (fw == null)
+            return Vector2.Zero;
+
+        var primary = StickAxis(fw->GamepadInputs);
+        var secondary = StickAxis(fw->GamepadInputs2);
+        return secondary.LengthSquared() > primary.LengthSquared() ? secondary : primary;
+    }
+
+    private static Vector2 StickAxis(FFXIVClientStructs.FFXIV.Client.System.Input.GamepadInputData data)
+    {
+        var strafe = data.LeftStickX != 0
+            ? data.LeftStickX / 99f
+            : data.LeftStickLeft - data.LeftStickRight;
+        var fwd = data.LeftStickY != 0
+            ? data.LeftStickY / 99f
+            : data.LeftStickUp - data.LeftStickDown;
+
+        var axis = new Vector2(strafe, fwd);
+        const float deadZone = 0.15f;
+        var len = axis.Length();
+        if (len <= deadZone)
+            return Vector2.Zero;
+        if (len > 1f)
+            axis /= len;
+        return axis;
+    }
+
+    /// <summary>Floor-snap the grabber's destination via vnavmesh, falling back to a raycast.</summary>
+    private Vector3 SnapGrabberToFloor(Vector3 pos)
+    {
+        if (vnavmeshIpc != null)
+        {
+            vnavmeshIpc.RefreshStatus();
+            if (vnavmeshIpc.CanPathfind)
+            {
+                var f = vnavmeshIpc.PointOnFloor(pos, false, 5f);
+                if (f != null)
+                    return new Vector3(pos.X, f.Value.Y, pos.Z);
+            }
+        }
+
+        if (BGCollisionModule.RaycastMaterialFilter(
+                new Vector3(pos.X, pos.Y + 2f, pos.Z),
+                new Vector3(0, -1, 0), out var hit, 50f))
+            return new Vector3(pos.X, hit.Point.Y, pos.Z);
+
+        return pos;
+    }
+
     private void ResolveBoneIndices(VictorySequenceStage stage)
     {
         npcHandBoneIdx = -1;
@@ -695,12 +792,16 @@ public unsafe class VictorySequenceController : IDisposable
             grabActive = false;
         }
 
+        grabberMoving = false;
+        grabberVisualState.Kind = ActorVisualStateKind.None;
+
         if (cinematicNpc?.BattleChara != null)
         {
             // Restore NPC to original position
             var npcObj = (GameObject*)cinematicNpc.BattleChara;
             movementBlockHook.SetApproachPosition(npcObj, npcOriginalPos.X, npcOriginalPos.Y, npcOriginalPos.Z);
             movementBlockHook.RemoveApproachNpc(cinematicNpc.Address);
+            ActorVisualStateController.ClearMovement((Character*)cinematicNpc.BattleChara, grabberVisualState);
             emotePlayer.ResetEmote((Character*)cinematicNpc.BattleChara);
         }
 

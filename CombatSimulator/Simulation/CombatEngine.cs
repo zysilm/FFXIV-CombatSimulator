@@ -76,8 +76,17 @@ public class CombatEngine : IDisposable
     public Func<SimulatedNpc, SimulatedEntityState?>? ResolveNpcTarget { get; set; }
     public Func<uint, nint?>? ResolveExternalEntityAddress { get; set; }
     public Func<bool>? HasLivingCompanions { get; set; }
+    /// <summary>
+    /// Returns the simulated entity id of the player's currently locked target, or
+    /// 0 when none. Wired to PlayerTargetController. When custom targeting is on,
+    /// auto-attack only fires against this target.
+    /// </summary>
+    public Func<uint>? GetLockedTargetId { get; set; }
     public Action<int>? OnPlayerDamageDealt { get; set; }
     public Action<uint, int>? OnPlayerDamageDealtToTarget { get; set; }
+    // Fired when an NPC's attack lands on the (still-alive) player; argument is the
+    // attacker's simulated entity id. Drives auto-counter target acquisition.
+    public Action<uint>? OnPlayerHitByNpc { get; set; }
     public string LastPlayerDefeatedBy { get; private set; } = string.Empty;
 
     /// <summary>
@@ -501,8 +510,6 @@ public class CombatEngine : IDisposable
             CombatLogType.DamageDealt);
 
         // Engage the NPC if it was idle
-        Vector3 engagedNpcPos = Vector3.Zero;
-        bool didEngage = false;
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             if (npc.SimulatedEntityId == (uint)targetId &&
@@ -512,45 +519,7 @@ public class CombatEngine : IDisposable
                 npc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
                 Ai.NpcAiController.StaggerTimers(npc);
                 AddLogEntry($"{npc.Name} engages!", CombatLogType.Info);
-                engagedNpcPos = GetEntityPosition(npc.State);
-                didEngage = true;
                 break;
-            }
-        }
-
-        // Aggro propagation: scan the game world for nearby BattleNpcs and add them as targets
-        if (didEngage && config.EnableAggroPropagation)
-        {
-            float aggroRange = config.AggroPropagationRange;
-
-            // First, activate any already-selected idle NPCs in range
-            foreach (var npc in npcSelector.SelectedNpcs)
-            {
-                if (npc.AiState != Ai.NpcAiState.Idle || !npc.IsSpawned)
-                    continue;
-                var npcPos = GetEntityPosition(npc.State);
-                if (Vector3.Distance(npcPos, engagedNpcPos) <= aggroRange)
-                {
-                    npc.AiState = Ai.NpcAiState.Engaging;
-                    npc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
-                    Ai.NpcAiController.StaggerTimers(npc);
-                    AddLogEntry($"{npc.Name} joins the fight!", CombatLogType.Info);
-                }
-            }
-
-            // Then, scan the object table for new BattleNpcs in range and auto-add them
-            var newNpcs = npcSelector.SelectNearbyBattleNpcs(
-                engagedNpcPos, aggroRange,
-                config.DefaultNpcLevel, config.DefaultNpcHpMultiplier,
-                (Npcs.NpcBehaviorType)config.DefaultNpcBehaviorType);
-
-            foreach (var newNpc in newNpcs)
-            {
-                RegisterNpcEntity(newNpc);
-                newNpc.AiState = Ai.NpcAiState.Engaging;
-                newNpc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
-                Ai.NpcAiController.StaggerTimers(newNpc);
-                AddLogEntry($"{newNpc.Name} joins the fight!", CombatLogType.Info);
             }
         }
 
@@ -608,7 +577,12 @@ public class CombatEngine : IDisposable
         // Apply damage to target
         target.CurrentHp = Math.Max(0, target.CurrentHp - dmgResult.Damage);
         if (target.IsPlayer)
+        {
             State.TotalDamageTaken += dmgResult.Damage;
+            // Player was hit and survived → let auto-counter consider locking this attacker.
+            if (target.IsAlive)
+                OnPlayerHitByNpc?.Invoke(npc.SimulatedEntityId);
+        }
 
         // Trigger animation (NPC -> Player). Preserve the selected action id
         // so ranged/caster skills can use their own timelines/VFX instead of
@@ -1339,9 +1313,47 @@ public class CombatEngine : IDisposable
         if (!ps.IsAlive)
             return;
 
-        // Don't auto-swing back just because something engaged us — wait until
-        // the player chooses to fight (matches real-game aggro: mob hits you,
-        // you decide whether to retaliate).
+        if (config.EnableCustomTargeting)
+        {
+            // Custom targeting: only auto-attack the locked target. No lock => no
+            // swings (matches "主角有目标时才发动攻击").
+            var lockedId = GetLockedTargetId?.Invoke() ?? 0u;
+            if (lockedId == 0u)
+                return;
+
+            SimulatedNpc? target = null;
+            foreach (var npc in npcSelector.SelectedNpcs)
+            {
+                if (npc.SimulatedEntityId == lockedId)
+                {
+                    target = npc;
+                    break;
+                }
+            }
+            if (target == null || !target.State.IsAlive)
+                return;
+
+            // Locking onto an enemy and swinging commits to the fight — engage it
+            // if it was still idle (mirrors ProcessPlayerAction).
+            if (target.AiState == Ai.NpcAiState.Idle)
+            {
+                target.AiState = Ai.NpcAiState.Engaging;
+                target.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
+                Ai.NpcAiController.StaggerTimers(target);
+                AddLogEntry($"{target.Name} engages!", CombatLogType.Info);
+            }
+
+            ps.AutoAttackTimer -= deltaTime;
+            if (ps.AutoAttackTimer <= 0)
+            {
+                ps.AutoAttackTimer = 2.56f; // Standard auto-attack delay
+                AutoAttackNpc(ps, target);
+            }
+            return;
+        }
+
+        // Legacy behavior (custom targeting disabled): don't auto-swing just because
+        // something engaged us — wait until the player chooses to fight.
         if (!playerInitiatedCombat)
             return;
 
@@ -1355,29 +1367,33 @@ public class CombatEngine : IDisposable
             {
                 if (npc.State.IsAlive && npc.IsEngaged)
                 {
-                    var dmg = damageCalculator.CalculateNpcAutoAttack(ps, npc.State, 110);
-                    npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
-                    State.TotalDamageDealt += dmg.Damage;
-                    OnPlayerDamageDealt?.Invoke(dmg.Damage);
-                    OnPlayerDamageDealtToTarget?.Invoke(npc.State.EntityId, dmg.Damage);
-
-                    // Trigger auto-attack animation + VFX
-                    var autoAttackData = new ActionData
-                    {
-                        ActionId = 7, // Auto-attack
-                        Potency = 110,
-                        DamageType = SimDamageType.Physical,
-                        AnimationLock = 0.6f,
-                    };
-                    TriggerActionEffect(ps, npc.State, autoAttackData, dmg);
-
-                    if (!npc.State.IsAlive)
-                        OnEntityDeath(npc.State);
-
+                    AutoAttackNpc(ps, npc);
                     break;
                 }
             }
         }
+    }
+
+    private void AutoAttackNpc(SimulatedEntityState ps, SimulatedNpc npc)
+    {
+        var dmg = damageCalculator.CalculateNpcAutoAttack(ps, npc.State, 110);
+        npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
+        State.TotalDamageDealt += dmg.Damage;
+        OnPlayerDamageDealt?.Invoke(dmg.Damage);
+        OnPlayerDamageDealtToTarget?.Invoke(npc.State.EntityId, dmg.Damage);
+
+        // Trigger auto-attack animation + VFX
+        var autoAttackData = new ActionData
+        {
+            ActionId = 7, // Auto-attack
+            Potency = 110,
+            DamageType = SimDamageType.Physical,
+            AnimationLock = 0.6f,
+        };
+        TriggerActionEffect(ps, npc.State, autoAttackData, dmg);
+
+        if (!npc.State.IsAlive)
+            OnEntityDeath(npc.State);
     }
 
     private void TickMpRegen(SimulatedEntityState entity, float deltaTime)
@@ -1393,6 +1409,56 @@ public class CombatEngine : IDisposable
     public void RegisterNpcEntity(SimulatedNpc npc)
     {
         State.Entities[npc.SimulatedEntityId] = npc.State;
+    }
+
+    /// <summary>
+    /// Free a slot in a full map-enemy pool by evicting the earliest-joined map
+    /// enemy that is already dead. The evicted enemy is fully recovered: its
+    /// ragdoll is cleared (if it was the ragdolled corpse), death animation reset,
+    /// mode restored, and the real BattleNpc returned to its original map position
+    /// and object kind. Returns true if an enemy was evicted, false when every map
+    /// enemy is still alive (the pool is genuinely full and the newcomer is refused).
+    /// </summary>
+    public bool TryEvictDeadMapEnemy()
+    {
+        SimulatedNpc? victim = null;
+        foreach (var npc in npcSelector.SelectedNpcs)
+        {
+            // Map enemies are real BattleNpcs (not client-controlled). Iteration is
+            // in join order, so the first dead one found is the earliest joined.
+            if (npc.IsClientControlled || npc.IsAlive)
+                continue;
+            victim = npc;
+            break;
+        }
+
+        if (victim == null)
+            return false;
+
+        UnregisterNpcEntity(victim.SimulatedEntityId);
+
+        unsafe
+        {
+            if (victim.BattleChara != null)
+            {
+                // Stop physics-driving the corpse before its position is restored.
+                if (ragdollController.IsActive && ragdollController.TargetCharacterAddress == victim.Address)
+                    ragdollController.Deactivate();
+
+                animationController.ResetDeathAnimation(victim.BattleChara);
+                animationController.ClearBattleStance(victim);
+                var character = (Character*)victim.BattleChara;
+                character->Mode = CharacterModes.Normal;
+                character->ModeParam = 0;
+            }
+        }
+
+        // Restores original position, ObjectKind/SubKind and clears the NPC's target.
+        npcSelector.DeselectNpc(victim);
+
+        AddLogEntry($"{victim.Name} leaves the fight.", CombatLogType.Info);
+        log.Info($"Evicted dead map enemy '{victim.Name}' to make room for a new one.");
+        return true;
     }
 
     public void RegisterCompanionEntity(CombatCompanion companion)

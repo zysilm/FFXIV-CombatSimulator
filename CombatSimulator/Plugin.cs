@@ -12,6 +12,7 @@ using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
+using CombatSimulator.Targeting;
 using Dalamud.Game.Command;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
@@ -47,6 +48,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly CombatEngine combatEngine;
     private readonly CombatCompanionManager companionManager;
     private readonly NpcAiController npcAiController;
+    private readonly PlayerTargetController playerTargetController;
+    private readonly MapEnemyController mapEnemyController;
     private readonly MovementBlockHook movementBlockHook;
     private readonly UseActionHook useActionHook;
     private readonly DeathCamController deathCamController;
@@ -63,6 +66,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly HpBarOverlay hpBarOverlay;
     private readonly CombatLogWindow combatLogWindow;
     private readonly RagdollDebugOverlay ragdollDebugOverlay;
+    private readonly CombatLinkOverlay combatLinkOverlay;
     private bool hookSafetyScanned;
     private bool wasLoggedIn;
 
@@ -106,7 +110,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         vnavmeshIpc = new VNavmeshIpc(pluginInterface, log);
         partyEngagePlanner = new PartyEngagePlanner(vnavmeshIpc);
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
-        animationController = new AnimationController(log, clientState, dataManager, sigScanner, config);
+        animationController = new AnimationController(log, clientState, dataManager, gameInterop, sigScanner, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, npcActionProfileProvider, log);
         npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, npcActionProfileProvider, log);
@@ -116,7 +120,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
         victorySequenceController = new Dev.VictorySequenceController(
             boneTransformService, animationController.EmotePlayer,
-            movementBlockHook, ragdollController, clientState, targetManager, config, log);
+            movementBlockHook, ragdollController, vnavmeshIpc, clientState, targetManager, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, ragdollController,
@@ -133,6 +137,24 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcAiController = new NpcAiController(
             combatEngine, animationController, movementBlockHook, vnavmeshIpc,
             clientState, config, combatPositioningService, partyEngagePlanner, log, victorySequenceController.ControlsNpc);
+
+        // Custom in-sim target lock system (综合提升). Takes over the game's target
+        // keybinds during simulation; the engine reads the locked target for
+        // auto-attack and UseActionHook routes manual actions to it.
+        playerTargetController = new PlayerTargetController(
+            gameInterop, combatEngine, npcSelector, config, objectTable, gameGui, log);
+        combatEngine.GetLockedTargetId = () => playerTargetController.LockedTargetEntityId;
+        combatEngine.OnPlayerHitByNpc = playerTargetController.NotifyPlayerHitBy;
+
+        mapEnemyController = new MapEnemyController(
+            objectTable,
+            config,
+            npcSelector,
+            combatEngine,
+            () => companionManager.Companions,
+            companionManager.ForceEnemyTarget,
+            () => npcSpawner.SpawnModeActive,
+            log);
 
         companionManager.OnCompanionSpawnComplete = companion =>
         {
@@ -223,7 +245,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             (nint)FFXIVClientStructs.FFXIV.Client.Game.Character.ActionEffectHandler.MemberFunctionPointers.Receive);
 
         // Safety — enable hooks immediately; they gate on internal state
-        useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, npcSpawner, config, clientState, log);
+        useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, npcSpawner, config, clientState, log, playerTargetController, mapEnemyController);
         useActionHook.Enable();
         movementBlockHook.Enable();
 
@@ -232,10 +254,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             activeCameraController.SetActive(true);
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, glamourerIpc, vnavmeshIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, mainWindow, config, gameGui, clientState);
+        combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
 
         // Register
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -276,6 +299,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcSelector.DeselectAll();
 
         useActionHook.Dispose();
+        playerTargetController.Dispose();
         movementBlockHook.Dispose();
         combatLogWindow.Dispose();
         hpBarOverlay.Dispose();
@@ -347,19 +371,21 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         if (!clientState.IsLoggedIn)
             return;
 
-        if (config.ShowShortcuts)
+        var anonymousMode = config.AnonymousMode;
+
+        if (!anonymousMode && config.ShowShortcuts)
             mainWindow.DrawShortcutsBar();
 
-        if (config.ShowFastCombatToolbar)
+        if (!anonymousMode && config.ShowFastCombatToolbar)
             mainWindow.DrawFastCombatToolbar();
 
-        if (config.ShowDeathCamToolbar)
+        if (!anonymousMode && config.ShowDeathCamToolbar)
             mainWindow.DrawDeathCamToolbar();
 
-        if (config.ShowActiveCamToolbar)
+        if (!anonymousMode && config.ShowActiveCamToolbar)
             mainWindow.DrawActiveCamToolbar();
 
-        if (config.ShowGrabToolbar)
+        if (!anonymousMode && config.ShowGrabToolbar)
             mainWindow.DrawGrabToolbar(victorySequenceController);
 
         if (config.ShowMainWindow)
@@ -375,11 +401,15 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             if (config.ShowEnemyHpBar || config.ShowPlayerHpBar || config.ShowHudPlayerHpBar)
                 hpBarOverlay.Draw();
 
-            if (config.ShowCombatLog)
+            if (!anonymousMode && config.ShowCombatLog)
                 combatLogWindow.Draw();
+
+            if (!anonymousMode && (config.ShowCombatLinkArcs || config.ShowLockMarker))
+                combatLinkOverlay.Draw();
         }
 
-        ragdollDebugOverlay.Draw();
+        if (!anonymousMode)
+            ragdollDebugOverlay.Draw();
 
         if (!combatEngine.IsActive)
         {
@@ -437,10 +467,15 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             ProcessPendingGlamourerApplies();
 
             var deltaTime = (float)(1.0 / 60.0);
+            animationController.Tick(deltaTime);
 
             // Camera controllers run independently of combat
             deathCamController.Tick(deltaTime);
             activeCameraController.Tick(deltaTime);
+
+            // Target lock upkeep (drops dead/stale locks, clears when inactive).
+            // Runs every frame so the lock is cleared the moment the sim stops.
+            playerTargetController.Tick(deltaTime);
 
             if (!combatEngine.IsActive)
                 return;
@@ -455,6 +490,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 return;
             }
 
+            mapEnemyController.Tick(deltaTime);
             combatEngine.Tick(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
             victorySequenceController.Tick(deltaTime);

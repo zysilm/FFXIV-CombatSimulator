@@ -4,12 +4,13 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
+using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using Lumina.Excel.Sheets;
 
-// ActorVfxCreate — spawns a .avfx on an actor (same function VFXEditor / Brio use)
+// ActorVfxCreate spawns a .avfx on an actor (same function VFXEditor / Brio use)
 // Signature from VFXEditor: scans the function body directly
 
 namespace CombatSimulator.Animation;
@@ -62,25 +63,42 @@ public unsafe class AnimationController : IDisposable
     private ushort playDeadIntroTimeline;
     private bool playDeadResolved;
 
-    // Battle dead ActionTimeline IDs — keeps weapons drawn (no sheathing).
+    // Battle dead ActionTimeline IDs keep weapons drawn (no sheathing).
     // Known IDs: battle/dead = 8935 (falling), battle/dead_pose = 8936 (settled).
     private ushort battleDeadIntroTimeline = 8935;
     private ushort battleDeadLoopTimeline = 8936;
     private bool battleDeadResolved;
     private ushort monsterRangedAutoAttackTimeline;
 
-    // ActorVfxCreate — spawns a .avfx particle effect attached to an actor
+    // ActorVfxCreate spawns a .avfx particle effect attached to an actor.
     private delegate nint ActorVfxCreateDelegate(
         string path, nint a2, nint a3, float a4, char a5, ushort a6, char a7);
 
     private ActorVfxCreateDelegate? actorVfxCreate;
     private nint actorVfxCreateAddr;
 
-    // ActorVfxRemove — removes a spawned VFX by pointer (same function VFXEditor uses)
+    // ActorVfxRemove removes a spawned VFX by pointer (same function VFXEditor uses).
     private delegate nint ActorVfxRemoveDelegate(nint vfx, char a2);
 
     private ActorVfxRemoveDelegate? actorVfxRemove;
     private nint actorVfxRemoveAddr;
+
+    private delegate void ActorVfxDtorDelegate(nint vfx);
+    private Hook<ActorVfxDtorDelegate>? actorVfxDtorHook;
+    private readonly List<TrackedActorVfx> trackedActorVfx = new();
+    private const float CastVfxTtl = 1.5f;
+    private const float StartVfxTtl = 1.5f;
+    private const float CasterTimelineVfxTtl = 3.0f;
+    private const float UntrackedVfxTtl = 0.0f;
+    private const int MaxTrackedActorVfx = 256;
+
+    private sealed class TrackedActorVfx
+    {
+        public nint Ptr;
+        public float Remaining;
+        public string Path = string.Empty;
+        public uint OwnerEntityId;
+    }
 
     /// <summary>Resolved address of the native ActorVfxCreate function (0 if unresolved).</summary>
     public nint ActorVfxCreateAddress => actorVfxCreateAddr;
@@ -98,6 +116,7 @@ public unsafe class AnimationController : IDisposable
         IPluginLog log,
         IClientState clientState,
         IDataManager dataManager,
+        IGameInteropProvider gameInterop,
         ISigScanner sigScanner,
         Configuration config)
     {
@@ -111,6 +130,7 @@ public unsafe class AnimationController : IDisposable
         ResolveMonsterRangedAttackTimeline(dataManager);
         ResolveActorVfxCreate(sigScanner);
         ResolveActorVfxRemove(sigScanner);
+        ResolveActorVfxDtor(gameInterop, sigScanner);
 
         log.Info("AnimationController: Initialized with ActionEffectHandler + emote timeline system.");
     }
@@ -127,7 +147,7 @@ public unsafe class AnimationController : IDisposable
         }
         catch (Exception ex)
         {
-            log.Warning(ex, "AnimationController: Could not resolve ActorVfxCreate — hit VFX will be unavailable.");
+            log.Warning(ex, "AnimationController: Could not resolve ActorVfxCreate; hit VFX will be unavailable.");
         }
     }
 
@@ -144,8 +164,45 @@ public unsafe class AnimationController : IDisposable
         }
         catch (Exception ex)
         {
-            log.Warning(ex, "AnimationController: Could not resolve ActorVfxRemove — VFX cleanup unavailable.");
+            log.Warning(ex, "AnimationController: Could not resolve ActorVfxRemove; VFX cleanup unavailable.");
         }
+    }
+
+    private void ResolveActorVfxDtor(IGameInteropProvider gameInterop, ISigScanner sigScanner)
+    {
+        try
+        {
+            var addr = sigScanner.ScanText(
+                "48 89 5C 24 ?? 57 48 83 EC ?? 48 8D 05 ?? ?? ?? ?? 48 8B D9 48 89 01 8B FA 48 8D 05 ?? ?? ?? ?? 48 89 81 ?? ?? ?? ?? 48 8B 89 ?? ?? ?? ?? 48 85 C9 74 ?? 48 8B 01 48 8B D3");
+            actorVfxDtorHook = gameInterop.HookFromAddress<ActorVfxDtorDelegate>(addr, ActorVfxDtorDetour);
+            actorVfxDtorHook.Enable();
+            log.Info($"AnimationController: ActorVfxDtor hook enabled at 0x{addr:X}");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "AnimationController: Could not hook ActorVfxDtor; tracked VFX cleanup will use TTL only.");
+        }
+    }
+
+    private void ActorVfxDtorDetour(nint vfx)
+    {
+        try
+        {
+            for (var i = trackedActorVfx.Count - 1; i >= 0; i--)
+            {
+                if (trackedActorVfx[i].Ptr == vfx)
+                {
+                    trackedActorVfx.RemoveAt(i);
+                    break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Error pruning tracked actor VFX on dtor.");
+        }
+
+        actorVfxDtorHook!.Original(vfx);
     }
 
     /// <summary>
@@ -173,7 +230,7 @@ public unsafe class AnimationController : IDisposable
                     playDeadLoopTimeline = (ushort)emote.ActionTimeline[0].RowId;
                     playDeadIntroTimeline = (ushort)emote.ActionTimeline[1].RowId;
                     playDeadResolved = playDeadLoopTimeline != 0 || playDeadIntroTimeline != 0;
-                    log.Info($"AnimationController: Resolved 'Play Dead' emote (id={emote.RowId}) → loop={playDeadLoopTimeline}, intro={playDeadIntroTimeline}");
+                    log.Info($"AnimationController: Resolved 'Play Dead' emote (id={emote.RowId}) -> loop={playDeadLoopTimeline}, intro={playDeadIntroTimeline}");
                     return;
                 }
             }
@@ -215,7 +272,7 @@ public unsafe class AnimationController : IDisposable
         if (foundLoop != 0) battleDeadLoopTimeline = foundLoop;
 
         battleDeadResolved = battleDeadIntroTimeline != 0 && battleDeadLoopTimeline != 0;
-        log.Info($"AnimationController: Battle dead timelines — intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}, resolved={battleDeadResolved} (key search: intro={foundIntro}, loop={foundLoop})");
+        log.Info($"AnimationController: Battle dead timelines: intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}, resolved={battleDeadResolved} (key search: intro={foundIntro}, loop={foundLoop})");
     }
 
     private void ResolveMonsterRangedAttackTimeline(IDataManager dataManager)
@@ -245,16 +302,33 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
-    /// No-op — VFX removal via actorVfxRemove is disabled because the same plugins
-    /// that hook actorVfxCreate also hook actorVfxRemove and crash on our NPC actors.
-    /// VFX expire naturally via their built-in .avfx durations.
+    /// Advance manually tracked actor VFX timers and remove stale caster-side VFX.
     /// </summary>
-    public void RemoveAllActiveVfx() { }
+    public void Tick(float deltaTime)
+    {
+        if (trackedActorVfx.Count == 0)
+            return;
+
+        for (var i = trackedActorVfx.Count - 1; i >= 0; i--)
+        {
+            var tracked = trackedActorVfx[i];
+            tracked.Remaining -= deltaTime;
+            if (tracked.Remaining <= 0)
+                RemoveTrackedActorVfxAt(i);
+        }
+    }
+
+    public void RemoveAllActiveVfx()
+    {
+        for (var i = trackedActorVfx.Count - 1; i >= 0; i--)
+            RemoveTrackedActorVfxAt(i);
+        trackedActorVfx.Clear();
+    }
 
     /// <summary>
     /// Play attack animation + VFX + hit reaction via ActionEffectHandler.Receive().
     /// This triggers the game's full combat visual pipeline: caster animation, target hit
-    /// reaction, VFX particles, damage flytext, and sound effects — all in one call.
+    /// reaction, VFX particles, damage flytext, and sound effects in one call.
     /// </summary>
     public void PlayActionEffect(ActionEffectRequest request)
     {
@@ -263,7 +337,7 @@ public unsafe class AnimationController : IDisposable
 
         try
         {
-            // Spawn skill VFX via ActorVfxCreate (off by default — other plugins that
+            // Spawn skill VFX via ActorVfxCreate (off by default; other plugins that
             // hook this function may crash when accessing our modified NPC actors)
             if (config.EnableCharacterVfx || config.EnableTargetVfx)
                 SpawnActionVfx(request);
@@ -312,13 +386,13 @@ public unsafe class AnimationController : IDisposable
             if (config.EnableCharacterVfx)
             {
                 if (!string.IsNullOrEmpty(request.CastVfxPath))
-                    SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, casterEntityId);
+                    SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, casterEntityId, CastVfxTtl);
 
                 if (!string.IsNullOrEmpty(request.StartVfxPath))
-                    SpawnAndTrack(request.StartVfxPath, casterAddr, orientAddr, casterEntityId);
+                    SpawnAndTrack(request.StartVfxPath, casterAddr, orientAddr, casterEntityId, StartVfxTtl);
 
                 foreach (var path in request.CasterVfxPaths)
-                    SpawnAndTrack(path, casterAddr, orientAddr, casterEntityId);
+                    SpawnAndTrack(path, casterAddr, orientAddr, casterEntityId, CasterTimelineVfxTtl);
             }
 
             // Spawn target VFX (hit/impact effects from ActionTimelineHit TMB)
@@ -335,14 +409,14 @@ public unsafe class AnimationController : IDisposable
                     if (request.TargetVfxPaths.Count > 0)
                     {
                         foreach (var path in request.TargetVfxPaths)
-                            SpawnAndTrack(path, targetAddr, casterAddr, targetEntityId);
+                            SpawnAndTrack(path, targetAddr, casterAddr, targetEntityId, UntrackedVfxTtl);
                     }
 
                     if ((request.TargetVfxPaths.Count == 0 || request.IsSourcePlayer) && config.EnableHitVfx)
                     {
                         var vfxPath = config.HitVfxPath;
                         if (!string.IsNullOrWhiteSpace(vfxPath))
-                            SpawnAndTrack(vfxPath, targetAddr, casterAddr, targetEntityId);
+                            SpawnAndTrack(vfxPath, targetAddr, casterAddr, targetEntityId, UntrackedVfxTtl);
                     }
                 }
             }
@@ -396,19 +470,52 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
-    /// Spawn a VFX via ActorVfxCreate. The VFX is NOT tracked for manual removal —
-    /// actorVfxRemove is hooked by the same plugins that hook actorVfxCreate and
-    /// crashes on our NPC actors. VFX expire naturally via their built-in .avfx duration.
+    /// Spawn a VFX via ActorVfxCreate. Positive ttl values track the returned pointer
+    /// for cleanup; ttl <= 0 leaves the VFX to expire naturally.
     /// </summary>
-    private void SpawnAndTrack(string path, nint attachTo, nint orientTo, uint ownerEntityId)
+    private void SpawnAndTrack(string path, nint attachTo, nint orientTo, uint ownerEntityId, float ttl)
     {
         try
         {
-            actorVfxCreate!(path, attachTo, orientTo, -1, (char)0, 0, (char)0);
+            var ptr = actorVfxCreate!(path, attachTo, orientTo, -1, (char)0, 0, (char)0);
+            if (ptr == nint.Zero || actorVfxRemove == null || ttl <= 0)
+                return;
+
+            trackedActorVfx.Add(new TrackedActorVfx
+            {
+                Ptr = ptr,
+                Remaining = ttl,
+                Path = path,
+                OwnerEntityId = ownerEntityId,
+            });
+
+            while (trackedActorVfx.Count > MaxTrackedActorVfx)
+                RemoveTrackedActorVfxAt(0);
         }
         catch (Exception ex)
         {
             log.Warning(ex, $"[VFX] actorVfxCreate crashed for '{path}' — skipping");
+        }
+    }
+
+    private void RemoveTrackedActorVfxAt(int index)
+    {
+        if (index < 0 || index >= trackedActorVfx.Count)
+            return;
+
+        var tracked = trackedActorVfx[index];
+        trackedActorVfx.RemoveAt(index);
+
+        if (tracked.Ptr == nint.Zero || actorVfxRemove == null)
+            return;
+
+        try
+        {
+            actorVfxRemove(tracked.Ptr, (char)0);
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"[VFX] actorVfxRemove failed for '{tracked.Path}' owner=0x{tracked.OwnerEntityId:X}");
         }
     }
 
@@ -537,7 +644,7 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
-    /// Put an NPC into "battle ready" visual state — weapon drawn, combat stance.
+    /// Put an NPC into "battle ready" visual state: weapon drawn, combat stance.
     /// Sets InCombat, IsHostile, IsWeaponDrawn flags, and switches to combat animation set.
     /// </summary>
     public void SetBattleStance(SimulatedNpc npc)
@@ -804,5 +911,16 @@ public unsafe class AnimationController : IDisposable
 
     public void Dispose()
     {
+        RemoveAllActiveVfx();
+        try
+        {
+            actorVfxDtorHook?.Disable();
+            actorVfxDtorHook?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Error disposing ActorVfxDtor hook.");
+        }
+        actorVfxDtorHook = null;
     }
 }

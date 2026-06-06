@@ -212,13 +212,16 @@ public class HpBarOverlay : IDisposable
             barPos + new Vector2(BarWidth, BarHeight),
             ImGui.ColorConvertFloat4ToU32(new Vector4(0.6f, 0.6f, 0.6f, 0.8f)));
 
-        // Name
-        var nameText = $"Lv.{npc.State.Level} {npc.Name}";
-        var nameSize = ImGui.CalcTextSize(nameText);
-        drawList.AddText(
-            screenPos - new Vector2(nameSize.X / 2, nameSize.Y + 4),
-            ImGui.ColorConvertFloat4ToU32(new Vector4(1, 0.4f, 0.4f, 1)),
-            nameText);
+        if (!config.AnonymousMode)
+        {
+            // Name
+            var nameText = $"Lv.{npc.State.Level} {npc.Name}";
+            var nameSize = ImGui.CalcTextSize(nameText);
+            drawList.AddText(
+                screenPos - new Vector2(nameSize.X / 2, nameSize.Y + 4),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(1, 0.4f, 0.4f, 1)),
+                nameText);
+        }
 
         // HP text
         var hpText = $"{npc.State.CurrentHp:N0} / {npc.State.MaxHp:N0}";
@@ -292,25 +295,34 @@ public class HpBarOverlay : IDisposable
             barPos + new Vector2(BarWidth, BarHeight),
             ImGui.ColorConvertFloat4ToU32(new Vector4(0.6f, 0.6f, 0.6f, 0.8f)));
 
-        // Name label
-        var displayName = !string.IsNullOrEmpty(config.CustomPlayerName) ? config.CustomPlayerName : ps.Name;
-        var nameText = BuildPlayerNameLabel(isDead, displayName);
-        var nameColor = isDead
-            ? new Vector4(1f, 0.2f, 0.2f, 1)
-            : new Vector4(0.4f, 0.7f, 1f, 1);
-        var nameSize = ImGui.CalcTextSize(nameText);
-        drawList.AddText(
-            screenPos - new Vector2(nameSize.X / 2, nameSize.Y + 4),
-            ImGui.ColorConvertFloat4ToU32(nameColor),
-            nameText);
+        var nameSize = Vector2.Zero;
+        if (!config.AnonymousMode)
+        {
+            // Name label
+            var displayName = !string.IsNullOrEmpty(config.CustomPlayerName) ? config.CustomPlayerName : ps.Name;
+            var nameText = BuildPlayerNameLabel(isDead, displayName);
+            var nameColor = isDead
+                ? new Vector4(1f, 0.2f, 0.2f, 1)
+                : new Vector4(0.4f, 0.7f, 1f, 1);
+            nameSize = ImGui.CalcTextSize(nameText);
+            drawList.AddText(
+                screenPos - new Vector2(nameSize.X / 2, nameSize.Y + 4),
+                ImGui.ColorConvertFloat4ToU32(nameColor),
+                nameText);
+        }
 
         // HP text
-        var hpText = (isDead && config.ShowDefeatedText) ? config.DefeatedText : $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
+        var hpText = (isDead && config.ShowDefeatedText && !config.AnonymousMode)
+            ? config.DefeatedText
+            : $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
         var hpSize = ImGui.CalcTextSize(hpText);
         drawList.AddText(
             barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
             0xFFFFFFFF,
             hpText);
+
+        if (config.AnonymousMode)
+            return;
 
         // Skull button when dead — drawn as an invisible ImGui button over the bar area
         if (isDead)
@@ -381,14 +393,19 @@ public class HpBarOverlay : IDisposable
             barPos + new Vector2(BarWidth, BarHeight),
             ImGui.ColorConvertFloat4ToU32(new Vector4(0.6f, 0.6f, 0.6f, 0.8f)));
 
-        var nameText = $"Lv.{state.Level} {state.Name}";
-        var nameSize = ImGui.CalcTextSize(nameText);
-        drawList.AddText(
-            screenPos - new Vector2(nameSize.X / 2, nameSize.Y + 4),
-            ImGui.ColorConvertFloat4ToU32(new Vector4(0.4f, 0.7f, 1f, 1)),
-            nameText);
+        if (!config.AnonymousMode)
+        {
+            var nameText = $"Lv.{state.Level} {state.Name}";
+            var nameSize = ImGui.CalcTextSize(nameText);
+            drawList.AddText(
+                screenPos - new Vector2(nameSize.X / 2, nameSize.Y + 4),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.4f, 0.7f, 1f, 1)),
+                nameText);
+        }
 
-        var hpText = isDead && config.ShowDefeatedText ? config.DefeatedText : $"{state.CurrentHp:N0} / {state.MaxHp:N0}";
+        var hpText = isDead && config.ShowDefeatedText && !config.AnonymousMode
+            ? config.DefeatedText
+            : $"{state.CurrentHp:N0} / {state.MaxHp:N0}";
         var hpSize = ImGui.CalcTextSize(hpText);
         drawList.AddText(
             barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
@@ -408,30 +425,33 @@ public class HpBarOverlay : IDisposable
             ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize |
             ImGuiWindowFlags.NoFocusOnAppearing))
         {
-            // Name line
-            var hudDisplayName = !string.IsNullOrEmpty(config.CustomPlayerName) ? config.CustomPlayerName : ps.Name;
-            if (isDead)
+            if (!config.AnonymousMode)
             {
-                ImGui.TextColored(new Vector4(1f, 0.2f, 0.2f, 1), BuildPlayerNameLabel(true, hudDisplayName));
-                ImGui.SameLine();
-
-                float pulse = (MathF.Sin((float)ImGui.GetTime() * 4f) + 1f) / 2f;
-                var skullColor = new Vector4(1f, 0.1f + pulse * 0.3f, 0.1f, 1f);
-                ImGui.PushStyleColor(ImGuiCol.Button, Vector4.Zero);
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1f, 0.3f, 0.3f, 0.3f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1f, 0.3f, 0.3f, 0.5f));
-                ImGui.PushStyleColor(ImGuiCol.Text, skullColor);
-                if (ImGui.SmallButton("\u2620##hudReset"))
+                // Name line
+                var hudDisplayName = !string.IsNullOrEmpty(config.CustomPlayerName) ? config.CustomPlayerName : ps.Name;
+                if (isDead)
                 {
-                    showResetPopup = true;
+                    ImGui.TextColored(new Vector4(1f, 0.2f, 0.2f, 1), BuildPlayerNameLabel(true, hudDisplayName));
+                    ImGui.SameLine();
+
+                    float pulse = (MathF.Sin((float)ImGui.GetTime() * 4f) + 1f) / 2f;
+                    var skullColor = new Vector4(1f, 0.1f + pulse * 0.3f, 0.1f, 1f);
+                    ImGui.PushStyleColor(ImGuiCol.Button, Vector4.Zero);
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1f, 0.3f, 0.3f, 0.3f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1f, 0.3f, 0.3f, 0.5f));
+                    ImGui.PushStyleColor(ImGuiCol.Text, skullColor);
+                    if (ImGui.SmallButton("\u2620##hudReset"))
+                    {
+                        showResetPopup = true;
+                    }
+                    ImGui.PopStyleColor(4);
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Click to reset battle");
                 }
-                ImGui.PopStyleColor(4);
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Click to reset battle");
-            }
-            else
-            {
-                ImGui.TextColored(new Vector4(0.4f, 0.7f, 1f, 1), BuildPlayerNameLabel(false, hudDisplayName));
+                else
+                {
+                    ImGui.TextColored(new Vector4(0.4f, 0.7f, 1f, 1), BuildPlayerNameLabel(false, hudDisplayName));
+                }
             }
 
             // HP bar
@@ -444,7 +464,9 @@ public class HpBarOverlay : IDisposable
                         : new Vector4(0.8f, 0.1f, 0.1f, 1);
 
             ImGui.PushStyleColor(ImGuiCol.PlotHistogram, fillColor);
-            var hpText = (isDead && config.ShowDefeatedText) ? config.DefeatedText : $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
+            var hpText = (isDead && config.ShowDefeatedText && !config.AnonymousMode)
+                ? config.DefeatedText
+                : $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
             ImGui.ProgressBar(hpPercent, new Vector2(-1, 0), hpText);
             ImGui.PopStyleColor();
         }

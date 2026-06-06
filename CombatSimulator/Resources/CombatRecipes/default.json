@@ -1,5 +1,16 @@
 [
   {
+    "name": "Field Combat",
+    "description": "Up to 9 visible players against nearby map enemies.",
+    "companions": [
+      { "type": "VisiblePlayers", "count": 9 }
+    ],
+    "enemies": [],
+    "mapEnemies": [
+      { "enabled": true, "maxCount": 50, "senseRange": 18.0, "level": 90, "hpMultiplier": 1.0, "behavior": "BasicMelee" }
+    ]
+  },
+  {
     "name": "Imperial Assault",
     "description": "10 randomized self companions, up to 10 visible players, and 15 imperial patrol enemies.",
     "companions": [

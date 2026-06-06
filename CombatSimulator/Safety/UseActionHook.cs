@@ -1,6 +1,7 @@
 using System;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
+using CombatSimulator.Targeting;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
@@ -16,6 +17,8 @@ public unsafe class UseActionHook : IDisposable
     private readonly Configuration config;
     private readonly IClientState clientState;
     private readonly IPluginLog log;
+    private readonly PlayerTargetController targetController;
+    private readonly MapEnemyController mapEnemyController;
 
     private delegate bool UseActionDelegate(
         ActionManager* actionManager,
@@ -44,7 +47,9 @@ public unsafe class UseActionHook : IDisposable
         NpcSpawner npcSpawner,
         Configuration config,
         IClientState clientState,
-        IPluginLog log)
+        IPluginLog log,
+        PlayerTargetController targetController,
+        MapEnemyController mapEnemyController)
     {
         this.combatEngine = combatEngine;
         this.npcSelector = npcSelector;
@@ -52,6 +57,8 @@ public unsafe class UseActionHook : IDisposable
         this.config = config;
         this.clientState = clientState;
         this.log = log;
+        this.targetController = targetController;
+        this.mapEnemyController = mapEnemyController;
 
         try
         {
@@ -108,6 +115,36 @@ public unsafe class UseActionHook : IDisposable
             if (actionType != ActionType.Action)
                 return useActionHook!.Original(actionManager, actionType, actionId,
                     targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
+
+            // Custom targeting: our PlayerTargetController owns the player's target.
+            // Route every combat action to the locked target; with no lock, swallow
+            // the action (no server packet, no simulation) so "attack only when a
+            // target is locked" holds.
+            if (config.EnableCustomTargeting)
+            {
+                var lockedId = targetController.LockedTargetEntityId;
+                if (lockedId == 0)
+                {
+                    var selected = targetId is not 0 and not 0xE0000000
+                        ? npcSelector.GetSelectedNpc((uint)targetId)
+                        : null;
+                    selected ??= mapEnemyController.TryRegisterByEntityId(targetId);
+                    if (selected != null)
+                    {
+                        targetController.LockTarget(selected);
+                        log.Info($"INTERCEPTED (map enemy join): actionId={actionId} -> 0x{selected.SimulatedEntityId:X}");
+                        combatEngine.EnqueuePlayerAction((uint)actionType, actionId, selected.SimulatedEntityId, extraParam);
+                        return true;
+                    }
+
+                    log.Debug("Custom targeting: no locked target; action ignored.");
+                    return true;
+                }
+
+                log.Info($"INTERCEPTED (custom targeting): actionId={actionId} -> locked 0x{lockedId:X}");
+                combatEngine.EnqueuePlayerAction((uint)actionType, actionId, lockedId, extraParam);
+                return true;
+            }
 
             // Spawn mode: when active, route all combat actions to the last alive
             // spawned NPC. No game target needed — bypasses TargetSystem entirely.

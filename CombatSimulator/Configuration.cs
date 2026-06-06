@@ -71,6 +71,7 @@ public class Configuration : IPluginConfiguration
     public bool ShowEnemyHpBar { get; set; } = true;
     public bool ShowPlayerHpBar { get; set; } = true;
     public bool ShowHudPlayerHpBar { get; set; } = false;
+    public bool AnonymousMode { get; set; } = false;
 
     // Simulation
     public float DamageMultiplier { get; set; } = 1.0f;
@@ -130,16 +131,48 @@ public class Configuration : IPluginConfiguration
     public float TargetApproachDistance { get; set; } = 1.5f;
     public bool UseVNavmeshTargetApproach { get; set; } = true;
 
-    // Aggro propagation: nearby BattleNpcs auto-added as targets when one is engaged
+    // Map enemies: real BattleNpc objects can join the mixed battle through
+    // sensing or first attack.
+    public bool EnableMapEnemySensing { get; set; } = false;
+    public float MapEnemySenseRange { get; set; } = 10.0f;
+    public int MapEnemyMaxCount { get; set; } = 10;
+
+    // Legacy aggro propagation. Kept for config compatibility; no longer shown
+    // in the main GUI once Map Enemies owns world-enemy joins.
     public bool EnableAggroPropagation { get; set; } = false;
     public float AggroPropagationRange { get; set; } = 15.0f;
 
     // Maximum number of active targets
     public int MaxTargets { get; set; } = 10;
 
+    // Custom in-sim targeting (综合提升): during an active simulation the plugin
+    // takes over the game's target keybinds (confirm acquires, cancel releases,
+    // next/prev cycle) and the player only attacks the locked target.
+    public bool EnableCustomTargeting { get; set; } = true;
+
+    // Auto-counter: while custom targeting is active and the player has no locked
+    // target, being hit by an enemy auto-locks that attacker. Pressing cancel
+    // suppresses it (no auto-lock even when hit) until the player confirm-locks again.
+    public bool EnableAutoCounter { get; set; } = true;
+
+    // Combat-link arcs: blue arc = player → locked target, red arcs = every enemy
+    // currently attacking the player. Drawn above the head with a flowing animation
+    // from attacker toward the one being attacked.
+    public bool ShowCombatLinkArcs { get; set; } = true;
+    public bool ShowLockMarker { get; set; } = true;
+    public float CombatLinkHeightOffset { get; set; } = 0.3f; // extra Y above the head anchor
+    public float CombatLinkAlpha { get; set; } = 0.55f;       // base stroke opacity
+    public float CombatLinkThickness { get; set; } = 4.0f;    // core stroke thickness (px)
+    public float CombatLinkFlowSpeed { get; set; } = 0.6f;    // flow cycles per second
+
     // Ragdoll physics (Experimental)
     public bool EnableRagdoll { get; set; } = false;
     public float RagdollActivationDelay { get; set; } = 1.0f;
+    // Extend terrain detection: also build ground collision patches under nearby
+    // enemies (not just the death spot) so a victory-sequence grab that drags the
+    // body onto an enemy doesn't fall through the floor on release. Costs extra
+    // raycasts/triangles at activation, so default off.
+    public bool ExtendTerrainDetection { get; set; } = false;
     // NPC death ragdoll
     public bool EnableNpcDeathRagdoll { get; set; } = true;
     public float NpcRagdollActivationDelay { get; set; } = 0.5f;
@@ -176,6 +209,8 @@ public class Configuration : IPluginConfiguration
     public bool RagdollVerboseLog { get; set; } = false;
     public bool RagdollFollowPosition { get; set; } = false; // Update GameObject.Position to follow ragdoll root (prevents model unload on long falls)
     public bool EnableVictorySequence { get; set; } = false;
+    public bool ControlGrabber { get; set; } = false;
+    public float GrabberControlSpeed { get; set; } = 2.5f;
     public List<VictorySequenceStage> VictorySequenceStages { get; set; } = new();
     public List<VictorySequenceStage> VictorySequenceOtherStages { get; set; } = new();
     public List<VictoryCinematicPreset> VictoryCinematicPresets { get; set; } = new();

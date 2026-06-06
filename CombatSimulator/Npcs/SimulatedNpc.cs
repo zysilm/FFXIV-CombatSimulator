@@ -44,6 +44,11 @@ public unsafe class SimulatedNpc
     public bool IsEngaged => AiState is NpcAiState.Engaging or NpcAiState.Combat or NpcAiState.Chasing;
     public ActorVisualState VisualState { get; set; } = new();
 
+    // True when this enemy is engaged and its resolved combat target is the local
+    // player. Updated each frame by NpcAiController; read by CombatLinkOverlay to
+    // draw the red "attacking you" arcs.
+    public bool IsAttackingPlayer { get; set; }
+
     // Casting
     public NpcSkill? CurrentCastSkill { get; set; }
 

@@ -258,6 +258,9 @@ public unsafe class NpcAiController : IDisposable
             var targetEntityId = targetState.EntityId;
             targetByNpcId[npc.SimulatedEntityId] = (targetState, targetPos);
 
+            // Expose "is this enemy attacking the player" for the combat-link overlay.
+            npc.IsAttackingPlayer = npc.IsEngaged && npc.State.IsAlive && targetState.IsPlayer;
+
             // Set NPC's target to the player (client-side only).
             // NPCs target the player during combat AND when player is dead (standing over corpse).
             // Only clear when NPC itself is dead or resetting.
