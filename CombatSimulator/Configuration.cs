@@ -133,7 +133,7 @@ public class Configuration : IPluginConfiguration
     // Map enemies: real BattleNpc objects can join the mixed battle through
     // sensing or first attack.
     public bool EnableMapEnemySensing { get; set; } = false;
-    public float MapEnemySenseRange { get; set; } = 15.0f;
+    public float MapEnemySenseRange { get; set; } = 10.0f;
     public int MapEnemyMaxCount { get; set; } = 10;
 
     // Legacy aggro propagation. Kept for config compatibility; no longer shown

@@ -34,7 +34,7 @@ public sealed class CombatRecipeMapEnemyGroup
 {
     public bool Enabled { get; set; } = true;
     public int MaxCount { get; set; } = 10;
-    public float SenseRange { get; set; } = 15.0f;
+    public float SenseRange { get; set; } = 10.0f;
     public int Level { get; set; } = 90;
     public float HpMultiplier { get; set; } = 1.0f;
     public NpcBehaviorType Behavior { get; set; } = NpcBehaviorType.BasicMelee;
