@@ -43,13 +43,6 @@ public unsafe class WeaponDropController : IDisposable
     private float simFriction;
     private int simSolverIterations;
 
-    // Attach.ExecuteType: 4 = weapon (driven by the owner skeleton's hand bone),
-    // 0 = root object (positioned by its own DrawObject.Position). We flip the
-    // weapon DrawObject to 0 while it falls so the game stops re-parenting it to
-    // the hand, then drive its world transform directly from the rigid body.
-    private const int WeaponAttachExecuteType = 4;
-    private const int DetachedExecuteType = 0;
-
     private class Entry
     {
         public nint CharacterAddress;
@@ -57,8 +50,6 @@ public unsafe class WeaponDropController : IDisposable
         public BodyHandle? Off;
         public int MainBoneIndex = -1;
         public int OffBoneIndex = -1;
-        public int MainOrigExecuteType = WeaponAttachExecuteType;
-        public int OffOrigExecuteType = WeaponAttachExecuteType;
         public StaticHandle? GroundTile;
     }
     private readonly Dictionary<nint, Entry> entries = new();
@@ -119,20 +110,6 @@ public unsafe class WeaponDropController : IDisposable
 
     private void DisposeEntry(Entry entry)
     {
-        // Re-attach the weapon to the hand (undo the decoupling) before dropping
-        // the rigid body, so a revived/reset character holds its weapon again.
-        try
-        {
-            if (entry.Main.HasValue)
-                ReattachWeapon(entry.CharacterAddress, DrawDataContainer.WeaponSlot.MainHand, entry.MainOrigExecuteType);
-            if (entry.Off.HasValue)
-                ReattachWeapon(entry.CharacterAddress, DrawDataContainer.WeaponSlot.OffHand, entry.OffOrigExecuteType);
-        }
-        catch (Exception ex)
-        {
-            log.Warning(ex, "WeaponDropController: failed to re-attach weapon on dispose");
-        }
-
         if (simulation == null) return;
         if (entry.Main.HasValue) simulation.Bodies.Remove(entry.Main.Value);
         if (entry.Off.HasValue) simulation.Bodies.Remove(entry.Off.Value);
@@ -223,13 +200,6 @@ public unsafe class WeaponDropController : IDisposable
             return;
         }
 
-        // Decouple the weapon DrawObject(s) from the owner skeleton so they fall
-        // freely instead of being re-parented to the hand every frame.
-        if (entry.Main.HasValue && mainDraw != null)
-            entry.MainOrigExecuteType = DetachWeapon(mainDraw);
-        if (entry.Off.HasValue && offDraw != null)
-            entry.OffOrigExecuteType = DetachWeapon(offDraw);
-
         // Per-entity ground tile under the spawn point
         var groundY = skelWorldPos.Y;
         if (BGCollisionModule.RaycastMaterialFilter(
@@ -283,25 +253,12 @@ public unsafe class WeaponDropController : IDisposable
         return character->DrawData.Weapon(slot).DrawObject;
     }
 
-    /// <summary>Break the weapon's attach to the owner skeleton; returns the original ExecuteType.</summary>
-    private static int DetachWeapon(DrawObject* weaponDraw)
-    {
-        var cb = (CharacterBase*)weaponDraw;
-        var orig = cb->Attach.ExecuteType;
-        cb->Attach.ExecuteType = DetachedExecuteType;
-        return orig == DetachedExecuteType ? WeaponAttachExecuteType : orig;
-    }
-
-    /// <summary>Drive a decoupled weapon DrawObject's world transform from its rigid body.</summary>
+    /// <summary>Drive a weapon DrawObject's world transform from its rigid body.</summary>
     private void DriveWeapon(DrawObject* weaponDraw, BodyHandle bodyHandle)
     {
         if (simulation == null) return;
 
-        // Keep it decoupled in case a redraw re-attached it to the hand.
         var cb = (CharacterBase*)weaponDraw;
-        if (cb->Attach.ExecuteType != DetachedExecuteType)
-            cb->Attach.ExecuteType = DetachedExecuteType;
-
         var bodyRef = simulation.Bodies.GetBodyReference(bodyHandle);
         var pos = bodyRef.Pose.Position;
         var rot = bodyRef.Pose.Orientation;
@@ -325,14 +282,6 @@ public unsafe class WeaponDropController : IDisposable
 
         weaponDraw->Position = pos;
         weaponDraw->Rotation = rot;
-    }
-
-    /// <summary>Restore the weapon's attach so it re-parents to the hand.</summary>
-    private static void ReattachWeapon(nint characterAddress, DrawDataContainer.WeaponSlot slot, int origExecuteType)
-    {
-        var draw = GetWeaponDrawObject(characterAddress, slot);
-        if (draw == null) return;
-        ((CharacterBase*)draw)->Attach.ExecuteType = origExecuteType;
     }
 
     private bool ConfigSnapshotChanged()

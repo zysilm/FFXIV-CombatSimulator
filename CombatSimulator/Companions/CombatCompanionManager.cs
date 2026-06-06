@@ -597,6 +597,10 @@ public unsafe class CombatCompanionManager : IDisposable
     {
         if (!config.SensePartyMembers)
             return;
+        // Only sense/auto-clone party members during an active battle. Otherwise
+        // companions would keep spawning while idle in the world or after Stop.
+        if (!combatEngine.IsActive)
+            return;
 
         senseTimer = Math.Max(0, senseTimer - deltaTime);
         if (senseTimer > 0)
