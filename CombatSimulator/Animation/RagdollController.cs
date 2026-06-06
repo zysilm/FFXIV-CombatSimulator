@@ -723,10 +723,15 @@ public unsafe class RagdollController : IDisposable
 
         // Resolve bone indices
         var nameToIndex = new Dictionary<string, int>();
+        // Name → definition, used to walk the config parent chain when a bone's
+        // direct parent is missing from the skeleton (see parent resolution below).
+        var defByName = new Dictionary<string, RagdollBoneDef>();
         ragdollBones.Clear();
 
         foreach (var def in BoneDefs)
         {
+            defByName[def.Name] = def;
+
             var idx = boneService.ResolveBoneIndex(skel, def.Name);
             if (idx < 0)
             {
@@ -1000,9 +1005,29 @@ public unsafe class RagdollController : IDisposable
 
             var bodyHandle = simulation.Bodies.Add(bodyDesc);
 
+            // Resolve the constraint parent by walking up the config parent chain to
+            // the nearest ancestor that actually exists in this skeleton. On a complete
+            // human skeleton the direct parent always resolves, so this matches on the
+            // first step and behaves identically to a direct lookup. On monster skeletons
+            // that lack intermediate bones (e.g. no neck j_kubi between chest and head),
+            // this keeps the leaf bone attached to its nearest present ancestor instead of
+            // orphaning it into an unconstrained free body that drifts away from the corpse.
             int parentBoneIdx = -1;
-            if (def.ParentName != null && nameToIndex.TryGetValue(def.ParentName, out var pIdx))
-                parentBoneIdx = pIdx;
+            var ancestorName = def.ParentName;
+            while (ancestorName != null)
+            {
+                if (nameToIndex.TryGetValue(ancestorName, out var pIdx))
+                {
+                    parentBoneIdx = pIdx;
+                    if (ancestorName != def.ParentName)
+                        log.Info($"[Ragdoll Init] '{def.Name}' parent '{def.ParentName}' missing; attached to ancestor '{ancestorName}'");
+                    break;
+                }
+
+                ancestorName = defByName.TryGetValue(ancestorName, out var ancestorDef)
+                    ? ancestorDef.ParentName
+                    : null;
+            }
 
             ragdollBones.Add(new RagdollBone
             {
