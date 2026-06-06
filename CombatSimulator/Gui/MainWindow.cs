@@ -2789,6 +2789,16 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Seconds after death before ragdoll physics take over.");
 
+                var extendTerrain = config.ExtendTerrainDetection;
+                if (ImGui.Checkbox("Extend Terrain Detection##ragdoll", ref extendTerrain))
+                {
+                    config.ExtendTerrainDetection = extendTerrain;
+                    config.Save();
+                }
+                HelpMarker("Also build ground collision under nearby enemies, not just the death spot. " +
+                           "Lets a victory-sequence grab drop the body onto an enemy without falling through " +
+                           "the floor. Costs extra raycasts at activation — may cause a brief hitch. Default off.");
+
                 var gravity = config.RagdollGravity;
                 if (ImGui.SliderFloat("Gravity##ragdoll", ref gravity, 0.1f, 30.0f, "%.1f"))
                 {

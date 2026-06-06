@@ -779,54 +779,41 @@ public unsafe class RagdollController : IDisposable
             Quaternion.Identity,
             safetyBoxIndex));
 
-        // Build terrain mesh from raycasts to capture hills, slopes, and valleys.
+        // Build terrain mesh(es) from raycasts to capture hills, slopes, and valleys.
+        // The player patch covers the death spot. A victory-sequence grab can drag
+        // the player ragdoll onto an enemy and then release it; without ground there
+        // the body falls through to the safety box (~2m under the floor). So we also
+        // lay a patch under each nearby enemy (their positions don't move during the
+        // grab), bounded by distance + count so a large spawn wave doesn't fire tens
+        // of thousands of raycasts in one frame.
+        int enemyPatches = 0;
+        AddTerrainPatch(skelWorldPos.X, skelWorldPos.Z, groundY);
+        if (npcSelector != null && config.ExtendTerrainDetection)
         {
-            var terrainRadius = 4.0f;
-            var terrainStep = 0.5f;
-            var gridSize = (int)(terrainRadius * 2 / terrainStep) + 1;
-            var heights = new float[gridSize, gridSize];
-            var ox = skelWorldPos.X - terrainRadius;
-            var oz = skelWorldPos.Z - terrainRadius;
+            const float maxEnemyPatchDist = 40f;
+            const int maxEnemyPatches = 16;
 
-            for (int gz = 0; gz < gridSize; gz++)
-            for (int gx = 0; gx < gridSize; gx++)
+            var nearby = new List<(float DistSq, float X, float Z)>();
+            foreach (var npc in npcSelector.SelectedNpcs)
             {
-                var wx = ox + gx * terrainStep;
-                var wz = oz + gz * terrainStep;
-                if (BGCollisionModule.RaycastMaterialFilter(
-                        new Vector3(wx, skelWorldPos.Y + 2.0f, wz),
-                        new Vector3(0, -1, 0), out var gridHit, 50f))
-                    heights[gx, gz] = gridHit.Point.Y;
-                else
-                    heights[gx, gz] = groundY;
+                if (npc.BattleChara == null || npc.Address == targetCharacterAddress)
+                    continue;
+                var pos = ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara)->Position;
+                var dx = pos.X - skelWorldPos.X;
+                var dz = pos.Z - skelWorldPos.Z;
+                var distSq = dx * dx + dz * dz;
+                if (distSq <= maxEnemyPatchDist * maxEnemyPatchDist)
+                    nearby.Add((distSq, pos.X, pos.Z));
             }
-
-            var triCount = (gridSize - 1) * (gridSize - 1) * 2;
-            bufferPool.Take<Triangle>(triCount, out var triangles);
-            int ti = 0;
-            for (int gz = 0; gz < gridSize - 1; gz++)
-            for (int gx = 0; gx < gridSize - 1; gx++)
+            nearby.Sort((a, b) => a.DistSq.CompareTo(b.DistSq));
+            int count = Math.Min(nearby.Count, maxEnemyPatches);
+            for (int i = 0; i < count; i++)
             {
-                var x0 = ox + gx * terrainStep;
-                var x1 = x0 + terrainStep;
-                var z0 = oz + gz * terrainStep;
-                var z1 = z0 + terrainStep;
-                var v00 = new Vector3(x0, heights[gx, gz], z0);
-                var v10 = new Vector3(x1, heights[gx + 1, gz], z0);
-                var v01 = new Vector3(x0, heights[gx, gz + 1], z1);
-                var v11 = new Vector3(x1, heights[gx + 1, gz + 1], z1);
-
-                // CW winding from above → front face points UP for collision from above
-                triangles[ti++] = new Triangle(v00, v10, v01);
-                triangles[ti++] = new Triangle(v10, v11, v01);
+                AddTerrainPatch(nearby[i].X, nearby[i].Z, groundY);
+                enemyPatches++;
             }
-
-            var terrainMesh = new BepuPhysics.Collidables.Mesh(triangles, Vector3.One, bufferPool);
-            var terrainIndex = simulation.Shapes.Add(terrainMesh);
-            simulation.Statics.Add(new StaticDescription(
-                Vector3.Zero, Quaternion.Identity, terrainIndex));
-            log.Info($"RagdollController: Terrain mesh {gridSize}x{gridSize} ({triCount} tris) + safety box at Y={groundY - 2f:F3}");
         }
+        log.Info($"RagdollController: terrain patches built (player + {enemyPatches} enemies) + safety box at Y={groundY - 2f:F3}");
 
         // --- Pass 1: Collect bone world positions and rotations ---
         var pose = skel.Pose;
@@ -1350,6 +1337,72 @@ public unsafe class RagdollController : IDisposable
         }
 
         return ragdollBones.Count > 0;
+    }
+
+    /// <summary>
+    /// Lay one 8m×8m terrain collision patch centered on (centerX, centerZ): raycast
+    /// a grid of ground heights and add it to the simulation as a static mesh. Used
+    /// for both the player's death spot and nearby enemies so a grabbed-and-released
+    /// ragdoll always has ground beneath it. <paramref name="defaultGroundY"/> is the
+    /// fallback height for the center raycast and any grid ray that misses.
+    /// </summary>
+    private void AddTerrainPatch(float centerX, float centerZ, float defaultGroundY)
+    {
+        if (simulation == null || bufferPool == null)
+            return;
+
+        const float terrainRadius = 4.0f;
+        const float terrainStep = 0.5f;
+        int gridSize = (int)(terrainRadius * 2 / terrainStep) + 1;
+
+        // Ground estimate at the patch center — used as the ray origin height and the
+        // miss fallback, so a patch under an enemy on different ground still works.
+        float patchGroundY = defaultGroundY;
+        if (BGCollisionModule.RaycastMaterialFilter(
+                new Vector3(centerX, defaultGroundY + 2.0f, centerZ),
+                new Vector3(0, -1, 0), out var centerHit, 50f))
+            patchGroundY = centerHit.Point.Y;
+
+        var heights = new float[gridSize, gridSize];
+        var ox = centerX - terrainRadius;
+        var oz = centerZ - terrainRadius;
+        for (int gz = 0; gz < gridSize; gz++)
+        for (int gx = 0; gx < gridSize; gx++)
+        {
+            var wx = ox + gx * terrainStep;
+            var wz = oz + gz * terrainStep;
+            if (BGCollisionModule.RaycastMaterialFilter(
+                    new Vector3(wx, patchGroundY + 2.0f, wz),
+                    new Vector3(0, -1, 0), out var gridHit, 50f))
+                heights[gx, gz] = gridHit.Point.Y;
+            else
+                heights[gx, gz] = patchGroundY;
+        }
+
+        var triCount = (gridSize - 1) * (gridSize - 1) * 2;
+        bufferPool.Take<Triangle>(triCount, out var triangles);
+        int ti = 0;
+        for (int gz = 0; gz < gridSize - 1; gz++)
+        for (int gx = 0; gx < gridSize - 1; gx++)
+        {
+            var x0 = ox + gx * terrainStep;
+            var x1 = x0 + terrainStep;
+            var z0 = oz + gz * terrainStep;
+            var z1 = z0 + terrainStep;
+            var v00 = new Vector3(x0, heights[gx, gz], z0);
+            var v10 = new Vector3(x1, heights[gx + 1, gz], z0);
+            var v01 = new Vector3(x0, heights[gx, gz + 1], z1);
+            var v11 = new Vector3(x1, heights[gx + 1, gz + 1], z1);
+
+            // CW winding from above → front face points UP for collision from above
+            triangles[ti++] = new Triangle(v00, v10, v01);
+            triangles[ti++] = new Triangle(v10, v11, v01);
+        }
+
+        var terrainMesh = new BepuPhysics.Collidables.Mesh(triangles, Vector3.One, bufferPool);
+        var terrainIndex = simulation.Shapes.Add(terrainMesh);
+        simulation.Statics.Add(new StaticDescription(
+            Vector3.Zero, Quaternion.Identity, terrainIndex));
     }
 
     /// <summary>

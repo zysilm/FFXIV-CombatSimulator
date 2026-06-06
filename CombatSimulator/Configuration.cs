@@ -155,6 +155,11 @@ public class Configuration : IPluginConfiguration
     // Ragdoll physics (Experimental)
     public bool EnableRagdoll { get; set; } = false;
     public float RagdollActivationDelay { get; set; } = 1.0f;
+    // Extend terrain detection: also build ground collision patches under nearby
+    // enemies (not just the death spot) so a victory-sequence grab that drags the
+    // body onto an enemy doesn't fall through the floor on release. Costs extra
+    // raycasts/triangles at activation, so default off.
+    public bool ExtendTerrainDetection { get; set; } = false;
     // NPC death ragdoll
     public bool EnableNpcDeathRagdoll { get; set; } = true;
     public float NpcRagdollActivationDelay { get; set; } = 0.5f;
