@@ -299,6 +299,7 @@ public class CombatEngine : IDisposable
         ragdollController.Deactivate();
         deathCamController?.Deactivate();
         RevertGlamourer();
+        ApplyResetGlamourer();
 
         AddLogEntry("Player revived in place.", CombatLogType.Info);
     }

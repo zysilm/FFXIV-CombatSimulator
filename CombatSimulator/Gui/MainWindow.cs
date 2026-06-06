@@ -389,7 +389,7 @@ public class MainWindow : IDisposable
         }
 
         DrawRecipeCombo("##CombatRecipe", compact ? 220f : -1f);
-        if (ImGui.IsItemHovered())
+        if (!compact && ImGui.IsItemHovered())
             ImGui.SetTooltip("Choose the recipe used by Start and Reset.");
 
         var recipe = recipes.Count > 0 ? recipes[selectedRecipeIndex] : null;
@@ -415,17 +415,20 @@ public class MainWindow : IDisposable
             if (ImGui.Button("Start", compact ? new Vector2(70, 0) : new Vector2(110, 0)) && recipe != null)
                 StartRecipe(recipe);
         }
-        HelpMarker("Stop any existing recipe battle, spawn the selected companions and virtual enemies, then start combat.");
+        if (!compact)
+            HelpMarker("Stop any existing recipe battle, spawn the selected companions and virtual enemies, then start combat.");
 
         ImGui.SameLine();
         if (ImGui.Button("Reset", compact ? new Vector2(70, 0) : new Vector2(110, 0)))
             ResetFastCombat();
-        HelpMarker("Reset the current combat state. Existing recipe companions are revived and virtual enemies are regenerated using the current setup.");
+        if (!compact)
+            HelpMarker("Reset the current combat state. Existing recipe companions are revived and virtual enemies are regenerated using the current setup.");
 
         ImGui.SameLine();
         if (ImGui.Button("Stop", compact ? new Vector2(70, 0) : new Vector2(110, 0)))
             StopFastCombat();
-        HelpMarker("Stop combat and clear all recipe companions and virtual enemies.");
+        if (!compact)
+            HelpMarker("Stop combat and clear all recipe companions and virtual enemies.");
 
         if (!compact)
         {
@@ -489,11 +492,11 @@ public class MainWindow : IDisposable
         if (!config.ShowDefeatRevivePopup || !combatEngine.IsActive || combatEngine.State.PlayerState.IsAlive)
             return;
 
-        ImGui.SetNextWindowSize(new Vector2(300, 110), ImGuiCond.Always);
+        ImGui.SetNextWindowSizeConstraints(new Vector2(300, 0), new Vector2(360, float.MaxValue));
         ImGui.SetNextWindowPos(ImGui.GetMainViewport().GetCenter(), ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
         var open = true;
         if (!ImGui.Begin("Defeated##CombatSimDefeated", ref open,
-                ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.AlwaysAutoResize))
+                ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.AlwaysAutoResize))
         {
             ImGui.End();
             return;
