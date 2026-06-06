@@ -906,7 +906,8 @@ public unsafe class RagdollController : IDisposable
         // completely unchanged. Non-humanoid skeletons (bats, birds, dragons,
         // quadrupeds) get a ragdoll generated from their real bone topology with
         // adaptive capsule sizing and generic ball joints, then run the SAME passes.
-        if (!IsHumanoidSkeleton(nameToIndex))
+        bool genericSkeleton = !IsHumanoidSkeleton(nameToIndex);
+        if (genericSkeleton)
         {
             var (genDefs, genNameToIndex) = BuildGenericSkeletonDefs(skel);
             log.Info($"RagdollController: non-humanoid skeleton — generated {genDefs.Length} generic ragdoll bones (human matches were {nameToIndex.Count})");
@@ -939,7 +940,13 @@ public unsafe class RagdollController : IDisposable
         // When self-collision is enabled, ConnectedPairs filters out nearby body pairs
         // (1-2 hops) while allowing distant body-body collisions (arms vs torso).
         // When disabled (null), only body-static collisions are allowed.
-        var connectedPairs = config.RagdollSelfCollision ? new HashSet<(int, int)>() : null;
+        // Generic (non-humanoid) ragdolls force self-collision OFF: their generated
+        // capsules commonly overlap (fat/compact bodies like toads), and body-body
+        // contact on overlapping capsules produces explosive separation forces. The
+        // human profile is hand-tuned so its capsules don't overlap, so it keeps it.
+        var connectedPairs = (config.RagdollSelfCollision && !genericSkeleton)
+            ? new HashSet<(int, int)>()
+            : null;
 
         // Party combat ragdolls deal with many more colliding bodies/statics, so
         // force a higher solver iteration count for stability while party combat
