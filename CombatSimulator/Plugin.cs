@@ -64,6 +64,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly CombatLogWindow combatLogWindow;
     private readonly RagdollDebugOverlay ragdollDebugOverlay;
     private bool hookSafetyScanned;
+    private bool wasLoggedIn;
 
     public CombatSimulatorPlugin(
         IDalamudPluginInterface pluginInterface,
@@ -341,6 +342,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnDraw()
     {
+        // No plugin UI off-world (title / character select) — prevents acting on
+        // a preview character (e.g. clicking Reset there crashes the game).
+        if (!clientState.IsLoggedIn)
+            return;
+
         if (config.ShowShortcuts)
             mainWindow.DrawShortcutsBar();
 
@@ -398,6 +404,17 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     {
         try
         {
+            // The plugin only operates in-world. On the title / character-select
+            // screens the visible character is just a preview model — cloning or
+            // spawning against it (companion sensing, etc.) crashes the game — so
+            // run nothing until logged in, and tear down on logout.
+            var loggedIn = clientState.IsLoggedIn;
+            if (wasLoggedIn && !loggedIn)
+                HandleLoggedOut();
+            wasLoggedIn = loggedIn;
+            if (!loggedIn)
+                return;
+
             // Scan for hook conflicts once after all plugins have loaded
             if (!hookSafetyScanned)
             {
@@ -723,6 +740,30 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             log.Info($"Territory changed to {territoryId} — auto-stopping combat simulation.");
             chatGui.Print("[CombatSim] Zone changed. Combat simulation stopped.");
             combatEngine.StopSimulation();
+        }
+    }
+
+    /// <summary>
+    /// Tear down all world-bound state when the player logs out (returns to the
+    /// title / character-select screen). Wrapped defensively because the game is
+    /// already destroying the world at this point.
+    /// </summary>
+    private void HandleLoggedOut()
+    {
+        try
+        {
+            npcSpawner.SpawnModeActive = false;
+            DeactivateAllNpcRagdolls();
+            weaponDropController.RemoveAll();
+            npcSpawner.DespawnAll();
+            companionManager.DespawnAll();
+            if (combatEngine.IsActive)
+                combatEngine.StopSimulation();
+            log.Info("Logged out — combat simulation state cleared.");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Error cleaning up combat state on logout.");
         }
     }
 }
