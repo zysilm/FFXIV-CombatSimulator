@@ -53,7 +53,10 @@ public class DamageCalculator
         var raw = CalculateDirectDamage(npc, potency, SimDamageType.Physical, enableCrit: false, enableDh: false, applyVariance: false);
         var mitigated = ApplyDamageTaken(raw.Damage, target, SimDamageType.Physical);
 
-        raw.Damage = Math.Max(1, ApplyLevelCorrection(mitigated, npc.Level, target.Level));
+        var corrected = ApplyLevelCorrection(mitigated, npc.Level, target.Level);
+        corrected = ApplyLevelAdvantage(corrected, npc.Level, target.Level);
+
+        raw.Damage = Math.Max(1, corrected);
         raw.DamageType = SimDamageType.Physical;
         return raw;
     }
@@ -205,6 +208,15 @@ public class DamageCalculator
 
         var penaltyPct = Math.Clamp((targetLevel - sourceLevel) * 2.5f, 0f, 90f);
         return (int)MathF.Floor(damage * (100f - penaltyPct) / 100f);
+    }
+
+    private static int ApplyLevelAdvantage(int damage, int sourceLevel, int targetLevel)
+    {
+        if (damage <= 0 || sourceLevel <= 0 || targetLevel <= 0 || sourceLevel <= targetLevel)
+            return damage;
+
+        var bonus = Math.Clamp(1f + (sourceLevel - targetLevel) * 0.025f, 1f, 8f);
+        return (int)MathF.Floor(damage * bonus);
     }
 
     private static int ApplyStatusDamageModifiers(int damage, SimulatedEntityState source, SimulatedEntityState target)
