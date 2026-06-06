@@ -12,7 +12,6 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager;
-using GameFramework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework;
 
 namespace CombatSimulator.Dev;
 
@@ -562,10 +561,6 @@ public unsafe class VictorySequenceController : IDisposable
         strafe += (im->GetInputStatus(InputCode.MOVE_RIGHT) ? 1f : 0f)
                 - (im->GetInputStatus(InputCode.MOVE_LEFT) ? 1f : 0f);
 
-        var pad = ReadLeftStickMoveAxis();
-        strafe += pad.X;
-        fwd += pad.Y;
-
         if (fwd == 0f && strafe == 0f) return Vector3.Zero;
         var input = new Vector2(strafe, fwd);
         if (input.LengthSquared() > 1f)
@@ -584,34 +579,6 @@ public unsafe class VictorySequenceController : IDisposable
         var camRight = new Vector3(-camFwd.Z, 0f, camFwd.X);
         var dir = camFwd * fwd + camRight * strafe;
         return dir.LengthSquared() < 1e-6f ? Vector3.Zero : Vector3.Normalize(dir);
-    }
-
-    private static Vector2 ReadLeftStickMoveAxis()
-    {
-        var fw = GameFramework.Instance();
-        if (fw == null)
-            return Vector2.Zero;
-
-        return StickAxis(fw->GamepadInputs);
-    }
-
-    private static Vector2 StickAxis(FFXIVClientStructs.FFXIV.Client.System.Input.GamepadInputData data)
-    {
-        var strafe = data.LeftStickX != 0
-            ? data.LeftStickX / 99f
-            : data.LeftStickLeft - data.LeftStickRight;
-        var fwd = data.LeftStickY != 0
-            ? data.LeftStickY / 99f
-            : data.LeftStickUp - data.LeftStickDown;
-
-        var axis = new Vector2(strafe, fwd);
-        const float deadZone = 0.15f;
-        var len = axis.Length();
-        if (len <= deadZone)
-            return Vector2.Zero;
-        if (len > 1f)
-            axis /= len;
-        return axis;
     }
 
     /// <summary>Floor-snap the grabber's destination via vnavmesh, falling back to a raycast.</summary>

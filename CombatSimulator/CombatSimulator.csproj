@@ -1,6 +1,6 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>2.1.0.6</Version>
+    <Version>2.1.0.7</Version>
     <Authors>zysilm</Authors>
     <Description>Client-side party combat simulation with NPCs and field enemies</Description>
     <IsPackable>false</IsPackable>
