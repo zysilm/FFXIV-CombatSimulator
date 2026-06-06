@@ -451,7 +451,7 @@ public class MainWindow : IDisposable
                 config.AnonymousMode = anonymousMode;
                 config.Save();
             }
-            HelpMarker("Hide Combat Simulator combat overlays except HP bars.");
+            HelpMarker("Hide character names and defeated/dead labels in HP overlays.");
         }
     }
 

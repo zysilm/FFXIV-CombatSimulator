@@ -371,21 +371,19 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         if (!clientState.IsLoggedIn)
             return;
 
-        var anonymousMode = config.AnonymousMode;
-
-        if (!anonymousMode && config.ShowShortcuts)
+        if (config.ShowShortcuts)
             mainWindow.DrawShortcutsBar();
 
-        if (!anonymousMode && config.ShowFastCombatToolbar)
+        if (config.ShowFastCombatToolbar)
             mainWindow.DrawFastCombatToolbar();
 
-        if (!anonymousMode && config.ShowDeathCamToolbar)
+        if (config.ShowDeathCamToolbar)
             mainWindow.DrawDeathCamToolbar();
 
-        if (!anonymousMode && config.ShowActiveCamToolbar)
+        if (config.ShowActiveCamToolbar)
             mainWindow.DrawActiveCamToolbar();
 
-        if (!anonymousMode && config.ShowGrabToolbar)
+        if (config.ShowGrabToolbar)
             mainWindow.DrawGrabToolbar(victorySequenceController);
 
         if (config.ShowMainWindow)
@@ -401,15 +399,14 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             if (config.ShowEnemyHpBar || config.ShowPlayerHpBar || config.ShowHudPlayerHpBar)
                 hpBarOverlay.Draw();
 
-            if (!anonymousMode && config.ShowCombatLog)
+            if (config.ShowCombatLog)
                 combatLogWindow.Draw();
 
-            if (!anonymousMode && (config.ShowCombatLinkArcs || config.ShowLockMarker))
+            if (config.ShowCombatLinkArcs || config.ShowLockMarker)
                 combatLinkOverlay.Draw();
         }
 
-        if (!anonymousMode)
-            ragdollDebugOverlay.Draw();
+        ragdollDebugOverlay.Draw();
 
         if (!combatEngine.IsActive)
         {
