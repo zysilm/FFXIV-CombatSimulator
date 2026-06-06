@@ -271,7 +271,6 @@ public class MainWindow : IDisposable
                     config.RagdollSolverIterations = 8;
                     config.RagdollSelfCollision = true;
                     config.RagdollFriction = 1.0f;
-                    config.WeaponDropEnabled = true;
                     config.WeaponDropGravity = 9.8f;
                     config.WeaponDropDamping = 0.99f;
                     config.WeaponDropMass = 1.5f;
@@ -2830,17 +2829,9 @@ public class MainWindow : IDisposable
                 HelpMarker("Surface friction for all ragdoll contacts. 0 = ice (limbs slide freely), 1 = grippy (default). Lower values make the body slide more realistically. Takes effect on next ragdoll activation.");
 
                 ImGui.Separator();
-                ImGui.Text("Weapon Drop (independent physics)");
+                ImGui.Text("Weapon Drop");
+                HelpMarker("On death the weapon detaches from the hand and falls with its own physics. Always active while ragdoll is enabled; tune the parameters below.");
 
-                var weaponDrop = config.WeaponDropEnabled;
-                if (ImGui.Checkbox("Enable Weapon Drop##weapondrop", ref weaponDrop))
-                {
-                    config.WeaponDropEnabled = weaponDrop;
-                    config.Save();
-                }
-                HelpMarker("Weapon detaches from the hand and falls with physics immediately on death. Independent of ragdoll — works on player and NPCs even with ragdoll disabled. Forces battle/dead animation so weapons stay drawn.");
-
-                if (config.WeaponDropEnabled)
                 {
                     var wdGravity = config.WeaponDropGravity;
                     if (ImGui.SliderFloat("Gravity##weapondrop", ref wdGravity, 0.0f, 30.0f, "%.2f"))

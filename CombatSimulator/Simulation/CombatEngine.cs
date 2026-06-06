@@ -1048,9 +1048,13 @@ public class CombatEngine : IDisposable
                     var player = Core.Services.ObjectTable.LocalPlayer;
                     if (player != null && player.Address != nint.Zero)
                     {
+                        // Weapon drop is part of ragdoll, so only fire it (and the
+                        // ragdoll) when ragdoll is enabled.
                         if (config.EnableRagdoll)
+                        {
                             ragdollController.Activate(player.Address);
-                        OnPlayerDeath?.Invoke(player.Address);
+                            OnPlayerDeath?.Invoke(player.Address);
+                        }
                     }
                 }
 

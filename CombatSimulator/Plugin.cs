@@ -468,13 +468,13 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnNpcDeathRagdoll(nint address)
     {
-        // Weapon drop runs alongside ragdoll using the same activation delay
-        weaponDropController.SpawnFor(address, config.NpcRagdollActivationDelay);
-
         if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
         {
             return;
         }
+
+        // Weapon drop is part of ragdoll — same activation delay.
+        weaponDropController.SpawnFor(address, config.NpcRagdollActivationDelay);
 
         if (npcRagdolls.ContainsKey(address)) return;
 
@@ -559,9 +559,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnCompanionDeathRagdoll(nint address)
     {
-        weaponDropController.SpawnFor(address, config.RagdollActivationDelay);
-
         if (!config.EnableRagdoll || !config.PartyCompanionDeathRagdoll) return;
+
+        // Weapon drop is part of ragdoll — same activation delay.
+        weaponDropController.SpawnFor(address, config.RagdollActivationDelay);
 
         if (npcRagdolls.ContainsKey(address)) return;
 
