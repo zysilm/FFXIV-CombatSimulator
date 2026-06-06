@@ -211,6 +211,11 @@ public class Configuration : IPluginConfiguration
     public bool EnableVictorySequence { get; set; } = false;
     public bool ControlGrabber { get; set; } = false;
     public float GrabberControlSpeed { get; set; } = 2.5f;
+    // Custom primary (grabber) NPC: when on, an alive enemy whose name contains
+    // GrabCustomPrimaryName is chosen as the cinematic/grab NPC (random among
+    // matches); otherwise the last-targeted enemy is used.
+    public bool GrabCustomPrimary { get; set; } = false;
+    public string GrabCustomPrimaryName { get; set; } = string.Empty;
     public List<VictorySequenceStage> VictorySequenceStages { get; set; } = new();
     public List<VictorySequenceStage> VictorySequenceOtherStages { get; set; } = new();
     public List<VictoryCinematicPreset> VictoryCinematicPresets { get; set; } = new();

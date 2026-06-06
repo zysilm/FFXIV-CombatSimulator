@@ -211,6 +211,28 @@ public class VictorySequenceGui
         if (!config.EnableVictorySequence) return;
 
         ImGui.Indent();
+
+        // Custom primary (grabber) NPC: choose by name instead of last-targeted.
+        var customPrimary = config.GrabCustomPrimary;
+        if (ImGui.Checkbox("Custom primary NPC##vsd", ref customPrimary))
+        {
+            config.GrabCustomPrimary = customPrimary;
+            config.Save();
+        }
+        HelpMarker("Pick which enemy performs the grab by name instead of the last-targeted enemy. When the text below partially matches an enemy's name, that enemy becomes the primary grabber; if several match, one is chosen at random. If nothing matches (or unchecked), the last-targeted enemy is used (original behavior).");
+        if (config.GrabCustomPrimary)
+        {
+            ImGui.Indent();
+            var primaryName = config.GrabCustomPrimaryName ?? string.Empty;
+            ImGui.SetNextItemWidth(220);
+            if (ImGui.InputText("Primary name match##vsd", ref primaryName, 64))
+            {
+                config.GrabCustomPrimaryName = primaryName;
+                config.Save();
+            }
+            ImGui.Unindent();
+        }
+
         var stages = config.VictorySequenceStages;
 
         // Stage list table

@@ -140,14 +140,34 @@ public unsafe class VictorySequenceController : IDisposable
         if (!config.EnableVictorySequence || config.VictorySequenceStages.Count == 0)
             return (false, null);
 
-        // Find the last targeted NPC (must be alive with valid BattleChara)
         SimulatedNpc? candidate = null;
-        foreach (var npc in npcs)
+
+        // Custom primary: prefer an alive NPC whose name matches the filter text.
+        // If several match, pick one at random; if none match, fall through to the
+        // default last-targeted selection below.
+        if (config.GrabCustomPrimary && !string.IsNullOrWhiteSpace(config.GrabCustomPrimaryName))
         {
-            if (npc.SimulatedEntityId == lastTargetedNpcId && npc.State.IsAlive && npc.BattleChara != null)
+            var matches = new List<SimulatedNpc>();
+            foreach (var npc in npcs)
             {
-                candidate = npc;
-                break;
+                if (npc.State.IsAlive && npc.BattleChara != null &&
+                    npc.Name.Contains(config.GrabCustomPrimaryName, StringComparison.OrdinalIgnoreCase))
+                    matches.Add(npc);
+            }
+            if (matches.Count > 0)
+                candidate = matches[Random.Shared.Next(matches.Count)];
+        }
+
+        // Find the last targeted NPC (must be alive with valid BattleChara)
+        if (candidate == null)
+        {
+            foreach (var npc in npcs)
+            {
+                if (npc.SimulatedEntityId == lastTargetedNpcId && npc.State.IsAlive && npc.BattleChara != null)
+                {
+                    candidate = npc;
+                    break;
+                }
             }
         }
         // Fallback: first alive NPC if last target is gone
