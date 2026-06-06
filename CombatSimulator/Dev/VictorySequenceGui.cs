@@ -693,6 +693,22 @@ public class VictorySequenceGui
             var grab = s.GrabEnabled;
             if (ImGui.Checkbox("Grab##vsd", ref grab))
             { s.GrabEnabled = grab; config.Save(); }
+
+            // Manual grabber control (global toggle): on a grab stage, drive the
+            // grabber's movement with the movement keys (camera-relative, walk anim,
+            // floor-snapped) while the grab is maintained.
+            var controlGrabber = config.ControlGrabber;
+            if (ImGui.Checkbox("Control Grabber##vsd", ref controlGrabber))
+            { config.ControlGrabber = controlGrabber; config.Save(); }
+            if (config.ControlGrabber)
+            {
+                ImGui.Indent();
+                var gcSpeed = config.GrabberControlSpeed;
+                if (ImGui.DragFloat("Move Speed##gcspd", ref gcSpeed, 0.1f, 0.5f, 12f, "%.1f"))
+                { config.GrabberControlSpeed = gcSpeed; config.Save(); }
+                ImGui.Unindent();
+            }
+
             if (s.GrabEnabled)
             {
                 ImGui.Indent();

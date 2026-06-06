@@ -196,6 +196,8 @@ public class Configuration : IPluginConfiguration
     public bool RagdollVerboseLog { get; set; } = false;
     public bool RagdollFollowPosition { get; set; } = false; // Update GameObject.Position to follow ragdoll root (prevents model unload on long falls)
     public bool EnableVictorySequence { get; set; } = false;
+    public bool ControlGrabber { get; set; } = false;
+    public float GrabberControlSpeed { get; set; } = 2.5f;
     public List<VictorySequenceStage> VictorySequenceStages { get; set; } = new();
     public List<VictorySequenceStage> VictorySequenceOtherStages { get; set; } = new();
     public List<VictoryCinematicPreset> VictoryCinematicPresets { get; set; } = new();
