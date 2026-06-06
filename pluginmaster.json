@@ -36,7 +36,7 @@
       "other"
     ],
     "LoadPriority": 0,
-    "AssemblyVersion": "2.1.0.0.0",
+    "AssemblyVersion": "2.1.0.0",
     "IconUrl": "https://raw.githubusercontent.com/zysilm/FFXIV-CombatSimulator/main/images/logo.png",
     "InternalName": "CombatSimulator",
     "DownloadLinkInstall": "https://github.com/zysilm/FFXIV-CombatSimulator/releases/download/v2.1.0.0/CombatSimulator.zip",

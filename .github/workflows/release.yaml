@@ -59,7 +59,8 @@ jobs:
           # SDK 15 pads the bundled CombatSimulator.json AssemblyVersion to 4-part
           # (e.g. 1.9.4 → 1.9.4.0). Dalamud strict-compares the manifest inside the
           # zip against pluginmaster.json's AssemblyVersion, so we must match.
-          data['AssemblyVersion'] = '${{ steps.version.outputs.version }}.0'
+          version = '${{ steps.version.outputs.version }}'
+          data['AssemblyVersion'] = version if version.count('.') >= 3 else f'{version}.0'
           data['InternalName'] = '${{ env.PLUGIN_NAME }}'
           data['RepoUrl'] = 'https://github.com/${{ github.repository }}'
           dl = 'https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/${{ env.PLUGIN_NAME }}.zip'
