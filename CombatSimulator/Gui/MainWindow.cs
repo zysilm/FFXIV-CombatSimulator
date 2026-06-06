@@ -407,7 +407,7 @@ public class MainWindow : IDisposable
                 config.FastCombatLevel = level;
                 config.Save();
             }
-            HelpMarker("Enemy and companion simulated level used when starting a recipe. Default is 90.");
+            HelpMarker("Enemy simulated level used when starting a recipe. Companions mirror player stats.");
         }
 
         if (compact)
