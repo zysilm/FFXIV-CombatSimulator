@@ -243,8 +243,8 @@ public class Configuration : IPluginConfiguration
 
     // Legacy combined skill VFX toggle. Migrated to the split toggles below.
     public bool EnableSkillVfx { get; set; } = false;
-    public bool EnableCharacterVfx { get; set; } = false;
-    public bool EnableTargetVfx { get; set; } = false;
+    public bool EnableCharacterVfx { get; set; } = true;
+    public bool EnableTargetVfx { get; set; } = true;
 
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
