@@ -267,7 +267,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                           "/combatsim professional - Open Professional Mode settings\n" +
                           "/combatsim start - Start combat simulation\n" +
                           "/combatsim stop - Stop combat simulation\n" +
-                          "/combatsim reset - Reset combat state",
+                          "/combatsim reset - Reset combat state\n" +
+                          "/combatsim export-actions - Export player action data to Actions.json",
         });
 
         pluginInterface.UiBuilder.Draw += OnDraw;
@@ -357,10 +358,32 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 config.Save();
                 break;
 
+            case "export-actions":
+            case "exportactions":
+                ExportActionDatabase();
+                break;
+
             default:
                 config.ShowMainWindow = !config.ShowMainWindow;
                 config.Save();
                 break;
+        }
+    }
+
+    private void ExportActionDatabase()
+    {
+        var exporter = new Simulation.ActionDatabaseExporter(Core.Services.DataManager, log);
+        var result = exporter.Export();
+        if (result.Success)
+        {
+            actionDataProvider.ReloadDatabase();
+            chatGui.Print($"[CombatSim] Exported {result.Count} player damage actions to {result.Path}");
+            if (!string.IsNullOrEmpty(result.AttackTypeSummary))
+                chatGui.Print($"[CombatSim] AttackTypes: {result.AttackTypeSummary}");
+        }
+        else
+        {
+            chatGui.PrintError($"[CombatSim] Action export failed: {result.Error}");
         }
     }
 

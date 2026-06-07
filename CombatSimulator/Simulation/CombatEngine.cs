@@ -29,6 +29,10 @@ public class SimulatedActionResult
     public bool TargetKilled { get; set; }
 }
 
+internal readonly record struct AppliedActionDamage(
+    SimulatedEntityState Target,
+    DamageResult DamageResult);
+
 public class CombatLogEntry
 {
     public float Timestamp { get; set; }
@@ -453,13 +457,24 @@ public class CombatEngine : IDisposable
         if (State.CombatStartTime == 0)
             State.CombatStartTime = State.SimulationTime;
 
-        // Calculate damage
-        var dmgResult = damageCalculator.Calculate(
-            State.PlayerState, target, actionData, isCombo,
-            EnableCriticalHits, EnableDirectHits, DamageMultiplier);
+        var targets = ResolveActionTargets(State.PlayerState, target, actionData);
+        if (targets.Count == 0)
+        {
+            result.FailReason = "No valid targets.";
+            return result;
+        }
 
-        // Apply damage
-        target.CurrentHp = Math.Max(0, target.CurrentHp - dmgResult.Damage);
+        var hits = ApplyDamageToTargets(
+            State.PlayerState,
+            targets,
+            t => damageCalculator.Calculate(
+                State.PlayerState, t, actionData, isCombo,
+                EnableCriticalHits, EnableDirectHits, DamageMultiplier));
+        if (hits.Count == 0)
+        {
+            result.FailReason = "No valid targets.";
+            return result;
+        }
 
         // Apply animation lock
         State.PlayerState.AnimationLock = actionData.AnimationLock;
@@ -483,28 +498,42 @@ public class CombatEngine : IDisposable
         State.PlayerState.LastComboAction = actionId;
         State.PlayerState.ComboTimer = 30.0f;
 
-        // Update stats
-        State.TotalDamageDealt += dmgResult.Damage;
-        OnPlayerDamageDealt?.Invoke(dmgResult.Damage);
-        OnPlayerDamageDealtToTarget?.Invoke(target.EntityId, dmgResult.Damage);
+        var totalDamage = 0;
+        foreach (var hit in hits)
+        {
+            totalDamage += hit.DamageResult.Damage;
+            State.TotalDamageDealt += hit.DamageResult.Damage;
+            OnPlayerDamageDealtToTarget?.Invoke(hit.Target.EntityId, hit.DamageResult.Damage);
+        }
+        OnPlayerDamageDealt?.Invoke(totalDamage);
 
         // Build result
         result.Success = true;
-        result.Damage = dmgResult.Damage;
-        result.IsCritical = dmgResult.IsCritical;
-        result.IsDirectHit = dmgResult.IsDirectHit;
+        result.Damage = totalDamage;
+        result.IsCritical = hits[0].DamageResult.IsCritical;
+        result.IsDirectHit = hits[0].DamageResult.IsDirectHit;
         result.IsCombo = isCombo;
 
         // Player chose to fight back — let TickAutoAttack swing from now on.
         playerInitiatedCombat = true;
 
         // Trigger animation
-        TriggerActionEffect(State.PlayerState, target, actionData, dmgResult);
+        TriggerActionEffect(State.PlayerState, actionData, hits);
 
         // Log
-        var critText = dmgResult.IsCritical ? " critical" : "";
-        var dhText = dmgResult.IsDirectHit ? " direct" : "";
+        var primaryHit = hits[0].DamageResult;
+        var dmgResult = new DamageResult
+        {
+            Damage = totalDamage,
+            IsCritical = primaryHit.IsCritical,
+            IsDirectHit = primaryHit.IsDirectHit,
+            DamageType = primaryHit.DamageType,
+        };
+        var critText = primaryHit.IsCritical ? " critical" : "";
+        var dhText = primaryHit.IsDirectHit ? " direct" : "";
         var comboText = isCombo ? " (combo)" : "";
+        var aoeText = hits.Count > 1 ? $" +{hits.Count - 1} targets" : "";
+        comboText += aoeText;
         AddLogEntry(
             $"You use {actionData.Name} → {target.Name}: {dmgResult.Damage:N0}{critText}{dhText} damage{comboText}",
             CombatLogType.DamageDealt);
@@ -524,10 +553,14 @@ public class CombatEngine : IDisposable
         }
 
         // Check death
-        if (!target.IsAlive)
+        foreach (var hit in hits)
         {
-            result.TargetKilled = true;
-            OnEntityDeath(target);
+            if (!hit.Target.IsAlive)
+            {
+                if (hit.Target.EntityId == target.EntityId)
+                    result.TargetKilled = true;
+                OnEntityDeath(hit.Target);
+            }
         }
 
         return result;
@@ -538,7 +571,8 @@ public class CombatEngine : IDisposable
         uint actionId,
         ulong targetId,
         int potency = 0,
-        NpcAttackStyle attackStyle = NpcAttackStyle.Auto)
+        NpcAttackStyle attackStyle = NpcAttackStyle.Auto,
+        float radius = 0)
     {
         var result = new SimulatedActionResult
         {
@@ -598,12 +632,41 @@ public class CombatEngine : IDisposable
         };
         if (potency > 0)
             visualAction.Potency = potency;
+        if (radius > 0)
+        {
+            visualAction.Radius = radius;
+            if (visualAction.Shape == AoeShape.Single)
+                visualAction.Shape = AoeShape.CircleSelf;
+        }
 
         ApplyNpcAttackStyle(visualAction, attackStyle == NpcAttackStyle.Auto ? npc.Behavior.AutoAttackStyle : attackStyle);
-        TriggerActionEffect(npc.State, target, visualAction, dmgResult);
+        var hits = new List<AppliedActionDamage> { new(target, dmgResult) };
+        var totalDamage = dmgResult.Damage;
+        foreach (var extraTarget in ResolveActionTargets(npc.State, target, visualAction))
+        {
+            if (extraTarget.EntityId == target.EntityId)
+                continue;
+
+            var extraDamage = damageCalculator.CalculateNpcAutoAttack(
+                npc.State,
+                extraTarget,
+                visualAction.Potency > 0 ? visualAction.Potency : 110);
+            extraTarget.CurrentHp = Math.Max(0, extraTarget.CurrentHp - extraDamage.Damage);
+            hits.Add(new AppliedActionDamage(extraTarget, extraDamage));
+            totalDamage += extraDamage.Damage;
+
+            if (extraTarget.IsPlayer)
+            {
+                State.TotalDamageTaken += extraDamage.Damage;
+                if (extraTarget.IsAlive)
+                    OnPlayerHitByNpc?.Invoke(npc.SimulatedEntityId);
+            }
+        }
+
+        TriggerActionEffect(npc.State, visualAction, hits);
 
         result.Success = true;
-        result.Damage = dmgResult.Damage;
+        result.Damage = totalDamage;
         result.IsCritical = dmgResult.IsCritical;
         result.IsDirectHit = dmgResult.IsDirectHit;
 
@@ -624,6 +687,15 @@ public class CombatEngine : IDisposable
             result.TargetKilled = true;
             OnEntityDeath(target);
         }
+        foreach (var hit in hits)
+        {
+            if (hit.Target.EntityId == target.EntityId || hit.Target.IsAlive)
+                continue;
+
+            if (hit.Target.IsPlayer)
+                LastPlayerDefeatedBy = npc.Name;
+            OnEntityDeath(hit.Target);
+        }
 
         return result;
     }
@@ -633,7 +705,8 @@ public class CombatEngine : IDisposable
         SimulatedNpc targetNpc,
         uint actionId,
         int potency = 0,
-        NpcAttackStyle attackStyle = NpcAttackStyle.Auto)
+        NpcAttackStyle attackStyle = NpcAttackStyle.Auto,
+        float radius = 0)
     {
         var result = new SimulatedActionResult
         {
@@ -682,12 +755,48 @@ public class CombatEngine : IDisposable
         };
         if (potency > 0)
             visualAction.Potency = potency;
+        if (radius > 0)
+        {
+            visualAction.Radius = radius;
+            if (visualAction.Shape == AoeShape.Single)
+                visualAction.Shape = AoeShape.CircleSelf;
+        }
 
         ApplyNpcAttackStyle(visualAction, attackStyle == NpcAttackStyle.Auto ? companion.Behavior.AutoAttackStyle : attackStyle);
-        TriggerActionEffect(companion.State, targetNpc.State, visualAction, dmgResult);
+        var hits = new List<AppliedActionDamage> { new(targetNpc.State, dmgResult) };
+        var totalDamage = dmgResult.Damage;
+        foreach (var extraTarget in ResolveActionTargets(companion.State, targetNpc.State, visualAction))
+        {
+            if (extraTarget.EntityId == targetNpc.SimulatedEntityId)
+                continue;
+
+            var extraDamage = potency > 0
+                ? damageCalculator.CalculateNpcAutoAttack(companion.State, extraTarget, visualAction.Potency)
+                : resolvedActionData != null
+                    ? damageCalculator.Calculate(companion.State, extraTarget, visualAction, false, EnableCriticalHits, EnableDirectHits, DamageMultiplier)
+                    : damageCalculator.CalculateNpcAutoAttack(companion.State, extraTarget);
+            extraTarget.CurrentHp = Math.Max(0, extraTarget.CurrentHp - extraDamage.Damage);
+            hits.Add(new AppliedActionDamage(extraTarget, extraDamage));
+            totalDamage += extraDamage.Damage;
+            State.TotalDamageDealt += extraDamage.Damage;
+
+            foreach (var npc in npcSelector.SelectedNpcs)
+            {
+                if (npc.SimulatedEntityId != extraTarget.EntityId || npc.AiState != Ai.NpcAiState.Idle)
+                    continue;
+
+                npc.AiState = Ai.NpcAiState.Engaging;
+                npc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
+                Ai.NpcAiController.StaggerTimers(npc);
+                AddLogEntry($"{npc.Name} engages!", CombatLogType.Info);
+                break;
+            }
+        }
+
+        TriggerActionEffect(companion.State, visualAction, hits);
 
         result.Success = true;
-        result.Damage = dmgResult.Damage;
+        result.Damage = totalDamage;
         result.IsCritical = dmgResult.IsCritical;
         result.IsDirectHit = dmgResult.IsDirectHit;
 
@@ -703,6 +812,13 @@ public class CombatEngine : IDisposable
             result.TargetKilled = true;
             OnEntityDeath(targetNpc.State);
         }
+        foreach (var hit in hits)
+        {
+            if (hit.Target.EntityId == targetNpc.SimulatedEntityId || hit.Target.IsAlive)
+                continue;
+
+            OnEntityDeath(hit.Target);
+        }
 
         return result;
     }
@@ -712,6 +828,158 @@ public class CombatEngine : IDisposable
 
     public Vector3 GetSimulatedEntityPosition(SimulatedEntityState entity)
         => GetEntityPosition(entity);
+
+    private List<AppliedActionDamage> ApplyDamageToTargets(
+        SimulatedEntityState source,
+        IReadOnlyList<SimulatedEntityState> targets,
+        Func<SimulatedEntityState, DamageResult> calculateDamage)
+    {
+        var hits = new List<AppliedActionDamage>();
+        foreach (var target in targets)
+        {
+            if (!target.IsAlive || hits.Count >= 32)
+                continue;
+
+            var damage = calculateDamage(target);
+            target.CurrentHp = Math.Max(0, target.CurrentHp - damage.Damage);
+            hits.Add(new AppliedActionDamage(target, damage));
+        }
+
+        return hits;
+    }
+
+    private List<SimulatedEntityState> ResolveActionTargets(
+        SimulatedEntityState source,
+        SimulatedEntityState primaryTarget,
+        ActionData actionData)
+    {
+        var targets = new List<SimulatedEntityState>();
+        if (!primaryTarget.IsAlive || !IsHostile(source, primaryTarget))
+            return targets;
+
+        targets.Add(primaryTarget);
+        if (actionData.Shape == AoeShape.Single || actionData.Radius <= 0)
+            return targets;
+
+        foreach (var candidate in GetHostileTargets(source))
+        {
+            if (targets.Count >= 32)
+                break;
+            if (candidate.EntityId == primaryTarget.EntityId || !candidate.IsAlive)
+                continue;
+            if (IsInsideActionArea(source, primaryTarget, candidate, actionData))
+                targets.Add(candidate);
+        }
+
+        return targets;
+    }
+
+    private List<SimulatedEntityState> GetHostileTargets(SimulatedEntityState source)
+    {
+        var result = new List<SimulatedEntityState>();
+        if (IsFriendly(source))
+        {
+            foreach (var entity in State.Entities.Values)
+            {
+                if (!entity.IsPlayer && !entity.IsCompanion && entity.IsAlive)
+                    result.Add(entity);
+            }
+            return result;
+        }
+
+        if (State.PlayerState.IsAlive)
+            result.Add(State.PlayerState);
+        foreach (var entity in State.Entities.Values)
+        {
+            if (entity.IsCompanion && entity.IsAlive)
+                result.Add(entity);
+        }
+        return result;
+    }
+
+    private bool IsInsideActionArea(
+        SimulatedEntityState source,
+        SimulatedEntityState primaryTarget,
+        SimulatedEntityState candidate,
+        ActionData actionData)
+    {
+        var sourcePos = GetEntityPosition(source);
+        var primaryPos = GetEntityPosition(primaryTarget);
+        var candidatePos = GetEntityPosition(candidate);
+        var radius = MathF.Max(0f, actionData.Radius);
+
+        return actionData.Shape switch
+        {
+            AoeShape.Circle or AoeShape.GroundCircle =>
+                Distance2D(primaryPos, candidatePos) <= radius,
+            AoeShape.CircleSelf or AoeShape.Donut =>
+                Distance2D(sourcePos, candidatePos) <= radius,
+            AoeShape.Cone =>
+                IsInsideCone(sourcePos, primaryPos, candidatePos, radius),
+            AoeShape.Line =>
+                IsInsideLine(sourcePos, primaryPos, candidatePos, radius, actionData.Width),
+            _ => false,
+        };
+    }
+
+    private static bool IsFriendly(SimulatedEntityState entity)
+        => entity.IsPlayer || entity.IsCompanion;
+
+    private static bool IsHostile(SimulatedEntityState a, SimulatedEntityState b)
+        => IsFriendly(a) != IsFriendly(b);
+
+    private static float Distance2D(Vector3 a, Vector3 b)
+    {
+        var dx = a.X - b.X;
+        var dz = a.Z - b.Z;
+        return MathF.Sqrt(dx * dx + dz * dz);
+    }
+
+    private static bool TryGetDirection2D(Vector3 from, Vector3 to, out Vector2 direction)
+    {
+        var delta = new Vector2(to.X - from.X, to.Z - from.Z);
+        var len = delta.Length();
+        if (len <= 0.001f)
+        {
+            direction = Vector2.Zero;
+            return false;
+        }
+
+        direction = delta / len;
+        return true;
+    }
+
+    private static bool IsInsideCone(Vector3 source, Vector3 primaryTarget, Vector3 candidate, float radius)
+    {
+        if (!TryGetDirection2D(source, primaryTarget, out var forward) ||
+            !TryGetDirection2D(source, candidate, out var toCandidate))
+        {
+            return false;
+        }
+
+        var distance = Distance2D(source, candidate);
+        if (distance > radius)
+            return false;
+
+        // Most FFXIV cone actions are broad frontal cones. Use 90 degrees total
+        // until/unless we add a data-backed cone angle.
+        return Vector2.Dot(forward, toCandidate) >= 0.70710677f;
+    }
+
+    private static bool IsInsideLine(Vector3 source, Vector3 primaryTarget, Vector3 candidate, float length, float width)
+    {
+        if (!TryGetDirection2D(source, primaryTarget, out var forward))
+            return false;
+
+        var toCandidate = new Vector2(candidate.X - source.X, candidate.Z - source.Z);
+        var along = Vector2.Dot(toCandidate, forward);
+        if (along < 0 || along > length)
+            return false;
+
+        var perpendicular = MathF.Abs(forward.X * toCandidate.Y - forward.Y * toCandidate.X);
+        var halfWidth = MathF.Max(width > 0 ? width : 4f, 0.5f) * 0.5f;
+        return perpendicular <= halfWidth;
+    }
 
     private static void ApplyNpcAttackStyle(ActionData actionData, NpcAttackStyle attackStyle)
     {
@@ -743,6 +1011,8 @@ public class CombatEngine : IDisposable
             RecastGroup = source.RecastGroup,
             Range = source.Range,
             Radius = source.Radius,
+            Shape = source.Shape,
+            Width = source.Width,
             DamageType = source.DamageType,
             MpCost = source.MpCost,
             IsComboAction = source.IsComboAction,
@@ -764,7 +1034,16 @@ public class CombatEngine : IDisposable
         SimulatedEntityState target,
         ActionData actionData,
         DamageResult dmgResult)
+        => TriggerActionEffect(source, actionData, new List<AppliedActionDamage> { new(target, dmgResult) });
+
+    private void TriggerActionEffect(
+        SimulatedEntityState source,
+        ActionData actionData,
+        IReadOnlyList<AppliedActionDamage> hits)
     {
+        if (hits.Count == 0)
+            return;
+
         try
         {
             // Get source position
@@ -809,9 +1088,8 @@ public class CombatEngine : IDisposable
             // Map simulated entity IDs to real game object IDs for native calls.
             // ActionEffectHandler.Receive needs IDs the game engine can resolve.
             var gameSourceId = GetGameEntityId(source);
-            var gameTargetId = GetGameEntityId(target);
 
-            animationController.PlayActionEffect(new ActionEffectRequest
+            var request = new ActionEffectRequest
             {
                 SourceEntityId = gameSourceId,
                 SourcePosition = sourcePos,
@@ -831,24 +1109,28 @@ public class CombatEngine : IDisposable
                 StartVfxPath = actionData.StartVfxPath,
                 CasterVfxPaths = actionData.CasterVfxPaths,
                 TargetVfxPaths = actionData.TargetVfxPaths,
-                Targets =
+            };
+
+            foreach (var hit in hits)
+            {
+                request.Targets.Add(new TargetEffect
                 {
-                    new TargetEffect
-                    {
-                        TargetId = gameTargetId,
-                        Damage = dmgResult.Damage,
-                        IsCritical = dmgResult.IsCritical,
-                        IsDirectHit = dmgResult.IsDirectHit,
-                        DamageType = dmgResult.DamageType,
-                    }
-                }
-            });
+                    TargetId = GetGameEntityId(hit.Target),
+                    Damage = hit.DamageResult.Damage,
+                    IsCritical = hit.DamageResult.IsCritical,
+                    IsDirectHit = hit.DamageResult.IsDirectHit,
+                    DamageType = hit.DamageResult.DamageType,
+                });
+            }
+
+            animationController.PlayActionEffect(request);
 
             // ActionEffectHandler.Receive's internal target lookup typically fails for
             // client-spawned NPCs (0xF000xxxx EntityIds aren't in CharacterManager),
             // so the natural hit reaction never fires. Play the damage timeline
             // directly on the target so it visibly flinches when hit.
-            PlayHitReactionOnTarget(target, dmgResult.Damage > 0);
+            foreach (var hit in hits)
+                PlayHitReactionOnTarget(hit.Target, hit.DamageResult.Damage > 0);
         }
         catch (Exception ex)
         {

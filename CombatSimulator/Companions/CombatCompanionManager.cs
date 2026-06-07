@@ -1017,7 +1017,8 @@ public unsafe class CombatCompanionManager : IDisposable
             if (dist > GetPartySkillRange(skill.Range, skill.AttackStyle))
                 continue;
 
-            var result = combatEngine.ProcessCompanionAction(companion, target, skill.ActionId, skill.Potency, skill.AttackStyle);
+            var result = combatEngine.ProcessCompanionAction(companion, target,
+                skill.ActionId, skill.Potency, skill.AttackStyle, skill.Radius);
             if (result.Success)
             {
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);

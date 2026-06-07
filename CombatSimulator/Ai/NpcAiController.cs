@@ -558,7 +558,8 @@ public unsafe class NpcAiController : IDisposable
                 if (npc.CurrentCastSkill != null)
                 {
                     var result = combatEngine.ProcessNpcAction(npc, npc.CurrentCastSkill.ActionId,
-                        npc.State.CastTargetId, npc.CurrentCastSkill.Potency, npc.CurrentCastSkill.AttackStyle);
+                        npc.State.CastTargetId, npc.CurrentCastSkill.Potency,
+                        npc.CurrentCastSkill.AttackStyle, npc.CurrentCastSkill.Radius);
                     if (result.Success)
                         npc.CurrentCastSkill.CooldownRemaining = npc.CurrentCastSkill.Cooldown;
                     npc.CurrentCastSkill = null;
@@ -605,7 +606,8 @@ public unsafe class NpcAiController : IDisposable
             }
             else
             {
-                var result = combatEngine.ProcessNpcAction(npc, skill.ActionId, targetEntityId, skill.Potency, skill.AttackStyle);
+                var result = combatEngine.ProcessNpcAction(npc, skill.ActionId, targetEntityId,
+                    skill.Potency, skill.AttackStyle, skill.Radius);
                 if (result.Success)
                 {
                     skill.CooldownRemaining = skill.Cooldown;
