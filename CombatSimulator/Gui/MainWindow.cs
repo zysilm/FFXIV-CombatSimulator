@@ -76,8 +76,6 @@ public class MainWindow : IDisposable
     private int spawnCategoryIndex = 0; // 0=Popular, 1=Recent, 2=Human, 3=Monsters, 4=All
     private int selectedCatalogIndex = -1;
     private NpcCatalogEntry? selectedCatalogEntry;
-    private int virtualEnemiesClickCount = 0;
-    private bool virtualEnemiesUnlocked = false;
     private int selectedRecipeIndex = 0;
 
     private static readonly string[] SpawnCategoryNames = { "Popular", "Recent", "Human", "Monsters", "All" };
@@ -945,109 +943,10 @@ public class MainWindow : IDisposable
 
     private void DrawVirtualEnemiesTab()
     {
-        // 6-click activation gate (resets every time mode is turned off or plugin loads)
-        if (!virtualEnemiesUnlocked)
-        {
-            ImGui.TextWrapped("Virtual Enemies allows you to spawn client-side enemies to practice combat against.");
-
-            ImGui.Spacing();
-            ImGui.BeginDisabled();
-            var dummy = false;
-            ImGui.Checkbox("Enable Virtual Enemies Mode", ref dummy);
-            ImGui.EndDisabled();
-
-            // The (!) icon IS the click target
-            ImGui.SameLine();
-            using (ImRaii.PushFont(UiBuilder.IconFont))
-            {
-                ImGui.TextColored(new Vector4(1f, 0.7f, 0f, 1f), FontAwesomeIcon.ExclamationTriangle.ToIconString());
-            }
-            // Track clicks on the (!) icon
-            if (ImGui.IsItemClicked())
-            {
-                virtualEnemiesClickCount++;
-                if (virtualEnemiesClickCount >= 6)
-                    virtualEnemiesUnlocked = true;
-            }
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.BeginTooltip();
-                ImGui.PushTextWrapPos(ImGui.GetFontSize() * 20.0f);
-                ImGui.TextUnformatted(
-                    "EXPERIMENTAL: This feature spawns client-side objects and intercepts " +
-                    "combat actions. It modifies game memory in ways that may cause crashes " +
-                    "or unexpected behavior.\n\n" +
-                    "Click this icon 6 times to acknowledge the risk and unlock.");
-                ImGui.PopTextWrapPos();
-                ImGui.EndTooltip();
-            }
-
-            if (virtualEnemiesClickCount > 0 && virtualEnemiesClickCount < 6)
-            {
-                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
-                    $"({virtualEnemiesClickCount}/6)");
-            }
-            else if (virtualEnemiesClickCount == 0)
-            {
-                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
-                    "Click the warning icon to unlock.");
-            }
-
-            return;
-        }
-
         // Lazy-load catalog on first open
         npcCatalog ??= new NpcCatalog(dataManager, log);
 
-        // On/Off toggle
-        var spawnMode = npcSpawner.SpawnModeActive;
-        if (ImGui.Checkbox("Virtual Enemies Mode", ref spawnMode))
-        {
-            npcSpawner.SpawnModeActive = spawnMode;
-            if (spawnMode)
-            {
-                // Auto-start combat sim when mode turns on
-                if (!combatEngine.IsActive)
-                {
-                    combatEngine.StartSimulation();
-                    chatGui.Print("[CombatSim] Virtual Enemies mode ON. Combat simulation started.");
-                }
-            }
-            else
-            {
-                // Despawn all and stop combat when turning off
-                foreach (var npc in new List<SimulatedNpc>(npcSpawner.SpawnedNpcs))
-                    npcSelector.UnregisterSpawnedNpc(npc);
-                npcSpawner.DespawnAll();
-                if (combatEngine.IsActive)
-                {
-                    combatEngine.StopSimulation();
-                    chatGui.Print("[CombatSim] Virtual Enemies mode OFF. All enemies despawned.");
-                }
-
-                // Re-lock: require 6 clicks again next time
-                virtualEnemiesUnlocked = false;
-                virtualEnemiesClickCount = 0;
-            }
-        }
-        HelpMarker(
-            "EXPERIMENTAL: When ON, virtual enemies are automatically targeted.\n" +
-            "All your skills will hit the last spawned enemy.\n" +
-            "Turning OFF despawns all enemies and stops combat.\n\n" +
-            "This feature modifies game memory and may cause crashes.");
-
-        ImGui.SameLine();
-        if (spawnMode)
-            ImGui.TextColored(new Vector4(0, 1, 0, 1), "Active");
-        else
-            ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1), "Inactive");
-
-        if (!spawnMode)
-        {
-            ImGui.TextDisabled("Enable Virtual Enemies Mode to spawn and fight enemies.");
-            return;
-        }
-
+        ImGui.TextWrapped("Search an enemy by name, then Spawn to fight it. Spawning starts the combat simulation automatically. Use Stop in the main window to despawn everything.");
         ImGui.Separator();
 
         // Category tabs: Popular / Recent / All
@@ -1155,6 +1054,15 @@ public class MainWindow : IDisposable
         {
             var entry = selectedCatalogEntry!;
             var pos = CalculateSpawnPosition(config.SpawnDistance);
+
+            // Virtual enemies are always available now: activate spawn mode and start
+            // the simulation on demand so the user can just search and spawn.
+            npcSpawner.SpawnModeActive = true;
+            if (!combatEngine.IsActive)
+            {
+                combatEngine.StartSimulation();
+                chatGui.Print("[CombatSim] Virtual Enemies: combat simulation started.");
+            }
 
             npcSpawner.QueueSpawn(new NpcSpawnRequest
             {
