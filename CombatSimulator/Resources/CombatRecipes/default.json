@@ -12,28 +12,37 @@
   },
   {
     "name": "Imperial Assault",
-    "description": "10 randomized self companions, up to 10 visible players, and 15 imperial patrol enemies.",
+    "description": "10 randomized self companions, up to 10 visible players, 14 imperial patrol enemies, and Livia sas Junius.",
     "companions": [
       { "type": "SelfRandomized", "count": 10 },
       { "type": "VisiblePlayers", "count": 10 }
     ],
     "enemies": [
-      { "type": "Human", "id": 0, "name": "imperial patrol", "occurrence": 2, "description": "Imperial patrol, second catalog match", "count": 15 }
+      { "type": "Human", "id": 0, "name": "imperial patrol", "occurrence": 2, "description": "Imperial patrol, second catalog match", "count": 14 },
+      { "type": "Human", "id": 0, "name": "Livia sas Junius", "occurrence": 2, "description": "Livia sas Junius, second catalog match", "count": 1, "hpMultiplier": 2.0 }
     ]
   },
   {
     "name": "Imperial Decisive Battle",
-    "description": "10 randomized self companions and up to 10 visible players against four imperial commanders (2x HP) and Zenos (8x HP).",
-    "companions": [
-      { "type": "SelfRandomized", "count": 10 },
-      { "type": "VisiblePlayers", "count": 10 }
-    ],
+    "description": "Solo (you alone) against four imperial commanders (2x HP) and Zenos (8x HP).",
+    "companions": [],
     "enemies": [
       { "type": "Human", "id": 0, "name": "Nael deus Darnus", "occurrence": 1, "description": "Nael deus Darnus, first catalog match", "count": 1, "hpMultiplier": 2.0 },
       { "type": "Human", "id": 0, "name": "Noah van Gabranth", "occurrence": 1, "description": "Noah van Gabranth, first catalog match", "count": 1, "hpMultiplier": 2.0 },
       { "type": "Human", "id": 0, "name": "Livia sas Junius", "occurrence": 2, "description": "Livia sas Junius, second catalog match", "count": 1, "hpMultiplier": 2.0 },
       { "type": "Human", "id": 0, "name": "Fordola", "occurrence": 2, "description": "Fordola, second catalog match", "count": 1, "hpMultiplier": 2.0 },
       { "type": "Human", "id": 1018510, "name": "Zenos Yae Galvus (No Helm)", "occurrence": 1, "description": "Zenos Yae Galvus (No Helm)", "count": 1, "hpMultiplier": 8.0, "behavior": "Boss" }
+    ]
+  },
+  {
+    "name": "Combat of Baron",
+    "description": "10 randomized self companions against 7 Memoriate of Darkness and 3 Blackguard.",
+    "companions": [
+      { "type": "SelfRandomized", "count": 10 }
+    ],
+    "enemies": [
+      { "type": "BNpc", "id": 0, "name": "Memoriate of Darkness", "occurrence": 1, "description": "Memoriate of Darkness, first catalog match", "count": 7 },
+      { "type": "Human", "id": 0, "name": "Blackguard", "occurrence": 1, "description": "Blackguard, first catalog match", "count": 3 }
     ]
   }
 ]
