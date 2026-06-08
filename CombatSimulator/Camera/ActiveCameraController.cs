@@ -400,7 +400,9 @@ public unsafe class ActiveCameraController : IDisposable
                 var deadBone = GetBoneWorldPosition(config.ActiveCameraBoneName, deadCharacterAddress);
                 var targetCenter = deadBone ?? transitionStartCenter;
                 targetCenter.Y += config.ActiveCameraHeightOffset;
-                float targetDist = MathF.Max(config.ActiveCameraMinZoomDistance, 3f);
+                // Zoom all the way in to the active-cam min distance so we get the close-up on the
+                // corpse — that's the whole point of active cam. The user can zoom out afterward.
+                float targetDist = config.ActiveCameraMinZoomDistance;
 
                 fightingCenter = Vector3.Lerp(transitionStartCenter, targetCenter, s);
                 fightingDistance = Lerp(transitionStartDistance, targetDist, s);
