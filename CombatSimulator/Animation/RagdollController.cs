@@ -1386,7 +1386,21 @@ public unsafe class RagdollController : IDisposable
             {
                 // Hinge: constrains position AND restricts rotation to one plane.
                 // Per BEPU RagdollDemo: Hinge + SwingLimit + AngularMotor (NO TwistLimit).
-                var hingeAxisWorld = ComputeHingeAxis(segDirWorld);
+                //
+                // Anatomical hinge axis = the normal of the plane the limb is already bent
+                // in at the death pose, from the parent and child segment directions. Knees
+                // and elbows are flexed at death, so the two segments are non-collinear and
+                // define a reliable bend plane. This is far more robust than deriving the axis
+                // from world-up (ComputeHingeAxis), which picks the wrong plane for splayed or
+                // twisted death poses — and a wrong plane lets the joint swing "sideways" past
+                // straight, reading as hyperextension even though SwingLimit=π/2 is correct.
+                var parentSegForAxis = Vector3.Transform(Vector3.UnitY, parentBodyRef.Pose.Orientation);
+                var bendNormal = Vector3.Cross(parentSegForAxis, segDirWorld);
+                Vector3 hingeAxisWorld;
+                if (bendNormal.LengthSquared() > 0.01f) // segments non-collinear (>~6° bend)
+                    hingeAxisWorld = Vector3.Normalize(bendNormal);
+                else
+                    hingeAxisWorld = ComputeHingeAxis(segDirWorld); // straight-limb fallback
                 var hingeAxisLocalChild = Vector3.Normalize(Vector3.Transform(
                     hingeAxisWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
                 var hingeAxisLocalParent = Vector3.Normalize(Vector3.Transform(
