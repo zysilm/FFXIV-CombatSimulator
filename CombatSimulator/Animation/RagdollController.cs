@@ -50,6 +50,12 @@ public unsafe class RagdollController : IDisposable
     private const int MaxSubstepsPerFrame = 4;  // cap catch-up to avoid a spiral of death
     private const float MaxFrameDelta = 0.1f;   // ignore huge gaps (loading screens, hitches)
 
+    // True once every ragdoll body has gone to sleep (settled). When resting we skip the
+    // physics step, the per-frame NPC-collision static rebuild, and hair integration —
+    // only re-asserting the held pose. Bodies can only sleep when settle-collision is off,
+    // so a resting corpse has nothing left to react to. Reset whenever the rig is rebuilt.
+    private bool prevAllAsleep;
+
     // Skeleton world transform (captured at activation from Skeleton.Transform)
     // ModelPose is in skeleton-local space; these convert to/from world space.
     private Vector3 skelWorldPos;
@@ -745,6 +751,7 @@ public unsafe class RagdollController : IDisposable
         isActive = true;
         lastFrameTimestamp = 0;
         physicsAccumulator = 0f;
+        prevAllAsleep = false;
 
         // Save original position so we can restore if FollowPosition is toggled off
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)characterAddress;
@@ -1835,6 +1842,7 @@ public unsafe class RagdollController : IDisposable
         // Physics bodies stay at correct world positions; we just need the current
         // transform to convert back to the model space the game expects for rendering.
         var skeleton = skel.CharBase->Skeleton;
+        var skeletonMoved = false;
         if (skeleton != null)
         {
             var newSkelPos = new Vector3(
@@ -1846,6 +1854,7 @@ public unsafe class RagdollController : IDisposable
             var skelDist = (newSkelPos - skelWorldPos).Length();
             if (skelDist > 0.1f)
             {
+                skeletonMoved = true;
                 if (config.RagdollVerboseLog)
                     log.Info($"[Ragdoll F{frameCount}] Skeleton moved {skelDist:F3}m: ({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3})→({newSkelPos.X:F3},{newSkelPos.Y:F3},{newSkelPos.Z:F3})");
                 if (BGCollisionModule.RaycastMaterialFilter(
@@ -1870,11 +1879,18 @@ public unsafe class RagdollController : IDisposable
             skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
         }
 
+        // Resting fast-path: once the rig is fully asleep there is nothing left to react
+        // to (bodies only sleep when settle-collision is off), so skip the physics step,
+        // the per-frame NPC-collision static rebuild, and hair — we just re-assert the
+        // held pose below. A grab, a generic rig, or a moved skeleton forces a full step.
+        var resting = prevAllAsleep && !activeRagdollIsGeneric && !grabConstraintActive && !skeletonMoved;
+
         // Update NPC collision volumes to track their current animated bone positions.
         // Must call UpdateBounds() after repositioning — BEPU2 doesn't auto-update
         // broad phase AABBs for statics, so without it collisions are never detected.
         // The grabbing NPC's collision is parked far away so the player body can pass through.
         var npcCollisionParkPos = new Vector3(0, -9999, 0);
+        if (!resting)
         for (int i = 0; i < npcCollisionStates.Count; i++)
         {
             var npcState = npcCollisionStates[i];
@@ -1976,20 +1992,28 @@ public unsafe class RagdollController : IDisposable
         // regardless of the game's framerate (a fixed 1/60 per render frame ran slow
         // below 60fps and fast above it). Below 60fps we take multiple substeps; above
         // 60fps some frames take zero (the write-back below still renders the last pose).
-        physicsAccumulator += dt;
+        // When resting (fully settled) we skip stepping entirely.
         int substeps = 0;
-        while (physicsAccumulator >= FixedTimestep && substeps < MaxSubstepsPerFrame)
+        if (!resting)
         {
-            simulation.Timestep(FixedTimestep);
-            if (activeRagdollIsGeneric)
-                ClampGenericVelocities();
-            physicsAccumulator -= FixedTimestep;
-            substeps++;
+            physicsAccumulator += dt;
+            while (physicsAccumulator >= FixedTimestep && substeps < MaxSubstepsPerFrame)
+            {
+                simulation.Timestep(FixedTimestep);
+                if (activeRagdollIsGeneric)
+                    ClampGenericVelocities();
+                physicsAccumulator -= FixedTimestep;
+                substeps++;
+            }
+            // If we hit the substep cap (severe hitch / very low fps), drop the backlog so
+            // we don't fire a burst of catch-up steps on the next frame (spiral of death).
+            if (substeps == MaxSubstepsPerFrame)
+                physicsAccumulator = 0f;
         }
-        // If we hit the substep cap (severe hitch / very low fps), drop the backlog so
-        // we don't fire a burst of catch-up steps on the next frame (spiral of death).
-        if (substeps == MaxSubstepsPerFrame)
+        else
+        {
             physicsAccumulator = 0f;
+        }
 
         var pose = skel.Pose;
 
@@ -2022,6 +2046,7 @@ public unsafe class RagdollController : IDisposable
         var worldRotations = cachedWorldRotations!;
         var boneValid = cachedBoneValid!;
         Array.Clear(boneValid, 0, boneCount);
+        var anyAwake = false;
 
         for (int i = 0; i < boneCount; i++)
         {
@@ -2029,6 +2054,7 @@ public unsafe class RagdollController : IDisposable
             if (rb.BoneIndex < 0 || rb.BoneIndex >= skel.BoneCount) continue;
 
             var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            if (bodyRef.Awake) anyAwake = true;
 
             // Guard against NaN from physics explosion — deactivate instead of crashing
             if (float.IsNaN(bodyRef.Pose.Position.X) || float.IsNaN(bodyRef.Pose.Position.Y) ||
@@ -2056,6 +2082,10 @@ public unsafe class RagdollController : IDisposable
 
             boneValid[i] = true;
         }
+
+        // Remember whether the rig is now fully asleep so next frame can take the
+        // resting fast-path. Only meaningful once at least one body exists.
+        prevAllAsleep = !anyAwake && boneCount > 0;
 
         // --- Floor offset correction ---
         // Currently a no-op: bodies settle naturally on the terrain mesh, so no uniform
@@ -2152,8 +2182,9 @@ public unsafe class RagdollController : IDisposable
             boneService.PropagateToPartialSkeletons(skel, kaoBodyBoneIndex, "j_kao", result);
         }
 
-        // Apply hair physics (after rigid j_kao propagation)
-        if (hairPhysics != null && kaoBodyBoneIndex >= 0)
+        // Apply hair physics (after rigid j_kao propagation). Skipped while resting —
+        // the body is settled, so hair has settled too.
+        if (hairPhysics != null && kaoBodyBoneIndex >= 0 && !resting)
         {
             // Advance hair by exactly the time the body physics advanced this frame,
             // so hair stays in step with the ragdoll across framerates (zero if no substep ran).
