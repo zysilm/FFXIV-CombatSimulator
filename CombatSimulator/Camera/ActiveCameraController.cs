@@ -524,6 +524,14 @@ public unsafe class ActiveCameraController : IDisposable
         log.Info($"FightingCam: combatant died (isPlayer={isPlayer}) — transitioning to corpse bone.");
     }
 
+    /// <summary>
+    /// Force the fighting camera back to a clean Off state. Call on simulation reset/stop so a
+    /// post-death Following state (which otherwise lingers until the corpse bone becomes
+    /// unreadable — never, if the dead character revives at the same address) is cleared and the
+    /// next 1v1 can re-engage.
+    /// </summary>
+    public void ResetFightingCamera() => EndFighting();
+
     private void EndFighting()
     {
         if (fightingState == FightingCamState.Off && !fightingHasState) return;
