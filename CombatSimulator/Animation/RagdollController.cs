@@ -92,6 +92,18 @@ public unsafe class RagdollController : IDisposable
     private const float GenericMaxLinearVelocity = 12f;  // m/s — clamp per frame to stop energy blow-up
     private const float GenericMaxAngularVelocity = 16f; // rad/s — clamp per frame (tiny bodies spin up fastest)
 
+    // Human/player rigs are hand-tuned and normally stable, but their constraint solver can
+    // still occasionally diverge (visible jitter that amplifies into a full-screen explosion).
+    // They get the same per-substep velocity clamp as generic rigs but with a HIGHER ceiling,
+    // so violent-but-valid motion (a body flung by a heavy hit) is preserved and only runaway
+    // blow-up is caught. A falling/flung ragdoll stays well under these; an exploding one
+    // shoots far past them.
+    // Tuning: a falling/flung human ragdoll runs ~3-12 m/s linear and ~5-15 rad/s angular,
+    // so these sit above believable motion but well below a divergence (100s of m/s). Lower
+    // them if jitter still escalates; raise them if hard flings look clipped.
+    private const float HumanMaxLinearVelocity = 18f;   // m/s — safety net only
+    private const float HumanMaxAngularVelocity = 22f;  // rad/s — safety net only
+
     // Ground height (physics ground may be lowered by floor offset)
     private float groundY;
     // Real terrain ground (before floor offset), used for visual correction
@@ -1823,12 +1835,13 @@ public unsafe class RagdollController : IDisposable
         log.Info($"RagdollController: {label} using fallback single capsule");
     }
 
-    // Generic rigs can inject energy through their stiff auto-built constraint network
-    // (small bodies + dense joints), building up over a second into a fly-across-the-map
-    // explosion. Clamp per-body velocity each substep as a hard ceiling: real ragdoll
-    // fall speeds stay well under these, so settling looks normal, but runaway growth is
-    // capped. Human rigs are hand-tuned and skip this.
-    private void ClampGenericVelocities()
+    // Clamp per-body velocity each substep as a hard ceiling against energy blow-up.
+    // Generic rigs inject energy through their stiff auto-built constraint network (small
+    // bodies + dense joints); human rigs are normally stable but can still have the solver
+    // diverge into a jitter-then-explode failure. Real ragdoll fall/fling speeds stay well
+    // under the ceilings, so settling looks normal, but runaway growth is capped. Callers
+    // pass tighter ceilings for generic rigs and looser ones for humans.
+    private void ClampVelocities(float maxLinear, float maxAngular)
     {
         foreach (var rb in ragdollBones)
         {
@@ -1836,12 +1849,12 @@ public unsafe class RagdollController : IDisposable
             if (!body.Awake) continue;
             var lin = body.Velocity.Linear;
             var linSpeed = lin.Length();
-            if (linSpeed > GenericMaxLinearVelocity)
-                body.Velocity.Linear = lin * (GenericMaxLinearVelocity / linSpeed);
+            if (linSpeed > maxLinear)
+                body.Velocity.Linear = lin * (maxLinear / linSpeed);
             var ang = body.Velocity.Angular;
             var angSpeed = ang.Length();
-            if (angSpeed > GenericMaxAngularVelocity)
-                body.Velocity.Angular = ang * (GenericMaxAngularVelocity / angSpeed);
+            if (angSpeed > maxAngular)
+                body.Velocity.Angular = ang * (maxAngular / angSpeed);
         }
     }
 
@@ -2017,11 +2030,14 @@ public unsafe class RagdollController : IDisposable
         if (!resting)
         {
             physicsAccumulator += dt;
+            var maxLinear = activeRagdollIsGeneric ? GenericMaxLinearVelocity : HumanMaxLinearVelocity;
+            var maxAngular = activeRagdollIsGeneric ? GenericMaxAngularVelocity : HumanMaxAngularVelocity;
             while (physicsAccumulator >= FixedTimestep && substeps < MaxSubstepsPerFrame)
             {
                 simulation.Timestep(FixedTimestep);
-                if (activeRagdollIsGeneric)
-                    ClampGenericVelocities();
+                // Clamp every rig now (humans too) — the safety net that stops jitter from
+                // amplifying into a full-screen explosion.
+                ClampVelocities(maxLinear, maxAngular);
                 physicsAccumulator -= FixedTimestep;
                 substeps++;
             }
