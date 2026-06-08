@@ -40,6 +40,16 @@ public unsafe class RagdollController : IDisposable
     private float activationDelay;
     private bool physicsStarted;
 
+    // Frame-rate-independent physics timing. The render hook fires once per rendered
+    // frame at whatever framerate the game runs (30/60/120/144…). Stepping a fixed
+    // 1/60 every call made the ragdoll run in slow-motion below 60fps and fast above it.
+    // We measure real wall-clock dt and advance the simulation in fixed-size substeps.
+    private long lastFrameTimestamp;
+    private float physicsAccumulator;
+    private const float FixedTimestep = 1f / 60f;
+    private const int MaxSubstepsPerFrame = 4;  // cap catch-up to avoid a spiral of death
+    private const float MaxFrameDelta = 0.1f;   // ignore huge gaps (loading screens, hitches)
+
     // Skeleton world transform (captured at activation from Skeleton.Transform)
     // ModelPose is in skeleton-local space; these convert to/from world space.
     private Vector3 skelWorldPos;
@@ -733,6 +743,8 @@ public unsafe class RagdollController : IDisposable
         physicsStarted = false;
         followWasActive = false;
         isActive = true;
+        lastFrameTimestamp = 0;
+        physicsAccumulator = 0f;
 
         // Save original position so we can restore if FollowPosition is toggled off
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)characterAddress;
@@ -781,7 +793,8 @@ public unsafe class RagdollController : IDisposable
 
         try
         {
-            elapsed += 1.0f / 60.0f;
+            var dt = ComputeFrameDelta();
+            elapsed += dt;
 
             // Wait for activation delay (death animation plays first)
             if (!physicsStarted)
@@ -790,15 +803,35 @@ public unsafe class RagdollController : IDisposable
                 if (!InitializePhysics()) { Deactivate(); return; }
                 physicsStarted = true;
                 frameCount = 0;
+                physicsAccumulator = 0f; // start clean — don't carry the activation-delay wait
             }
 
-            StepAndApply();
+            StepAndApply(dt);
         }
         catch (Exception ex)
         {
             log.Error(ex, "RagdollController: Error in render frame");
             Deactivate();
         }
+    }
+
+    /// <summary>
+    /// Real wall-clock seconds since the previous render frame, clamped to a sane range.
+    /// Returns one fixed timestep on the very first call (no prior timestamp yet).
+    /// </summary>
+    private float ComputeFrameDelta()
+    {
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (lastFrameTimestamp == 0)
+        {
+            lastFrameTimestamp = now;
+            return FixedTimestep;
+        }
+        var dt = (float)((now - lastFrameTimestamp) / (double)System.Diagnostics.Stopwatch.Frequency);
+        lastFrameTimestamp = now;
+        if (dt < 0f) dt = 0f;
+        if (dt > MaxFrameDelta) dt = MaxFrameDelta;
+        return dt;
     }
 
     // --- Coordinate conversion using Skeleton.Transform ---
@@ -1763,7 +1796,29 @@ public unsafe class RagdollController : IDisposable
         log.Info($"RagdollController: {label} using fallback single capsule");
     }
 
-    private void StepAndApply()
+    // Generic rigs can inject energy through their stiff auto-built constraint network
+    // (small bodies + dense joints), building up over a second into a fly-across-the-map
+    // explosion. Clamp per-body velocity each substep as a hard ceiling: real ragdoll
+    // fall speeds stay well under these, so settling looks normal, but runaway growth is
+    // capped. Human rigs are hand-tuned and skip this.
+    private void ClampGenericVelocities()
+    {
+        foreach (var rb in ragdollBones)
+        {
+            var body = simulation!.Bodies.GetBodyReference(rb.BodyHandle);
+            if (!body.Awake) continue;
+            var lin = body.Velocity.Linear;
+            var linSpeed = lin.Length();
+            if (linSpeed > GenericMaxLinearVelocity)
+                body.Velocity.Linear = lin * (GenericMaxLinearVelocity / linSpeed);
+            var ang = body.Velocity.Angular;
+            var angSpeed = ang.Length();
+            if (angSpeed > GenericMaxAngularVelocity)
+                body.Velocity.Angular = ang * (GenericMaxAngularVelocity / angSpeed);
+        }
+    }
+
+    private void StepAndApply(float dt)
     {
         if (simulation == null) return;
 
@@ -1916,30 +1971,25 @@ public unsafe class RagdollController : IDisposable
             catch { }
         }
 
-        // Step physics
-        simulation.Timestep(1.0f / 60.0f);
-
-        // Generic rigs can still inject energy through their stiff auto-built constraint
-        // network (small bodies + dense joints), building up over a second into a
-        // fly-across-the-map explosion. Clamp per-body velocity each frame as a hard
-        // ceiling: real ragdoll fall speeds stay well under these, so settling looks
-        // normal, but runaway growth is capped. Human rigs are hand-tuned and skip this.
-        if (activeRagdollIsGeneric)
+        // Step physics with a fixed timestep, advancing as many substeps as real
+        // wall-clock time has accumulated. This keeps ragdoll motion the same speed
+        // regardless of the game's framerate (a fixed 1/60 per render frame ran slow
+        // below 60fps and fast above it). Below 60fps we take multiple substeps; above
+        // 60fps some frames take zero (the write-back below still renders the last pose).
+        physicsAccumulator += dt;
+        int substeps = 0;
+        while (physicsAccumulator >= FixedTimestep && substeps < MaxSubstepsPerFrame)
         {
-            foreach (var rb in ragdollBones)
-            {
-                var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
-                if (!body.Awake) continue;
-                var lin = body.Velocity.Linear;
-                var linSpeed = lin.Length();
-                if (linSpeed > GenericMaxLinearVelocity)
-                    body.Velocity.Linear = lin * (GenericMaxLinearVelocity / linSpeed);
-                var ang = body.Velocity.Angular;
-                var angSpeed = ang.Length();
-                if (angSpeed > GenericMaxAngularVelocity)
-                    body.Velocity.Angular = ang * (GenericMaxAngularVelocity / angSpeed);
-            }
+            simulation.Timestep(FixedTimestep);
+            if (activeRagdollIsGeneric)
+                ClampGenericVelocities();
+            physicsAccumulator -= FixedTimestep;
+            substeps++;
         }
+        // If we hit the substep cap (severe hitch / very low fps), drop the backlog so
+        // we don't fire a burst of catch-up steps on the next frame (spiral of death).
+        if (substeps == MaxSubstepsPerFrame)
+            physicsAccumulator = 0f;
 
         var pose = skel.Pose;
 
@@ -2105,10 +2155,12 @@ public unsafe class RagdollController : IDisposable
         // Apply hair physics (after rigid j_kao propagation)
         if (hairPhysics != null && kaoBodyBoneIndex >= 0)
         {
+            // Advance hair by exactly the time the body physics advanced this frame,
+            // so hair stays in step with the ragdoll across framerates (zero if no substep ran).
             hairPhysics.StepAndApply(
                 skel.CharBase, kaoBodyBoneIndex,
                 skelWorldPos, skelWorldRot, skelWorldRotInv,
-                1.0f / 60.0f);
+                substeps * FixedTimestep);
         }
 
         // (Dev) Update GameObject.Position to follow ragdoll root bone.
