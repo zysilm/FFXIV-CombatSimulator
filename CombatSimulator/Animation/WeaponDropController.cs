@@ -61,6 +61,15 @@ public unsafe class WeaponDropController : IDisposable
     }
     private readonly List<Pending> pending = new();
 
+    // Frame-rate-independent physics timing (see RagdollController for rationale). The
+    // render hook fires once per rendered frame at whatever framerate the game runs;
+    // stepping a fixed 1/60 each call made weapons fall slow below 60fps and fast above.
+    private long lastFrameTimestamp;
+    private float physicsAccumulator;
+    private const float FixedTimestep = 1f / 60f;
+    private const int MaxSubstepsPerFrame = 4;
+    private const float MaxFrameDelta = 0.1f;
+
     private static readonly string[] WeaponMainHandBones = { "n_buki_r", "j_buki_r", "n_hte_r" };
     private static readonly string[] WeaponOffHandBones = { "n_buki_l", "j_buki_l", "n_hte_l" };
 
@@ -120,6 +129,8 @@ public unsafe class WeaponDropController : IDisposable
     {
         try
         {
+            var dt = ComputeFrameDelta();
+
             // Recreate sim if any physics-relevant config changed
             if (simulation != null && ConfigSnapshotChanged())
             {
@@ -135,7 +146,7 @@ public unsafe class WeaponDropController : IDisposable
                 for (int i = pending.Count - 1; i >= 0; i--)
                 {
                     var p = pending[i];
-                    p.Delay -= 1f / 60f;
+                    p.Delay -= dt;
                     if (p.Delay <= 0f)
                     {
                         pending.RemoveAt(i);
@@ -146,7 +157,18 @@ public unsafe class WeaponDropController : IDisposable
 
             if (entries.Count == 0 || simulation == null) return;
 
-            simulation.Timestep(1f / 60f);
+            // Advance the simulation in fixed substeps for as much real time as elapsed,
+            // so weapon fall speed is the same regardless of framerate.
+            physicsAccumulator += dt;
+            int substeps = 0;
+            while (physicsAccumulator >= FixedTimestep && substeps < MaxSubstepsPerFrame)
+            {
+                simulation.Timestep(FixedTimestep);
+                physicsAccumulator -= FixedTimestep;
+                substeps++;
+            }
+            if (substeps == MaxSubstepsPerFrame)
+                physicsAccumulator = 0f;
 
             foreach (var (addr, entry) in entries)
             {
@@ -166,6 +188,22 @@ public unsafe class WeaponDropController : IDisposable
         {
             log.Error(ex, "WeaponDropController: error in render frame");
         }
+    }
+
+    /// <summary>Real wall-clock seconds since the previous render frame, clamped to a sane range.</summary>
+    private float ComputeFrameDelta()
+    {
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (lastFrameTimestamp == 0)
+        {
+            lastFrameTimestamp = now;
+            return FixedTimestep;
+        }
+        var dt = (float)((now - lastFrameTimestamp) / (double)System.Diagnostics.Stopwatch.Frequency);
+        lastFrameTimestamp = now;
+        if (dt < 0f) dt = 0f;
+        if (dt > MaxFrameDelta) dt = MaxFrameDelta;
+        return dt;
     }
 
     private void TrySpawn(nint characterAddress)
