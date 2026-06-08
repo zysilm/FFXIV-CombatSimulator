@@ -50,6 +50,32 @@ public unsafe class ActiveCameraController : IDisposable
 
     public bool IsActive { get; private set; }
 
+    // --- Fighting Camera (1v1) ---
+    private enum FightingCamState { Off, Fighting, Transitioning, Following }
+    private FightingCamState fightingState = FightingCamState.Off;
+
+    // Provides the locked 1v1 target's character address (set by Plugin); null when none.
+    public Func<nint?>? GetFightingTargetAddress;
+
+    // Smoothed orbit center + auto-zoom distance, computed in Tick, consumed by the hook.
+    private Vector3 fightingCenter;
+    private float fightingDistance;
+    private bool fightingHasState;
+    private nint framedTargetAddress;
+
+    // Death transition (fighting → dead character's bone follow)
+    private float transitionElapsed;
+    private Vector3 transitionStartCenter;
+    private float transitionStartDistance;
+    private nint deadCharacterAddress;
+
+    // MaxDistance limit override so auto-zoom isn't clamped by the game (save/restore)
+    private float savedMaxDistanceFighting;
+    private bool fightingMaxDistOverridden;
+
+    /// <summary>True while the fighting camera owns the camera (any non-Off state).</summary>
+    public bool IsFightingEngaged => fightingState != FightingCamState.Off;
+
     public ActiveCameraController(IGameInteropProvider gameInterop, IClientState clientState,
         ISigScanner sigScanner, Configuration config, IPluginLog log)
     {
@@ -112,6 +138,7 @@ public unsafe class ActiveCameraController : IDisposable
         IsActive = on;
         if (!on)
         {
+            EndFighting();
             DisableCollisionPatch();
             RestoreMinDistance();
         }
@@ -201,6 +228,14 @@ public unsafe class ActiveCameraController : IDisposable
 
         try
         {
+            // Fighting camera owns the orbit center while engaged — Tick computes the
+            // fully-offset, smoothed center (midpoint while fighting, dead bone afterward).
+            if (IsFightingEngaged && fightingHasState)
+            {
+                *position = fightingCenter;
+                return;
+            }
+
             var bonePos = GetBoneWorldPosition(config.ActiveCameraBoneName);
             if (bonePos == null) return;
 
@@ -232,6 +267,9 @@ public unsafe class ActiveCameraController : IDisposable
     public void Tick(float deltaTime)
     {
         EnsureHook();
+
+        // Fighting camera state machine (computes center + auto-zoom; writes Distance)
+        UpdateFightingCamera(deltaTime);
 
         // Collision patch
         bool wantCollision = IsActive && config.ActiveCameraDisableCollision;
@@ -298,14 +336,224 @@ public unsafe class ActiveCameraController : IDisposable
         }
     }
 
-    private Vector3? GetBoneWorldPosition(string boneName)
+    /// <summary>
+    /// Fighting camera state machine. Run each frame from Tick. Computes the smoothed orbit
+    /// center (cached for the getCameraPosition hook) and writes the auto-zoom Distance.
+    /// </summary>
+    private void UpdateFightingCamera(float dt)
+    {
+        // Disengage if active cam off or fighting mode disabled
+        if (!IsActive || !config.ActiveCameraFightingMode)
+        {
+            if (fightingState != FightingCamState.Off) EndFighting();
+            return;
+        }
+
+        var camMgr = GameCameraManager.Instance();
+        if (camMgr == null || camMgr->Camera == null) return;
+        var gameCam = camMgr->Camera;
+
+        var playerAddr = LocalPlayerAddress();
+        var targetAddr = GetFightingTargetAddress?.Invoke() ?? nint.Zero;
+
+        switch (fightingState)
+        {
+            case FightingCamState.Off:
+            {
+                // Engage only with a valid, readable, live 1v1 pair
+                if (playerAddr == nint.Zero || targetAddr == nint.Zero) break;
+                var a = GetBoneWorldPosition(config.ActiveCameraFightingBoneName, playerAddr);
+                var b = GetBoneWorldPosition(config.ActiveCameraFightingBoneName, targetAddr);
+                if (a == null || b == null) break;
+                framedTargetAddress = targetAddr;
+                ComputeFraming(a.Value, b.Value, gameCam, out var c0, out var d0);
+                fightingCenter = c0;
+                fightingDistance = d0;
+                fightingHasState = true;
+                fightingState = FightingCamState.Fighting;
+                ApplyFightingDistance(gameCam, fightingDistance);
+                log.Info("FightingCam: engaged (1v1 framing).");
+                break;
+            }
+
+            case FightingCamState.Fighting:
+            {
+                if (playerAddr == nint.Zero || targetAddr == nint.Zero) { EndFighting(); break; }
+                framedTargetAddress = targetAddr;
+                var a = GetBoneWorldPosition(config.ActiveCameraFightingBoneName, playerAddr);
+                var b = GetBoneWorldPosition(config.ActiveCameraFightingBoneName, targetAddr);
+                if (a == null || b == null) break;
+                ComputeFraming(a.Value, b.Value, gameCam, out var ct, out var dt2);
+                SmoothToward(ref fightingCenter, ct, dt);
+                fightingDistance = SmoothScalar(fightingDistance, dt2, dt);
+                ApplyFightingDistance(gameCam, fightingDistance);
+                break;
+            }
+
+            case FightingCamState.Transitioning:
+            {
+                transitionElapsed += dt;
+                float dur = MathF.Max(config.ActiveCameraFightingTransitionDuration, 0.01f);
+                float t = Math.Clamp(transitionElapsed / dur, 0f, 1f);
+                float s = SmoothStep(t);
+
+                var deadBone = GetBoneWorldPosition(config.ActiveCameraBoneName, deadCharacterAddress);
+                var targetCenter = deadBone ?? transitionStartCenter;
+                targetCenter.Y += config.ActiveCameraHeightOffset;
+                float targetDist = MathF.Max(config.ActiveCameraMinZoomDistance, 3f);
+
+                fightingCenter = Vector3.Lerp(transitionStartCenter, targetCenter, s);
+                fightingDistance = Lerp(transitionStartDistance, targetDist, s);
+                ApplyFightingDistance(gameCam, fightingDistance);
+
+                if (t >= 1f)
+                {
+                    fightingState = FightingCamState.Following;
+                    log.Info("FightingCam: transition complete — following corpse bone.");
+                }
+                break;
+            }
+
+            case FightingCamState.Following:
+            {
+                var deadBone = GetBoneWorldPosition(config.ActiveCameraBoneName, deadCharacterAddress);
+                if (deadBone == null) { EndFighting(); break; } // corpse despawned (combat reset)
+                var c = deadBone.Value;
+                c.Y += config.ActiveCameraHeightOffset;
+                SmoothToward(ref fightingCenter, c, dt);
+                // Hand zoom back to the user once settled on the corpse.
+                RestoreFightingMaxDistance(gameCam);
+                break;
+            }
+        }
+    }
+
+    /// <summary>Compute midpoint center + auto-zoom distance so both subjects stay framed.</summary>
+    private void ComputeFraming(Vector3 a, Vector3 b, FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam,
+        out Vector3 center, out float distance)
+    {
+        center = (a + b) * 0.5f;
+        center.Y += config.ActiveCameraFightingHeightOffset;
+
+        float sep = (a - b).Length();
+        float vFov = gameCam->FoV;
+        if (vFov < 0.01f) vFov = 1.0f;
+        float aspect = GetViewportAspect();
+        float hHalf = MathF.Atan(aspect * MathF.Tan(vFov * 0.5f));
+        float margin = MathF.Max(1.0f, config.ActiveCameraFightingZoomMargin);
+
+        // Worst-case horizontal fit (pair spread across the wider screen axis)
+        float dH = hHalf > 0.001f ? (sep * 0.5f) / MathF.Tan(hHalf) * margin : config.ActiveCameraFightingMinDistance;
+        // Vertical fit for height differences
+        float vSep = MathF.Abs(a.Y - b.Y);
+        float vHalf = vFov * 0.5f;
+        float dV = vHalf > 0.001f ? (vSep * 0.5f) / MathF.Tan(vHalf) * margin : 0f;
+
+        distance = Math.Clamp(MathF.Max(dH, dV),
+            config.ActiveCameraFightingMinDistance, config.ActiveCameraFightingMaxDistance);
+    }
+
+    private static float GetViewportAspect()
     {
         try
         {
-            var player = Core.Services.ObjectTable.LocalPlayer;
-            if (player == null) return null;
+            var dev = FFXIVClientStructs.FFXIV.Client.Graphics.Kernel.Device.Instance();
+            if (dev != null && dev->Height > 0)
+                return (float)dev->Width / dev->Height;
+        }
+        catch { }
+        return 16f / 9f;
+    }
 
-            var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;
+    private void ApplyFightingDistance(FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam, float d)
+    {
+        if (!fightingMaxDistOverridden)
+        {
+            savedMaxDistanceFighting = gameCam->MaxDistance;
+            fightingMaxDistOverridden = true;
+        }
+        gameCam->MaxDistance = MathF.Max(savedMaxDistanceFighting, config.ActiveCameraFightingMaxDistance + 1f);
+        gameCam->Distance = d;
+        gameCam->InterpDistance = d;
+    }
+
+    private void RestoreFightingMaxDistance(FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam)
+    {
+        if (!fightingMaxDistOverridden) return;
+        gameCam->MaxDistance = savedMaxDistanceFighting;
+        fightingMaxDistOverridden = false;
+    }
+
+    private void SmoothToward(ref Vector3 cur, Vector3 target, float dt)
+    {
+        float k = 1f - MathF.Exp(-MathF.Max(0.1f, config.ActiveCameraFightingSmoothing) * dt);
+        cur = Vector3.Lerp(cur, target, k);
+    }
+
+    private float SmoothScalar(float cur, float target, float dt)
+    {
+        float k = 1f - MathF.Exp(-MathF.Max(0.1f, config.ActiveCameraFightingSmoothing) * dt);
+        return cur + (target - cur) * k;
+    }
+
+    private static float Lerp(float a, float b, float t) => a + (b - a) * t;
+    private static float SmoothStep(float t) => t * t * (3f - 2f * t);
+
+    private static nint LocalPlayerAddress()
+    {
+        var p = Core.Services.ObjectTable.LocalPlayer;
+        return p?.Address ?? nint.Zero;
+    }
+
+    /// <summary>
+    /// Notify that a combatant died. If the fighting camera is framing this pair, begin the
+    /// smooth transition to the dead character's active-cam bone. Called from Plugin death hooks.
+    /// </summary>
+    public void NotifyCombatantDeath(nint address, bool isPlayer)
+    {
+        if (fightingState != FightingCamState.Fighting) return;
+        var playerAddr = LocalPlayerAddress();
+        bool relevant = (isPlayer && address == playerAddr) || (!isPlayer && address == framedTargetAddress);
+        if (!relevant) return;
+
+        transitionStartCenter = fightingCenter;
+        transitionStartDistance = fightingDistance;
+        deadCharacterAddress = address;
+        transitionElapsed = 0f;
+        fightingState = FightingCamState.Transitioning;
+        log.Info($"FightingCam: combatant died (isPlayer={isPlayer}) — transitioning to corpse bone.");
+    }
+
+    private void EndFighting()
+    {
+        if (fightingState == FightingCamState.Off && !fightingHasState) return;
+        fightingState = FightingCamState.Off;
+        fightingHasState = false;
+        deadCharacterAddress = nint.Zero;
+        framedTargetAddress = nint.Zero;
+        try
+        {
+            var camMgr = GameCameraManager.Instance();
+            if (camMgr != null && camMgr->Camera != null)
+                RestoreFightingMaxDistance(camMgr->Camera);
+        }
+        catch { }
+    }
+
+    private Vector3? GetBoneWorldPosition(string boneName)
+    {
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null) return null;
+        return GetBoneWorldPosition(boneName, player.Address);
+    }
+
+    private Vector3? GetBoneWorldPosition(string boneName, nint characterAddress)
+    {
+        try
+        {
+            if (characterAddress == nint.Zero) return null;
+
+            var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)characterAddress;
             if (gameObj == null) return null;
 
             var drawObject = gameObj->DrawObject;
@@ -386,6 +634,7 @@ public unsafe class ActiveCameraController : IDisposable
 
     public void Dispose()
     {
+        EndFighting();
         SetActive(false);
         RestoreMinDistance();
         shouldDrawHook?.Dispose();

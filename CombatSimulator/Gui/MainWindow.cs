@@ -2459,6 +2459,79 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Prevent characters and NPCs from disappearing when the camera zooms very close.");
+
+                ImGui.Separator();
+                ImGui.TextDisabled("Fighting Camera (1v1)");
+
+                var fighting = config.ActiveCameraFightingMode;
+                if (ImGui.Checkbox("Enable Fighting Camera##activecam", ref fighting))
+                {
+                    config.ActiveCameraFightingMode = fighting;
+                    config.Save();
+                }
+                HelpMarker("During a 1v1, center the camera between you and the locked target and auto-zoom so both stay in frame (you keep manual rotation). On either death, smoothly transition to the dead character's bone (above) and suppress Death Cam.");
+
+                if (config.ActiveCameraFightingMode)
+                {
+                    // Framing bone (read from both combatants)
+                    int fBoneIdx = 0;
+                    for (int b = 0; b < bones.Length; b++)
+                        if (bones[b].BoneName == config.ActiveCameraFightingBoneName) { fBoneIdx = b; break; }
+                    if (ImGui.Combo("Framing Bone##fightcam", ref fBoneIdx, boneNames, boneNames.Length))
+                    {
+                        config.ActiveCameraFightingBoneName = bones[fBoneIdx].BoneName;
+                        config.Save();
+                    }
+                    HelpMarker("Bone on each combatant used to compute the framing midpoint.");
+
+                    var fTrans = config.ActiveCameraFightingTransitionDuration;
+                    if (ImGui.SliderFloat("Transition Duration##fightcam", ref fTrans, 0.1f, 5f, "%.2f s"))
+                    {
+                        config.ActiveCameraFightingTransitionDuration = fTrans;
+                        config.Save();
+                    }
+                    HelpMarker("How long the camera takes to move from the 1v1 framing to the dead character's bone.");
+
+                    var fMargin = config.ActiveCameraFightingZoomMargin;
+                    if (ImGui.SliderFloat("Zoom Margin##fightcam", ref fMargin, 1.0f, 2.5f, "%.2f"))
+                    {
+                        config.ActiveCameraFightingZoomMargin = fMargin;
+                        config.Save();
+                    }
+                    HelpMarker("Extra zoom-out so both fighters stay comfortably in frame. Higher = more padding.");
+
+                    var fMin = config.ActiveCameraFightingMinDistance;
+                    if (ImGui.SliderFloat("Min Distance##fightcam", ref fMin, 1.0f, 10f, "%.2f"))
+                    {
+                        config.ActiveCameraFightingMinDistance = fMin;
+                        config.Save();
+                    }
+                    HelpMarker("Closest the camera will auto-zoom when the fighters are near each other.");
+
+                    var fMax = config.ActiveCameraFightingMaxDistance;
+                    if (ImGui.SliderFloat("Max Distance##fightcam", ref fMax, 5f, 40f, "%.2f"))
+                    {
+                        config.ActiveCameraFightingMaxDistance = fMax;
+                        config.Save();
+                    }
+                    HelpMarker("Farthest the camera will auto-zoom when the fighters are far apart.");
+
+                    var fSmooth = config.ActiveCameraFightingSmoothing;
+                    if (ImGui.SliderFloat("Smoothing##fightcam", ref fSmooth, 1f, 20f, "%.1f"))
+                    {
+                        config.ActiveCameraFightingSmoothing = fSmooth;
+                        config.Save();
+                    }
+                    HelpMarker("How quickly the camera follows center/zoom changes. Higher = snappier, lower = floatier.");
+
+                    var fHeight = config.ActiveCameraFightingHeightOffset;
+                    if (ImGui.DragFloat("Center Height Offset##fightcam", ref fHeight, 0.01f, -5f, 10f, "%.2f"))
+                    {
+                        config.ActiveCameraFightingHeightOffset = fHeight;
+                        config.Save();
+                    }
+                    HelpMarker("Raises/lowers the framing midpoint.");
+                }
             }
 
             ImGui.Unindent();
