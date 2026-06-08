@@ -1358,6 +1358,13 @@ public unsafe class RagdollController : IDisposable
         var limitSpring = new SpringSettings(120, 1);
         var motorDamping = 0.01f;
 
+        // BEPU's TwistLimit measurement degenerates once a ball joint's swing exceeds ~90°
+        // (the twist axis tilts past the reference plane), letting the limb spin freely about
+        // its own axis — that rogue spin then torques neighbours (e.g. arms twisting the chest
+        // j_sebo_c). Cap ball-joint swing just under 90° so twist stays well-defined. Wide
+        // joints like the shoulder (configured 1.8 rad ≈ 103°) are clamped; tight ones are not.
+        const float ballJointMaxSwing = 1.40f; // ~80°
+
         for (int i = 0; i < ragdollBones.Count; i++)
         {
             var rb = ragdollBones[i];
@@ -1543,7 +1550,8 @@ public unsafe class RagdollController : IDisposable
                         {
                             AxisLocalA = axisChildLocal,
                             AxisLocalB = axisParentLocal,
-                            MaximumSwingAngle = boneDef.SwingLimit,
+                            // Keep under ~90° so the twist limit on this joint stays valid.
+                            MaximumSwingAngle = MathF.Min(boneDef.SwingLimit, ballJointMaxSwing),
                             SpringSettings = limitSpring, // stiff wall even for soft bodies
                         });
                 }
