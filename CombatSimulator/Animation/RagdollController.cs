@@ -2292,12 +2292,20 @@ public unsafe class RagdollController : IDisposable
 
         grabBodyHandle = targetBody.Value;
 
-        // Ensure all bodies stay awake so the grab constraint is always active
+        // Wake every body AND keep it awake for the duration of the grab. SleepThreshold=-1
+        // alone only prevents *future* sleep — a corpse that has already settled has all its
+        // bodies asleep, so without an explicit wake the servo lifts the pinned bone while the
+        // sleeping leg bodies stay frozen in the settled pose. The joints then get dragged into
+        // violation and the knees snap into a bend. Waking them up front lets the whole rig
+        // follow the lift smoothly.
         for (int i = 0; i < ragdollBones.Count; i++)
         {
             var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
             bodyRef.Activity.SleepThreshold = -1f;
+            bodyRef.Awake = true;
         }
+        // The rig is no longer resting; force a full physics step next frame.
+        prevAllAsleep = false;
 
         // Create OneBodyLinearServo: pins a body to a world-space target
         grabConstraintHandle = simulation.Solver.Add(grabBodyHandle,
