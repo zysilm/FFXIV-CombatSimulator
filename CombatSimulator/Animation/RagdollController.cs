@@ -1306,12 +1306,15 @@ public unsafe class RagdollController : IDisposable
             });
 
             // Log initial state for diagnostics
-            var logCapsuleY = Vector3.Transform(Vector3.UnitY, capsuleWorldRot);
-            log.Info($"[Ragdoll Init] '{def.Name}' idx={boneIdx} " +
-                     $"bonePos=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3}) " +
-                     $"capsuleCenter=({capsuleCenter.X:F3},{capsuleCenter.Y:F3},{capsuleCenter.Z:F3}) " +
-                     $"segHalf={segmentHalfLength:F3} capsuleLen={capsuleLength:F3} " +
-                     $"capsuleY=({logCapsuleY.X:F3},{logCapsuleY.Y:F3},{logCapsuleY.Z:F3})");
+            if (config.RagdollVerboseLog)
+            {
+                var logCapsuleY = Vector3.Transform(Vector3.UnitY, capsuleWorldRot);
+                log.Info($"[Ragdoll Init] '{def.Name}' idx={boneIdx} " +
+                         $"bonePos=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3}) " +
+                         $"capsuleCenter=({capsuleCenter.X:F3},{capsuleCenter.Y:F3},{capsuleCenter.Z:F3}) " +
+                         $"segHalf={segmentHalfLength:F3} capsuleLen={capsuleLength:F3} " +
+                         $"capsuleY=({logCapsuleY.X:F3},{logCapsuleY.Y:F3},{logCapsuleY.Z:F3})");
+            }
         }
 
         // --- Pass 3: Add constraints between connected bones ---
@@ -1439,7 +1442,8 @@ public unsafe class RagdollController : IDisposable
                             SpringSettings = limitSpring,
                         });
 
-                    log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad dot={Vector3.Dot(forwardWorld, segDirWorld):F3}");
+                    if (config.RagdollVerboseLog)
+                        log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad dot={Vector3.Dot(forwardWorld, segDirWorld):F3}");
 
                     // TwistLimit for hinge: anti-hyperextension constraint.
                     // Uses config TwistMin/Max (same as Ball joints — no hardcoded values).
@@ -1461,11 +1465,13 @@ public unsafe class RagdollController : IDisposable
                                 SpringSettings = limitSpring,
                             });
 
-                        log.Info($"[Ragdoll Constraint] '{rb.Name}' TwistLimit: min={boneDef.TwistMinAngle:F2} max={boneDef.TwistMaxAngle:F2}");
+                        if (config.RagdollVerboseLog)
+                            log.Info($"[Ragdoll Constraint] '{rb.Name}' TwistLimit: min={boneDef.TwistMinAngle:F2} max={boneDef.TwistMaxAngle:F2}");
                     }
                 }
 
-                log.Info($"[Ragdoll Constraint] '{rb.Name}' Hinge axis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3})");
+                if (config.RagdollVerboseLog)
+                    log.Info($"[Ragdoll Constraint] '{rb.Name}' Hinge axis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3})");
             }
             else
             {
