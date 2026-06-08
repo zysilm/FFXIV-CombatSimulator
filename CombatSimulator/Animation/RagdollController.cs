@@ -84,6 +84,12 @@ public unsafe class RagdollController : IDisposable
     // Diagnostic frame counter
     private int frameCount;
 
+    // Reused per-frame buffers for StepAndApply (avoid per-frame GC pressure)
+    private BoneModificationResult? cachedResult;
+    private Vector3[]? cachedWorldPositions;
+    private Quaternion[]? cachedWorldRotations;
+    private bool[]? cachedBoneValid;
+
     // Animation freeze state
     private float savedOverallSpeed = 1.0f;
     private readonly HashSet<int> ragdollBoneIndices = new();
@@ -1937,8 +1943,11 @@ public unsafe class RagdollController : IDisposable
 
         var pose = skel.Pose;
 
-        // Save original positions/rotations for delta tracking (needed for j_kao propagation)
-        var result = new BoneModificationResult(skel.BoneCount);
+        // Save original positions/rotations for delta tracking (needed for j_kao propagation).
+        // Reuse a cached result across frames — StepAndApply runs every render frame, so a
+        // fresh allocation here is steady GC pressure per active ragdoll.
+        var result = cachedResult ??= new BoneModificationResult(skel.BoneCount);
+        result.Reset(skel.BoneCount);
         for (int i = 0; i < skel.BoneCount; i++)
         {
             ref var m = ref pose->ModelPose.Data[i];
@@ -1953,9 +1962,16 @@ public unsafe class RagdollController : IDisposable
         // We need all positions first to measure how far the ragdoll sank below
         // the real terrain (due to the lowered physics ground), then correct uniformly.
         var boneCount = ragdollBones.Count;
-        var worldPositions = new Vector3[boneCount];
-        var worldRotations = new Quaternion[boneCount];
-        var boneValid = new bool[boneCount];
+        if (cachedWorldPositions == null || cachedWorldPositions.Length < boneCount)
+        {
+            cachedWorldPositions = new Vector3[boneCount];
+            cachedWorldRotations = new Quaternion[boneCount];
+            cachedBoneValid = new bool[boneCount];
+        }
+        var worldPositions = cachedWorldPositions;
+        var worldRotations = cachedWorldRotations!;
+        var boneValid = cachedBoneValid!;
+        Array.Clear(boneValid, 0, boneCount);
 
         for (int i = 0; i < boneCount; i++)
         {
