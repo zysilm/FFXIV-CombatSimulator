@@ -1956,7 +1956,6 @@ public unsafe class RagdollController : IDisposable
         var worldPositions = new Vector3[boneCount];
         var worldRotations = new Quaternion[boneCount];
         var boneValid = new bool[boneCount];
-        var lowestCapsuleBottomY = float.MaxValue;
 
         for (int i = 0; i < boneCount; i++)
         {
@@ -1989,28 +1988,13 @@ public unsafe class RagdollController : IDisposable
                 worldPositions[i] = bodyRef.Pose.Position;
             }
 
-            // Track lowest capsule bottom (not bone origin) for floor correction.
-            // The capsule extends below its center by |capsuleY.Y| * halfLength + radius.
-            activeDefByName.TryGetValue(rb.Name, out var boneDef);
-            var capsuleYDir = Vector3.Transform(Vector3.UnitY, bodyRef.Pose.Orientation);
-            var capsuleBottomY = bodyRef.Pose.Position.Y
-                                 - MathF.Abs(capsuleYDir.Y) * boneDef.CapsuleHalfLength
-                                 - boneDef.CapsuleRadius;
-            if (capsuleBottomY < lowestCapsuleBottomY)
-                lowestCapsuleBottomY = capsuleBottomY;
-
             boneValid[i] = true;
         }
 
         // --- Floor offset correction ---
-        // Physics ground was lowered by RagdollFloorOffset for stable constraint solving.
-        // Measure how far the lowest capsule bottom sank below the REAL terrain and shift
-        // all bones up by that amount. Uses capsule extents (not bone origins) because
-        // a bone origin can be above ground while its capsule extends below.
-        // Skip floor correction during the first ~30 frames to let the ragdoll settle.
-        // On the first frame, capsule bottoms from the init pose (e.g., standing on a mount)
-        // may extend below realGroundY even though the character is above the ground.
-        // Applying correction immediately causes a visible upward bounce.
+        // Currently a no-op: bodies settle naturally on the terrain mesh, so no uniform
+        // Y shift is applied. Kept as a zero so the write-back loop below reads uniformly;
+        // restore a real value here if capsule-vs-terrain sinking ever needs correcting.
         float yCorrection = 0f;
 
         // --- Frame summary (once per log frame, before per-bone data) ---
@@ -2019,15 +2003,25 @@ public unsafe class RagdollController : IDisposable
             var awakeBodies = 0;
             var maxLinVel = 0f;
             var maxAngVel = 0f;
+            var lowestCapsuleBottomY = float.MaxValue;
             for (int i = 0; i < boneCount; i++)
             {
                 if (!boneValid[i]) continue;
-                var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
+                var rb = ragdollBones[i];
+                var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
                 if (bodyRef.Awake) awakeBodies++;
                 var linSpeed = bodyRef.Velocity.Linear.Length();
                 var angSpeed = bodyRef.Velocity.Angular.Length();
                 if (linSpeed > maxLinVel) maxLinVel = linSpeed;
                 if (angSpeed > maxAngVel) maxAngVel = angSpeed;
+
+                activeDefByName.TryGetValue(rb.Name, out var boneDef);
+                var capsuleYDir = Vector3.Transform(Vector3.UnitY, bodyRef.Pose.Orientation);
+                var capsuleBottomY = bodyRef.Pose.Position.Y
+                                     - MathF.Abs(capsuleYDir.Y) * boneDef.CapsuleHalfLength
+                                     - boneDef.CapsuleRadius;
+                if (capsuleBottomY < lowestCapsuleBottomY)
+                    lowestCapsuleBottomY = capsuleBottomY;
             }
             log.Info($"[Ragdoll F{frameCount}] t={frameCount / 60f:F2}s awake={awakeBodies}/{boneCount} " +
                      $"yCorr={yCorrection:F3} lowestY={lowestCapsuleBottomY:F3} realGnd={realGroundY:F3} " +
