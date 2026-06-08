@@ -102,7 +102,10 @@ public unsafe class RagdollController : IDisposable
     // so these sit above believable motion but well below a divergence (100s of m/s). Lower
     // them if jitter still escalates; raise them if hard flings look clipped.
     private const float HumanMaxLinearVelocity = 18f;   // m/s — safety net only
-    private const float HumanMaxAngularVelocity = 22f;  // rad/s — safety net only
+    // Angular ceiling: low enough that joints can't whip past their swing/twist limits before
+    // the limit walls engage (fast spins were a cause of shoulder/waist over-rotation), but
+    // still well above natural ragdoll flailing so motion stays lively.
+    private const float HumanMaxAngularVelocity = 14f;  // rad/s — safety net + anti-overspin
 
     // Ground height (physics ground may be lowered by floor offset)
     private float groundY;
@@ -1348,7 +1351,11 @@ public unsafe class RagdollController : IDisposable
             boneIdxToBodyHandle[rb.BoneIndex] = rb.BodyHandle;
 
         var jointSpring = new SpringSettings(30, 1);
-        var limitSpring = new SpringSettings(60, 1);
+        // Limit walls (swing cones + twist ranges). Kept stiff so joints don't blow through
+        // their range under momentum — at 60Hz shoulders/waist could over-rotate (up to ~180°)
+        // before the soft wall arrested them. BEPU's SpringSettings stay stable at high
+        // frequency, so a firm wall is safe and makes the configured limits actually hold.
+        var limitSpring = new SpringSettings(120, 1);
         var motorDamping = 0.01f;
 
         for (int i = 0; i < ragdollBones.Count; i++)
