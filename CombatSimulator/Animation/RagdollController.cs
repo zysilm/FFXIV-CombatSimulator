@@ -118,6 +118,15 @@ public unsafe class RagdollController : IDisposable
     private Quaternion[]? cachedWorldRotations;
     private bool[]? cachedBoneValid;
 
+    // Render interpolation: physics advances in fixed 60Hz ticks but we render every frame
+    // (often >60fps). Without interpolation the ragdoll shows the same pose for several
+    // frames then jumps on each tick — visible micro-judder. We snapshot the bone world
+    // pose just before each physics tick (prev) and after (cur, in cachedWorld*), then blend
+    // by the leftover-accumulator fraction so the rendered pose advances smoothly every frame.
+    private Vector3[]? prevWorldPositions;
+    private Quaternion[]? prevWorldRotations;
+    private bool hasPrevPhysicsState;
+
     // Animation freeze state
     private float savedOverallSpeed = 1.0f;
     private readonly HashSet<int> ragdollBoneIndices = new();
@@ -764,6 +773,7 @@ public unsafe class RagdollController : IDisposable
         lastFrameTimestamp = 0;
         physicsAccumulator = 0f;
         prevAllAsleep = false;
+        hasPrevPhysicsState = false;
 
         // Save original position so we can restore if FollowPosition is toggled off
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)characterAddress;
@@ -1858,6 +1868,29 @@ public unsafe class RagdollController : IDisposable
         }
     }
 
+    // Snapshot the current reconstructed bone world pose into the interpolation prev buffers,
+    // using the same capsule-center → bone-origin reconstruction as Pass 1. Called just before
+    // each physics tick so prev holds the pre-tick state to blend from.
+    private void CapturePrevBodyPoses(int boneCount)
+    {
+        for (int i = 0; i < boneCount; i++)
+        {
+            var rb = ragdollBones[i];
+            if (rb.BoneIndex < 0) continue;
+            var b = simulation!.Bodies.GetBodyReference(rb.BodyHandle);
+            prevWorldRotations![i] = Quaternion.Normalize(b.Pose.Orientation * rb.CapsuleToBoneOffset);
+            if (rb.SegmentHalfLength > 0)
+            {
+                var y = Vector3.Transform(Vector3.UnitY, b.Pose.Orientation);
+                prevWorldPositions![i] = b.Pose.Position - rb.SegmentHalfLength * y;
+            }
+            else
+            {
+                prevWorldPositions![i] = b.Pose.Position;
+            }
+        }
+    }
+
     private void StepAndApply(float dt)
     {
         if (simulation == null) return;
@@ -2020,11 +2053,24 @@ public unsafe class RagdollController : IDisposable
             catch { }
         }
 
+        // Ensure per-frame buffers exist (cur reconstruction + interpolation prev), sized to
+        // the bone count. Allocated here (before stepping) so prev can be snapshotted in the loop.
+        var boneCount = ragdollBones.Count;
+        if (cachedWorldPositions == null || cachedWorldPositions.Length < boneCount)
+        {
+            cachedWorldPositions = new Vector3[boneCount];
+            cachedWorldRotations = new Quaternion[boneCount];
+            cachedBoneValid = new bool[boneCount];
+            prevWorldPositions = new Vector3[boneCount];
+            prevWorldRotations = new Quaternion[boneCount];
+            hasPrevPhysicsState = false; // buffers reallocated — old snapshot is stale
+        }
+
         // Step physics with a fixed timestep, advancing as many substeps as real
         // wall-clock time has accumulated. This keeps ragdoll motion the same speed
         // regardless of the game's framerate (a fixed 1/60 per render frame ran slow
         // below 60fps and fast above it). Below 60fps we take multiple substeps; above
-        // 60fps some frames take zero (the write-back below still renders the last pose).
+        // 60fps some frames take zero — render interpolation (below) keeps motion smooth.
         // When resting (fully settled) we skip stepping entirely.
         int substeps = 0;
         if (!resting)
@@ -2034,6 +2080,10 @@ public unsafe class RagdollController : IDisposable
             var maxAngular = activeRagdollIsGeneric ? GenericMaxAngularVelocity : HumanMaxAngularVelocity;
             while (physicsAccumulator >= FixedTimestep && substeps < MaxSubstepsPerFrame)
             {
+                // Snapshot the pre-tick bone pose for render interpolation. Overwritten each
+                // iteration, so it ends as the state immediately before the final tick.
+                CapturePrevBodyPoses(boneCount);
+                hasPrevPhysicsState = true;
                 simulation.Timestep(FixedTimestep);
                 // Clamp every rig now (humans too) — the safety net that stops jitter from
                 // amplifying into a full-screen explosion.
@@ -2050,6 +2100,14 @@ public unsafe class RagdollController : IDisposable
         {
             physicsAccumulator = 0f;
         }
+
+        // Fraction of a tick elapsed past the last completed tick. The write-back blends the
+        // current physics pose toward it from the previous tick's pose, so the rendered ragdoll
+        // advances a little every frame instead of snapping once per 60Hz tick. Resting or no
+        // prior tick → render the current pose directly (alpha = 1).
+        var renderAlpha = (!resting && hasPrevPhysicsState)
+            ? Math.Clamp(physicsAccumulator / FixedTimestep, 0f, 1f)
+            : 1f;
 
         var pose = skel.Pose;
 
@@ -2071,13 +2129,6 @@ public unsafe class RagdollController : IDisposable
         // --- Pass 1: Read physics bodies, compute bone world positions/rotations ---
         // We need all positions first to measure how far the ragdoll sank below
         // the real terrain (due to the lowered physics ground), then correct uniformly.
-        var boneCount = ragdollBones.Count;
-        if (cachedWorldPositions == null || cachedWorldPositions.Length < boneCount)
-        {
-            cachedWorldPositions = new Vector3[boneCount];
-            cachedWorldRotations = new Quaternion[boneCount];
-            cachedBoneValid = new bool[boneCount];
-        }
         var worldPositions = cachedWorldPositions;
         var worldRotations = cachedWorldRotations!;
         var boneValid = cachedBoneValid!;
@@ -2166,11 +2217,18 @@ public unsafe class RagdollController : IDisposable
             if (!boneValid[i]) continue;
             var rb = ragdollBones[i];
 
-            var boneWorldPos = worldPositions[i];
+            // Blend from the previous physics tick toward the current one for smooth motion
+            // between 60Hz ticks. At alpha = 1 these return the current pose exactly.
+            var boneWorldPos = renderAlpha >= 1f
+                ? worldPositions[i]
+                : Vector3.Lerp(prevWorldPositions![i], worldPositions[i], renderAlpha);
+            var boneWorldRot = renderAlpha >= 1f
+                ? worldRotations[i]
+                : Quaternion.Slerp(prevWorldRotations![i], worldRotations[i], renderAlpha);
             boneWorldPos.Y += yCorrection;
 
             var modelPos = WorldToModel(boneWorldPos);
-            var modelRot = WorldRotToModel(worldRotations[i]);
+            var modelRot = WorldRotToModel(boneWorldRot);
 
             if (logThisFrame)
             {
