@@ -218,10 +218,14 @@ public unsafe class WeaponDropController : IDisposable
         var gridSize = (int)(terrainRadius * 2 / terrainStep) + 1;
 
         var patchGroundY = defaultGroundY;
+        var anyHit = false;
         if (BGCollisionModule.RaycastMaterialFilter(
                 new Vector3(centerX, defaultGroundY + 5.0f, centerZ),
                 new Vector3(0, -1, 0), out var centerHit, 80f))
+        {
             patchGroundY = centerHit.Point.Y;
+            anyHit = true;
+        }
 
         var heights = new float[gridSize, gridSize];
         var ox = centerX - terrainRadius;
@@ -234,9 +238,25 @@ public unsafe class WeaponDropController : IDisposable
             if (BGCollisionModule.RaycastMaterialFilter(
                     new Vector3(wx, patchGroundY + 5.0f, wz),
                     new Vector3(0, -1, 0), out var gridHit, 80f))
+            {
                 heights[gx, gz] = gridHit.Point.Y;
+                anyHit = true;
+            }
             else
+            {
                 heights[gx, gz] = patchGroundY;
+            }
+        }
+
+        if (!anyHit)
+        {
+            log.Warning($"WeaponDropController: terrain raycasts missed at ({centerX:F2},{centerZ:F2}); using flat fallback.");
+            var fallbackShape = simulation!.Shapes.Add(new Box(8f, 0.1f, 8f));
+            var fallbackStatic = simulation.Statics.Add(new StaticDescription(
+                new Vector3(centerX, defaultGroundY - 0.05f, centerZ),
+                Quaternion.Identity,
+                fallbackShape));
+            return (fallbackStatic, fallbackShape);
         }
 
         var triCount = (gridSize - 1) * (gridSize - 1) * 2;
