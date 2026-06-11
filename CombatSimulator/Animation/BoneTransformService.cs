@@ -278,10 +278,10 @@ public unsafe struct SkeletonAccess
 /// <summary>Result of applying bone modifications. Contains originals and accumulated deltas for further processing.</summary>
 public class BoneModificationResult
 {
-    public readonly Vector3[] OriginalPositions;
-    public readonly Quaternion[] OriginalRotations;
-    public readonly Quaternion[] AccumulatedDeltas;
-    public readonly bool[] HasAccumulated;
+    public Vector3[] OriginalPositions;
+    public Quaternion[] OriginalRotations;
+    public Quaternion[] AccumulatedDeltas;
+    public bool[] HasAccumulated;
 
     public BoneModificationResult(int boneCount)
     {
@@ -289,5 +289,26 @@ public class BoneModificationResult
         OriginalRotations = new Quaternion[boneCount];
         AccumulatedDeltas = new Quaternion[boneCount];
         HasAccumulated = new bool[boneCount];
+    }
+
+    /// <summary>
+    /// Prepare this instance for reuse across frames without reallocating.
+    /// OriginalPositions/OriginalRotations are fully overwritten by the caller each frame,
+    /// and AccumulatedDeltas is only read where HasAccumulated is set, so only the
+    /// HasAccumulated flags need clearing. Grows the backing arrays if boneCount increased.
+    /// </summary>
+    public void Reset(int boneCount)
+    {
+        if (HasAccumulated.Length < boneCount)
+        {
+            OriginalPositions = new Vector3[boneCount];
+            OriginalRotations = new Quaternion[boneCount];
+            AccumulatedDeltas = new Quaternion[boneCount];
+            HasAccumulated = new bool[boneCount];
+        }
+        else
+        {
+            Array.Clear(HasAccumulated, 0, boneCount);
+        }
     }
 }

@@ -40,6 +40,22 @@ public unsafe class RagdollController : IDisposable
     private float activationDelay;
     private bool physicsStarted;
 
+    // Frame-rate-independent physics timing. The render hook fires once per rendered
+    // frame at whatever framerate the game runs (30/60/120/144…). Stepping a fixed
+    // 1/60 every call made the ragdoll run in slow-motion below 60fps and fast above it.
+    // We measure real wall-clock dt and advance the simulation in fixed-size substeps.
+    private long lastFrameTimestamp;
+    private float physicsAccumulator;
+    private const float FixedTimestep = 1f / 60f;
+    private const int MaxSubstepsPerFrame = 4;  // cap catch-up to avoid a spiral of death
+    private const float MaxFrameDelta = 0.1f;   // ignore huge gaps (loading screens, hitches)
+
+    // True once every ragdoll body has gone to sleep (settled). When resting we skip the
+    // physics step, the per-frame NPC-collision static rebuild, and hair integration —
+    // only re-asserting the held pose. Bodies can only sleep when settle-collision is off,
+    // so a resting corpse has nothing left to react to. Reset whenever the rig is rebuilt.
+    private bool prevAllAsleep;
+
     // Skeleton world transform (captured at activation from Skeleton.Transform)
     // ModelPose is in skeleton-local space; these convert to/from world space.
     private Vector3 skelWorldPos;
@@ -76,6 +92,21 @@ public unsafe class RagdollController : IDisposable
     private const float GenericMaxLinearVelocity = 12f;  // m/s — clamp per frame to stop energy blow-up
     private const float GenericMaxAngularVelocity = 16f; // rad/s — clamp per frame (tiny bodies spin up fastest)
 
+    // Human/player rigs are hand-tuned and normally stable, but their constraint solver can
+    // still occasionally diverge (visible jitter that amplifies into a full-screen explosion).
+    // They get the same per-substep velocity clamp as generic rigs but with a HIGHER ceiling,
+    // so violent-but-valid motion (a body flung by a heavy hit) is preserved and only runaway
+    // blow-up is caught. A falling/flung ragdoll stays well under these; an exploding one
+    // shoots far past them.
+    // Tuning: a falling/flung human ragdoll runs ~3-12 m/s linear and ~5-15 rad/s angular,
+    // so these sit above believable motion but well below a divergence (100s of m/s). Lower
+    // them if jitter still escalates; raise them if hard flings look clipped.
+    private const float HumanMaxLinearVelocity = 18f;   // m/s — safety net only
+    // Angular ceiling: low enough that joints can't whip past their swing/twist limits before
+    // the limit walls engage (fast spins were a cause of shoulder/waist over-rotation), but
+    // still well above natural ragdoll flailing so motion stays lively.
+    private const float HumanMaxAngularVelocity = 14f;  // rad/s — safety net + anti-overspin
+
     // Ground height (physics ground may be lowered by floor offset)
     private float groundY;
     // Real terrain ground (before floor offset), used for visual correction
@@ -83,6 +114,21 @@ public unsafe class RagdollController : IDisposable
 
     // Diagnostic frame counter
     private int frameCount;
+
+    // Reused per-frame buffers for StepAndApply (avoid per-frame GC pressure)
+    private BoneModificationResult? cachedResult;
+    private Vector3[]? cachedWorldPositions;
+    private Quaternion[]? cachedWorldRotations;
+    private bool[]? cachedBoneValid;
+
+    // Render interpolation: physics advances in fixed 60Hz ticks but we render every frame
+    // (often >60fps). Without interpolation the ragdoll shows the same pose for several
+    // frames then jumps on each tick — visible micro-judder. We snapshot the bone world
+    // pose just before each physics tick (prev) and after (cur, in cachedWorld*), then blend
+    // by the leftover-accumulator fraction so the rendered pose advances smoothly every frame.
+    private Vector3[]? prevWorldPositions;
+    private Quaternion[]? prevWorldRotations;
+    private bool hasPrevPhysicsState;
 
     // Animation freeze state
     private float savedOverallSpeed = 1.0f;
@@ -727,6 +773,10 @@ public unsafe class RagdollController : IDisposable
         physicsStarted = false;
         followWasActive = false;
         isActive = true;
+        lastFrameTimestamp = 0;
+        physicsAccumulator = 0f;
+        prevAllAsleep = false;
+        hasPrevPhysicsState = false;
 
         // Save original position so we can restore if FollowPosition is toggled off
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)characterAddress;
@@ -775,7 +825,8 @@ public unsafe class RagdollController : IDisposable
 
         try
         {
-            elapsed += 1.0f / 60.0f;
+            var dt = ComputeFrameDelta();
+            elapsed += dt;
 
             // Wait for activation delay (death animation plays first)
             if (!physicsStarted)
@@ -784,15 +835,35 @@ public unsafe class RagdollController : IDisposable
                 if (!InitializePhysics()) { Deactivate(); return; }
                 physicsStarted = true;
                 frameCount = 0;
+                physicsAccumulator = 0f; // start clean — don't carry the activation-delay wait
             }
 
-            StepAndApply();
+            StepAndApply(dt);
         }
         catch (Exception ex)
         {
             log.Error(ex, "RagdollController: Error in render frame");
             Deactivate();
         }
+    }
+
+    /// <summary>
+    /// Real wall-clock seconds since the previous render frame, clamped to a sane range.
+    /// Returns one fixed timestep on the very first call (no prior timestamp yet).
+    /// </summary>
+    private float ComputeFrameDelta()
+    {
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (lastFrameTimestamp == 0)
+        {
+            lastFrameTimestamp = now;
+            return FixedTimestep;
+        }
+        var dt = (float)((now - lastFrameTimestamp) / (double)System.Diagnostics.Stopwatch.Frequency);
+        lastFrameTimestamp = now;
+        if (dt < 0f) dt = 0f;
+        if (dt > MaxFrameDelta) dt = MaxFrameDelta;
+        return dt;
     }
 
     // --- Coordinate conversion using Skeleton.Transform ---
@@ -1260,12 +1331,15 @@ public unsafe class RagdollController : IDisposable
             });
 
             // Log initial state for diagnostics
-            var logCapsuleY = Vector3.Transform(Vector3.UnitY, capsuleWorldRot);
-            log.Info($"[Ragdoll Init] '{def.Name}' idx={boneIdx} " +
-                     $"bonePos=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3}) " +
-                     $"capsuleCenter=({capsuleCenter.X:F3},{capsuleCenter.Y:F3},{capsuleCenter.Z:F3}) " +
-                     $"segHalf={segmentHalfLength:F3} capsuleLen={capsuleLength:F3} " +
-                     $"capsuleY=({logCapsuleY.X:F3},{logCapsuleY.Y:F3},{logCapsuleY.Z:F3})");
+            if (config.RagdollVerboseLog)
+            {
+                var logCapsuleY = Vector3.Transform(Vector3.UnitY, capsuleWorldRot);
+                log.Info($"[Ragdoll Init] '{def.Name}' idx={boneIdx} " +
+                         $"bonePos=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3}) " +
+                         $"capsuleCenter=({capsuleCenter.X:F3},{capsuleCenter.Y:F3},{capsuleCenter.Z:F3}) " +
+                         $"segHalf={segmentHalfLength:F3} capsuleLen={capsuleLength:F3} " +
+                         $"capsuleY=({logCapsuleY.X:F3},{logCapsuleY.Y:F3},{logCapsuleY.Z:F3})");
+            }
         }
 
         // --- Pass 3: Add constraints between connected bones ---
@@ -1277,8 +1351,19 @@ public unsafe class RagdollController : IDisposable
             boneIdxToBodyHandle[rb.BoneIndex] = rb.BodyHandle;
 
         var jointSpring = new SpringSettings(30, 1);
-        var limitSpring = new SpringSettings(60, 1);
+        // Limit walls (swing cones + twist ranges). Kept stiff so joints don't blow through
+        // their range under momentum — at 60Hz shoulders/waist could over-rotate (up to ~180°)
+        // before the soft wall arrested them. BEPU's SpringSettings stay stable at high
+        // frequency, so a firm wall is safe and makes the configured limits actually hold.
+        var limitSpring = new SpringSettings(120, 1);
         var motorDamping = 0.01f;
+
+        // BEPU's TwistLimit measurement degenerates once a ball joint's swing exceeds ~90°
+        // (the twist axis tilts past the reference plane), letting the limb spin freely about
+        // its own axis — that rogue spin then torques neighbours (e.g. arms twisting the chest
+        // j_sebo_c). Cap ball-joint swing just under 90° so twist stays well-defined. Wide
+        // joints like the shoulder (configured 1.8 rad ≈ 103°) are clamped; tight ones are not.
+        const float ballJointMaxSwing = 1.40f; // ~80°
 
         for (int i = 0; i < ragdollBones.Count; i++)
         {
@@ -1337,7 +1422,21 @@ public unsafe class RagdollController : IDisposable
             {
                 // Hinge: constrains position AND restricts rotation to one plane.
                 // Per BEPU RagdollDemo: Hinge + SwingLimit + AngularMotor (NO TwistLimit).
-                var hingeAxisWorld = ComputeHingeAxis(segDirWorld);
+                //
+                // Anatomical hinge axis = the normal of the plane the limb is already bent
+                // in at the death pose, from the parent and child segment directions. Knees
+                // and elbows are flexed at death, so the two segments are non-collinear and
+                // define a reliable bend plane. This is far more robust than deriving the axis
+                // from world-up (ComputeHingeAxis), which picks the wrong plane for splayed or
+                // twisted death poses — and a wrong plane lets the joint swing "sideways" past
+                // straight, reading as hyperextension even though SwingLimit=π/2 is correct.
+                var parentSegForAxis = Vector3.Transform(Vector3.UnitY, parentBodyRef.Pose.Orientation);
+                var bendNormal = Vector3.Cross(parentSegForAxis, segDirWorld);
+                Vector3 hingeAxisWorld;
+                if (bendNormal.LengthSquared() > 0.01f) // segments non-collinear (>~6° bend)
+                    hingeAxisWorld = Vector3.Normalize(bendNormal);
+                else
+                    hingeAxisWorld = ComputeHingeAxis(segDirWorld); // straight-limb fallback
                 var hingeAxisLocalChild = Vector3.Normalize(Vector3.Transform(
                     hingeAxisWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
                 var hingeAxisLocalParent = Vector3.Normalize(Vector3.Transform(
@@ -1393,7 +1492,8 @@ public unsafe class RagdollController : IDisposable
                             SpringSettings = limitSpring,
                         });
 
-                    log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad dot={Vector3.Dot(forwardWorld, segDirWorld):F3}");
+                    if (config.RagdollVerboseLog)
+                        log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad dot={Vector3.Dot(forwardWorld, segDirWorld):F3}");
 
                     // TwistLimit for hinge: anti-hyperextension constraint.
                     // Uses config TwistMin/Max (same as Ball joints — no hardcoded values).
@@ -1415,11 +1515,13 @@ public unsafe class RagdollController : IDisposable
                                 SpringSettings = limitSpring,
                             });
 
-                        log.Info($"[Ragdoll Constraint] '{rb.Name}' TwistLimit: min={boneDef.TwistMinAngle:F2} max={boneDef.TwistMaxAngle:F2}");
+                        if (config.RagdollVerboseLog)
+                            log.Info($"[Ragdoll Constraint] '{rb.Name}' TwistLimit: min={boneDef.TwistMinAngle:F2} max={boneDef.TwistMaxAngle:F2}");
                     }
                 }
 
-                log.Info($"[Ragdoll Constraint] '{rb.Name}' Hinge axis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3})");
+                if (config.RagdollVerboseLog)
+                    log.Info($"[Ragdoll Constraint] '{rb.Name}' Hinge axis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3})");
             }
             else
             {
@@ -1448,7 +1550,8 @@ public unsafe class RagdollController : IDisposable
                         {
                             AxisLocalA = axisChildLocal,
                             AxisLocalB = axisParentLocal,
-                            MaximumSwingAngle = boneDef.SwingLimit,
+                            // Keep under ~90° so the twist limit on this joint stays valid.
+                            MaximumSwingAngle = MathF.Min(boneDef.SwingLimit, ballJointMaxSwing),
                             SpringSettings = limitSpring, // stiff wall even for soft bodies
                         });
                 }
@@ -1757,7 +1860,53 @@ public unsafe class RagdollController : IDisposable
         log.Info($"RagdollController: {label} using fallback single capsule");
     }
 
-    private void StepAndApply()
+    // Clamp per-body velocity each substep as a hard ceiling against energy blow-up.
+    // Generic rigs inject energy through their stiff auto-built constraint network (small
+    // bodies + dense joints); human rigs are normally stable but can still have the solver
+    // diverge into a jitter-then-explode failure. Real ragdoll fall/fling speeds stay well
+    // under the ceilings, so settling looks normal, but runaway growth is capped. Callers
+    // pass tighter ceilings for generic rigs and looser ones for humans.
+    private void ClampVelocities(float maxLinear, float maxAngular)
+    {
+        foreach (var rb in ragdollBones)
+        {
+            var body = simulation!.Bodies.GetBodyReference(rb.BodyHandle);
+            if (!body.Awake) continue;
+            var lin = body.Velocity.Linear;
+            var linSpeed = lin.Length();
+            if (linSpeed > maxLinear)
+                body.Velocity.Linear = lin * (maxLinear / linSpeed);
+            var ang = body.Velocity.Angular;
+            var angSpeed = ang.Length();
+            if (angSpeed > maxAngular)
+                body.Velocity.Angular = ang * (maxAngular / angSpeed);
+        }
+    }
+
+    // Snapshot the current reconstructed bone world pose into the interpolation prev buffers,
+    // using the same capsule-center → bone-origin reconstruction as Pass 1. Called just before
+    // each physics tick so prev holds the pre-tick state to blend from.
+    private void CapturePrevBodyPoses(int boneCount)
+    {
+        for (int i = 0; i < boneCount; i++)
+        {
+            var rb = ragdollBones[i];
+            if (rb.BoneIndex < 0) continue;
+            var b = simulation!.Bodies.GetBodyReference(rb.BodyHandle);
+            prevWorldRotations![i] = Quaternion.Normalize(b.Pose.Orientation * rb.CapsuleToBoneOffset);
+            if (rb.SegmentHalfLength > 0)
+            {
+                var y = Vector3.Transform(Vector3.UnitY, b.Pose.Orientation);
+                prevWorldPositions![i] = b.Pose.Position - rb.SegmentHalfLength * y;
+            }
+            else
+            {
+                prevWorldPositions![i] = b.Pose.Position;
+            }
+        }
+    }
+
+    private void StepAndApply(float dt)
     {
         if (simulation == null) return;
 
@@ -1774,6 +1923,7 @@ public unsafe class RagdollController : IDisposable
         // Physics bodies stay at correct world positions; we just need the current
         // transform to convert back to the model space the game expects for rendering.
         var skeleton = skel.CharBase->Skeleton;
+        var skeletonMoved = false;
         if (skeleton != null)
         {
             var newSkelPos = new Vector3(
@@ -1785,6 +1935,7 @@ public unsafe class RagdollController : IDisposable
             var skelDist = (newSkelPos - skelWorldPos).Length();
             if (skelDist > 0.1f)
             {
+                skeletonMoved = true;
                 if (config.RagdollVerboseLog)
                     log.Info($"[Ragdoll F{frameCount}] Skeleton moved {skelDist:F3}m: ({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3})→({newSkelPos.X:F3},{newSkelPos.Y:F3},{newSkelPos.Z:F3})");
                 if (BGCollisionModule.RaycastMaterialFilter(
@@ -1809,11 +1960,18 @@ public unsafe class RagdollController : IDisposable
             skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
         }
 
+        // Resting fast-path: once the rig is fully asleep there is nothing left to react
+        // to (bodies only sleep when settle-collision is off), so skip the physics step,
+        // the per-frame NPC-collision static rebuild, and hair — we just re-assert the
+        // held pose below. A grab, a generic rig, or a moved skeleton forces a full step.
+        var resting = prevAllAsleep && !activeRagdollIsGeneric && !grabConstraintActive && !skeletonMoved;
+
         // Update NPC collision volumes to track their current animated bone positions.
         // Must call UpdateBounds() after repositioning — BEPU2 doesn't auto-update
         // broad phase AABBs for statics, so without it collisions are never detected.
         // The grabbing NPC's collision is parked far away so the player body can pass through.
         var npcCollisionParkPos = new Vector3(0, -9999, 0);
+        if (!resting)
         for (int i = 0; i < npcCollisionStates.Count; i++)
         {
             var npcState = npcCollisionStates[i];
@@ -1910,35 +2068,69 @@ public unsafe class RagdollController : IDisposable
             catch { }
         }
 
-        // Step physics
-        simulation.Timestep(1.0f / 60.0f);
-
-        // Generic rigs can still inject energy through their stiff auto-built constraint
-        // network (small bodies + dense joints), building up over a second into a
-        // fly-across-the-map explosion. Clamp per-body velocity each frame as a hard
-        // ceiling: real ragdoll fall speeds stay well under these, so settling looks
-        // normal, but runaway growth is capped. Human rigs are hand-tuned and skip this.
-        if (activeRagdollIsGeneric)
+        // Ensure per-frame buffers exist (cur reconstruction + interpolation prev), sized to
+        // the bone count. Allocated here (before stepping) so prev can be snapshotted in the loop.
+        var boneCount = ragdollBones.Count;
+        if (cachedWorldPositions == null || cachedWorldPositions.Length < boneCount)
         {
-            foreach (var rb in ragdollBones)
-            {
-                var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
-                if (!body.Awake) continue;
-                var lin = body.Velocity.Linear;
-                var linSpeed = lin.Length();
-                if (linSpeed > GenericMaxLinearVelocity)
-                    body.Velocity.Linear = lin * (GenericMaxLinearVelocity / linSpeed);
-                var ang = body.Velocity.Angular;
-                var angSpeed = ang.Length();
-                if (angSpeed > GenericMaxAngularVelocity)
-                    body.Velocity.Angular = ang * (GenericMaxAngularVelocity / angSpeed);
-            }
+            cachedWorldPositions = new Vector3[boneCount];
+            cachedWorldRotations = new Quaternion[boneCount];
+            cachedBoneValid = new bool[boneCount];
+            prevWorldPositions = new Vector3[boneCount];
+            prevWorldRotations = new Quaternion[boneCount];
+            hasPrevPhysicsState = false; // buffers reallocated — old snapshot is stale
         }
+
+        // Step physics with a fixed timestep, advancing as many substeps as real
+        // wall-clock time has accumulated. This keeps ragdoll motion the same speed
+        // regardless of the game's framerate (a fixed 1/60 per render frame ran slow
+        // below 60fps and fast above it). Below 60fps we take multiple substeps; above
+        // 60fps some frames take zero — render interpolation (below) keeps motion smooth.
+        // When resting (fully settled) we skip stepping entirely.
+        int substeps = 0;
+        if (!resting)
+        {
+            physicsAccumulator += dt;
+            var maxLinear = activeRagdollIsGeneric ? GenericMaxLinearVelocity : HumanMaxLinearVelocity;
+            var maxAngular = activeRagdollIsGeneric ? GenericMaxAngularVelocity : HumanMaxAngularVelocity;
+            while (physicsAccumulator >= FixedTimestep && substeps < MaxSubstepsPerFrame)
+            {
+                // Snapshot the pre-tick bone pose for render interpolation. Overwritten each
+                // iteration, so it ends as the state immediately before the final tick.
+                CapturePrevBodyPoses(boneCount);
+                hasPrevPhysicsState = true;
+                simulation.Timestep(FixedTimestep);
+                // Clamp every rig now (humans too) — the safety net that stops jitter from
+                // amplifying into a full-screen explosion.
+                ClampVelocities(maxLinear, maxAngular);
+                physicsAccumulator -= FixedTimestep;
+                substeps++;
+            }
+            // If we hit the substep cap (severe hitch / very low fps), drop the backlog so
+            // we don't fire a burst of catch-up steps on the next frame (spiral of death).
+            if (substeps == MaxSubstepsPerFrame)
+                physicsAccumulator = 0f;
+        }
+        else
+        {
+            physicsAccumulator = 0f;
+        }
+
+        // Fraction of a tick elapsed past the last completed tick. The write-back blends the
+        // current physics pose toward it from the previous tick's pose, so the rendered ragdoll
+        // advances a little every frame instead of snapping once per 60Hz tick. Resting or no
+        // prior tick → render the current pose directly (alpha = 1).
+        var renderAlpha = (!resting && hasPrevPhysicsState)
+            ? Math.Clamp(physicsAccumulator / FixedTimestep, 0f, 1f)
+            : 1f;
 
         var pose = skel.Pose;
 
-        // Save original positions/rotations for delta tracking (needed for j_kao propagation)
-        var result = new BoneModificationResult(skel.BoneCount);
+        // Save original positions/rotations for delta tracking (needed for j_kao propagation).
+        // Reuse a cached result across frames — StepAndApply runs every render frame, so a
+        // fresh allocation here is steady GC pressure per active ragdoll.
+        var result = cachedResult ??= new BoneModificationResult(skel.BoneCount);
+        result.Reset(skel.BoneCount);
         for (int i = 0; i < skel.BoneCount; i++)
         {
             ref var m = ref pose->ModelPose.Data[i];
@@ -1952,11 +2144,11 @@ public unsafe class RagdollController : IDisposable
         // --- Pass 1: Read physics bodies, compute bone world positions/rotations ---
         // We need all positions first to measure how far the ragdoll sank below
         // the real terrain (due to the lowered physics ground), then correct uniformly.
-        var boneCount = ragdollBones.Count;
-        var worldPositions = new Vector3[boneCount];
-        var worldRotations = new Quaternion[boneCount];
-        var boneValid = new bool[boneCount];
-        var lowestCapsuleBottomY = float.MaxValue;
+        var worldPositions = cachedWorldPositions;
+        var worldRotations = cachedWorldRotations!;
+        var boneValid = cachedBoneValid!;
+        Array.Clear(boneValid, 0, boneCount);
+        var anyAwake = false;
 
         for (int i = 0; i < boneCount; i++)
         {
@@ -1964,6 +2156,7 @@ public unsafe class RagdollController : IDisposable
             if (rb.BoneIndex < 0 || rb.BoneIndex >= skel.BoneCount) continue;
 
             var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            if (bodyRef.Awake) anyAwake = true;
 
             // Guard against NaN from physics explosion — deactivate instead of crashing
             if (float.IsNaN(bodyRef.Pose.Position.X) || float.IsNaN(bodyRef.Pose.Position.Y) ||
@@ -1989,28 +2182,17 @@ public unsafe class RagdollController : IDisposable
                 worldPositions[i] = bodyRef.Pose.Position;
             }
 
-            // Track lowest capsule bottom (not bone origin) for floor correction.
-            // The capsule extends below its center by |capsuleY.Y| * halfLength + radius.
-            activeDefByName.TryGetValue(rb.Name, out var boneDef);
-            var capsuleYDir = Vector3.Transform(Vector3.UnitY, bodyRef.Pose.Orientation);
-            var capsuleBottomY = bodyRef.Pose.Position.Y
-                                 - MathF.Abs(capsuleYDir.Y) * boneDef.CapsuleHalfLength
-                                 - boneDef.CapsuleRadius;
-            if (capsuleBottomY < lowestCapsuleBottomY)
-                lowestCapsuleBottomY = capsuleBottomY;
-
             boneValid[i] = true;
         }
 
+        // Remember whether the rig is now fully asleep so next frame can take the
+        // resting fast-path. Only meaningful once at least one body exists.
+        prevAllAsleep = !anyAwake && boneCount > 0;
+
         // --- Floor offset correction ---
-        // Physics ground was lowered by RagdollFloorOffset for stable constraint solving.
-        // Measure how far the lowest capsule bottom sank below the REAL terrain and shift
-        // all bones up by that amount. Uses capsule extents (not bone origins) because
-        // a bone origin can be above ground while its capsule extends below.
-        // Skip floor correction during the first ~30 frames to let the ragdoll settle.
-        // On the first frame, capsule bottoms from the init pose (e.g., standing on a mount)
-        // may extend below realGroundY even though the character is above the ground.
-        // Applying correction immediately causes a visible upward bounce.
+        // Currently a no-op: bodies settle naturally on the terrain mesh, so no uniform
+        // Y shift is applied. Kept as a zero so the write-back loop below reads uniformly;
+        // restore a real value here if capsule-vs-terrain sinking ever needs correcting.
         float yCorrection = 0f;
 
         // --- Frame summary (once per log frame, before per-bone data) ---
@@ -2019,15 +2201,25 @@ public unsafe class RagdollController : IDisposable
             var awakeBodies = 0;
             var maxLinVel = 0f;
             var maxAngVel = 0f;
+            var lowestCapsuleBottomY = float.MaxValue;
             for (int i = 0; i < boneCount; i++)
             {
                 if (!boneValid[i]) continue;
-                var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
+                var rb = ragdollBones[i];
+                var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
                 if (bodyRef.Awake) awakeBodies++;
                 var linSpeed = bodyRef.Velocity.Linear.Length();
                 var angSpeed = bodyRef.Velocity.Angular.Length();
                 if (linSpeed > maxLinVel) maxLinVel = linSpeed;
                 if (angSpeed > maxAngVel) maxAngVel = angSpeed;
+
+                activeDefByName.TryGetValue(rb.Name, out var boneDef);
+                var capsuleYDir = Vector3.Transform(Vector3.UnitY, bodyRef.Pose.Orientation);
+                var capsuleBottomY = bodyRef.Pose.Position.Y
+                                     - MathF.Abs(capsuleYDir.Y) * boneDef.CapsuleHalfLength
+                                     - boneDef.CapsuleRadius;
+                if (capsuleBottomY < lowestCapsuleBottomY)
+                    lowestCapsuleBottomY = capsuleBottomY;
             }
             log.Info($"[Ragdoll F{frameCount}] t={frameCount / 60f:F2}s awake={awakeBodies}/{boneCount} " +
                      $"yCorr={yCorrection:F3} lowestY={lowestCapsuleBottomY:F3} realGnd={realGroundY:F3} " +
@@ -2040,11 +2232,18 @@ public unsafe class RagdollController : IDisposable
             if (!boneValid[i]) continue;
             var rb = ragdollBones[i];
 
-            var boneWorldPos = worldPositions[i];
+            // Blend from the previous physics tick toward the current one for smooth motion
+            // between 60Hz ticks. At alpha = 1 these return the current pose exactly.
+            var boneWorldPos = renderAlpha >= 1f
+                ? worldPositions[i]
+                : Vector3.Lerp(prevWorldPositions![i], worldPositions[i], renderAlpha);
+            var boneWorldRot = renderAlpha >= 1f
+                ? worldRotations[i]
+                : Quaternion.Slerp(prevWorldRotations![i], worldRotations[i], renderAlpha);
             boneWorldPos.Y += yCorrection;
 
             var modelPos = WorldToModel(boneWorldPos);
-            var modelRot = WorldRotToModel(worldRotations[i]);
+            var modelRot = WorldRotToModel(boneWorldRot);
 
             if (logThisFrame)
             {
@@ -2092,13 +2291,16 @@ public unsafe class RagdollController : IDisposable
             boneService.PropagateToPartialSkeletons(skel, kaoBodyBoneIndex, "j_kao", result);
         }
 
-        // Apply hair physics (after rigid j_kao propagation)
-        if (hairPhysics != null && kaoBodyBoneIndex >= 0)
+        // Apply hair physics (after rigid j_kao propagation). Skipped while resting —
+        // the body is settled, so hair has settled too.
+        if (hairPhysics != null && kaoBodyBoneIndex >= 0 && !resting)
         {
+            // Advance hair by exactly the time the body physics advanced this frame,
+            // so hair stays in step with the ragdoll across framerates (zero if no substep ran).
             hairPhysics.StepAndApply(
                 skel.CharBase, kaoBodyBoneIndex,
                 skelWorldPos, skelWorldRot, skelWorldRotInv,
-                1.0f / 60.0f);
+                substeps * FixedTimestep);
         }
 
         // (Dev) Update GameObject.Position to follow ragdoll root bone.
@@ -2163,12 +2365,20 @@ public unsafe class RagdollController : IDisposable
 
         grabBodyHandle = targetBody.Value;
 
-        // Ensure all bodies stay awake so the grab constraint is always active
+        // Wake every body AND keep it awake for the duration of the grab. SleepThreshold=-1
+        // alone only prevents *future* sleep — a corpse that has already settled has all its
+        // bodies asleep, so without an explicit wake the servo lifts the pinned bone while the
+        // sleeping leg bodies stay frozen in the settled pose. The joints then get dragged into
+        // violation and the knees snap into a bend. Waking them up front lets the whole rig
+        // follow the lift smoothly.
         for (int i = 0; i < ragdollBones.Count; i++)
         {
             var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
             bodyRef.Activity.SleepThreshold = -1f;
+            bodyRef.Awake = true;
         }
+        // The rig is no longer resting; force a full physics step next frame.
+        prevAllAsleep = false;
 
         // Create OneBodyLinearServo: pins a body to a world-space target
         grabConstraintHandle = simulation.Solver.Add(grabBodyHandle,

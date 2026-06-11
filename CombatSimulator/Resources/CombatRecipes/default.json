@@ -24,13 +24,14 @@
   },
   {
     "name": "Imperial Decisive Battle",
-    "description": "Solo (you alone) against four imperial commanders (2x HP) and Zenos (8x HP).",
+    "description": "Solo (you alone) against imperial commanders (2x HP) and Zenos (8x HP).",
     "companions": [],
     "enemies": [
       { "type": "Human", "id": 0, "name": "Nael deus Darnus", "occurrence": 1, "description": "Nael deus Darnus, first catalog match", "count": 1, "hpMultiplier": 2.0 },
       { "type": "Human", "id": 0, "name": "Noah van Gabranth", "occurrence": 1, "description": "Noah van Gabranth, first catalog match", "count": 1, "hpMultiplier": 2.0 },
       { "type": "Human", "id": 0, "name": "Livia sas Junius", "occurrence": 2, "description": "Livia sas Junius, second catalog match", "count": 1, "hpMultiplier": 2.0 },
       { "type": "Human", "id": 0, "name": "Fordola", "occurrence": 2, "description": "Fordola, second catalog match", "count": 1, "hpMultiplier": 2.0 },
+      { "type": "Human", "id": 0, "name": "Asahi", "occurrence": 1, "description": "Asahi, first catalog match", "count": 1, "hpMultiplier": 2.0 },
       { "type": "Human", "id": 1018510, "name": "Zenos Yae Galvus (No Helm)", "occurrence": 1, "description": "Zenos Yae Galvus (No Helm)", "count": 1, "hpMultiplier": 8.0, "behavior": "Boss" }
     ]
   },
