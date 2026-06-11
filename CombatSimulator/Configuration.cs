@@ -180,6 +180,19 @@ public class Configuration : IPluginConfiguration
     public float RagdollGravity { get; set; } = 9.8f;
     public float RagdollDamping { get; set; } = 0.97f;
     public int RagdollSolverIterations { get; set; } = 8;
+    // Velocity-solve substeps per fixed timestep. 1 = legacy behavior. Raising this
+    // re-solves the constraints at a finer sub-step, which is BEPU's recommended lever
+    // for making a STIFF limit wall (see RagdollLimitSpringFrequency) well-conditioned
+    // instead of pumping energy. Costs ~linearly in performance. Takes effect on next
+    // ragdoll activation.
+    public int RagdollSolverSubsteps { get; set; } = 1;
+    // Spring frequency (Hz) of the joint LIMIT walls (swing cones + twist ranges), not
+    // the positional joints. Higher = firmer wall so joints don't blow past their range
+    // under momentum (e.g. shoulders/waist over-rotating); too high relative to the
+    // 60Hz step can over-drive the solver into jitter. 60 = long-standing soft wall,
+    // 120 = very firm (needs substeps to stay stable), 90 = balanced default. Takes
+    // effect on next ragdoll activation.
+    public float RagdollLimitSpringFrequency { get; set; } = 90f;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
     // Weapon drop physics — runs as part of ragdoll; weapon detaches and falls on death

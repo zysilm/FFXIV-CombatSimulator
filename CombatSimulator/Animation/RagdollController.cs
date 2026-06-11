@@ -719,8 +719,18 @@ public unsafe class RagdollController : IDisposable
 
     // Default capsule radius for dynamically discovered bones
     private const float NpcDefaultBoneRadius = 0.04f;
-    // Minimum segment length to create a collision capsule (skip face/hair bones)
-    private const float NpcMinSegmentLength = 0.02f;
+    // Minimum segment length to create a collision capsule. Raised from 0.02 to drop the
+    // dense cluster of tiny face/finger/hair segments — they don't meaningfully block a
+    // falling ragdoll but each one costs a per-frame reposition + UpdateBounds.
+    private const float NpcMinSegmentLength = 0.05f;
+    // Hard cap on collision capsules per character: keep the longest segments (torso,
+    // limbs, head) and drop the rest. Bounds the per-frame static-update cost so a wave
+    // of high-bone-count enemies can't add tens of thousands of UpdateBounds calls.
+    private const int NpcMaxCollisionSegments = 24;
+    // A character whose root is farther than this (metres) from the corpse is skipped in
+    // the per-frame static update — it cannot contact the ragdoll, so tracking its bones
+    // is wasted work. It still resumes updating if it moves back into range.
+    private const float NpcCollisionUpdateRadius = 8f;
 
     // Per-NPC collision state (bone-based or single-capsule fallback)
     private struct NpcCollisionState
@@ -1064,7 +1074,7 @@ public unsafe class RagdollController : IDisposable
             new RagdollPoseIntegratorCallbacks(
                 new Vector3(0, -config.RagdollGravity, 0),
                 config.RagdollDamping),
-            new SolveDescription(solverIterations, 1));
+            new SolveDescription(solverIterations, Math.Max(1, config.RagdollSolverSubsteps)));
 
         // Safety net: flat box well below the character prevents infinite falling
         // if the terrain mesh has gaps or winding issues.
@@ -1351,18 +1361,22 @@ public unsafe class RagdollController : IDisposable
             boneIdxToBodyHandle[rb.BoneIndex] = rb.BodyHandle;
 
         var jointSpring = new SpringSettings(30, 1);
-        // Limit walls (swing cones + twist ranges). Kept stiff so joints don't blow through
-        // their range under momentum — at 60Hz shoulders/waist could over-rotate (up to ~180°)
-        // before the soft wall arrested them. BEPU's SpringSettings stay stable at high
-        // frequency, so a firm wall is safe and makes the configured limits actually hold.
-        var limitSpring = new SpringSettings(120, 1);
+        // Limit walls (swing cones + twist ranges). Firmer than the positional joint spring
+        // so joints don't blow through their range under momentum (e.g. shoulders/waist
+        // over-rotating before a soft wall arrests them). The frequency is configurable
+        // (RagdollLimitSpringFrequency) because a wall stiffer than ~the step rate can
+        // over-drive the 1-substep solver into jitter — pair a high value with
+        // RagdollSolverSubsteps > 1, or back it off, and A/B in-game.
+        var limitSpring = new SpringSettings(config.RagdollLimitSpringFrequency, 1);
         var motorDamping = 0.01f;
 
         // BEPU's TwistLimit measurement degenerates once a ball joint's swing exceeds ~90°
         // (the twist axis tilts past the reference plane), letting the limb spin freely about
         // its own axis — that rogue spin then torques neighbours (e.g. arms twisting the chest
-        // j_sebo_c). Cap ball-joint swing just under 90° so twist stays well-defined. Wide
-        // joints like the shoulder (configured 1.8 rad ≈ 103°) are clamped; tight ones are not.
+        // j_sebo_c). Rather than silently clamp the user's configured swing range (which made
+        // a configured 1.8rad shoulder secretly behave as ~80°), we keep the full swing cone
+        // and instead SKIP the twist limit on wide joints, where its measurement is unreliable
+        // anyway. Tight joints (<= this threshold) keep their twist limit.
         const float ballJointMaxSwing = 1.40f; // ~80°
 
         for (int i = 0; i < ragdollBones.Count; i++)
@@ -1550,14 +1564,18 @@ public unsafe class RagdollController : IDisposable
                         {
                             AxisLocalA = axisChildLocal,
                             AxisLocalB = axisParentLocal,
-                            // Keep under ~90° so the twist limit on this joint stays valid.
-                            MaximumSwingAngle = MathF.Min(boneDef.SwingLimit, ballJointMaxSwing),
+                            // Honor the configured swing range — see ballJointMaxSwing note;
+                            // we drop the twist limit on wide joints instead of clamping swing.
+                            MaximumSwingAngle = boneDef.SwingLimit,
                             SpringSettings = limitSpring, // stiff wall even for soft bodies
                         });
                 }
 
-                // TwistLimit: asymmetric axial rotation around the bone's segment axis
-                if (boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0)
+                // TwistLimit: asymmetric axial rotation around the bone's segment axis.
+                // Skipped on wide-swing joints (> ballJointMaxSwing): past ~90° the twist
+                // basis degenerates and the limit would inject rogue spin into neighbours.
+                if ((boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0) &&
+                    boneDef.SwingLimit <= ballJointMaxSwing)
                 {
                     var refDir = Vector3.Cross(segDirWorld, Vector3.UnitY);
                     if (refDir.LengthSquared() < 0.001f)
@@ -1700,7 +1718,10 @@ public unsafe class RagdollController : IDisposable
             return;
 
         const float terrainRadius = 4.0f;
-        const float terrainStep = 0.5f;
+        // 1.0m grid (81 rays/patch) instead of 0.5m (289 rays/patch). A corpse is ~2m, so
+        // 1m triangles conform to slopes/stairs fine while cutting the activation raycast
+        // burst ~3.5x — the burst was a visible hitch when several enemies die at once.
+        const float terrainStep = 1.0f;
         int gridSize = (int)(terrainRadius * 2 / terrainStep) + 1;
 
         // Ground estimate at the patch center — used as the ray origin height and the
@@ -1788,7 +1809,10 @@ public unsafe class RagdollController : IDisposable
 
         var boneStatics = new List<NpcBoneStatic>();
 
-        // Iterate all bones with a parent — each parent→child segment becomes a capsule
+        // Pass 1: collect every qualifying parent→child segment with its length so we can
+        // keep only the longest NpcMaxCollisionSegments (the big body-blocking segments)
+        // rather than building a static for every twig.
+        var candidates = new List<(float SegLen, int BoneIdx, int ParentIdx, float HalfLen, Vector3 Center, Quaternion Rot)>();
         var boneCount = Math.Min(ns.BoneCount, ns.ParentCount);
         for (int i = 1; i < boneCount; i++) // skip root (index 0, no parent)
         {
@@ -1809,22 +1833,29 @@ public unsafe class RagdollController : IDisposable
             if (segLen < NpcMinSegmentLength) continue; // skip tiny segments (face, fingers)
 
             var halfLen = segLen * 0.45f * scale;
-            var capsuleLength = halfLen * 2f;
-            var shapeIndex = simulation!.Shapes.Add(new Capsule(capsuleRadius, capsuleLength));
-
             var segDir = segment / segLen;
-            var capsuleCenter = parentWorldPos + halfLen * segDir;
-            var capsuleRot = RotationFromYToDirection(segment);
+            candidates.Add((segLen, i, parentIdx, halfLen,
+                parentWorldPos + halfLen * segDir, RotationFromYToDirection(segment)));
+        }
 
-            var staticHandle = simulation.Statics.Add(new StaticDescription(
-                capsuleCenter, capsuleRot, shapeIndex));
+        // Keep only the longest segments when a high-bone-count rig exceeds the cap.
+        if (candidates.Count > NpcMaxCollisionSegments)
+        {
+            candidates.Sort((a, b) => b.SegLen.CompareTo(a.SegLen));
+            candidates.RemoveRange(NpcMaxCollisionSegments, candidates.Count - NpcMaxCollisionSegments);
+        }
 
+        // Pass 2: create the static capsule for each kept segment.
+        foreach (var c in candidates)
+        {
+            var shapeIndex = simulation!.Shapes.Add(new Capsule(capsuleRadius, c.HalfLen * 2f));
+            var staticHandle = simulation.Statics.Add(new StaticDescription(c.Center, c.Rot, shapeIndex));
             boneStatics.Add(new NpcBoneStatic
             {
                 Handle = staticHandle,
-                BoneIndex = i,
-                ParentBoneIndex = parentIdx,
-                HalfLength = halfLen,
+                BoneIndex = c.BoneIdx,
+                ParentBoneIndex = c.ParentIdx,
+                HalfLength = c.HalfLen,
             });
         }
 
@@ -1961,10 +1992,13 @@ public unsafe class RagdollController : IDisposable
         }
 
         // Resting fast-path: once the rig is fully asleep there is nothing left to react
-        // to (bodies only sleep when settle-collision is off), so skip the physics step,
-        // the per-frame NPC-collision static rebuild, and hair — we just re-assert the
-        // held pose below. A grab, a generic rig, or a moved skeleton forces a full step.
-        var resting = prevAllAsleep && !activeRagdollIsGeneric && !grabConstraintActive && !skeletonMoved;
+        // to (bodies only sleep when settle-collision is off, and an asleep body has ~0
+        // velocity so there is no energy left to pump), so skip the physics step, the
+        // per-frame NPC-collision static rebuild, and hair — we just re-assert the held
+        // pose below. Applies to generic (monster) rigs too: if their auto-built network
+        // never settles, prevAllAsleep simply stays false and this never triggers; if it
+        // does settle, there is nothing to clamp. A grab or a moved skeleton forces a step.
+        var resting = prevAllAsleep && !grabConstraintActive && !skeletonMoved;
 
         // Update NPC collision volumes to track their current animated bone positions.
         // Must call UpdateBounds() after repositioning — BEPU2 doesn't auto-update
@@ -1996,6 +2030,14 @@ public unsafe class RagdollController : IDisposable
                     }
                     continue;
                 }
+
+                // Distance gate: a character whose root is far from the corpse cannot
+                // contact it, so skip the expensive skeleton read + per-bone reposition.
+                // Its statics stay where they were; it resumes updating if it moves back in.
+                var npcGo = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npcState.NpcAddress;
+                var npcRootPos = new Vector3(npcGo->Position.X, npcGo->Position.Y, npcGo->Position.Z);
+                if ((npcRootPos - skelWorldPos).LengthSquared() > NpcCollisionUpdateRadius * NpcCollisionUpdateRadius)
+                    continue;
 
                 if (npcState.IsFallback)
                 {

@@ -2754,6 +2754,22 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("BEPU2 constraint solver iterations per timestep. Higher = more stable/accurate joints but costs performance. Default 8. Takes effect on next ragdoll activation.");
 
+                var solverSubsteps = config.RagdollSolverSubsteps;
+                if (ImGui.SliderInt("Solver Substeps##ragdoll", ref solverSubsteps, 1, 8))
+                {
+                    config.RagdollSolverSubsteps = solverSubsteps;
+                    config.Save();
+                }
+                HelpMarker("Velocity-solve substeps per fixed timestep. 1 = legacy. Raising this re-solves constraints at a finer sub-step — BEPU's recommended way to keep a stiff joint-limit wall (see below) stable instead of jittering. Costs ~linearly. Takes effect on next ragdoll activation.");
+
+                var limitFreq = config.RagdollLimitSpringFrequency;
+                if (ImGui.SliderFloat("Limit Wall Stiffness (Hz)##ragdoll", ref limitFreq, 30f, 180f, "%.0f"))
+                {
+                    config.RagdollLimitSpringFrequency = limitFreq;
+                    config.Save();
+                }
+                HelpMarker("Spring frequency of the joint LIMIT walls (swing cones + twist ranges). Higher = firmer wall so joints don't over-rotate past their range, but too high for the substep count over-drives the solver into jitter. 60 = soft, 90 = balanced default, 120+ = firm (raise Solver Substeps to match). Takes effect on next ragdoll activation.");
+
                 var selfCollision = config.RagdollSelfCollision;
                 if (ImGui.Checkbox("Self Collision##ragdoll", ref selfCollision))
                 {
