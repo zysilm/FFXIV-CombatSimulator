@@ -93,19 +93,10 @@ public unsafe class RagdollController : IDisposable
     private const float GenericMaxAngularVelocity = 16f; // rad/s — clamp per frame (tiny bodies spin up fastest)
 
     // Human/player rigs are hand-tuned and normally stable, but their constraint solver can
-    // still occasionally diverge (visible jitter that amplifies into a full-screen explosion).
-    // They get the same per-substep velocity clamp as generic rigs but with a HIGHER ceiling,
-    // so violent-but-valid motion (a body flung by a heavy hit) is preserved and only runaway
-    // blow-up is caught. A falling/flung ragdoll stays well under these; an exploding one
-    // shoots far past them.
-    // Tuning: a falling/flung human ragdoll runs ~3-12 m/s linear and ~5-15 rad/s angular,
-    // so these sit above believable motion but well below a divergence (100s of m/s). Lower
-    // them if jitter still escalates; raise them if hard flings look clipped.
-    private const float HumanMaxLinearVelocity = 18f;   // m/s — safety net only
-    // Angular ceiling: low enough that joints can't whip past their swing/twist limits before
-    // the limit walls engage (fast spins were a cause of shoulder/waist over-rotation), but
-    // still well above natural ragdoll flailing so motion stays lively.
-    private const float HumanMaxAngularVelocity = 14f;  // rad/s — safety net + anti-overspin
+    // still occasionally diverge. Keep the ceiling above normal ragdoll motion so it only
+    // catches runaway energy, not ordinary falls or cinematic drags.
+    private const float HumanMaxLinearVelocity = 18f;
+    private const float HumanMaxAngularVelocity = 14f;
 
     // Ground height (physics ground may be lowered by floor offset)
     private float groundY;
@@ -1361,23 +1352,12 @@ public unsafe class RagdollController : IDisposable
             boneIdxToBodyHandle[rb.BoneIndex] = rb.BodyHandle;
 
         var jointSpring = new SpringSettings(30, 1);
-        // Limit walls (swing cones + twist ranges). Firmer than the positional joint spring
-        // so joints don't blow through their range under momentum (e.g. shoulders/waist
-        // over-rotating before a soft wall arrests them). The frequency is configurable
-        // (RagdollLimitSpringFrequency) because a wall stiffer than ~the step rate can
-        // over-drive the 1-substep solver into jitter — pair a high value with
-        // RagdollSolverSubsteps > 1, or back it off, and A/B in-game.
         var limitSpring = new SpringSettings(config.RagdollLimitSpringFrequency, 1);
         var motorDamping = 0.01f;
 
-        // BEPU's TwistLimit measurement degenerates once a ball joint's swing exceeds ~90°
-        // (the twist axis tilts past the reference plane), letting the limb spin freely about
-        // its own axis — that rogue spin then torques neighbours (e.g. arms twisting the chest
-        // j_sebo_c). Rather than silently clamp the user's configured swing range (which made
-        // a configured 1.8rad shoulder secretly behave as ~80°), we keep the full swing cone
-        // and instead SKIP the twist limit on wide joints, where its measurement is unreliable
-        // anyway. Tight joints (<= this threshold) keep their twist limit.
-        const float ballJointMaxSwing = 1.40f; // ~80°
+        // BEPU's TwistLimit measurement degenerates once a ball joint's swing exceeds ~90
+        // degrees. Keep the full configured swing cone and skip twist limits on wide joints.
+        const float ballJointMaxSwing = 1.40f;
 
         for (int i = 0; i < ragdollBones.Count; i++)
         {
@@ -1436,21 +1416,7 @@ public unsafe class RagdollController : IDisposable
             {
                 // Hinge: constrains position AND restricts rotation to one plane.
                 // Per BEPU RagdollDemo: Hinge + SwingLimit + AngularMotor (NO TwistLimit).
-                //
-                // Anatomical hinge axis = the normal of the plane the limb is already bent
-                // in at the death pose, from the parent and child segment directions. Knees
-                // and elbows are flexed at death, so the two segments are non-collinear and
-                // define a reliable bend plane. This is far more robust than deriving the axis
-                // from world-up (ComputeHingeAxis), which picks the wrong plane for splayed or
-                // twisted death poses — and a wrong plane lets the joint swing "sideways" past
-                // straight, reading as hyperextension even though SwingLimit=π/2 is correct.
-                var parentSegForAxis = Vector3.Transform(Vector3.UnitY, parentBodyRef.Pose.Orientation);
-                var bendNormal = Vector3.Cross(parentSegForAxis, segDirWorld);
-                Vector3 hingeAxisWorld;
-                if (bendNormal.LengthSquared() > 0.01f) // segments non-collinear (>~6° bend)
-                    hingeAxisWorld = Vector3.Normalize(bendNormal);
-                else
-                    hingeAxisWorld = ComputeHingeAxis(segDirWorld); // straight-limb fallback
+                var hingeAxisWorld = ComputeHingeAxis(segDirWorld);
                 var hingeAxisLocalChild = Vector3.Normalize(Vector3.Transform(
                     hingeAxisWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
                 var hingeAxisLocalParent = Vector3.Normalize(Vector3.Transform(
@@ -1564,16 +1530,13 @@ public unsafe class RagdollController : IDisposable
                         {
                             AxisLocalA = axisChildLocal,
                             AxisLocalB = axisParentLocal,
-                            // Honor the configured swing range — see ballJointMaxSwing note;
-                            // we drop the twist limit on wide joints instead of clamping swing.
                             MaximumSwingAngle = boneDef.SwingLimit,
                             SpringSettings = limitSpring, // stiff wall even for soft bodies
                         });
                 }
 
                 // TwistLimit: asymmetric axial rotation around the bone's segment axis.
-                // Skipped on wide-swing joints (> ballJointMaxSwing): past ~90° the twist
-                // basis degenerates and the limit would inject rogue spin into neighbours.
+                // Skipped on wide-swing joints where the twist basis becomes unreliable.
                 if ((boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0) &&
                     boneDef.SwingLimit <= ballJointMaxSwing)
                 {
@@ -2142,8 +2105,6 @@ public unsafe class RagdollController : IDisposable
                 CapturePrevBodyPoses(boneCount);
                 hasPrevPhysicsState = true;
                 simulation.Timestep(FixedTimestep);
-                // Clamp every rig now (humans too) — the safety net that stops jitter from
-                // amplifying into a full-screen explosion.
                 ClampVelocities(maxLinear, maxAngular);
                 physicsAccumulator -= FixedTimestep;
                 substeps++;

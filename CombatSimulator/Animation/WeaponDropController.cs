@@ -32,7 +32,6 @@ public unsafe class WeaponDropController : IDisposable
     private BepuSimulation? simulation;
     private TypedIndex weaponShapeIndex;
     private BodyInertia weaponInertia;
-    private TypedIndex groundTileShapeIndex;
 
     // Snapshot of physics-relevant config used when sim was created.
     // If user changes any of these, we recreate the sim on next render frame
@@ -51,6 +50,7 @@ public unsafe class WeaponDropController : IDisposable
         public int MainBoneIndex = -1;
         public int OffBoneIndex = -1;
         public StaticHandle? GroundTile;
+        public TypedIndex? GroundShape;
     }
     private readonly Dictionary<nint, Entry> entries = new();
 
@@ -60,15 +60,6 @@ public unsafe class WeaponDropController : IDisposable
         public float Delay;
     }
     private readonly List<Pending> pending = new();
-
-    // Frame-rate-independent physics timing (see RagdollController for rationale). The
-    // render hook fires once per rendered frame at whatever framerate the game runs;
-    // stepping a fixed 1/60 each call made weapons fall slow below 60fps and fast above.
-    private long lastFrameTimestamp;
-    private float physicsAccumulator;
-    private const float FixedTimestep = 1f / 60f;
-    private const int MaxSubstepsPerFrame = 4;
-    private const float MaxFrameDelta = 0.1f;
 
     private static readonly string[] WeaponMainHandBones = { "n_buki_r", "j_buki_r", "n_hte_r" };
     private static readonly string[] WeaponOffHandBones = { "n_buki_l", "j_buki_l", "n_hte_l" };
@@ -123,14 +114,13 @@ public unsafe class WeaponDropController : IDisposable
         if (entry.Main.HasValue) simulation.Bodies.Remove(entry.Main.Value);
         if (entry.Off.HasValue) simulation.Bodies.Remove(entry.Off.Value);
         if (entry.GroundTile.HasValue) simulation.Statics.Remove(entry.GroundTile.Value);
+        if (entry.GroundShape.HasValue) simulation.Shapes.Remove(entry.GroundShape.Value);
     }
 
     private void OnRenderFrame()
     {
         try
         {
-            var dt = ComputeFrameDelta();
-
             // Recreate sim if any physics-relevant config changed
             if (simulation != null && ConfigSnapshotChanged())
             {
@@ -146,7 +136,7 @@ public unsafe class WeaponDropController : IDisposable
                 for (int i = pending.Count - 1; i >= 0; i--)
                 {
                     var p = pending[i];
-                    p.Delay -= dt;
+                    p.Delay -= 1f / 60f;
                     if (p.Delay <= 0f)
                     {
                         pending.RemoveAt(i);
@@ -157,18 +147,7 @@ public unsafe class WeaponDropController : IDisposable
 
             if (entries.Count == 0 || simulation == null) return;
 
-            // Advance the simulation in fixed substeps for as much real time as elapsed,
-            // so weapon fall speed is the same regardless of framerate.
-            physicsAccumulator += dt;
-            int substeps = 0;
-            while (physicsAccumulator >= FixedTimestep && substeps < MaxSubstepsPerFrame)
-            {
-                simulation.Timestep(FixedTimestep);
-                physicsAccumulator -= FixedTimestep;
-                substeps++;
-            }
-            if (substeps == MaxSubstepsPerFrame)
-                physicsAccumulator = 0f;
+            simulation.Timestep(1f / 60f);
 
             foreach (var (addr, entry) in entries)
             {
@@ -188,22 +167,6 @@ public unsafe class WeaponDropController : IDisposable
         {
             log.Error(ex, "WeaponDropController: error in render frame");
         }
-    }
-
-    /// <summary>Real wall-clock seconds since the previous render frame, clamped to a sane range.</summary>
-    private float ComputeFrameDelta()
-    {
-        var now = System.Diagnostics.Stopwatch.GetTimestamp();
-        if (lastFrameTimestamp == 0)
-        {
-            lastFrameTimestamp = now;
-            return FixedTimestep;
-        }
-        var dt = (float)((now - lastFrameTimestamp) / (double)System.Diagnostics.Stopwatch.Frequency);
-        lastFrameTimestamp = now;
-        if (dt < 0f) dt = 0f;
-        if (dt > MaxFrameDelta) dt = MaxFrameDelta;
-        return dt;
     }
 
     private void TrySpawn(nint characterAddress)
@@ -238,22 +201,70 @@ public unsafe class WeaponDropController : IDisposable
             return;
         }
 
-        // Per-entity ground tile under the spawn point
-        var groundY = skelWorldPos.Y;
-        if (BGCollisionModule.RaycastMaterialFilter(
-                new Vector3(skelWorldPos.X, skelWorldPos.Y + 2.0f, skelWorldPos.Z),
-                new Vector3(0, -1, 0), out var hit, 50f))
-        {
-            groundY = hit.Point.Y;
-        }
-        entry.GroundTile = simulation.Statics.Add(new StaticDescription(
-            new Vector3(skelWorldPos.X, groundY - 0.05f, skelWorldPos.Z),
-            Quaternion.Identity,
-            groundTileShapeIndex));
+        // Per-entity terrain patch under the spawn point. A flat box looks fine on level
+        // ground but makes weapons visibly float or clip on slopes, so build a small mesh
+        // from game collision raycasts.
+        (entry.GroundTile, entry.GroundShape) = CreateTerrainPatch(skelWorldPos.X, skelWorldPos.Z, skelWorldPos.Y);
 
         entries[characterAddress] = entry;
         var n = (entry.Main.HasValue ? 1 : 0) + (entry.Off.HasValue ? 1 : 0);
-        log.Info($"WeaponDropController: spawned {n} weapon(s) for 0x{characterAddress:X} (groundY={groundY:F2})");
+        log.Info($"WeaponDropController: spawned {n} weapon(s) for 0x{characterAddress:X}");
+    }
+
+    private (StaticHandle StaticHandle, TypedIndex ShapeIndex) CreateTerrainPatch(float centerX, float centerZ, float defaultGroundY)
+    {
+        const float terrainRadius = 4.0f;
+        const float terrainStep = 0.5f;
+        var gridSize = (int)(terrainRadius * 2 / terrainStep) + 1;
+
+        var patchGroundY = defaultGroundY;
+        if (BGCollisionModule.RaycastMaterialFilter(
+                new Vector3(centerX, defaultGroundY + 5.0f, centerZ),
+                new Vector3(0, -1, 0), out var centerHit, 80f))
+            patchGroundY = centerHit.Point.Y;
+
+        var heights = new float[gridSize, gridSize];
+        var ox = centerX - terrainRadius;
+        var oz = centerZ - terrainRadius;
+        for (int gz = 0; gz < gridSize; gz++)
+        for (int gx = 0; gx < gridSize; gx++)
+        {
+            var wx = ox + gx * terrainStep;
+            var wz = oz + gz * terrainStep;
+            if (BGCollisionModule.RaycastMaterialFilter(
+                    new Vector3(wx, patchGroundY + 5.0f, wz),
+                    new Vector3(0, -1, 0), out var gridHit, 80f))
+                heights[gx, gz] = gridHit.Point.Y;
+            else
+                heights[gx, gz] = patchGroundY;
+        }
+
+        var triCount = (gridSize - 1) * (gridSize - 1) * 2;
+        bufferPool!.Take<Triangle>(triCount, out var triangles);
+        var ti = 0;
+        for (int gz = 0; gz < gridSize - 1; gz++)
+        for (int gx = 0; gx < gridSize - 1; gx++)
+        {
+            var x0 = ox + gx * terrainStep;
+            var x1 = x0 + terrainStep;
+            var z0 = oz + gz * terrainStep;
+            var z1 = z0 + terrainStep;
+            var v00 = new Vector3(x0, heights[gx, gz], z0);
+            var v10 = new Vector3(x1, heights[gx + 1, gz], z0);
+            var v01 = new Vector3(x0, heights[gx, gz + 1], z1);
+            var v11 = new Vector3(x1, heights[gx + 1, gz + 1], z1);
+
+            triangles[ti++] = new Triangle(v00, v10, v01);
+            triangles[ti++] = new Triangle(v10, v11, v01);
+        }
+
+        var mesh = new BepuPhysics.Collidables.Mesh(triangles, Vector3.One, bufferPool);
+        var shapeIndex = simulation!.Shapes.Add(mesh);
+        var staticHandle = simulation.Statics.Add(new StaticDescription(
+            Vector3.Zero,
+            Quaternion.Identity,
+            shapeIndex));
+        return (staticHandle, shapeIndex);
     }
 
     private BodyHandle? TryCreateWeaponBody(SkeletonAccess skel, string[] boneCandidates,
@@ -351,8 +362,6 @@ public unsafe class WeaponDropController : IDisposable
         var weaponShape = new Capsule(config.WeaponDropRadius, config.WeaponDropHalfLength * 2f);
         weaponShapeIndex = simulation.Shapes.Add(weaponShape);
         weaponInertia = weaponShape.ComputeInertia(config.WeaponDropMass);
-
-        groundTileShapeIndex = simulation.Shapes.Add(new Box(8f, 0.1f, 8f));
 
         log.Info($"WeaponDropController: simulation created (gravity={simGravity:F2}, bounce={simBounce:F2}, friction={simFriction:F2}, iter={simSolverIterations})");
     }
