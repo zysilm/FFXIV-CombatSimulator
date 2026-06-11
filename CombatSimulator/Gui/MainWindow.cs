@@ -2770,6 +2770,14 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Spring frequency of the joint LIMIT walls (swing cones + twist ranges). Higher = firmer wall so joints don't over-rotate past their range, but too high for the substep count over-drives the solver into jitter. 60 = soft, 90 = balanced default, 120+ = firm (raise Solver Substeps to match). Takes effect on next ragdoll activation.");
 
+                var experimentalJointFrames = config.RagdollExperimentalJointFrames;
+                if (ImGui.Checkbox("Experimental Joint Frames##ragdoll", ref experimentalJointFrames))
+                {
+                    config.RagdollExperimentalJointFrames = experimentalJointFrames;
+                    config.Save();
+                }
+                HelpMarker("Beta. Uses parent/child anatomical joint frames for hinge axes and ball-joint twist references. Default off; takes effect on next ragdoll activation.");
+
                 var selfCollision = config.RagdollSelfCollision;
                 if (ImGui.Checkbox("Self Collision##ragdoll", ref selfCollision))
                 {

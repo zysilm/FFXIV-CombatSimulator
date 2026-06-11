@@ -953,6 +953,78 @@ public unsafe class RagdollController : IDisposable
         return Vector3.Normalize(hingeAxis);
     }
 
+    private static Vector3 NormalizeOrFallback(Vector3 value, Vector3 fallback)
+    {
+        if (value.LengthSquared() > 1e-6f)
+            return Vector3.Normalize(value);
+
+        return fallback.LengthSquared() > 1e-6f ? Vector3.Normalize(fallback) : Vector3.UnitY;
+    }
+
+    private static Vector3 ProjectOntoPlane(Vector3 value, Vector3 planeNormal)
+    {
+        var normal = NormalizeOrFallback(planeNormal, Vector3.UnitY);
+        return value - Vector3.Dot(value, normal) * normal;
+    }
+
+    private Vector3 ComputeLegacyBallTwistReference(Vector3 segmentDir)
+    {
+        var segN = NormalizeOrFallback(segmentDir, Vector3.UnitY);
+        var refDir = Vector3.Cross(segN, Vector3.UnitY);
+        if (refDir.LengthSquared() < 0.001f)
+            refDir = Vector3.Cross(segN, Vector3.UnitX);
+
+        return NormalizeOrFallback(refDir, Vector3.UnitX);
+    }
+
+    private Vector3 ComputeExperimentalBallTwistReference(Vector3 segmentDir, Vector3 parentSegmentDir)
+    {
+        var segN = NormalizeOrFallback(segmentDir, Vector3.UnitY);
+        var parentN = NormalizeOrFallback(parentSegmentDir, Vector3.UnitY);
+
+        // Prefer the parent's segment projected into the child's twist plane. This makes
+        // ball-joint twist limits use an anatomical parent/child frame instead of world up.
+        var refDir = ProjectOntoPlane(parentN, segN);
+        if (refDir.LengthSquared() < 0.001f)
+            return ComputeLegacyBallTwistReference(segN);
+
+        return NormalizeOrFallback(refDir, ComputeLegacyBallTwistReference(segN));
+    }
+
+    private Vector3 ComputeExperimentalHingeAxis(Vector3 parentSegmentDir, Vector3 childSegmentDir)
+    {
+        var parentN = NormalizeOrFallback(parentSegmentDir, Vector3.UnitY);
+        var childN = NormalizeOrFallback(childSegmentDir, Vector3.UnitY);
+        var hingeAxis = Vector3.Cross(parentN, childN);
+
+        // Anatomical hinge axes are undefined for near-straight limbs. Keep main's
+        // world-up/character-forward fallback in that case.
+        if (hingeAxis.LengthSquared() < 0.001f)
+            return ComputeHingeAxis(childN);
+
+        var legacyAxis = ComputeHingeAxis(childN);
+        hingeAxis = Vector3.Normalize(hingeAxis);
+        if (Vector3.Dot(hingeAxis, legacyAxis) < 0)
+            hingeAxis = -hingeAxis;
+
+        return hingeAxis;
+    }
+
+    private Vector3 ComputeHingeForward(Vector3 hingeAxis, Vector3 parentSegmentDir, Vector3 childSegmentDir)
+    {
+        var parentN = NormalizeOrFallback(parentSegmentDir, Vector3.UnitY);
+        var childN = NormalizeOrFallback(childSegmentDir, Vector3.UnitY);
+        var forward = Vector3.Cross(hingeAxis, parentN);
+        if (forward.LengthSquared() < 0.001f)
+            forward = ProjectOntoPlane(childN, hingeAxis);
+
+        forward = NormalizeOrFallback(forward, childN);
+        if (Vector3.Dot(forward, childN) < 0)
+            forward = -forward;
+
+        return forward;
+    }
+
     private bool InitializePhysics()
     {
         var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
@@ -1410,13 +1482,18 @@ public unsafe class RagdollController : IDisposable
             var segDirWorld = Vector3.Transform(Vector3.UnitY, childBodyRef.Pose.Orientation);
             if (segDirWorld.LengthSquared() < 0.001f)
                 segDirWorld = Vector3.UnitY;
+            var parentSegDir = Vector3.Transform(Vector3.UnitY, parentBodyRef.Pose.Orientation);
+            if (parentSegDir.LengthSquared() < 0.001f)
+                parentSegDir = Vector3.UnitY;
 
             // --- Positional + angular constraint ---
             if (boneDef.Joint == JointType.Hinge)
             {
                 // Hinge: constrains position AND restricts rotation to one plane.
                 // Per BEPU RagdollDemo: Hinge + SwingLimit + AngularMotor (NO TwistLimit).
-                var hingeAxisWorld = ComputeHingeAxis(segDirWorld);
+                var hingeAxisWorld = config.RagdollExperimentalJointFrames
+                    ? ComputeExperimentalHingeAxis(parentSegDir, segDirWorld)
+                    : ComputeHingeAxis(segDirWorld);
                 var hingeAxisLocalChild = Vector3.Normalize(Vector3.Transform(
                     hingeAxisWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
                 var hingeAxisLocalParent = Vector3.Normalize(Vector3.Transform(
@@ -1444,17 +1521,7 @@ public unsafe class RagdollController : IDisposable
                 {
                     // "Forward" direction on the parent body = Cross(hingeAxis, parentSegDir).
                     // This is the direction the child limb swings toward during flexion.
-                    var parentSegDir = Vector3.Transform(Vector3.UnitY, parentBodyRef.Pose.Orientation);
-                    var forwardWorld = Vector3.Normalize(Vector3.Cross(hingeAxisWorld, parentSegDir));
-
-                    // The cross product can point in either direction. We validate it
-                    // against the ACTUAL child segment direction from the init pose.
-                    // The death animation already has joints bent correctly, so the child
-                    // segment (shin for knees, forearm for elbows) points in the direction
-                    // of correct flexion. forwardWorld must agree with that direction.
-                    // This is robust regardless of character orientation or facing convention.
-                    if (Vector3.Dot(forwardWorld, segDirWorld) < 0)
-                        forwardWorld = -forwardWorld;
+                    var forwardWorld = ComputeHingeForward(hingeAxisWorld, parentSegDir, segDirWorld);
 
                     var swingAxisLocalParent = Vector3.Normalize(Vector3.Transform(
                         forwardWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
@@ -1540,10 +1607,9 @@ public unsafe class RagdollController : IDisposable
                 if ((boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0) &&
                     boneDef.SwingLimit <= ballJointMaxSwing)
                 {
-                    var refDir = Vector3.Cross(segDirWorld, Vector3.UnitY);
-                    if (refDir.LengthSquared() < 0.001f)
-                        refDir = Vector3.Cross(segDirWorld, Vector3.UnitX);
-                    refDir = Vector3.Normalize(refDir);
+                    var refDir = config.RagdollExperimentalJointFrames
+                        ? ComputeExperimentalBallTwistReference(segDirWorld, parentSegDir)
+                        : ComputeLegacyBallTwistReference(segDirWorld);
 
                     var twistBasis = CreateTwistBasis(segDirWorld, refDir);
 
