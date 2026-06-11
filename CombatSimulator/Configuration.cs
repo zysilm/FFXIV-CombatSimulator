@@ -246,6 +246,17 @@ public class Configuration : IPluginConfiguration
     public float ActiveCameraMinZoomDistance { get; set; } = 1.0f;
     public bool ActiveCameraPreventFade { get; set; } = false;
 
+    // Fighting Camera (1v1): frame the player + locked target together with auto-zoom,
+    // then on either death transition to the dead character's bone (active-cam follow).
+    public bool ActiveCameraFightingMode { get; set; } = false;
+    public float ActiveCameraFightingTransitionDuration { get; set; } = 1.0f;
+    public float ActiveCameraFightingZoomMargin { get; set; } = 1.3f;
+    public float ActiveCameraFightingMinDistance { get; set; } = 2.5f;
+    public float ActiveCameraFightingMaxDistance { get; set; } = 15.0f;
+    public float ActiveCameraFightingSmoothing { get; set; } = 8.0f;
+    public float ActiveCameraFightingHeightOffset { get; set; } = 0f;
+    public string ActiveCameraFightingBoneName { get; set; } = "j_sebo_b";
+
     // Legacy combined skill VFX toggle. Migrated to the split toggles below.
     public bool EnableSkillVfx { get; set; } = false;
     public bool EnableCharacterVfx { get; set; } = true;

@@ -146,6 +146,16 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.GetLockedTargetId = () => playerTargetController.LockedTargetEntityId;
         combatEngine.OnPlayerHitByNpc = playerTargetController.NotifyPlayerHitBy;
 
+        // Fighting camera: frame the player + locked 1v1 target; suppress Death Cam when it owns the camera.
+        activeCameraController.GetFightingTargetAddress = () =>
+        {
+            var t = playerTargetController.LockedTarget;
+            if (t != null && t.IsSpawned && t.State.IsAlive && t.Address != nint.Zero)
+                return t.Address;
+            return null;
+        };
+        combatEngine.SuppressDeathCam = () => activeCameraController.IsFightingEngaged;
+
         mapEnemyController = new MapEnemyController(
             objectTable,
             config,
@@ -207,6 +217,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         {
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
+            activeCameraController.ResetFightingCamera();
 
             // Keep companions across a combat *reset* (IsActive stays true) when the
             // option is set — revive/heal them instead of despawning. Stopping the
@@ -228,7 +239,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         // Weapon drop is co-triggered with ragdoll (same delay), so writes survive while animation is frozen
         combatEngine.OnNpcDeathRagdoll = OnNpcDeathRagdoll;
-        combatEngine.OnPlayerDeath = addr => weaponDropController.SpawnFor(addr, config.RagdollActivationDelay);
+        combatEngine.OnPlayerDeath = addr =>
+        {
+            weaponDropController.SpawnFor(addr, config.RagdollActivationDelay);
+            activeCameraController.NotifyCombatantDeath(addr, isPlayer: true);
+        };
 
         // Hook safety checker — register native functions we CALL (not hook) that other plugins may hook.
         // We check for JMP detours at each address to detect third-party hooks.
@@ -541,6 +556,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnNpcDeathRagdoll(nint address)
     {
+        // Fighting camera death transition must run regardless of ragdoll settings.
+        activeCameraController.NotifyCombatantDeath(address, isPlayer: false);
+
         if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
         {
             return;

@@ -114,6 +114,12 @@ public class CombatEngine : IDisposable
     /// </summary>
     public Action<nint>? OnPlayerDeath { get; set; }
 
+    /// <summary>
+    /// When set and returns true, the Death Cam is not activated on player death — the Fighting
+    /// Camera handles the death transition itself so the two don't fight over the camera.
+    /// </summary>
+    public Func<bool>? SuppressDeathCam { get; set; }
+
     // Configuration (set from plugin config)
     public float DamageMultiplier { get; set; } = 1.0f;
     public bool EnableCriticalHits { get; set; } = true;
@@ -1297,7 +1303,8 @@ public class CombatEngine : IDisposable
                 animationController.PlayPlayerDeath();
                 TriggerEnemyVictoryIfPartyDefeated();
                 ApplyGlamourer();
-                deathCamController?.Activate();
+                if (!(SuppressDeathCam?.Invoke() ?? false))
+                    deathCamController?.Activate();
 
                 // Activate ragdoll physics on player death + fire weapon-drop hook
                 {
