@@ -44,7 +44,7 @@ public unsafe class NpcAiController : IDisposable
     private const float VNavmeshWaypointReachDistance = 0.45f;
     private const float VNavmeshLookaheadDistance = 1.25f;
     private const float PartyMeleeAttackRangeBuffer = 0.25f;
-    private const float PartyAttackRangeHysteresis = 0.15f;
+    private const float PartyAttackRangeHysteresis = 0.4f;
     private const float PartyApproachMovementEpsilon = 0.02f;
     private const float PartyApproachDebugInterval = 0.5f;
     // Low-pass time constant (seconds) for the steered enemy approach heading.
@@ -55,7 +55,7 @@ public unsafe class NpcAiController : IDisposable
     // Within (approach distance + lock buffer) an enemy locks its angle and stops;
     // it only unlocks to re-approach if pushed beyond (approach distance + unlock).
     private const float ApproachLockBuffer = 1.5f;
-    private const float ApproachUnlockBuffer = 5.0f;
+    private const float ApproachUnlockBuffer = 1.5f;
 
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
@@ -85,6 +85,7 @@ public unsafe class NpcAiController : IDisposable
         public uint TargetEntityId { get; set; }
         public Vector3 SmoothedMoveDir { get; set; }
         public bool HasSmoothedMoveDir { get; set; }
+        public bool WasHoldingRange { get; set; }
     }
 
     public NpcAiController(
@@ -267,7 +268,7 @@ public unsafe class NpcAiController : IDisposable
                 if (!partyMode || (!hasLivingCompanions && config.UseSoloTargetFormationWhenNoCompanions))
                 {
                     LogApproachRouteDebug(npc, "solo", partyMode, hasLivingCompanions);
-                    TickSoloApproach(npc, deltaTime, playerPos, i, approachNpcs.Count, terrainCache);
+                    TickSoloApproach(npc, deltaTime, playerPos, terrainCache);
                     continue;
                 }
 
@@ -777,8 +778,6 @@ public unsafe class NpcAiController : IDisposable
         SimulatedNpc npc,
         float deltaTime,
         Vector3 playerPos,
-        int npcIndex,
-        int totalNpcs,
         TerrainHeightCache? terrainCache)
     {
         if (npc.BattleChara == null) return;
@@ -797,39 +796,7 @@ public unsafe class NpcAiController : IDisposable
         var gameObj = (GameObject*)npc.BattleChara;
         var npcPos = (Vector3)gameObj->Position;
 
-        float distToPlayer = Vector3.Distance(npcPos, playerPos);
-        float targetDist = config.TargetApproachDistance;
-
-        Vector3 targetPos;
-        if (totalNpcs <= 1)
-        {
-            if (distToPlayer < 0.1f)
-            {
-                var player = Core.Services.ObjectTable.LocalPlayer;
-                float playerRot = player?.Rotation ?? 0;
-                var forward = new Vector3(-MathF.Sin(playerRot), 0, -MathF.Cos(playerRot));
-                targetPos = playerPos + forward * targetDist;
-            }
-            else
-            {
-                var dirFromPlayer = (npcPos - playerPos) / distToPlayer;
-                targetPos = playerPos + dirFromPlayer * targetDist;
-            }
-        }
-        else
-        {
-            var player = Core.Services.ObjectTable.LocalPlayer;
-            float playerRot = player?.Rotation ?? 0;
-
-            float arcSpan = MathF.PI * 4f / 3f;
-            float angleStep = totalNpcs > 1 ? arcSpan / (totalNpcs - 1) : 0;
-            float startAngle = playerRot - arcSpan / 2f;
-            float angle = startAngle + angleStep * npcIndex;
-
-            var dir = new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle));
-            targetPos = playerPos + dir * targetDist;
-        }
-
+        var targetPos = ComputeApproachGoal(npc, npcPos, playerPos);
         targetPos.Y = playerPos.Y + config.DefaultNpcHeightOffset;
 
         var moveTarget = targetPos;
@@ -920,7 +887,7 @@ public unsafe class NpcAiController : IDisposable
             if (terrainCache != null && approachPaths.TryGetValue(npc.Address, out var holdPathState))
                 CorrectStableRootHeight(gameObj, npcPos, terrainCache, holdPathState, deltaTime, preserveInitialClearance: false);
 
-            LogPartyApproachDebug(npc, "no-plan", npcPos, npcTargetPos, null, npcPos, false, distToTarget: FlatDistance(npcPos, npcTargetPos), attackRange: GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis);
+            LogPartyApproachDebug(npc, "no-plan", npcPos, npcTargetPos, null, npcPos, false, distToTarget: FlatDistance(npcPos, npcTargetPos), attackRange: GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer);
             StopApproachMoveAnim(npc);
             return;
         }
@@ -928,17 +895,27 @@ public unsafe class NpcAiController : IDisposable
         var targetPos = partyPlan.Goal;
         var facePos = partyPlan.HasFaceTarget ? partyPlan.FaceTarget : npcPos;
         var distToTarget = FlatDistance(npcPos, npcTargetPos);
-        var partyAttackRange = GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis;
-        if (distToTarget <= partyAttackRange)
+        var partyAttackRange = GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer;
+        var rangeStateAvailable = TryGetOrCreateApproachPathState(npc, out var rangeState);
+        var shouldHoldRange = rangeStateAvailable && rangeState.WasHoldingRange
+            ? distToTarget <= partyAttackRange + PartyAttackRangeHysteresis
+            : distToTarget <= partyAttackRange;
+        if (shouldHoldRange)
         {
-            if (terrainCache != null && TryGetOrCreateApproachPathState(npc, out var attackRangeState))
-                CorrectStableRootHeight(gameObj, npcPos, terrainCache, attackRangeState, deltaTime, preserveInitialClearance: false);
+            if (rangeStateAvailable)
+            {
+                rangeState.WasHoldingRange = true;
+                if (terrainCache != null)
+                    CorrectStableRootHeight(gameObj, npcPos, terrainCache, rangeState, deltaTime, preserveInitialClearance: false);
+            }
 
             LogPartyApproachDebug(npc, "in-range", npcPos, npcTargetPos, partyPlan, npcPos, false, distToTarget, partyAttackRange);
             StopApproachMoveAnim(npc);
             ForceRotateToward(npc, npcTargetPos, deltaTime);
             return;
         }
+        if (rangeStateAvailable)
+            rangeState.WasHoldingRange = false;
 
         var moveTarget = targetPos;
         var hasVnavmeshTarget = TryUpdateVNavmeshPath(
@@ -1212,7 +1189,7 @@ public unsafe class NpcAiController : IDisposable
     private float GetEffectiveNpcSkillRange(SimulatedNpc npc, SimulatedEntityState target, float skillRange)
     {
         if (UsesPartyConfiguredRange(npc, target))
-            return MathF.Min(skillRange, GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis);
+            return MathF.Min(skillRange, GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer);
 
         return skillRange;
     }

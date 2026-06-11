@@ -88,7 +88,7 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float FollowStopDistance = 0.6f;
     private const float CombatAnchorRelocateDistance = 10.0f;
     private const float MeleeAttackRangeBuffer = 0.25f;
-    private const float PartyAttackRangeHysteresis = 0.15f;
+    private const float PartyAttackRangeHysteresis = 0.4f;
     private const float SenseInterval = 1.0f;
     private const float ReachabilityCacheTtl = 0.5f;
     private const float TargetSelectInterval = 0.25f;
@@ -1020,7 +1020,7 @@ public unsafe class CombatCompanionManager : IDisposable
         var targetPos = (Vector3)targetObj->Position;
         var sourcePos = (Vector3)sourceObj->Position;
         var dist = FlatDistance(sourcePos, targetPos);
-        var effectiveRange = GetPartyAttackRange(companion.Behavior.AutoAttackStyle) + MeleeAttackRangeBuffer + PartyAttackRangeHysteresis;
+        var effectiveRange = GetPartyAttackRange(companion.Behavior.AutoAttackStyle) + MeleeAttackRangeBuffer;
         var reachability = EvaluateCompanionReachability(companion, target, enemies);
         if (reachability.Reachable || dist <= effectiveRange)
         {
@@ -1040,7 +1040,10 @@ public unsafe class CombatCompanionManager : IDisposable
         var currentUnreachable = companion.UnreachableTargetId == target.SimulatedEntityId &&
                                  companion.UnreachableTimer >= ReachabilityUnreachableDelay;
 
-        if (dist > effectiveRange)
+        var wasHoldingRange = companion.AiState is CompanionAiState.CombatReady or CompanionAiState.ActionLocked;
+        var resumeRange = effectiveRange + PartyAttackRangeHysteresis;
+        var shouldMove = wasHoldingRange ? dist > resumeRange : dist > effectiveRange;
+        if (shouldMove)
         {
             if (MoveByPartyPlan(companion, deltaTime, targetPos, terrainCache))
                 return;
@@ -1269,7 +1272,7 @@ public unsafe class CombatCompanionManager : IDisposable
             : MathF.Max(0.5f, config.PartyMeleeAttackRange);
 
     private float GetPartySkillRange(float skillRange, NpcAttackStyle style)
-        => MathF.Min(skillRange, GetPartyAttackRange(style) + MeleeAttackRangeBuffer + PartyAttackRangeHysteresis);
+        => MathF.Min(skillRange, GetPartyAttackRange(style) + MeleeAttackRangeBuffer);
 
     private static float FlatDistance(Vector3 a, Vector3 b)
     {
