@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using Dalamud.Hooking;
@@ -47,6 +48,7 @@ public unsafe class ActiveCameraController : IDisposable
     // Camera distance override — allow closer zoom when active
     private float savedMinDistance;
     private bool distanceOverridden;
+    private readonly Dictionary<(nint Address, string BoneName), int> boneIndexCache = new();
 
     public bool IsActive { get; private set; }
 
@@ -580,13 +582,21 @@ public unsafe class ActiveCameraController : IDisposable
             var havokSkeleton = pose->Skeleton;
             if (havokSkeleton == null) return null;
 
-            int boneIndex = -1;
-            for (int i = 0; i < havokSkeleton->Bones.Length; i++)
+            var cacheKey = (characterAddress, boneName);
+            if (!boneIndexCache.TryGetValue(cacheKey, out var boneIndex) ||
+                boneIndex < 0 ||
+                boneIndex >= havokSkeleton->Bones.Length ||
+                havokSkeleton->Bones[boneIndex].Name.String != boneName)
             {
-                if (havokSkeleton->Bones[i].Name.String == boneName)
+                boneIndex = -1;
+                for (int i = 0; i < havokSkeleton->Bones.Length; i++)
                 {
-                    boneIndex = i;
-                    break;
+                    if (havokSkeleton->Bones[i].Name.String == boneName)
+                    {
+                        boneIndex = i;
+                        boneIndexCache[cacheKey] = i;
+                        break;
+                    }
                 }
             }
             if (boneIndex < 0) return null;
