@@ -11,7 +11,6 @@ using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
-using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 
 namespace CombatSimulator.Ai;
 
@@ -26,6 +25,7 @@ public unsafe class NpcAiController : IDisposable
     private readonly IClientState clientState;
     private readonly Configuration config;
     private readonly PartyEngagePlanner partyEngagePlanner;
+    private readonly TerrainHeightService terrainHeightService;
     private readonly IPluginLog log;
     private readonly Func<nint, bool> isExternallyControlled;
     private readonly Dictionary<nint, ApproachPathState> approachPaths = new();
@@ -43,8 +43,6 @@ public unsafe class NpcAiController : IDisposable
     private const float VNavmeshFloorResnapInterval = 0.25f;
     private const float VNavmeshWaypointReachDistance = 0.45f;
     private const float VNavmeshLookaheadDistance = 1.25f;
-    private const float TerrainGridStep = 0.5f;
-    private const int TerrainGridMaxSize = 33;
     private const float PartyMeleeAttackRangeBuffer = 0.25f;
     private const float PartyAttackRangeHysteresis = 0.15f;
     private const float PartyApproachMovementEpsilon = 0.02f;
@@ -89,73 +87,6 @@ public unsafe class NpcAiController : IDisposable
         public bool HasSmoothedMoveDir { get; set; }
     }
 
-    private sealed class ApproachTerrainCache
-    {
-        public float OriginX { get; init; }
-        public float OriginZ { get; init; }
-        public float Step { get; init; }
-        public int Width { get; init; }
-        public int Depth { get; init; }
-        public float[,] Heights { get; init; } = new float[0, 0];
-        public bool[,] Valid { get; init; } = new bool[0, 0];
-
-        public bool TrySample(float x, float z, out float y)
-        {
-            y = 0;
-            if (Width <= 0 || Depth <= 0 || Step <= 0)
-                return false;
-
-            var gx = (x - OriginX) / Step;
-            var gz = (z - OriginZ) / Step;
-            var ix = (int)MathF.Floor(gx);
-            var iz = (int)MathF.Floor(gz);
-
-            if (ix < 0 || iz < 0 || ix >= Width || iz >= Depth)
-                return false;
-
-            if (ix < Width - 1 && iz < Depth - 1)
-            {
-                var tx = gx - ix;
-                var tz = gz - iz;
-                if (Valid[ix, iz] && Valid[ix + 1, iz] && Valid[ix, iz + 1] && Valid[ix + 1, iz + 1])
-                {
-                    var y0 = Lerp(Heights[ix, iz], Heights[ix + 1, iz], tx);
-                    var y1 = Lerp(Heights[ix, iz + 1], Heights[ix + 1, iz + 1], tx);
-                    y = Lerp(y0, y1, tz);
-                    return true;
-                }
-            }
-
-            var bestDistSq = float.MaxValue;
-            var bestY = 0f;
-            for (int dz = -1; dz <= 1; dz++)
-            for (int dx = -1; dx <= 1; dx++)
-            {
-                var sx = ix + dx;
-                var sz = iz + dz;
-                if (sx < 0 || sz < 0 || sx >= Width || sz >= Depth || !Valid[sx, sz])
-                    continue;
-
-                var wx = OriginX + sx * Step;
-                var wz = OriginZ + sz * Step;
-                var distSq = (wx - x) * (wx - x) + (wz - z) * (wz - z);
-                if (distSq < bestDistSq)
-                {
-                    bestDistSq = distSq;
-                    bestY = Heights[sx, sz];
-                }
-            }
-
-            if (bestDistSq == float.MaxValue)
-                return false;
-
-            y = bestY;
-            return true;
-        }
-
-        private static float Lerp(float a, float b, float t) => a + (b - a) * t;
-    }
-
     public NpcAiController(
         CombatEngine combatEngine,
         AnimationController animationController,
@@ -164,6 +95,7 @@ public unsafe class NpcAiController : IDisposable
         IClientState clientState,
         Configuration config,
         PartyEngagePlanner partyEngagePlanner,
+        TerrainHeightService terrainHeightService,
         IPluginLog log,
         Func<nint, bool>? isExternallyControlled = null)
     {
@@ -174,6 +106,7 @@ public unsafe class NpcAiController : IDisposable
         this.clientState = clientState;
         this.config = config;
         this.partyEngagePlanner = partyEngagePlanner;
+        this.terrainHeightService = terrainHeightService;
         this.log = log;
         this.isExternallyControlled = isExternallyControlled ?? (_ => false);
 
@@ -317,7 +250,7 @@ public unsafe class NpcAiController : IDisposable
                     approachLockedGoals.Remove(address);
             }
 
-            var terrainCache = BuildApproachTerrainCache(playerPos, approachNpcs);
+            var terrainCache = BuildTerrainHeightCache(playerPos, approachNpcs);
 
             for (int i = 0; i < approachNpcs.Count; i++)
             {
@@ -846,7 +779,7 @@ public unsafe class NpcAiController : IDisposable
         Vector3 playerPos,
         int npcIndex,
         int totalNpcs,
-        ApproachTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         if (npc.BattleChara == null) return;
         if (npc.AiState == NpcAiState.Dead)
@@ -954,7 +887,7 @@ public unsafe class NpcAiController : IDisposable
         Vector3 playerPos,
         SimulatedEntityState npcTarget,
         Vector3 npcTargetPos,
-        ApproachTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         if (npc.BattleChara == null) return;
         if (npc.AiState == NpcAiState.Dead)
@@ -1545,7 +1478,7 @@ public unsafe class NpcAiController : IDisposable
         }
     }
 
-    private ApproachTerrainCache? BuildApproachTerrainCache(Vector3 playerPos, IReadOnlyList<SimulatedNpc> npcs)
+    private TerrainHeightCache? BuildTerrainHeightCache(Vector3 playerPos, IReadOnlyList<SimulatedNpc> npcs)
     {
         if (npcs.Count == 0)
             return null;
@@ -1569,49 +1502,14 @@ public unsafe class NpcAiController : IDisposable
             maxY = MathF.Max(maxY, pos.Y);
         }
 
-        var widthWorld = MathF.Max(maxX - minX, TerrainGridStep);
-        var depthWorld = MathF.Max(maxZ - minZ, TerrainGridStep);
-        var step = MathF.Max(TerrainGridStep,
-            MathF.Max(widthWorld, depthWorld) / MathF.Max(1, TerrainGridMaxSize - 1));
-        var width = Math.Clamp((int)MathF.Ceiling(widthWorld / step) + 1, 2, TerrainGridMaxSize);
-        var depth = Math.Clamp((int)MathF.Ceiling(depthWorld / step) + 1, 2, TerrainGridMaxSize);
-
-        var heights = new float[width, depth];
-        var valid = new bool[width, depth];
-        var originY = maxY + 10f;
-        const float rayDistance = 80f;
-
-        for (int z = 0; z < depth; z++)
-        for (int x = 0; x < width; x++)
-        {
-            var wx = minX + x * step;
-            var wz = minZ + z * step;
-            if (BGCollisionModule.RaycastMaterialFilter(
-                    new Vector3(wx, originY, wz),
-                    new Vector3(0, -1, 0),
-                    out var hit,
-                    rayDistance))
-            {
-                heights[x, z] = hit.Point.Y;
-                valid[x, z] = true;
-            }
-        }
-
-        return new ApproachTerrainCache
-        {
-            OriginX = minX,
-            OriginZ = minZ,
-            Step = step,
-            Width = width,
-            Depth = depth,
-            Heights = heights,
-            Valid = valid,
-        };
+        return terrainHeightService.EnsureCoverage(
+            new TerrainHeightBounds(minX, maxX, minZ, maxZ, maxY),
+            combatEngine.State.SimulationTime);
     }
 
     private Vector3 CorrectMovingRootHeight(
         Vector3 rootPosition,
-        ApproachTerrainCache terrainCache,
+        TerrainHeightCache terrainCache,
         ApproachPathState state,
         float deltaTime,
         bool preserveInitialClearance)
@@ -1641,7 +1539,7 @@ public unsafe class NpcAiController : IDisposable
     private void CorrectStableRootHeight(
         GameObject* gameObj,
         Vector3 rootPosition,
-        ApproachTerrainCache terrainCache,
+        TerrainHeightCache terrainCache,
         ApproachPathState state,
         float deltaTime,
         bool preserveInitialClearance)

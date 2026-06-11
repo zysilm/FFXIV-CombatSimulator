@@ -38,6 +38,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly NpcActionProfileProvider npcActionProfileProvider;
     private readonly DamageCalculator damageCalculator;
     private readonly PartyEngagePlanner partyEngagePlanner;
+    private readonly TerrainHeightService terrainHeightService;
     private readonly GlamourerIpc glamourerIpc;
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly AnimationController animationController;
@@ -107,6 +108,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         vnavmeshIpc = new VNavmeshIpc(pluginInterface, log);
         partyEngagePlanner = new PartyEngagePlanner(vnavmeshIpc);
+        terrainHeightService = new TerrainHeightService();
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, gameInterop, sigScanner, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
@@ -126,7 +128,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             victorySequenceController);
         companionManager = new CombatCompanionManager(
             objectTable, clientState, config, combatEngine, animationController,
-            movementBlockHook, vnavmeshIpc, targetManager, partyEngagePlanner, log);
+            movementBlockHook, vnavmeshIpc, targetManager, partyEngagePlanner, terrainHeightService, log);
         combatEngine.ResolveNpcTarget = companionManager.SelectEnemyTarget;
         combatEngine.ResolveExternalEntityAddress = companionManager.ResolveAddress;
         combatEngine.HasLivingCompanions = () => companionManager.HasLivingCompanions;
@@ -134,7 +136,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnPlayerDamageDealtToTarget = companionManager.RegisterPlayerDamage;
         npcAiController = new NpcAiController(
             combatEngine, animationController, movementBlockHook, vnavmeshIpc,
-            clientState, config, partyEngagePlanner, log, victorySequenceController.ControlsNpc);
+            clientState, config, partyEngagePlanner, terrainHeightService, log, victorySequenceController.ControlsNpc);
 
         // Custom in-sim target lock system (综合提升). Takes over the game's target
         // keybinds during simulation; the engine reads the locked target for

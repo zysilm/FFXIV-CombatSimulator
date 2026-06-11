@@ -30,6 +30,7 @@ public unsafe class CombatCompanionManager : IDisposable
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly ITargetManager targetManager;
     private readonly PartyEngagePlanner partyEngagePlanner;
+    private readonly TerrainHeightService terrainHeightService;
     private readonly IPluginLog log;
 
     private readonly List<CombatCompanion> companions = new();
@@ -80,8 +81,6 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float VNavmeshFloorResnapInterval = 0.25f;
     private const float VNavmeshWaypointReachDistance = 0.5f;
     private const float VNavmeshLookaheadDistance = 1.25f;
-    private const float TerrainGridStep = 0.5f;
-    private const int TerrainGridMaxSize = 33;
     private const float CompanionMovementEpsilon = 0.02f;
     private const float RecentDpsWindowSeconds = 8.0f;
     private const float RetargetDpsLead = 1.20f;
@@ -157,6 +156,7 @@ public unsafe class CombatCompanionManager : IDisposable
         VNavmeshIpc vnavmeshIpc,
         ITargetManager targetManager,
         PartyEngagePlanner partyEngagePlanner,
+        TerrainHeightService terrainHeightService,
         IPluginLog log)
     {
         this.objectTable = objectTable;
@@ -168,6 +168,7 @@ public unsafe class CombatCompanionManager : IDisposable
         this.vnavmeshIpc = vnavmeshIpc;
         this.targetManager = targetManager;
         this.partyEngagePlanner = partyEngagePlanner;
+        this.terrainHeightService = terrainHeightService;
         this.log = log;
     }
 
@@ -260,7 +261,7 @@ public unsafe class CombatCompanionManager : IDisposable
         TickSensing(deltaTime);
 
         vnavmeshIpc.RefreshStatus();
-        var terrainCache = BuildCompanionTerrainCache(enemies);
+        var terrainCache = BuildTerrainHeightCache(enemies);
         var assignedTargets = new Dictionary<uint, int>();
         var companionPressure = new Dictionary<PressureKey, int>();
         TickCombatAnchor(enemies);
@@ -970,7 +971,7 @@ public unsafe class CombatCompanionManager : IDisposable
         IReadOnlyList<SimulatedNpc> enemies,
         int companionIndex,
         int companionCount,
-        CompanionTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         if (!companion.IsSpawned || companion.BattleChara == null)
             return;
@@ -1197,7 +1198,7 @@ public unsafe class CombatCompanionManager : IDisposable
         float deltaTime,
         int companionIndex,
         int companionCount,
-        CompanionTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         var player = objectTable.LocalPlayer;
         if (player == null || companion.BattleChara == null)
@@ -1222,7 +1223,7 @@ public unsafe class CombatCompanionManager : IDisposable
         CombatCompanion companion,
         float deltaTime,
         Vector3 fallbackFaceTarget,
-        CompanionTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         if (!partyEngagePlanner.TryGetPlan(companion.SimulatedEntityId, out var plan))
         {
@@ -1239,7 +1240,7 @@ public unsafe class CombatCompanionManager : IDisposable
         CombatCompanion companion,
         PartyEngagePlan plan,
         float deltaTime,
-        CompanionTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         if (companion.BattleChara == null)
             return false;
@@ -1520,7 +1521,7 @@ public unsafe class CombatCompanionManager : IDisposable
         CombatCompanion companion,
         Vector3 targetPos,
         float deltaTime,
-        CompanionTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         var obj = (GameObject*)companion.BattleChara;
         var current = (Vector3)obj->Position;
@@ -1641,7 +1642,7 @@ public unsafe class CombatCompanionManager : IDisposable
         float deltaTime,
         int companionIndex,
         int companionCount,
-        CompanionTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         var player = objectTable.LocalPlayer;
         if (player == null || companion.BattleChara == null)
@@ -1703,7 +1704,7 @@ public unsafe class CombatCompanionManager : IDisposable
         int companionIndex,
         int companionCount,
         Vector3 facePos,
-        CompanionTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         var player = objectTable.LocalPlayer;
         if (player == null || companion.BattleChara == null)
@@ -1968,7 +1969,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
     private Vector3 CorrectMovingRootHeight(
         Vector3 rootPosition,
-        CompanionTerrainCache terrainCache,
+        TerrainHeightCache terrainCache,
         PathState state,
         float deltaTime)
     {
@@ -1995,7 +1996,7 @@ public unsafe class CombatCompanionManager : IDisposable
     private void CorrectStableRootHeight(
         GameObject* gameObj,
         Vector3 rootPosition,
-        CompanionTerrainCache terrainCache,
+        TerrainHeightCache terrainCache,
         PathState state,
         float deltaTime)
     {
@@ -2124,7 +2125,7 @@ public unsafe class CombatCompanionManager : IDisposable
         companion.RecentDps = companion.RecentDamage / RecentDpsWindowSeconds;
     }
 
-    private CompanionTerrainCache? BuildCompanionTerrainCache(IReadOnlyList<SimulatedNpc> enemies)
+    private TerrainHeightCache? BuildTerrainHeightCache(IReadOnlyList<SimulatedNpc> enemies)
     {
         if (companions.Count == 0)
             return null;
@@ -2177,44 +2178,9 @@ public unsafe class CombatCompanionManager : IDisposable
         if (!hasBounds)
             return null;
 
-        var widthWorld = MathF.Max(maxX - minX, TerrainGridStep);
-        var depthWorld = MathF.Max(maxZ - minZ, TerrainGridStep);
-        var step = MathF.Max(TerrainGridStep,
-            MathF.Max(widthWorld, depthWorld) / MathF.Max(1, TerrainGridMaxSize - 1));
-        var width = Math.Clamp((int)MathF.Ceiling(widthWorld / step) + 1, 2, TerrainGridMaxSize);
-        var depth = Math.Clamp((int)MathF.Ceiling(depthWorld / step) + 1, 2, TerrainGridMaxSize);
-
-        var heights = new float[width, depth];
-        var valid = new bool[width, depth];
-        var originY = maxY + 10f;
-        const float rayDistance = 80f;
-
-        for (var z = 0; z < depth; z++)
-        for (var x = 0; x < width; x++)
-        {
-            var wx = minX + x * step;
-            var wz = minZ + z * step;
-            if (BGCollisionModule.RaycastMaterialFilter(
-                    new Vector3(wx, originY, wz),
-                    new Vector3(0, -1, 0),
-                    out var hit,
-                    rayDistance))
-            {
-                heights[x, z] = hit.Point.Y;
-                valid[x, z] = true;
-            }
-        }
-
-        return new CompanionTerrainCache
-        {
-            OriginX = minX,
-            OriginZ = minZ,
-            Step = step,
-            Width = width,
-            Depth = depth,
-            Heights = heights,
-            Valid = valid,
-        };
+        return terrainHeightService.EnsureCoverage(
+            new TerrainHeightBounds(minX, maxX, minZ, maxZ, maxY),
+            combatEngine.State.SimulationTime);
     }
 
     private void TickPlayerRecentDps(float deltaTime)
@@ -2357,73 +2323,6 @@ public unsafe class CombatCompanionManager : IDisposable
         public bool HasStableRootTerrainClearance { get; set; }
         public float LastMoveRootY { get; set; }
         public bool HasLastMoveRootY { get; set; }
-    }
-
-    private sealed class CompanionTerrainCache
-    {
-        public float OriginX { get; init; }
-        public float OriginZ { get; init; }
-        public float Step { get; init; }
-        public int Width { get; init; }
-        public int Depth { get; init; }
-        public float[,] Heights { get; init; } = new float[0, 0];
-        public bool[,] Valid { get; init; } = new bool[0, 0];
-
-        public bool TrySample(float x, float z, out float y)
-        {
-            y = 0;
-            if (Width <= 0 || Depth <= 0 || Step <= 0)
-                return false;
-
-            var gx = (x - OriginX) / Step;
-            var gz = (z - OriginZ) / Step;
-            var ix = (int)MathF.Floor(gx);
-            var iz = (int)MathF.Floor(gz);
-
-            if (ix < 0 || iz < 0 || ix >= Width || iz >= Depth)
-                return false;
-
-            if (ix < Width - 1 && iz < Depth - 1)
-            {
-                var tx = gx - ix;
-                var tz = gz - iz;
-                if (Valid[ix, iz] && Valid[ix + 1, iz] && Valid[ix, iz + 1] && Valid[ix + 1, iz + 1])
-                {
-                    var y0 = Lerp(Heights[ix, iz], Heights[ix + 1, iz], tx);
-                    var y1 = Lerp(Heights[ix, iz + 1], Heights[ix + 1, iz + 1], tx);
-                    y = Lerp(y0, y1, tz);
-                    return true;
-                }
-            }
-
-            var bestDistSq = float.MaxValue;
-            var bestY = 0f;
-            for (var dz = -1; dz <= 1; dz++)
-            for (var dx = -1; dx <= 1; dx++)
-            {
-                var sx = ix + dx;
-                var sz = iz + dz;
-                if (sx < 0 || sz < 0 || sx >= Width || sz >= Depth || !Valid[sx, sz])
-                    continue;
-
-                var wx = OriginX + sx * Step;
-                var wz = OriginZ + sz * Step;
-                var distSq = (wx - x) * (wx - x) + (wz - z) * (wz - z);
-                if (distSq < bestDistSq)
-                {
-                    bestDistSq = distSq;
-                    bestY = Heights[sx, sz];
-                }
-            }
-
-            if (bestDistSq == float.MaxValue)
-                return false;
-
-            y = bestY;
-            return true;
-        }
-
-        private static float Lerp(float a, float b, float t) => a + (b - a) * t;
     }
 
     private readonly record struct PressureKey(uint TargetId, bool Ranged);
