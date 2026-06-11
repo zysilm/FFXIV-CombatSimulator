@@ -234,7 +234,7 @@ public unsafe class ActiveCameraController : IDisposable
             // fully-offset, smoothed center (midpoint while fighting, dead bone afterward).
             if (IsFightingEngaged && fightingHasState)
             {
-                *position = fightingCenter;
+                *position = ApplyActiveCameraSideOffset(fightingCenter);
                 return;
             }
 
@@ -245,22 +245,28 @@ public unsafe class ActiveCameraController : IDisposable
 
             // Height offset
             pos.Y += config.ActiveCameraHeightOffset;
-
-            // Side offset (perpendicular to camera horizontal direction)
-            if (config.ActiveCameraSideOffset != 0)
-            {
-                var camMgr = GameCameraManager.Instance();
-                if (camMgr != null && camMgr->Camera != null)
-                {
-                    float a = camMgr->Camera->DirH - MathF.PI / 2f;
-                    pos.X += -config.ActiveCameraSideOffset * MathF.Sin(a);
-                    pos.Z += -config.ActiveCameraSideOffset * MathF.Cos(a);
-                }
-            }
+            pos = ApplyActiveCameraSideOffset(pos);
 
             *position = pos;
         }
         catch { }
+    }
+
+    private Vector3 ApplyActiveCameraSideOffset(Vector3 pos)
+    {
+        // Side offset is view-relative, so apply it in the camera hook rather than
+        // baking it into smoothed fighting-camera centers computed in Tick.
+        if (config.ActiveCameraSideOffset == 0)
+            return pos;
+
+        var camMgr = GameCameraManager.Instance();
+        if (camMgr == null || camMgr->Camera == null)
+            return pos;
+
+        float a = camMgr->Camera->DirH - MathF.PI / 2f;
+        pos.X += -config.ActiveCameraSideOffset * MathF.Sin(a);
+        pos.Z += -config.ActiveCameraSideOffset * MathF.Cos(a);
+        return pos;
     }
 
     /// <summary>
