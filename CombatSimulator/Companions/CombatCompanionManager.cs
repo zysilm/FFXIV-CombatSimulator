@@ -40,6 +40,19 @@ public unsafe class CombatCompanionManager : IDisposable
     private readonly Dictionary<uint, uint> enemyTargetByEnemyId = new();
     private uint nextEntityId = 0xF1000001;
 
+    // Reachability is expensive (rebuilds the full engage-graph per probe) and is queried
+    // O(companions x enemies) per frame for target scoring. Cache results keyed by the
+    // hypothesis "companion targets enemy", with a short TTL so positions can drift a
+    // little before we recompute. Cleared whenever the alive roster changes.
+    private readonly Dictionary<(uint Companion, uint Enemy), (bool Reachable, float Overflow, float ExpiresAt)> reachabilityCache = new();
+    private readonly List<(uint Companion, uint Enemy)> expiredReachabilityKeys = new();
+    // Tracks the set of alive actors (companions + enemies) so cross-frame caches can be
+    // invalidated on any death/spawn. -1 = never computed.
+    private int lastAliveSignature = -1;
+    // Engage-planner rebuild pacing (see Tick).
+    private float plannerBuildTimer;
+    private float plannerAccumulatedDt;
+
     // Floor for plugin-synthesised entity IDs. Spawned virtual enemies start at
     // 0xF0000001 and companion clones at 0xF1000001; no real player's EntityId
     // falls in this range. Used to keep our own spawned actors out of the
@@ -78,6 +91,9 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float MeleeAttackRangeBuffer = 0.25f;
     private const float PartyAttackRangeHysteresis = 0.15f;
     private const float SenseInterval = 1.0f;
+    private const float ReachabilityCacheTtl = 0.5f;
+    private const float TargetSelectInterval = 0.25f;
+    private const float PlannerBuildInterval = 0.2f;
     private const float SelectedTargetBonus = 130f;
     private const float LastPlayerTargetBonus = 95f;
     private const float AttackingPlayerBonus = 120f;
@@ -250,12 +266,48 @@ public unsafe class CombatCompanionManager : IDisposable
         TickCombatAnchor(enemies);
         UpdateFocusTarget(enemies);
 
+        var now = combatEngine.State.SimulationTime;
         var liveCompanions = companions.ToList();
+
+        // Cross-frame caches (reachability, engage plans) assume a stable roster. When
+        // anyone dies or spawns, invalidate them so a stale entry can't keep a companion
+        // attacking a corpse or holding a slot that no longer exists.
+        var aliveSignature = ComputeAliveSignature(liveCompanions, enemies);
+        if (aliveSignature != lastAliveSignature)
+        {
+            reachabilityCache.Clear();
+            plannerBuildTimer = 0f; // force a planner rebuild this frame
+            lastAliveSignature = aliveSignature;
+        }
+        else if (reachabilityCache.Count > 0)
+        {
+            RemoveExpiredReachabilityEntries(now);
+        }
+
         for (var i = 0; i < liveCompanions.Count; i++)
         {
             var companion = liveCompanions[i];
             TickRecentDps(companion, deltaTime);
-            AssignCompanionTarget(companion, enemies, assignedTargets, companionPressure);
+
+            // Target (re)selection is the heavy per-companion work — it scores every enemy,
+            // each with a reachability probe. Throttle it to a few times a second, but
+            // reselect immediately when the companion has no target or its target just
+            // died, otherwise it would briefly retreat before re-engaging.
+            var hasLiveTarget = companion.CurrentTargetId != 0 &&
+                HasLiveEnemy(enemies, companion.CurrentTargetId);
+            if (!hasLiveTarget || now >= companion.NextTargetSelectAt)
+            {
+                AssignCompanionTarget(companion, enemies, assignedTargets, companionPressure);
+                // Stagger by entity id so companions don't all reselect on the same frame.
+                companion.NextTargetSelectAt = now + TargetSelectInterval + (companion.SimulatedEntityId % 8) * 0.02f;
+            }
+            else
+            {
+                // Still register the held target into the spread accumulators so the
+                // companions that DO reselect this frame see accurate crowding/pressure.
+                assignedTargets[companion.CurrentTargetId] = assignedTargets.GetValueOrDefault(companion.CurrentTargetId) + 1;
+                AddPressure(companionPressure, companion.CurrentTargetId, IsRangedStyle(companion.Behavior.AutoAttackStyle));
+            }
         }
 
         var enemyTargets = new Dictionary<uint, uint>();
@@ -278,29 +330,43 @@ public unsafe class CombatCompanionManager : IDisposable
             .ToDictionary(c => c.SimulatedEntityId, c => c.CurrentTargetId);
 
         var player = objectTable.LocalPlayer;
+        plannerBuildTimer -= deltaTime;
+        plannerAccumulatedDt += deltaTime;
         if (player != null)
         {
-            var commandAnchorPos = combatAnchorActive ? combatAnchorPosition : player.Position;
-            var commandAnchorRot = combatAnchorActive ? combatAnchorRotation : player.Rotation;
-            partyEngagePlanner.Build(
-                deltaTime,
-                player.Position,
-                player.Rotation,
-                commandAnchorPos,
-                commandAnchorRot,
-                liveCompanions,
-                enemies,
-                companionTargets,
-                enemyTargets,
-                combatEngine.State.PlayerState.EntityId,
-                MathF.Max(1.0f, config.PartyCommandRange),
-                Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f),
-                MathF.Max(0.5f, config.PartyMeleeAttackRange) + MeleeAttackRangeBuffer,
-                MathF.Max(1.0f, config.PartyRangedAttackRange) + MeleeAttackRangeBuffer);
+            // The engage planner is slow-varying by design (0.75s repath, sticky slots),
+            // so rebuilding its full node/slot/min-cost-flow graph every frame is wasted
+            // work. Rebuild a few times a second; a roster change forced plannerBuildTimer
+            // to 0 above so deaths/spawns rebuild immediately. Movement still executes
+            // every frame off the cached plans. Build gets the accumulated dt so its
+            // internal repath timers advance in real time despite the throttle.
+            if (plannerBuildTimer <= 0)
+            {
+                var commandAnchorPos = combatAnchorActive ? combatAnchorPosition : player.Position;
+                var commandAnchorRot = combatAnchorActive ? combatAnchorRotation : player.Rotation;
+                partyEngagePlanner.Build(
+                    plannerAccumulatedDt,
+                    player.Position,
+                    player.Rotation,
+                    commandAnchorPos,
+                    commandAnchorRot,
+                    liveCompanions,
+                    enemies,
+                    companionTargets,
+                    enemyTargets,
+                    combatEngine.State.PlayerState.EntityId,
+                    MathF.Max(1.0f, config.PartyCommandRange),
+                    Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f),
+                    MathF.Max(0.5f, config.PartyMeleeAttackRange) + MeleeAttackRangeBuffer,
+                    MathF.Max(1.0f, config.PartyRangedAttackRange) + MeleeAttackRangeBuffer);
+                plannerBuildTimer = PlannerBuildInterval;
+                plannerAccumulatedDt = 0f;
+            }
         }
         else
         {
             partyEngagePlanner.Clear();
+            plannerAccumulatedDt = 0f;
         }
 
         for (var i = 0; i < liveCompanions.Count; i++)
@@ -1093,7 +1159,10 @@ public unsafe class CombatCompanionManager : IDisposable
 
         companion.CurrentTargetId = target?.SimulatedEntityId ?? 0;
         if (target != null)
+        {
+            assignedTargets[target.SimulatedEntityId] = assignedTargets.GetValueOrDefault(target.SimulatedEntityId) + 1;
             AddPressure(pressureMap, target.SimulatedEntityId, IsRangedStyle(companion.Behavior.AutoAttackStyle));
+        }
     }
 
     private SimulatedNpc? GetCurrentCompanionTarget(CombatCompanion companion, IReadOnlyList<SimulatedNpc> enemies)
@@ -1328,7 +1397,60 @@ public unsafe class CombatCompanionManager : IDisposable
         return -ReachabilityHardPenalty - reachability.Overflow * ReachabilitySoftPenaltyWeight;
     }
 
+    private static bool HasLiveEnemy(IReadOnlyList<SimulatedNpc> enemies, uint entityId)
+    {
+        for (var i = 0; i < enemies.Count; i++)
+        {
+            var e = enemies[i];
+            if (e.SimulatedEntityId == entityId && e.IsSpawned && e.State.IsAlive && e.BattleChara != null)
+                return true;
+        }
+        return false;
+    }
+
+    // Order-independent hash of the alive-actor set. Changes only when an actor enters or
+    // leaves combat (death/spawn), not when they move — so position-driven caches survive
+    // frame to frame but are dropped the moment the roster changes.
+    private static int ComputeAliveSignature(IReadOnlyList<CombatCompanion> liveCompanions, IReadOnlyList<SimulatedNpc> enemies)
+    {
+        var sig = 0;
+        foreach (var c in liveCompanions)
+            if (c.IsSpawned && c.State.IsAlive)
+                sig ^= (int)(c.SimulatedEntityId * 2654435761u);
+        foreach (var e in enemies)
+            if (e.IsSpawned && e.State.IsAlive)
+                sig ^= (int)(e.SimulatedEntityId * 40503u + 0x9E37u);
+        return sig;
+    }
+
+    private void RemoveExpiredReachabilityEntries(float now)
+    {
+        expiredReachabilityKeys.Clear();
+        foreach (var kv in reachabilityCache)
+        {
+            if (now >= kv.Value.ExpiresAt)
+                expiredReachabilityKeys.Add(kv.Key);
+        }
+        for (var i = 0; i < expiredReachabilityKeys.Count; i++)
+            reachabilityCache.Remove(expiredReachabilityKeys[i]);
+    }
+
     private (bool Reachable, float Overflow) EvaluateCompanionReachability(
+        CombatCompanion companion,
+        SimulatedNpc enemy,
+        IReadOnlyList<SimulatedNpc> enemies)
+    {
+        var key = (companion.SimulatedEntityId, enemy.SimulatedEntityId);
+        var now = combatEngine.State.SimulationTime;
+        if (reachabilityCache.TryGetValue(key, out var cached) && now < cached.ExpiresAt)
+            return (cached.Reachable, cached.Overflow);
+
+        var result = ComputeCompanionReachability(companion, enemy, enemies);
+        reachabilityCache[key] = (result.Reachable, result.Overflow, now + ReachabilityCacheTtl);
+        return result;
+    }
+
+    private (bool Reachable, float Overflow) ComputeCompanionReachability(
         CombatCompanion companion,
         SimulatedNpc enemy,
         IReadOnlyList<SimulatedNpc> enemies)
