@@ -193,9 +193,9 @@ public class Configuration : IPluginConfiguration
     // 120 = very firm (needs substeps to stay stable), 90 = balanced default. Takes
     // effect on next ragdoll activation.
     public float RagdollLimitSpringFrequency { get; set; } = 90f;
-    // Beta joint-frame builder. Default off so untested anatomical hinge/ball axes
-    // do not affect normal ragdoll behavior or the hidden grab workflow.
-    public bool RagdollExperimentalJointFrames { get; set; } = false;
+    // Anatomical joint-frame builder for hinge axes and ball-joint twist references.
+    // Keep the switch so unusual skeletons can fall back to the legacy frame builder.
+    public bool RagdollExperimentalJointFrames { get; set; } = true;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
     // Weapon drop physics — runs as part of ragdoll; weapon detaches and falls on death

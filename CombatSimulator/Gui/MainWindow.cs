@@ -2776,7 +2776,7 @@ public class MainWindow : IDisposable
                     config.RagdollExperimentalJointFrames = experimentalJointFrames;
                     config.Save();
                 }
-                HelpMarker("Beta. Uses parent/child anatomical joint frames for hinge axes and ball-joint twist references. Default off; takes effect on next ragdoll activation.");
+                HelpMarker("Uses parent/child anatomical joint frames for hinge axes and ball-joint twist references. Disable this if an unusual skeleton's joints behave incorrectly. Takes effect on next ragdoll activation.");
 
                 var selfCollision = config.RagdollSelfCollision;
                 if (ImGui.Checkbox("Self Collision##ragdoll", ref selfCollision))
