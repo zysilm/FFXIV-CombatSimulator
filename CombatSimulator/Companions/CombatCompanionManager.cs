@@ -145,6 +145,7 @@ public unsafe class CombatCompanionManager : IDisposable
     public Action<CombatCompanion>? OnCompanionSpawnComplete { get; set; }
     public Action<nint>? OnCompanionDeathRagdoll { get; set; }
     public Action<string>? OnSpawnError { get; set; }
+    public Func<uint, bool>? IsSourceEnemy { get; set; }
 
     public CombatCompanionManager(
         IObjectTable objectTable,
@@ -196,6 +197,10 @@ public unsafe class CombatCompanionManager : IDisposable
             if (player.EntityId >= SimulatedEntityIdFloor)
                 continue;
             if (player.Address == nint.Zero)
+                continue;
+            if (IsSourceEnemy?.Invoke(player.EntityId) == true)
+                continue;
+            if (ShouldLeaveVisiblePlayerForEnemySide(player.EntityId))
                 continue;
             if (!seenSources.Add(player.EntityId))
                 continue;
@@ -702,6 +707,10 @@ public unsafe class CombatCompanionManager : IDisposable
                 continue;
             if (player.EntityId >= SimulatedEntityIdFloor)
                 continue;
+            if (IsSourceEnemy?.Invoke(player.EntityId) == true)
+                continue;
+            if (ShouldLeaveVisiblePlayerForEnemySide(player.EntityId))
+                continue;
             if (player.Address == nint.Zero || !seenSources.Add(player.EntityId))
                 continue;
 
@@ -720,6 +729,18 @@ public unsafe class CombatCompanionManager : IDisposable
         foreach (var queued in spawnQueue)
             seen.Add(queued.EntityId);
         return seen;
+    }
+
+    public bool HasSourceEntity(uint sourceEntityId) => BuildSeenSourceSet().Contains(sourceEntityId);
+
+    private bool ShouldLeaveVisiblePlayerForEnemySide(uint sourceEntityId)
+    {
+        if (!config.EnableMapPlayerEnemySensing)
+            return false;
+        if (!config.SensePartyMembers)
+            return false;
+
+        return Random.Shared.Next(2) == 0;
     }
 
     private void ProcessSpawnRequest(CompanionSpawnSource sourceInfo)

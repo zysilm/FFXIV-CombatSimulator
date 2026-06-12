@@ -583,6 +583,7 @@ public class MainWindow : IDisposable
 
         config.EnableCombatCompanions = true;
         config.SensePartyMembers = recipe.Companions.Exists(c => c.Type == CompanionRecipeType.VisiblePlayers);
+        config.EnableMapPlayerEnemySensing = recipe.MapEnemies.Exists(g => g.Enabled && g.IncludePlayers);
         config.CombatCompanionMaxCount = Math.Min(CombatCompanionManager.MaxCompanionCap, TotalRequestedCompanions(recipe));
 
         npcSpawner.SpawnModeActive = true;
@@ -644,6 +645,8 @@ public class MainWindow : IDisposable
             return new MapEnemySettings
             {
                 Enabled = true,
+                IncludeBattleNpcs = group.IncludeBattleNpcs,
+                IncludePlayers = group.IncludePlayers,
                 MaxCount = Math.Max(0, group.MaxCount),
                 SenseRange = Math.Max(0.1f, group.SenseRange),
                 Level = Math.Clamp(config.FastCombatLevel, 1, 300),
@@ -886,7 +889,15 @@ public class MainWindow : IDisposable
         }
         HelpMarker("During normal mixed battles, nearby map BattleNpcs can join the enemy pool. Existing recipes only use this when the recipe explicitly enables Map Enemies.");
 
-        if (!sensing)
+        var playerEnemySensing = config.EnableMapPlayerEnemySensing;
+        if (ImGui.Checkbox("Sense map players as enemies", ref playerEnemySensing))
+        {
+            config.EnableMapPlayerEnemySensing = playerEnemySensing;
+            config.Save();
+        }
+        HelpMarker("Nearby visible players can join the enemy pool instead of being cloned as companions. If companion sensing is also enabled, each visible player is randomly assigned to one side and never both.");
+
+        if (!sensing && !playerEnemySensing)
             ImGui.BeginDisabled();
 
         var range = Math.Clamp(config.MapEnemySenseRange, 1.0f, 80.0f);
@@ -903,7 +914,7 @@ public class MainWindow : IDisposable
             config.Save();
         }
 
-        if (!sensing)
+        if (!sensing && !playerEnemySensing)
             ImGui.EndDisabled();
 
         ImGui.Separator();

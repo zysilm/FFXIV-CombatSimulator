@@ -156,10 +156,7 @@ public unsafe class NpcSelector : IDisposable
         int mapEnemyLimit,
         bool ignoreGlobalMaxTargets = false)
     {
-        if (obj is IPlayerCharacter)
-            return (null, "Players cannot be registered as map enemies.");
-
-        if ((byte)obj.ObjectKind != (byte)ObjectKind.BattleNpc)
+        if (obj is not IPlayerCharacter && (byte)obj.ObjectKind != (byte)ObjectKind.BattleNpc)
             return (null, "Target is not a BattleNpc.");
 
         foreach (var existing in selectedNpcs)

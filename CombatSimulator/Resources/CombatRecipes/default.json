@@ -11,6 +11,26 @@
     ]
   },
   {
+    "name": "PvP mode",
+    "description": "Solo against nearby visible players sensed from the map.",
+    "companions": [],
+    "enemies": [],
+    "mapEnemies": [
+      { "enabled": true, "includeBattleNpcs": false, "includePlayers": true, "maxCount": 15, "senseRange": 18.0, "level": 90, "hpMultiplier": 1.0, "behavior": "BasicMelee" }
+    ]
+  },
+  {
+    "name": "Player Brawl",
+    "description": "Up to 10v10 using only nearby visible players: you plus up to 9 allies against up to 10 map-player enemies.",
+    "companions": [
+      { "type": "VisiblePlayers", "count": 9 }
+    ],
+    "enemies": [],
+    "mapEnemies": [
+      { "enabled": true, "includeBattleNpcs": false, "includePlayers": true, "maxCount": 10, "senseRange": 18.0, "level": 90, "hpMultiplier": 1.0, "behavior": "BasicMelee" }
+    ]
+  },
+  {
     "name": "Imperial Assault",
     "description": "10 randomized self companions, up to 10 visible players, 14 imperial patrol enemies, and Livia sas Junius.",
     "companions": [

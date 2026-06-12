@@ -162,9 +162,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             npcSelector,
             combatEngine,
             () => companionManager.Companions,
+            companionManager.HasSourceEntity,
             companionManager.ForceEnemyTarget,
             () => npcSpawner.SpawnModeActive,
             log);
+        companionManager.IsSourceEnemy = entityId => npcSelector.GetSelectedNpc(entityId) != null;
 
         companionManager.OnCompanionSpawnComplete = companion =>
         {
