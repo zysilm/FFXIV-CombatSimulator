@@ -34,11 +34,23 @@ public unsafe class RagdollController : IDisposable
     // State
     private bool isActive;
     private nint targetCharacterAddress;
+    // EntityId captured at Activate — used every frame to detect that the target despawned
+    // and its object-table slot was reused by an unrelated character (so we don't freeze
+    // and write ragdoll bones onto the newcomer).
+    private uint targetEntityId;
     private Vector3 savedCharacterPosition; // original position before follow moved it
     private bool followWasActive;           // tracks toggle-off to restore position
     private float elapsed;
     private float activationDelay;
     private bool physicsStarted;
+    // Skeleton bone count captured at InitializePhysics. If it changes mid-ragdoll the draw
+    // object was rebuilt and our bone indices are stale → deactivate.
+    private int initialBoneCount;
+    // True once Timeline.OverallSpeed has been zeroed (animation frozen). Gates the restore
+    // in Deactivate. NOT the same as physicsStarted: the freeze happens inside
+    // InitializePhysics, which can still fail or throw afterwards (e.g. zero qualifying
+    // bones), and the restore must run on that path too or the character stays frozen forever.
+    private bool animationFrozen;
 
     // Frame-rate-independent physics timing. The render hook fires once per rendered
     // frame at whatever framerate the game runs (30/60/120/144…). Stepping a fixed
@@ -730,6 +742,10 @@ public unsafe class RagdollController : IDisposable
         public List<NpcBoneStatic> BoneStatics;   // populated when skeleton readable
         public StaticHandle FallbackHandle;        // used when skeleton unreadable
         public bool IsFallback;
+        // True while this character's statics have been parked far away because it left the
+        // update radius. Prevents leaving them frozen on the corpse ("ghost" capsules) and
+        // avoids re-parking every frame; cleared when it re-enters range.
+        public bool Parked;
     }
 
     public RagdollController(BoneTransformService boneService, Npcs.NpcSelector npcSelector,
@@ -772,6 +788,7 @@ public unsafe class RagdollController : IDisposable
         activationDelay = delayOverride;
         elapsed = 0f;
         physicsStarted = false;
+        animationFrozen = false;
         followWasActive = false;
         isActive = true;
         lastFrameTimestamp = 0;
@@ -782,6 +799,7 @@ public unsafe class RagdollController : IDisposable
         // Save original position so we can restore if FollowPosition is toggled off
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)characterAddress;
         savedCharacterPosition = go->Position;
+        targetEntityId = go->EntityId;
 
         log.Info($"RagdollController: Activated for 0x{characterAddress:X} (delay={activationDelay:F1}s)");
     }
@@ -791,8 +809,11 @@ public unsafe class RagdollController : IDisposable
         if (!isActive) return;
         isActive = false;
 
-        // Restore animation speed before clearing the address
-        if (targetCharacterAddress != nint.Zero && physicsStarted)
+        // Restore animation speed before clearing the address. Gated on animationFrozen
+        // (not physicsStarted) so a freeze that happened during a FAILED InitializePhysics
+        // is still undone — otherwise the corpse would be stuck at OverallSpeed=0 forever,
+        // and a later re-Activate would save that 0 as the "original" speed (sticky freeze).
+        if (targetCharacterAddress != nint.Zero && animationFrozen)
         {
             try
             {
@@ -807,7 +828,9 @@ public unsafe class RagdollController : IDisposable
         }
 
         targetCharacterAddress = nint.Zero;
+        targetEntityId = 0;
         physicsStarted = false;
+        animationFrozen = false;
         ragdollBoneIndices.Clear();
         activeDefByName.Clear();
         activeRagdollIsGeneric = false;
@@ -924,11 +947,15 @@ public unsafe class RagdollController : IDisposable
         var y = Vector3.Normalize(Vector3.Cross(z, referenceDir));
         var x = Vector3.Cross(y, z);
 
-        // Convert rotation matrix (columns: x, y, z) to quaternion
+        // Pack the basis as a rotation matrix whose local X/Y/Z axes map to x/y/z in world.
+        // System.Numerics uses the ROW-vector convention (Vector3.Transform(v, m) = v·M, so
+        // the image of UnitX is row 1), therefore the basis axes go in the ROWS, not the
+        // columns. Placing them in columns yields the transpose = the conjugate rotation,
+        // which made every TwistLimit measure twist about the wrong axis.
         var m = new Matrix4x4(
-            x.X, y.X, z.X, 0,
-            x.Y, y.Y, z.Y, 0,
-            x.Z, y.Z, z.Z, 0,
+            x.X, x.Y, x.Z, 0,
+            y.X, y.Y, y.Z, 0,
+            z.X, z.Y, z.Z, 0,
             0, 0, 0, 1);
         return Quaternion.CreateFromRotationMatrix(m);
     }
@@ -950,7 +977,11 @@ public unsafe class RagdollController : IDisposable
             var forward = Vector3.Transform(Vector3.UnitZ, skelWorldRot);
             hingeAxis = Vector3.Cross(segN, forward);
         }
-        return Vector3.Normalize(hingeAxis);
+        // Both crosses can still degenerate (near-vertical segment AND a pitched skeleton
+        // transform whose forward is also near-vertical, e.g. a mounted/flying death). Fall
+        // back to a fixed horizontal axis rather than normalizing a zero vector into NaN,
+        // which would otherwise propagate into the Hinge constraint and trip the NaN guard.
+        return NormalizeOrFallback(hingeAxis, Vector3.UnitX);
     }
 
     private static Vector3 NormalizeOrFallback(Vector3 value, Vector3 fallback)
@@ -1030,6 +1061,7 @@ public unsafe class RagdollController : IDisposable
         var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
         if (skelNullable == null) return false;
         var skel = skelNullable.Value;
+        initialBoneCount = skel.BoneCount;
         var BoneDefs = GetBoneDefs();
 
         // Get skeleton transform for proper world↔model conversion
@@ -1511,12 +1543,21 @@ public unsafe class RagdollController : IDisposable
 
                 // SwingLimit as bending range for the hinge (BEPU RagdollDemo pattern).
                 // Body A = child (shin/forearm), Body B = parent (thigh/upper arm).
-                // AxisLocalA = child's segment direction (capsule Y in child local space).
-                // AxisLocalB = "forward" direction on the parent body, perpendicular to the
-                //   parent's segment axis in the bending plane (Cross of hingeAxis x parentSegDir).
-                // At full extension (straight limb): these axes are perpendicular (90°).
-                // As the joint flexes: child axis rotates toward parent forward, angle decreases (allowed).
-                // Hyperextension: child axis rotates away, angle exceeds 90° (blocked).
+                // AxisLocalA = child's segment direction; AxisLocalB = "forward" on the parent
+                // body, perpendicular to the parent segment in the bend plane.
+                //
+                // SwingLimit caps the ANGLE between those two axes at MaximumSwingAngle. At full
+                // extension the axes are ~perpendicular, so the legal flexion window is centred
+                // near 90° of fold: roughly [90°−θ, 90°+θ]. With θ = π/2 (the value shipped for
+                // knees/elbows) that spans "fully straight" → "fully folded" while still blocking
+                // hyperextension at the straight end — which is why it works. A θ < π/2 also
+                // forbids full extension (the joint is forced to stay partly bent), so it is NOT
+                // an intuitive "max bend angle"; keep π/2 on real knees/elbows.
+                //
+                // NO TwistLimit is added on hinges: the hinge already removes all rotation except
+                // about its axis, and that remaining DOF *is* the bend — a twist limit about it
+                // would just re-clamp the bend (the old ±0.1 rad config would lock the joint to
+                // ~±6°). This matches the BEPU RagdollDemo (hinges use SwingLimit, never twist).
                 if (boneDef.SwingLimit > 0)
                 {
                     // "Forward" direction on the parent body = Cross(hingeAxis, parentSegDir).
@@ -1541,30 +1582,6 @@ public unsafe class RagdollController : IDisposable
 
                     if (config.RagdollVerboseLog)
                         log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad dot={Vector3.Dot(forwardWorld, segDirWorld):F3}");
-
-                    // TwistLimit for hinge: anti-hyperextension constraint.
-                    // Uses config TwistMin/Max (same as Ball joints — no hardcoded values).
-                    if (boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0)
-                    {
-                        var twistBasis = CreateTwistBasis(hingeAxisWorld, forwardWorld);
-                        var twistBasisLocalChild = Quaternion.Normalize(
-                            Quaternion.Inverse(childBodyRef.Pose.Orientation) * twistBasis);
-                        var twistBasisLocalParent = Quaternion.Normalize(
-                            Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis);
-
-                        simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                            new TwistLimit
-                            {
-                                LocalBasisA = twistBasisLocalChild,
-                                LocalBasisB = twistBasisLocalParent,
-                                MinimumAngle = boneDef.TwistMinAngle,
-                                MaximumAngle = boneDef.TwistMaxAngle,
-                                SpringSettings = limitSpring,
-                            });
-
-                        if (config.RagdollVerboseLog)
-                            log.Info($"[Ragdoll Constraint] '{rb.Name}' TwistLimit: min={boneDef.TwistMinAngle:F2} max={boneDef.TwistMaxAngle:F2}");
-                    }
                 }
 
                 if (config.RagdollVerboseLog)
@@ -1648,6 +1665,15 @@ public unsafe class RagdollController : IDisposable
             }
         }
 
+        // Nothing to simulate (e.g. a non-humanoid skeleton with no qualifying segments).
+        // Bail BEFORE freezing the animation — freezing a rig we can't drive would leave the
+        // corpse stuck mid-pose. Caller (OnRenderFrame) Deactivates on the false return.
+        if (ragdollBones.Count == 0)
+        {
+            log.Warning("RagdollController: no ragdoll bodies were created; aborting activation.");
+            return false;
+        }
+
         // Build ragdoll bone index set for fast lookup during propagation
         ragdollBoneIndices.Clear();
         foreach (var rb in ragdollBones)
@@ -1660,6 +1686,7 @@ public unsafe class RagdollController : IDisposable
         var character = (Character*)targetCharacterAddress;
         savedOverallSpeed = character->Timeline.OverallSpeed;
         character->Timeline.OverallSpeed = 0f;
+        animationFrozen = true;
         log.Info($"RagdollController: Animation frozen (saved speed={savedOverallSpeed:F2})");
 
         // Resolve ancestor bone — n_hara must follow j_kosi to prevent mesh tearing
@@ -1920,6 +1947,26 @@ public unsafe class RagdollController : IDisposable
         log.Info($"RagdollController: {label} using fallback single capsule");
     }
 
+    /// <summary>Move all of a character's collision statics to a far-away park position and
+    /// refresh their broad-phase bounds, so they stop colliding with the ragdoll.</summary>
+    private void ParkNpcStatics(NpcCollisionState npcState, Vector3 parkPos)
+    {
+        if (simulation == null) return;
+        if (npcState.IsFallback)
+        {
+            var s = simulation.Statics.GetStaticReference(npcState.FallbackHandle);
+            s.Pose.Position = parkPos;
+            s.UpdateBounds();
+            return;
+        }
+        for (int b = 0; b < npcState.BoneStatics.Count; b++)
+        {
+            var s = simulation.Statics.GetStaticReference(npcState.BoneStatics[b].Handle);
+            s.Pose.Position = parkPos;
+            s.UpdateBounds();
+        }
+    }
+
     // Clamp per-body velocity each substep as a hard ceiling against energy blow-up.
     // Generic rigs inject energy through their stiff auto-built constraint network (small
     // bodies + dense joints); human rigs are normally stable but can still have the solver
@@ -1970,9 +2017,32 @@ public unsafe class RagdollController : IDisposable
     {
         if (simulation == null) return;
 
+        // Liveness guard: if the corpse despawned and its object-table slot was reused, the
+        // address now points at an unrelated character with a different EntityId. Without this,
+        // we would freeze that newcomer's animation and overwrite its bones with our ragdoll
+        // pose. Deactivate cleanly instead (restores nothing — the original target is gone).
+        if (targetCharacterAddress == nint.Zero ||
+            ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress)->EntityId != targetEntityId)
+        {
+            log.Info("RagdollController: target despawned or slot reused; deactivating.");
+            animationFrozen = false; // do not write OverallSpeed onto whatever now occupies the slot
+            Deactivate();
+            return;
+        }
+
         var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
         if (skelNullable == null) return;
         var skel = skelNullable.Value;
+
+        // The draw object can be rebuilt mid-ragdoll (gear/glamour change) with a different
+        // bone count. Our stored bone indices and the resting/awake sampling would then be
+        // stale (and resting could latch true forever on a now-empty rig). Bail cleanly.
+        if (skel.BoneCount != initialBoneCount)
+        {
+            log.Info($"RagdollController: skeleton bone count changed ({initialBoneCount}->{skel.BoneCount}); deactivating.");
+            Deactivate();
+            return;
+        }
 
         // Keep animation frozen (game may recalculate OverallSpeed each frame)
         var character = (Character*)targetCharacterAddress;
@@ -2062,11 +2132,27 @@ public unsafe class RagdollController : IDisposable
 
                 // Distance gate: a character whose root is far from the corpse cannot
                 // contact it, so skip the expensive skeleton read + per-bone reposition.
-                // Its statics stay where they were; it resumes updating if it moves back in.
                 var npcGo = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npcState.NpcAddress;
                 var npcRootPos = new Vector3(npcGo->Position.X, npcGo->Position.Y, npcGo->Position.Z);
                 if ((npcRootPos - skelWorldPos).LengthSquared() > NpcCollisionUpdateRadius * NpcCollisionUpdateRadius)
+                {
+                    // Park its capsules far below ONCE on exit so a character that walks away
+                    // from the corpse doesn't leave its body-shaped statics frozen on top of
+                    // the ragdoll (invisible "ghost" collision). Skip cheaply thereafter.
+                    if (!npcState.Parked)
+                    {
+                        ParkNpcStatics(npcState, npcCollisionParkPos);
+                        npcState.Parked = true;
+                        npcCollisionStates[i] = npcState;
+                    }
                     continue;
+                }
+                if (npcState.Parked)
+                {
+                    // Back in range — the reposition below snaps the statics onto the skeleton.
+                    npcState.Parked = false;
+                    npcCollisionStates[i] = npcState;
+                }
 
                 if (npcState.IsFallback)
                 {
@@ -2404,6 +2490,11 @@ public unsafe class RagdollController : IDisposable
     private ConstraintHandle grabConstraintHandle;
     private bool grabConstraintActive;
     private BodyHandle grabBodyHandle;
+    // Servo/spring tuning captured at CreateGrabConstraint and reused by every
+    // UpdateGrabTarget — otherwise the per-frame update would overwrite the caller's
+    // configured force/speed/stiffness with hardcoded defaults after a single frame.
+    private ServoSettings grabServoSettings;
+    private SpringSettings grabSpringSettings;
     // Address of the grabbing NPC whose collision is parked during grab (0 = none)
     private nint suspendedNpcAddress;
 
@@ -2449,14 +2540,18 @@ public unsafe class RagdollController : IDisposable
         // The rig is no longer resting; force a full physics step next frame.
         prevAllAsleep = false;
 
+        // Remember the tuning so UpdateGrabTarget reuses it instead of resetting to defaults.
+        grabServoSettings = new ServoSettings(maxSpeed, 1f, maxForce);
+        grabSpringSettings = new SpringSettings(springFreq, 1);
+
         // Create OneBodyLinearServo: pins a body to a world-space target
         grabConstraintHandle = simulation.Solver.Add(grabBodyHandle,
             new OneBodyLinearServo
             {
                 LocalOffset = Vector3.Zero,
                 Target = initialTarget,
-                ServoSettings = new ServoSettings(maxSpeed, 1f, maxForce),
-                SpringSettings = new SpringSettings(springFreq, 1),
+                ServoSettings = grabServoSettings,
+                SpringSettings = grabSpringSettings,
             });
 
         grabConstraintActive = true;
@@ -2479,8 +2574,8 @@ public unsafe class RagdollController : IDisposable
             {
                 LocalOffset = Vector3.Zero,
                 Target = worldTarget,
-                ServoSettings = new ServoSettings(50f, 1f, 1000f),
-                SpringSettings = new SpringSettings(120, 1),
+                ServoSettings = grabServoSettings,
+                SpringSettings = grabSpringSettings,
             };
             simulation.Solver.ApplyDescription(grabConstraintHandle, desc);
         }

@@ -30,6 +30,8 @@ public unsafe class HairPhysicsSimulator
     private readonly IPluginLog log;
     private readonly List<HairChainState> hairChains = new();
     private int frameCount;
+    // Reused across frames/chains to avoid a per-frame Quaternion[] allocation per hair chain.
+    private Quaternion[] accDeltaBuffer = Array.Empty<Quaternion>();
 
     // Head sphere for self-collision (model-space position read each frame)
     private const float HeadRadius = 0.12f;
@@ -141,8 +143,13 @@ public unsafe class HairPhysicsSimulator
             var boneCount = Math.Min(chain.BoneCount, pose->ModelPose.Length);
             var parentCount = pose->Skeleton->ParentIndices.Length;
 
-            // Track accumulated rotation deltas for child propagation
-            var accDelta = new Quaternion[boneCount];
+            // Track accumulated rotation deltas for child propagation (reused buffer).
+            var accDelta = accDeltaBuffer;
+            if (accDelta.Length < boneCount)
+            {
+                accDelta = new Quaternion[boneCount];
+                accDeltaBuffer = accDelta;
+            }
             for (int b = 0; b < boneCount; b++) accDelta[b] = Quaternion.Identity;
 
             // Skip bone 0 (j_kao root — already positioned by PropagateToPartialSkeletons)
@@ -202,11 +209,17 @@ public unsafe class HairPhysicsSimulator
                 ToAxisAngle(rotToGravity, out var axis, out var angle);
                 angle *= gravityStrength;
 
+                // Frame-rate-independent integration. dt is the real time advanced this frame
+                // (substeps × 1/60), so normalize the per-frame damping/stiffness/application to
+                // a 1/60 s reference: at exactly 60fps dt60 == 1 and this reduces to the original
+                // tuning; at other framerates hair swings and damps at the same wall-clock rate.
+                var dt60 = dt * 60.0f;
+
                 // Angular acceleration (spring toward gravity)
                 var angAccel = axis * angle * 30.0f;
                 state.AngularVelocity += angAccel * dt;
-                state.AngularVelocity *= damping;
-                state.AngularVelocity *= (1.0f - stiffness);
+                state.AngularVelocity *= MathF.Pow(damping, dt60);
+                state.AngularVelocity *= MathF.Pow(1.0f - stiffness, dt60);
 
                 // Clamp velocity
                 var velMag = state.AngularVelocity.Length();
@@ -217,7 +230,7 @@ public unsafe class HairPhysicsSimulator
                 if (velMag > 0.0001f)
                 {
                     var velAxis = state.AngularVelocity / velMag;
-                    var velAngle = velMag; // velocity is already per-frame (integrated with dt)
+                    var velAngle = velMag * dt60; // rotation this frame, scaled to wall-clock time
                     var velRot = Quaternion.CreateFromAxisAngle(velAxis, velAngle);
 
                     var newDir = Vector3.Transform(currentDir, velRot);
@@ -262,7 +275,7 @@ public unsafe class HairPhysicsSimulator
                     bm.Rotation.Z = newRot.Z;
                     bm.Rotation.W = newRot.W;
 
-                    if (frameCount <= 5 || frameCount % 60 == 0)
+                    if (config.RagdollVerboseLog && (frameCount <= 5 || frameCount % 60 == 0))
                     {
                         log.Info($"[HairPhys F{frameCount}] bone {b}: vel={state.AngularVelocity.Length():F4} " +
                                  $"oldRot=({oldRot.X:F3},{oldRot.Y:F3},{oldRot.Z:F3},{oldRot.W:F3}) " +

@@ -41,6 +41,11 @@ public unsafe class WeaponDropController : IDisposable
     private float simBounce;
     private float simFriction;
     private int simSolverIterations;
+    // Snapshot of the shape/inertia inputs too — the weapon capsule shape and inertia are
+    // cached once at sim creation, so changing these must also trigger a rebuild or they go stale.
+    private float simRadius;
+    private float simHalfLength;
+    private float simMass;
 
     private class Entry
     {
@@ -114,7 +119,11 @@ public unsafe class WeaponDropController : IDisposable
         if (entry.Main.HasValue) simulation.Bodies.Remove(entry.Main.Value);
         if (entry.Off.HasValue) simulation.Bodies.Remove(entry.Off.Value);
         if (entry.GroundTile.HasValue) simulation.Statics.Remove(entry.GroundTile.Value);
-        if (entry.GroundShape.HasValue) simulation.Shapes.Remove(entry.GroundShape.Value);
+        // RemoveAndDispose (not Remove): the per-drop terrain patch is a Mesh that owns a
+        // pooled triangle buffer + acceleration tree. Plain Remove drops the shape but leaks
+        // those buffers, and this weapon simulation lives for the whole session.
+        if (entry.GroundShape.HasValue && bufferPool != null)
+            simulation.Shapes.RemoveAndDispose(entry.GroundShape.Value, bufferPool);
     }
 
     private void OnRenderFrame()
@@ -359,7 +368,10 @@ public unsafe class WeaponDropController : IDisposable
             || simDamping != config.WeaponDropDamping
             || simBounce != config.WeaponDropBounce
             || simFriction != config.WeaponDropFriction
-            || simSolverIterations != config.WeaponDropSolverIterations;
+            || simSolverIterations != config.WeaponDropSolverIterations
+            || simRadius != config.WeaponDropRadius
+            || simHalfLength != config.WeaponDropHalfLength
+            || simMass != config.WeaponDropMass;
     }
 
     private void EnsureSimulation()
@@ -371,6 +383,9 @@ public unsafe class WeaponDropController : IDisposable
         simBounce = config.WeaponDropBounce;
         simFriction = config.WeaponDropFriction;
         simSolverIterations = config.WeaponDropSolverIterations;
+        simRadius = config.WeaponDropRadius;
+        simHalfLength = config.WeaponDropHalfLength;
+        simMass = config.WeaponDropMass;
 
         bufferPool = new BufferPool();
         simulation = BepuSimulation.Create(
