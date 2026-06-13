@@ -459,6 +459,8 @@ public class Configuration : IPluginConfiguration
             var role = (RagdollController.AnatomicalRole)bone.AnatomicalRole;
             var isLowerLimb = bone.Name.StartsWith("j_asi_b_", StringComparison.Ordinal);
             var isForearm = bone.Name.StartsWith("j_ude_b_", StringComparison.Ordinal);
+            var isUpperArm = bone.Name.StartsWith("j_ude_a_", StringComparison.Ordinal);
+            var isClavicle = bone.Name.StartsWith("j_sako_", StringComparison.Ordinal);
             if ((role == RagdollController.AnatomicalRole.Knee || role == RagdollController.AnatomicalRole.Elbow ||
                  isLowerLimb || isForearm) &&
                 bone.JointType != (int)RagdollController.JointType.Hinge)
@@ -492,6 +494,29 @@ public class Configuration : IPluginConfiguration
                 if (bone.BoxHalfExtentX < minX) { bone.BoxHalfExtentX = minX; changed = true; }
                 if (bone.BoxHalfExtentY < minY) { bone.BoxHalfExtentY = minY; changed = true; }
                 if (bone.BoxHalfExtentZ < minZ) { bone.BoxHalfExtentZ = minZ; changed = true; }
+            }
+
+            if (isClavicle)
+            {
+                if (bone.SwingLimit < 0.35f) { bone.SwingLimit = 0.35f; changed = true; }
+                if (bone.TwistMinAngle < -0.25f || bone.TwistMinAngle > -0.05f) { bone.TwistMinAngle = -0.25f; changed = true; }
+                if (bone.TwistMaxAngle > 0.25f || bone.TwistMaxAngle < 0.05f) { bone.TwistMaxAngle = 0.25f; changed = true; }
+            }
+
+            if (isUpperArm)
+            {
+                if (bone.SwingLimit > 1.35f) { bone.SwingLimit = 1.35f; changed = true; }
+                if (bone.TwistMinAngle < -0.65f || bone.TwistMinAngle > -0.20f) { bone.TwistMinAngle = -0.65f; changed = true; }
+                if (bone.TwistMaxAngle > 0.65f || bone.TwistMaxAngle < 0.20f) { bone.TwistMaxAngle = 0.65f; changed = true; }
+                if (bone.ColliderShape != (int)RagdollController.RagdollColliderShape.Box)
+                {
+                    bone.ColliderShape = (int)RagdollController.RagdollColliderShape.Box;
+                    changed = true;
+                }
+
+                if (bone.BoxHalfExtentX < 0.032f) { bone.BoxHalfExtentX = 0.032f; changed = true; }
+                if (bone.BoxHalfExtentY < 0.075f) { bone.BoxHalfExtentY = 0.075f; changed = true; }
+                if (bone.BoxHalfExtentZ < 0.024f) { bone.BoxHalfExtentZ = 0.024f; changed = true; }
             }
         }
         return changed;
