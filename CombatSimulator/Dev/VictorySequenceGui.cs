@@ -176,6 +176,30 @@ public class VictorySequenceGui
         return 0;
     }
 
+    private static float GetStageDuration(VictorySequenceStage stage)
+    {
+        if (stage.Duration.HasValue)
+            return stage.Duration.Value;
+        if (stage.EndTime < 0f)
+            return -1f;
+        if (stage.EndTime > stage.StartTime)
+            return MathF.Max(0.1f, stage.EndTime - stage.StartTime);
+        return 3.0f;
+    }
+
+    private static void SetStageDuration(VictorySequenceStage stage, float duration)
+    {
+        stage.Duration = duration;
+        stage.StartTime = 0f;
+        stage.EndTime = duration < 0f ? -1f : duration;
+    }
+
+    private static string FormatDuration(VictorySequenceStage stage)
+    {
+        var duration = GetStageDuration(stage);
+        return duration < 0f ? "∞" : $"{duration:F1}s";
+    }
+
     private void ResolveEmoteTimelines(VictorySequenceStage stage)
     {
         stage.ResolvedIntroTimeline = 0;
@@ -239,7 +263,7 @@ public class VictorySequenceGui
         if (ImGui.BeginTable("##vseqstages", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
         {
             ImGui.TableSetupColumn("#", ImGuiTableColumnFlags.WidthFixed, 20);
-            ImGui.TableSetupColumn("Time", ImGuiTableColumnFlags.WidthFixed, 90);
+            ImGui.TableSetupColumn("Duration", ImGuiTableColumnFlags.WidthFixed, 70);
             ImGui.TableSetupColumn("Behavior", ImGuiTableColumnFlags.WidthFixed, 100);
             ImGui.TableSetupColumn("Grab", ImGuiTableColumnFlags.WidthFixed, 35);
             ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 70);
@@ -260,7 +284,7 @@ public class VictorySequenceGui
                 }
 
                 ImGui.TableNextColumn();
-                ImGui.Text(s.EndTime < 0 ? $"{s.StartTime:F1}-∞" : $"{s.StartTime:F1}-{s.EndTime:F1}s");
+                ImGui.Text(FormatDuration(s));
 
 
                 ImGui.TableNextColumn();
@@ -305,14 +329,7 @@ public class VictorySequenceGui
         if (ImGui.Button("+ Add Stage##vseq"))
         {
             var newStage = new VictorySequenceStage();
-            // Chain from previous stage's end values
-            if (stages.Count > 0)
-            {
-                var prev = stages[^1];
-                var prevEnd = prev.EndTime < 0 ? prev.StartTime + 5f : prev.EndTime;
-                newStage.StartTime = prevEnd;
-                newStage.EndTime = prevEnd; // user adjusts end time
-            }
+            SetStageDuration(newStage, 3.0f);
             stages.Add(newStage);
             selectedStageIndex = stages.Count - 1;
             config.Save();
@@ -330,7 +347,7 @@ public class VictorySequenceGui
         if (ImGui.BeginTable("##vseqother", 4, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
         {
             ImGui.TableSetupColumn("#", ImGuiTableColumnFlags.WidthFixed, 20);
-            ImGui.TableSetupColumn("Time", ImGuiTableColumnFlags.WidthFixed, 90);
+            ImGui.TableSetupColumn("Duration", ImGuiTableColumnFlags.WidthFixed, 70);
             ImGui.TableSetupColumn("Behavior", ImGuiTableColumnFlags.WidthFixed, 100);
             ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 70);
             ImGui.TableHeadersRow();
@@ -347,7 +364,7 @@ public class VictorySequenceGui
                     selectedStageIndex = -1;
                 }
                 ImGui.TableNextColumn();
-                ImGui.Text(s.EndTime < 0 ? $"{s.StartTime:F1}-∞" : $"{s.StartTime:F1}-{s.EndTime:F1}s");
+                ImGui.Text(FormatDuration(s));
                 ImGui.TableNextColumn();
                 var oBehavior = s.UseEmote
                     ? (s.EmoteId > 0 ? FindEmoteName(s.EmoteId) : "-")
@@ -368,13 +385,7 @@ public class VictorySequenceGui
         if (ImGui.Button("+ Add Stage##other"))
         {
             var newStage = new VictorySequenceStage();
-            if (otherStages.Count > 0)
-            {
-                var prev = otherStages[^1];
-                var prevEnd = prev.EndTime < 0 ? prev.StartTime + 5f : prev.EndTime;
-                newStage.StartTime = prevEnd;
-                newStage.EndTime = prevEnd;
-            }
+            SetStageDuration(newStage, 3.0f);
             otherStages.Add(newStage);
             selectedOtherStageIndex = otherStages.Count - 1;
             config.Save();
@@ -388,26 +399,16 @@ public class VictorySequenceGui
             var oidx = selectedOtherStageIndex;
 
             ImGui.TextDisabled($"Other Stage {oidx} — Timing");
-            var ost = os.StartTime;
-            if (ImGui.DragFloat("Start Time (s)##ot", ref ost, 0.1f, 0, 120, "%.1f"))
-            {
-                os.StartTime = ost;
-                if (oidx > 0 && otherStages[oidx - 1].EndTime >= 0) otherStages[oidx - 1].EndTime = ost;
-                config.Save();
-            }
-            if (os.EndTime >= 0)
-            {
-                var oet = os.EndTime;
-                if (ImGui.DragFloat("End Time (s)##ot", ref oet, 0.1f, 0, 120, "%.1f"))
-                {
-                    os.EndTime = oet;
-                    if (oidx < otherStages.Count - 1) otherStages[oidx + 1].StartTime = oet;
-                    config.Save();
-                }
-            }
-            var oInfTime = os.EndTime < 0;
+            var oDuration = GetStageDuration(os);
+            var oInfTime = oDuration < 0f;
             if (ImGui.Checkbox("Infinite Time##ovsd", ref oInfTime))
-            { os.EndTime = oInfTime ? -1f : os.StartTime + 3f; config.Save(); }
+            { SetStageDuration(os, oInfTime ? -1f : 3.0f); config.Save(); }
+            if (!oInfTime)
+            {
+                oDuration = MathF.Max(0.1f, oDuration);
+                if (ImGui.DragFloat("Duration (s)##ot", ref oDuration, 0.1f, 0.1f, 120, "%.1f"))
+                { SetStageDuration(os, oDuration); config.Save(); }
+            }
 
             ImGui.TextDisabled("Behavior");
             var oUseEmote = os.UseEmote;
@@ -523,36 +524,32 @@ public class VictorySequenceGui
             // === Timing ===
             ImGui.TextDisabled($"Stage {idx} — Timing");
 
-            var st = s.StartTime;
-            if (ImGui.DragFloat("Start Time (s)##t", ref st, 0.1f, 0, 120, "%.1f"))
-            {
-                s.StartTime = st;
-                if (idx > 0 && stages[idx - 1].EndTime >= 0)
-                    stages[idx - 1].EndTime = st;
-                config.Save();
-            }
-
-            if (s.EndTime >= 0)
-            {
-                var et = s.EndTime;
-                if (ImGui.DragFloat("End Time (s)##t", ref et, 0.1f, 0, 120, "%.1f"))
-                {
-                    s.EndTime = et;
-                    if (idx < stages.Count - 1) stages[idx + 1].StartTime = et;
-                    config.Save();
-                }
-            }
-
-            var infTime = s.EndTime < 0;
+            var duration = GetStageDuration(s);
+            var infTime = duration < 0f;
             if (ImGui.Checkbox("Infinite Time##vsd", ref infTime))
+            { SetStageDuration(s, infTime ? -1f : 3.0f); config.Save(); }
+            if (!infTime)
             {
-                s.EndTime = infTime ? -1f : s.StartTime + 3f;
-                config.Save();
+                duration = MathF.Max(0.1f, duration);
+                if (ImGui.DragFloat("Duration (s)##t", ref duration, 0.1f, 0.1f, 120, "%.1f"))
+                { SetStageDuration(s, duration); config.Save(); }
             }
 
             var lockFace = s.LockFacing;
             if (ImGui.Checkbox("Lock Facing##vsd", ref lockFace))
             { s.LockFacing = lockFace; config.Save(); }
+
+            var approach = s.ApproachBeforeStage;
+            if (ImGui.Checkbox("Approach before behavior##vsd", ref approach))
+            { s.ApproachBeforeStage = approach; config.Save(); }
+            if (s.ApproachBeforeStage)
+            {
+                ImGui.Indent();
+                var approachDistance = s.ApproachDistance;
+                if (ImGui.DragFloat("Approach distance (m)##vsd", ref approachDistance, 0.1f, 0.2f, 30f, "%.1f"))
+                { s.ApproachDistance = approachDistance; config.Save(); }
+                ImGui.Unindent();
+            }
 
             // === Behavior ===
             ImGui.TextDisabled("Behavior");

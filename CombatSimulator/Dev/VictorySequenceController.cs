@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Threading.Tasks;
 using CombatSimulator.Animation;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
@@ -32,6 +33,7 @@ public unsafe class VictorySequenceController : IDisposable
     // Runtime state
     private bool isActive;
     private float elapsed;
+    private float stageElapsed;
     private SimulatedNpc? cinematicNpc;
     private Vector3 npcOriginalPos;
     private int currentStageIndex = -1;
@@ -54,6 +56,7 @@ public unsafe class VictorySequenceController : IDisposable
         public SimulatedNpc Npc;
         public float TimeOffset;      // random stagger so they don't all transition at once
         public int StageIndex;
+        public float StageElapsed;
         public bool AnimPlayed;
         public uint LastEmoteId;
         public uint LastActionTimelineId;
@@ -70,6 +73,19 @@ public unsafe class VictorySequenceController : IDisposable
     private readonly ActorVisualState grabberVisualState = new();
     private bool grabberMoving;
     private float grabberControlYaw;
+
+    // Automatic cinematic approach before a stage starts. The timer for the
+    // behavior stage does not advance while this is moving.
+    private bool stageApproachComplete;
+    private int approachStageIndex = -1;
+    private readonly ApproachPathState approachPath = new();
+    private const float ApproachStopDistance = 0.25f;
+    private const float ApproachRepathInterval = 0.75f;
+    private const float ApproachRepathDistance = 1.0f;
+    private const float ApproachWaypointReachDistance = 0.5f;
+    private const float ApproachFloorRayStartOffset = 6.0f;
+    private const float ApproachFloorRayDistance = 24.0f;
+    private const float ApproachMaxNavmeshFloorDelta = 2.5f;
 
     public bool IsActive => isActive;
     public nint CinematicNpcAddress => cinematicNpc?.Address ?? nint.Zero;
@@ -231,12 +247,16 @@ public unsafe class VictorySequenceController : IDisposable
 
         isActive = true;
         elapsed = 0;
+        stageElapsed = 0;
         currentStageIndex = -1;
         stageAnimPlayed = false;
         grabActive = false;
         grabberMoving = false;
         grabberVisualState.Kind = ActorVisualStateKind.None;
         grabberControlYaw = 0f;
+        stageApproachComplete = false;
+        approachStageIndex = -1;
+        ResetApproachPath();
 
         var otherCount = config.VictorySequenceOtherStages.Count;
         log.Info($"VictorySequence: Started with NPC '{cinematicNpc.Name}' (lastTarget={lastTargetedNpcId:X}), {config.VictorySequenceStages.Count} stages, {otherNpcStates.Count} other NPCs with {otherCount} stages");
@@ -256,41 +276,37 @@ public unsafe class VictorySequenceController : IDisposable
 
         elapsed += deltaTime;
         var stages = config.VictorySequenceStages;
-
-        // Find current stage
-        int newStageIdx = -1;
-        for (int i = 0; i < stages.Count; i++)
-        {
-            var isInfinite = stages[i].EndTime < 0;
-            if (elapsed >= stages[i].StartTime && (isInfinite || elapsed < stages[i].EndTime))
-            {
-                newStageIdx = i;
-                break;
-            }
-        }
-
-        // Past all stages → stop (but not if last stage is infinite)
-        var lastEnd = stages.Count > 0 ? stages[^1].EndTime : 0;
-        if (newStageIdx == -1 && stages.Count > 0 && lastEnd >= 0 && elapsed >= lastEnd)
-        {
-            log.Info("VictorySequence: All stages complete");
-            Stop();
-            return;
-        }
-
-        // Stage transition — snapshot NPC's current position as the new stage start
-        if (newStageIdx != currentStageIndex && newStageIdx >= 0)
-        {
-            currentStageIndex = newStageIdx;
-            stageAnimPlayed = false;
-            log.Info($"VictorySequence: Entering stage {newStageIdx}");
-        }
+        if (currentStageIndex < 0)
+            EnterStage(0);
 
         if (currentStageIndex < 0 || currentStageIndex >= stages.Count)
             return;
 
         var stage = stages[currentStageIndex];
         var gameObj = (GameObject*)cinematicNpc.BattleChara;
+
+        if (TickStageApproach(stage, gameObj, deltaTime))
+        {
+            TickOtherNpcs(deltaTime);
+            return;
+        }
+
+        stageElapsed += deltaTime;
+        var duration = GetStageDuration(stage);
+        if (duration >= 0f && stageElapsed > duration)
+        {
+            var nextStage = currentStageIndex + 1;
+            if (nextStage >= stages.Count)
+            {
+                log.Info("VictorySequence: All stages complete");
+                Stop();
+                return;
+            }
+
+            EnterStage(nextStage);
+            TickOtherNpcs(deltaTime);
+            return;
+        }
 
         // When manual grabber control is on for a grab stage, the player drives the
         // grabber's movement (walk anim + floor-snapped) instead of the scripted
@@ -414,10 +430,233 @@ public unsafe class VictorySequenceController : IDisposable
         }
 
         // --- Tick other NPCs' animation sequence ---
-        TickOtherNpcs();
+        TickOtherNpcs(deltaTime);
     }
 
-    private void TickOtherNpcs()
+    private void EnterStage(int stageIndex)
+    {
+        currentStageIndex = stageIndex;
+        stageElapsed = 0f;
+        stageAnimPlayed = false;
+        stageApproachComplete = false;
+        approachStageIndex = -1;
+        ResetApproachPath();
+
+        var stages = config.VictorySequenceStages;
+        if (stageIndex >= 0 && stageIndex < stages.Count)
+            SyncLegacyTiming(stages[stageIndex]);
+
+        log.Info($"VictorySequence: Entering stage {stageIndex}");
+    }
+
+    private static float GetStageDuration(VictorySequenceStage stage)
+    {
+        if (stage.Duration.HasValue)
+            return stage.Duration.Value;
+
+        if (stage.EndTime < 0f)
+            return -1f;
+
+        if (stage.EndTime > stage.StartTime)
+            return MathF.Max(0.1f, stage.EndTime - stage.StartTime);
+
+        return 3.0f;
+    }
+
+    private static void SetStageDuration(VictorySequenceStage stage, float duration)
+    {
+        stage.Duration = duration;
+        stage.StartTime = 0f;
+        stage.EndTime = duration < 0f ? -1f : duration;
+    }
+
+    private static void SyncLegacyTiming(VictorySequenceStage stage)
+        => SetStageDuration(stage, GetStageDuration(stage));
+
+    private bool TickStageApproach(VictorySequenceStage stage, GameObject* gameObj, float dt)
+    {
+        if (!stage.ApproachBeforeStage || stageApproachComplete)
+            return false;
+
+        var character = (Character*)gameObj;
+        if (approachStageIndex != currentStageIndex)
+        {
+            approachStageIndex = currentStageIndex;
+            ResetApproachPath();
+            emotePlayer.ResetEmote(character);
+            character->SetMode(CharacterModes.Normal, 0);
+            grabberVisualState.Kind = ActorVisualStateKind.None;
+        }
+
+        var target = CalculateApproachTarget(stage);
+        var current = new Vector3(gameObj->Position.X, gameObj->Position.Y, gameObj->Position.Z);
+        if (FlatDistance(current, target) <= ApproachStopDistance)
+        {
+            var snappedTarget = SnapApproachToFloor(target, playerDeathPos.Y);
+            movementBlockHook.SetApproachPosition(gameObj, snappedTarget.X, snappedTarget.Y, snappedTarget.Z);
+            FacePlayer(gameObj, snappedTarget);
+            ActorVisualStateController.ClearMovement(character, grabberVisualState);
+            emotePlayer.ResetEmote(character);
+            grabberMoving = false;
+            stageAnimPlayed = false;
+            stageApproachComplete = true;
+            ResetApproachPath();
+            return false;
+        }
+
+        var moveTarget = GetApproachMoveTarget(current, target, dt);
+        var dir = moveTarget - current;
+        dir.Y = 0f;
+        if (dir.LengthSquared() < 0.0001f)
+            dir = target - current;
+        dir.Y = 0f;
+        if (dir.LengthSquared() < 0.0001f)
+            return true;
+
+        dir = Vector3.Normalize(dir);
+        var speed = config.GrabberControlSpeed > 0f ? config.GrabberControlSpeed : 2.5f;
+        var remaining = FlatDistance(current, moveTarget);
+        var moveDist = speed * dt;
+        var next = remaining <= moveDist
+            ? moveTarget
+            : current + dir * moveDist;
+        next = SnapApproachToFloor(next, current.Y);
+
+        movementBlockHook.SetApproachPosition(gameObj, next.X, next.Y, next.Z);
+        movementBlockHook.SetApproachRotation(gameObj, MathF.Atan2(dir.X, dir.Z));
+        ActorVisualStateController.ApplyMoving(character, grabberVisualState, dt);
+        grabberMoving = true;
+        return true;
+    }
+
+    private Vector3 CalculateApproachTarget(VictorySequenceStage stage)
+    {
+        var distance = Math.Clamp(stage.ApproachDistance, 0.2f, 30f);
+        var playerForward = new Vector3(MathF.Sin(playerFacingAngle), 0f, MathF.Cos(playerFacingAngle));
+        var target = playerDeathPos + playerForward * distance;
+        return SnapApproachToFloor(target, playerDeathPos.Y);
+    }
+
+    private Vector3 GetApproachMoveTarget(Vector3 current, Vector3 target, float dt)
+    {
+        if (vnavmeshIpc == null)
+            return target;
+
+        vnavmeshIpc.RefreshStatus();
+        if (!vnavmeshIpc.CanPathfind)
+            return target;
+
+        approachPath.RepathTimer = Math.Max(0f, approachPath.RepathTimer - dt);
+        if (approachPath.PendingPath != null && approachPath.PendingPath.IsCompleted)
+        {
+            try
+            {
+                approachPath.Waypoints = approachPath.PendingPath.GetAwaiter().GetResult();
+                approachPath.RequestedTarget = approachPath.PendingTarget;
+                approachPath.WaypointIndex = 0;
+            }
+            catch (Exception ex)
+            {
+                log.Verbose($"VictorySequence approach path failed: {ex.Message}");
+                approachPath.Waypoints.Clear();
+            }
+            approachPath.PendingPath = null;
+        }
+
+        var pathExhausted = approachPath.WaypointIndex >= approachPath.Waypoints.Count;
+        var shouldRepath = approachPath.PendingPath == null &&
+            approachPath.RepathTimer <= 0f &&
+            (approachPath.Waypoints.Count == 0 ||
+             Vector3.Distance(approachPath.RequestedTarget, target) > ApproachRepathDistance ||
+             (pathExhausted && FlatDistance(current, target) > 2f));
+
+        if (shouldRepath)
+        {
+            approachPath.RepathTimer = ApproachRepathInterval;
+            var from = SnapToNavmeshNearHeight(current, current.Y) ?? current;
+            var to = SnapToNavmeshNearHeight(target, playerDeathPos.Y) ?? target;
+            approachPath.PendingTarget = to;
+            try
+            {
+                approachPath.PendingPath = vnavmeshIpc.Pathfind(from, to, 0.75f);
+            }
+            catch (Exception ex)
+            {
+                log.Verbose($"VictorySequence approach path request failed: {ex.Message}");
+                approachPath.PendingPath = null;
+            }
+        }
+
+        while (approachPath.WaypointIndex < approachPath.Waypoints.Count &&
+               FlatDistance(current, approachPath.Waypoints[approachPath.WaypointIndex]) < ApproachWaypointReachDistance)
+            approachPath.WaypointIndex++;
+
+        return approachPath.WaypointIndex < approachPath.Waypoints.Count
+            ? SnapApproachToFloor(approachPath.Waypoints[approachPath.WaypointIndex], current.Y)
+            : target;
+    }
+
+    private Vector3? SnapToNavmeshNearHeight(Vector3 point, float referenceY)
+    {
+        try
+        {
+            var snapped = vnavmeshIpc.NearestPointReachable(point)
+                          ?? vnavmeshIpc.PointOnFloor(point + new Vector3(0, 10f, 0));
+            if (snapped.HasValue && MathF.Abs(snapped.Value.Y - referenceY) <= ApproachMaxNavmeshFloorDelta)
+                return snapped;
+        }
+        catch (Exception ex)
+        {
+            log.Verbose($"VictorySequence vnavmesh snap failed: {ex.Message}");
+        }
+
+        return null;
+    }
+
+    private Vector3 SnapApproachToFloor(Vector3 pos, float referenceY)
+    {
+        if (BGCollisionModule.RaycastMaterialFilter(
+                new Vector3(pos.X, referenceY + ApproachFloorRayStartOffset, pos.Z),
+                new Vector3(0, -1, 0),
+                out var hit,
+                ApproachFloorRayDistance))
+            return new Vector3(pos.X, hit.Point.Y, pos.Z);
+
+        if (vnavmeshIpc != null)
+        {
+            vnavmeshIpc.RefreshStatus();
+            if (vnavmeshIpc.CanPathfind)
+            {
+                var floor = SnapToNavmeshNearHeight(pos, referenceY);
+                if (floor.HasValue)
+                    return new Vector3(pos.X, floor.Value.Y, pos.Z);
+            }
+        }
+
+        return pos;
+    }
+
+    private void FacePlayer(GameObject* gameObj, Vector3 npcPos)
+    {
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        var headPos = player != null ? GetBoneWorldPos(player.Address, "j_kao") : null;
+        var faceTarget = headPos ?? playerDeathPos;
+        var toHead = faceTarget - npcPos;
+        if (toHead.LengthSquared() > 0.001f)
+            movementBlockHook.SetApproachRotation(gameObj, MathF.Atan2(toHead.X, toHead.Z));
+    }
+
+    private void ResetApproachPath()
+    {
+        approachPath.Waypoints.Clear();
+        approachPath.WaypointIndex = 0;
+        approachPath.RequestedTarget = default;
+        approachPath.PendingTarget = default;
+        approachPath.PendingPath = null;
+        approachPath.RepathTimer = 0f;
+    }
+
+    private void TickOtherNpcs(float deltaTime)
     {
         var otherStages = config.VictorySequenceOtherStages;
         if (otherStages.Count == 0 || otherNpcStates.Count == 0) return;
@@ -451,26 +690,12 @@ public unsafe class VictorySequenceController : IDisposable
             var state = otherNpcStates[ni];
             if (state.Npc.BattleChara == null) continue;
 
-            var npcElapsed = elapsed - state.TimeOffset;
-            if (npcElapsed < 0) continue; // not started yet
+            if (elapsed < state.TimeOffset) continue; // not started yet
 
-            // Find stage for this NPC's shifted time
-            int newIdx = -1;
-            for (int i = 0; i < otherStages.Count; i++)
+            if (state.StageIndex < 0)
             {
-                var isInfinite = otherStages[i].EndTime < 0;
-                var stageStart = otherStages[i].StartTime;
-                var stageEnd = otherStages[i].EndTime;
-                if (npcElapsed >= stageStart && (isInfinite || npcElapsed < stageEnd))
-                {
-                    newIdx = i;
-                    break;
-                }
-            }
-
-            if (newIdx != state.StageIndex && newIdx >= 0)
-            {
-                state.StageIndex = newIdx;
+                state.StageIndex = 0;
+                state.StageElapsed = 0f;
                 state.AnimPlayed = false;
             }
 
@@ -481,6 +706,20 @@ public unsafe class VictorySequenceController : IDisposable
             }
 
             var os = otherStages[state.StageIndex];
+            state.StageElapsed += deltaTime;
+            var osDuration = GetStageDuration(os);
+            if (osDuration >= 0f && state.StageElapsed > osDuration)
+            {
+                state.StageIndex++;
+                state.StageElapsed = 0f;
+                state.AnimPlayed = false;
+                if (state.StageIndex >= otherStages.Count)
+                {
+                    otherNpcStates[ni] = state;
+                    continue;
+                }
+                os = otherStages[state.StageIndex];
+            }
 
             // Play animation on stage enter or config change
             bool changed = state.AnimPlayed && (
@@ -601,6 +840,13 @@ public unsafe class VictorySequenceController : IDisposable
         var camRight = new Vector3(-camFwd.Z, 0f, camFwd.X);
         var dir = camFwd * input.Y + camRight * input.X;
         return dir.LengthSquared() < 1e-6f ? Vector3.Zero : Vector3.Normalize(dir);
+    }
+
+    private static float FlatDistance(Vector3 a, Vector3 b)
+    {
+        var delta = a - b;
+        delta.Y = 0f;
+        return delta.Length();
     }
 
     private static Vector2 ReadKeyboardMoveAxis()
@@ -832,5 +1078,15 @@ public unsafe class VictorySequenceController : IDisposable
     public void Dispose()
     {
         Stop();
+    }
+
+    private class ApproachPathState
+    {
+        public List<Vector3> Waypoints { get; set; } = new();
+        public int WaypointIndex { get; set; }
+        public Vector3 RequestedTarget { get; set; }
+        public Vector3 PendingTarget { get; set; }
+        public Task<List<Vector3>>? PendingPath { get; set; }
+        public float RepathTimer { get; set; }
     }
 }
