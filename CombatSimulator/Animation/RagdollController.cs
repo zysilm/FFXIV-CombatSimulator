@@ -61,12 +61,17 @@ public unsafe class RagdollController : IDisposable
     private const float FixedTimestep = 1f / 60f;
     private const int MaxSubstepsPerFrame = 4;  // cap catch-up to avoid a spiral of death
     private const float MaxFrameDelta = 0.1f;   // ignore huge gaps (loading screens, hitches)
+    private const float BiomechanicalSettleDuration = 1.25f;
 
     // True once every ragdoll body has gone to sleep (settled). When resting we skip the
     // physics step, the per-frame NPC-collision static rebuild, and hair integration —
     // only re-asserting the held pose. Bodies can only sleep when settle-collision is off,
     // so a resting corpse has nothing left to react to. Reset whenever the rig is rebuilt.
     private bool prevAllAsleep;
+    // Short post-wake window where passive anatomical constraints are allowed to solve even
+    // if the ragdoll had already gone to sleep. This prevents grab/release from preserving a
+    // contact-supported kneel or bent-elbow pose as a permanent "resting" posture.
+    private float biomechanicalSettleRemaining;
 
     // Skeleton world transform (captured at activation from Skeleton.Transform)
     // ModelPose is in skeleton-local space; these convert to/from world space.
@@ -745,24 +750,34 @@ public unsafe class RagdollController : IDisposable
 
     private static float DefaultHingeRestAngle(AnatomicalRole role, string name)
     {
-        return role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal)
-            ? MathF.PI / 2
-            : 0f;
+        return 0f;
     }
 
     private static float DefaultHingeRestSpringFreq(AnatomicalRole role, string name)
     {
-        return role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal)
-            ? 2.0f
-            : 0f;
+        if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
+            return 1.2f;
+        if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
+            return 1.5f;
+        return 0f;
     }
 
     private static float DefaultHingeRestMaxForce(AnatomicalRole role, string name)
     {
-        return role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal)
-            ? 8.0f
-            : 0f;
+        if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
+            return 10.0f;
+        if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
+            return 6.0f;
+        return 0f;
     }
+
+    private static bool HasPassiveHingeRest(AnatomicalRole role, string name)
+    {
+        return role == AnatomicalRole.Knee || role == AnatomicalRole.Elbow ||
+               name.StartsWith("j_asi_b_", StringComparison.Ordinal) ||
+               name.StartsWith("j_ude_b_", StringComparison.Ordinal);
+    }
+
 
     private static RagdollBoneDef[] BuildDefaultBoneDefs()
     {
@@ -927,6 +942,7 @@ public unsafe class RagdollController : IDisposable
         lastFrameTimestamp = 0;
         physicsAccumulator = 0f;
         prevAllAsleep = false;
+        biomechanicalSettleRemaining = 0f;
         hasPrevPhysicsState = false;
         // Save original position so we can restore if FollowPosition is toggled off
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)characterAddress;
@@ -992,6 +1008,7 @@ public unsafe class RagdollController : IDisposable
                 if (!InitializePhysics()) { Deactivate(); return; }
                 physicsStarted = true;
                 frameCount = 0;
+                BeginBiomechanicalSettle();
                 physicsAccumulator = 0f; // start clean — don't carry the activation-delay wait
             }
 
@@ -1303,15 +1320,14 @@ public unsafe class RagdollController : IDisposable
         Vector3 parentSegDir,
         Vector3 segDirWorld)
     {
-        if (boneDef.AnatomicalRole != AnatomicalRole.Elbow ||
+        if (!HasPassiveHingeRest(boneDef.AnatomicalRole, boneDef.Name) ||
             boneDef.HingeRestSpringFreq <= 0 ||
             boneDef.HingeRestMaxForce <= 0 ||
             simulation == null)
             return;
 
-        var forwardWorld = ComputeHingeForward(hingeAxisWorld, parentSegDir, segDirWorld);
         var childBasis = CreateTwistBasis(hingeAxisWorld, segDirWorld);
-        var parentBasis = CreateTwistBasis(hingeAxisWorld, forwardWorld);
+        var parentBasis = CreateTwistBasis(hingeAxisWorld, parentSegDir);
 
         simulation.Solver.Add(childHandle, parentHandle,
             new TwistServo
@@ -1324,7 +1340,28 @@ public unsafe class RagdollController : IDisposable
             });
 
         if (config.RagdollVerboseLog)
-            log.Info($"[Ragdoll Constraint] '{boneDef.Name}' elbow rest bias: angle={boneDef.HingeRestAngle:F2} freq={boneDef.HingeRestSpringFreq:F2} force={boneDef.HingeRestMaxForce:F2}");
+            log.Info($"[Ragdoll Constraint] '{boneDef.Name}' passive hinge rest: angle={boneDef.HingeRestAngle:F2} freq={boneDef.HingeRestSpringFreq:F2} force={boneDef.HingeRestMaxForce:F2}");
+    }
+
+    private void BeginBiomechanicalSettle(float duration = BiomechanicalSettleDuration)
+    {
+        biomechanicalSettleRemaining = MathF.Max(biomechanicalSettleRemaining, duration);
+        prevAllAsleep = false;
+    }
+
+    private void WakeRagdollBodiesForBiomechanicalSettle()
+    {
+        if (simulation == null) return;
+
+        for (int i = 0; i < ragdollBones.Count; i++)
+        {
+            try
+            {
+                var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
+                bodyRef.Awake = true;
+            }
+            catch { }
+        }
     }
 
     private bool InitializePhysics()
@@ -2451,6 +2488,13 @@ public unsafe class RagdollController : IDisposable
             skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
         }
 
+        if (skeletonMoved)
+            BeginBiomechanicalSettle();
+
+        var biomechanicalSettleActive = biomechanicalSettleRemaining > 0f;
+        if (biomechanicalSettleActive)
+            WakeRagdollBodiesForBiomechanicalSettle();
+
         // Resting fast-path: once the rig is fully asleep there is nothing left to react
         // to (bodies only sleep when settle-collision is off, and an asleep body has ~0
         // velocity so there is no energy left to pump), so skip the physics step, the
@@ -2458,7 +2502,7 @@ public unsafe class RagdollController : IDisposable
         // pose below. Applies to generic (monster) rigs too: if their auto-built network
         // never settles, prevAllAsleep simply stays false and this never triggers; if it
         // does settle, there is nothing to clamp. A grab or a moved skeleton forces a step.
-        var resting = prevAllAsleep && !grabConstraintActive && !skeletonMoved;
+        var resting = prevAllAsleep && !grabConstraintActive && !skeletonMoved && !biomechanicalSettleActive;
 
         // Update NPC collision volumes to track their current animated bone positions.
         // Must call UpdateBounds() after repositioning — BEPU2 doesn't auto-update
@@ -2631,6 +2675,9 @@ public unsafe class RagdollController : IDisposable
         {
             physicsAccumulator = 0f;
         }
+
+        if (biomechanicalSettleRemaining > 0f)
+            biomechanicalSettleRemaining = MathF.Max(0f, biomechanicalSettleRemaining - dt);
 
         // Fraction of a tick elapsed past the last completed tick. The write-back blends the
         // current physics pose toward it from the previous tick's pose, so the rendered ragdoll
@@ -2901,7 +2948,7 @@ public unsafe class RagdollController : IDisposable
             bodyRef.Awake = true;
         }
         // The rig is no longer resting; force a full physics step next frame.
-        prevAllAsleep = false;
+        BeginBiomechanicalSettle();
 
         // Remember the tuning so UpdateGrabTarget reuses it instead of resetting to defaults.
         grabServoSettings = new ServoSettings(maxSpeed, 1f, maxForce);
@@ -2970,12 +3017,14 @@ public unsafe class RagdollController : IDisposable
             {
                 var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
                 bodyRef.Activity.SleepThreshold = normalThreshold;
+                bodyRef.Awake = true;
             }
             catch { }
         }
 
         grabConstraintActive = false;
         suspendedNpcAddress = nint.Zero;
+        BeginBiomechanicalSettle();
 
         log.Info("RagdollController: Grab constraint removed");
     }
@@ -2986,6 +3035,7 @@ public unsafe class RagdollController : IDisposable
     {
         grabConstraintActive = false;
         suspendedNpcAddress = nint.Zero;
+        biomechanicalSettleRemaining = 0f;
         ragdollBones.Clear();
         npcCollisionStates.Clear();
         simulation?.Dispose();

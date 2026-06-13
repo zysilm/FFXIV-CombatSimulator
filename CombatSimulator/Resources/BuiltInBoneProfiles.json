@@ -997,9 +997,9 @@
                           "BoxHalfExtentY":  0.07,
                           "BoxHalfExtentZ":  0.025,
                           "SwingMinLimit":  0.45,
-                          "HingeRestAngle":  1.5707963267948966,
-                          "HingeRestSpringFreq":  2,
-                          "HingeRestMaxForce":  8
+                          "HingeRestAngle":  0,
+                          "HingeRestSpringFreq":  1.5,
+                          "HingeRestMaxForce":  6
                       },
                       {
                           "Name":  "j_ude_b_r",
@@ -1024,9 +1024,9 @@
                           "BoxHalfExtentY":  0.07,
                           "BoxHalfExtentZ":  0.025,
                           "SwingMinLimit":  0.45,
-                          "HingeRestAngle":  1.5707963267948966,
-                          "HingeRestSpringFreq":  2,
-                          "HingeRestMaxForce":  8
+                          "HingeRestAngle":  0,
+                          "HingeRestSpringFreq":  1.5,
+                          "HingeRestMaxForce":  6
                       },
                       {
                           "Name":  "j_te_l",
@@ -1160,8 +1160,8 @@
                           "BoxHalfExtentZ":  0.035,
                           "SwingMinLimit":  0.75,
                           "HingeRestAngle":  0,
-                          "HingeRestSpringFreq":  0,
-                          "HingeRestMaxForce":  0
+                          "HingeRestSpringFreq":  1.2,
+                          "HingeRestMaxForce":  10
                       },
                       {
                           "Name":  "j_asi_b_r",
@@ -1187,8 +1187,8 @@
                           "BoxHalfExtentZ":  0.035,
                           "SwingMinLimit":  0.75,
                           "HingeRestAngle":  0,
-                          "HingeRestSpringFreq":  0,
-                          "HingeRestMaxForce":  0
+                          "HingeRestSpringFreq":  1.2,
+                          "HingeRestMaxForce":  10
                       },
                       {
                           "Name":  "j_asi_c_l",
@@ -5646,9 +5646,9 @@
                           "BoxHalfExtentY":  0.07,
                           "BoxHalfExtentZ":  0.025,
                           "SwingMinLimit":  0.45,
-                          "HingeRestAngle":  1.5707963267948966,
-                          "HingeRestSpringFreq":  2,
-                          "HingeRestMaxForce":  8
+                          "HingeRestAngle":  0,
+                          "HingeRestSpringFreq":  1.5,
+                          "HingeRestMaxForce":  6
                       },
                       {
                           "Name":  "j_ude_b_r",
@@ -5673,9 +5673,9 @@
                           "BoxHalfExtentY":  0.07,
                           "BoxHalfExtentZ":  0.025,
                           "SwingMinLimit":  0.45,
-                          "HingeRestAngle":  1.5707963267948966,
-                          "HingeRestSpringFreq":  2,
-                          "HingeRestMaxForce":  8
+                          "HingeRestAngle":  0,
+                          "HingeRestSpringFreq":  1.5,
+                          "HingeRestMaxForce":  6
                       },
                       {
                           "Name":  "j_te_l",
@@ -5809,8 +5809,8 @@
                           "BoxHalfExtentZ":  0.035,
                           "SwingMinLimit":  0.75,
                           "HingeRestAngle":  0,
-                          "HingeRestSpringFreq":  0,
-                          "HingeRestMaxForce":  0
+                          "HingeRestSpringFreq":  1.2,
+                          "HingeRestMaxForce":  10
                       },
                       {
                           "Name":  "j_asi_b_r",
@@ -5836,8 +5836,8 @@
                           "BoxHalfExtentZ":  0.035,
                           "SwingMinLimit":  0.75,
                           "HingeRestAngle":  0,
-                          "HingeRestSpringFreq":  0,
-                          "HingeRestMaxForce":  0
+                          "HingeRestSpringFreq":  1.2,
+                          "HingeRestMaxForce":  10
                       },
                       {
                           "Name":  "j_asi_c_l",
@@ -10295,9 +10295,9 @@
                           "BoxHalfExtentY":  0.07,
                           "BoxHalfExtentZ":  0.025,
                           "SwingMinLimit":  0.45,
-                          "HingeRestAngle":  1.5707963267948966,
-                          "HingeRestSpringFreq":  2,
-                          "HingeRestMaxForce":  8
+                          "HingeRestAngle":  0,
+                          "HingeRestSpringFreq":  1.5,
+                          "HingeRestMaxForce":  6
                       },
                       {
                           "Name":  "j_ude_b_r",
@@ -10322,9 +10322,9 @@
                           "BoxHalfExtentY":  0.07,
                           "BoxHalfExtentZ":  0.025,
                           "SwingMinLimit":  0.45,
-                          "HingeRestAngle":  1.5707963267948966,
-                          "HingeRestSpringFreq":  2,
-                          "HingeRestMaxForce":  8
+                          "HingeRestAngle":  0,
+                          "HingeRestSpringFreq":  1.5,
+                          "HingeRestMaxForce":  6
                       },
                       {
                           "Name":  "j_te_l",
@@ -10458,8 +10458,8 @@
                           "BoxHalfExtentZ":  0.035,
                           "SwingMinLimit":  0.75,
                           "HingeRestAngle":  0,
-                          "HingeRestSpringFreq":  0,
-                          "HingeRestMaxForce":  0
+                          "HingeRestSpringFreq":  1.2,
+                          "HingeRestMaxForce":  10
                       },
                       {
                           "Name":  "j_asi_b_r",
@@ -10485,8 +10485,8 @@
                           "BoxHalfExtentZ":  0.035,
                           "SwingMinLimit":  0.75,
                           "HingeRestAngle":  0,
-                          "HingeRestSpringFreq":  0,
-                          "HingeRestMaxForce":  0
+                          "HingeRestSpringFreq":  1.2,
+                          "HingeRestMaxForce":  10
                       },
                       {
                           "Name":  "j_asi_c_l",
