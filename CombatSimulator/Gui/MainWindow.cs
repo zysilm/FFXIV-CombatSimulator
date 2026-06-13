@@ -1590,6 +1590,13 @@ public class MainWindow : IDisposable
                     if (ImGui.SliderFloat($"Swing Limit (rad){id}", ref swing, 0.0f, MathF.PI, "%.2f"))
                     { bone.SwingLimit = swing; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
 
+                    if ((RagdollController.JointType)bone.JointType == RagdollController.JointType.Hinge)
+                    {
+                        var swingMin = bone.SwingMinLimit ?? 0f;
+                        if (ImGui.SliderFloat($"Swing Min Limit (rad){id}", ref swingMin, 0.0f, MathF.PI, "%.2f"))
+                        { bone.SwingMinLimit = swingMin; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
+                    }
+
                     var twistMin = bone.TwistMinAngle;
                     if (ImGui.SliderFloat($"Twist Min (rad){id}", ref twistMin, -MathF.PI, 0f, "%.2f"))
                     { bone.TwistMinAngle = twistMin; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.TwistMin; }
@@ -1634,6 +1641,7 @@ public class MainWindow : IDisposable
                             bone.CapsuleHalfLength = def.CapsuleHalfLength;
                             bone.Mass = def.Mass;
                             bone.SwingLimit = def.SwingLimit;
+                            bone.SwingMinLimit = def.SwingMinLimit;
                             bone.JointType = def.JointType;
                             bone.TwistMinAngle = def.TwistMinAngle;
                             bone.TwistMaxAngle = def.TwistMaxAngle;
@@ -1779,6 +1787,7 @@ public class MainWindow : IDisposable
             CapsuleHalfLength = src.CapsuleHalfLength,
             Mass = src.Mass,
             SwingLimit = src.SwingLimit,
+            SwingMinLimit = src.SwingMinLimit,
             JointType = src.JointType,
             TwistMinAngle = src.TwistMinAngle,
             TwistMaxAngle = src.TwistMaxAngle,

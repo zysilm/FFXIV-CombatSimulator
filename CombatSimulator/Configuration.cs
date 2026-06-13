@@ -18,6 +18,7 @@ public class RagdollBoneConfig
     public float CapsuleHalfLength { get; set; }
     public float Mass { get; set; }
     public float SwingLimit { get; set; }
+    public float? SwingMinLimit { get; set; } // hinge-only lower bound; null means migrate/default
     public int JointType { get; set; } // 0=Ball, 1=Hinge
     public float TwistMinAngle { get; set; }
     public float TwistMaxAngle { get; set; }
@@ -428,12 +429,14 @@ public class Configuration : IPluginConfiguration
             var bx = bone.BoxHalfExtentX;
             var by = bone.BoxHalfExtentY;
             var bz = bone.BoxHalfExtentZ;
+            var swingMin = bone.SwingMinLimit;
             RagdollController.FillProfileDefaults(bone);
             if (role != bone.AnatomicalRole ||
                 shape != bone.ColliderShape ||
                 bx != bone.BoxHalfExtentX ||
                 by != bone.BoxHalfExtentY ||
-                bz != bone.BoxHalfExtentZ)
+                bz != bone.BoxHalfExtentZ ||
+                swingMin != bone.SwingMinLimit)
                 changed = true;
         }
         return changed;
@@ -462,6 +465,33 @@ public class Configuration : IPluginConfiguration
             {
                 bone.JointType = (int)RagdollController.JointType.Hinge;
                 changed = true;
+            }
+
+            var minSwingFloor = isLowerLimb || role == RagdollController.AnatomicalRole.Knee
+                ? 0.75f
+                : isForearm || role == RagdollController.AnatomicalRole.Elbow
+                    ? 0.45f
+                    : 0f;
+            if (minSwingFloor > 0 && (bone.SwingMinLimit == null || bone.SwingMinLimit < minSwingFloor))
+            {
+                bone.SwingMinLimit = minSwingFloor;
+                changed = true;
+            }
+
+            if (isLowerLimb || isForearm)
+            {
+                if (bone.ColliderShape != (int)RagdollController.RagdollColliderShape.Box)
+                {
+                    bone.ColliderShape = (int)RagdollController.RagdollColliderShape.Box;
+                    changed = true;
+                }
+
+                var minX = isLowerLimb ? 0.042f : 0.030f;
+                var minY = isLowerLimb ? 0.090f : 0.060f;
+                var minZ = isLowerLimb ? 0.030f : 0.022f;
+                if (bone.BoxHalfExtentX < minX) { bone.BoxHalfExtentX = minX; changed = true; }
+                if (bone.BoxHalfExtentY < minY) { bone.BoxHalfExtentY = minY; changed = true; }
+                if (bone.BoxHalfExtentZ < minZ) { bone.BoxHalfExtentZ = minZ; changed = true; }
             }
         }
         return changed;

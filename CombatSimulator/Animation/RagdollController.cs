@@ -536,6 +536,7 @@ public unsafe class RagdollController : IDisposable
         public float CapsuleHalfLength;
         public float Mass;
         public float SwingLimit;
+        public float SwingMinLimit;
         public JointType Joint;
         public float TwistMinAngle;
         public float TwistMaxAngle;
@@ -665,9 +666,11 @@ public unsafe class RagdollController : IDisposable
         if (bone.AnatomicalRole == (int)AnatomicalRole.Auto)
             bone.AnatomicalRole = (int)InferAnatomicalRole(bone.Name, bone.Description, bone.SoftBody);
 
+        bone.SwingMinLimit ??= DefaultSwingMinLimit((AnatomicalRole)bone.AnatomicalRole, bone.Name);
+
         var hasBoxMetadata = bone.BoxHalfExtentX > 0 || bone.BoxHalfExtentY > 0 || bone.BoxHalfExtentZ > 0;
         if (bone.ColliderShape == 0 && !hasBoxMetadata &&
-            (IsHandBone(bone.Name) || IsFootBone(bone.Name)))
+            (IsHandBone(bone.Name) || IsFootBone(bone.Name) || IsShinBone(bone.Name) || IsForearmBone(bone.Name)))
             bone.ColliderShape = (int)RagdollColliderShape.Box;
 
         if (bone.BoxHalfExtentX <= 0 || bone.BoxHalfExtentY <= 0 || bone.BoxHalfExtentZ <= 0)
@@ -701,9 +704,15 @@ public unsafe class RagdollController : IDisposable
 
     private static bool IsHandBone(string name) => name.StartsWith("j_te_", StringComparison.Ordinal);
     private static bool IsFootBone(string name) => name.StartsWith("j_asi_d_", StringComparison.Ordinal);
+    private static bool IsShinBone(string name) => name.StartsWith("j_asi_b_", StringComparison.Ordinal);
+    private static bool IsForearmBone(string name) => name.StartsWith("j_ude_b_", StringComparison.Ordinal);
 
     private static Vector3 DefaultBoxHalfExtents(RagdollBoneConfig bone)
     {
+        if (IsShinBone(bone.Name))
+            return new Vector3(MathF.Max(0.042f, bone.CapsuleRadius * 1.15f), MathF.Max(0.09f, bone.CapsuleHalfLength), MathF.Max(0.030f, bone.CapsuleRadius * 0.85f));
+        if (IsForearmBone(bone.Name))
+            return new Vector3(MathF.Max(0.030f, bone.CapsuleRadius * 1.10f), MathF.Max(0.060f, bone.CapsuleHalfLength), MathF.Max(0.022f, bone.CapsuleRadius * 0.85f));
         if (IsFootBone(bone.Name))
             return new Vector3(0.035f, MathF.Max(0.045f, bone.CapsuleHalfLength), 0.018f);
         if (IsHandBone(bone.Name))
@@ -712,6 +721,16 @@ public unsafe class RagdollController : IDisposable
         var r = MathF.Max(0.01f, bone.CapsuleRadius);
         var h = MathF.Max(0.01f, bone.CapsuleHalfLength);
         return new Vector3(r, h, r);
+    }
+
+    private static float DefaultSwingMinLimit(AnatomicalRole role, string name)
+    {
+        if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
+            return 0.75f;
+        if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
+            return 0.45f;
+
+        return 0f;
     }
 
     private static RagdollBoneDef[] BuildDefaultBoneDefs()
@@ -774,6 +793,7 @@ public unsafe class RagdollController : IDisposable
                 CapsuleHalfLength = c.CapsuleHalfLength,
                 Mass = c.Mass,
                 SwingLimit = c.SwingLimit,
+                SwingMinLimit = c.SwingMinLimit ?? 0f,
                 Joint = (JointType)c.JointType,
                 TwistMinAngle = c.TwistMinAngle,
                 TwistMaxAngle = c.TwistMaxAngle,
@@ -1204,6 +1224,39 @@ public unsafe class RagdollController : IDisposable
             forward = -forward;
 
         return forward;
+    }
+
+    private void AddAnatomicalHingeFoldStop(
+        BodyHandle childHandle,
+        BodyHandle parentHandle,
+        BodyReference childBodyRef,
+        BodyReference parentBodyRef,
+        RagdollBoneDef boneDef,
+        Vector3 hingeAxisWorld,
+        Vector3 parentSegDir,
+        Vector3 segDirWorld,
+        SpringSettings limitSpring)
+    {
+        if (boneDef.SwingMinLimit <= 0 || boneDef.SwingMinLimit >= MathF.PI || simulation == null)
+            return;
+
+        var forwardWorld = ComputeHingeForward(hingeAxisWorld, parentSegDir, segDirWorld);
+        var minLimitAxisLocalParent = Vector3.Normalize(Vector3.Transform(
+            -forwardWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
+        var swingAxisLocalChild = Vector3.Normalize(Vector3.Transform(
+            segDirWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
+
+        simulation.Solver.Add(childHandle, parentHandle,
+            new SwingLimit
+            {
+                AxisLocalA = swingAxisLocalChild,
+                AxisLocalB = minLimitAxisLocalParent,
+                MaximumSwingAngle = MathF.PI - boneDef.SwingMinLimit,
+                SpringSettings = limitSpring,
+            });
+
+        if (config.RagdollVerboseLog)
+            log.Info($"[Ragdoll Constraint] '{boneDef.Name}' anatomical fold stop: min={boneDef.SwingMinLimit:F2}rad role={boneDef.AnatomicalRole}");
     }
 
     private bool InitializePhysics()
@@ -1745,6 +1798,9 @@ public unsafe class RagdollController : IDisposable
                     if (config.RagdollVerboseLog)
                         log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad dot={Vector3.Dot(forwardWorld, segDirWorld):F3}");
                 }
+
+                AddAnatomicalHingeFoldStop(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
+                    boneDef, hingeAxisWorld, parentSegDir, segDirWorld, limitSpring);
 
                 if (boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0)
                 {
