@@ -140,7 +140,6 @@ public unsafe class RagdollController : IDisposable
     private Vector3[]? prevWorldPositions;
     private Quaternion[]? prevWorldRotations;
     private bool hasPrevPhysicsState;
-
     // Animation freeze state
     private float savedOverallSpeed = 1.0f;
     private readonly HashSet<int> ragdollBoneIndices = new();
@@ -169,6 +168,8 @@ public unsafe class RagdollController : IDisposable
         public Quaternion Orientation; // capsule rotation
         public float Radius;
         public float HalfLength;      // half of the segment length (capsule extends along Y)
+        public RagdollColliderShape ColliderShape;
+        public Vector3 BoxHalfExtents;
         public string Name;
         public JointType Joint;
         public float SwingLimit;
@@ -283,7 +284,9 @@ public unsafe class RagdollController : IDisposable
                 Position = bodyRef.Pose.Position,
                 Orientation = bodyRef.Pose.Orientation,
                 Radius = boneDef.CapsuleRadius,
-                HalfLength = boneDef.CapsuleHalfLength,
+                HalfLength = ResolveBodyHalfLength(boneDef),
+                ColliderShape = boneDef.ColliderShape,
+                BoxHalfExtents = ResolveBoxHalfExtents(boneDef, ResolveBodyHalfLength(boneDef)),
                 Name = rb.Name,
                 Joint = boneDef.Joint,
                 SwingLimit = boneDef.SwingLimit,
@@ -329,7 +332,9 @@ public unsafe class RagdollController : IDisposable
                 Position = worldPos,
                 Orientation = worldRot,
                 Radius = def.CapsuleRadius,
-                HalfLength = def.CapsuleHalfLength,
+                HalfLength = ResolveBodyHalfLength(def),
+                ColliderShape = def.ColliderShape,
+                BoxHalfExtents = ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)),
                 Name = def.Name,
                 Joint = def.Joint,
                 SwingLimit = def.SwingLimit,
@@ -501,6 +506,9 @@ public unsafe class RagdollController : IDisposable
                 Joint = JointType.Ball,
                 TwistMinAngle = -GenericTwistLimit,
                 TwistMaxAngle = GenericTwistLimit,
+                AnatomicalRole = AnatomicalRole.Generic,
+                ColliderShape = RagdollColliderShape.Capsule,
+                BoxHalfExtents = new Vector3(Math.Clamp(segLen * 0.28f, 0.02f, 0.18f), segLen * 0.45f, Math.Clamp(segLen * 0.28f, 0.02f, 0.18f)),
             });
         }
 
@@ -516,6 +524,8 @@ public unsafe class RagdollController : IDisposable
     //   SwingLimit compares two direction vectors and limits the angle between them,
     //   which naturally limits hinge bending when the axes are chosen correctly.
     public enum JointType { Ball, Hinge }
+    public enum AnatomicalRole { Auto, Generic, Pelvis, Spine, Head, Shoulder, Elbow, Hand, Hip, Knee, Ankle, Foot, Cloth, SoftBody, Weapon }
+    public enum RagdollColliderShape { Capsule, Box }
 
     // Ragdoll bone definition
     public struct RagdollBoneDef
@@ -529,6 +539,9 @@ public unsafe class RagdollController : IDisposable
         public JointType Joint;
         public float TwistMinAngle;
         public float TwistMaxAngle;
+        public AnatomicalRole AnatomicalRole;
+        public RagdollColliderShape ColliderShape;
+        public Vector3 BoxHalfExtents;
         public bool SoftBody;          // use soft springs + AngularServo (for breast/jiggle)
         public float SoftSpringFreq;   // BallSocket frequency (Hz)
         public float SoftSpringDamp;   // BallSocket damping ratio
@@ -647,6 +660,60 @@ public unsafe class RagdollController : IDisposable
     /// </summary>
     public static readonly RagdollBoneDef[] DefaultBoneDefs = BuildDefaultBoneDefs();
 
+    public static void FillProfileDefaults(RagdollBoneConfig bone)
+    {
+        if (bone.AnatomicalRole == (int)AnatomicalRole.Auto)
+            bone.AnatomicalRole = (int)InferAnatomicalRole(bone.Name, bone.Description, bone.SoftBody);
+
+        var hasBoxMetadata = bone.BoxHalfExtentX > 0 || bone.BoxHalfExtentY > 0 || bone.BoxHalfExtentZ > 0;
+        if (bone.ColliderShape == 0 && !hasBoxMetadata &&
+            (IsHandBone(bone.Name) || IsFootBone(bone.Name)))
+            bone.ColliderShape = (int)RagdollColliderShape.Box;
+
+        if (bone.BoxHalfExtentX <= 0 || bone.BoxHalfExtentY <= 0 || bone.BoxHalfExtentZ <= 0)
+        {
+            var extents = DefaultBoxHalfExtents(bone);
+            if (bone.BoxHalfExtentX <= 0) bone.BoxHalfExtentX = extents.X;
+            if (bone.BoxHalfExtentY <= 0) bone.BoxHalfExtentY = extents.Y;
+            if (bone.BoxHalfExtentZ <= 0) bone.BoxHalfExtentZ = extents.Z;
+        }
+    }
+
+    private static AnatomicalRole InferAnatomicalRole(string name, string? description, bool softBody)
+    {
+        if (softBody || name.StartsWith("j_mune_", StringComparison.Ordinal)) return AnatomicalRole.SoftBody;
+        if (name.StartsWith("j_sk_", StringComparison.Ordinal)) return AnatomicalRole.Cloth;
+        if (name.StartsWith("j_buki", StringComparison.Ordinal)) return AnatomicalRole.Weapon;
+        if (name == "j_kosi") return AnatomicalRole.Pelvis;
+        if (name.StartsWith("j_sebo_", StringComparison.Ordinal) || name == "j_kubi") return AnatomicalRole.Spine;
+        if (name == "j_kao") return AnatomicalRole.Head;
+        if (name.StartsWith("j_sako_", StringComparison.Ordinal) || name.StartsWith("j_ude_a_", StringComparison.Ordinal)) return AnatomicalRole.Shoulder;
+        if (name.StartsWith("j_ude_b_", StringComparison.Ordinal)) return AnatomicalRole.Elbow;
+        if (name.StartsWith("j_te_", StringComparison.Ordinal)) return AnatomicalRole.Hand;
+        if (name.StartsWith("j_asi_a_", StringComparison.Ordinal)) return AnatomicalRole.Hip;
+        if (name.StartsWith("j_asi_b_", StringComparison.Ordinal)) return AnatomicalRole.Knee;
+        if (name.StartsWith("j_asi_c_", StringComparison.Ordinal)) return AnatomicalRole.Ankle;
+        if (name.StartsWith("j_asi_d_", StringComparison.Ordinal) || name.StartsWith("j_asi_e_", StringComparison.Ordinal)) return AnatomicalRole.Foot;
+        if (!string.IsNullOrEmpty(description) && description.Contains("knee", StringComparison.OrdinalIgnoreCase)) return AnatomicalRole.Knee;
+        if (!string.IsNullOrEmpty(description) && description.Contains("elbow", StringComparison.OrdinalIgnoreCase)) return AnatomicalRole.Elbow;
+        return AnatomicalRole.Generic;
+    }
+
+    private static bool IsHandBone(string name) => name.StartsWith("j_te_", StringComparison.Ordinal);
+    private static bool IsFootBone(string name) => name.StartsWith("j_asi_d_", StringComparison.Ordinal);
+
+    private static Vector3 DefaultBoxHalfExtents(RagdollBoneConfig bone)
+    {
+        if (IsFootBone(bone.Name))
+            return new Vector3(0.035f, MathF.Max(0.045f, bone.CapsuleHalfLength), 0.018f);
+        if (IsHandBone(bone.Name))
+            return new Vector3(0.025f, MathF.Max(0.035f, bone.CapsuleHalfLength), 0.014f);
+
+        var r = MathF.Max(0.01f, bone.CapsuleRadius);
+        var h = MathF.Max(0.01f, bone.CapsuleHalfLength);
+        return new Vector3(r, h, r);
+    }
+
     private static RagdollBoneDef[] BuildDefaultBoneDefs()
     {
         return BuildBoneDefsFromConfigs(AllBoneDefaults);
@@ -675,6 +742,7 @@ public unsafe class RagdollController : IDisposable
         foreach (var c in configs)
         {
             if (!c.Enabled) continue;
+            FillProfileDefaults(c);
 
             // Walk up skeleton tree to find nearest enabled parent.
             // Use SkeletonParent from config, fall back to AllBoneDefaults if null.
@@ -709,6 +777,9 @@ public unsafe class RagdollController : IDisposable
                 Joint = (JointType)c.JointType,
                 TwistMinAngle = c.TwistMinAngle,
                 TwistMaxAngle = c.TwistMaxAngle,
+                AnatomicalRole = (AnatomicalRole)c.AnatomicalRole,
+                ColliderShape = (RagdollColliderShape)c.ColliderShape,
+                BoxHalfExtents = new Vector3(c.BoxHalfExtentX, c.BoxHalfExtentY, c.BoxHalfExtentZ),
                 SoftBody = c.SoftBody,
                 SoftSpringFreq = c.SoftSpringFreq,
                 SoftSpringDamp = c.SoftSpringDamp,
@@ -803,7 +874,6 @@ public unsafe class RagdollController : IDisposable
         physicsAccumulator = 0f;
         prevAllAsleep = false;
         hasPrevPhysicsState = false;
-
         // Save original position so we can restore if FollowPosition is toggled off
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)characterAddress;
         savedCharacterPosition = go->Position;
@@ -945,6 +1015,27 @@ public unsafe class RagdollController : IDisposable
         return Quaternion.CreateFromAxisAngle(axis, angle);
     }
 
+    private static Quaternion CreateCapsuleRotation(Vector3 segmentDir, Quaternion boneWorldRot)
+    {
+        var y = NormalizeOrFallback(segmentDir, Vector3.UnitY);
+        var z = ProjectOntoPlane(Vector3.Transform(Vector3.UnitZ, boneWorldRot), y);
+        if (z.LengthSquared() < 1e-5f)
+            z = ProjectOntoPlane(Vector3.Transform(Vector3.UnitX, boneWorldRot), y);
+        if (z.LengthSquared() < 1e-5f)
+            z = ProjectOntoPlane(MathF.Abs(Vector3.Dot(y, Vector3.UnitY)) > 0.9f ? Vector3.UnitZ : Vector3.UnitY, y);
+
+        z = NormalizeOrFallback(z, Vector3.UnitZ);
+        var x = NormalizeOrFallback(Vector3.Cross(y, z), Vector3.UnitX);
+        z = NormalizeOrFallback(Vector3.Cross(x, y), z);
+
+        var m = new Matrix4x4(
+            x.X, x.Y, x.Z, 0,
+            y.X, y.Y, y.Z, 0,
+            z.X, z.Y, z.Z, 0,
+            0, 0, 0, 1);
+        return Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(m));
+    }
+
     /// <summary>
     /// Build a quaternion encoding an orthonormal basis for TwistLimit.
     /// Z axis = twist measurement axis, X axis = 0° reference direction (orthogonalized).
@@ -1007,6 +1098,36 @@ public unsafe class RagdollController : IDisposable
         return value - Vector3.Dot(value, normal) * normal;
     }
 
+    private static float ResolveBodyHalfLength(RagdollBoneDef def)
+    {
+        if (def.ColliderShape == RagdollColliderShape.Box && def.BoxHalfExtents.Y > 0)
+            return def.BoxHalfExtents.Y;
+
+        return MathF.Max(0f, def.CapsuleHalfLength);
+    }
+
+    private static Vector3 ResolveBoxHalfExtents(RagdollBoneDef def, float bodyHalfLength)
+    {
+        var x = def.BoxHalfExtents.X > 0 ? def.BoxHalfExtents.X : MathF.Max(0.01f, def.CapsuleRadius);
+        var y = def.BoxHalfExtents.Y > 0 ? def.BoxHalfExtents.Y : MathF.Max(0.01f, bodyHalfLength);
+        var z = def.BoxHalfExtents.Z > 0 ? def.BoxHalfExtents.Z : MathF.Max(0.01f, def.CapsuleRadius);
+        return new Vector3(x, y, z);
+    }
+
+    private static float ComputeVerticalExtent(RagdollBoneDef def, Quaternion bodyWorldRot, float bodyHalfLength)
+    {
+        var yAxis = Vector3.Transform(Vector3.UnitY, bodyWorldRot);
+        if (def.ColliderShape != RagdollColliderShape.Box)
+            return MathF.Abs(yAxis.Y) * bodyHalfLength + def.CapsuleRadius;
+
+        var extents = ResolveBoxHalfExtents(def, bodyHalfLength);
+        var xAxis = Vector3.Transform(Vector3.UnitX, bodyWorldRot);
+        var zAxis = Vector3.Transform(Vector3.UnitZ, bodyWorldRot);
+        return MathF.Abs(xAxis.Y) * extents.X +
+               MathF.Abs(yAxis.Y) * extents.Y +
+               MathF.Abs(zAxis.Y) * extents.Z;
+    }
+
     private Vector3 ComputeLegacyBallTwistReference(Vector3 segmentDir)
     {
         var segN = NormalizeOrFallback(segmentDir, Vector3.UnitY);
@@ -1048,6 +1169,26 @@ public unsafe class RagdollController : IDisposable
             hingeAxis = -hingeAxis;
 
         return hingeAxis;
+    }
+
+    private Vector3 ComputeProfileHingeAxis(AnatomicalRole role, Vector3 parentSegmentDir, Vector3 childSegmentDir, Quaternion childBodyRot)
+    {
+        var childN = NormalizeOrFallback(childSegmentDir, Vector3.UnitY);
+
+        if (role == AnatomicalRole.Knee || role == AnatomicalRole.Elbow)
+        {
+            var frameAxis = ProjectOntoPlane(Vector3.Transform(Vector3.UnitX, childBodyRot), childN);
+            if (frameAxis.LengthSquared() > 0.001f)
+            {
+                var axis = Vector3.Normalize(frameAxis);
+                var experimental = ComputeExperimentalHingeAxis(parentSegmentDir, childN);
+                if (Vector3.Dot(axis, experimental) < 0)
+                    axis = -axis;
+                return axis;
+            }
+        }
+
+        return ComputeExperimentalHingeAxis(parentSegmentDir, childN);
     }
 
     private Vector3 ComputeHingeForward(Vector3 hingeAxis, Vector3 parentSegmentDir, Vector3 childSegmentDir)
@@ -1276,7 +1417,7 @@ public unsafe class RagdollController : IDisposable
 
             Vector3 capsuleCenter;
             float segmentHalfLength;
-            float effectiveHalfLength = def.CapsuleHalfLength;
+            float effectiveHalfLength = ResolveBodyHalfLength(def);
             Quaternion capsuleWorldRot;
 
             if (boneToFirstChild.TryGetValue(def.Name, out var childName) &&
@@ -1302,7 +1443,7 @@ public unsafe class RagdollController : IDisposable
                     var segDir = segment / segLen;
                     capsuleCenter = boneWorldPos + effectiveHalfLength * segDir;
                     segmentHalfLength = effectiveHalfLength;
-                    capsuleWorldRot = RotationFromYToDirection(segment);
+                    capsuleWorldRot = CreateCapsuleRotation(segment, boneWorldRot);
                 }
                 else
                 {
@@ -1337,7 +1478,7 @@ public unsafe class RagdollController : IDisposable
                     var dir = toSkelChild / toSkelChildLen;
                     capsuleCenter = boneWorldPos + effectiveHalfLength * dir;
                     segmentHalfLength = effectiveHalfLength;
-                    capsuleWorldRot = RotationFromYToDirection(toSkelChild);
+                    capsuleWorldRot = CreateCapsuleRotation(toSkelChild, boneWorldRot);
                 }
                 else
                 {
@@ -1361,7 +1502,7 @@ public unsafe class RagdollController : IDisposable
                     var dir = fromParent / fromParentLen;
                     capsuleCenter = boneWorldPos + effectiveHalfLength * dir;
                     segmentHalfLength = effectiveHalfLength;
-                    capsuleWorldRot = RotationFromYToDirection(fromParent);
+                    capsuleWorldRot = CreateCapsuleRotation(fromParent, boneWorldRot);
                 }
                 else
                 {
@@ -1382,29 +1523,41 @@ public unsafe class RagdollController : IDisposable
             var capsuleToBoneOffset = Quaternion.Normalize(
                 Quaternion.Inverse(capsuleWorldRot) * boneWorldRot);
 
-            // Clamp capsule center above ground so bodies don't start underground.
+            // Clamp body center above ground so bodies don't start underground.
             // Underground capsules cause explosive ground-collision forces in the first
             // frames. Lift just enough so the capsule bottom (center - extent - radius)
             // is at the ground plane.
-            var capsuleYAxis = Vector3.Transform(Vector3.UnitY, capsuleWorldRot);
-            var capsuleBottomExtent = MathF.Abs(capsuleYAxis.Y) * effectiveHalfLength + def.CapsuleRadius;
-            var minCenterY = groundY + capsuleBottomExtent + 0.005f; // 5mm clearance
+            var bodyBottomExtent = ComputeVerticalExtent(def, capsuleWorldRot, effectiveHalfLength);
+            var minCenterY = groundY + bodyBottomExtent + 0.005f; // 5mm clearance
             if (capsuleCenter.Y < minCenterY)
             {
                 log.Info($"[Ragdoll Init] '{def.Name}' lifted above ground: Y {capsuleCenter.Y:F3} -> {minCenterY:F3} (ground={groundY:F3})");
                 capsuleCenter.Y = minCenterY;
             }
 
-            var capsuleLength = effectiveHalfLength * 2;
-            var capsule = new Capsule(def.CapsuleRadius, capsuleLength);
-            var shapeIndex = simulation.Shapes.Add(capsule);
+            TypedIndex shapeIndex;
+            BodyInertia bodyInertia;
+            if (def.ColliderShape == RagdollColliderShape.Box)
+            {
+                var extents = ResolveBoxHalfExtents(def, effectiveHalfLength);
+                var box = new Box(extents.X * 2f, extents.Y * 2f, extents.Z * 2f);
+                shapeIndex = simulation.Shapes.Add(box);
+                bodyInertia = box.ComputeInertia(def.Mass);
+            }
+            else
+            {
+                var capsuleLength = effectiveHalfLength * 2;
+                var capsule = new Capsule(def.CapsuleRadius, capsuleLength);
+                shapeIndex = simulation.Shapes.Add(capsule);
+                bodyInertia = capsule.ComputeInertia(def.Mass);
+            }
 
             // SleepThreshold: 0.01 = normal (bodies sleep when settled).
             // -1 = never sleep (settle collision keeps bodies always active for NPC interaction).
             var sleepThreshold = (config.RagdollNpcSettleCollision && config.RagdollNpcCollision) ? -1f : 0.01f;
             var bodyDesc = BodyDescription.CreateDynamic(
                 new RigidPose(capsuleCenter, capsuleWorldRot),
-                capsule.ComputeInertia(def.Mass),
+                bodyInertia,
                 new CollidableDescription(shapeIndex, 0.04f),
                 new BodyActivityDescription(sleepThreshold));
 
@@ -1451,7 +1604,7 @@ public unsafe class RagdollController : IDisposable
                 log.Info($"[Ragdoll Init] '{def.Name}' idx={boneIdx} " +
                          $"bonePos=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3}) " +
                          $"capsuleCenter=({capsuleCenter.X:F3},{capsuleCenter.Y:F3},{capsuleCenter.Z:F3}) " +
-                         $"segHalf={segmentHalfLength:F3} capsuleLen={capsuleLength:F3} " +
+                         $"shape={def.ColliderShape} segHalf={segmentHalfLength:F3} bodyHalfY={effectiveHalfLength:F3} " +
                          $"capsuleY=({logCapsuleY.X:F3},{logCapsuleY.Y:F3},{logCapsuleY.Z:F3})");
             }
         }
@@ -1533,7 +1686,7 @@ public unsafe class RagdollController : IDisposable
                 // Hinge: constrains position AND restricts rotation to one plane.
                 // Per BEPU RagdollDemo: Hinge + SwingLimit + AngularMotor (NO TwistLimit).
                 var hingeAxisWorld = config.RagdollExperimentalJointFrames
-                    ? ComputeExperimentalHingeAxis(parentSegDir, segDirWorld)
+                    ? ComputeProfileHingeAxis(boneDef.AnatomicalRole, parentSegDir, segDirWorld, childBodyRef.Pose.Orientation)
                     : ComputeHingeAxis(segDirWorld);
                 var hingeAxisLocalChild = Vector3.Normalize(Vector3.Transform(
                     hingeAxisWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
@@ -1591,6 +1744,26 @@ public unsafe class RagdollController : IDisposable
 
                     if (config.RagdollVerboseLog)
                         log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad dot={Vector3.Dot(forwardWorld, segDirWorld):F3}");
+                }
+
+                if (boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0)
+                {
+                    // Hinge bending happens around hingeAxisWorld. The extra twist guard
+                    // constrains roll around the child segment axis, so it does not re-clamp
+                    // the bend DOF like the older hinge-axis TwistLimit did.
+                    var twistBasis = CreateTwistBasis(segDirWorld, hingeAxisWorld);
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                        new TwistLimit
+                        {
+                            LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * twistBasis),
+                            LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis),
+                            MinimumAngle = boneDef.TwistMinAngle,
+                            MaximumAngle = boneDef.TwistMaxAngle,
+                            SpringSettings = limitSpring,
+                        });
+
+                    if (config.RagdollVerboseLog)
+                        log.Info($"[Ragdoll Constraint] '{rb.Name}' SegmentTwistLimit: min={boneDef.TwistMinAngle:F2} max={boneDef.TwistMaxAngle:F2}");
                 }
 
                 if (config.RagdollVerboseLog)

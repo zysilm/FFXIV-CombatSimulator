@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using CombatSimulator.Animation;
 using CombatSimulator.Dev;
 using Dalamud.Configuration;
 using Dalamud.Plugin;
@@ -20,6 +21,11 @@ public class RagdollBoneConfig
     public int JointType { get; set; } // 0=Ball, 1=Hinge
     public float TwistMinAngle { get; set; }
     public float TwistMaxAngle { get; set; }
+    public int AnatomicalRole { get; set; } // 0=Generic, see RagdollController.AnatomicalRole
+    public int ColliderShape { get; set; } // 0=Capsule, 1=Box
+    public float BoxHalfExtentX { get; set; }
+    public float BoxHalfExtentY { get; set; }
+    public float BoxHalfExtentZ { get; set; }
     public string? Description { get; set; }      // human-readable label for UI
     // Soft body spring settings (for breast/jiggle bones)
     public bool SoftBody { get; set; }             // use soft springs + AngularServo instead of rigid + AngularMotor
@@ -331,6 +337,8 @@ public class Configuration : IPluginConfiguration
         pluginInterface = pi;
         MigrateSplitVfxToggles();
         MigrateSkirtParentChains();
+        MigrateRagdollProfileMetadata();
+        MigrateAnatomicalHinges();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
     }
@@ -399,6 +407,64 @@ public class Configuration : IPluginConfiguration
         if (tier == "b" && oldParent == "j_sebo_b") return $"j_sk_{pos}_a_{side}";
         if (tier == "c" && oldParent == "j_sebo_c") return $"j_sk_{pos}_b_{side}";
         return oldParent;
+    }
+
+    private void MigrateRagdollProfileMetadata()
+    {
+        bool changed = false;
+        if (MigrateRagdollBoneMetadata(RagdollBoneConfigs)) changed = true;
+        foreach (var profile in RagdollBoneProfiles)
+            if (MigrateRagdollBoneMetadata(profile.Bones)) changed = true;
+        if (changed) Save();
+    }
+
+    private static bool MigrateRagdollBoneMetadata(List<RagdollBoneConfig> bones)
+    {
+        bool changed = false;
+        foreach (var bone in bones)
+        {
+            var role = bone.AnatomicalRole;
+            var shape = bone.ColliderShape;
+            var bx = bone.BoxHalfExtentX;
+            var by = bone.BoxHalfExtentY;
+            var bz = bone.BoxHalfExtentZ;
+            RagdollController.FillProfileDefaults(bone);
+            if (role != bone.AnatomicalRole ||
+                shape != bone.ColliderShape ||
+                bx != bone.BoxHalfExtentX ||
+                by != bone.BoxHalfExtentY ||
+                bz != bone.BoxHalfExtentZ)
+                changed = true;
+        }
+        return changed;
+    }
+
+    private void MigrateAnatomicalHinges()
+    {
+        bool changed = false;
+        if (MigrateAnatomicalHingeList(RagdollBoneConfigs)) changed = true;
+        foreach (var profile in RagdollBoneProfiles)
+            if (MigrateAnatomicalHingeList(profile.Bones)) changed = true;
+        if (changed) Save();
+    }
+
+    private static bool MigrateAnatomicalHingeList(List<RagdollBoneConfig> bones)
+    {
+        bool changed = false;
+        foreach (var bone in bones)
+        {
+            var role = (RagdollController.AnatomicalRole)bone.AnatomicalRole;
+            var isLowerLimb = bone.Name.StartsWith("j_asi_b_", StringComparison.Ordinal);
+            var isForearm = bone.Name.StartsWith("j_ude_b_", StringComparison.Ordinal);
+            if ((role == RagdollController.AnatomicalRole.Knee || role == RagdollController.AnatomicalRole.Elbow ||
+                 isLowerLimb || isForearm) &&
+                bone.JointType != (int)RagdollController.JointType.Hinge)
+            {
+                bone.JointType = (int)RagdollController.JointType.Hinge;
+                changed = true;
+            }
+        }
+        return changed;
     }
 
     private static readonly Dictionary<string, string> LegacyBoneProfileNameMap = new()

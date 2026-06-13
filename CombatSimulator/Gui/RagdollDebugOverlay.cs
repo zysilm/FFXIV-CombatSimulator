@@ -63,6 +63,19 @@ public class RagdollDebugOverlay
             var xAxis = Vector3.Transform(Vector3.UnitX, cap.Orientation);
             var zAxis = Vector3.Transform(Vector3.UnitZ, cap.Orientation);
 
+            if (cap.ColliderShape == RagdollController.RagdollColliderShape.Box)
+            {
+                DrawBox3D(drawList, cap.Position, xAxis, yAxis, zAxis, cap.BoxHalfExtents, colorCapsule, thickness);
+                DrawCircle3D(drawList, cap.Position, xAxis, zAxis, MathF.Min(cap.BoxHalfExtents.X, cap.BoxHalfExtents.Z), jointColor, thickness + 0.5f);
+                if (gameGui.WorldToScreen(cap.Position, out var boxLabelPos))
+                {
+                    var label = isEditing ? $">> {cap.Name} <<" : cap.Name;
+                    var textSize = ImGui.CalcTextSize(label);
+                    drawList.AddText(boxLabelPos - textSize * 0.5f, colorLabel, label);
+                }
+                continue;
+            }
+
             var top = cap.Position + yAxis * cap.HalfLength;
             var bottom = cap.Position - yAxis * cap.HalfLength;
 
@@ -115,6 +128,40 @@ public class RagdollDebugOverlay
             if (jv.Valid)
                 DrawJointLimits(drawList, jv, editParam);
         }
+    }
+
+    private void DrawBox3D(ImDrawListPtr drawList, Vector3 center, Vector3 xAxis, Vector3 yAxis, Vector3 zAxis,
+        Vector3 halfExtents, uint color, float thickness)
+    {
+        Span<Vector3> corners = stackalloc Vector3[8];
+        int idx = 0;
+        for (int sx = -1; sx <= 1; sx += 2)
+        for (int sy = -1; sy <= 1; sy += 2)
+        for (int sz = -1; sz <= 1; sz += 2)
+            corners[idx++] = center +
+                             xAxis * (halfExtents.X * sx) +
+                             yAxis * (halfExtents.Y * sy) +
+                             zAxis * (halfExtents.Z * sz);
+
+        DrawEdge(drawList, corners[0], corners[1], color, thickness);
+        DrawEdge(drawList, corners[0], corners[2], color, thickness);
+        DrawEdge(drawList, corners[0], corners[4], color, thickness);
+        DrawEdge(drawList, corners[3], corners[1], color, thickness);
+        DrawEdge(drawList, corners[3], corners[2], color, thickness);
+        DrawEdge(drawList, corners[3], corners[7], color, thickness);
+        DrawEdge(drawList, corners[5], corners[1], color, thickness);
+        DrawEdge(drawList, corners[5], corners[4], color, thickness);
+        DrawEdge(drawList, corners[5], corners[7], color, thickness);
+        DrawEdge(drawList, corners[6], corners[2], color, thickness);
+        DrawEdge(drawList, corners[6], corners[4], color, thickness);
+        DrawEdge(drawList, corners[6], corners[7], color, thickness);
+    }
+
+    private void DrawEdge(ImDrawListPtr drawList, Vector3 a, Vector3 b, uint color, float thickness)
+    {
+        if (gameGui.WorldToScreen(a, out var sa) &&
+            gameGui.WorldToScreen(b, out var sb))
+            drawList.AddLine(sa, sb, color, thickness);
     }
 
     private void DrawJointLimits(ImDrawListPtr drawList, RagdollController.DebugJointVis jv,

@@ -1496,6 +1496,8 @@ public class MainWindow : IDisposable
         ImGui.Spacing();
 
         var jointTypes = new[] { "Ball", "Hinge" };
+        var anatomicalRoles = Enum.GetNames<RagdollController.AnatomicalRole>();
+        var colliderShapes = Enum.GetNames<RagdollController.RagdollColliderShape>();
         var changed = false;
         // EditingBoneName persists — only updated on value/toggle change
 
@@ -1549,6 +1551,14 @@ public class MainWindow : IDisposable
                     if (ImGui.Combo($"Joint Type{id}", ref jt, jointTypes, jointTypes.Length))
                     { bone.JointType = jt; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
 
+                    var role = bone.AnatomicalRole;
+                    if (ImGui.Combo($"Anatomical Role{id}", ref role, anatomicalRoles, anatomicalRoles.Length))
+                    { bone.AnatomicalRole = role; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                    var shape = bone.ColliderShape;
+                    if (ImGui.Combo($"Collider Shape{id}", ref shape, colliderShapes, colliderShapes.Length))
+                    { bone.ColliderShape = shape; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
                     var radius = bone.CapsuleRadius;
                     if (ImGui.SliderFloat($"Capsule Radius{id}", ref radius, 0.01f, 0.3f, "%.3f"))
                     { bone.CapsuleRadius = radius; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
@@ -1556,6 +1566,21 @@ public class MainWindow : IDisposable
                     var halfLen = bone.CapsuleHalfLength;
                     if (ImGui.SliderFloat($"Capsule Half-Length{id}", ref halfLen, 0.0f, 0.3f, "%.3f"))
                     { bone.CapsuleHalfLength = halfLen; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                    if ((RagdollController.RagdollColliderShape)bone.ColliderShape == RagdollController.RagdollColliderShape.Box)
+                    {
+                        var boxX = bone.BoxHalfExtentX;
+                        if (ImGui.SliderFloat($"Box Half X{id}", ref boxX, 0.005f, 0.3f, "%.3f"))
+                        { bone.BoxHalfExtentX = boxX; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                        var boxY = bone.BoxHalfExtentY;
+                        if (ImGui.SliderFloat($"Box Half Y{id}", ref boxY, 0.005f, 0.3f, "%.3f"))
+                        { bone.BoxHalfExtentY = boxY; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                        var boxZ = bone.BoxHalfExtentZ;
+                        if (ImGui.SliderFloat($"Box Half Z{id}", ref boxZ, 0.005f, 0.3f, "%.3f"))
+                        { bone.BoxHalfExtentZ = boxZ; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+                    }
 
                     var mass = bone.Mass;
                     if (ImGui.SliderFloat($"Mass{id}", ref mass, 0.1f, 15.0f, "%.1f"))
@@ -1604,7 +1629,7 @@ public class MainWindow : IDisposable
                     {
                         if (ImGui.SmallButton($"Reset{id}"))
                         {
-                            var def = RagdollController.AllBoneDefaults[i];
+                            var def = CloneBoneConfig(RagdollController.AllBoneDefaults[i]);
                             bone.CapsuleRadius = def.CapsuleRadius;
                             bone.CapsuleHalfLength = def.CapsuleHalfLength;
                             bone.Mass = def.Mass;
@@ -1612,6 +1637,11 @@ public class MainWindow : IDisposable
                             bone.JointType = def.JointType;
                             bone.TwistMinAngle = def.TwistMinAngle;
                             bone.TwistMaxAngle = def.TwistMaxAngle;
+                            bone.AnatomicalRole = def.AnatomicalRole;
+                            bone.ColliderShape = def.ColliderShape;
+                            bone.BoxHalfExtentX = def.BoxHalfExtentX;
+                            bone.BoxHalfExtentY = def.BoxHalfExtentY;
+                            bone.BoxHalfExtentZ = def.BoxHalfExtentZ;
                             bone.Enabled = def.Enabled;
                             bone.SoftBody = def.SoftBody;
                             bone.SoftSpringFreq = def.SoftSpringFreq;
@@ -1716,7 +1746,7 @@ public class MainWindow : IDisposable
             else
             {
                 // Unknown bone — safe disabled defaults
-                config.RagdollBoneConfigs.Add(new RagdollBoneConfig
+                var unknown = new RagdollBoneConfig
                 {
                     Name = boneName,
                     SkeletonParent = skelParent,
@@ -1728,7 +1758,9 @@ public class MainWindow : IDisposable
                     JointType = 0,
                     TwistMinAngle = -0.2f,
                     TwistMaxAngle = 0.2f,
-                });
+                };
+                RagdollController.FillProfileDefaults(unknown);
+                config.RagdollBoneConfigs.Add(unknown);
             }
             added = true;
         }
@@ -1738,7 +1770,7 @@ public class MainWindow : IDisposable
 
     private static RagdollBoneConfig CloneBoneConfig(RagdollBoneConfig src)
     {
-        return new RagdollBoneConfig
+        var clone = new RagdollBoneConfig
         {
             Name = src.Name,
             SkeletonParent = src.SkeletonParent,
@@ -1750,6 +1782,11 @@ public class MainWindow : IDisposable
             JointType = src.JointType,
             TwistMinAngle = src.TwistMinAngle,
             TwistMaxAngle = src.TwistMaxAngle,
+            AnatomicalRole = src.AnatomicalRole,
+            ColliderShape = src.ColliderShape,
+            BoxHalfExtentX = src.BoxHalfExtentX,
+            BoxHalfExtentY = src.BoxHalfExtentY,
+            BoxHalfExtentZ = src.BoxHalfExtentZ,
             Description = src.Description,
             SoftBody = src.SoftBody,
             SoftSpringFreq = src.SoftSpringFreq,
@@ -1757,6 +1794,8 @@ public class MainWindow : IDisposable
             SoftServoFreq = src.SoftServoFreq,
             SoftServoDamp = src.SoftServoDamp,
         };
+        RagdollController.FillProfileDefaults(clone);
+        return clone;
     }
 
     private void DrawDiagnoseSection()
