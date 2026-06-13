@@ -1595,6 +1595,18 @@ public class MainWindow : IDisposable
                         var swingMin = bone.SwingMinLimit ?? 0f;
                         if (ImGui.SliderFloat($"Swing Min Limit (rad){id}", ref swingMin, 0.0f, MathF.PI, "%.2f"))
                         { bone.SwingMinLimit = swingMin; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
+
+                        var restAngle = bone.HingeRestAngle ?? 0f;
+                        if (ImGui.SliderFloat($"Hinge Rest Angle (rad){id}", ref restAngle, 0.0f, MathF.PI, "%.2f"))
+                        { bone.HingeRestAngle = restAngle; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
+
+                        var restFreq = bone.HingeRestSpringFreq ?? 0f;
+                        if (ImGui.SliderFloat($"Hinge Rest Freq (Hz){id}", ref restFreq, 0.0f, 10.0f, "%.1f"))
+                        { bone.HingeRestSpringFreq = restFreq; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                        var restForce = bone.HingeRestMaxForce ?? 0f;
+                        if (ImGui.SliderFloat($"Hinge Rest Max Force{id}", ref restForce, 0.0f, 50.0f, "%.1f"))
+                        { bone.HingeRestMaxForce = restForce; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
                     }
 
                     var twistMin = bone.TwistMinAngle;
@@ -1642,6 +1654,9 @@ public class MainWindow : IDisposable
                             bone.Mass = def.Mass;
                             bone.SwingLimit = def.SwingLimit;
                             bone.SwingMinLimit = def.SwingMinLimit;
+                            bone.HingeRestAngle = def.HingeRestAngle;
+                            bone.HingeRestSpringFreq = def.HingeRestSpringFreq;
+                            bone.HingeRestMaxForce = def.HingeRestMaxForce;
                             bone.JointType = def.JointType;
                             bone.TwistMinAngle = def.TwistMinAngle;
                             bone.TwistMaxAngle = def.TwistMaxAngle;
@@ -1788,6 +1803,9 @@ public class MainWindow : IDisposable
             Mass = src.Mass,
             SwingLimit = src.SwingLimit,
             SwingMinLimit = src.SwingMinLimit,
+            HingeRestAngle = src.HingeRestAngle,
+            HingeRestSpringFreq = src.HingeRestSpringFreq,
+            HingeRestMaxForce = src.HingeRestMaxForce,
             JointType = src.JointType,
             TwistMinAngle = src.TwistMinAngle,
             TwistMaxAngle = src.TwistMaxAngle,

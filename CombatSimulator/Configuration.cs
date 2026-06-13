@@ -19,6 +19,9 @@ public class RagdollBoneConfig
     public float Mass { get; set; }
     public float SwingLimit { get; set; }
     public float? SwingMinLimit { get; set; } // hinge-only lower bound; null means migrate/default
+    public float? HingeRestAngle { get; set; } // hinge-only passive rest target; null disables/defaults
+    public float? HingeRestSpringFreq { get; set; }
+    public float? HingeRestMaxForce { get; set; }
     public int JointType { get; set; } // 0=Ball, 1=Hinge
     public float TwistMinAngle { get; set; }
     public float TwistMaxAngle { get; set; }
@@ -430,13 +433,19 @@ public class Configuration : IPluginConfiguration
             var by = bone.BoxHalfExtentY;
             var bz = bone.BoxHalfExtentZ;
             var swingMin = bone.SwingMinLimit;
+            var restAngle = bone.HingeRestAngle;
+            var restFreq = bone.HingeRestSpringFreq;
+            var restForce = bone.HingeRestMaxForce;
             RagdollController.FillProfileDefaults(bone);
             if (role != bone.AnatomicalRole ||
                 shape != bone.ColliderShape ||
                 bx != bone.BoxHalfExtentX ||
                 by != bone.BoxHalfExtentY ||
                 bz != bone.BoxHalfExtentZ ||
-                swingMin != bone.SwingMinLimit)
+                swingMin != bone.SwingMinLimit ||
+                restAngle != bone.HingeRestAngle ||
+                restFreq != bone.HingeRestSpringFreq ||
+                restForce != bone.HingeRestMaxForce)
                 changed = true;
         }
         return changed;
@@ -494,6 +503,15 @@ public class Configuration : IPluginConfiguration
                 if (bone.BoxHalfExtentX < minX) { bone.BoxHalfExtentX = minX; changed = true; }
                 if (bone.BoxHalfExtentY < minY) { bone.BoxHalfExtentY = minY; changed = true; }
                 if (bone.BoxHalfExtentZ < minZ) { bone.BoxHalfExtentZ = minZ; changed = true; }
+            }
+
+            if (isForearm || role == RagdollController.AnatomicalRole.Elbow)
+            {
+                if (bone.TwistMinAngle > -1.25f) { bone.TwistMinAngle = -1.25f; changed = true; }
+                if (bone.TwistMaxAngle < 1.25f) { bone.TwistMaxAngle = 1.25f; changed = true; }
+                if (bone.HingeRestAngle == null || bone.HingeRestAngle <= 0f) { bone.HingeRestAngle = MathF.PI / 2; changed = true; }
+                if (bone.HingeRestSpringFreq == null || bone.HingeRestSpringFreq <= 0f) { bone.HingeRestSpringFreq = 2.0f; changed = true; }
+                if (bone.HingeRestMaxForce == null || bone.HingeRestMaxForce <= 0f) { bone.HingeRestMaxForce = 8.0f; changed = true; }
             }
 
             if (isClavicle)

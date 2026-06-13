@@ -537,6 +537,9 @@ public unsafe class RagdollController : IDisposable
         public float Mass;
         public float SwingLimit;
         public float SwingMinLimit;
+        public float HingeRestAngle;
+        public float HingeRestSpringFreq;
+        public float HingeRestMaxForce;
         public JointType Joint;
         public float TwistMinAngle;
         public float TwistMaxAngle;
@@ -636,8 +639,8 @@ public unsafe class RagdollController : IDisposable
         // === ARM CHAIN === (all enabled — skeleton: j_sako → j_ude_a → j_ude_b → j_te)
         new RagdollBoneConfig { Name = "j_ude_a_l", SkeletonParent = "j_sako_l", Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.35f,               JointType = 0, TwistMinAngle = -0.65f, TwistMaxAngle = 0.65f, Description = "Left Upper Arm" },
         new RagdollBoneConfig { Name = "j_ude_a_r", SkeletonParent = "j_sako_r", Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.35f,               JointType = 0, TwistMinAngle = -0.65f, TwistMaxAngle = 0.65f, Description = "Right Upper Arm" },
-        new RagdollBoneConfig { Name = "j_ude_b_l", SkeletonParent = "j_ude_a_l",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.2f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Forearm" },
-        new RagdollBoneConfig { Name = "j_ude_b_r", SkeletonParent = "j_ude_a_r",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.2f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Forearm" },
+        new RagdollBoneConfig { Name = "j_ude_b_l", SkeletonParent = "j_ude_a_l",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.2f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -1.25f, TwistMaxAngle = 1.25f, Description = "Left Forearm" },
+        new RagdollBoneConfig { Name = "j_ude_b_r", SkeletonParent = "j_ude_a_r",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.2f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -1.25f, TwistMaxAngle = 1.25f, Description = "Right Forearm" },
         new RagdollBoneConfig { Name = "j_te_l",    SkeletonParent = "j_ude_b_l",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Left Hand" },
         new RagdollBoneConfig { Name = "j_te_r",    SkeletonParent = "j_ude_b_r",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Right Hand" },
 
@@ -667,6 +670,9 @@ public unsafe class RagdollController : IDisposable
             bone.AnatomicalRole = (int)InferAnatomicalRole(bone.Name, bone.Description, bone.SoftBody);
 
         bone.SwingMinLimit ??= DefaultSwingMinLimit((AnatomicalRole)bone.AnatomicalRole, bone.Name);
+        bone.HingeRestAngle ??= DefaultHingeRestAngle((AnatomicalRole)bone.AnatomicalRole, bone.Name);
+        bone.HingeRestSpringFreq ??= DefaultHingeRestSpringFreq((AnatomicalRole)bone.AnatomicalRole, bone.Name);
+        bone.HingeRestMaxForce ??= DefaultHingeRestMaxForce((AnatomicalRole)bone.AnatomicalRole, bone.Name);
 
         var hasBoxMetadata = bone.BoxHalfExtentX > 0 || bone.BoxHalfExtentY > 0 || bone.BoxHalfExtentZ > 0;
         if (bone.ColliderShape == 0 && !hasBoxMetadata &&
@@ -737,6 +743,27 @@ public unsafe class RagdollController : IDisposable
         return 0f;
     }
 
+    private static float DefaultHingeRestAngle(AnatomicalRole role, string name)
+    {
+        return role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal)
+            ? MathF.PI / 2
+            : 0f;
+    }
+
+    private static float DefaultHingeRestSpringFreq(AnatomicalRole role, string name)
+    {
+        return role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal)
+            ? 2.0f
+            : 0f;
+    }
+
+    private static float DefaultHingeRestMaxForce(AnatomicalRole role, string name)
+    {
+        return role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal)
+            ? 8.0f
+            : 0f;
+    }
+
     private static RagdollBoneDef[] BuildDefaultBoneDefs()
     {
         return BuildBoneDefsFromConfigs(AllBoneDefaults);
@@ -798,6 +825,9 @@ public unsafe class RagdollController : IDisposable
                 Mass = c.Mass,
                 SwingLimit = c.SwingLimit,
                 SwingMinLimit = c.SwingMinLimit ?? 0f,
+                HingeRestAngle = c.HingeRestAngle ?? 0f,
+                HingeRestSpringFreq = c.HingeRestSpringFreq ?? 0f,
+                HingeRestMaxForce = c.HingeRestMaxForce ?? 0f,
                 Joint = (JointType)c.JointType,
                 TwistMinAngle = c.TwistMinAngle,
                 TwistMaxAngle = c.TwistMaxAngle,
@@ -1261,6 +1291,40 @@ public unsafe class RagdollController : IDisposable
 
         if (config.RagdollVerboseLog)
             log.Info($"[Ragdoll Constraint] '{boneDef.Name}' anatomical fold stop: min={boneDef.SwingMinLimit:F2}rad role={boneDef.AnatomicalRole}");
+    }
+
+    private void AddAnatomicalHingeRestBias(
+        BodyHandle childHandle,
+        BodyHandle parentHandle,
+        BodyReference childBodyRef,
+        BodyReference parentBodyRef,
+        RagdollBoneDef boneDef,
+        Vector3 hingeAxisWorld,
+        Vector3 parentSegDir,
+        Vector3 segDirWorld)
+    {
+        if (boneDef.AnatomicalRole != AnatomicalRole.Elbow ||
+            boneDef.HingeRestSpringFreq <= 0 ||
+            boneDef.HingeRestMaxForce <= 0 ||
+            simulation == null)
+            return;
+
+        var forwardWorld = ComputeHingeForward(hingeAxisWorld, parentSegDir, segDirWorld);
+        var childBasis = CreateTwistBasis(hingeAxisWorld, segDirWorld);
+        var parentBasis = CreateTwistBasis(hingeAxisWorld, forwardWorld);
+
+        simulation.Solver.Add(childHandle, parentHandle,
+            new TwistServo
+            {
+                LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * childBasis),
+                LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * parentBasis),
+                TargetAngle = boneDef.HingeRestAngle,
+                SpringSettings = new SpringSettings(boneDef.HingeRestSpringFreq, 0.65f),
+                ServoSettings = new ServoSettings(1.2f, 0f, boneDef.HingeRestMaxForce),
+            });
+
+        if (config.RagdollVerboseLog)
+            log.Info($"[Ragdoll Constraint] '{boneDef.Name}' elbow rest bias: angle={boneDef.HingeRestAngle:F2} freq={boneDef.HingeRestSpringFreq:F2} force={boneDef.HingeRestMaxForce:F2}");
     }
 
     private bool InitializePhysics()
@@ -1805,6 +1869,8 @@ public unsafe class RagdollController : IDisposable
 
                 AddAnatomicalHingeFoldStop(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
                     boneDef, hingeAxisWorld, parentSegDir, segDirWorld, limitSpring);
+                AddAnatomicalHingeRestBias(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
+                    boneDef, hingeAxisWorld, parentSegDir, segDirWorld);
 
                 if (boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0)
                 {
