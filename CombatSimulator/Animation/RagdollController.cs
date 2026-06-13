@@ -756,18 +756,18 @@ public unsafe class RagdollController : IDisposable
     private static float DefaultHingeRestSpringFreq(AnatomicalRole role, string name)
     {
         if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
-            return 1.2f;
+            return 3.5f;
         if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
-            return 1.5f;
+            return 3.5f;
         return 0f;
     }
 
     private static float DefaultHingeRestMaxForce(AnatomicalRole role, string name)
     {
         if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
-            return 10.0f;
+            return 50.0f;
         if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
-            return 6.0f;
+            return 30.0f;
         return 0f;
     }
 
@@ -1291,23 +1291,37 @@ public unsafe class RagdollController : IDisposable
         if (boneDef.SwingMinLimit <= 0 || boneDef.SwingMinLimit >= MathF.PI || simulation == null)
             return;
 
-        var forwardWorld = ComputeHingeForward(hingeAxisWorld, parentSegDir, segDirWorld);
-        var minLimitAxisLocalParent = Vector3.Normalize(Vector3.Transform(
-            -forwardWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
-        var swingAxisLocalChild = Vector3.Normalize(Vector3.Transform(
+        // Measure the true anatomical bend angle (angle between child and parent segment dirs).
+        // This is pose-independent: 0° = straight, 90° = ORZ-bent, up to 180° = folded back.
+        var initBendAngle = MathF.Acos(Math.Clamp(
+            Vector3.Dot(Vector3.Normalize(segDirWorld), Vector3.Normalize(parentSegDir)), -1f, 1f));
+
+        // Set the fold stop limit to max(SwingMinLimit, initBend + buffer) so it never fires
+        // at the initial pose — even from ORZ (90°) — but still protects against hyper-flexion.
+        // Straight init: max(43°, 0°+15°) = 43°   — normal anatomical protection.
+        // ORZ init:      max(43°, 90°+15°) = 105°  — fires only at extreme over-bending.
+        const float foldBuffer = 0.26f; // ~15°
+        var foldStopMaxAngle = MathF.Max(boneDef.SwingMinLimit, initBendAngle + foldBuffer);
+        foldStopMaxAngle = MathF.Min(foldStopMaxAngle, MathF.PI - 0.05f);
+
+        // Both axes use segment directions so the constraint measures the actual anatomical
+        // bend angle, not a pose-derived reference that can flip between init poses.
+        var shinAxisLocalChild = Vector3.Normalize(Vector3.Transform(
             segDirWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
+        var thighAxisLocalParent = Vector3.Normalize(Vector3.Transform(
+            parentSegDir, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
 
         simulation.Solver.Add(childHandle, parentHandle,
             new SwingLimit
             {
-                AxisLocalA = swingAxisLocalChild,
-                AxisLocalB = minLimitAxisLocalParent,
-                MaximumSwingAngle = MathF.PI - boneDef.SwingMinLimit,
+                AxisLocalA = shinAxisLocalChild,
+                AxisLocalB = thighAxisLocalParent,
+                MaximumSwingAngle = foldStopMaxAngle,
                 SpringSettings = limitSpring,
             });
 
         if (config.RagdollVerboseLog)
-            log.Info($"[Ragdoll Constraint] '{boneDef.Name}' anatomical fold stop: min={boneDef.SwingMinLimit:F2}rad role={boneDef.AnatomicalRole}");
+            log.Info($"[Ragdoll Constraint] '{boneDef.Name}' fold stop: initBend={initBendAngle * 180f / MathF.PI:F1}° limit={foldStopMaxAngle * 180f / MathF.PI:F1}°");
     }
 
     private void AddAnatomicalHingeRestBias(
@@ -1320,6 +1334,12 @@ public unsafe class RagdollController : IDisposable
         Vector3 parentSegDir,
         Vector3 segDirWorld)
     {
+        // TwistServo-based extension bias is disabled. The AngularMotor on hinge joints
+        // now provides velocity damping that lets gravity drive extension naturally — the
+        // gravity torque on the hanging shin/forearm decelerates to zero as the joint
+        // reaches straight, so no active spring constraint is needed.
+        return;
+
         if (!HasPassiveHingeRest(boneDef.AnatomicalRole, boneDef.Name) ||
             boneDef.HingeRestSpringFreq <= 0 ||
             boneDef.HingeRestMaxForce <= 0 ||
@@ -1329,14 +1349,19 @@ public unsafe class RagdollController : IDisposable
         var childBasis = CreateTwistBasis(hingeAxisWorld, segDirWorld);
         var parentBasis = CreateTwistBasis(hingeAxisWorld, parentSegDir);
 
+        var initBendCos = Vector3.Dot(Vector3.Normalize(segDirWorld), Vector3.Normalize(parentSegDir));
+        var initBendDeg = MathF.Acos(Math.Clamp(initBendCos, -1f, 1f)) * (180f / MathF.PI);
+        if (config.RagdollVerboseLog)
+            log.Info($"[Ragdoll Constraint] '{boneDef.Name}' hinge rest init bend={initBendDeg:F1}° (0=straight, 90=ORZ)");
+
         simulation.Solver.Add(childHandle, parentHandle,
             new TwistServo
             {
                 LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * childBasis),
                 LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * parentBasis),
                 TargetAngle = boneDef.HingeRestAngle,
-                SpringSettings = new SpringSettings(boneDef.HingeRestSpringFreq, 0.65f),
-                ServoSettings = new ServoSettings(1.2f, 0f, boneDef.HingeRestMaxForce),
+                SpringSettings = new SpringSettings(boneDef.HingeRestSpringFreq, 0.8f),
+                ServoSettings = new ServoSettings(10.0f, 0f, boneDef.HingeRestMaxForce),
             });
 
         if (config.RagdollVerboseLog)
@@ -1563,10 +1588,9 @@ public unsafe class RagdollController : IDisposable
 
         // --- Pass 2: Create physics bodies ---
         // Capsule center is offset from bone origin (joint) along the segment direction.
-        // Capsule half-length is clamped to not exceed half the actual segment distance
-        // in the current pose. Death poses bend joints severely (e.g., shin=0.06m vs
-        // 0.22m anatomical), and oversized capsules overlap their neighbors, causing
-        // explosive solver forces in the first frames.
+        // Capsule half-length is usually clamped to the current pose segment distance.
+        // Anatomical hinges keep their profile length instead; ORZ-style death poses can
+        // collapse the observed knee/elbow segment and bake a fake short limb into physics.
         foreach (var def in BoneDefs)
         {
             if (!nameToIndex.TryGetValue(def.Name, out var boneIdx)) continue;
@@ -1577,6 +1601,8 @@ public unsafe class RagdollController : IDisposable
             float segmentHalfLength;
             float effectiveHalfLength = ResolveBodyHalfLength(def);
             Quaternion capsuleWorldRot;
+            var preserveAnatomicalLength = def.Joint == JointType.Hinge &&
+                                           HasPassiveHingeRest(def.AnatomicalRole, def.Name);
 
             if (boneToFirstChild.TryGetValue(def.Name, out var childName) &&
                 boneWorldPositions.TryGetValue(childName, out var childWorldPos))
@@ -1592,10 +1618,14 @@ public unsafe class RagdollController : IDisposable
                     // Use 45% of segment length (not 50% minus radius) to preserve capsule
                     // elongation for rotational stability — near-spheres lose orientation.
                     var maxHalf = MathF.Max(0.02f, segLen * 0.45f);
-                    if (effectiveHalfLength > maxHalf)
+                    if (!preserveAnatomicalLength && effectiveHalfLength > maxHalf)
                     {
                         log.Info($"[Ragdoll Init] '{def.Name}' capsule clamped: halfLen {effectiveHalfLength:F3} -> {maxHalf:F3} (segLen={segLen:F3})");
                         effectiveHalfLength = maxHalf;
+                    }
+                    else if (preserveAnatomicalLength && effectiveHalfLength > maxHalf && config.RagdollVerboseLog)
+                    {
+                        log.Info($"[Ragdoll Init] '{def.Name}' kept anatomical halfLen {effectiveHalfLength:F3} despite pose segLen={segLen:F3}");
                     }
 
                     var segDir = segment / segLen;
@@ -1627,10 +1657,14 @@ public unsafe class RagdollController : IDisposable
                 if (toSkelChildLen > 0.01f)
                 {
                     var maxHalf = MathF.Max(0.02f, toSkelChildLen * 0.45f);
-                    if (effectiveHalfLength > maxHalf)
+                    if (!preserveAnatomicalLength && effectiveHalfLength > maxHalf)
                     {
                         log.Info($"[Ragdoll Init] '{def.Name}' leaf capsule clamped: halfLen {effectiveHalfLength:F3} -> {maxHalf:F3} (segLen={toSkelChildLen:F3})");
                         effectiveHalfLength = maxHalf;
+                    }
+                    else if (preserveAnatomicalLength && effectiveHalfLength > maxHalf && config.RagdollVerboseLog)
+                    {
+                        log.Info($"[Ragdoll Init] '{def.Name}' kept anatomical leaf halfLen {effectiveHalfLength:F3} despite pose segLen={toSkelChildLen:F3}");
                     }
 
                     var dir = toSkelChild / toSkelChildLen;
@@ -1997,6 +2031,23 @@ public unsafe class RagdollController : IDisposable
                         TargetRelativeRotationLocalA = Quaternion.Identity,
                         ServoSettings = new ServoSettings(float.MaxValue, 0f, float.MaxValue),
                         SpringSettings = new SpringSettings(boneDef.SoftServoFreq, boneDef.SoftServoDamp),
+                    });
+            }
+            else if (boneDef.Joint == JointType.Hinge && HasPassiveHingeRest(boneDef.AnatomicalRole, rb.Name))
+            {
+                // Anatomical hinge joints (knee, elbow): use a moderate-force damping motor.
+                // MaxForce=10 N·m is intentionally below the gravity torque on the full
+                // shin/forearm chain (~8–9 N·m for knees), so gravity can still drive
+                // extension. The damping coefficient sets a terminal velocity:
+                //   v_terminal = gravity_torque / dampingCoefficient ≈ 9/2 ≈ 4.5 rad/s
+                // As the joint nears straight the gravity torque → 0, so the motor
+                // decelerates the limb to near-zero before it hits the SwingLimit —
+                // no snap-back, no oscillation.
+                simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                    new AngularMotor
+                    {
+                        TargetVelocityLocalA = Vector3.Zero,
+                        Settings = new MotorSettings(10f, 2f),
                     });
             }
             else
