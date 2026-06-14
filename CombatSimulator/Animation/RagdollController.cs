@@ -379,6 +379,14 @@ public unsafe class RagdollController : IDisposable
         return true;
     }
 
+    private bool IsNpcHumanoidSkeleton(SkeletonAccess skel)
+    {
+        foreach (var bone in HumanoidSignatureBones)
+            if (boneService.ResolveBoneIndex(skel, bone) < 0)
+                return false;
+        return true;
+    }
+
     /// <summary>
     /// Build a ragdoll bone definition set from a skeleton's real topology, for
     /// non-humanoid characters where the human profile does not fit. Capsule size
@@ -886,13 +894,17 @@ public unsafe class RagdollController : IDisposable
     // is wasted work. It still resumes updating if it moves back into range.
     private const float NpcCollisionUpdateRadius = 8f;
 
-    // Per-NPC collision state (bone-based or single-capsule fallback)
+    // Per-NPC collision state (bone-based, convex hull, or single-capsule fallback)
     private struct NpcCollisionState
     {
         public nint NpcAddress;
         public List<NpcBoneStatic> BoneStatics;   // populated when skeleton readable
         public StaticHandle FallbackHandle;        // used when skeleton unreadable
         public bool IsFallback;
+        // Convex hull mode (non-humanoid mounts/monsters)
+        public bool IsConvexHull;
+        public StaticHandle ConvexHullHandle;
+        public Vector3 HullCenterModelSpace; // hull centroid in skeleton-local (model) space
         // True while this character's statics have been parked far away because it left the
         // update radius. Prevents leaving them frozen on the corpse ("ghost" capsules) and
         // avoids re-parking every frame; cleared when it re-enters range.
@@ -2308,6 +2320,15 @@ public unsafe class RagdollController : IDisposable
             npcSkeleton->Transform.Rotation.Z,
             npcSkeleton->Transform.Rotation.W);
 
+        // Convex hull mode: one hull shape per character built from the bone point cloud.
+        // Eliminates inter-capsule gaps on any skeleton type; the shape is a snapshot of
+        // the activation pose and tracks only root translation/rotation each frame.
+        if (config.RagdollNpcCollisionConvexHull)
+        {
+            BuildConvexHullCollision(address, ns, npcSkelPos, npcSkelRot, label);
+            return;
+        }
+
         var boneStatics = new List<NpcBoneStatic>();
         var autoSize = config.RagdollNpcCollisionAutoSize;
         var profileRadii = autoSize ? BuildHumanoidCollisionRadiusMap(ns) : null;
@@ -2478,6 +2499,64 @@ public unsafe class RagdollController : IDisposable
         return Math.Clamp(MathF.Min(radius, segmentLength * 0.7f), NpcAutoMinRadius, NpcAutoMaxRadius);
     }
 
+    /// <summary>
+    /// Build a single convex hull collision static for a non-humanoid character (mount,
+    /// monster). Collects all bone MODEL-space positions as input points, constructs a
+    /// <see cref="ConvexHull"/> shape, and stores the hull centroid so the per-frame
+    /// update can reposition the static by transforming only the centroid — no shape
+    /// rebuild required.
+    /// </summary>
+    private void BuildConvexHullCollision(nint address, SkeletonAccess ns, Vector3 npcSkelPos, Quaternion npcSkelRot, string label)
+    {
+        if (simulation == null || bufferPool == null) return;
+
+        var boneCount = Math.Min(ns.BoneCount, ns.ParentCount);
+        if (boneCount < 4)
+        {
+            log.Info($"RagdollController: {label} has only {boneCount} bones — too few for convex hull, using fallback");
+            CreateFallbackCharacterCollision(label, address);
+            return;
+        }
+
+        bufferPool.Take<System.Numerics.Vector3>(boneCount, out var points);
+        try
+        {
+            for (int i = 0; i < boneCount; i++)
+            {
+                ref var mt = ref ns.Pose->ModelPose.Data[i];
+                points[i] = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+            }
+
+            var hull = new BepuPhysics.Collidables.ConvexHull(points, bufferPool, out var hullCenter);
+            var shapeIndex = simulation.Shapes.Add(hull);
+
+            // The hull's local origin is at hullCenter (model space). Transform to world.
+            var worldCenter = npcSkelPos + Vector3.Transform(hullCenter, npcSkelRot);
+            var staticHandle = simulation.Statics.Add(new StaticDescription(worldCenter, npcSkelRot, shapeIndex));
+
+            npcCollisionStates.Add(new NpcCollisionState
+            {
+                NpcAddress = address,
+                BoneStatics = new List<NpcBoneStatic>(),
+                IsFallback = false,
+                IsConvexHull = true,
+                ConvexHullHandle = staticHandle,
+                HullCenterModelSpace = hullCenter,
+            });
+
+            log.Info($"RagdollController: {label} convex hull collision — {boneCount} points, center=({hullCenter.X:F3},{hullCenter.Y:F3},{hullCenter.Z:F3})");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"RagdollController: {label} convex hull build failed, using fallback");
+            CreateFallbackCharacterCollision(label, address);
+        }
+        finally
+        {
+            bufferPool.Return(ref points);
+        }
+    }
+
     private void CreateFallbackCharacterCollision(string label, nint address)
     {
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)address;
@@ -2499,6 +2578,13 @@ public unsafe class RagdollController : IDisposable
     private void ParkNpcStatics(NpcCollisionState npcState, Vector3 parkPos)
     {
         if (simulation == null) return;
+        if (npcState.IsConvexHull)
+        {
+            var s = simulation.Statics.GetStaticReference(npcState.ConvexHullHandle);
+            s.Pose.Position = parkPos;
+            s.UpdateBounds();
+            return;
+        }
         if (npcState.IsFallback)
         {
             var s = simulation.Statics.GetStaticReference(npcState.FallbackHandle);
@@ -2666,7 +2752,13 @@ public unsafe class RagdollController : IDisposable
             {
                 if (suspendedNpcAddress != nint.Zero && npcState.NpcAddress == suspendedNpcAddress)
                 {
-                    if (npcState.IsFallback)
+                    if (npcState.IsConvexHull)
+                    {
+                        var staticRef = simulation.Statics.GetStaticReference(npcState.ConvexHullHandle);
+                        staticRef.Pose.Position = npcCollisionParkPos;
+                        staticRef.UpdateBounds();
+                    }
+                    else if (npcState.IsFallback)
                     {
                         var staticRef = simulation.Statics.GetStaticReference(npcState.FallbackHandle);
                         staticRef.Pose.Position = npcCollisionParkPos;
@@ -2706,6 +2798,34 @@ public unsafe class RagdollController : IDisposable
                     // Back in range — the reposition below snaps the statics onto the skeleton.
                     npcState.Parked = false;
                     npcCollisionStates[i] = npcState;
+                }
+
+                if (npcState.IsConvexHull)
+                {
+                    // Convex hull update: transform the stored model-space centroid by the
+                    // current skeleton transform — no shape rebuild, just a pose update.
+                    var npcSkelHull = boneService.TryGetSkeleton(npcState.NpcAddress);
+                    Vector3 hullWorldPos;
+                    Quaternion hullWorldRot;
+                    if (npcSkelHull != null && npcSkelHull.Value.CharBase->Skeleton != null)
+                    {
+                        var sk = npcSkelHull.Value.CharBase->Skeleton;
+                        var sp = new Vector3(sk->Transform.Position.X, sk->Transform.Position.Y, sk->Transform.Position.Z);
+                        var sr = new Quaternion(sk->Transform.Rotation.X, sk->Transform.Rotation.Y, sk->Transform.Rotation.Z, sk->Transform.Rotation.W);
+                        hullWorldPos = sp + Vector3.Transform(npcState.HullCenterModelSpace, sr);
+                        hullWorldRot = sr;
+                    }
+                    else
+                    {
+                        var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npcState.NpcAddress;
+                        hullWorldPos = new Vector3(go->Position.X, go->Position.Y, go->Position.Z);
+                        hullWorldRot = Quaternion.Identity;
+                    }
+                    var hullRef = simulation.Statics.GetStaticReference(npcState.ConvexHullHandle);
+                    hullRef.Pose.Position = hullWorldPos;
+                    hullRef.Pose.Orientation = hullWorldRot;
+                    hullRef.UpdateBounds();
+                    continue;
                 }
 
                 if (npcState.IsFallback)

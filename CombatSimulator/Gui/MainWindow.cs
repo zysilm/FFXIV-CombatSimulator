@@ -296,8 +296,7 @@ public class MainWindow : IDisposable
                     config.RagdollHairStiffness = 0.1f;
                     // NPC Collision
                     config.RagdollNpcCollision = true;
-                    config.RagdollNpcCollisionAutoSize = true;
-                    config.RagdollNpcCollisionScale = 0.0001f;
+                    config.RagdollNpcCollisionConvexHull = false;
                     // NPC Collision (Settle)
                     config.RagdollNpcSettleCollision = true;
                     config.Save();
@@ -3036,25 +3035,13 @@ public class MainWindow : IDisposable
             {
                 ImGui.Indent();
 
-                var autoSize = config.RagdollNpcCollisionAutoSize;
-                if (ImGui.Checkbox("Auto size NPC collision##npccolautosize", ref autoSize))
+                var convexHull = config.RagdollNpcCollisionConvexHull;
+                if (ImGui.Checkbox("Convex hull collision##npccolconvex", ref convexHull))
                 {
-                    config.RagdollNpcCollisionAutoSize = autoSize;
+                    config.RagdollNpcCollisionConvexHull = convexHull;
                     config.Save();
                 }
-                HelpMarker("Estimate each NPC or mount collision bone independently. Human rigs use the ragdoll profile; other rigs use skeleton proportions. When enabled, manual NPC Collision Scale is ignored.");
-
-                var npcScale = config.RagdollNpcCollisionScale;
-                if (config.RagdollNpcCollisionAutoSize)
-                    ImGui.BeginDisabled();
-                if (ImGui.SliderFloat("NPC Collision Scale##npccol", ref npcScale, 0.0001f, 5.0f, "%.4f"))
-                {
-                    config.RagdollNpcCollisionScale = npcScale;
-                    config.Save();
-                }
-                if (config.RagdollNpcCollisionAutoSize)
-                    ImGui.EndDisabled();
-                HelpMarker("Manual scale multiplier for NPC bone collision capsules. Used only when Auto size NPC collision is off.");
+                HelpMarker("Each collision target uses a single convex hull built from all bone positions. Eliminates inter-capsule gaps on mounts and monsters. Shape is a snapshot of the activation pose; root position/rotation tracks animation. Takes effect on next ragdoll activation.");
 
                 ImGui.Unindent();
             }

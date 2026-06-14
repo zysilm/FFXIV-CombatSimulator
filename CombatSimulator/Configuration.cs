@@ -255,6 +255,7 @@ public class Configuration : IPluginConfiguration
     public bool RagdollNpcCollision { get; set; } = true;
     public bool RagdollNpcCollisionAutoSize { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
+    public bool RagdollNpcCollisionConvexHull { get; set; } = false;
     public bool RagdollNpcSettleCollision { get; set; } = true;
 
     // Auto-engage: NPC enemy targets attack the player automatically on
