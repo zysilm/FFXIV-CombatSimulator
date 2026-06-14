@@ -5,8 +5,11 @@ namespace CombatSimulator.Dev;
 [Serializable]
 public class VictorySequenceStage
 {
+    // Legacy absolute timing is kept for old saved presets. New editing/runtime
+    // uses Duration only; StartTime/EndTime are synchronized for compatibility.
     public float StartTime { get; set; }
     public float EndTime { get; set; } = 3.0f;       // -1 = infinite time
+    public float? Duration { get; set; }
     public bool UseEmote { get; set; }
     public uint EmoteId { get; set; }
     public uint ActionTimelineId { get; set; }
@@ -37,4 +40,7 @@ public class VictorySequenceStage
     public float ShoulderYaw { get; set; }   // Y rotation, degrees
     public float ShoulderRoll { get; set; }  // Z rotation, degrees
     public bool LockFacing { get; set; } = true;
+
+    public bool ApproachBeforeStage { get; set; }
+    public float ApproachDistance { get; set; } = 2.0f;
 }

@@ -3,6 +3,8 @@ namespace CombatSimulator.Npcs;
 public sealed class MapEnemySettings
 {
     public bool Enabled { get; set; }
+    public bool IncludeBattleNpcs { get; set; } = true;
+    public bool IncludePlayers { get; set; } = false;
     public int MaxCount { get; set; } = 10;
     public float SenseRange { get; set; } = 10.0f;
     public int Level { get; set; } = 90;

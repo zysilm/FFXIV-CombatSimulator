@@ -20,6 +20,7 @@ public sealed unsafe class MapEnemyController
     private readonly NpcSelector npcSelector;
     private readonly CombatEngine combatEngine;
     private readonly Func<IReadOnlyList<CombatCompanion>> getCompanions;
+    private readonly Func<uint, bool> isCompanionSourceReserved;
     private readonly Action<uint, uint> forceEnemyTarget;
     private readonly Func<bool> isRecipeBattle;
     private readonly IPluginLog log;
@@ -33,6 +34,7 @@ public sealed unsafe class MapEnemyController
         NpcSelector npcSelector,
         CombatEngine combatEngine,
         Func<IReadOnlyList<CombatCompanion>> getCompanions,
+        Func<uint, bool> isCompanionSourceReserved,
         Action<uint, uint> forceEnemyTarget,
         Func<bool> isRecipeBattle,
         IPluginLog log)
@@ -42,6 +44,7 @@ public sealed unsafe class MapEnemyController
         this.npcSelector = npcSelector;
         this.combatEngine = combatEngine;
         this.getCompanions = getCompanions;
+        this.isCompanionSourceReserved = isCompanionSourceReserved;
         this.forceEnemyTarget = forceEnemyTarget;
         this.isRecipeBattle = isRecipeBattle;
         this.log = log;
@@ -109,7 +112,9 @@ public sealed unsafe class MapEnemyController
 
         return new MapEnemySettings
         {
-            Enabled = config.EnableMapEnemySensing,
+            Enabled = config.EnableMapEnemySensing || config.EnableMapPlayerEnemySensing,
+            IncludeBattleNpcs = config.EnableMapEnemySensing,
+            IncludePlayers = config.EnableMapPlayerEnemySensing,
             MaxCount = Math.Max(0, config.MapEnemyMaxCount),
             SenseRange = Math.Max(0.1f, config.MapEnemySenseRange),
             Level = Math.Clamp(config.DefaultNpcLevel, 1, 300),
@@ -128,7 +133,7 @@ public sealed unsafe class MapEnemyController
         // RegisterObject, so we scan every in-range candidate here.
         foreach (var obj in objectTable)
         {
-            if (!IsValidMapEnemyCandidate(obj))
+            if (!IsValidMapEnemyCandidate(obj, settings))
                 continue;
 
             if (npcSelector.GetSelectedNpc(obj.EntityId) != null)
@@ -144,7 +149,7 @@ public sealed unsafe class MapEnemyController
 
     private SimulatedNpc? RegisterObject(IGameObject obj, MapEnemySettings settings, uint initialTargetId)
     {
-        if (!IsValidMapEnemyCandidate(obj))
+        if (!IsValidMapEnemyCandidate(obj, settings))
             return null;
 
         // Already in the battle: hand back the existing entry, never evict for it.
@@ -187,12 +192,26 @@ public sealed unsafe class MapEnemyController
         return npc;
     }
 
-    private bool IsValidMapEnemyCandidate(IGameObject obj)
+    private bool IsValidMapEnemyCandidate(IGameObject obj, MapEnemySettings settings)
     {
         if (obj.Address == nint.Zero)
             return false;
 
-        if (obj is IPlayerCharacter)
+        if (obj is IPlayerCharacter player)
+        {
+            if (!settings.IncludePlayers)
+                return false;
+            if (objectTable.LocalPlayer != null && player.EntityId == objectTable.LocalPlayer.EntityId)
+                return false;
+            if (player.EntityId >= 0xF0000000)
+                return false;
+            if (isCompanionSourceReserved(player.EntityId))
+                return false;
+
+            return true;
+        }
+
+        if (!settings.IncludeBattleNpcs)
             return false;
 
         if ((byte)obj.ObjectKind != (byte)ObjectKind.BattleNpc)

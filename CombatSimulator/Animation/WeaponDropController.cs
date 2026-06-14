@@ -32,7 +32,6 @@ public unsafe class WeaponDropController : IDisposable
     private BepuSimulation? simulation;
     private TypedIndex weaponShapeIndex;
     private BodyInertia weaponInertia;
-    private TypedIndex groundTileShapeIndex;
 
     // Snapshot of physics-relevant config used when sim was created.
     // If user changes any of these, we recreate the sim on next render frame
@@ -42,6 +41,11 @@ public unsafe class WeaponDropController : IDisposable
     private float simBounce;
     private float simFriction;
     private int simSolverIterations;
+    // Snapshot of the shape/inertia inputs too — the weapon capsule shape and inertia are
+    // cached once at sim creation, so changing these must also trigger a rebuild or they go stale.
+    private float simRadius;
+    private float simHalfLength;
+    private float simMass;
 
     private class Entry
     {
@@ -51,6 +55,7 @@ public unsafe class WeaponDropController : IDisposable
         public int MainBoneIndex = -1;
         public int OffBoneIndex = -1;
         public StaticHandle? GroundTile;
+        public TypedIndex? GroundShape;
     }
     private readonly Dictionary<nint, Entry> entries = new();
 
@@ -114,6 +119,11 @@ public unsafe class WeaponDropController : IDisposable
         if (entry.Main.HasValue) simulation.Bodies.Remove(entry.Main.Value);
         if (entry.Off.HasValue) simulation.Bodies.Remove(entry.Off.Value);
         if (entry.GroundTile.HasValue) simulation.Statics.Remove(entry.GroundTile.Value);
+        // RemoveAndDispose (not Remove): the per-drop terrain patch is a Mesh that owns a
+        // pooled triangle buffer + acceleration tree. Plain Remove drops the shape but leaks
+        // those buffers, and this weapon simulation lives for the whole session.
+        if (entry.GroundShape.HasValue && bufferPool != null)
+            simulation.Shapes.RemoveAndDispose(entry.GroundShape.Value, bufferPool);
     }
 
     private void OnRenderFrame()
@@ -200,22 +210,90 @@ public unsafe class WeaponDropController : IDisposable
             return;
         }
 
-        // Per-entity ground tile under the spawn point
-        var groundY = skelWorldPos.Y;
-        if (BGCollisionModule.RaycastMaterialFilter(
-                new Vector3(skelWorldPos.X, skelWorldPos.Y + 2.0f, skelWorldPos.Z),
-                new Vector3(0, -1, 0), out var hit, 50f))
-        {
-            groundY = hit.Point.Y;
-        }
-        entry.GroundTile = simulation.Statics.Add(new StaticDescription(
-            new Vector3(skelWorldPos.X, groundY - 0.05f, skelWorldPos.Z),
-            Quaternion.Identity,
-            groundTileShapeIndex));
+        // Per-entity terrain patch under the spawn point. A flat box looks fine on level
+        // ground but makes weapons visibly float or clip on slopes, so build a small mesh
+        // from game collision raycasts.
+        (entry.GroundTile, entry.GroundShape) = CreateTerrainPatch(skelWorldPos.X, skelWorldPos.Z, skelWorldPos.Y);
 
         entries[characterAddress] = entry;
         var n = (entry.Main.HasValue ? 1 : 0) + (entry.Off.HasValue ? 1 : 0);
-        log.Info($"WeaponDropController: spawned {n} weapon(s) for 0x{characterAddress:X} (groundY={groundY:F2})");
+        log.Info($"WeaponDropController: spawned {n} weapon(s) for 0x{characterAddress:X}");
+    }
+
+    private (StaticHandle StaticHandle, TypedIndex ShapeIndex) CreateTerrainPatch(float centerX, float centerZ, float defaultGroundY)
+    {
+        const float terrainRadius = 4.0f;
+        const float terrainStep = 0.5f;
+        var gridSize = (int)(terrainRadius * 2 / terrainStep) + 1;
+
+        var patchGroundY = defaultGroundY;
+        var anyHit = false;
+        if (BGCollisionModule.RaycastMaterialFilter(
+                new Vector3(centerX, defaultGroundY + 5.0f, centerZ),
+                new Vector3(0, -1, 0), out var centerHit, 80f))
+        {
+            patchGroundY = centerHit.Point.Y;
+            anyHit = true;
+        }
+
+        var heights = new float[gridSize, gridSize];
+        var ox = centerX - terrainRadius;
+        var oz = centerZ - terrainRadius;
+        for (int gz = 0; gz < gridSize; gz++)
+        for (int gx = 0; gx < gridSize; gx++)
+        {
+            var wx = ox + gx * terrainStep;
+            var wz = oz + gz * terrainStep;
+            if (BGCollisionModule.RaycastMaterialFilter(
+                    new Vector3(wx, patchGroundY + 5.0f, wz),
+                    new Vector3(0, -1, 0), out var gridHit, 80f))
+            {
+                heights[gx, gz] = gridHit.Point.Y;
+                anyHit = true;
+            }
+            else
+            {
+                heights[gx, gz] = patchGroundY;
+            }
+        }
+
+        if (!anyHit)
+        {
+            log.Warning($"WeaponDropController: terrain raycasts missed at ({centerX:F2},{centerZ:F2}); using flat fallback.");
+            var fallbackShape = simulation!.Shapes.Add(new Box(8f, 0.1f, 8f));
+            var fallbackStatic = simulation.Statics.Add(new StaticDescription(
+                new Vector3(centerX, defaultGroundY - 0.05f, centerZ),
+                Quaternion.Identity,
+                fallbackShape));
+            return (fallbackStatic, fallbackShape);
+        }
+
+        var triCount = (gridSize - 1) * (gridSize - 1) * 2;
+        bufferPool!.Take<Triangle>(triCount, out var triangles);
+        var ti = 0;
+        for (int gz = 0; gz < gridSize - 1; gz++)
+        for (int gx = 0; gx < gridSize - 1; gx++)
+        {
+            var x0 = ox + gx * terrainStep;
+            var x1 = x0 + terrainStep;
+            var z0 = oz + gz * terrainStep;
+            var z1 = z0 + terrainStep;
+            var v00 = new Vector3(x0, heights[gx, gz], z0);
+            var v10 = new Vector3(x1, heights[gx + 1, gz], z0);
+            var v01 = new Vector3(x0, heights[gx, gz + 1], z1);
+            var v11 = new Vector3(x1, heights[gx + 1, gz + 1], z1);
+
+            triangles[ti++] = new Triangle(v00, v10, v01);
+            triangles[ti++] = new Triangle(v10, v11, v01);
+        }
+
+        var mesh = new BepuPhysics.Collidables.Mesh(triangles, Vector3.One, bufferPool);
+        var shapeIndex = simulation!.Shapes.Add(mesh);
+        var staticHandle = simulation.Statics.Add(new StaticDescription(
+            Vector3.Zero,
+            Quaternion.Identity,
+            shapeIndex));
+        return (staticHandle, shapeIndex);
     }
 
     private BodyHandle? TryCreateWeaponBody(SkeletonAccess skel, string[] boneCandidates,
@@ -290,7 +368,10 @@ public unsafe class WeaponDropController : IDisposable
             || simDamping != config.WeaponDropDamping
             || simBounce != config.WeaponDropBounce
             || simFriction != config.WeaponDropFriction
-            || simSolverIterations != config.WeaponDropSolverIterations;
+            || simSolverIterations != config.WeaponDropSolverIterations
+            || simRadius != config.WeaponDropRadius
+            || simHalfLength != config.WeaponDropHalfLength
+            || simMass != config.WeaponDropMass;
     }
 
     private void EnsureSimulation()
@@ -302,6 +383,9 @@ public unsafe class WeaponDropController : IDisposable
         simBounce = config.WeaponDropBounce;
         simFriction = config.WeaponDropFriction;
         simSolverIterations = config.WeaponDropSolverIterations;
+        simRadius = config.WeaponDropRadius;
+        simHalfLength = config.WeaponDropHalfLength;
+        simMass = config.WeaponDropMass;
 
         bufferPool = new BufferPool();
         simulation = BepuSimulation.Create(
@@ -313,8 +397,6 @@ public unsafe class WeaponDropController : IDisposable
         var weaponShape = new Capsule(config.WeaponDropRadius, config.WeaponDropHalfLength * 2f);
         weaponShapeIndex = simulation.Shapes.Add(weaponShape);
         weaponInertia = weaponShape.ComputeInertia(config.WeaponDropMass);
-
-        groundTileShapeIndex = simulation.Shapes.Add(new Box(8f, 0.1f, 8f));
 
         log.Info($"WeaponDropController: simulation created (gravity={simGravity:F2}, bounce={simBounce:F2}, friction={simFriction:F2}, iter={simSolverIterations})");
     }

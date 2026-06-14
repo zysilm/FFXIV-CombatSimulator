@@ -26,6 +26,10 @@ public unsafe class CombatCompanion
     public CompanionAiState AiState { get; set; }
     public NpcSkill? CurrentCastSkill { get; set; }
     public uint CurrentTargetId { get; set; }
+    // Simulation-time stamp at which this companion is next allowed to re-run the
+    // (heavy) target-selection scoring. Reselection happens early if the current
+    // target dies or is lost; see CombatCompanionManager.Tick.
+    public float NextTargetSelectAt { get; set; }
     public uint UnreachableTargetId { get; set; }
     public float UnreachableTimer { get; set; }
     public float RecentDamage { get; set; }

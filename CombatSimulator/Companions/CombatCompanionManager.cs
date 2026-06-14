@@ -29,8 +29,8 @@ public unsafe class CombatCompanionManager : IDisposable
     private readonly MovementBlockHook movementBlockHook;
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly ITargetManager targetManager;
-    private readonly CombatPositioningService combatPositioningService;
     private readonly PartyEngagePlanner partyEngagePlanner;
+    private readonly TerrainHeightService terrainHeightService;
     private readonly IPluginLog log;
 
     private readonly List<CombatCompanion> companions = new();
@@ -40,6 +40,19 @@ public unsafe class CombatCompanionManager : IDisposable
     private readonly Dictionary<nint, PathState> pathStates = new();
     private readonly Dictionary<uint, uint> enemyTargetByEnemyId = new();
     private uint nextEntityId = 0xF1000001;
+
+    // Reachability is expensive (rebuilds the full engage-graph per probe) and is queried
+    // O(companions x enemies) per frame for target scoring. Cache results keyed by the
+    // hypothesis "companion targets enemy", with a short TTL so positions can drift a
+    // little before we recompute. Cleared whenever the alive roster changes.
+    private readonly Dictionary<(uint Companion, uint Enemy), (bool Reachable, float Overflow, float ExpiresAt)> reachabilityCache = new();
+    private readonly List<(uint Companion, uint Enemy)> expiredReachabilityKeys = new();
+    // Tracks the set of alive actors (companions + enemies) so cross-frame caches can be
+    // invalidated on any death/spawn. -1 = never computed.
+    private int lastAliveSignature = -1;
+    // Engage-planner rebuild pacing (see Tick).
+    private float plannerBuildTimer;
+    private float plannerAccumulatedDt;
 
     // Floor for plugin-synthesised entity IDs. Spawned virtual enemies start at
     // 0xF0000001 and companion clones at 0xF1000001; no real player's EntityId
@@ -68,8 +81,6 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float VNavmeshFloorResnapInterval = 0.25f;
     private const float VNavmeshWaypointReachDistance = 0.5f;
     private const float VNavmeshLookaheadDistance = 1.25f;
-    private const float TerrainGridStep = 0.5f;
-    private const int TerrainGridMaxSize = 33;
     private const float CompanionMovementEpsilon = 0.02f;
     private const float RecentDpsWindowSeconds = 8.0f;
     private const float RetargetDpsLead = 1.20f;
@@ -77,8 +88,11 @@ public unsafe class CombatCompanionManager : IDisposable
     private const float FollowStopDistance = 0.6f;
     private const float CombatAnchorRelocateDistance = 10.0f;
     private const float MeleeAttackRangeBuffer = 0.25f;
-    private const float PartyAttackRangeHysteresis = 0.15f;
+    private const float PartyAttackRangeHysteresis = 0.4f;
     private const float SenseInterval = 1.0f;
+    private const float ReachabilityCacheTtl = 0.5f;
+    private const float TargetSelectInterval = 0.25f;
+    private const float PlannerBuildInterval = 0.2f;
     private const float SelectedTargetBonus = 130f;
     private const float LastPlayerTargetBonus = 95f;
     private const float AttackingPlayerBonus = 120f;
@@ -131,6 +145,7 @@ public unsafe class CombatCompanionManager : IDisposable
     public Action<CombatCompanion>? OnCompanionSpawnComplete { get; set; }
     public Action<nint>? OnCompanionDeathRagdoll { get; set; }
     public Action<string>? OnSpawnError { get; set; }
+    public Func<uint, bool>? IsSourceEnemy { get; set; }
 
     public CombatCompanionManager(
         IObjectTable objectTable,
@@ -141,8 +156,8 @@ public unsafe class CombatCompanionManager : IDisposable
         MovementBlockHook movementBlockHook,
         VNavmeshIpc vnavmeshIpc,
         ITargetManager targetManager,
-        CombatPositioningService combatPositioningService,
         PartyEngagePlanner partyEngagePlanner,
+        TerrainHeightService terrainHeightService,
         IPluginLog log)
     {
         this.objectTable = objectTable;
@@ -153,8 +168,8 @@ public unsafe class CombatCompanionManager : IDisposable
         this.movementBlockHook = movementBlockHook;
         this.vnavmeshIpc = vnavmeshIpc;
         this.targetManager = targetManager;
-        this.combatPositioningService = combatPositioningService;
         this.partyEngagePlanner = partyEngagePlanner;
+        this.terrainHeightService = terrainHeightService;
         this.log = log;
     }
 
@@ -182,6 +197,10 @@ public unsafe class CombatCompanionManager : IDisposable
             if (player.EntityId >= SimulatedEntityIdFloor)
                 continue;
             if (player.Address == nint.Zero)
+                continue;
+            if (IsSourceEnemy?.Invoke(player.EntityId) == true)
+                continue;
+            if (ShouldLeaveVisiblePlayerForEnemySide(player.EntityId))
                 continue;
             if (!seenSources.Add(player.EntityId))
                 continue;
@@ -247,18 +266,54 @@ public unsafe class CombatCompanionManager : IDisposable
         TickSensing(deltaTime);
 
         vnavmeshIpc.RefreshStatus();
-        var terrainCache = BuildCompanionTerrainCache(enemies);
+        var terrainCache = BuildTerrainHeightCache(enemies);
         var assignedTargets = new Dictionary<uint, int>();
         var companionPressure = new Dictionary<PressureKey, int>();
         TickCombatAnchor(enemies);
         UpdateFocusTarget(enemies);
 
+        var now = combatEngine.State.SimulationTime;
         var liveCompanions = companions.ToList();
+
+        // Cross-frame caches (reachability, engage plans) assume a stable roster. When
+        // anyone dies or spawns, invalidate them so a stale entry can't keep a companion
+        // attacking a corpse or holding a slot that no longer exists.
+        var aliveSignature = ComputeAliveSignature(liveCompanions, enemies);
+        if (aliveSignature != lastAliveSignature)
+        {
+            reachabilityCache.Clear();
+            plannerBuildTimer = 0f; // force a planner rebuild this frame
+            lastAliveSignature = aliveSignature;
+        }
+        else if (reachabilityCache.Count > 0)
+        {
+            RemoveExpiredReachabilityEntries(now);
+        }
+
         for (var i = 0; i < liveCompanions.Count; i++)
         {
             var companion = liveCompanions[i];
             TickRecentDps(companion, deltaTime);
-            AssignCompanionTarget(companion, enemies, assignedTargets, companionPressure);
+
+            // Target (re)selection is the heavy per-companion work — it scores every enemy,
+            // each with a reachability probe. Throttle it to a few times a second, but
+            // reselect immediately when the companion has no target or its target just
+            // died, otherwise it would briefly retreat before re-engaging.
+            var hasLiveTarget = companion.CurrentTargetId != 0 &&
+                HasLiveEnemy(enemies, companion.CurrentTargetId);
+            if (!hasLiveTarget || now >= companion.NextTargetSelectAt)
+            {
+                AssignCompanionTarget(companion, enemies, assignedTargets, companionPressure);
+                // Stagger by entity id so companions don't all reselect on the same frame.
+                companion.NextTargetSelectAt = now + TargetSelectInterval + (companion.SimulatedEntityId % 8) * 0.02f;
+            }
+            else
+            {
+                // Still register the held target into the spread accumulators so the
+                // companions that DO reselect this frame see accurate crowding/pressure.
+                assignedTargets[companion.CurrentTargetId] = assignedTargets.GetValueOrDefault(companion.CurrentTargetId) + 1;
+                AddPressure(companionPressure, companion.CurrentTargetId, IsRangedStyle(companion.Behavior.AutoAttackStyle));
+            }
         }
 
         var enemyTargets = new Dictionary<uint, uint>();
@@ -281,29 +336,43 @@ public unsafe class CombatCompanionManager : IDisposable
             .ToDictionary(c => c.SimulatedEntityId, c => c.CurrentTargetId);
 
         var player = objectTable.LocalPlayer;
+        plannerBuildTimer -= deltaTime;
+        plannerAccumulatedDt += deltaTime;
         if (player != null)
         {
-            var commandAnchorPos = combatAnchorActive ? combatAnchorPosition : player.Position;
-            var commandAnchorRot = combatAnchorActive ? combatAnchorRotation : player.Rotation;
-            partyEngagePlanner.Build(
-                deltaTime,
-                player.Position,
-                player.Rotation,
-                commandAnchorPos,
-                commandAnchorRot,
-                liveCompanions,
-                enemies,
-                companionTargets,
-                enemyTargets,
-                combatEngine.State.PlayerState.EntityId,
-                MathF.Max(1.0f, config.PartyCommandRange),
-                Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f),
-                MathF.Max(0.5f, config.PartyMeleeAttackRange) + MeleeAttackRangeBuffer,
-                MathF.Max(1.0f, config.PartyRangedAttackRange) + MeleeAttackRangeBuffer);
+            // The engage planner is slow-varying by design (0.75s repath, sticky slots),
+            // so rebuilding its full node/slot/min-cost-flow graph every frame is wasted
+            // work. Rebuild a few times a second; a roster change forced plannerBuildTimer
+            // to 0 above so deaths/spawns rebuild immediately. Movement still executes
+            // every frame off the cached plans. Build gets the accumulated dt so its
+            // internal repath timers advance in real time despite the throttle.
+            if (plannerBuildTimer <= 0)
+            {
+                var commandAnchorPos = combatAnchorActive ? combatAnchorPosition : player.Position;
+                var commandAnchorRot = combatAnchorActive ? combatAnchorRotation : player.Rotation;
+                partyEngagePlanner.Build(
+                    plannerAccumulatedDt,
+                    player.Position,
+                    player.Rotation,
+                    commandAnchorPos,
+                    commandAnchorRot,
+                    liveCompanions,
+                    enemies,
+                    companionTargets,
+                    enemyTargets,
+                    combatEngine.State.PlayerState.EntityId,
+                    MathF.Max(1.0f, config.PartyCommandRange),
+                    Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f),
+                    MathF.Max(0.5f, config.PartyMeleeAttackRange) + MeleeAttackRangeBuffer,
+                    MathF.Max(1.0f, config.PartyRangedAttackRange) + MeleeAttackRangeBuffer);
+                plannerBuildTimer = PlannerBuildInterval;
+                plannerAccumulatedDt = 0f;
+            }
         }
         else
         {
             partyEngagePlanner.Clear();
+            plannerAccumulatedDt = 0f;
         }
 
         for (var i = 0; i < liveCompanions.Count; i++)
@@ -638,6 +707,10 @@ public unsafe class CombatCompanionManager : IDisposable
                 continue;
             if (player.EntityId >= SimulatedEntityIdFloor)
                 continue;
+            if (IsSourceEnemy?.Invoke(player.EntityId) == true)
+                continue;
+            if (ShouldLeaveVisiblePlayerForEnemySide(player.EntityId))
+                continue;
             if (player.Address == nint.Zero || !seenSources.Add(player.EntityId))
                 continue;
 
@@ -656,6 +729,18 @@ public unsafe class CombatCompanionManager : IDisposable
         foreach (var queued in spawnQueue)
             seen.Add(queued.EntityId);
         return seen;
+    }
+
+    public bool HasSourceEntity(uint sourceEntityId) => BuildSeenSourceSet().Contains(sourceEntityId);
+
+    private bool ShouldLeaveVisiblePlayerForEnemySide(uint sourceEntityId)
+    {
+        if (!config.EnableMapPlayerEnemySensing)
+            return false;
+        if (!config.SensePartyMembers)
+            return false;
+
+        return Random.Shared.Next(2) == 0;
     }
 
     private void ProcessSpawnRequest(CompanionSpawnSource sourceInfo)
@@ -907,7 +992,7 @@ public unsafe class CombatCompanionManager : IDisposable
         IReadOnlyList<SimulatedNpc> enemies,
         int companionIndex,
         int companionCount,
-        CompanionTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         if (!companion.IsSpawned || companion.BattleChara == null)
             return;
@@ -918,7 +1003,6 @@ public unsafe class CombatCompanionManager : IDisposable
         {
             ClearCompanionActionState(companion);
             ClearCompanionTargetState(companion);
-            combatPositioningService.Release(companion.SimulatedEntityId);
             StopMove(companion);
             EnterCompanionState(companion, CompanionAiState.Dead);
             if (!companion.DeathAnimationPlayed)
@@ -937,7 +1021,6 @@ public unsafe class CombatCompanionManager : IDisposable
         {
             ClearCompanionActionState(companion);
             ClearCompanionTargetState(companion);
-            combatPositioningService.Release(companion.SimulatedEntityId);
             EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
             MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
             return;
@@ -948,7 +1031,6 @@ public unsafe class CombatCompanionManager : IDisposable
         {
             ClearCompanionActionState(companion);
             ClearCompanionTargetState(companion);
-            combatPositioningService.Release(companion.SimulatedEntityId);
             EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
             MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
             return;
@@ -959,7 +1041,7 @@ public unsafe class CombatCompanionManager : IDisposable
         var targetPos = (Vector3)targetObj->Position;
         var sourcePos = (Vector3)sourceObj->Position;
         var dist = FlatDistance(sourcePos, targetPos);
-        var effectiveRange = GetPartyAttackRange(companion.Behavior.AutoAttackStyle) + MeleeAttackRangeBuffer + PartyAttackRangeHysteresis;
+        var effectiveRange = GetPartyAttackRange(companion.Behavior.AutoAttackStyle) + MeleeAttackRangeBuffer;
         var reachability = EvaluateCompanionReachability(companion, target, enemies);
         if (reachability.Reachable || dist <= effectiveRange)
         {
@@ -979,9 +1061,11 @@ public unsafe class CombatCompanionManager : IDisposable
         var currentUnreachable = companion.UnreachableTargetId == target.SimulatedEntityId &&
                                  companion.UnreachableTimer >= ReachabilityUnreachableDelay;
 
-        if (dist > effectiveRange)
+        var wasHoldingRange = companion.AiState is CompanionAiState.CombatReady or CompanionAiState.ActionLocked;
+        var resumeRange = effectiveRange + PartyAttackRangeHysteresis;
+        var shouldMove = wasHoldingRange ? dist > resumeRange : dist > effectiveRange;
+        if (shouldMove)
         {
-            combatPositioningService.Release(companion.SimulatedEntityId);
             if (MoveByPartyPlan(companion, deltaTime, targetPos, terrainCache))
                 return;
 
@@ -1017,7 +1101,8 @@ public unsafe class CombatCompanionManager : IDisposable
             if (dist > GetPartySkillRange(skill.Range, skill.AttackStyle))
                 continue;
 
-            var result = combatEngine.ProcessCompanionAction(companion, target, skill.ActionId, skill.Potency, skill.AttackStyle);
+            var result = combatEngine.ProcessCompanionAction(companion, target,
+                skill.ActionId, skill.Potency, skill.AttackStyle, skill.Radius);
             if (result.Success)
             {
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
@@ -1099,7 +1184,10 @@ public unsafe class CombatCompanionManager : IDisposable
 
         companion.CurrentTargetId = target?.SimulatedEntityId ?? 0;
         if (target != null)
+        {
+            assignedTargets[target.SimulatedEntityId] = assignedTargets.GetValueOrDefault(target.SimulatedEntityId) + 1;
             AddPressure(pressureMap, target.SimulatedEntityId, IsRangedStyle(companion.Behavior.AutoAttackStyle));
+        }
     }
 
     private SimulatedNpc? GetCurrentCompanionTarget(CombatCompanion companion, IReadOnlyList<SimulatedNpc> enemies)
@@ -1134,7 +1222,7 @@ public unsafe class CombatCompanionManager : IDisposable
         float deltaTime,
         int companionIndex,
         int companionCount,
-        CompanionTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         var player = objectTable.LocalPlayer;
         if (player == null || companion.BattleChara == null)
@@ -1159,7 +1247,7 @@ public unsafe class CombatCompanionManager : IDisposable
         CombatCompanion companion,
         float deltaTime,
         Vector3 fallbackFaceTarget,
-        CompanionTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         if (!partyEngagePlanner.TryGetPlan(companion.SimulatedEntityId, out var plan))
         {
@@ -1176,7 +1264,7 @@ public unsafe class CombatCompanionManager : IDisposable
         CombatCompanion companion,
         PartyEngagePlan plan,
         float deltaTime,
-        CompanionTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         if (companion.BattleChara == null)
             return false;
@@ -1205,7 +1293,7 @@ public unsafe class CombatCompanionManager : IDisposable
             : MathF.Max(0.5f, config.PartyMeleeAttackRange);
 
     private float GetPartySkillRange(float skillRange, NpcAttackStyle style)
-        => MathF.Min(skillRange, GetPartyAttackRange(style) + MeleeAttackRangeBuffer + PartyAttackRangeHysteresis);
+        => MathF.Min(skillRange, GetPartyAttackRange(style) + MeleeAttackRangeBuffer);
 
     private static float FlatDistance(Vector3 a, Vector3 b)
     {
@@ -1334,7 +1422,60 @@ public unsafe class CombatCompanionManager : IDisposable
         return -ReachabilityHardPenalty - reachability.Overflow * ReachabilitySoftPenaltyWeight;
     }
 
+    private static bool HasLiveEnemy(IReadOnlyList<SimulatedNpc> enemies, uint entityId)
+    {
+        for (var i = 0; i < enemies.Count; i++)
+        {
+            var e = enemies[i];
+            if (e.SimulatedEntityId == entityId && e.IsSpawned && e.State.IsAlive && e.BattleChara != null)
+                return true;
+        }
+        return false;
+    }
+
+    // Order-independent hash of the alive-actor set. Changes only when an actor enters or
+    // leaves combat (death/spawn), not when they move — so position-driven caches survive
+    // frame to frame but are dropped the moment the roster changes.
+    private static int ComputeAliveSignature(IReadOnlyList<CombatCompanion> liveCompanions, IReadOnlyList<SimulatedNpc> enemies)
+    {
+        var sig = 0;
+        foreach (var c in liveCompanions)
+            if (c.IsSpawned && c.State.IsAlive)
+                sig ^= (int)(c.SimulatedEntityId * 2654435761u);
+        foreach (var e in enemies)
+            if (e.IsSpawned && e.State.IsAlive)
+                sig ^= (int)(e.SimulatedEntityId * 40503u + 0x9E37u);
+        return sig;
+    }
+
+    private void RemoveExpiredReachabilityEntries(float now)
+    {
+        expiredReachabilityKeys.Clear();
+        foreach (var kv in reachabilityCache)
+        {
+            if (now >= kv.Value.ExpiresAt)
+                expiredReachabilityKeys.Add(kv.Key);
+        }
+        for (var i = 0; i < expiredReachabilityKeys.Count; i++)
+            reachabilityCache.Remove(expiredReachabilityKeys[i]);
+    }
+
     private (bool Reachable, float Overflow) EvaluateCompanionReachability(
+        CombatCompanion companion,
+        SimulatedNpc enemy,
+        IReadOnlyList<SimulatedNpc> enemies)
+    {
+        var key = (companion.SimulatedEntityId, enemy.SimulatedEntityId);
+        var now = combatEngine.State.SimulationTime;
+        if (reachabilityCache.TryGetValue(key, out var cached) && now < cached.ExpiresAt)
+            return (cached.Reachable, cached.Overflow);
+
+        var result = ComputeCompanionReachability(companion, enemy, enemies);
+        reachabilityCache[key] = (result.Reachable, result.Overflow, now + ReachabilityCacheTtl);
+        return result;
+    }
+
+    private (bool Reachable, float Overflow) ComputeCompanionReachability(
         CombatCompanion companion,
         SimulatedNpc enemy,
         IReadOnlyList<SimulatedNpc> enemies)
@@ -1404,7 +1545,7 @@ public unsafe class CombatCompanionManager : IDisposable
         CombatCompanion companion,
         Vector3 targetPos,
         float deltaTime,
-        CompanionTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         var obj = (GameObject*)companion.BattleChara;
         var current = (Vector3)obj->Position;
@@ -1525,7 +1666,7 @@ public unsafe class CombatCompanionManager : IDisposable
         float deltaTime,
         int companionIndex,
         int companionCount,
-        CompanionTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         var player = objectTable.LocalPlayer;
         if (player == null || companion.BattleChara == null)
@@ -1587,7 +1728,7 @@ public unsafe class CombatCompanionManager : IDisposable
         int companionIndex,
         int companionCount,
         Vector3 facePos,
-        CompanionTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         var player = objectTable.LocalPlayer;
         if (player == null || companion.BattleChara == null)
@@ -1669,10 +1810,17 @@ public unsafe class CombatCompanionManager : IDisposable
             state.PendingPath = null;
         }
 
+        // Repath only when the path is stale, NOT merely because the interval elapsed —
+        // an idle timer firing every second forced a Pathfind + two synchronous navmesh
+        // snaps even when the target had not moved. The exhausted-but-not-arrived clause
+        // keeps the self-heal: if the path ran out before reaching the target (blocked,
+        // straight line won't do), we still re-request.
+        var pathExhausted = state.WaypointIndex >= state.Waypoints.Count;
         var shouldRepath = state.PendingPath == null &&
+            state.RepathTimer <= 0 &&
             (state.Waypoints.Count == 0 ||
-             state.RepathTimer <= 0 ||
-             Vector3.Distance(state.RequestedTarget, target) > RepathDistance);
+             Vector3.Distance(state.RequestedTarget, target) > RepathDistance ||
+             (pathExhausted && FlatDistance(current, target) > 2f));
 
         if (shouldRepath)
         {
@@ -1845,7 +1993,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
     private Vector3 CorrectMovingRootHeight(
         Vector3 rootPosition,
-        CompanionTerrainCache terrainCache,
+        TerrainHeightCache terrainCache,
         PathState state,
         float deltaTime)
     {
@@ -1872,7 +2020,7 @@ public unsafe class CombatCompanionManager : IDisposable
     private void CorrectStableRootHeight(
         GameObject* gameObj,
         Vector3 rootPosition,
-        CompanionTerrainCache terrainCache,
+        TerrainHeightCache terrainCache,
         PathState state,
         float deltaTime)
     {
@@ -2001,7 +2149,7 @@ public unsafe class CombatCompanionManager : IDisposable
         companion.RecentDps = companion.RecentDamage / RecentDpsWindowSeconds;
     }
 
-    private CompanionTerrainCache? BuildCompanionTerrainCache(IReadOnlyList<SimulatedNpc> enemies)
+    private TerrainHeightCache? BuildTerrainHeightCache(IReadOnlyList<SimulatedNpc> enemies)
     {
         if (companions.Count == 0)
             return null;
@@ -2054,44 +2202,9 @@ public unsafe class CombatCompanionManager : IDisposable
         if (!hasBounds)
             return null;
 
-        var widthWorld = MathF.Max(maxX - minX, TerrainGridStep);
-        var depthWorld = MathF.Max(maxZ - minZ, TerrainGridStep);
-        var step = MathF.Max(TerrainGridStep,
-            MathF.Max(widthWorld, depthWorld) / MathF.Max(1, TerrainGridMaxSize - 1));
-        var width = Math.Clamp((int)MathF.Ceiling(widthWorld / step) + 1, 2, TerrainGridMaxSize);
-        var depth = Math.Clamp((int)MathF.Ceiling(depthWorld / step) + 1, 2, TerrainGridMaxSize);
-
-        var heights = new float[width, depth];
-        var valid = new bool[width, depth];
-        var originY = maxY + 10f;
-        const float rayDistance = 80f;
-
-        for (var z = 0; z < depth; z++)
-        for (var x = 0; x < width; x++)
-        {
-            var wx = minX + x * step;
-            var wz = minZ + z * step;
-            if (BGCollisionModule.RaycastMaterialFilter(
-                    new Vector3(wx, originY, wz),
-                    new Vector3(0, -1, 0),
-                    out var hit,
-                    rayDistance))
-            {
-                heights[x, z] = hit.Point.Y;
-                valid[x, z] = true;
-            }
-        }
-
-        return new CompanionTerrainCache
-        {
-            OriginX = minX,
-            OriginZ = minZ,
-            Step = step,
-            Width = width,
-            Depth = depth,
-            Heights = heights,
-            Valid = valid,
-        };
+        return terrainHeightService.EnsureCoverage(
+            new TerrainHeightBounds(minX, maxX, minZ, maxZ, maxY),
+            combatEngine.State.SimulationTime);
     }
 
     private void TickPlayerRecentDps(float deltaTime)
@@ -2234,73 +2347,6 @@ public unsafe class CombatCompanionManager : IDisposable
         public bool HasStableRootTerrainClearance { get; set; }
         public float LastMoveRootY { get; set; }
         public bool HasLastMoveRootY { get; set; }
-    }
-
-    private sealed class CompanionTerrainCache
-    {
-        public float OriginX { get; init; }
-        public float OriginZ { get; init; }
-        public float Step { get; init; }
-        public int Width { get; init; }
-        public int Depth { get; init; }
-        public float[,] Heights { get; init; } = new float[0, 0];
-        public bool[,] Valid { get; init; } = new bool[0, 0];
-
-        public bool TrySample(float x, float z, out float y)
-        {
-            y = 0;
-            if (Width <= 0 || Depth <= 0 || Step <= 0)
-                return false;
-
-            var gx = (x - OriginX) / Step;
-            var gz = (z - OriginZ) / Step;
-            var ix = (int)MathF.Floor(gx);
-            var iz = (int)MathF.Floor(gz);
-
-            if (ix < 0 || iz < 0 || ix >= Width || iz >= Depth)
-                return false;
-
-            if (ix < Width - 1 && iz < Depth - 1)
-            {
-                var tx = gx - ix;
-                var tz = gz - iz;
-                if (Valid[ix, iz] && Valid[ix + 1, iz] && Valid[ix, iz + 1] && Valid[ix + 1, iz + 1])
-                {
-                    var y0 = Lerp(Heights[ix, iz], Heights[ix + 1, iz], tx);
-                    var y1 = Lerp(Heights[ix, iz + 1], Heights[ix + 1, iz + 1], tx);
-                    y = Lerp(y0, y1, tz);
-                    return true;
-                }
-            }
-
-            var bestDistSq = float.MaxValue;
-            var bestY = 0f;
-            for (var dz = -1; dz <= 1; dz++)
-            for (var dx = -1; dx <= 1; dx++)
-            {
-                var sx = ix + dx;
-                var sz = iz + dz;
-                if (sx < 0 || sz < 0 || sx >= Width || sz >= Depth || !Valid[sx, sz])
-                    continue;
-
-                var wx = OriginX + sx * Step;
-                var wz = OriginZ + sz * Step;
-                var distSq = (wx - x) * (wx - x) + (wz - z) * (wz - z);
-                if (distSq < bestDistSq)
-                {
-                    bestDistSq = distSq;
-                    bestY = Heights[sx, sz];
-                }
-            }
-
-            if (bestDistSq == float.MaxValue)
-                return false;
-
-            y = bestY;
-            return true;
-        }
-
-        private static float Lerp(float a, float b, float t) => a + (b - a) * t;
     }
 
     private readonly record struct PressureKey(uint TargetId, bool Ranged);

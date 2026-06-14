@@ -185,6 +185,15 @@ public class MainWindow : IDisposable
         HelpMarker("Show the combat targeting controls used by Combat Simulator.");
         DrawControlsPopup();
 
+        ImGui.Separator();
+        vnavmeshIpc.RefreshStatus();
+        if (vnavmeshIpc.IsAvailable)
+            ImGui.TextColored(new Vector4(0f, 0.85f, 0f, 1f), "vnavmesh: active");
+        else
+            ImGui.TextDisabled("vnavmesh: not installed");
+        ImGui.SameLine();
+        HelpMarker("vnavmesh is recommended for better pathfinding. The plugin works without it, but enemy movement will be limited.");
+
         ImGui.End();
     }
 
@@ -583,6 +592,7 @@ public class MainWindow : IDisposable
 
         config.EnableCombatCompanions = true;
         config.SensePartyMembers = recipe.Companions.Exists(c => c.Type == CompanionRecipeType.VisiblePlayers);
+        config.EnableMapPlayerEnemySensing = recipe.MapEnemies.Exists(g => g.Enabled && g.IncludePlayers);
         config.CombatCompanionMaxCount = Math.Min(CombatCompanionManager.MaxCompanionCap, TotalRequestedCompanions(recipe));
 
         npcSpawner.SpawnModeActive = true;
@@ -644,6 +654,8 @@ public class MainWindow : IDisposable
             return new MapEnemySettings
             {
                 Enabled = true,
+                IncludeBattleNpcs = group.IncludeBattleNpcs,
+                IncludePlayers = group.IncludePlayers,
                 MaxCount = Math.Max(0, group.MaxCount),
                 SenseRange = Math.Max(0.1f, group.SenseRange),
                 Level = Math.Clamp(config.FastCombatLevel, 1, 300),
@@ -886,7 +898,15 @@ public class MainWindow : IDisposable
         }
         HelpMarker("During normal mixed battles, nearby map BattleNpcs can join the enemy pool. Existing recipes only use this when the recipe explicitly enables Map Enemies.");
 
-        if (!sensing)
+        var playerEnemySensing = config.EnableMapPlayerEnemySensing;
+        if (ImGui.Checkbox("Sense map players as enemies", ref playerEnemySensing))
+        {
+            config.EnableMapPlayerEnemySensing = playerEnemySensing;
+            config.Save();
+        }
+        HelpMarker("Nearby visible players can join the enemy pool instead of being cloned as companions. If companion sensing is also enabled, each visible player is randomly assigned to one side and never both.");
+
+        if (!sensing && !playerEnemySensing)
             ImGui.BeginDisabled();
 
         var range = Math.Clamp(config.MapEnemySenseRange, 1.0f, 80.0f);
@@ -903,7 +923,7 @@ public class MainWindow : IDisposable
             config.Save();
         }
 
-        if (!sensing)
+        if (!sensing && !playerEnemySensing)
             ImGui.EndDisabled();
 
         ImGui.Separator();
@@ -948,6 +968,8 @@ public class MainWindow : IDisposable
 
         ImGui.TextWrapped("Search an enemy by name, then Spawn to fight it. Spawning starts the combat simulation automatically. Use Stop in the main window to despawn everything.");
         ImGui.Separator();
+        ImGui.TextColored(new Vector4(1f, 0.2f, 0.2f, 1f), "Warning: Spawning certain enemies may cause the game to crash. Use with caution.");
+        ImGui.Spacing();
 
         // Category tabs: Popular / Recent / All
         for (int c = 0; c < SpawnCategoryNames.Length; c++)
@@ -1485,6 +1507,8 @@ public class MainWindow : IDisposable
         ImGui.Spacing();
 
         var jointTypes = new[] { "Ball", "Hinge" };
+        var anatomicalRoles = Enum.GetNames<RagdollController.AnatomicalRole>();
+        var colliderShapes = Enum.GetNames<RagdollController.RagdollColliderShape>();
         var changed = false;
         // EditingBoneName persists — only updated on value/toggle change
 
@@ -1538,6 +1562,14 @@ public class MainWindow : IDisposable
                     if (ImGui.Combo($"Joint Type{id}", ref jt, jointTypes, jointTypes.Length))
                     { bone.JointType = jt; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
 
+                    var role = bone.AnatomicalRole;
+                    if (ImGui.Combo($"Anatomical Role{id}", ref role, anatomicalRoles, anatomicalRoles.Length))
+                    { bone.AnatomicalRole = role; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                    var shape = bone.ColliderShape;
+                    if (ImGui.Combo($"Collider Shape{id}", ref shape, colliderShapes, colliderShapes.Length))
+                    { bone.ColliderShape = shape; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
                     var radius = bone.CapsuleRadius;
                     if (ImGui.SliderFloat($"Capsule Radius{id}", ref radius, 0.01f, 0.3f, "%.3f"))
                     { bone.CapsuleRadius = radius; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
@@ -1546,6 +1578,21 @@ public class MainWindow : IDisposable
                     if (ImGui.SliderFloat($"Capsule Half-Length{id}", ref halfLen, 0.0f, 0.3f, "%.3f"))
                     { bone.CapsuleHalfLength = halfLen; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
 
+                    if ((RagdollController.RagdollColliderShape)bone.ColliderShape == RagdollController.RagdollColliderShape.Box)
+                    {
+                        var boxX = bone.BoxHalfExtentX;
+                        if (ImGui.SliderFloat($"Box Half X{id}", ref boxX, 0.005f, 0.3f, "%.3f"))
+                        { bone.BoxHalfExtentX = boxX; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                        var boxY = bone.BoxHalfExtentY;
+                        if (ImGui.SliderFloat($"Box Half Y{id}", ref boxY, 0.005f, 0.3f, "%.3f"))
+                        { bone.BoxHalfExtentY = boxY; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                        var boxZ = bone.BoxHalfExtentZ;
+                        if (ImGui.SliderFloat($"Box Half Z{id}", ref boxZ, 0.005f, 0.3f, "%.3f"))
+                        { bone.BoxHalfExtentZ = boxZ; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+                    }
+
                     var mass = bone.Mass;
                     if (ImGui.SliderFloat($"Mass{id}", ref mass, 0.1f, 15.0f, "%.1f"))
                     { bone.Mass = mass; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
@@ -1553,6 +1600,25 @@ public class MainWindow : IDisposable
                     var swing = bone.SwingLimit;
                     if (ImGui.SliderFloat($"Swing Limit (rad){id}", ref swing, 0.0f, MathF.PI, "%.2f"))
                     { bone.SwingLimit = swing; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
+
+                    if ((RagdollController.JointType)bone.JointType == RagdollController.JointType.Hinge)
+                    {
+                        var swingMin = bone.SwingMinLimit ?? 0f;
+                        if (ImGui.SliderFloat($"Swing Min Limit (rad){id}", ref swingMin, 0.0f, MathF.PI, "%.2f"))
+                        { bone.SwingMinLimit = swingMin; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
+
+                        var restAngle = bone.HingeRestAngle ?? 0f;
+                        if (ImGui.SliderFloat($"Hinge Rest Angle (rad){id}", ref restAngle, 0.0f, MathF.PI, "%.2f"))
+                        { bone.HingeRestAngle = restAngle; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
+
+                        var restFreq = bone.HingeRestSpringFreq ?? 0f;
+                        if (ImGui.SliderFloat($"Hinge Rest Freq (Hz){id}", ref restFreq, 0.0f, 10.0f, "%.1f"))
+                        { bone.HingeRestSpringFreq = restFreq; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                        var restForce = bone.HingeRestMaxForce ?? 0f;
+                        if (ImGui.SliderFloat($"Hinge Rest Max Force{id}", ref restForce, 0.0f, 50.0f, "%.1f"))
+                        { bone.HingeRestMaxForce = restForce; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+                    }
 
                     var twistMin = bone.TwistMinAngle;
                     if (ImGui.SliderFloat($"Twist Min (rad){id}", ref twistMin, -MathF.PI, 0f, "%.2f"))
@@ -1593,14 +1659,23 @@ public class MainWindow : IDisposable
                     {
                         if (ImGui.SmallButton($"Reset{id}"))
                         {
-                            var def = RagdollController.AllBoneDefaults[i];
+                            var def = CloneBoneConfig(RagdollController.AllBoneDefaults[i]);
                             bone.CapsuleRadius = def.CapsuleRadius;
                             bone.CapsuleHalfLength = def.CapsuleHalfLength;
                             bone.Mass = def.Mass;
                             bone.SwingLimit = def.SwingLimit;
+                            bone.SwingMinLimit = def.SwingMinLimit;
+                            bone.HingeRestAngle = def.HingeRestAngle;
+                            bone.HingeRestSpringFreq = def.HingeRestSpringFreq;
+                            bone.HingeRestMaxForce = def.HingeRestMaxForce;
                             bone.JointType = def.JointType;
                             bone.TwistMinAngle = def.TwistMinAngle;
                             bone.TwistMaxAngle = def.TwistMaxAngle;
+                            bone.AnatomicalRole = def.AnatomicalRole;
+                            bone.ColliderShape = def.ColliderShape;
+                            bone.BoxHalfExtentX = def.BoxHalfExtentX;
+                            bone.BoxHalfExtentY = def.BoxHalfExtentY;
+                            bone.BoxHalfExtentZ = def.BoxHalfExtentZ;
                             bone.Enabled = def.Enabled;
                             bone.SoftBody = def.SoftBody;
                             bone.SoftSpringFreq = def.SoftSpringFreq;
@@ -1705,7 +1780,7 @@ public class MainWindow : IDisposable
             else
             {
                 // Unknown bone — safe disabled defaults
-                config.RagdollBoneConfigs.Add(new RagdollBoneConfig
+                var unknown = new RagdollBoneConfig
                 {
                     Name = boneName,
                     SkeletonParent = skelParent,
@@ -1717,7 +1792,9 @@ public class MainWindow : IDisposable
                     JointType = 0,
                     TwistMinAngle = -0.2f,
                     TwistMaxAngle = 0.2f,
-                });
+                };
+                RagdollController.FillProfileDefaults(unknown);
+                config.RagdollBoneConfigs.Add(unknown);
             }
             added = true;
         }
@@ -1727,7 +1804,7 @@ public class MainWindow : IDisposable
 
     private static RagdollBoneConfig CloneBoneConfig(RagdollBoneConfig src)
     {
-        return new RagdollBoneConfig
+        var clone = new RagdollBoneConfig
         {
             Name = src.Name,
             SkeletonParent = src.SkeletonParent,
@@ -1736,9 +1813,18 @@ public class MainWindow : IDisposable
             CapsuleHalfLength = src.CapsuleHalfLength,
             Mass = src.Mass,
             SwingLimit = src.SwingLimit,
+            SwingMinLimit = src.SwingMinLimit,
+            HingeRestAngle = src.HingeRestAngle,
+            HingeRestSpringFreq = src.HingeRestSpringFreq,
+            HingeRestMaxForce = src.HingeRestMaxForce,
             JointType = src.JointType,
             TwistMinAngle = src.TwistMinAngle,
             TwistMaxAngle = src.TwistMaxAngle,
+            AnatomicalRole = src.AnatomicalRole,
+            ColliderShape = src.ColliderShape,
+            BoxHalfExtentX = src.BoxHalfExtentX,
+            BoxHalfExtentY = src.BoxHalfExtentY,
+            BoxHalfExtentZ = src.BoxHalfExtentZ,
             Description = src.Description,
             SoftBody = src.SoftBody,
             SoftSpringFreq = src.SoftSpringFreq,
@@ -1746,6 +1832,8 @@ public class MainWindow : IDisposable
             SoftServoFreq = src.SoftServoFreq,
             SoftServoDamp = src.SoftServoDamp,
         };
+        RagdollController.FillProfileDefaults(clone);
+        return clone;
     }
 
     private void DrawDiagnoseSection()
@@ -2459,6 +2547,79 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Prevent characters and NPCs from disappearing when the camera zooms very close.");
+
+                ImGui.Separator();
+                ImGui.TextDisabled("Fighting Camera (1v1)");
+
+                var fighting = config.ActiveCameraFightingMode;
+                if (ImGui.Checkbox("Enable Fighting Camera##activecam", ref fighting))
+                {
+                    config.ActiveCameraFightingMode = fighting;
+                    config.Save();
+                }
+                HelpMarker("During a 1v1, center the camera between you and the locked target and auto-zoom so both stay in frame (you keep manual rotation). On either death, smoothly transition to the dead character's bone (above) and suppress Death Cam.");
+
+                if (config.ActiveCameraFightingMode)
+                {
+                    // Framing bone (read from both combatants)
+                    int fBoneIdx = 0;
+                    for (int b = 0; b < bones.Length; b++)
+                        if (bones[b].BoneName == config.ActiveCameraFightingBoneName) { fBoneIdx = b; break; }
+                    if (ImGui.Combo("Framing Bone##fightcam", ref fBoneIdx, boneNames, boneNames.Length))
+                    {
+                        config.ActiveCameraFightingBoneName = bones[fBoneIdx].BoneName;
+                        config.Save();
+                    }
+                    HelpMarker("Bone on each combatant used to compute the framing midpoint.");
+
+                    var fTrans = config.ActiveCameraFightingTransitionDuration;
+                    if (ImGui.SliderFloat("Transition Duration##fightcam", ref fTrans, 0.1f, 5f, "%.2f s"))
+                    {
+                        config.ActiveCameraFightingTransitionDuration = fTrans;
+                        config.Save();
+                    }
+                    HelpMarker("How long the camera takes to move from the 1v1 framing to the dead character's bone.");
+
+                    var fMargin = config.ActiveCameraFightingZoomMargin;
+                    if (ImGui.SliderFloat("Zoom Margin##fightcam", ref fMargin, 1.0f, 2.5f, "%.2f"))
+                    {
+                        config.ActiveCameraFightingZoomMargin = fMargin;
+                        config.Save();
+                    }
+                    HelpMarker("Extra zoom-out so both fighters stay comfortably in frame. Higher = more padding.");
+
+                    var fMin = config.ActiveCameraFightingMinDistance;
+                    if (ImGui.SliderFloat("Min Distance##fightcam", ref fMin, 1.0f, 10f, "%.2f"))
+                    {
+                        config.ActiveCameraFightingMinDistance = fMin;
+                        config.Save();
+                    }
+                    HelpMarker("Closest the camera will auto-zoom when the fighters are near each other.");
+
+                    var fMax = config.ActiveCameraFightingMaxDistance;
+                    if (ImGui.SliderFloat("Max Distance##fightcam", ref fMax, 5f, 40f, "%.2f"))
+                    {
+                        config.ActiveCameraFightingMaxDistance = fMax;
+                        config.Save();
+                    }
+                    HelpMarker("Farthest the camera will auto-zoom when the fighters are far apart.");
+
+                    var fSmooth = config.ActiveCameraFightingSmoothing;
+                    if (ImGui.SliderFloat("Smoothing##fightcam", ref fSmooth, 1f, 20f, "%.1f"))
+                    {
+                        config.ActiveCameraFightingSmoothing = fSmooth;
+                        config.Save();
+                    }
+                    HelpMarker("How quickly the camera follows center/zoom changes. Higher = snappier, lower = floatier.");
+
+                    var fHeight = config.ActiveCameraFightingHeightOffset;
+                    if (ImGui.DragFloat("Center Height Offset##fightcam", ref fHeight, 0.01f, -5f, 10f, "%.2f"))
+                    {
+                        config.ActiveCameraFightingHeightOffset = fHeight;
+                        config.Save();
+                    }
+                    HelpMarker("Raises/lowers the framing midpoint.");
+                }
             }
 
             ImGui.Unindent();
@@ -2680,6 +2841,30 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("BEPU2 constraint solver iterations per timestep. Higher = more stable/accurate joints but costs performance. Default 8. Takes effect on next ragdoll activation.");
+
+                var solverSubsteps = config.RagdollSolverSubsteps;
+                if (ImGui.SliderInt("Solver Substeps##ragdoll", ref solverSubsteps, 1, 8))
+                {
+                    config.RagdollSolverSubsteps = solverSubsteps;
+                    config.Save();
+                }
+                HelpMarker("Velocity-solve substeps per fixed timestep. 1 = legacy. Raising this re-solves constraints at a finer sub-step — BEPU's recommended way to keep a stiff joint-limit wall (see below) stable instead of jittering. Costs ~linearly. Takes effect on next ragdoll activation.");
+
+                var limitFreq = config.RagdollLimitSpringFrequency;
+                if (ImGui.SliderFloat("Limit Wall Stiffness (Hz)##ragdoll", ref limitFreq, 30f, 180f, "%.0f"))
+                {
+                    config.RagdollLimitSpringFrequency = limitFreq;
+                    config.Save();
+                }
+                HelpMarker("Spring frequency of the joint LIMIT walls (swing cones + twist ranges). Higher = firmer wall so joints don't over-rotate past their range, but too high for the substep count over-drives the solver into jitter. 60 = soft, 90 = balanced default, 120+ = firm (raise Solver Substeps to match). Takes effect on next ragdoll activation.");
+
+                var experimentalJointFrames = config.RagdollExperimentalJointFrames;
+                if (ImGui.Checkbox("Experimental Joint Frames##ragdoll", ref experimentalJointFrames))
+                {
+                    config.RagdollExperimentalJointFrames = experimentalJointFrames;
+                    config.Save();
+                }
+                HelpMarker("Uses parent/child anatomical joint frames for hinge axes and ball-joint twist references. Disable this if an unusual skeleton's joints behave incorrectly. Takes effect on next ragdoll activation.");
 
                 var selfCollision = config.RagdollSelfCollision;
                 if (ImGui.Checkbox("Self Collision##ragdoll", ref selfCollision))

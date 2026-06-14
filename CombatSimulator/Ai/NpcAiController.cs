@@ -11,7 +11,6 @@ using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
-using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 
 namespace CombatSimulator.Ai;
 
@@ -25,8 +24,8 @@ public unsafe class NpcAiController : IDisposable
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly IClientState clientState;
     private readonly Configuration config;
-    private readonly CombatPositioningService combatPositioningService;
     private readonly PartyEngagePlanner partyEngagePlanner;
+    private readonly TerrainHeightService terrainHeightService;
     private readonly IPluginLog log;
     private readonly Func<nint, bool> isExternallyControlled;
     private readonly Dictionary<nint, ApproachPathState> approachPaths = new();
@@ -44,10 +43,8 @@ public unsafe class NpcAiController : IDisposable
     private const float VNavmeshFloorResnapInterval = 0.25f;
     private const float VNavmeshWaypointReachDistance = 0.45f;
     private const float VNavmeshLookaheadDistance = 1.25f;
-    private const float TerrainGridStep = 0.5f;
-    private const int TerrainGridMaxSize = 33;
     private const float PartyMeleeAttackRangeBuffer = 0.25f;
-    private const float PartyAttackRangeHysteresis = 0.15f;
+    private const float PartyAttackRangeHysteresis = 0.4f;
     private const float PartyApproachMovementEpsilon = 0.02f;
     private const float PartyApproachDebugInterval = 0.5f;
     // Low-pass time constant (seconds) for the steered enemy approach heading.
@@ -58,7 +55,7 @@ public unsafe class NpcAiController : IDisposable
     // Within (approach distance + lock buffer) an enemy locks its angle and stops;
     // it only unlocks to re-approach if pushed beyond (approach distance + unlock).
     private const float ApproachLockBuffer = 1.5f;
-    private const float ApproachUnlockBuffer = 5.0f;
+    private const float ApproachUnlockBuffer = 1.5f;
 
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
@@ -88,73 +85,7 @@ public unsafe class NpcAiController : IDisposable
         public uint TargetEntityId { get; set; }
         public Vector3 SmoothedMoveDir { get; set; }
         public bool HasSmoothedMoveDir { get; set; }
-    }
-
-    private sealed class ApproachTerrainCache
-    {
-        public float OriginX { get; init; }
-        public float OriginZ { get; init; }
-        public float Step { get; init; }
-        public int Width { get; init; }
-        public int Depth { get; init; }
-        public float[,] Heights { get; init; } = new float[0, 0];
-        public bool[,] Valid { get; init; } = new bool[0, 0];
-
-        public bool TrySample(float x, float z, out float y)
-        {
-            y = 0;
-            if (Width <= 0 || Depth <= 0 || Step <= 0)
-                return false;
-
-            var gx = (x - OriginX) / Step;
-            var gz = (z - OriginZ) / Step;
-            var ix = (int)MathF.Floor(gx);
-            var iz = (int)MathF.Floor(gz);
-
-            if (ix < 0 || iz < 0 || ix >= Width || iz >= Depth)
-                return false;
-
-            if (ix < Width - 1 && iz < Depth - 1)
-            {
-                var tx = gx - ix;
-                var tz = gz - iz;
-                if (Valid[ix, iz] && Valid[ix + 1, iz] && Valid[ix, iz + 1] && Valid[ix + 1, iz + 1])
-                {
-                    var y0 = Lerp(Heights[ix, iz], Heights[ix + 1, iz], tx);
-                    var y1 = Lerp(Heights[ix, iz + 1], Heights[ix + 1, iz + 1], tx);
-                    y = Lerp(y0, y1, tz);
-                    return true;
-                }
-            }
-
-            var bestDistSq = float.MaxValue;
-            var bestY = 0f;
-            for (int dz = -1; dz <= 1; dz++)
-            for (int dx = -1; dx <= 1; dx++)
-            {
-                var sx = ix + dx;
-                var sz = iz + dz;
-                if (sx < 0 || sz < 0 || sx >= Width || sz >= Depth || !Valid[sx, sz])
-                    continue;
-
-                var wx = OriginX + sx * Step;
-                var wz = OriginZ + sz * Step;
-                var distSq = (wx - x) * (wx - x) + (wz - z) * (wz - z);
-                if (distSq < bestDistSq)
-                {
-                    bestDistSq = distSq;
-                    bestY = Heights[sx, sz];
-                }
-            }
-
-            if (bestDistSq == float.MaxValue)
-                return false;
-
-            y = bestY;
-            return true;
-        }
-
-        private static float Lerp(float a, float b, float t) => a + (b - a) * t;
+        public bool WasHoldingRange { get; set; }
     }
 
     public NpcAiController(
@@ -164,8 +95,8 @@ public unsafe class NpcAiController : IDisposable
         VNavmeshIpc vnavmeshIpc,
         IClientState clientState,
         Configuration config,
-        CombatPositioningService combatPositioningService,
         PartyEngagePlanner partyEngagePlanner,
+        TerrainHeightService terrainHeightService,
         IPluginLog log,
         Func<nint, bool>? isExternallyControlled = null)
     {
@@ -175,8 +106,8 @@ public unsafe class NpcAiController : IDisposable
         this.vnavmeshIpc = vnavmeshIpc;
         this.clientState = clientState;
         this.config = config;
-        this.combatPositioningService = combatPositioningService;
         this.partyEngagePlanner = partyEngagePlanner;
+        this.terrainHeightService = terrainHeightService;
         this.log = log;
         this.isExternallyControlled = isExternallyControlled ?? (_ => false);
 
@@ -320,7 +251,7 @@ public unsafe class NpcAiController : IDisposable
                     approachLockedGoals.Remove(address);
             }
 
-            var terrainCache = BuildApproachTerrainCache(playerPos, approachNpcs);
+            var terrainCache = BuildTerrainHeightCache(playerPos, approachNpcs);
 
             for (int i = 0; i < approachNpcs.Count; i++)
             {
@@ -337,7 +268,7 @@ public unsafe class NpcAiController : IDisposable
                 if (!partyMode || (!hasLivingCompanions && config.UseSoloTargetFormationWhenNoCompanions))
                 {
                     LogApproachRouteDebug(npc, "solo", partyMode, hasLivingCompanions);
-                    TickSoloApproach(npc, deltaTime, playerPos, i, approachNpcs.Count, terrainCache);
+                    TickSoloApproach(npc, deltaTime, playerPos, terrainCache);
                     continue;
                 }
 
@@ -374,7 +305,6 @@ public unsafe class NpcAiController : IDisposable
 
     private void ClearPartyApproachState(SimulatedNpc npc)
     {
-        combatPositioningService.Release(npc.SimulatedEntityId);
         StopApproachMoveAnim(npc);
         approachPaths.Remove(npc.Address);
     }
@@ -558,7 +488,8 @@ public unsafe class NpcAiController : IDisposable
                 if (npc.CurrentCastSkill != null)
                 {
                     var result = combatEngine.ProcessNpcAction(npc, npc.CurrentCastSkill.ActionId,
-                        npc.State.CastTargetId, npc.CurrentCastSkill.Potency, npc.CurrentCastSkill.AttackStyle);
+                        npc.State.CastTargetId, npc.CurrentCastSkill.Potency,
+                        npc.CurrentCastSkill.AttackStyle, npc.CurrentCastSkill.Radius);
                     if (result.Success)
                         npc.CurrentCastSkill.CooldownRemaining = npc.CurrentCastSkill.Cooldown;
                     npc.CurrentCastSkill = null;
@@ -605,7 +536,8 @@ public unsafe class NpcAiController : IDisposable
             }
             else
             {
-                var result = combatEngine.ProcessNpcAction(npc, skill.ActionId, targetEntityId, skill.Potency, skill.AttackStyle);
+                var result = combatEngine.ProcessNpcAction(npc, skill.ActionId, targetEntityId,
+                    skill.Potency, skill.AttackStyle, skill.Radius);
                 if (result.Success)
                 {
                     skill.CooldownRemaining = skill.Cooldown;
@@ -846,9 +778,7 @@ public unsafe class NpcAiController : IDisposable
         SimulatedNpc npc,
         float deltaTime,
         Vector3 playerPos,
-        int npcIndex,
-        int totalNpcs,
-        ApproachTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         if (npc.BattleChara == null) return;
         if (npc.AiState == NpcAiState.Dead)
@@ -866,39 +796,7 @@ public unsafe class NpcAiController : IDisposable
         var gameObj = (GameObject*)npc.BattleChara;
         var npcPos = (Vector3)gameObj->Position;
 
-        float distToPlayer = Vector3.Distance(npcPos, playerPos);
-        float targetDist = config.TargetApproachDistance;
-
-        Vector3 targetPos;
-        if (totalNpcs <= 1)
-        {
-            if (distToPlayer < 0.1f)
-            {
-                var player = Core.Services.ObjectTable.LocalPlayer;
-                float playerRot = player?.Rotation ?? 0;
-                var forward = new Vector3(-MathF.Sin(playerRot), 0, -MathF.Cos(playerRot));
-                targetPos = playerPos + forward * targetDist;
-            }
-            else
-            {
-                var dirFromPlayer = (npcPos - playerPos) / distToPlayer;
-                targetPos = playerPos + dirFromPlayer * targetDist;
-            }
-        }
-        else
-        {
-            var player = Core.Services.ObjectTable.LocalPlayer;
-            float playerRot = player?.Rotation ?? 0;
-
-            float arcSpan = MathF.PI * 4f / 3f;
-            float angleStep = totalNpcs > 1 ? arcSpan / (totalNpcs - 1) : 0;
-            float startAngle = playerRot - arcSpan / 2f;
-            float angle = startAngle + angleStep * npcIndex;
-
-            var dir = new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle));
-            targetPos = playerPos + dir * targetDist;
-        }
-
+        var targetPos = ComputeApproachGoal(npc, npcPos, playerPos);
         targetPos.Y = playerPos.Y + config.DefaultNpcHeightOffset;
 
         var moveTarget = targetPos;
@@ -956,7 +854,7 @@ public unsafe class NpcAiController : IDisposable
         Vector3 playerPos,
         SimulatedEntityState npcTarget,
         Vector3 npcTargetPos,
-        ApproachTerrainCache? terrainCache)
+        TerrainHeightCache? terrainCache)
     {
         if (npc.BattleChara == null) return;
         if (npc.AiState == NpcAiState.Dead)
@@ -984,14 +882,12 @@ public unsafe class NpcAiController : IDisposable
             existingPathState.PendingPath = null;
         }
 
-        combatPositioningService.Release(npc.SimulatedEntityId);
-
         if (!partyEngagePlanner.TryGetPlan(npc.SimulatedEntityId, out var partyPlan))
         {
             if (terrainCache != null && approachPaths.TryGetValue(npc.Address, out var holdPathState))
                 CorrectStableRootHeight(gameObj, npcPos, terrainCache, holdPathState, deltaTime, preserveInitialClearance: false);
 
-            LogPartyApproachDebug(npc, "no-plan", npcPos, npcTargetPos, null, npcPos, false, distToTarget: FlatDistance(npcPos, npcTargetPos), attackRange: GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis);
+            LogPartyApproachDebug(npc, "no-plan", npcPos, npcTargetPos, null, npcPos, false, distToTarget: FlatDistance(npcPos, npcTargetPos), attackRange: GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer);
             StopApproachMoveAnim(npc);
             return;
         }
@@ -999,17 +895,27 @@ public unsafe class NpcAiController : IDisposable
         var targetPos = partyPlan.Goal;
         var facePos = partyPlan.HasFaceTarget ? partyPlan.FaceTarget : npcPos;
         var distToTarget = FlatDistance(npcPos, npcTargetPos);
-        var partyAttackRange = GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis;
-        if (distToTarget <= partyAttackRange)
+        var partyAttackRange = GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer;
+        var rangeStateAvailable = TryGetOrCreateApproachPathState(npc, out var rangeState);
+        var shouldHoldRange = rangeStateAvailable && rangeState.WasHoldingRange
+            ? distToTarget <= partyAttackRange + PartyAttackRangeHysteresis
+            : distToTarget <= partyAttackRange;
+        if (shouldHoldRange)
         {
-            if (terrainCache != null && TryGetOrCreateApproachPathState(npc, out var attackRangeState))
-                CorrectStableRootHeight(gameObj, npcPos, terrainCache, attackRangeState, deltaTime, preserveInitialClearance: false);
+            if (rangeStateAvailable)
+            {
+                rangeState.WasHoldingRange = true;
+                if (terrainCache != null)
+                    CorrectStableRootHeight(gameObj, npcPos, terrainCache, rangeState, deltaTime, preserveInitialClearance: false);
+            }
 
             LogPartyApproachDebug(npc, "in-range", npcPos, npcTargetPos, partyPlan, npcPos, false, distToTarget, partyAttackRange);
             StopApproachMoveAnim(npc);
             ForceRotateToward(npc, npcTargetPos, deltaTime);
             return;
         }
+        if (rangeStateAvailable)
+            rangeState.WasHoldingRange = false;
 
         var moveTarget = targetPos;
         var hasVnavmeshTarget = TryUpdateVNavmeshPath(
@@ -1283,7 +1189,7 @@ public unsafe class NpcAiController : IDisposable
     private float GetEffectiveNpcSkillRange(SimulatedNpc npc, SimulatedEntityState target, float skillRange)
     {
         if (UsesPartyConfiguredRange(npc, target))
-            return MathF.Min(skillRange, GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis);
+            return MathF.Min(skillRange, GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer);
 
         return skillRange;
     }
@@ -1549,7 +1455,7 @@ public unsafe class NpcAiController : IDisposable
         }
     }
 
-    private ApproachTerrainCache? BuildApproachTerrainCache(Vector3 playerPos, IReadOnlyList<SimulatedNpc> npcs)
+    private TerrainHeightCache? BuildTerrainHeightCache(Vector3 playerPos, IReadOnlyList<SimulatedNpc> npcs)
     {
         if (npcs.Count == 0)
             return null;
@@ -1573,49 +1479,14 @@ public unsafe class NpcAiController : IDisposable
             maxY = MathF.Max(maxY, pos.Y);
         }
 
-        var widthWorld = MathF.Max(maxX - minX, TerrainGridStep);
-        var depthWorld = MathF.Max(maxZ - minZ, TerrainGridStep);
-        var step = MathF.Max(TerrainGridStep,
-            MathF.Max(widthWorld, depthWorld) / MathF.Max(1, TerrainGridMaxSize - 1));
-        var width = Math.Clamp((int)MathF.Ceiling(widthWorld / step) + 1, 2, TerrainGridMaxSize);
-        var depth = Math.Clamp((int)MathF.Ceiling(depthWorld / step) + 1, 2, TerrainGridMaxSize);
-
-        var heights = new float[width, depth];
-        var valid = new bool[width, depth];
-        var originY = maxY + 10f;
-        const float rayDistance = 80f;
-
-        for (int z = 0; z < depth; z++)
-        for (int x = 0; x < width; x++)
-        {
-            var wx = minX + x * step;
-            var wz = minZ + z * step;
-            if (BGCollisionModule.RaycastMaterialFilter(
-                    new Vector3(wx, originY, wz),
-                    new Vector3(0, -1, 0),
-                    out var hit,
-                    rayDistance))
-            {
-                heights[x, z] = hit.Point.Y;
-                valid[x, z] = true;
-            }
-        }
-
-        return new ApproachTerrainCache
-        {
-            OriginX = minX,
-            OriginZ = minZ,
-            Step = step,
-            Width = width,
-            Depth = depth,
-            Heights = heights,
-            Valid = valid,
-        };
+        return terrainHeightService.EnsureCoverage(
+            new TerrainHeightBounds(minX, maxX, minZ, maxZ, maxY),
+            combatEngine.State.SimulationTime);
     }
 
     private Vector3 CorrectMovingRootHeight(
         Vector3 rootPosition,
-        ApproachTerrainCache terrainCache,
+        TerrainHeightCache terrainCache,
         ApproachPathState state,
         float deltaTime,
         bool preserveInitialClearance)
@@ -1645,7 +1516,7 @@ public unsafe class NpcAiController : IDisposable
     private void CorrectStableRootHeight(
         GameObject* gameObj,
         Vector3 rootPosition,
-        ApproachTerrainCache terrainCache,
+        TerrainHeightCache terrainCache,
         ApproachPathState state,
         float deltaTime,
         bool preserveInitialClearance)

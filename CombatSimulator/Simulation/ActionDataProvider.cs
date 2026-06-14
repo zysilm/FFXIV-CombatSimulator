@@ -16,6 +16,21 @@ public enum SimDamageType
     Unique,
 }
 
+/// <summary>
+/// Geometry of an action's effect area, derived from the game's CastType column.
+/// Single is the safe default for anything we don't recognise.
+/// </summary>
+public enum AoeShape
+{
+    Single,        // CastType 1 — one target only
+    Circle,        // CastType 2 — circle centred on the target
+    Cone,          // CastType 3 — cone from the caster toward the target
+    Line,          // CastType 4 — line/rectangle from the caster (width = XAxisModifier)
+    CircleSelf,    // CastType 5 — circle centred on the caster (PBAoE)
+    GroundCircle,  // CastType 7 — circle placed at a ground location
+    Donut,         // CastType 10 — ring centred on the caster
+}
+
 public class ActionData
 {
     public uint ActionId { get; set; }
@@ -26,6 +41,8 @@ public class ActionData
     public int RecastGroup { get; set; }
     public float Range { get; set; }
     public float Radius { get; set; }
+    public AoeShape Shape { get; set; } = AoeShape.Single;
+    public float Width { get; set; }
     public SimDamageType DamageType { get; set; }
     public int MpCost { get; set; }
     public bool IsComboAction { get; set; }
@@ -47,7 +64,7 @@ public partial class ActionDataProvider
 {
     private readonly IDataManager dataManager;
     private readonly IPluginLog log;
-    private readonly ActionPotencyProvider potencyProvider;
+    private readonly ActionDatabaseProvider actionDb;
     private readonly Dictionary<uint, ActionData> cache = new();
 
     // Same regex VFXEditor uses to extract .avfx paths from TMB binary data
@@ -58,8 +75,37 @@ public partial class ActionDataProvider
     {
         this.dataManager = dataManager;
         this.log = log;
-        potencyProvider = new ActionPotencyProvider(log);
+        actionDb = new ActionDatabaseProvider(log);
     }
+
+    /// <summary>
+    /// Maps the game's CastType column to our simplified effect-area shape.
+    /// Unknown values collapse to Single so we never accidentally widen an
+    /// action into an AoE we don't understand.
+    /// </summary>
+    public static AoeShape MapCastType(byte castType) => castType switch
+    {
+        1 => AoeShape.Single,
+        2 => AoeShape.Circle,
+        3 => AoeShape.Cone,
+        4 => AoeShape.Line,
+        5 => AoeShape.CircleSelf,
+        7 => AoeShape.GroundCircle,
+        10 => AoeShape.Donut,
+        _ => AoeShape.Single,
+    };
+
+    /// <summary>
+    /// Classify an action's damage as physical or magical from the AttackType row
+    /// id. Row 5 = Magic (verified against live client data: 斬#1/突#2/打#3 physical,
+    /// 魔法#5 magic, リミットブレイク#8, and unset = uint.MaxValue for weaponskills
+    /// that inherit their weapon's type). Row-id based, not name based, because the
+    /// AttackType name is localized (a Chinese/Japanese client returns 魔法, not
+    /// "Magic"). Everything that isn't row 5 is treated as physical, which is
+    /// correct for weaponskills and harmless for the rest.
+    /// </summary>
+    public static SimDamageType ClassifyDamageType(uint attackTypeRowId)
+        => attackTypeRowId == 5 ? SimDamageType.Magical : SimDamageType.Physical;
 
     public ActionData? GetActionData(uint actionId)
     {
@@ -84,6 +130,8 @@ public partial class ActionDataProvider
             RecastGroup = action.CooldownGroup,
             Range = action.Range,
             Radius = action.EffectRange,
+            Shape = MapCastType(action.CastType),
+            Width = action.XAxisModifier,
             MpCost = action.PrimaryCostValue,
             AnimationLock = 0.6f,
             IsPlayerAction = action.IsPlayerAction,
@@ -91,37 +139,68 @@ public partial class ActionDataProvider
             AnimationEndTimelineId = (ushort)action.AnimationEnd.RowId,
         };
 
-        // Damage type from AttackType
-        data.DamageType = action.AttackType.RowId switch
-        {
-            1 => SimDamageType.Physical, // Slashing
-            2 => SimDamageType.Physical, // Piercing
-            3 => SimDamageType.Physical, // Blunt
-            4 => SimDamageType.Physical, // Shot
-            5 => SimDamageType.Magical,  // Magic
-            _ => SimDamageType.Unique,
-        };
+        // Damage type from the AttackType row id (physical vs magical)
+        data.DamageType = ClassifyDamageType(action.AttackType.RowId);
 
-        if (potencyProvider.TryGet(actionId, out var potencyEntry))
-            data.Potency = potencyEntry.Potency;
-        else
-            data.Potency = EstimatePotency(data);
+        // Base potency: estimate now, JSON override (if any) applied below.
+        data.Potency = EstimatePotency(data);
 
         // Resolve VFX paths (same approach as VFXEditor)
         ResolveVfxPaths(action, data);
 
-        // Combo
+        // Combo (from Lumina; JSON may override below)
         if (action.ActionCombo.RowId != 0)
         {
             data.IsComboAction = true;
             data.ComboFrom = action.ActionCombo.RowId;
-            data.ComboPotency = potencyProvider.TryGet(actionId, out var comboPotencyEntry) && comboPotencyEntry.ComboPotency > 0
-                ? comboPotencyEntry.ComboPotency
-                : (int)(data.Potency * 1.5f);
+            data.ComboPotency = (int)(data.Potency * 1.5f);
         }
+
+        // Overlay curated/authored values from Actions.json. Only fields that are
+        // present override the Lumina-derived base, so a hand-edited entry can
+        // specify just a potency without clobbering the geometry, and an action
+        // absent from the file still works entirely off Lumina.
+        ApplyDatabaseOverride(actionId, data);
 
         cache[actionId] = data;
         return data;
+    }
+
+    private void ApplyDatabaseOverride(uint actionId, ActionData data)
+    {
+        if (!actionDb.TryGet(actionId, out var e))
+            return;
+
+        if (!string.IsNullOrWhiteSpace(e.Name))
+            data.Name = e.Name!;
+        if (e.Range.HasValue)
+            data.Range = e.Range.Value;
+        if (e.Shape.HasValue)
+            data.Shape = e.Shape.Value;
+        if (e.Radius.HasValue)
+            data.Radius = e.Radius.Value;
+        if (e.Width.HasValue)
+            data.Width = e.Width.Value;
+        if (e.DamageType.HasValue)
+            data.DamageType = e.DamageType.Value;
+        if (e.Potency > 0)
+        {
+            data.Potency = e.Potency;
+            // Keep the Lumina-derived combo potency proportional unless the file
+            // pins one explicitly below.
+            if (data.IsComboAction && e.ComboPotency <= 0)
+                data.ComboPotency = (int)(e.Potency * 1.5f);
+        }
+        if (e.ComboPotency > 0)
+        {
+            data.IsComboAction = true;
+            data.ComboPotency = e.ComboPotency;
+        }
+        if (e.ComboFrom.HasValue && e.ComboFrom.Value != 0)
+        {
+            data.IsComboAction = true;
+            data.ComboFrom = e.ComboFrom.Value;
+        }
     }
 
     private static int EstimatePotency(ActionData data)
@@ -144,6 +223,16 @@ public partial class ActionDataProvider
 
     public void ClearCache()
     {
+        cache.Clear();
+    }
+
+    /// <summary>
+    /// Re-read Actions.json (e.g. after an export or a hand edit) and drop the
+    /// per-action cache so the new values take effect immediately.
+    /// </summary>
+    public void ReloadDatabase()
+    {
+        actionDb.Reload();
         cache.Clear();
     }
 

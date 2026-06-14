@@ -37,8 +37,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly ActionDataProvider actionDataProvider;
     private readonly NpcActionProfileProvider npcActionProfileProvider;
     private readonly DamageCalculator damageCalculator;
-    private readonly CombatPositioningService combatPositioningService;
     private readonly PartyEngagePlanner partyEngagePlanner;
+    private readonly TerrainHeightService terrainHeightService;
     private readonly GlamourerIpc glamourerIpc;
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly AnimationController animationController;
@@ -105,10 +105,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         NpcWeaponClassifier.Initialize(dataManager, log);
         npcActionProfileProvider = new NpcActionProfileProvider(actionDataProvider, log);
         damageCalculator = new DamageCalculator(new CombatStatProvider(dataManager, log));
-        combatPositioningService = new CombatPositioningService();
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         vnavmeshIpc = new VNavmeshIpc(pluginInterface, log);
         partyEngagePlanner = new PartyEngagePlanner(vnavmeshIpc);
+        terrainHeightService = new TerrainHeightService();
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, gameInterop, sigScanner, config);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
@@ -128,7 +128,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             victorySequenceController);
         companionManager = new CombatCompanionManager(
             objectTable, clientState, config, combatEngine, animationController,
-            movementBlockHook, vnavmeshIpc, targetManager, combatPositioningService, partyEngagePlanner, log);
+            movementBlockHook, vnavmeshIpc, targetManager, partyEngagePlanner, terrainHeightService, log);
         combatEngine.ResolveNpcTarget = companionManager.SelectEnemyTarget;
         combatEngine.ResolveExternalEntityAddress = companionManager.ResolveAddress;
         combatEngine.HasLivingCompanions = () => companionManager.HasLivingCompanions;
@@ -136,7 +136,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnPlayerDamageDealtToTarget = companionManager.RegisterPlayerDamage;
         npcAiController = new NpcAiController(
             combatEngine, animationController, movementBlockHook, vnavmeshIpc,
-            clientState, config, combatPositioningService, partyEngagePlanner, log, victorySequenceController.ControlsNpc);
+            clientState, config, partyEngagePlanner, terrainHeightService, log, victorySequenceController.ControlsNpc);
 
         // Custom in-sim target lock system (综合提升). Takes over the game's target
         // keybinds during simulation; the engine reads the locked target for
@@ -146,15 +146,27 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.GetLockedTargetId = () => playerTargetController.LockedTargetEntityId;
         combatEngine.OnPlayerHitByNpc = playerTargetController.NotifyPlayerHitBy;
 
+        // Fighting camera: frame the player + locked 1v1 target; suppress Death Cam when it owns the camera.
+        activeCameraController.GetFightingTargetAddress = () =>
+        {
+            var t = playerTargetController.LockedTarget;
+            if (t != null && t.IsSpawned && t.State.IsAlive && t.Address != nint.Zero)
+                return t.Address;
+            return null;
+        };
+        combatEngine.SuppressDeathCam = () => activeCameraController.IsFightingEngaged;
+
         mapEnemyController = new MapEnemyController(
             objectTable,
             config,
             npcSelector,
             combatEngine,
             () => companionManager.Companions,
+            companionManager.HasSourceEntity,
             companionManager.ForceEnemyTarget,
             () => npcSpawner.SpawnModeActive,
             log);
+        companionManager.IsSourceEnemy = entityId => npcSelector.GetSelectedNpc(entityId) != null;
 
         companionManager.OnCompanionSpawnComplete = companion =>
         {
@@ -207,6 +219,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         {
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
+            activeCameraController.ResetFightingCamera();
 
             // Keep companions across a combat *reset* (IsActive stays true) when the
             // option is set — revive/heal them instead of despawning. Stopping the
@@ -228,7 +241,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         // Weapon drop is co-triggered with ragdoll (same delay), so writes survive while animation is frozen
         combatEngine.OnNpcDeathRagdoll = OnNpcDeathRagdoll;
-        combatEngine.OnPlayerDeath = addr => weaponDropController.SpawnFor(addr, config.RagdollActivationDelay);
+        combatEngine.OnPlayerDeath = addr =>
+        {
+            weaponDropController.SpawnFor(addr, config.RagdollActivationDelay);
+            activeCameraController.NotifyCombatantDeath(addr, isPlayer: true);
+        };
 
         // Hook safety checker — register native functions we CALL (not hook) that other plugins may hook.
         // We check for JMP detours at each address to detect third-party hooks.
@@ -249,9 +266,14 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         useActionHook.Enable();
         movementBlockHook.Enable();
 
-        // Restore active camera if it was enabled in config
+        // Do not auto-enable Active Camera on plugin/game startup. The camera and
+        // skeleton stack can still be settling during login; users can enable it
+        // manually once in-world.
         if (config.EnableActiveCamera)
-            activeCameraController.SetActive(true);
+        {
+            config.EnableActiveCamera = false;
+            config.Save();
+        }
 
         // GUI
         mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
@@ -267,7 +289,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                           "/combatsim professional - Open Professional Mode settings\n" +
                           "/combatsim start - Start combat simulation\n" +
                           "/combatsim stop - Stop combat simulation\n" +
-                          "/combatsim reset - Reset combat state",
+                          "/combatsim reset - Reset combat state\n" +
+                          "/combatsim export-actions - Export player action data to Actions.json",
         });
 
         pluginInterface.UiBuilder.Draw += OnDraw;
@@ -357,10 +380,32 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 config.Save();
                 break;
 
+            case "export-actions":
+            case "exportactions":
+                ExportActionDatabase();
+                break;
+
             default:
                 config.ShowMainWindow = !config.ShowMainWindow;
                 config.Save();
                 break;
+        }
+    }
+
+    private void ExportActionDatabase()
+    {
+        var exporter = new Simulation.ActionDatabaseExporter(Core.Services.DataManager, log);
+        var result = exporter.Export();
+        if (result.Success)
+        {
+            actionDataProvider.ReloadDatabase();
+            chatGui.Print($"[CombatSim] Exported {result.Count} player damage actions to {result.Path}");
+            if (!string.IsNullOrEmpty(result.AttackTypeSummary))
+                chatGui.Print($"[CombatSim] AttackTypes: {result.AttackTypeSummary}");
+        }
+        else
+        {
+            chatGui.PrintError($"[CombatSim] Action export failed: {result.Error}");
         }
     }
 
@@ -442,6 +487,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             if (!loggedIn)
                 return;
 
+            // Real wall-clock delta for all per-frame simulation. The framework fires
+            // once per rendered frame at whatever framerate the game runs; using a fixed
+            // 1/60 made every AI behavior (movement, attack cadence, casts, cooldowns,
+            // DPS) run fast above 60fps and slow below it. Clamp out loading/hitch gaps.
+            var deltaTime = Math.Clamp((float)fw.UpdateDelta.TotalSeconds, 0f, 0.1f);
+
             // Scan for hook conflicts once after all plugins have loaded
             if (!hookSafetyScanned)
             {
@@ -454,16 +505,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             // Process queued spawns and pending draw enables (works outside combat)
             npcSpawner.Tick();
-            if (Services.ObjectTable.LocalPlayer != null)
-                combatPositioningService.BeginFrame(
-                    Services.ObjectTable.LocalPlayer.Position,
-                    Services.ObjectTable.LocalPlayer.Rotation,
-                    companionManager.Companions,
-                    npcSelector.SelectedNpcs);
-            companionManager.Tick(1.0f / 60.0f, npcSelector.SelectedNpcs);
+            companionManager.Tick(deltaTime, npcSelector.SelectedNpcs);
             ProcessPendingGlamourerApplies();
 
-            var deltaTime = (float)(1.0 / 60.0);
             animationController.Tick(deltaTime);
 
             // Camera controllers run independently of combat
@@ -518,6 +562,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnNpcDeathRagdoll(nint address)
     {
+        // Fighting camera death transition must run regardless of ragdoll settings.
+        activeCameraController.NotifyCombatantDeath(address, isPlayer: false);
+
         if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
         {
             return;

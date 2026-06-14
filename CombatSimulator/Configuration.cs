@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using CombatSimulator.Animation;
 using CombatSimulator.Dev;
 using Dalamud.Configuration;
 using Dalamud.Plugin;
@@ -17,9 +18,18 @@ public class RagdollBoneConfig
     public float CapsuleHalfLength { get; set; }
     public float Mass { get; set; }
     public float SwingLimit { get; set; }
+    public float? SwingMinLimit { get; set; } // hinge-only lower bound; null means migrate/default
+    public float? HingeRestAngle { get; set; } // hinge-only passive rest target; null disables/defaults
+    public float? HingeRestSpringFreq { get; set; }
+    public float? HingeRestMaxForce { get; set; }
     public int JointType { get; set; } // 0=Ball, 1=Hinge
     public float TwistMinAngle { get; set; }
     public float TwistMaxAngle { get; set; }
+    public int AnatomicalRole { get; set; } // 0=Generic, see RagdollController.AnatomicalRole
+    public int ColliderShape { get; set; } // 0=Capsule, 1=Box
+    public float BoxHalfExtentX { get; set; }
+    public float BoxHalfExtentY { get; set; }
+    public float BoxHalfExtentZ { get; set; }
     public string? Description { get; set; }      // human-readable label for UI
     // Soft body spring settings (for breast/jiggle bones)
     public bool SoftBody { get; set; }             // use soft springs + AngularServo instead of rigid + AngularMotor
@@ -134,6 +144,7 @@ public class Configuration : IPluginConfiguration
     // Map enemies: real BattleNpc objects can join the mixed battle through
     // sensing or first attack.
     public bool EnableMapEnemySensing { get; set; } = false;
+    public bool EnableMapPlayerEnemySensing { get; set; } = false;
     public float MapEnemySenseRange { get; set; } = 10.0f;
     public int MapEnemyMaxCount { get; set; } = 10;
 
@@ -180,6 +191,22 @@ public class Configuration : IPluginConfiguration
     public float RagdollGravity { get; set; } = 9.8f;
     public float RagdollDamping { get; set; } = 0.97f;
     public int RagdollSolverIterations { get; set; } = 8;
+    // Velocity-solve substeps per fixed timestep. 1 = legacy behavior. Raising this
+    // re-solves the constraints at a finer sub-step, which is BEPU's recommended lever
+    // for making a STIFF limit wall (see RagdollLimitSpringFrequency) well-conditioned
+    // instead of pumping energy. Costs ~linearly in performance. Takes effect on next
+    // ragdoll activation.
+    public int RagdollSolverSubsteps { get; set; } = 1;
+    // Spring frequency (Hz) of the joint LIMIT walls (swing cones + twist ranges), not
+    // the positional joints. Higher = firmer wall so joints don't blow past their range
+    // under momentum (e.g. shoulders/waist over-rotating); too high relative to the
+    // 60Hz step can over-drive the solver into jitter. 60 = long-standing soft wall,
+    // 120 = very firm (needs substeps to stay stable), 90 = balanced default. Takes
+    // effect on next ragdoll activation.
+    public float RagdollLimitSpringFrequency { get; set; } = 90f;
+    // Anatomical joint-frame builder for hinge axes and ball-joint twist references.
+    // Keep the switch so unusual skeletons can fall back to the legacy frame builder.
+    public bool RagdollExperimentalJointFrames { get; set; } = true;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
     // Weapon drop physics — runs as part of ragdoll; weapon detaches and falls on death
@@ -246,6 +273,17 @@ public class Configuration : IPluginConfiguration
     public float ActiveCameraMinZoomDistance { get; set; } = 1.0f;
     public bool ActiveCameraPreventFade { get; set; } = false;
 
+    // Fighting Camera (1v1): frame the player + locked target together with auto-zoom,
+    // then on either death transition to the dead character's bone (active-cam follow).
+    public bool ActiveCameraFightingMode { get; set; } = false;
+    public float ActiveCameraFightingTransitionDuration { get; set; } = 1.0f;
+    public float ActiveCameraFightingZoomMargin { get; set; } = 1.3f;
+    public float ActiveCameraFightingMinDistance { get; set; } = 2.5f;
+    public float ActiveCameraFightingMaxDistance { get; set; } = 15.0f;
+    public float ActiveCameraFightingSmoothing { get; set; } = 8.0f;
+    public float ActiveCameraFightingHeightOffset { get; set; } = 0f;
+    public string ActiveCameraFightingBoneName { get; set; } = "j_sebo_b";
+
     // Legacy combined skill VFX toggle. Migrated to the split toggles below.
     public bool EnableSkillVfx { get; set; } = false;
     public bool EnableCharacterVfx { get; set; } = true;
@@ -303,6 +341,8 @@ public class Configuration : IPluginConfiguration
         pluginInterface = pi;
         MigrateSplitVfxToggles();
         MigrateSkirtParentChains();
+        MigrateRagdollProfileMetadata();
+        MigrateAnatomicalHinges();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
     }
@@ -371,6 +411,140 @@ public class Configuration : IPluginConfiguration
         if (tier == "b" && oldParent == "j_sebo_b") return $"j_sk_{pos}_a_{side}";
         if (tier == "c" && oldParent == "j_sebo_c") return $"j_sk_{pos}_b_{side}";
         return oldParent;
+    }
+
+    private void MigrateRagdollProfileMetadata()
+    {
+        bool changed = false;
+        if (MigrateRagdollBoneMetadata(RagdollBoneConfigs)) changed = true;
+        foreach (var profile in RagdollBoneProfiles)
+            if (MigrateRagdollBoneMetadata(profile.Bones)) changed = true;
+        if (changed) Save();
+    }
+
+    private static bool MigrateRagdollBoneMetadata(List<RagdollBoneConfig> bones)
+    {
+        bool changed = false;
+        foreach (var bone in bones)
+        {
+            var role = bone.AnatomicalRole;
+            var shape = bone.ColliderShape;
+            var bx = bone.BoxHalfExtentX;
+            var by = bone.BoxHalfExtentY;
+            var bz = bone.BoxHalfExtentZ;
+            var swingMin = bone.SwingMinLimit;
+            var restAngle = bone.HingeRestAngle;
+            var restFreq = bone.HingeRestSpringFreq;
+            var restForce = bone.HingeRestMaxForce;
+            RagdollController.FillProfileDefaults(bone);
+            if (role != bone.AnatomicalRole ||
+                shape != bone.ColliderShape ||
+                bx != bone.BoxHalfExtentX ||
+                by != bone.BoxHalfExtentY ||
+                bz != bone.BoxHalfExtentZ ||
+                swingMin != bone.SwingMinLimit ||
+                restAngle != bone.HingeRestAngle ||
+                restFreq != bone.HingeRestSpringFreq ||
+                restForce != bone.HingeRestMaxForce)
+                changed = true;
+        }
+        return changed;
+    }
+
+    private void MigrateAnatomicalHinges()
+    {
+        bool changed = false;
+        if (MigrateAnatomicalHingeList(RagdollBoneConfigs)) changed = true;
+        foreach (var profile in RagdollBoneProfiles)
+            if (MigrateAnatomicalHingeList(profile.Bones)) changed = true;
+        if (changed) Save();
+    }
+
+    private static bool MigrateAnatomicalHingeList(List<RagdollBoneConfig> bones)
+    {
+        bool changed = false;
+        foreach (var bone in bones)
+        {
+            var role = (RagdollController.AnatomicalRole)bone.AnatomicalRole;
+            var isLowerLimb = bone.Name.StartsWith("j_asi_b_", StringComparison.Ordinal);
+            var isForearm = bone.Name.StartsWith("j_ude_b_", StringComparison.Ordinal);
+            var isUpperArm = bone.Name.StartsWith("j_ude_a_", StringComparison.Ordinal);
+            var isClavicle = bone.Name.StartsWith("j_sako_", StringComparison.Ordinal);
+            if ((role == RagdollController.AnatomicalRole.Knee || role == RagdollController.AnatomicalRole.Elbow ||
+                 isLowerLimb || isForearm) &&
+                bone.JointType != (int)RagdollController.JointType.Hinge)
+            {
+                bone.JointType = (int)RagdollController.JointType.Hinge;
+                changed = true;
+            }
+
+            var minSwingFloor = isLowerLimb || role == RagdollController.AnatomicalRole.Knee
+                ? 0.75f
+                : isForearm || role == RagdollController.AnatomicalRole.Elbow
+                    ? 0.45f
+                    : 0f;
+            if (minSwingFloor > 0 && (bone.SwingMinLimit == null || bone.SwingMinLimit < minSwingFloor))
+            {
+                bone.SwingMinLimit = minSwingFloor;
+                changed = true;
+            }
+
+            if (isLowerLimb || isForearm)
+            {
+                if (bone.ColliderShape != (int)RagdollController.RagdollColliderShape.Box)
+                {
+                    bone.ColliderShape = (int)RagdollController.RagdollColliderShape.Box;
+                    changed = true;
+                }
+
+                var minX = isLowerLimb ? 0.042f : 0.030f;
+                var minY = isLowerLimb ? 0.090f : 0.060f;
+                var minZ = isLowerLimb ? 0.030f : 0.022f;
+                if (bone.BoxHalfExtentX < minX) { bone.BoxHalfExtentX = minX; changed = true; }
+                if (bone.BoxHalfExtentY < minY) { bone.BoxHalfExtentY = minY; changed = true; }
+                if (bone.BoxHalfExtentZ < minZ) { bone.BoxHalfExtentZ = minZ; changed = true; }
+            }
+
+            if (isForearm || role == RagdollController.AnatomicalRole.Elbow)
+            {
+                if (bone.TwistMinAngle > -1.25f) { bone.TwistMinAngle = -1.25f; changed = true; }
+                if (bone.TwistMaxAngle < 1.25f) { bone.TwistMaxAngle = 1.25f; changed = true; }
+                if (bone.HingeRestAngle == null || MathF.Abs(bone.HingeRestAngle.Value - MathF.PI / 2) < 0.01f) { bone.HingeRestAngle = 0f; changed = true; }
+                if (bone.HingeRestSpringFreq == null || bone.HingeRestSpringFreq <= 0f || bone.HingeRestSpringFreq >= 2.0f) { bone.HingeRestSpringFreq = 1.5f; changed = true; }
+                if (bone.HingeRestMaxForce == null || bone.HingeRestMaxForce <= 0f || bone.HingeRestMaxForce >= 8.0f) { bone.HingeRestMaxForce = 6.0f; changed = true; }
+            }
+
+            if (isLowerLimb || role == RagdollController.AnatomicalRole.Knee)
+            {
+                if (bone.HingeRestAngle == null || MathF.Abs(bone.HingeRestAngle.Value - MathF.PI / 2) < 0.01f) { bone.HingeRestAngle = 0f; changed = true; }
+                if (bone.HingeRestSpringFreq == null || bone.HingeRestSpringFreq <= 0f) { bone.HingeRestSpringFreq = 1.2f; changed = true; }
+                if (bone.HingeRestMaxForce == null || bone.HingeRestMaxForce <= 0f) { bone.HingeRestMaxForce = 10.0f; changed = true; }
+            }
+
+            if (isClavicle)
+            {
+                if (bone.SwingLimit < 0.35f) { bone.SwingLimit = 0.35f; changed = true; }
+                if (bone.TwistMinAngle < -0.25f || bone.TwistMinAngle > -0.05f) { bone.TwistMinAngle = -0.25f; changed = true; }
+                if (bone.TwistMaxAngle > 0.25f || bone.TwistMaxAngle < 0.05f) { bone.TwistMaxAngle = 0.25f; changed = true; }
+            }
+
+            if (isUpperArm)
+            {
+                if (bone.SwingLimit > 1.35f) { bone.SwingLimit = 1.35f; changed = true; }
+                if (bone.TwistMinAngle < -0.65f || bone.TwistMinAngle > -0.20f) { bone.TwistMinAngle = -0.65f; changed = true; }
+                if (bone.TwistMaxAngle > 0.65f || bone.TwistMaxAngle < 0.20f) { bone.TwistMaxAngle = 0.65f; changed = true; }
+                if (bone.ColliderShape != (int)RagdollController.RagdollColliderShape.Box)
+                {
+                    bone.ColliderShape = (int)RagdollController.RagdollColliderShape.Box;
+                    changed = true;
+                }
+
+                if (bone.BoxHalfExtentX < 0.032f) { bone.BoxHalfExtentX = 0.032f; changed = true; }
+                if (bone.BoxHalfExtentY < 0.075f) { bone.BoxHalfExtentY = 0.075f; changed = true; }
+                if (bone.BoxHalfExtentZ < 0.024f) { bone.BoxHalfExtentZ = 0.024f; changed = true; }
+            }
+        }
+        return changed;
     }
 
     private static readonly Dictionary<string, string> LegacyBoneProfileNameMap = new()
