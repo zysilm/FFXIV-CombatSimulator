@@ -1974,27 +1974,6 @@ public unsafe class RagdollController : IDisposable
             }
             else
             {
-                // j_asi_c (Ankle) is a short 8cm connector between j_asi_b (knee) and
-                // j_asi_d (foot). FFXIV adds it for smooth mesh deformation but it has no
-                // independent anatomical motion. A Weld snapshots the exact relative pose at
-                // activation and holds it completely rigid, eliminating the zigzag that the
-                // old BallSocket + 10Hz AngularServo approach could not prevent under grab
-                // or high-energy collision.
-                if (boneDef.AnatomicalRole == AnatomicalRole.Ankle)
-                {
-                    var worldOffset = parentBodyRef.Pose.Position - childBodyRef.Pose.Position;
-                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                        new Weld
-                        {
-                            LocalOffset = Vector3.Transform(
-                                worldOffset, Quaternion.Inverse(childBodyRef.Pose.Orientation)),
-                            LocalOrientation = Quaternion.Normalize(
-                                Quaternion.Inverse(childBodyRef.Pose.Orientation) * parentBodyRef.Pose.Orientation),
-                            SpringSettings = jointSpring,
-                        });
-                    continue; // Weld covers position + orientation — skip BallSocket/SwingLimit/TwistLimit/AngularMotor
-                }
-
                 // BallSocket: positional connection
                 // Soft bodies use low frequency + low damping for jiggle
                 simulation.Solver.Add(rb.BodyHandle, parentHandle,
@@ -2050,7 +2029,6 @@ public unsafe class RagdollController : IDisposable
 
             // Angular constraint: soft bodies use AngularServo (spring return to rest pose),
             // rigid bodies use AngularMotor (velocity damping only).
-            // Ankle (j_asi_c) is handled above by a Weld and never reaches this section.
             if (boneDef.SoftBody)
             {
                 simulation.Solver.Add(rb.BodyHandle, parentHandle,
