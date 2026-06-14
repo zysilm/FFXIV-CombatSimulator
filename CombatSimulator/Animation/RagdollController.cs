@@ -2033,23 +2033,6 @@ public unsafe class RagdollController : IDisposable
                         SpringSettings = new SpringSettings(boneDef.SoftServoFreq, boneDef.SoftServoDamp),
                     });
             }
-            else if (boneDef.Joint == JointType.Hinge && HasPassiveHingeRest(boneDef.AnatomicalRole, rb.Name))
-            {
-                // Anatomical hinge joints (knee, elbow): use a moderate-force damping motor.
-                // MaxForce=10 N·m is intentionally below the gravity torque on the full
-                // shin/forearm chain (~8–9 N·m for knees), so gravity can still drive
-                // extension. The damping coefficient sets a terminal velocity:
-                //   v_terminal = gravity_torque / dampingCoefficient ≈ 9/2 ≈ 4.5 rad/s
-                // As the joint nears straight the gravity torque → 0, so the motor
-                // decelerates the limb to near-zero before it hits the SwingLimit —
-                // no snap-back, no oscillation.
-                simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                    new AngularMotor
-                    {
-                        TargetVelocityLocalA = Vector3.Zero,
-                        Settings = new MotorSettings(10f, 2f),
-                    });
-            }
             else
             {
                 simulation.Solver.Add(rb.BodyHandle, parentHandle,
