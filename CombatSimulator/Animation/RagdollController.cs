@@ -1875,43 +1875,32 @@ public unsafe class RagdollController : IDisposable
             // --- Positional + angular constraint ---
             if (boneDef.Joint == JointType.Hinge)
             {
-                // Hinge: constrains position AND restricts rotation to one plane.
-                // Per BEPU RagdollDemo: Hinge + SwingLimit + AngularMotor (NO TwistLimit).
+                // Knee/elbow: BallSocket (position-only) + SwingLimits — same pattern as shoulder.
+                // A strict Hinge (5-DOF) constrains 2 angular axes with SpringSettings(30,1),
+                // producing ~83,000 N·m/rad stiffness. Any force perpendicular to the hinge axis
+                // generates ~1400 N·m corrective torque per degree of error — far more than the
+                // 8-iteration PGS solver can resolve in one frame. The joint appears completely
+                // frozen under grab and external collision, and the first-grab "twist snap" is
+                // the angular corrective impulse firing on frame 1.
+                // BallSocket constrains position only (3 DOF, like the shoulder), so the limb
+                // responds naturally to any applied force. SwingLimits provide anatomical range.
                 var hingeAxisWorld = config.RagdollExperimentalJointFrames
                     ? ComputeProfileHingeAxis(boneDef.AnatomicalRole, parentSegDir, segDirWorld, childBodyRef.Pose.Orientation)
                     : ComputeHingeAxis(segDirWorld);
-                var hingeAxisLocalChild = Vector3.Normalize(Vector3.Transform(
-                    hingeAxisWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
-                var hingeAxisLocalParent = Vector3.Normalize(Vector3.Transform(
-                    hingeAxisWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
 
                 simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                    new Hinge
+                    new BallSocket
                     {
                         LocalOffsetA = childLocalAnchor,
-                        LocalHingeAxisA = hingeAxisLocalChild,
                         LocalOffsetB = parentLocalAnchor,
-                        LocalHingeAxisB = hingeAxisLocalParent,
                         SpringSettings = jointSpring,
                     });
 
-                // SwingLimit as bending range for the hinge (BEPU RagdollDemo pattern).
-                // Body A = child (shin/forearm), Body B = parent (thigh/upper arm).
-                // AxisLocalA = child's segment direction; AxisLocalB = "forward" on the parent
-                // body, perpendicular to the parent segment in the bend plane.
-                //
-                // SwingLimit caps the ANGLE between those two axes at MaximumSwingAngle. At full
-                // extension the axes are ~perpendicular, so the legal flexion window is centred
-                // near 90° of fold: roughly [90°−θ, 90°+θ]. With θ = π/2 (the value shipped for
-                // knees/elbows) that spans "fully straight" → "fully folded" while still blocking
-                // hyperextension at the straight end — which is why it works. A θ < π/2 also
-                // forbids full extension (the joint is forced to stay partly bent), so it is NOT
-                // an intuitive "max bend angle"; keep π/2 on real knees/elbows.
-                //
-                // NO TwistLimit is added on hinges: the hinge already removes all rotation except
-                // about its axis, and that remaining DOF *is* the bend — a twist limit about it
-                // would just re-clamp the bend (the old ±0.1 rad config would lock the joint to
-                // ~±6°). This matches the BEPU RagdollDemo (hinges use SwingLimit, never twist).
+                // SwingLimit: bending range for the knee/elbow.
+                // AxisLocalA = child segment direction; AxisLocalB = "forward" on parent body
+                // (perpendicular to parent segment, in the bend plane).
+                // At full extension the axes are ~perpendicular → legal range spans
+                // "fully straight" through "fully folded" while blocking hyperextension.
                 if (boneDef.SwingLimit > 0)
                 {
                     // "Forward" direction on the parent body = Cross(hingeAxis, parentSegDir).
@@ -1943,28 +1932,12 @@ public unsafe class RagdollController : IDisposable
                 AddAnatomicalHingeRestBias(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
                     boneDef, hingeAxisWorld, parentSegDir, segDirWorld);
 
-                if (boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0)
-                {
-                    // Hinge bending happens around hingeAxisWorld. The extra twist guard
-                    // constrains roll around the child segment axis, so it does not re-clamp
-                    // the bend DOF like the older hinge-axis TwistLimit did.
-                    var twistBasis = CreateTwistBasis(segDirWorld, hingeAxisWorld);
-                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                        new TwistLimit
-                        {
-                            LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * twistBasis),
-                            LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis),
-                            MinimumAngle = boneDef.TwistMinAngle,
-                            MaximumAngle = boneDef.TwistMaxAngle,
-                            SpringSettings = limitSpring,
-                        });
-
-                    if (config.RagdollVerboseLog)
-                        log.Info($"[Ragdoll Constraint] '{rb.Name}' SegmentTwistLimit: min={boneDef.TwistMinAngle:F2} max={boneDef.TwistMaxAngle:F2}");
-                }
+                // TwistLimit (axial spin of the shin/forearm) is intentionally omitted.
+                // limitSpring(90,1) at ±0.1 rad would be another brick wall on the now-free
+                // axial DOF. Gravity keeps the limb aligned; SwingLimits cover the extremes.
 
                 if (config.RagdollVerboseLog)
-                    log.Info($"[Ragdoll Constraint] '{rb.Name}' Hinge axis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3})");
+                    log.Info($"[Ragdoll Constraint] '{rb.Name}' BallSocket (hinge replaced) hingeAxis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3})");
             }
             else
             {
