@@ -213,13 +213,6 @@ public unsafe class VictorySequenceController : IDisposable
         playerFacingAngle = playerObj->Rotation;
         playerObjId = playerObj->GetGameObjectId().Id;
 
-        // Lower the player's game position to ground level so the game's emote
-        // height adjustment system sees the target as on the ground (L variant).
-        // The player is dead — ragdoll controls the visual, not GameObject.Position.
-        // Direct struct write bypasses MovementBlockHook.IsBlocking.
-        playerObj->Position.Y -= 1.5f; // ~character standing height → ground level
-        log.Info($"VictorySequence: Lowered player Y from {playerDeathPos.Y:F2} to {playerObj->Position.Y:F2}");
-
         // Save NPC's true original position (before any plugin manipulation)
         npcOriginalPos = cinematicNpc.SpawnPosition;
 
