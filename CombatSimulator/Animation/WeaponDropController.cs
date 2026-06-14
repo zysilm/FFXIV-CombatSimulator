@@ -44,10 +44,8 @@ public unsafe class WeaponDropController : IDisposable
     // Snapshot of the shape/inertia inputs too — the weapon capsule shape and inertia are
     // cached once at sim creation, so changing these must also trigger a rebuild or they go stale.
     private float simRadius;
-    private float simHalfWidth;
     private float simHalfLength;
     private float simMass;
-    private float simAngularDamping;
 
     private class Entry
     {
@@ -315,25 +313,12 @@ public unsafe class WeaponDropController : IDisposable
         var worldPos = skelWorldPos + Vector3.Transform(modelPos, skelWorldRot);
         var worldRot = Quaternion.Normalize(skelWorldRot * modelRot);
 
-        // Force long axis (box local Z) to be horizontal so the weapon can never spawn
-        // standing on its tip (which produces a balanced-edge configuration that never falls flat).
-        // Weapon bones in FFXIV use local Z as the blade/hilt forward direction.
-        var longAxisWorld = Vector3.Transform(Vector3.UnitZ, worldRot);
-        var longAxisFlat  = new Vector3(longAxisWorld.X, 0f, longAxisWorld.Z);
-        float flatLenSq = longAxisFlat.LengthSquared();
-        Vector3 targetLong = flatLenSq > 0.001f
-            ? Vector3.Normalize(longAxisFlat)
-            : Vector3.UnitX; // near-vertical long axis — lay along X
-        worldRot = Quaternion.Normalize(ShortestArcRotation(longAxisWorld, targetLong) * worldRot);
-
         // Zero initial velocity (no jitter, no inheritance) — user requirement.
-        // Speculative margin kept small (proportionate to box thickness) to avoid
-        // pre-contact braking that makes the weapon appear to slow before landing.
         var handle = simulation!.Bodies.Add(BodyDescription.CreateDynamic(
             new RigidPose(worldPos, worldRot),
             default(BodyVelocity),
             weaponInertia,
-            new CollidableDescription(weaponShapeIndex, 0.005f),
+            new CollidableDescription(weaponShapeIndex, 0.04f),
             new BodyActivityDescription(0.01f)));
         return handle;
     }
@@ -385,10 +370,8 @@ public unsafe class WeaponDropController : IDisposable
             || simFriction != config.WeaponDropFriction
             || simSolverIterations != config.WeaponDropSolverIterations
             || simRadius != config.WeaponDropRadius
-            || simHalfWidth != config.WeaponDropHalfWidth
             || simHalfLength != config.WeaponDropHalfLength
-            || simMass != config.WeaponDropMass
-            || simAngularDamping != config.WeaponDropAngularDamping;
+            || simMass != config.WeaponDropMass;
     }
 
     private void EnsureSimulation()
@@ -401,26 +384,21 @@ public unsafe class WeaponDropController : IDisposable
         simFriction = config.WeaponDropFriction;
         simSolverIterations = config.WeaponDropSolverIterations;
         simRadius = config.WeaponDropRadius;
-        simHalfWidth = config.WeaponDropHalfWidth;
         simHalfLength = config.WeaponDropHalfLength;
         simMass = config.WeaponDropMass;
-        simAngularDamping = config.WeaponDropAngularDamping;
 
         bufferPool = new BufferPool();
         simulation = BepuSimulation.Create(
             bufferPool,
             new WeaponDropNarrowPhaseCallbacks { Friction = simFriction, MaxRecoveryVelocity = simBounce },
-            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -simGravity, 0), simDamping, simAngularDamping),
+            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -simGravity, 0), simDamping),
             new SolveDescription(simSolverIterations, 1));
 
-        // Box collider: thin × medium × long  →  X=thickness, Y=blade-width, Z=length.
-        // A flat box settles with its largest face (Y×Z) down, so swords lie blade-flat,
-        // books lie cover-flat, etc.  Capsules have circular cross-section and roll forever.
-        var weaponShape = new Box(config.WeaponDropRadius, config.WeaponDropHalfWidth, config.WeaponDropHalfLength);
+        var weaponShape = new Capsule(config.WeaponDropRadius, config.WeaponDropHalfLength * 2f);
         weaponShapeIndex = simulation.Shapes.Add(weaponShape);
         weaponInertia = weaponShape.ComputeInertia(config.WeaponDropMass);
 
-        log.Info($"WeaponDropController: simulation created (gravity={simGravity:F2}, bounce={simBounce:F2}, friction={simFriction:F2}, iter={simSolverIterations}, box={simRadius:F3}×{simHalfWidth:F3}×{simHalfLength:F3})");
+        log.Info($"WeaponDropController: simulation created (gravity={simGravity:F2}, bounce={simBounce:F2}, friction={simFriction:F2}, iter={simSolverIterations})");
     }
 
     private void DestroySimulation()
@@ -429,24 +407,6 @@ public unsafe class WeaponDropController : IDisposable
         simulation = null;
         bufferPool?.Clear();
         bufferPool = null;
-    }
-
-    // Shortest-arc quaternion that rotates unit vector 'from' to unit vector 'to'.
-    private static Quaternion ShortestArcRotation(Vector3 from, Vector3 to)
-    {
-        from = Vector3.Normalize(from);
-        to   = Vector3.Normalize(to);
-        float dot = Vector3.Dot(from, to);
-        if (dot > 0.9999f)  return Quaternion.Identity;
-        if (dot < -0.9999f)
-        {
-            // 180° — pick any perpendicular axis
-            var perp = MathF.Abs(from.X) < 0.57f ? Vector3.UnitX : Vector3.UnitZ;
-            var axis = Vector3.Normalize(Vector3.Cross(from, perp));
-            return new Quaternion(axis.X, axis.Y, axis.Z, 0f);
-        }
-        var cross = Vector3.Cross(from, to);
-        return Quaternion.Normalize(new Quaternion(cross.X, cross.Y, cross.Z, 1f + dot));
     }
 
     public void Dispose()
@@ -495,23 +455,19 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
 {
     private Vector3 gravity;
     private float linearDamping;
-    private float angularDamping;
     private Vector3Wide gravityDt;
-    private Vector<float> linearDampingDt;
-    private Vector<float> angularDampingDt;
+    private Vector<float> dampingDt;
 
     public readonly AngularIntegrationMode AngularIntegrationMode => AngularIntegrationMode.Nonconserving;
     public readonly bool AllowSubstepsForUnconstrainedBodies => false;
     public readonly bool IntegrateVelocityForKinematics => false;
 
-    public WeaponDropPoseIntegratorCallbacks(Vector3 gravity, float linearDamping, float angularDamping)
+    public WeaponDropPoseIntegratorCallbacks(Vector3 gravity, float linearDamping)
     {
         this.gravity = gravity;
         this.linearDamping = linearDamping;
-        this.angularDamping = angularDamping;
         this.gravityDt = default;
-        this.linearDampingDt = default;
-        this.angularDampingDt = default;
+        this.dampingDt = default;
     }
 
     public void Initialize(BepuSimulation simulation) { }
@@ -521,8 +477,7 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
         gravityDt.X = new Vector<float>(gravity.X * dt);
         gravityDt.Y = new Vector<float>(gravity.Y * dt);
         gravityDt.Z = new Vector<float>(gravity.Z * dt);
-        linearDampingDt = new Vector<float>(MathF.Pow(linearDamping, dt * 60f));
-        angularDampingDt = new Vector<float>(MathF.Pow(angularDamping, dt * 60f));
+        dampingDt = new Vector<float>(MathF.Pow(linearDamping, dt * 60f));
     }
 
     public void IntegrateVelocity(
@@ -530,11 +485,11 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
         BodyInertiaWide localInertia, Vector<int> integrationMask, int workerIndex,
         Vector<float> dt, ref BodyVelocityWide velocity)
     {
-        velocity.Linear.X = (velocity.Linear.X + gravityDt.X) * linearDampingDt;
-        velocity.Linear.Y = (velocity.Linear.Y + gravityDt.Y) * linearDampingDt;
-        velocity.Linear.Z = (velocity.Linear.Z + gravityDt.Z) * linearDampingDt;
-        velocity.Angular.X *= angularDampingDt;
-        velocity.Angular.Y *= angularDampingDt;
-        velocity.Angular.Z *= angularDampingDt;
+        velocity.Linear.X = (velocity.Linear.X + gravityDt.X) * dampingDt;
+        velocity.Linear.Y = (velocity.Linear.Y + gravityDt.Y) * dampingDt;
+        velocity.Linear.Z = (velocity.Linear.Z + gravityDt.Z) * dampingDt;
+        velocity.Angular.X *= dampingDt;
+        velocity.Angular.Y *= dampingDt;
+        velocity.Angular.Z *= dampingDt;
     }
 }
