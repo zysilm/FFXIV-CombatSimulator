@@ -1727,23 +1727,30 @@ public unsafe class RagdollController : IDisposable
             }
 
             // Rotation offset: capsuleWorldRot * offset = boneWorldRot
-            // j_asi_c (Ankle): override capsule direction to match parent (j_asi_b).
-            // The death animation bends j_asi_c away from j_asi_b before ragdoll fires;
-            // any orientation-snapshotting constraint (Weld) would then bake that bend
-            // permanently. Aligning the physics body to the parent direction at creation
-            // means the Weld snapshots a collinear pose (LocalOrientation ≈ Identity)
-            // regardless of activation timing.
-            if (def.AnatomicalRole == AnatomicalRole.Ankle &&
+            // Ankle (j_asi_c) and Knee (j_asi_b): override capsule direction to match
+            // the parent bone's direction at activation.
+            //
+            // The death animation bends these bones before the ragdoll fires. Any
+            // constraint that references the body's initial orientation (Weld, SwingLimit
+            // axes, FoldStop, TwistLimit basis) then bakes that bend permanently, causing
+            // a zigzag (Ankle) or unnatural knee fold (Knee).
+            //
+            // Fix: recompute capsuleWorldRot from the parent→child world segment so both
+            // bodies start collinear. For Ankle the Weld then snapshots ≈ Identity; for
+            // Knee the Hinge constraint axes (SwingLimit forward, FoldStop, TwistLimit)
+            // are derived from a neutral straight-leg pose and physics gravity handles the
+            // natural fold.
+            if ((def.AnatomicalRole == AnatomicalRole.Ankle || def.AnatomicalRole == AnatomicalRole.Knee) &&
                 def.ParentName != null &&
-                boneWorldPositions.TryGetValue(def.ParentName, out var ankleParentPos) &&
-                boneWorldRotations.TryGetValue(def.ParentName, out var ankleParentBoneRot))
+                boneWorldPositions.TryGetValue(def.ParentName, out var alignParentPos) &&
+                boneWorldRotations.TryGetValue(def.ParentName, out var alignParentBoneRot))
             {
-                var parentToAnkle = boneWorldPos - ankleParentPos;
-                var ptaLen = parentToAnkle.Length();
-                if (ptaLen > 0.01f)
+                var parentToChild = boneWorldPos - alignParentPos;
+                var ptcLen = parentToChild.Length();
+                if (ptcLen > 0.01f)
                 {
-                    capsuleWorldRot = CreateCapsuleRotation(parentToAnkle, ankleParentBoneRot);
-                    capsuleCenter   = boneWorldPos + (effectiveHalfLength / ptaLen) * parentToAnkle;
+                    capsuleWorldRot = CreateCapsuleRotation(parentToChild, alignParentBoneRot);
+                    capsuleCenter   = boneWorldPos + (effectiveHalfLength / ptcLen) * parentToChild;
                 }
             }
 
