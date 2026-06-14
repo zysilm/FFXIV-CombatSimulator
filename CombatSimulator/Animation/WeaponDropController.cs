@@ -342,10 +342,11 @@ public unsafe class WeaponDropController : IDisposable
             perEntryShape = hullIdx;
             // Keep speculative margin below half-thickness to avoid ghost contacts.
             speculativeMargin = MathF.Max(0.005f, config.WeaponDropRadius * 0.4f);
-            // Force spine to horizontal so the weapon can't spawn tip-down and stay vertical.
-            // The hull's wider flat face is then the first surface to contact the ground,
-            // and the physics naturally settle to the lowest-energy (flat) configuration.
-            gripWorldRot = FlattenHullSpine(gripWorldRot);
+            // Fully override spawn rotation: spine horizontal, wide face down, thin face up.
+            // FlattenHullSpine (previous) only fixed the spine but left the roll free,
+            // so the hull still spawned standing on its edge. FlatHullRotation constructs
+            // the rotation from the three target axes directly, ignoring original pitch/roll.
+            gripWorldRot = FlatHullRotation(gripWorldRot);
         }
         else
         {
@@ -473,39 +474,69 @@ public unsafe class WeaponDropController : IDisposable
     }
 
     /// <summary>
-    /// Rotate <paramref name="rot"/> so the local +Z axis (weapon spine) lies flat in the
-    /// horizontal XZ plane. Prevents weapons from spawning spine-down and sticking vertically
-    /// into the ground with no restoring force. The visual snaps once at spawn, then gravity
-    /// and the hull's flat face take over to produce a natural settle.
+    /// Build a spawn rotation that lays the hull flat on the ground:
+    ///   local Z (spine)  → horizontal direction derived from grip yaw
+    ///   local X (wide)   → horizontal, perpendicular to spine
+    ///   local Y (thin)   → world up (vertical)
+    /// Fully ignores the grip's pitch and roll so the weapon always spawns
+    /// wide-face-down regardless of what the death animation hand pose is.
+    /// FlattenHullSpine (previous attempt) only fixed the spine direction but left
+    /// local X/Y free to roll, so the hull still spawned on its edge.
     /// </summary>
-    private static Quaternion FlattenHullSpine(Quaternion rot)
+    private static Quaternion FlatHullRotation(Quaternion gripWorldRot)
     {
-        var spineWorld = Vector3.Transform(Vector3.UnitZ, rot);
-        var flat = new Vector3(spineWorld.X, 0f, spineWorld.Z);
-        var len = flat.Length();
-        if (len < 0.05f)
+        // Determine which horizontal direction the weapon roughly points.
+        var spineWorld = Vector3.Transform(Vector3.UnitZ, gripWorldRot);
+        var flatSpine = new Vector3(spineWorld.X, 0f, spineWorld.Z);
+        var len = flatSpine.Length();
+        if (len < 0.1f)
         {
-            // Spine is near-vertical: fall back to local +X projected to horizontal
-            var sideWorld = Vector3.Transform(Vector3.UnitX, rot);
-            flat = new Vector3(sideWorld.X, 0f, sideWorld.Z);
-            len = flat.Length();
-            if (len < 0.05f) return rot; // degenerate, keep as-is
+            // Spine near-vertical: use local +X as the weapon direction instead.
+            var sideWorld = Vector3.Transform(Vector3.UnitX, gripWorldRot);
+            flatSpine = new Vector3(sideWorld.X, 0f, sideWorld.Z);
+            len = flatSpine.Length();
+            flatSpine = len > 0.01f ? flatSpine / len : new Vector3(1f, 0f, 0f);
         }
-        flat /= len;
-        return Quaternion.Normalize(ShortestArcTowards(spineWorld, flat) * rot);
+        else flatSpine /= len;
+
+        // Build orthonormal frame: local Z = flatSpine, local Y = worldUp, local X = right.
+        // With this rotation applied, hull points at (±halfWide, ±halfThick, z) land at
+        //   ±halfWide * right  (horizontal) and ±halfThick * worldUp (vertical),
+        // so the wide face is horizontal and the thin face is vertical — weapon lies flat.
+        var right = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, flatSpine));
+        return QuaternionFromAxes(right, Vector3.UnitY, flatSpine);
     }
 
-    private static Quaternion ShortestArcTowards(Vector3 from, Vector3 to)
+    /// <summary>Convert three orthonormal world-space axes (local X/Y/Z) to a quaternion.</summary>
+    private static Quaternion QuaternionFromAxes(Vector3 right, Vector3 up, Vector3 forward)
     {
-        var dot = Vector3.Dot(from, to);
-        if (dot >= 0.9999f) return Quaternion.Identity;
-        if (dot <= -0.9999f)
+        // Rotation matrix columns: col0=right(=localX), col1=up(=localY), col2=forward(=localZ)
+        float m00 = right.X,   m01 = up.X,   m02 = forward.X;
+        float m10 = right.Y,   m11 = up.Y,   m12 = forward.Y;
+        float m20 = right.Z,   m21 = up.Z,   m22 = forward.Z;
+        float trace = m00 + m11 + m22;
+        float qx, qy, qz, qw;
+        if (trace > 0f)
         {
-            var perp = MathF.Abs(from.X) < 0.9f ? Vector3.UnitX : Vector3.UnitY;
-            return new Quaternion(Vector3.Normalize(Vector3.Cross(from, perp)), 0f);
+            float s = 0.5f / MathF.Sqrt(trace + 1f);
+            qw = 0.25f / s; qx = (m21 - m12) * s; qy = (m02 - m20) * s; qz = (m10 - m01) * s;
         }
-        var cross = Vector3.Cross(from, to);
-        return Quaternion.Normalize(new Quaternion(cross.X, cross.Y, cross.Z, 1f + dot));
+        else if (m00 > m11 && m00 > m22)
+        {
+            float s = 2f * MathF.Sqrt(1f + m00 - m11 - m22);
+            qw = (m21 - m12) / s; qx = 0.25f * s; qy = (m01 + m10) / s; qz = (m02 + m20) / s;
+        }
+        else if (m11 > m22)
+        {
+            float s = 2f * MathF.Sqrt(1f + m11 - m00 - m22);
+            qw = (m02 - m20) / s; qx = (m01 + m10) / s; qy = 0.25f * s; qz = (m12 + m21) / s;
+        }
+        else
+        {
+            float s = 2f * MathF.Sqrt(1f + m22 - m00 - m11);
+            qw = (m10 - m01) / s; qx = (m02 + m20) / s; qy = (m12 + m21) / s; qz = 0.25f * s;
+        }
+        return Quaternion.Normalize(new Quaternion(qx, qy, qz, qw));
     }
 
     /// <summary>Resolve the drawn weapon DrawObject for a slot, or null if unarmed/unloaded.</summary>
