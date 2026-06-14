@@ -185,6 +185,15 @@ public class MainWindow : IDisposable
         HelpMarker("Show the combat targeting controls used by Combat Simulator.");
         DrawControlsPopup();
 
+        ImGui.Separator();
+        vnavmeshIpc.RefreshStatus();
+        if (vnavmeshIpc.IsAvailable)
+            ImGui.TextColored(new Vector4(0f, 0.85f, 0f, 1f), "vnavmesh: active");
+        else
+            ImGui.TextDisabled("vnavmesh: not installed");
+        ImGui.SameLine();
+        HelpMarker("vnavmesh is recommended for better pathfinding. The plugin works without it, but enemy movement will be limited.");
+
         ImGui.End();
     }
 
@@ -959,6 +968,8 @@ public class MainWindow : IDisposable
 
         ImGui.TextWrapped("Search an enemy by name, then Spawn to fight it. Spawning starts the combat simulation automatically. Use Stop in the main window to despawn everything.");
         ImGui.Separator();
+        ImGui.TextColored(new Vector4(1f, 0.2f, 0.2f, 1f), "Warning: Spawning certain enemies may cause the game to crash. Use with caution.");
+        ImGui.Spacing();
 
         // Category tabs: Popular / Recent / All
         for (int c = 0; c < SpawnCategoryNames.Length; c++)
