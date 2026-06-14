@@ -865,11 +865,14 @@ public unsafe class RagdollController : IDisposable
         public StaticHandle Handle;
         public int BoneIndex;           // this bone's skeleton index
         public int ParentBoneIndex;     // parent bone for segment direction
-        public float HalfLength;        // half the segment length (scaled)
+        public float HalfLength;        // half the capsule body segment length
+        public float CenterFactor;      // parent->child fraction where the capsule is centered
     }
 
     // Default capsule radius for dynamically discovered bones
     private const float NpcDefaultBoneRadius = 0.04f;
+    private const float NpcAutoMinRadius = 0.025f;
+    private const float NpcAutoMaxRadius = 0.55f;
     // Minimum segment length to create a collision capsule. Raised from 0.02 to drop the
     // dense cluster of tiny face/finger/hair segments — they don't meaningfully block a
     // falling ragdoll but each one costs a per-frame reposition + UpdateBounds.
@@ -2089,14 +2092,14 @@ public unsafe class RagdollController : IDisposable
         if (config.RagdollNpcCollision && npcSelector != null)
         {
             var scale = config.RagdollNpcCollisionScale;
-            var capsuleRadius = NpcDefaultBoneRadius * scale;
+            var capsuleRadius = config.RagdollNpcCollisionAutoSize ? NpcDefaultBoneRadius : NpcDefaultBoneRadius * scale;
 
             // Fallback single-capsule shape for NPCs whose skeleton can't be read
-            var fbRadius = 0.3f * scale;
-            var fbLength = MathF.Max(0.2f, 1.6f - fbRadius * 2f);
+            var fbRadius = config.RagdollNpcCollisionAutoSize ? 0.35f : 0.3f * scale;
+            var fbLength = config.RagdollNpcCollisionAutoSize ? 1.2f : MathF.Max(0.2f, 1.6f - fbRadius * 2f);
             npcFallbackShapeIndex = simulation.Shapes.Add(new Capsule(fbRadius, fbLength));
 
-            log.Info($"RagdollController: NPC bone collision — {npcSelector.SelectedNpcs.Count} NPCs, scale={scale:F2}");
+            log.Info($"RagdollController: NPC bone collision — {npcSelector.SelectedNpcs.Count} NPCs, autoSize={config.RagdollNpcCollisionAutoSize}, scale={scale:F2}");
 
             // Dedupe across both sources so a character (e.g. a companion that also
             // appears elsewhere) only gets one set of collision statics.
@@ -2306,11 +2309,14 @@ public unsafe class RagdollController : IDisposable
             npcSkeleton->Transform.Rotation.W);
 
         var boneStatics = new List<NpcBoneStatic>();
+        var autoSize = config.RagdollNpcCollisionAutoSize;
+        var profileRadii = autoSize ? BuildHumanoidCollisionRadiusMap(ns) : null;
+        var autoContext = autoSize ? BuildNpcAutoCollisionContext(ns, npcSkelPos, npcSkelRot) : default;
 
         // Pass 1: collect every qualifying parent→child segment with its length so we can
         // keep only the longest NpcMaxCollisionSegments (the big body-blocking segments)
         // rather than building a static for every twig.
-        var candidates = new List<(float SegLen, int BoneIdx, int ParentIdx, float HalfLen, Vector3 Center, Quaternion Rot)>();
+        var candidates = new List<(float SegLen, int BoneIdx, int ParentIdx, float HalfLen, float Radius, float CenterFactor, Vector3 Center, Quaternion Rot)>();
         var boneCount = Math.Min(ns.BoneCount, ns.ParentCount);
         for (int i = 1; i < boneCount; i++) // skip root (index 0, no parent)
         {
@@ -2330,10 +2336,14 @@ public unsafe class RagdollController : IDisposable
             var segLen = segment.Length();
             if (segLen < NpcMinSegmentLength) continue; // skip tiny segments (face, fingers)
 
-            var halfLen = segLen * 0.45f * scale;
+            var radius = autoSize
+                ? EstimateNpcCollisionRadius(i, parentIdx, segLen, profileRadii, autoContext)
+                : capsuleRadius;
+            var halfLen = autoSize ? MathF.Max(0.01f, (segLen * 0.5f) - radius) : segLen * 0.45f * scale;
+            var centerFactor = autoSize ? 0.5f : halfLen / segLen;
             var segDir = segment / segLen;
             candidates.Add((segLen, i, parentIdx, halfLen,
-                parentWorldPos + halfLen * segDir, RotationFromYToDirection(segment)));
+                radius, centerFactor, parentWorldPos + (segLen * centerFactor) * segDir, RotationFromYToDirection(segment)));
         }
 
         // Keep only the longest segments when a high-bone-count rig exceeds the cap.
@@ -2346,7 +2356,7 @@ public unsafe class RagdollController : IDisposable
         // Pass 2: create the static capsule for each kept segment.
         foreach (var c in candidates)
         {
-            var shapeIndex = simulation!.Shapes.Add(new Capsule(capsuleRadius, c.HalfLen * 2f));
+            var shapeIndex = simulation!.Shapes.Add(new Capsule(c.Radius, c.HalfLen * 2f));
             var staticHandle = simulation.Statics.Add(new StaticDescription(c.Center, c.Rot, shapeIndex));
             boneStatics.Add(new NpcBoneStatic
             {
@@ -2354,6 +2364,7 @@ public unsafe class RagdollController : IDisposable
                 BoneIndex = c.BoneIdx,
                 ParentBoneIndex = c.ParentIdx,
                 HalfLength = c.HalfLen,
+                CenterFactor = c.CenterFactor,
             });
         }
 
@@ -2371,6 +2382,100 @@ public unsafe class RagdollController : IDisposable
         {
             CreateFallbackCharacterCollision(label, address);
         }
+    }
+
+    private Dictionary<int, float> BuildHumanoidCollisionRadiusMap(SkeletonAccess skel)
+    {
+        var result = new Dictionary<int, float>();
+        foreach (var signatureBone in HumanoidSignatureBones)
+            if (boneService.ResolveBoneIndex(skel, signatureBone) < 0)
+                return result;
+
+        foreach (var def in GetBoneDefs())
+        {
+            var index = boneService.ResolveBoneIndex(skel, def.Name);
+            if (index < 0)
+                continue;
+
+            var radius = def.CapsuleRadius;
+            if (def.ColliderShape == RagdollColliderShape.Box)
+            {
+                var extents = ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def));
+                radius = MathF.Max(extents.X, extents.Z);
+            }
+
+            result[index] = Math.Clamp(radius, NpcAutoMinRadius, NpcAutoMaxRadius);
+        }
+
+        return result;
+    }
+
+    private struct NpcAutoCollisionContext
+    {
+        public float SkeletonRadius;
+        public float[] NearestBoneDistances;
+    }
+
+    private NpcAutoCollisionContext BuildNpcAutoCollisionContext(SkeletonAccess skel, Vector3 skelPos, Quaternion skelRot)
+    {
+        var boneCount = Math.Min(skel.BoneCount, skel.ParentCount);
+        var positions = new Vector3[boneCount];
+        var min = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
+        var max = new Vector3(float.MinValue, float.MinValue, float.MinValue);
+
+        for (int i = 0; i < boneCount; i++)
+        {
+            ref var mt = ref skel.Pose->ModelPose.Data[i];
+            var world = NpcModelToWorld(new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z), skelPos, skelRot);
+            positions[i] = world;
+            min = Vector3.Min(min, world);
+            max = Vector3.Max(max, world);
+        }
+
+        var nearest = new float[boneCount];
+        Array.Fill(nearest, float.MaxValue);
+        for (int i = 0; i < boneCount; i++)
+        {
+            for (int j = i + 1; j < boneCount; j++)
+            {
+                var d = Vector3.Distance(positions[i], positions[j]);
+                if (d <= 0.001f)
+                    continue;
+                if (d < nearest[i]) nearest[i] = d;
+                if (d < nearest[j]) nearest[j] = d;
+            }
+        }
+
+        var extents = max - min;
+        var skeletonRadius = Math.Clamp(MathF.Max(extents.X, extents.Z) * 0.08f, NpcAutoMinRadius, NpcAutoMaxRadius);
+        return new NpcAutoCollisionContext
+        {
+            SkeletonRadius = skeletonRadius,
+            NearestBoneDistances = nearest,
+        };
+    }
+
+    private static float EstimateNpcCollisionRadius(
+        int boneIndex,
+        int parentIndex,
+        float segmentLength,
+        Dictionary<int, float>? profileRadii,
+        NpcAutoCollisionContext context)
+    {
+        if (profileRadii != null && profileRadii.TryGetValue(boneIndex, out var profileRadius))
+            return Math.Clamp(MathF.Min(profileRadius, segmentLength * 0.45f), NpcAutoMinRadius, NpcAutoMaxRadius);
+
+        var childNearest = boneIndex >= 0 && boneIndex < context.NearestBoneDistances.Length
+            ? context.NearestBoneDistances[boneIndex]
+            : float.MaxValue;
+        var parentNearest = parentIndex >= 0 && parentIndex < context.NearestBoneDistances.Length
+            ? context.NearestBoneDistances[parentIndex]
+            : float.MaxValue;
+        var nearest = MathF.Min(childNearest, parentNearest);
+        var densityRadius = float.IsFinite(nearest) ? nearest * 0.42f : context.SkeletonRadius;
+        var segmentRadius = segmentLength * 0.22f;
+        var radius = MathF.Max(context.SkeletonRadius, MathF.Max(densityRadius, segmentRadius));
+        return Math.Clamp(MathF.Min(radius, segmentLength * 0.7f), NpcAutoMinRadius, NpcAutoMaxRadius);
     }
 
     private void CreateFallbackCharacterCollision(string label, nint address)
@@ -2656,7 +2761,7 @@ public unsafe class RagdollController : IDisposable
                     if (segLen > 0.01f)
                     {
                         var segDir = segment / segLen;
-                        capsuleCenter = parentWorldPos + bs.HalfLength * segDir;
+                        capsuleCenter = parentWorldPos + (segLen * bs.CenterFactor) * segDir;
                         capsuleRot = RotationFromYToDirection(segment);
                     }
                     else

@@ -253,6 +253,7 @@ public class Configuration : IPluginConfiguration
     public bool DevCompanionAppearanceVariant { get; set; } = false;
     public bool DevPartyApproachDebugLog { get; set; } = false;
     public bool RagdollNpcCollision { get; set; } = true;
+    public bool RagdollNpcCollisionAutoSize { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcSettleCollision { get; set; } = true;
 

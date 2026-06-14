@@ -1300,7 +1300,7 @@ public class CombatEngine : IDisposable
                 playerDeathTriggered = true;
                 movementBlockHook.IsBlocking = true;
                 animationController.RemoveAllActiveVfx();
-                animationController.PlayPlayerDeath();
+                animationController.PlayPlayerDeath(forceCombatDeath: true);
                 TriggerEnemyVictoryIfPartyDefeated();
                 ApplyGlamourer();
                 if (!(SuppressDeathCam?.Invoke() ?? false))

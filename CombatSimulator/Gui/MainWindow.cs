@@ -296,6 +296,7 @@ public class MainWindow : IDisposable
                     config.RagdollHairStiffness = 0.1f;
                     // NPC Collision
                     config.RagdollNpcCollision = true;
+                    config.RagdollNpcCollisionAutoSize = true;
                     config.RagdollNpcCollisionScale = 0.0001f;
                     // NPC Collision (Settle)
                     config.RagdollNpcSettleCollision = true;
@@ -3035,13 +3036,25 @@ public class MainWindow : IDisposable
             {
                 ImGui.Indent();
 
+                var autoSize = config.RagdollNpcCollisionAutoSize;
+                if (ImGui.Checkbox("Auto size NPC collision##npccolautosize", ref autoSize))
+                {
+                    config.RagdollNpcCollisionAutoSize = autoSize;
+                    config.Save();
+                }
+                HelpMarker("Estimate each NPC or mount collision bone independently. Human rigs use the ragdoll profile; other rigs use skeleton proportions. When enabled, manual NPC Collision Scale is ignored.");
+
                 var npcScale = config.RagdollNpcCollisionScale;
+                if (config.RagdollNpcCollisionAutoSize)
+                    ImGui.BeginDisabled();
                 if (ImGui.SliderFloat("NPC Collision Scale##npccol", ref npcScale, 0.0001f, 5.0f, "%.4f"))
                 {
                     config.RagdollNpcCollisionScale = npcScale;
                     config.Save();
                 }
-                HelpMarker("Scale multiplier for NPC bone collision capsules. Increase for larger NPC models.");
+                if (config.RagdollNpcCollisionAutoSize)
+                    ImGui.EndDisabled();
+                HelpMarker("Manual scale multiplier for NPC bone collision capsules. Used only when Auto size NPC collision is off.");
 
                 ImGui.Unindent();
             }

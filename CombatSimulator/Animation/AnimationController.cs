@@ -709,7 +709,7 @@ public unsafe class AnimationController : IDisposable
 
             var character = (Character*)npc.BattleChara;
 
-            if (ShouldUseDrawnWeaponDeath(character) && battleDeadResolved)
+            if (ShouldUseCombatDeath(character) && battleDeadResolved)
             {
                 emotePlayer.PlayLoopedEmote(character, battleDeadLoopTimeline, battleDeadIntroTimeline);
                 log.Verbose($"Drawn-weapon death triggered for NPC '{npc.Name}'.");
@@ -735,9 +735,10 @@ public unsafe class AnimationController : IDisposable
 
     /// <summary>
     /// Play death animation on the player character.
-    /// Uses a drawn-weapon death timeline only if the player was already in drawn-weapon state.
+    /// Uses the combat death timeline if the player is in combat, including mounted cases
+    /// where the mount timeline can hide the drawn-weapon state.
     /// </summary>
-    public void PlayPlayerDeath()
+    public void PlayPlayerDeath(bool forceCombatDeath = false)
     {
         try
         {
@@ -745,7 +746,7 @@ public unsafe class AnimationController : IDisposable
             if (player == null) return;
             var character = (Character*)player.Address;
 
-            if (ShouldUseDrawnWeaponDeath(character) && battleDeadResolved)
+            if ((forceCombatDeath || ShouldUseCombatDeath(character)) && battleDeadResolved)
             {
                 emotePlayer.PlayLoopedEmote(character, battleDeadLoopTimeline, battleDeadIntroTimeline);
                 log.Info($"Player drawn-weapon death triggered (intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}).");
@@ -762,8 +763,8 @@ public unsafe class AnimationController : IDisposable
         }
     }
 
-    private static bool ShouldUseDrawnWeaponDeath(Character* character)
-        => character->Timeline.IsWeaponDrawn || character->Timeline.ModelState == 1;
+    private static bool ShouldUseCombatDeath(Character* character)
+        => character->CharacterData.InCombat || character->Timeline.IsWeaponDrawn || character->Timeline.ModelState == 1;
 
     /// <summary>
     /// Reset death animation on an NPC character (clear timeline override).

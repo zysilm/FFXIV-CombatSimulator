@@ -13,6 +13,7 @@ using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using CombatSimulator.Targeting;
+using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.Command;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
@@ -682,7 +683,13 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         var player = Services.ObjectTable.LocalPlayer;
         if (player != null && player.Address != nint.Zero)
+        {
             list.Add(player.Address);
+            if (config.RagdollNpcCollision)
+            {
+                AddMountCollisionAddresses(list);
+            }
+        }
 
         foreach (var companion in companionManager.Companions)
         {
@@ -691,6 +698,19 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         }
 
         return list;
+    }
+
+    private void AddMountCollisionAddresses(List<nint> list)
+    {
+        foreach (var obj in Services.ObjectTable)
+        {
+            if (obj == null || obj.Address == nint.Zero)
+                continue;
+            if (obj.ObjectKind != ObjectKind.Mount)
+                continue;
+
+            list.Add(obj.Address);
+        }
     }
 
     private void RemoveNpcRagdoll(nint address)
