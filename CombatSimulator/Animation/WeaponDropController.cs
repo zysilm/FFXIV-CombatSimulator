@@ -44,8 +44,10 @@ public unsafe class WeaponDropController : IDisposable
     // Snapshot of the shape/inertia inputs too — the weapon capsule shape and inertia are
     // cached once at sim creation, so changing these must also trigger a rebuild or they go stale.
     private float simRadius;
+    private float simHalfWidth;
     private float simHalfLength;
     private float simMass;
+    private float simAngularDamping;
 
     private class Entry
     {
@@ -370,8 +372,10 @@ public unsafe class WeaponDropController : IDisposable
             || simFriction != config.WeaponDropFriction
             || simSolverIterations != config.WeaponDropSolverIterations
             || simRadius != config.WeaponDropRadius
+            || simHalfWidth != config.WeaponDropHalfWidth
             || simHalfLength != config.WeaponDropHalfLength
-            || simMass != config.WeaponDropMass;
+            || simMass != config.WeaponDropMass
+            || simAngularDamping != config.WeaponDropAngularDamping;
     }
 
     private void EnsureSimulation()
@@ -384,21 +388,26 @@ public unsafe class WeaponDropController : IDisposable
         simFriction = config.WeaponDropFriction;
         simSolverIterations = config.WeaponDropSolverIterations;
         simRadius = config.WeaponDropRadius;
+        simHalfWidth = config.WeaponDropHalfWidth;
         simHalfLength = config.WeaponDropHalfLength;
         simMass = config.WeaponDropMass;
+        simAngularDamping = config.WeaponDropAngularDamping;
 
         bufferPool = new BufferPool();
         simulation = BepuSimulation.Create(
             bufferPool,
             new WeaponDropNarrowPhaseCallbacks { Friction = simFriction, MaxRecoveryVelocity = simBounce },
-            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -simGravity, 0), simDamping),
+            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -simGravity, 0), simDamping, simAngularDamping),
             new SolveDescription(simSolverIterations, 1));
 
-        var weaponShape = new Capsule(config.WeaponDropRadius, config.WeaponDropHalfLength * 2f);
+        // Box collider: thin × medium × long  →  X=thickness, Y=blade-width, Z=length.
+        // A flat box settles with its largest face (Y×Z) down, so swords lie blade-flat,
+        // books lie cover-flat, etc.  Capsules have circular cross-section and roll forever.
+        var weaponShape = new Box(config.WeaponDropRadius, config.WeaponDropHalfWidth, config.WeaponDropHalfLength);
         weaponShapeIndex = simulation.Shapes.Add(weaponShape);
         weaponInertia = weaponShape.ComputeInertia(config.WeaponDropMass);
 
-        log.Info($"WeaponDropController: simulation created (gravity={simGravity:F2}, bounce={simBounce:F2}, friction={simFriction:F2}, iter={simSolverIterations})");
+        log.Info($"WeaponDropController: simulation created (gravity={simGravity:F2}, bounce={simBounce:F2}, friction={simFriction:F2}, iter={simSolverIterations}, box={simRadius:F3}×{simHalfWidth:F3}×{simHalfLength:F3})");
     }
 
     private void DestroySimulation()
@@ -455,19 +464,23 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
 {
     private Vector3 gravity;
     private float linearDamping;
+    private float angularDamping;
     private Vector3Wide gravityDt;
-    private Vector<float> dampingDt;
+    private Vector<float> linearDampingDt;
+    private Vector<float> angularDampingDt;
 
     public readonly AngularIntegrationMode AngularIntegrationMode => AngularIntegrationMode.Nonconserving;
     public readonly bool AllowSubstepsForUnconstrainedBodies => false;
     public readonly bool IntegrateVelocityForKinematics => false;
 
-    public WeaponDropPoseIntegratorCallbacks(Vector3 gravity, float linearDamping)
+    public WeaponDropPoseIntegratorCallbacks(Vector3 gravity, float linearDamping, float angularDamping)
     {
         this.gravity = gravity;
         this.linearDamping = linearDamping;
+        this.angularDamping = angularDamping;
         this.gravityDt = default;
-        this.dampingDt = default;
+        this.linearDampingDt = default;
+        this.angularDampingDt = default;
     }
 
     public void Initialize(BepuSimulation simulation) { }
@@ -477,7 +490,8 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
         gravityDt.X = new Vector<float>(gravity.X * dt);
         gravityDt.Y = new Vector<float>(gravity.Y * dt);
         gravityDt.Z = new Vector<float>(gravity.Z * dt);
-        dampingDt = new Vector<float>(MathF.Pow(linearDamping, dt * 60f));
+        linearDampingDt = new Vector<float>(MathF.Pow(linearDamping, dt * 60f));
+        angularDampingDt = new Vector<float>(MathF.Pow(angularDamping, dt * 60f));
     }
 
     public void IntegrateVelocity(
@@ -485,11 +499,11 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
         BodyInertiaWide localInertia, Vector<int> integrationMask, int workerIndex,
         Vector<float> dt, ref BodyVelocityWide velocity)
     {
-        velocity.Linear.X = (velocity.Linear.X + gravityDt.X) * dampingDt;
-        velocity.Linear.Y = (velocity.Linear.Y + gravityDt.Y) * dampingDt;
-        velocity.Linear.Z = (velocity.Linear.Z + gravityDt.Z) * dampingDt;
-        velocity.Angular.X *= dampingDt;
-        velocity.Angular.Y *= dampingDt;
-        velocity.Angular.Z *= dampingDt;
+        velocity.Linear.X = (velocity.Linear.X + gravityDt.X) * linearDampingDt;
+        velocity.Linear.Y = (velocity.Linear.Y + gravityDt.Y) * linearDampingDt;
+        velocity.Linear.Z = (velocity.Linear.Z + gravityDt.Z) * linearDampingDt;
+        velocity.Angular.X *= angularDampingDt;
+        velocity.Angular.Y *= angularDampingDt;
+        velocity.Angular.Z *= angularDampingDt;
     }
 }

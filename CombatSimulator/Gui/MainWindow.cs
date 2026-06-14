@@ -285,10 +285,12 @@ public class MainWindow : IDisposable
                     config.WeaponDropGravity = 9.8f;
                     config.WeaponDropDamping = 0.99f;
                     config.WeaponDropMass = 1.5f;
-                    config.WeaponDropRadius = 0.025f;
+                    config.WeaponDropRadius = 0.015f;
+                    config.WeaponDropHalfWidth = 0.05f;
                     config.WeaponDropHalfLength = 0.4f;
                     config.WeaponDropBounce = 1.5f;
                     config.WeaponDropFriction = 0.6f;
+                    config.WeaponDropAngularDamping = 0.85f;
                     config.WeaponDropSolverIterations = 4;
                     config.RagdollHairPhysics = false;
                     config.RagdollHairGravityStrength = 0.5f;
@@ -2925,18 +2927,36 @@ public class MainWindow : IDisposable
                     }
 
                     var wdRadius = config.WeaponDropRadius;
-                    if (ImGui.SliderFloat("Capsule Radius##weapondrop", ref wdRadius, 0.005f, 0.2f, "%.3f"))
+                    if (ImGui.SliderFloat("Box Thickness##weapondrop", ref wdRadius, 0.005f, 0.1f, "%.3f"))
                     {
                         config.WeaponDropRadius = wdRadius;
                         config.Save();
                     }
+                    HelpMarker("Half-extent along the thinnest axis (blade thickness, book spine). Smaller = flatter.");
+
+                    var wdHalfWidth = config.WeaponDropHalfWidth;
+                    if (ImGui.SliderFloat("Box Half-Width##weapondrop", ref wdHalfWidth, 0.01f, 0.3f, "%.3f"))
+                    {
+                        config.WeaponDropHalfWidth = wdHalfWidth;
+                        config.Save();
+                    }
+                    HelpMarker("Half-extent along the cross-axis (blade width edge-to-edge, or book page height). Increase for wide blades or books.");
 
                     var wdHalf = config.WeaponDropHalfLength;
-                    if (ImGui.SliderFloat("Capsule Half-Length##weapondrop", ref wdHalf, 0.1f, 1.5f, "%.2f"))
+                    if (ImGui.SliderFloat("Box Half-Length##weapondrop", ref wdHalf, 0.1f, 1.5f, "%.2f"))
                     {
                         config.WeaponDropHalfLength = wdHalf;
                         config.Save();
                     }
+                    HelpMarker("Half-extent along the long axis (hilt-to-tip for blades, spine-to-edge for books).");
+
+                    var wdAngDamp = config.WeaponDropAngularDamping;
+                    if (ImGui.SliderFloat("Angular Damping##weapondrop", ref wdAngDamp, 0.5f, 1.0f, "%.3f"))
+                    {
+                        config.WeaponDropAngularDamping = wdAngDamp;
+                        config.Save();
+                    }
+                    HelpMarker("Per-frame angular velocity multiplier. Lower values stop spinning faster. Separate from linear damping.");
 
                     var wdSolver = config.WeaponDropSolverIterations;
                     if (ImGui.SliderInt("Solver Iterations##weapondrop", ref wdSolver, 1, 64))

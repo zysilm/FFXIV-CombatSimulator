@@ -213,10 +213,12 @@ public class Configuration : IPluginConfiguration
     public float WeaponDropGravity { get; set; } = 9.8f;
     public float WeaponDropDamping { get; set; } = 0.99f; // 1.0 = no damping, lower = settles faster
     public float WeaponDropMass { get; set; } = 1.5f;
-    public float WeaponDropRadius { get; set; } = 0.025f;
-    public float WeaponDropHalfLength { get; set; } = 0.4f;
+    public float WeaponDropRadius { get; set; } = 0.015f;    // box X half-extent (thickness, thin dimension)
+    public float WeaponDropHalfWidth { get; set; } = 0.05f;  // box Y half-extent (blade/page width)
+    public float WeaponDropHalfLength { get; set; } = 0.4f;  // box Z half-extent (long axis)
     public float WeaponDropBounce { get; set; } = 1.5f; // Bepu MaximumRecoveryVelocity — higher = bouncier
     public float WeaponDropFriction { get; set; } = 0.6f;
+    public float WeaponDropAngularDamping { get; set; } = 0.85f; // per-frame angular velocity multiplier; lower = stops spinning faster
     public int WeaponDropSolverIterations { get; set; } = 4;
     // Hair physics
     public bool RagdollHairPhysics { get; set; } = false;
