@@ -1974,6 +1974,52 @@ public unsafe class RagdollController : IDisposable
             }
             else
             {
+                // j_asi_c (Ankle): fully collinear constraint via SwingLimit(0) + TwistLimit(0,0).
+                // Unlike a Weld, these constraints don't snapshot the relative orientation at
+                // activation. Both axes are initialised to the same world direction, so the
+                // initial measured angle is always 0 regardless of the activation pose. The
+                // spring then drives any deviation back to 0, keeping j_asi_c collinear with
+                // j_asi_b at all times without baking the death-animation bend.
+                if (boneDef.AnatomicalRole == AnatomicalRole.Ankle)
+                {
+                    var ankleSpring = new SpringSettings(60f, 1f);
+
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                        new BallSocket
+                        {
+                            LocalOffsetA = childLocalAnchor,
+                            LocalOffsetB = parentLocalAnchor,
+                            SpringSettings = jointSpring,
+                        });
+
+                    var ankleAxisChild  = Vector3.Normalize(Vector3.Transform(segDirWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
+                    var ankleAxisParent = Vector3.Normalize(Vector3.Transform(segDirWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                        new SwingLimit
+                        {
+                            AxisLocalA = ankleAxisChild,
+                            AxisLocalB = ankleAxisParent,
+                            MaximumSwingAngle = 0f,
+                            SpringSettings = ankleSpring,
+                        });
+
+                    var ankleRefDir    = config.RagdollExperimentalJointFrames
+                        ? ComputeExperimentalBallTwistReference(segDirWorld, parentSegDir)
+                        : ComputeLegacyBallTwistReference(segDirWorld);
+                    var ankleTwistBasis = CreateTwistBasis(segDirWorld, ankleRefDir);
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                        new TwistLimit
+                        {
+                            LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * ankleTwistBasis),
+                            LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * ankleTwistBasis),
+                            MinimumAngle = 0f,
+                            MaximumAngle = 0f,
+                            SpringSettings = ankleSpring,
+                        });
+
+                    continue;
+                }
+
                 // BallSocket: positional connection
                 // Soft bodies use low frequency + low damping for jiggle
                 simulation.Solver.Add(rb.BodyHandle, parentHandle,
