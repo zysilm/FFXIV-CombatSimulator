@@ -290,7 +290,7 @@ public class MainWindow : IDisposable
                     config.WeaponDropHalfLength = 0.4f;
                     config.WeaponDropBounce = 1.5f;
                     config.WeaponDropFriction = 0.6f;
-                    config.WeaponDropAngularDamping = 0.85f;
+                    config.WeaponDropAngularDamping = 0.95f;
                     config.WeaponDropSolverIterations = 4;
                     config.RagdollHairPhysics = false;
                     config.RagdollHairGravityStrength = 0.5f;

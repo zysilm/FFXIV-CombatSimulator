@@ -315,12 +315,25 @@ public unsafe class WeaponDropController : IDisposable
         var worldPos = skelWorldPos + Vector3.Transform(modelPos, skelWorldRot);
         var worldRot = Quaternion.Normalize(skelWorldRot * modelRot);
 
+        // Force long axis (box local Z) to be horizontal so the weapon can never spawn
+        // standing on its tip (which produces a balanced-edge configuration that never falls flat).
+        // Weapon bones in FFXIV use local Z as the blade/hilt forward direction.
+        var longAxisWorld = Vector3.Transform(Vector3.UnitZ, worldRot);
+        var longAxisFlat  = new Vector3(longAxisWorld.X, 0f, longAxisWorld.Z);
+        float flatLenSq = longAxisFlat.LengthSquared();
+        Vector3 targetLong = flatLenSq > 0.001f
+            ? Vector3.Normalize(longAxisFlat)
+            : Vector3.UnitX; // near-vertical long axis — lay along X
+        worldRot = Quaternion.Normalize(ShortestArcRotation(longAxisWorld, targetLong) * worldRot);
+
         // Zero initial velocity (no jitter, no inheritance) — user requirement.
+        // Speculative margin kept small (proportionate to box thickness) to avoid
+        // pre-contact braking that makes the weapon appear to slow before landing.
         var handle = simulation!.Bodies.Add(BodyDescription.CreateDynamic(
             new RigidPose(worldPos, worldRot),
             default(BodyVelocity),
             weaponInertia,
-            new CollidableDescription(weaponShapeIndex, 0.04f),
+            new CollidableDescription(weaponShapeIndex, 0.005f),
             new BodyActivityDescription(0.01f)));
         return handle;
     }
@@ -416,6 +429,24 @@ public unsafe class WeaponDropController : IDisposable
         simulation = null;
         bufferPool?.Clear();
         bufferPool = null;
+    }
+
+    // Shortest-arc quaternion that rotates unit vector 'from' to unit vector 'to'.
+    private static Quaternion ShortestArcRotation(Vector3 from, Vector3 to)
+    {
+        from = Vector3.Normalize(from);
+        to   = Vector3.Normalize(to);
+        float dot = Vector3.Dot(from, to);
+        if (dot > 0.9999f)  return Quaternion.Identity;
+        if (dot < -0.9999f)
+        {
+            // 180° — pick any perpendicular axis
+            var perp = MathF.Abs(from.X) < 0.57f ? Vector3.UnitX : Vector3.UnitZ;
+            var axis = Vector3.Normalize(Vector3.Cross(from, perp));
+            return new Quaternion(axis.X, axis.Y, axis.Z, 0f);
+        }
+        var cross = Vector3.Cross(from, to);
+        return Quaternion.Normalize(new Quaternion(cross.X, cross.Y, cross.Z, 1f + dot));
     }
 
     public void Dispose()
