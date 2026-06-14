@@ -484,7 +484,9 @@ public unsafe class VictorySequenceController : IDisposable
             approachStageIndex = currentStageIndex;
             ResetApproachPath();
             emotePlayer.ResetEmote(character);
-            character->SetMode(CharacterModes.Normal, 0);
+            log.Debug($"VictorySeq approach init: charMode={character->Mode} stageIdx={currentStageIndex}");
+            if (character->Mode != CharacterModes.Dead)
+                character->SetMode(CharacterModes.Normal, 0);
             grabberVisualState.Kind = ActorVisualStateKind.None;
         }
 
@@ -785,7 +787,8 @@ public unsafe class VictorySequenceController : IDisposable
             if (!grabberMoving)
             {
                 emotePlayer.ResetEmote(character);
-                character->SetMode(CharacterModes.Normal, 0);
+                if (character->Mode != CharacterModes.Dead)
+                    character->SetMode(CharacterModes.Normal, 0);
                 grabberVisualState.Kind = ActorVisualStateKind.None;
                 grabberControlYaw = GetCameraYaw();
             }
