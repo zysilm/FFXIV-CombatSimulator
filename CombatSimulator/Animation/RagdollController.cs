@@ -1932,9 +1932,25 @@ public unsafe class RagdollController : IDisposable
                 AddAnatomicalHingeRestBias(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
                     boneDef, hingeAxisWorld, parentSegDir, segDirWorld);
 
-                // TwistLimit (axial spin of the shin/forearm) is intentionally omitted.
-                // limitSpring(90,1) at ±0.1 rad would be another brick wall on the now-free
-                // axial DOF. Gravity keeps the limb aligned; SwingLimits cover the extremes.
+                // Axial-rotation guard: prevents the shin/forearm from spinning 180° around
+                // its long axis during a high-speed grab. Wide range (±1.5 rad = ±86°) so it
+                // only fires for gross violations. Soft spring (10 Hz vs limitSpring 90 Hz):
+                // at 86°+30° overshoot the force is ~480 Nm — enough to stop a fast spin in
+                // under one frame of overshoot, but not stiff enough to freeze the joint.
+                // Inequality constraints (only active at the boundary) don't produce the
+                // constant large impulses that froze the old Hinge equality constraints.
+                {
+                    var twistBasis = CreateTwistBasis(segDirWorld, hingeAxisWorld);
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                        new TwistLimit
+                        {
+                            LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * twistBasis),
+                            LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis),
+                            MinimumAngle = -1.5f,
+                            MaximumAngle = 1.5f,
+                            SpringSettings = new SpringSettings(10f, 1f),
+                        });
+                }
 
                 if (config.RagdollVerboseLog)
                     log.Info($"[Ragdoll Constraint] '{rb.Name}' BallSocket (hinge replaced) hingeAxis=({hingeAxisWorld.X:F3},{hingeAxisWorld.Y:F3},{hingeAxisWorld.Z:F3})");
