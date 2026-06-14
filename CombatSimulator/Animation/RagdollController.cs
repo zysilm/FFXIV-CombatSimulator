@@ -1608,6 +1608,12 @@ public unsafe class RagdollController : IDisposable
         // collapse the observed knee/elbow segment and bake a fake short limb into physics.
         foreach (var def in BoneDefs)
         {
+            // j_asi_c (Ankle) is a cosmetic deformation bone with no anatomical DOF.
+            // Skipping it here lets j_asi_d connect directly to j_asi_b via the
+            // parent-walk in Pass 3, and j_asi_c's visual position is recovered by
+            // the propagation loop which inherits j_asi_b's physics delta.
+            if (def.AnatomicalRole == AnatomicalRole.Ankle) continue;
+
             if (!nameToIndex.TryGetValue(def.Name, out var boneIdx)) continue;
             if (!boneWorldPositions.TryGetValue(def.Name, out var boneWorldPos)) continue;
             var boneWorldRot = boneWorldRotations[def.Name];
@@ -1836,7 +1842,26 @@ public unsafe class RagdollController : IDisposable
         {
             var rb = ragdollBones[i];
             if (rb.ParentBoneIndex < 0) continue;
-            if (!boneIdxToBodyHandle.TryGetValue(rb.ParentBoneIndex, out var parentHandle)) continue;
+
+            // Walk up the def parent chain when the direct parent has no physics body
+            // (e.g., j_asi_c Ankle bones are skipped in Pass 2). j_asi_d will find
+            // j_asi_b as its effective constraint parent this way.
+            if (!boneIdxToBodyHandle.TryGetValue(rb.ParentBoneIndex, out var parentHandle))
+            {
+                bool found = false;
+                var walkName = rb.Name;
+                while (defByName.TryGetValue(walkName, out var walkDef) && walkDef.ParentName != null)
+                {
+                    walkName = walkDef.ParentName;
+                    if (nameToIndex.TryGetValue(walkName, out var walkIdx) &&
+                        boneIdxToBodyHandle.TryGetValue(walkIdx, out parentHandle))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) continue;
+            }
 
             // When self-collision is enabled, exclude nearby pairs (1-2 hops)
             if (connectedPairs != null)
