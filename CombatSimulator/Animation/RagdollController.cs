@@ -1969,8 +1969,10 @@ public unsafe class RagdollController : IDisposable
                             : jointSpring,
                     });
 
-                // SwingLimit: symmetric cone limiting deviation from initial direction
-                if (boneDef.SwingLimit > 0)
+                // SwingLimit: symmetric cone limiting deviation from initial direction.
+                // Skipped for Ankle (j_asi_c): the AngularServo below handles alignment,
+                // and limitSpring(90Hz) at 0.1 rad fires at 5.7° with ~12,700 N·m.
+                if (boneDef.SwingLimit > 0 && boneDef.AnatomicalRole != AnatomicalRole.Ankle)
                 {
                     var axisChildLocal = Vector3.Transform(segDirWorld,
                         Quaternion.Inverse(childBodyRef.Pose.Orientation));
@@ -1988,9 +1990,11 @@ public unsafe class RagdollController : IDisposable
                 }
 
                 // TwistLimit: asymmetric axial rotation around the bone's segment axis.
-                // Skipped on wide-swing joints where the twist basis becomes unreliable.
+                // Skipped on wide-swing joints (twist basis unreliable) and on Ankle
+                // (j_asi_c) for the same reason as SwingLimit above.
                 if ((boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0) &&
-                    boneDef.SwingLimit <= ballJointMaxSwing)
+                    boneDef.SwingLimit <= ballJointMaxSwing &&
+                    boneDef.AnatomicalRole != AnatomicalRole.Ankle)
                 {
                     var refDir = config.RagdollExperimentalJointFrames
                         ? ComputeExperimentalBallTwistReference(segDirWorld, parentSegDir)
@@ -2011,7 +2015,8 @@ public unsafe class RagdollController : IDisposable
             }
 
             // Angular constraint: soft bodies use AngularServo (spring return to rest pose),
-            // rigid bodies use AngularMotor (velocity damping only)
+            // Ankle (j_asi_c) uses a moderate AngularServo to rigidly track j_asi_b,
+            // rigid bodies use AngularMotor (velocity damping only).
             if (boneDef.SoftBody)
             {
                 simulation.Solver.Add(rb.BodyHandle, parentHandle,
@@ -2020,6 +2025,22 @@ public unsafe class RagdollController : IDisposable
                         TargetRelativeRotationLocalA = Quaternion.Identity,
                         ServoSettings = new ServoSettings(float.MaxValue, 0f, float.MaxValue),
                         SpringSettings = new SpringSettings(boneDef.SoftServoFreq, boneDef.SoftServoDamp),
+                    });
+            }
+            else if (boneDef.AnatomicalRole == AnatomicalRole.Ankle)
+            {
+                // j_asi_c is a short (8 cm) connector bone between j_asi_b (knee) and
+                // j_asi_d (foot). In FFXIV, it tracks j_asi_b as part of the knee bend.
+                // Without coupling, j_asi_c drifts independently during grab and creates
+                // a "lightning-bolt" zigzag in the shin. An AngularServo at 10 Hz keeps
+                // it aligned with j_asi_b (Quaternion.Identity = zero relative rotation)
+                // without the stiffness that caused the Hinge to freeze the joint.
+                simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                    new AngularServo
+                    {
+                        TargetRelativeRotationLocalA = Quaternion.Identity,
+                        ServoSettings = new ServoSettings(float.MaxValue, 0f, float.MaxValue),
+                        SpringSettings = new SpringSettings(10f, 1f),
                     });
             }
             else
