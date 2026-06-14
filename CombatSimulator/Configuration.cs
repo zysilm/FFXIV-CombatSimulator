@@ -213,8 +213,9 @@ public class Configuration : IPluginConfiguration
     public float WeaponDropGravity { get; set; } = 9.8f;
     public float WeaponDropDamping { get; set; } = 0.99f; // 1.0 = no damping, lower = settles faster
     public float WeaponDropMass { get; set; } = 1.5f;
-    public float WeaponDropRadius { get; set; } = 0.025f;
-    public float WeaponDropHalfLength { get; set; } = 0.4f;
+    public float WeaponDropRadius { get; set; } = 0.025f;    // hull half-thickness (thin axis)
+    public float WeaponDropHalfWidth { get; set; } = 0.05f;  // hull half-width (wide axis)
+    public float WeaponDropHalfLength { get; set; } = 0.4f;  // fallback half-length for single-bone weapons
     public float WeaponDropBounce { get; set; } = 1.5f; // Bepu MaximumRecoveryVelocity — higher = bouncier
     public float WeaponDropFriction { get; set; } = 0.6f;
     public int WeaponDropSolverIterations { get; set; } = 4;
