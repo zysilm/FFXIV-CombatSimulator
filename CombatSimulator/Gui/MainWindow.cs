@@ -284,6 +284,7 @@ public class MainWindow : IDisposable
                     config.RagdollFriction = 1.0f;
                     config.WeaponDropGravity = 9.8f;
                     config.WeaponDropDamping = 0.99f;
+                    config.WeaponDropAngularDamping = 0.85f;
                     config.WeaponDropMass = 1.5f;
                     config.WeaponDropRadius = 0.025f;
                     config.WeaponDropHalfLength = 0.4f;
@@ -2901,6 +2902,14 @@ public class MainWindow : IDisposable
                         config.Save();
                     }
                     HelpMarker("Per-frame velocity multiplier. 1.0 = no damping, lower values settle faster.");
+
+                    var wdAngDamping = config.WeaponDropAngularDamping;
+                    if (ImGui.SliderFloat("Angular Damping##weapondrop", ref wdAngDamping, 0.50f, 1.00f, "%.3f"))
+                    {
+                        config.WeaponDropAngularDamping = wdAngDamping;
+                        config.Save();
+                    }
+                    HelpMarker("Spin damping per frame. Lower than Linear Damping so the capsule stops rotating on contact and does not roll away.");
 
                     var wdBounce = config.WeaponDropBounce;
                     if (ImGui.SliderFloat("Bounce##weapondrop", ref wdBounce, 0.0f, 5.0f, "%.2f"))

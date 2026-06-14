@@ -211,7 +211,8 @@ public class Configuration : IPluginConfiguration
     public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
     // Weapon drop physics — runs as part of ragdoll; weapon detaches and falls on death
     public float WeaponDropGravity { get; set; } = 9.8f;
-    public float WeaponDropDamping { get; set; } = 0.99f; // 1.0 = no damping, lower = settles faster
+    public float WeaponDropDamping { get; set; } = 0.99f;
+    public float WeaponDropAngularDamping { get; set; } = 0.85f; // much stronger than linear: kills spin fast so capsule stops rolling
     public float WeaponDropMass { get; set; } = 1.5f;
     public float WeaponDropRadius { get; set; } = 0.025f;
     public float WeaponDropHalfLength { get; set; } = 0.4f;

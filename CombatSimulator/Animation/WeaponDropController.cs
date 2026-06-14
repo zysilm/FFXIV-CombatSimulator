@@ -38,6 +38,7 @@ public unsafe class WeaponDropController : IDisposable
     // (existing weapon bodies are dropped — they'll respawn on next death).
     private float simGravity;
     private float simDamping;
+    private float simAngularDamping;
     private float simBounce;
     private float simFriction;
     private int simSolverIterations;
@@ -366,6 +367,7 @@ public unsafe class WeaponDropController : IDisposable
     {
         return simGravity != config.WeaponDropGravity
             || simDamping != config.WeaponDropDamping
+            || simAngularDamping != config.WeaponDropAngularDamping
             || simBounce != config.WeaponDropBounce
             || simFriction != config.WeaponDropFriction
             || simSolverIterations != config.WeaponDropSolverIterations
@@ -380,6 +382,7 @@ public unsafe class WeaponDropController : IDisposable
 
         simGravity = config.WeaponDropGravity;
         simDamping = config.WeaponDropDamping;
+        simAngularDamping = config.WeaponDropAngularDamping;
         simBounce = config.WeaponDropBounce;
         simFriction = config.WeaponDropFriction;
         simSolverIterations = config.WeaponDropSolverIterations;
@@ -391,7 +394,7 @@ public unsafe class WeaponDropController : IDisposable
         simulation = BepuSimulation.Create(
             bufferPool,
             new WeaponDropNarrowPhaseCallbacks { Friction = simFriction, MaxRecoveryVelocity = simBounce },
-            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -simGravity, 0), simDamping),
+            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -simGravity, 0), simDamping, simAngularDamping),
             new SolveDescription(simSolverIterations, 1));
 
         var weaponShape = new Capsule(config.WeaponDropRadius, config.WeaponDropHalfLength * 2f);
@@ -455,19 +458,23 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
 {
     private Vector3 gravity;
     private float linearDamping;
+    private float angularDamping;
     private Vector3Wide gravityDt;
-    private Vector<float> dampingDt;
+    private Vector<float> linearDampingDt;
+    private Vector<float> angularDampingDt;
 
     public readonly AngularIntegrationMode AngularIntegrationMode => AngularIntegrationMode.Nonconserving;
     public readonly bool AllowSubstepsForUnconstrainedBodies => false;
     public readonly bool IntegrateVelocityForKinematics => false;
 
-    public WeaponDropPoseIntegratorCallbacks(Vector3 gravity, float linearDamping)
+    public WeaponDropPoseIntegratorCallbacks(Vector3 gravity, float linearDamping, float angularDamping)
     {
         this.gravity = gravity;
         this.linearDamping = linearDamping;
+        this.angularDamping = angularDamping;
         this.gravityDt = default;
-        this.dampingDt = default;
+        this.linearDampingDt = default;
+        this.angularDampingDt = default;
     }
 
     public void Initialize(BepuSimulation simulation) { }
@@ -477,7 +484,8 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
         gravityDt.X = new Vector<float>(gravity.X * dt);
         gravityDt.Y = new Vector<float>(gravity.Y * dt);
         gravityDt.Z = new Vector<float>(gravity.Z * dt);
-        dampingDt = new Vector<float>(MathF.Pow(linearDamping, dt * 60f));
+        linearDampingDt  = new Vector<float>(MathF.Pow(linearDamping,  dt * 60f));
+        angularDampingDt = new Vector<float>(MathF.Pow(angularDamping, dt * 60f));
     }
 
     public void IntegrateVelocity(
@@ -485,11 +493,11 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
         BodyInertiaWide localInertia, Vector<int> integrationMask, int workerIndex,
         Vector<float> dt, ref BodyVelocityWide velocity)
     {
-        velocity.Linear.X = (velocity.Linear.X + gravityDt.X) * dampingDt;
-        velocity.Linear.Y = (velocity.Linear.Y + gravityDt.Y) * dampingDt;
-        velocity.Linear.Z = (velocity.Linear.Z + gravityDt.Z) * dampingDt;
-        velocity.Angular.X *= dampingDt;
-        velocity.Angular.Y *= dampingDt;
-        velocity.Angular.Z *= dampingDt;
+        velocity.Linear.X = (velocity.Linear.X + gravityDt.X) * linearDampingDt;
+        velocity.Linear.Y = (velocity.Linear.Y + gravityDt.Y) * linearDampingDt;
+        velocity.Linear.Z = (velocity.Linear.Z + gravityDt.Z) * linearDampingDt;
+        velocity.Angular.X *= angularDampingDt;
+        velocity.Angular.Y *= angularDampingDt;
+        velocity.Angular.Z *= angularDampingDt;
     }
 }
