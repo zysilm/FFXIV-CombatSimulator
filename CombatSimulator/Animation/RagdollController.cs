@@ -1947,22 +1947,24 @@ public unsafe class RagdollController : IDisposable
                 AddAnatomicalHingeRestBias(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
                     boneDef, hingeAxisWorld, parentSegDir, segDirWorld);
 
-                // Axial-rotation guard: prevents the shin/forearm from spinning 180° around
-                // its long axis during a high-speed grab. Wide range (±1.5 rad = ±86°) so it
-                // only fires for gross violations. Soft spring (10 Hz vs limitSpring 90 Hz):
-                // at 86°+30° overshoot the force is ~480 Nm — enough to stop a fast spin in
-                // under one frame of overshoot, but not stiff enough to freeze the joint.
-                // Inequality constraints (only active at the boundary) don't produce the
-                // constant large impulses that froze the old Hinge equality constraints.
+                // Axial-rotation guard: prevents the shin/forearm from spinning around its
+                // long axis. Anatomical limits differ: the tibia (shin) allows only ~±10°
+                // of axial rotation in a relaxed dead leg, so knees use a tight ±0.2 rad
+                // (≈±11°). The forearm has genuine pronation/supination (~±80°) so elbows
+                // use a wider ±0.8 rad. Soft 10 Hz spring — inequality constraint only fires
+                // at the boundary, avoiding the constant large impulses that froze the old
+                // Hinge equality constraints.
                 {
+                    var isKnee = boneDef.AnatomicalRole == AnatomicalRole.Knee;
+                    var twistRange = isKnee ? 0.2f : 0.8f;
                     var twistBasis = CreateTwistBasis(segDirWorld, hingeAxisWorld);
                     simulation.Solver.Add(rb.BodyHandle, parentHandle,
                         new TwistLimit
                         {
                             LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * twistBasis),
                             LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis),
-                            MinimumAngle = -1.5f,
-                            MaximumAngle = 1.5f,
+                            MinimumAngle = -twistRange,
+                            MaximumAngle =  twistRange,
                             SpringSettings = new SpringSettings(10f, 1f),
                         });
                 }
