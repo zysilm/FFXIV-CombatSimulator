@@ -1727,6 +1727,26 @@ public unsafe class RagdollController : IDisposable
             }
 
             // Rotation offset: capsuleWorldRot * offset = boneWorldRot
+            // j_asi_c (Ankle): override capsule direction to match parent (j_asi_b).
+            // The death animation bends j_asi_c away from j_asi_b before ragdoll fires;
+            // any orientation-snapshotting constraint (Weld) would then bake that bend
+            // permanently. Aligning the physics body to the parent direction at creation
+            // means the Weld snapshots a collinear pose (LocalOrientation ≈ Identity)
+            // regardless of activation timing.
+            if (def.AnatomicalRole == AnatomicalRole.Ankle &&
+                def.ParentName != null &&
+                boneWorldPositions.TryGetValue(def.ParentName, out var ankleParentPos) &&
+                boneWorldRotations.TryGetValue(def.ParentName, out var ankleParentBoneRot))
+            {
+                var parentToAnkle = boneWorldPos - ankleParentPos;
+                var ptaLen = parentToAnkle.Length();
+                if (ptaLen > 0.01f)
+                {
+                    capsuleWorldRot = CreateCapsuleRotation(parentToAnkle, ankleParentBoneRot);
+                    capsuleCenter   = boneWorldPos + (effectiveHalfLength / ptaLen) * parentToAnkle;
+                }
+            }
+
             var capsuleToBoneOffset = Quaternion.Normalize(
                 Quaternion.Inverse(capsuleWorldRot) * boneWorldRot);
 
@@ -1974,49 +1994,21 @@ public unsafe class RagdollController : IDisposable
             }
             else
             {
-                // j_asi_c (Ankle): fully collinear constraint via SwingLimit(0) + TwistLimit(0,0).
-                // Unlike a Weld, these constraints don't snapshot the relative orientation at
-                // activation. Both axes are initialised to the same world direction, so the
-                // initial measured angle is always 0 regardless of the activation pose. The
-                // spring then drives any deviation back to 0, keeping j_asi_c collinear with
-                // j_asi_b at all times without baking the death-animation bend.
+                // j_asi_c (Ankle): Weld to parent (j_asi_b). The capsule was already
+                // aligned to the parent direction in Pass 2, so the snapshot here is
+                // LocalOrientation ≈ Identity — no animation bend is baked in.
                 if (boneDef.AnatomicalRole == AnatomicalRole.Ankle)
                 {
-                    var ankleSpring = new SpringSettings(60f, 1f);
-
+                    var weldOffset = parentBodyRef.Pose.Position - childBodyRef.Pose.Position;
                     simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                        new BallSocket
+                        new Weld
                         {
-                            LocalOffsetA = childLocalAnchor,
-                            LocalOffsetB = parentLocalAnchor,
+                            LocalOffset = Vector3.Transform(
+                                weldOffset, Quaternion.Inverse(childBodyRef.Pose.Orientation)),
+                            LocalOrientation = Quaternion.Normalize(
+                                Quaternion.Inverse(childBodyRef.Pose.Orientation) * parentBodyRef.Pose.Orientation),
                             SpringSettings = jointSpring,
                         });
-
-                    var ankleAxisChild  = Vector3.Normalize(Vector3.Transform(segDirWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
-                    var ankleAxisParent = Vector3.Normalize(Vector3.Transform(segDirWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
-                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                        new SwingLimit
-                        {
-                            AxisLocalA = ankleAxisChild,
-                            AxisLocalB = ankleAxisParent,
-                            MaximumSwingAngle = 0f,
-                            SpringSettings = ankleSpring,
-                        });
-
-                    var ankleRefDir    = config.RagdollExperimentalJointFrames
-                        ? ComputeExperimentalBallTwistReference(segDirWorld, parentSegDir)
-                        : ComputeLegacyBallTwistReference(segDirWorld);
-                    var ankleTwistBasis = CreateTwistBasis(segDirWorld, ankleRefDir);
-                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                        new TwistLimit
-                        {
-                            LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * ankleTwistBasis),
-                            LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * ankleTwistBasis),
-                            MinimumAngle = 0f,
-                            MaximumAngle = 0f,
-                            SpringSettings = ankleSpring,
-                        });
-
                     continue;
                 }
 
