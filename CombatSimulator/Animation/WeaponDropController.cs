@@ -38,14 +38,12 @@ public unsafe class WeaponDropController : IDisposable
     // (existing weapon bodies are dropped — they'll respawn on next death).
     private float simGravity;
     private float simDamping;
-    private float simAngularDamping;
     private float simBounce;
     private float simFriction;
     private int simSolverIterations;
-    // Snapshot of the shape/inertia inputs — changing these triggers a rebuild.
-    // simRadius/simHalfWidth/simHalfLength control the per-weapon convex hull cross-section.
+    // Snapshot of the shape/inertia inputs too — the weapon capsule shape and inertia are
+    // cached once at sim creation, so changing these must also trigger a rebuild or they go stale.
     private float simRadius;
-    private float simHalfWidth;
     private float simHalfLength;
     private float simMass;
 
@@ -56,14 +54,6 @@ public unsafe class WeaponDropController : IDisposable
         public BodyHandle? Off;
         public int MainBoneIndex = -1;
         public int OffBoneIndex = -1;
-        // Per-entry convex hull shapes (null = shared capsule fallback was used).
-        // Stored so we can RemoveAndDispose when this entry is cleaned up.
-        public TypedIndex? MainShapeIndex;
-        public TypedIndex? OffShapeIndex;
-        // Hull centroid in weapon model-space. Body pose.Position = centroid world pos;
-        // DriveWeapon subtracts it to recover the weapon root world pos for sk->Transform.
-        public Vector3 MainHullCenter;
-        public Vector3 OffHullCenter;
         public StaticHandle? GroundTile;
         public TypedIndex? GroundShape;
     }
@@ -128,12 +118,10 @@ public unsafe class WeaponDropController : IDisposable
         if (simulation == null) return;
         if (entry.Main.HasValue) simulation.Bodies.Remove(entry.Main.Value);
         if (entry.Off.HasValue) simulation.Bodies.Remove(entry.Off.Value);
-        // Per-entry convex hull shapes own pooled BVH/vertex buffers — RemoveAndDispose not Remove.
-        if (entry.MainShapeIndex.HasValue && bufferPool != null)
-            simulation.Shapes.RemoveAndDispose(entry.MainShapeIndex.Value, bufferPool);
-        if (entry.OffShapeIndex.HasValue && bufferPool != null)
-            simulation.Shapes.RemoveAndDispose(entry.OffShapeIndex.Value, bufferPool);
         if (entry.GroundTile.HasValue) simulation.Statics.Remove(entry.GroundTile.Value);
+        // RemoveAndDispose (not Remove): the per-drop terrain patch is a Mesh that owns a
+        // pooled triangle buffer + acceleration tree. Plain Remove drops the shape but leaks
+        // those buffers, and this weapon simulation lives for the whole session.
         if (entry.GroundShape.HasValue && bufferPool != null)
             simulation.Shapes.RemoveAndDispose(entry.GroundShape.Value, bufferPool);
     }
@@ -175,12 +163,12 @@ public unsafe class WeaponDropController : IDisposable
                 if (entry.Main.HasValue)
                 {
                     var mainDraw = GetWeaponDrawObject(addr, DrawDataContainer.WeaponSlot.MainHand);
-                    if (mainDraw != null) DriveWeapon(mainDraw, entry.Main.Value, entry.MainHullCenter);
+                    if (mainDraw != null) DriveWeapon(mainDraw, entry.Main.Value);
                 }
                 if (entry.Off.HasValue)
                 {
                     var offDraw = GetWeaponDrawObject(addr, DrawDataContainer.WeaponSlot.OffHand);
-                    if (offDraw != null) DriveWeapon(offDraw, entry.Off.Value, entry.OffHullCenter);
+                    if (offDraw != null) DriveWeapon(offDraw, entry.Off.Value);
                 }
             }
         }
@@ -212,11 +200,9 @@ public unsafe class WeaponDropController : IDisposable
 
         var entry = new Entry { CharacterAddress = characterAddress };
         if (mainDraw != null)
-            entry.Main = TryCreateWeaponBody(skel, WeaponMainHandBones, skelWorldPos, skelWorldRot,
-                mainDraw, out entry.MainBoneIndex, out entry.MainShapeIndex, out entry.MainHullCenter);
+            entry.Main = TryCreateWeaponBody(skel, WeaponMainHandBones, skelWorldPos, skelWorldRot, out entry.MainBoneIndex);
         if (offDraw != null)
-            entry.Off = TryCreateWeaponBody(skel, WeaponOffHandBones, skelWorldPos, skelWorldRot,
-                offDraw, out entry.OffBoneIndex, out entry.OffShapeIndex, out entry.OffHullCenter);
+            entry.Off = TryCreateWeaponBody(skel, WeaponOffHandBones, skelWorldPos, skelWorldRot, out entry.OffBoneIndex);
 
         if (!entry.Main.HasValue && !entry.Off.HasValue)
         {
@@ -311,13 +297,9 @@ public unsafe class WeaponDropController : IDisposable
     }
 
     private BodyHandle? TryCreateWeaponBody(SkeletonAccess skel, string[] boneCandidates,
-        Vector3 skelWorldPos, Quaternion skelWorldRot, DrawObject* weaponDraw,
-        out int boneIndex, out TypedIndex? perEntryShape, out Vector3 hullCenter)
+        Vector3 skelWorldPos, Quaternion skelWorldRot, out int boneIndex)
     {
         boneIndex = -1;
-        perEntryShape = null;
-        hullCenter = Vector3.Zero;
-
         foreach (var name in boneCandidates)
         {
             var idx = boneService.ResolveBoneIndex(skel, name);
@@ -328,215 +310,17 @@ public unsafe class WeaponDropController : IDisposable
         ref var mt = ref skel.Pose->ModelPose.Data[boneIndex];
         var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
         var modelRot = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
-        // gripWorldPos = where the weapon skeleton root sits in world space
-        var gripWorldPos = skelWorldPos + Vector3.Transform(modelPos, skelWorldRot);
-        var gripWorldRot = Quaternion.Normalize(skelWorldRot * modelRot);
+        var worldPos = skelWorldPos + Vector3.Transform(modelPos, skelWorldRot);
+        var worldRot = Quaternion.Normalize(skelWorldRot * modelRot);
 
-        TypedIndex shapeIdx;
-        BodyInertia inertia;
-        float speculativeMargin;
-        if (TryBuildWeaponHull(weaponDraw, out var hullIdx, out var hullInertia, out hullCenter))
-        {
-            shapeIdx = hullIdx;
-            inertia = hullInertia;
-            perEntryShape = hullIdx;
-            // Keep speculative margin below half-thickness to avoid ghost contacts.
-            speculativeMargin = MathF.Max(0.005f, config.WeaponDropRadius * 0.4f);
-            // Fully override spawn rotation: spine horizontal, wide face down, thin face up.
-            // FlattenHullSpine (previous) only fixed the spine but left the roll free,
-            // so the hull still spawned standing on its edge. FlatHullRotation constructs
-            // the rotation from the three target axes directly, ignoring original pitch/roll.
-            gripWorldRot = FlatHullRotation(gripWorldRot);
-        }
-        else
-        {
-            log.Info("WeaponDropController: hull build failed — falling back to capsule");
-            shapeIdx = weaponShapeIndex;
-            inertia = weaponInertia;
-            speculativeMargin = 0.04f;
-        }
-
-        // Body pose.Position = hull centroid in world space.
-        // For the capsule fallback hullCenter is Zero, so bodyWorldPos = gripWorldPos (unchanged).
-        var bodyWorldPos = gripWorldPos + Vector3.Transform(hullCenter, gripWorldRot);
-
+        // Zero initial velocity (no jitter, no inheritance) — user requirement.
         var handle = simulation!.Bodies.Add(BodyDescription.CreateDynamic(
-            new RigidPose(bodyWorldPos, gripWorldRot),
+            new RigidPose(worldPos, worldRot),
             default(BodyVelocity),
-            inertia,
-            new CollidableDescription(shapeIdx, speculativeMargin),
+            weaponInertia,
+            new CollidableDescription(weaponShapeIndex, 0.04f),
             new BodyActivityDescription(0.01f)));
         return handle;
-    }
-
-    /// <summary>
-    /// Build a flat convex hull from the weapon draw object's own skeleton bones.
-    /// Points are in weapon model space (= body local space). The hull will naturally
-    /// settle flat because halfWidth >> halfThick (halfThick = WeaponDropRadius,
-    /// halfWidth = WeaponDropHalfWidth). Returns false if bones are inaccessible;
-    /// caller falls back to the shared capsule shape.
-    /// </summary>
-    private bool TryBuildWeaponHull(DrawObject* weaponDraw,
-        out TypedIndex shapeIndex, out BodyInertia inertia, out Vector3 hullCenter)
-    {
-        shapeIndex = default;
-        inertia = default;
-        hullCenter = Vector3.Zero;
-
-        var cb = (CharacterBase*)weaponDraw;
-        var sk = cb->Skeleton;
-        if (sk == null || sk->PartialSkeletonCount < 1) return false;
-
-        var partial = &sk->PartialSkeletons[0];
-        var pose = partial->GetHavokPose(0);
-        if (pose == null || pose->Skeleton == null) return false;
-
-        var boneCount = pose->ModelPose.Length;
-        if (boneCount < 1) return false;
-
-        // Bone positions in weapon model space (skeleton root = body local origin)
-        var bonePts = new Vector3[boneCount];
-        for (var i = 0; i < boneCount; i++)
-        {
-            ref var b = ref pose->ModelPose.Data[i];
-            bonePts[i] = new Vector3(b.Translation.X, b.Translation.Y, b.Translation.Z);
-        }
-
-        // Find the two bones farthest apart — their direction defines the weapon's long axis.
-        var idxA = 0; var idxB = 0; float maxDist2 = 0f;
-        for (var i = 0; i < boneCount; i++)
-        for (var j = i + 1; j < boneCount; j++)
-        {
-            var d = Vector3.DistanceSquared(bonePts[i], bonePts[j]);
-            if (d > maxDist2) { maxDist2 = d; idxA = i; idxB = j; }
-        }
-
-        // Spine direction. For single-bone/collinear weapons fall back to weapon local +Z.
-        Vector3 spineDir;
-        if (maxDist2 < 0.0001f) // < 1 cm spread
-        {
-            // Weapon skeleton root rotation gives us the correct local Z in model space.
-            var skelRot = new Quaternion(
-                sk->Transform.Rotation.X, sk->Transform.Rotation.Y,
-                sk->Transform.Rotation.Z, sk->Transform.Rotation.W);
-            // Local Z in model space = inverse(skelRot) * world Z is wrong; we want the
-            // local-forward axis itself, which in model space is simply UnitZ before any
-            // world rotation is applied.  The bones are already in model space so just use UnitZ.
-            spineDir = Vector3.UnitZ;
-        }
-        else
-        {
-            spineDir = Vector3.Normalize(bonePts[idxB] - bonePts[idxA]);
-        }
-
-        // Two perpendicular axes for the flat cross-section.
-        // perp1 ≈ horizontal blade-width direction, perp2 ≈ blade-thickness direction.
-        var worldUp = MathF.Abs(Vector3.Dot(spineDir, Vector3.UnitY)) > 0.9f
-            ? Vector3.UnitX : Vector3.UnitY;
-        var perp1 = Vector3.Normalize(Vector3.Cross(spineDir, worldUp));
-        var perp2 = Vector3.Cross(spineDir, perp1);
-
-        var halfThick = config.WeaponDropRadius;
-        var halfWide  = config.WeaponDropHalfWidth;
-
-        // A cross-section rectangle at position p: 4 corner points.
-        var hullPts = new List<Vector3>(boneCount * 4 + 8);
-        void AddCross(Vector3 p)
-        {
-            hullPts.Add(p + halfWide * perp1 + halfThick * perp2);
-            hullPts.Add(p - halfWide * perp1 + halfThick * perp2);
-            hullPts.Add(p + halfWide * perp1 - halfThick * perp2);
-            hullPts.Add(p - halfWide * perp1 - halfThick * perp2);
-        }
-
-        foreach (var bp in bonePts) AddCross(bp);
-
-        // For single-bone or degenerate weapons: extend along spine so hull is non-degenerate.
-        if (maxDist2 < 0.0001f)
-        {
-            var root = bonePts[0];
-            AddCross(root + config.WeaponDropHalfLength * spineDir);
-            AddCross(root - config.WeaponDropHalfLength * spineDir);
-        }
-
-        if (hullPts.Count < 4) return false;
-
-        bufferPool!.Take<Vector3>(hullPts.Count, out var buf);
-        for (var i = 0; i < hullPts.Count; i++) buf[i] = hullPts[i];
-        var hull = new ConvexHull(buf, bufferPool, out var center);
-        bufferPool.Return(ref buf);
-
-        hullCenter = center;
-        shapeIndex = simulation!.Shapes.Add(hull);
-        inertia = hull.ComputeInertia(config.WeaponDropMass);
-        log.Info($"WeaponDropController: hull built — bones={boneCount}, hullPts={hullPts.Count}, center=({center.X:F3},{center.Y:F3},{center.Z:F3})");
-        return true;
-    }
-
-    /// <summary>
-    /// Build a spawn rotation that lays the hull flat on the ground:
-    ///   local Z (spine)  → horizontal direction derived from grip yaw
-    ///   local X (wide)   → horizontal, perpendicular to spine
-    ///   local Y (thin)   → world up (vertical)
-    /// Fully ignores the grip's pitch and roll so the weapon always spawns
-    /// wide-face-down regardless of what the death animation hand pose is.
-    /// FlattenHullSpine (previous attempt) only fixed the spine direction but left
-    /// local X/Y free to roll, so the hull still spawned on its edge.
-    /// </summary>
-    private static Quaternion FlatHullRotation(Quaternion gripWorldRot)
-    {
-        // Determine which horizontal direction the weapon roughly points.
-        var spineWorld = Vector3.Transform(Vector3.UnitZ, gripWorldRot);
-        var flatSpine = new Vector3(spineWorld.X, 0f, spineWorld.Z);
-        var len = flatSpine.Length();
-        if (len < 0.1f)
-        {
-            // Spine near-vertical: use local +X as the weapon direction instead.
-            var sideWorld = Vector3.Transform(Vector3.UnitX, gripWorldRot);
-            flatSpine = new Vector3(sideWorld.X, 0f, sideWorld.Z);
-            len = flatSpine.Length();
-            flatSpine = len > 0.01f ? flatSpine / len : new Vector3(1f, 0f, 0f);
-        }
-        else flatSpine /= len;
-
-        // Build orthonormal frame: local Z = flatSpine, local Y = worldUp, local X = right.
-        // With this rotation applied, hull points at (±halfWide, ±halfThick, z) land at
-        //   ±halfWide * right  (horizontal) and ±halfThick * worldUp (vertical),
-        // so the wide face is horizontal and the thin face is vertical — weapon lies flat.
-        var right = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, flatSpine));
-        return QuaternionFromAxes(right, Vector3.UnitY, flatSpine);
-    }
-
-    /// <summary>Convert three orthonormal world-space axes (local X/Y/Z) to a quaternion.</summary>
-    private static Quaternion QuaternionFromAxes(Vector3 right, Vector3 up, Vector3 forward)
-    {
-        // Rotation matrix columns: col0=right(=localX), col1=up(=localY), col2=forward(=localZ)
-        float m00 = right.X,   m01 = up.X,   m02 = forward.X;
-        float m10 = right.Y,   m11 = up.Y,   m12 = forward.Y;
-        float m20 = right.Z,   m21 = up.Z,   m22 = forward.Z;
-        float trace = m00 + m11 + m22;
-        float qx, qy, qz, qw;
-        if (trace > 0f)
-        {
-            float s = 0.5f / MathF.Sqrt(trace + 1f);
-            qw = 0.25f / s; qx = (m21 - m12) * s; qy = (m02 - m20) * s; qz = (m10 - m01) * s;
-        }
-        else if (m00 > m11 && m00 > m22)
-        {
-            float s = 2f * MathF.Sqrt(1f + m00 - m11 - m22);
-            qw = (m21 - m12) / s; qx = 0.25f * s; qy = (m01 + m10) / s; qz = (m02 + m20) / s;
-        }
-        else if (m11 > m22)
-        {
-            float s = 2f * MathF.Sqrt(1f + m11 - m00 - m22);
-            qw = (m02 - m20) / s; qx = (m01 + m10) / s; qy = 0.25f * s; qz = (m12 + m21) / s;
-        }
-        else
-        {
-            float s = 2f * MathF.Sqrt(1f + m22 - m00 - m11);
-            qw = (m10 - m01) / s; qx = (m02 + m20) / s; qy = (m12 + m21) / s; qz = 0.25f * s;
-        }
-        return Quaternion.Normalize(new Quaternion(qx, qy, qz, qw));
     }
 
     /// <summary>Resolve the drawn weapon DrawObject for a slot, or null if unarmed/unloaded.</summary>
@@ -548,35 +332,33 @@ public unsafe class WeaponDropController : IDisposable
     }
 
     /// <summary>Drive a weapon DrawObject's world transform from its rigid body.</summary>
-    /// <param name="hullCenter">
-    /// Hull centroid in weapon model space. Body pose.Position = centroid world pos.
-    /// We recover the model root world position by subtracting the rotated centroid offset
-    /// so the weapon mesh renders at the correct world location. Zero for the capsule fallback.
-    /// </param>
-    private void DriveWeapon(DrawObject* weaponDraw, BodyHandle bodyHandle, Vector3 hullCenter)
+    private void DriveWeapon(DrawObject* weaponDraw, BodyHandle bodyHandle)
     {
         if (simulation == null) return;
 
         var cb = (CharacterBase*)weaponDraw;
         var bodyRef = simulation.Bodies.GetBodyReference(bodyHandle);
+        var pos = bodyRef.Pose.Position;
         var rot = bodyRef.Pose.Orientation;
-        // body pose.Position is the hull centroid in world space.
-        // Weapon skeleton root = centroid - rotate(hullCenter).
-        var rootPos = bodyRef.Pose.Position - Vector3.Transform(hullCenter, rot);
 
+        // The weapon mesh is skinned to its OWN skeleton; the attach normally
+        // writes that skeleton's root world Transform from the owner hand bone.
+        // Overwrite it here (after the attach ran this frame) so the rendered
+        // weapon follows the rigid body — the same way ragdoll overwrites body
+        // bone ModelPose. DrawObject.Position alone does NOT move the mesh.
         var sk = cb->Skeleton;
         if (sk != null)
         {
-            sk->Transform.Position.X = rootPos.X;
-            sk->Transform.Position.Y = rootPos.Y;
-            sk->Transform.Position.Z = rootPos.Z;
+            sk->Transform.Position.X = pos.X;
+            sk->Transform.Position.Y = pos.Y;
+            sk->Transform.Position.Z = pos.Z;
             sk->Transform.Rotation.X = rot.X;
             sk->Transform.Rotation.Y = rot.Y;
             sk->Transform.Rotation.Z = rot.Z;
             sk->Transform.Rotation.W = rot.W;
         }
 
-        weaponDraw->Position = rootPos;
+        weaponDraw->Position = pos;
         weaponDraw->Rotation = rot;
     }
 
@@ -584,12 +366,10 @@ public unsafe class WeaponDropController : IDisposable
     {
         return simGravity != config.WeaponDropGravity
             || simDamping != config.WeaponDropDamping
-            || simAngularDamping != config.WeaponDropAngularDamping
             || simBounce != config.WeaponDropBounce
             || simFriction != config.WeaponDropFriction
             || simSolverIterations != config.WeaponDropSolverIterations
             || simRadius != config.WeaponDropRadius
-            || simHalfWidth != config.WeaponDropHalfWidth
             || simHalfLength != config.WeaponDropHalfLength
             || simMass != config.WeaponDropMass;
     }
@@ -600,12 +380,10 @@ public unsafe class WeaponDropController : IDisposable
 
         simGravity = config.WeaponDropGravity;
         simDamping = config.WeaponDropDamping;
-        simAngularDamping = config.WeaponDropAngularDamping;
         simBounce = config.WeaponDropBounce;
         simFriction = config.WeaponDropFriction;
         simSolverIterations = config.WeaponDropSolverIterations;
         simRadius = config.WeaponDropRadius;
-        simHalfWidth = config.WeaponDropHalfWidth;
         simHalfLength = config.WeaponDropHalfLength;
         simMass = config.WeaponDropMass;
 
@@ -613,10 +391,9 @@ public unsafe class WeaponDropController : IDisposable
         simulation = BepuSimulation.Create(
             bufferPool,
             new WeaponDropNarrowPhaseCallbacks { Friction = simFriction, MaxRecoveryVelocity = simBounce },
-            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -simGravity, 0), simDamping, simAngularDamping),
+            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -simGravity, 0), simDamping),
             new SolveDescription(simSolverIterations, 1));
 
-        // Shared capsule: fallback for weapons whose skeleton bones are inaccessible.
         var weaponShape = new Capsule(config.WeaponDropRadius, config.WeaponDropHalfLength * 2f);
         weaponShapeIndex = simulation.Shapes.Add(weaponShape);
         weaponInertia = weaponShape.ComputeInertia(config.WeaponDropMass);
@@ -678,23 +455,19 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
 {
     private Vector3 gravity;
     private float linearDamping;
-    private float angularDamping;
     private Vector3Wide gravityDt;
-    private Vector<float> linearDampingDt;
-    private Vector<float> angularDampingDt;
+    private Vector<float> dampingDt;
 
     public readonly AngularIntegrationMode AngularIntegrationMode => AngularIntegrationMode.Nonconserving;
     public readonly bool AllowSubstepsForUnconstrainedBodies => false;
     public readonly bool IntegrateVelocityForKinematics => false;
 
-    public WeaponDropPoseIntegratorCallbacks(Vector3 gravity, float linearDamping, float angularDamping)
+    public WeaponDropPoseIntegratorCallbacks(Vector3 gravity, float linearDamping)
     {
         this.gravity = gravity;
         this.linearDamping = linearDamping;
-        this.angularDamping = angularDamping;
         this.gravityDt = default;
-        this.linearDampingDt = default;
-        this.angularDampingDt = default;
+        this.dampingDt = default;
     }
 
     public void Initialize(BepuSimulation simulation) { }
@@ -704,8 +477,7 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
         gravityDt.X = new Vector<float>(gravity.X * dt);
         gravityDt.Y = new Vector<float>(gravity.Y * dt);
         gravityDt.Z = new Vector<float>(gravity.Z * dt);
-        linearDampingDt  = new Vector<float>(MathF.Pow(linearDamping,  dt * 60f));
-        angularDampingDt = new Vector<float>(MathF.Pow(angularDamping, dt * 60f));
+        dampingDt = new Vector<float>(MathF.Pow(linearDamping, dt * 60f));
     }
 
     public void IntegrateVelocity(
@@ -713,11 +485,11 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
         BodyInertiaWide localInertia, Vector<int> integrationMask, int workerIndex,
         Vector<float> dt, ref BodyVelocityWide velocity)
     {
-        velocity.Linear.X = (velocity.Linear.X + gravityDt.X) * linearDampingDt;
-        velocity.Linear.Y = (velocity.Linear.Y + gravityDt.Y) * linearDampingDt;
-        velocity.Linear.Z = (velocity.Linear.Z + gravityDt.Z) * linearDampingDt;
-        velocity.Angular.X *= angularDampingDt;
-        velocity.Angular.Y *= angularDampingDt;
-        velocity.Angular.Z *= angularDampingDt;
+        velocity.Linear.X = (velocity.Linear.X + gravityDt.X) * dampingDt;
+        velocity.Linear.Y = (velocity.Linear.Y + gravityDt.Y) * dampingDt;
+        velocity.Linear.Z = (velocity.Linear.Z + gravityDt.Z) * dampingDt;
+        velocity.Angular.X *= dampingDt;
+        velocity.Angular.Y *= dampingDt;
+        velocity.Angular.Z *= dampingDt;
     }
 }

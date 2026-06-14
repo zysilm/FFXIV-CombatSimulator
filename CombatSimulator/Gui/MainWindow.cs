@@ -284,10 +284,8 @@ public class MainWindow : IDisposable
                     config.RagdollFriction = 1.0f;
                     config.WeaponDropGravity = 9.8f;
                     config.WeaponDropDamping = 0.99f;
-                    config.WeaponDropAngularDamping = 0.94f;
                     config.WeaponDropMass = 1.5f;
                     config.WeaponDropRadius = 0.025f;
-                    config.WeaponDropHalfWidth = 0.05f;
                     config.WeaponDropHalfLength = 0.4f;
                     config.WeaponDropBounce = 1.5f;
                     config.WeaponDropFriction = 0.6f;
@@ -2897,20 +2895,12 @@ public class MainWindow : IDisposable
                     }
 
                     var wdDamping = config.WeaponDropDamping;
-                    if (ImGui.SliderFloat("Linear Damping##weapondrop", ref wdDamping, 0.80f, 1.00f, "%.3f"))
+                    if (ImGui.SliderFloat("Damping##weapondrop", ref wdDamping, 0.80f, 1.00f, "%.3f"))
                     {
                         config.WeaponDropDamping = wdDamping;
                         config.Save();
                     }
-                    HelpMarker("Per-frame linear velocity multiplier. 1.0 = no damping, lower values slow the weapon faster.");
-
-                    var wdAngDamping = config.WeaponDropAngularDamping;
-                    if (ImGui.SliderFloat("Angular Damping##weapondrop", ref wdAngDamping, 0.80f, 1.00f, "%.3f"))
-                    {
-                        config.WeaponDropAngularDamping = wdAngDamping;
-                        config.Save();
-                    }
-                    HelpMarker("Per-frame angular (spin) velocity multiplier. Keeping this below Linear Damping makes the weapon stop tumbling quickly and settle flat without jitter.");
+                    HelpMarker("Per-frame velocity multiplier. 1.0 = no damping, lower values settle faster.");
 
                     var wdBounce = config.WeaponDropBounce;
                     if (ImGui.SliderFloat("Bounce##weapondrop", ref wdBounce, 0.0f, 5.0f, "%.2f"))
@@ -2935,28 +2925,18 @@ public class MainWindow : IDisposable
                     }
 
                     var wdRadius = config.WeaponDropRadius;
-                    if (ImGui.SliderFloat("Hull Half-Thickness##weapondrop", ref wdRadius, 0.005f, 0.1f, "%.3f"))
+                    if (ImGui.SliderFloat("Capsule Radius##weapondrop", ref wdRadius, 0.005f, 0.2f, "%.3f"))
                     {
                         config.WeaponDropRadius = wdRadius;
                         config.Save();
                     }
-                    HelpMarker("Half-thickness of the convex hull cross-section (thin axis). Small values give a flat shape that settles lying down. Also controls the fallback capsule radius.");
-
-                    var wdHalfWidth = config.WeaponDropHalfWidth;
-                    if (ImGui.SliderFloat("Hull Half-Width##weapondrop", ref wdHalfWidth, 0.01f, 0.3f, "%.3f"))
-                    {
-                        config.WeaponDropHalfWidth = wdHalfWidth;
-                        config.Save();
-                    }
-                    HelpMarker("Half-width of the convex hull cross-section (wide axis). Should be noticeably larger than Half-Thickness so the hull has a flat face to settle on.");
 
                     var wdHalf = config.WeaponDropHalfLength;
-                    if (ImGui.SliderFloat("Hull Half-Length (fallback)##weapondrop", ref wdHalf, 0.1f, 1.5f, "%.2f"))
+                    if (ImGui.SliderFloat("Capsule Half-Length##weapondrop", ref wdHalf, 0.1f, 1.5f, "%.2f"))
                     {
                         config.WeaponDropHalfLength = wdHalf;
                         config.Save();
                     }
-                    HelpMarker("Used only for single-bone weapons with no bone spread (also controls the fallback capsule half-length).");
 
                     var wdSolver = config.WeaponDropSolverIterations;
                     if (ImGui.SliderInt("Solver Iterations##weapondrop", ref wdSolver, 1, 64))

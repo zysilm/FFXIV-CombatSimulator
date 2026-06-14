@@ -211,12 +211,10 @@ public class Configuration : IPluginConfiguration
     public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
     // Weapon drop physics — runs as part of ragdoll; weapon detaches and falls on death
     public float WeaponDropGravity { get; set; } = 9.8f;
-    public float WeaponDropDamping { get; set; } = 0.99f;        // linear: 1.0 = no damping
-    public float WeaponDropAngularDamping { get; set; } = 0.94f; // angular: stronger so weapon stops spinning quickly
+    public float WeaponDropDamping { get; set; } = 0.99f; // 1.0 = no damping, lower = settles faster
     public float WeaponDropMass { get; set; } = 1.5f;
-    public float WeaponDropRadius { get; set; } = 0.025f;    // hull half-thickness (thin axis)
-    public float WeaponDropHalfWidth { get; set; } = 0.05f;  // hull half-width (wide axis)
-    public float WeaponDropHalfLength { get; set; } = 0.4f;  // fallback half-length for single-bone weapons
+    public float WeaponDropRadius { get; set; } = 0.025f;
+    public float WeaponDropHalfLength { get; set; } = 0.4f;
     public float WeaponDropBounce { get; set; } = 1.5f; // Bepu MaximumRecoveryVelocity — higher = bouncier
     public float WeaponDropFriction { get; set; } = 0.6f;
     public int WeaponDropSolverIterations { get; set; } = 4;
