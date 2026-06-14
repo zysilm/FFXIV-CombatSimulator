@@ -38,6 +38,7 @@ public unsafe class WeaponDropController : IDisposable
     // (existing weapon bodies are dropped — they'll respawn on next death).
     private float simGravity;
     private float simDamping;
+    private float simAngularDamping;
     private float simBounce;
     private float simFriction;
     private int simSolverIterations;
@@ -339,11 +340,16 @@ public unsafe class WeaponDropController : IDisposable
             shapeIdx = hullIdx;
             inertia = hullInertia;
             perEntryShape = hullIdx;
-            // Keep speculative margin below half-thickness to avoid ghost contacts that cause jitter.
+            // Keep speculative margin below half-thickness to avoid ghost contacts.
             speculativeMargin = MathF.Max(0.005f, config.WeaponDropRadius * 0.4f);
+            // Force spine to horizontal so the weapon can't spawn tip-down and stay vertical.
+            // The hull's wider flat face is then the first surface to contact the ground,
+            // and the physics naturally settle to the lowest-energy (flat) configuration.
+            gripWorldRot = FlattenHullSpine(gripWorldRot);
         }
         else
         {
+            log.Info("WeaponDropController: hull build failed — falling back to capsule");
             shapeIdx = weaponShapeIndex;
             inertia = weaponInertia;
             speculativeMargin = 0.04f;
@@ -462,7 +468,44 @@ public unsafe class WeaponDropController : IDisposable
         hullCenter = center;
         shapeIndex = simulation!.Shapes.Add(hull);
         inertia = hull.ComputeInertia(config.WeaponDropMass);
+        log.Info($"WeaponDropController: hull built — bones={boneCount}, hullPts={hullPts.Count}, center=({center.X:F3},{center.Y:F3},{center.Z:F3})");
         return true;
+    }
+
+    /// <summary>
+    /// Rotate <paramref name="rot"/> so the local +Z axis (weapon spine) lies flat in the
+    /// horizontal XZ plane. Prevents weapons from spawning spine-down and sticking vertically
+    /// into the ground with no restoring force. The visual snaps once at spawn, then gravity
+    /// and the hull's flat face take over to produce a natural settle.
+    /// </summary>
+    private static Quaternion FlattenHullSpine(Quaternion rot)
+    {
+        var spineWorld = Vector3.Transform(Vector3.UnitZ, rot);
+        var flat = new Vector3(spineWorld.X, 0f, spineWorld.Z);
+        var len = flat.Length();
+        if (len < 0.05f)
+        {
+            // Spine is near-vertical: fall back to local +X projected to horizontal
+            var sideWorld = Vector3.Transform(Vector3.UnitX, rot);
+            flat = new Vector3(sideWorld.X, 0f, sideWorld.Z);
+            len = flat.Length();
+            if (len < 0.05f) return rot; // degenerate, keep as-is
+        }
+        flat /= len;
+        return Quaternion.Normalize(ShortestArcTowards(spineWorld, flat) * rot);
+    }
+
+    private static Quaternion ShortestArcTowards(Vector3 from, Vector3 to)
+    {
+        var dot = Vector3.Dot(from, to);
+        if (dot >= 0.9999f) return Quaternion.Identity;
+        if (dot <= -0.9999f)
+        {
+            var perp = MathF.Abs(from.X) < 0.9f ? Vector3.UnitX : Vector3.UnitY;
+            return new Quaternion(Vector3.Normalize(Vector3.Cross(from, perp)), 0f);
+        }
+        var cross = Vector3.Cross(from, to);
+        return Quaternion.Normalize(new Quaternion(cross.X, cross.Y, cross.Z, 1f + dot));
     }
 
     /// <summary>Resolve the drawn weapon DrawObject for a slot, or null if unarmed/unloaded.</summary>
@@ -510,6 +553,7 @@ public unsafe class WeaponDropController : IDisposable
     {
         return simGravity != config.WeaponDropGravity
             || simDamping != config.WeaponDropDamping
+            || simAngularDamping != config.WeaponDropAngularDamping
             || simBounce != config.WeaponDropBounce
             || simFriction != config.WeaponDropFriction
             || simSolverIterations != config.WeaponDropSolverIterations
@@ -525,6 +569,7 @@ public unsafe class WeaponDropController : IDisposable
 
         simGravity = config.WeaponDropGravity;
         simDamping = config.WeaponDropDamping;
+        simAngularDamping = config.WeaponDropAngularDamping;
         simBounce = config.WeaponDropBounce;
         simFriction = config.WeaponDropFriction;
         simSolverIterations = config.WeaponDropSolverIterations;
@@ -537,7 +582,7 @@ public unsafe class WeaponDropController : IDisposable
         simulation = BepuSimulation.Create(
             bufferPool,
             new WeaponDropNarrowPhaseCallbacks { Friction = simFriction, MaxRecoveryVelocity = simBounce },
-            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -simGravity, 0), simDamping),
+            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -simGravity, 0), simDamping, simAngularDamping),
             new SolveDescription(simSolverIterations, 1));
 
         // Shared capsule: fallback for weapons whose skeleton bones are inaccessible.
@@ -602,19 +647,23 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
 {
     private Vector3 gravity;
     private float linearDamping;
+    private float angularDamping;
     private Vector3Wide gravityDt;
-    private Vector<float> dampingDt;
+    private Vector<float> linearDampingDt;
+    private Vector<float> angularDampingDt;
 
     public readonly AngularIntegrationMode AngularIntegrationMode => AngularIntegrationMode.Nonconserving;
     public readonly bool AllowSubstepsForUnconstrainedBodies => false;
     public readonly bool IntegrateVelocityForKinematics => false;
 
-    public WeaponDropPoseIntegratorCallbacks(Vector3 gravity, float linearDamping)
+    public WeaponDropPoseIntegratorCallbacks(Vector3 gravity, float linearDamping, float angularDamping)
     {
         this.gravity = gravity;
         this.linearDamping = linearDamping;
+        this.angularDamping = angularDamping;
         this.gravityDt = default;
-        this.dampingDt = default;
+        this.linearDampingDt = default;
+        this.angularDampingDt = default;
     }
 
     public void Initialize(BepuSimulation simulation) { }
@@ -624,7 +673,8 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
         gravityDt.X = new Vector<float>(gravity.X * dt);
         gravityDt.Y = new Vector<float>(gravity.Y * dt);
         gravityDt.Z = new Vector<float>(gravity.Z * dt);
-        dampingDt = new Vector<float>(MathF.Pow(linearDamping, dt * 60f));
+        linearDampingDt  = new Vector<float>(MathF.Pow(linearDamping,  dt * 60f));
+        angularDampingDt = new Vector<float>(MathF.Pow(angularDamping, dt * 60f));
     }
 
     public void IntegrateVelocity(
@@ -632,11 +682,11 @@ struct WeaponDropPoseIntegratorCallbacks : IPoseIntegratorCallbacks
         BodyInertiaWide localInertia, Vector<int> integrationMask, int workerIndex,
         Vector<float> dt, ref BodyVelocityWide velocity)
     {
-        velocity.Linear.X = (velocity.Linear.X + gravityDt.X) * dampingDt;
-        velocity.Linear.Y = (velocity.Linear.Y + gravityDt.Y) * dampingDt;
-        velocity.Linear.Z = (velocity.Linear.Z + gravityDt.Z) * dampingDt;
-        velocity.Angular.X *= dampingDt;
-        velocity.Angular.Y *= dampingDt;
-        velocity.Angular.Z *= dampingDt;
+        velocity.Linear.X = (velocity.Linear.X + gravityDt.X) * linearDampingDt;
+        velocity.Linear.Y = (velocity.Linear.Y + gravityDt.Y) * linearDampingDt;
+        velocity.Linear.Z = (velocity.Linear.Z + gravityDt.Z) * linearDampingDt;
+        velocity.Angular.X *= angularDampingDt;
+        velocity.Angular.Y *= angularDampingDt;
+        velocity.Angular.Z *= angularDampingDt;
     }
 }

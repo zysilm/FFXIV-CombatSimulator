@@ -284,6 +284,7 @@ public class MainWindow : IDisposable
                     config.RagdollFriction = 1.0f;
                     config.WeaponDropGravity = 9.8f;
                     config.WeaponDropDamping = 0.99f;
+                    config.WeaponDropAngularDamping = 0.94f;
                     config.WeaponDropMass = 1.5f;
                     config.WeaponDropRadius = 0.025f;
                     config.WeaponDropHalfWidth = 0.05f;
@@ -2896,12 +2897,20 @@ public class MainWindow : IDisposable
                     }
 
                     var wdDamping = config.WeaponDropDamping;
-                    if (ImGui.SliderFloat("Damping##weapondrop", ref wdDamping, 0.80f, 1.00f, "%.3f"))
+                    if (ImGui.SliderFloat("Linear Damping##weapondrop", ref wdDamping, 0.80f, 1.00f, "%.3f"))
                     {
                         config.WeaponDropDamping = wdDamping;
                         config.Save();
                     }
-                    HelpMarker("Per-frame velocity multiplier. 1.0 = no damping, lower values settle faster.");
+                    HelpMarker("Per-frame linear velocity multiplier. 1.0 = no damping, lower values slow the weapon faster.");
+
+                    var wdAngDamping = config.WeaponDropAngularDamping;
+                    if (ImGui.SliderFloat("Angular Damping##weapondrop", ref wdAngDamping, 0.80f, 1.00f, "%.3f"))
+                    {
+                        config.WeaponDropAngularDamping = wdAngDamping;
+                        config.Save();
+                    }
+                    HelpMarker("Per-frame angular (spin) velocity multiplier. Keeping this below Linear Damping makes the weapon stop tumbling quickly and settle flat without jitter.");
 
                     var wdBounce = config.WeaponDropBounce;
                     if (ImGui.SliderFloat("Bounce##weapondrop", ref wdBounce, 0.0f, 5.0f, "%.2f"))
