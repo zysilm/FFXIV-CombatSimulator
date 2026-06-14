@@ -1972,6 +1972,27 @@ public unsafe class RagdollController : IDisposable
             }
             else
             {
+                // j_asi_c (Ankle) is a short 8cm connector between j_asi_b (knee) and
+                // j_asi_d (foot). FFXIV adds it for smooth mesh deformation but it has no
+                // independent anatomical motion. A Weld snapshots the exact relative pose at
+                // activation and holds it completely rigid, eliminating the zigzag that the
+                // old BallSocket + 10Hz AngularServo approach could not prevent under grab
+                // or high-energy collision.
+                if (boneDef.AnatomicalRole == AnatomicalRole.Ankle)
+                {
+                    var worldOffset = parentBodyRef.Pose.Position - childBodyRef.Pose.Position;
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                        new Weld
+                        {
+                            LocalOffset = Vector3.Transform(
+                                worldOffset, Quaternion.Inverse(childBodyRef.Pose.Orientation)),
+                            LocalOrientation = Quaternion.Normalize(
+                                Quaternion.Inverse(childBodyRef.Pose.Orientation) * parentBodyRef.Pose.Orientation),
+                            SpringSettings = jointSpring,
+                        });
+                    continue; // Weld covers position + orientation — skip BallSocket/SwingLimit/TwistLimit/AngularMotor
+                }
+
                 // BallSocket: positional connection
                 // Soft bodies use low frequency + low damping for jiggle
                 simulation.Solver.Add(rb.BodyHandle, parentHandle,
@@ -1985,9 +2006,7 @@ public unsafe class RagdollController : IDisposable
                     });
 
                 // SwingLimit: symmetric cone limiting deviation from initial direction.
-                // Skipped for Ankle (j_asi_c): the AngularServo below handles alignment,
-                // and limitSpring(90Hz) at 0.1 rad fires at 5.7° with ~12,700 N·m.
-                if (boneDef.SwingLimit > 0 && boneDef.AnatomicalRole != AnatomicalRole.Ankle)
+                if (boneDef.SwingLimit > 0)
                 {
                     var axisChildLocal = Vector3.Transform(segDirWorld,
                         Quaternion.Inverse(childBodyRef.Pose.Orientation));
@@ -2005,11 +2024,9 @@ public unsafe class RagdollController : IDisposable
                 }
 
                 // TwistLimit: asymmetric axial rotation around the bone's segment axis.
-                // Skipped on wide-swing joints (twist basis unreliable) and on Ankle
-                // (j_asi_c) for the same reason as SwingLimit above.
+                // Skipped on wide-swing joints where the twist basis becomes unreliable.
                 if ((boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0) &&
-                    boneDef.SwingLimit <= ballJointMaxSwing &&
-                    boneDef.AnatomicalRole != AnatomicalRole.Ankle)
+                    boneDef.SwingLimit <= ballJointMaxSwing)
                 {
                     var refDir = config.RagdollExperimentalJointFrames
                         ? ComputeExperimentalBallTwistReference(segDirWorld, parentSegDir)
@@ -2030,8 +2047,8 @@ public unsafe class RagdollController : IDisposable
             }
 
             // Angular constraint: soft bodies use AngularServo (spring return to rest pose),
-            // Ankle (j_asi_c) uses a moderate AngularServo to rigidly track j_asi_b,
             // rigid bodies use AngularMotor (velocity damping only).
+            // Ankle (j_asi_c) is handled above by a Weld and never reaches this section.
             if (boneDef.SoftBody)
             {
                 simulation.Solver.Add(rb.BodyHandle, parentHandle,
@@ -2040,22 +2057,6 @@ public unsafe class RagdollController : IDisposable
                         TargetRelativeRotationLocalA = Quaternion.Identity,
                         ServoSettings = new ServoSettings(float.MaxValue, 0f, float.MaxValue),
                         SpringSettings = new SpringSettings(boneDef.SoftServoFreq, boneDef.SoftServoDamp),
-                    });
-            }
-            else if (boneDef.AnatomicalRole == AnatomicalRole.Ankle)
-            {
-                // j_asi_c is a short (8 cm) connector bone between j_asi_b (knee) and
-                // j_asi_d (foot). In FFXIV, it tracks j_asi_b as part of the knee bend.
-                // Without coupling, j_asi_c drifts independently during grab and creates
-                // a "lightning-bolt" zigzag in the shin. An AngularServo at 10 Hz keeps
-                // it aligned with j_asi_b (Quaternion.Identity = zero relative rotation)
-                // without the stiffness that caused the Hinge to freeze the joint.
-                simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                    new AngularServo
-                    {
-                        TargetRelativeRotationLocalA = Quaternion.Identity,
-                        ServoSettings = new ServoSettings(float.MaxValue, 0f, float.MaxValue),
-                        SpringSettings = new SpringSettings(10f, 1f),
                     });
             }
             else
