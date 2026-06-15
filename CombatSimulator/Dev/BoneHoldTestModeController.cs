@@ -11,7 +11,7 @@ namespace CombatSimulator.Dev;
 
 /// <summary>
 /// Hidden mode: ragdoll stays active but is held upright via spine/pelvis physics
-/// constraints while the primary NPC continues to perform melee attacks.
+/// constraints while NPCs continue to perform melee attacks.
 /// Arms, head, and hands remain fully dynamic and react to NPC collisions.
 /// </summary>
 public unsafe class BoneHoldTestModeController : IDisposable
@@ -24,12 +24,12 @@ public unsafe class BoneHoldTestModeController : IDisposable
 
     private bool isActive;
     private bool attackEnabled;
+    private bool attackAllNpcs;
+    private float attackDistance;
     private SimulatedNpc? primaryNpc;
     private float attackTimer;
 
-    // Configurable attack interval (seconds between melee swings).
     public float AttackInterval { get; set; } = 2.5f;
-
     public bool IsActive => isActive;
 
     public BoneHoldTestModeController(
@@ -46,14 +46,9 @@ public unsafe class BoneHoldTestModeController : IDisposable
         this.log = log;
     }
 
-    /// <summary>
-    /// Start the mode. Lifts the ragdoll to standing height at the anchor bone and
-    /// begins driving the primary NPC to perform periodic melee attack animations.
-    /// </summary>
-    /// <param name="npcs">Active NPC list — first alive entry is used.</param>
-    /// <param name="anchorBone">Ragdoll bone to pin (e.g. "j_kosi", "j_sebo_c").</param>
-    /// <param name="standingHeight">Y offset above the character's death position for the anchor bone.</param>
-    public bool TryStart(IReadOnlyList<SimulatedNpc> npcs, string anchorBone = "j_kosi", float standingHeight = 0.92f, bool enableAttack = true)
+    public bool TryStart(IReadOnlyList<SimulatedNpc> npcs, string anchorBone = "j_kosi",
+        float standingHeight = 0.92f, bool enableAttack = true,
+        bool allNpcs = false, float atkDistance = 8.0f)
     {
         if (isActive) return false;
         if (!ragdollController.IsActive)
@@ -93,8 +88,10 @@ public unsafe class BoneHoldTestModeController : IDisposable
             return false;
         }
 
-        primaryNpc = candidate;
-        attackEnabled = enableAttack;
+        primaryNpc     = candidate;
+        attackEnabled  = enableAttack;
+        attackAllNpcs  = allNpcs;
+        attackDistance = atkDistance;
 
         if (attackEnabled)
         {
@@ -107,62 +104,107 @@ public unsafe class BoneHoldTestModeController : IDisposable
         return true;
     }
 
-    public void Tick(float deltaTime)
+    /// <summary>Adjust anchor bone and height while the mode is already running.</summary>
+    public void UpdateHold(string anchorBone, float standingHeight)
+    {
+        if (!isActive) return;
+
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null) return;
+
+        var go = (GameObject*)player.Address;
+        var anchorTarget = new Vector3(go->Position.X, go->Position.Y + standingHeight, go->Position.Z);
+        ragdollController.UpdateStandingSupport(anchorTarget, Quaternion.Identity, anchorBone);
+    }
+
+    public void Tick(float deltaTime, IReadOnlyList<SimulatedNpc> allNpcs)
     {
         if (!isActive) return;
 
         if (!ragdollController.IsActive)
         {
-            StopInternal(restoreNpc: true);
+            StopInternal(restoreNpc: true, allNpcs);
             return;
         }
 
         if (primaryNpc?.BattleChara == null)
         {
-            StopInternal(restoreNpc: false);
+            StopInternal(restoreNpc: false, allNpcs);
             return;
         }
 
-        if (attackEnabled)
+        if (!attackEnabled) return;
+
+        attackTimer -= deltaTime;
+        if (attackTimer > 0f) return;
+        attackTimer = AttackInterval;
+
+        var playerPos = Core.Services.ObjectTable.LocalPlayer is { } lp
+            ? new Vector3(((GameObject*)lp.Address)->Position.X,
+                          ((GameObject*)lp.Address)->Position.Y,
+                          ((GameObject*)lp.Address)->Position.Z)
+            : Vector3.Zero;
+
+        var targetId = Core.Services.ObjectTable.LocalPlayer?.EntityId ?? 0;
+        if (targetId == 0) return;
+
+        if (!attackAllNpcs)
         {
-            attackTimer -= deltaTime;
-            if (attackTimer <= 0f)
-            {
-                var targetId = Core.Services.ObjectTable.LocalPlayer?.EntityId ?? 0;
-                if (targetId != 0)
-                    animationController.PlayNpcAutoAttack(primaryNpc, targetId, 0);
-                attackTimer = AttackInterval;
-            }
+            if (InRange(primaryNpc, playerPos))
+                animationController.PlayNpcAutoAttack(primaryNpc, targetId, 0);
+            return;
+        }
+
+        foreach (var npc in allNpcs)
+        {
+            if (!npc.State.IsAlive || npc.BattleChara == null) continue;
+            if (!InRange(npc, playerPos)) continue;
+            animationController.PlayNpcAutoAttack(npc, targetId, 0);
         }
     }
 
-    public void Stop()
+    private bool InRange(SimulatedNpc npc, Vector3 playerPos)
     {
-        if (!isActive) return;
-        StopInternal(restoreNpc: true);
+        if (attackDistance <= 0f) return true;
+        var go = (GameObject*)npc.BattleChara;
+        var npcPos = new Vector3(go->Position.X, go->Position.Y, go->Position.Z);
+        return Vector3.Distance(npcPos, playerPos) <= attackDistance;
     }
 
-    private void StopInternal(bool restoreNpc)
+    public void Stop() => Stop(Array.Empty<SimulatedNpc>());
+
+    public void Stop(IReadOnlyList<SimulatedNpc> allNpcs)
+    {
+        if (!isActive) return;
+        StopInternal(restoreNpc: true, allNpcs);
+    }
+
+    private void StopInternal(bool restoreNpc, IReadOnlyList<SimulatedNpc> allNpcs)
     {
         ragdollController.RemoveStandingSupport();
 
-        if (restoreNpc && primaryNpc?.BattleChara != null)
+        if (restoreNpc)
         {
-            var character = (Character*)primaryNpc.BattleChara;
-            emotePlayer.ResetEmote(character);
-            if (attackEnabled) animationController.ClearBattleStance(primaryNpc);
-            character->SetMode(CharacterModes.Normal, 0);
+            var npcsToClean = attackAllNpcs ? allNpcs : (IEnumerable<SimulatedNpc>)(primaryNpc != null ? new[] { primaryNpc } : Array.Empty<SimulatedNpc>());
+            foreach (var npc in npcsToClean)
+            {
+                if (npc.BattleChara == null) continue;
+                var character = (Character*)npc.BattleChara;
+                emotePlayer.ResetEmote(character);
+                if (attackEnabled) animationController.ClearBattleStance(npc);
+                character->SetMode(CharacterModes.Normal, 0);
+            }
         }
 
         log.Info($"BoneHoldTestMode: stopped (NPC='{primaryNpc?.Name ?? "none"}')");
-        primaryNpc = null;
+        primaryNpc    = null;
         attackEnabled = false;
-        attackTimer = 0f;
-        isActive = false;
+        attackTimer   = 0f;
+        isActive      = false;
     }
 
     public void Dispose()
     {
-        if (isActive) StopInternal(restoreNpc: true);
+        if (isActive) StopInternal(restoreNpc: true, Array.Empty<SimulatedNpc>());
     }
 }

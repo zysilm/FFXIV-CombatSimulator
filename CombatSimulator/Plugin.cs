@@ -543,7 +543,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             combatEngine.Tick(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
             victorySequenceController.Tick(deltaTime);
-            executionModeController.Tick(deltaTime);
+            executionModeController.Tick(deltaTime, npcSelector.SelectedNpcs);
 
             // Dev: apply NPC scale override via DrawObject transform
             if (config.DevNpcScale != 1.0f)

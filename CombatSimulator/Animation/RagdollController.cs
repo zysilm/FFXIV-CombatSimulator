@@ -3335,11 +3335,10 @@ public unsafe class RagdollController : IDisposable
 
     private static readonly string[] StandingSpineBones = { "j_sebo_a", "j_sebo_b", "j_sebo_c" };
 
-    public bool CreateStandingSupport(Vector3 pelvisWorldPos, Quaternion uprightRot, string anchorBoneName = "j_kosi")
+    public bool CreateStandingSupport(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = "j_kosi")
     {
         if (simulation == null || !isActive) return false;
 
-        // Wake all bodies and keep them awake for the duration.
         for (int i = 0; i < ragdollBones.Count; i++)
         {
             var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
@@ -3348,22 +3347,40 @@ public unsafe class RagdollController : IDisposable
         }
         BeginBiomechanicalSettle();
 
-        // Anchor bone: strong linear servo drives the body up to the target height.
-        // High spring frequency so it pulls the character up quickly.
-        var pelvisHandle = FindBodyHandle(anchorBoneName);
-        if (pelvisHandle.HasValue)
+        BuildStandingConstraints(anchorWorldPos, uprightRot, anchorBoneName);
+        standingActive = true;
+        log.Info($"RagdollController: Standing support created — {standingConstraints.Count} constraints, anchor={anchorBoneName} ({anchorWorldPos.X:F2},{anchorWorldPos.Y:F2},{anchorWorldPos.Z:F2})");
+        return true;
+    }
+
+    /// <summary>Swap the anchor bone/position while the support is already active, without re-waking bodies.</summary>
+    public bool UpdateStandingSupport(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = "j_kosi")
+    {
+        if (!standingActive || simulation == null) return false;
+
+        foreach (var h in standingConstraints)
+            try { simulation.Solver.Remove(h); } catch { }
+        standingConstraints.Clear();
+
+        BuildStandingConstraints(anchorWorldPos, uprightRot, anchorBoneName);
+        return true;
+    }
+
+    private void BuildStandingConstraints(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName)
+    {
+        var anchorHandle = FindBodyHandle(anchorBoneName);
+        if (anchorHandle.HasValue)
         {
-            standingConstraints.Add(simulation.Solver.Add(pelvisHandle.Value,
+            standingConstraints.Add(simulation.Solver.Add(anchorHandle.Value,
                 new OneBodyLinearServo
                 {
                     LocalOffset    = Vector3.Zero,
-                    Target         = pelvisWorldPos,
+                    Target         = anchorWorldPos,
                     ServoSettings  = new ServoSettings(8f, 1f, 3000f),
                     SpringSettings = new SpringSettings(120f, 1f),
                 }));
 
-            // Keep pelvis upright; yields to strong impacts.
-            standingConstraints.Add(simulation.Solver.Add(pelvisHandle.Value,
+            standingConstraints.Add(simulation.Solver.Add(anchorHandle.Value,
                 new OneBodyAngularServo
                 {
                     TargetOrientation = uprightRot,
@@ -3372,7 +3389,6 @@ public unsafe class RagdollController : IDisposable
                 }));
         }
 
-        // Spine: progressively weaker angular support, allows natural sway on impact.
         float spineForce = 350f;
         float spineFreq  = 25f;
         foreach (var name in StandingSpineBones)
@@ -3391,10 +3407,6 @@ public unsafe class RagdollController : IDisposable
             spineForce *= 0.7f;
             spineFreq  *= 0.8f;
         }
-
-        standingActive = true;
-        log.Info($"RagdollController: Standing support created — {standingConstraints.Count} constraints, pelvis=({pelvisWorldPos.X:F2},{pelvisWorldPos.Y:F2},{pelvisWorldPos.Z:F2})");
-        return true;
     }
 
     public void RemoveStandingSupport()

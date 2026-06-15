@@ -3547,11 +3547,16 @@ public class MainWindow : IDisposable
 
     private static readonly (string Bone, string Label, float DefaultHeight)[] HoldAnchorBones =
     {
-        ("j_kosi",   "Pelvis",       0.92f),
-        ("j_sebo_a", "Lower Spine",  1.05f),
-        ("j_sebo_b", "Mid Spine",    1.15f),
-        ("j_sebo_c", "Chest",        1.25f),
-        ("j_kubi",   "Neck",         1.45f),
+        ("j_kosi",     "Pelvis",       0.92f),
+        ("j_sebo_a",   "Low Spine",    1.05f),
+        ("j_sebo_b",   "Mid Spine",    1.15f),
+        ("j_sebo_c",   "Chest",        1.25f),
+        ("j_kubi",     "Neck",         1.45f),
+        ("j_kao",      "Head",         1.60f),
+        ("j_te_l",     "L Hand",       1.05f),
+        ("j_te_r",     "R Hand",       1.05f),
+        ("j_asi_d_l",  "L Foot",       0.05f),
+        ("j_asi_d_r",  "R Foot",       0.05f),
     };
 
     public void DrawHoldToolbar(Dev.BoneHoldTestModeController executionModeController)
@@ -3570,65 +3575,82 @@ public class MainWindow : IDisposable
         if (ImGui.Button(active ? "Release##hold" : "Hold##hold"))
         {
             if (active)
-                executionModeController.Stop();
+                executionModeController.Stop(npcSelector.SelectedNpcs);
             else
-                executionModeController.TryStart(npcSelector.SelectedNpcs, config.HoldAnchorBone, config.HoldStandingHeight, config.HoldNpcAttack);
+                executionModeController.TryStart(npcSelector.SelectedNpcs,
+                    config.HoldAnchorBone, config.HoldStandingHeight,
+                    config.HoldNpcAttack, config.HoldAllNpcsAttack, config.HoldAttackDistance);
         }
+
+        if (active) ImGui.PopStyleColor();
 
         ImGui.SameLine();
         var atk = config.HoldNpcAttack;
         if (ImGui.Checkbox("Atk##hold", ref atk))
         { config.HoldNpcAttack = atk; config.Save(); }
 
-        if (active)
-            ImGui.PopStyleColor();
-
-        if (!active)
+        if (config.HoldNpcAttack)
         {
             ImGui.SameLine();
+            var all = config.HoldAllNpcsAttack;
+            if (ImGui.Checkbox("All##hold", ref all))
+            { config.HoldAllNpcsAttack = all; config.Save(); }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("All alive NPCs attack, not just the primary");
 
-            // Bone selector dropdown.
-            var currentLabel = "Pelvis";
-            var currentIdx = 0;
-            for (int i = 0; i < HoldAnchorBones.Length; i++)
-            {
-                if (HoldAnchorBones[i].Bone == config.HoldAnchorBone)
-                {
-                    currentLabel = HoldAnchorBones[i].Label;
-                    currentIdx = i;
-                    break;
-                }
-            }
-            ImGui.SetNextItemWidth(90);
-            if (ImGui.BeginCombo("##holdBone", currentLabel))
-            {
-                for (int i = 0; i < HoldAnchorBones.Length; i++)
-                {
-                    var selected = i == currentIdx;
-                    if (ImGui.Selectable(HoldAnchorBones[i].Label, selected))
-                    {
-                        config.HoldAnchorBone = HoldAnchorBones[i].Bone;
-                        config.HoldStandingHeight = HoldAnchorBones[i].DefaultHeight;
-                        config.Save();
-                    }
-                    if (selected) ImGui.SetItemDefaultFocus();
-                }
-                ImGui.EndCombo();
-            }
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Bone to pin in place");
-
+            ImGui.SameLine();
+            ImGui.Text("D");
             ImGui.SameLine();
             ImGui.SetNextItemWidth(60);
-            var h = config.HoldStandingHeight;
-            if (ImGui.DragFloat("##holdH", ref h, 0.02f, 0.2f, 2.0f, "%.2fm"))
-            { config.HoldStandingHeight = h; config.Save(); }
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Height above death position");
+            var dist = config.HoldAttackDistance;
+            if (ImGui.DragFloat("##holdD", ref dist, 0.5f, 1.0f, 30.0f, "%.1fm"))
+            { config.HoldAttackDistance = dist; config.Save(); }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Max attack distance from player");
         }
-        else
+
+        // Bone selector and height — always visible for live adjustment.
+        ImGui.SameLine();
+        var currentLabel = HoldAnchorBones[0].Label;
+        var currentIdx   = 0;
+        for (int i = 0; i < HoldAnchorBones.Length; i++)
         {
-            ImGui.SameLine();
-            ImGui.TextDisabled("active");
+            if (HoldAnchorBones[i].Bone == config.HoldAnchorBone)
+            {
+                currentLabel = HoldAnchorBones[i].Label;
+                currentIdx   = i;
+                break;
+            }
         }
+        ImGui.SetNextItemWidth(78);
+        if (ImGui.BeginCombo("##holdBone", currentLabel))
+        {
+            for (int i = 0; i < HoldAnchorBones.Length; i++)
+            {
+                var selected = i == currentIdx;
+                if (ImGui.Selectable(HoldAnchorBones[i].Label, selected))
+                {
+                    config.HoldAnchorBone      = HoldAnchorBones[i].Bone;
+                    config.HoldStandingHeight  = HoldAnchorBones[i].DefaultHeight;
+                    config.Save();
+                    if (active)
+                        executionModeController.UpdateHold(config.HoldAnchorBone, config.HoldStandingHeight);
+                }
+                if (selected) ImGui.SetItemDefaultFocus();
+            }
+            ImGui.EndCombo();
+        }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Bone to pin");
+
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(60);
+        var h = config.HoldStandingHeight;
+        if (ImGui.DragFloat("##holdH", ref h, 0.02f, -0.5f, 2.5f, "%.2fm"))
+        {
+            config.HoldStandingHeight = h;
+            config.Save();
+            if (active)
+                executionModeController.UpdateHold(config.HoldAnchorBone, config.HoldStandingHeight);
+        }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Height offset above death position");
 
         ImGui.End();
     }
