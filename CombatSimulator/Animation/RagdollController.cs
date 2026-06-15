@@ -3327,13 +3327,13 @@ public unsafe class RagdollController : IDisposable
 
 
     // --- Standing support constraint API (execution mode) ---
-    // Bones supported: pelvis (linear+angular), spine chain (angular), upper legs (angular).
-    // Arms, hands, and head are intentionally left free so they react to NPC collision.
+    // Pelvis: LinearServo to a computed standing height + AngularServo upright.
+    // Spine chain: progressively weaker AngularServos.
+    // Legs/arms/head: fully dynamic — gravity + joints handle them naturally.
     private readonly List<ConstraintHandle> standingConstraints = new();
     private bool standingActive;
 
-    private static readonly string[] StandingSpineBones  = { "j_sebo_a", "j_sebo_b", "j_sebo_c" };
-    private static readonly string[] StandingThighBones  = { "j_asi_a_l", "j_asi_a_r" };
+    private static readonly string[] StandingSpineBones = { "j_sebo_a", "j_sebo_b", "j_sebo_c" };
 
     public bool CreateStandingSupport(Vector3 pelvisWorldPos, Quaternion uprightRot)
     {
@@ -3348,20 +3348,21 @@ public unsafe class RagdollController : IDisposable
         }
         BeginBiomechanicalSettle();
 
-        // Pelvis: strong linear servo to hold world position (anti-gravity anchor).
+        // Pelvis: strong linear servo drives the body up to the target height.
+        // High spring frequency so it pulls the character up quickly.
         var pelvisHandle = FindBodyHandle("j_kosi");
         if (pelvisHandle.HasValue)
         {
             standingConstraints.Add(simulation.Solver.Add(pelvisHandle.Value,
                 new OneBodyLinearServo
                 {
-                    LocalOffset   = Vector3.Zero,
-                    Target        = pelvisWorldPos,
-                    ServoSettings = new ServoSettings(5f, 1f, 2500f),
-                    SpringSettings = new SpringSettings(80f, 1f),
+                    LocalOffset    = Vector3.Zero,
+                    Target         = pelvisWorldPos,
+                    ServoSettings  = new ServoSettings(8f, 1f, 3000f),
+                    SpringSettings = new SpringSettings(120f, 1f),
                 }));
 
-            // Pelvis angular servo: resist tilting but yield to strong hits.
+            // Keep pelvis upright; yields to strong impacts.
             standingConstraints.Add(simulation.Solver.Add(pelvisHandle.Value,
                 new OneBodyAngularServo
                 {
@@ -3371,7 +3372,7 @@ public unsafe class RagdollController : IDisposable
                 }));
         }
 
-        // Spine chain: progressively weaker angular servos, allow natural sway.
+        // Spine: progressively weaker angular support, allows natural sway on impact.
         float spineForce = 350f;
         float spineFreq  = 25f;
         foreach (var name in StandingSpineBones)
@@ -3389,22 +3390,6 @@ public unsafe class RagdollController : IDisposable
             }
             spineForce *= 0.7f;
             spineFreq  *= 0.8f;
-        }
-
-        // Upper legs: keep roughly extended downward so legs don't flail.
-        foreach (var name in StandingThighBones)
-        {
-            var h = FindBodyHandle(name);
-            if (h.HasValue)
-            {
-                standingConstraints.Add(simulation.Solver.Add(h.Value,
-                    new OneBodyAngularServo
-                    {
-                        TargetOrientation = uprightRot,
-                        ServoSettings     = new ServoSettings(10f, 1f, 200f),
-                        SpringSettings    = new SpringSettings(15f, 1f),
-                    }));
-            }
         }
 
         standingActive = true;

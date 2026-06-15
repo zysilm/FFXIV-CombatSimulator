@@ -3563,13 +3563,29 @@ public class MainWindow : IDisposable
             if (active)
                 executionModeController.Stop();
             else
-                executionModeController.TryStart(npcSelector.SelectedNpcs);
+                executionModeController.TryStart(npcSelector.SelectedNpcs, config.HoldStandingHeight, (ushort)config.HoldAttackTimelineId);
         }
 
         if (active)
             ImGui.PopStyleColor();
 
-        if (active)
+        if (!active)
+        {
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(60);
+            var h = config.HoldStandingHeight;
+            if (ImGui.DragFloat("##holdH", ref h, 0.02f, 0.3f, 1.8f, "%.2fm"))
+            { config.HoldStandingHeight = h; config.Save(); }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Pelvis height above death position");
+
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(70);
+            var tl = config.HoldAttackTimelineId;
+            if (ImGui.DragInt("##holdTL", ref tl, 1f, 0, 9999, tl == 0 ? "TL:none" : "TL:%d"))
+            { config.HoldAttackTimelineId = tl; config.Save(); }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("NPC attack animation timeline ID (0 = no override)");
+        }
+        else
         {
             ImGui.SameLine();
             ImGui.TextDisabled("active");
