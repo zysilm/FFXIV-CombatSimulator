@@ -3572,8 +3572,13 @@ public class MainWindow : IDisposable
             if (active)
                 executionModeController.Stop();
             else
-                executionModeController.TryStart(npcSelector.SelectedNpcs, config.HoldAnchorBone, config.HoldStandingHeight);
+                executionModeController.TryStart(npcSelector.SelectedNpcs, config.HoldAnchorBone, config.HoldStandingHeight, config.HoldNpcAttack);
         }
+
+        ImGui.SameLine();
+        var atk = config.HoldNpcAttack;
+        if (ImGui.Checkbox("Atk##hold", ref atk))
+        { config.HoldNpcAttack = atk; config.Save(); }
 
         if (active)
             ImGui.PopStyleColor();

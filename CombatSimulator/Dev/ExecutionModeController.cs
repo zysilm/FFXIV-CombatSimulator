@@ -23,6 +23,7 @@ public unsafe class ExecutionModeController : IDisposable
     private readonly IPluginLog log;
 
     private bool isActive;
+    private bool attackEnabled;
     private SimulatedNpc? primaryNpc;
     private float attackTimer;
 
@@ -52,7 +53,7 @@ public unsafe class ExecutionModeController : IDisposable
     /// <param name="npcs">Active NPC list — first alive entry is used.</param>
     /// <param name="anchorBone">Ragdoll bone to pin (e.g. "j_kosi", "j_sebo_c").</param>
     /// <param name="standingHeight">Y offset above the character's death position for the anchor bone.</param>
-    public bool TryStart(IReadOnlyList<SimulatedNpc> npcs, string anchorBone = "j_kosi", float standingHeight = 0.92f)
+    public bool TryStart(IReadOnlyList<SimulatedNpc> npcs, string anchorBone = "j_kosi", float standingHeight = 0.92f, bool enableAttack = true)
     {
         if (isActive) return false;
         if (!ragdollController.IsActive)
@@ -93,12 +94,13 @@ public unsafe class ExecutionModeController : IDisposable
         }
 
         primaryNpc = candidate;
+        attackEnabled = enableAttack;
 
-        // Put NPC into battle stance (weapon drawn, combat animation set).
-        animationController.SetBattleStance(primaryNpc);
-
-        // Fire first attack immediately on start.
-        attackTimer = 0f;
+        if (attackEnabled)
+        {
+            animationController.SetBattleStance(primaryNpc);
+            attackTimer = 0f;
+        }
 
         isActive = true;
         log.Info($"ExecutionMode: started — NPC '{primaryNpc.Name}', anchor={anchorBone}, height={standingHeight:F2}");
@@ -121,14 +123,16 @@ public unsafe class ExecutionModeController : IDisposable
             return;
         }
 
-        // Periodically trigger melee auto-attack animation on the NPC.
-        attackTimer -= deltaTime;
-        if (attackTimer <= 0f)
+        if (attackEnabled)
         {
-            var targetId = Core.Services.ObjectTable.LocalPlayer?.EntityId ?? 0;
-            if (targetId != 0)
-                animationController.PlayNpcAutoAttack(primaryNpc, targetId, 0);
-            attackTimer = AttackInterval;
+            attackTimer -= deltaTime;
+            if (attackTimer <= 0f)
+            {
+                var targetId = Core.Services.ObjectTable.LocalPlayer?.EntityId ?? 0;
+                if (targetId != 0)
+                    animationController.PlayNpcAutoAttack(primaryNpc, targetId, 0);
+                attackTimer = AttackInterval;
+            }
         }
     }
 
@@ -146,12 +150,13 @@ public unsafe class ExecutionModeController : IDisposable
         {
             var character = (Character*)primaryNpc.BattleChara;
             emotePlayer.ResetEmote(character);
-            animationController.ClearBattleStance(primaryNpc);
+            if (attackEnabled) animationController.ClearBattleStance(primaryNpc);
             character->SetMode(CharacterModes.Normal, 0);
         }
 
         log.Info($"ExecutionMode: stopped (NPC='{primaryNpc?.Name ?? "none"}')");
         primaryNpc = null;
+        attackEnabled = false;
         attackTimer = 0f;
         isActive = false;
     }
