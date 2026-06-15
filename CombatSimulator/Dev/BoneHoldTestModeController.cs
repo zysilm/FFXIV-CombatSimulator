@@ -131,16 +131,16 @@ public unsafe class BoneHoldTestModeController : IDisposable
         attackAllNpcs    = allNpcs;
         approachDistance = Math.Clamp(approachDist, 0.1f, 3.0f);
 
-        // Register all alive NPCs for approach movement.
-        foreach (var npc in npcs)
-        {
-            if (!npc.State.IsAlive || npc.BattleChara == null) continue;
-            movementBlockHook.AddApproachNpc(npc.Address);
-            approachStates.Add(new NpcApproachState { Npc = npc });
-        }
-
+        // Only take over NPC movement/animation when attack is enabled.
+        // Without attack, VictorySequence keeps full control of NPCs.
         if (attackEnabled)
         {
+            foreach (var npc in npcs)
+            {
+                if (!npc.State.IsAlive || npc.BattleChara == null) continue;
+                movementBlockHook.AddApproachNpc(npc.Address);
+                approachStates.Add(new NpcApproachState { Npc = npc });
+            }
             animationController.SetBattleStance(primaryNpc);
             attackTimer = 0f;
         }
