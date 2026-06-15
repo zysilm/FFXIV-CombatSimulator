@@ -14,7 +14,7 @@ namespace CombatSimulator.Dev;
 /// constraints while the primary NPC continues to perform melee attacks.
 /// Arms, head, and hands remain fully dynamic and react to NPC collisions.
 /// </summary>
-public unsafe class ExecutionModeController : IDisposable
+public unsafe class BoneHoldTestModeController : IDisposable
 {
     private readonly BoneTransformService boneService;
     private readonly EmoteTimelinePlayer emotePlayer;
@@ -32,7 +32,7 @@ public unsafe class ExecutionModeController : IDisposable
 
     public bool IsActive => isActive;
 
-    public ExecutionModeController(
+    public BoneHoldTestModeController(
         BoneTransformService boneService,
         EmoteTimelinePlayer emotePlayer,
         RagdollController ragdollController,
@@ -58,7 +58,7 @@ public unsafe class ExecutionModeController : IDisposable
         if (isActive) return false;
         if (!ragdollController.IsActive)
         {
-            log.Warning("ExecutionMode: ragdoll not active");
+            log.Warning("BoneHoldTestMode: ragdoll not active");
             return false;
         }
 
@@ -73,14 +73,14 @@ public unsafe class ExecutionModeController : IDisposable
         }
         if (candidate == null)
         {
-            log.Warning("ExecutionMode: no alive NPC found");
+            log.Warning("BoneHoldTestMode: no alive NPC found");
             return false;
         }
 
         var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null)
         {
-            log.Warning("ExecutionMode: no local player");
+            log.Warning("BoneHoldTestMode: no local player");
             return false;
         }
 
@@ -89,7 +89,7 @@ public unsafe class ExecutionModeController : IDisposable
 
         if (!ragdollController.CreateStandingSupport(anchorTarget, Quaternion.Identity, anchorBone))
         {
-            log.Warning("ExecutionMode: CreateStandingSupport failed");
+            log.Warning("BoneHoldTestMode: CreateStandingSupport failed");
             return false;
         }
 
@@ -103,7 +103,7 @@ public unsafe class ExecutionModeController : IDisposable
         }
 
         isActive = true;
-        log.Info($"ExecutionMode: started — NPC '{primaryNpc.Name}', anchor={anchorBone}, height={standingHeight:F2}");
+        log.Info($"BoneHoldTestMode: started — NPC '{primaryNpc.Name}', anchor={anchorBone}, height={standingHeight:F2}");
         return true;
     }
 
@@ -154,7 +154,7 @@ public unsafe class ExecutionModeController : IDisposable
             character->SetMode(CharacterModes.Normal, 0);
         }
 
-        log.Info($"ExecutionMode: stopped (NPC='{primaryNpc?.Name ?? "none"}')");
+        log.Info($"BoneHoldTestMode: stopped (NPC='{primaryNpc?.Name ?? "none"}')");
         primaryNpc = null;
         attackEnabled = false;
         attackTimer = 0f;

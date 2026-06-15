@@ -56,7 +56,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly DeathCamController deathCamController;
     private readonly ActiveCameraController activeCameraController;
     private readonly Dev.VictorySequenceController victorySequenceController;
-    private readonly Dev.ExecutionModeController executionModeController;
+    private readonly Dev.BoneHoldTestModeController executionModeController;
     private readonly HookSafetyChecker hookSafetyChecker;
 
     // NPC ragdoll controllers (multiple concurrent, persist until sim stop/reset/zone change)
@@ -123,7 +123,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         victorySequenceController = new Dev.VictorySequenceController(
             boneTransformService, animationController.EmotePlayer,
             movementBlockHook, ragdollController, vnavmeshIpc, clientState, targetManager, config, log);
-        executionModeController = new Dev.ExecutionModeController(
+        executionModeController = new Dev.BoneHoldTestModeController(
             boneTransformService, animationController.EmotePlayer, ragdollController, animationController, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,

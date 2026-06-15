@@ -3554,7 +3554,7 @@ public class MainWindow : IDisposable
         ("j_kubi",   "Neck",         1.45f),
     };
 
-    public void DrawHoldToolbar(Dev.ExecutionModeController executionModeController)
+    public void DrawHoldToolbar(Dev.BoneHoldTestModeController executionModeController)
     {
         if (!ImGui.Begin("Hold", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
         {
