@@ -3579,7 +3579,7 @@ public class MainWindow : IDisposable
             else
                 executionModeController.TryStart(npcSelector.SelectedNpcs,
                     config.HoldAnchorBone, config.HoldStandingHeight,
-                    config.HoldNpcAttack, config.HoldAllNpcsAttack, config.HoldAttackDistance);
+                    config.HoldNpcAttack, config.HoldAllNpcsAttack, config.HoldApproachDistance);
         }
 
         if (active) ImGui.PopStyleColor();
@@ -3600,11 +3600,11 @@ public class MainWindow : IDisposable
             ImGui.SameLine();
             ImGui.Text("D");
             ImGui.SameLine();
-            ImGui.SetNextItemWidth(60);
-            var dist = config.HoldAttackDistance;
-            if (ImGui.DragFloat("##holdD", ref dist, 0.5f, 1.0f, 30.0f, "%.1fm"))
-            { config.HoldAttackDistance = dist; config.Save(); }
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Max attack distance from player");
+            ImGui.SetNextItemWidth(55);
+            var dist = config.HoldApproachDistance;
+            if (ImGui.DragFloat("##holdD", ref dist, 0.05f, 0.1f, 3.0f, "%.1fm"))
+            { config.HoldApproachDistance = dist; config.Save(); }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("NPCs navigate to this distance from player");
         }
 
         // Bone selector and height — always visible for live adjustment.
