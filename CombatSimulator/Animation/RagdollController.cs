@@ -3326,10 +3326,132 @@ public unsafe class RagdollController : IDisposable
 
 
 
+    // --- Standing support constraint API (execution mode) ---
+    // Bones supported: pelvis (linear+angular), spine chain (angular), upper legs (angular).
+    // Arms, hands, and head are intentionally left free so they react to NPC collision.
+    private readonly List<ConstraintHandle> standingConstraints = new();
+    private bool standingActive;
+
+    private static readonly string[] StandingSpineBones  = { "j_sebo_a", "j_sebo_b", "j_sebo_c" };
+    private static readonly string[] StandingThighBones  = { "j_asi_a_l", "j_asi_a_r" };
+
+    public bool CreateStandingSupport(Vector3 pelvisWorldPos, Quaternion uprightRot)
+    {
+        if (simulation == null || !isActive) return false;
+
+        // Wake all bodies and keep them awake for the duration.
+        for (int i = 0; i < ragdollBones.Count; i++)
+        {
+            var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
+            bodyRef.Activity.SleepThreshold = -1f;
+            bodyRef.Awake = true;
+        }
+        BeginBiomechanicalSettle();
+
+        // Pelvis: strong linear servo to hold world position (anti-gravity anchor).
+        var pelvisHandle = FindBodyHandle("j_kosi");
+        if (pelvisHandle.HasValue)
+        {
+            standingConstraints.Add(simulation.Solver.Add(pelvisHandle.Value,
+                new OneBodyLinearServo
+                {
+                    LocalOffset   = Vector3.Zero,
+                    Target        = pelvisWorldPos,
+                    ServoSettings = new ServoSettings(5f, 1f, 2500f),
+                    SpringSettings = new SpringSettings(80f, 1f),
+                }));
+
+            // Pelvis angular servo: resist tilting but yield to strong hits.
+            standingConstraints.Add(simulation.Solver.Add(pelvisHandle.Value,
+                new OneBodyAngularServo
+                {
+                    TargetOrientation = uprightRot,
+                    ServoSettings     = new ServoSettings(8f, 1f, 600f),
+                    SpringSettings    = new SpringSettings(40f, 1f),
+                }));
+        }
+
+        // Spine chain: progressively weaker angular servos, allow natural sway.
+        float spineForce = 350f;
+        float spineFreq  = 25f;
+        foreach (var name in StandingSpineBones)
+        {
+            var h = FindBodyHandle(name);
+            if (h.HasValue)
+            {
+                standingConstraints.Add(simulation.Solver.Add(h.Value,
+                    new OneBodyAngularServo
+                    {
+                        TargetOrientation = uprightRot,
+                        ServoSettings     = new ServoSettings(10f, 1f, spineForce),
+                        SpringSettings    = new SpringSettings(spineFreq, 1f),
+                    }));
+            }
+            spineForce *= 0.7f;
+            spineFreq  *= 0.8f;
+        }
+
+        // Upper legs: keep roughly extended downward so legs don't flail.
+        foreach (var name in StandingThighBones)
+        {
+            var h = FindBodyHandle(name);
+            if (h.HasValue)
+            {
+                standingConstraints.Add(simulation.Solver.Add(h.Value,
+                    new OneBodyAngularServo
+                    {
+                        TargetOrientation = uprightRot,
+                        ServoSettings     = new ServoSettings(10f, 1f, 200f),
+                        SpringSettings    = new SpringSettings(15f, 1f),
+                    }));
+            }
+        }
+
+        standingActive = true;
+        log.Info($"RagdollController: Standing support created — {standingConstraints.Count} constraints, pelvis=({pelvisWorldPos.X:F2},{pelvisWorldPos.Y:F2},{pelvisWorldPos.Z:F2})");
+        return true;
+    }
+
+    public void RemoveStandingSupport()
+    {
+        if (!standingActive || simulation == null) return;
+
+        foreach (var h in standingConstraints)
+        {
+            try { simulation.Solver.Remove(h); } catch { }
+        }
+        standingConstraints.Clear();
+
+        var normalThreshold = (config.RagdollNpcSettleCollision && config.RagdollNpcCollision) ? -1f : 0.01f;
+        for (int i = 0; i < ragdollBones.Count; i++)
+        {
+            try
+            {
+                var bodyRef = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
+                bodyRef.Activity.SleepThreshold = normalThreshold;
+                bodyRef.Awake = true;
+            }
+            catch { }
+        }
+
+        standingActive = false;
+        BeginBiomechanicalSettle();
+        log.Info("RagdollController: Standing support removed");
+    }
+
+    private BodyHandle? FindBodyHandle(string boneName)
+    {
+        foreach (var rb in ragdollBones)
+            if (rb.Name == boneName) return rb.BodyHandle;
+        return null;
+    }
+
     private void DestroySimulation()
     {
         grabConstraintActive = false;
         suspendedNpcAddress = nint.Zero;
+        standingActive = false;
+        standingConstraints.Clear();
         biomechanicalSettleRemaining = 0f;
         ragdollBones.Clear();
         npcCollisionStates.Clear();

@@ -56,6 +56,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly DeathCamController deathCamController;
     private readonly ActiveCameraController activeCameraController;
     private readonly Dev.VictorySequenceController victorySequenceController;
+    private readonly Dev.ExecutionModeController executionModeController;
     private readonly HookSafetyChecker hookSafetyChecker;
 
     // NPC ragdoll controllers (multiple concurrent, persist until sim stop/reset/zone change)
@@ -122,6 +123,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         victorySequenceController = new Dev.VictorySequenceController(
             boneTransformService, animationController.EmotePlayer,
             movementBlockHook, ragdollController, vnavmeshIpc, clientState, targetManager, config, log);
+        executionModeController = new Dev.ExecutionModeController(
+            boneTransformService, animationController.EmotePlayer, ragdollController, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, ragdollController,
@@ -331,6 +334,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcAiController.Dispose();
         combatEngine.Dispose();
         victorySequenceController.Dispose();
+        executionModeController.Dispose();
         ragdollController.Dispose();
         weaponDropController.Dispose();
         boneTransformService.Dispose();
@@ -384,6 +388,22 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             case "export-actions":
             case "exportactions":
                 ExportActionDatabase();
+                break;
+
+            case "hold":
+                if (executionModeController.IsActive)
+                {
+                    executionModeController.Stop();
+                    chatGui.Print("[CombatSim] Hold released.");
+                }
+                else if (executionModeController.TryStart(npcSelector.SelectedNpcs))
+                {
+                    chatGui.Print("[CombatSim] Hold active.");
+                }
+                else
+                {
+                    chatGui.PrintError("[CombatSim] Hold: ragdoll not active or no NPC selected.");
+                }
                 break;
 
             default:
@@ -536,6 +556,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             combatEngine.Tick(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
             victorySequenceController.Tick(deltaTime);
+            executionModeController.Tick(deltaTime);
 
             // Dev: apply NPC scale override via DrawObject transform
             if (config.DevNpcScale != 1.0f)
