@@ -390,22 +390,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 ExportActionDatabase();
                 break;
 
-            case "hold":
-                if (executionModeController.IsActive)
-                {
-                    executionModeController.Stop();
-                    chatGui.Print("[CombatSim] Hold released.");
-                }
-                else if (executionModeController.TryStart(npcSelector.SelectedNpcs))
-                {
-                    chatGui.Print("[CombatSim] Hold active.");
-                }
-                else
-                {
-                    chatGui.PrintError("[CombatSim] Hold: ragdoll not active or no NPC selected.");
-                }
-                break;
-
             default:
                 config.ShowMainWindow = !config.ShowMainWindow;
                 config.Save();
@@ -451,6 +435,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         if (config.ShowGrabToolbar)
             mainWindow.DrawGrabToolbar(victorySequenceController);
+
+        if (config.ShowHoldToolbar)
+            mainWindow.DrawHoldToolbar(executionModeController);
 
         if (config.ShowMainWindow)
             mainWindow.Draw();

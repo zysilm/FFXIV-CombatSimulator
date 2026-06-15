@@ -3108,6 +3108,14 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Floating toolbar to toggle grab and tweak force/speed on the current victory cinema stage.");
 
+            var showHoldToolbar = config.ShowHoldToolbar;
+            if (ImGui.Checkbox("Show Hold Toolbar##dev", ref showHoldToolbar))
+            {
+                config.ShowHoldToolbar = showHoldToolbar;
+                config.Save();
+            }
+            HelpMarker("Floating toolbar to toggle standing hold on the active ragdoll while an NPC continues attacking.");
+
             var ragdollLog = config.RagdollVerboseLog;
             if (ImGui.Checkbox("Ragdoll Verbose Log##dev", ref ragdollLog))
             {
@@ -3532,6 +3540,39 @@ public class MainWindow : IDisposable
             ImGui.SetNextItemWidth(60);
             if (ImGui.DragFloat("##tbGHz", ref gsf, 5f, 10, 500, "%.0f"))
             { s.GrabSpringFreq = gsf; config.Save(); }
+        }
+
+        ImGui.End();
+    }
+
+    public void DrawHoldToolbar(Dev.ExecutionModeController executionModeController)
+    {
+        if (!ImGui.Begin("Hold", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.End();
+            return;
+        }
+
+        var active = executionModeController.IsActive;
+
+        if (active)
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.7f, 0.2f, 0.2f, 1f));
+
+        if (ImGui.Button(active ? "Release##hold" : "Hold##hold"))
+        {
+            if (active)
+                executionModeController.Stop();
+            else
+                executionModeController.TryStart(npcSelector.SelectedNpcs);
+        }
+
+        if (active)
+            ImGui.PopStyleColor();
+
+        if (active)
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled("active");
         }
 
         ImGui.End();
