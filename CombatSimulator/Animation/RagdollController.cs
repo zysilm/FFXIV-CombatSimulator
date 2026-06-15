@@ -3335,7 +3335,7 @@ public unsafe class RagdollController : IDisposable
 
     private static readonly string[] StandingSpineBones = { "j_sebo_a", "j_sebo_b", "j_sebo_c" };
 
-    public bool CreateStandingSupport(Vector3 pelvisWorldPos, Quaternion uprightRot)
+    public bool CreateStandingSupport(Vector3 pelvisWorldPos, Quaternion uprightRot, string anchorBoneName = "j_kosi")
     {
         if (simulation == null || !isActive) return false;
 
@@ -3348,9 +3348,9 @@ public unsafe class RagdollController : IDisposable
         }
         BeginBiomechanicalSettle();
 
-        // Pelvis: strong linear servo drives the body up to the target height.
+        // Anchor bone: strong linear servo drives the body up to the target height.
         // High spring frequency so it pulls the character up quickly.
-        var pelvisHandle = FindBodyHandle("j_kosi");
+        var pelvisHandle = FindBodyHandle(anchorBoneName);
         if (pelvisHandle.HasValue)
         {
             standingConstraints.Add(simulation.Solver.Add(pelvisHandle.Value,

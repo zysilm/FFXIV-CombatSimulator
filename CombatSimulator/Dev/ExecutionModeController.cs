@@ -11,7 +11,7 @@ namespace CombatSimulator.Dev;
 
 /// <summary>
 /// Hidden mode: ragdoll stays active but is held upright via spine/pelvis physics
-/// constraints while the primary NPC plays an attack animation.
+/// constraints while the primary NPC continues to perform melee attacks.
 /// Arms, head, and hands remain fully dynamic and react to NPC collisions.
 /// </summary>
 public unsafe class ExecutionModeController : IDisposable
@@ -19,11 +19,15 @@ public unsafe class ExecutionModeController : IDisposable
     private readonly BoneTransformService boneService;
     private readonly EmoteTimelinePlayer emotePlayer;
     private readonly RagdollController ragdollController;
+    private readonly AnimationController animationController;
     private readonly IPluginLog log;
 
     private bool isActive;
     private SimulatedNpc? primaryNpc;
-    private ushort savedTimelineOverride;
+    private float attackTimer;
+
+    // Configurable attack interval (seconds between melee swings).
+    public float AttackInterval { get; set; } = 2.5f;
 
     public bool IsActive => isActive;
 
@@ -31,23 +35,24 @@ public unsafe class ExecutionModeController : IDisposable
         BoneTransformService boneService,
         EmoteTimelinePlayer emotePlayer,
         RagdollController ragdollController,
+        AnimationController animationController,
         IPluginLog log)
     {
         this.boneService = boneService;
         this.emotePlayer = emotePlayer;
         this.ragdollController = ragdollController;
+        this.animationController = animationController;
         this.log = log;
     }
 
     /// <summary>
-    /// Start execution mode. Lifts the ragdoll to standing height and optionally
-    /// overrides the primary NPC's animation to a looping attack timeline.
+    /// Start the mode. Lifts the ragdoll to standing height at the anchor bone and
+    /// begins driving the primary NPC to perform periodic melee attack animations.
     /// </summary>
     /// <param name="npcs">Active NPC list — first alive entry is used.</param>
-    /// <param name="standingHeight">World-space Y offset above the character's death
-    /// position to place the pelvis. ~0.92 matches a standing FFXIV character.</param>
-    /// <param name="attackTimelineId">If non-zero, set on the NPC via BaseOverride.</param>
-    public bool TryStart(IReadOnlyList<SimulatedNpc> npcs, float standingHeight = 0.92f, ushort attackTimelineId = 0)
+    /// <param name="anchorBone">Ragdoll bone to pin (e.g. "j_kosi", "j_sebo_c").</param>
+    /// <param name="standingHeight">Y offset above the character's death position for the anchor bone.</param>
+    public bool TryStart(IReadOnlyList<SimulatedNpc> npcs, string anchorBone = "j_kosi", float standingHeight = 0.92f)
     {
         if (isActive) return false;
         if (!ragdollController.IsActive)
@@ -56,7 +61,6 @@ public unsafe class ExecutionModeController : IDisposable
             return false;
         }
 
-        // Find first alive NPC.
         SimulatedNpc? candidate = null;
         foreach (var npc in npcs)
         {
@@ -72,23 +76,17 @@ public unsafe class ExecutionModeController : IDisposable
             return false;
         }
 
-        // Target pelvis at death-spot XZ + caller-specified standing height.
-        // We deliberately do NOT read the current ragdoll skeleton position here —
-        // after a death fall the pelvis is at ground level, using it as the target
-        // would just pin the character to the floor rather than lifting them up.
         var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null)
         {
             log.Warning("ExecutionMode: no local player");
             return false;
         }
+
         var go = (GameObject*)player.Address;
-        var pelvisTarget = new Vector3(go->Position.X, go->Position.Y + standingHeight, go->Position.Z);
+        var anchorTarget = new Vector3(go->Position.X, go->Position.Y + standingHeight, go->Position.Z);
 
-        // Identity upright: Y-up, facing the death yaw (no yaw correction for now).
-        var uprightRot = Quaternion.Identity;
-
-        if (!ragdollController.CreateStandingSupport(pelvisTarget, uprightRot))
+        if (!ragdollController.CreateStandingSupport(anchorTarget, Quaternion.Identity, anchorBone))
         {
             log.Warning("ExecutionMode: CreateStandingSupport failed");
             return false;
@@ -96,21 +94,14 @@ public unsafe class ExecutionModeController : IDisposable
 
         primaryNpc = candidate;
 
-        // Override NPC animation to a specific attack loop if requested.
-        if (attackTimelineId > 0 && primaryNpc.BattleChara != null)
-        {
-            var character = (Character*)primaryNpc.BattleChara;
-            savedTimelineOverride = character->Timeline.BaseOverride;
-            character->Timeline.BaseOverride = attackTimelineId;
-            log.Info($"ExecutionMode: NPC '{primaryNpc.Name}' timeline → {attackTimelineId}");
-        }
-        else
-        {
-            savedTimelineOverride = 0;
-        }
+        // Put NPC into battle stance (weapon drawn, combat animation set).
+        animationController.SetBattleStance(primaryNpc);
+
+        // Fire first attack immediately on start.
+        attackTimer = 0f;
 
         isActive = true;
-        log.Info($"ExecutionMode: started — NPC '{primaryNpc.Name}', pelvisTarget=({pelvisTarget.X:F2},{pelvisTarget.Y:F2},{pelvisTarget.Z:F2}), timeline={attackTimelineId}");
+        log.Info($"ExecutionMode: started — NPC '{primaryNpc.Name}', anchor={anchorBone}, height={standingHeight:F2}");
         return true;
     }
 
@@ -129,6 +120,16 @@ public unsafe class ExecutionModeController : IDisposable
             StopInternal(restoreNpc: false);
             return;
         }
+
+        // Periodically trigger melee auto-attack animation on the NPC.
+        attackTimer -= deltaTime;
+        if (attackTimer <= 0f)
+        {
+            var targetId = Core.Services.ObjectTable.LocalPlayer?.EntityId ?? 0;
+            if (targetId != 0)
+                animationController.PlayNpcAutoAttack(primaryNpc, targetId, 0);
+            attackTimer = AttackInterval;
+        }
     }
 
     public void Stop()
@@ -144,18 +145,14 @@ public unsafe class ExecutionModeController : IDisposable
         if (restoreNpc && primaryNpc?.BattleChara != null)
         {
             var character = (Character*)primaryNpc.BattleChara;
-
-            if (savedTimelineOverride > 0)
-                character->Timeline.BaseOverride = savedTimelineOverride;
-            else
-                emotePlayer.ResetEmote(character);
-
+            emotePlayer.ResetEmote(character);
+            animationController.ClearBattleStance(primaryNpc);
             character->SetMode(CharacterModes.Normal, 0);
         }
 
         log.Info($"ExecutionMode: stopped (NPC='{primaryNpc?.Name ?? "none"}')");
         primaryNpc = null;
-        savedTimelineOverride = 0;
+        attackTimer = 0f;
         isActive = false;
     }
 

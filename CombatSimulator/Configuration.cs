@@ -251,7 +251,7 @@ public class Configuration : IPluginConfiguration
     public bool ShowGrabToolbar { get; set; } = false;
     public bool ShowHoldToolbar { get; set; } = false;
     public float HoldStandingHeight { get; set; } = 0.92f;
-    public int HoldAttackTimelineId { get; set; } = 0;
+    public string HoldAnchorBone { get; set; } = "j_kosi";
     public bool DevNpcOcclusionHide { get; set; } = false;
     public float DevNpcOcclusionRadius { get; set; } = 1.0f;
     public bool DevCompanionAppearanceVariant { get; set; } = false;

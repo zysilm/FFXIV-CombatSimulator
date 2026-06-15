@@ -124,7 +124,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             boneTransformService, animationController.EmotePlayer,
             movementBlockHook, ragdollController, vnavmeshIpc, clientState, targetManager, config, log);
         executionModeController = new Dev.ExecutionModeController(
-            boneTransformService, animationController.EmotePlayer, ragdollController, log);
+            boneTransformService, animationController.EmotePlayer, ragdollController, animationController, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, ragdollController,
