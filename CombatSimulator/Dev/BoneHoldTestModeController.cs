@@ -40,6 +40,9 @@ public unsafe class BoneHoldTestModeController : IDisposable
     private bool attackEnabled;
     private bool attackAllNpcs;
     private float attackTimer;
+    // 0/0 = melee anim; non-zero = play looped emote on each tick
+    private ushort attackEmoteLoopId;
+    private ushort attackEmoteIntroId;
 
     // ── Shake ───────────────────────────────────────────────────────────────
     private bool shakeEnabled;
@@ -249,6 +252,13 @@ public unsafe class BoneHoldTestModeController : IDisposable
         attackAllNpcs = allNpcs;
     }
 
+    /// <summary>Set which emote NPCs play on each attack tick. Both 0 = melee anim mode.</summary>
+    public void SetAttackEmote(ushort loopId, ushort introId)
+    {
+        attackEmoteLoopId  = loopId;
+        attackEmoteIntroId = introId;
+    }
+
     public void SetGrab(bool enabled, string npcBone, string playerBone, float force, float freq)
     {
         if (!isActive) return;
@@ -360,13 +370,13 @@ public unsafe class BoneHoldTestModeController : IDisposable
 
         if (!attackAllNpcs)
         {
-            animationController.PlayNpcMeleeAnimationOnly(primaryNpc);
+            PerformAttackAnimation(primaryNpc);
             return;
         }
         foreach (var npc in allNpcs)
         {
             if (!npc.State.IsAlive || npc.BattleChara == null) continue;
-            animationController.PlayNpcMeleeAnimationOnly(npc);
+            PerformAttackAnimation(npc);
         }
     }
 
@@ -410,6 +420,14 @@ public unsafe class BoneHoldTestModeController : IDisposable
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    private void PerformAttackAnimation(SimulatedNpc npc)
+    {
+        if (attackEmoteLoopId == 0)
+            animationController.PlayNpcMeleeAnimationOnly(npc);
+        else
+            animationController.PlayNpcEmote(npc, attackEmoteLoopId, attackEmoteIntroId);
+    }
 
     private void ApplyArmBind(float spread, float height)
     {

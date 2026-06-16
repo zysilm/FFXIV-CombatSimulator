@@ -3562,6 +3562,48 @@ public class MainWindow : IDisposable
     private static readonly string[] HoldGrabNpcBones    = { "j_te_r", "j_te_l" };
     private static readonly string[] HoldGrabPlayerBones = { "j_kubi", "j_sebo_c", "j_kosi", "j_kao", "j_ude_b_r", "j_ude_b_l" };
 
+    // Emote cache for the attack-mode dropdown ("Atk" first, then alphabetical emotes)
+    private List<(uint EmoteId, string Name)>? holdAttackEmoteCache;
+    private string[]? holdAttackEmoteNames;
+
+    private void EnsureHoldAttackEmoteCache()
+    {
+        if (holdAttackEmoteCache != null) return;
+        var items = new List<(uint, string)> { (0u, "Atk") };
+        try
+        {
+            var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>();
+            if (sheet != null)
+            {
+                var emotes = new List<(uint, string)>();
+                foreach (var emote in sheet)
+                {
+                    var name = emote.Name.ToString();
+                    if (!string.IsNullOrWhiteSpace(name))
+                        emotes.Add((emote.RowId, name));
+                }
+                emotes.Sort((a, b) => string.Compare(a.Item2, b.Item2, StringComparison.OrdinalIgnoreCase));
+                items.AddRange(emotes);
+            }
+        }
+        catch { }
+        holdAttackEmoteCache = items;
+        holdAttackEmoteNames = items.ConvertAll(e => e.Item2).ToArray();
+    }
+
+    private (ushort Loop, ushort Intro) ResolveHoldEmoteTimelines(uint emoteId)
+    {
+        if (emoteId == 0) return (0, 0);
+        try
+        {
+            var row = dataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>()?.GetRow(emoteId);
+            if (row.HasValue)
+                return ((ushort)row.Value.ActionTimeline[0].RowId, (ushort)row.Value.ActionTimeline[1].RowId);
+        }
+        catch { }
+        return (0, 0);
+    }
+
     private record struct HoldPreset(string Name, string Bone, float Height,
         bool BindArms = false, float ArmSpread = 0.8f, float ArmHeight = 1.2f, bool WallPin = false);
 
@@ -3588,13 +3630,18 @@ public class MainWindow : IDisposable
         if (ImGui.Button(active ? "Release##hold" : "Hold##hold"))
         {
             if (active) ctrl.Stop(npcSelector.SelectedNpcs);
-            else        ctrl.TryStart(npcSelector.SelectedNpcs,
-                            config.HoldAnchorBone, config.HoldStandingHeight,
-                            config.HoldNpcAttack, config.HoldAllNpcsAttack, config.HoldApproachDistance,
-                            config.HoldShakeEnabled, config.HoldShakeIntensity,
-                            config.HoldBindArms, config.HoldArmSpread, config.HoldArmHeight,
-                            config.HoldGrabEnabled, config.HoldGrabNpcBone, config.HoldGrabPlayerBone,
-                            config.HoldGrabForce, config.HoldGrabFreq);
+            else
+            {
+                var (eLoop, eIntro) = ResolveHoldEmoteTimelines(config.HoldAttackEmoteId);
+                ctrl.SetAttackEmote(eLoop, eIntro);
+                ctrl.TryStart(npcSelector.SelectedNpcs,
+                    config.HoldAnchorBone, config.HoldStandingHeight,
+                    config.HoldNpcAttack, config.HoldAllNpcsAttack, config.HoldApproachDistance,
+                    config.HoldShakeEnabled, config.HoldShakeIntensity,
+                    config.HoldBindArms, config.HoldArmSpread, config.HoldArmHeight,
+                    config.HoldGrabEnabled, config.HoldGrabNpcBone, config.HoldGrabPlayerBone,
+                    config.HoldGrabForce, config.HoldGrabFreq);
+            }
         }
         if (active) ImGui.PopStyleColor();
 
@@ -3606,33 +3653,47 @@ public class MainWindow : IDisposable
         // ── Attack ───────────────────────────────────────────────────────────
         if (ImGui.CollapsingHeader("Attack##holdSec"))
         {
+            // Enable checkbox (unlabeled) + emote/attack mode combo
             var atk = config.HoldNpcAttack;
-            if (ImGui.Checkbox("Atk##hold", ref atk))
+            if (ImGui.Checkbox("##holdAtkEnable", ref atk))
             {
                 config.HoldNpcAttack = atk; config.Save();
                 if (active) ctrl.SetAttack(atk, config.HoldAllNpcsAttack, npcSelector.SelectedNpcs);
             }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Enable attack / emote");
 
-            if (config.HoldNpcAttack)
+            ImGui.SameLine();
+            EnsureHoldAttackEmoteCache();
+            var emoteIdx = holdAttackEmoteCache!.FindIndex(e => e.EmoteId == config.HoldAttackEmoteId);
+            if (emoteIdx < 0) emoteIdx = 0;
+            ImGui.SetNextItemWidth(130);
+            if (ImGui.Combo("##holdAtkMode", ref emoteIdx, holdAttackEmoteNames!, holdAttackEmoteNames!.Length))
             {
-                ImGui.SameLine();
-                var all = config.HoldAllNpcsAttack;
-                if (ImGui.Checkbox("All##hold", ref all))
-                {
-                    config.HoldAllNpcsAttack = all; config.Save();
-                    if (active) ctrl.SetAttackAll(all);
-                }
-                if (ImGui.IsItemHovered()) ImGui.SetTooltip("All alive NPCs attack");
-
-                ImGui.SameLine();
-                ImGui.Text("D");
-                ImGui.SameLine();
-                ImGui.SetNextItemWidth(55);
-                var dist = config.HoldApproachDistance;
-                if (ImGui.DragFloat("##holdD", ref dist, 0.05f, 0.1f, 3.0f, "%.1fm"))
-                { config.HoldApproachDistance = dist; config.Save(); }
-                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Approach distance");
+                var sel = holdAttackEmoteCache[emoteIdx];
+                config.HoldAttackEmoteId = sel.EmoteId;
+                config.Save();
+                var (loop, intro) = ResolveHoldEmoteTimelines(sel.EmoteId);
+                if (active) ctrl.SetAttackEmote(loop, intro);
             }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("\"Atk\" = melee animation; others = looped emote");
+
+            ImGui.SameLine();
+            var all = config.HoldAllNpcsAttack;
+            if (ImGui.Checkbox("All##hold", ref all))
+            {
+                config.HoldAllNpcsAttack = all; config.Save();
+                if (active) ctrl.SetAttackAll(all);
+            }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("All alive NPCs");
+
+            ImGui.SameLine();
+            ImGui.Text("D");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(55);
+            var dist = config.HoldApproachDistance;
+            if (ImGui.DragFloat("##holdD", ref dist, 0.05f, 0.1f, 3.0f, "%.1fm"))
+            { config.HoldApproachDistance = dist; config.Save(); }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Approach distance");
         }
 
         // ── Bind Arms ────────────────────────────────────────────────────────

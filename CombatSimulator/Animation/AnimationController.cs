@@ -866,6 +866,16 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
+    /// Play an emote on an NPC character (looped: intro then BaseOverride loop).
+    /// </summary>
+    public void PlayNpcEmote(SimulatedNpc npc, ushort loopTimeline, ushort introTimeline)
+    {
+        if (npc.BattleChara == null) return;
+        var character = (Character*)npc.BattleChara;
+        EmotePlayer.PlayLoopedEmote(character, loopTimeline, introTimeline);
+    }
+
+    /// <summary>
     /// Play the NPC's melee attack animation via ActionEffectHandler with NumTargets=0.
     /// The NPC faces and animates toward the player but no effect hits any entity,
     /// so the player's death expression is not disturbed.
