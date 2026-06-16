@@ -3563,14 +3563,14 @@ public class MainWindow : IDisposable
     private static readonly string[] HoldGrabPlayerBones = { "j_kubi", "j_sebo_c", "j_kosi", "j_kao", "j_ude_b_r", "j_ude_b_l" };
 
     private record struct HoldPreset(string Name, string Bone, float Height,
-        bool BindArms = false, float ArmSpread = 0.8f, float ArmHeight = 1.2f);
+        bool BindArms = false, float ArmSpread = 0.8f, float ArmHeight = 1.2f, bool WallPin = false);
 
     private static readonly HoldPreset[] HoldPresets =
     {
         new("Kneel",       "j_kosi",   0.35f),
         new("Suspend",     "j_kubi",   2.0f),
-        new("Interrogate", "j_sebo_c", 1.25f, BindArms: true,  ArmSpread: 0.7f, ArmHeight: 1.1f),
-        new("Wall",        "j_sebo_b", 1.2f,  BindArms: false),
+        new("Interrogate", "j_sebo_b", 1.2f),
+        new("Wall",        "j_sebo_b", 1.2f,  WallPin: true),
     };
 
     public void DrawHoldToolbar(Dev.BoneHoldTestModeController ctrl)
@@ -3781,7 +3781,10 @@ public class MainWindow : IDisposable
                     config.Save();
                     if (active)
                     {
-                        ctrl.UpdateHold(p.Bone, p.Height);
+                        if (p.WallPin)
+                            ctrl.PinToWall(p.Bone, p.Height);
+                        else
+                            ctrl.UpdateHold(p.Bone, p.Height);
                         ctrl.UpdateArmBind(p.BindArms, p.ArmSpread, p.ArmHeight);
                     }
                 }

@@ -872,9 +872,6 @@ public unsafe class AnimationController : IDisposable
     /// </summary>
     public void PlayNpcMeleeAnimationOnly(SimulatedNpc npc)
     {
-        var player = Core.Services.ObjectTable.LocalPlayer;
-        if (player == null) return;
-
         var casterPtr = FindCharacter(npc.SimulatedEntityId, isPlayer: false);
         if (casterPtr == null) return;
 
@@ -892,7 +889,10 @@ public unsafe class AnimationController : IDisposable
             NativeMemory.Clear(effectsPtr,   (nuint)effectsSize);
             NativeMemory.Clear(targetIdsPtr, (nuint)idsSize);
 
-            headerPtr->AnimationTargetId  = (ulong)player.EntityId; // NPC faces player
+            // Use FFXIV's null-entity sentinel so no entity is targeted.
+            // NPC still plays the attack animation (driven by ActionId/AnimationLock/RotationInt)
+            // but nothing receives a hit state, preserving the player's death expression.
+            headerPtr->AnimationTargetId  = 0xE0000000UL;
             headerPtr->ActionId           = 7;
             headerPtr->GlobalSequence     = globalSequence++;
             headerPtr->AnimationLock      = 0.6f;
@@ -900,7 +900,7 @@ public unsafe class AnimationController : IDisposable
             headerPtr->RotationInt        = QuantizeRotation(GetNpcRotation(npc));
             headerPtr->SpellId            = 7;
             headerPtr->ActionType         = 1;
-            headerPtr->NumTargets         = 0; // no effects on any entity
+            headerPtr->NumTargets         = 0;
             headerPtr->ShowInLog          = false;
             headerPtr->ForceAnimationLock = false;
 

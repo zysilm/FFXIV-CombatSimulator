@@ -271,6 +271,27 @@ public unsafe class BoneHoldTestModeController : IDisposable
 
     // ── One-shot actions ──────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Raycast forward from the player's death position and pin the anchor bone
+    /// to the wall hit point. Falls back to height-based pin if no wall is hit.
+    /// </summary>
+    public bool PinToWall(string bone, float rayHeight, float maxDist = 2.5f)
+    {
+        if (!isActive) return false;
+        var origin = playerDeathPos + Vector3.UnitY * rayHeight;
+        if (BGCollisionModule.RaycastMaterialFilter(origin, playerDeathForward, out var hit, maxDist))
+        {
+            ragdollController.UpdateStandingSupport(hit.Point, Quaternion.Identity, bone);
+            log.Info($"BoneHoldTestMode: wall hit at {hit.Point:F2}");
+            return true;
+        }
+        ragdollController.UpdateStandingSupport(
+            new Vector3(playerDeathPos.X, playerDeathPos.Y + rayHeight, playerDeathPos.Z),
+            Quaternion.Identity, bone);
+        log.Info("BoneHoldTestMode: wall raycast no hit, using height fallback");
+        return false;
+    }
+
     /// <summary>Apply a lateral push impulse relative to player's death facing direction.</summary>
     public void Push(float forwardBias, float rightBias, float upBias, float speed = 8f)
     {
