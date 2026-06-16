@@ -291,8 +291,10 @@ public unsafe class BoneHoldTestModeController : IDisposable
         var origin = playerDeathPos + Vector3.UnitY * rayHeight;
         if (BGCollisionModule.RaycastMaterialFilter(origin, playerDeathForward, out var hit, maxDist))
         {
-            ragdollController.UpdateStandingSupport(hit.Point, Quaternion.Identity, bone);
-            log.Info($"BoneHoldTestMode: wall hit at {hit.Point:F2}");
+            // Pull back slightly from the surface so the body doesn't clip into the wall.
+            var pinPoint = hit.Point - playerDeathForward * 0.15f;
+            ragdollController.UpdateStandingSupport(pinPoint, Quaternion.Identity, bone);
+            log.Info($"BoneHoldTestMode: wall hit at {hit.Point:F2}, pinned at {pinPoint:F2}");
             return true;
         }
         ragdollController.UpdateStandingSupport(
