@@ -129,15 +129,11 @@ public unsafe class BoneHoldTestModeController : IDisposable
     {
         if (isActive || pendingStart) return false;
 
+        // NPC is optional — if none found, attack/grab are silently disabled.
         SimulatedNpc? candidate = null;
         foreach (var npc in npcs)
         {
             if (npc.State.IsAlive && npc.BattleChara != null) { candidate = npc; break; }
-        }
-        if (candidate == null)
-        {
-            log.Warning("BoneHoldTestMode: no alive NPC found");
-            return false;
         }
 
         var player = Core.Services.ObjectTable.LocalPlayer;
@@ -149,7 +145,8 @@ public unsafe class BoneHoldTestModeController : IDisposable
 
         // Store all state (physics-independent part)
         primaryNpc       = candidate;
-        attackEnabled    = enableAttack;
+        // Disable NPC-dependent features when no NPC is present
+        attackEnabled    = enableAttack && candidate != null;
         attackAllNpcs    = allNpcs;
         approachDistance = Math.Clamp(approachDist, 0.1f, 3.0f);
         shakeEnabled     = enableShake;
@@ -157,7 +154,7 @@ public unsafe class BoneHoldTestModeController : IDisposable
         shakeTimer       = 0f;
         attackTimer      = 0f;
         bindArmsEnabled  = bindArms;
-        grabEnabled      = enableGrab;
+        grabEnabled      = enableGrab && candidate != null;
         grabNpcBone      = npcBone;
         grabPlayerBone   = playerBone;
 
@@ -187,7 +184,7 @@ public unsafe class BoneHoldTestModeController : IDisposable
                 movementBlockHook.AddApproachNpc(npc.Address);
                 approachStates.Add(new NpcApproachState { Npc = npc });
             }
-            animationController.SetBattleStance(primaryNpc);
+            if (primaryNpc != null) animationController.SetBattleStance(primaryNpc);
         }
 
         pendingStart = true;
@@ -359,7 +356,8 @@ public unsafe class BoneHoldTestModeController : IDisposable
         if (!isActive) return;
 
         if (!ragdollController.IsActive) { StopInternal(restoreNpc: true, allNpcs); return; }
-        if (primaryNpc?.BattleChara == null) { StopInternal(restoreNpc: false, allNpcs); return; }
+        // Only abort if we expected an NPC and it has gone away.
+        if (primaryNpc != null && primaryNpc.BattleChara == null) { StopInternal(restoreNpc: false, allNpcs); return; }
 
         var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null) return;
