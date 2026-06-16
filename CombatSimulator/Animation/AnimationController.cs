@@ -866,15 +866,55 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
-    /// Play the NPC's melee attack animation directly on their timeline without going
-    /// through ActionEffectHandler, so the player is never registered as a hit target
-    /// and their facial/expression state is not disturbed.
+    /// Play the NPC's melee attack animation via ActionEffectHandler with NumTargets=0.
+    /// The NPC faces and animates toward the player but no effect hits any entity,
+    /// so the player's death expression is not disturbed.
     /// </summary>
     public void PlayNpcMeleeAnimationOnly(SimulatedNpc npc)
     {
-        if (npc.BattleChara == null || npcMeleeAutoAttackTimeline == 0) return;
-        var character = (Character*)npc.BattleChara;
-        EmotePlayer.PlayOneShot(character, npcMeleeAutoAttackTimeline);
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null) return;
+
+        var casterPtr = FindCharacter(npc.SimulatedEntityId, isPlayer: false);
+        if (casterPtr == null) return;
+
+        var headerSize   = sizeof(ActionEffectHandler.Header);
+        var effectsSize  = sizeof(ActionEffectHandler.TargetEffects);
+        var idsSize      = sizeof(GameObjectId);
+
+        var headerPtr    = (ActionEffectHandler.Header*)Marshal.AllocHGlobal(headerSize);
+        var effectsPtr   = (ActionEffectHandler.TargetEffects*)Marshal.AllocHGlobal(effectsSize);
+        var targetIdsPtr = (GameObjectId*)Marshal.AllocHGlobal(idsSize);
+
+        try
+        {
+            NativeMemory.Clear(headerPtr,    (nuint)headerSize);
+            NativeMemory.Clear(effectsPtr,   (nuint)effectsSize);
+            NativeMemory.Clear(targetIdsPtr, (nuint)idsSize);
+
+            headerPtr->AnimationTargetId  = (ulong)player.EntityId; // NPC faces player
+            headerPtr->ActionId           = 7;
+            headerPtr->GlobalSequence     = globalSequence++;
+            headerPtr->AnimationLock      = 0.6f;
+            headerPtr->SourceSequence     = 0;
+            headerPtr->RotationInt        = QuantizeRotation(GetNpcRotation(npc));
+            headerPtr->SpellId            = 7;
+            headerPtr->ActionType         = 1;
+            headerPtr->NumTargets         = 0; // no effects on any entity
+            headerPtr->ShowInLog          = false;
+            headerPtr->ForceAnimationLock = false;
+
+            var casterPos = GetNpcPosition(npc);
+            ActionEffectHandler.Receive(
+                npc.SimulatedEntityId, casterPtr, &casterPos,
+                headerPtr, effectsPtr, targetIdsPtr);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal((nint)headerPtr);
+            Marshal.FreeHGlobal((nint)effectsPtr);
+            Marshal.FreeHGlobal((nint)targetIdsPtr);
+        }
     }
 
     /// <summary>

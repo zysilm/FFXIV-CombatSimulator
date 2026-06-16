@@ -3608,14 +3608,20 @@ public class MainWindow : IDisposable
         {
             var atk = config.HoldNpcAttack;
             if (ImGui.Checkbox("Atk##hold", ref atk))
-            { config.HoldNpcAttack = atk; config.Save(); }
+            {
+                config.HoldNpcAttack = atk; config.Save();
+                if (active) ctrl.SetAttack(atk, config.HoldAllNpcsAttack, npcSelector.SelectedNpcs);
+            }
 
             if (config.HoldNpcAttack)
             {
                 ImGui.SameLine();
                 var all = config.HoldAllNpcsAttack;
                 if (ImGui.Checkbox("All##hold", ref all))
-                { config.HoldAllNpcsAttack = all; config.Save(); }
+                {
+                    config.HoldAllNpcsAttack = all; config.Save();
+                    if (active) ctrl.SetAttackAll(all);
+                }
                 if (ImGui.IsItemHovered()) ImGui.SetTooltip("All alive NPCs attack");
 
                 ImGui.SameLine();
@@ -3637,7 +3643,7 @@ public class MainWindow : IDisposable
             {
                 config.HoldBindArms = arms;
                 config.Save();
-                if (active) ctrl.UpdateArmBind(config.HoldArmSpread, config.HoldArmHeight);
+                if (active) ctrl.UpdateArmBind(arms, config.HoldArmSpread, config.HoldArmHeight);
             }
 
             if (config.HoldBindArms)
@@ -3651,7 +3657,7 @@ public class MainWindow : IDisposable
                 {
                     config.HoldArmSpread = spread;
                     config.Save();
-                    if (active) ctrl.UpdateArmBind(config.HoldArmSpread, config.HoldArmHeight);
+                    if (active) ctrl.UpdateArmBind(true, config.HoldArmSpread, config.HoldArmHeight);
                 }
                 if (ImGui.IsItemHovered()) ImGui.SetTooltip("Distance between wrists");
 
@@ -3664,7 +3670,7 @@ public class MainWindow : IDisposable
                 {
                     config.HoldArmHeight = armH;
                     config.Save();
-                    if (active) ctrl.UpdateArmBind(config.HoldArmSpread, config.HoldArmHeight);
+                    if (active) ctrl.UpdateArmBind(true, config.HoldArmSpread, config.HoldArmHeight);
                 }
                 if (ImGui.IsItemHovered()) ImGui.SetTooltip("Wrist height above ground");
             }
@@ -3675,7 +3681,11 @@ public class MainWindow : IDisposable
         {
             var grab = config.HoldGrabEnabled;
             if (ImGui.Checkbox("##holdGrab", ref grab))
-            { config.HoldGrabEnabled = grab; config.Save(); }
+            {
+                config.HoldGrabEnabled = grab; config.Save();
+                if (active) ctrl.SetGrab(grab, config.HoldGrabNpcBone, config.HoldGrabPlayerBone,
+                    config.HoldGrabForce, config.HoldGrabFreq);
+            }
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Pin player bone to NPC hand position");
 
             ImGui.SameLine();
@@ -3772,7 +3782,7 @@ public class MainWindow : IDisposable
                     if (active)
                     {
                         ctrl.UpdateHold(p.Bone, p.Height);
-                        ctrl.UpdateArmBind(p.ArmSpread, p.ArmHeight);
+                        ctrl.UpdateArmBind(p.BindArms, p.ArmSpread, p.ArmHeight);
                     }
                 }
             }

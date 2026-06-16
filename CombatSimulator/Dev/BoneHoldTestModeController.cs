@@ -196,14 +196,11 @@ public unsafe class BoneHoldTestModeController : IDisposable
         ragdollController.UpdateStandingSupport(target, Quaternion.Identity, anchorBone);
     }
 
-    public void UpdateArmBind(float spread, float height)
+    public void UpdateArmBind(bool enabled, float spread, float height)
     {
         if (!isActive) return;
-        if (!bindArmsEnabled)
-        {
-            ragdollController.RemoveWristConstraints();
-            return;
-        }
+        bindArmsEnabled = enabled;
+        if (!enabled) { ragdollController.RemoveWristConstraints(); return; }
         ApplyArmBind(spread, height);
     }
 
@@ -212,6 +209,64 @@ public unsafe class BoneHoldTestModeController : IDisposable
         shakeEnabled   = enabled;
         shakeIntensity = intensity;
         if (!enabled) shakeTimer = 0f;
+    }
+
+    public void SetAttack(bool enabled, bool allNpcs, IReadOnlyList<SimulatedNpc> npcs)
+    {
+        if (!isActive) return;
+        attackAllNpcs = allNpcs;
+        if (enabled == attackEnabled) return;
+
+        if (enabled)
+        {
+            foreach (var npc in npcs)
+            {
+                if (!npc.State.IsAlive || npc.BattleChara == null) continue;
+                movementBlockHook.AddApproachNpc(npc.Address);
+                approachStates.Add(new NpcApproachState { Npc = npc });
+            }
+            if (primaryNpc != null) animationController.SetBattleStance(primaryNpc);
+            attackTimer   = 0f;
+            attackEnabled = true;
+        }
+        else
+        {
+            foreach (var state in approachStates)
+            {
+                movementBlockHook.RemoveApproachNpc(state.Npc.Address);
+                if (state.Npc.BattleChara == null) continue;
+                var ch = (Character*)state.Npc.BattleChara;
+                ActorVisualStateController.ClearMovement(ch, state.Visual);
+                animationController.ClearBattleStance(state.Npc);
+            }
+            approachStates.Clear();
+            attackEnabled = false;
+        }
+    }
+
+    public void SetAttackAll(bool allNpcs)
+    {
+        attackAllNpcs = allNpcs;
+    }
+
+    public void SetGrab(bool enabled, string npcBone, string playerBone, float force, float freq)
+    {
+        if (!isActive) return;
+        if (enabled == grabEnabled) return;
+
+        grabNpcBone    = npcBone;
+        grabPlayerBone = playerBone;
+
+        if (enabled)
+        {
+            grabEnabled = true;
+            ApplyGrab(force, freq);
+        }
+        else
+        {
+            grabEnabled = false;
+            ragdollController.RemoveGrabConstraint();
+        }
     }
 
     // ── One-shot actions ──────────────────────────────────────────────────────
