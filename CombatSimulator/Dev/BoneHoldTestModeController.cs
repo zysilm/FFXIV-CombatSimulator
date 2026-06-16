@@ -198,19 +198,16 @@ public unsafe class BoneHoldTestModeController : IDisposable
         if (attackTimer > 0f) return;
         attackTimer = AttackInterval;
 
-        var targetId = player.EntityId;
-        if (targetId == 0) return;
-
         if (!attackAllNpcs)
         {
-            animationController.PlayNpcAutoAttack(primaryNpc, targetId, 0);
+            animationController.PlayNpcMeleeAnimationOnly(primaryNpc);
             return;
         }
 
         foreach (var npc in allNpcs)
         {
             if (!npc.State.IsAlive || npc.BattleChara == null) continue;
-            animationController.PlayNpcAutoAttack(npc, targetId, 0);
+            animationController.PlayNpcMeleeAnimationOnly(npc);
         }
     }
 

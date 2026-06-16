@@ -69,6 +69,7 @@ public unsafe class AnimationController : IDisposable
     private ushort battleDeadLoopTimeline = 8936;
     private bool battleDeadResolved;
     private ushort monsterRangedAutoAttackTimeline;
+    private ushort npcMeleeAutoAttackTimeline;
 
     // ActorVfxCreate spawns a .avfx particle effect attached to an actor.
     private delegate nint ActorVfxCreateDelegate(
@@ -128,6 +129,7 @@ public unsafe class AnimationController : IDisposable
         ResolvePlayDeadTimelines(dataManager);
         ResolveBattleDeadTimeline(dataManager);
         ResolveMonsterRangedAttackTimeline(dataManager);
+        ResolveMeleeAutoAttackTimeline(dataManager);
         ResolveActorVfxCreate(sigScanner);
         ResolveActorVfxRemove(sigScanner);
         ResolveActorVfxDtor(gameInterop, sigScanner);
@@ -298,6 +300,32 @@ public unsafe class AnimationController : IDisposable
         catch (Exception ex)
         {
             log.Warning(ex, "AnimationController: Failed to resolve monster ranged auto-attack timeline.");
+        }
+    }
+
+    private void ResolveMeleeAutoAttackTimeline(IDataManager dataManager)
+    {
+        try
+        {
+            var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ActionTimeline>();
+            if (sheet == null)
+                return;
+
+            foreach (var row in sheet)
+            {
+                if (row.Key.ToString() == "battle/auto_attack")
+                {
+                    npcMeleeAutoAttackTimeline = (ushort)row.RowId;
+                    log.Info($"AnimationController: Resolved melee auto-attack timeline battle/auto_attack -> {npcMeleeAutoAttackTimeline}.");
+                    return;
+                }
+            }
+
+            log.Warning("AnimationController: Could not find ActionTimeline key battle/auto_attack.");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "AnimationController: Failed to resolve melee auto-attack timeline.");
         }
     }
 
@@ -835,6 +863,18 @@ public unsafe class AnimationController : IDisposable
                 }
             }
         });
+    }
+
+    /// <summary>
+    /// Play the NPC's melee attack animation directly on their timeline without going
+    /// through ActionEffectHandler, so the player is never registered as a hit target
+    /// and their facial/expression state is not disturbed.
+    /// </summary>
+    public void PlayNpcMeleeAnimationOnly(SimulatedNpc npc)
+    {
+        if (npc.BattleChara == null || npcMeleeAutoAttackTimeline == 0) return;
+        var character = (Character*)npc.BattleChara;
+        EmotePlayer.PlayOneShot(character, npcMeleeAutoAttackTimeline);
     }
 
     /// <summary>
