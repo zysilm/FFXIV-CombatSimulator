@@ -122,6 +122,21 @@ public unsafe class BoneHoldTestModeController : IDisposable
         this.log                 = log;
     }
 
+    // ── Instant Death ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Starts combat sim if needed, then instantly kills the player with zero ragdoll delay.
+    /// No-op if the player is already dead.
+    /// </summary>
+    public void TriggerInstantDeath()
+    {
+        if (combatEngine.IsActive && !combatEngine.State.PlayerState.IsAlive) return;
+        if (!combatEngine.IsActive)
+            combatEngine.StartSimulation();
+        combatEngine.ForcePlayerInstantDeath();
+        log.Info("BoneHoldTestMode: instant death triggered");
+    }
+
     // ── Start / Stop ─────────────────────────────────────────────────────────
 
     public bool TryStart(IReadOnlyList<SimulatedNpc> npcs, string anchorBone, float standingHeight,
@@ -169,19 +184,8 @@ public unsafe class BoneHoldTestModeController : IDisposable
         pendingGrabForce      = grabForce;
         pendingGrabFreq       = grabFreq;
 
-        // Ensure the player is dead and ragdolled before creating constraints.
-        if (!combatEngine.IsActive)
-        {
-            // No combat sim running — start a minimal one and instantly kill the player.
-            combatEngine.StartSimulation();
-            combatEngine.ForcePlayerInstantDeath();
-            log.Info("BoneHoldTestMode: started minimal combat sim and force-killed player");
-        }
-        else if (!ragdollController.IsActive)
-        {
-            combatEngine.ForcePlayerInstantDeath();
-            log.Info("BoneHoldTestMode: force-killed alive player in existing combat sim");
-        }
+        // Hold only works once the ragdoll is already active (player must be dead).
+        if (!ragdollController.IsActive) { log.Warning("BoneHoldTestMode: ragdoll not active, use Instant Death first"); return false; }
 
         // Register attack NPCs immediately (doesn't need physics)
         if (attackEnabled)

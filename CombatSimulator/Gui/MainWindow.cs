@@ -3629,6 +3629,17 @@ public class MainWindow : IDisposable
         var active = ctrl.IsActive;
 
         // ── Row 1: main controls ─────────────────────────────────────────────
+        var alreadyDead = ragdollController.IsActive;
+        ImGui.BeginDisabled(alreadyDead);
+        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.15f, 0.15f, 1f));
+        if (ImGui.Button("Die##hold"))
+            ctrl.TriggerInstantDeath();
+        ImGui.PopStyleColor();
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(alreadyDead ? "Already dead" : "Instantly kill player (starts combat sim if needed)");
+
+        ImGui.SameLine();
         if (active) ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.7f, 0.2f, 0.2f, 1f));
         if (ImGui.Button(active ? "Release##hold" : "Hold##hold"))
         {
