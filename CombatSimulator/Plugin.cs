@@ -123,14 +123,14 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         victorySequenceController = new Dev.VictorySequenceController(
             boneTransformService, animationController.EmotePlayer,
             movementBlockHook, ragdollController, vnavmeshIpc, clientState, targetManager, config, log);
-        executionModeController = new Dev.BoneHoldTestModeController(
-            boneTransformService, animationController.EmotePlayer, ragdollController, animationController,
-            movementBlockHook, vnavmeshIpc, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, ragdollController,
             config, npcSelector, clientState, log, deathCamController,
             victorySequenceController);
+        executionModeController = new Dev.BoneHoldTestModeController(
+            boneTransformService, animationController.EmotePlayer, ragdollController, animationController,
+            movementBlockHook, vnavmeshIpc, combatEngine, log);
         companionManager = new CombatCompanionManager(
             objectTable, clientState, config, combatEngine, animationController,
             movementBlockHook, vnavmeshIpc, targetManager, partyEngagePlanner, terrainHeightService, log);

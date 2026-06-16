@@ -6,6 +6,7 @@ using CombatSimulator.Animation;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
+using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
@@ -26,12 +27,12 @@ public unsafe class BoneHoldTestModeController : IDisposable
     private readonly AnimationController animationController;
     private readonly MovementBlockHook movementBlockHook;
     private readonly VNavmeshIpc vnavmeshIpc;
+    private readonly CombatEngine combatEngine;
     private readonly IPluginLog log;
 
     // ── Core state ──────────────────────────────────────────────────────────
     private bool isActive;
-    private bool pendingStart;      // waiting for ragdoll physics to be ready
-    private bool ragdollSelfActivated; // we activated the ragdoll; must deactivate on stop
+    private bool pendingStart; // waiting for ragdoll physics to be ready
     private SimulatedNpc? primaryNpc;
 
     // Position/facing captured at TryStart (player's death position).
@@ -108,6 +109,7 @@ public unsafe class BoneHoldTestModeController : IDisposable
         AnimationController animationController,
         MovementBlockHook movementBlockHook,
         VNavmeshIpc vnavmeshIpc,
+        CombatEngine combatEngine,
         IPluginLog log)
     {
         this.boneService         = boneService;
@@ -116,6 +118,7 @@ public unsafe class BoneHoldTestModeController : IDisposable
         this.animationController = animationController;
         this.movementBlockHook   = movementBlockHook;
         this.vnavmeshIpc         = vnavmeshIpc;
+        this.combatEngine        = combatEngine;
         this.log                 = log;
     }
 
@@ -166,13 +169,18 @@ public unsafe class BoneHoldTestModeController : IDisposable
         pendingGrabForce      = grabForce;
         pendingGrabFreq       = grabFreq;
 
-        // If ragdoll not already active, self-activate with 0 delay.
-        // Physics will be ready on the next render tick; creation of constraints is deferred.
-        if (!ragdollController.IsActive)
+        // Ensure the player is dead and ragdolled before creating constraints.
+        if (!combatEngine.IsActive)
         {
-            ragdollController.Activate(player.Address, 0f);
-            ragdollSelfActivated = true;
-            log.Info("BoneHoldTestMode: self-activated ragdoll, deferring constraints");
+            // No combat sim running — start a minimal one and instantly kill the player.
+            combatEngine.StartSimulation();
+            combatEngine.ForcePlayerInstantDeath();
+            log.Info("BoneHoldTestMode: started minimal combat sim and force-killed player");
+        }
+        else if (!ragdollController.IsActive)
+        {
+            combatEngine.ForcePlayerInstantDeath();
+            log.Info("BoneHoldTestMode: force-killed alive player in existing combat sim");
         }
 
         // Register attack NPCs immediately (doesn't need physics)
@@ -441,13 +449,6 @@ public unsafe class BoneHoldTestModeController : IDisposable
             character->SetMode(CharacterModes.Normal, 0);
         }
         approachStates.Clear();
-
-        // If we self-activated the ragdoll, release it now.
-        if (ragdollSelfActivated)
-        {
-            ragdollController.Deactivate();
-            ragdollSelfActivated = false;
-        }
 
         log.Info($"BoneHoldTestMode: stopped (primary='{primaryNpc?.Name ?? "none"}')");
         primaryNpc      = null;

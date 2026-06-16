@@ -66,6 +66,7 @@ public class CombatEngine : IDisposable
     private readonly Dev.VictorySequenceController? victorySequenceController;
     private bool playerDeathTriggered;
     private bool victoryTriggered;
+    private bool instantRagdollOverride;
     // Player auto-attack is gated on this — when NPCs auto-engage (Dev option),
     // the player does NOT swing back until they manually use an action.
     // Set by ProcessPlayerAction when the player lands a real action; cleared
@@ -1315,7 +1316,8 @@ public class CombatEngine : IDisposable
                         // ragdoll) when ragdoll is enabled.
                         if (config.EnableRagdoll)
                         {
-                            ragdollController.Activate(player.Address);
+                            var ragdollDelay = instantRagdollOverride ? 0f : config.RagdollActivationDelay;
+                            ragdollController.Activate(player.Address, ragdollDelay);
                             OnPlayerDeath?.Invoke(player.Address);
                         }
                     }
@@ -1356,6 +1358,21 @@ public class CombatEngine : IDisposable
                 animationController.PlayVictory(isPlayerVictory: true);
             }
         }
+    }
+
+    /// <summary>
+    /// Instantly kills the player through the normal death pipeline, using zero ragdoll delay.
+    /// Requires the simulation to already be active. Used by BoneHoldTestMode.
+    /// </summary>
+    public void ForcePlayerInstantDeath()
+    {
+        if (!State.IsActive || playerDeathTriggered) return;
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null) return;
+        State.PlayerState.CurrentHp = 0;
+        instantRagdollOverride = true;
+        ExecuteDeathAnimation(player.EntityId, isPlayer: true);
+        instantRagdollOverride = false;
     }
 
     public void TriggerEnemyVictoryIfPartyDefeated()
