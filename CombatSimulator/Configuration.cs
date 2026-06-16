@@ -256,6 +256,7 @@ public class Configuration : IPluginConfiguration
     public bool HoldAllNpcsAttack { get; set; } = false;
     public float HoldApproachDistance { get; set; } = 1.0f;
     public uint HoldAttackEmoteId { get; set; } = 0; // 0 = "Atk" (melee anim), else emote RowId
+    public bool HoldDetailedBoneMode { get; set; } = false;
     public bool HoldShakeEnabled { get; set; } = false;
     public float HoldShakeIntensity { get; set; } = 3.0f;
     public bool HoldBindArms { get; set; } = false;

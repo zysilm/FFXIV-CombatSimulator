@@ -3562,6 +3562,9 @@ public class MainWindow : IDisposable
     private static readonly string[] HoldGrabNpcBones    = { "j_te_r", "j_te_l" };
     private static readonly string[] HoldGrabPlayerBones = { "j_kubi", "j_sebo_c", "j_kosi", "j_kao", "j_ude_b_r", "j_ude_b_l" };
 
+    // Detailed bone mode: real-time scan of all player skeleton bones
+    private string[]? holdDetailedBoneCache;
+
     // Emote cache for the attack-mode dropdown ("Atk" first, then alphabetical emotes)
     private List<(uint EmoteId, string Name)>? holdAttackEmoteCache;
     private string[]? holdAttackEmoteNames;
@@ -3855,35 +3858,116 @@ public class MainWindow : IDisposable
         ImGui.End();
     }
 
-    private void HoldBoneCombo(Dev.BoneHoldTestModeController ctrl, bool active)
+    private unsafe void HoldBoneCombo(Dev.BoneHoldTestModeController ctrl, bool active)
     {
-        var label = HoldAnchorBones[0].Label;
-        var idx   = 0;
-        for (int i = 0; i < HoldAnchorBones.Length; i++)
+        // Detailed mode toggle (small checkbox before the combo)
+        var detailed = config.HoldDetailedBoneMode;
+        ImGui.SetNextItemWidth(16);
+        if (ImGui.Checkbox("##holdBoneDetailed", ref detailed))
         {
-            if (HoldAnchorBones[i].Bone != config.HoldAnchorBone) continue;
-            label = HoldAnchorBones[i].Label;
-            idx   = i;
-            break;
+            config.HoldDetailedBoneMode = detailed;
+            config.Save();
+            holdDetailedBoneCache = null; // force refresh on next open
         }
-        ImGui.SetNextItemWidth(78);
-        if (ImGui.BeginCombo("##holdBone", label))
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Detailed: show all character bones (real-time)");
+        ImGui.SameLine();
+
+        if (!detailed)
         {
+            // Normal mode: preset list
+            var label = config.HoldAnchorBone;
+            var idx   = 0;
             for (int i = 0; i < HoldAnchorBones.Length; i++)
             {
-                var sel = i == idx;
-                if (ImGui.Selectable(HoldAnchorBones[i].Label, sel))
-                {
-                    config.HoldAnchorBone     = HoldAnchorBones[i].Bone;
-                    config.HoldStandingHeight = HoldAnchorBones[i].DefaultHeight;
-                    config.Save();
-                    if (active) ctrl.UpdateHold(config.HoldAnchorBone, config.HoldStandingHeight);
-                }
-                if (sel) ImGui.SetItemDefaultFocus();
+                if (HoldAnchorBones[i].Bone != config.HoldAnchorBone) continue;
+                label = HoldAnchorBones[i].Label;
+                idx   = i;
+                break;
             }
-            ImGui.EndCombo();
+            ImGui.SetNextItemWidth(78);
+            if (ImGui.BeginCombo("##holdBone", label))
+            {
+                for (int i = 0; i < HoldAnchorBones.Length; i++)
+                {
+                    var sel = i == idx;
+                    if (ImGui.Selectable(HoldAnchorBones[i].Label, sel))
+                    {
+                        config.HoldAnchorBone     = HoldAnchorBones[i].Bone;
+                        config.HoldStandingHeight = HoldAnchorBones[i].DefaultHeight;
+                        config.Save();
+                        if (active) ctrl.UpdateHold(config.HoldAnchorBone, config.HoldStandingHeight);
+                    }
+                    if (sel) ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Bone to pin");
         }
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Bone to pin");
+        else
+        {
+            // Detailed mode: scan all bones from player skeleton
+            RefreshDetailedBoneCache();
+            var bones = holdDetailedBoneCache;
+            var current = config.HoldAnchorBone;
+            ImGui.SetNextItemWidth(110);
+            if (ImGui.BeginCombo("##holdBoneDetail", current))
+            {
+                if (bones != null)
+                {
+                    foreach (var bone in bones)
+                    {
+                        var sel = bone == current;
+                        if (ImGui.Selectable(bone, sel))
+                        {
+                            config.HoldAnchorBone = bone;
+                            config.Save();
+                            if (active) ctrl.UpdateHold(bone, config.HoldStandingHeight);
+                        }
+                        if (sel) ImGui.SetItemDefaultFocus();
+                    }
+                }
+                else
+                {
+                    ImGui.TextDisabled("No skeleton available");
+                }
+                ImGui.EndCombo();
+            }
+            else
+            {
+                // Refresh every time the combo is closed so next open is up to date
+                holdDetailedBoneCache = null;
+            }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("All skeleton bones (real-time)");
+        }
+    }
+
+    private unsafe void RefreshDetailedBoneCache()
+    {
+        if (holdDetailedBoneCache != null) return;
+        try
+        {
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            if (player == null) return;
+            var go      = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;
+            if (go->DrawObject == null) return;
+            var charBase = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)go->DrawObject;
+            var skeleton = charBase->Skeleton;
+            if (skeleton == null || skeleton->PartialSkeletonCount < 1) return;
+            var partial  = &skeleton->PartialSkeletons[0];
+            var pose     = partial->GetHavokPose(0);
+            if (pose == null || pose->Skeleton == null) return;
+            var havokSkel = pose->Skeleton;
+            var count     = havokSkel->Bones.Length;
+            var names     = new List<string>(count);
+            for (int i = 0; i < count; i++)
+            {
+                var name = havokSkel->Bones[i].Name.String;
+                if (!string.IsNullOrEmpty(name)) names.Add(name);
+            }
+            names.Sort(StringComparer.OrdinalIgnoreCase);
+            holdDetailedBoneCache = names.ToArray();
+        }
+        catch { holdDetailedBoneCache = null; }
     }
 
     private void HoldHeightDrag(Dev.BoneHoldTestModeController ctrl, bool active)

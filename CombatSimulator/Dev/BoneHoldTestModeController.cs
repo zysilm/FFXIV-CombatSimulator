@@ -30,6 +30,8 @@ public unsafe class BoneHoldTestModeController : IDisposable
 
     // ── Core state ──────────────────────────────────────────────────────────
     private bool isActive;
+    private bool pendingStart;      // waiting for ragdoll physics to be ready
+    private bool ragdollSelfActivated; // we activated the ragdoll; must deactivate on stop
     private SimulatedNpc? primaryNpc;
 
     // Position/facing captured at TryStart (player's death position).
@@ -49,6 +51,14 @@ public unsafe class BoneHoldTestModeController : IDisposable
     private float shakeIntensity;
     private float shakeTimer;
     private const float ShakeInterval = 0.15f;
+
+    // ── Pending deferred-start args (physics-dependent, resolved when sim ready) ──
+    private string pendingAnchorBone = "j_kosi";
+    private float  pendingStandingHeight;
+    private float  pendingArmSpread;
+    private float  pendingArmHeight;
+    private float  pendingGrabForce;
+    private float  pendingGrabFreq;
 
     // ── Arm bind ────────────────────────────────────────────────────────────
     private bool bindArmsEnabled;
@@ -72,7 +82,7 @@ public unsafe class BoneHoldTestModeController : IDisposable
     private const float NavmeshYTolerance     = 2.5f;
 
     public float AttackInterval { get; set; } = 2.5f;
-    public bool IsActive => isActive;
+    public bool IsActive => isActive || pendingStart;
 
     private class NpcApproachState
     {
@@ -117,12 +127,7 @@ public unsafe class BoneHoldTestModeController : IDisposable
         bool bindArms, float armSpread, float armHeight,
         bool enableGrab, string npcBone, string playerBone, float grabForce, float grabFreq)
     {
-        if (isActive) return false;
-        if (!ragdollController.IsActive)
-        {
-            log.Warning("BoneHoldTestMode: ragdoll not active");
-            return false;
-        }
+        if (isActive || pendingStart) return false;
 
         SimulatedNpc? candidate = null;
         foreach (var npc in npcs)
@@ -139,30 +144,41 @@ public unsafe class BoneHoldTestModeController : IDisposable
         if (player == null) { log.Warning("BoneHoldTestMode: no local player"); return false; }
 
         var go = (GameObject*)player.Address;
-        playerDeathPos = new Vector3(go->Position.X, go->Position.Y, go->Position.Z);
+        playerDeathPos    = new Vector3(go->Position.X, go->Position.Y, go->Position.Z);
         playerDeathForward = new Vector3(MathF.Sin(go->Rotation), 0f, MathF.Cos(go->Rotation));
 
-        var anchorTarget = new Vector3(playerDeathPos.X, playerDeathPos.Y + standingHeight, playerDeathPos.Z);
-        if (!ragdollController.CreateStandingSupport(anchorTarget, Quaternion.Identity, anchorBone))
+        // Store all state (physics-independent part)
+        primaryNpc       = candidate;
+        attackEnabled    = enableAttack;
+        attackAllNpcs    = allNpcs;
+        approachDistance = Math.Clamp(approachDist, 0.1f, 3.0f);
+        shakeEnabled     = enableShake;
+        shakeIntensity   = shakeStr;
+        shakeTimer       = 0f;
+        attackTimer      = 0f;
+        bindArmsEnabled  = bindArms;
+        grabEnabled      = enableGrab;
+        grabNpcBone      = npcBone;
+        grabPlayerBone   = playerBone;
+
+        // Store deferred physics args
+        pendingAnchorBone     = anchorBone;
+        pendingStandingHeight = standingHeight;
+        pendingArmSpread      = armSpread;
+        pendingArmHeight      = armHeight;
+        pendingGrabForce      = grabForce;
+        pendingGrabFreq       = grabFreq;
+
+        // If ragdoll not already active, self-activate with 0 delay.
+        // Physics will be ready on the next render tick; creation of constraints is deferred.
+        if (!ragdollController.IsActive)
         {
-            log.Warning("BoneHoldTestMode: CreateStandingSupport failed");
-            return false;
+            ragdollController.Activate(player.Address, 0f);
+            ragdollSelfActivated = true;
+            log.Info("BoneHoldTestMode: self-activated ragdoll, deferring constraints");
         }
 
-        primaryNpc        = candidate;
-        attackEnabled     = enableAttack;
-        attackAllNpcs     = allNpcs;
-        approachDistance  = Math.Clamp(approachDist, 0.1f, 3.0f);
-        shakeEnabled      = enableShake;
-        shakeIntensity    = shakeStr;
-        shakeTimer        = 0f;
-        attackTimer       = 0f;
-        bindArmsEnabled   = bindArms;
-        grabEnabled       = enableGrab;
-        grabNpcBone       = npcBone;
-        grabPlayerBone    = playerBone;
-
-        // Attack: take over NPC movement/animation only when attack is on.
+        // Register attack NPCs immediately (doesn't need physics)
         if (attackEnabled)
         {
             foreach (var npc in npcs)
@@ -174,17 +190,29 @@ public unsafe class BoneHoldTestModeController : IDisposable
             animationController.SetBattleStance(primaryNpc);
         }
 
-        // Arm bind.
-        if (bindArmsEnabled)
-            ApplyArmBind(armSpread, armHeight);
+        pendingStart = true;
+        return true;
+    }
 
-        // NPC Grab.
-        if (grabEnabled)
-            ApplyGrab(grabForce, grabFreq);
+    private void TryCompletePendingStart()
+    {
+        if (!ragdollController.IsSimulationReady) return;
+
+        pendingStart = false;
+
+        var anchorTarget = new Vector3(playerDeathPos.X, playerDeathPos.Y + pendingStandingHeight, playerDeathPos.Z);
+        if (!ragdollController.CreateStandingSupport(anchorTarget, Quaternion.Identity, pendingAnchorBone))
+        {
+            log.Warning("BoneHoldTestMode: CreateStandingSupport failed after physics ready");
+            StopInternal(restoreNpc: true, Array.Empty<SimulatedNpc>());
+            return;
+        }
+
+        if (bindArmsEnabled) ApplyArmBind(pendingArmSpread, pendingArmHeight);
+        if (grabEnabled)     ApplyGrab(pendingGrabForce, pendingGrabFreq);
 
         isActive = true;
-        log.Info($"BoneHoldTestMode: started — anchor={anchorBone} h={standingHeight:F2} atk={attackEnabled} shake={shakeEnabled} bind={bindArmsEnabled} grab={grabEnabled}");
-        return true;
+        log.Info($"BoneHoldTestMode: started — anchor={pendingAnchorBone} h={pendingStandingHeight:F2} atk={attackEnabled} shake={shakeEnabled} bind={bindArmsEnabled} grab={grabEnabled}");
     }
 
     // ── Live adjustments (callable while active) ──────────────────────────────
@@ -327,6 +355,7 @@ public unsafe class BoneHoldTestModeController : IDisposable
 
     public void Tick(float deltaTime, IReadOnlyList<SimulatedNpc> allNpcs)
     {
+        if (pendingStart) { TryCompletePendingStart(); return; }
         if (!isActive) return;
 
         if (!ragdollController.IsActive) { StopInternal(restoreNpc: true, allNpcs); return; }
@@ -388,15 +417,20 @@ public unsafe class BoneHoldTestModeController : IDisposable
 
     public void Stop(IReadOnlyList<SimulatedNpc> allNpcs)
     {
-        if (!isActive) return;
+        if (!isActive && !pendingStart) return;
         StopInternal(restoreNpc: true, allNpcs);
     }
 
     private void StopInternal(bool restoreNpc, IReadOnlyList<SimulatedNpc> allNpcs)
     {
-        ragdollController.RemoveStandingSupport();
-        ragdollController.RemoveWristConstraints();
-        if (grabEnabled) ragdollController.RemoveGrabConstraint();
+        pendingStart = false;
+
+        if (isActive)
+        {
+            ragdollController.RemoveStandingSupport();
+            ragdollController.RemoveWristConstraints();
+            if (grabEnabled) ragdollController.RemoveGrabConstraint();
+        }
 
         foreach (var state in approachStates)
         {
@@ -410,15 +444,22 @@ public unsafe class BoneHoldTestModeController : IDisposable
         }
         approachStates.Clear();
 
+        // If we self-activated the ragdoll, release it now.
+        if (ragdollSelfActivated)
+        {
+            ragdollController.Deactivate();
+            ragdollSelfActivated = false;
+        }
+
         log.Info($"BoneHoldTestMode: stopped (primary='{primaryNpc?.Name ?? "none"}')");
-        primaryNpc    = null;
-        attackEnabled = false;
-        shakeEnabled  = false;
+        primaryNpc      = null;
+        attackEnabled   = false;
+        shakeEnabled    = false;
         bindArmsEnabled = false;
-        grabEnabled   = false;
-        shakeTimer    = 0f;
-        attackTimer   = 0f;
-        isActive      = false;
+        grabEnabled     = false;
+        shakeTimer      = 0f;
+        attackTimer     = 0f;
+        isActive        = false;
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -569,6 +610,6 @@ public unsafe class BoneHoldTestModeController : IDisposable
 
     public void Dispose()
     {
-        if (isActive) StopInternal(restoreNpc: true, Array.Empty<SimulatedNpc>());
+        if (isActive || pendingStart) StopInternal(restoreNpc: true, Array.Empty<SimulatedNpc>());
     }
 }

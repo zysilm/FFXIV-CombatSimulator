@@ -164,6 +164,7 @@ public unsafe class RagdollController : IDisposable
 
 
     public bool IsActive => isActive;
+    public bool IsSimulationReady => isActive && simulation != null;
     public nint TargetCharacterAddress => targetCharacterAddress;
 
     /// <summary>Debug draw data for a single ragdoll capsule body.</summary>
