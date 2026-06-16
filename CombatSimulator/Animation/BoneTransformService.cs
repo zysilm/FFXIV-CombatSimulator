@@ -258,6 +258,38 @@ public unsafe class BoneTransformService : IDisposable
         return -1;
     }
 
+    /// <summary>
+    /// Get a bone's world-space position for any character by address and bone name.
+    /// Returns null if the skeleton is unavailable or the bone is not found.
+    /// </summary>
+    public Vector3? GetBoneWorldPos(nint characterAddress, string boneName)
+    {
+        if (characterAddress == nint.Zero) return null;
+        var skel = TryGetSkeleton(characterAddress);
+        if (skel == null) return null;
+        var ns = skel.Value;
+
+        var idx = ResolveBoneIndex(ns, boneName);
+        if (idx < 0 || idx >= ns.BoneCount) return null;
+
+        var skeleton = ns.CharBase->Skeleton;
+        if (skeleton == null) return null;
+
+        var skelPos = new Vector3(
+            skeleton->Transform.Position.X,
+            skeleton->Transform.Position.Y,
+            skeleton->Transform.Position.Z);
+        var skelRot = new Quaternion(
+            skeleton->Transform.Rotation.X,
+            skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z,
+            skeleton->Transform.Rotation.W);
+
+        ref var mt = ref ns.Pose->ModelPose.Data[idx];
+        var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+        return skelPos + Vector3.Transform(modelPos, skelRot);
+    }
+
     public void Dispose()
     {
         OnRenderFrame = null;

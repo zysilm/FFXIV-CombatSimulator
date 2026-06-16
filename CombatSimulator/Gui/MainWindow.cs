@@ -3559,7 +3559,21 @@ public class MainWindow : IDisposable
         ("j_asi_d_r",  "R Foot",       0.05f),
     };
 
-    public void DrawHoldToolbar(Dev.BoneHoldTestModeController executionModeController)
+    private static readonly string[] HoldGrabNpcBones    = { "j_te_r", "j_te_l" };
+    private static readonly string[] HoldGrabPlayerBones = { "j_kubi", "j_sebo_c", "j_kosi", "j_kao", "j_ude_b_r", "j_ude_b_l" };
+
+    private record struct HoldPreset(string Name, string Bone, float Height,
+        bool BindArms = false, float ArmSpread = 0.8f, float ArmHeight = 1.2f);
+
+    private static readonly HoldPreset[] HoldPresets =
+    {
+        new("Kneel",       "j_kosi",   0.35f),
+        new("Suspend",     "j_kubi",   2.0f),
+        new("Interrogate", "j_sebo_c", 1.25f, BindArms: true,  ArmSpread: 0.7f, ArmHeight: 1.1f),
+        new("Wall",        "j_sebo_b", 1.2f,  BindArms: false),
+    };
+
+    public void DrawHoldToolbar(Dev.BoneHoldTestModeController ctrl)
     {
         if (!ImGui.Begin("Hold", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
         {
@@ -3567,92 +3581,248 @@ public class MainWindow : IDisposable
             return;
         }
 
-        var active = executionModeController.IsActive;
+        var active = ctrl.IsActive;
 
-        if (active)
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.7f, 0.2f, 0.2f, 1f));
-
+        // ── Row 1: main controls ─────────────────────────────────────────────
+        if (active) ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.7f, 0.2f, 0.2f, 1f));
         if (ImGui.Button(active ? "Release##hold" : "Hold##hold"))
         {
-            if (active)
-                executionModeController.Stop(npcSelector.SelectedNpcs);
-            else
-                executionModeController.TryStart(npcSelector.SelectedNpcs,
-                    config.HoldAnchorBone, config.HoldStandingHeight,
-                    config.HoldNpcAttack, config.HoldAllNpcsAttack, config.HoldApproachDistance);
+            if (active) ctrl.Stop(npcSelector.SelectedNpcs);
+            else        ctrl.TryStart(npcSelector.SelectedNpcs,
+                            config.HoldAnchorBone, config.HoldStandingHeight,
+                            config.HoldNpcAttack, config.HoldAllNpcsAttack, config.HoldApproachDistance,
+                            config.HoldShakeEnabled, config.HoldShakeIntensity,
+                            config.HoldBindArms, config.HoldArmSpread, config.HoldArmHeight,
+                            config.HoldGrabEnabled, config.HoldGrabNpcBone, config.HoldGrabPlayerBone,
+                            config.HoldGrabForce, config.HoldGrabFreq);
         }
-
         if (active) ImGui.PopStyleColor();
 
         ImGui.SameLine();
-        var atk = config.HoldNpcAttack;
-        if (ImGui.Checkbox("Atk##hold", ref atk))
-        { config.HoldNpcAttack = atk; config.Save(); }
-
-        if (config.HoldNpcAttack)
-        {
-            ImGui.SameLine();
-            var all = config.HoldAllNpcsAttack;
-            if (ImGui.Checkbox("All##hold", ref all))
-            { config.HoldAllNpcsAttack = all; config.Save(); }
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("All alive NPCs attack, not just the primary");
-
-            ImGui.SameLine();
-            ImGui.Text("D");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(55);
-            var dist = config.HoldApproachDistance;
-            if (ImGui.DragFloat("##holdD", ref dist, 0.05f, 0.1f, 3.0f, "%.1fm"))
-            { config.HoldApproachDistance = dist; config.Save(); }
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("NPCs navigate to this distance from player");
-        }
-
-        // Bone selector and height — always visible for live adjustment.
+        HoldBoneCombo(ctrl, active);
         ImGui.SameLine();
-        var currentLabel = HoldAnchorBones[0].Label;
-        var currentIdx   = 0;
-        for (int i = 0; i < HoldAnchorBones.Length; i++)
+        HoldHeightDrag(ctrl, active);
+
+        // ── Attack ───────────────────────────────────────────────────────────
+        if (ImGui.CollapsingHeader("Attack##holdSec"))
         {
-            if (HoldAnchorBones[i].Bone == config.HoldAnchorBone)
+            var atk = config.HoldNpcAttack;
+            if (ImGui.Checkbox("Atk##hold", ref atk))
+            { config.HoldNpcAttack = atk; config.Save(); }
+
+            if (config.HoldNpcAttack)
             {
-                currentLabel = HoldAnchorBones[i].Label;
-                currentIdx   = i;
-                break;
+                ImGui.SameLine();
+                var all = config.HoldAllNpcsAttack;
+                if (ImGui.Checkbox("All##hold", ref all))
+                { config.HoldAllNpcsAttack = all; config.Save(); }
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("All alive NPCs attack");
+
+                ImGui.SameLine();
+                ImGui.Text("D");
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(55);
+                var dist = config.HoldApproachDistance;
+                if (ImGui.DragFloat("##holdD", ref dist, 0.05f, 0.1f, 3.0f, "%.1fm"))
+                { config.HoldApproachDistance = dist; config.Save(); }
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Approach distance");
             }
         }
+
+        // ── Bind Arms ────────────────────────────────────────────────────────
+        if (ImGui.CollapsingHeader("Bind##holdSec"))
+        {
+            var arms = config.HoldBindArms;
+            if (ImGui.Checkbox("Arms##hold", ref arms))
+            {
+                config.HoldBindArms = arms;
+                config.Save();
+                if (active) ctrl.UpdateArmBind(config.HoldArmSpread, config.HoldArmHeight);
+            }
+
+            if (config.HoldBindArms)
+            {
+                ImGui.SameLine();
+                ImGui.Text("Spread");
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(60);
+                var spread = config.HoldArmSpread;
+                if (ImGui.DragFloat("##holdSpread", ref spread, 0.05f, 0.1f, 2.0f, "%.2fm"))
+                {
+                    config.HoldArmSpread = spread;
+                    config.Save();
+                    if (active) ctrl.UpdateArmBind(config.HoldArmSpread, config.HoldArmHeight);
+                }
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Distance between wrists");
+
+                ImGui.SameLine();
+                ImGui.Text("H");
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(55);
+                var armH = config.HoldArmHeight;
+                if (ImGui.DragFloat("##holdAH", ref armH, 0.02f, 0.0f, 2.5f, "%.2fm"))
+                {
+                    config.HoldArmHeight = armH;
+                    config.Save();
+                    if (active) ctrl.UpdateArmBind(config.HoldArmSpread, config.HoldArmHeight);
+                }
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Wrist height above ground");
+            }
+        }
+
+        // ── NPC Grab ─────────────────────────────────────────────────────────
+        if (ImGui.CollapsingHeader("Grab##holdSec"))
+        {
+            var grab = config.HoldGrabEnabled;
+            if (ImGui.Checkbox("##holdGrab", ref grab))
+            { config.HoldGrabEnabled = grab; config.Save(); }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Pin player bone to NPC hand position");
+
+            ImGui.SameLine();
+            // NPC bone combo
+            var npcBoneIdx = Array.IndexOf(HoldGrabNpcBones, config.HoldGrabNpcBone);
+            if (npcBoneIdx < 0) npcBoneIdx = 0;
+            ImGui.SetNextItemWidth(55);
+            if (ImGui.Combo("##holdGNpc", ref npcBoneIdx, HoldGrabNpcBones, HoldGrabNpcBones.Length))
+            { config.HoldGrabNpcBone = HoldGrabNpcBones[npcBoneIdx]; config.Save(); }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("NPC bone (hand)");
+
+            ImGui.SameLine();
+            ImGui.Text("→");
+            ImGui.SameLine();
+            // Player bone combo
+            var playerBoneIdx = Array.IndexOf(HoldGrabPlayerBones, config.HoldGrabPlayerBone);
+            if (playerBoneIdx < 0) playerBoneIdx = 0;
+            ImGui.SetNextItemWidth(70);
+            if (ImGui.Combo("##holdGPlayer", ref playerBoneIdx, HoldGrabPlayerBones, HoldGrabPlayerBones.Length))
+            { config.HoldGrabPlayerBone = HoldGrabPlayerBones[playerBoneIdx]; config.Save(); }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Player bone to grab");
+
+            ImGui.SameLine();
+            ImGui.Text("F");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(60);
+            var gf = config.HoldGrabForce;
+            if (ImGui.DragFloat("##holdGF", ref gf, 10f, 50f, 3000f, "%.0f"))
+            { config.HoldGrabForce = gf; config.Save(); }
+
+            ImGui.SameLine();
+            ImGui.Text("Hz");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(50);
+            var ghz = config.HoldGrabFreq;
+            if (ImGui.DragFloat("##holdGHz", ref ghz, 5f, 10f, 300f, "%.0f"))
+            { config.HoldGrabFreq = ghz; config.Save(); }
+        }
+
+        // ── Impact ───────────────────────────────────────────────────────────
+        if (ImGui.CollapsingHeader("Impact##holdSec"))
+        {
+            var shake = config.HoldShakeEnabled;
+            if (ImGui.Checkbox("Shake##hold", ref shake))
+            {
+                config.HoldShakeEnabled = shake;
+                config.Save();
+                if (active) ctrl.SetShake(shake, config.HoldShakeIntensity);
+            }
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(55);
+            var str = config.HoldShakeIntensity;
+            if (ImGui.DragFloat("##holdStr", ref str, 0.1f, 0.5f, 15f, "%.1f"))
+            {
+                config.HoldShakeIntensity = str;
+                config.Save();
+                if (active && shake) ctrl.SetShake(true, str);
+            }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Shake intensity (m/s)");
+
+            ImGui.SameLine();
+            ImGui.Text("|");
+            ImGui.SameLine();
+
+            if (!active) ImGui.BeginDisabled();
+            if (ImGui.Button("←##hold"))  ctrl.Push(0,  -1, 0);
+            ImGui.SameLine();
+            if (ImGui.Button("→##hold"))  ctrl.Push(0,  +1, 0);
+            ImGui.SameLine();
+            if (ImGui.Button("↑##hold"))  ctrl.Push(0,   0, 1, speed: 6f);
+            ImGui.SameLine();
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.7f, 0.2f, 0.2f, 1f));
+            if (ImGui.Button("Fling##hold")) ctrl.Fling();
+            ImGui.PopStyleColor();
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Launch upward and release hold");
+            if (!active) ImGui.EndDisabled();
+        }
+
+        // ── Presets ──────────────────────────────────────────────────────────
+        if (ImGui.CollapsingHeader("Presets##holdSec"))
+        {
+            for (int i = 0; i < HoldPresets.Length; i++)
+            {
+                if (i > 0) ImGui.SameLine();
+                var p = HoldPresets[i];
+                if (ImGui.Button($"{p.Name}##holdPre{i}"))
+                {
+                    config.HoldAnchorBone     = p.Bone;
+                    config.HoldStandingHeight = p.Height;
+                    config.HoldBindArms       = p.BindArms;
+                    config.HoldArmSpread      = p.ArmSpread;
+                    config.HoldArmHeight      = p.ArmHeight;
+                    config.Save();
+                    if (active)
+                    {
+                        ctrl.UpdateHold(p.Bone, p.Height);
+                        ctrl.UpdateArmBind(p.ArmSpread, p.ArmHeight);
+                    }
+                }
+            }
+        }
+
+        ImGui.End();
+    }
+
+    private void HoldBoneCombo(Dev.BoneHoldTestModeController ctrl, bool active)
+    {
+        var label = HoldAnchorBones[0].Label;
+        var idx   = 0;
+        for (int i = 0; i < HoldAnchorBones.Length; i++)
+        {
+            if (HoldAnchorBones[i].Bone != config.HoldAnchorBone) continue;
+            label = HoldAnchorBones[i].Label;
+            idx   = i;
+            break;
+        }
         ImGui.SetNextItemWidth(78);
-        if (ImGui.BeginCombo("##holdBone", currentLabel))
+        if (ImGui.BeginCombo("##holdBone", label))
         {
             for (int i = 0; i < HoldAnchorBones.Length; i++)
             {
-                var selected = i == currentIdx;
-                if (ImGui.Selectable(HoldAnchorBones[i].Label, selected))
+                var sel = i == idx;
+                if (ImGui.Selectable(HoldAnchorBones[i].Label, sel))
                 {
-                    config.HoldAnchorBone      = HoldAnchorBones[i].Bone;
-                    config.HoldStandingHeight  = HoldAnchorBones[i].DefaultHeight;
+                    config.HoldAnchorBone     = HoldAnchorBones[i].Bone;
+                    config.HoldStandingHeight = HoldAnchorBones[i].DefaultHeight;
                     config.Save();
-                    if (active)
-                        executionModeController.UpdateHold(config.HoldAnchorBone, config.HoldStandingHeight);
+                    if (active) ctrl.UpdateHold(config.HoldAnchorBone, config.HoldStandingHeight);
                 }
-                if (selected) ImGui.SetItemDefaultFocus();
+                if (sel) ImGui.SetItemDefaultFocus();
             }
             ImGui.EndCombo();
         }
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Bone to pin");
+    }
 
-        ImGui.SameLine();
+    private void HoldHeightDrag(Dev.BoneHoldTestModeController ctrl, bool active)
+    {
         ImGui.SetNextItemWidth(60);
         var h = config.HoldStandingHeight;
         if (ImGui.DragFloat("##holdH", ref h, 0.02f, -0.5f, 2.5f, "%.2fm"))
         {
             config.HoldStandingHeight = h;
             config.Save();
-            if (active)
-                executionModeController.UpdateHold(config.HoldAnchorBone, config.HoldStandingHeight);
+            if (active) ctrl.UpdateHold(config.HoldAnchorBone, config.HoldStandingHeight);
         }
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Height offset above death position");
-
-        ImGui.End();
     }
 
     public void Dispose()

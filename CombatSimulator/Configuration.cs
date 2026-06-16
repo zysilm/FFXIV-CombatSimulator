@@ -255,6 +255,16 @@ public class Configuration : IPluginConfiguration
     public bool HoldNpcAttack { get; set; } = true;
     public bool HoldAllNpcsAttack { get; set; } = false;
     public float HoldApproachDistance { get; set; } = 1.0f;
+    public bool HoldShakeEnabled { get; set; } = false;
+    public float HoldShakeIntensity { get; set; } = 3.0f;
+    public bool HoldBindArms { get; set; } = false;
+    public float HoldArmSpread { get; set; } = 0.8f;
+    public float HoldArmHeight { get; set; } = 1.2f;
+    public bool HoldGrabEnabled { get; set; } = false;
+    public string HoldGrabNpcBone { get; set; } = "j_te_r";
+    public string HoldGrabPlayerBone { get; set; } = "j_kubi";
+    public float HoldGrabForce { get; set; } = 800f;
+    public float HoldGrabFreq { get; set; } = 120f;
     public bool DevNpcOcclusionHide { get; set; } = false;
     public float DevNpcOcclusionRadius { get; set; } = 1.0f;
     public bool DevCompanionAppearanceVariant { get; set; } = false;

@@ -14,9 +14,9 @@ using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 namespace CombatSimulator.Dev;
 
 /// <summary>
-/// Hidden mode: ragdoll stays active but is held upright via spine/pelvis physics
-/// constraints while NPCs navigate to the configured approach distance and perform
-/// periodic melee attacks.
+/// Hidden dev mode: ragdoll held upright via physics constraints.
+/// Supports NPC approach navigation, attack animation, arm binding,
+/// NPC bone grab, shake, directional impulse and one-shot fling.
 /// </summary>
 public unsafe class BoneHoldTestModeController : IDisposable
 {
@@ -28,23 +28,45 @@ public unsafe class BoneHoldTestModeController : IDisposable
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly IPluginLog log;
 
+    // ── Core state ──────────────────────────────────────────────────────────
     private bool isActive;
+    private SimulatedNpc? primaryNpc;
+
+    // Position/facing captured at TryStart (player's death position).
+    private Vector3 playerDeathPos;
+    private Vector3 playerDeathForward; // unit vector, XZ only
+
+    // ── Attack ──────────────────────────────────────────────────────────────
     private bool attackEnabled;
     private bool attackAllNpcs;
-    private float approachDistance;
-    private SimulatedNpc? primaryNpc;
     private float attackTimer;
 
+    // ── Shake ───────────────────────────────────────────────────────────────
+    private bool shakeEnabled;
+    private float shakeIntensity;
+    private float shakeTimer;
+    private const float ShakeInterval = 0.15f;
+
+    // ── Arm bind ────────────────────────────────────────────────────────────
+    private bool bindArmsEnabled;
+
+    // ── NPC Grab ────────────────────────────────────────────────────────────
+    private bool grabEnabled;
+    private string grabNpcBone  = "j_te_r";
+    private string grabPlayerBone = "j_kubi";
+
+    // ── Approach navigation ─────────────────────────────────────────────────
+    private float approachDistance;
     private readonly List<NpcApproachState> approachStates = new();
 
-    private const float ApproachSpeed           = 3.5f;
-    private const float ApproachStopDistance    = 0.25f;
-    private const float ApproachRepathInterval  = 0.75f;
-    private const float ApproachRepathDistance  = 1.0f;
-    private const float ApproachWaypointReach   = 0.5f;
-    private const float FloorRayStart           = 6.0f;
-    private const float FloorRayDist            = 24.0f;
-    private const float NavmeshYTolerance       = 2.5f;
+    private const float ApproachSpeed         = 3.5f;
+    private const float ApproachStopDistance  = 0.25f;
+    private const float ApproachRepathInterval = 0.75f;
+    private const float ApproachRepathDistance = 1.0f;
+    private const float ApproachWaypointReach  = 0.5f;
+    private const float FloorRayStart         = 6.0f;
+    private const float FloorRayDist          = 24.0f;
+    private const float NavmeshYTolerance     = 2.5f;
 
     public float AttackInterval { get; set; } = 2.5f;
     public bool IsActive => isActive;
@@ -75,18 +97,22 @@ public unsafe class BoneHoldTestModeController : IDisposable
         VNavmeshIpc vnavmeshIpc,
         IPluginLog log)
     {
-        this.boneService          = boneService;
-        this.emotePlayer          = emotePlayer;
-        this.ragdollController    = ragdollController;
-        this.animationController  = animationController;
-        this.movementBlockHook    = movementBlockHook;
-        this.vnavmeshIpc          = vnavmeshIpc;
-        this.log                  = log;
+        this.boneService         = boneService;
+        this.emotePlayer         = emotePlayer;
+        this.ragdollController   = ragdollController;
+        this.animationController = animationController;
+        this.movementBlockHook   = movementBlockHook;
+        this.vnavmeshIpc         = vnavmeshIpc;
+        this.log                 = log;
     }
 
-    public bool TryStart(IReadOnlyList<SimulatedNpc> npcs, string anchorBone = "j_kosi",
-        float standingHeight = 0.92f, bool enableAttack = true,
-        bool allNpcs = false, float approachDist = 1.0f)
+    // ── Start / Stop ─────────────────────────────────────────────────────────
+
+    public bool TryStart(IReadOnlyList<SimulatedNpc> npcs, string anchorBone, float standingHeight,
+        bool enableAttack, bool allNpcs, float approachDist,
+        bool enableShake, float shakeStr,
+        bool bindArms, float armSpread, float armHeight,
+        bool enableGrab, string npcBone, string playerBone, float grabForce, float grabFreq)
     {
         if (isActive) return false;
         if (!ragdollController.IsActive)
@@ -98,11 +124,7 @@ public unsafe class BoneHoldTestModeController : IDisposable
         SimulatedNpc? candidate = null;
         foreach (var npc in npcs)
         {
-            if (npc.State.IsAlive && npc.BattleChara != null)
-            {
-                candidate = npc;
-                break;
-            }
+            if (npc.State.IsAlive && npc.BattleChara != null) { candidate = npc; break; }
         }
         if (candidate == null)
         {
@@ -111,28 +133,33 @@ public unsafe class BoneHoldTestModeController : IDisposable
         }
 
         var player = Core.Services.ObjectTable.LocalPlayer;
-        if (player == null)
-        {
-            log.Warning("BoneHoldTestMode: no local player");
-            return false;
-        }
+        if (player == null) { log.Warning("BoneHoldTestMode: no local player"); return false; }
 
         var go = (GameObject*)player.Address;
-        var anchorTarget = new Vector3(go->Position.X, go->Position.Y + standingHeight, go->Position.Z);
+        playerDeathPos = new Vector3(go->Position.X, go->Position.Y, go->Position.Z);
+        playerDeathForward = new Vector3(MathF.Sin(go->Rotation), 0f, MathF.Cos(go->Rotation));
 
+        var anchorTarget = new Vector3(playerDeathPos.X, playerDeathPos.Y + standingHeight, playerDeathPos.Z);
         if (!ragdollController.CreateStandingSupport(anchorTarget, Quaternion.Identity, anchorBone))
         {
             log.Warning("BoneHoldTestMode: CreateStandingSupport failed");
             return false;
         }
 
-        primaryNpc       = candidate;
-        attackEnabled    = enableAttack;
-        attackAllNpcs    = allNpcs;
-        approachDistance = Math.Clamp(approachDist, 0.1f, 3.0f);
+        primaryNpc        = candidate;
+        attackEnabled     = enableAttack;
+        attackAllNpcs     = allNpcs;
+        approachDistance  = Math.Clamp(approachDist, 0.1f, 3.0f);
+        shakeEnabled      = enableShake;
+        shakeIntensity    = shakeStr;
+        shakeTimer        = 0f;
+        attackTimer       = 0f;
+        bindArmsEnabled   = bindArms;
+        grabEnabled       = enableGrab;
+        grabNpcBone       = npcBone;
+        grabPlayerBone    = playerBone;
 
-        // Only take over NPC movement/animation when attack is enabled.
-        // Without attack, VictorySequence keeps full control of NPCs.
+        // Attack: take over NPC movement/animation only when attack is on.
         if (attackEnabled)
         {
             foreach (var npc in npcs)
@@ -142,42 +169,80 @@ public unsafe class BoneHoldTestModeController : IDisposable
                 approachStates.Add(new NpcApproachState { Npc = npc });
             }
             animationController.SetBattleStance(primaryNpc);
-            attackTimer = 0f;
         }
 
+        // Arm bind.
+        if (bindArmsEnabled)
+            ApplyArmBind(armSpread, armHeight);
+
+        // NPC Grab.
+        if (grabEnabled)
+            ApplyGrab(grabForce, grabFreq);
+
         isActive = true;
-        log.Info($"BoneHoldTestMode: started — NPC '{primaryNpc.Name}', anchor={anchorBone}, height={standingHeight:F2}, approach={approachDistance:F2}m");
+        log.Info($"BoneHoldTestMode: started — anchor={anchorBone} h={standingHeight:F2} atk={attackEnabled} shake={shakeEnabled} bind={bindArmsEnabled} grab={grabEnabled}");
         return true;
     }
 
-    /// <summary>Adjust anchor bone and height while the mode is already running.</summary>
+    // ── Live adjustments (callable while active) ──────────────────────────────
+
     public void UpdateHold(string anchorBone, float standingHeight)
     {
         if (!isActive) return;
-
         var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null) return;
-
         var go = (GameObject*)player.Address;
-        var anchorTarget = new Vector3(go->Position.X, go->Position.Y + standingHeight, go->Position.Z);
-        ragdollController.UpdateStandingSupport(anchorTarget, Quaternion.Identity, anchorBone);
+        var target = new Vector3(go->Position.X, go->Position.Y + standingHeight, go->Position.Z);
+        ragdollController.UpdateStandingSupport(target, Quaternion.Identity, anchorBone);
     }
+
+    public void UpdateArmBind(float spread, float height)
+    {
+        if (!isActive) return;
+        if (!bindArmsEnabled)
+        {
+            ragdollController.RemoveWristConstraints();
+            return;
+        }
+        ApplyArmBind(spread, height);
+    }
+
+    public void SetShake(bool enabled, float intensity)
+    {
+        shakeEnabled   = enabled;
+        shakeIntensity = intensity;
+        if (!enabled) shakeTimer = 0f;
+    }
+
+    // ── One-shot actions ──────────────────────────────────────────────────────
+
+    /// <summary>Apply a lateral push impulse relative to player's death facing direction.</summary>
+    public void Push(float forwardBias, float rightBias, float upBias, float speed = 8f)
+    {
+        if (!isActive) return;
+        var right = new Vector3(playerDeathForward.Z, 0f, -playerDeathForward.X);
+        var dir = playerDeathForward * forwardBias + right * rightBias + Vector3.UnitY * upBias;
+        if (dir.LengthSquared() > 0.001f)
+            dir = Vector3.Normalize(dir);
+        ragdollController.ApplyImpulse("j_kosi", dir * speed);
+    }
+
+    /// <summary>Fling: big upward + forward impulse, then release hold.</summary>
+    public void Fling()
+    {
+        if (!isActive) return;
+        ragdollController.ApplyImpulse("j_kosi", playerDeathForward * 6f + Vector3.UnitY * 12f);
+        Stop(Array.Empty<SimulatedNpc>());
+    }
+
+    // ── Tick ─────────────────────────────────────────────────────────────────
 
     public void Tick(float deltaTime, IReadOnlyList<SimulatedNpc> allNpcs)
     {
         if (!isActive) return;
 
-        if (!ragdollController.IsActive)
-        {
-            StopInternal(restoreNpc: true, allNpcs);
-            return;
-        }
-
-        if (primaryNpc?.BattleChara == null)
-        {
-            StopInternal(restoreNpc: false, allNpcs);
-            return;
-        }
+        if (!ragdollController.IsActive) { StopInternal(restoreNpc: true, allNpcs); return; }
+        if (primaryNpc?.BattleChara == null) { StopInternal(restoreNpc: false, allNpcs); return; }
 
         var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null) return;
@@ -185,15 +250,34 @@ public unsafe class BoneHoldTestModeController : IDisposable
         var playerGo  = (GameObject*)player.Address;
         var playerPos = new Vector3(playerGo->Position.X, playerGo->Position.Y, playerGo->Position.Z);
 
-        // Drive all registered NPCs toward the approach distance.
+        // NPC approach navigation.
         foreach (var state in approachStates)
         {
             if (!state.Npc.State.IsAlive || state.Npc.BattleChara == null) continue;
             TickNpcApproach(state, playerPos, deltaTime);
         }
 
-        if (!attackEnabled) return;
+        // Shake.
+        if (shakeEnabled)
+        {
+            shakeTimer -= deltaTime;
+            if (shakeTimer <= 0f)
+            {
+                ragdollController.ApplyShake(shakeIntensity);
+                shakeTimer = ShakeInterval;
+            }
+        }
 
+        // NPC grab: update servo target every tick from NPC hand bone.
+        if (grabEnabled && primaryNpc.BattleChara != null)
+        {
+            var handPos = boneService.GetBoneWorldPos(primaryNpc.Address, grabNpcBone);
+            if (handPos.HasValue)
+                ragdollController.UpdateGrabTarget(handPos.Value);
+        }
+
+        // Attack.
+        if (!attackEnabled) return;
         attackTimer -= deltaTime;
         if (attackTimer > 0f) return;
         attackTimer = AttackInterval;
@@ -203,7 +287,6 @@ public unsafe class BoneHoldTestModeController : IDisposable
             animationController.PlayNpcMeleeAnimationOnly(primaryNpc);
             return;
         }
-
         foreach (var npc in allNpcs)
         {
             if (!npc.State.IsAlive || npc.BattleChara == null) continue;
@@ -211,12 +294,70 @@ public unsafe class BoneHoldTestModeController : IDisposable
         }
     }
 
+    // ── Stop ─────────────────────────────────────────────────────────────────
+
+    public void Stop() => Stop(Array.Empty<SimulatedNpc>());
+
+    public void Stop(IReadOnlyList<SimulatedNpc> allNpcs)
+    {
+        if (!isActive) return;
+        StopInternal(restoreNpc: true, allNpcs);
+    }
+
+    private void StopInternal(bool restoreNpc, IReadOnlyList<SimulatedNpc> allNpcs)
+    {
+        ragdollController.RemoveStandingSupport();
+        ragdollController.RemoveWristConstraints();
+        if (grabEnabled) ragdollController.RemoveGrabConstraint();
+
+        foreach (var state in approachStates)
+        {
+            movementBlockHook.RemoveApproachNpc(state.Npc.Address);
+            if (!restoreNpc || state.Npc.BattleChara == null) continue;
+            var character = (Character*)state.Npc.BattleChara;
+            ActorVisualStateController.ClearMovement(character, state.Visual);
+            emotePlayer.ResetEmote(character);
+            if (attackEnabled) animationController.ClearBattleStance(state.Npc);
+            character->SetMode(CharacterModes.Normal, 0);
+        }
+        approachStates.Clear();
+
+        log.Info($"BoneHoldTestMode: stopped (primary='{primaryNpc?.Name ?? "none"}')");
+        primaryNpc    = null;
+        attackEnabled = false;
+        shakeEnabled  = false;
+        bindArmsEnabled = false;
+        grabEnabled   = false;
+        shakeTimer    = 0f;
+        attackTimer   = 0f;
+        isActive      = false;
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    private void ApplyArmBind(float spread, float height)
+    {
+        var right = new Vector3(playerDeathForward.Z, 0f, -playerDeathForward.X);
+        var leftTarget  = playerDeathPos + right * -(spread / 2f) + Vector3.UnitY * height;
+        var rightTarget = playerDeathPos + right * +(spread / 2f) + Vector3.UnitY * height;
+        ragdollController.CreateWristConstraints(leftTarget, rightTarget);
+    }
+
+    private void ApplyGrab(float force, float freq)
+    {
+        var initialPos = boneService.GetBoneWorldPos(primaryNpc!.Address, grabNpcBone)
+                         ?? playerDeathPos + playerDeathForward * 0.5f + Vector3.UnitY * 1.4f;
+        ragdollController.CreateGrabConstraint(grabPlayerBone, initialPos,
+            primaryNpc.Address, force, 50f, freq);
+    }
+
+    // ─── Approach navigation ──────────────────────────────────────────────────
+
     private void TickNpcApproach(NpcApproachState state, Vector3 playerPos, float dt)
     {
         var go      = (GameObject*)state.Npc.BattleChara;
         var current = new Vector3(go->Position.X, go->Position.Y, go->Position.Z);
 
-        // Target = playerPos offset toward the NPC at approachDistance.
         var dir2d = current - playerPos;
         dir2d.Y = 0f;
         var target = dir2d.LengthSquared() > 0.01f
@@ -263,20 +404,15 @@ public unsafe class BoneHoldTestModeController : IDisposable
                 path.RequestedTarget = path.PendingTarget;
                 path.WaypointIndex   = 0;
             }
-            catch
-            {
-                path.Waypoints.Clear();
-            }
+            catch { path.Waypoints.Clear(); }
             path.PendingPath = null;
         }
 
-        var pathExhausted = path.WaypointIndex >= path.Waypoints.Count;
-        var shouldRepath  = path.PendingPath == null &&
-                            path.RepathTimer <= 0f &&
-                            (path.Waypoints.Count == 0 ||
-                             Vector3.Distance(path.RequestedTarget, target) > ApproachRepathDistance ||
-                             (pathExhausted && FlatDist(current, target) > 2f));
-
+        var exhausted   = path.WaypointIndex >= path.Waypoints.Count;
+        var shouldRepath = path.PendingPath == null && path.RepathTimer <= 0f &&
+                           (path.Waypoints.Count == 0 ||
+                            Vector3.Distance(path.RequestedTarget, target) > ApproachRepathDistance ||
+                            (exhausted && FlatDist(current, target) > 2f));
         if (shouldRepath)
         {
             path.RepathTimer   = ApproachRepathInterval;
@@ -302,7 +438,6 @@ public unsafe class BoneHoldTestModeController : IDisposable
                 new Vector3(pos.X, refY + FloorRayStart, pos.Z),
                 new Vector3(0, -1, 0), out var hit, FloorRayDist))
             return new Vector3(pos.X, hit.Point.Y, pos.Z);
-
         var snapped = SnapNavmesh(pos, refY);
         return snapped.HasValue ? new Vector3(pos.X, snapped.Value.Y, pos.Z) : pos;
     }
@@ -332,40 +467,8 @@ public unsafe class BoneHoldTestModeController : IDisposable
 
     private static float FlatDist(Vector3 a, Vector3 b)
     {
-        var dx = a.X - b.X;
-        var dz = a.Z - b.Z;
+        var dx = a.X - b.X; var dz = a.Z - b.Z;
         return MathF.Sqrt(dx * dx + dz * dz);
-    }
-
-    public void Stop() => Stop(Array.Empty<SimulatedNpc>());
-
-    public void Stop(IReadOnlyList<SimulatedNpc> allNpcs)
-    {
-        if (!isActive) return;
-        StopInternal(restoreNpc: true, allNpcs);
-    }
-
-    private void StopInternal(bool restoreNpc, IReadOnlyList<SimulatedNpc> allNpcs)
-    {
-        ragdollController.RemoveStandingSupport();
-
-        foreach (var state in approachStates)
-        {
-            movementBlockHook.RemoveApproachNpc(state.Npc.Address);
-            if (!restoreNpc || state.Npc.BattleChara == null) continue;
-            var character = (Character*)state.Npc.BattleChara;
-            ActorVisualStateController.ClearMovement(character, state.Visual);
-            emotePlayer.ResetEmote(character);
-            if (attackEnabled) animationController.ClearBattleStance(state.Npc);
-            character->SetMode(CharacterModes.Normal, 0);
-        }
-        approachStates.Clear();
-
-        log.Info($"BoneHoldTestMode: stopped (primary='{primaryNpc?.Name ?? "none"}')");
-        primaryNpc    = null;
-        attackEnabled = false;
-        attackTimer   = 0f;
-        isActive      = false;
     }
 
     public void Dispose()

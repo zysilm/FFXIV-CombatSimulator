@@ -3436,6 +3436,94 @@ public unsafe class RagdollController : IDisposable
         log.Info("RagdollController: Standing support removed");
     }
 
+    // ─── Wrist constraints ───────────────────────────────────────────────────
+
+    private readonly List<ConstraintHandle> wristConstraints = new();
+    private float wristForce = 500f;
+    private float wristFreq  = 80f;
+
+    public bool CreateWristConstraints(Vector3 leftTarget, Vector3 rightTarget,
+        float force = 500f, float freq = 80f)
+    {
+        if (simulation == null || !isActive) return false;
+
+        foreach (var h in wristConstraints)
+            try { simulation.Solver.Remove(h); } catch { }
+        wristConstraints.Clear();
+
+        wristForce = force;
+        wristFreq  = freq;
+        BuildWristConstraint("j_te_l", leftTarget);
+        BuildWristConstraint("j_te_r", rightTarget);
+        BeginBiomechanicalSettle();
+        return wristConstraints.Count > 0;
+    }
+
+    public bool UpdateWristConstraints(Vector3 leftTarget, Vector3 rightTarget)
+    {
+        if (simulation == null || wristConstraints.Count == 0) return false;
+
+        foreach (var h in wristConstraints)
+            try { simulation.Solver.Remove(h); } catch { }
+        wristConstraints.Clear();
+
+        BuildWristConstraint("j_te_l", leftTarget);
+        BuildWristConstraint("j_te_r", rightTarget);
+        return true;
+    }
+
+    public void RemoveWristConstraints()
+    {
+        if (simulation == null) return;
+        foreach (var h in wristConstraints)
+            try { simulation.Solver.Remove(h); } catch { }
+        wristConstraints.Clear();
+    }
+
+    private void BuildWristConstraint(string boneName, Vector3 target)
+    {
+        var handle = FindBodyHandle(boneName);
+        if (!handle.HasValue) return;
+        wristConstraints.Add(simulation!.Solver.Add(handle.Value,
+            new OneBodyLinearServo
+            {
+                LocalOffset    = Vector3.Zero,
+                Target         = target,
+                ServoSettings  = new ServoSettings(8f, 1f, wristForce),
+                SpringSettings = new SpringSettings(wristFreq, 1f),
+            }));
+    }
+
+    // ─── Direct impulse ──────────────────────────────────────────────────────
+
+    public void ApplyImpulse(string boneName, Vector3 velocityDelta)
+    {
+        if (simulation == null || !isActive) return;
+        var handle = FindBodyHandle(boneName);
+        if (!handle.HasValue) return;
+        var body = simulation.Bodies.GetBodyReference(handle.Value);
+        body.Velocity.Linear += velocityDelta;
+        body.Awake = true;
+        BeginBiomechanicalSettle();
+    }
+
+    private static readonly System.Random ShakeRng = new();
+
+    public void ApplyShake(float intensity)
+    {
+        if (simulation == null || !isActive) return;
+        var handle = FindBodyHandle("j_kosi");
+        if (!handle.HasValue) return;
+        var angle = (float)(ShakeRng.NextDouble() * MathF.PI * 2f);
+        var impulse = new Vector3(MathF.Cos(angle) * intensity, 0f, MathF.Sin(angle) * intensity);
+        var body = simulation.Bodies.GetBodyReference(handle.Value);
+        body.Velocity.Linear += impulse;
+        body.Awake = true;
+        BeginBiomechanicalSettle();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
     private BodyHandle? FindBodyHandle(string boneName)
     {
         foreach (var rb in ragdollBones)
@@ -3449,6 +3537,7 @@ public unsafe class RagdollController : IDisposable
         suspendedNpcAddress = nint.Zero;
         standingActive = false;
         standingConstraints.Clear();
+        wristConstraints.Clear();
         biomechanicalSettleRemaining = 0f;
         ragdollBones.Clear();
         npcCollisionStates.Clear();
