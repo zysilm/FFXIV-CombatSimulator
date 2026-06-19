@@ -928,6 +928,20 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
+    /// Action Mode: play a melee swing on the local player with no target — whiff
+    /// feedback so a light attack that connects with nothing still animates and the
+    /// button never feels dead. Hits play the full weaponskill animation through the
+    /// ActionEffect pipeline instead.
+    /// </summary>
+    public void PlayPlayerMeleeSwing()
+    {
+        if (npcMeleeAutoAttackTimeline == 0) return;
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null) return;
+        EmotePlayer.PlayOneShot((Character*)player.Address, npcMeleeAutoAttackTimeline, 0);
+    }
+
+    /// <summary>
     /// Spawn a hit VFX on the player character (independent of the action pipeline).
     /// Called when the player takes damage from NPC attacks.
     /// </summary>

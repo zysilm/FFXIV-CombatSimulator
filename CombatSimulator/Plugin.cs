@@ -59,6 +59,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly Dev.BoneHoldTestModeController executionModeController;
     private readonly HookSafetyChecker hookSafetyChecker;
 
+    // Action Mode (动作模式): real-time combat layer wired through narrow seams.
+    private readonly CombatSimulator.ActionCombat.ActionComboSink actionComboSink;
+    private readonly CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter;
+    private readonly CombatSimulator.ActionCombat.TelegraphSystem telegraphSystem;
+    private readonly CombatSimulator.ActionCombat.ActionModeController actionModeController;
+
     // NPC ragdoll controllers (multiple concurrent, persist until sim stop/reset/zone change)
     private readonly Dictionary<nint, RagdollController> npcRagdolls = new();
 
@@ -69,6 +75,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly CombatLogWindow combatLogWindow;
     private readonly RagdollDebugOverlay ragdollDebugOverlay;
     private readonly CombatLinkOverlay combatLinkOverlay;
+    private readonly TelegraphOverlay telegraphOverlay;
     private bool hookSafetyScanned;
     private bool wasLoggedIn;
 
@@ -128,6 +135,24 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             glamourerIpc, movementBlockHook, ragdollController,
             config, npcSelector, clientState, log, deathCamController,
             victorySequenceController);
+        // Action Mode wiring. Seams: ActionComboSink (player input), CombatModeRouter
+        // (enemy attack executor), TelegraphSystem (windup→hitbox). All gate on
+        // config.ActionMode; off ⇒ behavior-equivalent simulation paths.
+        actionComboSink = new CombatSimulator.ActionCombat.ActionComboSink(config);
+        var playerDodgeController = new CombatSimulator.ActionCombat.PlayerDodgeController(movementBlockHook, config, log);
+        telegraphSystem = new CombatSimulator.ActionCombat.TelegraphSystem(
+            combatEngine, animationController, () => playerDodgeController.IsInvulnerable, log);
+        var playerHitboxResolver = new CombatSimulator.ActionCombat.PlayerHitboxResolver(combatEngine, npcSelector, config);
+        actionModeController = new CombatSimulator.ActionCombat.ActionModeController(
+            config, actionComboSink, playerHitboxResolver, playerDodgeController,
+            telegraphSystem, combatEngine, animationController, log);
+        combatModeRouter = new CombatSimulator.ActionCombat.CombatModeRouter(
+            config,
+            new CombatSimulator.ActionCombat.InstantAttackExecutor(combatEngine),
+            new CombatSimulator.ActionCombat.TelegraphedAttackExecutor(telegraphSystem, config));
+        // Clear any live telegraphs when a combat session ends.
+        combatEngine.OnSimulationReset += telegraphSystem.Clear;
+
         executionModeController = new Dev.BoneHoldTestModeController(
             boneTransformService, animationController.EmotePlayer, ragdollController, animationController,
             movementBlockHook, vnavmeshIpc, combatEngine, log);
@@ -141,7 +166,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnPlayerDamageDealtToTarget = companionManager.RegisterPlayerDamage;
         npcAiController = new NpcAiController(
             combatEngine, animationController, movementBlockHook, vnavmeshIpc,
-            clientState, config, partyEngagePlanner, terrainHeightService, log, victorySequenceController.ControlsNpc);
+            clientState, config, partyEngagePlanner, terrainHeightService, log,
+            combatModeRouter, victorySequenceController.ControlsNpc);
 
         // Custom in-sim target lock system (综合提升). Takes over the game's target
         // keybinds during simulation; the engine reads the locked target for
@@ -267,7 +293,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             (nint)FFXIVClientStructs.FFXIV.Client.Game.Character.ActionEffectHandler.MemberFunctionPointers.Receive);
 
         // Safety — enable hooks immediately; they gate on internal state
-        useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, npcSpawner, config, clientState, log, playerTargetController, mapEnemyController);
+        useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, npcSpawner, config, clientState, log, playerTargetController, mapEnemyController, actionComboSink);
         useActionHook.Enable();
         movementBlockHook.Enable();
 
@@ -286,6 +312,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, mainWindow, config, gameGui, clientState);
         combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
+        telegraphOverlay = new TelegraphOverlay(telegraphSystem, gameGui, config);
 
         // Register
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -458,6 +485,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             if (config.ShowCombatLinkArcs || config.ShowLockMarker)
                 combatLinkOverlay.Draw();
+
+            if (config.ActionMode && config.ShowTelegraphs)
+                telegraphOverlay.Draw();
         }
 
         ragdollDebugOverlay.Draw();
@@ -526,6 +556,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // Target lock upkeep (drops dead/stale locks, clears when inactive).
             // Runs every frame so the lock is cleared the moment the sim stops.
             playerTargetController.Tick(deltaTime);
+
+            // Action Mode loop (player combo/dodge + enemy telegraphs). Runs every
+            // frame so an in-flight dodge dash and toggle-off cleanup are handled even
+            // when the sim is not active; gates internally on config.ActionMode.
+            actionModeController.Tick(deltaTime);
 
             if (!combatEngine.IsActive)
                 return;

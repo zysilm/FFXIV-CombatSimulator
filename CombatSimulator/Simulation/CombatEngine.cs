@@ -918,13 +918,13 @@ public class CombatEngine : IDisposable
         return actionData.Shape switch
         {
             AoeShape.Circle or AoeShape.GroundCircle =>
-                Distance2D(primaryPos, candidatePos) <= radius,
+                CombatGeometry.IsInsideCircle(primaryPos, candidatePos, radius),
             AoeShape.CircleSelf or AoeShape.Donut =>
-                Distance2D(sourcePos, candidatePos) <= radius,
+                CombatGeometry.IsInsideCircle(sourcePos, candidatePos, radius),
             AoeShape.Cone =>
-                IsInsideCone(sourcePos, primaryPos, candidatePos, radius),
+                CombatGeometry.IsInsideCone(sourcePos, primaryPos, candidatePos, radius),
             AoeShape.Line =>
-                IsInsideLine(sourcePos, primaryPos, candidatePos, radius, actionData.Width),
+                CombatGeometry.IsInsideLine(sourcePos, primaryPos, candidatePos, radius, actionData.Width),
             _ => false,
         };
     }
@@ -935,58 +935,8 @@ public class CombatEngine : IDisposable
     private static bool IsHostile(SimulatedEntityState a, SimulatedEntityState b)
         => IsFriendly(a) != IsFriendly(b);
 
-    private static float Distance2D(Vector3 a, Vector3 b)
-    {
-        var dx = a.X - b.X;
-        var dz = a.Z - b.Z;
-        return MathF.Sqrt(dx * dx + dz * dz);
-    }
-
-    private static bool TryGetDirection2D(Vector3 from, Vector3 to, out Vector2 direction)
-    {
-        var delta = new Vector2(to.X - from.X, to.Z - from.Z);
-        var len = delta.Length();
-        if (len <= 0.001f)
-        {
-            direction = Vector2.Zero;
-            return false;
-        }
-
-        direction = delta / len;
-        return true;
-    }
-
-    private static bool IsInsideCone(Vector3 source, Vector3 primaryTarget, Vector3 candidate, float radius)
-    {
-        if (!TryGetDirection2D(source, primaryTarget, out var forward) ||
-            !TryGetDirection2D(source, candidate, out var toCandidate))
-        {
-            return false;
-        }
-
-        var distance = Distance2D(source, candidate);
-        if (distance > radius)
-            return false;
-
-        // Most FFXIV cone actions are broad frontal cones. Use 90 degrees total
-        // until/unless we add a data-backed cone angle.
-        return Vector2.Dot(forward, toCandidate) >= 0.70710677f;
-    }
-
-    private static bool IsInsideLine(Vector3 source, Vector3 primaryTarget, Vector3 candidate, float length, float width)
-    {
-        if (!TryGetDirection2D(source, primaryTarget, out var forward))
-            return false;
-
-        var toCandidate = new Vector2(candidate.X - source.X, candidate.Z - source.Z);
-        var along = Vector2.Dot(toCandidate, forward);
-        if (along < 0 || along > length)
-            return false;
-
-        var perpendicular = MathF.Abs(forward.X * toCandidate.Y - forward.Y * toCandidate.X);
-        var halfWidth = MathF.Max(width > 0 ? width : 4f, 0.5f) * 0.5f;
-        return perpendicular <= halfWidth;
-    }
+    // 2D hit-shape tests moved to CombatGeometry so the Action-Mode telegraph +
+    // player hitbox share the exact same geometry as AoE resolution.
 
     private static void ApplyNpcAttackStyle(ActionData actionData, NpcAttackStyle attackStyle)
     {
@@ -1615,6 +1565,10 @@ public class CombatEngine : IDisposable
 
     private void TickAutoAttack(float deltaTime)
     {
+        // Action Mode replaces the timed auto-attack with button-driven combos.
+        if (config.ActionMode)
+            return;
+
         var ps = State.PlayerState;
         if (!ps.IsAlive)
             return;
@@ -1700,6 +1654,78 @@ public class CombatEngine : IDisposable
 
         if (!npc.State.IsAlive)
             OnEntityDeath(npc.State);
+    }
+
+    /// <summary>
+    /// Action Mode: apply a player melee hit to every enemy the hitbox already
+    /// selected (geometry is done by the Action layer — there is no range/GCD/combo
+    /// check here, this is the additive replacement for the sim-mode pipeline).
+    /// Plays one batched ActionEffect (player swing + flytext + per-target flinch)
+    /// and resolves deaths. Returns the number of enemies struck; 0 = whiff (caller
+    /// plays a swing-only animation for feedback).
+    /// </summary>
+    public int ApplyResolvedPlayerHit(IReadOnlyList<uint> targetEntityIds, uint actionId, int potency)
+    {
+        var ps = State.PlayerState;
+        if (!ps.IsAlive || targetEntityIds.Count == 0)
+            return 0;
+
+        var source = actionDataProvider.GetActionData(actionId);
+        var actionData = source != null ? CloneActionData(source) : new ActionData
+        {
+            ActionId = actionId == 0 ? 7u : actionId,
+            Name = "Attack",
+            DamageType = SimDamageType.Physical,
+            AnimationLock = 0.6f,
+        };
+        actionData.Potency = potency;
+
+        var hits = new List<AppliedActionDamage>();
+        var total = 0;
+        foreach (var id in targetEntityIds)
+        {
+            var target = State.GetEntity(id);
+            if (target == null || !target.IsAlive || target.IsPlayer || target.IsCompanion)
+                continue;
+
+            var dmg = damageCalculator.CalculateNpcAutoAttack(ps, target, potency);
+            target.CurrentHp = Math.Max(0, target.CurrentHp - dmg.Damage);
+            hits.Add(new AppliedActionDamage(target, dmg));
+            total += dmg.Damage;
+            State.TotalDamageDealt += dmg.Damage;
+            OnPlayerDamageDealtToTarget?.Invoke(target.EntityId, dmg.Damage);
+            EngageIdleTarget(target.EntityId);
+        }
+
+        if (hits.Count == 0)
+            return 0;
+
+        if (State.CombatStartTime == 0)
+            State.CombatStartTime = State.SimulationTime;
+
+        OnPlayerDamageDealt?.Invoke(total);
+        TriggerActionEffect(ps, actionData, hits);
+
+        foreach (var hit in hits)
+            if (!hit.Target.IsAlive)
+                OnEntityDeath(hit.Target);
+
+        return hits.Count;
+    }
+
+    /// <summary>Engage a still-idle selected enemy (mirrors the sim-mode first-hit engage).</summary>
+    private void EngageIdleTarget(uint entityId)
+    {
+        foreach (var npc in npcSelector.SelectedNpcs)
+        {
+            if (npc.SimulatedEntityId != entityId || npc.AiState != Ai.NpcAiState.Idle)
+                continue;
+            npc.AiState = Ai.NpcAiState.Engaging;
+            npc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
+            Ai.NpcAiController.StaggerTimers(npc);
+            AddLogEntry($"{npc.Name} engages!", CombatLogType.Info);
+            break;
+        }
     }
 
     private void TickMpRegen(SimulatedEntityState entity, float deltaTime)

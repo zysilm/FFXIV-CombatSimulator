@@ -354,6 +354,42 @@ public class Configuration : IPluginConfiguration
     public List<uint> RecentNpcIds { get; set; } = new();
     public List<RecentNpcEntry> RecentNpcEntries { get; set; } = new();
 
+    // ── Action Mode (动作模式) ──────────────────────────────────────────────
+    // A toggleable real-time action layer that replaces the tab-target / GCD
+    // interaction. Player attacks/dodge come from hotbar actions remapped by
+    // actionId (the game resolves keyboard/gamepad for us); enemy attacks
+    // telegraph (起手快照) then resolve by hitbox at the active frame. When OFF,
+    // every seam falls back to the original simulation behavior.
+    public bool ActionMode { get; set; } = false;
+
+    // Input map: put these actions on the hotbar; a press is interpreted as the
+    // mapped role instead of firing the real action. 0 = unmapped.
+    public uint ActionAttackId { get; set; } = 0;
+    public uint ActionDodgeId { get; set; } = 0;
+    public uint ActionSkill1Id { get; set; } = 0;
+    public uint ActionSkill2Id { get; set; } = 0;
+
+    // Telegraph / windup tuning
+    public float MinTelegraphWindup { get; set; } = 0.4f;  // floor so even instant attacks are readable
+
+    // Dodge tuning
+    public float DodgeIFrames { get; set; } = 0.35f;       // invulnerability window
+    public float DodgeDistance { get; set; } = 5f;         // dash distance (yalms)
+    public float DodgeDuration { get; set; } = 0.3f;       // dash travel time
+    public float DodgeCooldown { get; set; } = 0.5f;       // min time between dodges
+
+    // Player light-combo + hitbox tuning
+    public float LightComboWindow { get; set; } = 0.6f;    // time to chain the next swing
+    public float LightSwingInterval { get; set; } = 0.4f;  // min time between swings (cadence)
+    public float PlayerHitboxRange { get; set; } = 4f;     // frontal cone reach (yalms)
+    public float PlayerHitboxAngleDeg { get; set; } = 90f; // frontal cone full angle
+    public int LightAttackPotency { get; set; } = 120;
+
+    // Telegraph overlay
+    public bool ShowTelegraphs { get; set; } = true;
+    public float TelegraphAlpha { get; set; } = 0.45f;
+    public float TelegraphThickness { get; set; } = 3.0f;
+
     [NonSerialized]
     private IDalamudPluginInterface? pluginInterface;
 

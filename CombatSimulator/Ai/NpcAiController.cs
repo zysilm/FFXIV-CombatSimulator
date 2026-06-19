@@ -27,6 +27,7 @@ public unsafe class NpcAiController : IDisposable
     private readonly PartyEngagePlanner partyEngagePlanner;
     private readonly TerrainHeightService terrainHeightService;
     private readonly IPluginLog log;
+    private readonly CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter;
     private readonly Func<nint, bool> isExternallyControlled;
     private readonly Dictionary<nint, ApproachPathState> approachPaths = new();
     private readonly Dictionary<uint, float> partyApproachDebugNextLogAt = new();
@@ -98,6 +99,7 @@ public unsafe class NpcAiController : IDisposable
         PartyEngagePlanner partyEngagePlanner,
         TerrainHeightService terrainHeightService,
         IPluginLog log,
+        CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter,
         Func<nint, bool>? isExternallyControlled = null)
     {
         this.combatEngine = combatEngine;
@@ -109,6 +111,7 @@ public unsafe class NpcAiController : IDisposable
         this.partyEngagePlanner = partyEngagePlanner;
         this.terrainHeightService = terrainHeightService;
         this.log = log;
+        this.combatModeRouter = combatModeRouter;
         this.isExternallyControlled = isExternallyControlled ?? (_ => false);
 
         combatEngine.OnSimulationStarted += ScheduleAutoEngage;
@@ -487,10 +490,10 @@ public unsafe class NpcAiController : IDisposable
                 npc.State.IsCasting = false;
                 if (npc.CurrentCastSkill != null)
                 {
-                    var result = combatEngine.ProcessNpcAction(npc, npc.CurrentCastSkill.ActionId,
-                        npc.State.CastTargetId, npc.CurrentCastSkill.Potency,
-                        npc.CurrentCastSkill.AttackStyle, npc.CurrentCastSkill.Radius);
-                    if (result.Success)
+                    var ok = combatModeRouter.AttackExecutor.Execute(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
+                        npc.CurrentCastSkill.ActionId, npc.State.CastTargetId, npc.CurrentCastSkill.Potency,
+                        npc.CurrentCastSkill.AttackStyle, npc.CurrentCastSkill.Radius, npc.CurrentCastSkill.CastTime));
+                    if (ok)
                         npc.CurrentCastSkill.CooldownRemaining = npc.CurrentCastSkill.Cooldown;
                     npc.CurrentCastSkill = null;
                 }
@@ -521,7 +524,9 @@ public unsafe class NpcAiController : IDisposable
             if (hpPercent > skill.HpThreshold)
                 continue;
 
-            if (skill.CastTime > 0)
+            // Action Mode skips the engine cast bar — the telegraph executor owns the
+            // windup uniformly (cast time feeds the telegraph duration).
+            if (!config.ActionMode && skill.CastTime > 0)
             {
                 npc.State.IsCasting = true;
                 npc.State.CastActionId = skill.ActionId;
@@ -536,12 +541,12 @@ public unsafe class NpcAiController : IDisposable
             }
             else
             {
-                var result = combatEngine.ProcessNpcAction(npc, skill.ActionId, targetEntityId,
-                    skill.Potency, skill.AttackStyle, skill.Radius);
-                if (result.Success)
+                var ok = combatModeRouter.AttackExecutor.Execute(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
+                    skill.ActionId, targetEntityId, skill.Potency, skill.AttackStyle, skill.Radius, skill.CastTime));
+                if (ok)
                 {
                     skill.CooldownRemaining = skill.Cooldown;
-                    npc.State.AnimationLock = 0.6f;
+                    npc.State.AnimationLock = MathF.Max(npc.State.AnimationLock, 0.6f);
                 }
             }
             return;
@@ -552,10 +557,11 @@ public unsafe class NpcAiController : IDisposable
         if (npc.AutoAttackTimer <= 0)
         {
             npc.AutoAttackTimer = npc.Behavior.AutoAttackDelay;
-            var result = combatEngine.ProcessNpcAction(npc, npc.Behavior.AutoAttackActionId,
-                targetEntityId, npc.Behavior.AutoAttackPotency, npc.Behavior.AutoAttackStyle);
-            if (result.Success)
-                npc.State.AnimationLock = 0.6f;
+            var ok = combatModeRouter.AttackExecutor.Execute(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
+                npc.Behavior.AutoAttackActionId, targetEntityId, npc.Behavior.AutoAttackPotency,
+                npc.Behavior.AutoAttackStyle, 0f, 0f));
+            if (ok)
+                npc.State.AnimationLock = MathF.Max(npc.State.AnimationLock, 0.6f);
         }
     }
 

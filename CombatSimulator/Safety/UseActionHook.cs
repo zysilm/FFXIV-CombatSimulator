@@ -19,6 +19,7 @@ public unsafe class UseActionHook : IDisposable
     private readonly IPluginLog log;
     private readonly PlayerTargetController targetController;
     private readonly MapEnemyController mapEnemyController;
+    private readonly CombatSimulator.ActionCombat.IPlayerActionSink actionSink;
 
     private delegate bool UseActionDelegate(
         ActionManager* actionManager,
@@ -49,7 +50,8 @@ public unsafe class UseActionHook : IDisposable
         IClientState clientState,
         IPluginLog log,
         PlayerTargetController targetController,
-        MapEnemyController mapEnemyController)
+        MapEnemyController mapEnemyController,
+        CombatSimulator.ActionCombat.IPlayerActionSink actionSink)
     {
         this.combatEngine = combatEngine;
         this.npcSelector = npcSelector;
@@ -59,6 +61,7 @@ public unsafe class UseActionHook : IDisposable
         this.log = log;
         this.targetController = targetController;
         this.mapEnemyController = mapEnemyController;
+        this.actionSink = actionSink;
 
         try
         {
@@ -115,6 +118,15 @@ public unsafe class UseActionHook : IDisposable
             if (actionType != ActionType.Action)
                 return useActionHook!.Original(actionManager, actionType, actionId,
                     targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
+
+            // Action Mode: hotbar presses are remapped to action-combat inputs
+            // (light attack / dodge / skill) and never reach the server. Bypasses all
+            // sim-mode targeting/spawn routing below.
+            if (config.ActionMode)
+            {
+                actionSink.OnAction((uint)actionType, actionId, targetId, extraParam);
+                return true;
+            }
 
             // Custom targeting: our PlayerTargetController owns the player's target.
             // Route every combat action to the locked target; with no lock, swallow

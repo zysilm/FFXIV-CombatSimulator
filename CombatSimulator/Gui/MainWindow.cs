@@ -249,6 +249,7 @@ public class MainWindow : IDisposable
         {
             case 0: // Combat
                 DrawSimulationSection();
+                DrawActionModeSection();
                 break;
             case 1: // Targets
                 DrawMapEnemiesSection();
@@ -1278,6 +1279,92 @@ public class MainWindow : IDisposable
                 ImGui.PopStyleColor();
             }
         }
+    }
+
+    private void DrawActionModeSection()
+    {
+        if (!ImGui.CollapsingHeader("Action Mode (动作模式) [Experimental]"))
+            return;
+
+        var actionMode = config.ActionMode;
+        if (ImGui.Checkbox("Enable Action Mode", ref actionMode))
+        {
+            config.ActionMode = actionMode;
+            config.Save();
+        }
+        HelpMarker("Real-time action combat: button-driven light attacks + dodge, and enemy attacks " +
+                   "that telegraph (起手快照) then resolve by hitbox. Off = the normal tab-target simulation.");
+
+        if (!actionMode)
+            return;
+
+        ImGui.Separator();
+        ImGui.Text("Input Map — hotbar action ids");
+        ImGui.TextWrapped("Put these actions on your hotbar (keyboard or gamepad); a press is read as the " +
+                          "mapped role instead of firing the action. 0 = unset (any unmapped press = light attack).");
+
+        void IdField(string label, uint current, System.Action<uint> set, string help)
+        {
+            int v = (int)current;
+            if (ImGui.InputInt(label, ref v))
+            {
+                set((uint)System.Math.Max(0, v));
+                config.Save();
+            }
+            HelpMarker(help);
+        }
+
+        IdField("Attack action id", config.ActionAttackId, x => config.ActionAttackId = x,
+            "Action id that triggers a light attack. 0 = any unmapped press attacks.");
+        IdField("Dodge action id", config.ActionDodgeId, x => config.ActionDodgeId = x,
+            "Action id that triggers a dodge (backstep dash + i-frames).");
+        IdField("Skill 1 action id", config.ActionSkill1Id, x => config.ActionSkill1Id = x,
+            "Reserved for a skill slot (currently behaves as a light attack).");
+        IdField("Skill 2 action id", config.ActionSkill2Id, x => config.ActionSkill2Id = x,
+            "Reserved for a skill slot (currently behaves as a light attack).");
+
+        ImGui.Separator();
+        ImGui.Text("Player");
+        SliderFloatSaved("Swing interval", () => config.LightSwingInterval, v => config.LightSwingInterval = v, 0.15f, 1.0f, "Min seconds between light swings.");
+        SliderFloatSaved("Combo window", () => config.LightComboWindow, v => config.LightComboWindow = v, 0.2f, 1.5f, "Time to chain the next combo step.");
+        SliderFloatSaved("Hitbox range", () => config.PlayerHitboxRange, v => config.PlayerHitboxRange = v, 1f, 10f, "Frontal cone reach (yalms).");
+        SliderFloatSaved("Hitbox angle", () => config.PlayerHitboxAngleDeg, v => config.PlayerHitboxAngleDeg = v, 30f, 180f, "Frontal cone full angle (degrees).");
+
+        var potency = config.LightAttackPotency;
+        if (ImGui.InputInt("Light attack potency", ref potency))
+        {
+            config.LightAttackPotency = System.Math.Max(1, potency);
+            config.Save();
+        }
+
+        ImGui.Separator();
+        ImGui.Text("Dodge");
+        SliderFloatSaved("I-frames", () => config.DodgeIFrames, v => config.DodgeIFrames = v, 0.1f, 1.0f, "Invulnerability window length (seconds).");
+        SliderFloatSaved("Dash distance", () => config.DodgeDistance, v => config.DodgeDistance = v, 1f, 12f, "Backstep distance (yalms).");
+        SliderFloatSaved("Dash duration", () => config.DodgeDuration, v => config.DodgeDuration = v, 0.1f, 0.8f, "Dash travel time (seconds).");
+        SliderFloatSaved("Dodge cooldown", () => config.DodgeCooldown, v => config.DodgeCooldown = v, 0f, 2f, "Min seconds between dodges.");
+
+        ImGui.Separator();
+        ImGui.Text("Enemy telegraph");
+        SliderFloatSaved("Min windup", () => config.MinTelegraphWindup, v => config.MinTelegraphWindup = v, 0.1f, 2.0f, "Minimum readable windup before a hit lands.");
+        var showTele = config.ShowTelegraphs;
+        if (ImGui.Checkbox("Show telegraph circles", ref showTele))
+        {
+            config.ShowTelegraphs = showTele;
+            config.Save();
+        }
+        SliderFloatSaved("Telegraph opacity", () => config.TelegraphAlpha, v => config.TelegraphAlpha = v, 0.05f, 1.0f, "Ground danger-zone opacity.");
+    }
+
+    private void SliderFloatSaved(string label, Func<float> get, System.Action<float> set, float min, float max, string help)
+    {
+        var v = get();
+        if (ImGui.SliderFloat(label, ref v, min, max, "%.2f"))
+        {
+            set(v);
+            config.Save();
+        }
+        HelpMarker(help);
     }
 
     private void DrawHitVfxSection()
