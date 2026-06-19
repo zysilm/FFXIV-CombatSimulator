@@ -396,7 +396,7 @@ public unsafe class BoneHoldTestModeController : IDisposable
         }
 
         // NPC grab: update servo target every tick from NPC hand bone.
-        if (grabEnabled && primaryNpc.BattleChara != null)
+        if (grabEnabled && primaryNpc?.BattleChara != null)
         {
             var handPos = boneService.GetBoneWorldPos(primaryNpc.Address, grabNpcBone);
             if (handPos.HasValue)
@@ -411,7 +411,7 @@ public unsafe class BoneHoldTestModeController : IDisposable
 
         if (!attackAllNpcs)
         {
-            PerformAttackAnimation(primaryNpc);
+            if (primaryNpc != null) PerformAttackAnimation(primaryNpc);
             return;
         }
         foreach (var npc in allNpcs)
