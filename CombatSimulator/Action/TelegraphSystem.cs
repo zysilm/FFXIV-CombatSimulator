@@ -124,5 +124,18 @@ public sealed class TelegraphSystem
         }
     }
 
+    /// <summary>
+    /// True while the given enemy is mid-windup on a telegraph. Used to grant
+    /// super-armor (suppress the hit-reaction flinch) so a committed enemy attack
+    /// isn't visually stunlocked by rapid player hits — the player must dodge, not mash.
+    /// </summary>
+    public bool IsWindingUp(uint npcSimId)
+    {
+        foreach (var t in active)
+            if (!t.Resolved && t.Source.SimulatedEntityId == npcSimId)
+                return true;
+        return false;
+    }
+
     public void Clear() => active.Clear();
 }

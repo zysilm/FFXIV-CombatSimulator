@@ -87,6 +87,12 @@ public class CombatEngine : IDisposable
     /// auto-attack only fires against this target.
     /// </summary>
     public Func<uint>? GetLockedTargetId { get; set; }
+    /// <summary>
+    /// Action Mode: returns true while the target enemy is committed to a telegraphed
+    /// attack (winding up), so the hit-reaction flinch is suppressed (super-armor) and
+    /// rapid player hits don't visually stunlock it. Wired to TelegraphSystem.
+    /// </summary>
+    public Func<uint, bool>? IsTargetSuperArmored { get; set; }
     public Action<int>? OnPlayerDamageDealt { get; set; }
     public Action<uint, int>? OnPlayerDamageDealtToTarget { get; set; }
     // Fired when an NPC's attack lands on the (still-alive) player; argument is the
@@ -1098,6 +1104,9 @@ public class CombatEngine : IDisposable
     private unsafe void PlayHitReactionOnTarget(SimulatedEntityState target, bool isDamage)
     {
         if (!isDamage || target.IsPlayer) return;
+
+        // Super-armor: a target mid-telegraph commits to its attack — no flinch.
+        if (IsTargetSuperArmored?.Invoke(target.EntityId) == true) return;
 
         if (target.IsCompanion)
         {

@@ -152,6 +152,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             new CombatSimulator.ActionCombat.TelegraphedAttackExecutor(telegraphSystem, config));
         // Clear any live telegraphs when a combat session ends.
         combatEngine.OnSimulationReset += telegraphSystem.Clear;
+        // Super-armor enemies during their telegraph windup (no flinch from player hits).
+        combatEngine.IsTargetSuperArmored = telegraphSystem.IsWindingUp;
 
         executionModeController = new Dev.BoneHoldTestModeController(
             boneTransformService, animationController.EmotePlayer, ragdollController, animationController,
