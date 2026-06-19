@@ -942,6 +942,59 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
+    /// Action Mode: play the player's own action animation as a whiff (NumTargets=0)
+    /// through the same ActionEffectHandler pipeline that hits use — so an out-of-range
+    /// or no-target light attack still visibly swings and the key never feels dead. Uses
+    /// the pressed actionId's real weaponskill animation (far more reliable than the
+    /// emote-timeline path in <see cref="PlayPlayerMeleeSwing"/>).
+    /// </summary>
+    public void PlayPlayerActionAnimationOnly(uint actionId)
+    {
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null || player.Address == nint.Zero) return;
+        var casterPtr = (Character*)player.Address;
+
+        var headerSize   = sizeof(ActionEffectHandler.Header);
+        var effectsSize  = sizeof(ActionEffectHandler.TargetEffects);
+        var idsSize      = sizeof(GameObjectId);
+
+        var headerPtr    = (ActionEffectHandler.Header*)Marshal.AllocHGlobal(headerSize);
+        var effectsPtr   = (ActionEffectHandler.TargetEffects*)Marshal.AllocHGlobal(effectsSize);
+        var targetIdsPtr = (GameObjectId*)Marshal.AllocHGlobal(idsSize);
+
+        try
+        {
+            NativeMemory.Clear(headerPtr,    (nuint)headerSize);
+            NativeMemory.Clear(effectsPtr,   (nuint)effectsSize);
+            NativeMemory.Clear(targetIdsPtr, (nuint)idsSize);
+
+            var aid = actionId == 0 ? 7u : actionId;
+            headerPtr->AnimationTargetId  = 0xE0000000UL;
+            headerPtr->ActionId           = aid;
+            headerPtr->GlobalSequence     = globalSequence++;
+            headerPtr->AnimationLock      = 0.6f;
+            headerPtr->SourceSequence     = 0;
+            headerPtr->RotationInt        = QuantizeRotation(player.Rotation);
+            headerPtr->SpellId            = (ushort)aid;
+            headerPtr->ActionType         = 1;
+            headerPtr->NumTargets         = 0;
+            headerPtr->ShowInLog          = false;
+            headerPtr->ForceAnimationLock = false;
+
+            var casterPos = player.Position;
+            ActionEffectHandler.Receive(
+                player.EntityId, casterPtr, &casterPos,
+                headerPtr, effectsPtr, targetIdsPtr);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal((nint)headerPtr);
+            Marshal.FreeHGlobal((nint)effectsPtr);
+            Marshal.FreeHGlobal((nint)targetIdsPtr);
+        }
+    }
+
+    /// <summary>
     /// Spawn a hit VFX on the player character (independent of the action pipeline).
     /// Called when the player takes damage from NPC attacks.
     /// </summary>

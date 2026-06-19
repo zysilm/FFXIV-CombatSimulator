@@ -124,6 +124,9 @@ public unsafe class UseActionHook : IDisposable
             // sim-mode targeting/spawn routing below.
             if (config.ActionMode)
             {
+                // Diagnostic: confirms out-of-range/no-target presses still reach us
+                // (the game calls UseAction for them) — they should always whiff-swing.
+                log.Info($"Action Mode input: actionId={actionId}, targetId=0x{targetId:X}");
                 actionSink.OnAction((uint)actionType, actionId, targetId, extraParam);
                 return true;
             }

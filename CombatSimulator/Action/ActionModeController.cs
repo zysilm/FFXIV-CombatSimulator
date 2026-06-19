@@ -101,7 +101,7 @@ public sealed class ActionModeController
         var ids = hitbox.ResolveConeTargets();
         var struck = combatEngine.ApplyResolvedPlayerHit(ids, actionId, config.LightAttackPotency);
         if (struck == 0)
-            animationController.PlayPlayerMeleeSwing(); // whiff feedback
+            animationController.PlayPlayerActionAnimationOnly(actionId); // reliable whiff (打空) feedback
     }
 
     private void OnModeExit()
