@@ -1345,6 +1345,11 @@ public class MainWindow : IDisposable
         SliderFloatSaved("Dodge cooldown", () => config.DodgeCooldown, v => config.DodgeCooldown = v, 0f, 2f, "Min seconds between dodges.");
 
         ImGui.Separator();
+        ImGui.Text("Enemy / companion pacing");
+        SliderFloatSaved("Attack pace", () => config.ActionEnemyAttackSpeed, v => config.ActionEnemyAttackSpeed = v, 0.5f, 3.0f,
+            "Enemies and companions initiate attacks this many times faster (auto delay + skill cooldowns). 1.0 = unchanged.");
+
+        ImGui.Separator();
         ImGui.Text("Enemy telegraph");
         SliderFloatSaved("Min windup", () => config.MinTelegraphWindup, v => config.MinTelegraphWindup = v, 0.1f, 2.0f, "Minimum readable windup before a hit lands.");
         var showTele = config.ShowTelegraphs;

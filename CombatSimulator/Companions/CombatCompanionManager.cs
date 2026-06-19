@@ -1106,7 +1106,7 @@ public unsafe class CombatCompanionManager : IDisposable
             if (result.Success)
             {
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
-                skill.CooldownRemaining = skill.Cooldown;
+                skill.CooldownRemaining = skill.Cooldown / ActionPace();
                 companion.State.AnimationLock = 0.6f;
             }
             return;
@@ -1115,7 +1115,7 @@ public unsafe class CombatCompanionManager : IDisposable
         companion.AutoAttackTimer -= deltaTime;
         if (companion.AutoAttackTimer <= 0)
         {
-            companion.AutoAttackTimer = companion.Behavior.AutoAttackDelay;
+            companion.AutoAttackTimer = companion.Behavior.AutoAttackDelay / ActionPace();
             var result = combatEngine.ProcessCompanionAction(
                 companion, target,
                 companion.Behavior.AutoAttackActionId,
@@ -1128,6 +1128,9 @@ public unsafe class CombatCompanionManager : IDisposable
             }
         }
     }
+
+    // Companions keep pace with Action Mode's faster combat (same multiplier as enemies).
+    private float ActionPace() => config.ActionMode ? Math.Max(0.1f, config.ActionEnemyAttackSpeed) : 1f;
 
     private static void TickCompanionActionTimers(CombatCompanion companion, float deltaTime)
     {

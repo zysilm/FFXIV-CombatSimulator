@@ -372,6 +372,11 @@ public class Configuration : IPluginConfiguration
     // Telegraph / windup tuning
     public float MinTelegraphWindup { get; set; } = 0.4f;  // floor so even instant attacks are readable
 
+    // Action-Mode attack pace: enemies AND companions initiate attacks this many
+    // times faster (auto-attack delay + skill cooldowns divided by this). Makes the
+    // fight feel action-paced instead of the slow tab-target ~3s cadence.
+    public float ActionEnemyAttackSpeed { get; set; } = 1.6f;
+
     // Dodge tuning
     public float DodgeIFrames { get; set; } = 0.35f;       // invulnerability window
     public float DodgeDistance { get; set; } = 5f;         // dash distance (yalms)

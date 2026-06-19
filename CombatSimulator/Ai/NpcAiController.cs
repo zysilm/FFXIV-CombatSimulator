@@ -415,6 +415,10 @@ public unsafe class NpcAiController : IDisposable
         }
     }
 
+    // Action Mode initiates attacks faster (auto delay + skill CDs divided by this)
+    // so enemies pressure the player at action-game pace instead of the ~3s tab-target cadence.
+    private float ActionPace() => config.ActionMode ? MathF.Max(0.1f, config.ActionEnemyAttackSpeed) : 1f;
+
     private void TickCombat(
         SimulatedNpc npc, float deltaTime,
         Vector3 playerPos, uint playerEntityId,
@@ -494,7 +498,7 @@ public unsafe class NpcAiController : IDisposable
                         npc.CurrentCastSkill.ActionId, npc.State.CastTargetId, npc.CurrentCastSkill.Potency,
                         npc.CurrentCastSkill.AttackStyle, npc.CurrentCastSkill.Radius, npc.CurrentCastSkill.CastTime));
                     if (ok)
-                        npc.CurrentCastSkill.CooldownRemaining = npc.CurrentCastSkill.Cooldown;
+                        npc.CurrentCastSkill.CooldownRemaining = npc.CurrentCastSkill.Cooldown / ActionPace();
                     npc.CurrentCastSkill = null;
                 }
             }
@@ -545,7 +549,7 @@ public unsafe class NpcAiController : IDisposable
                     skill.ActionId, targetEntityId, skill.Potency, skill.AttackStyle, skill.Radius, skill.CastTime));
                 if (ok)
                 {
-                    skill.CooldownRemaining = skill.Cooldown;
+                    skill.CooldownRemaining = skill.Cooldown / ActionPace();
                     npc.State.AnimationLock = MathF.Max(npc.State.AnimationLock, 0.6f);
                 }
             }
@@ -556,7 +560,7 @@ public unsafe class NpcAiController : IDisposable
         npc.AutoAttackTimer -= deltaTime;
         if (npc.AutoAttackTimer <= 0)
         {
-            npc.AutoAttackTimer = npc.Behavior.AutoAttackDelay;
+            npc.AutoAttackTimer = npc.Behavior.AutoAttackDelay / ActionPace();
             var ok = combatModeRouter.AttackExecutor.Execute(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
                 npc.Behavior.AutoAttackActionId, targetEntityId, npc.Behavior.AutoAttackPotency,
                 npc.Behavior.AutoAttackStyle, 0f, 0f));
