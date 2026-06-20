@@ -321,7 +321,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, mainWindow, config, gameGui, clientState);
         combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
         telegraphOverlay = new TelegraphOverlay(telegraphSystem, gameGui, config);
-        osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config);
+        osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config, playerGuardController);
 
         // Register
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)

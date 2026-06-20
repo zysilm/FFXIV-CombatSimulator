@@ -20,8 +20,15 @@ public sealed class PlayerGuardController
     private float activeTimer;
     private float recoveryTimer;
     private float cooldownTimer;
+    private int chainCount;
 
     public bool IsGuardActive => activeTimer > 0f;
+    /// <summary>Attacks absorbed by the in-progress guard chain (live).</summary>
+    public int ChainCount => chainCount;
+    /// <summary>Attacks absorbed by the last completed chain — the instantaneous count output.</summary>
+    public int LastChainGuardCount { get; private set; }
+    /// <summary>Fired when a guard chain ends, with how many attacks it absorbed (always &gt; 0).</summary>
+    public event Action<int>? OnChainGuardResolved;
 
     public PlayerGuardController(
         AnimationController animationController,
@@ -43,7 +50,9 @@ public sealed class PlayerGuardController
             return false;
         }
 
-        if (cooldownTimer > 0f || recoveryTimer > 0f)
+        // Can't start a new guard while one is already open (the chain absorbs follow-ups for
+        // you — no need to re-press), or while recovering/cooling down from the last chain.
+        if (activeTimer > 0f || cooldownTimer > 0f || recoveryTimer > 0f)
             return false;
 
         var player = Core.Services.ObjectTable.LocalPlayer;
@@ -51,8 +60,7 @@ public sealed class PlayerGuardController
             return false;
 
         activeTimer = MathF.Max(0.01f, config.GuardActiveWindow);
-        recoveryTimer = MathF.Max(activeTimer, config.GuardRecovery);
-        cooldownTimer = MathF.Max(0f, config.GuardCooldown);
+        chainCount = 0;
         animationController.PlayPlayerGuardAnimation();
         return true;
     }
@@ -66,7 +74,11 @@ public sealed class PlayerGuardController
         }
 
         if (activeTimer > 0f)
+        {
             activeTimer = MathF.Max(0f, activeTimer - dt);
+            if (activeTimer <= 0f)
+                EndChain();
+        }
 
         if (recoveryTimer > 0f)
             recoveryTimer = MathF.Max(0f, recoveryTimer - dt);
@@ -83,9 +95,28 @@ public sealed class PlayerGuardController
             return;
         }
 
-        activeTimer = 0f;
+        // Absorb this attack and KEEP the guard open: any further attack arriving within the chain
+        // window is absorbed by the same press, so a burst of attacks costs one parry, not many.
+        chainCount++;
+        activeTimer = MathF.Max(activeTimer, MathF.Max(0.01f, config.ChainGuardWindow));
         animationController.PlayPlayerGuardSuccess();
-        log.Debug("Perfect guard resolved.");
+        log.Debug($"Chain guard absorbed attack #{chainCount}.");
+    }
+
+    // The chain ends when the open window finally lapses with no new attack. Output the count and
+    // only NOW apply recovery + cooldown, so the cooldown never cuts a chain short.
+    private void EndChain()
+    {
+        activeTimer = 0f;
+        LastChainGuardCount = chainCount;
+        if (chainCount > 0)
+        {
+            OnChainGuardResolved?.Invoke(chainCount);
+            log.Debug($"Guard chain ended: absorbed {chainCount} attack(s).");
+        }
+        chainCount = 0;
+        recoveryTimer = MathF.Max(0f, config.GuardRecovery);
+        cooldownTimer = MathF.Max(0f, config.GuardCooldown);
     }
 
     public void Reset()
@@ -93,5 +124,6 @@ public sealed class PlayerGuardController
         activeTimer = 0f;
         recoveryTimer = 0f;
         cooldownTimer = 0f;
+        chainCount = 0;
     }
 }

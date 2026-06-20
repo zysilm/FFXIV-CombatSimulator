@@ -33,12 +33,19 @@ public sealed class OsuParryOverlay
     private readonly TelegraphSystem telegraphs;
     private readonly IGameGui gameGui;
     private readonly Configuration config;
+    private readonly PlayerGuardController guard;
 
-    public OsuParryOverlay(TelegraphSystem telegraphs, IGameGui gameGui, Configuration config)
+    // Chain-guard display state.
+    private int lastChainCount;
+    private float absorbPop;     // 1→0 burst on each absorb
+    private float countFade;     // keeps the count visible briefly after the chain ends
+
+    public OsuParryOverlay(TelegraphSystem telegraphs, IGameGui gameGui, Configuration config, PlayerGuardController guard)
     {
         this.telegraphs = telegraphs;
         this.gameGui = gameGui;
         this.config = config;
+        this.guard = guard;
     }
 
     public void Draw()
@@ -47,7 +54,9 @@ public sealed class OsuParryOverlay
             return;
 
         var list = telegraphs.Active;
-        if (list.Count == 0)
+        // Keep drawing while guarding (chain window open) or while the count lingers, even with no
+        // active telegraph — the guard-active ring/count must show between/without incoming attacks.
+        if (list.Count == 0 && !guard.IsGuardActive && countFade <= 0f)
             return;
 
         var player = Core.Services.ObjectTable.LocalPlayer;
@@ -77,6 +86,47 @@ public sealed class OsuParryOverlay
                 DrawApproach(drawList, center, innerR, outerStart, t, time);
             else
                 DrawResolved(drawList, center, innerR, t);
+        }
+
+        DrawChainGuard(drawList, center, innerR, time);
+    }
+
+    // Chain-guard indicator: a steady bright ring while the guard window is open (absorbing), a
+    // quick outward pop on each absorbed attack, and an "xN" count for a chain of 2+.
+    private void DrawChainGuard(ImDrawListPtr drawList, Vector2 center, float innerR, float time)
+    {
+        var dt = ImGui.GetIO().DeltaTime;
+        var live = guard.ChainCount;
+        if (live > lastChainCount && live > 0)
+            absorbPop = 1f; // a new attack was just absorbed
+        lastChainCount = live;
+        if (absorbPop > 0f)
+            absorbPop = MathF.Max(0f, absorbPop - dt * 4.5f);
+
+        var guarding = guard.IsGuardActive;
+        if (guarding)
+            countFade = 1f;
+        else if (countFade > 0f)
+            countFade = MathF.Max(0f, countFade - dt * 1.6f);
+
+        if (guarding)
+        {
+            // "Guard up, absorbing" ring — pulses, and pops outward briefly on each absorb.
+            var pulse = 0.7f + 0.3f * MathF.Sin(time * 12f);
+            var r = innerR * (1.25f + 0.18f * absorbPop);
+            DrawRingGlow(drawList, center, r, GuardColor, 0.9f * pulse, 2.6f);
+        }
+
+        var count = guarding ? live : guard.LastChainGuardCount;
+        if (count >= 2 && (guarding || countFade > 0f))
+        {
+            var alpha = guarding ? 1f : countFade;
+            var label = $"x{count}";
+            var scale = 1.8f * (1f + 0.25f * absorbPop);
+            var size = ImGui.GetFontSize() * scale;
+            var dim = ImGui.CalcTextSize(label) * scale;
+            var pos = new Vector2(center.X - dim.X * 0.5f, center.Y - innerR * 2.1f - dim.Y * 0.5f);
+            drawList.AddText(ImGui.GetFont(), size, pos, Col(WindowColor, alpha), label);
         }
     }
 

@@ -383,7 +383,8 @@ public class Configuration : IPluginConfiguration
     // Guard tuning
     public float GuardActiveWindow { get; set; } = 0.22f;  // perfect-guard reaction window (early tolerance)
     public float GuardLateTolerance { get; set; } = 0.15f; // grace after the strike closes (late tolerance)
-    public float GuardRecovery { get; set; } = 0.35f;      // lockout after a guard attempt
+    public float ChainGuardWindow { get; set; } = 0.4f;    // after a block, keep guard open this long to absorb the next attack (chain guard)
+    public float GuardRecovery { get; set; } = 0.35f;      // lockout after a guard CHAIN ends
     public float GuardCooldown { get; set; } = 0.15f;      // min time between guard attempts
     public ushort GuardTimelineId { get; set; } = 0;       // 0 = auto/fallback
     public string GuardSuccessVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
@@ -455,6 +456,7 @@ public class Configuration : IPluginConfiguration
 
         GuardActiveWindow = defaults.GuardActiveWindow;
         GuardLateTolerance = defaults.GuardLateTolerance;
+        ChainGuardWindow = defaults.ChainGuardWindow;
         GuardRecovery = defaults.GuardRecovery;
         GuardCooldown = defaults.GuardCooldown;
         GuardTimelineId = defaults.GuardTimelineId;
