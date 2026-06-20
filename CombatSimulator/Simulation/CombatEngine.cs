@@ -1682,63 +1682,6 @@ public class CombatEngine : IDisposable
             OnEntityDeath(npc.State);
     }
 
-    /// <summary>
-    /// Action Mode: apply a player melee hit to every enemy the hitbox already
-    /// selected (geometry is done by the Action layer — there is no range/GCD/combo
-    /// check here, this is the additive replacement for the sim-mode pipeline).
-    /// Plays one batched ActionEffect (player swing + flytext + per-target flinch)
-    /// and resolves deaths. Returns the number of enemies struck; 0 = whiff (caller
-    /// plays a swing-only animation for feedback).
-    /// </summary>
-    public int ApplyResolvedPlayerHit(IReadOnlyList<uint> targetEntityIds, uint actionId, int potency)
-    {
-        var ps = State.PlayerState;
-        if (!ps.IsAlive || targetEntityIds.Count == 0)
-            return 0;
-
-        var source = actionDataProvider.GetActionData(actionId);
-        var actionData = source != null ? CloneActionData(source) : new ActionData
-        {
-            ActionId = actionId == 0 ? 7u : actionId,
-            Name = "Attack",
-            DamageType = SimDamageType.Physical,
-            AnimationLock = 0.6f,
-        };
-        actionData.Potency = potency;
-
-        var hits = new List<AppliedActionDamage>();
-        var total = 0;
-        foreach (var id in targetEntityIds)
-        {
-            var target = State.GetEntity(id);
-            if (target == null || !target.IsAlive || target.IsPlayer || target.IsCompanion)
-                continue;
-
-            var dmg = damageCalculator.CalculateNpcAutoAttack(ps, target, potency);
-            target.CurrentHp = Math.Max(0, target.CurrentHp - dmg.Damage);
-            hits.Add(new AppliedActionDamage(target, dmg));
-            total += dmg.Damage;
-            State.TotalDamageDealt += dmg.Damage;
-            OnPlayerDamageDealtToTarget?.Invoke(target.EntityId, dmg.Damage);
-            EngageIdleTarget(target.EntityId);
-        }
-
-        if (hits.Count == 0)
-            return 0;
-
-        if (State.CombatStartTime == 0)
-            State.CombatStartTime = State.SimulationTime;
-
-        OnPlayerDamageDealt?.Invoke(total);
-        TriggerActionEffect(ps, actionData, hits);
-
-        foreach (var hit in hits)
-            if (!hit.Target.IsAlive)
-                OnEntityDeath(hit.Target);
-
-        return hits.Count;
-    }
-
     public ActionData? GetActionData(uint actionId) => actionDataProvider.GetActionData(actionId);
 
     /// <summary>
