@@ -75,6 +75,7 @@ public class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
     public bool ActionGuardDefaultMigratedToR2 { get; set; } = false;
+    public bool ActionGuardVfxDefaultMigratedToHeavySwing { get; set; } = false;
     public bool ActionBasicAttackDefaultMigratedToSouth { get; set; } = false;
 
     // General
@@ -392,7 +393,7 @@ public class Configuration : IPluginConfiguration
     public float GuardRecovery { get; set; } = 0.35f;      // lockout after a guard CHAIN ends
     public float GuardCooldown { get; set; } = 0.15f;      // min time between guard attempts
     public ushort GuardTimelineId { get; set; } = 0;       // 0 = auto/fallback
-    public string GuardSuccessVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
+    public string GuardSuccessVfxPath { get; set; } = "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx";
     public string EnemyTelegraphVfxPath { get; set; } = "vfx/common/eff/cmhit_fire1t.avfx";
 
     // Player light-combo + hitbox tuning
@@ -439,6 +440,7 @@ public class Configuration : IPluginConfiguration
         MigrateRagdollProfileMetadata();
         MigrateAnatomicalHinges();
         MigrateActionGuardDefaultButton();
+        MigrateActionGuardVfxDefault();
         MigrateActionBasicAttackDefaultButton();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
@@ -503,6 +505,18 @@ public class Configuration : IPluginConfiguration
             ActionGuardGamepadButton = GamepadButtons.R2;
 
         ActionGuardDefaultMigratedToR2 = true;
+        Save();
+    }
+
+    private void MigrateActionGuardVfxDefault()
+    {
+        if (ActionGuardVfxDefaultMigratedToHeavySwing)
+            return;
+
+        if (GuardSuccessVfxPath == "vfx/common/eff/dk05th_stdn0t.avfx")
+            GuardSuccessVfxPath = "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx";
+
+        ActionGuardVfxDefaultMigratedToHeavySwing = true;
         Save();
     }
 
