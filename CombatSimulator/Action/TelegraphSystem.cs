@@ -234,15 +234,21 @@ public sealed class TelegraphSystem
 
     private void PlayWhiffSwing(ActiveTelegraph t)
     {
+        // Show the enemy attack even when it's blocked/dodged. Ranged/magic play their cast pose
+        // (no projectile/damage) so a parried staff enemy isn't animation-less.
         if (t.Request.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto)
             animationController.PlayNpcMeleeAnimationOnly(t.Source);
+        else
+            animationController.PlayNpcWindupPose(t.Source, t.Request.ActionId);
     }
 
-    // Play the enemy's real attack animation at windup start for ALL styles (melee, ranged, magic)
-    // so guard/dodge/hit are handled uniformly — ranged enemies are no longer animation-less on a
-    // successful parry while still resolving a full hit.
+    // Only MELEE/AUTO play a real attack swing at windup start (so the strike can suppress the 2nd
+    // swing for a clean, parry-readable single swing). Ranged/magic do NOT — their projectile/cast
+    // VFX (fireball etc.) lives in the full ActionEffect, so they keep the un-suppressed hit and
+    // instead show their cast pose on guard/dodge via PlayWhiffSwing.
     private bool TryPlayWindupAnimation(SimulatedNpc source, in NpcAttackRequest req)
         => config.ActionEnemyWindupSwing &&
+           req.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto &&
            animationController.PlayNpcWindupPose(source, req.ActionId);
 
     private void Finish(ActiveTelegraph t, TelegraphOutcome outcome)
