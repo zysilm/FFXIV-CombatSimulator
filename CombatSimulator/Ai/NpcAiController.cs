@@ -50,6 +50,12 @@ public unsafe class NpcAiController : IDisposable
     private const float MagicAutoAttackMeleeRange = 3.5f;
     // Dynamic positioning: dwell damps intent flicker (front/back thrash).
     private const float IntentMinDwell = 0.6f;
+    // Anti-orbit: within this distance of its assigned slot the enemy heads straight in, ignoring
+    // crowd separation, so it can pack into attack range instead of being pushed around the cluster.
+    private const float CommitToSlotRadius = 3.8f;
+    // Once holding in range, only re-approach when the target moves beyond this wider band (so the
+    // enemy settles instead of re-chasing every small slot/target jitter).
+    private const float PartyHoldReleaseBuffer = 1.5f;
     // Below this fraction of the desired ranged hold, a ranged-intent enemy drifts back out.
     private const float RangedBackoffFraction = 0.6f;
     private const float PartyApproachMovementEpsilon = 0.02f;
@@ -924,7 +930,7 @@ public unsafe class NpcAiController : IDisposable
         var partyAttackRange = DynamicHoldRange(npc) + PartyMeleeAttackRangeBuffer;
         var rangeStateAvailable = TryGetOrCreateApproachPathState(npc, out var rangeState);
         var outerEdge = rangeStateAvailable && rangeState.WasHoldingRange
-            ? partyAttackRange + PartyAttackRangeHysteresis
+            ? partyAttackRange + PartyHoldReleaseBuffer
             : partyAttackRange;
         // Ranged-intent enemies that drifted too close (e.g. after a melee excursion) back off toward
         // the planner's backline goal instead of holding. Gentle: only fires when well inside.
@@ -1004,12 +1010,16 @@ public unsafe class NpcAiController : IDisposable
         }
         else
         {
-            var rawDir = GetSteeredMoveDirection(
-                npc.SimulatedEntityId,
-                LocalSteeringFaction.Enemy,
-                npcPos,
-                flatMove,
-                npcTarget.EntityId);
+            // Near its slot, commit straight in (ignore crowd separation) so it can reach attack
+            // range instead of orbiting the cluster; farther out, steer around allies/enemies.
+            var rawDir = remainingDist <= CommitToSlotRadius
+                ? (flatMove.LengthSquared() > 0.000001f ? Vector3.Normalize(flatMove) : Vector3.Zero)
+                : GetSteeredMoveDirection(
+                    npc.SimulatedEntityId,
+                    LocalSteeringFaction.Enemy,
+                    npcPos,
+                    flatMove,
+                    npcTarget.EntityId);
             if (rawDir == Vector3.Zero)
             {
                 LogPartyApproachDebug(npc, "steering-blocked", npcPos, npcTargetPos, partyPlan, moveTarget, hasVnavmeshTarget, distToTarget, partyAttackRange);
