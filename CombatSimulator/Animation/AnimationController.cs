@@ -76,9 +76,13 @@ public unsafe class AnimationController : IDisposable
     // guard VFX instead.
     private static readonly int[] GuardSoundIndices = { 39, 40 };
     private long guardSoundWindowUntilTicks;
-    private int guardSoundWindowLogCount;
     private nint noSoundScdPtr;
     private nint noSoundInfoPtr;
+    // Set for one tick when a successful guard re-triggers the guard timeline: the next guard
+    // ting (idx 39/40) is let through instead of muted, so the game itself emits the genuine ting
+    // as success feedback. Direct replay via the play function doesn't work (it needs the caller's
+    // finalize step), so we re-trigger the timeline instead.
+    private bool allowGuardTingOnce;
     private ushort monsterRangedAutoAttackTimeline;
     private ushort npcMeleeAutoAttackTimeline;
 
@@ -368,13 +372,7 @@ public unsafe class AnimationController : IDisposable
 
             noSoundScdPtr = Marshal.AllocHGlobal(bytes.Length);
             Marshal.Copy(bytes, 0, noSoundScdPtr, bytes.Length);
-
-            noSoundInfoPtr = Marshal.AllocHGlobal(256);
-            for (var i = 0; i < 256; i += 8)
-                Marshal.WriteInt64(noSoundInfoPtr + i, 0);
-            Marshal.WriteIntPtr(noSoundInfoPtr + 8, noSoundScdPtr);
-            Marshal.WriteInt32(noSoundInfoPtr + 0x88, 0x54);
-            Marshal.WriteInt16(noSoundInfoPtr + 0x94, 0);
+            noSoundInfoPtr = BuildSoundInfo(noSoundScdPtr);
 
             log.Info("AnimationController: guard silent-sound redirect initialized.");
         }
@@ -385,6 +383,20 @@ public unsafe class AnimationController : IDisposable
         }
     }
 
+    // Builds the minimal unmanaged "sound info" PlaySpecificSound expects (SoundFilter's layout):
+    // a 256B block whose +8 points at .scd data, +0x88 = 0x54, +0x94 = 0. Used both for the
+    // silent redirect and for replaying the guard ting from the live guard .scd.
+    private static nint BuildSoundInfo(nint scdData)
+    {
+        var info = Marshal.AllocHGlobal(256);
+        for (var i = 0; i < 256; i += 8)
+            Marshal.WriteInt64(info + i, 0);
+        Marshal.WriteIntPtr(info + 8, scdData);
+        Marshal.WriteInt32(info + 0x88, 0x54);
+        Marshal.WriteInt16(info + 0x94, 0);
+        return info;
+    }
+
     // During the guard window, redirect the crisp guard sub-sounds (idx 39/40) to the silent
     // .scd; all other audio passes through untouched. Original is always called.
     private void* PlaySpecificSoundDetour(long a1, int idx)
@@ -392,24 +404,26 @@ public unsafe class AnimationController : IDisposable
         try
         {
             if (a1 != 0 &&
-                noSoundInfoPtr != 0 &&
                 Environment.TickCount64 <= guardSoundWindowUntilTicks &&
                 Array.IndexOf(GuardSoundIndices, idx) >= 0)
             {
-                if (guardSoundWindowLogCount < 8)
-                {
-                    guardSoundWindowLogCount++;
-                    var scdData = *(byte**)(a1 + 8);
-                    log.Info($"[GuardSoundDiag] muted guard sound idx={idx} scdData=0x{(nint)scdData:X}");
-                }
+                // A successful guard re-triggers the timeline with allowGuardTingOnce set, so that
+                // one ting passes through; every other in-window press ting is muted.
+                var willMute = noSoundInfoPtr != 0 && !allowGuardTingOnce;
+                allowGuardTingOnce = false;
 
-                a1 = noSoundInfoPtr;
-                idx = 0;
+                log.Verbose($"[Guard] ting idx={idx} muted={willMute}");
+
+                if (willMute)
+                {
+                    a1 = noSoundInfoPtr;
+                    idx = 0;
+                }
             }
         }
         catch (Exception ex)
         {
-            log.Warning(ex, "[GuardSoundDiag] mute error.");
+            log.Warning(ex, "Guard sound mute error.");
         }
 
         return playSpecificSoundHook!.Original(a1, idx);
@@ -1162,19 +1176,11 @@ public unsafe class AnimationController : IDisposable
     {
         try
         {
-            var player = Core.Services.ObjectTable.LocalPlayer;
-            if (player == null || player.Address == nint.Zero)
-                return;
-
-            var character = (Character*)player.Address;
-            var timeline = config.GuardTimelineId != 0 ? config.GuardTimelineId : guardTimeline;
-            // Open the guard-sound window so the PlaySpecificSound hook mutes the crisp guard SFX.
+            // Open the guard-sound window so the PlaySpecificSound hook mutes the crisp press ting.
             guardSoundWindowUntilTicks = Environment.TickCount64 + 1000;
-            guardSoundWindowLogCount = 0;
+            allowGuardTingOnce = false;
 
-            character->Timeline.IsWeaponDrawn = true;
-            character->Timeline.ModelState = 1;
-            character->Timeline.PlayActionTimeline(timeline != 0 ? timeline : (ushort)78);
+            PlayGuardTimeline();
         }
         catch (Exception ex)
         {
@@ -1184,8 +1190,27 @@ public unsafe class AnimationController : IDisposable
 
     public void PlayPlayerGuardSuccess()
     {
-        // Keep the diagnostic window open through resolution so any success-side SFX is logged too.
+        // Direct replay of the suppressed ting via the play function doesn't work (the game needs a
+        // caller-side finalize step). Instead, let the next ting through and re-trigger the guard
+        // timeline so the game itself emits the genuine ting as success feedback. The pose restarts
+        // from frame 0 — negligible even for a preemptive guard (~200ms).
+        allowGuardTingOnce = true;
+        PlayGuardTimeline();
+
         SpawnConfiguredVfxOnPlayer(config.GuardSuccessVfxPath, ttl: 0.35f);
+    }
+
+    private void PlayGuardTimeline()
+    {
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null || player.Address == nint.Zero)
+            return;
+
+        var character = (Character*)player.Address;
+        var timeline = config.GuardTimelineId != 0 ? config.GuardTimelineId : guardTimeline;
+        character->Timeline.IsWeaponDrawn = true;
+        character->Timeline.ModelState = 1;
+        character->Timeline.PlayActionTimeline(timeline != 0 ? timeline : (ushort)78);
     }
 
     public void PlayEnemyTelegraphWarning(SimulatedNpc npc)
