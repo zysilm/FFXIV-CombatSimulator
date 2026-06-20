@@ -131,7 +131,10 @@ public sealed unsafe class PlayerTargetController : IDisposable
     }
 
     private bool ShouldTakeOver()
-        => combatEngine.IsActive && config.EnableCustomTargeting && npcSelector.SelectedNpcs.Count > 0;
+        // Action Mode is soft-target only (the reticle + facing cone pick the target); the hard
+        // lock/cycle targeting system is disabled so it doesn't fight the action-combat flow.
+        => combatEngine.IsActive && config.EnableCustomTargeting && !config.ActionMode
+           && npcSelector.SelectedNpcs.Count > 0;
 
     /// <summary>
     /// Per-frame driver from the framework update: drop the lock if the target died

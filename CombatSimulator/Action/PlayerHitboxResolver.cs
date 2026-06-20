@@ -101,4 +101,21 @@ public sealed class PlayerHitboxResolver
 
         return best;
     }
+
+    /// <summary>The current basic-attack (普攻) soft-target, using the job-based melee/ranged
+    /// selection cone. Shared by the attack itself and the reticle overlay so they always agree.</summary>
+    public SimulatedNpc? ResolveBasicAttackPrimary()
+    {
+        var ranged = IsRangedBasicAttackJob();
+        var range = ranged ? config.RangedBasicRange : config.PlayerHitboxRange;
+        var angle = ranged ? config.RangedSelectAngleDeg : config.PlayerHitboxAngleDeg;
+        return ResolvePrimary(range, angle, ranged);
+    }
+
+    /// <summary>Bard/Archer + Astrologian fire a ranged basic attack; everyone else is melee.</summary>
+    public static bool IsRangedBasicAttackJob()
+    {
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        return player != null && player.ClassJob.RowId is 23 or 5 or 33;
+    }
 }

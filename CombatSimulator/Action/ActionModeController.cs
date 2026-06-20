@@ -162,25 +162,12 @@ public sealed class ActionModeController
         attackLockoutTimer = MathF.Max(attackLockoutTimer, duration);
         swingCooldown = config.LightSwingInterval;
 
-        var ranged = IsRangedBasicAttackJob();
-        var range = ranged ? config.RangedBasicRange : config.PlayerHitboxRange;
-        var angle = ranged ? config.RangedSelectAngleDeg : config.PlayerHitboxAngleDeg;
-        var primary = hitbox.ResolvePrimary(range, angle, ranged);
+        var primary = hitbox.ResolveBasicAttackPrimary();
         var struck = primary != null
             ? combatEngine.ApplyPlayerActionMode(AutoAttackId, primary.State.EntityId, config.LightAttackPotency)
             : 0;
         if (struck == 0)
             animationController.PlayPlayerActionAnimationOnly(AutoAttackId);
-    }
-
-    private static bool IsRangedBasicAttackJob()
-    {
-        var player = Core.Services.ObjectTable.LocalPlayer;
-        if (player == null)
-            return false;
-        var jobId = player.ClassJob.RowId;
-        // Bard(23)/Archer(5) + Astrologian(33) fire a ranged basic attack; everyone else is melee.
-        return jobId is 23 or 5 or 33;
     }
 
     private unsafe void TickGuardKey()

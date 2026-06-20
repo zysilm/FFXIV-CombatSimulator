@@ -77,6 +77,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly CombatLinkOverlay combatLinkOverlay;
     private readonly TelegraphOverlay telegraphOverlay;
     private readonly OsuParryOverlay osuParryOverlay;
+    private readonly ReticleOverlay reticleOverlay;
     private bool hookSafetyScanned;
     private bool wasLoggedIn;
 
@@ -322,6 +323,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
         telegraphOverlay = new TelegraphOverlay(telegraphSystem, gameGui, config);
         osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config, playerGuardController);
+        reticleOverlay = new ReticleOverlay(playerHitboxResolver, combatEngine, gameGui, config);
 
         // Register
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -499,6 +501,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 telegraphOverlay.Draw();
 
             osuParryOverlay.Draw();
+            reticleOverlay.Draw();
         }
 
         ragdollDebugOverlay.Draw();
