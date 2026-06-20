@@ -73,6 +73,9 @@ public sealed class OsuParryOverlay
             if (!t.TargetIsPlayer)
                 continue;
 
+            if (!t.IsApproachActive)
+                continue;
+
             if (!t.Resolved)
                 DrawApproach(drawList, center, innerR, outerStart, t, time);
             else

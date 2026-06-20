@@ -30,6 +30,8 @@ public sealed class ActiveTelegraph
     public NpcAttackRequest Request;
     public Vector3 AnchorPos;
     public float Radius;
+    public float LeadInTotal;
+    public float LeadInElapsed;
     public float WindupTotal;
     public float WindupElapsed;
     public bool Resolved;
@@ -42,7 +44,10 @@ public sealed class ActiveTelegraph
     public float GraceRemaining;
     public float GraceTotal;
 
-    public float Progress => WindupTotal <= 0f ? 1f : Math.Clamp(WindupElapsed / WindupTotal, 0f, 1f);
+    public bool IsApproachActive => LeadInElapsed >= LeadInTotal;
+    public float Progress => !IsApproachActive || WindupTotal <= 0f
+        ? 0f
+        : Math.Clamp(WindupElapsed / WindupTotal, 0f, 1f);
 }
 
 /// <summary>
@@ -81,16 +86,16 @@ public sealed class TelegraphSystem
         this.log = log;
     }
 
-    public void Spawn(SimulatedNpc source, in NpcAttackRequest req, float windup)
+    public void Spawn(SimulatedNpc source, in NpcAttackRequest req, float windup, float leadIn = 0f)
     {
         var target = combatEngine.State.GetEntity(req.TargetId);
         if (target == null || !target.IsAlive)
             return;
 
-        var windupAnimationPlayed =
-            config.ActionEnemyWindupSwing &&
-            req.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto &&
-            animationController.PlayNpcWindupPose(source, req.ActionId);
+        var normalizedLeadIn = MathF.Max(0f, leadIn);
+        var windupAnimationPlayed = false;
+        if (normalizedLeadIn <= 0f)
+            windupAnimationPlayed = TryPlayWindupAnimation(source, req);
 
         // The enemy's real swing fires at the strike (when the circle closes), so it stays
         // synced with the telegraph and keeps its impact sound/reaction.
@@ -100,6 +105,8 @@ public sealed class TelegraphSystem
             Request = req,
             AnchorPos = combatEngine.GetSimulatedEntityPosition(target),
             Radius = req.Radius > 0 ? req.Radius : MeleeStrikeRadius,
+            LeadInTotal = normalizedLeadIn,
+            LeadInElapsed = normalizedLeadIn <= 0f ? 0f : 0f,
             WindupTotal = MathF.Max(0.01f, windup),
             WindupElapsed = 0f,
             TargetIsPlayer = target.IsPlayer,
@@ -124,14 +131,29 @@ public sealed class TelegraphSystem
                 continue;
             }
 
-            t.WindupElapsed += dt;
-
             var target = combatEngine.State.GetEntity(t.Request.TargetId);
             if (target == null || !target.IsAlive || !t.Source.State.IsAlive)
             {
                 Finish(t, TelegraphOutcome.Dodged);
                 continue;
             }
+
+            var windupDt = dt;
+            if (!t.IsApproachActive)
+            {
+                t.LeadInElapsed += dt;
+                if (!t.IsApproachActive)
+                    continue;
+
+                windupDt = MathF.Max(0f, t.LeadInElapsed - t.LeadInTotal);
+                t.LeadInElapsed = t.LeadInTotal;
+                if (!t.WindupAnimationPlayed)
+                    t.WindupAnimationPlayed = TryPlayWindupAnimation(t.Source, t.Request);
+                if (windupDt <= 0f)
+                    continue;
+            }
+
+            t.WindupElapsed += windupDt;
 
             if (!t.InGrace)
             {
@@ -214,6 +236,11 @@ public sealed class TelegraphSystem
         if (t.Request.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto)
             animationController.PlayNpcMeleeAnimationOnly(t.Source);
     }
+
+    private bool TryPlayWindupAnimation(SimulatedNpc source, in NpcAttackRequest req)
+        => config.ActionEnemyWindupSwing &&
+           req.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto &&
+           animationController.PlayNpcWindupPose(source, req.ActionId);
 
     private void Finish(ActiveTelegraph t, TelegraphOutcome outcome)
     {

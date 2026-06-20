@@ -4,10 +4,9 @@ using CombatSimulator.Npcs;
 namespace CombatSimulator.ActionCombat;
 
 /// <summary>
-/// Action Mode: a committed enemy attack becomes a telegraph (起手快照) instead of
-/// instant damage. We snapshot the danger zone now and hold the enemy in its windup
-/// (anim-lock = windup) so it visibly winds up; <see cref="TelegraphSystem"/> resolves
-/// the hit at the active frame against the target's live position.
+/// Action Mode: a committed enemy attack becomes a telegraph instead of instant damage.
+/// Cast time is treated as lead-in warning time; the parry approach circle stays tied to
+/// the final strike windup so long casts do not become slow parry circles.
 /// </summary>
 public sealed class TelegraphedAttackExecutor : IAttackExecutor
 {
@@ -22,12 +21,12 @@ public sealed class TelegraphedAttackExecutor : IAttackExecutor
 
     public bool Execute(SimulatedNpc source, in NpcAttackRequest req)
     {
-        // The swing animation plays now (at Spawn) and the hit resolves after the windup,
-        // so the animation reads as the windup (swing-start → weapon-connect).
-        var windup = MathF.Max(req.CastTime, config.ActionWindupSeconds);
-        // Hold the enemy in its windup so it doesn't immediately start another attack.
-        source.State.AnimationLock = MathF.Max(source.State.AnimationLock, windup);
-        telegraphs.Spawn(source, req, windup);
+        var windup = MathF.Max(0.01f, config.ActionWindupSeconds);
+        var leadIn = MathF.Max(0f, req.CastTime - windup);
+        var total = leadIn + windup;
+
+        source.State.AnimationLock = MathF.Max(source.State.AnimationLock, total);
+        telegraphs.Spawn(source, req, windup, leadIn);
         return true;
     }
 }
