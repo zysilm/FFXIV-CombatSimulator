@@ -48,9 +48,7 @@ public unsafe class NpcAiController : IDisposable
     private const float PartyAttackRangeHysteresis = 0.4f;
     // Caster/magic enemies auto-attack at melee reach (their spells are ranged, the basic swing is not).
     private const float MagicAutoAttackMeleeRange = 3.5f;
-    // Dynamic positioning: a ranged/magic skill ready within this lookahead keeps the enemy at range
-    // (so a caster waits to cast instead of walking in). Dwell damps intent flicker.
-    private const float RangedIntentLookahead = 2.5f;
+    // Dynamic positioning: dwell damps intent flicker (front/back thrash).
     private const float IntentMinDwell = 0.6f;
     // Below this fraction of the desired ranged hold, a ranged-intent enemy drifts back out.
     private const float RangedBackoffFraction = 0.6f;
@@ -1235,22 +1233,25 @@ public unsafe class NpcAiController : IDisposable
         var rangedHold = MathF.Max(1.0f, config.PartyRangedAttackRange);
         var hpPercent = npc.State.MaxHp > 0 ? (float)npc.State.CurrentHp / npc.State.MaxHp : 1f;
 
-        // Physical ranged (bow/gun) auto-attacks at range, so it always wants range. Caster/magic
-        // and melee autos are melee — those only want range when a ranged SKILL is available.
+        // Physical ranged (bow/gun) auto-attacks at range. A caster fights at range whenever it OWNS
+        // a usable ranged/magic skill — it WAITS at range for the cooldown instead of walking in
+        // (cooldown-driven walk-in left it in melee most of the time, standing too close). Only a
+        // pure-melee enemy with no ranged option engages in melee.
         var wantRanged = npc.Behavior.AutoAttackStyle == NpcAttackStyle.Ranged;
-        var rangedTarget = rangedHold;
+        var maxRangedSkillRange = 0f;
         foreach (var skill in npc.Behavior.Skills)
         {
             if (skill.AttackStyle is not (NpcAttackStyle.Ranged or NpcAttackStyle.Magic))
                 continue;
             if (hpPercent > skill.HpThreshold)
-                continue; // HP-gated — not usable yet
-            if (skill.CooldownRemaining > RangedIntentLookahead)
-                continue; // not ready and not coming soon
+                continue; // HP-gated — not part of its usable kit yet
             wantRanged = true;
-            // Stand off at the configured ranged distance, but never beyond the skill's own reach.
-            rangedTarget = MathF.Min(rangedTarget, MathF.Max(meleeHold, skill.Range));
+            maxRangedSkillRange = MathF.Max(maxRangedSkillRange, skill.Range);
         }
+        // Stand off at the configured ranged distance, capped by the best spell's reach.
+        var rangedTarget = maxRangedSkillRange > 0f
+            ? MathF.Min(rangedHold, MathF.Max(meleeHold, maxRangedSkillRange))
+            : rangedHold;
 
         // Only flip intent once the dwell has elapsed, to avoid front/back thrash.
         if (wantRanged != npc.IsRangedIntent && npc.IntentDwellTimer <= 0f)
