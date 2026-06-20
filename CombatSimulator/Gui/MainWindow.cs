@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Text;
+using System.Text.RegularExpressions;
 using CombatSimulator.Animation;
 using CombatSimulator.Camera;
 using CombatSimulator.Companions;
@@ -9,10 +11,12 @@ using CombatSimulator.Npcs;
 using CombatSimulator.Recipes;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
+using Dalamud.Game.ClientState.GamePad;
 using Dalamud.Interface;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
+using LuminaAction = Lumina.Excel.Sheets.Action;
 
 namespace CombatSimulator.Gui;
 
@@ -51,8 +55,28 @@ public class MainWindow : IDisposable
     private string[] skeletonBoneNames = Array.Empty<string>();
     private Dictionary<string, string?> skeletonBoneParents = new();
     private bool skeletonBonesLoaded;
+    private List<(string Label, string Path)>? actionVfxCache;
+    private string guardSuccessVfxFilter = "";
+    private string enemyWarningVfxFilter = "";
+    private string hitVfxFilter = "";
 
     private static readonly string[] BehaviorNames = { "Training Dummy", "Basic Melee", "Basic Ranged", "Boss" };
+    private static readonly string[] ActionGuardKeyLabels = { "Shift", "Ctrl", "Alt", "None" };
+    private static readonly int[] ActionGuardKeyValues = { 16, 17, 18, 0 };
+    private static readonly string[] ActionGuardGamepadLabels = { "R1", "L1", "R2", "L2", "Circle / East", "Cross / South", "Square / West", "Triangle / North", "None" };
+    private static readonly GamepadButtons[] ActionGuardGamepadValues =
+    {
+        GamepadButtons.R1,
+        GamepadButtons.L1,
+        GamepadButtons.R2,
+        GamepadButtons.L2,
+        GamepadButtons.East,
+        GamepadButtons.South,
+        GamepadButtons.West,
+        GamepadButtons.North,
+        GamepadButtons.None,
+    };
+    private static readonly Regex AvfxPathRegex = new(@"\u0000([a-zA-Z0-9\/_]*?)\.avfx", RegexOptions.Compiled);
 
     // Death cam preset state
     private string newPresetName = "";
@@ -1283,7 +1307,7 @@ public class MainWindow : IDisposable
 
     private void DrawActionModeSection()
     {
-        if (!ImGui.CollapsingHeader("Action Mode (动作模式) [Experimental]"))
+        if (!ImGui.CollapsingHeader("Action Mode [Experimental]"))
             return;
 
         var actionMode = config.ActionMode;
@@ -1292,37 +1316,31 @@ public class MainWindow : IDisposable
             config.ActionMode = actionMode;
             config.Save();
         }
-        HelpMarker("Real-time action combat: button-driven light attacks + dodge, and enemy attacks " +
-                   "that telegraph (起手快照) then resolve by hitbox. Off = the normal tab-target simulation.");
+        HelpMarker("Real-time action combat: button-driven light attacks and timed guard, with enemy attacks shown as telegraphs before hitbox resolution. Off = the normal tab-target simulation.");
 
         if (!actionMode)
             return;
 
         ImGui.Separator();
-        ImGui.Text("Input Map — hotbar action ids");
-        ImGui.TextWrapped("Put these actions on your hotbar (keyboard or gamepad); a press is read as the " +
-                          "mapped role instead of firing the action. 0 = unset (any unmapped press = light attack).");
+        ImGui.Text("Input");
+        ImGui.TextWrapped("Light attacks use any intercepted hotbar action. Guard uses an independent key, so it works on every job without action ids.");
 
-        void IdField(string label, uint current, System.Action<uint> set, string help)
+        ImGui.Text("Guard key");
+        var guardKeyIndex = IndexOf(ActionGuardKeyValues, config.ActionGuardKey);
+        if (ImGui.Combo("Keyboard##actionguard", ref guardKeyIndex, ActionGuardKeyLabels, ActionGuardKeyLabels.Length))
         {
-            int v = (int)current;
-            if (ImGui.InputInt(label, ref v))
-            {
-                set((uint)System.Math.Max(0, v));
-                config.Save();
-            }
-            HelpMarker(help);
+            config.ActionGuardKey = ActionGuardKeyValues[guardKeyIndex];
+            config.Save();
         }
+        HelpMarker("Keyboard key used for Action Mode guard. Default is Shift so jump remains untouched.");
 
-        IdField("Attack action id", config.ActionAttackId, x => config.ActionAttackId = x,
-            "Action id that triggers a light attack. 0 = any unmapped press attacks.");
-        IdField("Dodge action id", config.ActionDodgeId, x => config.ActionDodgeId = x,
-            "Action id that triggers a dodge (backstep dash + i-frames).");
-        IdField("Skill 1 action id", config.ActionSkill1Id, x => config.ActionSkill1Id = x,
-            "Reserved for a skill slot (currently behaves as a light attack).");
-        IdField("Skill 2 action id", config.ActionSkill2Id, x => config.ActionSkill2Id = x,
-            "Reserved for a skill slot (currently behaves as a light attack).");
-
+        var guardPadIndex = IndexOf(ActionGuardGamepadValues, config.ActionGuardGamepadButton);
+        if (ImGui.Combo("Gamepad##actionguard", ref guardPadIndex, ActionGuardGamepadLabels, ActionGuardGamepadLabels.Length))
+        {
+            config.ActionGuardGamepadButton = ActionGuardGamepadValues[guardPadIndex];
+            config.Save();
+        }
+        HelpMarker("Gamepad button used for Action Mode guard. Default is R1 on a PlayStation-style layout.");
         ImGui.Separator();
         ImGui.Text("Player");
         SliderFloatSaved("Swing interval", () => config.LightSwingInterval, v => config.LightSwingInterval = v, 0.15f, 1.0f, "Min seconds between light swings.");
@@ -1338,11 +1356,13 @@ public class MainWindow : IDisposable
         }
 
         ImGui.Separator();
-        ImGui.Text("Dodge");
-        SliderFloatSaved("I-frames", () => config.DodgeIFrames, v => config.DodgeIFrames = v, 0.1f, 1.0f, "Invulnerability window length (seconds).");
-        SliderFloatSaved("Dash distance", () => config.DodgeDistance, v => config.DodgeDistance = v, 1f, 12f, "Backstep distance (yalms).");
-        SliderFloatSaved("Dash duration", () => config.DodgeDuration, v => config.DodgeDuration = v, 0.1f, 0.8f, "Dash travel time (seconds).");
-        SliderFloatSaved("Dodge cooldown", () => config.DodgeCooldown, v => config.DodgeCooldown = v, 0f, 2f, "Min seconds between dodges.");
+        ImGui.Text("Guard");
+        SliderFloatSaved("Active window", () => config.GuardActiveWindow, v => config.GuardActiveWindow = v, 0.05f, 0.6f, "Perfect-guard reaction window in seconds.");
+        SliderFloatSaved("Recovery", () => config.GuardRecovery, v => config.GuardRecovery = v, 0.05f, 1.0f, "Lockout after a guard attempt.");
+        SliderFloatSaved("Cooldown", () => config.GuardCooldown, v => config.GuardCooldown = v, 0f, 1.0f, "Minimum time between guard attempts.");
+
+        DrawVfxPicker("Guard success VFX", () => config.GuardSuccessVfxPath, v => config.GuardSuccessVfxPath = v, ref guardSuccessVfxFilter);
+        DrawVfxPicker("Enemy warning VFX", () => config.EnemyTelegraphVfxPath, v => config.EnemyTelegraphVfxPath = v, ref enemyWarningVfxFilter);
 
         ImGui.Separator();
         ImGui.Text("Enemy / companion pacing");
@@ -1370,6 +1390,152 @@ public class MainWindow : IDisposable
             config.Save();
         }
         HelpMarker(help);
+    }
+
+    private void DrawVfxPicker(string label, Func<string> get, System.Action<string> set, ref string filter)
+    {
+        EnsureActionVfxCache();
+        var list = actionVfxCache ?? new List<(string Label, string Path)> { ("None", "") };
+        var current = get();
+        var preview = FindVfxLabel(current);
+
+        if (!ImGui.BeginCombo(label, preview))
+            return;
+
+        ImGui.SetNextItemWidth(-1);
+        ImGui.InputText($"Filter##{label}", ref filter, 128);
+
+        for (var i = 0; i < list.Count; i++)
+        {
+            var item = list[i];
+            if (!MatchesFilter(item, filter))
+                continue;
+
+            var selected = item.Path == current;
+            if (ImGui.Selectable($"{item.Label}##{label}{i}", selected))
+            {
+                set(item.Path);
+                config.Save();
+            }
+            if (selected)
+                ImGui.SetItemDefaultFocus();
+        }
+
+        ImGui.EndCombo();
+    }
+
+    private void EnsureActionVfxCache()
+    {
+        if (actionVfxCache != null)
+            return;
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var list = new List<(string Label, string Path)> { ("None", "") };
+
+        void Add(string path, string source)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+            if (!seen.Add(path))
+                return;
+
+            list.Add(($"{source}: {path}", path));
+        }
+
+        Add("vfx/common/eff/dk05th_stdn0t.avfx", "Common");
+        Add("vfx/common/eff/cmhit_fire1t.avfx", "Common");
+
+        try
+        {
+            var sheet = dataManager.GetExcelSheet<LuminaAction>();
+            if (sheet != null)
+            {
+                foreach (var action in sheet)
+                {
+                    var actionName = action.Name.ToString();
+                    if (string.IsNullOrWhiteSpace(actionName))
+                        actionName = $"Action {action.RowId}";
+
+                    var castLoc = action.VFX.ValueNullable?.VFX.ValueNullable?.Location.ExtractText();
+                    if (!string.IsNullOrWhiteSpace(castLoc))
+                        Add($"vfx/common/eff/{castLoc}.avfx", actionName);
+
+                    var startLoc = action.AnimationStart.ValueNullable?.VFX.ValueNullable?.Location.ExtractText();
+                    if (!string.IsNullOrWhiteSpace(startLoc))
+                        Add($"vfx/common/eff/{startLoc}.avfx", actionName);
+
+                    var endKey = action.AnimationEnd.ValueNullable?.Key.ExtractText();
+                    if (!string.IsNullOrWhiteSpace(endKey) && !endKey.Contains("[SKL_ID]"))
+                        AddVfxFromTmb($"chara/action/{endKey}.tmb", actionName, Add);
+
+                    var hitKey = action.ActionTimelineHit.ValueNullable?.Key.ExtractText();
+                    if (!string.IsNullOrWhiteSpace(hitKey) && !hitKey.Contains("[SKL_ID]") && !hitKey.Contains("normal_hit"))
+                        AddVfxFromTmb($"chara/action/{hitKey}.tmb", actionName, Add);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Failed to build action VFX picker cache.");
+        }
+
+        list.Sort(1, Math.Max(0, list.Count - 1), Comparer<(string Label, string Path)>.Create(
+            (a, b) => string.Compare(a.Label, b.Label, StringComparison.OrdinalIgnoreCase)));
+        actionVfxCache = list;
+    }
+
+    private void AddVfxFromTmb(string tmbPath, string source, System.Action<string, string> add)
+    {
+        try
+        {
+            if (!dataManager.FileExists(tmbPath))
+                return;
+
+            var file = dataManager.GetFile(tmbPath);
+            if (file?.Data == null)
+                return;
+
+            var text = Encoding.UTF8.GetString(file.Data);
+            foreach (Match match in AvfxPathRegex.Matches(text))
+                add(match.Value.Trim('\0'), source);
+        }
+        catch
+        {
+        }
+    }
+
+    private string FindVfxLabel(string path)
+    {
+        EnsureActionVfxCache();
+        if (actionVfxCache != null)
+        {
+            foreach (var item in actionVfxCache)
+                if (string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase))
+                    return item.Label;
+        }
+
+        return string.IsNullOrWhiteSpace(path) ? "None" : path;
+    }
+
+    private static bool MatchesFilter((string Label, string Path) item, string filter)
+    {
+        if (string.IsNullOrWhiteSpace(filter))
+            return true;
+
+        return item.Label.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+               item.Path.Contains(filter, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int IndexOf<T>(IReadOnlyList<T> values, T current)
+    {
+        var comparer = EqualityComparer<T>.Default;
+        for (var i = 0; i < values.Count; i++)
+        {
+            if (comparer.Equals(values[i], current))
+                return i;
+        }
+
+        return Math.Max(0, values.Count - 1);
     }
 
     private void DrawHitVfxSection()
@@ -1417,13 +1583,8 @@ public class MainWindow : IDisposable
             }
             HelpMarker("When target-side action VFX are unavailable, spawn this configured hit effect on the damaged target.");
 
-            var vfxPath = config.HitVfxPath;
-            if (ImGui.InputText("VFX Path (.avfx)", ref vfxPath, 256))
-            {
-                config.HitVfxPath = vfxPath;
-                config.Save();
-            }
-            HelpMarker("Game VFX path to spawn on hit. Uses FFXIV's internal .avfx format.\nDefault: vfx/common/eff/dk05th_stdn0t.avfx");
+            DrawVfxPicker("Fallback Hit VFX", () => config.HitVfxPath, v => config.HitVfxPath = v, ref hitVfxFilter);
+            HelpMarker("Game VFX path to spawn on hit. This list is built from action VFX data and timeline TMB files.");
 
             if (!config.EnableTargetVfx)
                 ImGui.EndDisabled();

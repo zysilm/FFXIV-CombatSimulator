@@ -90,6 +90,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         IGameGui gameGui,
         IChatGui chatGui,
         ICondition condition,
+        IGamepadState gamepadState,
         ITargetManager targetManager,
         ISigScanner sigScanner,
         IPluginLog log)
@@ -139,13 +140,17 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // (enemy attack executor), TelegraphSystem (windup→hitbox). All gate on
         // config.ActionMode; off ⇒ behavior-equivalent simulation paths.
         actionComboSink = new CombatSimulator.ActionCombat.ActionComboSink(config);
-        var playerDodgeController = new CombatSimulator.ActionCombat.PlayerDodgeController(movementBlockHook, config, log);
+        var playerGuardController = new CombatSimulator.ActionCombat.PlayerGuardController(
+            animationController,
+            config,
+            () => combatEngine.State.PlayerState.IsAlive,
+            log);
         telegraphSystem = new CombatSimulator.ActionCombat.TelegraphSystem(
-            combatEngine, animationController, () => playerDodgeController.IsInvulnerable, log);
+            combatEngine, animationController, () => playerGuardController.IsGuardActive, playerGuardController.NotifyPerfectGuard, log);
         var playerHitboxResolver = new CombatSimulator.ActionCombat.PlayerHitboxResolver(combatEngine, npcSelector, config);
         actionModeController = new CombatSimulator.ActionCombat.ActionModeController(
-            config, actionComboSink, playerHitboxResolver, playerDodgeController,
-            telegraphSystem, combatEngine, animationController, log);
+            config, actionComboSink, playerHitboxResolver, playerGuardController,
+            telegraphSystem, combatEngine, animationController, gamepadState, log);
         combatModeRouter = new CombatSimulator.ActionCombat.CombatModeRouter(
             config,
             new CombatSimulator.ActionCombat.InstantAttackExecutor(combatEngine),
@@ -559,8 +564,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // Runs every frame so the lock is cleared the moment the sim stops.
             playerTargetController.Tick(deltaTime);
 
-            // Action Mode loop (player combo/dodge + enemy telegraphs). Runs every
-            // frame so an in-flight dodge dash and toggle-off cleanup are handled even
+            // Action Mode loop (player combo/guard + enemy telegraphs). Runs every
+            // frame so guard windows and toggle-off cleanup are handled even
             // when the sim is not active; gates internally on config.ActionMode.
             actionModeController.Tick(deltaTime);
 

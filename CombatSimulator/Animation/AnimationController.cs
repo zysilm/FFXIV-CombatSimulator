@@ -68,6 +68,7 @@ public unsafe class AnimationController : IDisposable
     private ushort battleDeadIntroTimeline = 8935;
     private ushort battleDeadLoopTimeline = 8936;
     private bool battleDeadResolved;
+    private ushort guardTimeline;
     private ushort monsterRangedAutoAttackTimeline;
     private ushort npcMeleeAutoAttackTimeline;
 
@@ -128,6 +129,7 @@ public unsafe class AnimationController : IDisposable
 
         ResolvePlayDeadTimelines(dataManager);
         ResolveBattleDeadTimeline(dataManager);
+        ResolveGuardTimeline(dataManager);
         ResolveMonsterRangedAttackTimeline(dataManager);
         ResolveMeleeAutoAttackTimeline(dataManager);
         ResolveActorVfxCreate(sigScanner);
@@ -275,6 +277,35 @@ public unsafe class AnimationController : IDisposable
 
         battleDeadResolved = battleDeadIntroTimeline != 0 && battleDeadLoopTimeline != 0;
         log.Info($"AnimationController: Battle dead timelines: intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}, resolved={battleDeadResolved} (key search: intro={foundIntro}, loop={foundLoop})");
+    }
+
+    private void ResolveGuardTimeline(IDataManager dataManager)
+    {
+        try
+        {
+            var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ActionTimeline>();
+            if (sheet == null)
+                return;
+
+            foreach (var row in sheet)
+            {
+                var key = row.Key.ToString();
+                if (key.Contains("guard", StringComparison.OrdinalIgnoreCase) ||
+                    key.Contains("block", StringComparison.OrdinalIgnoreCase) ||
+                    key.Contains("parry", StringComparison.OrdinalIgnoreCase))
+                {
+                    guardTimeline = (ushort)row.RowId;
+                    log.Info($"AnimationController: Resolved guard timeline {key} -> {guardTimeline}.");
+                    return;
+                }
+            }
+
+            log.Warning("AnimationController: Could not find a guard/block/parry ActionTimeline; guard will use fallback flinch timeline.");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "AnimationController: Failed to resolve guard timeline.");
+        }
     }
 
     private void ResolveMonsterRangedAttackTimeline(IDataManager dataManager)
@@ -1018,6 +1049,106 @@ public unsafe class AnimationController : IDisposable
         {
             log.Error(ex, "Failed to spawn hit VFX on player.");
         }
+    }
+
+    public void PlayPlayerGuardMiss()
+    {
+        // Failed/mistimed guard feedback: ordinary auto-attack as the sound
+        // carrier, then a silent guard pose override. Do not call PlayActionTimeline
+        // for the guard pose here; that timeline can contain the crisp block sound.
+        PlayPlayerActionAnimationOnly(7u);
+        SetPlayerGuardPoseOverride();
+    }
+
+    public void ClearPlayerGuardPose()
+    {
+        try
+        {
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            if (player == null || player.Address == nint.Zero)
+                return;
+
+            var character = (Character*)player.Address;
+            var timeline = config.GuardTimelineId != 0 ? config.GuardTimelineId : guardTimeline;
+            if (timeline != 0 && character->Timeline.BaseOverride == timeline)
+                character->Timeline.BaseOverride = 0;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Failed to clear player guard pose.");
+        }
+    }
+
+    private void SetPlayerGuardPoseOverride()
+    {
+        try
+        {
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            if (player == null || player.Address == nint.Zero)
+                return;
+
+            var character = (Character*)player.Address;
+            var timeline = config.GuardTimelineId != 0 ? config.GuardTimelineId : guardTimeline;
+            character->Timeline.IsWeaponDrawn = true;
+            character->Timeline.ModelState = 1;
+            if (timeline != 0)
+                character->Timeline.BaseOverride = timeline;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Failed to set player guard pose.");
+        }
+    }
+
+    private void PlayPlayerGuardTimeline()
+    {
+        try
+        {
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            if (player == null || player.Address == nint.Zero)
+                return;
+
+            var character = (Character*)player.Address;
+            var timeline = config.GuardTimelineId != 0 ? config.GuardTimelineId : guardTimeline;
+            character->Timeline.IsWeaponDrawn = true;
+            character->Timeline.ModelState = 1;
+            character->Timeline.PlayActionTimeline(timeline != 0 ? timeline : (ushort)78);
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Failed to play player guard animation.");
+        }
+    }
+
+    public void PlayPlayerGuardSuccess()
+    {
+        PlayPlayerGuardTimeline();
+        SpawnConfiguredVfxOnPlayer(config.GuardSuccessVfxPath, ttl: 0.35f);
+    }
+
+    public void PlayEnemyTelegraphWarning(SimulatedNpc npc)
+    {
+        if (npc.Address == nint.Zero)
+            return;
+
+        SpawnConfiguredVfx(npc.Address, npc.Address, config.EnemyTelegraphVfxPath, ttl: 0.45f, npc.SimulatedEntityId);
+    }
+
+    private void SpawnConfiguredVfxOnPlayer(string path, float ttl)
+    {
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null || player.Address == nint.Zero)
+            return;
+
+        SpawnConfiguredVfx(player.Address, player.Address, path, ttl, player.EntityId);
+    }
+
+    private void SpawnConfiguredVfx(nint attachTo, nint orientTo, string path, float ttl, uint ownerEntityId)
+    {
+        if (actorVfxCreate == null || string.IsNullOrWhiteSpace(path))
+            return;
+
+        SpawnAndTrack(path, attachTo, orientTo, ownerEntityId, ttl);
     }
 
     private Character* FindCharacter(uint entityId, bool isPlayer)

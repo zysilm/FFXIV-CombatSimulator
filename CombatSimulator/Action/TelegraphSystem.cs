@@ -10,14 +10,14 @@ namespace CombatSimulator.ActionCombat;
 
 /// <summary>
 /// A live enemy attack telegraph: a danger circle snapshotted at the target's
-/// position when the attack was committed (起手快照). The player dodges by leaving
-/// the circle before the windup completes.
+/// position when the attack was committed. The player can avoid it by leaving
+/// the circle or by timing guard during the active frame.
 /// </summary>
 public sealed class ActiveTelegraph
 {
     public SimulatedNpc Source = null!;
     public NpcAttackRequest Request;
-    public Vector3 AnchorPos;     // snapshot — does NOT follow the target
+    public Vector3 AnchorPos;
     public float Radius;
     public float WindupTotal;
     public float WindupElapsed;
@@ -28,10 +28,9 @@ public sealed class ActiveTelegraph
 }
 
 /// <summary>
-/// Owns active enemy telegraphs. Each ticks Windup → (resolve) → Recovery. At the
-/// active frame the hit is tested with <see cref="CombatGeometry"/> against the
-/// target's LIVE position — the same circle the overlay draws — so a dodge is a real
-/// miss. Hits reuse <see cref="CombatEngine.ProcessNpcAction"/> (damage + visuals).
+/// Owns active enemy telegraphs. Each ticks windup -> resolve -> recovery.
+/// At the active frame the hit is tested against the target's live position.
+/// Hits reuse CombatEngine.ProcessNpcAction for damage and visuals.
 /// </summary>
 public sealed class TelegraphSystem
 {
@@ -40,7 +39,8 @@ public sealed class TelegraphSystem
 
     private readonly CombatEngine combatEngine;
     private readonly AnimationController animationController;
-    private readonly Func<bool> playerInvulnerable;
+    private readonly Func<bool> playerGuardActive;
+    private readonly Action playerPerfectGuard;
     private readonly IPluginLog log;
     private readonly List<ActiveTelegraph> active = new();
 
@@ -49,12 +49,14 @@ public sealed class TelegraphSystem
     public TelegraphSystem(
         CombatEngine combatEngine,
         AnimationController animationController,
-        Func<bool> playerInvulnerable,
+        Func<bool> playerGuardActive,
+        Action playerPerfectGuard,
         IPluginLog log)
     {
         this.combatEngine = combatEngine;
         this.animationController = animationController;
-        this.playerInvulnerable = playerInvulnerable;
+        this.playerGuardActive = playerGuardActive;
+        this.playerPerfectGuard = playerPerfectGuard;
         this.log = log;
     }
 
@@ -63,6 +65,8 @@ public sealed class TelegraphSystem
         var target = combatEngine.State.GetEntity(req.TargetId);
         if (target == null || !target.IsAlive)
             return;
+
+        animationController.PlayEnemyTelegraphWarning(source);
 
         active.Add(new ActiveTelegraph
         {
@@ -106,28 +110,32 @@ public sealed class TelegraphSystem
             return;
 
         var targetPos = combatEngine.GetSimulatedEntityPosition(target);
-        bool inside = CombatGeometry.IsInsideCircle(t.AnchorPos, targetPos, t.Radius);
-        bool dodged = target.IsPlayer && playerInvulnerable();
+        var inside = CombatGeometry.IsInsideCircle(t.AnchorPos, targetPos, t.Radius);
+        var guarded = inside && target.IsPlayer && playerGuardActive();
 
-        if (inside && !dodged)
+        if (guarded)
         {
-            // Reuse the engine's apply-damage + animation pipeline (no range gate).
+            playerPerfectGuard();
+            if (t.Request.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto)
+                animationController.PlayNpcMeleeAnimationOnly(t.Source);
+            return;
+        }
+
+        if (inside)
+        {
             combatEngine.ProcessNpcAction(
                 t.Source, t.Request.ActionId, t.Request.TargetId,
                 t.Request.Potency, t.Request.Style, t.Request.Radius);
         }
         else if (t.Request.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto)
         {
-            // Whiff: melee enemies still swing so the dodge reads clearly. Ranged
-            // whiffs simply don't fire a projectile.
             animationController.PlayNpcMeleeAnimationOnly(t.Source);
         }
     }
 
     /// <summary>
-    /// True while the given enemy is mid-windup on a telegraph. Used to grant
-    /// super-armor (suppress the hit-reaction flinch) so a committed enemy attack
-    /// isn't visually stunlocked by rapid player hits — the player must dodge, not mash.
+    /// True while the given enemy is mid-windup on a telegraph. Used to suppress
+    /// hit-reaction flinch so committed enemy attacks cannot be stunlocked.
     /// </summary>
     public bool IsWindingUp(uint npcSimId)
     {

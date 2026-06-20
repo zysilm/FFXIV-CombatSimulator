@@ -7,7 +7,7 @@ namespace CombatSimulator.ActionCombat;
 public enum PlayerInputRole
 {
     LightAttack,
-    Dodge,
+    Guard,
     Skill1,
     Skill2,
 }
@@ -40,11 +40,11 @@ public sealed class ActionComboSink : IPlayerActionSink
             queue.Enqueue(input);
     }
 
-    // Dodge / skills are opt-in by actionId; anything else is a light attack, so the
+    // Guard / skills are opt-in by actionId; anything else is a light attack, so the
     // mode is usable before the player configures specific ids.
     private PlayerInputRole MapRole(uint id)
     {
-        if (config.ActionDodgeId != 0 && id == config.ActionDodgeId) return PlayerInputRole.Dodge;
+        if (config.ActionGuardId != 0 && id == config.ActionGuardId) return PlayerInputRole.Guard;
         if (config.ActionSkill1Id != 0 && id == config.ActionSkill1Id) return PlayerInputRole.Skill1;
         if (config.ActionSkill2Id != 0 && id == config.ActionSkill2Id) return PlayerInputRole.Skill2;
         return PlayerInputRole.LightAttack;

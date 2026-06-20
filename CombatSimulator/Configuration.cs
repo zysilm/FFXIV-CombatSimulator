@@ -5,6 +5,7 @@ using CombatSimulator.Animation;
 using CombatSimulator.Dev;
 using Dalamud.Configuration;
 using Dalamud.Plugin;
+using Dalamud.Game.ClientState.GamePad;
 
 namespace CombatSimulator;
 
@@ -356,7 +357,7 @@ public class Configuration : IPluginConfiguration
 
     // ── Action Mode (动作模式) ──────────────────────────────────────────────
     // A toggleable real-time action layer that replaces the tab-target / GCD
-    // interaction. Player attacks/dodge come from hotbar actions remapped by
+    // interaction. Player attacks/guard come from hotbar actions remapped by
     // actionId (the game resolves keyboard/gamepad for us); enemy attacks
     // telegraph (起手快照) then resolve by hitbox at the active frame. When OFF,
     // every seam falls back to the original simulation behavior.
@@ -365,9 +366,11 @@ public class Configuration : IPluginConfiguration
     // Input map: put these actions on the hotbar; a press is interpreted as the
     // mapped role instead of firing the real action. 0 = unmapped.
     public uint ActionAttackId { get; set; } = 0;
-    public uint ActionDodgeId { get; set; } = 0;
+    public uint ActionGuardId { get; set; } = 0;
     public uint ActionSkill1Id { get; set; } = 0;
     public uint ActionSkill2Id { get; set; } = 0;
+    public int ActionGuardKey { get; set; } = 16; // SeVirtualKey.Shift. Independent of job/action availability.
+    public GamepadButtons ActionGuardGamepadButton { get; set; } = GamepadButtons.R1;
 
     // Telegraph / windup tuning
     public float MinTelegraphWindup { get; set; } = 0.4f;  // floor so even instant attacks are readable
@@ -377,11 +380,13 @@ public class Configuration : IPluginConfiguration
     // fight feel action-paced instead of the slow tab-target ~3s cadence.
     public float ActionEnemyAttackSpeed { get; set; } = 1.6f;
 
-    // Dodge tuning
-    public float DodgeIFrames { get; set; } = 0.35f;       // invulnerability window
-    public float DodgeDistance { get; set; } = 5f;         // dash distance (yalms)
-    public float DodgeDuration { get; set; } = 0.3f;       // dash travel time
-    public float DodgeCooldown { get; set; } = 0.5f;       // min time between dodges
+    // Guard tuning
+    public float GuardActiveWindow { get; set; } = 0.22f;  // perfect-guard reaction window
+    public float GuardRecovery { get; set; } = 0.35f;      // lockout after a guard attempt
+    public float GuardCooldown { get; set; } = 0.15f;      // min time between guard attempts
+    public ushort GuardTimelineId { get; set; } = 0;       // 0 = auto/fallback
+    public string GuardSuccessVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
+    public string EnemyTelegraphVfxPath { get; set; } = "vfx/common/eff/cmhit_fire1t.avfx";
 
     // Player light-combo + hitbox tuning
     public float LightComboWindow { get; set; } = 0.6f;    // time to chain the next swing
