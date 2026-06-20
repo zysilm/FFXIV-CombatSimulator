@@ -1085,6 +1085,62 @@ public unsafe class AnimationController : IDisposable
     /// button never feels dead. Hits play the full weaponskill animation through the
     /// ActionEffect pipeline instead.
     /// </summary>
+    /// <summary>
+    /// Action Mode wind-up body language: play a non-hit preparatory battle timeline directly
+    /// on the NPC. This avoids using ActionEffect for the windup, so the real strike can still
+    /// use the full hit-feedback pipeline at resolve time without creating a duplicate attack.
+    /// </summary>
+    public bool PlayNpcWindupPose(SimulatedNpc npc, uint actionId)
+    {
+        var casterPtr = FindCharacter(npc.SimulatedEntityId, isPlayer: false);
+        if (casterPtr == null) return false;
+
+        var headerSize   = sizeof(ActionEffectHandler.Header);
+        var effectsSize  = sizeof(ActionEffectHandler.TargetEffects);
+        var idsSize      = sizeof(GameObjectId);
+
+        var headerPtr    = (ActionEffectHandler.Header*)Marshal.AllocHGlobal(headerSize);
+        var effectsPtr   = (ActionEffectHandler.TargetEffects*)Marshal.AllocHGlobal(effectsSize);
+        var targetIdsPtr = (GameObjectId*)Marshal.AllocHGlobal(idsSize);
+
+        try
+        {
+            NativeMemory.Clear(headerPtr,    (nuint)headerSize);
+            NativeMemory.Clear(effectsPtr,   (nuint)effectsSize);
+            NativeMemory.Clear(targetIdsPtr, (nuint)idsSize);
+
+            var aid = actionId == 0 ? 7u : actionId;
+            headerPtr->AnimationTargetId  = 0xE0000000UL;
+            headerPtr->ActionId           = aid;
+            headerPtr->GlobalSequence     = globalSequence++;
+            headerPtr->AnimationLock      = 0.6f;
+            headerPtr->SourceSequence     = 0;
+            headerPtr->RotationInt        = QuantizeRotation(GetNpcRotation(npc));
+            headerPtr->SpellId            = (ushort)(aid & 0xFFFF);
+            headerPtr->ActionType         = 1;
+            headerPtr->NumTargets         = 0;
+            headerPtr->ShowInLog          = false;
+            headerPtr->ForceAnimationLock = false;
+
+            var casterPos = GetNpcPosition(npc);
+            ActionEffectHandler.Receive(
+                npc.SimulatedEntityId, casterPtr, &casterPos,
+                headerPtr, effectsPtr, targetIdsPtr);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"Failed to play NPC wind-up action effect for {npc.Name}.");
+            return false;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal((nint)headerPtr);
+            Marshal.FreeHGlobal((nint)effectsPtr);
+            Marshal.FreeHGlobal((nint)targetIdsPtr);
+        }
+    }
+
     public void PlayPlayerMeleeSwing()
     {
         if (npcMeleeAutoAttackTimeline == 0) return;
