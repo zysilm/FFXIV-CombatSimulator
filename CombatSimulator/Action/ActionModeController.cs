@@ -17,6 +17,8 @@ namespace CombatSimulator.ActionCombat;
 /// </summary>
 public sealed class ActionModeController
 {
+    private const float GuardCancelLockRatio = 0.70f;
+
     private readonly Configuration config;
     private readonly ActionComboSink comboSink;
     private readonly PlayerHitboxResolver hitbox;
@@ -28,6 +30,8 @@ public sealed class ActionModeController
     private readonly IPluginLog log;
 
     private float swingCooldown;
+    private float guardLockoutTimer;
+    private float attackLockoutTimer;
     private int comboStep;
     private float comboTimer;
     private bool wasActive;
@@ -74,6 +78,8 @@ public sealed class ActionModeController
         if (!combatEngine.State.PlayerState.IsAlive)
         {
             guard.Reset();
+            guardLockoutTimer = 0f;
+            attackLockoutTimer = 0f;
             guardKeyWasDown = false;
             comboSink.Clear();
             telegraphs.Tick(dt);
@@ -81,6 +87,8 @@ public sealed class ActionModeController
         }
 
         if (swingCooldown > 0f) swingCooldown = MathF.Max(0f, swingCooldown - dt);
+        if (guardLockoutTimer > 0f) guardLockoutTimer = MathF.Max(0f, guardLockoutTimer - dt);
+        if (attackLockoutTimer > 0f) attackLockoutTimer = MathF.Max(0f, attackLockoutTimer - dt);
         if (comboTimer > 0f)
         {
             comboTimer -= dt;
@@ -114,7 +122,7 @@ public sealed class ActionModeController
 
         var isDown = fw->KeyboardInputs.KeyState[keyValue].HasFlag(KeyStateFlags.Down);
         if (isDown && !guardKeyWasDown)
-            guard.TryGuard();
+            TryGuard();
 
         guardKeyWasDown = isDown;
     }
@@ -126,11 +134,9 @@ public sealed class ActionModeController
 
         if (gamepadState.Pressed(config.ActionGuardGamepadButton) > 0)
         {
-            if (guard.TryGuard())
-            {
-                guardGamepadSuppressFrames = 3;
-                SuppressGuardGamepadInput();
-            }
+            TryGuard();
+            guardGamepadSuppressFrames = 3;
+            SuppressGuardGamepadInput();
         }
     }
 
@@ -139,7 +145,7 @@ public sealed class ActionModeController
         switch (input.Role)
         {
             case PlayerInputRole.Guard:
-                guard.TryGuard();
+                TryGuard();
                 break;
             default: // LightAttack / Skill1 / Skill2 → a light swing for this slice
                 LightAttack(input.ActionId);
@@ -149,11 +155,16 @@ public sealed class ActionModeController
 
     private void LightAttack(uint actionId)
     {
+        if (attackLockoutTimer > 0f)
+            return;
         if (swingCooldown > 0f)
             return;
         if (!combatEngine.State.PlayerState.IsAlive)
             return;
 
+        var duration = MathF.Max(0.05f, animationController.ResolveActionAnimationDuration(actionId));
+        guardLockoutTimer = MathF.Max(guardLockoutTimer, duration * GuardCancelLockRatio);
+        attackLockoutTimer = MathF.Max(attackLockoutTimer, duration);
         swingCooldown = config.LightSwingInterval;
         comboStep = comboTimer > 0f ? (comboStep + 1) % 3 : 0;
         comboTimer = config.LightComboWindow;
@@ -164,12 +175,22 @@ public sealed class ActionModeController
             animationController.PlayPlayerActionAnimationOnly(actionId); // reliable whiff (打空) feedback
     }
 
+    private bool TryGuard()
+    {
+        if (guardLockoutTimer > 0f)
+            return false;
+
+        return guard.TryGuard();
+    }
+
     private void OnModeExit()
     {
         comboSink.Clear();
         guard.Reset();
         telegraphs.Clear();
         swingCooldown = 0f;
+        guardLockoutTimer = 0f;
+        attackLockoutTimer = 0f;
         comboStep = 0;
         comboTimer = 0f;
         guardKeyWasDown = false;

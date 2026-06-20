@@ -54,6 +54,8 @@ public unsafe class AnimationController : IDisposable
     private readonly EmoteTimelinePlayer emotePlayer;
     public EmoteTimelinePlayer EmotePlayer => emotePlayer;
     private readonly Configuration config;
+    private readonly IDataManager dataManager;
+    private readonly Dictionary<uint, float> actionAnimationDurationCache = new();
 
     // Monotonically increasing sequence number for fabricated ActionEffects
     private uint globalSequence = 0x10000000;
@@ -145,6 +147,7 @@ public unsafe class AnimationController : IDisposable
         this.log = log;
         this.clientState = clientState;
         this.config = config;
+        this.dataManager = dataManager;
         this.emotePlayer = new EmoteTimelinePlayer(log);
 
         ResolvePlayDeadTimelines(dataManager);
@@ -348,6 +351,94 @@ public unsafe class AnimationController : IDisposable
         catch (Exception ex)
         {
             log.Warning(ex, "AnimationController: Failed to enable PlaySpecificSound hook.");
+        }
+    }
+
+    public float ResolveActionAnimationDuration(uint actionId)
+    {
+        actionId = actionId == 0 ? 7u : actionId;
+        if (actionAnimationDurationCache.TryGetValue(actionId, out var cached))
+            return cached;
+
+        var duration = ResolveActionAnimationDurationUncached(actionId);
+        actionAnimationDurationCache[actionId] = duration;
+        return duration;
+    }
+
+    private float ResolveActionAnimationDurationUncached(uint actionId)
+    {
+        const float fallbackSeconds = 0.6f;
+
+        try
+        {
+            var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>();
+            var row = sheet?.GetRowOrDefault(actionId);
+            if (row == null)
+                return fallbackSeconds;
+
+            var action = row.Value;
+            var duration = ResolveTimelineDuration(action.AnimationEnd.ValueNullable);
+
+            return duration is > 0.05f ? duration.Value : fallbackSeconds;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"AnimationController: Failed to resolve animation duration for action {actionId}.");
+            return fallbackSeconds;
+        }
+    }
+
+    private float? ResolveTimelineDuration(ActionTimeline? timeline)
+    {
+        if (timeline == null)
+            return null;
+
+        var key = timeline.Value.Key.ExtractText();
+        if (string.IsNullOrWhiteSpace(key) || key.Contains("[SKL_ID]", StringComparison.Ordinal))
+            return null;
+
+        return ResolveTmbDuration($"chara/action/{key}.tmb");
+    }
+
+    private float? ResolveTmbDuration(string tmbPath)
+    {
+        try
+        {
+            var file = dataManager.GetFile(tmbPath);
+            var data = file?.Data;
+            if (data == null || data.Length < 12)
+                return null;
+
+            if (data[0] != (byte)'T' || data[1] != (byte)'M' ||
+                data[2] != (byte)'L' || data[3] != (byte)'B')
+                return null;
+
+            var itemCount = BitConverter.ToInt32(data, 8);
+            var offset = 12;
+            var maxTime = 0;
+
+            for (var i = 0; i < itemCount - 2 && offset + 12 <= data.Length; i++)
+            {
+                var size = BitConverter.ToInt32(data, offset + 4);
+                if (size <= 0 || offset + size > data.Length)
+                    break;
+
+                if (data[offset] == (byte)'C')
+                {
+                    var time = BitConverter.ToInt16(data, offset + 10);
+                    if (time > maxTime)
+                        maxTime = time;
+                }
+
+                offset += size;
+            }
+
+            return maxTime > 0 ? maxTime / 30f : null;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"AnimationController: Failed to parse TMB duration: {tmbPath}");
+            return null;
         }
     }
 
