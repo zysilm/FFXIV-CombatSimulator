@@ -585,7 +585,8 @@ public class CombatEngine : IDisposable
         ulong targetId,
         int potency = 0,
         NpcAttackStyle attackStyle = NpcAttackStyle.Auto,
-        float radius = 0)
+        float radius = 0,
+        bool suppressCasterActionEffect = false)
     {
         var result = new SimulatedActionResult
         {
@@ -676,7 +677,10 @@ public class CombatEngine : IDisposable
             }
         }
 
-        TriggerActionEffect(npc.State, visualAction, hits);
+        if (suppressCasterActionEffect)
+            TriggerManualNpcHitFeedback(hits);
+        else
+            TriggerActionEffect(npc.State, visualAction, hits);
 
         result.Success = true;
         result.Damage = totalDamage;
@@ -1101,35 +1105,44 @@ public class CombatEngine : IDisposable
         }
     }
 
-    private unsafe void PlayHitReactionOnTarget(SimulatedEntityState target, bool isDamage)
+    private void TriggerManualNpcHitFeedback(IReadOnlyList<AppliedActionDamage> hits)
     {
-        if (!isDamage || target.IsPlayer) return;
-
-        // Super-armor: a target mid-telegraph commits to its attack — no flinch.
-        if (IsTargetSuperArmored?.Invoke(target.EntityId) == true) return;
-
-        if (target.IsCompanion)
+        foreach (var hit in hits)
         {
-            var addr = ResolveExternalEntityAddress?.Invoke(target.EntityId);
-            if (addr.HasValue && addr.Value != nint.Zero)
-            {
-                var character = (Character*)addr.Value;
-                character->Timeline.PlayActionTimeline(78);
-            }
-            return;
-        }
-
-        foreach (var npc in npcSelector.SelectedNpcs)
-        {
-            if (npc.SimulatedEntityId != target.EntityId || npc.BattleChara == null)
+            if (hit.DamageResult.Damage <= 0)
                 continue;
 
-            var character = (Character*)npc.BattleChara;
-            // ActionTimeline row 78 = damage_lt (left-side flinch). Generic and
-            // reliable across most race/job combinations.
-            character->Timeline.PlayActionTimeline(78);
-            return;
+            PlayHitReactionOnTarget(hit.Target, isDamage: true, includePlayer: true);
         }
+    }
+
+    // Action-Mode hit reaction: play the additive "battle/damage" flinch on whoever got hit.
+    // (Not ActionTimeline 78 — that's the guard/parry pose, wrong in a parry mode.)
+    private unsafe void PlayHitReactionOnTarget(SimulatedEntityState target, bool isDamage, bool includePlayer = false)
+    {
+        if (!isDamage || (target.IsPlayer && !includePlayer)) return;
+
+        // Super-armor: a target mid-telegraph commits to its attack — no reaction.
+        if (IsTargetSuperArmored?.Invoke(target.EntityId) == true) return;
+
+        var addr = ResolveTargetAddress(target);
+        if (addr != nint.Zero)
+            animationController.PlayHitReactionAnimation(addr);
+    }
+
+    private unsafe nint ResolveTargetAddress(SimulatedEntityState target)
+    {
+        if (target.IsPlayer)
+            return Core.Services.ObjectTable.LocalPlayer?.Address ?? nint.Zero;
+
+        if (target.IsCompanion)
+            return ResolveExternalEntityAddress?.Invoke(target.EntityId) ?? nint.Zero;
+
+        foreach (var npc in npcSelector.SelectedNpcs)
+            if (npc.SimulatedEntityId == target.EntityId && npc.BattleChara != null)
+                return (nint)npc.BattleChara;
+
+        return nint.Zero;
     }
 
     /// <summary>

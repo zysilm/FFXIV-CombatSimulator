@@ -87,6 +87,7 @@ public unsafe class AnimationController : IDisposable
     private bool allowGuardTingOnce;
     private ushort monsterRangedAutoAttackTimeline;
     private ushort npcMeleeAutoAttackTimeline;
+    private ushort damageTimeline = 68; // ActionTimeline "battle/damage" — additive hit reaction
 
     // ActorVfxCreate spawns a .avfx particle effect attached to an actor.
     private delegate nint ActorVfxCreateDelegate(
@@ -153,6 +154,7 @@ public unsafe class AnimationController : IDisposable
         ResolvePlayDeadTimelines(dataManager);
         ResolveBattleDeadTimeline(dataManager);
         ResolveGuardTimeline(dataManager);
+        ResolveDamageTimeline(dataManager);
         ResolveMonsterRangedAttackTimeline(dataManager);
         ResolveMeleeAutoAttackTimeline(dataManager);
         ResolveActorVfxCreate(sigScanner);
@@ -330,6 +332,46 @@ public unsafe class AnimationController : IDisposable
         {
             log.Warning(ex, "AnimationController: Failed to resolve guard timeline.");
         }
+    }
+
+    private void ResolveDamageTimeline(IDataManager dataManager)
+    {
+        try
+        {
+            var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ActionTimeline>();
+            if (sheet == null)
+                return;
+
+            // "battle/damage" is the combat-stance hit reaction (additive flinch). Resolve by key
+            // so it survives row-id shifts; fall back to the known id 68.
+            foreach (var row in sheet)
+            {
+                if (row.Key.ToString().Equals("battle/damage", StringComparison.OrdinalIgnoreCase))
+                {
+                    damageTimeline = (ushort)row.RowId;
+                    log.Info($"AnimationController: Resolved damage timeline battle/damage -> {damageTimeline}.");
+                    return;
+                }
+            }
+
+            log.Warning($"AnimationController: Could not find ActionTimeline battle/damage; using fallback {damageTimeline}.");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "AnimationController: Failed to resolve damage timeline.");
+        }
+    }
+
+    /// <summary>
+    /// Action-Mode hit reaction: play the additive "battle/damage" flinch on the struck actor
+    /// (player, companion, or NPC) as a one-shot blend over its current animation.
+    /// </summary>
+    public void PlayHitReactionAnimation(nint actorAddress)
+    {
+        if (actorAddress == nint.Zero || damageTimeline == 0)
+            return;
+
+        emotePlayer.PlayOneShot((Character*)actorAddress, damageTimeline);
     }
 
     private void ResolvePlaySpecificSoundHook(IGameInteropProvider gameInterop, ISigScanner sigScanner)
@@ -1299,23 +1341,30 @@ public unsafe class AnimationController : IDisposable
     /// </summary>
     public void SpawnHitVfxOnPlayer()
     {
-        if (actorVfxCreate == null) return;
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player != null)
+            SpawnHitVfxOnActor(player.Address);
+    }
+
+    /// <summary>
+    /// Spawn the configured hit-impact VFX on any actor (player, companion, or NPC). Used as the
+    /// Action-Mode hit reaction instead of a flinch timeline.
+    /// </summary>
+    public void SpawnHitVfxOnActor(nint actorAddress)
+    {
+        if (actorVfxCreate == null || actorAddress == nint.Zero) return;
 
         try
         {
-            var player = Core.Services.ObjectTable.LocalPlayer;
-            if (player == null) return;
-
             var vfxPath = config.HitVfxPath;
             if (string.IsNullOrWhiteSpace(vfxPath)) return;
 
-            var playerAddr = player.Address;
-            actorVfxCreate(vfxPath, playerAddr, playerAddr, -1, (char)0, 0, (char)0);
-            log.Verbose($"Hit VFX spawned on player: {vfxPath}");
+            actorVfxCreate(vfxPath, actorAddress, actorAddress, -1, (char)0, 0, (char)0);
+            log.Verbose($"Hit VFX spawned on actor 0x{actorAddress:X}: {vfxPath}");
         }
         catch (Exception ex)
         {
-            log.Error(ex, "Failed to spawn hit VFX on player.");
+            log.Error(ex, "Failed to spawn hit VFX on actor.");
         }
     }
 

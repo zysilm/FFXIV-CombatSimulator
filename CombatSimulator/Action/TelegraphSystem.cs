@@ -220,7 +220,8 @@ public sealed class TelegraphSystem
         // briefly double-swing when a windup swing already played.
         combatEngine.ProcessNpcAction(
             t.Source, t.Request.ActionId, t.Request.TargetId,
-            t.Request.Potency, t.Request.Style, t.Request.Radius);
+            t.Request.Potency, t.Request.Style, t.Request.Radius,
+            suppressCasterActionEffect: t.WindupAnimationPlayed);
         Finish(t, TelegraphOutcome.Hit);
     }
 
@@ -237,9 +238,11 @@ public sealed class TelegraphSystem
             animationController.PlayNpcMeleeAnimationOnly(t.Source);
     }
 
+    // Play the enemy's real attack animation at windup start for ALL styles (melee, ranged, magic)
+    // so guard/dodge/hit are handled uniformly — ranged enemies are no longer animation-less on a
+    // successful parry while still resolving a full hit.
     private bool TryPlayWindupAnimation(SimulatedNpc source, in NpcAttackRequest req)
         => config.ActionEnemyWindupSwing &&
-           req.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto &&
            animationController.PlayNpcWindupPose(source, req.ActionId);
 
     private void Finish(ActiveTelegraph t, TelegraphOutcome outcome)
