@@ -139,6 +139,9 @@ public class CombatEngine : IDisposable
     // Pending death animations (delayed so the killing blow visuals play first)
     private readonly List<PendingDeath> pendingDeaths = new();
     private const float DeathAnimationDelay = 0.5f;
+    // Action Mode: the player drops almost immediately after the killing blow (the 0.5s gap between
+    // the hit-react and the fall felt laggy). Keeps a hair so the hit impact still registers.
+    private const float ActionPlayerDeathDelay = 0.1f;
 
     private struct PendingDeath
     {
@@ -1380,12 +1383,13 @@ public class CombatEngine : IDisposable
             return;
         }
 
-        // Queue death animation with a short delay so the killing blow plays first
+        // Queue death animation with a short delay so the killing blow plays first. In Action Mode
+        // the player drops fast so the fall isn't lagging hundreds of ms behind the hit-react.
         pendingDeaths.Add(new PendingDeath
         {
             EntityId = entity.IsPlayer ? 0UL : entity.EntityId,
             IsPlayer = entity.IsPlayer,
-            Timer = DeathAnimationDelay,
+            Timer = entity.IsPlayer && config.ActionMode ? ActionPlayerDeathDelay : DeathAnimationDelay,
         });
 
     }
