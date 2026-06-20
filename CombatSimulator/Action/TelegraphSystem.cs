@@ -242,13 +242,14 @@ public sealed class TelegraphSystem
             animationController.PlayNpcWindupPose(t.Source, t.Request.ActionId);
     }
 
-    // Only MELEE/AUTO play a real attack swing at windup start (so the strike can suppress the 2nd
-    // swing for a clean, parry-readable single swing). Ranged/magic do NOT — their projectile/cast
-    // VFX (fireball etc.) lives in the full ActionEffect, so they keep the un-suppressed hit and
-    // instead show their cast pose on guard/dodge via PlayWhiffSwing.
+    // Only AUTO-ATTACKS get the windup swing + single-swing suppression (the frequent, parry-
+    // readable melee hits). SKILLS are never suppressed so their projectile/cast VFX (fireball
+    // etc.) always plays via the full ActionEffect. Physical-ranged autos (bow/gun) are also left
+    // un-suppressed to keep their arrow VFX.
     private bool TryPlayWindupAnimation(SimulatedNpc source, in NpcAttackRequest req)
         => config.ActionEnemyWindupSwing &&
-           req.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto &&
+           req.IsAutoAttack &&
+           req.Style != NpcAttackStyle.Ranged &&
            animationController.PlayNpcWindupPose(source, req.ActionId);
 
     private void Finish(ActiveTelegraph t, TelegraphOutcome outcome)

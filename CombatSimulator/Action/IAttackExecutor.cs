@@ -9,7 +9,8 @@ public readonly record struct NpcAttackRequest(
     int Potency,
     NpcAttackStyle Style,
     float Radius,
-    float CastTime);
+    float CastTime,
+    bool IsAutoAttack = false);
 
 /// <summary>
 /// Seam 2: how an enemy attack resolves. The enemy AI (skills, pathing, HP) is

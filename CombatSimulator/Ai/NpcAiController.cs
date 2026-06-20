@@ -46,6 +46,8 @@ public unsafe class NpcAiController : IDisposable
     private const float VNavmeshLookaheadDistance = 1.25f;
     private const float PartyMeleeAttackRangeBuffer = 0.25f;
     private const float PartyAttackRangeHysteresis = 0.4f;
+    // Caster/magic enemies auto-attack at melee reach (their spells are ranged, the basic swing is not).
+    private const float MagicAutoAttackMeleeRange = 3.5f;
     private const float PartyApproachMovementEpsilon = 0.02f;
     private const float PartyApproachDebugInterval = 0.5f;
     // Low-pass time constant (seconds) for the steered enemy approach heading.
@@ -560,10 +562,16 @@ public unsafe class NpcAiController : IDisposable
         npc.AutoAttackTimer -= deltaTime;
         if (npc.AutoAttackTimer <= 0)
         {
+            // FFXIV: caster/magic auto-attacks are MELEE (only physical ranged — bow/gun — auto at
+            // range). Their spells stay ranged via the skill loop above; the basic swing only lands
+            // up close. Hold the swing (don't reset the timer) until the target is in melee.
+            if (npc.Behavior.AutoAttackStyle == NpcAttackStyle.Magic && distToTarget > MagicAutoAttackMeleeRange)
+                return;
+
             npc.AutoAttackTimer = npc.Behavior.AutoAttackDelay / ActionPace();
             var ok = combatModeRouter.AttackExecutor.Execute(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
                 npc.Behavior.AutoAttackActionId, targetEntityId, npc.Behavior.AutoAttackPotency,
-                npc.Behavior.AutoAttackStyle, 0f, 0f));
+                npc.Behavior.AutoAttackStyle, 0f, 0f, IsAutoAttack: true));
             if (ok)
                 npc.State.AnimationLock = MathF.Max(npc.State.AnimationLock, 0.6f);
         }
@@ -1199,7 +1207,13 @@ public unsafe class NpcAiController : IDisposable
     private float GetEffectiveNpcSkillRange(SimulatedNpc npc, SimulatedEntityState target, float skillRange)
     {
         if (UsesPartyConfiguredRange(npc, target))
+        {
+            // Casters stand in melee (their auto is a melee swing) but their SPELLS keep full
+            // range — don't clamp spell range down to the melee auto range.
+            if (npc.Behavior.AutoAttackStyle == NpcAttackStyle.Magic)
+                return skillRange;
             return MathF.Min(skillRange, GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer);
+        }
 
         return skillRange;
     }
@@ -1209,8 +1223,10 @@ public unsafe class NpcAiController : IDisposable
            (combatEngine.HasLivingCompanions?.Invoke() == true ||
             !config.UseSoloTargetFormationWhenNoCompanions);
 
+    // Only physical ranged (bow/gun) holds at range. Casters/magic hold at MELEE — their basic
+    // auto-attack is a melee swing in FFXIV; their spells (full range) still fire from up close.
     private float GetPartyAttackRange(NpcAttackStyle style)
-        => style is NpcAttackStyle.Ranged or NpcAttackStyle.Magic
+        => style is NpcAttackStyle.Ranged
             ? MathF.Max(1.0f, config.PartyRangedAttackRange)
             : MathF.Max(0.5f, config.PartyMeleeAttackRange);
 
