@@ -121,12 +121,10 @@ public class NpcActionProfileProvider
             return;
         }
 
-        foreach (var skill in behavior.Skills)
-        {
-            skill.Range = Math.Max(skill.Range, 20f);
-            if (skill.AttackStyle == NpcAttackStyle.Auto || skill.AttackStyle == NpcAttackStyle.Melee)
-                skill.AttackStyle = NpcAttackStyle.Magic;
-        }
+        // Don't blanket-force every skill to Magic + 20y range — that turned a caster's MELEE
+        // weaponskill (e.g. Heavy Swing) into a ranged cast. EnrichFromActionData (runs next)
+        // classifies each skill by its real action data (magical→Magic, short physical→Melee) and
+        // fills the real range, so melee skills stay melee.
     }
 
     private static bool HasPhysicalRangedActionCarriers(NpcBehavior behavior)

@@ -728,7 +728,9 @@ public unsafe class NpcAiController : IDisposable
     /// </summary>
     private Vector3 ComputeApproachGoal(SimulatedNpc npc, Vector3 npcPos, Vector3 playerPos)
     {
-        var targetDist = MathF.Max(0.5f, config.TargetApproachDistance);
+        // Solo path: keep distance at the enemy's intended engage range (caster stands at spell
+        // range, melee comes in) instead of one fixed ring for everyone.
+        var targetDist = MathF.Max(0.5f, npc.DesiredEngageRange > 0f ? npc.DesiredEngageRange : config.TargetApproachDistance);
 
         // Hold a locked world spot — the enemy stands its ground and does NOT glide
         // with the player. Only re-approach once the player has wandered away from
