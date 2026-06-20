@@ -393,9 +393,13 @@ public class Configuration : IPluginConfiguration
     // Player light-combo + hitbox tuning
     public float LightComboWindow { get; set; } = 0.6f;    // time to chain the next swing
     public float LightSwingInterval { get; set; } = 0.4f;  // min time between swings (cadence)
-    public float PlayerHitboxRange { get; set; } = 4f;     // frontal cone reach (yalms)
-    public float PlayerHitboxAngleDeg { get; set; } = 90f; // frontal cone full angle
+    public float PlayerHitboxRange { get; set; } = 4f;     // melee basic-attack reach (yalms)
+    public float PlayerHitboxAngleDeg { get; set; } = 90f; // melee selection cone full angle
     public int LightAttackPotency { get; set; } = 120;
+    // Soft-target selection: ranged basic attack / ranged skills use a longer, wider selection cone
+    // and pick the smallest-angle enemy (not the nearest).
+    public float RangedBasicRange { get; set; } = 22f;
+    public float RangedSelectAngleDeg { get; set; } = 160f;
 
     // Telegraph overlay
     public bool ShowTelegraphs { get; set; } = false;

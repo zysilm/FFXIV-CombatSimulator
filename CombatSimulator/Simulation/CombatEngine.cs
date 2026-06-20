@@ -1739,6 +1739,73 @@ public class CombatEngine : IDisposable
         return hits.Count;
     }
 
+    public ActionData? GetActionData(uint actionId) => actionDataProvider.GetActionData(actionId);
+
+    /// <summary>
+    /// Action-Mode player attack: given a soft-target primary, fan out the action's REAL shape via
+    /// <see cref="ResolveActionTargets"/> and apply with its real potency (or an override for the
+    /// basic attack). Reuses the same shape module + feedback (swing/impact sound/hit-react/flytext)
+    /// normal mode uses. Returns the number of enemies hit; 0 = whiff (caller plays animation-only).
+    /// </summary>
+    public int ApplyPlayerActionMode(uint actionId, ulong primaryEntityId, int potencyOverride = 0)
+    {
+        var ps = State.PlayerState;
+        if (!ps.IsAlive)
+            return 0;
+
+        var primary = State.GetEntity(primaryEntityId);
+        if (primary == null || !primary.IsAlive || !IsHostile(ps, primary))
+            return 0;
+
+        var source = actionDataProvider.GetActionData(actionId);
+        var actionData = source != null ? CloneActionData(source) : new ActionData
+        {
+            ActionId = actionId == 0 ? 7u : actionId,
+            Name = "Attack",
+            DamageType = SimDamageType.Physical,
+            AnimationLock = 0.6f,
+        };
+        if (potencyOverride > 0)
+            actionData.Potency = potencyOverride;
+        var potency = actionData.Potency > 0 ? actionData.Potency : 100;
+
+        // Action Mode has no placed ground/target reticle, so a circle AoE centres on the PLAYER
+        // (full ring around you) instead of on the front-picked primary — fixes "circle only hits in
+        // front". Cones/lines stay directional.
+        if (actionData.Shape is AoeShape.Circle or AoeShape.GroundCircle)
+            actionData.Shape = AoeShape.CircleSelf;
+
+        var hits = new List<AppliedActionDamage>();
+        var total = 0;
+        foreach (var target in ResolveActionTargets(ps, primary, actionData))
+        {
+            if (target.IsPlayer || target.IsCompanion || !target.IsAlive)
+                continue;
+            var dmg = damageCalculator.CalculateNpcAutoAttack(ps, target, potency);
+            target.CurrentHp = Math.Max(0, target.CurrentHp - dmg.Damage);
+            hits.Add(new AppliedActionDamage(target, dmg));
+            total += dmg.Damage;
+            State.TotalDamageDealt += dmg.Damage;
+            OnPlayerDamageDealtToTarget?.Invoke(target.EntityId, dmg.Damage);
+            EngageIdleTarget(target.EntityId);
+        }
+
+        if (hits.Count == 0)
+            return 0;
+
+        if (State.CombatStartTime == 0)
+            State.CombatStartTime = State.SimulationTime;
+
+        OnPlayerDamageDealt?.Invoke(total);
+        TriggerActionEffect(ps, actionData, hits);
+
+        foreach (var hit in hits)
+            if (!hit.Target.IsAlive)
+                OnEntityDeath(hit.Target);
+
+        return hits.Count;
+    }
+
     /// <summary>Engage a still-idle selected enemy (mirrors the sim-mode first-hit engage).</summary>
     private void EngageIdleTarget(uint entityId)
     {

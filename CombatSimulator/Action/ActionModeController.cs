@@ -169,10 +169,32 @@ public sealed class ActionModeController
         comboStep = comboTimer > 0f ? (comboStep + 1) % 3 : 0;
         comboTimer = config.LightComboWindow;
 
-        var ids = hitbox.ResolveConeTargets();
-        var struck = combatEngine.ApplyResolvedPlayerHit(ids, actionId, config.LightAttackPotency);
+        // Soft-target by the action's real selection cone, then fan out its real shape/potency.
+        var (range, angle, smallestAngle) = ResolveSelectionParams(actionId);
+        var primary = hitbox.ResolvePrimary(range, angle, smallestAngle);
+        var struck = primary != null
+            ? combatEngine.ApplyPlayerActionMode(actionId, primary.State.EntityId)
+            : 0;
         if (struck == 0)
             animationController.PlayPlayerActionAnimationOnly(actionId); // reliable whiff (打空) feedback
+    }
+
+    // Derive the soft-target selection cone from the action's real data. Any CIRCLE AoE is treated as
+    // centred on the player (full ring) since Action Mode has no placed ground/target reticle; cones
+    // and lines stay directional; ranged/magic uses a longer, wider cone + smallest-angle pick.
+    private (float Range, float AngleDeg, bool SmallestAngle) ResolveSelectionParams(uint actionId)
+    {
+        var data = combatEngine.GetActionData(actionId);
+        if (data == null)
+            return (config.PlayerHitboxRange, config.PlayerHitboxAngleDeg, false);
+
+        if (data.Shape is AoeShape.CircleSelf or AoeShape.Donut or AoeShape.Circle or AoeShape.GroundCircle)
+            return (MathF.Max(data.Radius, 1f), 360f, false);
+
+        var ranged = data.DamageType == SimDamageType.Magical || data.Range > 5f;
+        var range = data.Range > 0f ? data.Range : (ranged ? config.RangedBasicRange : config.PlayerHitboxRange);
+        var angle = ranged ? config.RangedSelectAngleDeg : config.PlayerHitboxAngleDeg;
+        return (range, angle, ranged);
     }
 
     private bool TryGuard()
