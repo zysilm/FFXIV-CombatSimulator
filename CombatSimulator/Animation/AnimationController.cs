@@ -1051,56 +1051,7 @@ public unsafe class AnimationController : IDisposable
         }
     }
 
-    public void PlayPlayerGuardMiss()
-    {
-        // Failed/mistimed guard feedback: ordinary auto-attack as the sound
-        // carrier, then a silent guard pose override. Do not call PlayActionTimeline
-        // for the guard pose here; that timeline can contain the crisp block sound.
-        PlayPlayerActionAnimationOnly(7u);
-        SetPlayerGuardPoseOverride();
-    }
-
-    public void ClearPlayerGuardPose()
-    {
-        try
-        {
-            var player = Core.Services.ObjectTable.LocalPlayer;
-            if (player == null || player.Address == nint.Zero)
-                return;
-
-            var character = (Character*)player.Address;
-            var timeline = config.GuardTimelineId != 0 ? config.GuardTimelineId : guardTimeline;
-            if (timeline != 0 && character->Timeline.BaseOverride == timeline)
-                character->Timeline.BaseOverride = 0;
-        }
-        catch (Exception ex)
-        {
-            log.Warning(ex, "Failed to clear player guard pose.");
-        }
-    }
-
-    private void SetPlayerGuardPoseOverride()
-    {
-        try
-        {
-            var player = Core.Services.ObjectTable.LocalPlayer;
-            if (player == null || player.Address == nint.Zero)
-                return;
-
-            var character = (Character*)player.Address;
-            var timeline = config.GuardTimelineId != 0 ? config.GuardTimelineId : guardTimeline;
-            character->Timeline.IsWeaponDrawn = true;
-            character->Timeline.ModelState = 1;
-            if (timeline != 0)
-                character->Timeline.BaseOverride = timeline;
-        }
-        catch (Exception ex)
-        {
-            log.Warning(ex, "Failed to set player guard pose.");
-        }
-    }
-
-    private void PlayPlayerGuardTimeline()
+    public void PlayPlayerGuardAnimation()
     {
         try
         {
@@ -1122,7 +1073,6 @@ public unsafe class AnimationController : IDisposable
 
     public void PlayPlayerGuardSuccess()
     {
-        PlayPlayerGuardTimeline();
         SpawnConfiguredVfxOnPlayer(config.GuardSuccessVfxPath, ttl: 0.35f);
     }
 
