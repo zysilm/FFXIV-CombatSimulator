@@ -61,4 +61,12 @@ public unsafe class SimulatedNpc
     // default melee animation. Per-NPC override so e.g. an archer model
     // never plays a sword swing.
     public bool IsRanged { get; set; }
+
+    // Action-Mode dynamic positioning: the engage distance + role the enemy wants right now, based
+    // on the action it intends to use next. Updated each frame by NpcAiController; the approach
+    // logic and PartyEngagePlanner read these instead of a fixed weapon-style range.
+    // DesiredEngageRange == 0 means "not computed yet" (callers fall back to the style range).
+    public float DesiredEngageRange { get; set; }
+    public bool IsRangedIntent { get; set; }
+    public float IntentDwellTimer { get; set; }
 }

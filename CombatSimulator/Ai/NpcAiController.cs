@@ -48,6 +48,12 @@ public unsafe class NpcAiController : IDisposable
     private const float PartyAttackRangeHysteresis = 0.4f;
     // Caster/magic enemies auto-attack at melee reach (their spells are ranged, the basic swing is not).
     private const float MagicAutoAttackMeleeRange = 3.5f;
+    // Dynamic positioning: a ranged/magic skill ready within this lookahead keeps the enemy at range
+    // (so a caster waits to cast instead of walking in). Dwell damps intent flicker.
+    private const float RangedIntentLookahead = 2.5f;
+    private const float IntentMinDwell = 0.6f;
+    // Below this fraction of the desired ranged hold, a ranged-intent enemy drifts back out.
+    private const float RangedBackoffFraction = 0.6f;
     private const float PartyApproachMovementEpsilon = 0.02f;
     private const float PartyApproachDebugInterval = 0.5f;
     // Low-pass time constant (seconds) for the steered enemy approach heading.
@@ -433,6 +439,8 @@ public unsafe class NpcAiController : IDisposable
             npc.AiState = NpcAiState.Idle;
             return;
         }
+
+        UpdateDesiredEngageRange(npc, deltaTime);
 
         var targetPos = combatEngine.GetSimulatedEntityPosition(simulatedTarget);
         var distToTarget = UsesPartyConfiguredRange(npc, simulatedTarget)
@@ -913,11 +921,15 @@ public unsafe class NpcAiController : IDisposable
         var targetPos = partyPlan.Goal;
         var facePos = partyPlan.HasFaceTarget ? partyPlan.FaceTarget : npcPos;
         var distToTarget = FlatDistance(npcPos, npcTargetPos);
-        var partyAttackRange = GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer;
+        var partyAttackRange = DynamicHoldRange(npc) + PartyMeleeAttackRangeBuffer;
         var rangeStateAvailable = TryGetOrCreateApproachPathState(npc, out var rangeState);
-        var shouldHoldRange = rangeStateAvailable && rangeState.WasHoldingRange
-            ? distToTarget <= partyAttackRange + PartyAttackRangeHysteresis
-            : distToTarget <= partyAttackRange;
+        var outerEdge = rangeStateAvailable && rangeState.WasHoldingRange
+            ? partyAttackRange + PartyAttackRangeHysteresis
+            : partyAttackRange;
+        // Ranged-intent enemies that drifted too close (e.g. after a melee excursion) back off toward
+        // the planner's backline goal instead of holding. Gentle: only fires when well inside.
+        var tooCloseForRanged = npc.IsRangedIntent && distToTarget < partyAttackRange * RangedBackoffFraction;
+        var shouldHoldRange = distToTarget <= outerEdge && !tooCloseForRanged;
         if (shouldHoldRange)
         {
             if (rangeStateAvailable)
@@ -1196,12 +1208,58 @@ public unsafe class NpcAiController : IDisposable
     private float GetEffectiveNpcAttackRange(SimulatedNpc npc, SimulatedEntityState target)
     {
         if (UsesPartyConfiguredRange(npc, target))
-            return GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis;
+            return DynamicHoldRange(npc) + PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis;
 
         // For real NPCs: use a generous range since we can't move them.
         return npc.IsClientControlled
             ? npc.Behavior.AutoAttackRange + 1.0f
             : npc.Behavior.AutoAttackRange + 30.0f;
+    }
+
+    // The enemy's current desired engage distance (driven by the action it intends to use next),
+    // falling back to the fixed weapon-style range until it has been computed this combat.
+    private float DynamicHoldRange(SimulatedNpc npc)
+        => npc.DesiredEngageRange > 0f
+            ? npc.DesiredEngageRange
+            : GetPartyAttackRange(npc.Behavior.AutoAttackStyle);
+
+    // Prefer-ranged with lookahead + dwell: a caster stays at spell range while it has any ranged
+    // skill ready or coming soon, and only falls to its (melee) auto when it has no ranged option
+    // for a while. Updated every combat frame; the approach + planner read the result.
+    private void UpdateDesiredEngageRange(SimulatedNpc npc, float deltaTime)
+    {
+        if (npc.IntentDwellTimer > 0f)
+            npc.IntentDwellTimer = MathF.Max(0f, npc.IntentDwellTimer - deltaTime);
+
+        var meleeHold = MathF.Max(0.5f, config.PartyMeleeAttackRange);
+        var rangedHold = MathF.Max(1.0f, config.PartyRangedAttackRange);
+        var hpPercent = npc.State.MaxHp > 0 ? (float)npc.State.CurrentHp / npc.State.MaxHp : 1f;
+
+        // Physical ranged (bow/gun) auto-attacks at range, so it always wants range. Caster/magic
+        // and melee autos are melee — those only want range when a ranged SKILL is available.
+        var wantRanged = npc.Behavior.AutoAttackStyle == NpcAttackStyle.Ranged;
+        var rangedTarget = rangedHold;
+        foreach (var skill in npc.Behavior.Skills)
+        {
+            if (skill.AttackStyle is not (NpcAttackStyle.Ranged or NpcAttackStyle.Magic))
+                continue;
+            if (hpPercent > skill.HpThreshold)
+                continue; // HP-gated — not usable yet
+            if (skill.CooldownRemaining > RangedIntentLookahead)
+                continue; // not ready and not coming soon
+            wantRanged = true;
+            // Stand off at the configured ranged distance, but never beyond the skill's own reach.
+            rangedTarget = MathF.Min(rangedTarget, MathF.Max(meleeHold, skill.Range));
+        }
+
+        // Only flip intent once the dwell has elapsed, to avoid front/back thrash.
+        if (wantRanged != npc.IsRangedIntent && npc.IntentDwellTimer <= 0f)
+        {
+            npc.IsRangedIntent = wantRanged;
+            npc.IntentDwellTimer = IntentMinDwell;
+        }
+
+        npc.DesiredEngageRange = npc.IsRangedIntent ? rangedTarget : meleeHold;
     }
 
     private float GetEffectiveNpcSkillRange(SimulatedNpc npc, SimulatedEntityState target, float skillRange)

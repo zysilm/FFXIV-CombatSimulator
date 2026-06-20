@@ -294,14 +294,23 @@ public sealed unsafe class PartyEngagePlanner
                 continue;
 
             var position = (Vector3)((GameObject*)enemy.BattleChara)->Position;
+            // Action-Mode dynamic positioning: place the enemy by the action it intends to use next
+            // (caster casting → backline; meleeing → front), falling back to its fixed weapon style
+            // until NpcAiController has computed an intent this combat.
+            var enemyRange = enemy.DesiredEngageRange > 0f
+                ? enemy.DesiredEngageRange
+                : GetPreferredEngageRange(enemy.Behavior.AutoAttackStyle, partyMeleeAttackRange, partyRangedAttackRange);
+            var enemyRanged = enemy.DesiredEngageRange > 0f
+                ? enemy.IsRangedIntent
+                : IsRangedStyle(enemy.Behavior.AutoAttackStyle);
             nodes[enemy.SimulatedEntityId] = new PartyNode(
                 enemy.SimulatedEntityId,
                 PartyNodeSide.Enemy,
                 position,
                 enemy.SpawnPosition,
-                GetPreferredEngageRange(enemy.Behavior.AutoAttackStyle, partyMeleeAttackRange, partyRangedAttackRange),
+                enemyRange,
                 enemyTargets.GetValueOrDefault(enemy.SimulatedEntityId),
-                IsRangedStyle(enemy.Behavior.AutoAttackStyle));
+                enemyRanged);
         }
 
         return nodes;
