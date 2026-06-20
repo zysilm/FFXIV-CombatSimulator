@@ -14,5 +14,6 @@
     <EmbeddedResource Include="Resources\BuiltInBoneProfiles.json" />
     <EmbeddedResource Include="Resources\CombatRecipes\*.json" />
     <EmbeddedResource Include="Resources\Actions.json" />
+    <EmbeddedResource Include="Resources\gaya_nosound.scd" />
   </ItemGroup>
 </Project>

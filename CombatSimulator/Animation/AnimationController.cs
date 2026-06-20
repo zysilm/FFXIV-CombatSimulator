@@ -69,6 +69,16 @@ public unsafe class AnimationController : IDisposable
     private ushort battleDeadLoopTimeline = 8936;
     private bool battleDeadResolved;
     private ushort guardTimeline;
+    // Guard-sound suppression. The guard timeline emits one of two sub-sounds (idx 39/40)
+    // from a shared battle .scd — both are the crisp guard "ting" (confirmed via GuardSoundDiag).
+    // We open a short window on each guard press and redirect those sub-sounds to a silent .scd
+    // (SoundFilter's trick), so the animation plays without the sound; success feedback is the
+    // guard VFX instead.
+    private static readonly int[] GuardSoundIndices = { 39, 40 };
+    private long guardSoundWindowUntilTicks;
+    private int guardSoundWindowLogCount;
+    private nint noSoundScdPtr;
+    private nint noSoundInfoPtr;
     private ushort monsterRangedAutoAttackTimeline;
     private ushort npcMeleeAutoAttackTimeline;
 
@@ -87,6 +97,12 @@ public unsafe class AnimationController : IDisposable
 
     private delegate void ActorVfxDtorDelegate(nint vfx);
     private Hook<ActorVfxDtorDelegate>? actorVfxDtorHook;
+
+    // Game's per-effect SFX dispatch — the same function SoundFilter hooks to mute sounds.
+    // a1 points at the sound info; the loaded .scd data pointer lives at *(byte**)(a1+8);
+    // idx selects the sub-sound. Returning Original keeps audio untouched (log-only for now).
+    private delegate void* PlaySpecificSoundDelegate(long a1, int idx);
+    private Hook<PlaySpecificSoundDelegate>? playSpecificSoundHook;
     private readonly List<TrackedActorVfx> trackedActorVfx = new();
     private const float CastVfxTtl = 1.5f;
     private const float StartVfxTtl = 1.5f;
@@ -135,6 +151,7 @@ public unsafe class AnimationController : IDisposable
         ResolveActorVfxCreate(sigScanner);
         ResolveActorVfxRemove(sigScanner);
         ResolveActorVfxDtor(gameInterop, sigScanner);
+        ResolvePlaySpecificSoundHook(gameInterop, sigScanner);
 
         log.Info("AnimationController: Initialized with ActionEffectHandler + emote timeline system.");
     }
@@ -306,6 +323,96 @@ public unsafe class AnimationController : IDisposable
         {
             log.Warning(ex, "AnimationController: Failed to resolve guard timeline.");
         }
+    }
+
+    private void ResolvePlaySpecificSoundHook(IGameInteropProvider gameInterop, ISigScanner sigScanner)
+    {
+        try
+        {
+            SetUpNoSound();
+
+            // SoundFilter's PlaySpecificSound. This sig is a function prologue, so ScanText
+            // lands on the entry directly — no E8/call-site offset resolution needed (the
+            // earlier InitSound attempt failed precisely because it used a call-site sig).
+            const string playSpecificSoundSig =
+                "48 89 5C 24 ?? 48 89 74 24 ?? 57 48 83 EC 20 33 F6 8B DA 48 8B F9 0F BA E2 0F";
+            var addr = sigScanner.ScanText(playSpecificSoundSig);
+            playSpecificSoundHook = gameInterop.HookFromAddress<PlaySpecificSoundDelegate>(addr, PlaySpecificSoundDetour);
+            playSpecificSoundHook.Enable();
+            log.Info($"AnimationController: PlaySpecificSound hook enabled at 0x{addr:X}.");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "AnimationController: Failed to enable PlaySpecificSound hook.");
+        }
+    }
+
+    // Build the silent-sound redirect target (SoundFilter's gaya_nosound.scd trick): an
+    // unmanaged "sound info" whose data pointer (+8) points at a silent .scd, used to swap out
+    // the guard sound without skipping the original call (skipping risks a null-deref crash).
+    private void SetUpNoSound()
+    {
+        try
+        {
+            var asm = System.Reflection.Assembly.GetExecutingAssembly();
+            using var stream = asm.GetManifestResourceStream("CombatSimulator.Resources.gaya_nosound.scd");
+            if (stream == null)
+            {
+                log.Warning("AnimationController: gaya_nosound.scd not embedded; guard sound mute disabled.");
+                return;
+            }
+
+            using var ms = new System.IO.MemoryStream();
+            stream.CopyTo(ms);
+            var bytes = ms.ToArray();
+
+            noSoundScdPtr = Marshal.AllocHGlobal(bytes.Length);
+            Marshal.Copy(bytes, 0, noSoundScdPtr, bytes.Length);
+
+            noSoundInfoPtr = Marshal.AllocHGlobal(256);
+            for (var i = 0; i < 256; i += 8)
+                Marshal.WriteInt64(noSoundInfoPtr + i, 0);
+            Marshal.WriteIntPtr(noSoundInfoPtr + 8, noSoundScdPtr);
+            Marshal.WriteInt32(noSoundInfoPtr + 0x88, 0x54);
+            Marshal.WriteInt16(noSoundInfoPtr + 0x94, 0);
+
+            log.Info("AnimationController: guard silent-sound redirect initialized.");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "AnimationController: failed to set up guard sound mute; no mute applied.");
+            noSoundInfoPtr = 0;
+        }
+    }
+
+    // During the guard window, redirect the crisp guard sub-sounds (idx 39/40) to the silent
+    // .scd; all other audio passes through untouched. Original is always called.
+    private void* PlaySpecificSoundDetour(long a1, int idx)
+    {
+        try
+        {
+            if (a1 != 0 &&
+                noSoundInfoPtr != 0 &&
+                Environment.TickCount64 <= guardSoundWindowUntilTicks &&
+                Array.IndexOf(GuardSoundIndices, idx) >= 0)
+            {
+                if (guardSoundWindowLogCount < 8)
+                {
+                    guardSoundWindowLogCount++;
+                    var scdData = *(byte**)(a1 + 8);
+                    log.Info($"[GuardSoundDiag] muted guard sound idx={idx} scdData=0x{(nint)scdData:X}");
+                }
+
+                a1 = noSoundInfoPtr;
+                idx = 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "[GuardSoundDiag] mute error.");
+        }
+
+        return playSpecificSoundHook!.Original(a1, idx);
     }
 
     private void ResolveMonsterRangedAttackTimeline(IDataManager dataManager)
@@ -1061,6 +1168,10 @@ public unsafe class AnimationController : IDisposable
 
             var character = (Character*)player.Address;
             var timeline = config.GuardTimelineId != 0 ? config.GuardTimelineId : guardTimeline;
+            // Open the guard-sound window so the PlaySpecificSound hook mutes the crisp guard SFX.
+            guardSoundWindowUntilTicks = Environment.TickCount64 + 1000;
+            guardSoundWindowLogCount = 0;
+
             character->Timeline.IsWeaponDrawn = true;
             character->Timeline.ModelState = 1;
             character->Timeline.PlayActionTimeline(timeline != 0 ? timeline : (ushort)78);
@@ -1073,6 +1184,7 @@ public unsafe class AnimationController : IDisposable
 
     public void PlayPlayerGuardSuccess()
     {
+        // Keep the diagnostic window open through resolution so any success-side SFX is logged too.
         SpawnConfiguredVfxOnPlayer(config.GuardSuccessVfxPath, ttl: 0.35f);
     }
 
@@ -1161,5 +1273,28 @@ public unsafe class AnimationController : IDisposable
             log.Warning(ex, "Error disposing ActorVfxDtor hook.");
         }
         actorVfxDtorHook = null;
+
+        try
+        {
+            playSpecificSoundHook?.Disable();
+            playSpecificSoundHook?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Error disposing PlaySpecificSound hook.");
+        }
+        playSpecificSoundHook = null;
+
+        // Free the silent-sound buffers only after the hook is gone so the detour can't use them.
+        if (noSoundInfoPtr != 0)
+        {
+            Marshal.FreeHGlobal(noSoundInfoPtr);
+            noSoundInfoPtr = 0;
+        }
+        if (noSoundScdPtr != 0)
+        {
+            Marshal.FreeHGlobal(noSoundScdPtr);
+            noSoundScdPtr = 0;
+        }
     }
 }
