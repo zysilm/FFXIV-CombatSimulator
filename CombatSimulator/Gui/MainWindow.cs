@@ -1372,8 +1372,15 @@ public class MainWindow : IDisposable
 
         ImGui.Separator();
         ImGui.Text("Enemy telegraph");
-        SliderFloatSaved("Windup (swing→hit)", () => config.ActionWindupSeconds, v => config.ActionWindupSeconds = v, 0.15f, 1.5f,
-            "Time from the enemy's swing starting to the hit landing. The swing animation plays at the start, so tune this to match when the weapon actually connects. Also the approach-circle duration.");
+        SliderFloatSaved("Windup", () => config.ActionWindupSeconds, v => config.ActionWindupSeconds = v, 0.15f, 1.5f,
+            "Time from the telegraph appearing to the strike landing — your reaction time, and the approach-circle duration.");
+        var windupSwing = config.ActionEnemyWindupSwing;
+        if (ImGui.Checkbox("Wind-up swing", ref windupSwing))
+        {
+            config.ActionEnemyWindupSwing = windupSwing;
+            config.Save();
+        }
+        HelpMarker("Enemy swings when the telegraph starts (body language during the windup). NOTE: the impact sound/hit-reaction is engine-tied to a swing, so the strike still swings — this means a second swing. Off = idle windup, one clean swing at the strike.");
         var showTele = config.ShowTelegraphs;
         if (ImGui.Checkbox("Show telegraph circles", ref showTele))
         {

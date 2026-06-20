@@ -401,10 +401,15 @@ public class Configuration : IPluginConfiguration
     public float TelegraphAlpha { get; set; } = 0.45f;
     public float TelegraphThickness { get; set; } = 3.0f;
 
-    // Action Mode windup: the enemy swing plays at attack start and the hit resolves
-    // this long after, so the animation itself reads as the windup (tune to match the
-    // moment the weapon connects). Also the duration of the osu-style approach circle.
+    // Action Mode windup: the strike resolves this long after the telegraph appears, so it's
+    // the time the player has to react, and the duration of the osu-style approach circle.
     public float ActionWindupSeconds { get; set; } = 0.5f;
+
+    // Play a wind-up swing on the enemy when the telegraph starts so the windup has body
+    // language (instead of the enemy standing idle until the strike). NOTE: the engine couples
+    // the impact sound + hit-reaction to a swing, so the strike still swings — this produces a
+    // second swing. Off = enemy idle during the windup, single clean swing at the strike.
+    public bool ActionEnemyWindupSwing { get; set; } = true;
 
     // osu-style parry-timing circle drawn on the player. A steady inner ring + an outer
     // ring that shrinks onto it over the windup; aligned = the guard window.

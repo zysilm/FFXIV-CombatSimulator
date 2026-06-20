@@ -86,8 +86,14 @@ public sealed class TelegraphSystem
         if (target == null || !target.IsAlive)
             return;
 
-        // No animation here: the enemy's real swing fires at the strike (when the circle
-        // closes), so it stays synced with the telegraph and keeps its impact sound/reaction.
+        // Optional wind-up swing so the windup has body language. The real attack (with the
+        // impact sound + hit-reaction, which the engine ties to a swing) still fires at the
+        // strike — so this adds a second swing; it's a toggle the player can judge.
+        if (config.ActionEnemyWindupSwing && req.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto)
+            animationController.PlayNpcMeleeAnimationOnly(source);
+
+        // The enemy's real swing fires at the strike (when the circle closes), so it stays
+        // synced with the telegraph and keeps its impact sound/reaction.
         active.Add(new ActiveTelegraph
         {
             Source = source,
@@ -178,14 +184,19 @@ public sealed class TelegraphSystem
     private void DoGuard(ActiveTelegraph t)
     {
         playerPerfectGuard();
-        PlayWhiffSwing(t); // enemy visibly swings; it's blocked, no damage
+        // No extra swing on a successful guard: if we already swung at the windup start, that
+        // motion just plays through; otherwise show the strike swing now.
+        if (!SwungAtWindupStart(t))
+            PlayWhiffSwing(t);
         Finish(t, TelegraphOutcome.Guarded);
     }
 
     private void DoHit(ActiveTelegraph t)
     {
         // Full attack: swing + impact sound + target hit-reaction + flytext all fire here, in
-        // sync with the circle closing. (Same path normal mode uses, so feedback matches.)
+        // sync with the circle closing. (Same path normal mode uses, so feedback matches.) The
+        // engine ties the sound/hit-react to a swing, so on a HIT this is the one case that can
+        // briefly double-swing when a windup swing already played.
         combatEngine.ProcessNpcAction(
             t.Source, t.Request.ActionId, t.Request.TargetId,
             t.Request.Potency, t.Request.Style, t.Request.Radius);
@@ -194,9 +205,16 @@ public sealed class TelegraphSystem
 
     private void DoDodge(ActiveTelegraph t)
     {
-        PlayWhiffSwing(t); // enemy swings and misses
+        // No extra swing on a dodge either — the windup swing (if any) just whiffs.
+        if (!SwungAtWindupStart(t))
+            PlayWhiffSwing(t);
         Finish(t, TelegraphOutcome.Dodged);
     }
+
+    // True when Spawn already played the wind-up swing for this attack, so guard/dodge must not
+    // play a second one (keeping skilled outcomes a clean single swing).
+    private bool SwungAtWindupStart(ActiveTelegraph t)
+        => config.ActionEnemyWindupSwing && t.Request.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto;
 
     private void PlayWhiffSwing(ActiveTelegraph t)
     {
