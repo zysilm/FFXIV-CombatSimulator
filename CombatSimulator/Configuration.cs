@@ -74,6 +74,8 @@ public class RecentNpcEntry
 public class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
+    public bool ActionGuardDefaultMigratedToR2 { get; set; } = false;
+    public bool ActionBasicAttackDefaultMigratedToSouth { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -370,9 +372,9 @@ public class Configuration : IPluginConfiguration
     public uint ActionSkill1Id { get; set; } = 0;
     public uint ActionSkill2Id { get; set; } = 0;
     public int ActionGuardKey { get; set; } = 17; // SeVirtualKey.Control. Independent of job/action availability.
-    public GamepadButtons ActionGuardGamepadButton { get; set; } = GamepadButtons.R1;
-    // Basic attack (普攻): gamepad East/Circle (Xbox B) + the Q key, no hotbar action needed.
-    public GamepadButtons ActionBasicAttackGamepadButton { get; set; } = GamepadButtons.East;
+    public GamepadButtons ActionGuardGamepadButton { get; set; } = GamepadButtons.R2;
+    // Basic attack: gamepad South/Cross (Xbox A) + the Q key, no hotbar action needed.
+    public GamepadButtons ActionBasicAttackGamepadButton { get; set; } = GamepadButtons.South;
     public int ActionBasicAttackKey { get; set; } = 0x51; // SeVirtualKey.Q
 
     // Telegraph / windup tuning
@@ -436,6 +438,8 @@ public class Configuration : IPluginConfiguration
         MigrateSkirtParentChains();
         MigrateRagdollProfileMetadata();
         MigrateAnatomicalHinges();
+        MigrateActionGuardDefaultButton();
+        MigrateActionBasicAttackDefaultButton();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
     }
@@ -457,6 +461,8 @@ public class Configuration : IPluginConfiguration
         ActionSkill2Id = defaults.ActionSkill2Id;
         ActionGuardKey = defaults.ActionGuardKey;
         ActionGuardGamepadButton = defaults.ActionGuardGamepadButton;
+        ActionBasicAttackGamepadButton = defaults.ActionBasicAttackGamepadButton;
+        ActionBasicAttackKey = defaults.ActionBasicAttackKey;
 
         MinTelegraphWindup = defaults.MinTelegraphWindup;
         ActionEnemyAttackSpeed = defaults.ActionEnemyAttackSpeed;
@@ -486,6 +492,30 @@ public class Configuration : IPluginConfiguration
         OsuAnchorHeight = defaults.OsuAnchorHeight;
         OsuInnerRadius = defaults.OsuInnerRadius;
         OsuOuterStartScale = defaults.OsuOuterStartScale;
+    }
+
+    private void MigrateActionGuardDefaultButton()
+    {
+        if (ActionGuardDefaultMigratedToR2)
+            return;
+
+        if (ActionGuardGamepadButton == GamepadButtons.R1)
+            ActionGuardGamepadButton = GamepadButtons.R2;
+
+        ActionGuardDefaultMigratedToR2 = true;
+        Save();
+    }
+
+    private void MigrateActionBasicAttackDefaultButton()
+    {
+        if (ActionBasicAttackDefaultMigratedToSouth)
+            return;
+
+        if (ActionBasicAttackGamepadButton == GamepadButtons.East)
+            ActionBasicAttackGamepadButton = GamepadButtons.South;
+
+        ActionBasicAttackDefaultMigratedToSouth = true;
+        Save();
     }
 
     private void MigrateSplitVfxToggles()

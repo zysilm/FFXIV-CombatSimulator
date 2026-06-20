@@ -63,8 +63,8 @@ public class MainWindow : IDisposable
     private static readonly string[] BehaviorNames = { "Training Dummy", "Basic Melee", "Basic Ranged", "Boss" };
     private static readonly string[] ActionGuardKeyLabels = { "Shift", "Ctrl", "Alt", "None" };
     private static readonly int[] ActionGuardKeyValues = { 16, 17, 18, 0 };
-    private static readonly string[] ActionGuardGamepadLabels = { "R1", "L1", "R2", "L2", "Circle / East", "Cross / South", "Square / West", "Triangle / North", "None" };
-    private static readonly GamepadButtons[] ActionGuardGamepadValues =
+    private static readonly string[] ActionGamepadButtonLabels = { "R1", "L1", "R2", "L2", "Circle / East", "Cross / South", "Square / West", "Triangle / North", "None" };
+    private static readonly GamepadButtons[] ActionGamepadButtonValues =
     {
         GamepadButtons.R1,
         GamepadButtons.L1,
@@ -1342,13 +1342,24 @@ public class MainWindow : IDisposable
         }
         HelpMarker("Keyboard key used for Action Mode guard. Default is Shift so jump remains untouched.");
 
-        var guardPadIndex = IndexOf(ActionGuardGamepadValues, config.ActionGuardGamepadButton);
-        if (ImGui.Combo("Gamepad##actionguard", ref guardPadIndex, ActionGuardGamepadLabels, ActionGuardGamepadLabels.Length))
+        var guardPadIndex = IndexOf(ActionGamepadButtonValues, config.ActionGuardGamepadButton);
+        if (ImGui.Combo("Gamepad##actionguard", ref guardPadIndex, ActionGamepadButtonLabels, ActionGamepadButtonLabels.Length))
         {
-            config.ActionGuardGamepadButton = ActionGuardGamepadValues[guardPadIndex];
+            config.ActionGuardGamepadButton = ActionGamepadButtonValues[guardPadIndex];
             config.Save();
         }
-        HelpMarker("Gamepad button used for Action Mode guard. Default is R1 on a PlayStation-style layout.");
+        HelpMarker("Gamepad button used for Action Mode guard. Default is R2 on a PlayStation-style layout.");
+
+        ImGui.Text("Basic attack");
+        var basicPadIndex = IndexOf(ActionGamepadButtonValues, config.ActionBasicAttackGamepadButton);
+        if (ImGui.Combo("Gamepad##actionbasicattack", ref basicPadIndex, ActionGamepadButtonLabels, ActionGamepadButtonLabels.Length))
+        {
+            config.ActionBasicAttackGamepadButton = ActionGamepadButtonValues[basicPadIndex];
+            config.Save();
+        }
+        HelpMarker("Gamepad button used for the no-hotbar basic attack. Default is Cross / South on a PlayStation-style layout.");
+        ImGui.TextDisabled("Keyboard: Q");
+
         ImGui.Separator();
         ImGui.Text("Player");
         SliderFloatSaved("Swing interval", () => config.LightSwingInterval, v => config.LightSwingInterval = v, 0.15f, 1.0f, "Min seconds between light swings.");
@@ -1373,10 +1384,6 @@ public class MainWindow : IDisposable
 
         DrawVfxPicker("Guard success VFX", () => config.GuardSuccessVfxPath, v => config.GuardSuccessVfxPath = v, ref guardSuccessVfxFilter);
         DrawVfxPicker("Enemy warning VFX", () => config.EnemyTelegraphVfxPath, v => config.EnemyTelegraphVfxPath = v, ref enemyWarningVfxFilter);
-
-        ImGui.Separator();
-        ImGui.Text("Basic attack (普攻)");
-        ImGui.TextDisabled("Gamepad Circle/East (Xbox B), or the Q key.");
 
         ImGui.Separator();
         ImGui.Text("Enemy / companion pacing");
