@@ -381,7 +381,8 @@ public class Configuration : IPluginConfiguration
     public float ActionEnemyAttackSpeed { get; set; } = 1.6f;
 
     // Guard tuning
-    public float GuardActiveWindow { get; set; } = 0.22f;  // perfect-guard reaction window
+    public float GuardActiveWindow { get; set; } = 0.22f;  // perfect-guard reaction window (early tolerance)
+    public float GuardLateTolerance { get; set; } = 0.15f; // grace after the strike closes (late tolerance)
     public float GuardRecovery { get; set; } = 0.35f;      // lockout after a guard attempt
     public float GuardCooldown { get; set; } = 0.15f;      // min time between guard attempts
     public ushort GuardTimelineId { get; set; } = 0;       // 0 = auto/fallback
@@ -399,6 +400,18 @@ public class Configuration : IPluginConfiguration
     public bool ShowTelegraphs { get; set; } = true;
     public float TelegraphAlpha { get; set; } = 0.45f;
     public float TelegraphThickness { get; set; } = 3.0f;
+
+    // Action Mode windup: the enemy swing plays at attack start and the hit resolves
+    // this long after, so the animation itself reads as the windup (tune to match the
+    // moment the weapon connects). Also the duration of the osu-style approach circle.
+    public float ActionWindupSeconds { get; set; } = 0.5f;
+
+    // osu-style parry-timing circle drawn on the player. A steady inner ring + an outer
+    // ring that shrinks onto it over the windup; aligned = the guard window.
+    public bool OsuCircleEnabled { get; set; } = true;
+    public float OsuAnchorHeight { get; set; } = 1.1f;     // anchor height above feet (yalms; chest≈1.1)
+    public float OsuInnerRadius { get; set; } = 0.18f;     // inner ring radius in world units (~1.5× head)
+    public float OsuOuterStartScale { get; set; } = 3.2f;  // outer ring starts at inner × this
 
     [NonSerialized]
     private IDalamudPluginInterface? pluginInterface;

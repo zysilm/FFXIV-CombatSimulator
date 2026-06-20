@@ -22,7 +22,9 @@ public sealed class TelegraphedAttackExecutor : IAttackExecutor
 
     public bool Execute(SimulatedNpc source, in NpcAttackRequest req)
     {
-        var windup = MathF.Max(req.CastTime, config.MinTelegraphWindup);
+        // The swing animation plays now (at Spawn) and the hit resolves after the windup,
+        // so the animation reads as the windup (swing-start → weapon-connect).
+        var windup = MathF.Max(req.CastTime, config.ActionWindupSeconds);
         // Hold the enemy in its windup so it doesn't immediately start another attack.
         source.State.AnimationLock = MathF.Max(source.State.AnimationLock, windup);
         telegraphs.Spawn(source, req, windup);

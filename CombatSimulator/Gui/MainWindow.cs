@@ -1357,7 +1357,8 @@ public class MainWindow : IDisposable
 
         ImGui.Separator();
         ImGui.Text("Guard");
-        SliderFloatSaved("Active window", () => config.GuardActiveWindow, v => config.GuardActiveWindow = v, 0.05f, 0.6f, "Perfect-guard reaction window in seconds.");
+        SliderFloatSaved("Active window", () => config.GuardActiveWindow, v => config.GuardActiveWindow = v, 0.05f, 0.6f, "Early tolerance: how long a guard press stays active (press up to this long BEFORE the strike).");
+        SliderFloatSaved("Late tolerance", () => config.GuardLateTolerance, v => config.GuardLateTolerance = v, 0f, 0.5f, "Grace AFTER the strike closes during which a guard still counts (double-sided). 0 = strict.");
         SliderFloatSaved("Recovery", () => config.GuardRecovery, v => config.GuardRecovery = v, 0.05f, 1.0f, "Lockout after a guard attempt.");
         SliderFloatSaved("Cooldown", () => config.GuardCooldown, v => config.GuardCooldown = v, 0f, 1.0f, "Minimum time between guard attempts.");
 
@@ -1371,7 +1372,8 @@ public class MainWindow : IDisposable
 
         ImGui.Separator();
         ImGui.Text("Enemy telegraph");
-        SliderFloatSaved("Min windup", () => config.MinTelegraphWindup, v => config.MinTelegraphWindup = v, 0.1f, 2.0f, "Minimum readable windup before a hit lands.");
+        SliderFloatSaved("Windup (swing→hit)", () => config.ActionWindupSeconds, v => config.ActionWindupSeconds = v, 0.15f, 1.5f,
+            "Time from the enemy's swing starting to the hit landing. The swing animation plays at the start, so tune this to match when the weapon actually connects. Also the approach-circle duration.");
         var showTele = config.ShowTelegraphs;
         if (ImGui.Checkbox("Show telegraph circles", ref showTele))
         {
@@ -1379,6 +1381,19 @@ public class MainWindow : IDisposable
             config.Save();
         }
         SliderFloatSaved("Telegraph opacity", () => config.TelegraphAlpha, v => config.TelegraphAlpha = v, 0.05f, 1.0f, "Ground danger-zone opacity.");
+
+        ImGui.Separator();
+        ImGui.Text("Parry circle (osu-style)");
+        var osu = config.OsuCircleEnabled;
+        if (ImGui.Checkbox("Show parry circle", ref osu))
+        {
+            config.OsuCircleEnabled = osu;
+            config.Save();
+        }
+        HelpMarker("Approach circle on the player that shrinks onto a target ring; aligned = the guard window.");
+        SliderFloatSaved("Anchor height", () => config.OsuAnchorHeight, v => config.OsuAnchorHeight = v, 0f, 2.2f, "Height on the player to draw the circle (yalms above feet; chest≈1.1, head≈1.6).");
+        SliderFloatSaved("Inner ring size", () => config.OsuInnerRadius, v => config.OsuInnerRadius = v, 0.08f, 0.5f, "Target ring radius in world units (~1.5× head ≈ 0.18).");
+        SliderFloatSaved("Outer start scale", () => config.OsuOuterStartScale, v => config.OsuOuterStartScale = v, 1.5f, 6.0f, "How wide the approach ring starts, relative to the inner ring.");
     }
 
     private void SliderFloatSaved(string label, Func<float> get, System.Action<float> set, float min, float max, string help)

@@ -76,6 +76,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly RagdollDebugOverlay ragdollDebugOverlay;
     private readonly CombatLinkOverlay combatLinkOverlay;
     private readonly TelegraphOverlay telegraphOverlay;
+    private readonly OsuParryOverlay osuParryOverlay;
     private bool hookSafetyScanned;
     private bool wasLoggedIn;
 
@@ -146,7 +147,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             () => combatEngine.State.PlayerState.IsAlive,
             log);
         telegraphSystem = new CombatSimulator.ActionCombat.TelegraphSystem(
-            combatEngine, animationController, () => playerGuardController.IsGuardActive, playerGuardController.NotifyPerfectGuard, log);
+            combatEngine, animationController, config, () => playerGuardController.IsGuardActive, playerGuardController.NotifyPerfectGuard, log);
         var playerHitboxResolver = new CombatSimulator.ActionCombat.PlayerHitboxResolver(combatEngine, npcSelector, config);
         actionModeController = new CombatSimulator.ActionCombat.ActionModeController(
             config, actionComboSink, playerHitboxResolver, playerGuardController,
@@ -320,6 +321,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, mainWindow, config, gameGui, clientState);
         combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
         telegraphOverlay = new TelegraphOverlay(telegraphSystem, gameGui, config);
+        osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config);
 
         // Register
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -495,6 +497,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             if (config.ActionMode && config.ShowTelegraphs)
                 telegraphOverlay.Draw();
+
+            osuParryOverlay.Draw();
         }
 
         ragdollDebugOverlay.Draw();
