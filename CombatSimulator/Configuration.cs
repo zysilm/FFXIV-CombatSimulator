@@ -369,7 +369,7 @@ public class Configuration : IPluginConfiguration
     public uint ActionGuardId { get; set; } = 0;
     public uint ActionSkill1Id { get; set; } = 0;
     public uint ActionSkill2Id { get; set; } = 0;
-    public int ActionGuardKey { get; set; } = 16; // SeVirtualKey.Shift. Independent of job/action availability.
+    public int ActionGuardKey { get; set; } = 17; // SeVirtualKey.Control. Independent of job/action availability.
     public GamepadButtons ActionGuardGamepadButton { get; set; } = GamepadButtons.R1;
 
     // Telegraph / windup tuning
@@ -398,13 +398,13 @@ public class Configuration : IPluginConfiguration
     public int LightAttackPotency { get; set; } = 120;
 
     // Telegraph overlay
-    public bool ShowTelegraphs { get; set; } = true;
+    public bool ShowTelegraphs { get; set; } = false;
     public float TelegraphAlpha { get; set; } = 0.45f;
     public float TelegraphThickness { get; set; } = 3.0f;
 
     // Action Mode windup: the strike resolves this long after the telegraph appears, so it's
     // the time the player has to react, and the duration of the osu-style approach circle.
-    public float ActionWindupSeconds { get; set; } = 0.5f;
+    public float ActionWindupSeconds { get; set; } = 0.39f;
 
     // Play a wind-up swing on the enemy when the telegraph starts so the windup has body
     // language (instead of the enemy standing idle until the strike). NOTE: the engine couples

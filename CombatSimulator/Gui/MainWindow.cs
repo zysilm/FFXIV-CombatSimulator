@@ -3898,7 +3898,7 @@ public class MainWindow : IDisposable
     {
         new("Kneel",       "j_kosi",   0.35f),
         new("Suspend",     "j_kubi",   2.0f),
-        new("Interrogate", "j_sebo_b", 1.2f),
+        new("Interrogate", "j_kosi",   1.02f),
         new("Wall",        "j_sebo_b", 1.2f,  WallPin: true),
     };
 
