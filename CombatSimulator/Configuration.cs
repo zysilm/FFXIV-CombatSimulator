@@ -437,6 +437,48 @@ public class Configuration : IPluginConfiguration
         pluginInterface?.SavePluginConfig(this);
     }
 
+    public void ResetActionModeDefaults(bool preserveEnabled = true)
+    {
+        var enabled = ActionMode;
+        var defaults = new Configuration();
+
+        ActionMode = preserveEnabled ? enabled : defaults.ActionMode;
+        ActionAttackId = defaults.ActionAttackId;
+        ActionGuardId = defaults.ActionGuardId;
+        ActionSkill1Id = defaults.ActionSkill1Id;
+        ActionSkill2Id = defaults.ActionSkill2Id;
+        ActionGuardKey = defaults.ActionGuardKey;
+        ActionGuardGamepadButton = defaults.ActionGuardGamepadButton;
+
+        MinTelegraphWindup = defaults.MinTelegraphWindup;
+        ActionEnemyAttackSpeed = defaults.ActionEnemyAttackSpeed;
+
+        GuardActiveWindow = defaults.GuardActiveWindow;
+        GuardLateTolerance = defaults.GuardLateTolerance;
+        GuardRecovery = defaults.GuardRecovery;
+        GuardCooldown = defaults.GuardCooldown;
+        GuardTimelineId = defaults.GuardTimelineId;
+        GuardSuccessVfxPath = defaults.GuardSuccessVfxPath;
+        EnemyTelegraphVfxPath = defaults.EnemyTelegraphVfxPath;
+
+        LightComboWindow = defaults.LightComboWindow;
+        LightSwingInterval = defaults.LightSwingInterval;
+        PlayerHitboxRange = defaults.PlayerHitboxRange;
+        PlayerHitboxAngleDeg = defaults.PlayerHitboxAngleDeg;
+        LightAttackPotency = defaults.LightAttackPotency;
+
+        ShowTelegraphs = defaults.ShowTelegraphs;
+        TelegraphAlpha = defaults.TelegraphAlpha;
+        TelegraphThickness = defaults.TelegraphThickness;
+        ActionWindupSeconds = defaults.ActionWindupSeconds;
+        ActionEnemyWindupSwing = defaults.ActionEnemyWindupSwing;
+
+        OsuCircleEnabled = defaults.OsuCircleEnabled;
+        OsuAnchorHeight = defaults.OsuAnchorHeight;
+        OsuInnerRadius = defaults.OsuInnerRadius;
+        OsuOuterStartScale = defaults.OsuOuterStartScale;
+    }
+
     private void MigrateSplitVfxToggles()
     {
         if (!EnableSkillVfx)

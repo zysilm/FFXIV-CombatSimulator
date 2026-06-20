@@ -1318,6 +1318,14 @@ public class MainWindow : IDisposable
         }
         HelpMarker("Real-time action combat: button-driven light attacks and timed guard, with enemy attacks shown as telegraphs before hitbox resolution. Off = the normal tab-target simulation.");
 
+        if (ImGui.Button("Reset Action Mode Defaults"))
+        {
+            config.ResetActionModeDefaults();
+            config.Save();
+            actionMode = config.ActionMode;
+        }
+        HelpMarker("Restore all Action Mode tuning, input bindings, VFX choices, telegraph, guard, player, and parry-circle settings to built-in defaults. Keeps the current Enable Action Mode state.");
+
         if (!actionMode)
             return;
 

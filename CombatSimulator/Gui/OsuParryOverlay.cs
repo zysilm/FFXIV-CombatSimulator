@@ -20,6 +20,7 @@ public sealed class OsuParryOverlay
 {
     private const int Segments = 64;
     private const float RecoveryDuration = 0.3f; // mirrors TelegraphSystem recovery
+    private const float FallbackPixelsPerYalm = 180f;
 
     // Colour language: calm at rest → warm as it approaches → gold-white flash at the
     // window → red on a hit → cyan on a perfect guard.
@@ -55,13 +56,9 @@ public sealed class OsuParryOverlay
 
         // Anchor at chest height; derive a world→pixel scale from a 0.5y reference so the
         // rings stay proportional to the character on screen at any camera distance.
-        var anchorWorld = player.Position + new Vector3(0f, config.OsuAnchorHeight, 0f);
-        if (!gameGui.WorldToScreen(anchorWorld, out var center))
-            return;
-        if (!gameGui.WorldToScreen(anchorWorld + new Vector3(0f, 0.5f, 0f), out var refUp))
+        if (!TryResolveAnchor(player.Position, out var center, out var pixelsPerYalm))
             return;
 
-        var pixelsPerYalm = MathF.Max(1f, Vector2.Distance(center, refUp) / 0.5f);
         var innerR = MathF.Max(6f, config.OsuInnerRadius * pixelsPerYalm);
         var outerStart = MathF.Max(1.2f, config.OsuOuterStartScale);
 
@@ -159,6 +156,47 @@ public sealed class OsuParryOverlay
 
         drawList.AddCircle(center, radius, Col(color, alpha * 0.28f), Segments, thickness + 3.5f);
         drawList.AddCircle(center, radius, Col(color, alpha), Segments, thickness);
+    }
+
+    private bool TryResolveAnchor(Vector3 playerPos, out Vector2 center, out float pixelsPerYalm)
+    {
+        var viewport = ImGui.GetMainViewport();
+        var fallbackCenter = viewport.Pos + new Vector2(viewport.Size.X * 0.5f, viewport.Size.Y * 0.58f);
+
+        Span<float> heights = stackalloc float[]
+        {
+            config.OsuAnchorHeight,
+            1.6f,
+            1.1f,
+            0.6f,
+            0.15f,
+        };
+
+        foreach (var height in heights)
+            if (TryProjectAnchor(playerPos + new Vector3(0f, height, 0f), out center, out pixelsPerYalm))
+                return true;
+
+        center = fallbackCenter;
+        pixelsPerYalm = FallbackPixelsPerYalm;
+        return true;
+    }
+
+    private bool TryProjectAnchor(Vector3 anchorWorld, out Vector2 center, out float pixelsPerYalm)
+    {
+        if (!gameGui.WorldToScreen(anchorWorld, out center))
+        {
+            pixelsPerYalm = FallbackPixelsPerYalm;
+            return false;
+        }
+
+        if (gameGui.WorldToScreen(anchorWorld + new Vector3(0f, 0.5f, 0f), out var refUp))
+            pixelsPerYalm = MathF.Max(1f, Vector2.Distance(center, refUp) / 0.5f);
+        else if (gameGui.WorldToScreen(anchorWorld - new Vector3(0f, 0.5f, 0f), out var refDown))
+            pixelsPerYalm = MathF.Max(1f, Vector2.Distance(center, refDown) / 0.5f);
+        else
+            pixelsPerYalm = FallbackPixelsPerYalm;
+
+        return true;
     }
 
     private static float Lerp(float a, float b, float t) => a + (b - a) * Math.Clamp(t, 0f, 1f);
