@@ -371,6 +371,9 @@ public class Configuration : IPluginConfiguration
     public uint ActionSkill2Id { get; set; } = 0;
     public int ActionGuardKey { get; set; } = 17; // SeVirtualKey.Control. Independent of job/action availability.
     public GamepadButtons ActionGuardGamepadButton { get; set; } = GamepadButtons.R1;
+    // Basic attack (普攻): gamepad East/Circle (Xbox B) + the Q key, no hotbar action needed.
+    public GamepadButtons ActionBasicAttackGamepadButton { get; set; } = GamepadButtons.East;
+    public int ActionBasicAttackKey { get; set; } = 0x51; // SeVirtualKey.Q
 
     // Telegraph / windup tuning
     public float MinTelegraphWindup { get; set; } = 0.4f;  // floor so even instant attacks are readable

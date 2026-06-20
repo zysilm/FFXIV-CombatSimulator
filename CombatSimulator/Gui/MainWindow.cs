@@ -1375,6 +1375,10 @@ public class MainWindow : IDisposable
         DrawVfxPicker("Enemy warning VFX", () => config.EnemyTelegraphVfxPath, v => config.EnemyTelegraphVfxPath = v, ref enemyWarningVfxFilter);
 
         ImGui.Separator();
+        ImGui.Text("Basic attack (普攻)");
+        ImGui.TextDisabled("Gamepad Circle/East (Xbox B), or the Q key.");
+
+        ImGui.Separator();
         ImGui.Text("Enemy / companion pacing");
         SliderFloatSaved("Attack pace", () => config.ActionEnemyAttackSpeed, v => config.ActionEnemyAttackSpeed = v, 0.5f, 3.0f,
             "Enemies and companions initiate attacks this many times faster (auto delay + skill cooldowns). 1.0 = unchanged.");

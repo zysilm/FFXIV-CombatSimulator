@@ -36,7 +36,9 @@ public sealed class ActionModeController
     private float comboTimer;
     private bool wasActive;
     private bool guardKeyWasDown;
+    private bool basicAttackKeyWasDown;
     private int guardGamepadSuppressFrames;
+    private int basicAttackGamepadSuppressFrames;
 
     public ActionModeController(
         Configuration config,
@@ -81,6 +83,7 @@ public sealed class ActionModeController
             guardLockoutTimer = 0f;
             attackLockoutTimer = 0f;
             guardKeyWasDown = false;
+            basicAttackKeyWasDown = false;
             comboSink.Clear();
             telegraphs.Tick(dt);
             return;
@@ -98,10 +101,86 @@ public sealed class ActionModeController
         guard.Tick(dt);
         telegraphs.Tick(dt);
         SuppressGuardGamepadInputIfNeeded();
+        SuppressBasicAttackGamepadInputIfNeeded();
         TickGuardKey();
         TickGuardGamepad();
+        TickBasicAttackKey();
+        TickBasicAttackGamepad();
         comboSink.Drain(HandleInput);
         SuppressGuardGamepadInputIfNeeded();
+        SuppressBasicAttackGamepadInputIfNeeded();
+    }
+
+    private void TickBasicAttackGamepad()
+    {
+        if (config.ActionBasicAttackGamepadButton == GamepadButtons.None)
+            return;
+        if (gamepadState.Pressed(config.ActionBasicAttackGamepadButton) > 0)
+        {
+            BasicAttack();
+            basicAttackGamepadSuppressFrames = 3;
+            SuppressBasicAttackGamepadInput();
+        }
+    }
+
+    private unsafe void TickBasicAttackKey()
+    {
+        if (ImGui.GetIO().WantCaptureKeyboard)
+        {
+            basicAttackKeyWasDown = false;
+            return;
+        }
+
+        var fw = GameFramework.Instance();
+        if (fw == null)
+            return;
+
+        var keyValue = config.ActionBasicAttackKey;
+        if (keyValue <= 0 || keyValue >= 256)
+            return;
+
+        var isDown = fw->KeyboardInputs.KeyState[keyValue].HasFlag(KeyStateFlags.Down);
+        if (isDown && !basicAttackKeyWasDown)
+            BasicAttack();
+
+        basicAttackKeyWasDown = isDown;
+    }
+
+    // The player's weapon basic attack (普攻): no hotbar action needed. Ranged for Bard/Archer +
+    // Astrologian (longer/wider cone, smallest-angle pick); melee for everyone else (narrow nearest).
+    // Plays the weapon auto-attack (action 7) with the configured potency/cadence.
+    private void BasicAttack()
+    {
+        if (attackLockoutTimer > 0f || swingCooldown > 0f)
+            return;
+        if (!combatEngine.State.PlayerState.IsAlive)
+            return;
+
+        const uint AutoAttackId = 7;
+        var duration = MathF.Max(0.05f, animationController.ResolveActionAnimationDuration(AutoAttackId));
+        guardLockoutTimer = MathF.Max(guardLockoutTimer, duration * GuardCancelLockRatio);
+        attackLockoutTimer = MathF.Max(attackLockoutTimer, duration);
+        swingCooldown = config.LightSwingInterval;
+
+        var ranged = IsRangedBasicAttackJob();
+        var range = ranged ? config.RangedBasicRange : config.PlayerHitboxRange;
+        var angle = ranged ? config.RangedSelectAngleDeg : config.PlayerHitboxAngleDeg;
+        var primary = hitbox.ResolvePrimary(range, angle, ranged);
+        var struck = primary != null
+            ? combatEngine.ApplyPlayerActionMode(AutoAttackId, primary.State.EntityId, config.LightAttackPotency)
+            : 0;
+        if (struck == 0)
+            animationController.PlayPlayerActionAnimationOnly(AutoAttackId);
+    }
+
+    private static bool IsRangedBasicAttackJob()
+    {
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null)
+            return false;
+        var jobId = player.ClassJob.RowId;
+        // Bard(23)/Archer(5) + Astrologian(33) fire a ranged basic attack; everyone else is melee.
+        return jobId is 23 or 5 or 33;
     }
 
     private unsafe void TickGuardKey()
@@ -216,7 +295,9 @@ public sealed class ActionModeController
         comboStep = 0;
         comboTimer = 0f;
         guardKeyWasDown = false;
+        basicAttackKeyWasDown = false;
         guardGamepadSuppressFrames = 0;
+        basicAttackGamepadSuppressFrames = 0;
     }
 
     private void SuppressGuardGamepadInputIfNeeded()
@@ -224,13 +305,26 @@ public sealed class ActionModeController
         if (guardGamepadSuppressFrames <= 0)
             return;
 
-        SuppressGuardGamepadInput();
+        SuppressGamepadButton(config.ActionGuardGamepadButton);
         guardGamepadSuppressFrames--;
     }
 
-    private unsafe void SuppressGuardGamepadInput()
+    private void SuppressGuardGamepadInput() => SuppressGamepadButton(config.ActionGuardGamepadButton);
+
+    private void SuppressBasicAttackGamepadInputIfNeeded()
     {
-        var mask = ToGamepadButtonsFlags(config.ActionGuardGamepadButton);
+        if (basicAttackGamepadSuppressFrames <= 0)
+            return;
+
+        SuppressGamepadButton(config.ActionBasicAttackGamepadButton);
+        basicAttackGamepadSuppressFrames--;
+    }
+
+    private void SuppressBasicAttackGamepadInput() => SuppressGamepadButton(config.ActionBasicAttackGamepadButton);
+
+    private unsafe void SuppressGamepadButton(GamepadButtons button)
+    {
+        var mask = ToGamepadButtonsFlags(button);
         if (mask == GamepadButtonsFlags.None || gamepadState.GamepadInputAddress == nint.Zero)
             return;
 
@@ -240,7 +334,7 @@ public sealed class ActionModeController
         ClearGamepadButton(ref input->ButtonsRepeat, mask);
         ClearGamepadButton(ref input->ButtonsReleased, mask);
 
-        switch (config.ActionGuardGamepadButton)
+        switch (button)
         {
             case GamepadButtons.R1: input->R1 = 0f; break;
             case GamepadButtons.L1: input->L1 = 0f; break;
