@@ -131,6 +131,7 @@ public class CombatEngine : IDisposable
     public float DamageMultiplier { get; set; } = 1.0f;
     public bool EnableCriticalHits { get; set; } = true;
     public bool EnableDirectHits { get; set; } = true;
+    private const int GuardMpRestore = 1000;
 
     // Queued player actions (from UseAction hook, processed on framework thread)
     private readonly Queue<QueuedAction> actionQueue = new();
@@ -422,21 +423,7 @@ public class CombatEngine : IDisposable
         }
 
         // Get action data
-        var actionData = actionDataProvider.GetActionData(actionId);
-        if (actionData == null)
-        {
-            // Unknown action - use generic values
-            actionData = new ActionData
-            {
-                ActionId = actionId,
-                Name = $"Action #{actionId}",
-                Potency = 200,
-                RecastTime = 2.5f,
-                RecastGroup = 58,
-                AnimationLock = 0.6f,
-                DamageType = SimDamageType.Physical,
-            };
-        }
+        var actionData = GetActionDataOrFallback(actionId);
 
         // Check animation lock
         if (State.PlayerState.AnimationLock > 0)
@@ -477,6 +464,12 @@ public class CombatEngine : IDisposable
         if (targets.Count == 0)
         {
             result.FailReason = "No valid targets.";
+            return result;
+        }
+
+        if (!TrySpendMp(State.PlayerState, actionData, out var mpFailReason))
+        {
+            result.FailReason = mpFailReason;
             return result;
         }
 
@@ -984,6 +977,7 @@ public class CombatEngine : IDisposable
             Shape = source.Shape,
             Width = source.Width,
             DamageType = source.DamageType,
+            NativeMpCost = source.NativeMpCost,
             MpCost = source.MpCost,
             IsComboAction = source.IsComboAction,
             ComboFrom = source.ComboFrom,
@@ -1684,6 +1678,41 @@ public class CombatEngine : IDisposable
 
     public ActionData? GetActionData(uint actionId) => actionDataProvider.GetActionData(actionId);
 
+    public ActionData GetActionDataOrFallback(uint actionId)
+    {
+        var source = actionDataProvider.GetActionData(actionId);
+        if (source != null)
+            return CloneActionData(source);
+
+        var fallback = new ActionData
+        {
+            ActionId = actionId == 0 ? 7u : actionId,
+            Name = actionId == 7 ? "Attack" : $"Action #{actionId}",
+            RecastTime = 2.5f,
+            RecastGroup = 58,
+            Range = 3f,
+            Shape = AoeShape.Single,
+            DamageType = SimDamageType.Physical,
+            AnimationLock = 0.6f,
+        };
+        VirtualActionModel.Apply(fallback, config.LightAttackPotency);
+        return fallback;
+    }
+
+    public bool TrySpendPlayerActionMp(uint actionId, out ActionData actionData, out string? failReason)
+    {
+        actionData = GetActionDataOrFallback(actionId);
+        return TrySpendMp(State.PlayerState, actionData, out failReason);
+    }
+
+    public void RestorePlayerGuardMp(int guardCount)
+    {
+        if (guardCount <= 0)
+            return;
+
+        RestoreMp(State.PlayerState, GuardMpRestore * guardCount);
+    }
+
     /// <summary>
     /// Action-Mode player attack: given a soft-target primary, fan out the action's REAL shape via
     /// <see cref="ResolveActionTargets"/> and apply with its real potency (or an override for the
@@ -1700,17 +1729,12 @@ public class CombatEngine : IDisposable
         if (primary == null || !primary.IsAlive || !IsHostile(ps, primary))
             return 0;
 
-        var source = actionDataProvider.GetActionData(actionId);
-        var actionData = source != null ? CloneActionData(source) : new ActionData
-        {
-            ActionId = actionId == 0 ? 7u : actionId,
-            Name = "Attack",
-            DamageType = SimDamageType.Physical,
-            AnimationLock = 0.6f,
-        };
+        var actionData = GetActionDataOrFallback(actionId);
         if (potencyOverride > 0)
+        {
             actionData.Potency = potencyOverride;
-        var potency = actionData.Potency > 0 ? actionData.Potency : 100;
+            actionData.MpCost = 0;
+        }
 
         // Action Mode has no placed ground/target reticle, so a circle AoE centres on the PLAYER
         // (full ring around you) instead of on the front-picked primary — fixes "circle only hits in
@@ -1724,7 +1748,9 @@ public class CombatEngine : IDisposable
         {
             if (target.IsPlayer || target.IsCompanion || !target.IsAlive)
                 continue;
-            var dmg = damageCalculator.CalculateNpcAutoAttack(ps, target, potency);
+            var dmg = damageCalculator.Calculate(
+                ps, target, actionData, false,
+                EnableCriticalHits, EnableDirectHits, DamageMultiplier);
             target.CurrentHp = Math.Max(0, target.CurrentHp - dmg.Damage);
             hits.Add(new AppliedActionDamage(target, dmg));
             total += dmg.Damage;
@@ -1772,6 +1798,31 @@ public class CombatEngine : IDisposable
             entity.CurrentMp = Math.Min(entity.MaxMp,
                 entity.CurrentMp + (int)(67 * deltaTime));
         }
+    }
+
+    private static bool TrySpendMp(SimulatedEntityState entity, ActionData actionData, out string? failReason)
+    {
+        failReason = null;
+        var cost = Math.Max(0, actionData.MpCost);
+        if (cost <= 0)
+            return true;
+
+        if (entity.CurrentMp < cost)
+        {
+            failReason = $"Not enough MP ({entity.CurrentMp}/{cost}).";
+            return false;
+        }
+
+        entity.CurrentMp = Math.Max(0, entity.CurrentMp - cost);
+        return true;
+    }
+
+    private static void RestoreMp(SimulatedEntityState entity, int amount)
+    {
+        if (amount <= 0 || entity.MaxMp <= 0)
+            return;
+
+        entity.CurrentMp = Math.Min(entity.MaxMp, entity.CurrentMp + amount);
     }
 
     public void RegisterNpcEntity(SimulatedNpc npc)

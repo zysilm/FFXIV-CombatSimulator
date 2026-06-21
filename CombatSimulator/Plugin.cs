@@ -113,7 +113,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         config.Initialize(pluginInterface);
 
         // Simulation
-        actionDataProvider = new ActionDataProvider(dataManager, log);
+        actionDataProvider = new ActionDataProvider(dataManager, log, config);
         NpcWeaponClassifier.Initialize(dataManager, log);
         npcActionProfileProvider = new NpcActionProfileProvider(actionDataProvider, log);
         damageCalculator = new DamageCalculator(new CombatStatProvider(dataManager, log));
@@ -147,6 +147,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             config,
             () => combatEngine.State.PlayerState.IsAlive,
             log);
+        playerGuardController.OnChainGuardResolved += combatEngine.RestorePlayerGuardMp;
         telegraphSystem = new CombatSimulator.ActionCombat.TelegraphSystem(
             combatEngine, animationController, config, () => playerGuardController.IsGuardActive, playerGuardController.NotifyPerfectGuard, log);
         var playerHitboxResolver = new CombatSimulator.ActionCombat.PlayerHitboxResolver(combatEngine, npcSelector, config);

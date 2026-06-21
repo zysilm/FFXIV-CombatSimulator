@@ -14,6 +14,8 @@ namespace CombatSimulator.Npcs;
 /// </summary>
 public class NpcActionProfileProvider
 {
+    private const int PhysicalRangedAutoPotency = 82;
+
     private readonly ActionDataProvider actionDataProvider;
     private readonly IPluginLog log;
 
@@ -95,7 +97,7 @@ public class NpcActionProfileProvider
     private static void ForceRanged(NpcBehavior behavior)
     {
         behavior.AutoAttackRange = Math.Max(behavior.AutoAttackRange, 25f);
-        behavior.AutoAttackPotency = Math.Min(behavior.AutoAttackPotency, 100);
+        behavior.AutoAttackPotency = Math.Min(behavior.AutoAttackPotency, PhysicalRangedAutoPotency);
         behavior.AutoAttackActionId = behavior.AutoAttackActionId == 7 ? 97u : behavior.AutoAttackActionId;
         behavior.AutoAttackStyle = NpcAttackStyle.Ranged;
 
@@ -190,7 +192,7 @@ public class NpcActionProfileProvider
         {
             AutoAttackDelay = 3.0f,
             AutoAttackRange = 25.0f,
-            AutoAttackPotency = 90,
+            AutoAttackPotency = PhysicalRangedAutoPotency,
             AutoAttackActionId = 97,
             AutoAttackStyle = NpcAttackStyle.Ranged,
             MoveSpeed = 5.0f,

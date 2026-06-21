@@ -18,6 +18,7 @@ namespace CombatSimulator.ActionCombat;
 public sealed class ActionModeController
 {
     private const float GuardCancelLockRatio = 0.70f;
+    private const float PhysicalRangedBasicPotencyRatio = 0.75f;
 
     private readonly Configuration config;
     private readonly ActionComboSink comboSink;
@@ -163,8 +164,11 @@ public sealed class ActionModeController
         swingCooldown = config.LightSwingInterval;
 
         var primary = hitbox.ResolveBasicAttackPrimary();
+        var potency = PlayerHitboxResolver.IsRangedBasicAttackJob()
+            ? Math.Max(1, (int)MathF.Round(config.LightAttackPotency * PhysicalRangedBasicPotencyRatio))
+            : config.LightAttackPotency;
         var struck = primary != null
-            ? combatEngine.ApplyPlayerActionMode(AutoAttackId, primary.State.EntityId, config.LightAttackPotency)
+            ? combatEngine.ApplyPlayerActionMode(AutoAttackId, primary.State.EntityId, potency)
             : 0;
         if (struck == 0)
             animationController.PlayPlayerActionAnimationOnly(AutoAttackId);
@@ -226,6 +230,8 @@ public sealed class ActionModeController
         if (swingCooldown > 0f)
             return;
         if (!combatEngine.State.PlayerState.IsAlive)
+            return;
+        if (!combatEngine.TrySpendPlayerActionMp(actionId, out _, out _))
             return;
 
         var duration = MathF.Max(0.05f, animationController.ResolveActionAnimationDuration(actionId));

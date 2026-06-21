@@ -89,6 +89,6 @@ public sealed class PlayerHitboxResolver
     public static bool IsRangedBasicAttackJob()
     {
         var player = Core.Services.ObjectTable.LocalPlayer;
-        return player != null && player.ClassJob.RowId is 23 or 5 or 33;
+        return player != null && player.ClassJob.RowId is 5 or 23 or 31 or 38;
     }
 }

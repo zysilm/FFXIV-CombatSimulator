@@ -44,6 +44,7 @@ public class ActionData
     public AoeShape Shape { get; set; } = AoeShape.Single;
     public float Width { get; set; }
     public SimDamageType DamageType { get; set; }
+    public int NativeMpCost { get; set; }
     public int MpCost { get; set; }
     public bool IsComboAction { get; set; }
     public uint ComboFrom { get; set; }
@@ -64,17 +65,20 @@ public partial class ActionDataProvider
 {
     private readonly IDataManager dataManager;
     private readonly IPluginLog log;
+    private readonly Configuration config;
     private readonly ActionDatabaseProvider actionDb;
     private readonly Dictionary<uint, ActionData> cache = new();
+    private int cachedBasicPotency;
 
     // Same regex VFXEditor uses to extract .avfx paths from TMB binary data
     [GeneratedRegex(@"\u0000([a-zA-Z0-9\/_]*?)\.avfx", RegexOptions.Compiled)]
     private static partial Regex AvfxPathRegex();
 
-    public ActionDataProvider(IDataManager dataManager, IPluginLog log)
+    public ActionDataProvider(IDataManager dataManager, IPluginLog log, Configuration config)
     {
         this.dataManager = dataManager;
         this.log = log;
+        this.config = config;
         actionDb = new ActionDatabaseProvider(log);
     }
 
@@ -109,6 +113,12 @@ public partial class ActionDataProvider
 
     public ActionData? GetActionData(uint actionId)
     {
+        if (cachedBasicPotency != config.LightAttackPotency)
+        {
+            cache.Clear();
+            cachedBasicPotency = config.LightAttackPotency;
+        }
+
         if (cache.TryGetValue(actionId, out var cached))
             return cached;
 
@@ -132,6 +142,7 @@ public partial class ActionDataProvider
             Radius = action.EffectRange,
             Shape = MapCastType(action.CastType),
             Width = action.XAxisModifier,
+            NativeMpCost = action.PrimaryCostValue,
             MpCost = action.PrimaryCostValue,
             AnimationLock = 0.6f,
             IsPlayerAction = action.IsPlayerAction,
@@ -141,9 +152,6 @@ public partial class ActionDataProvider
 
         // Damage type from the AttackType row id (physical vs magical)
         data.DamageType = ClassifyDamageType(action.AttackType.RowId);
-
-        // Base potency: estimate now, JSON override (if any) applied below.
-        data.Potency = EstimatePotency(data);
 
         // Resolve VFX paths (same approach as VFXEditor)
         ResolveVfxPaths(action, data);
@@ -156,11 +164,13 @@ public partial class ActionDataProvider
             data.ComboPotency = (int)(data.Potency * 1.5f);
         }
 
-        // Overlay curated/authored values from Actions.json. Only fields that are
-        // present override the Lumina-derived base, so a hand-edited entry can
-        // specify just a potency without clobbering the geometry, and an action
-        // absent from the file still works entirely off Lumina.
+        // Overlay curated/authored geometry from Actions.json. Potency is deliberately not read
+        // from the file anymore; the virtual action model owns damage and MP pricing globally.
         ApplyDatabaseOverride(actionId, data);
+
+        // Combat potency is not reliably exposed by the client sheets. Use the action-game
+        // model for both MP price and damage potency after geometry overrides are applied.
+        VirtualActionModel.Apply(data, config.LightAttackPotency);
 
         cache[actionId] = data;
         return data;
@@ -183,42 +193,11 @@ public partial class ActionDataProvider
             data.Width = e.Width.Value;
         if (e.DamageType.HasValue)
             data.DamageType = e.DamageType.Value;
-        if (e.Potency > 0)
-        {
-            data.Potency = e.Potency;
-            // Keep the Lumina-derived combo potency proportional unless the file
-            // pins one explicitly below.
-            if (data.IsComboAction && e.ComboPotency <= 0)
-                data.ComboPotency = (int)(e.Potency * 1.5f);
-        }
-        if (e.ComboPotency > 0)
-        {
-            data.IsComboAction = true;
-            data.ComboPotency = e.ComboPotency;
-        }
         if (e.ComboFrom.HasValue && e.ComboFrom.Value != 0)
         {
             data.IsComboAction = true;
             data.ComboFrom = e.ComboFrom.Value;
         }
-    }
-
-    private static int EstimatePotency(ActionData data)
-    {
-        // Heuristic: GCD attacks have higher potency, oGCDs vary
-        if (data.RecastTime >= 2.0f && data.RecastTime <= 3.0f)
-        {
-            // GCD action
-            return data.CastTime > 0 ? 300 : 200;
-        }
-
-        if (data.RecastTime > 3.0f)
-        {
-            // oGCD with cooldown
-            return (int)(data.RecastTime * 15); // Longer CD = higher potency
-        }
-
-        return 150; // Default
     }
 
     public void ClearCache()
