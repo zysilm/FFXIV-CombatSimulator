@@ -132,6 +132,7 @@ public class CombatEngine : IDisposable
     public bool EnableCriticalHits { get; set; } = true;
     public bool EnableDirectHits { get; set; } = true;
     private const int GuardMpRestore = 1000;
+    private const int BasicAttackMpRestore = 300;
 
     // Queued player actions (from UseAction hook, processed on framework thread)
     private readonly Queue<QueuedAction> actionQueue = new();
@@ -1766,6 +1767,9 @@ public class CombatEngine : IDisposable
 
         if (State.CombatStartTime == 0)
             State.CombatStartTime = State.SimulationTime;
+
+        if (actionId == 7 && potencyOverride > 0)
+            RestoreMp(ps, BasicAttackMpRestore);
 
         OnPlayerDamageDealt?.Invoke(total);
         TriggerActionEffect(ps, actionData, hits);
