@@ -1743,6 +1743,15 @@ public class MainWindow : IDisposable
             ImGui.SameLine();
             ImGui.TextDisabled("Toggle all j_buki holster/scabbard bones.");
         }
+
+        var liftUnderground = config.RagdollLiftUndergroundBonesOnStart;
+        if (ImGui.Checkbox("Lift Underground Bones on Start##ragdollAdv", ref liftUnderground))
+        {
+            config.RagdollLiftUndergroundBonesOnStart = liftUnderground;
+            config.Save();
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled("Lift initial ragdoll pose if bones start below ground.");
         ImGui.Spacing();
 
         if (ragdollController.IsActive)

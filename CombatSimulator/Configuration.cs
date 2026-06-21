@@ -240,6 +240,7 @@ public class Configuration : IPluginConfiguration
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollVerboseLog { get; set; } = false;
     public bool RagdollFollowPosition { get; set; } = false; // Update GameObject.Position to follow ragdoll root (prevents model unload on long falls)
+    public bool RagdollLiftUndergroundBonesOnStart { get; set; } = false;
     public bool EnableVictorySequence { get; set; } = false;
     public bool ControlGrabber { get; set; } = false;
     public float GrabberControlSpeed { get; set; } = 2.5f;

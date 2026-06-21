@@ -141,13 +141,16 @@ public class DamageCalculator
 
     private int FWeaponDamage(SimulatedEntityState source, SimDamageType damageType, LevelModifiers mods)
     {
-        var weaponDamage = damageType == SimDamageType.Magical && source.MagicWeaponDamage > 0
+        var casterScaling = UsesCasterScaling(source.ClassJobId) && damageType == SimDamageType.Magical;
+        var weaponDamage = casterScaling && source.MagicWeaponDamage > 0
             ? source.MagicWeaponDamage
             : source.WeaponDamage;
         if (weaponDamage <= 0)
             weaponDamage = EstimateWeaponDamage(source.Level);
 
-        var jobMod = statProvider.GetPrimaryJobModifier(source.ClassJobId, damageType);
+        var jobMod = statProvider.GetPrimaryJobModifier(
+            source.ClassJobId,
+            casterScaling ? SimDamageType.Magical : SimDamageType.Physical);
         return (int)Math.Floor(mods.Main * jobMod / 1000.0) + weaponDamage;
     }
 
@@ -180,12 +183,25 @@ public class DamageCalculator
 
     private static int ResolveAttackStat(SimulatedEntityState source, SimDamageType damageType, LevelModifiers mods)
     {
-        if (damageType == SimDamageType.Magical && source.AttackMagicPotency > 0)
+        var casterScaling = UsesCasterScaling(source.ClassJobId) && damageType == SimDamageType.Magical;
+        if (casterScaling && source.AttackMagicPotency > 0)
             return source.AttackMagicPotency;
-        if (damageType != SimDamageType.Magical && source.AttackPower > 0)
+        if (!casterScaling && source.AttackPower > 0)
             return source.AttackPower;
         return source.MainStat > 0 ? source.MainStat : mods.Main + 100;
     }
+
+    private static bool UsesCasterScaling(uint classJobId)
+        => classJobId is
+            6 or 24 or  // Conjurer / White Mage
+            7 or 25 or  // Thaumaturge / Black Mage
+            26 or 27 or // Arcanist / Summoner
+            28 or       // Scholar
+            33 or       // Astrologian
+            35 or       // Red Mage
+            36 or       // Blue Mage
+            40 or       // Sage
+            42;         // Pictomancer
 
     private static int ResolveStat(int value, int fallback) => value > 0 ? value : fallback;
 

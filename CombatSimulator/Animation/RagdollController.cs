@@ -1405,6 +1405,54 @@ public unsafe class RagdollController : IDisposable
         }
     }
 
+    private Vector3 ApplyInitialUndergroundBoneLift(Dictionary<string, Vector3> boneWorldPositions)
+    {
+        if (!config.RagdollLiftUndergroundBonesOnStart || boneWorldPositions.Count == 0)
+            return Vector3.Zero;
+
+        const float clearance = 0.03f;
+        var requiredLift = 0f;
+        var worstBone = string.Empty;
+        var worstGround = groundY;
+        var worstBoneY = 0f;
+        var sampled = 0;
+
+        foreach (var (name, pos) in boneWorldPositions)
+        {
+            var localGroundY = groundY;
+            if (BGCollisionModule.RaycastMaterialFilter(
+                    new Vector3(pos.X, pos.Y + TerrainRaycastStartYOffset, pos.Z),
+                    new Vector3(0, -1, 0),
+                    out var hit,
+                    TerrainRaycastDistance))
+            {
+                localGroundY = hit.Point.Y;
+                sampled++;
+            }
+
+            var lift = localGroundY + clearance - pos.Y;
+            if (lift <= requiredLift)
+                continue;
+
+            requiredLift = lift;
+            worstBone = name;
+            worstGround = localGroundY;
+            worstBoneY = pos.Y;
+        }
+
+        if (requiredLift <= 0f)
+            return Vector3.Zero;
+
+        var offset = new Vector3(0f, requiredLift, 0f);
+        var keys = new List<string>(boneWorldPositions.Keys);
+        foreach (var key in keys)
+            boneWorldPositions[key] += offset;
+
+        log.Info($"RagdollController: lifted initial ragdoll pose by {requiredLift:F3}m " +
+                 $"({worstBone} y={worstBoneY:F3}, ground={worstGround:F3}, sampled={sampled}/{boneWorldPositions.Count}).");
+        return offset;
+    }
+
     private bool InitializePhysics()
     {
         var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
@@ -1569,6 +1617,7 @@ public unsafe class RagdollController : IDisposable
         var pose = skel.Pose;
         var boneWorldPositions = new Dictionary<string, Vector3>();
         var boneWorldRotations = new Dictionary<string, Quaternion>();
+        var initialPoseLift = Vector3.Zero;
 
         foreach (var def in BoneDefs)
         {
@@ -1579,6 +1628,8 @@ public unsafe class RagdollController : IDisposable
             boneWorldPositions[def.Name] = ModelToWorld(modelPos);
             boneWorldRotations[def.Name] = ModelRotToWorld(modelRot);
         }
+
+        initialPoseLift = ApplyInitialUndergroundBoneLift(boneWorldPositions);
 
         // Build child lookup: for each bone, find its first child in BoneDefs
         var boneToFirstChild = new Dictionary<string, string>();
@@ -1666,7 +1717,7 @@ public unsafe class RagdollController : IDisposable
                 // extends along the actual limb, not along the parent segment.
                 ref var childMt = ref pose->ModelPose.Data[skelChildIdx];
                 var childModelPos = new Vector3(childMt.Translation.X, childMt.Translation.Y, childMt.Translation.Z);
-                var skelChildWorldPos = ModelToWorld(childModelPos);
+                var skelChildWorldPos = ModelToWorld(childModelPos) + initialPoseLift;
                 var toSkelChild = skelChildWorldPos - boneWorldPos;
                 var toSkelChildLen = toSkelChild.Length();
 
