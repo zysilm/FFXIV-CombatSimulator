@@ -25,6 +25,9 @@ public class HpBarOverlay : IDisposable
 
     private const float BarWidth = 200f;
     private const float BarHeight = 16f;
+    private const float MpBarWidth = 184f;
+    private const float MpBarHeight = 12f;
+    private const float ResourceBarGap = 2f;
 
     // Native addon names to hide when combat sim is active
     private static readonly string[] NativeAddonNames =
@@ -261,8 +264,8 @@ public class HpBarOverlay : IDisposable
     private void DrawPlayerHpBar(ImDrawListPtr drawList, Vector2 screenPos)
     {
         var ps = combatEngine.State.PlayerState;
-        float hpPercent = ps.MaxHp > 0 ? (float)ps.CurrentHp / ps.MaxHp : 1;
         bool isDead = !ps.IsAlive;
+        float hpPercent = ps.MaxHp > 0 ? Math.Clamp((float)Math.Max(0, ps.CurrentHp) / ps.MaxHp, 0f, 1f) : (isDead ? 0f : 1f);
 
         var barPos = screenPos - new Vector2(BarWidth / 2, 0);
 
@@ -321,6 +324,8 @@ public class HpBarOverlay : IDisposable
             0xFFFFFFFF,
             hpText);
 
+        DrawMpBar(drawList, ps, barPos + new Vector2((BarWidth - MpBarWidth) / 2, BarHeight + ResourceBarGap), MpBarWidth);
+
         if (config.AnonymousMode)
             return;
 
@@ -340,7 +345,7 @@ public class HpBarOverlay : IDisposable
             // Create an invisible button over the skull + bar area for click detection
             // We need to use an ImGui window for this since background drawlist doesn't handle input
             ImGui.SetNextWindowPos(barPos - new Vector2(0, nameSize.Y + 4), ImGuiCond.Always);
-            ImGui.SetNextWindowSize(new Vector2(BarWidth + skullSize.X + 8, BarHeight + nameSize.Y + 8));
+            ImGui.SetNextWindowSize(new Vector2(BarWidth + skullSize.X + 8, BarHeight + MpBarHeight + ResourceBarGap + nameSize.Y + 8));
             if (ImGui.Begin("##DeathClickArea", ImGuiWindowFlags.NoDecoration |
                 ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoMove |
                 ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoScrollbar |
@@ -363,8 +368,8 @@ public class HpBarOverlay : IDisposable
     private void DrawCompanionHpBar(ImDrawListPtr drawList, CombatCompanion companion, Vector2 screenPos)
     {
         var state = companion.State;
-        var hpPercent = state.MaxHp > 0 ? (float)state.CurrentHp / state.MaxHp : 0;
         var isDead = !state.IsAlive;
+        var hpPercent = state.MaxHp > 0 ? Math.Clamp((float)Math.Max(0, state.CurrentHp) / state.MaxHp, 0f, 1f) : 0;
         var barPos = screenPos - new Vector2(BarWidth / 2, 0);
 
         drawList.AddRectFilled(
@@ -411,13 +416,17 @@ public class HpBarOverlay : IDisposable
             barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
             0xFFFFFFFF,
             hpText);
+
+        DrawMpBar(drawList, state, barPos + new Vector2((BarWidth - MpBarWidth) / 2, BarHeight + ResourceBarGap), MpBarWidth);
     }
 
     private void DrawHudPlayerHpBar()
     {
         var ps = combatEngine.State.PlayerState;
         bool isDead = !ps.IsAlive;
-        float hpPercent = ps.MaxHp > 0 ? (float)ps.CurrentHp / ps.MaxHp : (isDead ? 0 : 1);
+        float hpPercent = ps.MaxHp > 0 ? Math.Clamp((float)Math.Max(0, ps.CurrentHp) / ps.MaxHp, 0f, 1f) : (isDead ? 0 : 1);
+        var displayedMp = isDead ? 0 : Math.Max(0, ps.CurrentMp);
+        float mpPercent = ps.MaxMp > 0 ? Math.Clamp((float)displayedMp / ps.MaxMp, 0f, 1f) : 0f;
 
         ImGui.SetNextWindowSize(new Vector2(240, 0), ImGuiCond.FirstUseEver);
 
@@ -469,8 +478,42 @@ public class HpBarOverlay : IDisposable
                 : $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
             ImGui.ProgressBar(hpPercent, new Vector2(-1, 0), hpText);
             ImGui.PopStyleColor();
+
+            ImGui.PushStyleColor(ImGuiCol.PlotHistogram, new Vector4(0.1f, 0.35f, 0.95f, 1f));
+            ImGui.ProgressBar(mpPercent, new Vector2(-1, 0), $"{displayedMp:N0} / {ps.MaxMp:N0} MP");
+            ImGui.PopStyleColor();
         }
         ImGui.End();
+    }
+
+    private void DrawMpBar(ImDrawListPtr drawList, SimulatedEntityState state, Vector2 barPos, float width)
+    {
+        if (state.MaxMp <= 0)
+            return;
+
+        var displayedMp = state.IsAlive ? Math.Max(0, state.CurrentMp) : 0;
+        var mpPercent = Math.Clamp((float)displayedMp / state.MaxMp, 0f, 1f);
+        var bgColor = ImGui.ColorConvertFloat4ToU32(new Vector4(0.04f, 0.05f, 0.10f, 0.88f));
+        var fillColor = ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.35f, 0.95f, 0.95f));
+        var borderColor = ImGui.ColorConvertFloat4ToU32(new Vector4(0.25f, 0.35f, 0.75f, 0.8f));
+
+        drawList.AddRectFilled(
+            barPos,
+            barPos + new Vector2(width, MpBarHeight),
+            bgColor);
+
+        if (mpPercent > 0f)
+        {
+            drawList.AddRectFilled(
+                barPos,
+                barPos + new Vector2(width * mpPercent, MpBarHeight),
+                fillColor);
+        }
+
+        drawList.AddRect(
+            barPos,
+            barPos + new Vector2(width, MpBarHeight),
+            borderColor);
     }
 
     private string BuildPlayerNameLabel(bool isDead, string displayName)

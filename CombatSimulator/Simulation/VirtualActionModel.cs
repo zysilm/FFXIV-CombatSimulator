@@ -9,9 +9,9 @@ namespace CombatSimulator.Simulation;
 /// </summary>
 public static class VirtualActionModel
 {
-    private const int MinActionCost = 100;
-    private const int MaxActionCost = 4200;
-    private const float MaxPowerCost = 4000f;
+    private const int MinActionCost = 1500;
+    private const int MaxActionCost = 8500;
+    private const float MaxPowerCost = 8000f;
 
     public static void Apply(ActionData data, int basicPotency)
     {
@@ -36,22 +36,22 @@ public static class VirtualActionModel
         if (IsBasicAttack(data))
             return 0;
 
-        var nativeMpSignal = MathF.Min(MathF.Max(0, data.NativeMpCost), 2000) * 0.35f;
+        var nativeMpSignal = MathF.Min(MathF.Max(0, data.NativeMpCost), 2000) * 0.45f;
         var recast = MathF.Max(0f, data.RecastTime);
         var cast = MathF.Max(0f, data.CastTime);
 
         var baseCost = recast switch
         {
-            >= 2.0f and <= 3.0f => cast > 0f ? 450f : 350f,
-            > 3.0f => 700f,
-            _ => 250f,
+            >= 2.0f and <= 3.0f => cast > 0f ? 1650f : 1500f,
+            > 3.0f => 2200f,
+            _ => 1500f,
         };
 
-        var cooldownCost = MathF.Min(MathF.Max(0f, recast - 2.5f) * 32f, 2800f);
+        var cooldownCost = MathF.Min(MathF.Max(0f, recast - 2.5f) * 75f, 4400f);
         var expectedTargets = ExpectedTargets(data);
-        var aoeCost = MathF.Max(0f, expectedTargets - 1f) * 260f;
-        var rangeCost = data.Range <= 5f ? 0f : data.Range <= 15f ? 100f : 180f;
-        var castDiscount = MathF.Min(cast, 3f) * 90f;
+        var aoeCost = MathF.Max(0f, expectedTargets - 1f) * 180f;
+        var rangeCost = data.Range <= 5f ? 0f : data.Range <= 15f ? 220f : 380f;
+        var castDiscount = MathF.Min(cast, 3f) * 120f;
 
         var cost = nativeMpSignal + baseCost + cooldownCost + aoeCost + rangeCost - castDiscount;
         return (int)MathF.Round(Math.Clamp(cost, MinActionCost, MaxActionCost));
@@ -63,17 +63,35 @@ public static class VirtualActionModel
             return Math.Max(1, basicPotency);
 
         var basePotency = Math.Max(1, basicPotency);
+        var multiplier = CalculateMultiplier(data);
+        var potency = basePotency * multiplier;
+        return (int)MathF.Round(Math.Clamp(potency, basePotency * 0.65f, basePotency * 12.0f));
+    }
+
+    public static float CalculateMultiplier(ActionData data)
+    {
+        if (IsBasicAttack(data))
+            return 1f;
+
         var cost = Math.Clamp(data.MpCost > 0 ? data.MpCost : CalculateMpCost(data), MinActionCost, MaxActionCost);
-        var expectedTargets = ExpectedTargets(data);
+        var singleBudget = 1f + 9f * MathF.Pow(MathF.Min(cost, MaxPowerCost) / MaxPowerCost, 1.25f);
+        var rangeFactor = data.Range <= 5f ? 1.10f : data.Range <= 15f ? 1.0f : 0.90f;
+        var castFactor = 1f + MathF.Min(MathF.Max(0f, data.CastTime), 3f) * 0.06f;
 
-        var costFactor = 1f + 4.8f * MathF.Pow(MathF.Min(cost, MaxPowerCost) / MaxPowerCost, 0.72f);
-        var rangeFactor = data.Range <= 5f ? 1.15f : data.Range <= 15f ? 1.0f : 0.92f;
-        var targetFactor = 1f / MathF.Sqrt(MathF.Max(1f, expectedTargets));
-        var castFactor = 1f + MathF.Min(MathF.Max(0f, data.CastTime), 3f) * 0.08f;
-        var cooldownFactor = 1f + MathF.Min(MathF.Max(0f, data.RecastTime - 2.5f), 90f) * 0.003f;
+        if (!IsAoe(data))
+            return singleBudget * rangeFactor * castFactor;
 
-        var potency = basePotency * costFactor * rangeFactor * targetFactor * castFactor * cooldownFactor;
-        return (int)MathF.Round(Math.Clamp(potency, basePotency * 1.15f, basePotency * 8.0f));
+        var aoeBudget = AoeBudget(data, cost);
+        return singleBudget * aoeBudget * AoeShapeFactor(data) * rangeFactor * castFactor;
+    }
+
+    public static float AoeActualTargetFalloff(ActionData data, int actualTargets)
+    {
+        if (!IsAoe(data) || actualTargets <= 1)
+            return 1f;
+
+        var expectedTargets = MathF.Max(1f, ExpectedTargets(data));
+        return Math.Clamp(MathF.Sqrt(expectedTargets / actualTargets), 0.55f, 1f);
     }
 
     public static float ExpectedTargets(ActionData data)
@@ -88,6 +106,35 @@ public static class VirtualActionModel
                 radius <= 5f ? 2.0f : radius <= 8f ? 2.8f : 3.5f,
             AoeShape.Donut => 3.0f,
             _ => 1.0f,
+        };
+    }
+
+    public static bool IsAoe(ActionData data)
+        => data.Shape != AoeShape.Single && data.Radius > 0f;
+
+    private static float AoeBudget(ActionData data, int cost)
+    {
+        var t = Math.Clamp((cost - MinActionCost) / (MaxPowerCost - MinActionCost), 0f, 1f);
+        var budget = 0.36f + 0.19f * t;
+
+        // Keep the largest AoEs near half of an equivalent single-target budget.
+        if (ExpectedTargets(data) >= 3f)
+            budget -= 0.06f;
+
+        return Math.Clamp(budget, 0.34f, 0.55f);
+    }
+
+    private static float AoeShapeFactor(ActionData data)
+    {
+        var radius = MathF.Max(0f, data.Radius);
+        return data.Shape switch
+        {
+            AoeShape.Line => data.Width <= 3f ? 1.12f : 1.0f,
+            AoeShape.Cone => radius <= 6f ? 1.08f : radius <= 10f ? 1.0f : 0.92f,
+            AoeShape.CircleSelf => radius <= 5f ? 0.95f : radius <= 8f ? 0.86f : 0.78f,
+            AoeShape.Circle or AoeShape.GroundCircle => radius <= 5f ? 0.90f : radius <= 8f ? 0.82f : 0.74f,
+            AoeShape.Donut => 0.78f,
+            _ => 1f,
         };
     }
 

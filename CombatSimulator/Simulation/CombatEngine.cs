@@ -477,7 +477,7 @@ public class CombatEngine : IDisposable
             State.PlayerState,
             targets,
             t => damageCalculator.Calculate(
-                State.PlayerState, t, actionData, isCombo,
+                State.PlayerState, t, ScaleActionPotency(actionData, targets.Count), isCombo,
                 EnableCriticalHits, EnableDirectHits, DamageMultiplier));
         if (hits.Count == 0)
         {
@@ -1744,12 +1744,14 @@ public class CombatEngine : IDisposable
 
         var hits = new List<AppliedActionDamage>();
         var total = 0;
-        foreach (var target in ResolveActionTargets(ps, primary, actionData))
+        var targets = ResolveActionTargets(ps, primary, actionData);
+        var damageAction = ScaleActionPotency(actionData, targets.Count);
+        foreach (var target in targets)
         {
             if (target.IsPlayer || target.IsCompanion || !target.IsAlive)
                 continue;
             var dmg = damageCalculator.Calculate(
-                ps, target, actionData, false,
+                ps, target, damageAction, false,
                 EnableCriticalHits, EnableDirectHits, DamageMultiplier);
             target.CurrentHp = Math.Max(0, target.CurrentHp - dmg.Damage);
             hits.Add(new AppliedActionDamage(target, dmg));
@@ -1773,6 +1775,19 @@ public class CombatEngine : IDisposable
                 OnEntityDeath(hit.Target);
 
         return hits.Count;
+    }
+
+    private static ActionData ScaleActionPotency(ActionData actionData, int actualTargets)
+    {
+        var falloff = VirtualActionModel.AoeActualTargetFalloff(actionData, actualTargets);
+        if (Math.Abs(falloff - 1f) < 0.001f)
+            return actionData;
+
+        var scaled = CloneActionData(actionData);
+        scaled.Potency = Math.Max(1, (int)MathF.Round(scaled.Potency * falloff));
+        if (scaled.ComboPotency > 0)
+            scaled.ComboPotency = Math.Max(1, (int)MathF.Round(scaled.ComboPotency * falloff));
+        return scaled;
     }
 
     /// <summary>Engage a still-idle selected enemy (mirrors the sim-mode first-hit engage).</summary>
