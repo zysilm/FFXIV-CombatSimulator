@@ -38,22 +38,17 @@ public static class VirtualActionModel
 
         var nativeMpSignal = MathF.Min(MathF.Max(0, data.NativeMpCost), 2000) * 0.45f;
         var recast = MathF.Max(0f, data.RecastTime);
-        var cast = MathF.Max(0f, data.CastTime);
+        var commit = CommitTime(data);
+        var baseCost = CommitBaseCost(commit);
 
-        var baseCost = recast switch
-        {
-            >= 2.0f and <= 3.0f => cast > 0f ? 1650f : 1500f,
-            > 3.0f => 2200f,
-            _ => 1500f,
-        };
-
-        var cooldownCost = MathF.Min(MathF.Max(0f, recast - 2.5f) * 75f, 4400f);
+        // Recast is only a secondary signal now. The primary action-game tier is the
+        // actual release/animation commitment, which Action Mode resolves from TMB.
+        var cooldownCost = MathF.Min(MathF.Max(0f, recast - 2.5f) * 25f, 1200f);
         var expectedTargets = ExpectedTargets(data);
         var aoeCost = MathF.Max(0f, expectedTargets - 1f) * 180f;
         var rangeCost = data.Range <= 5f ? 0f : data.Range <= 15f ? 220f : 380f;
-        var castDiscount = MathF.Min(cast, 3f) * 120f;
 
-        var cost = nativeMpSignal + baseCost + cooldownCost + aoeCost + rangeCost - castDiscount;
+        var cost = nativeMpSignal + baseCost + cooldownCost + aoeCost + rangeCost;
         return (int)MathF.Round(Math.Clamp(cost, MinActionCost, MaxActionCost));
     }
 
@@ -77,12 +72,13 @@ public static class VirtualActionModel
         var singleBudget = 1f + 9f * MathF.Pow(MathF.Min(cost, MaxPowerCost) / MaxPowerCost, 1.25f);
         var rangeFactor = data.Range <= 5f ? 1.10f : data.Range <= 15f ? 1.0f : 0.90f;
         var castFactor = 1f + MathF.Min(MathF.Max(0f, data.CastTime), 3f) * 0.06f;
+        var commitFactor = 1f + MathF.Min(MathF.Max(0f, CommitTime(data) - 0.8f), 1.7f) * 0.04f;
 
         if (!IsAoe(data))
-            return singleBudget * rangeFactor * castFactor;
+            return singleBudget * rangeFactor * castFactor * commitFactor;
 
         var aoeBudget = AoeBudget(data, cost);
-        return singleBudget * aoeBudget * AoeShapeFactor(data) * rangeFactor * castFactor;
+        return singleBudget * aoeBudget * AoeShapeFactor(data) * rangeFactor * castFactor * commitFactor;
     }
 
     public static float AoeActualTargetFalloff(ActionData data, int actualTargets)
@@ -137,6 +133,41 @@ public static class VirtualActionModel
             _ => 1f,
         };
     }
+
+    private static float CommitTime(ActionData data)
+    {
+        var cast = MathF.Max(0f, data.CastTime);
+        if (data.AnimationDuration > 0.05f)
+            return MathF.Max(cast, data.AnimationDuration * 0.70f);
+
+        var recast = MathF.Max(0f, data.RecastTime);
+        var fallbackAnimation = recast switch
+        {
+            <= 0f => 0.75f,
+            <= 3.0f => 0.85f,
+            <= 30.0f => 1.20f,
+            <= 60.0f => 1.60f,
+            _ => 2.10f,
+        };
+        return MathF.Max(cast, fallbackAnimation * 0.70f);
+    }
+
+    private static float CommitBaseCost(float commit)
+    {
+        commit = MathF.Max(0f, commit);
+        if (commit <= 0.4f)
+            return MinActionCost;
+        if (commit <= 0.8f)
+            return Lerp(1500f, 2500f, (commit - 0.4f) / 0.4f);
+        if (commit <= 1.3f)
+            return Lerp(2500f, 4000f, (commit - 0.8f) / 0.5f);
+        if (commit <= 2.0f)
+            return Lerp(4000f, 6500f, (commit - 1.3f) / 0.7f);
+        return Lerp(6500f, MaxActionCost, Math.Clamp((commit - 2.0f) / 1.0f, 0f, 1f));
+    }
+
+    private static float Lerp(float a, float b, float t)
+        => a + (b - a) * Math.Clamp(t, 0f, 1f);
 
     private static bool IsBasicAttack(ActionData data)
         => data.ActionId is 0 or 7;

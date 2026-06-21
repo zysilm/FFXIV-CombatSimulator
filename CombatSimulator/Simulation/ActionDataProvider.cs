@@ -50,6 +50,7 @@ public class ActionData
     public uint ComboFrom { get; set; }
     public int ComboPotency { get; set; }
     public float AnimationLock { get; set; } = 0.6f;
+    public float AnimationDuration { get; set; }
     public bool IsPlayerAction { get; set; } = true;
     public ushort AnimationStartTimelineId { get; set; }
     public ushort AnimationEndTimelineId { get; set; }

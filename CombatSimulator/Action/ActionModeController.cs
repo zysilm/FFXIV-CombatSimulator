@@ -231,10 +231,11 @@ public sealed class ActionModeController
             return;
         if (!combatEngine.State.PlayerState.IsAlive)
             return;
-        if (!combatEngine.TrySpendPlayerActionMp(actionId, out _, out _))
-            return;
 
         var duration = MathF.Max(0.05f, animationController.ResolveActionAnimationDuration(actionId));
+        if (!combatEngine.TrySpendPlayerActionMp(actionId, duration, out _, out _))
+            return;
+
         guardLockoutTimer = MathF.Max(guardLockoutTimer, duration * GuardCancelLockRatio);
         attackLockoutTimer = MathF.Max(attackLockoutTimer, duration);
         swingCooldown = config.LightSwingInterval;
@@ -245,7 +246,7 @@ public sealed class ActionModeController
         var (range, angle, smallestAngle) = ResolveSelectionParams(actionId);
         var primary = hitbox.ResolvePrimary(range, angle, smallestAngle);
         var struck = primary != null
-            ? combatEngine.ApplyPlayerActionMode(actionId, primary.State.EntityId)
+            ? combatEngine.ApplyPlayerActionMode(actionId, primary.State.EntityId, animationDuration: duration)
             : 0;
         if (struck == 0)
             animationController.PlayPlayerActionAnimationOnly(actionId); // reliable whiff (打空) feedback

@@ -984,6 +984,7 @@ public class CombatEngine : IDisposable
             ComboFrom = source.ComboFrom,
             ComboPotency = source.ComboPotency,
             AnimationLock = source.AnimationLock,
+            AnimationDuration = source.AnimationDuration,
             IsPlayerAction = source.IsPlayerAction,
             AnimationStartTimelineId = source.AnimationStartTimelineId,
             AnimationEndTimelineId = source.AnimationEndTimelineId,
@@ -1679,11 +1680,15 @@ public class CombatEngine : IDisposable
 
     public ActionData? GetActionData(uint actionId) => actionDataProvider.GetActionData(actionId);
 
-    public ActionData GetActionDataOrFallback(uint actionId)
+    public ActionData GetActionDataOrFallback(uint actionId, float animationDuration = 0f)
     {
         var source = actionDataProvider.GetActionData(actionId);
         if (source != null)
-            return CloneActionData(source);
+        {
+            var data = CloneActionData(source);
+            ApplyActionModeAnimationDuration(data, animationDuration);
+            return data;
+        }
 
         var fallback = new ActionData
         {
@@ -1696,13 +1701,26 @@ public class CombatEngine : IDisposable
             DamageType = SimDamageType.Physical,
             AnimationLock = 0.6f,
         };
+        ApplyActionModeAnimationDuration(fallback, animationDuration);
         VirtualActionModel.Apply(fallback, config.LightAttackPotency);
         return fallback;
     }
 
-    public bool TrySpendPlayerActionMp(uint actionId, out ActionData actionData, out string? failReason)
+    private void ApplyActionModeAnimationDuration(ActionData actionData, float animationDuration)
     {
-        actionData = GetActionDataOrFallback(actionId);
+        if (animationDuration <= 0.05f)
+            return;
+
+        actionData.AnimationDuration = animationDuration;
+        VirtualActionModel.Apply(actionData, config.LightAttackPotency);
+    }
+
+    public bool TrySpendPlayerActionMp(uint actionId, out ActionData actionData, out string? failReason)
+        => TrySpendPlayerActionMp(actionId, 0f, out actionData, out failReason);
+
+    public bool TrySpendPlayerActionMp(uint actionId, float animationDuration, out ActionData actionData, out string? failReason)
+    {
+        actionData = GetActionDataOrFallback(actionId, animationDuration);
         return TrySpendMp(State.PlayerState, actionData, out failReason);
     }
 
@@ -1720,7 +1738,7 @@ public class CombatEngine : IDisposable
     /// basic attack). Reuses the same shape module + feedback (swing/impact sound/hit-react/flytext)
     /// normal mode uses. Returns the number of enemies hit; 0 = whiff (caller plays animation-only).
     /// </summary>
-    public int ApplyPlayerActionMode(uint actionId, ulong primaryEntityId, int potencyOverride = 0)
+    public int ApplyPlayerActionMode(uint actionId, ulong primaryEntityId, int potencyOverride = 0, float animationDuration = 0f)
     {
         var ps = State.PlayerState;
         if (!ps.IsAlive)
@@ -1730,7 +1748,7 @@ public class CombatEngine : IDisposable
         if (primary == null || !primary.IsAlive || !IsHostile(ps, primary))
             return 0;
 
-        var actionData = GetActionDataOrFallback(actionId);
+        var actionData = GetActionDataOrFallback(actionId, animationDuration);
         if (potencyOverride > 0)
         {
             actionData.Potency = potencyOverride;
