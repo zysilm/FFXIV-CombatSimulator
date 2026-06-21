@@ -725,6 +725,17 @@ public unsafe class RagdollController : IDisposable
     private static bool IsHandBone(string name) => name.StartsWith("j_te_", StringComparison.Ordinal);
     private static bool IsFootBone(string name) => name.StartsWith("j_asi_d_", StringComparison.Ordinal);
     private static bool IsShinBone(string name) => name.StartsWith("j_asi_b_", StringComparison.Ordinal);
+    private static bool IsKneeOrCalfStartupLiftBone(string name)
+    {
+        if (IsShinBone(name))
+            return true;
+
+        return name.Contains("knee", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("kneel", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("calf", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("shin", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool IsForearmBone(string name) => name.StartsWith("j_ude_b_", StringComparison.Ordinal);
     private static bool IsUpperArmBone(string name) => name.StartsWith("j_ude_a_", StringComparison.Ordinal);
     private static bool IsClavicleBone(string name) => name.StartsWith("j_sako_", StringComparison.Ordinal);
@@ -1410,7 +1421,8 @@ public unsafe class RagdollController : IDisposable
         if (!config.RagdollLiftUndergroundBonesOnStart || boneWorldPositions.Count == 0)
             return Vector3.Zero;
 
-        const float clearance = 0.03f;
+        const float defaultClearance = 0.03f;
+        const float kneeCalfClearance = 0.15f;
         var requiredLift = 0f;
         var worstBone = string.Empty;
         var worstGround = groundY;
@@ -1430,6 +1442,7 @@ public unsafe class RagdollController : IDisposable
                 sampled++;
             }
 
+            var clearance = IsKneeOrCalfStartupLiftBone(name) ? kneeCalfClearance : defaultClearance;
             var lift = localGroundY + clearance - pos.Y;
             if (lift <= requiredLift)
                 continue;

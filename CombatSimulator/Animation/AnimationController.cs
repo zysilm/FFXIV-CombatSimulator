@@ -85,6 +85,10 @@ public unsafe class AnimationController : IDisposable
     // as success feedback. Direct replay via the play function doesn't work (it needs the caller's
     // finalize step), so we re-trigger the timeline instead.
     private bool allowGuardTingOnce;
+    private bool guardVisualRestorePending;
+    private bool guardSavedWeaponDrawn;
+    private byte guardSavedModelState;
+    private float guardVisualRestoreTimer;
     private ushort monsterRangedAutoAttackTimeline;
     private ushort npcMeleeAutoAttackTimeline;
     private ushort damageTimeline = 68; // ActionTimeline "battle/damage" — additive hit reaction
@@ -619,8 +623,7 @@ public unsafe class AnimationController : IDisposable
     /// </summary>
     public void Tick(float deltaTime)
     {
-        if (trackedActorVfx.Count == 0)
-            return;
+        TickGuardVisualRestore(deltaTime);
 
         for (var i = trackedActorVfx.Count - 1; i >= 0; i--)
         {
@@ -1006,6 +1009,98 @@ public unsafe class AnimationController : IDisposable
         catch (Exception ex)
         {
             log.Error(ex, $"Failed to clear battle stance for {npc.Name}.");
+        }
+    }
+
+    /// <summary>
+    /// Clear the local player's combat visual flags after CombatSimulator-owned combat ends.
+    /// This does not touch the active timeline; it only returns idle selection to the normal
+    /// sheathed/non-hostile state so animation mods cannot keep resolving combat idle.
+    /// </summary>
+    public void ClearPlayerBattleStance()
+    {
+        try
+        {
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            if (player == null || player.Address == nint.Zero)
+                return;
+
+            var character = (Character*)player.Address;
+            character->CharacterData.InCombat = false;
+            character->CharacterData.IsHostile = false;
+            character->Timeline.IsWeaponDrawn = false;
+            character->Timeline.ModelState = 0;
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Failed to clear player battle stance.");
+        }
+    }
+
+    public void RestorePlayerGuardVisualState()
+    {
+        if (!guardVisualRestorePending)
+            return;
+
+        try
+        {
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            if (player != null && player.Address != nint.Zero)
+            {
+                var character = (Character*)player.Address;
+                character->Timeline.IsWeaponDrawn = guardSavedWeaponDrawn;
+                character->Timeline.ModelState = guardSavedModelState;
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Failed to restore player guard visual state.");
+        }
+        finally
+        {
+            guardVisualRestorePending = false;
+            guardVisualRestoreTimer = 0f;
+        }
+    }
+
+    /// <summary>
+    /// Emergency cleanup for a local player stuck in a CombatSimulator-owned action/death pose.
+    /// This is intentionally heavier than ClearPlayerBattleStance and should only be used from
+    /// explicit recovery flows.
+    /// </summary>
+    public void RecoverPlayerAnimationState()
+    {
+        try
+        {
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            if (player == null || player.Address == nint.Zero)
+                return;
+
+            var character = (Character*)player.Address;
+            character->Timeline.OverallSpeed = 1.0f;
+            character->Timeline.BaseOverride = 0;
+            character->Timeline.IsWeaponDrawn = false;
+            character->Timeline.ModelState = 0;
+            character->CharacterData.InCombat = false;
+            character->CharacterData.IsHostile = false;
+            character->Mode = CharacterModes.Normal;
+            character->ModeParam = 0;
+            emotePlayer.ResetEmote(character);
+
+            // If the current draw/animation instance cached a bad pose, state resets above are
+            // not enough. Use the same self-copy redraw trigger used by spawned humanoids to
+            // make the client rebuild its draw-data/animation binding without a full restart.
+            character->CharacterSetup.CopyFromCharacter(
+                character, CharacterSetupContainer.CopyFlags.None);
+            character->SetMode(CharacterModes.Normal, 0);
+            emotePlayer.ResetEmote(character);
+
+            guardVisualRestorePending = false;
+            guardVisualRestoreTimer = 0f;
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Failed to recover player animation state.");
         }
     }
 
@@ -1404,9 +1499,27 @@ public unsafe class AnimationController : IDisposable
 
         var character = (Character*)player.Address;
         var timeline = config.GuardTimelineId != 0 ? config.GuardTimelineId : guardTimeline;
+        if (!guardVisualRestorePending)
+        {
+            guardSavedWeaponDrawn = character->Timeline.IsWeaponDrawn;
+            guardSavedModelState = character->Timeline.ModelState;
+            guardVisualRestorePending = true;
+        }
+
+        guardVisualRestoreTimer = MathF.Max(0.25f, config.GuardActiveWindow + config.GuardRecovery);
         character->Timeline.IsWeaponDrawn = true;
         character->Timeline.ModelState = 1;
         character->Timeline.PlayActionTimeline(timeline != 0 ? timeline : (ushort)78);
+    }
+
+    private void TickGuardVisualRestore(float deltaTime)
+    {
+        if (!guardVisualRestorePending)
+            return;
+
+        guardVisualRestoreTimer = MathF.Max(0f, guardVisualRestoreTimer - deltaTime);
+        if (guardVisualRestoreTimer <= 0f)
+            RestorePlayerGuardVisualState();
     }
 
     public void PlayEnemyTelegraphWarning(SimulatedNpc npc)

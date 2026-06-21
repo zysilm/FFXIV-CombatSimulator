@@ -1326,6 +1326,13 @@ public class MainWindow : IDisposable
         }
         HelpMarker("Restore all Action Mode tuning, input bindings, VFX choices, telegraph, guard, player, and parry-circle settings to built-in defaults. Keeps the current Enable Action Mode state.");
 
+        if (ImGui.Button("Recover Player Animation"))
+        {
+            ragdollController.Deactivate();
+            animationController.RecoverPlayerAnimationState();
+        }
+        HelpMarker("Force-clear CombatSimulator-owned player animation state if the local player gets stuck in a death, guard, or combat idle pose.");
+
         if (!actionMode)
             return;
 

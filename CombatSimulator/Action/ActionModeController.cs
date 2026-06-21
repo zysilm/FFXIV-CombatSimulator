@@ -283,6 +283,7 @@ public sealed class ActionModeController
         comboSink.Clear();
         guard.Reset();
         telegraphs.Clear();
+        animationController.RestorePlayerGuardVisualState();
         swingCooldown = 0f;
         guardLockoutTimer = 0f;
         attackLockoutTimer = 0f;

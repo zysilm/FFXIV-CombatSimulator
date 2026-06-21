@@ -334,6 +334,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                           "/combatsim start - Start combat simulation\n" +
                           "/combatsim stop - Stop combat simulation\n" +
                           "/combatsim reset - Reset combat state\n" +
+                          "/combatsim recover - Force reset the local player's animation state\n" +
                           "/combatsim export-actions - Export player action data to Actions.json",
         });
 
@@ -416,6 +417,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             case "reset":
                 combatEngine.ResetState();
                 chatGui.Print("[CombatSim] Combat state reset.");
+                break;
+
+            case "recover":
+                ragdollController.Deactivate();
+                animationController.RecoverPlayerAnimationState();
+                chatGui.Print("[CombatSim] Player animation state recovered.");
                 break;
 
             case "professional":
