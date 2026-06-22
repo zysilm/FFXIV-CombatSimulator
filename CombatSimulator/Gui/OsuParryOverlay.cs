@@ -20,6 +20,7 @@ public sealed class OsuParryOverlay
 {
     private const int Segments = 64;
     private const float RecoveryDuration = 0.3f; // mirrors TelegraphSystem recovery
+    private const float GuardConfirmDuration = 0.055f;
     private const float FallbackPixelsPerYalm = 180f;
 
     // Colour language: calm at rest → warm as it approaches → gold-white flash at the
@@ -179,10 +180,14 @@ public sealed class OsuParryOverlay
         switch (t.Outcome)
         {
             case TelegraphOutcome.Guarded:
-                // Convergence burst: a bright ring expands outward and fades.
-                var burstR = innerR * (1f + 1.4f * k);
-                DrawRingGlow(drawList, center, burstR, GuardColor, fade, 3.0f);
-                DrawRingGlow(drawList, center, innerR, GuardColor, fade * 0.9f, 2.2f);
+                // Hit-confirm ticks only: no full ring, no outer-ring jump, no lingering shape
+                // that can be mistaken for another incoming telegraph.
+                var elapsed = RecoveryDuration - t.RecoveryRemaining;
+                if (elapsed <= GuardConfirmDuration)
+                {
+                    var flash = 1f - Math.Clamp(elapsed / GuardConfirmDuration, 0f, 1f);
+                    DrawGuardConfirmTicks(drawList, center, innerR, flash);
+                }
                 break;
 
             case TelegraphOutcome.Hit:
@@ -206,6 +211,52 @@ public sealed class OsuParryOverlay
 
         drawList.AddCircle(center, radius, Col(color, alpha * 0.28f), Segments, thickness + 3.5f);
         drawList.AddCircle(center, radius, Col(color, alpha), Segments, thickness);
+    }
+
+    private static void DrawGuardConfirmTicks(ImDrawListPtr drawList, Vector2 center, float radius, float alpha)
+    {
+        if (radius <= 1f || alpha <= 0.01f)
+            return;
+
+        const float arcLen = 0.34f;
+        var tickRadius = radius;
+        var tickAlpha = MathF.Min(1f, alpha * 1.25f);
+        var glowAlpha = alpha * 0.22f;
+        for (var i = 0; i < 4; i++)
+        {
+            var mid = i * MathF.PI * 0.5f;
+            DrawArc(drawList, center, tickRadius, mid - arcLen, mid + arcLen, GuardColor, glowAlpha, 6.0f);
+            DrawArc(drawList, center, tickRadius, mid - arcLen, mid + arcLen, WindowColor, tickAlpha, 2.8f);
+        }
+    }
+
+    private static void DrawArc(
+        ImDrawListPtr drawList,
+        Vector2 center,
+        float radius,
+        float a0,
+        float a1,
+        Vector3 color,
+        float alpha,
+        float thickness)
+    {
+        if (alpha <= 0.01f || radius <= 1f)
+            return;
+
+        const int steps = 8;
+        Span<Vector2> pts = stackalloc Vector2[steps + 1];
+        for (var i = 0; i <= steps; i++)
+        {
+            var t = i / (float)steps;
+            var a = Lerp(a0, a1, t);
+            pts[i] = center + new Vector2(MathF.Cos(a), MathF.Sin(a)) * radius;
+        }
+
+        unsafe
+        {
+            fixed (Vector2* ptr = pts)
+                drawList.AddPolyline(ref ptr[0], pts.Length, Col(color, alpha), ImDrawFlags.None, thickness);
+        }
     }
 
     private bool TryResolveAnchor(Vector3 playerPos, out Vector2 center, out float pixelsPerYalm)
