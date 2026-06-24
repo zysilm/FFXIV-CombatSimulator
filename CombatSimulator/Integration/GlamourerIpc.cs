@@ -103,6 +103,42 @@ public class GlamourerIpc
     }
 
     /// <summary>
+    /// Set (or strip) a single equipment/accessory slot on an actor by object-table index.
+    /// Passing <paramref name="itemId"/> = 0 tells Glamourer to resolve its per-slot
+    /// "Nothing" item (smallclothes for body/legs/feet/hands, empty for head/accessories) —
+    /// i.e. a visual unequip.
+    ///
+    /// When <paramref name="persist"/> is true the <c>Once</c> flag is intentionally NOT set,
+    /// so Glamourer retains the manipulation in its managed state and re-applies it on every
+    /// redraw. Without this, a plain draw-object write is reverted by Glamourer on the next
+    /// equipment update.
+    /// </summary>
+    public bool SetItem(int objectIndex, byte apiSlot, ulong itemId, bool persist = true)
+    {
+        if (objectIndex < 0) return false;
+        try
+        {
+            var subscriber = pluginInterface.GetIpcSubscriber<int, byte, ulong, IReadOnlyList<byte>, uint, ulong, int>("Glamourer.SetItem.V3");
+            // Two dye channels, both undyed. StainIds guards empty lists, but some Glamourer
+            // builds expect a concrete 2-element list — pass one explicitly to be safe.
+            var stains = new List<byte> { 0, 0 };
+            var flags = (ulong)(persist ? ApplyFlagEquipment : ApplyFlagOnce | ApplyFlagEquipment);
+            var result = subscriber.InvokeFunc(objectIndex, apiSlot, itemId, stains, 0u, flags);
+            IsAvailable = true;
+            if (result != 0)
+                log.Warning($"GlamourerIpc: SetItem(idx={objectIndex}, slot={apiSlot}) returned ec={result}");
+            return result == 0;
+        }
+        catch (Exception ex)
+        {
+            // Log full exception (incl. InnerException + stack) — the provider wraps the real
+            // cause in a TargetInvocationException whose outer Message is uninformative.
+            log.Error(ex, $"GlamourerIpc: SetItem(idx={objectIndex}, slot={apiSlot}) threw; inner={ex.InnerException?.GetType().Name}: {ex.InnerException?.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Revert the local player's Glamourer state back to normal.
     /// </summary>
     public bool RevertState()

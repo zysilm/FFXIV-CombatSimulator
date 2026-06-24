@@ -59,6 +59,10 @@ public unsafe class ActiveCameraController : IDisposable
     // Provides the locked 1v1 target's character address (set by Plugin); null when none.
     public Func<nint?>? GetFightingTargetAddress;
 
+    /// <summary>When set and returns a value, the active camera orbits that world position
+    /// instead of the local player's bone (used by Monster mode to follow the creature).</summary>
+    public Func<Vector3?>? GetOrbitCenterOverride;
+
     // Smoothed orbit center + auto-zoom distance, computed in Tick, consumed by the hook.
     private Vector3 fightingCenter;
     private float fightingDistance;
@@ -230,6 +234,17 @@ public unsafe class ActiveCameraController : IDisposable
 
         try
         {
+            // Monster mode overrides the orbit center with the creature's world position —
+            // takes precedence over everything else, including the fighting camera.
+            var monsterCenter = GetOrbitCenterOverride?.Invoke();
+            if (monsterCenter.HasValue)
+            {
+                var mc = monsterCenter.Value;
+                mc.Y += config.ActiveCameraHeightOffset;
+                *position = ApplyActiveCameraSideOffset(mc);
+                return;
+            }
+
             // Fighting camera owns the orbit center while engaged — Tick computes the
             // fully-offset, smoothed center (midpoint while fighting, dead bone afterward).
             if (IsFightingEngaged && fightingHasState)

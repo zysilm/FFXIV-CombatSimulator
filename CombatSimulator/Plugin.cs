@@ -57,6 +57,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly ActiveCameraController activeCameraController;
     private readonly Dev.VictorySequenceController victorySequenceController;
     private readonly Dev.BoneHoldTestModeController executionModeController;
+    private readonly Dev.KoStripController koStripController;
+    private readonly Dev.MonsterModeController monsterModeController;
     private readonly HookSafetyChecker hookSafetyChecker;
 
     // Action Mode (动作模式): real-time combat layer wired through narrow seams.
@@ -93,6 +95,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         IChatGui chatGui,
         ICondition condition,
         IGamepadState gamepadState,
+        IKeyState keyState,
         ITargetManager targetManager,
         ISigScanner sigScanner,
         IPluginLog log)
@@ -128,8 +131,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, npcActionProfileProvider, log);
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
         weaponDropController = new WeaponDropController(boneTransformService, config, log);
+        koStripController = new Dev.KoStripController(config, glamourerIpc, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
+        monsterModeController = new Dev.MonsterModeController(keyState, gamepadState, framework, ragdollController, animationController, boneTransformService, movementBlockHook, activeCameraController, config, log);
         victorySequenceController = new Dev.VictorySequenceController(
             boneTransformService, animationController.EmotePlayer,
             movementBlockHook, ragdollController, vnavmeshIpc, clientState, targetManager, config, log);
@@ -260,6 +265,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         {
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
+            koStripController.Reset();
+            monsterModeController.Despawn();
             activeCameraController.ResetFightingCamera();
 
             // Keep companions across a combat *reset* (IsActive stays true) when the
@@ -285,6 +292,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnPlayerDeath = addr =>
         {
             weaponDropController.SpawnFor(addr, config.RagdollActivationDelay);
+            koStripController.StripOnKo(addr);
+            if (config.MonsterSpawnOnDeath) monsterModeController.Spawn();
             activeCameraController.NotifyCombatantDeath(addr, isPlayer: true);
         };
 
@@ -376,6 +385,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.Dispose();
         victorySequenceController.Dispose();
         executionModeController.Dispose();
+        koStripController.Dispose();
+        monsterModeController.Dispose();
         ragdollController.Dispose();
         weaponDropController.Dispose();
         boneTransformService.Dispose();
@@ -485,6 +496,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         if (config.ShowHoldToolbar)
             mainWindow.DrawHoldToolbar(executionModeController);
+
+        if (config.ShowKoStripToolbar)
+            mainWindow.DrawKoStripToolbar(koStripController);
+
+        if (config.ShowMonsterToolbar)
+            mainWindow.DrawMonsterToolbar(monsterModeController);
 
         if (config.ShowMainWindow)
             mainWindow.Draw();
@@ -631,6 +648,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     {
         // Fighting camera death transition must run regardless of ragdoll settings.
         activeCameraController.NotifyCombatantDeath(address, isPlayer: false);
+
+        // Note: KO strip is intentionally player-only — NPC draw objects vary too much
+        // (non-humanoid, partial gear) to strip reliably, so it's not applied here.
 
         if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
         {
@@ -900,6 +920,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         DeactivateAllNpcRagdolls();
         weaponDropController.RemoveAll();
+        koStripController.Reset();
+        monsterModeController.Despawn();
 
         if (combatEngine.IsActive)
         {
@@ -921,6 +943,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             npcSpawner.SpawnModeActive = false;
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
+            koStripController.Reset();
+            monsterModeController.Despawn();
             npcSpawner.DespawnAll();
             companionManager.DespawnAll();
             if (combatEngine.IsActive)

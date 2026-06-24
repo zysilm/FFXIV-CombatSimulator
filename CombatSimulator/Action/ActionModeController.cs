@@ -78,6 +78,17 @@ public sealed class ActionModeController
         }
         wasActive = true;
 
+        if (!combatEngine.IsActive)
+        {
+            guard.Reset();
+            guardLockoutTimer = 0f;
+            attackLockoutTimer = 0f;
+            guardKeyWasDown = false;
+            basicAttackKeyWasDown = false;
+            comboSink.Clear();
+            return;
+        }
+
         if (!combatEngine.State.PlayerState.IsAlive)
         {
             guard.Reset();

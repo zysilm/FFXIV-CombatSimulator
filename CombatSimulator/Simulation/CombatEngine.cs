@@ -185,6 +185,7 @@ public class CombatEngine : IDisposable
         if (State.IsActive)
             return;
 
+        animationController.CapturePlayerCombatVisualState();
         InitializePlayerState();
         State.IsActive = true;
         State.SimulationTime = 0;
@@ -239,7 +240,7 @@ public class CombatEngine : IDisposable
         }
         npcSelector.DeselectAll();
         animationController.ResetPlayerDeathAnimation();
-        animationController.ClearPlayerBattleStance();
+        animationController.RestorePlayerCombatVisualState();
         animationController.RemoveAllActiveVfx();
         movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
@@ -288,7 +289,7 @@ public class CombatEngine : IDisposable
         }
 
         animationController.ResetPlayerDeathAnimation();
-        animationController.ClearPlayerBattleStance();
+        animationController.RestorePlayerCombatVisualState();
         movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
         RevertGlamourer();
@@ -328,7 +329,7 @@ public class CombatEngine : IDisposable
         playerDeathTriggered = false;
         LastPlayerDefeatedBy = string.Empty;
         animationController.ResetPlayerDeathAnimation();
-        animationController.ClearPlayerBattleStance();
+        animationController.RestorePlayerCombatVisualState();
         movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
         deathCamController?.Deactivate();

@@ -89,6 +89,11 @@ public unsafe class AnimationController : IDisposable
     private bool guardSavedWeaponDrawn;
     private byte guardSavedModelState;
     private float guardVisualRestoreTimer;
+    private bool playerSessionVisualCaptured;
+    private bool playerSessionWeaponDrawn;
+    private byte playerSessionModelState;
+    private bool playerSessionInCombat;
+    private bool playerSessionIsHostile;
     private ushort monsterRangedAutoAttackTimeline;
     private ushort npcMeleeAutoAttackTimeline;
     private ushort damageTimeline = 68; // ActionTimeline "battle/damage" — additive hit reaction
@@ -1034,6 +1039,54 @@ public unsafe class AnimationController : IDisposable
         catch (Exception ex)
         {
             log.Error(ex, "Failed to clear player battle stance.");
+        }
+    }
+
+    public void CapturePlayerCombatVisualState()
+    {
+        try
+        {
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            if (player == null || player.Address == nint.Zero)
+                return;
+
+            var character = (Character*)player.Address;
+            playerSessionWeaponDrawn = character->Timeline.IsWeaponDrawn;
+            playerSessionModelState = character->Timeline.ModelState;
+            playerSessionInCombat = character->CharacterData.InCombat;
+            playerSessionIsHostile = character->CharacterData.IsHostile;
+            playerSessionVisualCaptured = true;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Failed to capture player combat visual state.");
+        }
+    }
+
+    public void RestorePlayerCombatVisualState()
+    {
+        if (!playerSessionVisualCaptured)
+            return;
+
+        try
+        {
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            if (player != null && player.Address != nint.Zero)
+            {
+                var character = (Character*)player.Address;
+                character->Timeline.IsWeaponDrawn = playerSessionWeaponDrawn;
+                character->Timeline.ModelState = playerSessionModelState;
+                character->CharacterData.InCombat = playerSessionInCombat;
+                character->CharacterData.IsHostile = playerSessionIsHostile;
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Failed to restore player combat visual state.");
+        }
+        finally
+        {
+            playerSessionVisualCaptured = false;
         }
     }
 

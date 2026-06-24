@@ -11,6 +11,15 @@
     ]
   },
   {
+    "name": "Solo",
+    "description": "You alone against nearby map enemies.",
+    "companions": [],
+    "enemies": [],
+    "mapEnemies": [
+      { "enabled": true, "maxCount": 15, "senseRange": 18.0, "level": 90, "hpMultiplier": 1.0, "behavior": "BasicMelee" }
+    ]
+  },
+  {
     "name": "PvP mode",
     "description": "Solo against nearby visible players sensed from the map.",
     "companions": [],

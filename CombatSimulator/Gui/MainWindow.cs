@@ -441,6 +441,14 @@ public class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Enemy simulated level used when starting a recipe. Companions mirror player stats.");
+
+            var actionMode = config.ActionMode;
+            if (ImGui.Checkbox("Action Mode", ref actionMode))
+            {
+                config.ActionMode = actionMode;
+                config.Save();
+            }
+            HelpMarker(BuildActionModeQuickHelp());
         }
 
         if (compact)
@@ -534,6 +542,49 @@ public class MainWindow : IDisposable
         ImGui.TableNextColumn();
         ImGui.TextUnformatted(gamepad);
     }
+
+    private string BuildActionModeQuickHelp()
+    {
+        var guardKeyboard = FormatActionKey(config.ActionGuardKey);
+        var guardPad = FormatGamepadButton(config.ActionGuardGamepadButton);
+        var basicKeyboard = FormatActionKey(config.ActionBasicAttackKey);
+        var basicPad = FormatGamepadButton(config.ActionBasicAttackGamepadButton);
+
+        return "Action Mode turns combat into real-time soft-target action combat.\n\n" +
+               "Hotbar actions use their real range/shape and auto-pick targets in front of you.\n" +
+               "Enemy attacks show parry rings; press guard as the outer ring meets the inner ring.\n\n" +
+               $"Guard: keyboard {guardKeyboard}, gamepad {guardPad}\n" +
+               $"Basic attack: keyboard {basicKeyboard}, gamepad {basicPad}\n" +
+               "Skills: your normal hotbar buttons.";
+    }
+
+    private static string FormatActionKey(int key)
+        => key switch
+        {
+            0 => "None",
+            16 => "Shift",
+            17 => "Ctrl",
+            18 => "Alt",
+            0x51 => "Q",
+            >= 0x41 and <= 0x5A => ((char)key).ToString(),
+            >= 0x30 and <= 0x39 => ((char)key).ToString(),
+            _ => $"VK {key}",
+        };
+
+    private static string FormatGamepadButton(GamepadButtons button)
+        => button switch
+        {
+            GamepadButtons.R1 => "R1",
+            GamepadButtons.L1 => "L1",
+            GamepadButtons.R2 => "R2",
+            GamepadButtons.L2 => "L2",
+            GamepadButtons.East => "Circle / East",
+            GamepadButtons.South => "Cross / South",
+            GamepadButtons.West => "Square / West",
+            GamepadButtons.North => "Triangle / North",
+            GamepadButtons.None => "None",
+            _ => button.ToString(),
+        };
 
     private void DrawRecipeCombo(string id, float width)
     {
@@ -3427,6 +3478,22 @@ public class MainWindow : IDisposable
             }
             HelpMarker("Floating toolbar to toggle standing hold on the active ragdoll while an NPC continues attacking.");
 
+            var showKoStripToolbar = config.ShowKoStripToolbar;
+            if (ImGui.Checkbox("Show KO Strip Toolbar##dev", ref showKoStripToolbar))
+            {
+                config.ShowKoStripToolbar = showKoStripToolbar;
+                config.Save();
+            }
+            HelpMarker("Floating toolbar for 'Strip KO': visually unequip selected gear slots on knockout (swap to smallclothes). Visual only, restored on reset.");
+
+            var showMonsterToolbar = config.ShowMonsterToolbar;
+            if (ImGui.Checkbox("Show Monster Toolbar##dev", ref showMonsterToolbar))
+            {
+                config.ShowMonsterToolbar = showMonsterToolbar;
+                config.Save();
+            }
+            HelpMarker("Floating toolbar for 'Monster': on death, spawn a controllable no-HP creature (default Bat) — WASD move, A/D turn, Q/E up/down, attack key to punt the ragdoll.");
+
             var ragdollLog = config.RagdollVerboseLog;
             if (ImGui.Checkbox("Ragdoll Verbose Log##dev", ref ragdollLog))
             {
@@ -3928,6 +3995,161 @@ public class MainWindow : IDisposable
         new("Interrogate", "j_kosi",   1.02f),
         new("Wall",        "j_sebo_b", 1.2f,  WallPin: true),
     };
+
+    public void DrawKoStripToolbar(Dev.KoStripController ctrl)
+    {
+        if (!ImGui.Begin("KO Strip", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.End();
+            return;
+        }
+
+        var enabled = config.KoStripEnabled;
+        if (ImGui.Checkbox("Strip on KO##kostrip", ref enabled))
+        {
+            config.KoStripEnabled = enabled;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When you are knocked out, visually unequip the selected slots\n(swap to smallclothes). Your character only. Visual only.");
+
+        ImGui.Separator();
+        ImGui.TextDisabled("Slots");
+
+        KoStripSlotCheckbox("Head", () => config.KoStripHead, v => config.KoStripHead = v);
+        ImGui.SameLine();
+        KoStripSlotCheckbox("Body", () => config.KoStripBody, v => config.KoStripBody = v);
+        ImGui.SameLine();
+        KoStripSlotCheckbox("Hands", () => config.KoStripHands, v => config.KoStripHands = v);
+        KoStripSlotCheckbox("Legs", () => config.KoStripLegs, v => config.KoStripLegs = v);
+        ImGui.SameLine();
+        KoStripSlotCheckbox("Feet", () => config.KoStripFeet, v => config.KoStripFeet = v);
+
+        ImGui.TextDisabled("Accessories");
+        KoStripSlotCheckbox("Ears", () => config.KoStripEars, v => config.KoStripEars = v);
+        ImGui.SameLine();
+        KoStripSlotCheckbox("Neck", () => config.KoStripNeck, v => config.KoStripNeck = v);
+        ImGui.SameLine();
+        KoStripSlotCheckbox("Wrists", () => config.KoStripWrists, v => config.KoStripWrists = v);
+        KoStripSlotCheckbox("R.Finger", () => config.KoStripRFinger, v => config.KoStripRFinger = v);
+        ImGui.SameLine();
+        KoStripSlotCheckbox("L.Finger", () => config.KoStripLFinger, v => config.KoStripLFinger = v);
+
+        ImGui.Separator();
+
+        // ── Manual test buttons (ignore the apply-to toggles) ────────────────
+        if (ImGui.Button("Strip Now##kostrip"))
+        {
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            if (player != null) ctrl.StripNow(player.Address);
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Strip your character right now (test).");
+
+        ImGui.End();
+    }
+
+    private void KoStripSlotCheckbox(string label, Func<bool> get, Action<bool> set)
+    {
+        var v = get();
+        if (ImGui.Checkbox($"{label}##kostripSlot", ref v))
+        {
+            set(v);
+            config.Save();
+        }
+    }
+
+    private static readonly (string Name, uint Id, uint NameId)[] MonsterModels =
+    {
+        ("Bat", 38, 38),
+        ("Cactuar", 3, 3),
+        ("Hog", 15, 15),
+        ("Imp", 21, 21),
+        ("Flytrap", 23, 23),
+        ("Tortoise", 34, 34),
+        ("Wisp", 45, 45),
+        ("Myconid", 48, 48),
+        ("Striking Dummy", 541, 541),
+    };
+
+    private static readonly (string Name, int Key)[] MonsterAttackKeys =
+    {
+        ("Y", 0x59),
+        ("F", 0x46),
+        ("R", 0x52),
+        ("C", 0x43),
+        ("X", 0x58),
+        ("Space", 0x20),
+    };
+
+    public void DrawMonsterToolbar(Dev.MonsterModeController ctrl)
+    {
+        if (!ImGui.Begin("Monster", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.End();
+            return;
+        }
+
+        var active = ctrl.IsActive;
+
+        var onDeath = config.MonsterSpawnOnDeath;
+        if (ImGui.Checkbox("Spawn on death##monster", ref onDeath))
+        {
+            config.MonsterSpawnOnDeath = onDeath;
+            config.Save();
+        }
+
+        var modelIdx = Array.FindIndex(MonsterModels, m => m.Id == config.MonsterModelId);
+        if (modelIdx < 0) modelIdx = 0;
+        ImGui.SetNextItemWidth(140);
+        if (ImGui.BeginCombo("Model##monster", MonsterModels[modelIdx].Name))
+        {
+            for (int i = 0; i < MonsterModels.Length; i++)
+                if (ImGui.Selectable(MonsterModels[i].Name, i == modelIdx))
+                {
+                    config.MonsterModelId = MonsterModels[i].Id;
+                    config.MonsterModelNameId = MonsterModels[i].NameId;
+                    config.Save();
+                }
+            ImGui.EndCombo();
+        }
+
+        ImGui.BeginDisabled(active);
+        if (ImGui.Button("Spawn##monster")) ctrl.Spawn();
+        ImGui.EndDisabled();
+        ImGui.SameLine();
+        ImGui.BeginDisabled(!active);
+        if (ImGui.Button("Despawn##monster")) ctrl.Despawn();
+        ImGui.EndDisabled();
+
+        ImGui.Separator();
+
+        var moveSpeed = config.MonsterMoveSpeed;
+        if (ImGui.SliderFloat("Move##monster", ref moveSpeed, 1f, 20f, "%.1f")) { config.MonsterMoveSpeed = moveSpeed; config.Save(); }
+        var vSpeed = config.MonsterVerticalSpeed;
+        if (ImGui.SliderFloat("Fly##monster", ref vSpeed, 1f, 15f, "%.1f")) { config.MonsterVerticalSpeed = vSpeed; config.Save(); }
+        var impulse = config.MonsterAttackImpulse;
+        if (ImGui.SliderFloat("Impulse##monster", ref impulse, 1f, 60f, "%.1f")) { config.MonsterAttackImpulse = impulse; config.Save(); }
+        var range = config.MonsterAttackRange;
+        if (ImGui.SliderFloat("Range##monster", ref range, 1f, 10f, "%.1f")) { config.MonsterAttackRange = range; config.Save(); }
+
+        var keyIdx = Array.FindIndex(MonsterAttackKeys, k => k.Key == config.MonsterAttackKey);
+        if (keyIdx < 0) keyIdx = 0;
+        ImGui.SetNextItemWidth(140);
+        if (ImGui.BeginCombo("Attack key##monster", MonsterAttackKeys[keyIdx].Name))
+        {
+            for (int i = 0; i < MonsterAttackKeys.Length; i++)
+                if (ImGui.Selectable(MonsterAttackKeys[i].Name, i == keyIdx))
+                { config.MonsterAttackKey = MonsterAttackKeys[i].Key; config.Save(); }
+            ImGui.EndCombo();
+        }
+
+        ImGui.TextDisabled("WASD = camera-relative move · Q/E up/down");
+        ImGui.TextDisabled("Attack = key above, or your real auto-attack/gamepad");
+        ImGui.TextDisabled(active ? "Monster: active" : "Monster: none");
+
+        ImGui.End();
+    }
 
     public void DrawHoldToolbar(Dev.BoneHoldTestModeController ctrl)
     {

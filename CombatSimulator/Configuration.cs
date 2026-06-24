@@ -255,6 +255,37 @@ public class Configuration : IPluginConfiguration
     public float DevNpcScale { get; set; } = 1.0f;
     public bool ShowGrabToolbar { get; set; } = false;
     public bool ShowHoldToolbar { get; set; } = false;
+
+    // ── KO Strip (dev experimental) ──────────────────────────────────────────
+    // Visually unequips selected gear slots on knockout (dramatic fighting-game
+    // style). Tier 1: pure visual unequip (swap slot model to smallclothes), no
+    // physics drop. Draw-object only — no server packets, restored on reset.
+    public bool ShowKoStripToolbar { get; set; } = false;
+    public bool KoStripEnabled { get; set; } = false;
+
+    // ── Monster mode (dev experimental) ──────────────────────────────────────
+    // On player death, spawn a controllable no-HP creature (default Bat) that flies around
+    // and can punt the ground ragdoll with an adjustable impulse.
+    public bool ShowMonsterToolbar { get; set; } = false;
+    public bool MonsterSpawnOnDeath { get; set; } = false;
+    public uint MonsterModelId { get; set; } = 38;      // BNpcBaseId — 38 = Bat
+    public uint MonsterModelNameId { get; set; } = 38;  // BNpcNameId
+    public float MonsterMoveSpeed { get; set; } = 6f;
+    public float MonsterVerticalSpeed { get; set; } = 4f;
+    public float MonsterAttackImpulse { get; set; } = 15f;
+    public float MonsterAttackRange { get; set; } = 3f;
+    public int MonsterAttackKey { get; set; } = 0x59; // VirtualKey.Y — adjustable normal-attack key
+    public bool KoStripHead { get; set; } = false;
+    public bool KoStripBody { get; set; } = true;
+    public bool KoStripHands { get; set; } = true;
+    public bool KoStripLegs { get; set; } = true;
+    public bool KoStripFeet { get; set; } = true;
+    public bool KoStripEars { get; set; } = false;
+    public bool KoStripNeck { get; set; } = false;
+    public bool KoStripWrists { get; set; } = false;
+    public bool KoStripRFinger { get; set; } = false;
+    public bool KoStripLFinger { get; set; } = false;
+
     public float HoldStandingHeight { get; set; } = 0.92f;
     public string HoldAnchorBone { get; set; } = "j_kosi";
     public bool HoldNpcAttack { get; set; } = true;

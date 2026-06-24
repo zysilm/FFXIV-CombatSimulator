@@ -3572,6 +3572,38 @@ public unsafe class RagdollController : IDisposable
         BeginBiomechanicalSettle();
     }
 
+    /// <summary>
+    /// Punt the ragdoll body nearest to <paramref name="from"/> within <paramref name="maxDist"/>.
+    /// Uses the full set of ragdoll bodies (the body "point cloud") as the hit volume rather than a
+    /// single named bone, so contact anywhere on the body registers. The impulse points away from
+    /// <paramref name="from"/> horizontally plus an upward kick. Returns true if a body was hit.
+    /// </summary>
+    public bool PuntNearest(Vector3 from, float maxDist, float strength, float upBias = 0.5f)
+    {
+        if (simulation == null || !isActive) return false;
+
+        BodyHandle? best = null;
+        var bestDistSq = maxDist * maxDist;
+        var bestPos = Vector3.Zero;
+        foreach (var rb in ragdollBones)
+        {
+            var pos = simulation.Bodies.GetBodyReference(rb.BodyHandle).Pose.Position;
+            var dSq = Vector3.DistanceSquared(pos, from);
+            if (dSq <= bestDistSq) { bestDistSq = dSq; best = rb.BodyHandle; bestPos = pos; }
+        }
+        if (!best.HasValue) return false;
+
+        var horiz = new Vector3(bestPos.X - from.X, 0f, bestPos.Z - from.Z);
+        var dir = horiz.LengthSquared() > 0.0001f ? Vector3.Normalize(horiz) : Vector3.UnitX;
+        var impulse = dir * strength + Vector3.UnitY * (strength * upBias);
+
+        var body = simulation.Bodies.GetBodyReference(best.Value);
+        body.Velocity.Linear += impulse;
+        body.Awake = true;
+        BeginBiomechanicalSettle();
+        return true;
+    }
+
     private static readonly System.Random ShakeRng = new();
 
     public void ApplyShake(float intensity)
