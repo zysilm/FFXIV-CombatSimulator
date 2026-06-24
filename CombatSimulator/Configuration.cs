@@ -275,6 +275,7 @@ public class Configuration : IPluginConfiguration
     public float MonsterAttackImpulse { get; set; } = 15f;
     public float MonsterAttackRange { get; set; } = 3f;
     public int MonsterAttackKey { get; set; } = 0x59; // VirtualKey.Y — adjustable normal-attack key
+    public bool MonsterCameraFollowsMonster { get; set; } = true; // remembered cam target (monster vs character)
     public bool KoStripHead { get; set; } = false;
     public bool KoStripBody { get; set; } = true;
     public bool KoStripHands { get; set; } = true;

@@ -54,7 +54,6 @@ public unsafe class MonsterModeController : IDisposable
     private bool prevActiveCamState;
     private bool prevAttackKeyDown;
     private bool colliderRegistered;
-    private bool cameraFollowsMonster = true;
     private readonly ActorVisualState visualState = new();
 
     public bool IsActive => monsterIndex >= 0;
@@ -94,15 +93,17 @@ public unsafe class MonsterModeController : IDisposable
     }
 
     /// <summary>True when the active camera is orbiting the creature; false = orbiting the player.</summary>
-    public bool CameraFollowsMonster => cameraFollowsMonster;
+    public bool CameraFollowsMonster => config.MonsterCameraFollowsMonster;
 
-    /// <summary>Toggle the active camera between following the monster and the player (character cam).</summary>
+    /// <summary>Toggle the active camera between following the monster and the player (character cam).
+    /// The choice is remembered (config) — spawn/despawn/reset never auto-switch it.</summary>
     public void ToggleCamera()
     {
         if (!IsActive) return;
-        cameraFollowsMonster = !cameraFollowsMonster;
+        config.MonsterCameraFollowsMonster = !config.MonsterCameraFollowsMonster;
+        config.Save();
         // Override → monster; null → active camera falls back to the player's bone.
-        activeCamera.GetOrbitCenterOverride = cameraFollowsMonster ? CameraCenter : null;
+        activeCamera.GetOrbitCenterOverride = config.MonsterCameraFollowsMonster ? CameraCenter : null;
     }
 
     public void Spawn()
@@ -161,10 +162,9 @@ public unsafe class MonsterModeController : IDisposable
         // Block the game from moving the creature so our writes win.
         movementBlock.AddApproachNpc(monsterAddress);
 
-        // Camera follows the creature (free orbit centered on it).
+        // Camera follows per the remembered preference (monster vs character) — don't force it.
         prevActiveCamState = activeCamera.IsActive;
-        cameraFollowsMonster = true;
-        activeCamera.GetOrbitCenterOverride = CameraCenter;
+        activeCamera.GetOrbitCenterOverride = config.MonsterCameraFollowsMonster ? CameraCenter : null;
         activeCamera.SetActive(true);
 
         log.Info($"MonsterMode: spawned model={config.MonsterModelId} at index {index} (0x{monsterAddress:X})");
@@ -274,18 +274,21 @@ public unsafe class MonsterModeController : IDisposable
         prevAttackKeyDown = down;
     }
 
-    /// <summary>Trigger the monster's attack — swing animation + sound, and punt the ragdoll.</summary>
+    /// <summary>Trigger the monster's attack — punt the ragdoll, then swing animation + sound.</summary>
     public void OnAttackInput()
     {
         if (!IsActive) return;
 
-        PlaySwing();
-
-        if (!playerRagdoll.IsActive) return;
+        // Punt FIRST so a swing-animation failure can't skip the physics.
         var monsterPos = new Vector3(posX, posY, posZ);
-        // Whole-body hit: the ragdoll's body point cloud is the hit volume.
-        if (playerRagdoll.PuntNearest(monsterPos, config.MonsterAttackRange, config.MonsterAttackImpulse))
-            log.Info($"MonsterMode: attack impulse {config.MonsterAttackImpulse:F1}");
+        var hit = playerRagdoll.IsActive &&
+                  playerRagdoll.PuntNearest(monsterPos, config.MonsterAttackRange, config.MonsterAttackImpulse);
+        var nearest = playerRagdoll.NearestBodyDistance(monsterPos);
+        log.Info($"MonsterMode attack: ragdollActive={playerRagdoll.IsActive} hit={hit} " +
+                 $"nearestBody={(nearest.HasValue ? nearest.Value.ToString("F2") : "n/a")} range={config.MonsterAttackRange:F1} impulse={config.MonsterAttackImpulse:F1}");
+
+        try { PlaySwing(); }
+        catch (Exception ex) { log.Warning(ex, "MonsterMode: swing failed"); }
     }
 
     // Fabricate an auto-attack ActionEffect from the monster so the real animation + sound play.
@@ -321,7 +324,6 @@ public unsafe class MonsterModeController : IDisposable
         movementBlock.RemoveApproachNpc(monsterAddress);
         activeCamera.GetOrbitCenterOverride = null;
         activeCamera.SetActive(prevActiveCamState);
-        cameraFollowsMonster = true;
 
         var mgr = ClientObjectManager.Instance();
         if (mgr != null) mgr->DeleteObjectByIndex((ushort)monsterIndex, 0);

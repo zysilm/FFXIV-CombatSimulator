@@ -3599,11 +3599,29 @@ public unsafe class RagdollController : IDisposable
         var dir = horiz.LengthSquared() > 0.0001f ? Vector3.Normalize(horiz) : Vector3.UnitX;
         var impulse = dir * strength + Vector3.UnitY * (strength * upBias);
 
+        // A fully settled corpse is asleep. Setting velocity on a sleeping body before it is
+        // activated doesn't stick, and a single woken body anchored to a sleeping constraint
+        // island won't move. Wake the whole ragdoll first, THEN apply the impulse.
+        WakeRagdollBodiesForBiomechanicalSettle();
         var body = simulation.Bodies.GetBodyReference(best.Value);
-        body.Velocity.Linear += impulse;
         body.Awake = true;
+        body.Velocity.Linear += impulse;
         BeginBiomechanicalSettle();
         return true;
+    }
+
+    /// <summary>Distance from <paramref name="from"/> to the nearest ragdoll body, or null if none.</summary>
+    public float? NearestBodyDistance(Vector3 from)
+    {
+        if (simulation == null || !isActive) return null;
+        float? best = null;
+        foreach (var rb in ragdollBones)
+        {
+            var pos = simulation.Bodies.GetBodyReference(rb.BodyHandle).Pose.Position;
+            var d = Vector3.Distance(pos, from);
+            if (best == null || d < best.Value) best = d;
+        }
+        return best;
     }
 
     /// <summary>
