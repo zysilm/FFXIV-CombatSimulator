@@ -2228,8 +2228,10 @@ public unsafe class CombatCompanionManager : IDisposable
         try
         {
             movementBlockHook.RemoveApproachNpc(companion.Address);
+            // Only touch game memory while the session is alive — on game close Dispose runs after
+            // the game freed these objects, so DisableDraw/DeleteObjectByIndex would crash.
             var clientObjMgr = ClientObjectManager.Instance();
-            if (clientObjMgr != null && companion.ObjectIndex >= 0)
+            if (clientObjMgr != null && companion.ObjectIndex >= 0 && Core.Services.ObjectTable.LocalPlayer != null)
             {
                 if (companion.BattleChara != null)
                     ((GameObject*)companion.BattleChara)->DisableDraw();

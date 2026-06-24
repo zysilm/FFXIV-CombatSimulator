@@ -375,16 +375,25 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         pluginInterface.UiBuilder.OpenConfigUi -= OnOpenConfig;
         commandManager.RemoveHandler(CommandName);
 
-        RestoreOcclusionHiddenNpcs();
-        DeactivateAllNpcRagdolls();
-        npcSpawner.SpawnModeActive = false;
-        companionManager.DespawnAll();
-        companionManager.Dispose();
-        npcSpawner.DespawnAll();
-        npcSpawner.Dispose();
-        combatEngine.StopSimulation();
-        npcSelector.DeselectAll();
+        // Game-state cleanup touches live game objects (despawn, restore animations/visibility).
+        // On game CLOSE, Dispose runs after the game has freed those objects, so doing it would
+        // dereference freed memory and crash. Only do it while a session is alive (plugin unload
+        // while playing); on close the game frees everything itself.
+        if (Core.Services.ObjectTable.LocalPlayer != null)
+        {
+            RestoreOcclusionHiddenNpcs();
+            DeactivateAllNpcRagdolls();
+            npcSpawner.SpawnModeActive = false;
+            companionManager.DespawnAll();
+            npcSpawner.DespawnAll();
+            combatEngine.StopSimulation();
+            npcSelector.DeselectAll();
+        }
 
+        // Resource disposal (BEPU sims, hooks, event handlers) — always safe; any game-memory
+        // access inside is itself guarded.
+        companionManager.Dispose();
+        npcSpawner.Dispose();
         useActionHook.Dispose();
         playerTargetController.Dispose();
         movementBlockHook.Dispose();

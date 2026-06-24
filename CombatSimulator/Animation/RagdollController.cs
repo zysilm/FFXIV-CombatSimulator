@@ -1003,7 +1003,9 @@ public unsafe class RagdollController : IDisposable
         // (not physicsStarted) so a freeze that happened during a FAILED InitializePhysics
         // is still undone — otherwise the corpse would be stuck at OverallSpeed=0 forever,
         // and a later re-Activate would save that 0 as the "original" speed (sticky freeze).
-        if (targetCharacterAddress != nint.Zero && animationFrozen)
+        // Skip the character write during game shutdown — the actor is already freed then and the
+        // write would crash (this runs from Dispose on game close). LocalPlayer null => closing.
+        if (targetCharacterAddress != nint.Zero && animationFrozen && Core.Services.ObjectTable.LocalPlayer != null)
         {
             try
             {

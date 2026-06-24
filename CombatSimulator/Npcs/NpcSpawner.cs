@@ -403,8 +403,11 @@ public unsafe class NpcSpawner : IDisposable
 
         try
         {
+            // Only touch game memory while the session is alive. On game close Dispose runs after
+            // the game has freed these objects, so DisableDraw/DeleteObjectByIndex would dereference
+            // freed memory and crash (the game frees them itself).
             var clientObjMgr = ClientObjectManager.Instance();
-            if (clientObjMgr != null && npc.ObjectIndex >= 0)
+            if (clientObjMgr != null && npc.ObjectIndex >= 0 && Core.Services.ObjectTable.LocalPlayer != null)
             {
                 if (npc.BattleChara != null)
                 {
