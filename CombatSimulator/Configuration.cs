@@ -271,7 +271,7 @@ public class Configuration : IPluginConfiguration
     public uint MonsterModelId { get; set; } = 38;      // BNpcBaseId — 38 = Bat
     public uint MonsterModelNameId { get; set; } = 38;  // BNpcNameId
     public float MonsterMoveSpeed { get; set; } = 6f;
-    public float MonsterVerticalSpeed { get; set; } = 4f;
+    public float MonsterVerticalSpeed { get; set; } = 2.5f;
     public float MonsterAttackImpulse { get; set; } = 15f;
     public float MonsterAttackRange { get; set; } = 3f;
     public int MonsterAttackKey { get; set; } = 0x59; // VirtualKey.Y — adjustable normal-attack key

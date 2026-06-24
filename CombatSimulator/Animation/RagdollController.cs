@@ -161,6 +161,7 @@ public unsafe class RagdollController : IDisposable
     // NPC bone collision — per-bone static capsules for active targets
     private readonly List<NpcCollisionState> npcCollisionStates = new();
     private TypedIndex npcFallbackShapeIndex;   // single-capsule fallback shape
+    private bool npcFallbackShapeReady;         // whether npcFallbackShapeIndex has been created this sim
 
 
     public bool IsActive => isActive;
@@ -2201,6 +2202,7 @@ public unsafe class RagdollController : IDisposable
             var fbRadius = config.RagdollNpcCollisionAutoSize ? 0.35f : 0.3f * scale;
             var fbLength = config.RagdollNpcCollisionAutoSize ? 1.2f : MathF.Max(0.2f, 1.6f - fbRadius * 2f);
             npcFallbackShapeIndex = simulation.Shapes.Add(new Capsule(fbRadius, fbLength));
+            npcFallbackShapeReady = true;
 
             log.Info($"RagdollController: NPC bone collision — {npcSelector.SelectedNpcs.Count} NPCs, autoSize={config.RagdollNpcCollisionAutoSize}, scale={scale:F2}");
 
@@ -3604,6 +3606,50 @@ public unsafe class RagdollController : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Register a live character as a moving collider in the ragdoll simulation AFTER activation
+    /// (the per-bone collision built at init only captures party/NPC actors that existed then).
+    /// Used by Monster mode so the creature physically pushes the ragdoll when it walks into it,
+    /// not just on an explicit attack. Returns false if the sim isn't ready yet — callers should
+    /// retry until it succeeds. Pair with <see cref="RemoveLiveCollider"/> before the actor despawns.
+    /// </summary>
+    public bool AddLiveCollider(nint address)
+    {
+        if (simulation == null || !isActive || !physicsStarted) return false;
+        if (address == nint.Zero || address == targetCharacterAddress) return false;
+        foreach (var s in npcCollisionStates)
+            if (s.NpcAddress == address) return false; // already registered
+        // Need a readable skeleton so we take the bone-capsule (or hull) path, not the fallback.
+        if (boneService.TryGetSkeleton(address) == null) return false;
+
+        // The fallback shape is only created at init when NPC collision was enabled — ensure it
+        // exists in case BuildCharacterCollision falls back.
+        if (!npcFallbackShapeReady)
+        {
+            npcFallbackShapeIndex = simulation.Shapes.Add(new Capsule(0.35f, 1.2f));
+            npcFallbackShapeReady = true;
+        }
+
+        var scale = config.RagdollNpcCollisionScale;
+        var capsuleRadius = config.RagdollNpcCollisionAutoSize ? NpcDefaultBoneRadius : NpcDefaultBoneRadius * scale;
+        var before = npcCollisionStates.Count;
+        BuildCharacterCollision(address, "monster", scale, capsuleRadius);
+        return npcCollisionStates.Count > before;
+    }
+
+    /// <summary>Remove a live collider registered via <see cref="AddLiveCollider"/> (parks its
+    /// statics far away and drops the per-frame tracking entry so a despawned actor isn't read).</summary>
+    public void RemoveLiveCollider(nint address)
+    {
+        if (simulation == null) return;
+        for (int i = npcCollisionStates.Count - 1; i >= 0; i--)
+        {
+            if (npcCollisionStates[i].NpcAddress != address) continue;
+            ParkNpcStatics(npcCollisionStates[i], new Vector3(0, -9999, 0));
+            npcCollisionStates.RemoveAt(i);
+        }
+    }
+
     private static readonly System.Random ShakeRng = new();
 
     public void ApplyShake(float intensity)
@@ -3638,6 +3684,7 @@ public unsafe class RagdollController : IDisposable
         biomechanicalSettleRemaining = 0f;
         ragdollBones.Clear();
         npcCollisionStates.Clear();
+        npcFallbackShapeReady = false;
         simulation?.Dispose();
         simulation = null;
         bufferPool?.Clear();

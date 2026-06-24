@@ -4122,6 +4122,13 @@ public class MainWindow : IDisposable
         if (ImGui.Button("Despawn##monster")) ctrl.Despawn();
         ImGui.EndDisabled();
 
+        ImGui.BeginDisabled(!active);
+        if (ImGui.Button($"Cam: {(ctrl.CameraFollowsMonster ? "Monster" : "Character")}##monster"))
+            ctrl.ToggleCamera();
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Switch the active camera between following the monster and your character.");
+
         ImGui.Separator();
 
         var moveSpeed = config.MonsterMoveSpeed;
@@ -4144,8 +4151,20 @@ public class MainWindow : IDisposable
             ImGui.EndCombo();
         }
 
+        if (ImGui.Button("Reset defaults##monster"))
+        {
+            config.MonsterMoveSpeed = 6f;
+            config.MonsterVerticalSpeed = 2.5f;
+            config.MonsterAttackImpulse = 15f;
+            config.MonsterAttackRange = 3f;
+            config.MonsterAttackKey = 0x59; // Y
+            config.MonsterModelId = 38;     // Bat
+            config.MonsterModelNameId = 38;
+            config.Save();
+        }
+
         ImGui.TextDisabled("WASD = camera-relative move · Q/E up/down");
-        ImGui.TextDisabled("Attack = key above, or your real auto-attack/gamepad");
+        ImGui.TextDisabled("Gamepad: left stick move · L2/R2 down/up · Cross attack");
         ImGui.TextDisabled(active ? "Monster: active" : "Monster: none");
 
         ImGui.End();

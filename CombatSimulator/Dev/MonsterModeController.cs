@@ -53,6 +53,8 @@ public unsafe class MonsterModeController : IDisposable
     private float posX, posY, posZ;
     private bool prevActiveCamState;
     private bool prevAttackKeyDown;
+    private bool colliderRegistered;
+    private bool cameraFollowsMonster = true;
     private readonly ActorVisualState visualState = new();
 
     public bool IsActive => monsterIndex >= 0;
@@ -89,6 +91,18 @@ public unsafe class MonsterModeController : IDisposable
             if (p.HasValue) return p.Value;
         }
         return new Vector3(posX, posY + 0.5f, posZ);
+    }
+
+    /// <summary>True when the active camera is orbiting the creature; false = orbiting the player.</summary>
+    public bool CameraFollowsMonster => cameraFollowsMonster;
+
+    /// <summary>Toggle the active camera between following the monster and the player (character cam).</summary>
+    public void ToggleCamera()
+    {
+        if (!IsActive) return;
+        cameraFollowsMonster = !cameraFollowsMonster;
+        // Override → monster; null → active camera falls back to the player's bone.
+        activeCamera.GetOrbitCenterOverride = cameraFollowsMonster ? CameraCenter : null;
     }
 
     public void Spawn()
@@ -149,6 +163,7 @@ public unsafe class MonsterModeController : IDisposable
 
         // Camera follows the creature (free orbit centered on it).
         prevActiveCamState = activeCamera.IsActive;
+        cameraFollowsMonster = true;
         activeCamera.GetOrbitCenterOverride = CameraCenter;
         activeCamera.SetActive(true);
 
@@ -174,6 +189,12 @@ public unsafe class MonsterModeController : IDisposable
             }
 
             if (!IsActive || monsterAddress == nint.Zero) return;
+
+            // Register the creature as a live collider so it physically pushes the ragdoll when it
+            // walks into it (not just on attack). Retries until the player ragdoll physics is ready.
+            if (!colliderRegistered && playerRagdoll.AddLiveCollider(monsterAddress))
+                colliderRegistered = true;
+
             if (ImGui.GetIO().WantTextInput) return;
 
             var dt = (float)fw.UpdateDelta.TotalSeconds;
@@ -291,9 +312,16 @@ public unsafe class MonsterModeController : IDisposable
     {
         if (monsterIndex < 0) { pendingDraw = false; return; }
 
+        // Stop the ragdoll referencing this address BEFORE the object is deleted.
+        if (colliderRegistered)
+        {
+            playerRagdoll.RemoveLiveCollider(monsterAddress);
+            colliderRegistered = false;
+        }
         movementBlock.RemoveApproachNpc(monsterAddress);
         activeCamera.GetOrbitCenterOverride = null;
         activeCamera.SetActive(prevActiveCamState);
+        cameraFollowsMonster = true;
 
         var mgr = ClientObjectManager.Instance();
         if (mgr != null) mgr->DeleteObjectByIndex((ushort)monsterIndex, 0);
