@@ -442,10 +442,17 @@ public unsafe class BoneHoldTestModeController : IDisposable
             if (grabEnabled) ragdollController.RemoveGrabConstraint();
         }
 
+        // Writing to NPC character memory is only safe with a live session AND a pointer that
+        // still refers to a real object. On game close the game has freed these (Dispose runs
+        // during shutdown) and a despawned NPC can leave a stale, non-null pointer — both cause
+        // an AccessViolation. Gate on a live local player and confirm the address is still in the
+        // object table.
+        var gameAlive = Core.Services.ObjectTable.LocalPlayer != null;
         foreach (var state in approachStates)
         {
             movementBlockHook.RemoveApproachNpc(state.Npc.Address);
-            if (!restoreNpc || state.Npc.BattleChara == null) continue;
+            if (!restoreNpc || !gameAlive || state.Npc.BattleChara == null || !IsAddressLive(state.Npc.Address))
+                continue;
             var character = (Character*)state.Npc.BattleChara;
             ActorVisualStateController.ClearMovement(character, state.Visual);
             emotePlayer.ResetEmote(character);
@@ -466,6 +473,16 @@ public unsafe class BoneHoldTestModeController : IDisposable
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// <summary>True if the address still refers to a live object in the table (guards against
+    /// freed/stale BattleChara pointers before dereferencing them).</summary>
+    private static bool IsAddressLive(nint address)
+    {
+        if (address == nint.Zero) return false;
+        foreach (var o in Core.Services.ObjectTable)
+            if (o.Address == address) return true;
+        return false;
+    }
 
     private void PerformAttackAnimation(SimulatedNpc npc)
     {

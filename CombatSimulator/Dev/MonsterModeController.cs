@@ -325,14 +325,20 @@ public unsafe class MonsterModeController : IDisposable
         activeCamera.GetOrbitCenterOverride = null;
         activeCamera.SetActive(prevActiveCamState);
 
-        // Tear down the draw object/skeleton BEFORE deleting the slot. Deleting a still-drawn
-        // character leaves its skeleton in the game's animation/look-at update and crashes the
-        // engine (matches NpcSpawner/CompanionManager despawn order).
-        if (monsterAddress != nint.Zero)
-            ((GameObject*)monsterAddress)->DisableDraw();
+        // Only touch game memory while the session is alive. During game shutdown Dispose runs
+        // after the game has freed these objects, so DisableDraw/DeleteObjectByIndex would
+        // dereference freed memory and crash. (The game frees the object itself on close.)
+        if (Core.Services.ObjectTable.LocalPlayer != null)
+        {
+            // Tear down the draw object/skeleton BEFORE deleting the slot — deleting a still-drawn
+            // character leaves its skeleton in the game's animation/look-at update and crashes the
+            // engine (matches NpcSpawner/CompanionManager despawn order).
+            if (monsterAddress != nint.Zero)
+                ((GameObject*)monsterAddress)->DisableDraw();
 
-        var mgr = ClientObjectManager.Instance();
-        if (mgr != null) mgr->DeleteObjectByIndex((ushort)monsterIndex, 0);
+            var mgr = ClientObjectManager.Instance();
+            if (mgr != null) mgr->DeleteObjectByIndex((ushort)monsterIndex, 0);
+        }
         log.Info($"MonsterMode: despawned index {monsterIndex}");
         monsterIndex = -1;
         monsterAddress = nint.Zero;
