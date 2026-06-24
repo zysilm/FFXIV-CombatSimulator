@@ -272,10 +272,11 @@ public class Configuration : IPluginConfiguration
     public uint MonsterModelNameId { get; set; } = 38;  // BNpcNameId
     public float MonsterMoveSpeed { get; set; } = 6f;
     public float MonsterVerticalSpeed { get; set; } = 2.5f;
-    public float MonsterAttackImpulse { get; set; } = 15f;
-    public float MonsterAttackRange { get; set; } = 3f;
     public int MonsterAttackKey { get; set; } = 0x59; // VirtualKey.Y — adjustable normal-attack key
     public bool MonsterCameraFollowsMonster { get; set; } = true; // remembered cam target (monster vs character)
+    // Strike: during an attack the monster's collider bones impart their swing velocity (× power) to
+    // nearby ragdoll bodies, so the hit lands forcefully at the limb's real contact point.
+    public float MonsterStrikePower { get; set; } = 1.5f;
     public bool KoStripHead { get; set; } = false;
     public bool KoStripBody { get; set; } = true;
     public bool KoStripHands { get; set; } = true;

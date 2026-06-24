@@ -274,21 +274,20 @@ public unsafe class MonsterModeController : IDisposable
         prevAttackKeyDown = down;
     }
 
-    /// <summary>Trigger the monster's attack — punt the ragdoll, then swing animation + sound.</summary>
+    private const float StrikeWindow = 0.5f; // seconds the strike window stays open (covers the swing)
+
+    /// <summary>Trigger the monster's attack — swing animation + sound; the swinging limb's collider
+    /// then flings the ragdoll at the real contact point.</summary>
     public void OnAttackInput()
     {
         if (!IsActive) return;
 
-        // Punt FIRST so a swing-animation failure can't skip the physics.
-        var monsterPos = new Vector3(posX, posY, posZ);
-        var hit = playerRagdoll.IsActive &&
-                  playerRagdoll.PuntNearest(monsterPos, config.MonsterAttackRange, config.MonsterAttackImpulse);
-        var nearest = playerRagdoll.NearestBodyDistance(monsterPos);
-        log.Info($"MonsterMode attack: ragdollActive={playerRagdoll.IsActive} hit={hit} " +
-                 $"nearestBody={(nearest.HasValue ? nearest.Value.ToString("F2") : "n/a")} range={config.MonsterAttackRange:F1} impulse={config.MonsterAttackImpulse:F1}");
-
+        // The swing animation moves the monster's colliders; the strike rides on it, so play it first.
         try { PlaySwing(); }
         catch (Exception ex) { log.Warning(ex, "MonsterMode: swing failed"); }
+
+        if (playerRagdoll.IsActive)
+            playerRagdoll.BeginAttackStrike(StrikeWindow, config.MonsterStrikePower);
     }
 
     // Fabricate an auto-attack ActionEffect from the monster so the real animation + sound play.

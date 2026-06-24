@@ -4135,10 +4135,10 @@ public class MainWindow : IDisposable
         if (ImGui.SliderFloat("Move##monster", ref moveSpeed, 1f, 20f, "%.1f")) { config.MonsterMoveSpeed = moveSpeed; config.Save(); }
         var vSpeed = config.MonsterVerticalSpeed;
         if (ImGui.SliderFloat("Fly##monster", ref vSpeed, 1f, 15f, "%.1f")) { config.MonsterVerticalSpeed = vSpeed; config.Save(); }
-        var impulse = config.MonsterAttackImpulse;
-        if (ImGui.SliderFloat("Impulse##monster", ref impulse, 1f, 60f, "%.1f")) { config.MonsterAttackImpulse = impulse; config.Save(); }
-        var range = config.MonsterAttackRange;
-        if (ImGui.SliderFloat("Range##monster", ref range, 1f, 10f, "%.1f")) { config.MonsterAttackRange = range; config.Save(); }
+        var strikePower = config.MonsterStrikePower;
+        if (ImGui.SliderFloat("Strike power##monster", ref strikePower, 0.2f, 6f, "%.2f")) { config.MonsterStrikePower = strikePower; config.Save(); }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("How hard the swinging limb flings the body (multiplies the limb's swing speed).");
 
         var keyIdx = Array.FindIndex(MonsterAttackKeys, k => k.Key == config.MonsterAttackKey);
         if (keyIdx < 0) keyIdx = 0;
@@ -4155,8 +4155,7 @@ public class MainWindow : IDisposable
         {
             config.MonsterMoveSpeed = 6f;
             config.MonsterVerticalSpeed = 2.5f;
-            config.MonsterAttackImpulse = 15f;
-            config.MonsterAttackRange = 3f;
+            config.MonsterStrikePower = 1.5f;
             config.MonsterAttackKey = 0x59; // Y
             config.MonsterModelId = 38;     // Bat
             config.MonsterModelNameId = 38;

@@ -162,6 +162,12 @@ public unsafe class RagdollController : IDisposable
     private readonly List<NpcCollisionState> npcCollisionStates = new();
     private TypedIndex npcFallbackShapeIndex;   // single-capsule fallback shape
     private bool npcFallbackShapeReady;         // whether npcFallbackShapeIndex has been created this sim
+    // Monster strike: during the attack window the monster's collider bones impart their swing
+    // velocity as an impulse to nearby ragdoll bodies (a fast swing = a heavy hit, at the limb's
+    // real contact point).
+    private float attackStrikeTimer;
+    private float strikePower;
+    private nint strikeColliderAddress;
 
 
     public bool IsActive => isActive;
@@ -1028,6 +1034,8 @@ public unsafe class RagdollController : IDisposable
         {
             var dt = ComputeFrameDelta();
             elapsed += dt;
+
+            if (attackStrikeTimer > 0f) attackStrikeTimer -= dt;
 
             // Wait for activation delay (death animation plays first)
             if (!physicsStarted)
@@ -2949,6 +2957,8 @@ public unsafe class RagdollController : IDisposable
                     npcSkeleton->Transform.Rotation.Z,
                     npcSkeleton->Transform.Rotation.W);
 
+                var doStrike = attackStrikeTimer > 0f && npcState.NpcAddress == strikeColliderAddress;
+
                 for (int b = 0; b < npcState.BoneStatics.Count; b++)
                 {
                     var bs = npcState.BoneStatics[b];
@@ -2984,9 +2994,20 @@ public unsafe class RagdollController : IDisposable
                     }
 
                     var staticRef = simulation.Statics.GetStaticReference(bs.Handle);
+                    var oldPos = staticRef.Pose.Position;
                     staticRef.Pose.Position = capsuleCenter;
                     staticRef.Pose.Orientation = capsuleRot;
                     staticRef.UpdateBounds();
+
+                    // Monster strike: this collider bone moved from oldPos→capsuleCenter this frame.
+                    // During the attack window, impart that swing velocity to nearby ragdoll bodies,
+                    // so a fast-swinging limb forcefully flings the body at the real contact point.
+                    if (doStrike && dt > 0f)
+                    {
+                        var swingVel = (capsuleCenter - oldPos) / dt;
+                        if (swingVel.LengthSquared() > StrikeMinSpeed * StrikeMinSpeed)
+                            ApplyStrikeImpulse(capsuleCenter, swingVel, StrikeContactRadius);
+                    }
                 }
             }
             catch { }
@@ -3610,6 +3631,26 @@ public unsafe class RagdollController : IDisposable
         return true;
     }
 
+    // Monster strike tuning: a collider bone must move faster than this to register a hit, and only
+    // ragdoll bodies within this radius of the bone are hit.
+    private const float StrikeMinSpeed = 1.5f;      // m/s
+    private const float StrikeContactRadius = 0.6f; // m
+
+    /// <summary>Impart a swing as an impulse to ragdoll bodies near <paramref name="point"/>.</summary>
+    private void ApplyStrikeImpulse(Vector3 point, Vector3 swingVel, float radius)
+    {
+        if (simulation == null) return;
+        var impulse = swingVel * strikePower;
+        var radiusSq = radius * radius;
+        foreach (var rb in ragdollBones)
+        {
+            var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            if (Vector3.DistanceSquared(bodyRef.Pose.Position, point) > radiusSq) continue;
+            bodyRef.Velocity.Linear += impulse;
+            bodyRef.Awake = true;
+        }
+    }
+
     /// <summary>Distance from <paramref name="from"/> to the nearest ragdoll body, or null if none.</summary>
     public float? NearestBodyDistance(Vector3 from)
     {
@@ -3652,7 +3693,9 @@ public unsafe class RagdollController : IDisposable
         var capsuleRadius = config.RagdollNpcCollisionAutoSize ? NpcDefaultBoneRadius : NpcDefaultBoneRadius * scale;
         var before = npcCollisionStates.Count;
         BuildCharacterCollision(address, "monster", scale, capsuleRadius);
-        return npcCollisionStates.Count > before;
+        if (npcCollisionStates.Count <= before) return false;
+        strikeColliderAddress = address; // this collider's bones drive the attack strike
+        return true;
     }
 
     /// <summary>Remove a live collider registered via <see cref="AddLiveCollider"/> (parks its
@@ -3660,12 +3703,26 @@ public unsafe class RagdollController : IDisposable
     public void RemoveLiveCollider(nint address)
     {
         if (simulation == null) return;
+        if (strikeColliderAddress == address) strikeColliderAddress = nint.Zero;
         for (int i = npcCollisionStates.Count - 1; i >= 0; i--)
         {
             if (npcCollisionStates[i].NpcAddress != address) continue;
             ParkNpcStatics(npcCollisionStates[i], new Vector3(0, -9999, 0));
             npcCollisionStates.RemoveAt(i);
         }
+    }
+
+    /// <summary>
+    /// Open a brief strike window: while it's open, the monster's collider bones impart their
+    /// swing velocity (× <paramref name="power"/>) as an impulse to nearby ragdoll bodies, so the
+    /// attack flings the body where the limb actually lands. Auto-closes after <paramref name="duration"/>s.
+    /// </summary>
+    public void BeginAttackStrike(float duration, float power)
+    {
+        strikePower = power;
+        attackStrikeTimer = MathF.Max(attackStrikeTimer, duration);
+        WakeRagdollBodiesForBiomechanicalSettle();
+        BeginBiomechanicalSettle();
     }
 
     private static readonly System.Random ShakeRng = new();
@@ -3703,6 +3760,9 @@ public unsafe class RagdollController : IDisposable
         ragdollBones.Clear();
         npcCollisionStates.Clear();
         npcFallbackShapeReady = false;
+        attackStrikeTimer = 0f;
+        strikePower = 0f;
+        strikeColliderAddress = nint.Zero;
         simulation?.Dispose();
         simulation = null;
         bufferPool?.Clear();
