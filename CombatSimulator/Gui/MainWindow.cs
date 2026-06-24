@@ -4096,8 +4096,23 @@ public class MainWindow : IDisposable
         if (ImGui.Checkbox("Spawn on death##monster", ref onDeath))
         {
             config.MonsterSpawnOnDeath = onDeath;
+            if (onDeath) config.MonsterControlKiller = false; // mutually exclusive
             config.Save();
         }
+
+        var controlKiller = config.MonsterControlKiller;
+        if (ImGui.Checkbox("Control killer on death##monster", ref controlKiller))
+        {
+            config.MonsterControlKiller = controlKiller;
+            if (controlKiller)
+            {
+                config.MonsterSpawnOnDeath = false; // can't spawn while controlling the killer
+                ctrl.Despawn();                      // force-despawn any active monster
+            }
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("On death, take control of the enemy that just defeated you instead of\nspawning a creature. Same controls. Disables spawning while on.");
 
         var modelIdx = Array.FindIndex(MonsterModels, m => m.Id == config.MonsterModelId);
         if (modelIdx < 0) modelIdx = 0;
@@ -4114,7 +4129,7 @@ public class MainWindow : IDisposable
             ImGui.EndCombo();
         }
 
-        ImGui.BeginDisabled(active);
+        ImGui.BeginDisabled(active || config.MonsterControlKiller);
         if (ImGui.Button("Spawn##monster")) ctrl.Spawn();
         ImGui.EndDisabled();
         ImGui.SameLine();

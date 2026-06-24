@@ -182,7 +182,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcAiController = new NpcAiController(
             combatEngine, animationController, movementBlockHook, vnavmeshIpc,
             clientState, config, partyEngagePlanner, terrainHeightService, log,
-            combatModeRouter, victorySequenceController.ControlsNpc);
+            combatModeRouter,
+            addr => victorySequenceController.ControlsNpc(addr) || monsterModeController.ControlsNpc(addr));
 
         // Custom in-sim target lock system (综合提升). Takes over the game's target
         // keybinds during simulation; the engine reads the locked target for
@@ -293,7 +294,16 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         {
             weaponDropController.SpawnFor(addr, config.RagdollActivationDelay);
             koStripController.StripOnKo(addr);
-            if (config.MonsterSpawnOnDeath) monsterModeController.Spawn();
+            if (config.MonsterControlKiller)
+            {
+                var killer = FindNpcByAddress(combatEngine.LastPlayerKillerAddress);
+                if (killer != null) monsterModeController.ControlKiller(killer);
+                else log.Info("MonsterMode: no valid killer to control.");
+            }
+            else if (config.MonsterSpawnOnDeath)
+            {
+                monsterModeController.Spawn();
+            }
             activeCameraController.NotifyCombatantDeath(addr, isPlayer: true);
         };
 
@@ -642,6 +652,14 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             log.Error(ex, "Error in framework update, stopping simulation.");
             combatEngine.StopSimulation();
         }
+    }
+
+    private SimulatedNpc? FindNpcByAddress(nint address)
+    {
+        if (address == nint.Zero) return null;
+        foreach (var npc in npcSelector.SelectedNpcs)
+            if (npc.Address == address && npc.BattleChara != null) return npc;
+        return null;
     }
 
     private void OnNpcDeathRagdoll(nint address)

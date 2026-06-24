@@ -268,6 +268,7 @@ public class Configuration : IPluginConfiguration
     // and can punt the ground ragdoll with an adjustable impulse.
     public bool ShowMonsterToolbar { get; set; } = false;
     public bool MonsterSpawnOnDeath { get; set; } = false;
+    public bool MonsterControlKiller { get; set; } = false; // on death, control the enemy that killed you (instead of spawning)
     public uint MonsterModelId { get; set; } = 38;      // BNpcBaseId — 38 = Bat
     public uint MonsterModelNameId { get; set; } = 38;  // BNpcNameId
     public float MonsterMoveSpeed { get; set; } = 6f;

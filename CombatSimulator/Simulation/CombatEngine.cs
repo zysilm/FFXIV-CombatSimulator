@@ -99,6 +99,8 @@ public class CombatEngine : IDisposable
     // attacker's simulated entity id. Drives auto-counter target acquisition.
     public Action<uint>? OnPlayerHitByNpc { get; set; }
     public string LastPlayerDefeatedBy { get; private set; } = string.Empty;
+    /// <summary>Address of the NPC that landed the killing blow on the player (0 if none).</summary>
+    public nint LastPlayerKillerAddress { get; private set; }
 
     /// <summary>
     /// Fired at the end of StopSimulation and ResetState — i.e. whenever the
@@ -192,6 +194,7 @@ public class CombatEngine : IDisposable
         State.CombatStartTime = 0;
         playerDeathTriggered = false;
         LastPlayerDefeatedBy = string.Empty;
+        LastPlayerKillerAddress = nint.Zero;
         victoryTriggered = false;
         glamourerApplied = false;
         playerInitiatedCombat = false;
@@ -248,6 +251,7 @@ public class CombatEngine : IDisposable
         RevertGlamourer();
         playerInitiatedCombat = false;
         LastPlayerDefeatedBy = string.Empty;
+        LastPlayerKillerAddress = nint.Zero;
 
         AddLogEntry("Combat simulation stopped.", CombatLogType.Info);
         log.Info("Combat simulation stopped.");
@@ -297,6 +301,7 @@ public class CombatEngine : IDisposable
 
         playerDeathTriggered = false;
         LastPlayerDefeatedBy = string.Empty;
+        LastPlayerKillerAddress = nint.Zero;
         victoryTriggered = false;
         glamourerApplied = false;
         playerInitiatedCombat = false;
@@ -328,6 +333,7 @@ public class CombatEngine : IDisposable
 
         playerDeathTriggered = false;
         LastPlayerDefeatedBy = string.Empty;
+        LastPlayerKillerAddress = nint.Zero;
         animationController.ResetPlayerDeathAnimation();
         animationController.RestorePlayerCombatVisualState();
         movementBlockHook.IsBlocking = false;
@@ -701,7 +707,10 @@ public class CombatEngine : IDisposable
         if (!target.IsAlive)
         {
             if (target.IsPlayer)
+            {
                 LastPlayerDefeatedBy = npc.Name;
+                LastPlayerKillerAddress = npc.Address;
+            }
             result.TargetKilled = true;
             OnEntityDeath(target);
         }
@@ -711,7 +720,10 @@ public class CombatEngine : IDisposable
                 continue;
 
             if (hit.Target.IsPlayer)
+            {
                 LastPlayerDefeatedBy = npc.Name;
+                LastPlayerKillerAddress = npc.Address;
+            }
             OnEntityDeath(hit.Target);
         }
 

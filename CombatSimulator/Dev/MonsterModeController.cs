@@ -42,9 +42,11 @@ public unsafe class MonsterModeController : IDisposable
     private readonly Configuration config;
     private readonly IPluginLog log;
 
-    private int monsterIndex = -1;
+    private int monsterIndex = -1;       // ClientObjectManager index (only when we spawned the object)
     private uint monsterEntityId;
     private nint monsterAddress;
+    private bool ownsObject;              // true = we spawned it (delete on despawn); false = controlling an existing enemy
+    private Npcs.SimulatedNpc? controlledNpc; // the killer we took over (so we can release its AI)
     private bool pendingDraw;
     private int framesWaited;
     private const int MaxPendingFrames = 60;
@@ -56,7 +58,10 @@ public unsafe class MonsterModeController : IDisposable
     private bool colliderRegistered;
     private readonly ActorVisualState visualState = new();
 
-    public bool IsActive => monsterIndex >= 0;
+    public bool IsActive => monsterAddress != nint.Zero;
+
+    /// <summary>True while we're controlling an existing enemy at this address (suppresses its AI).</summary>
+    public bool ControlsNpc(nint address) => controlledNpc != null && controlledNpc.Address == address;
 
     public MonsterModeController(IKeyState keyState, IGamepadState gamepad, IFramework framework,
         RagdollController playerRagdoll, AnimationController animation, BoneTransformService boneService,
@@ -156,18 +161,50 @@ public unsafe class MonsterModeController : IDisposable
 
         monsterIndex = index;
         monsterAddress = (nint)obj;
+        ownsObject = true;
         pendingDraw = true;
         framesWaited = 0;
+        BeginControl(spawnPos, yaw);
 
-        // Block the game from moving the creature so our writes win.
+        log.Info($"MonsterMode: spawned model={config.MonsterModelId} at index {index} (0x{monsterAddress:X})");
+    }
+
+    /// <summary>
+    /// Take control of an existing enemy (the one that just defeated the player) instead of
+    /// spawning a creature. Same controls; we don't own the object (no delete on release).
+    /// </summary>
+    public void ControlKiller(Npcs.SimulatedNpc killer)
+    {
+        if (IsActive) { log.Info("MonsterMode: already active"); return; }
+        if (killer.BattleChara == null || killer.Address == nint.Zero) { log.Warning("MonsterMode: killer invalid"); return; }
+
+        var obj = (GameObject*)killer.Address;
+        if (obj->DrawObject == null) { log.Warning("MonsterMode: killer not drawn"); return; }
+
+        controlledNpc = killer;
+        killer.IsClientControlled = true; // suppress its AI behaviours
+        monsterIndex = -1;
+        ownsObject = false;
+        monsterAddress = killer.Address;
+        monsterEntityId = obj->EntityId;
+        pendingDraw = false; // already drawn
+        var pos = new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z);
+        posX = pos.X; posY = pos.Y; posZ = pos.Z;
+        yaw = obj->Rotation;
+        BeginControl(pos, yaw);
+
+        log.Info($"MonsterMode: controlling killer '{killer.Name}' (0x{monsterAddress:X})");
+    }
+
+    private void BeginControl(Vector3 pos, float rot)
+    {
+        posX = pos.X; posY = pos.Y; posZ = pos.Z; yaw = rot;
+        // Block the game from moving the actor so our writes win.
         movementBlock.AddApproachNpc(monsterAddress);
-
         // Camera follows per the remembered preference (monster vs character) — don't force it.
         prevActiveCamState = activeCamera.IsActive;
         activeCamera.GetOrbitCenterOverride = config.MonsterCameraFollowsMonster ? CameraCenter : null;
         activeCamera.SetActive(true);
-
-        log.Info($"MonsterMode: spawned model={config.MonsterModelId} at index {index} (0x{monsterAddress:X})");
     }
 
     private void OnUpdate(IFramework fw)
@@ -312,7 +349,7 @@ public unsafe class MonsterModeController : IDisposable
 
     public void Despawn()
     {
-        if (monsterIndex < 0) { pendingDraw = false; return; }
+        if (monsterAddress == nint.Zero) { pendingDraw = false; return; }
 
         // Stop the ragdoll referencing this address BEFORE the object is deleted.
         if (colliderRegistered)
@@ -324,23 +361,29 @@ public unsafe class MonsterModeController : IDisposable
         activeCamera.GetOrbitCenterOverride = null;
         activeCamera.SetActive(prevActiveCamState);
 
-        // Only touch game memory while the session is alive. During game shutdown Dispose runs
-        // after the game has freed these objects, so DisableDraw/DeleteObjectByIndex would
-        // dereference freed memory and crash. (The game frees the object itself on close.)
-        if (Core.Services.ObjectTable.LocalPlayer != null)
+        // Controlled killer: it's a real enemy we don't own — release its AI, never delete it.
+        if (controlledNpc != null)
         {
-            // Tear down the draw object/skeleton BEFORE deleting the slot — deleting a still-drawn
-            // character leaves its skeleton in the game's animation/look-at update and crashes the
-            // engine (matches NpcSpawner/CompanionManager despawn order).
-            if (monsterAddress != nint.Zero)
-                ((GameObject*)monsterAddress)->DisableDraw();
-
-            var mgr = ClientObjectManager.Instance();
-            if (mgr != null) mgr->DeleteObjectByIndex((ushort)monsterIndex, 0);
+            controlledNpc.IsClientControlled = false;
+            controlledNpc = null;
+            // Reset our move-anim override only while the session is alive (avoid touching freed memory on close).
+            if (Core.Services.ObjectTable.LocalPlayer != null)
+                ActorVisualStateController.ClearMovement((Character*)monsterAddress, visualState);
         }
-        log.Info($"MonsterMode: despawned index {monsterIndex}");
+        // Spawned creature: delete the object. Only touch game memory while the session is alive —
+        // during game shutdown the game has already freed it (DisableDraw/Delete would crash).
+        else if (ownsObject && Core.Services.ObjectTable.LocalPlayer != null)
+        {
+            // Tear down the draw object/skeleton BEFORE deleting the slot (matches NpcSpawner order).
+            ((GameObject*)monsterAddress)->DisableDraw();
+            var mgr = ClientObjectManager.Instance();
+            if (mgr != null && monsterIndex >= 0) mgr->DeleteObjectByIndex((ushort)monsterIndex, 0);
+        }
+
+        log.Info($"MonsterMode: despawned (owned={ownsObject}, idx={monsterIndex})");
         monsterIndex = -1;
         monsterAddress = nint.Zero;
+        ownsObject = false;
         pendingDraw = false;
     }
 
