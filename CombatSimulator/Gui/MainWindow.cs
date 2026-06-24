@@ -4151,7 +4151,11 @@ public class MainWindow : IDisposable
         var vSpeed = config.MonsterVerticalSpeed;
         if (ImGui.SliderFloat("Fly##monster", ref vSpeed, 1f, 15f, "%.1f")) { config.MonsterVerticalSpeed = vSpeed; config.Save(); }
         var strikePower = config.MonsterStrikePower;
-        if (ImGui.SliderFloat("Strike power##monster", ref strikePower, 0.2f, 6f, "%.2f")) { config.MonsterStrikePower = strikePower; config.Save(); }
+        if (ImGui.SliderFloat("Strike power##monster", ref strikePower, 0.01f, 2f, "%.2f"))
+        {
+            config.MonsterStrikePower = MathF.Round(strikePower, 2); // 0.01 steps
+            config.Save();
+        }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("How hard the swinging limb flings the body (multiplies the limb's swing speed).");
 
@@ -4170,7 +4174,7 @@ public class MainWindow : IDisposable
         {
             config.MonsterMoveSpeed = 6f;
             config.MonsterVerticalSpeed = 2.5f;
-            config.MonsterStrikePower = 1.5f;
+            config.MonsterStrikePower = 0.1f;
             config.MonsterAttackKey = 0x59; // Y
             config.MonsterModelId = 38;     // Bat
             config.MonsterModelNameId = 38;

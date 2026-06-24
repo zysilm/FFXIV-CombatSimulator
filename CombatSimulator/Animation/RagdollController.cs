@@ -9,6 +9,7 @@ using BepuUtilities;
 using BepuUtilities.Memory;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using BepuSimulation = BepuPhysics.Simulation;
 
@@ -168,6 +169,13 @@ public unsafe class RagdollController : IDisposable
     private float attackStrikeTimer;
     private float strikePower;
     private nint strikeColliderAddress;
+    // Weapon strike: a humanoid's weapon is a separate draw object (not in the bone capsules), so
+    // track its blade endpoints to give a sword swing its own velocity-driven hit.
+    private Vector3 prevBladeA, prevBladeB;
+    private bool weaponPrevValid;
+    // Each body is struck at most once per swing — the window spans many frames, so striking every
+    // frame accumulated into a launch. One hit per swing makes strike power linear/predictable.
+    private readonly HashSet<int> struckThisWindow = new();
 
 
     public bool IsActive => isActive;
@@ -1036,6 +1044,7 @@ public unsafe class RagdollController : IDisposable
             elapsed += dt;
 
             if (attackStrikeTimer > 0f) attackStrikeTimer -= dt;
+            UpdateWeaponStrike(dt);
 
             // Wait for activation delay (death animation plays first)
             if (!physicsStarted)
@@ -3636,17 +3645,91 @@ public unsafe class RagdollController : IDisposable
     private const float StrikeMinSpeed = 1.5f;      // m/s
     private const float StrikeContactRadius = 0.6f; // m
 
+    // A strike knocks the body AWAY from the contact point (outward + a little up), with strength
+    // from the swing SPEED — using the raw swing velocity would drag the body along the arc (toward
+    // the attacker on the retract phase).
+    private const float StrikeUpBias = 0.3f;
+
+    private Vector3 StrikeImpulse(Vector3 bodyPos, Vector3 contactPoint, float swingSpeed)
+    {
+        var away = new Vector3(bodyPos.X - contactPoint.X, 0f, bodyPos.Z - contactPoint.Z);
+        var dir = away.LengthSquared() > 1e-6f ? Vector3.Normalize(away) : Vector3.UnitX;
+        return (dir + Vector3.UnitY * StrikeUpBias) * (swingSpeed * strikePower);
+    }
+
     /// <summary>Impart a swing as an impulse to ragdoll bodies near <paramref name="point"/>.</summary>
     private void ApplyStrikeImpulse(Vector3 point, Vector3 swingVel, float radius)
     {
         if (simulation == null) return;
-        var impulse = swingVel * strikePower;
+        var speed = swingVel.Length();
         var radiusSq = radius * radius;
         foreach (var rb in ragdollBones)
         {
             var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
-            if (Vector3.DistanceSquared(bodyRef.Pose.Position, point) > radiusSq) continue;
-            bodyRef.Velocity.Linear += impulse;
+            var p = bodyRef.Pose.Position;
+            if (Vector3.DistanceSquared(p, point) > radiusSq) continue;
+            if (!struckThisWindow.Add(rb.BodyHandle.Value)) continue; // one hit per swing
+            bodyRef.Velocity.Linear += StrikeImpulse(p, point, speed);
+            bodyRef.Awake = true;
+        }
+    }
+
+    private const float WeaponStrikeRadius = 0.55f; // generous around the blade line (weapons are thin)
+
+    /// <summary>
+    /// A humanoid's weapon is a separate draw object, so it isn't in the bone collision capsules.
+    /// Treat the blade as a line segment (its world transform lives on the weapon's own skeleton root
+    /// — DrawObject.Position alone doesn't move the mesh) and, during the attack window, impart its
+    /// swing velocity to ragdoll bodies near the blade. No-op for unarmed/creature models.
+    /// </summary>
+    private void UpdateWeaponStrike(float dt)
+    {
+        if (simulation == null || strikeColliderAddress == nint.Zero) { weaponPrevValid = false; return; }
+        var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)strikeColliderAddress;
+        if (gameObj->DrawObject == null) { weaponPrevValid = false; return; }
+        var character = (Character*)strikeColliderAddress;
+        var weaponDraw = character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).DrawObject;
+        if (weaponDraw == null) { weaponPrevValid = false; return; }
+
+        var sk = ((CharacterBase*)weaponDraw)->Skeleton;
+        if (sk == null) { weaponPrevValid = false; return; }
+        var center = new Vector3(sk->Transform.Position.X, sk->Transform.Position.Y, sk->Transform.Position.Z);
+        var rot = new Quaternion(sk->Transform.Rotation.X, sk->Transform.Rotation.Y, sk->Transform.Rotation.Z, sk->Transform.Rotation.W);
+        // Weapon-drop models the weapon as a Y-aligned capsule, so the blade runs along local Y.
+        // Sample both ends so the blade direction's sign doesn't matter.
+        var dir = Vector3.Transform(Vector3.UnitY, rot);
+        var half = MathF.Max(0.4f, config.WeaponDropHalfLength);
+        var a = center - dir * half;
+        var b = center + dir * half;
+
+        if (attackStrikeTimer > 0f && weaponPrevValid && dt > 0f)
+        {
+            var vel = ((a - prevBladeA) + (b - prevBladeB)) * (0.5f / dt);
+            if (vel.LengthSquared() > StrikeMinSpeed * StrikeMinSpeed)
+                ApplyStrikeImpulseSegment(a, b, vel, WeaponStrikeRadius);
+        }
+        prevBladeA = a;
+        prevBladeB = b;
+        weaponPrevValid = true;
+    }
+
+    /// <summary>Strike ragdoll bodies near the blade line segment a→b.</summary>
+    private void ApplyStrikeImpulseSegment(Vector3 a, Vector3 b, Vector3 swingVel, float radius)
+    {
+        if (simulation == null) return;
+        var speed = swingVel.Length();
+        var ab = b - a;
+        var abLenSq = ab.LengthSquared();
+        var radiusSq = radius * radius;
+        foreach (var rb in ragdollBones)
+        {
+            var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            var p = bodyRef.Pose.Position;
+            var t = abLenSq > 1e-6f ? Math.Clamp(Vector3.Dot(p - a, ab) / abLenSq, 0f, 1f) : 0f;
+            var closest = a + ab * t;
+            if (Vector3.DistanceSquared(p, closest) > radiusSq) continue;
+            if (!struckThisWindow.Add(rb.BodyHandle.Value)) continue; // one hit per swing
+            bodyRef.Velocity.Linear += StrikeImpulse(p, closest, speed);
             bodyRef.Awake = true;
         }
     }
@@ -3676,8 +3759,11 @@ public unsafe class RagdollController : IDisposable
     {
         if (simulation == null || !isActive || !physicsStarted) return false;
         if (address == nint.Zero || address == targetCharacterAddress) return false;
+        // Already a collision actor (e.g. the controlled killer was a selected NPC captured when the
+        // ragdoll activated) — its bone capsules already track it; just mark it as the strike collider
+        // so the bone/weapon strike activates. Without this, the killer's strike never fired.
         foreach (var s in npcCollisionStates)
-            if (s.NpcAddress == address) return false; // already registered
+            if (s.NpcAddress == address) { strikeColliderAddress = address; return true; }
         // Need a readable skeleton so we take the bone-capsule (or hull) path, not the fallback.
         if (boneService.TryGetSkeleton(address) == null) return false;
 
@@ -3721,6 +3807,7 @@ public unsafe class RagdollController : IDisposable
     {
         strikePower = power;
         attackStrikeTimer = MathF.Max(attackStrikeTimer, duration);
+        struckThisWindow.Clear(); // a fresh swing may hit each body again
         WakeRagdollBodiesForBiomechanicalSettle();
         BeginBiomechanicalSettle();
     }
@@ -3763,6 +3850,7 @@ public unsafe class RagdollController : IDisposable
         attackStrikeTimer = 0f;
         strikePower = 0f;
         strikeColliderAddress = nint.Zero;
+        weaponPrevValid = false;
         simulation?.Dispose();
         simulation = null;
         bufferPool?.Clear();

@@ -277,7 +277,7 @@ public class Configuration : IPluginConfiguration
     public bool MonsterCameraFollowsMonster { get; set; } = true; // remembered cam target (monster vs character)
     // Strike: during an attack the monster's collider bones impart their swing velocity (× power) to
     // nearby ragdoll bodies, so the hit lands forcefully at the limb's real contact point.
-    public float MonsterStrikePower { get; set; } = 1.5f;
+    public float MonsterStrikePower { get; set; } = 0.1f;
     public bool KoStripHead { get; set; } = false;
     public bool KoStripBody { get; set; } = true;
     public bool KoStripHands { get; set; } = true;
