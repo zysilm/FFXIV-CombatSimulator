@@ -325,6 +325,12 @@ public unsafe class MonsterModeController : IDisposable
         activeCamera.GetOrbitCenterOverride = null;
         activeCamera.SetActive(prevActiveCamState);
 
+        // Tear down the draw object/skeleton BEFORE deleting the slot. Deleting a still-drawn
+        // character leaves its skeleton in the game's animation/look-at update and crashes the
+        // engine (matches NpcSpawner/CompanionManager despawn order).
+        if (monsterAddress != nint.Zero)
+            ((GameObject*)monsterAddress)->DisableDraw();
+
         var mgr = ClientObjectManager.Instance();
         if (mgr != null) mgr->DeleteObjectByIndex((ushort)monsterIndex, 0);
         log.Info($"MonsterMode: despawned index {monsterIndex}");
