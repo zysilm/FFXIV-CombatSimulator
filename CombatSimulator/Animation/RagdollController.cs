@@ -1020,6 +1020,7 @@ public unsafe class RagdollController : IDisposable
         }
 
         StopCollapseSpike();
+        pendingCollapseSpike = false;
 
         targetCharacterAddress = nint.Zero;
         targetEntityId = 0;
@@ -1059,6 +1060,15 @@ public unsafe class RagdollController : IDisposable
                 frameCount = 0;
                 BeginBiomechanicalSettle();
                 physicsAccumulator = 0f; // start clean — don't carry the activation-delay wait
+
+                // Bodies are at their freshly-created death-instant poses (zero velocity) — the
+                // ideal moment to snapshot "muscle tone" for an armed collapse spike.
+                if (pendingCollapseSpike)
+                {
+                    pendingCollapseSpike = false;
+                    BeginCollapseSpike(pendingCollapseArchetype, pendingCollapseStrength,
+                        pendingCollapseHold, pendingCollapseFade);
+                }
             }
 
             StepAndApply(dt);
@@ -3456,7 +3466,37 @@ public unsafe class RagdollController : IDisposable
     private const float CollapseDamping = 1f;
     private const float CollapseMaxSpeed = 12f;
 
+    // One-shot request to auto-begin the spike the instant physics initializes, so it captures
+    // the *standing death-instant* pose before gravity collapses it. Manual BeginCollapseSpike
+    // after death is too late for KneelPitch — the body has already crumpled by the time you
+    // click. Arm this before triggering death instead.
+    private bool pendingCollapseSpike;
+    private CollapseArchetype pendingCollapseArchetype;
+    private float pendingCollapseStrength;
+    private float pendingCollapseHold;
+    private float pendingCollapseFade;
+
     public bool CollapseSpikeActive => collapseSpikeActive;
+
+    /// <summary>
+    /// Arm the collapse spike to fire automatically the moment the ragdoll's physics is ready
+    /// (capturing the standing death-instant pose). If the ragdoll is already simulating, begins
+    /// immediately. Call this BEFORE triggering death so KneelPitch sees the upright pose.
+    /// </summary>
+    public void RequestCollapseSpikeOnReady(CollapseArchetype archetype, float strength, float holdDuration, float fadeDuration)
+    {
+        if (IsSimulationReady)
+        {
+            BeginCollapseSpike(archetype, strength, holdDuration, fadeDuration);
+            return;
+        }
+        pendingCollapseArchetype = archetype;
+        pendingCollapseStrength = strength;
+        pendingCollapseHold = holdDuration;
+        pendingCollapseFade = fadeDuration;
+        pendingCollapseSpike = true;
+        log.Info($"RagdollController: collapse spike armed for next death — archetype={archetype}");
+    }
 
     /// <summary>
     /// Begin the death-collapse spike: snapshot every parented body's current relative

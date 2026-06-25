@@ -4462,6 +4462,22 @@ public class MainWindow : IDisposable
             ImGui.TextColored(
                 spikeOn ? new Vector4(0.4f, 1f, 0.4f, 1f) : new Vector4(0.6f, 0.6f, 0.6f, 1f),
                 spikeOn ? "active" : "idle");
+
+            // Auto-capture path: arm the spike, then kill the player. The spike fires the instant
+            // physics starts, snapshotting the standing death pose — the only way KneelPitch can
+            // see an upright body (clicking Begin after Die is too late; it's already collapsed).
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.15f, 0.15f, 1f));
+            if (ImGui.Button("Die + Auto Collapse##spike"))
+            {
+                ragdollController.RequestCollapseSpikeOnReady(
+                    (Animation.RagdollController.CollapseArchetype)spikeArchetype,
+                    spikeStrength, spikeHold, spikeFade);
+                ctrl.TriggerInstantDeath();
+            }
+            ImGui.PopStyleColor();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Kill the player AND auto-begin the spike at the death instant,\n" +
+                                 "capturing the standing pose. Use this for KneelPitch.");
         }
 
         // ── Presets ──────────────────────────────────────────────────────────
