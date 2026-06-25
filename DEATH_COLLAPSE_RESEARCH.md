@@ -195,6 +195,60 @@ settle.
 
 ---
 
+## 7. Spike results (empirical — branch `death-collapse-spike`)
+
+We built a throwaway spike (per §6b): on death, attach a per-joint `AngularServo`
+targeting the captured death-instant pose ("muscle tone"), then fade per-tier strength to
+zero. Three archetypes, driven from a "Collapse Spike" panel in the Hold dev window, with a
+"Die + Auto Collapse" button that arms the spike so it fires the instant physics
+initializes (capturing the *standing* pose, before gravity crumples it).
+
+### What passed
+- **Q1 — can servos hold the pose against gravity? ✅** `StiffHold` keeps the body rigid in
+  the captured pose. BEPU2 `AngularServo` PD-to-pose works on the human rig.
+- **Q2 — smooth release? ✅** `UniformCollapse` holds briefly then fades all joints to zero
+  and hands off to the passive ragdoll with no pop/snap. **The relaxation-fade model is
+  sound.**
+
+### What failed
+- **Q3 — directed kneel-then-pitch (`KneelPitch`): ✗ not usable with this mechanism.**
+  Observed: at high strength the knee was a rigid strut (no buckle); softening the hinge
+  servo (lower strength / `hingeFactor`→0) let the knee bend, **but it bent *sideways*, not
+  forward**, and the body toppled **backward into a supine pose** — nowhere near a kneel.
+
+### Why (the conclusion that matters)
+**"Hold-then-fade" is a *relaxation* model: it can only release a body from a pose it is
+already in. It has no way to *drive* the body toward a NEW pose it was never in.** A kneel
+is a new posture (knees deeply flexed, hips lowered, **feet planted**, weight shifted
+**forward**) absent from the standing capture — so nothing pulls the body toward it, and a
+freed knee just buckles whichever way the constraint network / gravity happen to push.
+
+### Decision
+- **Relaxation-type archetypes are proven and shippable as-is**: `StiffHold` (≈ full
+  power-off / stiff timber fall) and `UniformCollapse` (≈ generic limp crumple). These two
+  already cover the *atonia / instant-death* cases from §4.
+- **Directional variety is a cheap add-on, independent of kneeling.** Layer a single CoM
+  impulse (we already have `ApplyImpulse`) onto `UniformCollapse` to bias the fall
+  forward / backward / sideways per the 44 / 41 / 33 distribution (§4). This buys most of
+  the visible variety *without* the kneel machinery.
+- **Directed posture-change archetypes (kneel-pitch, stagger, slump-to-knees) need a
+  different subsystem** and should NOT keep being forced through servo-fade. They require
+  *driving toward a target pose*:
+  1. a **kneel target pose** for the legs to servo toward (a few hardcoded flexed
+     hip/knee/ankle angles, or one cheap kneel keyframe) — drive, not relax;
+  2. **planted feet** (temporary foot anchor / high friction) so flexing knees lower the
+     body instead of sliding it out;
+  3. a **forward CoM bias** (small pelvis torque or timed forward impulse) for the pitch.
+  This is essentially a minimal active-ragdoll-to-goal controller — a bigger lift than the
+  relaxation spike, to be scoped separately if kneeling is judged worth it.
+
+**Net:** the spike de-risked the core mechanism (servo PD works), validated the relaxation
+family, and proved kneeling is out of scope for *this* mechanism. Recommended next step is
+architecture for the relaxation family + directional-impulse variety; treat directed
+kneeling as a separate, later investigation.
+
+---
+
 ## Sources
 - Euphoria (software) — Wikipedia: https://en.wikipedia.org/wiki/Euphoria_(software)
 - Euphoria — GTA Wiki: https://gta.fandom.com/wiki/Euphoria
