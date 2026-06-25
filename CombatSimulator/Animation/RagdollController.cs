@@ -1019,6 +1019,8 @@ public unsafe class RagdollController : IDisposable
             }
         }
 
+        StopCollapseSpike();
+
         targetCharacterAddress = nint.Zero;
         targetEntityId = 0;
         physicsStarted = false;
@@ -2849,7 +2851,11 @@ public unsafe class RagdollController : IDisposable
         // pose below. Applies to generic (monster) rigs too: if their auto-built network
         // never settles, prevAllAsleep simply stays false and this never triggers; if it
         // does settle, there is nothing to clamp. A grab or a moved skeleton forces a step.
-        var resting = prevAllAsleep && !grabConstraintActive && !skeletonMoved && !biomechanicalSettleActive;
+        var resting = prevAllAsleep && !grabConstraintActive && !collapseSpikeActive && !skeletonMoved && !biomechanicalSettleActive;
+
+        // Death-collapse spike: restrength the per-joint "muscle" servos before stepping so the
+        // updated torque ceilings take effect this tick. Advances the fade and retires itself.
+        UpdateCollapseSpike(dt);
 
         // Update NPC collision volumes to track their current animated bone positions.
         // Must call UpdateBounds() after repositioning — BEPU2 doesn't auto-update
@@ -3423,7 +3429,184 @@ public unsafe class RagdollController : IDisposable
         log.Info("RagdollController: Grab constraint removed");
     }
 
+    // --- Death-collapse spike (experimental proof-of-concept) ---
+    // Active-ragdoll spike: instead of letting the corpse go instantly limp, snapshot the
+    // current ("death-instant") relative orientation of every joint and pin it with an
+    // AngularServo ("muscle tone"), then fade each joint's strength toward zero so gravity
+    // drives a controlled collapse. The per-tier fade order/curve decides the collapse style.
+    // NOTE: this reuses the AngularServo *mechanism* only and is tuned from scratch — it
+    // inherits nothing from (and proves nothing about) the poor soft-body bones.
+    public enum CollapseArchetype { StiffHold, UniformCollapse, KneelPitch }
 
+    private struct CollapseServo
+    {
+        public ConstraintHandle Handle;
+        public int Tier;          // 0 = legs, 1 = core (pelvis/spine), 2 = upper body
+        public Quaternion Target; // captured TargetRelativeRotationLocalA
+    }
+
+    private readonly List<CollapseServo> collapseServos = new();
+    private bool collapseSpikeActive;
+    private CollapseArchetype collapseArchetype;
+    private float collapseElapsed;
+    private float collapseHold;
+    private float collapseFade;
+    private float collapseFreq;
+    private float collapseMaxForce;
+    private const float CollapseDamping = 1f;
+    private const float CollapseMaxSpeed = 12f;
+
+    public bool CollapseSpikeActive => collapseSpikeActive;
+
+    /// <summary>
+    /// Begin the death-collapse spike: snapshot every parented body's current relative
+    /// orientation, pin it with an AngularServo, then fade strength to zero per the chosen
+    /// archetype. <paramref name="strength"/> is the servo spring frequency (Hz); the max
+    /// corrective torque scales with it. Returns false if the ragdoll isn't simulating.
+    /// </summary>
+    public bool BeginCollapseSpike(CollapseArchetype archetype, float strength, float holdDuration, float fadeDuration)
+    {
+        if (simulation == null || !isActive) return false;
+        StopCollapseSpike();
+
+        collapseArchetype = archetype;
+        collapseElapsed = 0f;
+        collapseHold = MathF.Max(0f, holdDuration);
+        collapseFade = MathF.Max(0.01f, fadeDuration);
+        collapseFreq = MathF.Max(0.5f, strength);
+        // Torque ceiling scales with strength so a weaker "muscle" both responds softer and
+        // saturates sooner. Spike default — tuned live from the GUI, not gospel.
+        collapseMaxForce = strength * 60f;
+
+        var handleByBoneIdx = new Dictionary<int, BodyHandle>();
+        foreach (var rb in ragdollBones)
+            handleByBoneIdx[rb.BoneIndex] = rb.BodyHandle;
+
+        for (int i = 0; i < ragdollBones.Count; i++)
+        {
+            var rb = ragdollBones[i];
+            if (rb.ParentBoneIndex < 0) continue;
+            if (!handleByBoneIdx.TryGetValue(rb.ParentBoneIndex, out var parentHandle)) continue;
+
+            var child = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            var parent = simulation.Bodies.GetBodyReference(parentHandle);
+            child.Awake = true;
+            parent.Awake = true;
+
+            // Preserve the current relative orientation: OrientationB = OrientationA * T.
+            var target = Quaternion.Normalize(
+                Quaternion.Inverse(child.Pose.Orientation) * parent.Pose.Orientation);
+
+            activeDefByName.TryGetValue(rb.Name, out var def);
+            var tier = CollapseTier(def.AnatomicalRole);
+
+            var handle = simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                new AngularServo
+                {
+                    TargetRelativeRotationLocalA = target,
+                    SpringSettings = new SpringSettings(collapseFreq, CollapseDamping),
+                    ServoSettings = new ServoSettings(CollapseMaxSpeed, 0f, collapseMaxForce),
+                });
+
+            collapseServos.Add(new CollapseServo { Handle = handle, Tier = tier, Target = target });
+        }
+
+        if (collapseServos.Count == 0) return false;
+
+        collapseSpikeActive = true;
+        prevAllAsleep = false;
+        log.Info($"RagdollController: collapse spike begun — archetype={archetype} servos={collapseServos.Count} freq={collapseFreq:F1} maxForce={collapseMaxForce:F0} hold={collapseHold:F2} fade={collapseFade:F2}");
+        return true;
+    }
+
+    public void StopCollapseSpike()
+    {
+        if (simulation != null)
+            foreach (var s in collapseServos)
+                try { simulation.Solver.Remove(s.Handle); } catch { }
+
+        collapseServos.Clear();
+        if (collapseSpikeActive)
+        {
+            collapseSpikeActive = false;
+            BeginBiomechanicalSettle();
+            log.Info("RagdollController: collapse spike stopped");
+        }
+    }
+
+    private static int CollapseTier(AnatomicalRole role) => role switch
+    {
+        AnatomicalRole.Hip or AnatomicalRole.Knee or AnatomicalRole.Ankle or AnatomicalRole.Foot => 0,
+        AnatomicalRole.Pelvis or AnatomicalRole.Spine => 1,
+        _ => 2,
+    };
+
+    /// <summary>Per-tier muscle strength in [0,1] as the collapse progresses.</summary>
+    private float CollapseGain(int tier)
+    {
+        switch (collapseArchetype)
+        {
+            case CollapseArchetype.StiffHold:
+                return 1f; // never fades — pure "can the servos hold the pose?" test
+
+            case CollapseArchetype.UniformCollapse:
+            {
+                var t = collapseElapsed - collapseHold;
+                if (t <= 0f) return 1f;
+                return Math.Clamp(1f - t / collapseFade, 0f, 1f);
+            }
+
+            case CollapseArchetype.KneelPitch:
+            {
+                // Legs buckle first; core holds to form a kneel; upper body releases last → pitch.
+                var t = collapseElapsed - collapseHold;
+                if (t <= 0f) return 1f;
+                var (start, dur) = tier switch
+                {
+                    0 => (0f, collapseFade * 0.4f),                  // legs: fast, immediate
+                    1 => (collapseFade * 0.6f, collapseFade * 0.8f), // core: later
+                    _ => (collapseFade * 1.0f, collapseFade * 0.8f), // upper: last
+                };
+                if (t <= start) return 1f;
+                return Math.Clamp(1f - (t - start) / dur, 0f, 1f);
+            }
+        }
+        return 1f;
+    }
+
+    /// <summary>Advance the collapse spike: restrength each servo, retire when fully faded.</summary>
+    private void UpdateCollapseSpike(float dt)
+    {
+        if (!collapseSpikeActive || simulation == null) return;
+        collapseElapsed += dt;
+
+        var anyAlive = false;
+        for (int i = 0; i < collapseServos.Count; i++)
+        {
+            var s = collapseServos[i];
+            var g = CollapseGain(s.Tier);
+            if (g > 0.001f) anyAlive = true;
+            try
+            {
+                simulation.Solver.ApplyDescription(s.Handle,
+                    new AngularServo
+                    {
+                        TargetRelativeRotationLocalA = s.Target,
+                        SpringSettings = new SpringSettings(collapseFreq, CollapseDamping),
+                        ServoSettings = new ServoSettings(CollapseMaxSpeed, 0f, collapseMaxForce * g),
+                    });
+            }
+            catch { }
+        }
+
+        // StiffHold never retires; the others release to a pure passive ragdoll (constraints
+        // removed, bodies free to sleep) once every tier has fully faded.
+        if (!anyAlive && collapseArchetype != CollapseArchetype.StiffHold)
+        {
+            log.Info("RagdollController: collapse spike fully faded — releasing to passive ragdoll");
+            StopCollapseSpike();
+        }
+    }
 
     // --- Standing support constraint API (execution mode) ---
     // Pelvis: LinearServo to a computed standing height + AngularServo upright.

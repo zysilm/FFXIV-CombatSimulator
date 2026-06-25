@@ -4188,6 +4188,13 @@ public class MainWindow : IDisposable
         ImGui.End();
     }
 
+    // Collapse-spike (experimental) GUI state — not persisted; spike only.
+    private int spikeArchetype;
+    private float spikeStrength = 14f;
+    private float spikeHold = 0.4f;
+    private float spikeFade = 1.0f;
+    private static readonly string[] spikeArchetypeNames = { "StiffHold", "UniformCollapse", "KneelPitch" };
+
     public void DrawHoldToolbar(Dev.BoneHoldTestModeController ctrl)
     {
         if (!ImGui.Begin("Hold", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
@@ -4407,6 +4414,54 @@ public class MainWindow : IDisposable
             ImGui.PopStyleColor();
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Launch upward and release hold");
             if (!active) ImGui.EndDisabled();
+        }
+
+        // ── Collapse Spike (experimental) ────────────────────────────────────
+        if (ImGui.CollapsingHeader("Collapse Spike##holdSec"))
+        {
+            ImGui.TextDisabled("Active-ragdoll death-collapse proof of concept");
+
+            ImGui.SetNextItemWidth(150);
+            ImGui.Combo("Mode##spike", ref spikeArchetype, spikeArchetypeNames, spikeArchetypeNames.Length);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(
+                    "StiffHold: freeze joints at full strength (can servos hold the pose?)\n" +
+                    "UniformCollapse: hold, then fade all joints together (smooth release?)\n" +
+                    "KneelPitch: legs buckle first, then core, then upper (kneel → pitch)");
+
+            ImGui.SetNextItemWidth(110);
+            ImGui.DragFloat("Strength (Hz)##spike", ref spikeStrength, 0.5f, 1f, 60f, "%.0f");
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Servo spring frequency; torque ceiling scales with it");
+
+            ImGui.SetNextItemWidth(90);
+            ImGui.DragFloat("Hold (s)##spike", ref spikeHold, 0.05f, 0f, 5f, "%.2f");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(90);
+            ImGui.DragFloat("Fade (s)##spike", ref spikeFade, 0.05f, 0.05f, 6f, "%.2f");
+
+            var spikeOn = ragdollController.CollapseSpikeActive;
+            var deadNow = ragdollController.IsActive;
+
+            ImGui.BeginDisabled(!deadNow);
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.45f, 0.7f, 1f));
+            if (ImGui.Button("Begin Collapse##spike"))
+                ragdollController.BeginCollapseSpike(
+                    (Animation.RagdollController.CollapseArchetype)spikeArchetype,
+                    spikeStrength, spikeHold, spikeFade);
+            ImGui.PopStyleColor();
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled) && !deadNow)
+                ImGui.SetTooltip("Player must be dead first (use Die)");
+
+            ImGui.SameLine();
+            ImGui.BeginDisabled(!spikeOn);
+            if (ImGui.Button("Stop##spike")) ragdollController.StopCollapseSpike();
+            ImGui.EndDisabled();
+
+            ImGui.SameLine();
+            ImGui.TextColored(
+                spikeOn ? new Vector4(0.4f, 1f, 0.4f, 1f) : new Vector4(0.6f, 0.6f, 0.6f, 1f),
+                spikeOn ? "active" : "idle");
         }
 
         // ── Presets ──────────────────────────────────────────────────────────
