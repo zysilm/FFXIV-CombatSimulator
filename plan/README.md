@@ -7,6 +7,7 @@
 | [00-overview.md](00-overview.md) | Architecture overview, core design, technology stack |
 | [01-phases.md](01-phases.md) | Implementation phases, dependencies, MVP definition |
 | [02-technical-decisions.md](02-technical-decisions.md) | Key decisions, trade-offs, risk assessment |
+| [06-physics-death-collapse-research.md](06-physics-death-collapse-research.md) | Research survey: zero-animation physics/biomechanical death collapse (active ragdoll, stiffness fade, collapse archetypes) |
 
 ## Quick Summary
 
