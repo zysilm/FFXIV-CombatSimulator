@@ -1067,7 +1067,7 @@ public unsafe class RagdollController : IDisposable
                 {
                     pendingCollapseSpike = false;
                     BeginCollapseSpike(pendingCollapseArchetype, pendingCollapseStrength,
-                        pendingCollapseHold, pendingCollapseFade);
+                        pendingCollapseHold, pendingCollapseFade, pendingCollapseHinge);
                 }
             }
 
@@ -3453,6 +3453,8 @@ public unsafe class RagdollController : IDisposable
         public ConstraintHandle Handle;
         public int Tier;          // 0 = legs, 1 = core (pelvis/spine), 2 = upper body
         public Quaternion Target; // captured TargetRelativeRotationLocalA
+        public float Freq;        // this joint's spring frequency
+        public float MaxForce;    // this joint's full torque ceiling (gain multiplies this)
     }
 
     private readonly List<CollapseServo> collapseServos = new();
@@ -3475,6 +3477,7 @@ public unsafe class RagdollController : IDisposable
     private float pendingCollapseStrength;
     private float pendingCollapseHold;
     private float pendingCollapseFade;
+    private float pendingCollapseHinge;
 
     public bool CollapseSpikeActive => collapseSpikeActive;
 
@@ -3483,17 +3486,18 @@ public unsafe class RagdollController : IDisposable
     /// (capturing the standing death-instant pose). If the ragdoll is already simulating, begins
     /// immediately. Call this BEFORE triggering death so KneelPitch sees the upright pose.
     /// </summary>
-    public void RequestCollapseSpikeOnReady(CollapseArchetype archetype, float strength, float holdDuration, float fadeDuration)
+    public void RequestCollapseSpikeOnReady(CollapseArchetype archetype, float strength, float holdDuration, float fadeDuration, float hingeFactor)
     {
         if (IsSimulationReady)
         {
-            BeginCollapseSpike(archetype, strength, holdDuration, fadeDuration);
+            BeginCollapseSpike(archetype, strength, holdDuration, fadeDuration, hingeFactor);
             return;
         }
         pendingCollapseArchetype = archetype;
         pendingCollapseStrength = strength;
         pendingCollapseHold = holdDuration;
         pendingCollapseFade = fadeDuration;
+        pendingCollapseHinge = hingeFactor;
         pendingCollapseSpike = true;
         log.Info($"RagdollController: collapse spike armed for next death — archetype={archetype}");
     }
@@ -3504,10 +3508,11 @@ public unsafe class RagdollController : IDisposable
     /// archetype. <paramref name="strength"/> is the servo spring frequency (Hz); the max
     /// corrective torque scales with it. Returns false if the ragdoll isn't simulating.
     /// </summary>
-    public bool BeginCollapseSpike(CollapseArchetype archetype, float strength, float holdDuration, float fadeDuration)
+    public bool BeginCollapseSpike(CollapseArchetype archetype, float strength, float holdDuration, float fadeDuration, float hingeFactor)
     {
         if (simulation == null || !isActive) return false;
         StopCollapseSpike();
+        hingeFactor = Math.Clamp(hingeFactor, 0f, 1f);
 
         collapseArchetype = archetype;
         collapseElapsed = 0f;
@@ -3540,22 +3545,33 @@ public unsafe class RagdollController : IDisposable
             activeDefByName.TryGetValue(rb.Name, out var def);
             var tier = CollapseTier(def.AnatomicalRole);
 
+            // A hinge (knee/elbow) needs to FLEX to kneel; pinning its full orientation at the
+            // standing angle makes it a rigid strut that can't buckle. Scale its servo down so it
+            // yields under body weight (controlled buckle) instead of locking. Ball joints
+            // (spine/hips/shoulders/neck) keep full strength.
+            var isHinge = def.Joint == JointType.Hinge;
+            var jointFreq = isHinge ? collapseFreq * 0.6f : collapseFreq;
+            var jointForce = isHinge ? collapseMaxForce * hingeFactor : collapseMaxForce;
+
             var handle = simulation.Solver.Add(rb.BodyHandle, parentHandle,
                 new AngularServo
                 {
                     TargetRelativeRotationLocalA = target,
-                    SpringSettings = new SpringSettings(collapseFreq, CollapseDamping),
-                    ServoSettings = new ServoSettings(CollapseMaxSpeed, 0f, collapseMaxForce),
+                    SpringSettings = new SpringSettings(jointFreq, CollapseDamping),
+                    ServoSettings = new ServoSettings(CollapseMaxSpeed, 0f, jointForce),
                 });
 
-            collapseServos.Add(new CollapseServo { Handle = handle, Tier = tier, Target = target });
+            collapseServos.Add(new CollapseServo
+            {
+                Handle = handle, Tier = tier, Target = target, Freq = jointFreq, MaxForce = jointForce,
+            });
         }
 
         if (collapseServos.Count == 0) return false;
 
         collapseSpikeActive = true;
         prevAllAsleep = false;
-        log.Info($"RagdollController: collapse spike begun — archetype={archetype} servos={collapseServos.Count} freq={collapseFreq:F1} maxForce={collapseMaxForce:F0} hold={collapseHold:F2} fade={collapseFade:F2}");
+        log.Info($"RagdollController: collapse spike begun — archetype={archetype} servos={collapseServos.Count} freq={collapseFreq:F1} maxForce={collapseMaxForce:F0} hingeFactor={hingeFactor:F2} hold={collapseHold:F2} fade={collapseFade:F2}");
         return true;
     }
 
@@ -3632,8 +3648,8 @@ public unsafe class RagdollController : IDisposable
                     new AngularServo
                     {
                         TargetRelativeRotationLocalA = s.Target,
-                        SpringSettings = new SpringSettings(collapseFreq, CollapseDamping),
-                        ServoSettings = new ServoSettings(CollapseMaxSpeed, 0f, collapseMaxForce * g),
+                        SpringSettings = new SpringSettings(s.Freq, CollapseDamping),
+                        ServoSettings = new ServoSettings(CollapseMaxSpeed, 0f, s.MaxForce * g),
                     });
             }
             catch { }

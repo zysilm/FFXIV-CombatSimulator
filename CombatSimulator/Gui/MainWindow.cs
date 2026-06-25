@@ -4193,6 +4193,7 @@ public class MainWindow : IDisposable
     private float spikeStrength = 14f;
     private float spikeHold = 0.4f;
     private float spikeFade = 1.0f;
+    private float spikeHingeSoft = 0.25f; // hinge (knee/elbow) servo strength fraction
     private static readonly string[] spikeArchetypeNames = { "StiffHold", "UniformCollapse", "KneelPitch" };
 
     public void DrawHoldToolbar(Dev.BoneHoldTestModeController ctrl)
@@ -4439,6 +4440,12 @@ public class MainWindow : IDisposable
             ImGui.SetNextItemWidth(90);
             ImGui.DragFloat("Fade (s)##spike", ref spikeFade, 0.05f, 0.05f, 6f, "%.2f");
 
+            ImGui.SetNextItemWidth(110);
+            ImGui.DragFloat("Hinge soften##spike", ref spikeHingeSoft, 0.01f, 0f, 1f, "%.2f");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Knee/elbow servo strength fraction. Lower = knees yield and buckle\n" +
+                                 "under body weight instead of locking straight. 0 = knees fully free.");
+
             var spikeOn = ragdollController.CollapseSpikeActive;
             var deadNow = ragdollController.IsActive;
 
@@ -4447,7 +4454,7 @@ public class MainWindow : IDisposable
             if (ImGui.Button("Begin Collapse##spike"))
                 ragdollController.BeginCollapseSpike(
                     (Animation.RagdollController.CollapseArchetype)spikeArchetype,
-                    spikeStrength, spikeHold, spikeFade);
+                    spikeStrength, spikeHold, spikeFade, spikeHingeSoft);
             ImGui.PopStyleColor();
             ImGui.EndDisabled();
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled) && !deadNow)
@@ -4471,7 +4478,7 @@ public class MainWindow : IDisposable
             {
                 ragdollController.RequestCollapseSpikeOnReady(
                     (Animation.RagdollController.CollapseArchetype)spikeArchetype,
-                    spikeStrength, spikeHold, spikeFade);
+                    spikeStrength, spikeHold, spikeFade, spikeHingeSoft);
                 ctrl.TriggerInstantDeath();
             }
             ImGui.PopStyleColor();
