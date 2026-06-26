@@ -176,6 +176,7 @@ public class MainWindow : IDisposable
         "Effects",
         "Camera",
         "Ragdoll",
+        "Guided Collapse",
         "Ragdoll (Adv)",
         "Virtual Enemies",
         "Settings",
@@ -307,14 +308,6 @@ public class MainWindow : IDisposable
                     config.RagdollSolverIterations = 8;
                     config.RagdollSelfCollision = true;
                     config.RagdollFriction = 1.0f;
-                    config.DeathCollapseEnabled = false;
-                    config.DeathCollapseArchetype = 1;
-                    config.DeathCollapseStrength = 14f;
-                    config.DeathCollapseHold = 0.3f;
-                    config.DeathCollapseFade = 0.9f;
-                    config.DeathCollapseHingeSoften = 0.25f;
-                    config.DeathCollapseDirection = 1;
-                    config.DeathCollapseImpulse = 2.0f;
                     config.WeaponDropGravity = 9.8f;
                     config.WeaponDropDamping = 0.99f;
                     config.WeaponDropAngularDamping = 0.85f;
@@ -336,17 +329,20 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 break;
-            case 6: // Ragdoll (Advanced)
+            case 6: // Guided Collapse
+                DrawGuidedCollapseSection();
+                break;
+            case 7: // Ragdoll (Advanced)
                 DrawRagdollAdvancedSection();
                 break;
-            case 7: // Virtual Enemies
+            case 8: // Virtual Enemies
                 DrawVirtualEnemiesTab();
                 break;
-            case 8: // Settings
+            case 9: // Settings
                 DrawGuiSettingsSection();
                 DrawDevSection();
                 break;
-            case 9: // Diagnose
+            case 10: // Diagnose
                 DrawDiagnoseSection();
                 break;
         }
@@ -3137,6 +3133,260 @@ public class MainWindow : IDisposable
         chatGui.Print("[CombatSim] Bone configs reset to defaults. Reactivate ragdoll to apply.");
     }
 
+    private void DrawGuidedCollapseSection()
+    {
+        ImGui.Text("Guided Collapse");
+        HelpMarker("Optional procedural death-collapse controller layered on top of ragdoll activation. Requires Enable Ragdoll.");
+
+        var guided = config.GuidedCollapse;
+        var enabled = guided.Enabled;
+        if (ImGui.Checkbox("Enable Guided Collapse##guidedcollapse", ref enabled))
+        {
+            guided.Enabled = enabled;
+            config.Save();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Restore Defaults##guidedcollapse"))
+        {
+            config.ResetGuidedCollapseDefaults();
+            config.Save();
+        }
+        HelpMarker("Reset all Guided Collapse mode and tuning parameters to built-in defaults.");
+
+        if (guided.Enabled && !config.EnableRagdoll)
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.25f, 1f), "Enable Ragdoll on the Ragdoll page; Guided Collapse only arms during ragdoll activation.");
+
+        if (guided.Enabled && config.RagdollActivationDelay > 0.001f)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.25f, 1f), "Activation Delay is not zero; guided collapse captures the delayed death-animation pose.");
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Set 0##guidedcollapseDelay"))
+            {
+                config.RagdollActivationDelay = 0f;
+                config.Save();
+            }
+        }
+
+        using (ImRaii.Disabled(!guided.Enabled))
+        {
+            var mode = Math.Clamp(guided.Mode, 0, guidedCollapseModeNames.Length - 1);
+            if (ImGui.Combo("Mode##guidedcollapse", ref mode, guidedCollapseModeNames, guidedCollapseModeNames.Length))
+            {
+                guided.Mode = mode;
+                config.Save();
+            }
+
+            ImGui.Separator();
+            if (guided.Mode == 0)
+                DrawGuidedRelaxationSettings(guided.Relaxation);
+            else
+                DrawGuidedKneePowerLossSettings(guided.KneePowerLoss);
+        }
+    }
+
+    private void DrawGuidedRelaxationSettings(GuidedCollapseRelaxationSettings s)
+    {
+        ImGui.Text("Relaxation");
+        HelpMarker("Validated hold-then-fade active-ragdoll family. Good for power-off/limp deaths; does not try to kneel.");
+
+        var archetype = Math.Clamp(s.Archetype, 0, guidedRelaxationArchetypeNames.Length - 1);
+        if (ImGui.Combo("Relaxation mode##guidedrelax", ref archetype, guidedRelaxationArchetypeNames, guidedRelaxationArchetypeNames.Length))
+        {
+            s.Archetype = archetype;
+            config.Save();
+        }
+
+        var strength = Math.Clamp(s.Strength, 0.5f, 40f);
+        if (ImGui.SliderFloat("Strength (Hz)##guidedrelax", ref strength, 0.5f, 40f, "%.1f"))
+        {
+            s.Strength = strength;
+            config.Save();
+        }
+
+        var hold = Math.Clamp(s.Hold, 0f, 5f);
+        if (ImGui.SliderFloat("Hold (s)##guidedrelax", ref hold, 0f, 5f, "%.2f"))
+        {
+            s.Hold = hold;
+            config.Save();
+        }
+
+        var fade = Math.Clamp(s.Fade, 0.05f, 8f);
+        if (ImGui.SliderFloat("Fade (s)##guidedrelax", ref fade, 0.05f, 8f, "%.2f"))
+        {
+            s.Fade = fade;
+            config.Save();
+        }
+
+        var hinge = Math.Clamp(s.HingeSoften, 0f, 1f);
+        if (ImGui.SliderFloat("Hinge strength##guidedrelax", ref hinge, 0f, 1f, "%.2f"))
+        {
+            s.HingeSoften = hinge;
+            config.Save();
+        }
+
+        var direction = Math.Clamp(s.Direction, 0, guidedCollapseDirectionNames.Length - 1);
+        if (ImGui.Combo("Topple direction##guidedrelax", ref direction, guidedCollapseDirectionNames, guidedCollapseDirectionNames.Length))
+        {
+            s.Direction = direction;
+            config.Save();
+        }
+
+        using (ImRaii.Disabled(s.Direction == 0))
+        {
+            var impulse = Math.Clamp(s.Impulse, 0f, 8f);
+            if (ImGui.SliderFloat("Topple impulse##guidedrelax", ref impulse, 0f, 8f, "%.2f"))
+            {
+                s.Impulse = impulse;
+                config.Save();
+            }
+        }
+    }
+
+    private void DrawGuidedKneePowerLossSettings(GuidedCollapseKneePowerLossSettings s)
+    {
+        ImGui.Text("Knee Power Loss");
+        HelpMarker("Current best directed collapse pattern: optional entry conditioning, then leg-extensor failure and forward torso release. Narrow straight stance still has known artifacts.");
+
+        var entry = s.EntryConditioningEnabled;
+        if (ImGui.Checkbox("Entry conditioning##guidedknee", ref entry))
+        {
+            s.EntryConditioningEnabled = entry;
+            config.Save();
+        }
+
+        using (ImRaii.Disabled(!s.EntryConditioningEnabled))
+        {
+            var stanceThreshold = Math.Clamp(s.EntryStanceThreshold, 0.05f, 1.0f);
+            if (ImGui.SliderFloat("Trigger stance width##guidedknee", ref stanceThreshold, 0.05f, 1.0f, "%.2f"))
+            {
+                s.EntryStanceThreshold = stanceThreshold;
+                config.Save();
+            }
+
+            var readyStance = Math.Clamp(s.EntryReadyStance, 0.05f, 1.2f);
+            if (ImGui.SliderFloat("Ready stance width##guidedknee", ref readyStance, 0.05f, 1.2f, "%.2f"))
+            {
+                s.EntryReadyStance = readyStance;
+                config.Save();
+            }
+
+            var readyKnee = Math.Clamp(s.EntryReadyKneeAngle, 1f, 60f);
+            if (ImGui.SliderFloat("Ready knee angle##guidedknee", ref readyKnee, 1f, 60f, "%.1f"))
+            {
+                s.EntryReadyKneeAngle = readyKnee;
+                config.Save();
+            }
+
+            var minDur = Math.Clamp(s.EntryMinDuration, 0.05f, 1.0f);
+            if (ImGui.SliderFloat("Entry min (s)##guidedknee", ref minDur, 0.05f, 1.0f, "%.2f"))
+            {
+                s.EntryMinDuration = minDur;
+                if (s.EntryMaxDuration < s.EntryMinDuration) s.EntryMaxDuration = s.EntryMinDuration;
+                config.Save();
+            }
+
+            var maxDur = Math.Clamp(s.EntryMaxDuration, s.EntryMinDuration, 1.5f);
+            if (ImGui.SliderFloat("Entry max (s)##guidedknee", ref maxDur, s.EntryMinDuration, 1.5f, "%.2f"))
+            {
+                s.EntryMaxDuration = maxDur;
+                config.Save();
+            }
+
+            if (ImGui.CollapsingHeader("Entry Advanced##guidedknee"))
+            {
+                var targetStart = Math.Clamp(s.EntryTargetStanceStart, 0.05f, 1.2f);
+                if (ImGui.SliderFloat("Target stance start##guidedknee", ref targetStart, 0.05f, 1.2f, "%.2f"))
+                {
+                    s.EntryTargetStanceStart = targetStart;
+                    config.Save();
+                }
+
+                var targetEnd = Math.Clamp(s.EntryTargetStanceEnd, 0.05f, 1.2f);
+                if (ImGui.SliderFloat("Target stance end##guidedknee", ref targetEnd, 0.05f, 1.2f, "%.2f"))
+                {
+                    s.EntryTargetStanceEnd = targetEnd;
+                    config.Save();
+                }
+
+                var downStart = Math.Clamp(s.EntryPelvisDownStart, 0f, 2f);
+                if (ImGui.SliderFloat("Pelvis down start##guidedknee", ref downStart, 0f, 2f, "%.2f"))
+                {
+                    s.EntryPelvisDownStart = downStart;
+                    config.Save();
+                }
+
+                var downEnd = Math.Clamp(s.EntryPelvisDownEnd, 0f, 2f);
+                if (ImGui.SliderFloat("Pelvis down end##guidedknee", ref downEnd, 0f, 2f, "%.2f"))
+                {
+                    s.EntryPelvisDownEnd = downEnd;
+                    config.Save();
+                }
+            }
+        }
+
+        ImGui.Separator();
+
+        var flexDegrees = Math.Clamp(s.KneeFlexDegrees, 0f, 90f);
+        if (ImGui.SliderFloat("Knee flex target##guidedknee", ref flexDegrees, 0f, 90f, "%.0f deg"))
+        {
+            s.KneeFlexDegrees = flexDegrees;
+            config.Save();
+        }
+
+        var buckleFlex = Math.Clamp(s.KneeBuckleFlexForce, 0f, 500f);
+        if (ImGui.SliderFloat("Buckle knee force##guidedknee", ref buckleFlex, 0f, 500f, "%.0f"))
+        {
+            s.KneeBuckleFlexForce = buckleFlex;
+            config.Save();
+        }
+
+        var torsoFlex = Math.Clamp(s.KneeTorsoFlexForce, 0f, 500f);
+        if (ImGui.SliderFloat("Torso knee force##guidedknee", ref torsoFlex, 0f, 500f, "%.0f"))
+        {
+            s.KneeTorsoFlexForce = torsoFlex;
+            config.Save();
+        }
+
+        var footSupport = Math.Clamp(s.BuckleFootSupportForce, 0f, 5000f);
+        if (ImGui.SliderFloat("Buckle foot support##guidedknee", ref footSupport, 0f, 5000f, "%.0f"))
+        {
+            s.BuckleFootSupportForce = footSupport;
+            config.Save();
+        }
+
+        var pelvisForce = Math.Clamp(s.BucklePelvisForce, 0f, 3000f);
+        if (ImGui.SliderFloat("Buckle pelvis force##guidedknee", ref pelvisForce, 0f, 3000f, "%.0f"))
+        {
+            s.BucklePelvisForce = pelvisForce;
+            config.Save();
+        }
+
+        if (ImGui.CollapsingHeader("Torso Phase##guidedknee"))
+        {
+            var torsoFoot = Math.Clamp(s.TorsoFootSupportForce, 0f, 5000f);
+            if (ImGui.SliderFloat("Torso foot support##guidedknee", ref torsoFoot, 0f, 5000f, "%.0f"))
+            {
+                s.TorsoFootSupportForce = torsoFoot;
+                config.Save();
+            }
+
+            var torsoPelvis = Math.Clamp(s.TorsoPelvisForce, 0f, 3000f);
+            if (ImGui.SliderFloat("Torso pelvis force##guidedknee", ref torsoPelvis, 0f, 3000f, "%.0f"))
+            {
+                s.TorsoPelvisForce = torsoPelvis;
+                config.Save();
+            }
+        }
+
+        var chestPitch = Math.Clamp(s.ChestPitchDegrees, -90f, 90f);
+        if (ImGui.SliderFloat("Chest pitch##guidedknee", ref chestPitch, -90f, 90f, "%.0f deg"))
+        {
+            s.ChestPitchDegrees = chestPitch;
+            config.Save();
+        }
+    }
+
     private void DrawRagdollSection()
     {
         if (ImGui.CollapsingHeader("Ragdoll"))
@@ -3252,88 +3502,6 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Surface friction for all ragdoll contacts. 0 = ice (limbs slide freely), 1 = grippy (default). Lower values make the body slide more realistically. Takes effect on next ragdoll activation.");
-
-                ImGui.Separator();
-                if (ImGui.CollapsingHeader("Death Collapse##deathcollapse"))
-                {
-                    var collapseEnabled = config.DeathCollapseEnabled;
-                    if (ImGui.Checkbox("Enable Death Collapse##deathcollapse", ref collapseEnabled))
-                    {
-                        config.DeathCollapseEnabled = collapseEnabled;
-                        config.Save();
-                    }
-                    HelpMarker("Physics-driven muscle relaxation on death. The body briefly holds the captured death pose, then fades limp. This is the validated relaxation family only; directed kneeling is intentionally not exposed here.");
-
-                    if (config.DeathCollapseEnabled && config.RagdollActivationDelay > 0.001f)
-                    {
-                        ImGui.TextColored(new Vector4(1f, 0.75f, 0.25f, 1f), "Activation Delay is not zero; collapse captures the delayed death-animation pose.");
-                        ImGui.SameLine();
-                        if (ImGui.SmallButton("Set 0##deathcollapseDelay"))
-                        {
-                            config.RagdollActivationDelay = 0f;
-                            config.Save();
-                        }
-                    }
-
-                    using (ImRaii.Disabled(!config.DeathCollapseEnabled))
-                    {
-                        var archetype = Math.Clamp(config.DeathCollapseArchetype, 0, deathCollapseArchetypeNames.Length - 1);
-                        if (ImGui.Combo("Mode##deathcollapse", ref archetype, deathCollapseArchetypeNames, deathCollapseArchetypeNames.Length))
-                        {
-                            config.DeathCollapseArchetype = archetype;
-                            config.Save();
-                        }
-                        HelpMarker("StiffHold keeps joint muscle tone on indefinitely for a rigid power-off fall. UniformCollapse holds briefly, then fades to passive ragdoll.");
-
-                        var strength = Math.Clamp(config.DeathCollapseStrength, 0.5f, 40f);
-                        if (ImGui.SliderFloat("Strength (Hz)##deathcollapse", ref strength, 0.5f, 40f, "%.1f"))
-                        {
-                            config.DeathCollapseStrength = strength;
-                            config.Save();
-                        }
-                        HelpMarker("Servo spring frequency for the temporary muscle tone. Higher holds the captured pose harder but can become stiff or jittery.");
-
-                        var hold = Math.Clamp(config.DeathCollapseHold, 0f, 5f);
-                        if (ImGui.SliderFloat("Hold (s)##deathcollapse", ref hold, 0f, 5f, "%.2f"))
-                        {
-                            config.DeathCollapseHold = hold;
-                            config.Save();
-                        }
-
-                        var fade = Math.Clamp(config.DeathCollapseFade, 0.05f, 8f);
-                        if (ImGui.SliderFloat("Fade (s)##deathcollapse", ref fade, 0.05f, 8f, "%.2f"))
-                        {
-                            config.DeathCollapseFade = fade;
-                            config.Save();
-                        }
-
-                        var hinge = Math.Clamp(config.DeathCollapseHingeSoften, 0f, 1f);
-                        if (ImGui.SliderFloat("Hinge strength##deathcollapse", ref hinge, 0f, 1f, "%.2f"))
-                        {
-                            config.DeathCollapseHingeSoften = hinge;
-                            config.Save();
-                        }
-                        HelpMarker("Knee/elbow servo fraction. Lower values let hinges yield more easily; 1.0 pins them like the other joints.");
-
-                        var direction = Math.Clamp(config.DeathCollapseDirection, 0, deathCollapseDirectionNames.Length - 1);
-                        if (ImGui.Combo("Topple direction##deathcollapse", ref direction, deathCollapseDirectionNames, deathCollapseDirectionNames.Length))
-                        {
-                            config.DeathCollapseDirection = direction;
-                            config.Save();
-                        }
-                        HelpMarker("Optional chest impulse applied at capture time to bias the fall. Random uses the fall-survey weighting recorded in DEATH_COLLAPSE_RESEARCH.md.");
-
-                        using (ImRaii.Disabled(config.DeathCollapseDirection == 0))
-                        {
-                            var impulse = Math.Clamp(config.DeathCollapseImpulse, 0f, 8f);
-                            if (ImGui.SliderFloat("Topple impulse##deathcollapse", ref impulse, 0f, 8f, "%.2f"))
-                            {
-                                config.DeathCollapseImpulse = impulse;
-                                config.Save();
-                            }
-                        }
-                    }
-                }
 
                 ImGui.Separator();
                 ImGui.Text("Weapon Drop");
@@ -4291,8 +4459,9 @@ public class MainWindow : IDisposable
     private float directedKneelForward = 0.35f;
     private float directedKneelPitch = 45f;
     private static readonly string[] spikeArchetypeNames = { "StiffHold", "UniformCollapse", "KneelPitch" };
-    private static readonly string[] deathCollapseArchetypeNames = { "StiffHold", "UniformCollapse" };
-    private static readonly string[] deathCollapseDirectionNames = { "None", "Random", "Forward", "Backward", "Sideways" };
+    private static readonly string[] guidedCollapseModeNames = { "Relaxation", "Knee Power Loss" };
+    private static readonly string[] guidedRelaxationArchetypeNames = { "StiffHold", "UniformCollapse" };
+    private static readonly string[] guidedCollapseDirectionNames = { "None", "Random", "Forward", "Backward", "Sideways" };
 
     public void DrawHoldToolbar(Dev.BoneHoldTestModeController ctrl)
     {

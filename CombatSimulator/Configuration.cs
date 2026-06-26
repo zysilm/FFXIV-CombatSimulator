@@ -48,6 +48,59 @@ public class RagdollBoneProfile
 }
 
 [Serializable]
+public class GuidedCollapseSettings
+{
+    public bool Enabled { get; set; } = false;
+    public int Mode { get; set; } = 1; // 0=Relaxation, 1=KneePowerLoss
+    public GuidedCollapseRelaxationSettings Relaxation { get; set; } = new();
+    public GuidedCollapseKneePowerLossSettings KneePowerLoss { get; set; } = new();
+
+    public void ResetDefaults()
+    {
+        var defaults = new GuidedCollapseSettings();
+        Enabled = defaults.Enabled;
+        Mode = defaults.Mode;
+        Relaxation = defaults.Relaxation;
+        KneePowerLoss = defaults.KneePowerLoss;
+    }
+}
+
+[Serializable]
+public class GuidedCollapseRelaxationSettings
+{
+    public int Archetype { get; set; } = 1;        // 0=StiffHold, 1=UniformCollapse
+    public float Strength { get; set; } = 14f;
+    public float Hold { get; set; } = 0.3f;
+    public float Fade { get; set; } = 0.9f;
+    public float HingeSoften { get; set; } = 0.25f;
+    public int Direction { get; set; } = 1;        // 0=None,1=Random,2=Forward,3=Backward,4=Sideways
+    public float Impulse { get; set; } = 2.0f;
+}
+
+[Serializable]
+public class GuidedCollapseKneePowerLossSettings
+{
+    public bool EntryConditioningEnabled { get; set; } = true;
+    public float EntryStanceThreshold { get; set; } = 0.28f;
+    public float EntryReadyStance { get; set; } = 0.30f;
+    public float EntryReadyKneeAngle { get; set; } = 10f;
+    public float EntryMinDuration { get; set; } = 0.24f;
+    public float EntryMaxDuration { get; set; } = 0.42f;
+    public float EntryTargetStanceStart { get; set; } = 0.34f;
+    public float EntryTargetStanceEnd { get; set; } = 0.50f;
+    public float EntryPelvisDownStart { get; set; } = 0.32f;
+    public float EntryPelvisDownEnd { get; set; } = 0.60f;
+    public float KneeFlexDegrees { get; set; } = 34f;
+    public float KneeBuckleFlexForce { get; set; } = 82f;
+    public float KneeTorsoFlexForce { get; set; } = 42f;
+    public float BuckleFootSupportForce { get; set; } = 1100f;
+    public float TorsoFootSupportForce { get; set; } = 650f;
+    public float BucklePelvisForce { get; set; } = 420f;
+    public float TorsoPelvisForce { get; set; } = 220f;
+    public float ChestPitchDegrees { get; set; } = 41f;
+}
+
+[Serializable]
 public class DeathCamPreset
 {
     public string Name { get; set; } = "";
@@ -227,6 +280,7 @@ public class Configuration : IPluginConfiguration
     public float DeathCollapseHingeSoften { get; set; } = 0.25f;// knee/elbow servo fraction (lower = limbs yield)
     public int DeathCollapseDirection { get; set; } = 1;        // 0=None,1=Random,2=Forward,3=Backward,4=Sideways
     public float DeathCollapseImpulse { get; set; } = 2.0f;     // topple nudge speed (m/s) at the chest
+    public GuidedCollapseSettings GuidedCollapse { get; set; } = new();
     // Weapon drop physics — runs as part of ragdoll; weapon detaches and falls on death
     public float WeaponDropGravity { get; set; } = 9.8f;
     public float WeaponDropDamping { get; set; } = 0.99f;
@@ -491,6 +545,7 @@ public class Configuration : IPluginConfiguration
         MigrateActionGuardDefaultButton();
         MigrateActionGuardVfxDefault();
         MigrateActionBasicAttackDefaultButton();
+        MigrateGuidedCollapse();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
     }
@@ -498,6 +553,14 @@ public class Configuration : IPluginConfiguration
     public void Save()
     {
         pluginInterface?.SavePluginConfig(this);
+    }
+
+    public void ResetGuidedCollapseDefaults(bool preserveEnabled = false)
+    {
+        var enabled = GuidedCollapse.Enabled;
+        GuidedCollapse.ResetDefaults();
+        if (preserveEnabled)
+            GuidedCollapse.Enabled = enabled;
     }
 
     public void ResetActionModeDefaults(bool preserveEnabled = true)
@@ -579,6 +642,27 @@ public class Configuration : IPluginConfiguration
 
         ActionBasicAttackDefaultMigratedToSouth = true;
         Save();
+    }
+
+    private void MigrateGuidedCollapse()
+    {
+        GuidedCollapse ??= new GuidedCollapseSettings();
+        GuidedCollapse.Relaxation ??= new GuidedCollapseRelaxationSettings();
+        GuidedCollapse.KneePowerLoss ??= new GuidedCollapseKneePowerLossSettings();
+
+        if (DeathCollapseEnabled && !GuidedCollapse.Enabled)
+        {
+            GuidedCollapse.Enabled = true;
+            GuidedCollapse.Mode = 0;
+            GuidedCollapse.Relaxation.Archetype = DeathCollapseArchetype;
+            GuidedCollapse.Relaxation.Strength = DeathCollapseStrength;
+            GuidedCollapse.Relaxation.Hold = DeathCollapseHold;
+            GuidedCollapse.Relaxation.Fade = DeathCollapseFade;
+            GuidedCollapse.Relaxation.HingeSoften = DeathCollapseHingeSoften;
+            GuidedCollapse.Relaxation.Direction = DeathCollapseDirection;
+            GuidedCollapse.Relaxation.Impulse = DeathCollapseImpulse;
+            Save();
+        }
     }
 
     private void MigrateSplitVfxToggles()

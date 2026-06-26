@@ -994,7 +994,7 @@ public unsafe class RagdollController : IDisposable
         savedCharacterPosition = go->Position;
         targetEntityId = go->EntityId;
 
-        ArmConfiguredDeathCollapse();
+        ArmConfiguredGuidedCollapse();
 
         log.Info($"RagdollController: Activated for 0x{characterAddress:X} (delay={activationDelay:F1}s)");
     }
@@ -3538,23 +3538,31 @@ public unsafe class RagdollController : IDisposable
 
     public bool CollapseSpikeActive => collapseSpikeActive;
 
-    private void ArmConfiguredDeathCollapse()
+    private void ArmConfiguredGuidedCollapse()
     {
-        if (!config.DeathCollapseEnabled) return;
+        var guided = config.GuidedCollapse;
+        if (!guided.Enabled) return;
 
-        var archetype = config.DeathCollapseArchetype == 0
+        if (guided.Mode == 1)
+        {
+            RequestEntryConditionedKneePowerLossOnReady();
+            return;
+        }
+
+        var relaxation = guided.Relaxation;
+        var archetype = relaxation.Archetype == 0
             ? CollapseArchetype.StiffHold
             : CollapseArchetype.UniformCollapse;
-        var direction = (CollapseDirection)Math.Clamp(config.DeathCollapseDirection, 0, 4);
+        var direction = (CollapseDirection)Math.Clamp(relaxation.Direction, 0, 4);
 
         RequestCollapseSpikeOnReady(
             archetype,
-            Math.Clamp(config.DeathCollapseStrength, 0.5f, 40f),
-            Math.Clamp(config.DeathCollapseHold, 0f, 5f),
-            Math.Clamp(config.DeathCollapseFade, 0.05f, 8f),
-            Math.Clamp(config.DeathCollapseHingeSoften, 0f, 1f),
+            Math.Clamp(relaxation.Strength, 0.5f, 40f),
+            Math.Clamp(relaxation.Hold, 0f, 5f),
+            Math.Clamp(relaxation.Fade, 0.05f, 8f),
+            Math.Clamp(relaxation.HingeSoften, 0f, 1f),
             direction,
-            Math.Clamp(config.DeathCollapseImpulse, 0f, 8f));
+            Math.Clamp(relaxation.Impulse, 0f, 8f));
     }
 
     /// <summary>
@@ -4518,6 +4526,13 @@ public unsafe class RagdollController : IDisposable
 
     public void RequestEntryConditionedKneePowerLossOnReady()
     {
+        var knee = config.GuidedCollapse.KneePowerLoss;
+        if (!knee.EntryConditioningEnabled)
+        {
+            RequestKneePowerLossForwardOnReady();
+            return;
+        }
+
         if (IsSimulationReady)
         {
             if (!BeginCollapseEntryConditioning(BeginKneePowerLossForwardPattern))
@@ -4542,8 +4557,10 @@ public unsafe class RagdollController : IDisposable
 
         entryForward = ResolveCollapseDirection(CollapseDirection.Forward);
         entryRight = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
+        var knee = config.GuidedCollapse.KneePowerLoss;
         var straightestKnee = MathF.Min(entryLeftKneeAngle, entryRightKneeAngle);
-        entryWasNeeded = entryStanceWidth < 0.28f || straightestKnee < 8f;
+        entryWasNeeded = entryStanceWidth < Math.Clamp(knee.EntryStanceThreshold, 0.05f, 1.0f) ||
+                         straightestKnee < Math.Clamp(knee.EntryReadyKneeAngle, 1f, 60f);
         if (!entryWasNeeded)
         {
             log.Info($"RagdollController: entry conditioning skipped - stance={entryStanceWidth:F2} kneeAngles=({entryLeftKneeAngle:F1},{entryRightKneeAngle:F1})");
@@ -4579,17 +4596,26 @@ public unsafe class RagdollController : IDisposable
         if (!entryConditioningActive || simulation == null) return;
 
         entryConditioningElapsed += dt;
-        var t = SmoothStep(Math.Clamp(entryConditioningElapsed / 0.36f, 0f, 1f));
+        var knee = config.GuidedCollapse.KneePowerLoss;
+        var minDuration = Math.Clamp(knee.EntryMinDuration, 0.05f, 1.0f);
+        var maxDuration = Math.Clamp(MathF.Max(knee.EntryMaxDuration, minDuration), minDuration, 1.5f);
+        var t = SmoothStep(Math.Clamp(entryConditioningElapsed / maxDuration, 0f, 1f));
         var stepScale = Math.Clamp(dt * 60f, 0.35f, 2.0f);
 
-        ApplyEntryKneeSeparation(0.34f + 0.16f * t, 0.10f * stepScale);
-        ApplyCoreAxisVelocity("j_kosi", -Vector3.UnitY, 0.32f + 0.28f * t, 0.075f * stepScale);
+        var targetStance = Math.Clamp(knee.EntryTargetStanceStart, 0.05f, 1.2f)
+            + (Math.Clamp(knee.EntryTargetStanceEnd, 0.05f, 1.2f) - Math.Clamp(knee.EntryTargetStanceStart, 0.05f, 1.2f)) * t;
+        var pelvisDown = Math.Clamp(knee.EntryPelvisDownStart, 0f, 2f)
+            + (Math.Clamp(knee.EntryPelvisDownEnd, 0f, 2f) - Math.Clamp(knee.EntryPelvisDownStart, 0f, 2f)) * t;
+
+        ApplyEntryKneeSeparation(targetStance, 0.10f * stepScale);
+        ApplyCoreAxisVelocity("j_kosi", -Vector3.UnitY, pelvisDown, 0.075f * stepScale);
         ApplyCoreAxisVelocity("j_kosi", entryForward, 0.20f + 0.18f * t, 0.055f * stepScale);
         ApplyCoreAxisVelocity("j_sebo_b", entryForward, 0.10f + 0.10f * t, 0.040f * stepScale);
 
         var ready = TryMeasureEntryPose(out var stance, out var leftAngle, out var rightAngle, out _, out _) &&
-                    stance >= 0.30f && MathF.Min(leftAngle, rightAngle) >= 10f;
-        if (entryConditioningElapsed < 0.24f || (!ready && entryConditioningElapsed < 0.42f))
+                    stance >= Math.Clamp(knee.EntryReadyStance, 0.05f, 1.2f) &&
+                    MathF.Min(leftAngle, rightAngle) >= Math.Clamp(knee.EntryReadyKneeAngle, 1f, 60f);
+        if (entryConditioningElapsed < minDuration || (!ready && entryConditioningElapsed < maxDuration))
             return;
 
         var continuation = entryConditioningContinuation;
@@ -4761,10 +4787,12 @@ public unsafe class RagdollController : IDisposable
         TryBuildLegAnatomyFrame("j_asi_a_r", "j_asi_b_r", "j_asi_c_r", "j_asi_d_r",
             rightKneeBody.Pose.Orientation, out var rightHingeAxis, out var rightHingeForward);
 
+        var kneeSettings = config.GuidedCollapse.KneePowerLoss;
+        var kneeFlexDegrees = Math.Clamp(kneeSettings.KneeFlexDegrees, 0f, 90f);
         kneeLeftKneeFlexTarget = MakeRelativeFlexTarget(leftKneeBody.Pose.Orientation, leftThighBody.Pose.Orientation,
-            leftHingeAxis, leftHingeForward, 34f);
+            leftHingeAxis, leftHingeForward, kneeFlexDegrees);
         kneeRightKneeFlexTarget = MakeRelativeFlexTarget(rightKneeBody.Pose.Orientation, rightThighBody.Pose.Orientation,
-            rightHingeAxis, rightHingeForward, 34f);
+            rightHingeAxis, rightHingeForward, kneeFlexDegrees);
 
         log.Info($"RagdollController: knee power-loss axes L axis=({leftHingeAxis.X:F2},{leftHingeAxis.Y:F2},{leftHingeAxis.Z:F2}) fwd=({leftHingeForward.X:F2},{leftHingeForward.Y:F2},{leftHingeForward.Z:F2}); " +
                  $"R axis=({rightHingeAxis.X:F2},{rightHingeAxis.Y:F2},{rightHingeAxis.Z:F2}) fwd=({rightHingeForward.X:F2},{rightHingeForward.Y:F2},{rightHingeForward.Z:F2})");
@@ -4855,39 +4883,44 @@ public unsafe class RagdollController : IDisposable
         var t = SmoothStep(Math.Clamp(kneePowerLossPhaseElapsed / 0.75f, 0f, 1f));
         var supportGain = 1f - 0.45f * t;
         var flexGain = SmoothStep(Math.Clamp(kneePowerLossPhaseElapsed / 0.55f, 0f, 1f));
+        var kneeSettings = config.GuidedCollapse.KneePowerLoss;
 
-        ApplySoftFootSupport(kneeLeftFootSupport, kneeLeftFootStart, supportGain, 1100f);
-        ApplySoftFootSupport(kneeRightFootSupport, kneeRightFootStart, supportGain, 1100f);
+        ApplySoftFootSupport(kneeLeftFootSupport, kneeLeftFootStart, supportGain, Math.Clamp(kneeSettings.BuckleFootSupportForce, 0f, 5000f));
+        ApplySoftFootSupport(kneeRightFootSupport, kneeRightFootStart, supportGain, Math.Clamp(kneeSettings.BuckleFootSupportForce, 0f, 5000f));
 
         ApplyKneeLateralStability(5.5f, 0.45f);
 
-        ApplyDirectedRelativeAngular(kneeLeftFlexBias, Quaternion.Slerp(kneeLeftKneeStartTarget, kneeLeftKneeFlexTarget, flexGain), 82f * flexGain, 14f);
-        ApplyDirectedRelativeAngular(kneeRightFlexBias, Quaternion.Slerp(kneeRightKneeStartTarget, kneeRightKneeFlexTarget, flexGain), 82f * flexGain, 14f);
+        var flexForce = Math.Clamp(kneeSettings.KneeBuckleFlexForce, 0f, 500f);
+        ApplyDirectedRelativeAngular(kneeLeftFlexBias, Quaternion.Slerp(kneeLeftKneeStartTarget, kneeLeftKneeFlexTarget, flexGain), flexForce * flexGain, 14f);
+        ApplyDirectedRelativeAngular(kneeRightFlexBias, Quaternion.Slerp(kneeRightKneeStartTarget, kneeRightKneeFlexTarget, flexGain), flexForce * flexGain, 14f);
 
         var needMoreDrop = pelvisDrop < 0.22f ? 1f : pelvisDrop < 0.38f ? 0.45f : 0.1f;
         var target = kneePelvisStart
             + kneeForward * (0.10f + 0.18f * t)
             - Vector3.UnitY * (0.28f + 0.18f * t);
-        ApplyDirectedLinear(kneePelvisSupport, target, 420f * needMoreDrop, 14f);
+        ApplyDirectedLinear(kneePelvisSupport, target, Math.Clamp(kneeSettings.BucklePelvisForce, 0f, 3000f) * needMoreDrop, 14f);
     }
 
     private void UpdateKneeTorsoLossPhase()
     {
         var t = SmoothStep(Math.Clamp(kneePowerLossPhaseElapsed / 0.65f, 0f, 1f));
         var supportGain = 1f - t;
+        var kneeSettings = config.GuidedCollapse.KneePowerLoss;
 
-        ApplySoftFootSupport(kneeLeftFootSupport, kneeLeftFootStart, supportGain, 650f);
-        ApplySoftFootSupport(kneeRightFootSupport, kneeRightFootStart, supportGain, 650f);
+        ApplySoftFootSupport(kneeLeftFootSupport, kneeLeftFootStart, supportGain, Math.Clamp(kneeSettings.TorsoFootSupportForce, 0f, 5000f));
+        ApplySoftFootSupport(kneeRightFootSupport, kneeRightFootStart, supportGain, Math.Clamp(kneeSettings.TorsoFootSupportForce, 0f, 5000f));
         ApplyKneeLateralStability(3.0f * supportGain, 0.32f);
-        ApplyDirectedRelativeAngular(kneeLeftFlexBias, kneeLeftKneeFlexTarget, 42f * supportGain, 10f);
-        ApplyDirectedRelativeAngular(kneeRightFlexBias, kneeRightKneeFlexTarget, 42f * supportGain, 10f);
+        var flexForce = Math.Clamp(kneeSettings.KneeTorsoFlexForce, 0f, 500f);
+        ApplyDirectedRelativeAngular(kneeLeftFlexBias, kneeLeftKneeFlexTarget, flexForce * supportGain, 10f);
+        ApplyDirectedRelativeAngular(kneeRightFlexBias, kneeRightKneeFlexTarget, flexForce * supportGain, 10f);
 
+        var chestPitch = Math.Clamp(kneeSettings.ChestPitchDegrees, -90f, 90f) * MathF.PI / 180f;
         var chestTarget = Quaternion.Normalize(
-            Quaternion.CreateFromAxisAngle(kneeRight, 0.72f * t) * kneeChestStartRot);
+            Quaternion.CreateFromAxisAngle(kneeRight, chestPitch * t) * kneeChestStartRot);
         ApplyDirectedAngular(kneeChestPitch, chestTarget, 260f * (1f - 0.45f * t), 18f);
 
         var pelvisTarget = kneePelvisStart + kneeForward * (0.25f + 0.18f * t) - Vector3.UnitY * 0.46f;
-        ApplyDirectedLinear(kneePelvisSupport, pelvisTarget, 220f * supportGain, 10f);
+        ApplyDirectedLinear(kneePelvisSupport, pelvisTarget, Math.Clamp(kneeSettings.TorsoPelvisForce, 0f, 3000f) * supportGain, 10f);
     }
 
     private void ApplySoftFootSupport(ConstraintHandle? handle, Vector3 start, float gain, float force)
