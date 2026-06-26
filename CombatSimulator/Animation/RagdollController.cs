@@ -1023,6 +1023,8 @@ public unsafe class RagdollController : IDisposable
 
         StopCollapseSpike();
         pendingCollapseSpike = false;
+        StopDirectedCollapseSpike();
+        pendingDirectedCollapseSpike = false;
 
         targetCharacterAddress = nint.Zero;
         targetEntityId = 0;
@@ -1073,6 +1075,18 @@ public unsafe class RagdollController : IDisposable
                     {
                         ApplyCollapseDirectionImpulse(pendingCollapseDirection, pendingCollapseImpulse);
                     }
+                }
+
+                if (pendingDirectedCollapseSpike)
+                {
+                    pendingDirectedCollapseSpike = false;
+                    BeginDirectedKneelPitchSpike(
+                        pendingDirectedDuration,
+                        pendingDirectedFootForce,
+                        pendingDirectedPelvisForce,
+                        pendingDirectedDrop,
+                        pendingDirectedForward,
+                        pendingDirectedPitchDegrees);
                 }
             }
 
@@ -2866,11 +2880,12 @@ public unsafe class RagdollController : IDisposable
         // pose below. Applies to generic (monster) rigs too: if their auto-built network
         // never settles, prevAllAsleep simply stays false and this never triggers; if it
         // does settle, there is nothing to clamp. A grab or a moved skeleton forces a step.
-        var resting = prevAllAsleep && !grabConstraintActive && !collapseSpikeActive && !skeletonMoved && !biomechanicalSettleActive;
+        var resting = prevAllAsleep && !grabConstraintActive && !collapseSpikeActive && !directedCollapseActive && !skeletonMoved && !biomechanicalSettleActive;
 
         // Death-collapse spike: restrength the per-joint "muscle" servos before stepping so the
         // updated torque ceilings take effect this tick. Advances the fade and retires itself.
         UpdateCollapseSpike(dt);
+        UpdateDirectedCollapseSpike(dt);
 
         // Update NPC collision volumes to track their current animated bone positions.
         // Must call UpdateBounds() after repositioning — BEPU2 doesn't auto-update
@@ -3743,6 +3758,210 @@ public unsafe class RagdollController : IDisposable
             log.Info("RagdollController: collapse spike fully faded — releasing to passive ragdoll");
             StopCollapseSpike();
         }
+    }
+
+    // --- Directed collapse spike (experimental proof-of-concept) ---
+    // Goal: validate "foot plant + staged body drive" for a forward kneel/pitch death.
+    // This is intentionally separate from the validated relaxation-family Death Collapse.
+    private ConstraintHandle? directedLeftFootConstraint;
+    private ConstraintHandle? directedRightFootConstraint;
+    private ConstraintHandle? directedPelvisLinearConstraint;
+    private ConstraintHandle? directedPelvisAngularConstraint;
+    private ConstraintHandle? directedChestAngularConstraint;
+    private bool directedCollapseActive;
+    private bool pendingDirectedCollapseSpike;
+    private float directedElapsed;
+    private float directedDuration;
+    private float directedFootForce;
+    private float directedPelvisForce;
+    private float directedDrop;
+    private float directedForwardDistance;
+    private float directedPitchRadians;
+    private float pendingDirectedDuration;
+    private float pendingDirectedFootForce;
+    private float pendingDirectedPelvisForce;
+    private float pendingDirectedDrop;
+    private float pendingDirectedForward;
+    private float pendingDirectedPitchDegrees;
+    private Vector3 directedForward;
+    private Vector3 directedRight;
+    private Vector3 directedLeftFootTarget;
+    private Vector3 directedRightFootTarget;
+    private Vector3 directedPelvisStart;
+    private Quaternion directedPelvisStartRot;
+    private Quaternion directedChestStartRot;
+
+    public bool DirectedCollapseSpikeActive => directedCollapseActive;
+
+    public void RequestDirectedKneelPitchOnReady(float duration, float footForce, float pelvisForce,
+        float drop, float forward, float pitchDegrees)
+    {
+        if (IsSimulationReady)
+        {
+            BeginDirectedKneelPitchSpike(duration, footForce, pelvisForce, drop, forward, pitchDegrees);
+            return;
+        }
+
+        pendingDirectedDuration = duration;
+        pendingDirectedFootForce = footForce;
+        pendingDirectedPelvisForce = pelvisForce;
+        pendingDirectedDrop = drop;
+        pendingDirectedForward = forward;
+        pendingDirectedPitchDegrees = pitchDegrees;
+        pendingDirectedCollapseSpike = true;
+        log.Info("RagdollController: directed kneel-pitch armed for next death");
+    }
+
+    public bool BeginDirectedKneelPitchSpike(float duration, float footForce, float pelvisForce,
+        float drop, float forward, float pitchDegrees)
+    {
+        if (simulation == null || !isActive) return false;
+
+        var leftFoot = FindBodyHandle("j_asi_d_l");
+        var rightFoot = FindBodyHandle("j_asi_d_r");
+        var pelvis = FindBodyHandle("j_kosi");
+        var chest = FindBodyHandle("j_sebo_c") ?? FindBodyHandle("j_sebo_b");
+        if (!leftFoot.HasValue || !rightFoot.HasValue || !pelvis.HasValue || !chest.HasValue)
+        {
+            log.Warning("RagdollController: directed kneel-pitch failed - missing foot/pelvis/chest body");
+            return false;
+        }
+
+        StopCollapseSpike();
+        StopDirectedCollapseSpike();
+
+        directedDuration = Math.Clamp(duration, 0.25f, 4f);
+        directedFootForce = Math.Clamp(footForce, 50f, 10000f);
+        directedPelvisForce = Math.Clamp(pelvisForce, 50f, 10000f);
+        directedDrop = Math.Clamp(drop, 0.05f, 1.5f);
+        directedForwardDistance = Math.Clamp(forward, 0f, 2f);
+        directedPitchRadians = Math.Clamp(pitchDegrees, -90f, 90f) * (MathF.PI / 180f);
+        directedElapsed = 0f;
+
+        directedForward = ResolveCollapseDirection(CollapseDirection.Forward);
+        directedRight = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
+
+        var leftBody = simulation.Bodies.GetBodyReference(leftFoot.Value);
+        var rightBody = simulation.Bodies.GetBodyReference(rightFoot.Value);
+        var pelvisBody = simulation.Bodies.GetBodyReference(pelvis.Value);
+        var chestBody = simulation.Bodies.GetBodyReference(chest.Value);
+
+        directedLeftFootTarget = leftBody.Pose.Position;
+        directedRightFootTarget = rightBody.Pose.Position;
+        directedPelvisStart = pelvisBody.Pose.Position;
+        directedPelvisStartRot = pelvisBody.Pose.Orientation;
+        directedChestStartRot = chestBody.Pose.Orientation;
+
+        WakeRagdollBodiesForBiomechanicalSettle();
+
+        directedLeftFootConstraint = simulation.Solver.Add(leftFoot.Value, DirectedLinearServo(directedLeftFootTarget, directedFootForce, 90f));
+        directedRightFootConstraint = simulation.Solver.Add(rightFoot.Value, DirectedLinearServo(directedRightFootTarget, directedFootForce, 90f));
+        directedPelvisLinearConstraint = simulation.Solver.Add(pelvis.Value, DirectedLinearServo(directedPelvisStart, directedPelvisForce, 45f));
+        directedPelvisAngularConstraint = simulation.Solver.Add(pelvis.Value, DirectedAngularServo(directedPelvisStartRot, directedPelvisForce * 0.25f, 20f));
+        directedChestAngularConstraint = simulation.Solver.Add(chest.Value, DirectedAngularServo(directedChestStartRot, directedPelvisForce * 0.35f, 25f));
+
+        directedCollapseActive = true;
+        prevAllAsleep = false;
+        BeginBiomechanicalSettle();
+        log.Info($"RagdollController: directed kneel-pitch begun - duration={directedDuration:F2} footForce={directedFootForce:F0} pelvisForce={directedPelvisForce:F0} drop={directedDrop:F2} forward={directedForwardDistance:F2} pitch={pitchDegrees:F0}");
+        return true;
+    }
+
+    public void StopDirectedCollapseSpike()
+    {
+        if (simulation != null)
+        {
+            RemoveDirectedConstraint(ref directedLeftFootConstraint);
+            RemoveDirectedConstraint(ref directedRightFootConstraint);
+            RemoveDirectedConstraint(ref directedPelvisLinearConstraint);
+            RemoveDirectedConstraint(ref directedPelvisAngularConstraint);
+            RemoveDirectedConstraint(ref directedChestAngularConstraint);
+        }
+        else
+        {
+            directedLeftFootConstraint = null;
+            directedRightFootConstraint = null;
+            directedPelvisLinearConstraint = null;
+            directedPelvisAngularConstraint = null;
+            directedChestAngularConstraint = null;
+        }
+
+        if (directedCollapseActive)
+        {
+            directedCollapseActive = false;
+            BeginBiomechanicalSettle();
+            log.Info("RagdollController: directed kneel-pitch stopped");
+        }
+    }
+
+    private void UpdateDirectedCollapseSpike(float dt)
+    {
+        if (!directedCollapseActive || simulation == null) return;
+        directedElapsed += dt;
+
+        var t = Math.Clamp(directedElapsed / directedDuration, 0f, 1f);
+        var plantGain = 1f - SmoothStep(Math.Clamp((t - 0.70f) / 0.25f, 0f, 1f));
+        var driveGain = 1f - SmoothStep(Math.Clamp((t - 0.78f) / 0.20f, 0f, 1f));
+        var buckle = SmoothStep(Math.Clamp(t / 0.62f, 0f, 1f));
+        var pitch = SmoothStep(Math.Clamp((t - 0.32f) / 0.46f, 0f, 1f));
+
+        var pelvisTarget = directedPelvisStart
+            + directedForward * (directedForwardDistance * buckle)
+            - Vector3.UnitY * (directedDrop * buckle);
+
+        var pelvisTargetRot = Quaternion.Normalize(
+            Quaternion.CreateFromAxisAngle(directedRight, directedPitchRadians * 0.35f * pitch) * directedPelvisStartRot);
+        var chestTargetRot = Quaternion.Normalize(
+            Quaternion.CreateFromAxisAngle(directedRight, directedPitchRadians * pitch) * directedChestStartRot);
+
+        ApplyDirectedLinear(directedLeftFootConstraint, directedLeftFootTarget, directedFootForce * plantGain, 90f);
+        ApplyDirectedLinear(directedRightFootConstraint, directedRightFootTarget, directedFootForce * plantGain, 90f);
+        ApplyDirectedLinear(directedPelvisLinearConstraint, pelvisTarget, directedPelvisForce * driveGain, 45f);
+        ApplyDirectedAngular(directedPelvisAngularConstraint, pelvisTargetRot, directedPelvisForce * 0.25f * driveGain, 20f);
+        ApplyDirectedAngular(directedChestAngularConstraint, chestTargetRot, directedPelvisForce * 0.35f * driveGain, 25f);
+
+        if (directedElapsed >= directedDuration)
+            StopDirectedCollapseSpike();
+    }
+
+    private static OneBodyLinearServo DirectedLinearServo(Vector3 target, float force, float freq) => new()
+    {
+        LocalOffset = Vector3.Zero,
+        Target = target,
+        ServoSettings = new ServoSettings(12f, 1f, MathF.Max(0f, force)),
+        SpringSettings = new SpringSettings(freq, 1f),
+    };
+
+    private static OneBodyAngularServo DirectedAngularServo(Quaternion target, float force, float freq) => new()
+    {
+        TargetOrientation = target,
+        ServoSettings = new ServoSettings(12f, 1f, MathF.Max(0f, force)),
+        SpringSettings = new SpringSettings(freq, 1f),
+    };
+
+    private void ApplyDirectedLinear(ConstraintHandle? handle, Vector3 target, float force, float freq)
+    {
+        if (!handle.HasValue || simulation == null) return;
+        try { simulation.Solver.ApplyDescription(handle.Value, DirectedLinearServo(target, force, freq)); } catch { }
+    }
+
+    private void ApplyDirectedAngular(ConstraintHandle? handle, Quaternion target, float force, float freq)
+    {
+        if (!handle.HasValue || simulation == null) return;
+        try { simulation.Solver.ApplyDescription(handle.Value, DirectedAngularServo(target, force, freq)); } catch { }
+    }
+
+    private void RemoveDirectedConstraint(ref ConstraintHandle? handle)
+    {
+        if (!handle.HasValue || simulation == null) { handle = null; return; }
+        try { simulation.Solver.Remove(handle.Value); } catch { }
+        handle = null;
+    }
+
+    private static float SmoothStep(float t)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        return t * t * (3f - 2f * t);
     }
 
     // --- Standing support constraint API (execution mode) ---

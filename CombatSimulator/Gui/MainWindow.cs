@@ -4284,6 +4284,12 @@ public class MainWindow : IDisposable
     private float spikeHold = 0.4f;
     private float spikeFade = 1.0f;
     private float spikeHingeSoft = 0.25f; // hinge (knee/elbow) servo strength fraction
+    private float directedKneelDuration = 1.25f;
+    private float directedKneelFootForce = 3500f;
+    private float directedKneelPelvisForce = 2200f;
+    private float directedKneelDrop = 0.55f;
+    private float directedKneelForward = 0.35f;
+    private float directedKneelPitch = 45f;
     private static readonly string[] spikeArchetypeNames = { "StiffHold", "UniformCollapse", "KneelPitch" };
     private static readonly string[] deathCollapseArchetypeNames = { "StiffHold", "UniformCollapse" };
     private static readonly string[] deathCollapseDirectionNames = { "None", "Random", "Forward", "Backward", "Sideways" };
@@ -4577,6 +4583,67 @@ public class MainWindow : IDisposable
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Kill the player AND auto-begin the spike at the death instant,\n" +
                                  "capturing the standing pose. Use this for KneelPitch.");
+
+            ImGui.Separator();
+            ImGui.TextDisabled("Directed Kneel Spike");
+            ImGui.SetNextItemWidth(90);
+            ImGui.DragFloat("Duration (s)##directedKneel", ref directedKneelDuration, 0.05f, 0.25f, 4f, "%.2f");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(90);
+            ImGui.DragFloat("Drop##directedKneel", ref directedKneelDrop, 0.02f, 0.05f, 1.5f, "%.2f");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(90);
+            ImGui.DragFloat("Forward##directedKneel", ref directedKneelForward, 0.02f, 0f, 2f, "%.2f");
+
+            ImGui.SetNextItemWidth(105);
+            ImGui.DragFloat("Foot force##directedKneel", ref directedKneelFootForce, 100f, 50f, 10000f, "%.0f");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(105);
+            ImGui.DragFloat("Pelvis force##directedKneel", ref directedKneelPelvisForce, 100f, 50f, 10000f, "%.0f");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(90);
+            ImGui.DragFloat("Pitch##directedKneel", ref directedKneelPitch, 1f, -90f, 90f, "%.0f");
+
+            var directedOn = ragdollController.DirectedCollapseSpikeActive;
+            ImGui.BeginDisabled(!deadNow);
+            if (ImGui.Button("Begin Directed Kneel##directedKneel"))
+                ragdollController.BeginDirectedKneelPitchSpike(
+                    directedKneelDuration,
+                    directedKneelFootForce,
+                    directedKneelPelvisForce,
+                    directedKneelDrop,
+                    directedKneelForward,
+                    directedKneelPitch);
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled) && !deadNow)
+                ImGui.SetTooltip("Player must be dead first. Usually use Die + Directed Kneel instead.");
+
+            ImGui.SameLine();
+            ImGui.BeginDisabled(!directedOn);
+            if (ImGui.Button("Stop##directedKneel")) ragdollController.StopDirectedCollapseSpike();
+            ImGui.EndDisabled();
+
+            ImGui.SameLine();
+            ImGui.TextColored(
+                directedOn ? new Vector4(0.4f, 1f, 0.4f, 1f) : new Vector4(0.6f, 0.6f, 0.6f, 1f),
+                directedOn ? "active" : "idle");
+
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.15f, 0.15f, 1f));
+            if (ImGui.Button("Die + Directed Kneel##directedKneel"))
+            {
+                ragdollController.RequestDirectedKneelPitchOnReady(
+                    directedKneelDuration,
+                    directedKneelFootForce,
+                    directedKneelPelvisForce,
+                    directedKneelDrop,
+                    directedKneelForward,
+                    directedKneelPitch);
+                ctrl.TriggerInstantDeath();
+            }
+            ImGui.PopStyleColor();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Kill the player and begin the directed kneel controller at physics initialization.\n" +
+                                 "This tests foot anchors + pelvis drive + torso pitch, not hold-then-fade.");
         }
 
         // ── Presets ──────────────────────────────────────────────────────────
