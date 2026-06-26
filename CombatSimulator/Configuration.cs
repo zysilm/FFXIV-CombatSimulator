@@ -103,7 +103,7 @@ public class GuidedCollapseKneePowerLossSettings
     public float BucklePelvisForce { get; set; } = 420f;
     public float TorsoPelvisForce { get; set; } = 220f;
     public float ChestPitchDegrees { get; set; } = 41f;
-    public bool UseSemanticControls { get; set; } = true;
+    public bool UseSemanticControls { get; set; } = false;
     public float BuckleMinDuration { get; set; } = 0.24f;
     public float BuckleTimeout { get; set; } = 0.95f;
     public float BucklePelvisDropToTorso { get; set; } = 0.30f;

@@ -4691,52 +4691,7 @@ public unsafe class RagdollController : IDisposable
 
     private GuidedCollapseKneePowerLossSettings EffectiveKneePowerLossSettings()
     {
-        var raw = config.GuidedCollapse.KneePowerLoss;
-        if (!raw.UseSemanticControls)
-            return raw;
-
-        var entry = Math.Clamp(raw.EntryStrength, 0f, 1f);
-        var yield = Math.Clamp(raw.KneeYield, 0f, 1f);
-        var grip = Math.Clamp(raw.FootGrip, 0f, 1f);
-        var forward = Math.Clamp(raw.ForwardCommitment, 0f, 1f);
-        var release = Math.Clamp(raw.ReleaseTiming, 0f, 1f);
-
-        return new GuidedCollapseKneePowerLossSettings
-        {
-            UseSemanticControls = true,
-            EntryStrength = raw.EntryStrength,
-            KneeYield = raw.KneeYield,
-            FootGrip = raw.FootGrip,
-            ForwardCommitment = raw.ForwardCommitment,
-            ReleaseTiming = raw.ReleaseTiming,
-            EntryConditioningEnabled = raw.EntryConditioningEnabled,
-
-            EntryStanceThreshold = 0.24f + 0.12f * entry,
-            EntryReadyStance = 0.27f + 0.18f * entry,
-            EntryReadyKneeAngle = 7f + 12f * entry,
-            EntryMinDuration = 0.14f + 0.18f * entry,
-            EntryMaxDuration = 0.24f + 0.42f * entry,
-            EntryTargetStanceStart = 0.28f + 0.14f * entry,
-            EntryTargetStanceEnd = 0.36f + 0.24f * entry,
-            EntryPelvisDownStart = 0.20f + 0.22f * entry,
-            EntryPelvisDownEnd = 0.34f + 0.34f * entry,
-
-            KneeFlexDegrees = 18f + 38f * yield,
-            KneeBuckleFlexForce = 35f + 115f * yield,
-            KneeTorsoFlexForce = 15f + 70f * yield,
-            BuckleFootSupportForce = 250f + 1500f * grip,
-            TorsoFootSupportForce = 100f + 950f * grip,
-            BucklePelvisForce = 180f + 520f * forward,
-            TorsoPelvisForce = 80f + 320f * forward,
-            ChestPitchDegrees = 22f + 42f * forward,
-
-            BuckleMinDuration = 0.16f + 0.22f * release,
-            BuckleTimeout = 0.55f + 0.85f * release,
-            BucklePelvisDropToTorso = 0.22f + 0.20f * release,
-            BuckleKneeAngleToTorso = 14f + 20f * release,
-            TorsoMinDuration = 0.35f + 0.45f * release,
-            TorsoTimeout = 0.55f + 0.75f * release,
-        };
+        return config.GuidedCollapse.KneePowerLoss;
     }
 
     // --- Knee power-loss forward pattern (C# pattern spike) ---
