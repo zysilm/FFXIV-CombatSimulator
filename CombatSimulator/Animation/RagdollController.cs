@@ -4360,8 +4360,22 @@ public unsafe class RagdollController : IDisposable
 
         kneeLeftKneeStartTarget = Quaternion.Normalize(Quaternion.Inverse(leftKneeBody.Pose.Orientation) * leftThighBody.Pose.Orientation);
         kneeRightKneeStartTarget = Quaternion.Normalize(Quaternion.Inverse(rightKneeBody.Pose.Orientation) * rightThighBody.Pose.Orientation);
-        kneeLeftKneeFlexTarget = MakeRelativeFlexTarget(leftKneeBody.Pose.Orientation, leftThighBody.Pose.Orientation, kneeRight, 55f);
-        kneeRightKneeFlexTarget = MakeRelativeFlexTarget(rightKneeBody.Pose.Orientation, rightThighBody.Pose.Orientation, kneeRight, 55f);
+        var leftKneeAxis = Vector3.Transform(Vector3.UnitY, leftKneeBody.Pose.Orientation);
+        var rightKneeAxis = Vector3.Transform(Vector3.UnitY, rightKneeBody.Pose.Orientation);
+        var leftThighAxis = Vector3.Transform(Vector3.UnitY, leftThighBody.Pose.Orientation);
+        var rightThighAxis = Vector3.Transform(Vector3.UnitY, rightThighBody.Pose.Orientation);
+        var leftHingeAxis = ComputeProfileHingeAxis(AnatomicalRole.Knee, leftThighAxis, leftKneeAxis, leftKneeBody.Pose.Orientation);
+        var rightHingeAxis = ComputeProfileHingeAxis(AnatomicalRole.Knee, rightThighAxis, rightKneeAxis, rightKneeBody.Pose.Orientation);
+        var leftHingeForward = ComputeHingeForward(leftHingeAxis, leftThighAxis, leftKneeAxis);
+        var rightHingeForward = ComputeHingeForward(rightHingeAxis, rightThighAxis, rightKneeAxis);
+
+        kneeLeftKneeFlexTarget = MakeRelativeFlexTarget(leftKneeBody.Pose.Orientation, leftThighBody.Pose.Orientation,
+            leftHingeAxis, leftHingeForward, 55f);
+        kneeRightKneeFlexTarget = MakeRelativeFlexTarget(rightKneeBody.Pose.Orientation, rightThighBody.Pose.Orientation,
+            rightHingeAxis, rightHingeForward, 55f);
+
+        log.Info($"RagdollController: knee power-loss axes L axis=({leftHingeAxis.X:F2},{leftHingeAxis.Y:F2},{leftHingeAxis.Z:F2}) fwd=({leftHingeForward.X:F2},{leftHingeForward.Y:F2},{leftHingeForward.Z:F2}); " +
+                 $"R axis=({rightHingeAxis.X:F2},{rightHingeAxis.Y:F2},{rightHingeAxis.Z:F2}) fwd=({rightHingeForward.X:F2},{rightHingeForward.Y:F2},{rightHingeForward.Z:F2})");
 
         WakeRagdollBodiesForBiomechanicalSettle();
 
@@ -4501,11 +4515,33 @@ public unsafe class RagdollController : IDisposable
         return simulation.Bodies.GetBodyReference(handle.Value).Pose.Position.Y;
     }
 
-    private static Quaternion MakeRelativeFlexTarget(Quaternion childOrientation, Quaternion parentOrientation, Vector3 flexAxisWorld, float degrees)
+    private static Quaternion MakeRelativeFlexTarget(Quaternion childOrientation, Quaternion parentOrientation,
+        Vector3 flexAxisWorld, Vector3 flexForwardWorld, float degrees)
     {
         if (flexAxisWorld.LengthSquared() < 0.0001f) flexAxisWorld = Vector3.UnitX;
-        var flexWorld = Quaternion.CreateFromAxisAngle(Vector3.Normalize(flexAxisWorld), degrees * (MathF.PI / 180f));
-        return Quaternion.Normalize(Quaternion.Inverse(childOrientation) * flexWorld * parentOrientation);
+        if (flexForwardWorld.LengthSquared() < 0.0001f) flexForwardWorld = Vector3.UnitZ;
+
+        var axis = Vector3.Normalize(flexAxisWorld);
+        var forward = Vector3.Normalize(flexForwardWorld);
+        var radians = degrees * (MathF.PI / 180f);
+
+        Quaternion bestChild = childOrientation;
+        var bestDot = float.NegativeInfinity;
+        for (int i = 0; i < 2; i++)
+        {
+            var sign = i == 0 ? 1f : -1f;
+            var flexWorld = Quaternion.CreateFromAxisAngle(axis, radians * sign);
+            var candidateChild = Quaternion.Normalize(flexWorld * childOrientation);
+            var candidateAxis = Vector3.Transform(Vector3.UnitY, candidateChild);
+            var dot = Vector3.Dot(candidateAxis, forward);
+            if (dot > bestDot)
+            {
+                bestDot = dot;
+                bestChild = candidateChild;
+            }
+        }
+
+        return Quaternion.Normalize(Quaternion.Inverse(bestChild) * parentOrientation);
     }
 
     // --- Standing support constraint API (execution mode) ---
