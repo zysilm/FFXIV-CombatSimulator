@@ -4644,6 +4644,17 @@ public class MainWindow : IDisposable
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Kill the player and begin the directed kneel controller at physics initialization.\n" +
                                  "This tests foot anchors + pelvis drive + torso pitch, not hold-then-fade.");
+
+            ImGui.SameLine();
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.35f, 0.65f, 1f));
+            if (ImGui.Button("Die + Profile Collapse##directedProfile"))
+            {
+                ragdollController.RequestProfileDirectedCollapseOnReady("leg_extensor_failure_forward");
+                ctrl.TriggerInstantDeath();
+            }
+            ImGui.PopStyleColor();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Run the built-in JSON-driven collapse profile:\nleg_extensor_failure_forward");
         }
 
         // ── Presets ──────────────────────────────────────────────────────────

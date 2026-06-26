@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using CombatSimulator.Animation.CollapseProfiles;
 using BepuPhysics;
 using BepuPhysics.Collidables;
 using BepuPhysics.CollisionDetection;
@@ -948,6 +949,7 @@ public unsafe class RagdollController : IDisposable
         this.extraCollisionProvider = extraCollisionProvider;
         this.config = config;
         this.log = log;
+        collapseProfileBook = new CollapseProfileBook(log);
 
         boneService.OnRenderFrame += OnRenderFrame;
     }
@@ -961,6 +963,7 @@ public unsafe class RagdollController : IDisposable
         this.extraCollisionProvider = null;
         this.config = config;
         this.log = log;
+        collapseProfileBook = new CollapseProfileBook(log);
 
         boneService.OnRenderFrame += OnRenderFrame;
     }
@@ -1080,13 +1083,16 @@ public unsafe class RagdollController : IDisposable
                 if (pendingDirectedCollapseSpike)
                 {
                     pendingDirectedCollapseSpike = false;
-                    BeginDirectedKneelPitchSpike(
-                        pendingDirectedDuration,
-                        pendingDirectedFootForce,
-                        pendingDirectedPelvisForce,
-                        pendingDirectedDrop,
-                        pendingDirectedForward,
-                        pendingDirectedPitchDegrees);
+                    if (!string.IsNullOrWhiteSpace(pendingDirectedProfileId))
+                        BeginProfileDirectedCollapseSpike(pendingDirectedProfileId);
+                    else
+                        BeginDirectedKneelPitchSpike(
+                            pendingDirectedDuration,
+                            pendingDirectedFootForce,
+                            pendingDirectedPelvisForce,
+                            pendingDirectedDrop,
+                            pendingDirectedForward,
+                            pendingDirectedPitchDegrees);
                 }
             }
 
@@ -3770,6 +3776,10 @@ public unsafe class RagdollController : IDisposable
     private ConstraintHandle? directedChestAngularConstraint;
     private bool directedCollapseActive;
     private bool pendingDirectedCollapseSpike;
+    private CollapseProfile? directedProfile;
+    private int directedPhaseIndex;
+    private float directedPhaseElapsed;
+    private string pendingDirectedProfileId = string.Empty;
     private float directedElapsed;
     private float directedDuration;
     private float directedFootForce;
@@ -3783,6 +3793,7 @@ public unsafe class RagdollController : IDisposable
     private float pendingDirectedDrop;
     private float pendingDirectedForward;
     private float pendingDirectedPitchDegrees;
+    private readonly CollapseProfileBook collapseProfileBook;
     private Vector3 directedForward;
     private Vector3 directedRight;
     private Vector3 directedLeftFootTarget;
@@ -3808,8 +3819,81 @@ public unsafe class RagdollController : IDisposable
         pendingDirectedDrop = drop;
         pendingDirectedForward = forward;
         pendingDirectedPitchDegrees = pitchDegrees;
+        pendingDirectedProfileId = string.Empty;
         pendingDirectedCollapseSpike = true;
         log.Info("RagdollController: directed kneel-pitch armed for next death");
+    }
+
+    public void RequestProfileDirectedCollapseOnReady(string profileId)
+    {
+        if (IsSimulationReady)
+        {
+            BeginProfileDirectedCollapseSpike(profileId);
+            return;
+        }
+
+        pendingDirectedProfileId = profileId;
+        pendingDirectedCollapseSpike = true;
+        log.Info($"RagdollController: directed collapse profile armed for next death - profile={profileId}");
+    }
+
+    public bool BeginProfileDirectedCollapseSpike(string profileId)
+    {
+        var profile = collapseProfileBook.FindById(profileId);
+        if (profile == null)
+        {
+            log.Warning($"RagdollController: directed collapse profile not found - profile={profileId}");
+            return false;
+        }
+
+        return BeginProfileDirectedCollapseSpike(profile);
+    }
+
+    private bool BeginProfileDirectedCollapseSpike(CollapseProfile profile)
+    {
+        if (simulation == null || !isActive || profile.Phases.Count == 0) return false;
+
+        StopCollapseSpike();
+        StopDirectedCollapseSpike();
+
+        directedProfile = profile;
+        directedPhaseIndex = 0;
+        directedPhaseElapsed = 0f;
+        directedElapsed = 0f;
+        directedDuration = 0f;
+        foreach (var phase in profile.Phases)
+            directedDuration += MathF.Max(0.01f, phase.Duration);
+
+        directedForward = ResolveCollapseDirection(CollapseDirection.Forward);
+        directedRight = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
+
+        var pelvis = FindBodyHandle("j_kosi");
+        if (pelvis.HasValue)
+        {
+            var pelvisBody = simulation.Bodies.GetBodyReference(pelvis.Value);
+            directedPelvisStart = pelvisBody.Pose.Position;
+            directedPelvisStartRot = pelvisBody.Pose.Orientation;
+        }
+
+        var chest = FindBodyHandle("j_sebo_c") ?? FindBodyHandle("j_sebo_b");
+        if (chest.HasValue)
+            directedChestStartRot = simulation.Bodies.GetBodyReference(chest.Value).Pose.Orientation;
+
+        var leftFoot = FindBodyHandle("j_asi_d_l");
+        if (leftFoot.HasValue)
+            directedLeftFootTarget = simulation.Bodies.GetBodyReference(leftFoot.Value).Pose.Position;
+        var rightFoot = FindBodyHandle("j_asi_d_r");
+        if (rightFoot.HasValue)
+            directedRightFootTarget = simulation.Bodies.GetBodyReference(rightFoot.Value).Pose.Position;
+
+        WakeRagdollBodiesForBiomechanicalSettle();
+        EnsureProfileConstraints(profile);
+
+        directedCollapseActive = true;
+        prevAllAsleep = false;
+        BeginBiomechanicalSettle();
+        log.Info($"RagdollController: directed collapse profile begun - profile={profile.Id} phases={profile.Phases.Count} duration={directedDuration:F2}");
+        return true;
     }
 
     public bool BeginDirectedKneelPitchSpike(float duration, float footForce, float pelvisForce,
@@ -3830,6 +3914,9 @@ public unsafe class RagdollController : IDisposable
         StopCollapseSpike();
         StopDirectedCollapseSpike();
 
+        directedProfile = null;
+        directedPhaseIndex = 0;
+        directedPhaseElapsed = 0f;
         directedDuration = Math.Clamp(duration, 0.25f, 4f);
         directedFootForce = Math.Clamp(footForce, 50f, 10000f);
         directedPelvisForce = Math.Clamp(pelvisForce, 50f, 10000f);
@@ -3889,6 +3976,9 @@ public unsafe class RagdollController : IDisposable
         if (directedCollapseActive)
         {
             directedCollapseActive = false;
+            directedProfile = null;
+            directedPhaseIndex = 0;
+            directedPhaseElapsed = 0f;
             BeginBiomechanicalSettle();
             log.Info("RagdollController: directed kneel-pitch stopped");
         }
@@ -3897,6 +3987,12 @@ public unsafe class RagdollController : IDisposable
     private void UpdateDirectedCollapseSpike(float dt)
     {
         if (!directedCollapseActive || simulation == null) return;
+        if (directedProfile != null)
+        {
+            UpdateProfileDirectedCollapseSpike(dt);
+            return;
+        }
+
         directedElapsed += dt;
 
         var t = Math.Clamp(directedElapsed / directedDuration, 0f, 1f);
@@ -3924,6 +4020,110 @@ public unsafe class RagdollController : IDisposable
             StopDirectedCollapseSpike();
     }
 
+    private void UpdateProfileDirectedCollapseSpike(float dt)
+    {
+        if (directedProfile == null || simulation == null) return;
+        if (directedPhaseIndex >= directedProfile.Phases.Count)
+        {
+            StopDirectedCollapseSpike();
+            return;
+        }
+
+        directedElapsed += dt;
+        directedPhaseElapsed += dt;
+
+        var phase = directedProfile.Phases[directedPhaseIndex];
+        var phaseDuration = MathF.Max(0.01f, phase.Duration);
+        var phaseT = Math.Clamp(directedPhaseElapsed / phaseDuration, 0f, 1f);
+
+        foreach (var controller in phase.Controllers)
+            ApplyProfileController(controller, phaseT);
+
+        if (directedPhaseElapsed >= phaseDuration)
+        {
+            directedPhaseIndex++;
+            directedPhaseElapsed = 0f;
+            if (directedPhaseIndex >= directedProfile.Phases.Count)
+                StopDirectedCollapseSpike();
+        }
+    }
+
+    private void EnsureProfileConstraints(CollapseProfile profile)
+    {
+        foreach (var phase in profile.Phases)
+        foreach (var controller in phase.Controllers)
+        {
+            switch (controller.Type)
+            {
+                case "footPlant":
+                    EnsureFootPlantConstraints(controller);
+                    break;
+                case "pelvisDrop":
+                    EnsurePelvisLinearConstraint(controller);
+                    EnsurePelvisAngularConstraint(controller);
+                    break;
+                case "torsoPitch":
+                    EnsureChestAngularConstraint(controller);
+                    EnsurePelvisAngularConstraint(controller);
+                    break;
+            }
+        }
+    }
+
+    private void ApplyProfileController(CollapseControllerProfile controller, float phaseT)
+    {
+        var localT = ControllerLocalT(controller, phaseT);
+        var eased = SmoothStep(localT);
+        var strength = Lerp(controller.StrengthFrom, controller.StrengthTo, eased);
+
+        switch (controller.Type)
+        {
+            case "footPlant":
+                ApplyDirectedLinear(directedLeftFootConstraint, directedLeftFootTarget,
+                    controller.Force * strength, controller.Frequency > 0 ? controller.Frequency : 90f);
+                ApplyDirectedLinear(directedRightFootConstraint, directedRightFootTarget,
+                    controller.Force * strength, controller.Frequency > 0 ? controller.Frequency : 90f);
+                break;
+
+            case "pelvisDrop":
+            {
+                var direction = ResolveProfileDirection(controller.Direction);
+                var target = directedPelvisStart
+                    + direction * (controller.Distance * eased)
+                    - Vector3.UnitY * (controller.Drop * eased);
+                ApplyDirectedLinear(directedPelvisLinearConstraint, target,
+                    controller.Force * strength, controller.Frequency > 0 ? controller.Frequency : 45f);
+
+                var pelvisPitch = controller.PitchDegrees * controller.PelvisPitchScale * (MathF.PI / 180f);
+                var pelvisTargetRot = Quaternion.Normalize(
+                    Quaternion.CreateFromAxisAngle(directedRight, pelvisPitch * eased) * directedPelvisStartRot);
+                ApplyDirectedAngular(directedPelvisAngularConstraint, pelvisTargetRot,
+                    controller.Force * 0.25f * strength, 20f);
+                break;
+            }
+
+            case "torsoPitch":
+            {
+                var pitch = controller.PitchDegrees * (MathF.PI / 180f);
+                var chestTargetRot = Quaternion.Normalize(
+                    Quaternion.CreateFromAxisAngle(directedRight, pitch * eased) * directedChestStartRot);
+                ApplyDirectedAngular(directedChestAngularConstraint, chestTargetRot,
+                    controller.Force * strength, controller.Frequency > 0 ? controller.Frequency : 25f);
+
+                var pelvisPitch = controller.PitchDegrees * controller.PelvisPitchScale * (MathF.PI / 180f);
+                var pelvisTargetRot = Quaternion.Normalize(
+                    Quaternion.CreateFromAxisAngle(directedRight, pelvisPitch * eased) * directedPelvisStartRot);
+                ApplyDirectedAngular(directedPelvisAngularConstraint, pelvisTargetRot,
+                    controller.Force * 0.45f * strength, 20f);
+                break;
+            }
+
+            case "releaseToPassive":
+                StopDirectedCollapseSpike();
+                break;
+        }
+    }
+
     private static OneBodyLinearServo DirectedLinearServo(Vector3 target, float force, float freq) => new()
     {
         LocalOffset = Vector3.Zero,
@@ -3938,6 +4138,87 @@ public unsafe class RagdollController : IDisposable
         ServoSettings = new ServoSettings(12f, 1f, MathF.Max(0f, force)),
         SpringSettings = new SpringSettings(freq, 1f),
     };
+
+    private void EnsureFootPlantConstraints(CollapseControllerProfile controller)
+    {
+        if (simulation == null) return;
+
+        foreach (var bone in controller.Bones)
+        {
+            var handle = FindBodyHandle(bone);
+            if (!handle.HasValue) continue;
+
+            if (bone.EndsWith("_l", StringComparison.Ordinal))
+            {
+                if (!directedLeftFootConstraint.HasValue)
+                {
+                    directedLeftFootTarget = simulation.Bodies.GetBodyReference(handle.Value).Pose.Position;
+                    directedLeftFootConstraint = simulation.Solver.Add(handle.Value,
+                        DirectedLinearServo(directedLeftFootTarget, 0f, controller.Frequency > 0 ? controller.Frequency : 90f));
+                }
+            }
+            else if (bone.EndsWith("_r", StringComparison.Ordinal))
+            {
+                if (!directedRightFootConstraint.HasValue)
+                {
+                    directedRightFootTarget = simulation.Bodies.GetBodyReference(handle.Value).Pose.Position;
+                    directedRightFootConstraint = simulation.Solver.Add(handle.Value,
+                        DirectedLinearServo(directedRightFootTarget, 0f, controller.Frequency > 0 ? controller.Frequency : 90f));
+                }
+            }
+        }
+    }
+
+    private void EnsurePelvisLinearConstraint(CollapseControllerProfile controller)
+    {
+        if (simulation == null || directedPelvisLinearConstraint.HasValue) return;
+        var handle = FindBodyHandle(string.IsNullOrWhiteSpace(controller.Bone) ? "j_kosi" : controller.Bone);
+        if (!handle.HasValue) return;
+        directedPelvisStart = simulation.Bodies.GetBodyReference(handle.Value).Pose.Position;
+        directedPelvisLinearConstraint = simulation.Solver.Add(handle.Value,
+            DirectedLinearServo(directedPelvisStart, 0f, controller.Frequency > 0 ? controller.Frequency : 45f));
+    }
+
+    private void EnsurePelvisAngularConstraint(CollapseControllerProfile controller)
+    {
+        if (simulation == null || directedPelvisAngularConstraint.HasValue) return;
+        var handle = FindBodyHandle("j_kosi");
+        if (!handle.HasValue) return;
+        directedPelvisStartRot = simulation.Bodies.GetBodyReference(handle.Value).Pose.Orientation;
+        directedPelvisAngularConstraint = simulation.Solver.Add(handle.Value,
+            DirectedAngularServo(directedPelvisStartRot, 0f, 20f));
+    }
+
+    private void EnsureChestAngularConstraint(CollapseControllerProfile controller)
+    {
+        if (simulation == null || directedChestAngularConstraint.HasValue) return;
+        var handle = FindBodyHandle(string.IsNullOrWhiteSpace(controller.Bone) ? "j_sebo_c" : controller.Bone)
+            ?? FindBodyHandle("j_sebo_b");
+        if (!handle.HasValue) return;
+        directedChestStartRot = simulation.Bodies.GetBodyReference(handle.Value).Pose.Orientation;
+        directedChestAngularConstraint = simulation.Solver.Add(handle.Value,
+            DirectedAngularServo(directedChestStartRot, 0f, controller.Frequency > 0 ? controller.Frequency : 25f));
+    }
+
+    private Vector3 ResolveProfileDirection(string direction)
+    {
+        return direction.Equals("backward", StringComparison.OrdinalIgnoreCase) ? -directedForward :
+               direction.Equals("left", StringComparison.OrdinalIgnoreCase) ? -directedRight :
+               direction.Equals("right", StringComparison.OrdinalIgnoreCase) ? directedRight :
+               direction.Equals("sideways", StringComparison.OrdinalIgnoreCase) ? (ShakeRng.Next(2) == 0 ? -directedRight : directedRight) :
+               directedForward;
+    }
+
+    private static float ControllerLocalT(CollapseControllerProfile controller, float phaseT)
+    {
+        var start = Math.Clamp(controller.StartTime, 0f, 1f);
+        var end = Math.Clamp(controller.EndTime, 0f, 1f);
+        if (end <= start) end = start + 0.0001f;
+        return Math.Clamp((phaseT - start) / (end - start), 0f, 1f);
+    }
+
+    private static float Lerp(float a, float b, float t)
+        => a + (b - a) * Math.Clamp(t, 0f, 1f);
 
     private void ApplyDirectedLinear(ConstraintHandle? handle, Vector3 target, float force, float freq)
     {

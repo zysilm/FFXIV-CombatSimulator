@@ -1,0 +1,83 @@
+{
+  "id": "leg_extensor_failure_forward",
+  "displayName": "Leg Extensor Failure Forward",
+  "description": "Foot-supported leg failure: feet plant, pelvis drops forward, torso loses tone and pitches forward, then releases to passive ragdoll.",
+  "phases": [
+    {
+      "name": "plant_and_buckle",
+      "duration": 0.78,
+      "controllers": [
+        {
+          "type": "footPlant",
+          "bones": [ "j_asi_d_l", "j_asi_d_r" ],
+          "force": 3500,
+          "frequency": 90,
+          "strengthFrom": 1.0,
+          "strengthTo": 0.65
+        },
+        {
+          "type": "pelvisDrop",
+          "bone": "j_kosi",
+          "force": 2200,
+          "frequency": 45,
+          "drop": 0.55,
+          "distance": 0.35,
+          "direction": "forward"
+        },
+        {
+          "type": "torsoPitch",
+          "bone": "j_sebo_c",
+          "force": 770,
+          "frequency": 25,
+          "pitchDegrees": 18,
+          "pelvisPitchScale": 0.25,
+          "startTime": 0.35
+        }
+      ]
+    },
+    {
+      "name": "torso_loss",
+      "duration": 0.52,
+      "controllers": [
+        {
+          "type": "footPlant",
+          "bones": [ "j_asi_d_l", "j_asi_d_r" ],
+          "force": 3500,
+          "frequency": 90,
+          "strengthFrom": 0.65,
+          "strengthTo": 0.0
+        },
+        {
+          "type": "pelvisDrop",
+          "bone": "j_kosi",
+          "force": 2200,
+          "frequency": 45,
+          "drop": 0.55,
+          "distance": 0.35,
+          "direction": "forward",
+          "strengthFrom": 1.0,
+          "strengthTo": 0.25
+        },
+        {
+          "type": "torsoPitch",
+          "bone": "j_sebo_c",
+          "force": 770,
+          "frequency": 25,
+          "pitchDegrees": 45,
+          "pelvisPitchScale": 0.35,
+          "strengthFrom": 1.0,
+          "strengthTo": 0.25
+        }
+      ]
+    },
+    {
+      "name": "release",
+      "duration": 0.12,
+      "controllers": [
+        {
+          "type": "releaseToPassive"
+        }
+      ]
+    }
+  ]
+}
