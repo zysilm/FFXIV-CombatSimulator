@@ -176,7 +176,6 @@ public class MainWindow : IDisposable
         "Effects",
         "Camera",
         "Ragdoll",
-        "Guided Collapse",
         "Ragdoll (Adv)",
         "Virtual Enemies",
         "Settings",
@@ -292,6 +291,7 @@ public class MainWindow : IDisposable
                 break;
             case 5: // Ragdoll
                 DrawRagdollSection();
+                DrawGuidedCollapseSection();
                 DrawNpcCollisionSection();
                 DrawNpcSettleCollisionSection();
                 ImGui.Separator();
@@ -308,6 +308,7 @@ public class MainWindow : IDisposable
                     config.RagdollSolverIterations = 8;
                     config.RagdollSelfCollision = true;
                     config.RagdollFriction = 1.0f;
+                    config.ResetGuidedCollapseDefaults();
                     config.WeaponDropGravity = 9.8f;
                     config.WeaponDropDamping = 0.99f;
                     config.WeaponDropAngularDamping = 0.85f;
@@ -329,20 +330,17 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 break;
-            case 6: // Guided Collapse
-                DrawGuidedCollapseSection();
-                break;
-            case 7: // Ragdoll (Advanced)
+            case 6: // Ragdoll (Advanced)
                 DrawRagdollAdvancedSection();
                 break;
-            case 8: // Virtual Enemies
+            case 7: // Virtual Enemies
                 DrawVirtualEnemiesTab();
                 break;
-            case 9: // Settings
+            case 8: // Settings
                 DrawGuiSettingsSection();
                 DrawDevSection();
                 break;
-            case 10: // Diagnose
+            case 9: // Diagnose
                 DrawDiagnoseSection();
                 break;
         }
@@ -3135,6 +3133,9 @@ public class MainWindow : IDisposable
 
     private void DrawGuidedCollapseSection()
     {
+        if (!ImGui.CollapsingHeader("Guided Collapse##guidedcollapse"))
+            return;
+
         ImGui.Text("Guided Collapse");
         HelpMarker("Optional procedural death-collapse controller layered on top of ragdoll activation. Requires Enable Ragdoll.");
 
