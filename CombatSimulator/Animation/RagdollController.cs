@@ -1028,6 +1028,8 @@ public unsafe class RagdollController : IDisposable
         pendingCollapseSpike = false;
         StopDirectedCollapseSpike();
         pendingDirectedCollapseSpike = false;
+        StopKneePowerLossPattern();
+        pendingKneePowerLossPattern = false;
 
         targetCharacterAddress = nint.Zero;
         targetEntityId = 0;
@@ -1093,6 +1095,12 @@ public unsafe class RagdollController : IDisposable
                             pendingDirectedDrop,
                             pendingDirectedForward,
                             pendingDirectedPitchDegrees);
+                }
+
+                if (pendingKneePowerLossPattern)
+                {
+                    pendingKneePowerLossPattern = false;
+                    BeginKneePowerLossForwardPattern();
                 }
             }
 
@@ -2886,12 +2894,13 @@ public unsafe class RagdollController : IDisposable
         // pose below. Applies to generic (monster) rigs too: if their auto-built network
         // never settles, prevAllAsleep simply stays false and this never triggers; if it
         // does settle, there is nothing to clamp. A grab or a moved skeleton forces a step.
-        var resting = prevAllAsleep && !grabConstraintActive && !collapseSpikeActive && !directedCollapseActive && !skeletonMoved && !biomechanicalSettleActive;
+        var resting = prevAllAsleep && !grabConstraintActive && !collapseSpikeActive && !directedCollapseActive && !kneePowerLossActive && !skeletonMoved && !biomechanicalSettleActive;
 
         // Death-collapse spike: restrength the per-joint "muscle" servos before stepping so the
         // updated torque ceilings take effect this tick. Advances the fade and retires itself.
         UpdateCollapseSpike(dt);
         UpdateDirectedCollapseSpike(dt);
+        UpdateKneePowerLossPattern(dt);
 
         // Update NPC collision volumes to track their current animated bone positions.
         // Must call UpdateBounds() after repositioning — BEPU2 doesn't auto-update
@@ -4143,6 +4152,13 @@ public unsafe class RagdollController : IDisposable
         SpringSettings = new SpringSettings(freq, 1f),
     };
 
+    private static AngularServo DirectedRelativeAngularServo(Quaternion target, float force, float freq) => new()
+    {
+        TargetRelativeRotationLocalA = target,
+        ServoSettings = new ServoSettings(12f, 1f, MathF.Max(0f, force)),
+        SpringSettings = new SpringSettings(freq, 1f),
+    };
+
     private void EnsureFootPlantConstraints(CollapseControllerProfile controller)
     {
         if (simulation == null) return;
@@ -4236,6 +4252,12 @@ public unsafe class RagdollController : IDisposable
         try { simulation.Solver.ApplyDescription(handle.Value, DirectedAngularServo(target, force, freq)); } catch { }
     }
 
+    private void ApplyDirectedRelativeAngular(ConstraintHandle? handle, Quaternion target, float force, float freq)
+    {
+        if (!handle.HasValue || simulation == null) return;
+        try { simulation.Solver.ApplyDescription(handle.Value, DirectedRelativeAngularServo(target, force, freq)); } catch { }
+    }
+
     private void RemoveDirectedConstraint(ref ConstraintHandle? handle)
     {
         if (!handle.HasValue || simulation == null) { handle = null; return; }
@@ -4247,6 +4269,243 @@ public unsafe class RagdollController : IDisposable
     {
         t = Math.Clamp(t, 0f, 1f);
         return t * t * (3f - 2f * t);
+    }
+
+    // --- Knee power-loss forward pattern (C# pattern spike) ---
+    // Biomechanics-inspired failure controller: feet provide soft support, knee flexion bias
+    // nudges legs into the sagittal plane, pelvis/chest only receive weak feedback. This should
+    // feel less like the body is being pulled into a pose and more like leg extensor tone failed.
+    private enum KneePowerLossPhase { Buckle, TorsoLoss, Release }
+
+    private bool pendingKneePowerLossPattern;
+    private bool kneePowerLossActive;
+    private KneePowerLossPhase kneePowerLossPhase;
+    private float kneePowerLossElapsed;
+    private float kneePowerLossPhaseElapsed;
+    private ConstraintHandle? kneeLeftFootSupport;
+    private ConstraintHandle? kneeRightFootSupport;
+    private ConstraintHandle? kneeLeftFlexBias;
+    private ConstraintHandle? kneeRightFlexBias;
+    private ConstraintHandle? kneePelvisSupport;
+    private ConstraintHandle? kneeChestPitch;
+    private Vector3 kneeForward;
+    private Vector3 kneeRight;
+    private Vector3 kneeLeftFootStart;
+    private Vector3 kneeRightFootStart;
+    private Vector3 kneePelvisStart;
+    private Quaternion kneeLeftKneeStartTarget;
+    private Quaternion kneeRightKneeStartTarget;
+    private Quaternion kneeLeftKneeFlexTarget;
+    private Quaternion kneeRightKneeFlexTarget;
+    private Quaternion kneeChestStartRot;
+
+    public bool KneePowerLossPatternActive => kneePowerLossActive;
+
+    public void RequestKneePowerLossForwardOnReady()
+    {
+        if (IsSimulationReady)
+        {
+            BeginKneePowerLossForwardPattern();
+            return;
+        }
+
+        pendingKneePowerLossPattern = true;
+        log.Info("RagdollController: knee power-loss forward armed for next death");
+    }
+
+    public bool BeginKneePowerLossForwardPattern()
+    {
+        if (simulation == null || !isActive) return false;
+
+        var leftFoot = FindBodyHandle("j_asi_d_l");
+        var rightFoot = FindBodyHandle("j_asi_d_r");
+        var pelvis = FindBodyHandle("j_kosi");
+        var chest = FindBodyHandle("j_sebo_c") ?? FindBodyHandle("j_sebo_b");
+        var leftKnee = FindBodyHandle("j_asi_b_l");
+        var rightKnee = FindBodyHandle("j_asi_b_r");
+        var leftThigh = FindBodyHandle("j_asi_a_l");
+        var rightThigh = FindBodyHandle("j_asi_a_r");
+
+        if (!leftFoot.HasValue || !rightFoot.HasValue || !pelvis.HasValue || !chest.HasValue ||
+            !leftKnee.HasValue || !rightKnee.HasValue || !leftThigh.HasValue || !rightThigh.HasValue)
+        {
+            log.Warning("RagdollController: knee power-loss failed - missing leg/core body");
+            return false;
+        }
+
+        StopCollapseSpike();
+        StopDirectedCollapseSpike();
+        StopKneePowerLossPattern();
+
+        kneeForward = ResolveCollapseDirection(CollapseDirection.Forward);
+        kneeRight = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
+        kneePowerLossElapsed = 0f;
+        kneePowerLossPhaseElapsed = 0f;
+        kneePowerLossPhase = KneePowerLossPhase.Buckle;
+
+        var leftFootBody = simulation.Bodies.GetBodyReference(leftFoot.Value);
+        var rightFootBody = simulation.Bodies.GetBodyReference(rightFoot.Value);
+        var pelvisBody = simulation.Bodies.GetBodyReference(pelvis.Value);
+        var chestBody = simulation.Bodies.GetBodyReference(chest.Value);
+
+        kneeLeftFootStart = leftFootBody.Pose.Position;
+        kneeRightFootStart = rightFootBody.Pose.Position;
+        kneePelvisStart = pelvisBody.Pose.Position;
+        kneeChestStartRot = chestBody.Pose.Orientation;
+
+        var leftKneeBody = simulation.Bodies.GetBodyReference(leftKnee.Value);
+        var rightKneeBody = simulation.Bodies.GetBodyReference(rightKnee.Value);
+        var leftThighBody = simulation.Bodies.GetBodyReference(leftThigh.Value);
+        var rightThighBody = simulation.Bodies.GetBodyReference(rightThigh.Value);
+
+        kneeLeftKneeStartTarget = Quaternion.Normalize(Quaternion.Inverse(leftKneeBody.Pose.Orientation) * leftThighBody.Pose.Orientation);
+        kneeRightKneeStartTarget = Quaternion.Normalize(Quaternion.Inverse(rightKneeBody.Pose.Orientation) * rightThighBody.Pose.Orientation);
+        kneeLeftKneeFlexTarget = MakeRelativeFlexTarget(leftKneeBody.Pose.Orientation, leftThighBody.Pose.Orientation, kneeRight, 55f);
+        kneeRightKneeFlexTarget = MakeRelativeFlexTarget(rightKneeBody.Pose.Orientation, rightThighBody.Pose.Orientation, kneeRight, 55f);
+
+        WakeRagdollBodiesForBiomechanicalSettle();
+
+        kneeLeftFootSupport = simulation.Solver.Add(leftFoot.Value, DirectedLinearServo(kneeLeftFootStart, 0f, 55f));
+        kneeRightFootSupport = simulation.Solver.Add(rightFoot.Value, DirectedLinearServo(kneeRightFootStart, 0f, 55f));
+        kneeLeftFlexBias = simulation.Solver.Add(leftKnee.Value, leftThigh.Value, DirectedRelativeAngularServo(kneeLeftKneeStartTarget, 0f, 18f));
+        kneeRightFlexBias = simulation.Solver.Add(rightKnee.Value, rightThigh.Value, DirectedRelativeAngularServo(kneeRightKneeStartTarget, 0f, 18f));
+        kneePelvisSupport = simulation.Solver.Add(pelvis.Value, DirectedLinearServo(kneePelvisStart, 0f, 20f));
+        kneeChestPitch = simulation.Solver.Add(chest.Value, DirectedAngularServo(kneeChestStartRot, 0f, 18f));
+
+        kneePowerLossActive = true;
+        prevAllAsleep = false;
+        BeginBiomechanicalSettle();
+        log.Info("RagdollController: knee power-loss forward begun");
+        return true;
+    }
+
+    public void StopKneePowerLossPattern()
+    {
+        if (simulation != null)
+        {
+            RemoveDirectedConstraint(ref kneeLeftFootSupport);
+            RemoveDirectedConstraint(ref kneeRightFootSupport);
+            RemoveDirectedConstraint(ref kneeLeftFlexBias);
+            RemoveDirectedConstraint(ref kneeRightFlexBias);
+            RemoveDirectedConstraint(ref kneePelvisSupport);
+            RemoveDirectedConstraint(ref kneeChestPitch);
+        }
+        else
+        {
+            kneeLeftFootSupport = null;
+            kneeRightFootSupport = null;
+            kneeLeftFlexBias = null;
+            kneeRightFlexBias = null;
+            kneePelvisSupport = null;
+            kneeChestPitch = null;
+        }
+
+        if (kneePowerLossActive)
+        {
+            kneePowerLossActive = false;
+            BeginBiomechanicalSettle();
+            log.Info("RagdollController: knee power-loss forward stopped");
+        }
+    }
+
+    private void UpdateKneePowerLossPattern(float dt)
+    {
+        if (!kneePowerLossActive || simulation == null) return;
+
+        kneePowerLossElapsed += dt;
+        kneePowerLossPhaseElapsed += dt;
+
+        var pelvis = FindBodyHandle("j_kosi");
+        var chest = FindBodyHandle("j_sebo_c") ?? FindBodyHandle("j_sebo_b");
+        if (!pelvis.HasValue || !chest.HasValue) { StopKneePowerLossPattern(); return; }
+
+        var pelvisBody = simulation.Bodies.GetBodyReference(pelvis.Value);
+        var pelvisDrop = MathF.Max(0f, kneePelvisStart.Y - pelvisBody.Pose.Position.Y);
+        var kneeNearGround = BoneHeight("j_asi_b_l") < groundY + 0.18f || BoneHeight("j_asi_b_r") < groundY + 0.18f;
+
+        if (kneePowerLossPhase == KneePowerLossPhase.Buckle && (pelvisDrop > 0.34f || kneeNearGround || kneePowerLossPhaseElapsed > 0.85f))
+            SwitchKneePowerLossPhase(KneePowerLossPhase.TorsoLoss);
+        else if (kneePowerLossPhase == KneePowerLossPhase.TorsoLoss && kneePowerLossPhaseElapsed > 0.65f)
+            SwitchKneePowerLossPhase(KneePowerLossPhase.Release);
+
+        switch (kneePowerLossPhase)
+        {
+            case KneePowerLossPhase.Buckle:
+                UpdateKneeBucklePhase(pelvisDrop);
+                break;
+            case KneePowerLossPhase.TorsoLoss:
+                UpdateKneeTorsoLossPhase();
+                break;
+            case KneePowerLossPhase.Release:
+                StopKneePowerLossPattern();
+                break;
+        }
+    }
+
+    private void UpdateKneeBucklePhase(float pelvisDrop)
+    {
+        var t = SmoothStep(Math.Clamp(kneePowerLossPhaseElapsed / 0.75f, 0f, 1f));
+        var supportGain = 1f - 0.45f * t;
+        var flexGain = SmoothStep(Math.Clamp(kneePowerLossPhaseElapsed / 0.55f, 0f, 1f));
+
+        ApplySoftFootSupport(kneeLeftFootSupport, kneeLeftFootStart, supportGain, 1100f);
+        ApplySoftFootSupport(kneeRightFootSupport, kneeRightFootStart, supportGain, 1100f);
+
+        ApplyDirectedRelativeAngular(kneeLeftFlexBias, Quaternion.Slerp(kneeLeftKneeStartTarget, kneeLeftKneeFlexTarget, flexGain), 165f * flexGain, 18f);
+        ApplyDirectedRelativeAngular(kneeRightFlexBias, Quaternion.Slerp(kneeRightKneeStartTarget, kneeRightKneeFlexTarget, flexGain), 165f * flexGain, 18f);
+
+        var needMoreDrop = pelvisDrop < 0.22f ? 1f : pelvisDrop < 0.38f ? 0.45f : 0.1f;
+        var target = kneePelvisStart
+            + kneeForward * (0.10f + 0.18f * t)
+            - Vector3.UnitY * (0.28f + 0.18f * t);
+        ApplyDirectedLinear(kneePelvisSupport, target, 420f * needMoreDrop, 14f);
+    }
+
+    private void UpdateKneeTorsoLossPhase()
+    {
+        var t = SmoothStep(Math.Clamp(kneePowerLossPhaseElapsed / 0.65f, 0f, 1f));
+        var supportGain = 1f - t;
+
+        ApplySoftFootSupport(kneeLeftFootSupport, kneeLeftFootStart, supportGain, 650f);
+        ApplySoftFootSupport(kneeRightFootSupport, kneeRightFootStart, supportGain, 650f);
+        ApplyDirectedRelativeAngular(kneeLeftFlexBias, kneeLeftKneeFlexTarget, 90f * supportGain, 12f);
+        ApplyDirectedRelativeAngular(kneeRightFlexBias, kneeRightKneeFlexTarget, 90f * supportGain, 12f);
+
+        var chestTarget = Quaternion.Normalize(
+            Quaternion.CreateFromAxisAngle(kneeRight, 0.72f * t) * kneeChestStartRot);
+        ApplyDirectedAngular(kneeChestPitch, chestTarget, 260f * (1f - 0.45f * t), 18f);
+
+        var pelvisTarget = kneePelvisStart + kneeForward * (0.25f + 0.18f * t) - Vector3.UnitY * 0.46f;
+        ApplyDirectedLinear(kneePelvisSupport, pelvisTarget, 220f * supportGain, 10f);
+    }
+
+    private void ApplySoftFootSupport(ConstraintHandle? handle, Vector3 start, float gain, float force)
+    {
+        var target = start;
+        target.Y = groundY + MathF.Max(0.02f, start.Y - groundY);
+        ApplyDirectedLinear(handle, target, force * Math.Clamp(gain, 0f, 1f), 38f);
+    }
+
+    private void SwitchKneePowerLossPhase(KneePowerLossPhase phase)
+    {
+        kneePowerLossPhase = phase;
+        kneePowerLossPhaseElapsed = 0f;
+        log.Info($"RagdollController: knee power-loss phase -> {phase}");
+    }
+
+    private float BoneHeight(string boneName)
+    {
+        if (simulation == null) return float.PositiveInfinity;
+        var handle = FindBodyHandle(boneName);
+        if (!handle.HasValue) return float.PositiveInfinity;
+        return simulation.Bodies.GetBodyReference(handle.Value).Pose.Position.Y;
+    }
+
+    private static Quaternion MakeRelativeFlexTarget(Quaternion childOrientation, Quaternion parentOrientation, Vector3 flexAxisWorld, float degrees)
+    {
+        if (flexAxisWorld.LengthSquared() < 0.0001f) flexAxisWorld = Vector3.UnitX;
+        var flexWorld = Quaternion.CreateFromAxisAngle(Vector3.Normalize(flexAxisWorld), degrees * (MathF.PI / 180f));
+        return Quaternion.Normalize(Quaternion.Inverse(childOrientation) * flexWorld * parentOrientation);
     }
 
     // --- Standing support constraint API (execution mode) ---

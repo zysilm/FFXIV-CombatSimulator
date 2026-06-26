@@ -4646,6 +4646,17 @@ public class MainWindow : IDisposable
                                  "This tests foot anchors + pelvis drive + torso pitch, not hold-then-fade.");
 
             ImGui.SameLine();
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.5f, 0.25f, 1f));
+            if (ImGui.Button("Die + Knee Power Loss##kneePowerLoss"))
+            {
+                ragdollController.RequestKneePowerLossForwardOnReady();
+                ctrl.TriggerInstantDeath();
+            }
+            ImGui.PopStyleColor();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Run the C# pattern spike: soft foot support + knee flexion bias + state feedback.");
+
+            ImGui.SameLine();
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.35f, 0.65f, 1f));
             if (ImGui.Button("Die + Profile Collapse##directedProfile"))
             {
