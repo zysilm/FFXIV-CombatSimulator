@@ -4292,6 +4292,8 @@ public unsafe class RagdollController : IDisposable
     private Vector3 kneeRight;
     private Vector3 kneeLeftFootStart;
     private Vector3 kneeRightFootStart;
+    private Vector3 kneeLeftStart;
+    private Vector3 kneeRightStart;
     private Vector3 kneePelvisStart;
     private Quaternion kneeLeftKneeStartTarget;
     private Quaternion kneeRightKneeStartTarget;
@@ -4357,6 +4359,8 @@ public unsafe class RagdollController : IDisposable
         var rightKneeBody = simulation.Bodies.GetBodyReference(rightKnee.Value);
         var leftThighBody = simulation.Bodies.GetBodyReference(leftThigh.Value);
         var rightThighBody = simulation.Bodies.GetBodyReference(rightThigh.Value);
+        kneeLeftStart = leftKneeBody.Pose.Position;
+        kneeRightStart = rightKneeBody.Pose.Position;
 
         kneeLeftKneeStartTarget = Quaternion.Normalize(Quaternion.Inverse(leftKneeBody.Pose.Orientation) * leftThighBody.Pose.Orientation);
         kneeRightKneeStartTarget = Quaternion.Normalize(Quaternion.Inverse(rightKneeBody.Pose.Orientation) * rightThighBody.Pose.Orientation);
@@ -4366,9 +4370,9 @@ public unsafe class RagdollController : IDisposable
             rightKneeBody.Pose.Orientation, out var rightHingeAxis, out var rightHingeForward);
 
         kneeLeftKneeFlexTarget = MakeRelativeFlexTarget(leftKneeBody.Pose.Orientation, leftThighBody.Pose.Orientation,
-            leftHingeAxis, leftHingeForward, 55f);
+            leftHingeAxis, leftHingeForward, 34f);
         kneeRightKneeFlexTarget = MakeRelativeFlexTarget(rightKneeBody.Pose.Orientation, rightThighBody.Pose.Orientation,
-            rightHingeAxis, rightHingeForward, 55f);
+            rightHingeAxis, rightHingeForward, 34f);
 
         log.Info($"RagdollController: knee power-loss axes L axis=({leftHingeAxis.X:F2},{leftHingeAxis.Y:F2},{leftHingeAxis.Z:F2}) fwd=({leftHingeForward.X:F2},{leftHingeForward.Y:F2},{leftHingeForward.Z:F2}); " +
                  $"R axis=({rightHingeAxis.X:F2},{rightHingeAxis.Y:F2},{rightHingeAxis.Z:F2}) fwd=({rightHingeForward.X:F2},{rightHingeForward.Y:F2},{rightHingeForward.Z:F2})");
@@ -4463,8 +4467,10 @@ public unsafe class RagdollController : IDisposable
         ApplySoftFootSupport(kneeLeftFootSupport, kneeLeftFootStart, supportGain, 1100f);
         ApplySoftFootSupport(kneeRightFootSupport, kneeRightFootStart, supportGain, 1100f);
 
-        ApplyDirectedRelativeAngular(kneeLeftFlexBias, Quaternion.Slerp(kneeLeftKneeStartTarget, kneeLeftKneeFlexTarget, flexGain), 165f * flexGain, 18f);
-        ApplyDirectedRelativeAngular(kneeRightFlexBias, Quaternion.Slerp(kneeRightKneeStartTarget, kneeRightKneeFlexTarget, flexGain), 165f * flexGain, 18f);
+        ApplyKneeLateralStability(5.5f, 0.45f);
+
+        ApplyDirectedRelativeAngular(kneeLeftFlexBias, Quaternion.Slerp(kneeLeftKneeStartTarget, kneeLeftKneeFlexTarget, flexGain), 82f * flexGain, 14f);
+        ApplyDirectedRelativeAngular(kneeRightFlexBias, Quaternion.Slerp(kneeRightKneeStartTarget, kneeRightKneeFlexTarget, flexGain), 82f * flexGain, 14f);
 
         var needMoreDrop = pelvisDrop < 0.22f ? 1f : pelvisDrop < 0.38f ? 0.45f : 0.1f;
         var target = kneePelvisStart
@@ -4480,8 +4486,9 @@ public unsafe class RagdollController : IDisposable
 
         ApplySoftFootSupport(kneeLeftFootSupport, kneeLeftFootStart, supportGain, 650f);
         ApplySoftFootSupport(kneeRightFootSupport, kneeRightFootStart, supportGain, 650f);
-        ApplyDirectedRelativeAngular(kneeLeftFlexBias, kneeLeftKneeFlexTarget, 90f * supportGain, 12f);
-        ApplyDirectedRelativeAngular(kneeRightFlexBias, kneeRightKneeFlexTarget, 90f * supportGain, 12f);
+        ApplyKneeLateralStability(3.0f * supportGain, 0.32f);
+        ApplyDirectedRelativeAngular(kneeLeftFlexBias, kneeLeftKneeFlexTarget, 42f * supportGain, 10f);
+        ApplyDirectedRelativeAngular(kneeRightFlexBias, kneeRightKneeFlexTarget, 42f * supportGain, 10f);
 
         var chestTarget = Quaternion.Normalize(
             Quaternion.CreateFromAxisAngle(kneeRight, 0.72f * t) * kneeChestStartRot);
@@ -4496,6 +4503,36 @@ public unsafe class RagdollController : IDisposable
         var target = start;
         target.Y = groundY + MathF.Max(0.02f, start.Y - groundY);
         ApplyDirectedLinear(handle, target, force * Math.Clamp(gain, 0f, 1f), 38f);
+    }
+
+    private void ApplyKneeLateralStability(float gain, float maxSpeed)
+    {
+        if (simulation == null || gain <= 0f) return;
+        var leftKnee = FindBodyHandle("j_asi_b_l");
+        var rightKnee = FindBodyHandle("j_asi_b_r");
+        if (!leftKnee.HasValue || !rightKnee.HasValue) return;
+
+        var lateral = FlatNormalize(kneeRight, Vector3.UnitX);
+        var leftBody = simulation.Bodies.GetBodyReference(leftKnee.Value);
+        var rightBody = simulation.Bodies.GetBodyReference(rightKnee.Value);
+        var mid = (leftBody.Pose.Position + rightBody.Pose.Position) * 0.5f;
+        var startMid = (kneeLeftStart + kneeRightStart) * 0.5f;
+
+        var leftOffset = Vector3.Dot(kneeLeftStart - startMid, lateral);
+        var rightOffset = Vector3.Dot(kneeRightStart - startMid, lateral);
+        var leftTarget = mid + lateral * leftOffset;
+        var rightTarget = mid + lateral * rightOffset;
+
+        ApplyKneeLateralVelocity(leftBody, lateral, Vector3.Dot(leftTarget - leftBody.Pose.Position, lateral), gain, maxSpeed);
+        ApplyKneeLateralVelocity(rightBody, lateral, Vector3.Dot(rightTarget - rightBody.Pose.Position, lateral), gain, maxSpeed);
+    }
+
+    private static void ApplyKneeLateralVelocity(BodyReference body, Vector3 lateral, float error, float gain, float maxSpeed)
+    {
+        var velocity = Math.Clamp(error * gain, -maxSpeed, maxSpeed);
+        var existing = Vector3.Dot(body.Velocity.Linear, lateral);
+        // Only correct the inward/outward spacing error. Leave vertical drop and forward kneel motion free.
+        body.Velocity.Linear += lateral * (velocity - existing * 0.35f);
     }
 
     private void SwitchKneePowerLossPhase(KneePowerLossPhase phase)
