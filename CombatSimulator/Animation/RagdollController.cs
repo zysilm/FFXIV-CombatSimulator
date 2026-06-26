@@ -4088,15 +4088,18 @@ public unsafe class RagdollController : IDisposable
             case "pelvisDrop":
             {
                 var direction = ResolveProfileDirection(controller.Direction);
+                var drop = Lerp(controller.DropFrom, controller.Drop, eased);
+                var distance = Lerp(controller.DistanceFrom, controller.Distance, eased);
                 var target = directedPelvisStart
-                    + direction * (controller.Distance * eased)
-                    - Vector3.UnitY * (controller.Drop * eased);
+                    + direction * distance
+                    - Vector3.UnitY * drop;
                 ApplyDirectedLinear(directedPelvisLinearConstraint, target,
                     controller.Force * strength, controller.Frequency > 0 ? controller.Frequency : 45f);
 
-                var pelvisPitch = controller.PitchDegrees * controller.PelvisPitchScale * (MathF.PI / 180f);
+                var pelvisPitch = Lerp(controller.PitchDegreesFrom, controller.PitchDegrees, eased)
+                    * controller.PelvisPitchScale * (MathF.PI / 180f);
                 var pelvisTargetRot = Quaternion.Normalize(
-                    Quaternion.CreateFromAxisAngle(directedRight, pelvisPitch * eased) * directedPelvisStartRot);
+                    Quaternion.CreateFromAxisAngle(directedRight, pelvisPitch) * directedPelvisStartRot);
                 ApplyDirectedAngular(directedPelvisAngularConstraint, pelvisTargetRot,
                     controller.Force * 0.25f * strength, 20f);
                 break;
@@ -4104,15 +4107,16 @@ public unsafe class RagdollController : IDisposable
 
             case "torsoPitch":
             {
-                var pitch = controller.PitchDegrees * (MathF.PI / 180f);
+                var pitchDegrees = Lerp(controller.PitchDegreesFrom, controller.PitchDegrees, eased);
+                var pitch = pitchDegrees * (MathF.PI / 180f);
                 var chestTargetRot = Quaternion.Normalize(
-                    Quaternion.CreateFromAxisAngle(directedRight, pitch * eased) * directedChestStartRot);
+                    Quaternion.CreateFromAxisAngle(directedRight, pitch) * directedChestStartRot);
                 ApplyDirectedAngular(directedChestAngularConstraint, chestTargetRot,
                     controller.Force * strength, controller.Frequency > 0 ? controller.Frequency : 25f);
 
-                var pelvisPitch = controller.PitchDegrees * controller.PelvisPitchScale * (MathF.PI / 180f);
+                var pelvisPitch = pitchDegrees * controller.PelvisPitchScale * (MathF.PI / 180f);
                 var pelvisTargetRot = Quaternion.Normalize(
-                    Quaternion.CreateFromAxisAngle(directedRight, pelvisPitch * eased) * directedPelvisStartRot);
+                    Quaternion.CreateFromAxisAngle(directedRight, pelvisPitch) * directedPelvisStartRot);
                 ApplyDirectedAngular(directedPelvisAngularConstraint, pelvisTargetRot,
                     controller.Force * 0.45f * strength, 20f);
                 break;

@@ -30,8 +30,11 @@ public sealed class CollapseControllerProfile
     public float EndTime { get; set; } = 1f;
     public float StrengthFrom { get; set; } = 1f;
     public float StrengthTo { get; set; } = 1f;
+    public float DropFrom { get; set; }
     public float Drop { get; set; }
+    public float DistanceFrom { get; set; }
     public float Distance { get; set; }
+    public float PitchDegreesFrom { get; set; }
     public float PitchDegrees { get; set; }
     public float PelvisPitchScale { get; set; } = 0.35f;
     public string TargetBone { get; set; } = string.Empty;
