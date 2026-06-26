@@ -3358,6 +3358,40 @@ public class MainWindow : IDisposable
 
         if (ImGui.CollapsingHeader("Support Advanced##guidedknee"))
         {
+            var footProxy = s.FootProxyEnabled;
+            if (ImGui.Checkbox("Foot contact proxy##guidedknee", ref footProxy))
+            {
+                s.FootProxyEnabled = footProxy;
+                config.Save();
+            }
+            HelpMarker("Applies the temporary foot support servo at a virtual sole point near the ground instead of the ankle body center. This targets narrow-stance knee artifacts without changing the final passive ragdoll.");
+
+            using (ImRaii.Disabled(!s.FootProxyEnabled))
+            {
+                var proxyForward = Math.Clamp(s.FootProxyForwardOffset, -0.05f, 0.25f);
+                if (ImGui.SliderFloat("Proxy forward##guidedknee", ref proxyForward, -0.05f, 0.25f, "%.3f"))
+                {
+                    s.FootProxyForwardOffset = proxyForward;
+                    config.Save();
+                }
+
+                var proxyDown = Math.Clamp(s.FootProxyDownOffset, 0f, 0.16f);
+                if (ImGui.SliderFloat("Proxy down##guidedknee", ref proxyDown, 0f, 0.16f, "%.3f"))
+                {
+                    s.FootProxyDownOffset = proxyDown;
+                    config.Save();
+                }
+
+                var proxyClearance = Math.Clamp(s.FootProxyGroundClearance, 0.004f, 0.08f);
+                if (ImGui.SliderFloat("Proxy clearance##guidedknee", ref proxyClearance, 0.004f, 0.08f, "%.3f"))
+                {
+                    s.FootProxyGroundClearance = proxyClearance;
+                    config.Save();
+                }
+            }
+
+            ImGui.Separator();
+
             var torsoFoot = Math.Clamp(s.TorsoFootSupportForce, 0f, 5000f);
             if (ImGui.SliderFloat("Torso foot support##guidedknee", ref torsoFoot, 0f, 5000f, "%.0f"))
             {

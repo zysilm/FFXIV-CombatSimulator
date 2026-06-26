@@ -4164,9 +4164,12 @@ public unsafe class RagdollController : IDisposable
         }
     }
 
-    private static OneBodyLinearServo DirectedLinearServo(Vector3 target, float force, float freq) => new()
+    private static OneBodyLinearServo DirectedLinearServo(Vector3 target, float force, float freq)
+        => DirectedLinearServo(target, force, freq, Vector3.Zero);
+
+    private static OneBodyLinearServo DirectedLinearServo(Vector3 target, float force, float freq, Vector3 localOffset) => new()
     {
-        LocalOffset = Vector3.Zero,
+        LocalOffset = localOffset,
         Target = target,
         ServoSettings = new ServoSettings(12f, 1f, MathF.Max(0f, force)),
         SpringSettings = new SpringSettings(freq, 1f),
@@ -4268,9 +4271,12 @@ public unsafe class RagdollController : IDisposable
         => a + (b - a) * Math.Clamp(t, 0f, 1f);
 
     private void ApplyDirectedLinear(ConstraintHandle? handle, Vector3 target, float force, float freq)
+        => ApplyDirectedLinear(handle, target, force, freq, Vector3.Zero);
+
+    private void ApplyDirectedLinear(ConstraintHandle? handle, Vector3 target, float force, float freq, Vector3 localOffset)
     {
         if (!handle.HasValue || simulation == null) return;
-        try { simulation.Solver.ApplyDescription(handle.Value, DirectedLinearServo(target, force, freq)); } catch { }
+        try { simulation.Solver.ApplyDescription(handle.Value, DirectedLinearServo(target, force, freq, localOffset)); } catch { }
     }
 
     private void ApplyDirectedAngular(ConstraintHandle? handle, Quaternion target, float force, float freq)
@@ -4715,6 +4721,8 @@ public unsafe class RagdollController : IDisposable
     private Vector3 kneeRight;
     private Vector3 kneeLeftFootStart;
     private Vector3 kneeRightFootStart;
+    private Vector3 kneeLeftFootLocalOffset;
+    private Vector3 kneeRightFootLocalOffset;
     private Vector3 kneeLeftStart;
     private Vector3 kneeRightStart;
     private Vector3 kneePelvisStart;
@@ -4736,6 +4744,35 @@ public unsafe class RagdollController : IDisposable
 
         pendingKneePowerLossPattern = true;
         log.Info("RagdollController: knee power-loss forward armed for next death");
+    }
+
+    private bool TryBuildKneeFootSupportProxy(BodyHandle footHandle, bool left, out Vector3 target, out Vector3 localOffset)
+    {
+        target = Vector3.Zero;
+        localOffset = Vector3.Zero;
+        if (simulation == null) return false;
+
+        var settings = EffectiveKneePowerLossSettings();
+        if (!settings.FootProxyEnabled) return false;
+
+        var body = simulation.Bodies.GetBodyReference(footHandle);
+        var forward = FlatNormalize(kneeForward, Vector3.UnitZ);
+        var forwardOffset = Math.Clamp(settings.FootProxyForwardOffset, -0.05f, 0.25f);
+        var downOffset = Math.Clamp(settings.FootProxyDownOffset, 0f, 0.16f);
+        var clearance = Math.Clamp(settings.FootProxyGroundClearance, 0.004f, 0.08f);
+
+        // FFXIV's foot/toe bones are not reliable sole vectors; j_asi_d often behaves like an
+        // ankle/downward marker. Anchor a virtual sole point in the intended sagittal direction
+        // instead, and apply the foot support servo at that local point on the foot body.
+        target = body.Pose.Position + forward * forwardOffset - Vector3.UnitY * downOffset;
+        target.Y = groundY + clearance;
+        localOffset = Vector3.Transform(target - body.Pose.Position, Quaternion.Inverse(body.Pose.Orientation));
+
+        log.Info(
+            $"RagdollController: knee foot proxy {(left ? "L" : "R")} " +
+            $"target=({target.X:F2},{target.Y:F2},{target.Z:F2}) " +
+            $"local=({localOffset.X:F2},{localOffset.Y:F2},{localOffset.Z:F2})");
+        return true;
     }
 
     public bool BeginKneePowerLossForwardPattern()
@@ -4775,8 +4812,21 @@ public unsafe class RagdollController : IDisposable
 
         kneeLeftFootStart = leftFootBody.Pose.Position;
         kneeRightFootStart = rightFootBody.Pose.Position;
+        kneeLeftFootLocalOffset = Vector3.Zero;
+        kneeRightFootLocalOffset = Vector3.Zero;
         kneePelvisStart = pelvisBody.Pose.Position;
         kneeChestStartRot = chestBody.Pose.Orientation;
+
+        if (TryBuildKneeFootSupportProxy(leftFoot.Value, true, out var leftProxyTarget, out var leftProxyLocal))
+        {
+            kneeLeftFootStart = leftProxyTarget;
+            kneeLeftFootLocalOffset = leftProxyLocal;
+        }
+        if (TryBuildKneeFootSupportProxy(rightFoot.Value, false, out var rightProxyTarget, out var rightProxyLocal))
+        {
+            kneeRightFootStart = rightProxyTarget;
+            kneeRightFootLocalOffset = rightProxyLocal;
+        }
 
         var leftKneeBody = simulation.Bodies.GetBodyReference(leftKnee.Value);
         var rightKneeBody = simulation.Bodies.GetBodyReference(rightKnee.Value);
@@ -4806,8 +4856,8 @@ public unsafe class RagdollController : IDisposable
 
         WakeRagdollBodiesForBiomechanicalSettle();
 
-        kneeLeftFootSupport = simulation.Solver.Add(leftFoot.Value, DirectedLinearServo(kneeLeftFootStart, 0f, 55f));
-        kneeRightFootSupport = simulation.Solver.Add(rightFoot.Value, DirectedLinearServo(kneeRightFootStart, 0f, 55f));
+        kneeLeftFootSupport = simulation.Solver.Add(leftFoot.Value, DirectedLinearServo(kneeLeftFootStart, 0f, 55f, kneeLeftFootLocalOffset));
+        kneeRightFootSupport = simulation.Solver.Add(rightFoot.Value, DirectedLinearServo(kneeRightFootStart, 0f, 55f, kneeRightFootLocalOffset));
         kneeLeftFlexBias = simulation.Solver.Add(leftKnee.Value, leftThigh.Value, DirectedRelativeAngularServo(kneeLeftKneeStartTarget, 0f, 18f));
         kneeRightFlexBias = simulation.Solver.Add(rightKnee.Value, rightThigh.Value, DirectedRelativeAngularServo(kneeRightKneeStartTarget, 0f, 18f));
         kneePelvisSupport = simulation.Solver.Add(pelvis.Value, DirectedLinearServo(kneePelvisStart, 0f, 20f));
@@ -4906,8 +4956,8 @@ public unsafe class RagdollController : IDisposable
         var flexGain = SmoothStep(Math.Clamp(kneePowerLossPhaseElapsed / 0.55f, 0f, 1f));
         var kneeSettings = EffectiveKneePowerLossSettings();
 
-        ApplySoftFootSupport(kneeLeftFootSupport, kneeLeftFootStart, supportGain, Math.Clamp(kneeSettings.BuckleFootSupportForce, 0f, 5000f));
-        ApplySoftFootSupport(kneeRightFootSupport, kneeRightFootStart, supportGain, Math.Clamp(kneeSettings.BuckleFootSupportForce, 0f, 5000f));
+        ApplySoftFootSupport(kneeLeftFootSupport, kneeLeftFootStart, kneeLeftFootLocalOffset, supportGain, Math.Clamp(kneeSettings.BuckleFootSupportForce, 0f, 5000f));
+        ApplySoftFootSupport(kneeRightFootSupport, kneeRightFootStart, kneeRightFootLocalOffset, supportGain, Math.Clamp(kneeSettings.BuckleFootSupportForce, 0f, 5000f));
 
         ApplyKneeLateralStability(5.5f, 0.45f);
 
@@ -4928,8 +4978,8 @@ public unsafe class RagdollController : IDisposable
         var supportGain = 1f - t;
         var kneeSettings = EffectiveKneePowerLossSettings();
 
-        ApplySoftFootSupport(kneeLeftFootSupport, kneeLeftFootStart, supportGain, Math.Clamp(kneeSettings.TorsoFootSupportForce, 0f, 5000f));
-        ApplySoftFootSupport(kneeRightFootSupport, kneeRightFootStart, supportGain, Math.Clamp(kneeSettings.TorsoFootSupportForce, 0f, 5000f));
+        ApplySoftFootSupport(kneeLeftFootSupport, kneeLeftFootStart, kneeLeftFootLocalOffset, supportGain, Math.Clamp(kneeSettings.TorsoFootSupportForce, 0f, 5000f));
+        ApplySoftFootSupport(kneeRightFootSupport, kneeRightFootStart, kneeRightFootLocalOffset, supportGain, Math.Clamp(kneeSettings.TorsoFootSupportForce, 0f, 5000f));
         ApplyKneeLateralStability(3.0f * supportGain, 0.32f);
         var flexForce = Math.Clamp(kneeSettings.KneeTorsoFlexForce, 0f, 500f);
         ApplyDirectedRelativeAngular(kneeLeftFlexBias, kneeLeftKneeFlexTarget, flexForce * supportGain, 10f);
@@ -4944,11 +4994,15 @@ public unsafe class RagdollController : IDisposable
         ApplyDirectedLinear(kneePelvisSupport, pelvisTarget, Math.Clamp(kneeSettings.TorsoPelvisForce, 0f, 3000f) * supportGain, 10f);
     }
 
-    private void ApplySoftFootSupport(ConstraintHandle? handle, Vector3 start, float gain, float force)
+    private void ApplySoftFootSupport(ConstraintHandle? handle, Vector3 start, Vector3 localOffset, float gain, float force)
     {
         var target = start;
-        target.Y = groundY + MathF.Max(0.02f, start.Y - groundY);
-        ApplyDirectedLinear(handle, target, force * Math.Clamp(gain, 0f, 1f), 38f);
+        var settings = EffectiveKneePowerLossSettings();
+        var clearance = settings.FootProxyEnabled
+            ? Math.Clamp(settings.FootProxyGroundClearance, 0.004f, 0.08f)
+            : 0.02f;
+        target.Y = groundY + MathF.Max(clearance, start.Y - groundY);
+        ApplyDirectedLinear(handle, target, force * Math.Clamp(gain, 0f, 1f), 38f, localOffset);
     }
 
     private void ApplyKneeLateralStability(float gain, float maxSpeed)

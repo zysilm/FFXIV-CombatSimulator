@@ -100,6 +100,10 @@ public class GuidedCollapseKneePowerLossSettings
     public float KneeTorsoFlexForce { get; set; } = 42f;
     public float BuckleFootSupportForce { get; set; } = 1100f;
     public float TorsoFootSupportForce { get; set; } = 650f;
+    public bool FootProxyEnabled { get; set; } = true;
+    public float FootProxyForwardOffset { get; set; } = 0.10f;
+    public float FootProxyDownOffset { get; set; } = 0.035f;
+    public float FootProxyGroundClearance { get; set; } = 0.018f;
     public float BucklePelvisForce { get; set; } = 420f;
     public float TorsoPelvisForce { get; set; } = 220f;
     public float ChestPitchDegrees { get; set; } = 41f;
