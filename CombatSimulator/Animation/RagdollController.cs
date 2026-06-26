@@ -1030,6 +1030,8 @@ public unsafe class RagdollController : IDisposable
         pendingDirectedCollapseSpike = false;
         StopWholeBodyCollapse();
         pendingWholeBodyCollapse = false;
+        StopCollapseEntryConditioning();
+        pendingEntryConditionedKneePowerLoss = false;
         StopKneePowerLossPattern();
         pendingKneePowerLossPattern = false;
 
@@ -1103,6 +1105,13 @@ public unsafe class RagdollController : IDisposable
                 {
                     pendingWholeBodyCollapse = false;
                     BeginWholeBodyCollapse();
+                }
+
+                if (pendingEntryConditionedKneePowerLoss)
+                {
+                    pendingEntryConditionedKneePowerLoss = false;
+                    if (!BeginCollapseEntryConditioning(BeginKneePowerLossForwardPattern))
+                        BeginKneePowerLossForwardPattern();
                 }
 
                 if (pendingKneePowerLossPattern)
@@ -2902,13 +2911,14 @@ public unsafe class RagdollController : IDisposable
         // pose below. Applies to generic (monster) rigs too: if their auto-built network
         // never settles, prevAllAsleep simply stays false and this never triggers; if it
         // does settle, there is nothing to clamp. A grab or a moved skeleton forces a step.
-        var resting = prevAllAsleep && !grabConstraintActive && !collapseSpikeActive && !directedCollapseActive && !wholeBodyCollapseActive && !kneePowerLossActive && !skeletonMoved && !biomechanicalSettleActive;
+        var resting = prevAllAsleep && !grabConstraintActive && !collapseSpikeActive && !directedCollapseActive && !wholeBodyCollapseActive && !entryConditioningActive && !kneePowerLossActive && !skeletonMoved && !biomechanicalSettleActive;
 
         // Death-collapse spike: restrength the per-joint "muscle" servos before stepping so the
         // updated torque ceilings take effect this tick. Advances the fade and retires itself.
         UpdateCollapseSpike(dt);
         UpdateDirectedCollapseSpike(dt);
         UpdateWholeBodyCollapse(dt);
+        UpdateCollapseEntryConditioning(dt);
         UpdateKneePowerLossPattern(dt);
 
         // Update NPC collision volumes to track their current animated bone positions.
@@ -4485,6 +4495,168 @@ public unsafe class RagdollController : IDisposable
         var current = Vector3.Dot(body.Velocity.Angular, n);
         var delta = Math.Clamp(targetSpeed - current, -maxDelta, maxDelta);
         body.Velocity.Angular += n * delta;
+        body.Awake = true;
+    }
+
+    // --- Collapse entry conditioning ---
+    // Common pre-pass for narrow upright death poses. When the stance is too closed or the knees
+    // are locked nearly straight, downstream collapse profiles inherit an unstable support base
+    // and tend to fold the knees inward. This pre-pass briefly opens the support geometry and
+    // starts a small pelvis drop before handing off to the requested collapse pattern.
+    private bool pendingEntryConditionedKneePowerLoss;
+    private bool entryConditioningActive;
+    private float entryConditioningElapsed;
+    private Func<bool>? entryConditioningContinuation;
+    private Vector3 entryForward;
+    private Vector3 entryRight;
+    private Vector3 entryLeftKneeStart;
+    private Vector3 entryRightKneeStart;
+    private float entryStanceWidth;
+    private float entryLeftKneeAngle;
+    private float entryRightKneeAngle;
+    private bool entryWasNeeded;
+
+    public void RequestEntryConditionedKneePowerLossOnReady()
+    {
+        if (IsSimulationReady)
+        {
+            if (!BeginCollapseEntryConditioning(BeginKneePowerLossForwardPattern))
+                BeginKneePowerLossForwardPattern();
+            return;
+        }
+
+        pendingEntryConditionedKneePowerLoss = true;
+        log.Info("RagdollController: entry-conditioned knee power-loss armed for next death");
+    }
+
+    private bool BeginCollapseEntryConditioning(Func<bool> continuation)
+    {
+        if (simulation == null || !isActive) return false;
+
+        if (!TryMeasureEntryPose(out entryStanceWidth, out entryLeftKneeAngle, out entryRightKneeAngle,
+                out entryLeftKneeStart, out entryRightKneeStart))
+        {
+            log.Warning("RagdollController: entry conditioning skipped - missing leg pose data");
+            return false;
+        }
+
+        entryForward = ResolveCollapseDirection(CollapseDirection.Forward);
+        entryRight = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
+        var straightestKnee = MathF.Min(entryLeftKneeAngle, entryRightKneeAngle);
+        entryWasNeeded = entryStanceWidth < 0.28f || straightestKnee < 8f;
+        if (!entryWasNeeded)
+        {
+            log.Info($"RagdollController: entry conditioning skipped - stance={entryStanceWidth:F2} kneeAngles=({entryLeftKneeAngle:F1},{entryRightKneeAngle:F1})");
+            return false;
+        }
+
+        StopCollapseSpike();
+        StopDirectedCollapseSpike();
+        StopWholeBodyCollapse();
+        StopKneePowerLossPattern();
+        StopCollapseEntryConditioning();
+
+        entryConditioningContinuation = continuation;
+        entryConditioningElapsed = 0f;
+        entryConditioningActive = true;
+        WakeRagdollBodiesForBiomechanicalSettle();
+        BeginBiomechanicalSettle();
+        log.Info($"RagdollController: entry conditioning begun - stance={entryStanceWidth:F2} kneeAngles=({entryLeftKneeAngle:F1},{entryRightKneeAngle:F1})");
+        return true;
+    }
+
+    private void StopCollapseEntryConditioning()
+    {
+        if (!entryConditioningActive) return;
+        entryConditioningActive = false;
+        entryConditioningContinuation = null;
+        BeginBiomechanicalSettle();
+        log.Info("RagdollController: entry conditioning stopped");
+    }
+
+    private void UpdateCollapseEntryConditioning(float dt)
+    {
+        if (!entryConditioningActive || simulation == null) return;
+
+        entryConditioningElapsed += dt;
+        var t = SmoothStep(Math.Clamp(entryConditioningElapsed / 0.24f, 0f, 1f));
+        var stepScale = Math.Clamp(dt * 60f, 0.35f, 2.0f);
+
+        ApplyEntryKneeSeparation(0.32f + 0.18f * t, 0.11f * stepScale);
+        ApplyCoreAxisVelocity("j_kosi", -Vector3.UnitY, 0.28f + 0.22f * t, 0.07f * stepScale);
+        ApplyCoreAxisVelocity("j_kosi", entryForward, 0.22f + 0.18f * t, 0.06f * stepScale);
+        ApplyCoreAxisVelocity("j_sebo_b", entryForward, 0.12f + 0.10f * t, 0.045f * stepScale);
+
+        if (entryConditioningElapsed < 0.24f) return;
+
+        var continuation = entryConditioningContinuation;
+        entryConditioningActive = false;
+        entryConditioningContinuation = null;
+        log.Info("RagdollController: entry conditioning complete");
+        _ = continuation?.Invoke();
+    }
+
+    private bool TryMeasureEntryPose(out float stanceWidth, out float leftKneeAngle, out float rightKneeAngle,
+        out Vector3 leftKnee, out Vector3 rightKnee)
+    {
+        stanceWidth = 0f;
+        leftKneeAngle = 0f;
+        rightKneeAngle = 0f;
+        leftKnee = Vector3.Zero;
+        rightKnee = Vector3.Zero;
+
+        if (!TryGetSupportPoint(true, out var leftSupport) || !TryGetSupportPoint(false, out var rightSupport))
+            return false;
+        var rightAxis = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
+        stanceWidth = MathF.Abs(Vector3.Dot(rightSupport - leftSupport, rightAxis));
+
+        leftKneeAngle = MeasureLegBendAngle("j_asi_a_l", "j_asi_b_l", "j_asi_c_l", out leftKnee);
+        rightKneeAngle = MeasureLegBendAngle("j_asi_a_r", "j_asi_b_r", "j_asi_c_r", out rightKnee);
+        return leftKneeAngle >= 0f && rightKneeAngle >= 0f;
+    }
+
+    private float MeasureLegBendAngle(string hipBone, string kneeBone, string ankleBone, out Vector3 knee)
+    {
+        knee = Vector3.Zero;
+        if (!TryGetBoneOriginPosition(hipBone, out var hip) ||
+            !TryGetBoneOriginPosition(kneeBone, out knee) ||
+            !TryGetBoneOriginPosition(ankleBone, out var ankle))
+            return -1f;
+
+        var thigh = NormalizeOrFallback(knee - hip, Vector3.UnitY);
+        var shin = NormalizeOrFallback(ankle - knee, Vector3.UnitY);
+        return MathF.Acos(Math.Clamp(Vector3.Dot(thigh, shin), -1f, 1f)) * 180f / MathF.PI;
+    }
+
+    private void ApplyEntryKneeSeparation(float targetWidth, float maxDelta)
+    {
+        if (simulation == null) return;
+        var leftHandle = FindBodyHandle("j_asi_b_l");
+        var rightHandle = FindBodyHandle("j_asi_b_r");
+        if (!leftHandle.HasValue || !rightHandle.HasValue) return;
+
+        var lateral = FlatNormalize(entryRight, Vector3.UnitX);
+        var left = simulation.Bodies.GetBodyReference(leftHandle.Value);
+        var right = simulation.Bodies.GetBodyReference(rightHandle.Value);
+        var currentWidth = MathF.Abs(Vector3.Dot(right.Pose.Position - left.Pose.Position, lateral));
+        var error = MathF.Max(0f, targetWidth - currentWidth);
+        if (error <= 0.001f) return;
+
+        var leftSign = Vector3.Dot(left.Pose.Position - right.Pose.Position, lateral) >= 0f ? 1f : -1f;
+        var leftDir = lateral * leftSign;
+        var rightDir = -leftDir;
+        var speed = Math.Clamp(error * 3.2f, 0f, 0.55f);
+        ApplyBodyVelocityAlong(left, leftDir, speed, maxDelta);
+        ApplyBodyVelocityAlong(right, rightDir, speed, maxDelta);
+    }
+
+    private static void ApplyBodyVelocityAlong(BodyReference body, Vector3 axis, float targetSpeed, float maxDelta)
+    {
+        if (axis.LengthSquared() < 0.0001f) return;
+        var n = Vector3.Normalize(axis);
+        var current = Vector3.Dot(body.Velocity.Linear, n);
+        var delta = Math.Clamp(targetSpeed - current, -maxDelta, maxDelta);
+        body.Velocity.Linear += n * delta;
         body.Awake = true;
     }
 

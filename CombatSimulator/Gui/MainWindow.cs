@@ -4661,12 +4661,22 @@ public class MainWindow : IDisposable
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.5f, 0.25f, 1f));
             if (ImGui.Button("Die + Knee Power Loss##kneePowerLoss"))
             {
-                ragdollController.RequestKneePowerLossForwardOnReady();
+                ragdollController.RequestEntryConditionedKneePowerLossOnReady();
                 ctrl.TriggerInstantDeath();
             }
             ImGui.PopStyleColor();
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Run the C# pattern spike: soft foot support + knee flexion bias + state feedback.");
+                ImGui.SetTooltip("Run entry conditioning first when the stance is narrow/straight,\n" +
+                                 "then hand off to the C# knee power-loss pattern.");
+
+            ImGui.SameLine();
+            if (ImGui.Button("Legacy Knee##kneePowerLossLegacy"))
+            {
+                ragdollController.RequestKneePowerLossForwardOnReady();
+                ctrl.TriggerInstantDeath();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Old direct knee power-loss path, kept for A/B comparison.");
 
             ImGui.SameLine();
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.35f, 0.65f, 1f));
