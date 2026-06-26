@@ -3256,46 +3256,92 @@ public class MainWindow : IDisposable
             config.Save();
         }
 
-        using (ImRaii.Disabled(!s.EntryConditioningEnabled))
+        var semantic = s.UseSemanticControls;
+        if (ImGui.Checkbox("Semantic controls##guidedknee", ref semantic))
         {
-            var stanceThreshold = Math.Clamp(s.EntryStanceThreshold, 0.05f, 1.0f);
-            if (ImGui.SliderFloat("Trigger stance width##guidedknee", ref stanceThreshold, 0.05f, 1.0f, "%.2f"))
+            s.UseSemanticControls = semantic;
+            config.Save();
+        }
+        HelpMarker("Show a small set of high-level controls and derive the low-level forces/timing from them. Disable to edit raw parameters directly.");
+
+        if (s.UseSemanticControls)
+        {
+            var entryStrength = Math.Clamp(s.EntryStrength, 0f, 1f);
+            if (ImGui.SliderFloat("Entry strength##guidedknee", ref entryStrength, 0f, 1f, "%.2f"))
             {
-                s.EntryStanceThreshold = stanceThreshold;
+                s.EntryStrength = entryStrength;
                 config.Save();
             }
 
-            var readyStance = Math.Clamp(s.EntryReadyStance, 0.05f, 1.2f);
-            if (ImGui.SliderFloat("Ready stance width##guidedknee", ref readyStance, 0.05f, 1.2f, "%.2f"))
+            var kneeYield = Math.Clamp(s.KneeYield, 0f, 1f);
+            if (ImGui.SliderFloat("Knee yield##guidedknee", ref kneeYield, 0f, 1f, "%.2f"))
             {
-                s.EntryReadyStance = readyStance;
+                s.KneeYield = kneeYield;
                 config.Save();
             }
 
-            var readyKnee = Math.Clamp(s.EntryReadyKneeAngle, 1f, 60f);
-            if (ImGui.SliderFloat("Ready knee angle##guidedknee", ref readyKnee, 1f, 60f, "%.1f"))
+            var footGrip = Math.Clamp(s.FootGrip, 0f, 1f);
+            if (ImGui.SliderFloat("Foot grip##guidedknee", ref footGrip, 0f, 1f, "%.2f"))
             {
-                s.EntryReadyKneeAngle = readyKnee;
+                s.FootGrip = footGrip;
                 config.Save();
             }
 
-            var minDur = Math.Clamp(s.EntryMinDuration, 0.05f, 1.0f);
-            if (ImGui.SliderFloat("Entry min (s)##guidedknee", ref minDur, 0.05f, 1.0f, "%.2f"))
+            var forward = Math.Clamp(s.ForwardCommitment, 0f, 1f);
+            if (ImGui.SliderFloat("Forward commitment##guidedknee", ref forward, 0f, 1f, "%.2f"))
             {
-                s.EntryMinDuration = minDur;
-                if (s.EntryMaxDuration < s.EntryMinDuration) s.EntryMaxDuration = s.EntryMinDuration;
+                s.ForwardCommitment = forward;
                 config.Save();
             }
 
-            var maxDur = Math.Clamp(s.EntryMaxDuration, s.EntryMinDuration, 1.5f);
-            if (ImGui.SliderFloat("Entry max (s)##guidedknee", ref maxDur, s.EntryMinDuration, 1.5f, "%.2f"))
+            var release = Math.Clamp(s.ReleaseTiming, 0f, 1f);
+            if (ImGui.SliderFloat("Release timing##guidedknee", ref release, 0f, 1f, "%.2f"))
             {
-                s.EntryMaxDuration = maxDur;
+                s.ReleaseTiming = release;
                 config.Save();
             }
+        }
 
-            if (ImGui.CollapsingHeader("Entry Advanced##guidedknee"))
+        if (ImGui.CollapsingHeader("Advanced Raw Parameters##guidedknee"))
+        {
+            using (ImRaii.Disabled(!s.EntryConditioningEnabled))
             {
+                var stanceThreshold = Math.Clamp(s.EntryStanceThreshold, 0.05f, 1.0f);
+                if (ImGui.SliderFloat("Trigger stance width##guidedknee", ref stanceThreshold, 0.05f, 1.0f, "%.2f"))
+                {
+                    s.EntryStanceThreshold = stanceThreshold;
+                    config.Save();
+                }
+
+                var readyStance = Math.Clamp(s.EntryReadyStance, 0.05f, 1.2f);
+                if (ImGui.SliderFloat("Ready stance width##guidedknee", ref readyStance, 0.05f, 1.2f, "%.2f"))
+                {
+                    s.EntryReadyStance = readyStance;
+                    config.Save();
+                }
+
+                var readyKnee = Math.Clamp(s.EntryReadyKneeAngle, 1f, 60f);
+                if (ImGui.SliderFloat("Ready knee angle##guidedknee", ref readyKnee, 1f, 60f, "%.1f"))
+                {
+                    s.EntryReadyKneeAngle = readyKnee;
+                    config.Save();
+                }
+
+                var minDur = Math.Clamp(s.EntryMinDuration, 0.05f, 1.0f);
+                if (ImGui.SliderFloat("Entry min (s)##guidedknee", ref minDur, 0.05f, 1.0f, "%.2f"))
+                {
+                    s.EntryMinDuration = minDur;
+                    if (s.EntryMaxDuration < s.EntryMinDuration) s.EntryMaxDuration = s.EntryMinDuration;
+                    config.Save();
+                }
+
+                var maxDur = Math.Clamp(s.EntryMaxDuration, s.EntryMinDuration, 1.5f);
+                if (ImGui.SliderFloat("Entry max (s)##guidedknee", ref maxDur, s.EntryMinDuration, 1.5f, "%.2f"))
+                {
+                    s.EntryMaxDuration = maxDur;
+                    config.Save();
+                }
+
                 var targetStart = Math.Clamp(s.EntryTargetStanceStart, 0.05f, 1.2f);
                 if (ImGui.SliderFloat("Target stance start##guidedknee", ref targetStart, 0.05f, 1.2f, "%.2f"))
                 {
@@ -3324,47 +3370,37 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
             }
-        }
 
-        ImGui.Separator();
+            ImGui.Separator();
 
-        var flexDegrees = Math.Clamp(s.KneeFlexDegrees, 0f, 90f);
-        if (ImGui.SliderFloat("Knee flex target##guidedknee", ref flexDegrees, 0f, 90f, "%.0f deg"))
-        {
-            s.KneeFlexDegrees = flexDegrees;
-            config.Save();
-        }
+            var flexDegrees = Math.Clamp(s.KneeFlexDegrees, 0f, 90f);
+            if (ImGui.SliderFloat("Knee flex target##guidedknee", ref flexDegrees, 0f, 90f, "%.0f deg"))
+            {
+                s.KneeFlexDegrees = flexDegrees;
+                config.Save();
+            }
 
-        var buckleFlex = Math.Clamp(s.KneeBuckleFlexForce, 0f, 500f);
-        if (ImGui.SliderFloat("Buckle knee force##guidedknee", ref buckleFlex, 0f, 500f, "%.0f"))
-        {
-            s.KneeBuckleFlexForce = buckleFlex;
-            config.Save();
-        }
+            var buckleFlex = Math.Clamp(s.KneeBuckleFlexForce, 0f, 500f);
+            if (ImGui.SliderFloat("Buckle knee force##guidedknee", ref buckleFlex, 0f, 500f, "%.0f"))
+            {
+                s.KneeBuckleFlexForce = buckleFlex;
+                config.Save();
+            }
 
-        var torsoFlex = Math.Clamp(s.KneeTorsoFlexForce, 0f, 500f);
-        if (ImGui.SliderFloat("Torso knee force##guidedknee", ref torsoFlex, 0f, 500f, "%.0f"))
-        {
-            s.KneeTorsoFlexForce = torsoFlex;
-            config.Save();
-        }
+            var torsoFlex = Math.Clamp(s.KneeTorsoFlexForce, 0f, 500f);
+            if (ImGui.SliderFloat("Torso knee force##guidedknee", ref torsoFlex, 0f, 500f, "%.0f"))
+            {
+                s.KneeTorsoFlexForce = torsoFlex;
+                config.Save();
+            }
 
-        var footSupport = Math.Clamp(s.BuckleFootSupportForce, 0f, 5000f);
-        if (ImGui.SliderFloat("Buckle foot support##guidedknee", ref footSupport, 0f, 5000f, "%.0f"))
-        {
-            s.BuckleFootSupportForce = footSupport;
-            config.Save();
-        }
+            var footSupport = Math.Clamp(s.BuckleFootSupportForce, 0f, 5000f);
+            if (ImGui.SliderFloat("Buckle foot support##guidedknee", ref footSupport, 0f, 5000f, "%.0f"))
+            {
+                s.BuckleFootSupportForce = footSupport;
+                config.Save();
+            }
 
-        var pelvisForce = Math.Clamp(s.BucklePelvisForce, 0f, 3000f);
-        if (ImGui.SliderFloat("Buckle pelvis force##guidedknee", ref pelvisForce, 0f, 3000f, "%.0f"))
-        {
-            s.BucklePelvisForce = pelvisForce;
-            config.Save();
-        }
-
-        if (ImGui.CollapsingHeader("Torso Phase##guidedknee"))
-        {
             var torsoFoot = Math.Clamp(s.TorsoFootSupportForce, 0f, 5000f);
             if (ImGui.SliderFloat("Torso foot support##guidedknee", ref torsoFoot, 0f, 5000f, "%.0f"))
             {
@@ -3378,13 +3414,64 @@ public class MainWindow : IDisposable
                 s.TorsoPelvisForce = torsoPelvis;
                 config.Save();
             }
-        }
 
-        var chestPitch = Math.Clamp(s.ChestPitchDegrees, -90f, 90f);
-        if (ImGui.SliderFloat("Chest pitch##guidedknee", ref chestPitch, -90f, 90f, "%.0f deg"))
-        {
-            s.ChestPitchDegrees = chestPitch;
-            config.Save();
+            var pelvisForce = Math.Clamp(s.BucklePelvisForce, 0f, 3000f);
+            if (ImGui.SliderFloat("Buckle pelvis force##guidedknee", ref pelvisForce, 0f, 3000f, "%.0f"))
+            {
+                s.BucklePelvisForce = pelvisForce;
+                config.Save();
+            }
+
+            var chestPitch = Math.Clamp(s.ChestPitchDegrees, -90f, 90f);
+            if (ImGui.SliderFloat("Chest pitch##guidedknee", ref chestPitch, -90f, 90f, "%.0f deg"))
+            {
+                s.ChestPitchDegrees = chestPitch;
+                config.Save();
+            }
+
+            ImGui.Separator();
+
+            var buckleMin = Math.Clamp(s.BuckleMinDuration, 0.05f, 1.5f);
+            if (ImGui.SliderFloat("Buckle min (s)##guidedknee", ref buckleMin, 0.05f, 1.5f, "%.2f"))
+            {
+                s.BuckleMinDuration = buckleMin;
+                config.Save();
+            }
+
+            var buckleTimeout = Math.Clamp(s.BuckleTimeout, 0.1f, 3f);
+            if (ImGui.SliderFloat("Buckle timeout (s)##guidedknee", ref buckleTimeout, 0.1f, 3f, "%.2f"))
+            {
+                s.BuckleTimeout = buckleTimeout;
+                config.Save();
+            }
+
+            var dropToTorso = Math.Clamp(s.BucklePelvisDropToTorso, 0.05f, 1.5f);
+            if (ImGui.SliderFloat("Drop to torso##guidedknee", ref dropToTorso, 0.05f, 1.5f, "%.2f"))
+            {
+                s.BucklePelvisDropToTorso = dropToTorso;
+                config.Save();
+            }
+
+            var kneeToTorso = Math.Clamp(s.BuckleKneeAngleToTorso, 1f, 90f);
+            if (ImGui.SliderFloat("Knee angle to torso##guidedknee", ref kneeToTorso, 1f, 90f, "%.1f"))
+            {
+                s.BuckleKneeAngleToTorso = kneeToTorso;
+                config.Save();
+            }
+
+            var torsoMin = Math.Clamp(s.TorsoMinDuration, 0.05f, 2f);
+            if (ImGui.SliderFloat("Torso min (s)##guidedknee", ref torsoMin, 0.05f, 2f, "%.2f"))
+            {
+                s.TorsoMinDuration = torsoMin;
+                config.Save();
+            }
+
+            var torsoTimeout = Math.Clamp(s.TorsoTimeout, 0.1f, 3f);
+            if (ImGui.SliderFloat("Torso timeout (s)##guidedknee", ref torsoTimeout, 0.1f, 3f, "%.2f"))
+            {
+                s.TorsoTimeout = torsoTimeout;
+                config.Save();
+            }
         }
     }
 

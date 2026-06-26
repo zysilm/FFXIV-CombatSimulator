@@ -80,6 +80,11 @@ public class GuidedCollapseRelaxationSettings
 [Serializable]
 public class GuidedCollapseKneePowerLossSettings
 {
+    public float EntryStrength { get; set; } = 0.65f;
+    public float KneeYield { get; set; } = 0.55f;
+    public float FootGrip { get; set; } = 0.65f;
+    public float ForwardCommitment { get; set; } = 0.55f;
+    public float ReleaseTiming { get; set; } = 0.55f;
     public bool EntryConditioningEnabled { get; set; } = true;
     public float EntryStanceThreshold { get; set; } = 0.28f;
     public float EntryReadyStance { get; set; } = 0.30f;
@@ -98,6 +103,13 @@ public class GuidedCollapseKneePowerLossSettings
     public float BucklePelvisForce { get; set; } = 420f;
     public float TorsoPelvisForce { get; set; } = 220f;
     public float ChestPitchDegrees { get; set; } = 41f;
+    public bool UseSemanticControls { get; set; } = true;
+    public float BuckleMinDuration { get; set; } = 0.24f;
+    public float BuckleTimeout { get; set; } = 0.95f;
+    public float BucklePelvisDropToTorso { get; set; } = 0.30f;
+    public float BuckleKneeAngleToTorso { get; set; } = 22f;
+    public float TorsoMinDuration { get; set; } = 0.55f;
+    public float TorsoTimeout { get; set; } = 0.90f;
 }
 
 [Serializable]

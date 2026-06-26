@@ -4526,7 +4526,7 @@ public unsafe class RagdollController : IDisposable
 
     public void RequestEntryConditionedKneePowerLossOnReady()
     {
-        var knee = config.GuidedCollapse.KneePowerLoss;
+        var knee = EffectiveKneePowerLossSettings();
         if (!knee.EntryConditioningEnabled)
         {
             RequestKneePowerLossForwardOnReady();
@@ -4557,7 +4557,7 @@ public unsafe class RagdollController : IDisposable
 
         entryForward = ResolveCollapseDirection(CollapseDirection.Forward);
         entryRight = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
-        var knee = config.GuidedCollapse.KneePowerLoss;
+        var knee = EffectiveKneePowerLossSettings();
         var straightestKnee = MathF.Min(entryLeftKneeAngle, entryRightKneeAngle);
         entryWasNeeded = entryStanceWidth < Math.Clamp(knee.EntryStanceThreshold, 0.05f, 1.0f) ||
                          straightestKnee < Math.Clamp(knee.EntryReadyKneeAngle, 1f, 60f);
@@ -4596,7 +4596,7 @@ public unsafe class RagdollController : IDisposable
         if (!entryConditioningActive || simulation == null) return;
 
         entryConditioningElapsed += dt;
-        var knee = config.GuidedCollapse.KneePowerLoss;
+        var knee = EffectiveKneePowerLossSettings();
         var minDuration = Math.Clamp(knee.EntryMinDuration, 0.05f, 1.0f);
         var maxDuration = Math.Clamp(MathF.Max(knee.EntryMaxDuration, minDuration), minDuration, 1.5f);
         var t = SmoothStep(Math.Clamp(entryConditioningElapsed / maxDuration, 0f, 1f));
@@ -4687,6 +4687,56 @@ public unsafe class RagdollController : IDisposable
         var delta = Math.Clamp(targetSpeed - current, -maxDelta, maxDelta);
         body.Velocity.Linear += n * delta;
         body.Awake = true;
+    }
+
+    private GuidedCollapseKneePowerLossSettings EffectiveKneePowerLossSettings()
+    {
+        var raw = config.GuidedCollapse.KneePowerLoss;
+        if (!raw.UseSemanticControls)
+            return raw;
+
+        var entry = Math.Clamp(raw.EntryStrength, 0f, 1f);
+        var yield = Math.Clamp(raw.KneeYield, 0f, 1f);
+        var grip = Math.Clamp(raw.FootGrip, 0f, 1f);
+        var forward = Math.Clamp(raw.ForwardCommitment, 0f, 1f);
+        var release = Math.Clamp(raw.ReleaseTiming, 0f, 1f);
+
+        return new GuidedCollapseKneePowerLossSettings
+        {
+            UseSemanticControls = true,
+            EntryStrength = raw.EntryStrength,
+            KneeYield = raw.KneeYield,
+            FootGrip = raw.FootGrip,
+            ForwardCommitment = raw.ForwardCommitment,
+            ReleaseTiming = raw.ReleaseTiming,
+            EntryConditioningEnabled = raw.EntryConditioningEnabled,
+
+            EntryStanceThreshold = 0.24f + 0.12f * entry,
+            EntryReadyStance = 0.27f + 0.18f * entry,
+            EntryReadyKneeAngle = 7f + 12f * entry,
+            EntryMinDuration = 0.14f + 0.18f * entry,
+            EntryMaxDuration = 0.24f + 0.42f * entry,
+            EntryTargetStanceStart = 0.28f + 0.14f * entry,
+            EntryTargetStanceEnd = 0.36f + 0.24f * entry,
+            EntryPelvisDownStart = 0.20f + 0.22f * entry,
+            EntryPelvisDownEnd = 0.34f + 0.34f * entry,
+
+            KneeFlexDegrees = 18f + 38f * yield,
+            KneeBuckleFlexForce = 35f + 115f * yield,
+            KneeTorsoFlexForce = 15f + 70f * yield,
+            BuckleFootSupportForce = 250f + 1500f * grip,
+            TorsoFootSupportForce = 100f + 950f * grip,
+            BucklePelvisForce = 180f + 520f * forward,
+            TorsoPelvisForce = 80f + 320f * forward,
+            ChestPitchDegrees = 22f + 42f * forward,
+
+            BuckleMinDuration = 0.16f + 0.22f * release,
+            BuckleTimeout = 0.55f + 0.85f * release,
+            BucklePelvisDropToTorso = 0.22f + 0.20f * release,
+            BuckleKneeAngleToTorso = 14f + 20f * release,
+            TorsoMinDuration = 0.35f + 0.45f * release,
+            TorsoTimeout = 0.55f + 0.75f * release,
+        };
     }
 
     // --- Knee power-loss forward pattern (C# pattern spike) ---
@@ -4787,7 +4837,7 @@ public unsafe class RagdollController : IDisposable
         TryBuildLegAnatomyFrame("j_asi_a_r", "j_asi_b_r", "j_asi_c_r", "j_asi_d_r",
             rightKneeBody.Pose.Orientation, out var rightHingeAxis, out var rightHingeForward);
 
-        var kneeSettings = config.GuidedCollapse.KneePowerLoss;
+        var kneeSettings = EffectiveKneePowerLossSettings();
         var kneeFlexDegrees = Math.Clamp(kneeSettings.KneeFlexDegrees, 0f, 90f);
         kneeLeftKneeFlexTarget = MakeRelativeFlexTarget(leftKneeBody.Pose.Orientation, leftThighBody.Pose.Orientation,
             leftHingeAxis, leftHingeForward, kneeFlexDegrees);
@@ -4857,12 +4907,28 @@ public unsafe class RagdollController : IDisposable
 
         var pelvisBody = simulation.Bodies.GetBodyReference(pelvis.Value);
         var pelvisDrop = MathF.Max(0f, kneePelvisStart.Y - pelvisBody.Pose.Position.Y);
+        var kneeSettings = EffectiveKneePowerLossSettings();
         var kneeNearGround = BoneHeight("j_asi_b_l") < groundY + 0.18f || BoneHeight("j_asi_b_r") < groundY + 0.18f;
+        var minKneeAngle = MeasureCurrentKneePowerLossMinAngle();
+        var forwardOffset = MeasureCurrentKneePowerLossForwardOffset();
 
-        if (kneePowerLossPhase == KneePowerLossPhase.Buckle && (pelvisDrop > 0.34f || kneeNearGround || kneePowerLossPhaseElapsed > 0.85f))
+        if (kneePowerLossPhase == KneePowerLossPhase.Buckle &&
+            kneePowerLossPhaseElapsed >= Math.Clamp(kneeSettings.BuckleMinDuration, 0.05f, 1.5f) &&
+            (pelvisDrop > Math.Clamp(kneeSettings.BucklePelvisDropToTorso, 0.05f, 1.5f) ||
+             minKneeAngle > Math.Clamp(kneeSettings.BuckleKneeAngleToTorso, 1f, 90f) ||
+             kneeNearGround ||
+             kneePowerLossPhaseElapsed > Math.Clamp(kneeSettings.BuckleTimeout, 0.1f, 3f)))
+        {
+            log.Info($"RagdollController: knee power-loss buckle complete - drop={pelvisDrop:F2} knee={minKneeAngle:F1} fwd={forwardOffset:F2} nearGround={kneeNearGround}");
             SwitchKneePowerLossPhase(KneePowerLossPhase.TorsoLoss);
-        else if (kneePowerLossPhase == KneePowerLossPhase.TorsoLoss && kneePowerLossPhaseElapsed > 0.65f)
+        }
+        else if (kneePowerLossPhase == KneePowerLossPhase.TorsoLoss &&
+                 kneePowerLossPhaseElapsed >= Math.Clamp(kneeSettings.TorsoMinDuration, 0.05f, 2f) &&
+                 (forwardOffset > 0.24f || kneePowerLossPhaseElapsed > Math.Clamp(kneeSettings.TorsoTimeout, 0.1f, 3f)))
+        {
+            log.Info($"RagdollController: knee power-loss torso complete - drop={pelvisDrop:F2} knee={minKneeAngle:F1} fwd={forwardOffset:F2}");
             SwitchKneePowerLossPhase(KneePowerLossPhase.Release);
+        }
 
         switch (kneePowerLossPhase)
         {
@@ -4883,7 +4949,7 @@ public unsafe class RagdollController : IDisposable
         var t = SmoothStep(Math.Clamp(kneePowerLossPhaseElapsed / 0.75f, 0f, 1f));
         var supportGain = 1f - 0.45f * t;
         var flexGain = SmoothStep(Math.Clamp(kneePowerLossPhaseElapsed / 0.55f, 0f, 1f));
-        var kneeSettings = config.GuidedCollapse.KneePowerLoss;
+        var kneeSettings = EffectiveKneePowerLossSettings();
 
         ApplySoftFootSupport(kneeLeftFootSupport, kneeLeftFootStart, supportGain, Math.Clamp(kneeSettings.BuckleFootSupportForce, 0f, 5000f));
         ApplySoftFootSupport(kneeRightFootSupport, kneeRightFootStart, supportGain, Math.Clamp(kneeSettings.BuckleFootSupportForce, 0f, 5000f));
@@ -4905,7 +4971,7 @@ public unsafe class RagdollController : IDisposable
     {
         var t = SmoothStep(Math.Clamp(kneePowerLossPhaseElapsed / 0.65f, 0f, 1f));
         var supportGain = 1f - t;
-        var kneeSettings = config.GuidedCollapse.KneePowerLoss;
+        var kneeSettings = EffectiveKneePowerLossSettings();
 
         ApplySoftFootSupport(kneeLeftFootSupport, kneeLeftFootStart, supportGain, Math.Clamp(kneeSettings.TorsoFootSupportForce, 0f, 5000f));
         ApplySoftFootSupport(kneeRightFootSupport, kneeRightFootStart, supportGain, Math.Clamp(kneeSettings.TorsoFootSupportForce, 0f, 5000f));
@@ -4973,6 +5039,27 @@ public unsafe class RagdollController : IDisposable
         return TryGetBoneOriginPosition(boneName, out var position)
             ? position.Y
             : float.PositiveInfinity;
+    }
+
+    private float MeasureCurrentKneePowerLossMinAngle()
+    {
+        var left = MeasureLegBendAngle("j_asi_a_l", "j_asi_b_l", "j_asi_c_l", out _);
+        var right = MeasureLegBendAngle("j_asi_a_r", "j_asi_b_r", "j_asi_c_r", out _);
+        if (left < 0f && right < 0f) return 0f;
+        if (left < 0f) return right;
+        if (right < 0f) return left;
+        return MathF.Min(left, right);
+    }
+
+    private float MeasureCurrentKneePowerLossForwardOffset()
+    {
+        if (simulation == null) return 0f;
+        var pelvis = FindBodyHandle("j_kosi");
+        if (!pelvis.HasValue) return 0f;
+
+        var pelvisPos = simulation.Bodies.GetBodyReference(pelvis.Value).Pose.Position;
+        var footCenter = (kneeLeftFootStart + kneeRightFootStart) * 0.5f;
+        return Vector3.Dot(pelvisPos - footCenter, kneeForward);
     }
 
     private void LogLegAnatomyDiagnostics(string side, string thighBone, string shinBone, string calfBone, string footBone,
