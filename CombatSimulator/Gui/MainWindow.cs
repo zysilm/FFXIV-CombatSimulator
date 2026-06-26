@@ -4646,6 +4646,18 @@ public class MainWindow : IDisposable
                                  "This tests foot anchors + pelvis drive + torso pitch, not hold-then-fade.");
 
             ImGui.SameLine();
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.18f, 0.45f, 0.38f, 1f));
+            if (ImGui.Button("Die + Whole Body##wholeBodyCollapse"))
+            {
+                ragdollController.RequestWholeBodyCollapseOnReady();
+                ctrl.TriggerInstantDeath();
+            }
+            ImGui.PopStyleColor();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Run the whole-body balance-loss spike: COM/support feedback + core velocity bias.\n" +
+                                 "No knee pose target and no foot/pelvis position clamps.");
+
+            ImGui.SameLine();
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.5f, 0.25f, 1f));
             if (ImGui.Button("Die + Knee Power Loss##kneePowerLoss"))
             {

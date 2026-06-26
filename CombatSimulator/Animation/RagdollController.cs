@@ -1028,6 +1028,8 @@ public unsafe class RagdollController : IDisposable
         pendingCollapseSpike = false;
         StopDirectedCollapseSpike();
         pendingDirectedCollapseSpike = false;
+        StopWholeBodyCollapse();
+        pendingWholeBodyCollapse = false;
         StopKneePowerLossPattern();
         pendingKneePowerLossPattern = false;
 
@@ -1095,6 +1097,12 @@ public unsafe class RagdollController : IDisposable
                             pendingDirectedDrop,
                             pendingDirectedForward,
                             pendingDirectedPitchDegrees);
+                }
+
+                if (pendingWholeBodyCollapse)
+                {
+                    pendingWholeBodyCollapse = false;
+                    BeginWholeBodyCollapse();
                 }
 
                 if (pendingKneePowerLossPattern)
@@ -2894,12 +2902,13 @@ public unsafe class RagdollController : IDisposable
         // pose below. Applies to generic (monster) rigs too: if their auto-built network
         // never settles, prevAllAsleep simply stays false and this never triggers; if it
         // does settle, there is nothing to clamp. A grab or a moved skeleton forces a step.
-        var resting = prevAllAsleep && !grabConstraintActive && !collapseSpikeActive && !directedCollapseActive && !kneePowerLossActive && !skeletonMoved && !biomechanicalSettleActive;
+        var resting = prevAllAsleep && !grabConstraintActive && !collapseSpikeActive && !directedCollapseActive && !wholeBodyCollapseActive && !kneePowerLossActive && !skeletonMoved && !biomechanicalSettleActive;
 
         // Death-collapse spike: restrength the per-joint "muscle" servos before stepping so the
         // updated torque ceilings take effect this tick. Advances the fade and retires itself.
         UpdateCollapseSpike(dt);
         UpdateDirectedCollapseSpike(dt);
+        UpdateWholeBodyCollapse(dt);
         UpdateKneePowerLossPattern(dt);
 
         // Update NPC collision volumes to track their current animated bone positions.
@@ -4269,6 +4278,214 @@ public unsafe class RagdollController : IDisposable
     {
         t = Math.Clamp(t, 0f, 1f);
         return t * t * (3f - 2f * t);
+    }
+
+    // --- Whole-body balance-loss collapse (experimental, paper-aligned spike) ---
+    // This controller follows the common physics-character pattern from SIMBICON/falling
+    // controllers: reason about the whole-body COM relative to the support base, then bias
+    // core velocities so the body loses balance. Knees are not driven to a pose; they respond
+    // passively through the existing anatomical constraints, contacts, gravity, and friction.
+    private bool pendingWholeBodyCollapse;
+    private bool wholeBodyCollapseActive;
+    private float wholeBodyElapsed;
+    private Vector3 wholeBodyForward;
+    private Vector3 wholeBodyRight;
+    private Vector3 wholeBodyInitialCom;
+    private Vector3 wholeBodyInitialSupport;
+
+    public bool WholeBodyCollapseActive => wholeBodyCollapseActive;
+
+    public void RequestWholeBodyCollapseOnReady()
+    {
+        if (IsSimulationReady)
+        {
+            BeginWholeBodyCollapse();
+            return;
+        }
+
+        pendingWholeBodyCollapse = true;
+        log.Info("RagdollController: whole-body collapse armed for next death");
+    }
+
+    public bool BeginWholeBodyCollapse()
+    {
+        if (simulation == null || !isActive) return false;
+
+        if (!TryComputeWholeBodyState(out wholeBodyInitialCom, out wholeBodyInitialSupport, out _))
+        {
+            log.Warning("RagdollController: whole-body collapse failed - missing COM/support bodies");
+            return false;
+        }
+
+        StopCollapseSpike();
+        StopDirectedCollapseSpike();
+        StopKneePowerLossPattern();
+        StopWholeBodyCollapse();
+
+        wholeBodyForward = ResolveCollapseDirection(CollapseDirection.Forward);
+        wholeBodyRight = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
+        wholeBodyElapsed = 0f;
+        wholeBodyCollapseActive = true;
+
+        WakeRagdollBodiesForBiomechanicalSettle();
+        BeginBiomechanicalSettle();
+        log.Info($"RagdollController: whole-body collapse begun - com=({wholeBodyInitialCom.X:F2},{wholeBodyInitialCom.Y:F2},{wholeBodyInitialCom.Z:F2}) support=({wholeBodyInitialSupport.X:F2},{wholeBodyInitialSupport.Y:F2},{wholeBodyInitialSupport.Z:F2})");
+        return true;
+    }
+
+    public void StopWholeBodyCollapse()
+    {
+        if (!wholeBodyCollapseActive) return;
+        wholeBodyCollapseActive = false;
+        BeginBiomechanicalSettle();
+        log.Info("RagdollController: whole-body collapse stopped");
+    }
+
+    private void UpdateWholeBodyCollapse(float dt)
+    {
+        if (!wholeBodyCollapseActive || simulation == null) return;
+
+        wholeBodyElapsed += dt;
+        if (!TryComputeWholeBodyState(out var com, out var support, out var comVelocity))
+        {
+            StopWholeBodyCollapse();
+            return;
+        }
+
+        var t = SmoothStep(Math.Clamp(wholeBodyElapsed / 1.20f, 0f, 1f));
+        var release = SmoothStep(Math.Clamp((wholeBodyElapsed - 1.10f) / 0.35f, 0f, 1f));
+        var gain = 1f - release;
+        var stepScale = Math.Clamp(dt * 60f, 0.35f, 2.0f);
+
+        var forwardOffset = Vector3.Dot(com - support, wholeBodyForward);
+        var lateralOffset = Vector3.Dot(com - support, wholeBodyRight);
+        var lateralVelocity = Vector3.Dot(comVelocity, wholeBodyRight);
+
+        // Move the COM projection toward and then beyond the front of the foot support. This
+        // creates a balance failure; it is not a knee pose target.
+        var targetForwardOffset = 0.12f + 0.34f * t;
+        var forwardError = targetForwardOffset - forwardOffset;
+        var forwardSpeed = Math.Clamp(0.35f + forwardError * 2.1f, 0f, 1.25f) * gain;
+        var downSpeed = (0.20f + 0.42f * t) * gain;
+        var lateralSpeed = Math.Clamp(-lateralOffset * 2.8f - lateralVelocity * 0.65f, -0.55f, 0.55f) * gain;
+        var pitchSpeed = (0.55f + 1.15f * t) * gain;
+
+        ApplyCoreAxisVelocity("j_kosi", wholeBodyForward, forwardSpeed, 0.105f * stepScale);
+        ApplyCoreAxisVelocity("j_kosi", -Vector3.UnitY, downSpeed, 0.090f * stepScale);
+        ApplyCoreAxisVelocity("j_kosi", wholeBodyRight, lateralSpeed, 0.080f * stepScale);
+
+        ApplyCoreAxisVelocity("j_sebo_b", wholeBodyForward, forwardSpeed * 0.82f, 0.085f * stepScale);
+        ApplyCoreAxisVelocity("j_sebo_c", wholeBodyForward, forwardSpeed * 0.95f, 0.085f * stepScale);
+        ApplyCoreAxisVelocity("j_sebo_c", wholeBodyRight, lateralSpeed * 0.85f, 0.065f * stepScale);
+        ApplyCoreAxisVelocity("j_kao", wholeBodyRight, lateralSpeed * 0.65f, 0.045f * stepScale);
+
+        ApplyCoreAngularVelocity("j_sebo_c", wholeBodyRight, pitchSpeed, 0.105f * stepScale);
+        ApplyCoreAngularVelocity("j_sebo_b", wholeBodyRight, pitchSpeed * 0.65f, 0.075f * stepScale);
+        ApplyCoreAngularVelocity("j_kosi", wholeBodyRight, pitchSpeed * 0.30f, 0.050f * stepScale);
+
+        if (wholeBodyElapsed >= 1.55f)
+            StopWholeBodyCollapse();
+    }
+
+    private bool TryComputeWholeBodyState(out Vector3 com, out Vector3 support, out Vector3 comVelocity)
+    {
+        com = Vector3.Zero;
+        support = Vector3.Zero;
+        comVelocity = Vector3.Zero;
+        if (simulation == null || ragdollBones.Count == 0) return false;
+
+        var totalWeight = 0f;
+        foreach (var rb in ragdollBones)
+        {
+            activeDefByName.TryGetValue(rb.Name, out var def);
+            var weight = WholeBodyComWeight(def.AnatomicalRole);
+            if (weight <= 0f) continue;
+
+            var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            com += body.Pose.Position * weight;
+            comVelocity += body.Velocity.Linear * weight;
+            totalWeight += weight;
+        }
+
+        if (totalWeight <= 0.001f) return false;
+        com /= totalWeight;
+        comVelocity /= totalWeight;
+
+        if (!TryGetSupportPoint(true, out var left) || !TryGetSupportPoint(false, out var right))
+            return false;
+        support = (left + right) * 0.5f;
+        support.Y = groundY;
+        return true;
+    }
+
+    private static float WholeBodyComWeight(AnatomicalRole role) => role switch
+    {
+        AnatomicalRole.Pelvis => 4.0f,
+        AnatomicalRole.Spine => 3.2f,
+        AnatomicalRole.Head => 1.4f,
+        AnatomicalRole.Hip => 2.0f,
+        AnatomicalRole.Knee => 1.4f,
+        AnatomicalRole.Ankle or AnatomicalRole.Foot => 0.7f,
+        AnatomicalRole.Shoulder => 1.0f,
+        AnatomicalRole.Elbow or AnatomicalRole.Hand => 0.55f,
+        AnatomicalRole.Cloth or AnatomicalRole.SoftBody or AnatomicalRole.Weapon => 0f,
+        _ => 1.0f,
+    };
+
+    private bool TryGetSupportPoint(bool left, out Vector3 point)
+    {
+        point = Vector3.Zero;
+        if (simulation == null) return false;
+
+        var suffix = left ? "_l" : "_r";
+        var names = new[]
+        {
+            "j_asi_e" + suffix,
+            "j_asi_d" + suffix,
+            "j_asi_c" + suffix,
+        };
+
+        var found = false;
+        var bestY = float.PositiveInfinity;
+        foreach (var name in names)
+        {
+            var handle = FindBodyHandle(name);
+            if (!handle.HasValue) continue;
+            var pos = simulation.Bodies.GetBodyReference(handle.Value).Pose.Position;
+            if (!found || pos.Y < bestY)
+            {
+                found = true;
+                bestY = pos.Y;
+                point = pos;
+            }
+        }
+        return found;
+    }
+
+    private void ApplyCoreAxisVelocity(string boneName, Vector3 axis, float targetSpeed, float maxDelta)
+    {
+        if (simulation == null || axis.LengthSquared() < 0.0001f) return;
+        var handle = FindBodyHandle(boneName);
+        if (!handle.HasValue) return;
+        var body = simulation.Bodies.GetBodyReference(handle.Value);
+        var n = Vector3.Normalize(axis);
+        var current = Vector3.Dot(body.Velocity.Linear, n);
+        var delta = Math.Clamp(targetSpeed - current, -maxDelta, maxDelta);
+        body.Velocity.Linear += n * delta;
+        body.Awake = true;
+    }
+
+    private void ApplyCoreAngularVelocity(string boneName, Vector3 axis, float targetSpeed, float maxDelta)
+    {
+        if (simulation == null || axis.LengthSquared() < 0.0001f) return;
+        var handle = FindBodyHandle(boneName);
+        if (!handle.HasValue) return;
+        var body = simulation.Bodies.GetBodyReference(handle.Value);
+        var n = Vector3.Normalize(axis);
+        var current = Vector3.Dot(body.Velocity.Angular, n);
+        var delta = Math.Clamp(targetSpeed - current, -maxDelta, maxDelta);
+        body.Velocity.Angular += n * delta;
+        body.Awake = true;
     }
 
     // --- Knee power-loss forward pattern (C# pattern spike) ---
