@@ -4376,6 +4376,8 @@ public unsafe class RagdollController : IDisposable
 
         log.Info($"RagdollController: knee power-loss axes L axis=({leftHingeAxis.X:F2},{leftHingeAxis.Y:F2},{leftHingeAxis.Z:F2}) fwd=({leftHingeForward.X:F2},{leftHingeForward.Y:F2},{leftHingeForward.Z:F2}); " +
                  $"R axis=({rightHingeAxis.X:F2},{rightHingeAxis.Y:F2},{rightHingeAxis.Z:F2}) fwd=({rightHingeForward.X:F2},{rightHingeForward.Y:F2},{rightHingeForward.Z:F2})");
+        LogLegAnatomyDiagnostics("L", "j_asi_a_l", "j_asi_b_l", "j_asi_c_l", "j_asi_d_l", leftHingeAxis, leftHingeForward);
+        LogLegAnatomyDiagnostics("R", "j_asi_a_r", "j_asi_b_r", "j_asi_c_r", "j_asi_d_r", rightHingeAxis, rightHingeForward);
 
         WakeRagdollBodiesForBiomechanicalSettle();
 
@@ -4513,6 +4515,53 @@ public unsafe class RagdollController : IDisposable
         var handle = FindBodyHandle(boneName);
         if (!handle.HasValue) return float.PositiveInfinity;
         return simulation.Bodies.GetBodyReference(handle.Value).Pose.Position.Y;
+    }
+
+    private void LogLegAnatomyDiagnostics(string side, string thighBone, string shinBone, string calfBone, string footBone,
+        Vector3 currentHingeAxis, Vector3 currentHingeForward)
+    {
+        if (simulation == null) return;
+        if (!TryGetBodyPosition(thighBone, out var hip) ||
+            !TryGetBodyPosition(shinBone, out var knee) ||
+            !TryGetBodyPosition(calfBone, out var ankle) ||
+            !TryGetBodyPosition(footBone, out var foot))
+            return;
+
+        var thigh = NormalizeOrFallback(knee - hip, Vector3.UnitY);
+        var shin = NormalizeOrFallback(ankle - knee, Vector3.UnitY);
+        var footDir = NormalizeOrFallback(foot - ankle, kneeForward);
+        var rawAxis = Vector3.Cross(thigh, shin);
+        var geomAxis = rawAxis.LengthSquared() > 0.0005f
+            ? Vector3.Normalize(rawAxis)
+            : NormalizeOrFallback(Vector3.Cross(kneeForward, shin), currentHingeAxis);
+        if (Vector3.Dot(geomAxis, currentHingeAxis) < 0)
+            geomAxis = -geomAxis;
+
+        var geomForward = NormalizeOrFallback(ProjectOntoPlane(kneeForward, geomAxis), currentHingeForward);
+        var footForward = NormalizeOrFallback(ProjectOntoPlane(footDir, geomAxis), geomForward);
+        if (Vector3.Dot(geomForward, currentHingeForward) < 0)
+            geomForward = -geomForward;
+
+        var thighShinAngle = MathF.Acos(Math.Clamp(Vector3.Dot(thigh, shin), -1f, 1f)) * 180f / MathF.PI;
+        var frameAxisDot = Vector3.Dot(geomAxis, currentHingeAxis);
+        var frameForwardDot = Vector3.Dot(geomForward, currentHingeForward);
+
+        log.Info(
+            $"RagdollController: leg anatomy {side} " +
+            $"hip=({hip.X:F2},{hip.Y:F2},{hip.Z:F2}) knee=({knee.X:F2},{knee.Y:F2},{knee.Z:F2}) ankle=({ankle.X:F2},{ankle.Y:F2},{ankle.Z:F2}) foot=({foot.X:F2},{foot.Y:F2},{foot.Z:F2}) " +
+            $"thigh=({thigh.X:F2},{thigh.Y:F2},{thigh.Z:F2}) shin=({shin.X:F2},{shin.Y:F2},{shin.Z:F2}) footDir=({footDir.X:F2},{footDir.Y:F2},{footDir.Z:F2}) " +
+            $"geomAxis=({geomAxis.X:F2},{geomAxis.Y:F2},{geomAxis.Z:F2}) geomFwd=({geomForward.X:F2},{geomForward.Y:F2},{geomForward.Z:F2}) footFwd=({footForward.X:F2},{footForward.Y:F2},{footForward.Z:F2}) " +
+            $"angle={thighShinAngle:F1} axisDot={frameAxisDot:F2} fwdDot={frameForwardDot:F2}");
+    }
+
+    private bool TryGetBodyPosition(string boneName, out Vector3 position)
+    {
+        position = Vector3.Zero;
+        if (simulation == null) return false;
+        var handle = FindBodyHandle(boneName);
+        if (!handle.HasValue) return false;
+        position = simulation.Bodies.GetBodyReference(handle.Value).Pose.Position;
+        return true;
     }
 
     private static Quaternion MakeRelativeFlexTarget(Quaternion childOrientation, Quaternion parentOrientation,
