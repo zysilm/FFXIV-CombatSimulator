@@ -4580,11 +4580,13 @@ public unsafe class RagdollController : IDisposable
                 hingeAxis = NormalizeOrFallback(Vector3.Cross(kneeForward, shin), hingeAxis);
         }
 
-        // The flexion "forward" is the shin bending direction within the hinge plane. Prefer
-        // the foot direction projected into that plane; fall back to the body's forward vector.
-        var footForward = ProjectOntoPlane(footDir, hingeAxis);
+        // The flexion direction is the character sagittal direction projected into the knee
+        // hinge plane. Do NOT use j_asi_d as "foot forward": in FFXIV this bone origin is often
+        // mostly below the ankle, so ankle->foot points downward and drives the knee into a fake
+        // vertical/sideways fold.
+        var sagittalForward = ProjectOntoPlane(kneeForward, hingeAxis);
         var bodyForward = ProjectOntoPlane(Vector3.Transform(Vector3.UnitZ, childBodyRot), hingeAxis);
-        flexForward = NormalizeOrFallback(footForward, NormalizeOrFallback(bodyForward, kneeForward));
+        flexForward = NormalizeOrFallback(sagittalForward, NormalizeOrFallback(bodyForward, kneeForward));
 
         return true;
     }
