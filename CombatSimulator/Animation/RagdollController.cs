@@ -4579,20 +4579,23 @@ public unsafe class RagdollController : IDisposable
         if (!entryConditioningActive || simulation == null) return;
 
         entryConditioningElapsed += dt;
-        var t = SmoothStep(Math.Clamp(entryConditioningElapsed / 0.24f, 0f, 1f));
+        var t = SmoothStep(Math.Clamp(entryConditioningElapsed / 0.36f, 0f, 1f));
         var stepScale = Math.Clamp(dt * 60f, 0.35f, 2.0f);
 
-        ApplyEntryKneeSeparation(0.32f + 0.18f * t, 0.11f * stepScale);
-        ApplyCoreAxisVelocity("j_kosi", -Vector3.UnitY, 0.28f + 0.22f * t, 0.07f * stepScale);
-        ApplyCoreAxisVelocity("j_kosi", entryForward, 0.22f + 0.18f * t, 0.06f * stepScale);
-        ApplyCoreAxisVelocity("j_sebo_b", entryForward, 0.12f + 0.10f * t, 0.045f * stepScale);
+        ApplyEntryKneeSeparation(0.34f + 0.16f * t, 0.10f * stepScale);
+        ApplyCoreAxisVelocity("j_kosi", -Vector3.UnitY, 0.32f + 0.28f * t, 0.075f * stepScale);
+        ApplyCoreAxisVelocity("j_kosi", entryForward, 0.20f + 0.18f * t, 0.055f * stepScale);
+        ApplyCoreAxisVelocity("j_sebo_b", entryForward, 0.10f + 0.10f * t, 0.040f * stepScale);
 
-        if (entryConditioningElapsed < 0.24f) return;
+        var ready = TryMeasureEntryPose(out var stance, out var leftAngle, out var rightAngle, out _, out _) &&
+                    stance >= 0.30f && MathF.Min(leftAngle, rightAngle) >= 10f;
+        if (entryConditioningElapsed < 0.24f || (!ready && entryConditioningElapsed < 0.42f))
+            return;
 
         var continuation = entryConditioningContinuation;
         entryConditioningActive = false;
         entryConditioningContinuation = null;
-        log.Info("RagdollController: entry conditioning complete");
+        log.Info($"RagdollController: entry conditioning complete - stance={stance:F2} kneeAngles=({leftAngle:F1},{rightAngle:F1}) ready={ready}");
         _ = continuation?.Invoke();
     }
 
@@ -4934,9 +4937,9 @@ public unsafe class RagdollController : IDisposable
     private float BoneHeight(string boneName)
     {
         if (simulation == null) return float.PositiveInfinity;
-        var handle = FindBodyHandle(boneName);
-        if (!handle.HasValue) return float.PositiveInfinity;
-        return simulation.Bodies.GetBodyReference(handle.Value).Pose.Position.Y;
+        return TryGetBoneOriginPosition(boneName, out var position)
+            ? position.Y
+            : float.PositiveInfinity;
     }
 
     private void LogLegAnatomyDiagnostics(string side, string thighBone, string shinBone, string calfBone, string footBone,

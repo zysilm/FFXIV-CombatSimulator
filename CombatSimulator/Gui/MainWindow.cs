@@ -4670,15 +4670,6 @@ public class MainWindow : IDisposable
                                  "then hand off to the C# knee power-loss pattern.");
 
             ImGui.SameLine();
-            if (ImGui.Button("Legacy Knee##kneePowerLossLegacy"))
-            {
-                ragdollController.RequestKneePowerLossForwardOnReady();
-                ctrl.TriggerInstantDeath();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Old direct knee power-loss path, kept for A/B comparison.");
-
-            ImGui.SameLine();
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.35f, 0.65f, 1f));
             if (ImGui.Button("Die + Profile Collapse##directedProfile"))
             {
