@@ -307,6 +307,14 @@ public class MainWindow : IDisposable
                     config.RagdollSolverIterations = 8;
                     config.RagdollSelfCollision = true;
                     config.RagdollFriction = 1.0f;
+                    config.DeathCollapseEnabled = false;
+                    config.DeathCollapseArchetype = 1;
+                    config.DeathCollapseStrength = 14f;
+                    config.DeathCollapseHold = 0.3f;
+                    config.DeathCollapseFade = 0.9f;
+                    config.DeathCollapseHingeSoften = 0.25f;
+                    config.DeathCollapseDirection = 1;
+                    config.DeathCollapseImpulse = 2.0f;
                     config.WeaponDropGravity = 9.8f;
                     config.WeaponDropDamping = 0.99f;
                     config.WeaponDropAngularDamping = 0.85f;
@@ -3246,6 +3254,88 @@ public class MainWindow : IDisposable
                 HelpMarker("Surface friction for all ragdoll contacts. 0 = ice (limbs slide freely), 1 = grippy (default). Lower values make the body slide more realistically. Takes effect on next ragdoll activation.");
 
                 ImGui.Separator();
+                if (ImGui.CollapsingHeader("Death Collapse##deathcollapse"))
+                {
+                    var collapseEnabled = config.DeathCollapseEnabled;
+                    if (ImGui.Checkbox("Enable Death Collapse##deathcollapse", ref collapseEnabled))
+                    {
+                        config.DeathCollapseEnabled = collapseEnabled;
+                        config.Save();
+                    }
+                    HelpMarker("Physics-driven muscle relaxation on death. The body briefly holds the captured death pose, then fades limp. This is the validated relaxation family only; directed kneeling is intentionally not exposed here.");
+
+                    if (config.DeathCollapseEnabled && config.RagdollActivationDelay > 0.001f)
+                    {
+                        ImGui.TextColored(new Vector4(1f, 0.75f, 0.25f, 1f), "Activation Delay is not zero; collapse captures the delayed death-animation pose.");
+                        ImGui.SameLine();
+                        if (ImGui.SmallButton("Set 0##deathcollapseDelay"))
+                        {
+                            config.RagdollActivationDelay = 0f;
+                            config.Save();
+                        }
+                    }
+
+                    using (ImRaii.Disabled(!config.DeathCollapseEnabled))
+                    {
+                        var archetype = Math.Clamp(config.DeathCollapseArchetype, 0, deathCollapseArchetypeNames.Length - 1);
+                        if (ImGui.Combo("Mode##deathcollapse", ref archetype, deathCollapseArchetypeNames, deathCollapseArchetypeNames.Length))
+                        {
+                            config.DeathCollapseArchetype = archetype;
+                            config.Save();
+                        }
+                        HelpMarker("StiffHold keeps joint muscle tone on indefinitely for a rigid power-off fall. UniformCollapse holds briefly, then fades to passive ragdoll.");
+
+                        var strength = Math.Clamp(config.DeathCollapseStrength, 0.5f, 40f);
+                        if (ImGui.SliderFloat("Strength (Hz)##deathcollapse", ref strength, 0.5f, 40f, "%.1f"))
+                        {
+                            config.DeathCollapseStrength = strength;
+                            config.Save();
+                        }
+                        HelpMarker("Servo spring frequency for the temporary muscle tone. Higher holds the captured pose harder but can become stiff or jittery.");
+
+                        var hold = Math.Clamp(config.DeathCollapseHold, 0f, 5f);
+                        if (ImGui.SliderFloat("Hold (s)##deathcollapse", ref hold, 0f, 5f, "%.2f"))
+                        {
+                            config.DeathCollapseHold = hold;
+                            config.Save();
+                        }
+
+                        var fade = Math.Clamp(config.DeathCollapseFade, 0.05f, 8f);
+                        if (ImGui.SliderFloat("Fade (s)##deathcollapse", ref fade, 0.05f, 8f, "%.2f"))
+                        {
+                            config.DeathCollapseFade = fade;
+                            config.Save();
+                        }
+
+                        var hinge = Math.Clamp(config.DeathCollapseHingeSoften, 0f, 1f);
+                        if (ImGui.SliderFloat("Hinge strength##deathcollapse", ref hinge, 0f, 1f, "%.2f"))
+                        {
+                            config.DeathCollapseHingeSoften = hinge;
+                            config.Save();
+                        }
+                        HelpMarker("Knee/elbow servo fraction. Lower values let hinges yield more easily; 1.0 pins them like the other joints.");
+
+                        var direction = Math.Clamp(config.DeathCollapseDirection, 0, deathCollapseDirectionNames.Length - 1);
+                        if (ImGui.Combo("Topple direction##deathcollapse", ref direction, deathCollapseDirectionNames, deathCollapseDirectionNames.Length))
+                        {
+                            config.DeathCollapseDirection = direction;
+                            config.Save();
+                        }
+                        HelpMarker("Optional chest impulse applied at capture time to bias the fall. Random uses the fall-survey weighting recorded in DEATH_COLLAPSE_RESEARCH.md.");
+
+                        using (ImRaii.Disabled(config.DeathCollapseDirection == 0))
+                        {
+                            var impulse = Math.Clamp(config.DeathCollapseImpulse, 0f, 8f);
+                            if (ImGui.SliderFloat("Topple impulse##deathcollapse", ref impulse, 0f, 8f, "%.2f"))
+                            {
+                                config.DeathCollapseImpulse = impulse;
+                                config.Save();
+                            }
+                        }
+                    }
+                }
+
+                ImGui.Separator();
                 ImGui.Text("Weapon Drop");
                 HelpMarker("On death the weapon detaches from the hand and falls with its own physics. Always active while ragdoll is enabled; tune the parameters below.");
 
@@ -4195,6 +4285,8 @@ public class MainWindow : IDisposable
     private float spikeFade = 1.0f;
     private float spikeHingeSoft = 0.25f; // hinge (knee/elbow) servo strength fraction
     private static readonly string[] spikeArchetypeNames = { "StiffHold", "UniformCollapse", "KneelPitch" };
+    private static readonly string[] deathCollapseArchetypeNames = { "StiffHold", "UniformCollapse" };
+    private static readonly string[] deathCollapseDirectionNames = { "None", "Random", "Forward", "Backward", "Sideways" };
 
     public void DrawHoldToolbar(Dev.BoneHoldTestModeController ctrl)
     {

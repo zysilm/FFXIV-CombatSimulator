@@ -991,6 +991,8 @@ public unsafe class RagdollController : IDisposable
         savedCharacterPosition = go->Position;
         targetEntityId = go->EntityId;
 
+        ArmConfiguredDeathCollapse();
+
         log.Info($"RagdollController: Activated for 0x{characterAddress:X} (delay={activationDelay:F1}s)");
     }
 
@@ -1066,8 +1068,11 @@ public unsafe class RagdollController : IDisposable
                 if (pendingCollapseSpike)
                 {
                     pendingCollapseSpike = false;
-                    BeginCollapseSpike(pendingCollapseArchetype, pendingCollapseStrength,
-                        pendingCollapseHold, pendingCollapseFade, pendingCollapseHinge);
+                    if (BeginCollapseSpike(pendingCollapseArchetype, pendingCollapseStrength,
+                        pendingCollapseHold, pendingCollapseFade, pendingCollapseHinge))
+                    {
+                        ApplyCollapseDirectionImpulse(pendingCollapseDirection, pendingCollapseImpulse);
+                    }
                 }
             }
 
@@ -3447,6 +3452,7 @@ public unsafe class RagdollController : IDisposable
     // NOTE: this reuses the AngularServo *mechanism* only and is tuned from scratch — it
     // inherits nothing from (and proves nothing about) the poor soft-body bones.
     public enum CollapseArchetype { StiffHold, UniformCollapse, KneelPitch }
+    public enum CollapseDirection { None, Random, Forward, Backward, Sideways }
 
     private struct CollapseServo
     {
@@ -3478,19 +3484,42 @@ public unsafe class RagdollController : IDisposable
     private float pendingCollapseHold;
     private float pendingCollapseFade;
     private float pendingCollapseHinge;
+    private CollapseDirection pendingCollapseDirection;
+    private float pendingCollapseImpulse;
 
     public bool CollapseSpikeActive => collapseSpikeActive;
+
+    private void ArmConfiguredDeathCollapse()
+    {
+        if (!config.DeathCollapseEnabled) return;
+
+        var archetype = config.DeathCollapseArchetype == 0
+            ? CollapseArchetype.StiffHold
+            : CollapseArchetype.UniformCollapse;
+        var direction = (CollapseDirection)Math.Clamp(config.DeathCollapseDirection, 0, 4);
+
+        RequestCollapseSpikeOnReady(
+            archetype,
+            Math.Clamp(config.DeathCollapseStrength, 0.5f, 40f),
+            Math.Clamp(config.DeathCollapseHold, 0f, 5f),
+            Math.Clamp(config.DeathCollapseFade, 0.05f, 8f),
+            Math.Clamp(config.DeathCollapseHingeSoften, 0f, 1f),
+            direction,
+            Math.Clamp(config.DeathCollapseImpulse, 0f, 8f));
+    }
 
     /// <summary>
     /// Arm the collapse spike to fire automatically the moment the ragdoll's physics is ready
     /// (capturing the standing death-instant pose). If the ragdoll is already simulating, begins
     /// immediately. Call this BEFORE triggering death so KneelPitch sees the upright pose.
     /// </summary>
-    public void RequestCollapseSpikeOnReady(CollapseArchetype archetype, float strength, float holdDuration, float fadeDuration, float hingeFactor)
+    public void RequestCollapseSpikeOnReady(CollapseArchetype archetype, float strength, float holdDuration, float fadeDuration, float hingeFactor,
+        CollapseDirection direction = CollapseDirection.None, float impulse = 0f)
     {
         if (IsSimulationReady)
         {
-            BeginCollapseSpike(archetype, strength, holdDuration, fadeDuration, hingeFactor);
+            if (BeginCollapseSpike(archetype, strength, holdDuration, fadeDuration, hingeFactor))
+                ApplyCollapseDirectionImpulse(direction, impulse);
             return;
         }
         pendingCollapseArchetype = archetype;
@@ -3498,6 +3527,8 @@ public unsafe class RagdollController : IDisposable
         pendingCollapseHold = holdDuration;
         pendingCollapseFade = fadeDuration;
         pendingCollapseHinge = hingeFactor;
+        pendingCollapseDirection = direction;
+        pendingCollapseImpulse = impulse;
         pendingCollapseSpike = true;
         log.Info($"RagdollController: collapse spike armed for next death — archetype={archetype}");
     }
@@ -3573,6 +3604,56 @@ public unsafe class RagdollController : IDisposable
         prevAllAsleep = false;
         log.Info($"RagdollController: collapse spike begun — archetype={archetype} servos={collapseServos.Count} freq={collapseFreq:F1} maxForce={collapseMaxForce:F0} hingeFactor={hingeFactor:F2} hold={collapseHold:F2} fade={collapseFade:F2}");
         return true;
+    }
+
+    private void ApplyCollapseDirectionImpulse(CollapseDirection direction, float impulse)
+    {
+        if (simulation == null || direction == CollapseDirection.None || impulse <= 0.001f) return;
+
+        var dir = ResolveCollapseDirection(direction);
+        if (dir.LengthSquared() < 0.0001f) return;
+
+        var handle = FindBodyHandle("j_sebo_c")
+            ?? FindBodyHandle("j_sebo_b")
+            ?? FindBodyHandle("j_kosi");
+        if (!handle.HasValue) return;
+
+        WakeRagdollBodiesForBiomechanicalSettle();
+        var body = simulation.Bodies.GetBodyReference(handle.Value);
+        body.Velocity.Linear += dir * impulse;
+        body.Awake = true;
+        BeginBiomechanicalSettle();
+        log.Info($"RagdollController: collapse direction impulse - direction={direction} vector=({dir.X:F2},{dir.Y:F2},{dir.Z:F2}) impulse={impulse:F2}");
+    }
+
+    private Vector3 ResolveCollapseDirection(CollapseDirection direction)
+    {
+        if (direction == CollapseDirection.Random)
+        {
+            var roll = ShakeRng.Next(118); // video-fall survey weighting: forward 44, sideways 41, backward 33.
+            direction = roll < 44
+                ? CollapseDirection.Forward
+                : roll < 85
+                    ? CollapseDirection.Sideways
+                    : CollapseDirection.Backward;
+        }
+
+        var forward = FlatNormalize(Vector3.Transform(Vector3.UnitZ, skelWorldRot), Vector3.UnitZ);
+        var right = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
+
+        return direction switch
+        {
+            CollapseDirection.Forward => forward,
+            CollapseDirection.Backward => -forward,
+            CollapseDirection.Sideways => ShakeRng.Next(2) == 0 ? -right : right,
+            _ => Vector3.Zero,
+        };
+    }
+
+    private static Vector3 FlatNormalize(Vector3 v, Vector3 fallback)
+    {
+        v.Y = 0f;
+        return v.LengthSquared() > 0.0001f ? Vector3.Normalize(v) : fallback;
     }
 
     public void StopCollapseSpike()
