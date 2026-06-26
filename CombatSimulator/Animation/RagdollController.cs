@@ -4360,14 +4360,10 @@ public unsafe class RagdollController : IDisposable
 
         kneeLeftKneeStartTarget = Quaternion.Normalize(Quaternion.Inverse(leftKneeBody.Pose.Orientation) * leftThighBody.Pose.Orientation);
         kneeRightKneeStartTarget = Quaternion.Normalize(Quaternion.Inverse(rightKneeBody.Pose.Orientation) * rightThighBody.Pose.Orientation);
-        var leftKneeAxis = Vector3.Transform(Vector3.UnitY, leftKneeBody.Pose.Orientation);
-        var rightKneeAxis = Vector3.Transform(Vector3.UnitY, rightKneeBody.Pose.Orientation);
-        var leftThighAxis = Vector3.Transform(Vector3.UnitY, leftThighBody.Pose.Orientation);
-        var rightThighAxis = Vector3.Transform(Vector3.UnitY, rightThighBody.Pose.Orientation);
-        var leftHingeAxis = ComputeProfileHingeAxis(AnatomicalRole.Knee, leftThighAxis, leftKneeAxis, leftKneeBody.Pose.Orientation);
-        var rightHingeAxis = ComputeProfileHingeAxis(AnatomicalRole.Knee, rightThighAxis, rightKneeAxis, rightKneeBody.Pose.Orientation);
-        var leftHingeForward = ComputeHingeForward(leftHingeAxis, leftThighAxis, leftKneeAxis);
-        var rightHingeForward = ComputeHingeForward(rightHingeAxis, rightThighAxis, rightKneeAxis);
+        TryBuildLegAnatomyFrame("j_asi_a_l", "j_asi_b_l", "j_asi_c_l", "j_asi_d_l",
+            leftKneeBody.Pose.Orientation, out var leftHingeAxis, out var leftHingeForward);
+        TryBuildLegAnatomyFrame("j_asi_a_r", "j_asi_b_r", "j_asi_c_r", "j_asi_d_r",
+            rightKneeBody.Pose.Orientation, out var rightHingeAxis, out var rightHingeForward);
 
         kneeLeftKneeFlexTarget = MakeRelativeFlexTarget(leftKneeBody.Pose.Orientation, leftThighBody.Pose.Orientation,
             leftHingeAxis, leftHingeForward, 55f);
@@ -4521,10 +4517,10 @@ public unsafe class RagdollController : IDisposable
         Vector3 currentHingeAxis, Vector3 currentHingeForward)
     {
         if (simulation == null) return;
-        if (!TryGetBodyPosition(thighBone, out var hip) ||
-            !TryGetBodyPosition(shinBone, out var knee) ||
-            !TryGetBodyPosition(calfBone, out var ankle) ||
-            !TryGetBodyPosition(footBone, out var foot))
+        if (!TryGetBoneOriginPosition(thighBone, out var hip) ||
+            !TryGetBoneOriginPosition(shinBone, out var knee) ||
+            !TryGetBoneOriginPosition(calfBone, out var ankle) ||
+            !TryGetBoneOriginPosition(footBone, out var foot))
             return;
 
         var thigh = NormalizeOrFallback(knee - hip, Vector3.UnitY);
@@ -4554,13 +4550,63 @@ public unsafe class RagdollController : IDisposable
             $"angle={thighShinAngle:F1} axisDot={frameAxisDot:F2} fwdDot={frameForwardDot:F2}");
     }
 
-    private bool TryGetBodyPosition(string boneName, out Vector3 position)
+    private bool TryBuildLegAnatomyFrame(string thighBone, string shinBone, string calfBone, string footBone,
+        Quaternion childBodyRot, out Vector3 hingeAxis, out Vector3 flexForward)
+    {
+        hingeAxis = Vector3.Transform(Vector3.UnitX, childBodyRot);
+        flexForward = Vector3.Transform(Vector3.UnitZ, childBodyRot);
+
+        if (!TryGetBoneOriginPosition(thighBone, out var hip) ||
+            !TryGetBoneOriginPosition(shinBone, out var knee) ||
+            !TryGetBoneOriginPosition(calfBone, out var ankle) ||
+            !TryGetBoneOriginPosition(footBone, out var foot))
+            return false;
+
+        var thigh = NormalizeOrFallback(knee - hip, Vector3.UnitY);
+        var shin = NormalizeOrFallback(ankle - knee, Vector3.UnitY);
+        var footDir = NormalizeOrFallback(foot - ankle, kneeForward);
+
+        var rawAxis = Vector3.Cross(thigh, shin);
+        if (rawAxis.LengthSquared() > 0.0005f)
+        {
+            hingeAxis = Vector3.Normalize(rawAxis);
+        }
+        else
+        {
+            var footProjected = ProjectOntoPlane(footDir, shin);
+            if (footProjected.LengthSquared() > 0.0005f)
+                hingeAxis = NormalizeOrFallback(Vector3.Cross(footProjected, shin), hingeAxis);
+            else
+                hingeAxis = NormalizeOrFallback(Vector3.Cross(kneeForward, shin), hingeAxis);
+        }
+
+        // The flexion "forward" is the shin bending direction within the hinge plane. Prefer
+        // the foot direction projected into that plane; fall back to the body's forward vector.
+        var footForward = ProjectOntoPlane(footDir, hingeAxis);
+        var bodyForward = ProjectOntoPlane(Vector3.Transform(Vector3.UnitZ, childBodyRot), hingeAxis);
+        flexForward = NormalizeOrFallback(footForward, NormalizeOrFallback(bodyForward, kneeForward));
+
+        return true;
+    }
+
+    private bool TryGetBoneOriginPosition(string boneName, out Vector3 position)
     {
         position = Vector3.Zero;
         if (simulation == null) return false;
-        var handle = FindBodyHandle(boneName);
-        if (!handle.HasValue) return false;
-        position = simulation.Bodies.GetBodyReference(handle.Value).Pose.Position;
+        RagdollBone? bone = null;
+        foreach (var rb in ragdollBones)
+        {
+            if (rb.Name == boneName)
+            {
+                bone = rb;
+                break;
+            }
+        }
+        if (!bone.HasValue) return false;
+
+        var body = simulation.Bodies.GetBodyReference(bone.Value.BodyHandle);
+        var yAxis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
+        position = body.Pose.Position - yAxis * bone.Value.SegmentHalfLength;
         return true;
     }
 
