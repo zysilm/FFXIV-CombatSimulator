@@ -4529,19 +4529,6 @@ public class MainWindow : IDisposable
         ImGui.End();
     }
 
-    // Collapse-spike (experimental) GUI state — not persisted; spike only.
-    private int spikeArchetype;
-    private float spikeStrength = 14f;
-    private float spikeHold = 0.4f;
-    private float spikeFade = 1.0f;
-    private float spikeHingeSoft = 0.25f; // hinge (knee/elbow) servo strength fraction
-    private float directedKneelDuration = 1.25f;
-    private float directedKneelFootForce = 3500f;
-    private float directedKneelPelvisForce = 2200f;
-    private float directedKneelDrop = 0.55f;
-    private float directedKneelForward = 0.35f;
-    private float directedKneelPitch = 45f;
-    private static readonly string[] spikeArchetypeNames = { "StiffHold", "UniformCollapse", "KneelPitch" };
     private static readonly string[] guidedCollapseModeNames = { "Relaxation", "Knee Power Loss" };
     private static readonly string[] guidedRelaxationArchetypeNames = { "StiffHold", "UniformCollapse" };
     private static readonly string[] guidedCollapseDirectionNames = { "None", "Random", "Forward", "Backward", "Sideways" };
@@ -4767,137 +4754,17 @@ public class MainWindow : IDisposable
             if (!active) ImGui.EndDisabled();
         }
 
-        // ── Collapse Spike (experimental) ────────────────────────────────────
-        if (ImGui.CollapsingHeader("Collapse Spike##holdSec"))
+        // ── Death Collapse (validation) ──────────────────────────────────────
+        // Dev shortcuts that force a specific collapse controller on a fresh death.
+        // Each button links straight to a RagdollController method — no Hold-local
+        // parameters. Production tuning lives in the Ragdoll tab's Guided Collapse
+        // section; plain "Die" above runs whatever that is configured for.
+        if (ImGui.CollapsingHeader("Death Collapse (validation)##holdSec"))
         {
-            ImGui.TextDisabled("Active-ragdoll death-collapse proof of concept");
+            ImGui.TextDisabled("Force a specific collapse controller on a fresh death.");
+            ImGui.TextDisabled("Plain \"Die\" runs the configured Guided Collapse (Ragdoll tab).");
+            ImGui.Spacing();
 
-            ImGui.SetNextItemWidth(150);
-            ImGui.Combo("Mode##spike", ref spikeArchetype, spikeArchetypeNames, spikeArchetypeNames.Length);
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip(
-                    "StiffHold: freeze joints at full strength (can servos hold the pose?)\n" +
-                    "UniformCollapse: hold, then fade all joints together (smooth release?)\n" +
-                    "KneelPitch: legs buckle first, then core, then upper (kneel → pitch)");
-
-            ImGui.SetNextItemWidth(110);
-            ImGui.DragFloat("Strength (Hz)##spike", ref spikeStrength, 0.5f, 1f, 60f, "%.0f");
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Servo spring frequency; torque ceiling scales with it");
-
-            ImGui.SetNextItemWidth(90);
-            ImGui.DragFloat("Hold (s)##spike", ref spikeHold, 0.05f, 0f, 5f, "%.2f");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(90);
-            ImGui.DragFloat("Fade (s)##spike", ref spikeFade, 0.05f, 0.05f, 6f, "%.2f");
-
-            ImGui.SetNextItemWidth(110);
-            ImGui.DragFloat("Hinge soften##spike", ref spikeHingeSoft, 0.01f, 0f, 1f, "%.2f");
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Knee/elbow servo strength fraction. Lower = knees yield and buckle\n" +
-                                 "under body weight instead of locking straight. 0 = knees fully free.");
-
-            var spikeOn = ragdollController.CollapseSpikeActive;
-            var deadNow = ragdollController.IsActive;
-
-            ImGui.BeginDisabled(!deadNow);
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.45f, 0.7f, 1f));
-            if (ImGui.Button("Begin Collapse##spike"))
-                ragdollController.BeginCollapseSpike(
-                    (Animation.RagdollController.CollapseArchetype)spikeArchetype,
-                    spikeStrength, spikeHold, spikeFade, spikeHingeSoft);
-            ImGui.PopStyleColor();
-            ImGui.EndDisabled();
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled) && !deadNow)
-                ImGui.SetTooltip("Player must be dead first (use Die)");
-
-            ImGui.SameLine();
-            ImGui.BeginDisabled(!spikeOn);
-            if (ImGui.Button("Stop##spike")) ragdollController.StopCollapseSpike();
-            ImGui.EndDisabled();
-
-            ImGui.SameLine();
-            ImGui.TextColored(
-                spikeOn ? new Vector4(0.4f, 1f, 0.4f, 1f) : new Vector4(0.6f, 0.6f, 0.6f, 1f),
-                spikeOn ? "active" : "idle");
-
-            // Auto-capture path: arm the spike, then kill the player. The spike fires the instant
-            // physics starts, snapshotting the standing death pose — the only way KneelPitch can
-            // see an upright body (clicking Begin after Die is too late; it's already collapsed).
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.15f, 0.15f, 1f));
-            if (ImGui.Button("Die + Auto Collapse##spike"))
-            {
-                ragdollController.RequestCollapseSpikeOnReady(
-                    (Animation.RagdollController.CollapseArchetype)spikeArchetype,
-                    spikeStrength, spikeHold, spikeFade, spikeHingeSoft);
-                ctrl.TriggerInstantDeath();
-            }
-            ImGui.PopStyleColor();
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Kill the player AND auto-begin the spike at the death instant,\n" +
-                                 "capturing the standing pose. Use this for KneelPitch.");
-
-            ImGui.Separator();
-            ImGui.TextDisabled("Directed Kneel Spike");
-            ImGui.SetNextItemWidth(90);
-            ImGui.DragFloat("Duration (s)##directedKneel", ref directedKneelDuration, 0.05f, 0.25f, 4f, "%.2f");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(90);
-            ImGui.DragFloat("Drop##directedKneel", ref directedKneelDrop, 0.02f, 0.05f, 1.5f, "%.2f");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(90);
-            ImGui.DragFloat("Forward##directedKneel", ref directedKneelForward, 0.02f, 0f, 2f, "%.2f");
-
-            ImGui.SetNextItemWidth(105);
-            ImGui.DragFloat("Foot force##directedKneel", ref directedKneelFootForce, 100f, 50f, 10000f, "%.0f");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(105);
-            ImGui.DragFloat("Pelvis force##directedKneel", ref directedKneelPelvisForce, 100f, 50f, 10000f, "%.0f");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(90);
-            ImGui.DragFloat("Pitch##directedKneel", ref directedKneelPitch, 1f, -90f, 90f, "%.0f");
-
-            var directedOn = ragdollController.DirectedCollapseSpikeActive;
-            ImGui.BeginDisabled(!deadNow);
-            if (ImGui.Button("Begin Directed Kneel##directedKneel"))
-                ragdollController.BeginDirectedKneelPitchSpike(
-                    directedKneelDuration,
-                    directedKneelFootForce,
-                    directedKneelPelvisForce,
-                    directedKneelDrop,
-                    directedKneelForward,
-                    directedKneelPitch);
-            ImGui.EndDisabled();
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled) && !deadNow)
-                ImGui.SetTooltip("Player must be dead first. Usually use Die + Directed Kneel instead.");
-
-            ImGui.SameLine();
-            ImGui.BeginDisabled(!directedOn);
-            if (ImGui.Button("Stop##directedKneel")) ragdollController.StopDirectedCollapseSpike();
-            ImGui.EndDisabled();
-
-            ImGui.SameLine();
-            ImGui.TextColored(
-                directedOn ? new Vector4(0.4f, 1f, 0.4f, 1f) : new Vector4(0.6f, 0.6f, 0.6f, 1f),
-                directedOn ? "active" : "idle");
-
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.15f, 0.15f, 1f));
-            if (ImGui.Button("Die + Directed Kneel##directedKneel"))
-            {
-                ragdollController.RequestDirectedKneelPitchOnReady(
-                    directedKneelDuration,
-                    directedKneelFootForce,
-                    directedKneelPelvisForce,
-                    directedKneelDrop,
-                    directedKneelForward,
-                    directedKneelPitch);
-                ctrl.TriggerInstantDeath();
-            }
-            ImGui.PopStyleColor();
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Kill the player and begin the directed kneel controller at physics initialization.\n" +
-                                 "This tests foot anchors + pelvis drive + torso pitch, not hold-then-fade.");
-
-            ImGui.SameLine();
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.18f, 0.45f, 0.38f, 1f));
             if (ImGui.Button("Die + Whole Body##wholeBodyCollapse"))
             {

@@ -283,19 +283,8 @@ public class Configuration : IPluginConfiguration
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
 
-    // Death collapse — physics-driven "muscle relaxation" on death (active-ragdoll relaxation
-    // family). When enabled, a dying body holds its standing death-instant pose briefly
-    // ("muscle tone") then fades limp via per-joint AngularServos, optionally with a directional
-    // topple impulse. Layered on top of normal ragdoll activation (needs EnableRagdoll). Directed
-    // postures (kneeling) are intentionally out of scope — see DEATH_COLLAPSE_RESEARCH.md.
-    public bool DeathCollapseEnabled { get; set; } = false;
-    public int DeathCollapseArchetype { get; set; } = 1;        // 0=StiffHold (stays rigid), 1=UniformCollapse (relax limp)
-    public float DeathCollapseStrength { get; set; } = 14f;     // servo spring freq (Hz); torque ceiling scales with it
-    public float DeathCollapseHold { get; set; } = 0.3f;        // seconds holding the death pose before fading
-    public float DeathCollapseFade { get; set; } = 0.9f;        // seconds to fade muscle tone to zero
-    public float DeathCollapseHingeSoften { get; set; } = 0.25f;// knee/elbow servo fraction (lower = limbs yield)
-    public int DeathCollapseDirection { get; set; } = 1;        // 0=None,1=Random,2=Forward,3=Backward,4=Sideways
-    public float DeathCollapseImpulse { get; set; } = 2.0f;     // topple nudge speed (m/s) at the chest
+    // Death collapse — physics-driven guided collapse on death (relaxation family + directed
+    // knee power-loss). Config lives in GuidedCollapse; see DEATH_COLLAPSE_RESEARCH.md.
     public GuidedCollapseSettings GuidedCollapse { get; set; } = new();
     // Weapon drop physics — runs as part of ragdoll; weapon detaches and falls on death
     public float WeaponDropGravity { get; set; } = 9.8f;
@@ -665,20 +654,6 @@ public class Configuration : IPluginConfiguration
         GuidedCollapse ??= new GuidedCollapseSettings();
         GuidedCollapse.Relaxation ??= new GuidedCollapseRelaxationSettings();
         GuidedCollapse.KneePowerLoss ??= new GuidedCollapseKneePowerLossSettings();
-
-        if (DeathCollapseEnabled && !GuidedCollapse.Enabled)
-        {
-            GuidedCollapse.Enabled = true;
-            GuidedCollapse.Mode = 0;
-            GuidedCollapse.Relaxation.Archetype = DeathCollapseArchetype;
-            GuidedCollapse.Relaxation.Strength = DeathCollapseStrength;
-            GuidedCollapse.Relaxation.Hold = DeathCollapseHold;
-            GuidedCollapse.Relaxation.Fade = DeathCollapseFade;
-            GuidedCollapse.Relaxation.HingeSoften = DeathCollapseHingeSoften;
-            GuidedCollapse.Relaxation.Direction = DeathCollapseDirection;
-            GuidedCollapse.Relaxation.Impulse = DeathCollapseImpulse;
-            Save();
-        }
     }
 
     private void MigrateSplitVfxToggles()

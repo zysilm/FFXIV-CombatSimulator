@@ -3500,7 +3500,7 @@ public unsafe class RagdollController : IDisposable
     // drives a controlled collapse. The per-tier fade order/curve decides the collapse style.
     // NOTE: this reuses the AngularServo *mechanism* only and is tuned from scratch — it
     // inherits nothing from (and proves nothing about) the poor soft-body bones.
-    public enum CollapseArchetype { StiffHold, UniformCollapse, KneelPitch }
+    public enum CollapseArchetype { StiffHold, UniformCollapse }
     public enum CollapseDirection { None, Random, Forward, Backward, Sideways }
 
     private struct CollapseServo
@@ -3525,8 +3525,8 @@ public unsafe class RagdollController : IDisposable
 
     // One-shot request to auto-begin the spike the instant physics initializes, so it captures
     // the *standing death-instant* pose before gravity collapses it. Manual BeginCollapseSpike
-    // after death is too late for KneelPitch — the body has already crumpled by the time you
-    // click. Arm this before triggering death instead.
+    // after death is too late — the body has already crumpled by the time you click. Arm this
+    // before triggering death instead.
     private bool pendingCollapseSpike;
     private CollapseArchetype pendingCollapseArchetype;
     private float pendingCollapseStrength;
@@ -3568,7 +3568,7 @@ public unsafe class RagdollController : IDisposable
     /// <summary>
     /// Arm the collapse spike to fire automatically the moment the ragdoll's physics is ready
     /// (capturing the standing death-instant pose). If the ragdoll is already simulating, begins
-    /// immediately. Call this BEFORE triggering death so KneelPitch sees the upright pose.
+    /// immediately. Call this BEFORE triggering death so the spike captures the upright pose.
     /// </summary>
     public void RequestCollapseSpikeOnReady(CollapseArchetype archetype, float strength, float holdDuration, float fadeDuration, float hingeFactor,
         CollapseDirection direction = CollapseDirection.None, float impulse = 0f)
@@ -3748,21 +3748,6 @@ public unsafe class RagdollController : IDisposable
                 var t = collapseElapsed - collapseHold;
                 if (t <= 0f) return 1f;
                 return Math.Clamp(1f - t / collapseFade, 0f, 1f);
-            }
-
-            case CollapseArchetype.KneelPitch:
-            {
-                // Legs buckle first; core holds to form a kneel; upper body releases last → pitch.
-                var t = collapseElapsed - collapseHold;
-                if (t <= 0f) return 1f;
-                var (start, dur) = tier switch
-                {
-                    0 => (0f, collapseFade * 0.4f),                  // legs: fast, immediate
-                    1 => (collapseFade * 0.6f, collapseFade * 0.8f), // core: later
-                    _ => (collapseFade * 1.0f, collapseFade * 0.8f), // upper: last
-                };
-                if (t <= start) return 1f;
-                return Math.Clamp(1f - (t - start) / dur, 0f, 1f);
             }
         }
         return 1f;
