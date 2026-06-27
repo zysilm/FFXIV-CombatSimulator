@@ -2000,7 +2000,12 @@ public unsafe class RagdollController : IDisposable
 
         var jointSpring = new SpringSettings(30, 1);
         var limitSpring = new SpringSettings(config.RagdollLimitSpringFrequency, 1);
-        var motorDamping = 0.01f;
+        // Passive tension floor: the rigid-joint AngularMotor (target velocity 0) resists every
+        // bit of relative articulation. A dead/unconscious body is NOT a wet noodle — passive
+        // tissue (ligaments, tendon, visco-elastic muscle) keeps a residual resistance, so limbs
+        // move somewhat together rather than flailing independently. The legacy 0.01 was almost
+        // none (the classic "rubbery ragdoll" tell); a small floor reads as a body with weight.
+        var motorDamping = Math.Clamp(config.RagdollPassiveJointDamping, 0f, 2f);
 
         // BEPU's TwistLimit measurement degenerates once a ball joint's swing exceeds ~90
         // degrees. Keep the full configured swing cone and skip twist limits on wide joints.

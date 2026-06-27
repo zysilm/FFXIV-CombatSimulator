@@ -1814,6 +1814,37 @@ public class MainWindow : IDisposable
         ImGui.TextDisabled("Lift initial ragdoll pose if bones start below ground.");
         ImGui.Spacing();
 
+        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Joint Physics (global)");
+        ImGui.TextDisabled("Applies to every profile. Takes effect on next ragdoll activation.");
+
+        var planarHinge = config.RagdollKneeElbowPlanarHinge;
+        if (ImGui.Checkbox("Knee/Elbow Planar Hinge##ragdollAdv", ref planarHinge))
+        {
+            config.RagdollKneeElbowPlanarHinge = planarHinge;
+            config.Save();
+        }
+        HelpMarker("Constrain knees/elbows to fold forward/back only (sagittal plane) with a soft AngularHinge, instead of a swing cone that lets them bend sideways — the biggest 'ragdoll, not a body' tell. Disable to fall back to the cone. Takes effect on next ragdoll activation.");
+
+        using (ImRaii.Disabled(!config.RagdollKneeElbowPlanarHinge))
+        {
+            var hingeFreq = config.RagdollKneeHingeFrequency;
+            if (ImGui.SliderFloat("Planar Hinge Stiffness (Hz)##ragdollAdv", ref hingeFreq, 4f, 40f, "%.0f"))
+            {
+                config.RagdollKneeHingeFrequency = hingeFreq;
+                config.Save();
+            }
+            HelpMarker("Plane stiffness for the knee/elbow planar hinge. Too low = still folds sideways under load; too high relative to the 60 Hz step / substep count = jitter or freeze. 18 = balanced default. Takes effect on next ragdoll activation.");
+        }
+
+        var passiveTone = config.RagdollPassiveJointDamping;
+        if (ImGui.SliderFloat("Passive Joint Tone##ragdollAdv", ref passiveTone, 0.01f, 1.0f, "%.2f"))
+        {
+            config.RagdollPassiveJointDamping = passiveTone;
+            config.Save();
+        }
+        HelpMarker("Residual resistance of every joint to articulation once the body is limp (passive tissue tone). 0.01 = legacy near-zero, the rubbery 'wet noodle' corpse; higher = limbs move with weight instead of flailing. Too high reads as rigor-mortis stiffness. 0.1 = balanced default. Takes effect on next ragdoll activation.");
+        ImGui.Spacing();
+
         if (ragdollController.IsActive)
         {
             if (ImGui.Button("Apply Changes (Reactivate Ragdoll)"))
@@ -3569,25 +3600,6 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Uses parent/child anatomical joint frames for hinge axes and ball-joint twist references. Disable this if an unusual skeleton's joints behave incorrectly. Takes effect on next ragdoll activation.");
-
-                var planarHinge = config.RagdollKneeElbowPlanarHinge;
-                if (ImGui.Checkbox("Knee/Elbow Planar Hinge##ragdoll", ref planarHinge))
-                {
-                    config.RagdollKneeElbowPlanarHinge = planarHinge;
-                    config.Save();
-                }
-                HelpMarker("Constrain knees/elbows to fold forward/back only (sagittal plane) with a soft AngularHinge, instead of a swing cone that lets them bend sideways — the biggest 'ragdoll, not a body' tell. Disable to fall back to the cone. Takes effect on next ragdoll activation.");
-
-                using (ImRaii.Disabled(!config.RagdollKneeElbowPlanarHinge))
-                {
-                    var hingeFreq = config.RagdollKneeHingeFrequency;
-                    if (ImGui.SliderFloat("Planar Hinge Stiffness (Hz)##ragdoll", ref hingeFreq, 4f, 40f, "%.0f"))
-                    {
-                        config.RagdollKneeHingeFrequency = hingeFreq;
-                        config.Save();
-                    }
-                    HelpMarker("Plane stiffness for the knee/elbow planar hinge. Too low = still folds sideways under load; too high relative to the 60 Hz step / substep count = jitter or freeze. 18 = balanced default. Takes effect on next ragdoll activation.");
-                }
 
                 var selfCollision = config.RagdollSelfCollision;
                 if (ImGui.Checkbox("Self Collision##ragdoll", ref selfCollision))

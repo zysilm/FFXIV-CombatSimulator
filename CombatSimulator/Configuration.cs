@@ -289,6 +289,12 @@ public class Configuration : IPluginConfiguration
     // effect on next ragdoll activation.
     public bool RagdollKneeElbowPlanarHinge { get; set; } = true;
     public float RagdollKneeHingeFrequency { get; set; } = 18f;
+    // Passive tension floor: residual resistance of every joint to relative articulation,
+    // applied by the rigid-joint AngularMotor. 0.01 = legacy near-zero (rubbery wet-noodle
+    // corpse); a small floor makes limbs move with some weight/tone instead of flailing
+    // independently. Too high reads as rigor-mortis stiffness. Takes effect on next ragdoll
+    // activation.
+    public float RagdollPassiveJointDamping { get; set; } = 0.1f;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
 
