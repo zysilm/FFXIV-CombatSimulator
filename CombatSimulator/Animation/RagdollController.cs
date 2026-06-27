@@ -747,6 +747,71 @@ public unsafe class RagdollController : IDisposable
         return def.Mass;
     }
 
+    // === Tier C — Anatomical range-of-motion (ROM) table ============================
+    // Solver-AGNOSTIC, clinical/ISB-derived per-DOF ranges of motion, stored in RADIANS.
+    // This is the durable source of truth for joint ROM: it survives a future reduced-
+    // coordinate (Tier A) builder, which would consume the SAME numbers. Keyed by the
+    // side-stripped bone name (so left/right share one entry, matching the mass table).
+    //
+    // Source: standard healthy-adult goniometric / clinical ROM (AAOS averages) expressed
+    // in the ISB Grood-Suntay joint coordinate system; rounded to typical means:
+    //   Knee     flexion 0-140 deg, hyperextension 5,        axial (tibial) +/-10
+    //   Elbow    flexion 0-145 deg, hyperextension 5,        axial (pron/sup) +/-80
+    //   Hip      flexion 120, extension 20, abduction 45, adduction 25, axial +/-40
+    //   Shoulder flexion 170, extension 50, abduction 170, adduction 40, axial +/-90
+    //   Ankle    dorsiflexion 20, plantarflexion 45,         inv/eversion +/-20
+    //   Neck     flexion/extension +/-45, lateral +/-40,     axial +/-70
+    //   Spine    (per segment) flex/ext +/-15, lateral +/-15, axial +/-10
+    //
+    // WIRED IN TODAY (maximal-coordinate builder): the AXIAL twist range of every joint
+    // (C2) and the knee/elbow FLEXION + HYPEREXTENSION bounds about the Tier-B hinge axis
+    // (C3). DEFERRED to Tier A: the ball-joint (hip/shoulder) asymmetric SWING ellipse /
+    // reach-cone (flex/ext/abd/add) — fiddly in maximal coordinates; see RAGDOLL_JOINT_MODEL.md
+    // Part 2, Tier C. Those flex/ext/abd/add fields are populated here for that future use.
+    private readonly struct AnatomicalRom
+    {
+        public readonly float FlexionMax;    // forward bend / dorsiflexion (rad, >=0)  [swing, deferred for ball joints]
+        public readonly float ExtensionMax;  // backward bend / plantarflex / hyperext (rad, >=0)
+        public readonly float AbductionMax;  // (rad) [swing, deferred]
+        public readonly float AdductionMax;  // (rad) [swing, deferred]
+        public readonly float AxialMin;      // axial twist lower bound (rad, signed)   [C2, wired]
+        public readonly float AxialMax;      // axial twist upper bound (rad, signed)   [C2, wired]
+
+        public AnatomicalRom(float flexionMax, float extensionMax, float abductionMax,
+                             float adductionMax, float axialMin, float axialMax)
+        {
+            FlexionMax = flexionMax;
+            ExtensionMax = extensionMax;
+            AbductionMax = abductionMax;
+            AdductionMax = adductionMax;
+            AxialMin = axialMin;
+            AxialMax = axialMax;
+        }
+    }
+
+    private static float D2R(float degrees) => degrees * (MathF.PI / 180f);
+
+    // Keyed by side-stripped bone name (see SideStrippedBoneName). Bones absent from this
+    // table fall back to their hand-set boneDef twist values (and the legacy fold-stop).
+    private static readonly Dictionary<string, AnatomicalRom> AnatomicalRomTable = new()
+    {
+        // Hinge joints
+        { "j_asi_b", new AnatomicalRom(D2R(140f), D2R(5f),   0f,        0f,        D2R(-10f), D2R(10f)) }, // Knee (shin)
+        { "j_ude_b", new AnatomicalRom(D2R(145f), D2R(5f),   0f,        0f,        D2R(-80f), D2R(80f)) }, // Elbow (forearm)
+        // Ball joints (axial wired now; swing fields deferred to Tier A)
+        { "j_asi_a", new AnatomicalRom(D2R(120f), D2R(20f),  D2R(45f),  D2R(25f),  D2R(-40f), D2R(40f)) }, // Hip (thigh)
+        { "j_ude_a", new AnatomicalRom(D2R(170f), D2R(50f),  D2R(170f), D2R(40f),  D2R(-90f), D2R(90f)) }, // Shoulder (upper arm)
+        { "j_sako",  new AnatomicalRom(D2R(170f), D2R(50f),  D2R(170f), D2R(40f),  D2R(-90f), D2R(90f)) }, // Shoulder (clavicle)
+        { "j_asi_d", new AnatomicalRom(D2R(20f),  D2R(45f),  0f,        0f,        D2R(-20f), D2R(20f)) }, // Ankle (foot): dorsi/plantar + inv/ev
+        { "j_kubi",  new AnatomicalRom(D2R(45f),  D2R(45f),  D2R(40f),  D2R(40f),  D2R(-70f), D2R(70f)) }, // Neck
+        { "j_sebo_a",new AnatomicalRom(D2R(15f),  D2R(15f),  D2R(15f),  D2R(15f),  D2R(-10f), D2R(10f)) }, // Lower spine
+        { "j_sebo_b",new AnatomicalRom(D2R(15f),  D2R(15f),  D2R(15f),  D2R(15f),  D2R(-10f), D2R(10f)) }, // Mid spine
+        { "j_sebo_c",new AnatomicalRom(D2R(15f),  D2R(15f),  D2R(15f),  D2R(15f),  D2R(-10f), D2R(10f)) }, // Chest
+    };
+
+    private static bool TryGetAnatomicalRom(string boneName, out AnatomicalRom rom)
+        => AnatomicalRomTable.TryGetValue(SideStrippedBoneName(boneName), out rom);
+
     public static void FillProfileDefaults(RagdollBoneConfig bone)
     {
         if (bone.AnatomicalRole == (int)AnatomicalRole.Auto)
@@ -1493,9 +1558,14 @@ public unsafe class RagdollController : IDisposable
         Vector3 hingeAxisWorld,
         Vector3 parentSegDir,
         Vector3 segDirWorld,
-        SpringSettings limitSpring)
+        SpringSettings limitSpring,
+        float? foldCapOverride = null)
     {
-        if (boneDef.SwingMinLimit <= 0 || boneDef.SwingMinLimit >= MathF.PI || simulation == null)
+        if (simulation == null)
+            return;
+        // foldCapOverride (Tier C) lets the anatomical ROM drive the max-fold cap; when it is
+        // supplied we honour it even if SwingMinLimit was 0/disabled for this bone.
+        if (foldCapOverride == null && (boneDef.SwingMinLimit <= 0 || boneDef.SwingMinLimit >= MathF.PI))
             return;
 
         // Measure the true anatomical bend angle (angle between child and parent segment dirs).
@@ -1508,7 +1578,8 @@ public unsafe class RagdollController : IDisposable
         // Straight init: max(43°, 0°+15°) = 43°   — normal anatomical protection.
         // ORZ init:      max(43°, 90°+15°) = 105°  — fires only at extreme over-bending.
         const float foldBuffer = 0.26f; // ~15°
-        var foldStopMaxAngle = MathF.Max(boneDef.SwingMinLimit, initBendAngle + foldBuffer);
+        var foldFloor = foldCapOverride ?? boneDef.SwingMinLimit;
+        var foldStopMaxAngle = MathF.Max(foldFloor, initBendAngle + foldBuffer);
         foldStopMaxAngle = MathF.Min(foldStopMaxAngle, MathF.PI - 0.05f);
 
         // Both axes use segment directions so the constraint measures the actual anatomical
@@ -1529,6 +1600,94 @@ public unsafe class RagdollController : IDisposable
 
         if (config.RagdollVerboseLog)
             log.Info($"[Ragdoll Constraint] '{boneDef.Name}' fold stop: initBend={initBendAngle * 180f / MathF.PI:F1}° limit={foldStopMaxAngle * 180f / MathF.PI:F1}°");
+    }
+
+    /// <summary>
+    /// Tier C (C3) — directional flexion / hyperextension limit for a knee or elbow about the
+    /// Tier-B hinge axis. Unlike the fold-stop (which measures the UNSIGNED angle between the
+    /// two segments and so cannot tell forward flexion from backward hyperextension), this is a
+    /// SIGNED limit about the hinge axis: flexion is allowed up to <c>rom.FlexionMax</c> while
+    /// bending backward past straight is blocked beyond <c>rom.ExtensionMax</c> (hyperextension).
+    ///
+    /// Robustness (this is the medium-risk part the plan warns about):
+    ///  - Anatomical anchoring: each body's twist basis shares the hinge axis (Z) but uses its
+    ///    OWN segment as the in-plane reference, so the measured twist equals the TRUE flexion
+    ///    angle (0 = anatomically straight), independent of the bent death-instant pose. Using a
+    ///    single shared world basis instead would read 0 at the death pose and mis-anchor the
+    ///    hyperextension floor to wherever the limb happened to die.
+    ///  - Snap-proof: the init signed flexion is measured here in the SAME convention the solver
+    ///    uses, and the range is widened (never tightened past anatomy) so the init pose is
+    ///    strictly inside [min,max]. The widening uses |initFlexion| so it is correct even if the
+    ///    solver's twist sign differs from ours — the wall can never fire on activation, so the
+    ///    joint cannot snap or freeze when the ragdoll spawns, from any death pose (incl. ORZ).
+    /// </summary>
+    private void AddAnatomicalHingeFlexionLimit(
+        BodyHandle childHandle,
+        BodyHandle parentHandle,
+        BodyReference childBodyRef,
+        BodyReference parentBodyRef,
+        RagdollBoneDef boneDef,
+        Vector3 hingeAxisWorld,
+        Vector3 parentSegDir,
+        Vector3 segDirWorld,
+        AnatomicalRom rom,
+        SpringSettings limitSpring)
+    {
+        if (simulation == null)
+            return;
+
+        var hingeN = NormalizeOrFallback(hingeAxisWorld, Vector3.UnitX);
+
+        // Per-body bases: same twist axis (hinge), each referenced to its own segment so the
+        // measured relative twist == true flexion (see method summary).
+        var basisAWorld = CreateTwistBasis(hingeN, segDirWorld);    // child  (shin / forearm)
+        var basisBWorld = CreateTwistBasis(hingeN, parentSegDir);   // parent (thigh / upper arm)
+
+        // Measure init signed flexion in the solver's convention: the angle of the child's
+        // in-plane axis relative to the parent's about the hinge axis. CreateTwistBasis maps the
+        // local X axis to ProjectOntoPlane(segment, hingeAxis), so we compare those directly.
+        var xA = ProjectOntoPlane(segDirWorld, hingeN);
+        var xB = ProjectOntoPlane(parentSegDir, hingeN);
+        float initFlexion = 0f;
+        if (xA.LengthSquared() > 1e-6f && xB.LengthSquared() > 1e-6f)
+        {
+            xA = Vector3.Normalize(xA);
+            xB = Vector3.Normalize(xB);
+            var s = Vector3.Dot(Vector3.Cross(xB, xA), hingeN);
+            var c = Math.Clamp(Vector3.Dot(xB, xA), -1f, 1f);
+            initFlexion = MathF.Atan2(s, c);
+        }
+
+        // Anatomical bounds: flexion positive, hyperextension a small negative floor.
+        var minAngle = -rom.ExtensionMax; // e.g. knee -5°
+        var maxAngle =  rom.FlexionMax;   // e.g. knee +140°
+
+        // Snap-proof widening: keep the init pose strictly inside the range, sign-agnostically.
+        const float margin = 0.09f; // ~5°
+        var initPad = MathF.Abs(initFlexion) + margin;
+        minAngle = MathF.Min(minAngle, -initPad);
+        maxAngle = MathF.Max(maxAngle,  initPad);
+        // Never exceed the solver's measurable twist range.
+        minAngle = MathF.Max(minAngle, -(MathF.PI - 0.05f));
+        maxAngle = MathF.Min(maxAngle,  MathF.PI - 0.05f);
+
+        var basisALocal = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * basisAWorld);
+        var basisBLocal = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * basisBWorld);
+
+        simulation.Solver.Add(childHandle, parentHandle,
+            new TwistLimit
+            {
+                LocalBasisA = basisALocal,
+                LocalBasisB = basisBLocal,
+                MinimumAngle = minAngle,
+                MaximumAngle = maxAngle,
+                SpringSettings = limitSpring,
+            });
+
+        // One-time validation log (per knee/elbow): resolved flexion min/max + init flexion.
+        log.Info($"[Ragdoll ROM] '{boneDef.Name}' flexion limit: initFlexion={initFlexion * 180f / MathF.PI:F1}° " +
+                 $"range=[{minAngle * 180f / MathF.PI:F1}°,{maxAngle * 180f / MathF.PI:F1}°] " +
+                 $"(hyperext block>{rom.ExtensionMax * 180f / MathF.PI:F0}°, flexMax={rom.FlexionMax * 180f / MathF.PI:F0}°)");
     }
 
     private void AddAnatomicalHingeRestBias(
@@ -2254,10 +2413,30 @@ public unsafe class RagdollController : IDisposable
                         });
                 }
 
+                // Tier C — asymmetric ROM for this hinge (knee/elbow). Resolved once here so
+                // it drives the fold-stop cap (C3), the directional flexion limit (C3) and the
+                // axial twist guard (C2) below.
+                AnatomicalRom hingeRom = default;
+                bool hasHingeRom = config.RagdollAnatomicalRom &&
+                    (boneDef.AnatomicalRole == AnatomicalRole.Knee || boneDef.AnatomicalRole == AnatomicalRole.Elbow) &&
+                    TryGetAnatomicalRom(rb.Name, out hingeRom);
+
+                // C3: when ROM is on, loosen the symmetric fold-stop cap to the anatomical
+                // flexion max so it no longer blocks legal flexion before the directional
+                // limit does; the directional TwistLimit below now owns hyperextension.
                 AddAnatomicalHingeFoldStop(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
-                    boneDef, hingeAxisWorld, parentSegDir, segDirWorld, limitSpring);
+                    boneDef, hingeAxisWorld, parentSegDir, segDirWorld, limitSpring,
+                    hasHingeRom ? hingeRom.FlexionMax : (float?)null);
                 AddAnatomicalHingeRestBias(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
                     boneDef, hingeAxisWorld, parentSegDir, segDirWorld);
+
+                // C3: directional flexion/hyperextension limit about the Tier-B hinge axis.
+                // This is what actually blocks the knee/elbow bending BACKWARD past (nearly)
+                // straight — the symmetric fold-stop above cannot tell flexion from
+                // hyperextension. Anatomically anchored + snap-proof (see method).
+                if (hasHingeRom)
+                    AddAnatomicalHingeFlexionLimit(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
+                        boneDef, hingeAxisWorld, parentSegDir, segDirWorld, hingeRom, limitSpring);
 
                 // Axial-rotation guard: prevents the shin/forearm from spinning around its
                 // long axis. Anatomical limits differ: the tibia (shin) allows only ~±10°
@@ -2268,15 +2447,24 @@ public unsafe class RagdollController : IDisposable
                 // Hinge equality constraints.
                 {
                     var isKnee = boneDef.AnatomicalRole == AnatomicalRole.Knee;
-                    var twistRange = isKnee ? 0.2f : 0.8f;
+                    // C2: asymmetric axial twist from the anatomical ROM table when ROM is on
+                    // (knee tibial +/-10 deg, elbow pron/sup +/-80 deg); else the legacy
+                    // symmetric guard (knee +/-0.2, elbow +/-0.8).
+                    var twistMin = isKnee ? -0.2f : -0.8f;
+                    var twistMax = isKnee ?  0.2f :  0.8f;
+                    if (hasHingeRom)
+                    {
+                        twistMin = hingeRom.AxialMin;
+                        twistMax = hingeRom.AxialMax;
+                    }
                     var twistBasis = CreateTwistBasis(segDirWorld, hingeAxisWorld);
                     simulation.Solver.Add(rb.BodyHandle, parentHandle,
                         new TwistLimit
                         {
                             LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * twistBasis),
                             LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis),
-                            MinimumAngle = -twistRange,
-                            MaximumAngle =  twistRange,
+                            MinimumAngle = twistMin,
+                            MaximumAngle = twistMax,
                             SpringSettings = new SpringSettings(10f, 1f),
                         });
                 }
@@ -2336,7 +2524,16 @@ public unsafe class RagdollController : IDisposable
 
                 // TwistLimit: asymmetric axial rotation around the bone's segment axis.
                 // Skipped on wide-swing joints where the twist basis becomes unreliable.
-                if ((boneDef.TwistMinAngle != 0 || boneDef.TwistMaxAngle != 0) &&
+                // C2: when ROM is on, take the axial range from the anatomical table (correct
+                // clinical asymmetry); otherwise use the hand-set boneDef twist values.
+                var ballTwistMin = boneDef.TwistMinAngle;
+                var ballTwistMax = boneDef.TwistMaxAngle;
+                if (config.RagdollAnatomicalRom && TryGetAnatomicalRom(rb.Name, out var ballRom))
+                {
+                    ballTwistMin = ballRom.AxialMin;
+                    ballTwistMax = ballRom.AxialMax;
+                }
+                if ((ballTwistMin != 0 || ballTwistMax != 0) &&
                     boneDef.SwingLimit <= ballJointMaxSwing)
                 {
                     var refDir = config.RagdollExperimentalJointFrames
@@ -2350,8 +2547,8 @@ public unsafe class RagdollController : IDisposable
                         {
                             LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * twistBasis),
                             LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis),
-                            MinimumAngle = boneDef.TwistMinAngle,
-                            MaximumAngle = boneDef.TwistMaxAngle,
+                            MinimumAngle = ballTwistMin,
+                            MaximumAngle = ballTwistMax,
                             SpringSettings = limitSpring,
                         });
                 }

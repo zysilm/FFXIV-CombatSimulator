@@ -1,6 +1,11 @@
 # Ragdoll Joint Model — Global Review, Literature, and Implementation Plan
 
-**Status:** Research complete; implementation plan approved. Milestone 1 (Tiers D + B) in progress.
+**Status:** Research complete; plan approved. Tiers **D + B done** (committed), **C done**
+(committed; C1 ROM table + C2 asymmetric axial twist live; C3 hyperextension block is
+present but conservatively *widened* — needs an in-game twist-sign confirmation via the new
+`[Ragdoll ROM]` log line to tighten to the true anatomical floor). Ball-joint asymmetric
+**swing ellipse is deferred to Tier A** (fiddly in maximal-coordinate; ROM numbers already
+in the table). Tier **A** not started (gated by feasibility spike A0).
 **Goal:** Replace our pose-derived, maximal-coordinate joint modeling with an
 anatomically-grounded **solver-agnostic joint model** (correct frames, asymmetric ROM,
 anthropometric mass), and ultimately a reduced-coordinate articulated solver. The trigger

@@ -3597,6 +3597,14 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Tier B: derive the knee/elbow hinge axis from the skeleton medial-lateral (character left-right) axis instead of Cross(thigh,shin), which is degenerate for a near-straight limb and made one knee hinge sideways and the other forward. ON gives stable, near-mirror L/R knee axes. Takes effect on next ragdoll activation.");
 
+                var anatomicalRom = config.RagdollAnatomicalRom;
+                if (ImGui.Checkbox("Anatomical ROM (asymmetric)##ragdoll", ref anatomicalRom))
+                {
+                    config.RagdollAnatomicalRom = anatomicalRom;
+                    config.Save();
+                }
+                HelpMarker("Tier C: drive joint axial-twist ranges (all joints) and knee/elbow flexion/hyperextension bounds from a clinical/ISB anatomical ROM table instead of the hand-set symmetric values. Blocks knee/elbow bending backward past straight (hyperextension) and gives each joint a correct asymmetric axial range. Ball-joint asymmetric SWING (hip/shoulder reach cone) is deferred. Takes effect on next ragdoll activation.");
+
                 var anthropometricMass = config.RagdollAnthropometricMass;
                 if (ImGui.Checkbox("Anthropometric Mass##ragdoll", ref anthropometricMass))
                 {

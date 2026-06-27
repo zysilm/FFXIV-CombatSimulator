@@ -310,6 +310,14 @@ public class Configuration : IPluginConfiguration
     // the bone, instead of Cross(thighDir, shinDir) which is degenerate for a near-straight
     // limb and produced an asymmetric (one knee sideways, one forward) axis at death.
     public bool RagdollAnatomicalHingeAxis { get; set; } = true;
+    // Tier C — Asymmetric swing-twist range of motion. When on, joints draw their axial
+    // twist range (all joints) and the knee/elbow flexion/hyperextension bounds from a
+    // clinical/ISB anatomical ROM table instead of the hand-set per-bone twist values and
+    // the symmetric fold-stop. Blocks knee/elbow backward hyperextension (the most visible
+    // anatomical violation) and gives each joint a correct asymmetric axial range. The
+    // ball-joint (hip/shoulder) asymmetric SWING ellipse is deferred to Tier A. Takes
+    // effect on next ragdoll activation.
+    public bool RagdollAnatomicalRom { get; set; } = true;
 
     // Death collapse — physics-driven guided collapse on death (relaxation family + directed
     // knee power-loss). Config lives in GuidedCollapse; see DEATH_COLLAPSE_RESEARCH.md.
