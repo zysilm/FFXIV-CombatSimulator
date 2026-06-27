@@ -694,6 +694,59 @@ public unsafe class RagdollController : IDisposable
     /// </summary>
     public static readonly RagdollBoneDef[] DefaultBoneDefs = BuildDefaultBoneDefs();
 
+    // Tier D — Anthropometric segment masses as fractions of total body mass.
+    // Winter, Biomechanics and Motor Control of Human Movement, Table 3.1.
+    // Keyed by the side-stripped bone name (trailing _l/_r removed). Bones not in
+    // this table (cloth j_sk_*, weapon j_buki*, breast j_mune_*) keep their literal
+    // Mass and are excluded from anthropometric scaling.
+    //
+    // Limbs are bilateral, so each per-side fraction below is HALF of Winter's total
+    // (e.g. Winter thigh .100 = both thighs; each thigh = .050).
+    // Trunk (.497) is split so the pelvis is the heaviest of the four segments
+    // (Winter has pelvis .142, abdomen .139, thorax .216; we further split the
+    // thorax across our mid-spine + chest so all four sum to .497 and pelvis >= each).
+    private static readonly Dictionary<string, float> AnthropometricMassFraction = new()
+    {
+        // Lower limb (per side)
+        { "j_asi_a", 0.050f },  // thigh        (Winter thigh .100 / 2)
+        { "j_asi_b", 0.0258f }, // shank (shin) (Winter leg .0465 minus foot folded? see below)
+        { "j_asi_c", 0.0025f }, // calf segment (small; folded remainder of shank)
+        { "j_asi_d", 0.00725f },// foot         (Winter foot .0145 / 2)
+        // Upper limb (per side)
+        { "j_ude_a", 0.014f },  // upper arm    (Winter .028 / 2)
+        { "j_ude_b", 0.008f },  // forearm      (Winter .016 / 2)
+        { "j_te",    0.003f },  // hand         (Winter .006 / 2)
+        // Head + neck (.081 total)
+        { "j_kao",   0.036f },  // head
+        { "j_kubi",  0.045f },  // neck
+        // Trunk (.497 total, pelvis heaviest)
+        { "j_kosi",  0.142f },  // pelvis
+        { "j_sebo_a",0.139f },  // lower spine
+        { "j_sebo_b",0.110f },  // mid spine
+        { "j_sebo_c",0.106f },  // chest
+    };
+
+    // Strip a trailing "_l" / "_r" side suffix for anthropometric-table lookup.
+    private static string SideStrippedBoneName(string name)
+    {
+        if (name.Length > 2 && (name.EndsWith("_l") || name.EndsWith("_r")))
+            return name.Substring(0, name.Length - 2);
+        return name;
+    }
+
+    // Resolve a bone's effective mass. With anthropometric mass on, bones present in
+    // AnthropometricMassFraction use (fraction x bodyMass); all others fall back to the
+    // hand-picked def.Mass.
+    private static float ResolveBoneMass(RagdollBoneDef def, bool anthropometric, float bodyMass)
+    {
+        if (anthropometric &&
+            AnthropometricMassFraction.TryGetValue(SideStrippedBoneName(def.Name), out var frac))
+        {
+            return frac * bodyMass;
+        }
+        return def.Mass;
+    }
+
     public static void FillProfileDefaults(RagdollBoneConfig bone)
     {
         if (bone.AnatomicalRole == (int)AnatomicalRole.Auto)
@@ -1355,7 +1408,23 @@ public unsafe class RagdollController : IDisposable
     {
         var childN = NormalizeOrFallback(childSegmentDir, Vector3.UnitY);
 
-        if (role == AnatomicalRole.Knee || role == AnatomicalRole.Elbow)
+        // Tier B — anatomy-fixed hinge axis. Derive the knee/elbow hinge from the
+        // skeleton's medial-lateral (character RIGHT) axis projected perpendicular to the
+        // bone segment, instead of Cross(parent,child) which is degenerate for a near-
+        // straight limb. This is stable regardless of how bent the limb is, so both knees
+        // resolve to near-mirror axes (~±character-right) rather than one sideways + one
+        // forward. Sign is aligned to the legacy axis so flexion direction is preserved.
+        if (config.RagdollAnatomicalHingeAxis &&
+            (role == AnatomicalRole.Knee || role == AnatomicalRole.Elbow))
+        {
+            var anatAxis = ComputeAnatomicalHingeAxis(parentSegmentDir, childN);
+            if (anatAxis.HasValue)
+                return anatAxis.Value;
+            // Degenerate (e.g. limb segment is itself along character-right): fall through.
+        }
+
+        if (config.RagdollExperimentalJointFrames &&
+            (role == AnatomicalRole.Knee || role == AnatomicalRole.Elbow))
         {
             var frameAxis = ProjectOntoPlane(Vector3.Transform(Vector3.UnitX, childBodyRot), childN);
             if (frameAxis.LengthSquared() > 0.001f)
@@ -1369,6 +1438,35 @@ public unsafe class RagdollController : IDisposable
         }
 
         return ComputeExperimentalHingeAxis(parentSegmentDir, childN);
+    }
+
+    /// <summary>
+    /// Tier B — stable knee/elbow hinge axis = skeleton medial-lateral (character RIGHT)
+    /// axis projected perpendicular to the child bone segment, normalized. Returns null
+    /// when the projection is degenerate (segment nearly parallel to character-right), so
+    /// the caller can fall back to the legacy pose-derived axis. The sign is aligned to the
+    /// legacy ComputeExperimentalHingeAxis so the flexion direction (and all downstream
+    /// SwingLimit / AngularHinge / FoldStop / TwistBasis math) is unchanged.
+    /// </summary>
+    private Vector3? ComputeAnatomicalHingeAxis(Vector3 parentSegmentDir, Vector3 childSegmentDir)
+    {
+        var childN = NormalizeOrFallback(childSegmentDir, Vector3.UnitY);
+        var right = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
+
+        var projected = ProjectOntoPlane(right, childN);
+        if (projected.LengthSquared() < 0.001f)
+            return null;
+
+        var axis = Vector3.Normalize(projected);
+
+        // Keep the same sign as the legacy axis so both knees flex identically (shin swings
+        // backward = flexion). The legacy/experimental fallback already enforces a consistent
+        // sign relative to the world-up cross.
+        var legacy = ComputeExperimentalHingeAxis(parentSegmentDir, childN);
+        if (Vector3.Dot(axis, legacy) < 0)
+            axis = -axis;
+
+        return axis;
     }
 
     private Vector3 ComputeHingeForward(Vector3 hingeAxis, Vector3 parentSegmentDir, Vector3 childSegmentDir)
@@ -1753,6 +1851,7 @@ public unsafe class RagdollController : IDisposable
         // Capsule half-length is usually clamped to the current pose segment distance.
         // Anatomical hinges keep their profile length instead; ORZ-style death poses can
         // collapse the observed knee/elbow segment and bake a fake short limb into physics.
+        float resolvedTotalMass = 0f; // Tier D — sum of all enabled bodies' effective mass.
         foreach (var def in BoneDefs)
         {
             if (!nameToIndex.TryGetValue(def.Name, out var boneIdx)) continue;
@@ -1916,6 +2015,11 @@ public unsafe class RagdollController : IDisposable
                 capsuleCenter.Y = minCenterY;
             }
 
+            // Tier D — resolve effective mass (anthropometric fraction x body mass, or
+            // the hand-picked Mass when the toggle is off / bone not in the table).
+            var effectiveMass = ResolveBoneMass(def, config.RagdollAnthropometricMass, config.RagdollBodyMass);
+            resolvedTotalMass += effectiveMass;
+
             TypedIndex shapeIndex;
             BodyInertia bodyInertia;
             if (def.ColliderShape == RagdollColliderShape.Box)
@@ -1923,14 +2027,14 @@ public unsafe class RagdollController : IDisposable
                 var extents = ResolveBoxHalfExtents(def, effectiveHalfLength);
                 var box = new Box(extents.X * 2f, extents.Y * 2f, extents.Z * 2f);
                 shapeIndex = simulation.Shapes.Add(box);
-                bodyInertia = box.ComputeInertia(def.Mass);
+                bodyInertia = box.ComputeInertia(effectiveMass);
             }
             else
             {
                 var capsuleLength = effectiveHalfLength * 2;
                 var capsule = new Capsule(def.CapsuleRadius, capsuleLength);
                 shapeIndex = simulation.Shapes.Add(capsule);
-                bodyInertia = capsule.ComputeInertia(def.Mass);
+                bodyInertia = capsule.ComputeInertia(effectiveMass);
             }
 
             // SleepThreshold: 0.01 = normal (bodies sleep when settled).
@@ -1989,6 +2093,11 @@ public unsafe class RagdollController : IDisposable
                          $"capsuleY=({logCapsuleY.X:F3},{logCapsuleY.Y:F3},{logCapsuleY.Z:F3})");
             }
         }
+
+        // Tier D — one-time sanity log: resolved total should be ~RagdollBodyMass minus the
+        // excluded cloth/weapon/breast bones (which keep their tiny literal masses).
+        if (config.RagdollAnthropometricMass)
+            log.Info($"[Ragdoll Init] Anthropometric mass on: resolved total = {resolvedTotalMass:F2} kg (body mass = {config.RagdollBodyMass:F1} kg)");
 
         // --- Pass 3: Add constraints between connected bones ---
         // Per the BEPU RagdollDemo, each joint gets a layered constraint set:
@@ -2076,6 +2185,12 @@ public unsafe class RagdollController : IDisposable
                 var hingeAxisWorld = config.RagdollExperimentalJointFrames
                     ? ComputeProfileHingeAxis(boneDef.AnatomicalRole, parentSegDir, segDirWorld, childBodyRef.Pose.Orientation)
                     : ComputeHingeAxis(segDirWorld);
+
+                // Tier B validation — one-time log of the base-construction knee/elbow hinge
+                // axis. With RagdollAnatomicalHingeAxis on, L and R should be near-mirror and
+                // both roughly aligned with the character left-right axis (NOT one forward).
+                if (boneDef.AnatomicalRole == AnatomicalRole.Knee || boneDef.AnatomicalRole == AnatomicalRole.Elbow)
+                    log.Info($"[Ragdoll Joint] '{rb.Name}' hinge axis=({hingeAxisWorld.X:F2},{hingeAxisWorld.Y:F2},{hingeAxisWorld.Z:F2}) anatomical={config.RagdollAnatomicalHingeAxis}");
 
                 simulation.Solver.Add(rb.BodyHandle, parentHandle,
                     new BallSocket
@@ -5190,18 +5305,31 @@ public unsafe class RagdollController : IDisposable
         var shin = NormalizeOrFallback(ankle - knee, Vector3.UnitY);
         var footDir = NormalizeOrFallback(foot - ankle, kneeForward);
 
-        var rawAxis = Vector3.Cross(thigh, shin);
-        if (rawAxis.LengthSquared() > 0.0005f)
+        // Tier B — anatomy-fixed knee hinge axis. The skeleton medial-lateral (character
+        // RIGHT, = kneeRight) axis projected perpendicular to the shin is stable regardless
+        // of how bent the leg is, so both legs resolve to near-mirror axes (~±character-
+        // right) instead of the Cross(thigh,shin) result that goes degenerate (and pointed
+        // FORWARD for one knee) when the leg is near-straight at death.
+        var anatomicalAxis = ProjectOntoPlane(kneeRight, shin);
+        if (config.RagdollAnatomicalHingeAxis && anatomicalAxis.LengthSquared() > 0.0005f)
         {
-            hingeAxis = Vector3.Normalize(rawAxis);
+            hingeAxis = Vector3.Normalize(anatomicalAxis);
         }
         else
         {
-            var footProjected = ProjectOntoPlane(footDir, shin);
-            if (footProjected.LengthSquared() > 0.0005f)
-                hingeAxis = NormalizeOrFallback(Vector3.Cross(footProjected, shin), hingeAxis);
+            var rawAxis = Vector3.Cross(thigh, shin);
+            if (rawAxis.LengthSquared() > 0.0005f)
+            {
+                hingeAxis = Vector3.Normalize(rawAxis);
+            }
             else
-                hingeAxis = NormalizeOrFallback(Vector3.Cross(kneeForward, shin), hingeAxis);
+            {
+                var footProjected = ProjectOntoPlane(footDir, shin);
+                if (footProjected.LengthSquared() > 0.0005f)
+                    hingeAxis = NormalizeOrFallback(Vector3.Cross(footProjected, shin), hingeAxis);
+                else
+                    hingeAxis = NormalizeOrFallback(Vector3.Cross(kneeForward, shin), hingeAxis);
+            }
         }
 
         // The flexion direction is the character sagittal direction projected into the knee

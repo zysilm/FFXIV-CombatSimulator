@@ -299,6 +299,18 @@ public class Configuration : IPluginConfiguration
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
 
+    // Tier D — Anthropometric segment masses. When on, each physics bone's mass is
+    // resolved as (Winter Table 3.1 body-mass fraction) x RagdollBodyMass instead of the
+    // hand-picked per-bone Mass values. Fixes wrong inertia (thigh too heavy, trunk not
+    // pelvis-heavy). Cloth/weapon/breast bones keep their tiny existing masses.
+    public bool RagdollAnthropometricMass { get; set; } = true;
+    public float RagdollBodyMass { get; set; } = 70f; // Total body mass (kg) anthropometric fractions scale against.
+    // Tier B — Anatomy-fixed knee/elbow hinge axis. When on, the hinge axis is derived
+    // from the skeleton medial-lateral (character RIGHT) axis projected perpendicular to
+    // the bone, instead of Cross(thighDir, shinDir) which is degenerate for a near-straight
+    // limb and produced an asymmetric (one knee sideways, one forward) axis at death.
+    public bool RagdollAnatomicalHingeAxis { get; set; } = true;
+
     // Death collapse — physics-driven guided collapse on death (relaxation family + directed
     // knee power-loss). Config lives in GuidedCollapse; see DEATH_COLLAPSE_RESEARCH.md.
     public GuidedCollapseSettings GuidedCollapse { get; set; } = new();

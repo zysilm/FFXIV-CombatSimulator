@@ -3589,6 +3589,33 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Uses parent/child anatomical joint frames for hinge axes and ball-joint twist references. Disable this if an unusual skeleton's joints behave incorrectly. Takes effect on next ragdoll activation.");
 
+                var anatomicalHinge = config.RagdollAnatomicalHingeAxis;
+                if (ImGui.Checkbox("Anatomical Hinge Axis##ragdoll", ref anatomicalHinge))
+                {
+                    config.RagdollAnatomicalHingeAxis = anatomicalHinge;
+                    config.Save();
+                }
+                HelpMarker("Tier B: derive the knee/elbow hinge axis from the skeleton medial-lateral (character left-right) axis instead of Cross(thigh,shin), which is degenerate for a near-straight limb and made one knee hinge sideways and the other forward. ON gives stable, near-mirror L/R knee axes. Takes effect on next ragdoll activation.");
+
+                var anthropometricMass = config.RagdollAnthropometricMass;
+                if (ImGui.Checkbox("Anthropometric Mass##ragdoll", ref anthropometricMass))
+                {
+                    config.RagdollAnthropometricMass = anthropometricMass;
+                    config.Save();
+                }
+                HelpMarker("Tier D: resolve per-bone mass from Winter body-segment fractions x total body mass instead of hand-picked values (fixes too-heavy thigh and non-pelvis-heavy trunk). Takes effect on next ragdoll activation.");
+
+                if (config.RagdollAnthropometricMass)
+                {
+                    var bodyMass = config.RagdollBodyMass;
+                    if (ImGui.SliderFloat("Body Mass (kg)##ragdoll", ref bodyMass, 30f, 150f, "%.0f"))
+                    {
+                        config.RagdollBodyMass = bodyMass;
+                        config.Save();
+                    }
+                    HelpMarker("Total body mass the anthropometric segment fractions scale against. 70 kg default. Takes effect on next ragdoll activation.");
+                }
+
                 var selfCollision = config.RagdollSelfCollision;
                 if (ImGui.Checkbox("Self Collision##ragdoll", ref selfCollision))
                 {
