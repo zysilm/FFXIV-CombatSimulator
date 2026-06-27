@@ -280,6 +280,15 @@ public class Configuration : IPluginConfiguration
     // Anatomical joint-frame builder for hinge axes and ball-joint twist references.
     // Keep the switch so unusual skeletons can fall back to the legacy frame builder.
     public bool RagdollExperimentalJointFrames { get; set; } = true;
+    // Knee/elbow planar hinge: constrain the bend to the sagittal plane with a soft
+    // AngularHinge (BallSocket = position, AngularHinge = plane, SwingLimit = range).
+    // Without it the knee/elbow is a swing CONE and can fold sideways — the biggest
+    // "ragdoll, not a body" tell. Soft spring + substeps avoid the freeze the old stiff
+    // full-Hinge hit. Frequency is the plane stiffness (Hz): too low = still bends
+    // sideways under load, too high relative to the 60 Hz step = jitter/freeze. Takes
+    // effect on next ragdoll activation.
+    public bool RagdollKneeElbowPlanarHinge { get; set; } = true;
+    public float RagdollKneeHingeFrequency { get; set; } = 18f;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
 

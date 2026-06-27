@@ -2116,6 +2116,29 @@ public unsafe class RagdollController : IDisposable
                         log.Info($"[Ragdoll Constraint] '{rb.Name}' SwingLimit: parentFwd=({forwardWorld.X:F3},{forwardWorld.Y:F3},{forwardWorld.Z:F3}) childSeg=({segDirWorld.X:F3},{segDirWorld.Y:F3},{segDirWorld.Z:F3}) max={boneDef.SwingLimit:F2}rad dot={Vector3.Dot(forwardWorld, segDirWorld):F3}");
                 }
 
+                // Planar hinge: pin the bend to the sagittal plane so the knee/elbow folds
+                // forward/back only, never sideways. AngularHinge keeps the two hinge axes
+                // parallel (removing the 2 off-axis angular DOF) while leaving flexion about the
+                // axis free — the BallSocket above already owns position. This is the part the
+                // cone SwingLimit can't express (a cone permits any swing direction). Soft spring
+                // + the substep solver keep it from re-triggering the stiff full-Hinge freeze.
+                if (config.RagdollKneeElbowPlanarHinge)
+                {
+                    var hingeAxisLocalChild = Vector3.Normalize(Vector3.Transform(
+                        hingeAxisWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
+                    var hingeAxisLocalParent = Vector3.Normalize(Vector3.Transform(
+                        hingeAxisWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
+
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                        new AngularHinge
+                        {
+                            LocalHingeAxisA = hingeAxisLocalChild,
+                            LocalHingeAxisB = hingeAxisLocalParent,
+                            SpringSettings = new SpringSettings(
+                                Math.Clamp(config.RagdollKneeHingeFrequency, 1f, 60f), 1f),
+                        });
+                }
+
                 AddAnatomicalHingeFoldStop(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
                     boneDef, hingeAxisWorld, parentSegDir, segDirWorld, limitSpring);
                 AddAnatomicalHingeRestBias(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
@@ -3510,6 +3533,8 @@ public unsafe class RagdollController : IDisposable
         public Quaternion Target; // captured TargetRelativeRotationLocalA
         public float Freq;        // this joint's spring frequency
         public float MaxForce;    // this joint's full torque ceiling (gain multiplies this)
+        public BodyHandle ChildBody;  // body A — for reading the live relative rotation
+        public BodyHandle ParentBody; // body B
     }
 
     private readonly List<CollapseServo> collapseServos = new();
@@ -3522,6 +3547,19 @@ public unsafe class RagdollController : IDisposable
     private float collapseMaxForce;
     private const float CollapseDamping = 1f;
     private const float CollapseMaxSpeed = 12f;
+
+    // --- Eccentric braking (the muscle "pays out" under load instead of going slack) ---
+    // Real failing muscle keeps resisting while it lengthens (eccentric contraction), so a real
+    // collapse is *braked* — it sinks, gets slowed, sinks again — not a free-fall to limp. After
+    // the position-hold gain fades, we don't drop the joint to zero torque; we hand it to a
+    // velocity-damping "brake" servo: target tracks the *current* orientation (so there's no
+    // spring snap-back, it can't hold the pose), but a high damping ratio + residual force ceiling
+    // resists angular velocity, so the descent stays slow and controlled. The brake itself then
+    // tails off over CollapseBrakeFade and the joint retires to the passive ragdoll.
+    private const float CollapseBrakeDamping = 4f;     // overdamped while paying out (vs critical=1)
+    private const float CollapseBrakeFreqScale = 0.5f; // soften the position spring as it releases
+    private const float CollapseBrakeForceFrac = 0.3f; // residual torque ceiling = fraction of full
+    private const float CollapseBrakeFade = 0.7f;      // seconds the brake decays after the hold is gone
 
     // One-shot request to auto-begin the spike the instant physics initializes, so it captures
     // the *standing death-instant* pose before gravity collapses it. Manual BeginCollapseSpike
@@ -3652,6 +3690,7 @@ public unsafe class RagdollController : IDisposable
             collapseServos.Add(new CollapseServo
             {
                 Handle = handle, Tier = tier, Target = target, Freq = jointFreq, MaxForce = jointForce,
+                ChildBody = rb.BodyHandle, ParentBody = parentHandle,
             });
         }
 
@@ -3753,38 +3792,74 @@ public unsafe class RagdollController : IDisposable
         return 1f;
     }
 
-    /// <summary>Advance the collapse spike: restrength each servo, retire when fully faded.</summary>
+    /// <summary>Velocity-brake envelope in [0,1]: full while the position-hold fades, then decays
+    /// over CollapseBrakeFade so the joint pays out slowly before retiring. StiffHold has no
+    /// brake phase (it never releases).</summary>
+    private float CollapseBrake()
+    {
+        if (collapseArchetype == CollapseArchetype.StiffHold) return 0f;
+        var tAfterHold = collapseElapsed - collapseHold - collapseFade; // time since stiffness fully gone
+        if (tAfterHold <= 0f) return 1f;
+        return Math.Clamp(1f - tAfterHold / CollapseBrakeFade, 0f, 1f);
+    }
+
+    /// <summary>Advance the collapse spike: blend each joint from position-hold to an eccentric
+    /// velocity brake, then retire to the passive ragdoll once hold and brake are both spent.</summary>
     private void UpdateCollapseSpike(float dt)
     {
         if (!collapseSpikeActive || simulation == null) return;
         collapseElapsed += dt;
 
+        var brake = CollapseBrake();
         var anyAlive = false;
         for (int i = 0; i < collapseServos.Count; i++)
         {
             var s = collapseServos[i];
-            var g = CollapseGain(s.Tier);
-            if (g > 0.001f) anyAlive = true;
+            var hold = CollapseGain(s.Tier); // position-hold strength, 1 → 0
+            if (hold > 0.001f || brake > 0.001f) anyAlive = true;
+
+            // As the muscle releases (hold → 0) blend the captured pose target toward the *live*
+            // relative rotation, soften the position spring, and raise damping. With the target
+            // tracking the current pose there's no restoring snap-back — only velocity resistance
+            // — so the joint can't hold against gravity but brakes how fast it gives way.
+            var target = s.Target;
+            if (hold < 0.999f)
+            {
+                var current = ReadRelativeRotation(s.ChildBody, s.ParentBody);
+                target = Quaternion.Normalize(Quaternion.Slerp(current, s.Target, hold));
+            }
+            var freq = s.Freq * (CollapseBrakeFreqScale + (1f - CollapseBrakeFreqScale) * hold);
+            var damping = CollapseBrakeDamping + (CollapseDamping - CollapseBrakeDamping) * hold;
+            var force = s.MaxForce * MathF.Max(hold, CollapseBrakeForceFrac * brake);
+
             try
             {
                 simulation.Solver.ApplyDescription(s.Handle,
                     new AngularServo
                     {
-                        TargetRelativeRotationLocalA = s.Target,
-                        SpringSettings = new SpringSettings(s.Freq, CollapseDamping),
-                        ServoSettings = new ServoSettings(CollapseMaxSpeed, 0f, s.MaxForce * g),
+                        TargetRelativeRotationLocalA = target,
+                        SpringSettings = new SpringSettings(freq, damping),
+                        ServoSettings = new ServoSettings(CollapseMaxSpeed, 0f, force),
                     });
             }
             catch { }
         }
 
         // StiffHold never retires; the others release to a pure passive ragdoll (constraints
-        // removed, bodies free to sleep) once every tier has fully faded.
+        // removed, bodies free to sleep) once both the hold and the brake are spent.
         if (!anyAlive && collapseArchetype != CollapseArchetype.StiffHold)
         {
-            log.Info("RagdollController: collapse spike fully faded — releasing to passive ragdoll");
+            log.Info("RagdollController: collapse spike fully released — handing to passive ragdoll");
             StopCollapseSpike();
         }
+    }
+
+    private Quaternion ReadRelativeRotation(BodyHandle child, BodyHandle parent)
+    {
+        if (simulation == null) return Quaternion.Identity;
+        var c = simulation.Bodies.GetBodyReference(child).Pose.Orientation;
+        var p = simulation.Bodies.GetBodyReference(parent).Pose.Orientation;
+        return Quaternion.Normalize(Quaternion.Inverse(c) * p);
     }
 
     // --- Directed collapse spike (experimental proof-of-concept) ---
