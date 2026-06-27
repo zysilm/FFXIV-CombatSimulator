@@ -2000,12 +2000,7 @@ public unsafe class RagdollController : IDisposable
 
         var jointSpring = new SpringSettings(30, 1);
         var limitSpring = new SpringSettings(config.RagdollLimitSpringFrequency, 1);
-        // Passive tension floor: the rigid-joint AngularMotor (target velocity 0) resists every
-        // bit of relative articulation. A dead/unconscious body is NOT a wet noodle — passive
-        // tissue (ligaments, tendon, visco-elastic muscle) keeps a residual resistance, so limbs
-        // move somewhat together rather than flailing independently. The legacy 0.01 was almost
-        // none (the classic "rubbery ragdoll" tell); a small floor reads as a body with weight.
-        var motorDamping = Math.Clamp(config.RagdollPassiveJointDamping, 0f, 2f);
+        var motorDamping = 0.01f;
 
         // BEPU's TwistLimit measurement degenerates once a ball joint's swing exceeds ~90
         // degrees. Keep the full configured swing cone and skip twist limits on wide joints.
@@ -3560,11 +3555,12 @@ public unsafe class RagdollController : IDisposable
     // velocity-damping "brake" servo: target tracks the *current* orientation (so there's no
     // spring snap-back, it can't hold the pose), but a high damping ratio + residual force ceiling
     // resists angular velocity, so the descent stays slow and controlled. The brake itself then
-    // tails off over CollapseBrakeFade and the joint retires to the passive ragdoll.
+    // tails off over collapseBrakeFade and the joint retires to the passive ragdoll.
     private const float CollapseBrakeDamping = 4f;     // overdamped while paying out (vs critical=1)
     private const float CollapseBrakeFreqScale = 0.5f; // soften the position spring as it releases
-    private const float CollapseBrakeForceFrac = 0.3f; // residual torque ceiling = fraction of full
-    private const float CollapseBrakeFade = 0.7f;      // seconds the brake decays after the hold is gone
+    // Per-profile (GuidedCollapse.Relaxation): set in BeginCollapseSpike from config.
+    private float collapseBrakeForceFrac = 0.3f; // residual torque ceiling = fraction of full
+    private float collapseBrakeFade = 0.7f;      // seconds the brake decays after the hold is gone
 
     // One-shot request to auto-begin the spike the instant physics initializes, so it captures
     // the *standing death-instant* pose before gravity collapses it. Manual BeginCollapseSpike
@@ -3653,6 +3649,11 @@ public unsafe class RagdollController : IDisposable
         // Torque ceiling scales with strength so a weaker "muscle" both responds softer and
         // saturates sooner. Spike default — tuned live from the GUI, not gospel.
         collapseMaxForce = strength * 60f;
+
+        // Eccentric brake shape — per-profile (GuidedCollapse.Relaxation).
+        var relax = config.GuidedCollapse.Relaxation;
+        collapseBrakeForceFrac = Math.Clamp(relax.BrakeStrength, 0f, 1f);
+        collapseBrakeFade = Math.Clamp(relax.BrakeFade, 0.05f, 4f);
 
         var handleByBoneIdx = new Dictionary<int, BodyHandle>();
         foreach (var rb in ragdollBones)
@@ -3798,14 +3799,14 @@ public unsafe class RagdollController : IDisposable
     }
 
     /// <summary>Velocity-brake envelope in [0,1]: full while the position-hold fades, then decays
-    /// over CollapseBrakeFade so the joint pays out slowly before retiring. StiffHold has no
+    /// over collapseBrakeFade so the joint pays out slowly before retiring. StiffHold has no
     /// brake phase (it never releases).</summary>
     private float CollapseBrake()
     {
         if (collapseArchetype == CollapseArchetype.StiffHold) return 0f;
         var tAfterHold = collapseElapsed - collapseHold - collapseFade; // time since stiffness fully gone
         if (tAfterHold <= 0f) return 1f;
-        return Math.Clamp(1f - tAfterHold / CollapseBrakeFade, 0f, 1f);
+        return Math.Clamp(1f - tAfterHold / collapseBrakeFade, 0f, 1f);
     }
 
     /// <summary>Advance the collapse spike: blend each joint from position-hold to an eccentric
@@ -3835,7 +3836,7 @@ public unsafe class RagdollController : IDisposable
             }
             var freq = s.Freq * (CollapseBrakeFreqScale + (1f - CollapseBrakeFreqScale) * hold);
             var damping = CollapseBrakeDamping + (CollapseDamping - CollapseBrakeDamping) * hold;
-            var force = s.MaxForce * MathF.Max(hold, CollapseBrakeForceFrac * brake);
+            var force = s.MaxForce * MathF.Max(hold, collapseBrakeForceFrac * brake);
 
             try
             {

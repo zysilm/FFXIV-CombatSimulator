@@ -75,6 +75,13 @@ public class GuidedCollapseRelaxationSettings
     public float HingeSoften { get; set; } = 0.25f;
     public int Direction { get; set; } = 1;        // 0=None,1=Random,2=Forward,3=Backward,4=Sideways
     public float Impulse { get; set; } = 2.0f;
+    // Eccentric braking: after the hold fades, joints keep a velocity-resisting brake (the
+    // muscle "pays out" under load) instead of going slack instantly, so the body sinks →
+    // gets braked → sinks rather than free-falling to limp. BrakeStrength = residual torque
+    // ceiling as a fraction of full (0 = old instant-limp behavior, ~0.3 = noticeable brake);
+    // BrakeFade = seconds the brake decays over after the hold is gone.
+    public float BrakeStrength { get; set; } = 0.3f;
+    public float BrakeFade { get; set; } = 0.7f;
 }
 
 [Serializable]
@@ -289,12 +296,6 @@ public class Configuration : IPluginConfiguration
     // effect on next ragdoll activation.
     public bool RagdollKneeElbowPlanarHinge { get; set; } = true;
     public float RagdollKneeHingeFrequency { get; set; } = 18f;
-    // Passive tension floor: residual resistance of every joint to relative articulation,
-    // applied by the rigid-joint AngularMotor. 0.01 = legacy near-zero (rubbery wet-noodle
-    // corpse); a small floor makes limbs move with some weight/tone instead of flailing
-    // independently. Too high reads as rigor-mortis stiffness. Takes effect on next ragdoll
-    // activation.
-    public float RagdollPassiveJointDamping { get; set; } = 0.1f;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
 

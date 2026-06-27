@@ -1814,37 +1814,6 @@ public class MainWindow : IDisposable
         ImGui.TextDisabled("Lift initial ragdoll pose if bones start below ground.");
         ImGui.Spacing();
 
-        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Joint Physics (global)");
-        ImGui.TextDisabled("Applies to every profile. Takes effect on next ragdoll activation.");
-
-        var planarHinge = config.RagdollKneeElbowPlanarHinge;
-        if (ImGui.Checkbox("Knee/Elbow Planar Hinge##ragdollAdv", ref planarHinge))
-        {
-            config.RagdollKneeElbowPlanarHinge = planarHinge;
-            config.Save();
-        }
-        HelpMarker("Constrain knees/elbows to fold forward/back only (sagittal plane) with a soft AngularHinge, instead of a swing cone that lets them bend sideways — the biggest 'ragdoll, not a body' tell. Disable to fall back to the cone. Takes effect on next ragdoll activation.");
-
-        using (ImRaii.Disabled(!config.RagdollKneeElbowPlanarHinge))
-        {
-            var hingeFreq = config.RagdollKneeHingeFrequency;
-            if (ImGui.SliderFloat("Planar Hinge Stiffness (Hz)##ragdollAdv", ref hingeFreq, 4f, 40f, "%.0f"))
-            {
-                config.RagdollKneeHingeFrequency = hingeFreq;
-                config.Save();
-            }
-            HelpMarker("Plane stiffness for the knee/elbow planar hinge. Too low = still folds sideways under load; too high relative to the 60 Hz step / substep count = jitter or freeze. 18 = balanced default. Takes effect on next ragdoll activation.");
-        }
-
-        var passiveTone = config.RagdollPassiveJointDamping;
-        if (ImGui.SliderFloat("Passive Joint Tone##ragdollAdv", ref passiveTone, 0.01f, 1.0f, "%.2f"))
-        {
-            config.RagdollPassiveJointDamping = passiveTone;
-            config.Save();
-        }
-        HelpMarker("Residual resistance of every joint to articulation once the body is limp (passive tissue tone). 0.01 = legacy near-zero, the rubbery 'wet noodle' corpse; higher = limbs move with weight instead of flailing. Too high reads as rigor-mortis stiffness. 0.1 = balanced default. Takes effect on next ragdoll activation.");
-        ImGui.Spacing();
-
         if (ragdollController.IsActive)
         {
             if (ImGui.Button("Apply Changes (Reactivate Ragdoll)"))
@@ -3248,6 +3217,25 @@ public class MainWindow : IDisposable
         {
             s.Fade = fade;
             config.Save();
+        }
+
+        var brakeStrength = Math.Clamp(s.BrakeStrength, 0f, 1f);
+        if (ImGui.SliderFloat("Eccentric brake##guidedrelax", ref brakeStrength, 0f, 1f, "%.2f"))
+        {
+            s.BrakeStrength = brakeStrength;
+            config.Save();
+        }
+        HelpMarker("After the hold fades, joints keep a velocity-resisting brake instead of going slack instantly — the body sinks, gets braked, sinks, rather than free-falling to limp. 0 = old instant-limp; ~0.3 = noticeable controlled settle. Takes effect on next death.");
+
+        using (ImRaii.Disabled(s.BrakeStrength <= 0f))
+        {
+            var brakeFade = Math.Clamp(s.BrakeFade, 0.05f, 4f);
+            if (ImGui.SliderFloat("Brake fade (s)##guidedrelax", ref brakeFade, 0.05f, 4f, "%.2f"))
+            {
+                s.BrakeFade = brakeFade;
+                config.Save();
+            }
+            HelpMarker("Seconds the eccentric brake decays over after the hold is gone, before the joint retires to the passive ragdoll. Longer = the body keeps paying out slowly for longer. Takes effect on next death.");
         }
 
         var hinge = Math.Clamp(s.HingeSoften, 0f, 1f);
