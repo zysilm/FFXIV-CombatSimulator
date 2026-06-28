@@ -140,6 +140,57 @@ public unsafe class DismembermentController : IDisposable
 
     public bool HasAny => clones.Count > 0 || pending.Count > 0;
 
+    public void SyncSelectionFor(nint sourceAddress, IReadOnlyCollection<string> selectedBones, string? glamourBase64)
+    {
+        if (sourceAddress == nint.Zero) return;
+
+        var selected = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var bone in selectedBones)
+            if (!string.IsNullOrWhiteSpace(bone))
+                selected.Add(bone);
+
+        if (selected.Count == 0)
+        {
+            RemoveFor(sourceAddress);
+            return;
+        }
+
+        var current = GetTrackedBones(sourceAddress);
+        var changed = new HashSet<string>(current, StringComparer.Ordinal);
+        changed.SymmetricExceptWith(selected);
+
+        var rebuild = new HashSet<string>(StringComparer.Ordinal);
+        if (changed.Count > 0)
+        {
+            var skelN = boneService.TryGetSkeleton(sourceAddress);
+            if (skelN != null)
+            {
+                var skel = skelN.Value;
+                foreach (var selectedBone in selected)
+                {
+                    if (!current.Contains(selectedBone)) continue;
+                    foreach (var changedBone in changed)
+                    {
+                        if (selectedBone == changedBone) continue;
+                        if (IsDescendantBoneName(skel, changedBone, selectedBone))
+                        {
+                            rebuild.Add(selectedBone);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        foreach (var bone in current)
+            if (!selected.Contains(bone) || rebuild.Contains(bone))
+                RemoveOne(sourceAddress, bone);
+
+        foreach (var bone in selected)
+            if (!HasTrackedBone(sourceAddress, bone))
+                SpawnFor(sourceAddress, bone, 0f, glamourBase64);
+    }
+
     /// <summary>Schedule a severed-limb clone for <paramref name="limbRootBone"/> on the given character,
     /// firing after <paramref name="delay"/> (matches the ragdoll activation delay).</summary>
     public void SpawnFor(nint sourceAddress, string limbRootBone, float delay, string? glamourBase64)
@@ -167,6 +218,43 @@ public unsafe class DismembermentController : IDisposable
                 DespawnClone(clones[i]);
                 clones.RemoveAt(i);
             }
+    }
+
+    private HashSet<string> GetTrackedBones(nint sourceAddress)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var p in pending)
+            if (p.SourceAddress == sourceAddress)
+                result.Add(p.LimbRootBone);
+        foreach (var c in clones)
+            if (c.SourceAddress == sourceAddress)
+                result.Add(c.LimbRootBone);
+        return result;
+    }
+
+    private bool HasTrackedBone(nint sourceAddress, string limbRootBone)
+    {
+        return pending.Exists(p => p.SourceAddress == sourceAddress && p.LimbRootBone == limbRootBone) ||
+               clones.Exists(c => c.SourceAddress == sourceAddress && c.LimbRootBone == limbRootBone);
+    }
+
+    private void RemoveOne(nint sourceAddress, string limbRootBone)
+    {
+        pending.RemoveAll(p => p.SourceAddress == sourceAddress && p.LimbRootBone == limbRootBone);
+        for (int i = clones.Count - 1; i >= 0; i--)
+        {
+            var c = clones[i];
+            if (c.SourceAddress != sourceAddress || c.LimbRootBone != limbRootBone) continue;
+            DespawnClone(c);
+            clones.RemoveAt(i);
+        }
+    }
+
+    private bool IsDescendantBoneName(SkeletonAccess skel, string boneName, string rootBoneName)
+    {
+        var bone = boneService.ResolveBoneIndex(skel, boneName);
+        var root = boneService.ResolveBoneIndex(skel, rootBoneName);
+        return bone >= 0 && root >= 0 && IsDescendantOrSelf(skel, bone, root);
     }
 
     public void RemoveAll()

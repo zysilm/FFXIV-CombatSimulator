@@ -355,7 +355,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         }
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, mainWindow, config, gameGui, clientState);

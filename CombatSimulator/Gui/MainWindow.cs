@@ -32,6 +32,7 @@ public class MainWindow : IDisposable
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly AnimationController animationController;
     private readonly RagdollController ragdollController;
+    private readonly DismembermentController dismembermentController;
     private readonly DeathCamController deathCamController;
     private readonly ActiveCameraController activeCameraController;
     private readonly HookSafetyChecker hookSafetyChecker;
@@ -132,6 +133,7 @@ public class MainWindow : IDisposable
         VNavmeshIpc vnavmeshIpc,
         AnimationController animationController,
         RagdollController ragdollController,
+        DismembermentController dismembermentController,
         DeathCamController deathCamController,
         ActiveCameraController activeCameraController,
         HookSafetyChecker hookSafetyChecker,
@@ -150,6 +152,7 @@ public class MainWindow : IDisposable
         this.vnavmeshIpc = vnavmeshIpc;
         this.animationController = animationController;
         this.ragdollController = ragdollController;
+        this.dismembermentController = dismembermentController;
         this.deathCamController = deathCamController;
         this.activeCameraController = activeCameraController;
         this.hookSafetyChecker = hookSafetyChecker;
@@ -1758,6 +1761,7 @@ public class MainWindow : IDisposable
                         config.DismemberPocBones.Remove(bone);
                     }
                     config.Save();
+                    SyncDynamicDismemberSelection();
                 }
             }
 
@@ -1767,9 +1771,30 @@ public class MainWindow : IDisposable
             {
                 config.EnableDismemberRollaway = rollaway;
                 config.Save();
+                SyncDynamicDismemberSelection();
             }
             HelpMarker("Also spawn a clone of you showing ONLY each severed limb, which tumbles to the ground (full appearance + live Glamourer if installed). Off = just hide the limb on the body. POC: local player only; one clone per selected limb.");
         }
+    }
+
+    private void SyncDynamicDismemberSelection()
+    {
+        if (!combatEngine.IsActive || combatEngine.State.PlayerState.IsAlive || !ragdollController.IsActive)
+            return;
+
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null || player.Address == nint.Zero)
+            return;
+
+        if (!config.EnableDismemberRollaway)
+        {
+            dismembermentController.RemoveFor(player.Address);
+            return;
+        }
+
+        var playerIdx = player.ObjectIndex;
+        var glam = glamourerIpc.GetStateBase64((int)playerIdx);
+        dismembermentController.SyncSelectionFor(player.Address, config.DismemberPocBones, glam);
     }
 
     private static readonly (string Label, string Bone)[] DismemberParts =
