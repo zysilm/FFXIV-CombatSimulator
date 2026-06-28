@@ -247,6 +247,23 @@ public unsafe class DismembermentController : IDisposable
         pending.Add(p);
     }
 
+    public void SpawnForImmediate(nint sourceAddress, string limbRootBone, string? glamourBase64)
+    {
+        if (sourceAddress == nint.Zero || string.IsNullOrEmpty(limbRootBone)) return;
+        if (clones.Exists(c => c.SourceAddress == sourceAddress && c.LimbRootBone == limbRootBone)) return;
+        if (pending.Exists(p => p.SourceAddress == sourceAddress && p.LimbRootBone == limbRootBone)) return;
+
+        var p = new Pending
+        {
+            SourceAddress = sourceAddress,
+            LimbRootBone = limbRootBone,
+            Delay = 0f,
+            GlamourBase64 = glamourBase64,
+        };
+        TryRefreshHandoff(p, 1f / 60f);
+        TrySpawn(p);
+    }
+
     public void RemoveFor(nint sourceAddress)
     {
         pending.RemoveAll(p => p.SourceAddress == sourceAddress);

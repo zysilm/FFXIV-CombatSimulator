@@ -125,6 +125,13 @@ public class CombatEngine : IDisposable
     public Action<nint>? OnPlayerDeath { get; set; }
 
     /// <summary>
+    /// Fired immediately before the local player death animation starts.
+    /// Experimental modules use this for source objects that must be sampled before
+    /// the death pipeline changes the player's visual state.
+    /// </summary>
+    public Action? BeforePlayerDeath { get; set; }
+
+    /// <summary>
     /// When set and returns true, the Death Cam is not activated on player death — the Fighting
     /// Camera handles the death transition itself so the two don't fight over the camera.
     /// </summary>
@@ -1287,6 +1294,7 @@ public class CombatEngine : IDisposable
                 playerDeathTriggered = true;
                 movementBlockHook.IsBlocking = true;
                 animationController.RemoveAllActiveVfx();
+                BeforePlayerDeath?.Invoke();
                 animationController.PlayPlayerDeath(forceCombatDeath: true);
                 TriggerEnemyVictoryIfPartyDefeated();
                 ApplyGlamourer();

@@ -13,6 +13,7 @@ public sealed class DevExperimentalStub : IDevExperimental
     public IVictorySequence? VictorySequence => null;
     public bool ControlsNpc(nint address) => false;
     public void Tick(float deltaTime) { }
+    public void BeforePlayerDeath() { }
     public void OnPlayerDeath(nint playerAddress) { }
     public void ResetTransientState() { }
     public void DrawToolbars(MainWindow mainWindow) { }

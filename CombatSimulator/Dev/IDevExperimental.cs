@@ -18,6 +18,7 @@ public interface IDevExperimental : IDisposable
     bool ControlsNpc(nint address);
 
     void Tick(float deltaTime);
+    void BeforePlayerDeath();
     void OnPlayerDeath(nint playerAddress);
     void ResetTransientState();
     void DrawToolbars(MainWindow mainWindow);
