@@ -1353,26 +1353,10 @@ public unsafe class RagdollController : IDisposable
         return v;
     }
 
-    // POC dismemberment — map a (limb, side) selection to the subtree-root bone.
-    private static string? DismemberRootBoneName(int limb, int side)
+    // Collapse the given limb's entire bone subtree to ~0 scale so the limb vanishes from the body.
+    private void HideLimbSubtree(SkeletonAccess skel, string rootName)
     {
-        var s = side == 1 ? "_r" : "_l";
-        return limb switch
-        {
-            1 => "j_kao",        // head (no side)
-            2 => "j_ude_a" + s,  // upper arm
-            3 => "j_ude_b" + s,  // forearm
-            4 => "j_asi_a" + s,  // thigh
-            5 => "j_asi_b" + s,  // shin
-            _ => null,
-        };
-    }
-
-    // Collapse the chosen limb's entire bone subtree to ~0 scale so the limb vanishes from the body.
-    private void HideLimbSubtree(SkeletonAccess skel, int limb, int side)
-    {
-        var rootName = DismemberRootBoneName(limb, side);
-        if (rootName == null) return;
+        if (string.IsNullOrEmpty(rootName)) return;
 
         var rootIdx = -1;
         foreach (var rb in ragdollBones)
@@ -3867,11 +3851,13 @@ public unsafe class RagdollController : IDisposable
             boneService.PropagateToPartialSkeletons(skel, kaoBodyBoneIndex, "j_kao", result);
         }
 
-        // Dismemberment POC: collapse the chosen limb's whole bone subtree to ~0 scale so it
+        // Dismemberment POC: collapse each selected limb's whole bone subtree to ~0 scale so it
         // vanishes from the body (the "hide" half of hide-and-substitute). Done last so it overrides
         // the physics/propagation writes for those bones.
-        if (config.DismemberPocLimb > 0)
-            HideLimbSubtree(skel, config.DismemberPocLimb, config.DismemberPocSide);
+        var severedBones = config.DismemberPocBones;
+        if (severedBones != null && severedBones.Count > 0)
+            foreach (var boneName in severedBones)
+                HideLimbSubtree(skel, boneName);
 
         // Apply hair physics (after rigid j_kao propagation). Skipped while resting —
         // the body is settled, so hair has settled too.

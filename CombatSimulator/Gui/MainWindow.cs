@@ -1740,27 +1740,37 @@ public class MainWindow : IDisposable
 
         if (ImGui.CollapsingHeader("Dismemberment (POC)"))
         {
-            HelpMarker("Proof of concept: while the player ragdoll is active (on death), collapse the chosen limb's bones so it vanishes from the body. Validates the 'hide' step before the separate rolling limb prop is added. Trigger a death to see it.");
-            var limb = Math.Clamp(config.DismemberPocLimb, 0, dismemberLimbNames.Length - 1);
-            if (ImGui.Combo("Limb##dismember", ref limb, dismemberLimbNames, dismemberLimbNames.Length))
+            HelpMarker("Proof of concept: while the player ragdoll is active (on death), collapse each selected part's bones so it vanishes from the body. Multi-select. Validates the 'hide' step before the separate rolling limb prop is added. Trigger a death to see it.");
+            for (int i = 0; i < DismemberParts.Length; i++)
             {
-                config.DismemberPocLimb = limb;
-                config.Save();
-            }
-            using (ImRaii.Disabled(config.DismemberPocLimb is 0 or 1)) // Head has no side
-            {
-                var side = Math.Clamp(config.DismemberPocSide, 0, dismemberSideNames.Length - 1);
-                if (ImGui.Combo("Side##dismember", ref side, dismemberSideNames, dismemberSideNames.Length))
+                var (label, bone) = DismemberParts[i];
+                if (label.StartsWith("R ")) ImGui.SameLine();
+                var on = config.DismemberPocBones.Contains(bone);
+                if (ImGui.Checkbox(label + "##dismember", ref on))
                 {
-                    config.DismemberPocSide = side;
+                    if (on)
+                    {
+                        if (!config.DismemberPocBones.Contains(bone))
+                            config.DismemberPocBones.Add(bone);
+                    }
+                    else
+                    {
+                        config.DismemberPocBones.Remove(bone);
+                    }
                     config.Save();
                 }
             }
         }
     }
 
-    private static readonly string[] dismemberLimbNames = { "Off", "Head", "Upper arm", "Forearm", "Thigh", "Shin" };
-    private static readonly string[] dismemberSideNames = { "Left", "Right" };
+    private static readonly (string Label, string Bone)[] DismemberParts =
+    {
+        ("Head", "j_kao"),
+        ("L Upper arm", "j_ude_a_l"), ("R Upper arm", "j_ude_a_r"),
+        ("L Forearm", "j_ude_b_l"),   ("R Forearm", "j_ude_b_r"),
+        ("L Thigh", "j_asi_a_l"),     ("R Thigh", "j_asi_a_r"),
+        ("L Shin", "j_asi_b_l"),      ("R Shin", "j_asi_b_r"),
+    };
 
     private void DrawGlamourerHeaderSection()
     {
