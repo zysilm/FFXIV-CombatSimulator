@@ -16,6 +16,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify public build has no experimental module
+        run: test ! -e ${{ env.SOLUTION_DIR }}/Dev/Experimental/DevExperimentalModule.cs
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -31,18 +34,3 @@ jobs:
         run: dotnet build ${{ env.SOLUTION_DIR }}/${{ env.PLUGIN_NAME }}.csproj -c Release
         env:
           DALAMUD_HOME: /home/runner/dalamud
-
-      - name: Package
-        run: |
-          out_dir=$(find ${{ env.SOLUTION_DIR }}/bin/Release -name "${{ env.PLUGIN_NAME }}.dll" -printf '%h' -quit)
-          echo "Output dir: $out_dir"
-          mkdir -p artifact/${{ env.PLUGIN_NAME }}
-          cp "$out_dir"/${{ env.PLUGIN_NAME }}.dll artifact/${{ env.PLUGIN_NAME }}/
-          cp "$out_dir"/${{ env.PLUGIN_NAME }}.json artifact/${{ env.PLUGIN_NAME }}/
-          [ -f "$out_dir"/${{ env.PLUGIN_NAME }}.pdb ] && cp "$out_dir"/${{ env.PLUGIN_NAME }}.pdb artifact/${{ env.PLUGIN_NAME }}/ || true
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: latest
-          path: artifact/

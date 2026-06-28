@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using CombatSimulator.Animation;
-using CombatSimulator.Dev;
 using Dalamud.Configuration;
 using Dalamud.Plugin;
 using Dalamud.Game.ClientState.GamePad;
@@ -409,76 +408,6 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollVerboseLog { get; set; } = false;
     public bool RagdollFollowPosition { get; set; } = false; // Update GameObject.Position to follow ragdoll root (prevents model unload on long falls)
     public bool RagdollLiftUndergroundBonesOnStart { get; set; } = false;
-    public bool EnableVictorySequence { get; set; } = false;
-    public bool ControlGrabber { get; set; } = false;
-    public float GrabberControlSpeed { get; set; } = 2.5f;
-    // Custom primary (grabber) NPC: when on, an alive enemy whose name contains
-    // GrabCustomPrimaryName is chosen as the cinematic/grab NPC (random among
-    // matches); otherwise the last-targeted enemy is used.
-    public bool GrabCustomPrimary { get; set; } = false;
-    public string GrabCustomPrimaryName { get; set; } = string.Empty;
-    // VictorySequenceStages / OtherStages / CinematicPresets moved to the experimental partial
-    // (they reference dev types that only exist when the private module is compiled in).
-    public float DevNpcScale { get; set; } = 1.0f;
-    public bool ShowGrabToolbar { get; set; } = false;
-    public bool ShowHoldToolbar { get; set; } = false;
-
-    // ── KO Strip (dev experimental) ──────────────────────────────────────────
-    // Visually unequips selected gear slots on knockout (dramatic fighting-game
-    // style). Tier 1: pure visual unequip (swap slot model to smallclothes), no
-    // physics drop. Draw-object only — no server packets, restored on reset.
-    public bool ShowKoStripToolbar { get; set; } = false;
-    public bool KoStripEnabled { get; set; } = false;
-
-    // ── Monster mode (dev experimental) ──────────────────────────────────────
-    // On player death, spawn a controllable no-HP creature (default Bat) that flies around
-    // and can punt the ground ragdoll with an adjustable impulse.
-    public bool ShowMonsterToolbar { get; set; } = false;
-    public bool MonsterSpawnOnDeath { get; set; } = false;
-    public bool MonsterControlKiller { get; set; } = false; // on death, control the enemy that killed you (instead of spawning)
-    public uint MonsterModelId { get; set; } = 38;      // BNpcBaseId — 38 = Bat
-    public uint MonsterModelNameId { get; set; } = 38;  // BNpcNameId
-    public float MonsterMoveSpeed { get; set; } = 6f;
-    public float MonsterVerticalSpeed { get; set; } = 2.5f;
-    public int MonsterAttackKey { get; set; } = 0x59; // VirtualKey.Y — adjustable normal-attack key
-    public bool MonsterCameraFollowsMonster { get; set; } = true; // remembered cam target (monster vs character)
-    // Strike: during an attack the monster's collider bones impart their swing velocity (× power) to
-    // nearby ragdoll bodies, so the hit lands forcefully at the limb's real contact point.
-    public float MonsterStrikePower { get; set; } = 0.1f;
-    // Keep the creature on the floor (navmesh/raycast clamp) instead of free flight. Default on.
-    public bool MonsterGroundWalk { get; set; } = true;
-    // On-hit progressive part separation when a swing connects in range. 0 = Off, 1 = Sequential, 2 = Random.
-    public int MonsterStrikePartProfile { get; set; } = 0;
-    public bool KoStripHead { get; set; } = false;
-    public bool KoStripBody { get; set; } = true;
-    public bool KoStripHands { get; set; } = true;
-    public bool KoStripLegs { get; set; } = true;
-    public bool KoStripFeet { get; set; } = true;
-    public bool KoStripEars { get; set; } = false;
-    public bool KoStripNeck { get; set; } = false;
-    public bool KoStripWrists { get; set; } = false;
-    public bool KoStripRFinger { get; set; } = false;
-    public bool KoStripLFinger { get; set; } = false;
-
-    public float HoldStandingHeight { get; set; } = 0.92f;
-    public string HoldAnchorBone { get; set; } = "j_kosi";
-    public bool HoldNpcAttack { get; set; } = true;
-    public bool HoldAllNpcsAttack { get; set; } = false;
-    public float HoldApproachDistance { get; set; } = 1.0f;
-    public uint HoldAttackEmoteId { get; set; } = 0; // 0 = "Atk" (melee anim), else emote RowId
-    public bool HoldDetailedBoneMode { get; set; } = false;
-    public bool HoldShakeEnabled { get; set; } = false;
-    public float HoldShakeIntensity { get; set; } = 3.0f;
-    public bool HoldBindArms { get; set; } = false;
-    public float HoldArmSpread { get; set; } = 0.8f;
-    public float HoldArmHeight { get; set; } = 1.2f;
-    public bool HoldGrabEnabled { get; set; } = false;
-    public string HoldGrabNpcBone { get; set; } = "j_te_r";
-    public string HoldGrabPlayerBone { get; set; } = "j_kubi";
-    public float HoldGrabForce { get; set; } = 800f;
-    public float HoldGrabFreq { get; set; } = 120f;
-    public bool DevNpcOcclusionHide { get; set; } = false;
-    public float DevNpcOcclusionRadius { get; set; } = 1.0f;
     public bool DevCompanionAppearanceVariant { get; set; } = false;
     public bool DevPartyApproachDebugLog { get; set; } = false;
     public bool RagdollNpcCollision { get; set; } = true;

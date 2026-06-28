@@ -1,0 +1,3 @@
+[submodule "CombatSimulator/Dev/Experimental"]
+	path = CombatSimulator/Dev/Experimental
+	url = https://github.com/zysilm/ffxiv-combatsimulator-dev.git

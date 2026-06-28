@@ -17,6 +17,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Checkout experimental module
+        env:
+          DEV_EXPERIMENTAL_REPO_TOKEN: ${{ secrets.DEV_EXPERIMENTAL_REPO_TOKEN }}
+        run: |
+          if [ -z "$DEV_EXPERIMENTAL_REPO_TOKEN" ]; then
+            echo "::error::Missing DEV_EXPERIMENTAL_REPO_TOKEN secret with read access to zysilm/ffxiv-combatsimulator-dev"
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${DEV_EXPERIMENTAL_REPO_TOKEN}@github.com/zysilm/".insteadOf "https://github.com/zysilm/"
+          git submodule sync -- ${{ env.SOLUTION_DIR }}/Dev/Experimental
+          git submodule update --init --depth 1 -- ${{ env.SOLUTION_DIR }}/Dev/Experimental
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
