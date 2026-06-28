@@ -499,7 +499,7 @@ public partial class Configuration : IPluginConfiguration
     // actionId (the game resolves keyboard/gamepad for us); enemy attacks
     // telegraph (起手快照) then resolve by hitbox at the active frame. When OFF,
     // every seam falls back to the original simulation behavior.
-    public bool ActionMode { get; set; } = false;
+    public bool ActionMode { get; set; } = true;
 
     // Input map: put these actions on the hotbar; a press is interpreted as the
     // mapped role instead of firing the real action. 0 = unmapped.
