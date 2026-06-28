@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Text;
 using BepuPhysics;
 using BepuPhysics.Collidables;
+using BepuPhysics.Constraints;
 using BepuUtilities.Memory;
 using CombatSimulator.Integration;
 using Dalamud.Game.ClientState.Objects.Types;
@@ -40,6 +41,7 @@ public unsafe class DismembermentController : IDisposable
 
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
+    private readonly HashSet<(int, int)> connectedPairs = new();
     private TypedIndex limbShapeIndex;
     private BodyInertia limbInertia;
     private uint nextEntityId = 0xF2000001;
@@ -62,12 +64,31 @@ public unsafe class DismembermentController : IDisposable
         public List<(int Idx, Vector3 T, Quaternion R, Vector3 S)>? LimbSnapshot; // frozen limb pose
         public List<TypedIndex>? Shapes; // compound + child shapes to dispose
         public BodyHandle? Body;
+        public LimbRig? Rig;
         public StaticHandle? GroundTile;
         public TypedIndex? GroundShape;
         public bool KeepTimelineRunning;
         public string? GlamourBase64;
         public int GlamourFramesUntil = -1;
         public int GlamourAttemptsLeft;
+    }
+
+    private sealed class LimbRig
+    {
+        public readonly List<LimbBody> Bodies = new();
+        public readonly HashSet<int> BoneIndices = new();
+        public readonly List<(int, int)> ConnectedPairs = new();
+        public readonly List<TypedIndex> Shapes = new();
+    }
+
+    private struct LimbBody
+    {
+        public int BoneIndex;
+        public string Name;
+        public BodyHandle Body;
+        public Quaternion BodyToBoneRotation;
+        public float SegmentHalfLength;
+        public RagdollController.RagdollBoneDef Def;
     }
 
     private sealed class Pending
@@ -304,19 +325,31 @@ public unsafe class DismembermentController : IDisposable
             EnsureSimulation();
             if (simulation != null)
             {
-                // Head keeps the older single-proxy path. Building a shape from the head subtree pulls
-                // in ears/hair bones and can fight cosmetic physics or modded skeletons.
-                var shape = limbShapeIndex;
-                var inertia = limbInertia;
-                if (!c.KeepTimelineRunning)
-                    shape = BuildLimbShape(skel, c, out inertia);
-
-                c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
-                    new RigidPose(c.SeveranceWorldPos, c.SeveranceWorldRot),
-                    default(BodyVelocity),
-                    inertia,
-                    new CollidableDescription(shape, 0.04f),
-                    new BodyActivityDescription(0.01f)));
+                if (c.KeepTimelineRunning)
+                {
+                    // Head keeps the older single-proxy path. Building a rig from the head subtree
+                    // pulls in cosmetic partials and modded ear/hair bones that should stay visual.
+                    c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
+                        new RigidPose(c.SeveranceWorldPos, c.SeveranceWorldRot),
+                        default(BodyVelocity),
+                        limbInertia,
+                        new CollidableDescription(limbShapeIndex, 0.04f),
+                        new BodyActivityDescription(0.01f)));
+                }
+                else
+                {
+                    c.Rig = BuildLimbRig(skel, c);
+                    if (c.Rig == null)
+                    {
+                        var shape = BuildLimbShape(skel, c, out var inertia);
+                        c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
+                            new RigidPose(c.SeveranceWorldPos, c.SeveranceWorldRot),
+                            default(BodyVelocity),
+                            inertia,
+                            new CollidableDescription(shape, 0.04f),
+                            new BodyActivityDescription(0.01f)));
+                    }
+                }
                 (c.GroundTile, c.GroundShape) = CreateTerrainPatch(c.SeveranceWorldPos.X, c.SeveranceWorldPos.Z, c.SeveranceWorldPos.Y);
             }
             c.Armed = true;
@@ -338,7 +371,13 @@ public unsafe class DismembermentController : IDisposable
                 m.Scale.X = s.S.X; m.Scale.Y = s.S.Y; m.Scale.Z = s.S.Z;
             }
         }
-        if (simulation == null || c.Body == null) return;
+        if (simulation == null) return;
+        if (c.Rig != null)
+        {
+            DriveLimbRig(skel, c);
+            return;
+        }
+        if (c.Body == null) return;
         var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
         var bodyPos = bodyRef.Pose.Position;
         var bodyRot = bodyRef.Pose.Orientation;
@@ -364,6 +403,314 @@ public unsafe class DismembermentController : IDisposable
         drawObj->Position = skelPos;
         drawObj->Rotation = bodyRot;
         ((GameObject*)c.Chara)->Position = skelPos;
+    }
+
+    private LimbRig? BuildLimbRig(SkeletonAccess skel, Clone c)
+    {
+        if (simulation == null) return null;
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton == null) return null;
+
+        var skelPos = new Vector3(
+            skeleton->Transform.Position.X,
+            skeleton->Transform.Position.Y,
+            skeleton->Transform.Position.Z);
+        var skelRot = Quaternion.Normalize(new Quaternion(
+            skeleton->Transform.Rotation.X,
+            skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z,
+            skeleton->Transform.Rotation.W));
+
+        var defs = GetRagdollBoneDefs();
+        var selected = new List<RagdollController.RagdollBoneDef>();
+        var selectedNames = new HashSet<string>();
+        foreach (var def in defs)
+        {
+            if (!IsLimbRigRole(def.AnatomicalRole) || def.SoftBody)
+                continue;
+            var idx = boneService.ResolveBoneIndex(skel, def.Name);
+            if (idx < 0 || !IsDescendantOrSelf(skel, idx, c.LimbIndex))
+                continue;
+            selected.Add(def);
+            selectedNames.Add(def.Name);
+        }
+
+        if (selected.Count < 2)
+            return null;
+
+        var rig = new LimbRig();
+        var bodyByName = new Dictionary<string, LimbBody>();
+        var worldPositions = new Dictionary<string, Vector3>();
+        var worldRotations = new Dictionary<string, Quaternion>();
+
+        foreach (var def in selected)
+        {
+            var idx = boneService.ResolveBoneIndex(skel, def.Name);
+            ref var mt = ref skel.Pose->ModelPose.Data[idx];
+            var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+            var modelRot = Quaternion.Normalize(new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W));
+            worldPositions[def.Name] = skelPos + Vector3.Transform(modelPos, skelRot);
+            worldRotations[def.Name] = Quaternion.Normalize(skelRot * modelRot);
+        }
+
+        foreach (var def in selected)
+        {
+            var idx = boneService.ResolveBoneIndex(skel, def.Name);
+            var boneWorldPos = worldPositions[def.Name];
+            var boneWorldRot = worldRotations[def.Name];
+
+            var segment = Vector3.Zero;
+            var hasSegment = false;
+            var childName = FindSelectedChild(def.Name, selected);
+            if (childName != null && worldPositions.TryGetValue(childName, out var childWorldPos))
+            {
+                segment = childWorldPos - boneWorldPos;
+                hasSegment = segment.LengthSquared() > 1e-6f;
+            }
+            else if (def.ParentName != null && worldPositions.TryGetValue(def.ParentName, out var parentWorldPos))
+            {
+                segment = boneWorldPos - parentWorldPos;
+                hasSegment = segment.LengthSquared() > 1e-6f;
+            }
+
+            var bodyHalfLength = ResolveBodyHalfLength(def);
+            var bodyCenter = boneWorldPos;
+            var bodyRot = boneWorldRot;
+            var segmentHalfLength = 0f;
+            if (hasSegment)
+            {
+                var segmentLength = segment.Length();
+                var axis = segment / segmentLength;
+                segmentHalfLength = MathF.Min(bodyHalfLength, MathF.Max(0f, segmentLength * 0.45f));
+                bodyCenter = boneWorldPos + axis * segmentHalfLength;
+                bodyRot = CreateCapsuleRotation(segment, boneWorldRot);
+            }
+
+            var mass = MathF.Max(0.05f, def.Mass);
+            var shapeIndex = CreateRigShape(def, bodyHalfLength, mass, out var inertia);
+            rig.Shapes.Add(shapeIndex);
+
+            var handle = simulation.Bodies.Add(BodyDescription.CreateDynamic(
+                new RigidPose(bodyCenter, bodyRot),
+                default(BodyVelocity),
+                inertia,
+                new CollidableDescription(shapeIndex, 0.04f),
+                new BodyActivityDescription(0.01f)));
+
+            var rb = new LimbBody
+            {
+                BoneIndex = idx,
+                Name = def.Name,
+                Body = handle,
+                BodyToBoneRotation = Quaternion.Normalize(Quaternion.Inverse(bodyRot) * boneWorldRot),
+                SegmentHalfLength = segmentHalfLength,
+                Def = def,
+            };
+            rig.Bodies.Add(rb);
+            rig.BoneIndices.Add(idx);
+            bodyByName[def.Name] = rb;
+        }
+
+        foreach (var rb in rig.Bodies)
+        {
+            if (rb.Def.ParentName == null || !bodyByName.TryGetValue(rb.Def.ParentName, out var parent))
+                continue;
+
+            rig.ConnectedPairs.Add(AddConnectedPair(rb.Body, parent.Body));
+            if (parent.Def.ParentName != null && bodyByName.TryGetValue(parent.Def.ParentName, out var grandParent))
+                rig.ConnectedPairs.Add(AddConnectedPair(rb.Body, grandParent.Body));
+
+            AddLimbRigConstraint(rb, parent, worldPositions);
+        }
+
+        log.Info($"Dismember: local rig idx={c.ObjectIndex} bone={c.LimbRootBone} bodies={rig.Bodies.Count}");
+        return rig;
+    }
+
+    private void DriveLimbRig(SkeletonAccess skel, Clone c)
+    {
+        if (simulation == null || c.Rig == null) return;
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton == null) return;
+
+        var skelPos = new Vector3(
+            skeleton->Transform.Position.X,
+            skeleton->Transform.Position.Y,
+            skeleton->Transform.Position.Z);
+        var skelRot = Quaternion.Normalize(new Quaternion(
+            skeleton->Transform.Rotation.X,
+            skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z,
+            skeleton->Transform.Rotation.W));
+        var skelRotInv = Quaternion.Inverse(skelRot);
+
+        var result = new BoneModificationResult(skel.BoneCount);
+        for (int i = 0; i < skel.BoneCount; i++)
+        {
+            ref var m = ref skel.Pose->ModelPose.Data[i];
+            result.OriginalPositions[i] = new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z);
+            result.OriginalRotations[i] = Quaternion.Normalize(new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W));
+        }
+
+        foreach (var rb in c.Rig.Bodies)
+        {
+            var body = simulation.Bodies.GetBodyReference(rb.Body);
+            var boneWorldRot = Quaternion.Normalize(body.Pose.Orientation * rb.BodyToBoneRotation);
+            var boneWorldPos = body.Pose.Position;
+            if (rb.SegmentHalfLength > 0)
+            {
+                var yAxis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
+                boneWorldPos -= yAxis * rb.SegmentHalfLength;
+            }
+
+            var modelPos = Vector3.Transform(boneWorldPos - skelPos, skelRotInv);
+            var modelRot = Quaternion.Normalize(skelRotInv * boneWorldRot);
+            boneService.WriteBoneTransform(skel, rb.BoneIndex, modelPos, modelRot, result);
+        }
+
+        for (int i = 0; i < skel.BoneCount && i < skel.ParentCount; i++)
+        {
+            if (c.Rig.BoneIndices.Contains(i) || !IsDescendantOrSelf(skel, i, c.LimbIndex))
+                continue;
+
+            var parentIdx = skel.HavokSkeleton->ParentIndices[i];
+            if (parentIdx < 0 || !result.HasAccumulated[parentIdx])
+                continue;
+
+            var parentDelta = result.AccumulatedDeltas[parentIdx];
+            var parentOrigPos = result.OriginalPositions[parentIdx];
+            ref var parentModel = ref skel.Pose->ModelPose.Data[parentIdx];
+            var parentNewPos = new Vector3(parentModel.Translation.X, parentModel.Translation.Y, parentModel.Translation.Z);
+
+            var relPos = result.OriginalPositions[i] - parentOrigPos;
+            relPos = Vector3.Transform(relPos, parentDelta);
+            var newPos = parentOrigPos + relPos + (parentNewPos - parentOrigPos);
+            var newRot = Quaternion.Normalize(parentDelta * result.OriginalRotations[i]);
+
+            boneService.WriteBoneTransform(skel, i, newPos, newRot, result);
+        }
+    }
+
+    private RagdollController.RagdollBoneDef[] GetRagdollBoneDefs()
+    {
+        if (config.RagdollBoneConfigs.Count > 0)
+            return RagdollController.BuildBoneDefsFromConfigs(config.RagdollBoneConfigs.ToArray());
+        return RagdollController.DefaultBoneDefs;
+    }
+
+    private static bool IsLimbRigRole(RagdollController.AnatomicalRole role)
+        => role is RagdollController.AnatomicalRole.Shoulder
+            or RagdollController.AnatomicalRole.Elbow
+            or RagdollController.AnatomicalRole.Hand
+            or RagdollController.AnatomicalRole.Hip
+            or RagdollController.AnatomicalRole.Knee
+            or RagdollController.AnatomicalRole.Ankle
+            or RagdollController.AnatomicalRole.Foot;
+
+    private static string? FindSelectedChild(string parentName, List<RagdollController.RagdollBoneDef> defs)
+    {
+        foreach (var def in defs)
+            if (string.Equals(def.ParentName, parentName, StringComparison.Ordinal))
+                return def.Name;
+        return null;
+    }
+
+    private TypedIndex CreateRigShape(RagdollController.RagdollBoneDef def, float bodyHalfLength, float mass, out BodyInertia inertia)
+    {
+        if (def.ColliderShape == RagdollController.RagdollColliderShape.Box)
+        {
+            var extents = ResolveBoxHalfExtents(def, bodyHalfLength);
+            var box = new Box(extents.X * 2f, extents.Y * 2f, extents.Z * 2f);
+            inertia = box.ComputeInertia(mass);
+            return simulation!.Shapes.Add(box);
+        }
+
+        var capsule = new Capsule(MathF.Max(0.005f, def.CapsuleRadius), bodyHalfLength * 2f);
+        inertia = capsule.ComputeInertia(mass);
+        return simulation!.Shapes.Add(capsule);
+    }
+
+    private void AddLimbRigConstraint(LimbBody child, LimbBody parent, Dictionary<string, Vector3> worldPositions)
+    {
+        if (simulation == null) return;
+        var childBody = simulation.Bodies.GetBodyReference(child.Body);
+        var parentBody = simulation.Bodies.GetBodyReference(parent.Body);
+        var anchorWorld = worldPositions.TryGetValue(child.Name, out var anchor) ? anchor : childBody.Pose.Position;
+
+        var childLocalAnchor = Vector3.Transform(anchorWorld - childBody.Pose.Position, Quaternion.Inverse(childBody.Pose.Orientation));
+        var parentLocalAnchor = Vector3.Transform(anchorWorld - parentBody.Pose.Position, Quaternion.Inverse(parentBody.Pose.Orientation));
+
+        var childSeg = NormalizeOrFallback(Vector3.Transform(Vector3.UnitY, childBody.Pose.Orientation), Vector3.UnitY);
+        var parentSeg = NormalizeOrFallback(Vector3.Transform(Vector3.UnitY, parentBody.Pose.Orientation), Vector3.UnitY);
+        var jointSpring = new SpringSettings(18f, 1f);
+        var limitSpring = new SpringSettings(10f, 1f);
+
+        simulation.Solver.Add(child.Body, parent.Body, new BallSocket
+        {
+            LocalOffsetA = childLocalAnchor,
+            LocalOffsetB = parentLocalAnchor,
+            SpringSettings = jointSpring,
+        });
+
+        if (child.Def.Joint == RagdollController.JointType.Hinge)
+        {
+            var hingeAxis = ComputeHingeAxis(childSeg);
+            var forward = ComputeHingeForward(hingeAxis, parentSeg, childSeg);
+
+            simulation.Solver.Add(child.Body, parent.Body, new SwingLimit
+            {
+                AxisLocalA = Vector3.Normalize(Vector3.Transform(childSeg, Quaternion.Inverse(childBody.Pose.Orientation))),
+                AxisLocalB = Vector3.Normalize(Vector3.Transform(forward, Quaternion.Inverse(parentBody.Pose.Orientation))),
+                MaximumSwingAngle = MathF.Max(0.05f, child.Def.SwingLimit),
+                SpringSettings = limitSpring,
+            });
+
+            simulation.Solver.Add(child.Body, parent.Body, new AngularHinge
+            {
+                LocalHingeAxisA = Vector3.Normalize(Vector3.Transform(hingeAxis, Quaternion.Inverse(childBody.Pose.Orientation))),
+                LocalHingeAxisB = Vector3.Normalize(Vector3.Transform(hingeAxis, Quaternion.Inverse(parentBody.Pose.Orientation))),
+                SpringSettings = new SpringSettings(8f, 1f),
+            });
+        }
+        else if (child.Def.SwingLimit > 0)
+        {
+            simulation.Solver.Add(child.Body, parent.Body, new SwingLimit
+            {
+                AxisLocalA = Vector3.Normalize(Vector3.Transform(childSeg, Quaternion.Inverse(childBody.Pose.Orientation))),
+                AxisLocalB = Vector3.Normalize(Vector3.Transform(childSeg, Quaternion.Inverse(parentBody.Pose.Orientation))),
+                MaximumSwingAngle = child.Def.SwingLimit,
+                SpringSettings = limitSpring,
+            });
+        }
+
+        if (child.Def.TwistMinAngle != 0 || child.Def.TwistMaxAngle != 0)
+        {
+            var refDir = ComputeTwistReference(childSeg);
+            var twistBasis = CreateTwistBasis(childSeg, refDir);
+            simulation.Solver.Add(child.Body, parent.Body, new TwistLimit
+            {
+                LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBody.Pose.Orientation) * twistBasis),
+                LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBody.Pose.Orientation) * twistBasis),
+                MinimumAngle = child.Def.TwistMinAngle,
+                MaximumAngle = child.Def.TwistMaxAngle,
+                SpringSettings = limitSpring,
+            });
+        }
+
+        simulation.Solver.Add(child.Body, parent.Body, new AngularMotor
+        {
+            TargetVelocityLocalA = Vector3.Zero,
+            Settings = new MotorSettings(float.MaxValue, 0.25f),
+        });
+    }
+
+    private (int, int) AddConnectedPair(BodyHandle a, BodyHandle b)
+    {
+        var lo = Math.Min(a.Value, b.Value);
+        var hi = Math.Max(a.Value, b.Value);
+        var pair = (lo, hi);
+        connectedPairs.Add(pair);
+        return pair;
     }
 
     // Hide the clone's main/off-hand weapons (separate draw objects not affected by collapsing body
@@ -472,6 +819,16 @@ public unsafe class DismembermentController : IDisposable
             if (simulation != null)
             {
                 if (c.Body.HasValue) simulation.Bodies.Remove(c.Body.Value);
+                if (c.Rig != null)
+                {
+                    foreach (var pair in c.Rig.ConnectedPairs)
+                        connectedPairs.Remove(pair);
+                    foreach (var rb in c.Rig.Bodies)
+                        try { simulation.Bodies.Remove(rb.Body); } catch { }
+                    if (bufferPool != null)
+                        foreach (var s in c.Rig.Shapes)
+                            try { simulation.Shapes.RemoveAndDispose(s, bufferPool); } catch { }
+                }
                 if (c.GroundTile.HasValue) simulation.Statics.Remove(c.GroundTile.Value);
                 if (c.GroundShape.HasValue && bufferPool != null)
                     simulation.Shapes.RemoveAndDispose(c.GroundShape.Value, bufferPool);
@@ -613,13 +970,104 @@ public unsafe class DismembermentController : IDisposable
         return Quaternion.CreateFromAxisAngle(axis, MathF.Acos(Math.Clamp(d, -1f, 1f)));
     }
 
+    private static float ResolveBodyHalfLength(RagdollController.RagdollBoneDef def)
+    {
+        if (def.ColliderShape == RagdollController.RagdollColliderShape.Box && def.BoxHalfExtents.Y > 0)
+            return def.BoxHalfExtents.Y;
+        return MathF.Max(0f, def.CapsuleHalfLength);
+    }
+
+    private static Vector3 ResolveBoxHalfExtents(RagdollController.RagdollBoneDef def, float bodyHalfLength)
+    {
+        var x = def.BoxHalfExtents.X > 0 ? def.BoxHalfExtents.X : MathF.Max(0.01f, def.CapsuleRadius);
+        var y = def.BoxHalfExtents.Y > 0 ? def.BoxHalfExtents.Y : MathF.Max(0.01f, bodyHalfLength);
+        var z = def.BoxHalfExtents.Z > 0 ? def.BoxHalfExtents.Z : MathF.Max(0.01f, def.CapsuleRadius);
+        return new Vector3(x, y, z);
+    }
+
+    private static Quaternion CreateCapsuleRotation(Vector3 segmentDir, Quaternion boneWorldRot)
+    {
+        var y = NormalizeOrFallback(segmentDir, Vector3.UnitY);
+        var z = ProjectOntoPlane(Vector3.Transform(Vector3.UnitZ, boneWorldRot), y);
+        if (z.LengthSquared() < 1e-5f)
+            z = ProjectOntoPlane(Vector3.Transform(Vector3.UnitX, boneWorldRot), y);
+        if (z.LengthSquared() < 1e-5f)
+            z = ProjectOntoPlane(MathF.Abs(Vector3.Dot(y, Vector3.UnitY)) > 0.9f ? Vector3.UnitZ : Vector3.UnitY, y);
+
+        z = NormalizeOrFallback(z, Vector3.UnitZ);
+        var x = NormalizeOrFallback(Vector3.Cross(y, z), Vector3.UnitX);
+        z = NormalizeOrFallback(Vector3.Cross(x, y), z);
+
+        var m = new Matrix4x4(
+            x.X, x.Y, x.Z, 0,
+            y.X, y.Y, y.Z, 0,
+            z.X, z.Y, z.Z, 0,
+            0, 0, 0, 1);
+        return Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(m));
+    }
+
+    private static Quaternion CreateTwistBasis(Vector3 twistAxis, Vector3 referenceDir)
+    {
+        var z = NormalizeOrFallback(twistAxis, Vector3.UnitY);
+        var y = NormalizeOrFallback(Vector3.Cross(z, referenceDir), Vector3.UnitX);
+        var x = NormalizeOrFallback(Vector3.Cross(y, z), Vector3.UnitZ);
+        var m = new Matrix4x4(
+            x.X, x.Y, x.Z, 0,
+            y.X, y.Y, y.Z, 0,
+            z.X, z.Y, z.Z, 0,
+            0, 0, 0, 1);
+        return Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(m));
+    }
+
+    private static Vector3 ComputeHingeAxis(Vector3 segmentDir)
+    {
+        var seg = NormalizeOrFallback(segmentDir, Vector3.UnitY);
+        var axis = Vector3.Cross(seg, Vector3.UnitY);
+        if (axis.LengthSquared() < 0.001f)
+            axis = Vector3.Cross(seg, Vector3.UnitZ);
+        return NormalizeOrFallback(axis, Vector3.UnitX);
+    }
+
+    private static Vector3 ComputeHingeForward(Vector3 hingeAxis, Vector3 parentSegmentDir, Vector3 childSegmentDir)
+    {
+        var parent = NormalizeOrFallback(parentSegmentDir, Vector3.UnitY);
+        var child = NormalizeOrFallback(childSegmentDir, Vector3.UnitY);
+        var forward = Vector3.Cross(hingeAxis, parent);
+        if (forward.LengthSquared() < 0.001f)
+            forward = ProjectOntoPlane(child, hingeAxis);
+        forward = NormalizeOrFallback(forward, child);
+        return Vector3.Dot(forward, child) < 0 ? -forward : forward;
+    }
+
+    private static Vector3 ComputeTwistReference(Vector3 segmentDir)
+    {
+        var seg = NormalizeOrFallback(segmentDir, Vector3.UnitY);
+        var reference = Vector3.Cross(seg, Vector3.UnitY);
+        if (reference.LengthSquared() < 0.001f)
+            reference = Vector3.Cross(seg, Vector3.UnitX);
+        return NormalizeOrFallback(reference, Vector3.UnitX);
+    }
+
+    private static Vector3 NormalizeOrFallback(Vector3 value, Vector3 fallback)
+    {
+        if (value.LengthSquared() > 1e-6f)
+            return Vector3.Normalize(value);
+        return fallback.LengthSquared() > 1e-6f ? Vector3.Normalize(fallback) : Vector3.UnitY;
+    }
+
+    private static Vector3 ProjectOntoPlane(Vector3 value, Vector3 planeNormal)
+    {
+        var normal = NormalizeOrFallback(planeNormal, Vector3.UnitY);
+        return value - Vector3.Dot(value, normal) * normal;
+    }
+
     private void EnsureSimulation()
     {
         if (simulation != null) return;
         bufferPool = new BufferPool();
         simulation = BepuSimulation.Create(
             bufferPool,
-            new WeaponDropNarrowPhaseCallbacks { Friction = config.RagdollFriction, MaxRecoveryVelocity = 1.5f },
+            new RagdollNarrowPhaseCallbacks { ConnectedPairs = connectedPairs, Friction = config.RagdollFriction },
             // Stronger damping than weapons (0.97/0.92) so limbs tumble a bit then settle, not roll far.
             new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -config.RagdollGravity, 0), 0.93f, 0.84f),
             new SolveDescription(4, 1));
@@ -634,6 +1082,7 @@ public unsafe class DismembermentController : IDisposable
     {
         simulation?.Dispose();
         simulation = null;
+        connectedPairs.Clear();
         bufferPool?.Clear();
         bufferPool = null;
     }
