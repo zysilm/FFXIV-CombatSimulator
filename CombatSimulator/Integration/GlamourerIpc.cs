@@ -116,12 +116,10 @@ public class GlamourerIpc
         if (!loggedApiVersion)
         {
             loggedApiVersion = true;
-            try
-            {
-                var ver = pluginInterface.GetIpcSubscriber<(int, int)>("Glamourer.ApiVersions").InvokeFunc();
-                log.Info($"GlamourerIpc: API version {ver.Item1}.{ver.Item2}");
-            }
-            catch (Exception ex) { log.Warning($"GlamourerIpc: ApiVersions unavailable ({ex.Message})"); }
+            try { var v = pluginInterface.GetIpcSubscriber<(int, int)>("Glamourer.ApiVersions").InvokeFunc(); log.Info($"GlamourerIpc: API version (ApiVersions) {v.Item1}.{v.Item2}"); }
+            catch (Exception ex) { log.Warning($"GlamourerIpc: ApiVersions {ex.Message}"); }
+            try { var v = pluginInterface.GetIpcSubscriber<int>("Glamourer.ApiVersion").InvokeFunc(); log.Info($"GlamourerIpc: API version (ApiVersion) {v}"); }
+            catch (Exception ex) { log.Warning($"GlamourerIpc: ApiVersion {ex.Message}"); }
         }
 
         // V4 (objectIndex, key) -> (ec, base64)
@@ -135,16 +133,33 @@ public class GlamourerIpc
         }
         catch (Exception ex) { log.Warning($"GlamourerIpc: GetStateBase64.V4 {ex.Message}"); }
 
-        // V3 (objectIndex) -> (ec, base64)  [no key]
-        try
+        // V3/V2/V1 (objectIndex) -> (ec, base64)  [no key]
+        foreach (var label in new[] { "Glamourer.GetStateBase64.V3", "Glamourer.GetStateBase64.V2", "Glamourer.GetStateBase64.V1", "Glamourer.GetStateBase64" })
         {
-            var s = pluginInterface.GetIpcSubscriber<int, (int, string?)>("Glamourer.GetStateBase64.V3");
-            var (ec, state) = s.InvokeFunc(objectIndex);
-            IsAvailable = true;
-            if (ec == 0 && !string.IsNullOrEmpty(state)) { log.Info($"GlamourerIpc: GetStateBase64.V3 ok len={state!.Length}"); return state; }
-            log.Warning($"GlamourerIpc: GetStateBase64.V3 ec={ec} len={state?.Length ?? 0}");
+            try
+            {
+                var s = pluginInterface.GetIpcSubscriber<int, (int, string?)>(label);
+                var (ec, state) = s.InvokeFunc(objectIndex);
+                IsAvailable = true;
+                if (ec == 0 && !string.IsNullOrEmpty(state)) { log.Info($"GlamourerIpc: {label} ok len={state!.Length}"); return state; }
+                log.Warning($"GlamourerIpc: {label} ec={ec} len={state?.Length ?? 0}");
+            }
+            catch (Exception ex) { log.Warning($"GlamourerIpc: {label} {ex.Message}"); }
         }
-        catch (Exception ex) { log.Warning($"GlamourerIpc: GetStateBase64.V3 {ex.Message}"); }
+
+        // Legacy: GetAllCustomizationFromCharacter (by object-table index) -> base64 string
+        foreach (var label in new[] { "Glamourer.GetAllCustomizationFromCharacter", "Glamourer.GetAllCustomization" })
+        {
+            try
+            {
+                var s = pluginInterface.GetIpcSubscriber<int, string>(label);
+                var state = s.InvokeFunc(objectIndex);
+                IsAvailable = true;
+                if (!string.IsNullOrEmpty(state)) { log.Info($"GlamourerIpc: {label} ok len={state.Length}"); return state; }
+                log.Warning($"GlamourerIpc: {label} empty");
+            }
+            catch (Exception ex) { log.Warning($"GlamourerIpc: {label} {ex.Message}"); }
+        }
 
         return null;
     }
