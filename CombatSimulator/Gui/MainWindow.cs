@@ -1737,7 +1737,30 @@ public class MainWindow : IDisposable
                     ImGui.SetTooltip("Spawn a spark on the struck target (uses the Hit VFX path). Spawning actor VFX on modified/spawned enemies can be fragile -- disable if you see issues.");
             }
         }
+
+        if (ImGui.CollapsingHeader("Dismemberment (POC)"))
+        {
+            HelpMarker("Proof of concept: while the player ragdoll is active (on death), collapse the chosen limb's bones so it vanishes from the body. Validates the 'hide' step before the separate rolling limb prop is added. Trigger a death to see it.");
+            var limb = Math.Clamp(config.DismemberPocLimb, 0, dismemberLimbNames.Length - 1);
+            if (ImGui.Combo("Limb##dismember", ref limb, dismemberLimbNames, dismemberLimbNames.Length))
+            {
+                config.DismemberPocLimb = limb;
+                config.Save();
+            }
+            using (ImRaii.Disabled(config.DismemberPocLimb is 0 or 1)) // Head has no side
+            {
+                var side = Math.Clamp(config.DismemberPocSide, 0, dismemberSideNames.Length - 1);
+                if (ImGui.Combo("Side##dismember", ref side, dismemberSideNames, dismemberSideNames.Length))
+                {
+                    config.DismemberPocSide = side;
+                    config.Save();
+                }
+            }
+        }
     }
+
+    private static readonly string[] dismemberLimbNames = { "Off", "Head", "Upper arm", "Forearm", "Thigh", "Shin" };
+    private static readonly string[] dismemberSideNames = { "Left", "Right" };
 
     private void DrawGlamourerHeaderSection()
     {

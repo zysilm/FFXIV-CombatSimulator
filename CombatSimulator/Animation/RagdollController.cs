@@ -1353,6 +1353,103 @@ public unsafe class RagdollController : IDisposable
         return v;
     }
 
+    // POC dismemberment — map a (limb, side) selection to the subtree-root bone.
+    private static string? DismemberRootBoneName(int limb, int side)
+    {
+        var s = side == 1 ? "_r" : "_l";
+        return limb switch
+        {
+            1 => "j_kao",        // head (no side)
+            2 => "j_ude_a" + s,  // upper arm
+            3 => "j_ude_b" + s,  // forearm
+            4 => "j_asi_a" + s,  // thigh
+            5 => "j_asi_b" + s,  // shin
+            _ => null,
+        };
+    }
+
+    // Collapse the chosen limb's entire bone subtree to ~0 scale so the limb vanishes from the body.
+    private void HideLimbSubtree(SkeletonAccess skel, int limb, int side)
+    {
+        var rootName = DismemberRootBoneName(limb, side);
+        if (rootName == null) return;
+
+        var rootIdx = -1;
+        foreach (var rb in ragdollBones)
+            if (rb.Name == rootName) { rootIdx = rb.BoneIndex; break; }
+        if (rootIdx < 0) return;
+
+        var pose = skel.Pose;
+        // Severance point = the root bone's model-space position (its joint). Collapse every subtree
+        // bone to BOTH ~0 scale AND that single point, so the limb has no length and no leftover
+        // sliver — it fully vanishes into the joint instead of compressing into a thin model.
+        ref var rootM = ref pose->ModelPose.Data[rootIdx];
+        var rx = rootM.Translation.X;
+        var ry = rootM.Translation.Y;
+        var rz = rootM.Translation.Z;
+
+        var n = Math.Min(skel.BoneCount, skel.ParentCount);
+        for (int i = 0; i < n; i++)
+        {
+            if (!IsDescendantOrSelf(skel, i, rootIdx)) continue;
+            ref var m = ref pose->ModelPose.Data[i];
+            m.Translation.X = rx;
+            m.Translation.Y = ry;
+            m.Translation.Z = rz;
+            m.Scale.X = 0.0001f;
+            m.Scale.Y = 0.0001f;
+            m.Scale.Z = 0.0001f;
+        }
+
+        // Face/hair (and similar) live on SEPARATE partial skeletons attached to a body bone, so they
+        // are not in the main parent chain above — collapse those too or the head stays visible.
+        HideSubtreePartialSkeletons(skel, rootIdx, new Vector3(rx, ry, rz));
+    }
+
+    private void HideSubtreePartialSkeletons(SkeletonAccess skel, int rootIdx, Vector3 collapsePoint)
+    {
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton == null) return;
+
+        for (int ps = 1; ps < skeleton->PartialSkeletonCount; ps++)
+        {
+            var partial = &skeleton->PartialSkeletons[ps];
+            var pose = partial->GetHavokPose(0);
+            if (pose == null || pose->Skeleton == null || pose->ModelInSync == 0) continue;
+
+            var cnt = pose->ModelPose.Length;
+            if (cnt < 1) continue;
+
+            // This partial attaches to its root bone (e.g. "j_kao"); collapse it only if that bone is
+            // inside the hidden subtree.
+            var rootName = pose->Skeleton->Bones[0].Name.String;
+            var mainIdx = boneService.ResolveBoneIndex(skel, rootName);
+            if (mainIdx < 0 || !IsDescendantOrSelf(skel, mainIdx, rootIdx)) continue;
+
+            for (int b = 0; b < cnt; b++)
+            {
+                ref var m = ref pose->ModelPose.Data[b];
+                m.Translation.X = collapsePoint.X;
+                m.Translation.Y = collapsePoint.Y;
+                m.Translation.Z = collapsePoint.Z;
+                m.Scale.X = 0.0001f;
+                m.Scale.Y = 0.0001f;
+                m.Scale.Z = 0.0001f;
+            }
+        }
+    }
+
+    private static bool IsDescendantOrSelf(SkeletonAccess skel, int bone, int root)
+    {
+        var guard = 0;
+        while (bone >= 0 && guard++ < 256)
+        {
+            if (bone == root) return true;
+            bone = skel.HavokSkeleton->ParentIndices[bone];
+        }
+        return false;
+    }
+
     private Vector3 ModelToWorld(Vector3 modelPos)
         => skelWorldPos + Vector3.Transform(modelPos, skelWorldRot);
 
@@ -3769,6 +3866,12 @@ public unsafe class RagdollController : IDisposable
         {
             boneService.PropagateToPartialSkeletons(skel, kaoBodyBoneIndex, "j_kao", result);
         }
+
+        // Dismemberment POC: collapse the chosen limb's whole bone subtree to ~0 scale so it
+        // vanishes from the body (the "hide" half of hide-and-substitute). Done last so it overrides
+        // the physics/propagation writes for those bones.
+        if (config.DismemberPocLimb > 0)
+            HideLimbSubtree(skel, config.DismemberPocLimb, config.DismemberPocSide);
 
         // Apply hair physics (after rigid j_kao propagation). Skipped while resting —
         // the body is settled, so hair has settled too.

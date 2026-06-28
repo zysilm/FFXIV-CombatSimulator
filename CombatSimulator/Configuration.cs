@@ -366,6 +366,12 @@ public class Configuration : IPluginConfiguration
     // effect on next ragdoll activation.
     public bool RagdollAnatomicalRom { get; set; } = true;
 
+    // Dismemberment POC: while the player ragdoll is active, collapse a chosen limb's bone subtree
+    // to ~0 scale so it vanishes from the body (validates the "hide" mechanic before adding the
+    // separate rolling limb prop). 0 = off; 1=Head, 2=UpperArm, 3=Forearm, 4=Thigh, 5=Shin.
+    public int DismemberPocLimb { get; set; } = 0;
+    public int DismemberPocSide { get; set; } = 0; // 0 = left, 1 = right
+
     // Death collapse — physics-driven guided collapse on death (relaxation family + directed
     // knee power-loss). Config lives in GuidedCollapse; see DEATH_COLLAPSE_RESEARCH.md.
     public GuidedCollapseSettings GuidedCollapse { get; set; } = new();
