@@ -103,6 +103,60 @@ public class GlamourerIpc
     }
 
     /// <summary>
+    /// Capture an actor's LIVE Glamourer state (including any runtime design switches the user made)
+    /// as a base64 string. Returns null if Glamourer is unavailable or the call fails — callers must
+    /// treat the live state as optional and fall back to the base game appearance.
+    /// </summary>
+    public string? GetStateBase64(int objectIndex)
+    {
+        if (objectIndex < 0) return null;
+        try
+        {
+            var subscriber = pluginInterface.GetIpcSubscriber<int, uint, (int, string?)>("Glamourer.GetStateBase64.V4");
+            var (ec, state) = subscriber.InvokeFunc(objectIndex, 0u);
+            IsAvailable = true;
+            if (ec != 0 || string.IsNullOrEmpty(state))
+            {
+                log.Warning($"GlamourerIpc: GetStateBase64(idx={objectIndex}) ec={ec}, len={state?.Length ?? 0}");
+                return null;
+            }
+            return state;
+        }
+        catch (Exception ex)
+        {
+            log.Warning($"GlamourerIpc: GetStateBase64 not available ({ex.Message}); inner={ex.InnerException?.Message}");
+            IsAvailable = false;
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Apply a base64 state (captured via <see cref="GetStateBase64"/>) onto an actor by object-table
+    /// index — used to mirror the player's live appearance onto a spawned clone. The <c>Once</c> flag is
+    /// NOT set (the clone is still building its draw object). Returns false if Glamourer is unavailable.
+    /// </summary>
+    public bool ApplyStateBase64(string base64, int objectIndex, uint key = 0)
+    {
+        if (objectIndex < 0 || string.IsNullOrEmpty(base64)) return false;
+        try
+        {
+            // V4 ApplyState takes the state as `object` (a base64 string is accepted here).
+            var subscriber = pluginInterface.GetIpcSubscriber<object, int, uint, ulong, int>("Glamourer.ApplyState.V4");
+            var flags = (ulong)(ApplyFlagEquipment | ApplyFlagCustomization);
+            var result = subscriber.InvokeFunc(base64, objectIndex, key, flags);
+            IsAvailable = true;
+            if (result != 0)
+                log.Warning($"GlamourerIpc: ApplyStateBase64(idx={objectIndex}) ec={result}");
+            return result == 0;
+        }
+        catch (Exception ex)
+        {
+            log.Warning($"GlamourerIpc: ApplyStateBase64 not available ({ex.Message}); inner={ex.InnerException?.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Set (or strip) a single equipment/accessory slot on an actor by object-table index.
     /// Passing <paramref name="itemId"/> = 0 tells Glamourer to resolve its per-slot
     /// "Nothing" item (smallclothes for body/legs/feet/hands, empty for head/accessories) —

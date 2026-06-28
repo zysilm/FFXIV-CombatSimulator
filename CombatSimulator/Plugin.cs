@@ -46,6 +46,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly BoneTransformService boneTransformService;
     private readonly RagdollController ragdollController;
     private readonly WeaponDropController weaponDropController;
+    private readonly DismembermentController dismembermentController;
     private readonly CombatEngine combatEngine;
     private readonly CombatCompanionManager companionManager;
     private readonly NpcAiController npcAiController;
@@ -132,6 +133,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, npcActionProfileProvider, log);
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
         weaponDropController = new WeaponDropController(boneTransformService, config, log);
+        dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, objectTable, config, log);
         koStripController = new Dev.KoStripController(config, glamourerIpc, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
@@ -272,6 +274,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         {
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
+            dismembermentController.RemoveAll();
             koStripController.Reset();
             monsterModeController.Despawn();
             activeCameraController.ResetFightingCamera();
@@ -299,6 +302,15 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnPlayerDeath = addr =>
         {
             weaponDropController.SpawnFor(addr, config.RagdollActivationDelay);
+            if (config.EnableDismemberRollaway && config.DismemberPocBones is { Count: > 0 })
+            {
+                // Capture the player's LIVE Glamourer state once (null if Glamourer absent) and spawn one
+                // severed-limb clone per selected part.
+                var playerIdx = objectTable.LocalPlayer?.ObjectIndex ?? 0;
+                var glam = glamourerIpc.GetStateBase64((int)playerIdx);
+                foreach (var bone in config.DismemberPocBones)
+                    dismembermentController.SpawnFor(addr, bone, config.RagdollActivationDelay, glam);
+            }
             koStripController.StripOnKo(addr);
             if (config.MonsterControlKiller)
             {
@@ -414,6 +426,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         monsterModeController.Dispose();
         ragdollController.Dispose();
         weaponDropController.Dispose();
+        dismembermentController.Dispose();
         boneTransformService.Dispose();
         deathCamController.Dispose();
         activeCameraController.Dispose();
@@ -956,6 +969,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         DeactivateAllNpcRagdolls();
         weaponDropController.RemoveAll();
+        dismembermentController.RemoveAll();
         koStripController.Reset();
         monsterModeController.Despawn();
 
@@ -979,6 +993,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             npcSpawner.SpawnModeActive = false;
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
+            dismembermentController.RemoveAll();
             koStripController.Reset();
             monsterModeController.Despawn();
             npcSpawner.DespawnAll();

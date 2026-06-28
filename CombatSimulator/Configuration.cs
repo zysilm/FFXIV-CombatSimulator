@@ -371,6 +371,9 @@ public class Configuration : IPluginConfiguration
     // every severed part (e.g. "j_kao", "j_ude_b_l"). Empty = none. The separate rolling limb prop
     // comes later; this is the "hide" half.
     public List<string> DismemberPocBones { get; set; } = new();
+    // When on, each hidden limb also spawns a clone that shows ONLY that limb and tumbles away (the
+    // "rolls away" half). Off = just hide on the body. POC: local player only.
+    public bool EnableDismemberRollaway { get; set; } = false;
 
     // Death collapse — physics-driven guided collapse on death (relaxation family + directed
     // knee power-loss). Config lives in GuidedCollapse; see DEATH_COLLAPSE_RESEARCH.md.

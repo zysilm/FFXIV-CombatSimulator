@@ -1760,6 +1760,15 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
             }
+
+            ImGui.Separator();
+            var rollaway = config.EnableDismemberRollaway;
+            if (ImGui.Checkbox("Limb rolls away (clone)", ref rollaway))
+            {
+                config.EnableDismemberRollaway = rollaway;
+                config.Save();
+            }
+            HelpMarker("Also spawn a clone of you showing ONLY each severed limb, which tumbles to the ground (full appearance + live Glamourer if installed). Off = just hide the limb on the body. POC: local player only; one clone per selected limb.");
         }
     }
 
