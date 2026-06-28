@@ -3581,6 +3581,22 @@ public class MainWindow : IDisposable
                 }
                 HelpMarker("Spring frequency of the joint LIMIT walls (swing cones + twist ranges). Higher = firmer wall so joints don't over-rotate past their range, but too high for the substep count over-drives the solver into jitter. 60 = soft, 90 = balanced default, 120+ = firm (raise Solver Substeps to match). Takes effect on next ragdoll activation.");
 
+                var jointFreq = config.RagdollJointSpringFrequency;
+                if (ImGui.SliderFloat("Joint Stiffness (Hz)##ragdoll", ref jointFreq, 15f, 120f, "%.0f"))
+                {
+                    config.RagdollJointSpringFrequency = jointFreq;
+                    config.Save();
+                }
+                HelpMarker("Spring frequency of the POSITIONAL joints that hold bones together (BallSocket/Weld), not the limit walls. Higher = bones separate less under big impulses (the 'rubber-band' stretch); too high for the substep count = jitter. 30 = long-standing default. Raise Solver Substeps to support higher values. Takes effect on next ragdoll activation.");
+
+                var footJointFreq = config.RagdollFootJointSpringFrequency;
+                if (ImGui.SliderFloat("Foot Joint Stiffness (Hz)##ragdoll", ref footJointFreq, 0f, 150f, "%.0f"))
+                {
+                    config.RagdollFootJointSpringFrequency = footJointFreq;
+                    config.Save();
+                }
+                HelpMarker("Positional stiffness of the calf->foot joint specifically. The foot takes the hardest ground-impact impulses, so it rubber-bands first; give it a firmer spring than the body default. 60 = firm, 0 = use the body Joint Stiffness above. Takes effect on next ragdoll activation.");
+
                 var experimentalJointFrames = config.RagdollExperimentalJointFrames;
                 if (ImGui.Checkbox("Experimental Joint Frames##ragdoll", ref experimentalJointFrames))
                 {

@@ -103,16 +103,24 @@ public class GuidedCollapseKneePowerLossSettings
     public float EntryPelvisDownStart { get; set; } = 0.32f;
     public float EntryPelvisDownEnd { get; set; } = 0.60f;
     public float KneeFlexDegrees { get; set; } = 34f;
-    public float KneeBuckleFlexForce { get; set; } = 82f;
-    public float KneeTorsoFlexForce { get; set; } = 42f;
+    // Knee-flex torques act on the lower-leg inertia, which Tier D's anthropometric masses
+    // cut to ~half (shin 3->1.8, calf 1->0.18 kg). Scaled down ~x0.55 so the knee buckles at
+    // the same rate instead of over-driving on the now-lighter leg (was 82 / 42).
+    public float KneeBuckleFlexForce { get; set; } = 46f;
+    public float KneeTorsoFlexForce { get; set; } = 24f;
+    // Foot supports are positional pins that anchor the WHOLE body's pivot over the planted
+    // foot; body mass is unchanged (~70 kg), so these stay as-is (lowering them slips the foot).
     public float BuckleFootSupportForce { get; set; } = 1100f;
     public float TorsoFootSupportForce { get; set; } = 650f;
     public bool FootProxyEnabled { get; set; } = true;
     public float FootProxyForwardOffset { get; set; } = 0.10f;
     public float FootProxyDownOffset { get; set; } = 0.035f;
     public float FootProxyGroundClearance { get; set; } = 0.018f;
-    public float BucklePelvisForce { get; set; } = 420f;
-    public float TorsoPelvisForce { get; set; } = 220f;
+    // Pelvis-drive torques act on the trunk, which Tier D made HEAVIER (pelvis 8->9.9,
+    // mid-spine 5->7.7 kg). Scaled up ~x1.24 so the torso still pitches forward in step with
+    // the buckling legs instead of lagging (was 420 / 220).
+    public float BucklePelvisForce { get; set; } = 520f;
+    public float TorsoPelvisForce { get; set; } = 275f;
     public float ChestPitchDegrees { get; set; } = 41f;
     public bool UseSemanticControls { get; set; } = false;
     public float BuckleMinDuration { get; set; } = 0.24f;
@@ -284,6 +292,17 @@ public class Configuration : IPluginConfiguration
     // 120 = very firm (needs substeps to stay stable), 90 = balanced default. Takes
     // effect on next ragdoll activation.
     public float RagdollLimitSpringFrequency { get; set; } = 90f;
+    // Spring frequency (Hz) of the POSITIONAL joints (the BallSocket/Weld that hold bones
+    // together at the joint), as opposed to the limit walls above. Higher = bones separate
+    // less under large impulses ("rubber-band" stretch); too high relative to the step needs
+    // more substeps to stay stable. 30 = long-standing default. Takes effect on next
+    // ragdoll activation.
+    public float RagdollJointSpringFrequency { get; set; } = 30f;
+    // Positional joint stiffness for the FOOT specifically (calf->foot BallSocket). The foot
+    // takes the hardest ground-impact impulses, so it rubber-bands first; give it a firmer
+    // spring than the body default. 60 = firm; falls back to RagdollJointSpringFrequency when
+    // set to 0. Takes effect on next ragdoll activation.
+    public float RagdollFootJointSpringFrequency { get; set; } = 60f;
     // Anatomical joint-frame builder for hinge axes and ball-joint twist references.
     // Keep the switch so unusual skeletons can fall back to the legacy frame builder.
     public bool RagdollExperimentalJointFrames { get; set; } = true;

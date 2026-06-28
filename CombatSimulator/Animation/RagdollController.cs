@@ -2266,7 +2266,14 @@ public unsafe class RagdollController : IDisposable
         foreach (var rb in ragdollBones)
             boneIdxToBodyHandle[rb.BoneIndex] = rb.BodyHandle;
 
-        var jointSpring = new SpringSettings(30, 1);
+        var jointSpring = new SpringSettings(config.RagdollJointSpringFrequency, 1);
+        // Foot positional joint is firmer than the body default: it absorbs the hardest
+        // ground-impact impulses and otherwise rubber-bands first. Falls back to the body
+        // default when the foot frequency is left at 0.
+        var footJointFreq = config.RagdollFootJointSpringFrequency > 0f
+            ? config.RagdollFootJointSpringFrequency
+            : config.RagdollJointSpringFrequency;
+        var footJointSpring = new SpringSettings(footJointFreq, 1);
         var limitSpring = new SpringSettings(config.RagdollLimitSpringFrequency, 1);
         var motorDamping = 0.01f;
 
@@ -2501,7 +2508,9 @@ public unsafe class RagdollController : IDisposable
                         LocalOffsetB = parentLocalAnchor,
                         SpringSettings = boneDef.SoftBody
                             ? new SpringSettings(boneDef.SoftSpringFreq, boneDef.SoftSpringDamp)
-                            : jointSpring,
+                            : boneDef.AnatomicalRole == AnatomicalRole.Foot
+                                ? footJointSpring
+                                : jointSpring,
                     });
 
                 // SwingLimit: symmetric cone limiting deviation from initial direction.
