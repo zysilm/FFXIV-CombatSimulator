@@ -2,7 +2,7 @@
     "Name": "Combat Simulator",
     "Author": "zysilm",
     "Punchline": "Turn FFXIV into an ARPG with advanced Ragdoll feature.",
-    "Description": "Adds a local ARPG-style combat layer with action controls, NPC battles, party companions, hit feedback, cinematic cameras, and advanced ragdoll physics. All combat is simulated client-side; no data is sent to the server.",
+    "Description": "A local combat sandbox that makes FFXIV feel more like an action RPG, with responsive fights and advanced ragdoll physics. Everything runs client-side and does not affect the server.",
     "RepoUrl": "https://github.com/zysilm/FFXIV-CombatSimulator",
     "Tags": [
         "combat",
