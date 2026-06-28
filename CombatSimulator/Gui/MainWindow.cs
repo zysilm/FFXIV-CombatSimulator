@@ -1795,6 +1795,8 @@ public class MainWindow : IDisposable
     {
         ("j_ude_a_l", "j_ude_b_l"),
         ("j_ude_a_r", "j_ude_b_r"),
+        ("j_asi_a_l", "j_asi_b_l"),
+        ("j_asi_a_r", "j_asi_b_r"),
     };
 
     private bool NormalizeDismemberPartSelection()
