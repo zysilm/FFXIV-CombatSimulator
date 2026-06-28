@@ -95,12 +95,25 @@ public sealed class PlayerGuardController
             return;
         }
 
-        // Absorb this attack and KEEP the guard open: any further attack arriving within the chain
-        // window is absorbed by the same press, so a burst of attacks costs one parry, not many.
+        // Absorb this attack.
         chainCount++;
-        activeTimer = MathF.Max(activeTimer, MathF.Max(0.01f, config.ChainGuardWindow));
         animationController.PlayPlayerGuardSuccess();
         log.Debug($"Chain guard absorbed attack #{chainCount}.");
+
+        // Cap the chain: a single press absorbs a short burst, but it must not tank an unbroken
+        // swarm forever (each block refreshes the window, so a continuous crowd would otherwise
+        // keep one press alive indefinitely). Once the cap is hit, end the chain NOW so the window
+        // closes and further attacks land until the player re-guards (after recovery + cooldown).
+        var maxChain = config.GuardMaxChain;
+        if (maxChain > 0 && chainCount >= maxChain)
+        {
+            EndChain();
+            return;
+        }
+
+        // Otherwise KEEP the guard open: any further attack arriving within the chain window is
+        // absorbed by the same press, so a burst of attacks costs one parry, not many.
+        activeTimer = MathF.Max(activeTimer, MathF.Max(0.01f, config.ChainGuardWindow));
     }
 
     // The chain ends when the open window finally lapses with no new attack. Output the count and

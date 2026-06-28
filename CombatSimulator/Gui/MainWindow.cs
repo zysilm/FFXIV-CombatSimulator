@@ -1439,6 +1439,16 @@ public class MainWindow : IDisposable
         SliderFloatSaved("Active window", () => config.GuardActiveWindow, v => config.GuardActiveWindow = v, 0.05f, 0.6f, "Early tolerance: how long a guard press stays active (press up to this long BEFORE the strike).");
         SliderFloatSaved("Late tolerance", () => config.GuardLateTolerance, v => config.GuardLateTolerance = v, 0f, 0.5f, "Grace AFTER the strike closes during which a guard still counts (double-sided). 0 = strict.");
         SliderFloatSaved("Chain window", () => config.ChainGuardWindow, v => config.ChainGuardWindow = v, 0f, 1.0f, "After a block, keep guard open this long to absorb the next attack with the SAME press (chain guard). 0 = single block per press.");
+        {
+            var maxChain = config.GuardMaxChain;
+            if (ImGui.SliderInt("Max chain blocks", ref maxChain, 0, 20))
+            {
+                config.GuardMaxChain = maxChain;
+                config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Max attacks ONE guard press can chain-block before the chain ends and you must re-guard. Stops a single press from blocking dozens of hits from a continuous swarm. 0 = unlimited (legacy).");
+        }
         SliderFloatSaved("Recovery", () => config.GuardRecovery, v => config.GuardRecovery = v, 0.05f, 1.0f, "Lockout after a guard CHAIN ends.");
         SliderFloatSaved("Cooldown", () => config.GuardCooldown, v => config.GuardCooldown = v, 0f, 1.0f, "Minimum time between guard attempts.");
 
