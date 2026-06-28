@@ -1,8 +1,8 @@
 {
     "Name": "Combat Simulator",
     "Author": "zysilm",
-    "Punchline": "Run local party battles with NPCs and field enemies.",
-    "Description": "A client-side combat simulator for local field battles, NPC targets, and companion skirmishes. Features party-style combat, target selection, NPC AI, action VFX, HP overlays, death cam, active camera, and high-precision ragdoll physics. All combat is simulated locally - no data is sent to the server.",
+    "Punchline": "Turn FFXIV into an ARPG with advanced Ragdoll feature.",
+    "Description": "Adds a local ARPG-style combat layer with action controls, NPC battles, party companions, hit feedback, cinematic cameras, and advanced ragdoll physics. All combat is simulated client-side; no data is sent to the server.",
     "RepoUrl": "https://github.com/zysilm/FFXIV-CombatSimulator",
     "Tags": [
         "combat",
