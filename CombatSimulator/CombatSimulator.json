@@ -2,7 +2,7 @@
     "Name": "Combat Simulator",
     "Author": "zysilm",
     "Punchline": "Turn FFXIV into an ARPG with advanced Ragdoll feature.",
-    "Description": "A local combat sandbox that makes FFXIV feel more like an action RPG, with responsive fights and advanced ragdoll physics. Everything runs client-side and does not affect the server.",
+    "Description": "A combat sandbox that makes FFXIV feel more like an action RPG, with responsive fights and advanced ragdoll physics.",
     "RepoUrl": "https://github.com/zysilm/FFXIV-CombatSimulator",
     "Tags": [
         "combat",
