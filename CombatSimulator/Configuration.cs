@@ -597,6 +597,25 @@ public class Configuration : IPluginConfiguration
     // large enemy is hittable from its surface (not its centre) while a small enemy is unchanged. This
     // is how FFXIV itself measures melee range. 0 = old centre-to-centre, 1 = exact surface, >1 = lenient.
     public float MeleeTargetHitboxReach { get; set; } = 1.0f;
+
+    // Hit feedback ("game feel" / 打击感) on a confirmed player attack: brief target hitstop + a
+    // camera punch + an optional hit spark. All gated below.
+    public bool EnableHitFeedback { get; set; } = true;
+    // Delay (seconds) between the attack input and the impact feedback firing. The swing has ~0.5s of
+    // windup before the weapon visually CONNECTS, so the hitstop/camera/spark must wait or they fire
+    // at swing start and feel disconnected. ~0.45 lines up with the contact frame; tune to taste.
+    public float HitFeedbackDelay { get; set; } = 0.45f;
+    // Hitstop: freeze the struck target's animation for this many ms on impact ("刀刀到肉"). The single
+    // biggest contributor to impact feel. Keep SHORT (40-90 ms) or it reads as lag. 0 = off. Only the
+    // target is frozen (never the player), and the freeze is skipped/auto-released if it dies.
+    public float HitstopMs { get; set; } = 81.5f;
+    // Camera punch: a brief decaying screen shake on impact (yalms of camera offset). Small = weighty,
+    // large = nauseating. Layered on top of Active/Fight cam; suppressed during the death cam. 0 = off.
+    public float HitCameraShake { get; set; } = 0.1f;
+    public float HitCameraShakeDuration { get; set; } = 0.2f; // seconds the shake decays over
+    // Spawn a spark VFX on the struck target (reuses HitVfxPath). Off by default: ActorVfxCreate on
+    // modified/spawned actors can be fragile, so opt in once you've confirmed it's stable in your setup.
+    public bool EnableHitSparkVfx { get; set; } = true;
     public int LightAttackPotency { get; set; } = 120;
     // Soft-target selection: ranged basic attack / ranged skills use a longer, wider selection cone
     // and pick the smallest-angle enemy (not the nearest).

@@ -66,6 +66,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter;
     private readonly CombatSimulator.ActionCombat.TelegraphSystem telegraphSystem;
     private readonly CombatSimulator.ActionCombat.ActionModeController actionModeController;
+    private readonly CombatSimulator.ActionCombat.HitFeedbackController hitFeedbackController;
 
     // NPC ragdoll controllers (multiple concurrent, persist until sim stop/reset/zone change)
     private readonly Dictionary<nint, RagdollController> npcRagdolls = new();
@@ -156,15 +157,20 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         telegraphSystem = new CombatSimulator.ActionCombat.TelegraphSystem(
             combatEngine, animationController, config, () => playerGuardController.IsGuardActive, playerGuardController.NotifyPerfectGuard, log);
         var playerHitboxResolver = new CombatSimulator.ActionCombat.PlayerHitboxResolver(combatEngine, npcSelector, config);
+        hitFeedbackController = new CombatSimulator.ActionCombat.HitFeedbackController(
+            config, npcSelector.GetSelectedNpc, animationController, log);
+        deathCamController.HitShakeProvider = () => hitFeedbackController.CurrentShakeOffset;
         actionModeController = new CombatSimulator.ActionCombat.ActionModeController(
             config, actionComboSink, playerHitboxResolver, playerGuardController,
-            telegraphSystem, combatEngine, animationController, gamepadState, log);
+            telegraphSystem, combatEngine, animationController, hitFeedbackController, gamepadState, log);
         combatModeRouter = new CombatSimulator.ActionCombat.CombatModeRouter(
             config,
             new CombatSimulator.ActionCombat.InstantAttackExecutor(combatEngine),
             new CombatSimulator.ActionCombat.TelegraphedAttackExecutor(telegraphSystem, config));
         // Clear any live telegraphs when a combat session ends.
         combatEngine.OnSimulationReset += telegraphSystem.Clear;
+        // Release any outstanding hitstop freezes when combat ends so no enemy is left frozen.
+        combatEngine.OnSimulationReset += hitFeedbackController.Clear;
         // Super-armor enemies during their telegraph windup (no flinch from player hits).
         combatEngine.IsTargetSuperArmored = telegraphSystem.IsWindingUp;
 
@@ -619,6 +625,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // frame so guard windows and toggle-off cleanup are handled even
             // when the sim is not active; gates internally on config.ActionMode.
             actionModeController.Tick(deltaTime);
+
+            // Hit feedback (camera punch decay + hitstop restore). Runs every frame.
+            hitFeedbackController.Tick(deltaTime);
 
             if (!combatEngine.IsActive)
                 return;

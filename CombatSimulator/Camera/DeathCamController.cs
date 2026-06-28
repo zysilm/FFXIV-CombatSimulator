@@ -201,7 +201,12 @@ public unsafe class DeathCamController : IDisposable
             return;
 
         if (state == DeathCamState.Inactive && !IsPreviewActive)
+        {
+            // Normal gameplay: no death-cam framing, but layer the combat hit-shake on top of
+            // whatever the final view is (Active/Fight cam already applied via Original()).
+            ApplyHitShake(thisPtr);
             return;
+        }
 
         try
         {
@@ -279,6 +284,39 @@ public unsafe class DeathCamController : IDisposable
     /// ViewMatrix translates world→view, so shifting camera position
     /// modifies the translation component: T -= R * offset
     /// </summary>
+    /// <summary>Supplies the current combat hit-shake camera offset (set by Plugin). Applied only
+    /// during normal gameplay, on top of any Active/Fight cam, and never during the death cam.</summary>
+    public Func<Vector3>? HitShakeProvider { get; set; }
+
+    private void ApplyHitShake(CameraBase* thisPtr)
+    {
+        var provider = HitShakeProvider;
+        if (provider == null)
+            return;
+        var offset = provider();
+        if (offset.LengthSquared() < 0.0000001f)
+            return;
+        try
+        {
+            // Mirror the death-cam shift: move Position + RenderCamera Origin AND the view matrices,
+            // so the offset survives any downstream rebuild of the view matrix from Position.
+            var sceneCam = &thisPtr->SceneCamera;
+            var scenePos = sceneCam->Position;
+            sceneCam->Position = new Vector3(scenePos.X + offset.X, scenePos.Y + offset.Y, scenePos.Z + offset.Z);
+            if (sceneCam->RenderCamera != null)
+            {
+                var origin = sceneCam->RenderCamera->Origin;
+                sceneCam->RenderCamera->Origin = new Vector3(origin.X + offset.X, origin.Y + offset.Y, origin.Z + offset.Z);
+                ApplyOffsetToViewMatrix(ref sceneCam->RenderCamera->ViewMatrix, offset);
+            }
+            ApplyOffsetToViewMatrix(ref sceneCam->ViewMatrix, offset);
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "DeathCam: Error applying hit shake.");
+        }
+    }
+
     private static void ApplyOffsetToViewMatrix(ref FFXIVClientStructs.FFXIV.Common.Math.Matrix4x4 viewMatrix, Vector3 offset)
     {
         viewMatrix.M41 -= viewMatrix.M11 * offset.X + viewMatrix.M12 * offset.Y + viewMatrix.M13 * offset.Z;

@@ -383,6 +383,30 @@ public unsafe class AnimationController : IDisposable
         emotePlayer.PlayOneShot((Character*)actorAddress, damageTimeline);
     }
 
+    /// <summary>Set an actor's animation timeline speed (used for hitstop: 0 = frozen, 1 = normal).
+    /// Caller is responsible for restoring it.</summary>
+    public void SetActorAnimationSpeed(nint actorAddress, float speed)
+    {
+        if (actorAddress == nint.Zero)
+            return;
+        try { ((Character*)actorAddress)->Timeline.OverallSpeed = speed; }
+        catch (Exception ex) { log.Warning(ex, "SetActorAnimationSpeed failed."); }
+    }
+
+    /// <summary>Spawn a one-shot hit spark on the struck target (reuses the configured HitVfxPath).</summary>
+    public void SpawnHitSpark(nint targetAddress)
+    {
+        if (targetAddress == nint.Zero || actorVfxCreate == null)
+            return;
+        var path = !string.IsNullOrWhiteSpace(config.HitVfxPath) ? config.HitVfxPath : HitVfxCandidates[0];
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        var caster = player != null ? player.Address : targetAddress;
+        // ActorVfxCreate spawns on the THIRD arg (orientTo) → pass the target there so the spark
+        // lands on the enemy, not on the caster/player.
+        try { SpawnAndTrack(path, caster, targetAddress, 0, UntrackedVfxTtl); }
+        catch (Exception ex) { log.Error(ex, "SpawnHitSpark failed."); }
+    }
+
     private void ResolvePlaySpecificSoundHook(IGameInteropProvider gameInterop, ISigScanner sigScanner)
     {
         try
@@ -629,6 +653,7 @@ public unsafe class AnimationController : IDisposable
     public void Tick(float deltaTime)
     {
         TickGuardVisualRestore(deltaTime);
+        TickPendingTargetVfx(deltaTime);
 
         for (var i = trackedActorVfx.Count - 1; i >= 0; i--)
         {
@@ -727,17 +752,20 @@ public unsafe class AnimationController : IDisposable
                     var (targetAddr, targetEntityId) = ResolveActorAddress((uint)target.TargetId, false);
                     if (targetAddr == 0) continue;
 
+                    // ActorVfxCreate spawns the effect on its THIRD arg (orientTo), so the struck
+                    // TARGET must be passed there (not the caster) or the hit VFX lands on the player.
+                    // EmitTargetVfx defers player hits to the contact frame (hit-feedback delay).
                     if (request.TargetVfxPaths.Count > 0)
                     {
                         foreach (var path in request.TargetVfxPaths)
-                            SpawnAndTrack(path, targetAddr, casterAddr, targetEntityId, UntrackedVfxTtl);
+                            EmitTargetVfx(path, request, (uint)target.TargetId, casterAddr, targetAddr, targetEntityId);
                     }
 
                     if ((request.TargetVfxPaths.Count == 0 || request.IsSourcePlayer) && config.EnableHitVfx)
                     {
                         var vfxPath = config.HitVfxPath;
                         if (!string.IsNullOrWhiteSpace(vfxPath))
-                            SpawnAndTrack(vfxPath, targetAddr, casterAddr, targetEntityId, UntrackedVfxTtl);
+                            EmitTargetVfx(vfxPath, request, (uint)target.TargetId, casterAddr, targetAddr, targetEntityId);
                     }
                 }
             }
@@ -788,6 +816,57 @@ public unsafe class AnimationController : IDisposable
             }
         }
         return (0, 0);
+    }
+
+    // Player hit/target VFX, deferred so it lands on the weapon's contact frame in sync with the
+    // hit-feedback delay (camera/hitstop/spark), instead of at swing start. Re-resolves both actors
+    // at fire time so a target that died/despawned during the windup is simply skipped.
+    private struct PendingTargetVfx
+    {
+        public string Path;
+        public uint TargetSimId;
+        public uint CasterEntityId;
+        public bool CasterIsPlayer;
+        public float Timer;
+    }
+    private readonly List<PendingTargetVfx> pendingTargetVfx = new();
+
+    private void EmitTargetVfx(string path, ActionEffectRequest request, uint targetSimId, nint casterAddrNow, nint targetAddrNow, uint targetEntityId)
+    {
+        var delay = (request.IsSourcePlayer && config.EnableHitFeedback) ? MathF.Max(0f, config.HitFeedbackDelay) : 0f;
+        if (delay <= 0.001f)
+        {
+            SpawnAndTrack(path, casterAddrNow, targetAddrNow, targetEntityId, UntrackedVfxTtl);
+            return;
+        }
+        pendingTargetVfx.Add(new PendingTargetVfx
+        {
+            Path = path,
+            TargetSimId = targetSimId,
+            CasterEntityId = request.SourceEntityId,
+            CasterIsPlayer = request.IsSourcePlayer,
+            Timer = delay,
+        });
+    }
+
+    private void TickPendingTargetVfx(float dt)
+    {
+        for (var i = pendingTargetVfx.Count - 1; i >= 0; i--)
+        {
+            var p = pendingTargetVfx[i];
+            p.Timer -= dt;
+            if (p.Timer > 0f)
+            {
+                pendingTargetVfx[i] = p;
+                continue;
+            }
+            pendingTargetVfx.RemoveAt(i);
+            var (tAddr, tId) = ResolveActorAddress(p.TargetSimId, false);
+            if (tAddr == 0)
+                continue;
+            var (cAddr, _) = ResolveActorAddress(p.CasterEntityId, p.CasterIsPlayer);
+            SpawnAndTrack(p.Path, cAddr, tAddr, tId, UntrackedVfxTtl);
+        }
     }
 
     /// <summary>

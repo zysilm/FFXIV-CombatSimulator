@@ -1457,6 +1457,34 @@ public class MainWindow : IDisposable
         DrawVfxPicker("Enemy warning VFX", () => config.EnemyTelegraphVfxPath, v => config.EnemyTelegraphVfxPath = v, ref enemyWarningVfxFilter);
 
         ImGui.Separator();
+        ImGui.Text("Hit feedback");
+        var hitFeedback = config.EnableHitFeedback;
+        if (ImGui.Checkbox("Enable hit feedback", ref hitFeedback))
+        {
+            config.EnableHitFeedback = hitFeedback;
+            config.Save();
+        }
+        using (ImRaii.Disabled(!config.EnableHitFeedback))
+        {
+            SliderFloatSaved("Feedback delay (s)", () => config.HitFeedbackDelay, v => config.HitFeedbackDelay = v, 0f, 1.0f,
+                "Wait this long after the attack input before the feedback fires, so hitstop/camera/spark land when the weapon visually CONNECTS instead of at swing start. ~0.45 matches a normal swing's contact frame. 0 = instant.");
+            SliderFloatSaved("Hitstop (ms)", () => config.HitstopMs, v => config.HitstopMs = v, 0f, 150f,
+                "Freeze the struck target's animation this long on impact -- the biggest single source of weight/impact feel. Keep short (40-90 ms) or it reads as lag. 0 = off. Only the target is frozen, never the player.");
+            SliderFloatSaved("Camera punch", () => config.HitCameraShake, v => config.HitCameraShake = v, 0f, 0.3f,
+                "Brief screen-shake magnitude on impact (camera offset in yalms). Small = weighty, large = nauseating. Layered over Active/Fight cam; suppressed during the death cam. 0 = off.");
+            SliderFloatSaved("Punch duration", () => config.HitCameraShakeDuration, v => config.HitCameraShakeDuration = v, 0.05f, 0.5f,
+                "Seconds the camera punch decays over.");
+            var spark = config.EnableHitSparkVfx;
+            if (ImGui.Checkbox("Hit spark VFX", ref spark))
+            {
+                config.EnableHitSparkVfx = spark;
+                config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Spawn a spark on the struck target (uses the Hit VFX path). Off by default: spawning actor VFX on modified/spawned enemies can be fragile -- enable once you've confirmed it's stable in your setup.");
+        }
+
+        ImGui.Separator();
         ImGui.Text("Enemy / companion pacing");
         SliderFloatSaved("Attack pace", () => config.ActionEnemyAttackSpeed, v => config.ActionEnemyAttackSpeed = v, 0.5f, 3.0f,
             "Enemies and companions initiate attacks this many times faster (auto delay + skill cooldowns). 1.0 = unchanged.");

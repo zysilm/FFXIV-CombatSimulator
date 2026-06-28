@@ -27,6 +27,7 @@ public sealed class ActionModeController
     private readonly TelegraphSystem telegraphs;
     private readonly CombatEngine combatEngine;
     private readonly AnimationController animationController;
+    private readonly HitFeedbackController hitFeedback;
     private readonly IGamepadState gamepadState;
     private readonly IPluginLog log;
 
@@ -49,6 +50,7 @@ public sealed class ActionModeController
         TelegraphSystem telegraphs,
         CombatEngine combatEngine,
         AnimationController animationController,
+        HitFeedbackController hitFeedback,
         IGamepadState gamepadState,
         IPluginLog log)
     {
@@ -59,6 +61,7 @@ public sealed class ActionModeController
         this.telegraphs = telegraphs;
         this.combatEngine = combatEngine;
         this.animationController = animationController;
+        this.hitFeedback = hitFeedback;
         this.gamepadState = gamepadState;
         this.log = log;
     }
@@ -183,6 +186,8 @@ public sealed class ActionModeController
             : 0;
         if (struck == 0)
             animationController.PlayPlayerActionAnimationOnly(AutoAttackId);
+        else
+            hitFeedback.TriggerHit(primary);
     }
 
     private unsafe void TickGuardKey()
@@ -261,6 +266,8 @@ public sealed class ActionModeController
             : 0;
         if (struck == 0)
             animationController.PlayPlayerActionAnimationOnly(actionId); // reliable whiff (打空) feedback
+        else
+            hitFeedback.TriggerHit(primary);
     }
 
     // Derive the soft-target selection cone from the action's real data. Any CIRCLE AoE is treated as
