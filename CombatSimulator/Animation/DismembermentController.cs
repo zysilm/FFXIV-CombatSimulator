@@ -762,6 +762,8 @@ public unsafe class DismembermentController : IDisposable
 
         for (int i = pcNpcCollisionStates.Count - 1; i >= 0; i--)
             UpdatePcNpcCollisionState(pcNpcCollisionStates[i]);
+
+        WakePcCollisionBodies();
     }
 
     private void BuildPcNpcCollision(nint address)
@@ -808,8 +810,7 @@ public unsafe class DismembermentController : IDisposable
             if (segLen < PcNpcCollisionMinSegmentLength)
                 continue;
 
-            var halfLen = MathF.Max(0.01f, (segLen * 0.5f) - PcNpcCollisionDefaultRadius);
-            var centerFactor = halfLen / segLen;
+            var centerFactor = 0.5f;
             var center = parentWorld + segment * centerFactor;
             candidates.Add((segLen, i, parentIdx, centerFactor, center, AlignYTo(segment / segLen)));
         }
@@ -959,6 +960,22 @@ public unsafe class DismembermentController : IDisposable
         pcNpcCollisionStates.Clear();
         pcNpcCollisionAddresses.Clear();
         restrictedStaticHandles.Clear();
+    }
+
+    private void WakePcCollisionBodies()
+    {
+        if (simulation == null)
+            return;
+
+        foreach (var handleValue in pcCollisionBodyHandles)
+        {
+            try
+            {
+                var body = simulation.Bodies.GetBodyReference(new BodyHandle(handleValue));
+                body.Awake = true;
+            }
+            catch { }
+        }
     }
 
     private void UpdateClone(Clone c)
