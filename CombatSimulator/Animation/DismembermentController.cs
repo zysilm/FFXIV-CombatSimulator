@@ -71,6 +71,28 @@ public unsafe class DismembermentController : IDisposable
         public string? GlamourBase64;
         public int GlamourFramesUntil = -1;
         public int GlamourAttemptsLeft;
+        public HandoffSnapshot? Handoff;
+    }
+
+    private sealed class HandoffSnapshot
+    {
+        public Vector3 SkeletonPos;
+        public Quaternion SkeletonRot;
+        public string RootBone = "";
+        public Vector3 RootWorldPos;
+        public Quaternion RootWorldRot;
+        public readonly Dictionary<string, HandoffBone> Bones = new();
+    }
+
+    private struct HandoffBone
+    {
+        public Vector3 ModelPos;
+        public Quaternion ModelRot;
+        public Vector3 Scale;
+        public Vector3 WorldPos;
+        public Quaternion WorldRot;
+        public Vector3 LinearVelocity;
+        public Vector3 AngularVelocity;
     }
 
     private sealed class LimbRig
@@ -97,6 +119,7 @@ public unsafe class DismembermentController : IDisposable
         public string LimbRootBone = "";
         public float Delay;
         public string? GlamourBase64;
+        public HandoffSnapshot? LastSample;
     }
 
     private readonly List<Clone> clones = new();
@@ -124,13 +147,15 @@ public unsafe class DismembermentController : IDisposable
         if (sourceAddress == nint.Zero || string.IsNullOrEmpty(limbRootBone)) return;
         if (clones.Exists(c => c.SourceAddress == sourceAddress && c.LimbRootBone == limbRootBone)) return;
         if (pending.Exists(p => p.SourceAddress == sourceAddress && p.LimbRootBone == limbRootBone)) return;
-        pending.Add(new Pending
+        var p = new Pending
         {
             SourceAddress = sourceAddress,
             LimbRootBone = limbRootBone,
             Delay = MathF.Max(0f, delay),
             GlamourBase64 = glamourBase64,
-        });
+        };
+        TryRefreshHandoff(p, 1f / 60f);
+        pending.Add(p);
     }
 
     public void RemoveFor(nint sourceAddress)
@@ -160,7 +185,9 @@ public unsafe class DismembermentController : IDisposable
             for (int i = pending.Count - 1; i >= 0; i--)
             {
                 var p = pending[i];
-                p.Delay -= 1f / 60f;
+                const float dt = 1f / 60f;
+                TryRefreshHandoff(p, dt);
+                p.Delay -= dt;
                 if (p.Delay <= 0f)
                 {
                     pending.RemoveAt(i);
@@ -202,12 +229,14 @@ public unsafe class DismembermentController : IDisposable
         var srcSk = skel.CharBase->Skeleton;
         if (srcSk == null) return;
         var srcPos = new Vector3(srcSk->Transform.Position.X, srcSk->Transform.Position.Y, srcSk->Transform.Position.Z);
-        var srcRot = new Quaternion(srcSk->Transform.Rotation.X, srcSk->Transform.Rotation.Y, srcSk->Transform.Rotation.Z, srcSk->Transform.Rotation.W);
+        var srcRot = Quaternion.Normalize(new Quaternion(srcSk->Transform.Rotation.X, srcSk->Transform.Rotation.Y, srcSk->Transform.Rotation.Z, srcSk->Transform.Rotation.W));
         ref var lm = ref skel.Pose->ModelPose.Data[limbIdx];
         var limbModelPos = new Vector3(lm.Translation.X, lm.Translation.Y, lm.Translation.Z);
         var limbModelRot = new Quaternion(lm.Rotation.X, lm.Rotation.Y, lm.Rotation.Z, lm.Rotation.W);
-        var severancePos = srcPos + Vector3.Transform(limbModelPos, srcRot);
-        var severanceRot = Quaternion.Normalize(srcRot * limbModelRot);
+        var handoff = p.LastSample;
+        var severancePos = handoff?.RootWorldPos ?? (srcPos + Vector3.Transform(limbModelPos, srcRot));
+        var severanceRot = handoff?.RootWorldRot ?? Quaternion.Normalize(srcRot * limbModelRot);
+        var cloneBasePos = handoff?.SkeletonPos ?? severancePos;
 
         var src = (Character*)p.SourceAddress;
         if (((byte*)&src->DrawData.CustomizeData)[0] == 0) { log.Warning("Dismember: source not humanoid"); return; }
@@ -230,7 +259,7 @@ public unsafe class DismembermentController : IDisposable
         obj->SubKind = 0;
         obj->TargetableStatus = 0; // never targetable
         obj->RenderFlags = (VisibilityFlags)0;
-        obj->Position = severancePos;
+        obj->Position = cloneBasePos;
         obj->Rotation = 0f;
         WriteCloneName((GameObject*)obj, index);
 
@@ -257,8 +286,94 @@ public unsafe class DismembermentController : IDisposable
             SeveranceWorldPos = severancePos,
             SeveranceWorldRot = severanceRot,
             GlamourBase64 = p.GlamourBase64,
+            Handoff = handoff,
         });
         log.Info($"Dismember: clone idx={index} bone={p.LimbRootBone} at ({severancePos.X:F1},{severancePos.Y:F1},{severancePos.Z:F1})");
+    }
+
+    private void TryRefreshHandoff(Pending p, float dt)
+    {
+        var sample = CaptureHandoff(p.SourceAddress, p.LimbRootBone, p.LastSample, dt);
+        if (sample != null)
+            p.LastSample = sample;
+    }
+
+    private HandoffSnapshot? CaptureHandoff(nint sourceAddress, string rootBone, HandoffSnapshot? previous, float dt)
+    {
+        var skelN = boneService.TryGetSkeleton(sourceAddress);
+        if (skelN == null) return null;
+        var skel = skelN.Value;
+        var rootIdx = boneService.ResolveBoneIndex(skel, rootBone);
+        if (rootIdx < 0) return null;
+
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton == null) return null;
+
+        var skelPos = new Vector3(
+            skeleton->Transform.Position.X,
+            skeleton->Transform.Position.Y,
+            skeleton->Transform.Position.Z);
+        var skelRot = Quaternion.Normalize(new Quaternion(
+            skeleton->Transform.Rotation.X,
+            skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z,
+            skeleton->Transform.Rotation.W));
+
+        ref var rootPose = ref skel.Pose->ModelPose.Data[rootIdx];
+        var rootModelPos = new Vector3(rootPose.Translation.X, rootPose.Translation.Y, rootPose.Translation.Z);
+        var rootModelRot = Quaternion.Normalize(new Quaternion(rootPose.Rotation.X, rootPose.Rotation.Y, rootPose.Rotation.Z, rootPose.Rotation.W));
+
+        var result = new HandoffSnapshot
+        {
+            SkeletonPos = skelPos,
+            SkeletonRot = skelRot,
+            RootBone = rootBone,
+            RootWorldPos = skelPos + Vector3.Transform(rootModelPos, skelRot),
+            RootWorldRot = Quaternion.Normalize(skelRot * rootModelRot),
+        };
+
+        var n = Math.Min(skel.BoneCount, skel.ParentCount);
+        var maxSpan = 0f;
+        var maxScale = 0f;
+        for (int i = 0; i < n; i++)
+        {
+            if (!IsDescendantOrSelf(skel, i, rootIdx)) continue;
+            var name = skel.HavokSkeleton->Bones[i].Name.String;
+            if (string.IsNullOrEmpty(name)) continue;
+
+            ref var m = ref skel.Pose->ModelPose.Data[i];
+            var modelPos = new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z);
+            var modelRot = Quaternion.Normalize(new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W));
+            var scale = new Vector3(m.Scale.X, m.Scale.Y, m.Scale.Z);
+            var worldPos = skelPos + Vector3.Transform(modelPos, skelRot);
+            var worldRot = Quaternion.Normalize(skelRot * modelRot);
+
+            var bone = new HandoffBone
+            {
+                ModelPos = modelPos,
+                ModelRot = modelRot,
+                Scale = scale,
+                WorldPos = worldPos,
+                WorldRot = worldRot,
+            };
+
+            if (previous != null && previous.Bones.TryGetValue(name, out var prev) && dt > 1e-5f)
+            {
+                bone.LinearVelocity = ClampVectorLength((worldPos - prev.WorldPos) / dt, 8f);
+                bone.AngularVelocity = ClampVectorLength(AngularVelocityFromQuats(prev.WorldRot, worldRot, dt), 30f);
+            }
+
+            result.Bones[name] = bone;
+            maxSpan = MathF.Max(maxSpan, (modelPos - rootModelPos).Length());
+            maxScale = MathF.Max(maxScale, MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z)));
+        }
+
+        // Once the source-side limb has been hidden, all descendant bones collapse to the
+        // same tiny point. Keep the last real sample instead of replacing it with that pose.
+        if (!IsHeadLimb(rootBone) && (maxSpan < 0.035f || maxScale < 0.05f))
+            return null;
+
+        return result.Bones.Count > 0 ? result : null;
     }
 
     private void TryEnableDraw(Clone c)
@@ -280,6 +395,60 @@ public unsafe class DismembermentController : IDisposable
         log.Info($"Dismember: clone idx={c.ObjectIndex} drawn (settling)");
     }
 
+    private void ApplyHandoffPose(SkeletonAccess skel, Clone c)
+    {
+        var handoff = c.Handoff;
+        if (handoff == null) return;
+
+        SetCloneBaseTransform(c, handoff.SkeletonPos, handoff.SkeletonRot);
+        foreach (var (name, bone) in handoff.Bones)
+        {
+            var idx = boneService.ResolveBoneIndex(skel, name);
+            if (idx < 0 || idx >= skel.BoneCount) continue;
+            ref var m = ref skel.Pose->ModelPose.Data[idx];
+            m.Translation.X = bone.ModelPos.X;
+            m.Translation.Y = bone.ModelPos.Y;
+            m.Translation.Z = bone.ModelPos.Z;
+            m.Rotation.X = bone.ModelRot.X;
+            m.Rotation.Y = bone.ModelRot.Y;
+            m.Rotation.Z = bone.ModelRot.Z;
+            m.Rotation.W = bone.ModelRot.W;
+            m.Scale.X = bone.Scale.X;
+            m.Scale.Y = bone.Scale.Y;
+            m.Scale.Z = bone.Scale.Z;
+        }
+    }
+
+    private void SetCloneBaseTransform(Clone c, Vector3 pos, Quaternion rot)
+    {
+        var obj = (GameObject*)c.Chara;
+        obj->Position = pos;
+        var drawObj = obj->DrawObject;
+        if (drawObj == null) return;
+
+        drawObj->Position = pos;
+        drawObj->Rotation = rot;
+        var cb = (CharacterBase*)drawObj;
+        var sk = cb->Skeleton;
+        if (sk == null) return;
+        sk->Transform.Position.X = pos.X;
+        sk->Transform.Position.Y = pos.Y;
+        sk->Transform.Position.Z = pos.Z;
+        sk->Transform.Rotation.X = rot.X;
+        sk->Transform.Rotation.Y = rot.Y;
+        sk->Transform.Rotation.Z = rot.Z;
+        sk->Transform.Rotation.W = rot.W;
+    }
+
+    private void SeedBodyVelocity(BodyHandle handle, Clone c, string boneName)
+    {
+        if (simulation == null || c.Handoff == null) return;
+        if (!c.Handoff.Bones.TryGetValue(boneName, out var bone)) return;
+        var body = simulation.Bodies.GetBodyReference(handle);
+        body.Velocity.Linear = bone.LinearVelocity;
+        body.Velocity.Angular = bone.AngularVelocity;
+    }
+
     private void UpdateClone(Clone c)
     {
         if (c.Chara == null) return;
@@ -293,6 +462,9 @@ public unsafe class DismembermentController : IDisposable
         if (c.LimbIndex < 0)
             c.LimbIndex = boneService.ResolveBoneIndex(skel, c.LimbRootBone);
         if (c.LimbIndex < 0) return; // nothing we can do until the limb resolves
+
+        if (!c.Armed)
+            ApplyHandoffPose(skel, c);
 
         // Each frame: show ONLY the limb (others thrown far away) and hide the clone's weapons.
         HideAllButLimb(skel, c.LimbIndex);
@@ -336,6 +508,7 @@ public unsafe class DismembermentController : IDisposable
                             limbInertia,
                             new CollidableDescription(limbShapeIndex, 0.04f),
                             new BodyActivityDescription(0.01f)));
+                        SeedBodyVelocity(c.Body.Value, c, c.LimbRootBone);
                     }
                 }
                 else
@@ -350,6 +523,7 @@ public unsafe class DismembermentController : IDisposable
                             inertia,
                             new CollidableDescription(shape, 0.04f),
                             new BodyActivityDescription(0.01f)));
+                        SeedBodyVelocity(c.Body.Value, c, c.LimbRootBone);
                     }
                 }
                 (c.GroundTile, c.GroundShape) = CreateTerrainPatch(c.SeveranceWorldPos.X, c.SeveranceWorldPos.Z, c.SeveranceWorldPos.Y);
@@ -500,6 +674,7 @@ public unsafe class DismembermentController : IDisposable
                 inertia,
                 new CollidableDescription(shapeIndex, 0.04f),
                 new BodyActivityDescription(0.01f)));
+            SeedBodyVelocity(handle, c, def.Name);
 
             var rb = new LimbBody
             {
@@ -569,6 +744,7 @@ public unsafe class DismembermentController : IDisposable
             inertia,
             new CollidableDescription(shape, 0.04f),
             new BodyActivityDescription(0.01f)));
+        SeedBodyVelocity(handle, c, c.LimbRootBone);
 
         var rig = new LimbRig();
         rig.Shapes.Add(shape);
@@ -1156,6 +1332,26 @@ public unsafe class DismembermentController : IDisposable
     {
         var normal = NormalizeOrFallback(planeNormal, Vector3.UnitY);
         return value - Vector3.Dot(value, normal) * normal;
+    }
+
+    private static Vector3 AngularVelocityFromQuats(Quaternion prev, Quaternion curr, float dt)
+    {
+        if (dt <= 1e-5f) return Vector3.Zero;
+        var dq = Quaternion.Normalize(curr * Quaternion.Conjugate(prev));
+        if (dq.W < 0f) dq = new Quaternion(-dq.X, -dq.Y, -dq.Z, -dq.W);
+        var s = MathF.Sqrt(MathF.Max(0f, 1f - dq.W * dq.W));
+        if (s < 1e-5f) return Vector3.Zero;
+        var angle = 2f * MathF.Acos(Math.Clamp(dq.W, -1f, 1f));
+        var axis = new Vector3(dq.X, dq.Y, dq.Z) / s;
+        return axis * (angle / dt);
+    }
+
+    private static Vector3 ClampVectorLength(Vector3 v, float maxLen)
+    {
+        var lenSq = v.LengthSquared();
+        if (lenSq > maxLen * maxLen && lenSq > 1e-8f)
+            return v * (maxLen / MathF.Sqrt(lenSq));
+        return v;
     }
 
     private void EnsureSimulation()
