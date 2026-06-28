@@ -22,6 +22,18 @@ public unsafe class SimulatedNpc
     public nint Address => (nint)BattleChara;
     public IGameObject? GameObjectRef { get; set; }
 
+    /// <summary>Collision/hitbox radius (yalms) of the underlying game object. Used for edge-to-edge
+    /// melee range so large enemies are reachable from their surface, not their centre. 0.5 fallback.</summary>
+    public float HitboxRadius
+    {
+        get
+        {
+            if (BattleChara == null) return 0.5f;
+            var r = ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)BattleChara)->HitboxRadius;
+            return r > 0.01f ? r : 0.5f;
+        }
+    }
+
     // Control mode (false = real game NPC, true = client-spawned)
     public bool IsClientControlled { get; set; }
 

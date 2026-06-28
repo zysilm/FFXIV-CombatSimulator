@@ -48,7 +48,11 @@ public sealed class PlayerHitboxResolver
                 continue;
 
             var npos = combatEngine.GetSimulatedEntityPosition(npc.State);
-            if (!CombatGeometry.IsInsideConeAngle(pos, aim, npos, range, selectAngleDeg))
+            // Edge-to-edge reach: extend the cone by the target's hitbox radius so a large enemy is
+            // selectable from its surface (not its centre), while a small enemy is effectively
+            // unchanged. Matches how FFXIV measures melee range.
+            var hitR = npc.HitboxRadius * MathF.Max(0f, config.MeleeTargetHitboxReach);
+            if (!CombatGeometry.IsInsideConeAngle(pos, aim, npos, range + hitR, selectAngleDeg))
                 continue;
 
             float metric;
@@ -60,7 +64,9 @@ public sealed class PlayerHitboxResolver
             }
             else
             {
-                metric = CombatGeometry.Distance2D(pos, npos);
+                // Nearest by SURFACE distance so a big enemy whose body is in front beats a small one
+                // whose centre is closer but whose edge is farther.
+                metric = CombatGeometry.Distance2D(pos, npos) - hitR;
             }
 
             if (metric < bestMetric)

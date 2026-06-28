@@ -591,8 +591,12 @@ public class Configuration : IPluginConfiguration
     // Player light-combo + hitbox tuning
     public float LightComboWindow { get; set; } = 0.6f;    // time to chain the next swing
     public float LightSwingInterval { get; set; } = 0.4f;  // min time between swings (cadence)
-    public float PlayerHitboxRange { get; set; } = 4f;     // melee basic-attack reach (yalms)
+    public float PlayerHitboxRange { get; set; } = 4f;     // melee basic-attack reach (yalms), measured to the target's SURFACE
     public float PlayerHitboxAngleDeg { get; set; } = 90f; // melee selection cone full angle
+    // Edge-to-edge reach: the target's hitbox radius x this is added to the melee select range, so a
+    // large enemy is hittable from its surface (not its centre) while a small enemy is unchanged. This
+    // is how FFXIV itself measures melee range. 0 = old centre-to-centre, 1 = exact surface, >1 = lenient.
+    public float MeleeTargetHitboxReach { get; set; } = 1.0f;
     public int LightAttackPotency { get; set; } = 120;
     // Soft-target selection: ranged basic attack / ranged skills use a longer, wider selection cone
     // and pick the smallest-angle enemy (not the nearest).

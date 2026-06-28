@@ -1424,8 +1424,9 @@ public class MainWindow : IDisposable
         ImGui.Text("Player");
         SliderFloatSaved("Swing interval", () => config.LightSwingInterval, v => config.LightSwingInterval = v, 0.15f, 1.0f, "Min seconds between light swings.");
         SliderFloatSaved("Combo window", () => config.LightComboWindow, v => config.LightComboWindow = v, 0.2f, 1.5f, "Time to chain the next combo step.");
-        SliderFloatSaved("Hitbox range", () => config.PlayerHitboxRange, v => config.PlayerHitboxRange = v, 1f, 10f, "Frontal cone reach (yalms).");
+        SliderFloatSaved("Hitbox range", () => config.PlayerHitboxRange, v => config.PlayerHitboxRange = v, 1f, 10f, "Frontal cone reach (yalms), measured to the target's SURFACE.");
         SliderFloatSaved("Hitbox angle", () => config.PlayerHitboxAngleDeg, v => config.PlayerHitboxAngleDeg = v, 30f, 180f, "Frontal cone full angle (degrees).");
+        SliderFloatSaved("Large-enemy reach", () => config.MeleeTargetHitboxReach, v => config.MeleeTargetHitboxReach = v, 0f, 2f, "How much of the target's hitbox radius is added to melee reach, so big enemies are hittable from their surface instead of their centre (small enemies are unchanged). 0 = centre-to-centre, 1 = exact surface (like FFXIV), >1 = lenient.");
 
         var potency = config.LightAttackPotency;
         if (ImGui.InputInt("Light attack potency", ref potency))
