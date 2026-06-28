@@ -4810,7 +4810,8 @@ public class MainWindow : IDisposable
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("A swing that connects in range always sparks the player. This adds progressive part separation:\n" +
                              "Sequential — fore-arms/shins (4 hits) → arms/thighs (4 hits) → head.\n" +
-                             "Random — any still-attached part each hit (parent supersedes its child).");
+                             "Random — any still-attached part each hit (parent supersedes its child).\n" +
+                             "When nothing is left to peel, a further strike releases the hold (if held).");
 
         if (ImGui.Button("Reset defaults##monster"))
         {
@@ -5055,52 +5056,6 @@ public class MainWindow : IDisposable
             ImGui.PopStyleColor();
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Launch upward and release hold");
             if (!active) ImGui.EndDisabled();
-        }
-
-        // ── Death Collapse (validation) ──────────────────────────────────────
-        // Dev shortcuts that force a specific collapse controller on a fresh death.
-        // Each button links straight to a RagdollController method — no Hold-local
-        // parameters. Production tuning lives in the Ragdoll tab's Guided Collapse
-        // section; plain "Die" above runs whatever that is configured for.
-        if (ImGui.CollapsingHeader("Death Collapse (validation)##holdSec"))
-        {
-            ImGui.TextDisabled("Force a specific collapse controller on a fresh death.");
-            ImGui.TextDisabled("Plain \"Die\" runs the configured Guided Collapse (Ragdoll tab).");
-            ImGui.Spacing();
-
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.18f, 0.45f, 0.38f, 1f));
-            if (ImGui.Button("Die + Whole Body##wholeBodyCollapse"))
-            {
-                ragdollController.RequestWholeBodyCollapseOnReady();
-                ctrl.TriggerInstantDeath();
-            }
-            ImGui.PopStyleColor();
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Run the whole-body balance-loss spike: COM/support feedback + core velocity bias.\n" +
-                                 "No knee pose target and no foot/pelvis position clamps.");
-
-            ImGui.SameLine();
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.5f, 0.25f, 1f));
-            if (ImGui.Button("Die + Knee Power Loss##kneePowerLoss"))
-            {
-                ragdollController.RequestEntryConditionedKneePowerLossOnReady();
-                ctrl.TriggerInstantDeath();
-            }
-            ImGui.PopStyleColor();
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Run entry conditioning first when the stance is narrow/straight,\n" +
-                                 "then hand off to the C# knee power-loss pattern.");
-
-            ImGui.SameLine();
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.35f, 0.65f, 1f));
-            if (ImGui.Button("Die + Profile Collapse##directedProfile"))
-            {
-                ragdollController.RequestProfileDirectedCollapseOnReady("leg_extensor_failure_forward");
-                ctrl.TriggerInstantDeath();
-            }
-            ImGui.PopStyleColor();
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Run the built-in JSON-driven collapse profile:\nleg_extensor_failure_forward");
         }
 
         // ── Presets ──────────────────────────────────────────────────────────

@@ -51,6 +51,10 @@ public unsafe class MonsterModeController : IDisposable
     private readonly MonsterDismembermentPlanner partPlanner = new();
     private readonly List<float> pendingHitTimers = new();
 
+    // Optional held-corpse mode: once everything is peeled, a further strike releases the hold.
+    private BoneHoldTestModeController? holdController;
+    public void AttachHold(BoneHoldTestModeController hold) => holdController = hold;
+
     private int monsterIndex = -1;       // ClientObjectManager index (only when we spawned the object)
     private uint monsterEntityId;
     private nint monsterAddress;
@@ -393,7 +397,16 @@ public unsafe class MonsterModeController : IDisposable
         if (profile == MonsterStrikePartProfile.Off || !playerRagdoll.IsActive) return;
 
         var bone = partPlanner.NextHit(profile);
-        if (bone == null) return; // everything already detached
+        if (bone == null)
+        {
+            // Fully peeled: if the corpse is being held upright, this strike releases the hold.
+            if (holdController != null && holdController.IsActive)
+            {
+                holdController.Stop();
+                log.Info("MonsterMode: fully detached — released hold");
+            }
+            return;
+        }
 
         // Union with any manually-selected PC dismember bones so SetDismemberedBones (which switches
         // the ragdoll to the local override list) doesn't un-hide those.

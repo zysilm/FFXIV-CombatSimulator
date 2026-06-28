@@ -179,6 +179,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         executionModeController = new Dev.BoneHoldTestModeController(
             boneTransformService, animationController.EmotePlayer, ragdollController, animationController,
             movementBlockHook, vnavmeshIpc, combatEngine, log);
+        monsterModeController.AttachHold(executionModeController);
         companionManager = new CombatCompanionManager(
             objectTable, clientState, config, combatEngine, animationController,
             movementBlockHook, vnavmeshIpc, targetManager, partyEngagePlanner, terrainHeightService, log);
