@@ -1286,20 +1286,40 @@ public unsafe class AnimationController : IDisposable
             if (player == null) return;
             var character = (Character*)player.Address;
 
-            if ((forceCombatDeath || ShouldUseCombatDeath(character)) && battleDeadResolved)
-            {
-                emotePlayer.PlayLoopedEmote(character, battleDeadLoopTimeline, battleDeadIntroTimeline);
-                log.Info($"Player drawn-weapon death triggered (intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}).");
-            }
-            else if (playDeadResolved)
-            {
-                emotePlayer.PlayLoopedEmote(character, playDeadLoopTimeline, playDeadIntroTimeline);
-                log.Info("Player death emote (timeline) triggered.");
-            }
+            PlayDeathAnimationOnActor(character, forceCombatDeath);
         }
         catch (Exception ex)
         {
             log.Error(ex, "Failed to play player death animation.");
+        }
+    }
+
+    public void PlayDeathAnimationOnActor(Character* character, bool forceCombatDeath = false)
+    {
+        if (character == null) return;
+
+        try
+        {
+            character->Timeline.OverallSpeed = 1.0f;
+            if ((forceCombatDeath || ShouldUseCombatDeath(character)) && battleDeadResolved)
+            {
+                emotePlayer.PlayLoopedEmote(character, battleDeadLoopTimeline, battleDeadIntroTimeline);
+                log.Info($"Death timeline triggered (intro={battleDeadIntroTimeline}, loop={battleDeadLoopTimeline}).");
+            }
+            else if (playDeadResolved)
+            {
+                emotePlayer.PlayLoopedEmote(character, playDeadLoopTimeline, playDeadIntroTimeline);
+                log.Info("Death emote timeline triggered.");
+            }
+            else
+            {
+                character->SetMode(CharacterModes.Dead, 0);
+                log.Info("Death mode fallback triggered.");
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Failed to play death animation on actor.");
         }
     }
 

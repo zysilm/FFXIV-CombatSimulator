@@ -27,6 +27,7 @@ public unsafe class DismembermentController : IDisposable
 {
     private readonly BoneTransformService boneService;
     private readonly GlamourerIpc glamourerIpc;
+    private readonly AnimationController animationController;
     private readonly IObjectTable objectTable;
     private readonly Configuration config;
     private readonly IPluginLog log;
@@ -64,6 +65,7 @@ public unsafe class DismembermentController : IDisposable
         public BodyHandle? Body;
         public StaticHandle? GroundTile;
         public TypedIndex? GroundShape;
+        public bool KeepTimelineRunning;
         public string? GlamourBase64;
         public int GlamourFramesUntil = -1;
         public int GlamourAttemptsLeft;
@@ -83,10 +85,11 @@ public unsafe class DismembermentController : IDisposable
     private readonly HashSet<int> allocatedIndices = new();
 
     public DismembermentController(BoneTransformService boneService, GlamourerIpc glamourerIpc,
-        IObjectTable objectTable, Configuration config, IPluginLog log)
+        AnimationController animationController, IObjectTable objectTable, Configuration config, IPluginLog log)
     {
         this.boneService = boneService;
         this.glamourerIpc = glamourerIpc;
+        this.animationController = animationController;
         this.objectTable = objectTable;
         this.config = config;
         this.log = log;
@@ -217,12 +220,13 @@ public unsafe class DismembermentController : IDisposable
         obj->RenderFlags = (VisibilityFlags)0;
         obj->Position = severancePos;
         obj->Rotation = 0f;
-        for (int j = 0; j < 64; j++) obj->Name[j] = 0; // no nameplate
+        WriteCloneName((GameObject*)obj, index);
 
         const CharacterSetupContainer.CopyFlags flags =
             CharacterSetupContainer.CopyFlags.ClassJob | CharacterSetupContainer.CopyFlags.WeaponHiding;
         character->CharacterSetup.CopyFromCharacter(src, flags);
         character->CharacterSetup.CopyFromCharacter(character, CharacterSetupContainer.CopyFlags.None);
+        WriteCloneName((GameObject*)obj, index);
         character->SetMode(CharacterModes.Normal, 0);
 
         IGameObject? gameObjectRef = null;
@@ -254,8 +258,13 @@ public unsafe class DismembermentController : IDisposable
         c.Chara->EnableDraw();
         c.DrawEnabled = true;
         c.SettleFrames = 8;        // let it idle into a real pose before freezing
-        c.GlamourFramesUntil = 3;  // apply WHILE the clone is still alive (frozen actors may not redraw)
-        c.GlamourAttemptsLeft = 6;
+        c.GlamourFramesUntil = 1;  // apply WHILE the clone is still alive (frozen actors may not redraw)
+        c.GlamourAttemptsLeft = 20;
+        if (IsHeadLimb(c.LimbRootBone))
+        {
+            c.KeepTimelineRunning = true;
+            animationController.PlayDeathAnimationOnActor((Character*)c.Chara, forceCombatDeath: true);
+        }
         log.Info($"Dismember: clone idx={c.ObjectIndex} drawn (settling)");
     }
 
@@ -283,7 +292,7 @@ public unsafe class DismembermentController : IDisposable
             if (--c.SettleFrames > 0) return;
             ref var lm = ref skel.Pose->ModelPose.Data[c.LimbIndex];
             c.LimbRootModelPos = new Vector3(lm.Translation.X, lm.Translation.Y, lm.Translation.Z);
-            ((Character*)c.Chara)->Timeline.OverallSpeed = 0f;
+            ((Character*)c.Chara)->Timeline.OverallSpeed = c.KeepTimelineRunning ? 1f : 0f;
             // Snapshot the settled limb pose so we can re-assert it every frame — guarantees the limb
             // is a frozen rigid chunk and can't keep breathing.
             c.LimbSnapshot = new List<(int, Vector3, Quaternion, Vector3)>();
@@ -318,7 +327,7 @@ public unsafe class DismembermentController : IDisposable
 
         // Armed: re-assert freeze, re-write the frozen limb pose (no breathing), and drive the clone
         // skeleton from the rigid body, pivoting at the limb root so the chunk tumbles about its cut.
-        ((Character*)c.Chara)->Timeline.OverallSpeed = 0f;
+        ((Character*)c.Chara)->Timeline.OverallSpeed = c.KeepTimelineRunning ? 1f : 0f;
         if (c.LimbSnapshot != null)
         {
             var pose = skel.Pose;
@@ -366,15 +375,35 @@ public unsafe class DismembermentController : IDisposable
 
     private void ApplyDeferredGlamour(Clone c)
     {
-        if (c.GlamourBase64 == null || c.GameObjectRef == null || c.GlamourAttemptsLeft <= 0) return;
+        if (c.GlamourBase64 == null || c.GlamourAttemptsLeft <= 0) return;
         if (c.GlamourFramesUntil > 0) { c.GlamourFramesUntil--; return; }
         if (c.GlamourFramesUntil == 0)
         {
-            var ok = glamourerIpc.ApplyStateBase64(c.GlamourBase64, c.GameObjectRef.ObjectIndex);
+            var objectIndex = (int)((GameObject*)c.Chara)->ObjectIndex;
+            var ok = glamourerIpc.ApplyStateBase64(c.GlamourBase64, objectIndex);
             c.GlamourAttemptsLeft--;
-            if (ok) { c.GlamourBase64 = null; log.Info($"Dismember: glamour applied idx={c.ObjectIndex}"); }
+            if (ok)
+            {
+                c.GlamourBase64 = null;
+                if (!c.Armed)
+                    c.SettleFrames = Math.Max(c.SettleFrames, 6);
+                log.Info($"Dismember: glamour applied idx={objectIndex}");
+            }
             else c.GlamourFramesUntil = 5; // retry
         }
+    }
+
+    private static bool IsHeadLimb(string limbRootBone)
+        => string.Equals(limbRootBone, "j_kao", StringComparison.OrdinalIgnoreCase);
+
+    private static void WriteCloneName(GameObject* obj, int objectIndex)
+    {
+        var suffix = Math.Abs(objectIndex) % (26 * 26);
+        var first = (char)('A' + suffix / 26);
+        var second = (char)('a' + suffix % 26);
+        var nameBytes = Encoding.UTF8.GetBytes($"Mirror {first}{second}");
+        for (int j = 0; j < 64; j++)
+            obj->Name[j] = j < nameBytes.Length && j < 63 ? nameBytes[j] : (byte)0;
     }
 
     // Collapse every bone NOT in the limb's subtree to the CUT POINT (the limb root) with exact-0

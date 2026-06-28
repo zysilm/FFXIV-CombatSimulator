@@ -122,16 +122,19 @@ public class GlamourerIpc
             catch (Exception ex) { log.Warning($"GlamourerIpc: ApiVersion {ex.Message}"); }
         }
 
-        // V4 (objectIndex, key) -> (ec, base64)
-        try
+        // V4/current (objectIndex, key) -> (ec, base64)
+        foreach (var label in new[] { "Glamourer.GetStateBase64.V4", "Glamourer.GetStateBase64" })
         {
-            var s = pluginInterface.GetIpcSubscriber<int, uint, (int, string?)>("Glamourer.GetStateBase64.V4");
-            var (ec, state) = s.InvokeFunc(objectIndex, 0u);
-            IsAvailable = true;
-            if (ec == 0 && !string.IsNullOrEmpty(state)) { log.Info($"GlamourerIpc: GetStateBase64.V4 ok len={state!.Length}"); return state; }
-            log.Warning($"GlamourerIpc: GetStateBase64.V4 ec={ec} len={state?.Length ?? 0}");
+            try
+            {
+                var s = pluginInterface.GetIpcSubscriber<int, uint, (int, string?)>(label);
+                var (ec, state) = s.InvokeFunc(objectIndex, 0u);
+                IsAvailable = true;
+                if (ec == 0 && !string.IsNullOrEmpty(state)) { log.Info($"GlamourerIpc: {label} ok len={state!.Length}"); return state; }
+                log.Warning($"GlamourerIpc: {label} ec={ec} len={state?.Length ?? 0}");
+            }
+            catch (Exception ex) { log.Warning($"GlamourerIpc: {label} {ex.Message}"); }
         }
-        catch (Exception ex) { log.Warning($"GlamourerIpc: GetStateBase64.V4 {ex.Message}"); }
 
         // V3/V2/V1 (objectIndex) -> (ec, base64)  [no key]
         foreach (var label in new[] { "Glamourer.GetStateBase64.V3", "Glamourer.GetStateBase64.V2", "Glamourer.GetStateBase64.V1", "Glamourer.GetStateBase64" })
@@ -174,16 +177,19 @@ public class GlamourerIpc
         if (objectIndex < 0 || string.IsNullOrEmpty(base64)) return false;
         var flags = (ulong)(ApplyFlagEquipment | ApplyFlagCustomization);
 
-        // V4 (state, objectIndex, key, flags) -> ec
-        try
+        // V4/current (state, objectIndex, key, flags) -> ec
+        foreach (var label in new[] { "Glamourer.ApplyState.V4", "Glamourer.ApplyState" })
         {
-            var s = pluginInterface.GetIpcSubscriber<object, int, uint, ulong, int>("Glamourer.ApplyState.V4");
-            var r = s.InvokeFunc(base64, objectIndex, key, flags);
-            IsAvailable = true;
-            if (r == 0) { log.Info($"GlamourerIpc: ApplyState.V4 ok idx={objectIndex}"); return true; }
-            log.Warning($"GlamourerIpc: ApplyState.V4 ec={r}");
+            try
+            {
+                var s = pluginInterface.GetIpcSubscriber<object, int, uint, ulong, int>(label);
+                var r = s.InvokeFunc(base64, objectIndex, key, flags);
+                IsAvailable = true;
+                if (r == 0) { log.Info($"GlamourerIpc: {label} ok idx={objectIndex}"); return true; }
+                log.Warning($"GlamourerIpc: {label} ec={r}");
+            }
+            catch (Exception ex) { log.Warning($"GlamourerIpc: {label} {ex.Message}"); }
         }
-        catch (Exception ex) { log.Warning($"GlamourerIpc: ApplyState.V4 {ex.Message}"); }
 
         // V3 (state, objectIndex, flags) -> ec  [no key]
         try
