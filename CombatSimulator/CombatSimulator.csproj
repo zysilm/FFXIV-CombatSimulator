@@ -6,6 +6,14 @@
     <IsPackable>false</IsPackable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <!-- Experimental dev module: a private git submodule at Dev/Experimental. When it is checked out
+       its sources compile in and DEV_EXPERIMENTAL is defined; otherwise the SDK glob finds none of
+       those files and the plugin builds against the no-op DevExperimentalStub. The public CI builds
+       without the submodule (verify-only, no deploy); the release build includes it. -->
+  <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)\Dev\Experimental\DevExperimentalModule.cs')">
+    <DefineConstants>$(DefineConstants);DEV_EXPERIMENTAL</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" />
   </ItemGroup>

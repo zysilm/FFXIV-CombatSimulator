@@ -168,10 +168,14 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // All experimental ("easter-egg") dev features live in one module now (Victory/Hold/KO Strip/
         // Monster + dev-only per-frame tweaks). The engine drives the cinematic victory through the
         // IVictorySequence seam.
+#if DEV_EXPERIMENTAL
         devExperimental = new Dev.Experimental.DevExperimentalModule(
             keyState, gamepadState, framework, ragdollController, animationController, boneTransformService,
             movementBlockHook, activeCameraController, vnavmeshIpc, dismembermentController, glamourerIpc,
             combatEngine, clientState, targetManager, npcSelector, FindNpcByAddress, config, log);
+#else
+        devExperimental = new Dev.DevExperimentalStub();
+#endif
         combatEngine.VictorySequence = devExperimental.VictorySequence;
         companionManager = new CombatCompanionManager(
             objectTable, clientState, config, combatEngine, animationController,

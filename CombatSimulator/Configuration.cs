@@ -155,7 +155,7 @@ public class RecentNpcEntry
 }
 
 [Serializable]
-public class Configuration : IPluginConfiguration
+public partial class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
     public bool ActionGuardDefaultMigratedToR2 { get; set; } = false;
@@ -417,9 +417,8 @@ public class Configuration : IPluginConfiguration
     // matches); otherwise the last-targeted enemy is used.
     public bool GrabCustomPrimary { get; set; } = false;
     public string GrabCustomPrimaryName { get; set; } = string.Empty;
-    public List<VictorySequenceStage> VictorySequenceStages { get; set; } = new();
-    public List<VictorySequenceStage> VictorySequenceOtherStages { get; set; } = new();
-    public List<VictoryCinematicPreset> VictoryCinematicPresets { get; set; } = new();
+    // VictorySequenceStages / OtherStages / CinematicPresets moved to the experimental partial
+    // (they reference dev types that only exist when the private module is compiled in).
     public float DevNpcScale { get; set; } = 1.0f;
     public bool ShowGrabToolbar { get; set; } = false;
     public bool ShowHoldToolbar { get; set; } = false;
