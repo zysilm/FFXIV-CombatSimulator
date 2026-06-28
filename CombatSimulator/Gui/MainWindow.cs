@@ -345,7 +345,6 @@ public partial class MainWindow : IDisposable
                 break;
             case 8: // Settings
                 DrawGuiSettingsSection();
-                DrawDevSection();
                 break;
             case 9: // Diagnose
                 DrawDiagnoseSection();
