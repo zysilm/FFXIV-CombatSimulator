@@ -56,7 +56,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly UseActionHook useActionHook;
     private readonly DeathCamController deathCamController;
     private readonly ActiveCameraController activeCameraController;
-    private readonly Dev.Experimental.DevExperimentalModule devExperimental;
+    private readonly Dev.IDevExperimental devExperimental;
     private readonly HookSafetyChecker hookSafetyChecker;
 
     // Action Mode (动作模式): real-time combat layer wired through narrow seams.
@@ -172,7 +172,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             keyState, gamepadState, framework, ragdollController, animationController, boneTransformService,
             movementBlockHook, activeCameraController, vnavmeshIpc, dismembermentController, glamourerIpc,
             combatEngine, clientState, targetManager, npcSelector, FindNpcByAddress, config, log);
-        combatEngine.VictorySequence = devExperimental.Victory;
+        combatEngine.VictorySequence = devExperimental.VictorySequence;
         companionManager = new CombatCompanionManager(
             objectTable, clientState, config, combatEngine, animationController,
             movementBlockHook, vnavmeshIpc, targetManager, partyEngagePlanner, terrainHeightService, log);

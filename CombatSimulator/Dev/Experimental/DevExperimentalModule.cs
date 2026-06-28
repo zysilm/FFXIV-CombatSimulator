@@ -23,7 +23,7 @@ namespace CombatSimulator.Dev.Experimental;
 /// lifecycle (tick / player-death / reset / zone-change / draw / dispose) here, so all dev-exclusive
 /// orchestration lives in one place.
 /// </summary>
-public sealed unsafe class DevExperimentalModule : IDisposable
+public sealed unsafe class DevExperimentalModule : IDevExperimental
 {
     private readonly Configuration config;
     private readonly NpcSelector npcSelector;
@@ -65,6 +65,9 @@ public sealed unsafe class DevExperimentalModule : IDisposable
             activeCamera, vnav, dismemberment, glamourer, config, log);
         Monster.AttachHold(Hold);
     }
+
+    // Engine seam: expose the cinematic victory controller as the narrow interface.
+    IVictorySequence? IDevExperimental.VictorySequence => Victory;
 
     /// <summary>True while a dev controller is driving this NPC (suppresses its AI).</summary>
     public bool ControlsNpc(nint address) => Victory.ControlsNpc(address) || Monster.ControlsNpc(address);
