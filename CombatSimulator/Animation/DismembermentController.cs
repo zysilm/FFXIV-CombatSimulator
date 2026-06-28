@@ -11,6 +11,7 @@ using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
+using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using BepuSimulation = BepuPhysics.Simulation;
 
 namespace CombatSimulator.Animation;
@@ -54,6 +55,8 @@ public unsafe class DismembermentController : IDisposable
         public Quaternion SeveranceWorldRot;
         public bool DrawEnabled;
         public int FramesWaited;
+        public int SettleFrames;   // let the clone idle into a real pose before freezing
+        public bool Armed;         // frozen + body created + driving
         public int LimbIndex = -1;
         public Vector3 LimbRootModelPos;
         public BodyHandle? Body;
@@ -75,6 +78,7 @@ public unsafe class DismembermentController : IDisposable
 
     private readonly List<Clone> clones = new();
     private readonly List<Pending> pending = new();
+    private readonly HashSet<int> allocatedIndices = new();
 
     public DismembermentController(BoneTransformService boneService, GlamourerIpc glamourerIpc,
         IObjectTable objectTable, Configuration config, IPluginLog log)
@@ -142,7 +146,7 @@ public unsafe class DismembermentController : IDisposable
 
             if (clones.Count == 0) return;
 
-            // Draw-ready poll + freeze + body creation.
+            // Draw-ready poll.
             foreach (var c in clones)
                 if (!c.DrawEnabled) TryEnableDraw(c);
 
@@ -160,7 +164,7 @@ public unsafe class DismembermentController : IDisposable
                 }
                 if (!c.DrawEnabled) continue;
                 ApplyDeferredGlamour(c);
-                DriveClone(c);
+                UpdateClone(c);
             }
         }
         catch (Exception ex)
@@ -198,8 +202,9 @@ public unsafe class DismembermentController : IDisposable
         if (createResult == 0xFFFFFFFF) { log.Warning("Dismember: CreateBattleCharacter failed (no slot)"); return; }
 
         var index = (int)createResult;
+        allocatedIndices.Add(index);
         var obj = clientObjMgr->GetObjectByIndex((ushort)index);
-        if (obj == null) { log.Warning("Dismember: object null after create"); return; }
+        if (obj == null) { allocatedIndices.Remove(index); log.Warning("Dismember: object null after create"); return; }
 
         var chara = (BattleChara*)obj;
         var character = (Character*)chara;
@@ -245,67 +250,58 @@ public unsafe class DismembermentController : IDisposable
         if (!c.Chara->IsReadyToDraw() && c.FramesWaited < MaxPendingFrames) return;
 
         c.Chara->EnableDraw();
-        ((Character*)c.Chara)->Timeline.OverallSpeed = 0f; // freeze pose
-
-        var skelN = boneService.TryGetSkeleton((nint)c.Chara);
-        if (skelN == null) return;
-        var skel = skelN.Value;
-        c.LimbIndex = boneService.ResolveBoneIndex(skel, c.LimbRootBone);
-        if (c.LimbIndex >= 0)
-        {
-            ref var lm = ref skel.Pose->ModelPose.Data[c.LimbIndex];
-            c.LimbRootModelPos = new Vector3(lm.Translation.X, lm.Translation.Y, lm.Translation.Z);
-        }
-
-        EnsureSimulation();
-        if (simulation != null)
-        {
-            c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
-                new RigidPose(c.SeveranceWorldPos, c.SeveranceWorldRot),
-                default(BodyVelocity),
-                limbInertia,
-                new CollidableDescription(limbShapeIndex, 0.04f),
-                new BodyActivityDescription(0.01f)));
-            (c.GroundTile, c.GroundShape) = CreateTerrainPatch(c.SeveranceWorldPos.X, c.SeveranceWorldPos.Z, c.SeveranceWorldPos.Y);
-        }
-
         c.DrawEnabled = true;
-        c.GlamourFramesUntil = 5;
-        c.GlamourAttemptsLeft = 4;
-        log.Info($"Dismember: clone idx={c.ObjectIndex} drawn + frozen, body created (limbIdx={c.LimbIndex})");
+        c.SettleFrames = 8;        // let it idle into a real pose before freezing
+        c.GlamourFramesUntil = 8;
+        c.GlamourAttemptsLeft = 5;
+        log.Info($"Dismember: clone idx={c.ObjectIndex} drawn (settling)");
     }
 
-    private void ApplyDeferredGlamour(Clone c)
+    private void UpdateClone(Clone c)
     {
-        if (c.GlamourBase64 == null || c.GameObjectRef == null || c.GlamourAttemptsLeft <= 0) return;
-        if (c.GlamourFramesUntil > 0) { c.GlamourFramesUntil--; return; }
-        if (c.GlamourFramesUntil == 0)
-        {
-            var ok = glamourerIpc.ApplyStateBase64(c.GlamourBase64, c.GameObjectRef.ObjectIndex);
-            c.GlamourAttemptsLeft--;
-            if (ok) { c.GlamourBase64 = null; log.Info($"Dismember: glamour applied idx={c.ObjectIndex}"); }
-            else c.GlamourFramesUntil = 5; // retry
-        }
-    }
-
-    private void DriveClone(Clone c)
-    {
-        if (simulation == null || c.Body == null || c.Chara == null || c.LimbIndex < 0) return;
+        if (c.Chara == null) return;
         var drawObj = ((GameObject*)c.Chara)->DrawObject;
         if (drawObj == null) return;
 
-        // Re-assert the freeze (the game recomputes it each frame).
-        ((Character*)c.Chara)->Timeline.OverallSpeed = 0f;
-
-        // Hide everything EXCEPT the limb subtree, each frame (the clone isn't ragdolled, so nothing
-        // else keeps these collapsed).
         var skelN = boneService.TryGetSkeleton((nint)c.Chara);
         if (skelN == null) return;
         var skel = skelN.Value;
-        HideAllButLimb(skel, c.LimbIndex, c.LimbRootModelPos);
 
-        // Drive the clone skeleton root from the rigid body, pivoting at the limb root so the visible
-        // chunk tumbles about its cut end.
+        if (c.LimbIndex < 0)
+            c.LimbIndex = boneService.ResolveBoneIndex(skel, c.LimbRootBone);
+        if (c.LimbIndex < 0) return; // nothing we can do until the limb resolves
+
+        // Each frame: show ONLY the limb (others thrown far away) and hide the clone's weapons.
+        HideAllButLimb(skel, c.LimbIndex);
+        HideWeapons(c);
+
+        if (!c.Armed)
+        {
+            // Let the pose settle (the limb gets a real shape), then freeze + spawn the body.
+            if (--c.SettleFrames > 0) return;
+            ref var lm = ref skel.Pose->ModelPose.Data[c.LimbIndex];
+            c.LimbRootModelPos = new Vector3(lm.Translation.X, lm.Translation.Y, lm.Translation.Z);
+            ((Character*)c.Chara)->Timeline.OverallSpeed = 0f;
+            EnsureSimulation();
+            if (simulation != null)
+            {
+                c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
+                    new RigidPose(c.SeveranceWorldPos, c.SeveranceWorldRot),
+                    default(BodyVelocity),
+                    limbInertia,
+                    new CollidableDescription(limbShapeIndex, 0.04f),
+                    new BodyActivityDescription(0.01f)));
+                (c.GroundTile, c.GroundShape) = CreateTerrainPatch(c.SeveranceWorldPos.X, c.SeveranceWorldPos.Z, c.SeveranceWorldPos.Y);
+            }
+            c.Armed = true;
+            log.Info($"Dismember: clone idx={c.ObjectIndex} armed (limbIdx={c.LimbIndex})");
+            return;
+        }
+
+        // Armed: re-assert freeze and drive the clone skeleton from the rigid body, pivoting at the
+        // limb root so the visible chunk tumbles about its cut.
+        ((Character*)c.Chara)->Timeline.OverallSpeed = 0f;
+        if (simulation == null || c.Body == null) return;
         var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
         var bodyPos = bodyRef.Pose.Position;
         var bodyRot = bodyRef.Pose.Orientation;
@@ -328,18 +324,49 @@ public unsafe class DismembermentController : IDisposable
         ((GameObject*)c.Chara)->Position = skelPos;
     }
 
-    // Collapse every bone NOT in the limb's subtree to the cut point + ~0 scale, plus any partial
-    // skeleton not attached under the limb. Inverse of RagdollController.HideLimbSubtree.
-    private void HideAllButLimb(SkeletonAccess skel, int limbIdx, Vector3 cut)
+    // Hide the clone's main/off-hand weapons (separate draw objects not affected by collapsing body
+    // bones) so they don't float next to the limb.
+    private void HideWeapons(Clone c)
+    {
+        var character = (Character*)c.Chara;
+        var main = character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).DrawObject;
+        var off = character->DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).DrawObject;
+        if (main != null) main->Scale = Vector3.Zero;
+        if (off != null) off->Scale = Vector3.Zero;
+    }
+
+    private void ApplyDeferredGlamour(Clone c)
+    {
+        if (c.GlamourBase64 == null || c.GameObjectRef == null || c.GlamourAttemptsLeft <= 0) return;
+        if (c.GlamourFramesUntil > 0) { c.GlamourFramesUntil--; return; }
+        if (c.GlamourFramesUntil == 0)
+        {
+            var ok = glamourerIpc.ApplyStateBase64(c.GlamourBase64, c.GameObjectRef.ObjectIndex);
+            c.GlamourAttemptsLeft--;
+            if (ok) { c.GlamourBase64 = null; log.Info($"Dismember: glamour applied idx={c.ObjectIndex}"); }
+            else c.GlamourFramesUntil = 5; // retry
+        }
+    }
+
+    // Collapse every bone NOT in the limb's subtree to the CUT POINT (the limb root) with exact-0
+    // scale, plus any partial skeleton not attached under the limb. Collapsing to the cut (not far
+    // away) pinches the shared seam verts at the cut instead of stretching them into a spike; exact-0
+    // scale makes the rest of the body cull to a zero-area point. Inverse of HideLimbSubtree.
+    private void HideAllButLimb(SkeletonAccess skel, int limbIdx)
     {
         var pose = skel.Pose;
+        ref var lm = ref pose->ModelPose.Data[limbIdx];
+        var cx = lm.Translation.X;
+        var cy = lm.Translation.Y;
+        var cz = lm.Translation.Z;
+
         var n = Math.Min(skel.BoneCount, skel.ParentCount);
         for (int i = 0; i < n; i++)
         {
             if (IsDescendantOrSelf(skel, i, limbIdx)) continue;
             ref var m = ref pose->ModelPose.Data[i];
-            m.Translation.X = cut.X; m.Translation.Y = cut.Y; m.Translation.Z = cut.Z;
-            m.Scale.X = 0.0001f; m.Scale.Y = 0.0001f; m.Scale.Z = 0.0001f;
+            m.Translation.X = cx; m.Translation.Y = cy; m.Translation.Z = cz;
+            m.Scale.X = 0.0001f; m.Scale.Y = 0.0001f; m.Scale.Z = 0.0001f; // NOT 0 — singular matrix => NaN glitch
         }
 
         var skeleton = skel.CharBase->Skeleton;
@@ -397,23 +424,30 @@ public unsafe class DismembermentController : IDisposable
         {
             log.Warning(ex, $"Dismember: despawn clone idx={c.ObjectIndex} failed");
         }
+        allocatedIndices.Remove(c.ObjectIndex);
     }
 
     private uint FindFreeObjectHint()
     {
-        // Use a different window than companions (100-199) to reduce hint collisions.
+        // Window 200-299 (companions use 100-199). Must avoid slots our own live clones hold, or the
+        // game's CreateBattleCharacter collides and fails for the 2nd+ limb.
         uint hint = 200;
-        while (hint < 250) hint++;
-        return 200;
+        while (hint < 300 && allocatedIndices.Contains((int)hint)) hint++;
+        return hint;
     }
 
-    private (StaticHandle, TypedIndex) CreateTerrainPatch(float centerX, float centerZ, float defaultGroundY)
+    private (StaticHandle, TypedIndex) CreateTerrainPatch(float centerX, float centerZ, float aboveY)
     {
-        // Reuse the weapon-drop flat-fallback approach (a small box) — limbs are small and roll on the
-        // local patch; a flat box is adequate for the POC and avoids the mesh-buffer cleanup path.
+        // The limb spawns at body height (aboveY ~1m up), so raycast DOWN to the real floor — without
+        // this the ground box sits at limb height and the limb just floats there instead of falling.
+        var groundY = aboveY - 1.5f;
+        if (BGCollisionModule.RaycastMaterialFilter(
+                new Vector3(centerX, aboveY + 5f, centerZ), new Vector3(0, -1, 0), out var hit, 80f))
+            groundY = hit.Point.Y;
+
         var shape = simulation!.Shapes.Add(new Box(8f, 0.1f, 8f));
         var st = simulation.Statics.Add(new StaticDescription(
-            new Vector3(centerX, defaultGroundY - 0.05f, centerZ), Quaternion.Identity, shape));
+            new Vector3(centerX, groundY - 0.05f, centerZ), Quaternion.Identity, shape));
         return (st, shape);
     }
 

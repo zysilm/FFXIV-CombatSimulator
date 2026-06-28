@@ -308,6 +308,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 // severed-limb clone per selected part.
                 var playerIdx = objectTable.LocalPlayer?.ObjectIndex ?? 0;
                 var glam = glamourerIpc.GetStateBase64((int)playerIdx);
+                log.Info($"Dismember: glamour capture playerIdx={playerIdx} len={(glam?.Length ?? -1)}");
                 foreach (var bone in config.DismemberPocBones)
                     dismembermentController.SpawnFor(addr, bone, config.RagdollActivationDelay, glam);
             }
