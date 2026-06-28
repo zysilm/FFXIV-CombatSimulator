@@ -375,6 +375,8 @@ public unsafe class DismembermentController : IDisposable
         if (c.Rig != null)
         {
             DriveLimbRig(skel, c);
+            HideAllButLimb(skel, c.LimbIndex);
+            HideWeapons(c);
             return;
         }
         if (c.Body == null) return;
