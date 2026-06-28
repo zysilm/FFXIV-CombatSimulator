@@ -282,9 +282,9 @@ public class Configuration : IPluginConfiguration
     // Velocity-solve substeps per fixed timestep. 1 = legacy behavior. Raising this
     // re-solves the constraints at a finer sub-step, which is BEPU's recommended lever
     // for making a STIFF limit wall (see RagdollLimitSpringFrequency) well-conditioned
-    // instead of pumping energy. Costs ~linearly in performance. Takes effect on next
-    // ragdoll activation.
-    public int RagdollSolverSubsteps { get; set; } = 1;
+    // instead of pumping energy. Costs ~linearly in performance. 8 = the validated default
+    // that keeps stiff joints/limits from rubber-banding. Takes effect on next ragdoll activation.
+    public int RagdollSolverSubsteps { get; set; } = 8;
     // Spring frequency (Hz) of the joint LIMIT walls (swing cones + twist ranges), not
     // the positional joints. Higher = firmer wall so joints don't blow past their range
     // under momentum (e.g. shoulders/waist over-rotating); too high relative to the
