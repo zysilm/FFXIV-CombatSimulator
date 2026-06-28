@@ -42,11 +42,17 @@ public unsafe class DismembermentController : IDisposable
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
     private readonly HashSet<(int, int)> connectedPairs = new();
+    private readonly HashSet<int> restrictedStaticHandles = new();
+    private readonly HashSet<int> pcCollisionBodyHandles = new();
+    private readonly List<NpcCollisionState> pcNpcCollisionStates = new();
+    private readonly HashSet<nint> pcNpcCollisionAddresses = new();
     private TypedIndex limbShapeIndex;
     private BodyInertia limbInertia;
     private uint nextEntityId = 0xF2000001;
 
     public float DismemberActivationImpulse { get; set; }
+    public bool EnablePcDismemberNpcCollision { get; set; }
+    public Func<IReadOnlyList<nint>>? PcDismemberNpcCollisionProvider { get; set; }
 
     private sealed class Clone
     {
@@ -58,6 +64,7 @@ public unsafe class DismembermentController : IDisposable
         public Vector3 SeveranceWorldPos;
         public Quaternion SeveranceWorldRot;
         public Vector3 OutwardWorldDir;
+        public bool IsPlayerControlledSource;
         public bool DrawEnabled;
         public int FramesWaited;
         public int SettleFrames;   // let the clone idle into a real pose before freezing
@@ -114,6 +121,24 @@ public unsafe class DismembermentController : IDisposable
         public Quaternion BodyToBoneRotation;
         public float SegmentHalfLength;
         public RagdollController.RagdollBoneDef Def;
+    }
+
+    private struct NpcBoneStatic
+    {
+        public StaticHandle Handle;
+        public TypedIndex Shape;
+        public int BoneIndex;
+        public int ParentBoneIndex;
+        public float CenterFactor;
+    }
+
+    private struct NpcCollisionState
+    {
+        public nint Address;
+        public List<NpcBoneStatic> BoneStatics;
+        public StaticHandle FallbackHandle;
+        public TypedIndex FallbackShape;
+        public bool IsFallback;
     }
 
     private sealed class Pending
@@ -318,9 +343,14 @@ public unsafe class DismembermentController : IDisposable
     public void RemoveAll()
     {
         pending.Clear();
-        if (clones.Count == 0) return;
+        if (clones.Count == 0)
+        {
+            ClearPcNpcCollisionStatics();
+            return;
+        }
         foreach (var c in clones) DespawnClone(c);
         clones.Clear();
+        ClearPcNpcCollisionStatics();
     }
 
     private void OnRenderFrame()
@@ -347,6 +377,7 @@ public unsafe class DismembermentController : IDisposable
             foreach (var c in clones)
                 if (!c.DrawEnabled) TryEnableDraw(c);
 
+            UpdatePcNpcCollisionStatics();
             if (simulation != null) simulation.Timestep(1f / 60f);
 
             for (int i = clones.Count - 1; i >= 0; i--)
@@ -384,6 +415,8 @@ public unsafe class DismembermentController : IDisposable
         var severanceRot = handoff?.RootWorldRot ?? Quaternion.Normalize(srcRot * limbModelRot);
         var cloneBasePos = handoff?.SkeletonPos ?? severancePos;
         var outwardDir = ComputeOutwardDirection(skel, limbIdx, severancePos, srcPos, srcRot);
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        var isPlayerControlledSource = player != null && player.Address == p.SourceAddress;
 
         var src = (Character*)p.SourceAddress;
 
@@ -435,6 +468,7 @@ public unsafe class DismembermentController : IDisposable
             SeveranceWorldPos = severancePos,
             SeveranceWorldRot = severanceRot,
             OutwardWorldDir = outwardDir,
+            IsPlayerControlledSource = isPlayerControlledSource,
             GlamourBase64 = p.GlamourBase64,
             Handoff = handoff,
         });
@@ -657,6 +691,276 @@ public unsafe class DismembermentController : IDisposable
         body.Awake = true;
     }
 
+    private void RegisterPcCollisionBodies(Clone c)
+    {
+        if (!c.IsPlayerControlledSource)
+            return;
+
+        if (c.Rig != null)
+        {
+            foreach (var limbBody in c.Rig.Bodies)
+                pcCollisionBodyHandles.Add(limbBody.Body.Value);
+            return;
+        }
+
+        if (c.Body.HasValue)
+            pcCollisionBodyHandles.Add(c.Body.Value.Value);
+    }
+
+    private void UnregisterPcCollisionBodies(Clone c)
+    {
+        if (!c.IsPlayerControlledSource)
+            return;
+
+        if (c.Rig != null)
+        {
+            foreach (var limbBody in c.Rig.Bodies)
+                pcCollisionBodyHandles.Remove(limbBody.Body.Value);
+        }
+
+        if (c.Body.HasValue)
+            pcCollisionBodyHandles.Remove(c.Body.Value.Value);
+    }
+
+    private const float PcNpcCollisionDefaultRadius = 0.045f;
+    private const float PcNpcCollisionFallbackRadius = 0.32f;
+    private const float PcNpcCollisionFallbackLength = 1.2f;
+    private const float PcNpcCollisionMinSegmentLength = 0.05f;
+    private const int PcNpcCollisionMaxSegments = 24;
+
+    private void UpdatePcNpcCollisionStatics()
+    {
+        if (!EnablePcDismemberNpcCollision || simulation == null || pcCollisionBodyHandles.Count == 0)
+        {
+            ClearPcNpcCollisionStatics();
+            return;
+        }
+
+        var addresses = PcDismemberNpcCollisionProvider?.Invoke() ?? Array.Empty<nint>();
+        var nextAddresses = new HashSet<nint>();
+        var playerAddress = Core.Services.ObjectTable.LocalPlayer?.Address ?? nint.Zero;
+        foreach (var address in addresses)
+        {
+            if (address == nint.Zero || address == playerAddress)
+                continue;
+            nextAddresses.Add(address);
+        }
+
+        if (nextAddresses.Count == 0)
+        {
+            ClearPcNpcCollisionStatics();
+            return;
+        }
+
+        if (!pcNpcCollisionAddresses.SetEquals(nextAddresses))
+        {
+            ClearPcNpcCollisionStatics();
+            foreach (var address in nextAddresses)
+                BuildPcNpcCollision(address);
+            pcNpcCollisionAddresses.UnionWith(nextAddresses);
+        }
+
+        for (int i = pcNpcCollisionStates.Count - 1; i >= 0; i--)
+            UpdatePcNpcCollisionState(pcNpcCollisionStates[i]);
+    }
+
+    private void BuildPcNpcCollision(nint address)
+    {
+        if (simulation == null)
+            return;
+
+        var skelN = boneService.TryGetSkeleton(address);
+        if (skelN == null || skelN.Value.CharBase->Skeleton == null)
+        {
+            CreatePcNpcFallbackCollision(address);
+            return;
+        }
+
+        var skel = skelN.Value;
+        var skeleton = skel.CharBase->Skeleton;
+        var skelPos = new Vector3(skeleton->Transform.Position.X, skeleton->Transform.Position.Y, skeleton->Transform.Position.Z);
+        var skelRot = Quaternion.Normalize(new Quaternion(
+            skeleton->Transform.Rotation.X,
+            skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z,
+            skeleton->Transform.Rotation.W));
+
+        var candidates = new List<(float Len, int Bone, int Parent, float CenterFactor, Vector3 Center, Quaternion Rot)>();
+        var boneCount = Math.Min(skel.BoneCount, skel.ParentCount);
+        for (int i = 1; i < boneCount; i++)
+        {
+            var parentIdx = skel.HavokSkeleton->ParentIndices[i];
+            if (parentIdx < 0 || parentIdx >= skel.BoneCount)
+                continue;
+
+            ref var parentMt = ref skel.Pose->ModelPose.Data[parentIdx];
+            var parentWorld = skelPos + Vector3.Transform(
+                new Vector3(parentMt.Translation.X, parentMt.Translation.Y, parentMt.Translation.Z),
+                skelRot);
+
+            ref var childMt = ref skel.Pose->ModelPose.Data[i];
+            var childWorld = skelPos + Vector3.Transform(
+                new Vector3(childMt.Translation.X, childMt.Translation.Y, childMt.Translation.Z),
+                skelRot);
+
+            var segment = childWorld - parentWorld;
+            var segLen = segment.Length();
+            if (segLen < PcNpcCollisionMinSegmentLength)
+                continue;
+
+            var halfLen = MathF.Max(0.01f, (segLen * 0.5f) - PcNpcCollisionDefaultRadius);
+            var centerFactor = halfLen / segLen;
+            var center = parentWorld + segment * centerFactor;
+            candidates.Add((segLen, i, parentIdx, centerFactor, center, AlignYTo(segment / segLen)));
+        }
+
+        if (candidates.Count > PcNpcCollisionMaxSegments)
+        {
+            candidates.Sort((a, b) => b.Len.CompareTo(a.Len));
+            candidates.RemoveRange(PcNpcCollisionMaxSegments, candidates.Count - PcNpcCollisionMaxSegments);
+        }
+
+        if (candidates.Count == 0)
+        {
+            CreatePcNpcFallbackCollision(address);
+            return;
+        }
+
+        var statics = new List<NpcBoneStatic>();
+        foreach (var c in candidates)
+        {
+            var shape = simulation.Shapes.Add(new Capsule(PcNpcCollisionDefaultRadius, MathF.Max(0.02f, c.Len - PcNpcCollisionDefaultRadius * 2f)));
+            var handle = simulation.Statics.Add(new StaticDescription(c.Center, c.Rot, shape));
+            restrictedStaticHandles.Add(handle.Value);
+            statics.Add(new NpcBoneStatic
+            {
+                Handle = handle,
+                Shape = shape,
+                BoneIndex = c.Bone,
+                ParentBoneIndex = c.Parent,
+                CenterFactor = c.CenterFactor,
+            });
+        }
+
+        pcNpcCollisionStates.Add(new NpcCollisionState
+        {
+            Address = address,
+            BoneStatics = statics,
+        });
+    }
+
+    private void CreatePcNpcFallbackCollision(nint address)
+    {
+        if (simulation == null)
+            return;
+
+        var go = (GameObject*)address;
+        var pos = new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z);
+        var shape = simulation.Shapes.Add(new Capsule(PcNpcCollisionFallbackRadius, PcNpcCollisionFallbackLength));
+        var handle = simulation.Statics.Add(new StaticDescription(pos, Quaternion.Identity, shape));
+        restrictedStaticHandles.Add(handle.Value);
+        pcNpcCollisionStates.Add(new NpcCollisionState
+        {
+            Address = address,
+            BoneStatics = new List<NpcBoneStatic>(),
+            FallbackHandle = handle,
+            FallbackShape = shape,
+            IsFallback = true,
+        });
+    }
+
+    private void UpdatePcNpcCollisionState(NpcCollisionState state)
+    {
+        if (simulation == null)
+            return;
+
+        try
+        {
+            if (state.IsFallback)
+            {
+                var go = (GameObject*)state.Address;
+                var staticRef = simulation.Statics.GetStaticReference(state.FallbackHandle);
+                staticRef.Pose.Position = new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z);
+                staticRef.UpdateBounds();
+                return;
+            }
+
+            var skelN = boneService.TryGetSkeleton(state.Address);
+            if (skelN == null || skelN.Value.CharBase->Skeleton == null)
+                return;
+
+            var skel = skelN.Value;
+            var skeleton = skel.CharBase->Skeleton;
+            var skelPos = new Vector3(skeleton->Transform.Position.X, skeleton->Transform.Position.Y, skeleton->Transform.Position.Z);
+            var skelRot = Quaternion.Normalize(new Quaternion(
+                skeleton->Transform.Rotation.X,
+                skeleton->Transform.Rotation.Y,
+                skeleton->Transform.Rotation.Z,
+                skeleton->Transform.Rotation.W));
+
+            foreach (var bs in state.BoneStatics)
+            {
+                if (bs.BoneIndex < 0 || bs.BoneIndex >= skel.BoneCount ||
+                    bs.ParentBoneIndex < 0 || bs.ParentBoneIndex >= skel.BoneCount)
+                    continue;
+
+                ref var parentMt = ref skel.Pose->ModelPose.Data[bs.ParentBoneIndex];
+                var parentWorld = skelPos + Vector3.Transform(
+                    new Vector3(parentMt.Translation.X, parentMt.Translation.Y, parentMt.Translation.Z),
+                    skelRot);
+
+                ref var childMt = ref skel.Pose->ModelPose.Data[bs.BoneIndex];
+                var childWorld = skelPos + Vector3.Transform(
+                    new Vector3(childMt.Translation.X, childMt.Translation.Y, childMt.Translation.Z),
+                    skelRot);
+
+                var segment = childWorld - parentWorld;
+                var segLen = segment.Length();
+                var staticRef = simulation.Statics.GetStaticReference(bs.Handle);
+                if (segLen > 0.01f)
+                {
+                    staticRef.Pose.Position = parentWorld + segment * bs.CenterFactor;
+                    staticRef.Pose.Orientation = AlignYTo(segment / segLen);
+                }
+                else
+                {
+                    staticRef.Pose.Position = parentWorld;
+                    staticRef.Pose.Orientation = Quaternion.Identity;
+                }
+                staticRef.UpdateBounds();
+            }
+        }
+        catch { }
+    }
+
+    private void ClearPcNpcCollisionStatics()
+    {
+        if (simulation != null)
+        {
+            foreach (var state in pcNpcCollisionStates)
+            {
+                if (state.IsFallback)
+                {
+                    try { simulation.Statics.Remove(state.FallbackHandle); } catch { }
+                    if (bufferPool != null)
+                        try { simulation.Shapes.RemoveAndDispose(state.FallbackShape, bufferPool); } catch { }
+                    continue;
+                }
+
+                foreach (var bs in state.BoneStatics)
+                {
+                    try { simulation.Statics.Remove(bs.Handle); } catch { }
+                    if (bufferPool != null)
+                        try { simulation.Shapes.RemoveAndDispose(bs.Shape, bufferPool); } catch { }
+                }
+            }
+        }
+
+        pcNpcCollisionStates.Clear();
+        pcNpcCollisionAddresses.Clear();
+        restrictedStaticHandles.Clear();
+    }
+
     private void UpdateClone(Clone c)
     {
         if (c.Chara == null) return;
@@ -737,6 +1041,7 @@ public unsafe class DismembermentController : IDisposable
                     }
                 }
                 (c.GroundTile, c.GroundShape) = CreateTerrainPatch(c.SeveranceWorldPos.X, c.SeveranceWorldPos.Z, c.SeveranceWorldPos.Y);
+                RegisterPcCollisionBodies(c);
                 ApplyActivationImpulse(c);
             }
             c.Armed = true;
@@ -1627,6 +1932,7 @@ public unsafe class DismembermentController : IDisposable
         {
             if (simulation != null)
             {
+                UnregisterPcCollisionBodies(c);
                 if (c.Body.HasValue) simulation.Bodies.Remove(c.Body.Value);
                 if (c.Rig != null)
                 {
@@ -1896,7 +2202,13 @@ public unsafe class DismembermentController : IDisposable
         bufferPool = new BufferPool();
         simulation = BepuSimulation.Create(
             bufferPool,
-            new RagdollNarrowPhaseCallbacks { ConnectedPairs = connectedPairs, Friction = config.RagdollFriction },
+            new RagdollNarrowPhaseCallbacks
+            {
+                ConnectedPairs = connectedPairs,
+                Friction = config.RagdollFriction,
+                RestrictedStatics = restrictedStaticHandles,
+                AllowedDynamicBodiesForRestrictedStatics = pcCollisionBodyHandles,
+            },
             // Stronger damping than weapons (0.97/0.92) so limbs tumble a bit then settle, not roll far.
             new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -config.RagdollGravity, 0), 0.93f, 0.84f),
             new SolveDescription(4, 1));
@@ -1912,6 +2224,10 @@ public unsafe class DismembermentController : IDisposable
         simulation?.Dispose();
         simulation = null;
         connectedPairs.Clear();
+        pcCollisionBodyHandles.Clear();
+        pcNpcCollisionStates.Clear();
+        pcNpcCollisionAddresses.Clear();
+        restrictedStaticHandles.Clear();
         bufferPool?.Clear();
         bufferPool = null;
     }

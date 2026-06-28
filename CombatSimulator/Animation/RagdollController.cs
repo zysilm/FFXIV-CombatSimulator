@@ -6362,6 +6362,8 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     // Connected body pairs that should NOT collide (parent-child joints).
     // All other body-body pairs DO collide (arms vs torso, etc.).
     public HashSet<(int, int)> ConnectedPairs;
+    public HashSet<int>? RestrictedStatics;
+    public HashSet<int>? AllowedDynamicBodiesForRestrictedStatics;
 
     public void Initialize(BepuSimulation simulation) { }
 
@@ -6369,7 +6371,17 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     {
         // Always allow body-static collisions (ragdoll vs ground)
         if (a.Mobility == CollidableMobility.Static || b.Mobility == CollidableMobility.Static)
+        {
+            if (RestrictedStatics != null && AllowedDynamicBodiesForRestrictedStatics != null &&
+                ((a.Mobility == CollidableMobility.Static && RestrictedStatics.Contains(a.StaticHandle.Value)) ||
+                 (b.Mobility == CollidableMobility.Static && RestrictedStatics.Contains(b.StaticHandle.Value))))
+            {
+                var dynamicRef = a.Mobility == CollidableMobility.Dynamic ? a : b;
+                return dynamicRef.Mobility == CollidableMobility.Dynamic &&
+                       AllowedDynamicBodiesForRestrictedStatics.Contains(dynamicRef.BodyHandle.Value);
+            }
             return true;
+        }
 
         // Body-body: allow UNLESS they are directly connected by a joint.
         // Connected pairs would explode because they share a constraint anchor point.
