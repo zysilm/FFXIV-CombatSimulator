@@ -46,6 +46,8 @@ public unsafe class DismembermentController : IDisposable
     private BodyInertia limbInertia;
     private uint nextEntityId = 0xF2000001;
 
+    public float DismemberActivationImpulse { get; set; }
+
     private sealed class Clone
     {
         public nint SourceAddress;
@@ -55,6 +57,7 @@ public unsafe class DismembermentController : IDisposable
         public IGameObject? GameObjectRef;
         public Vector3 SeveranceWorldPos;
         public Quaternion SeveranceWorldRot;
+        public Vector3 OutwardWorldDir;
         public bool DrawEnabled;
         public int FramesWaited;
         public int SettleFrames;   // let the clone idle into a real pose before freezing
@@ -380,6 +383,7 @@ public unsafe class DismembermentController : IDisposable
         var severancePos = handoff?.RootWorldPos ?? (srcPos + Vector3.Transform(limbModelPos, srcRot));
         var severanceRot = handoff?.RootWorldRot ?? Quaternion.Normalize(srcRot * limbModelRot);
         var cloneBasePos = handoff?.SkeletonPos ?? severancePos;
+        var outwardDir = ComputeOutwardDirection(skel, limbIdx, severancePos, srcPos, srcRot);
 
         var src = (Character*)p.SourceAddress;
 
@@ -430,10 +434,36 @@ public unsafe class DismembermentController : IDisposable
             GameObjectRef = gameObjectRef,
             SeveranceWorldPos = severancePos,
             SeveranceWorldRot = severanceRot,
+            OutwardWorldDir = outwardDir,
             GlamourBase64 = p.GlamourBase64,
             Handoff = handoff,
         });
         log.Info($"Dismember: clone idx={index} bone={p.LimbRootBone} at ({severancePos.X:F1},{severancePos.Y:F1},{severancePos.Z:F1})");
+    }
+
+    private static Vector3 ComputeOutwardDirection(
+        SkeletonAccess skel,
+        int limbIdx,
+        Vector3 severanceWorldPos,
+        Vector3 sourceWorldPos,
+        Quaternion sourceWorldRot)
+    {
+        var parentIdx = -1;
+        if (limbIdx >= 0 && limbIdx < skel.ParentCount)
+            parentIdx = skel.HavokSkeleton->ParentIndices[limbIdx];
+
+        if (parentIdx >= 0 && parentIdx < skel.BoneCount)
+        {
+            ref var pm = ref skel.Pose->ModelPose.Data[parentIdx];
+            var parentModelPos = new Vector3(pm.Translation.X, pm.Translation.Y, pm.Translation.Z);
+            var parentWorldPos = sourceWorldPos + Vector3.Transform(parentModelPos, sourceWorldRot);
+            var dir = severanceWorldPos - parentWorldPos;
+            if (dir.LengthSquared() > 1e-6f)
+                return Vector3.Normalize(dir);
+        }
+
+        var fallback = severanceWorldPos - sourceWorldPos;
+        return fallback.LengthSquared() > 1e-6f ? Vector3.Normalize(fallback) : Vector3.UnitX;
     }
 
     private void TryRefreshHandoff(Pending p, float dt)
@@ -594,6 +624,39 @@ public unsafe class DismembermentController : IDisposable
         body.Velocity.Angular = bone.AngularVelocity;
     }
 
+    private void ApplyActivationImpulse(Clone c)
+    {
+        if (simulation == null) return;
+
+        var impulse = MathF.Max(0f, DismemberActivationImpulse);
+        if (impulse <= 0f) return;
+
+        var dir = c.OutwardWorldDir;
+        if (dir.LengthSquared() < 1e-6f)
+            dir = Vector3.UnitX;
+        else
+            dir = Vector3.Normalize(dir);
+
+        var velocityDelta = dir * impulse;
+        if (c.Rig != null)
+        {
+            foreach (var limbBody in c.Rig.Bodies)
+                ApplyVelocityDelta(limbBody.Body, velocityDelta);
+            return;
+        }
+
+        if (c.Body.HasValue)
+            ApplyVelocityDelta(c.Body.Value, velocityDelta);
+    }
+
+    private void ApplyVelocityDelta(BodyHandle handle, Vector3 velocityDelta)
+    {
+        if (simulation == null) return;
+        var body = simulation.Bodies.GetBodyReference(handle);
+        body.Velocity.Linear += velocityDelta;
+        body.Awake = true;
+    }
+
     private void UpdateClone(Clone c)
     {
         if (c.Chara == null) return;
@@ -674,6 +737,7 @@ public unsafe class DismembermentController : IDisposable
                     }
                 }
                 (c.GroundTile, c.GroundShape) = CreateTerrainPatch(c.SeveranceWorldPos.X, c.SeveranceWorldPos.Z, c.SeveranceWorldPos.Y);
+                ApplyActivationImpulse(c);
             }
             c.Armed = true;
             log.Info($"Dismember: clone idx={c.ObjectIndex} armed (limbIdx={c.LimbIndex})");
