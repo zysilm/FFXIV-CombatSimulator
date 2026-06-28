@@ -5,6 +5,8 @@ using CombatSimulator.Animation;
 using Dalamud.Configuration;
 using Dalamud.Plugin;
 using Dalamud.Game.ClientState.GamePad;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace CombatSimulator;
 
@@ -157,6 +159,12 @@ public class RecentNpcEntry
 public partial class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
+
+    // Preserve private/dev-only config fields when this object is loaded and saved by a
+    // public build that does not compile the experimental partial Configuration.
+    [JsonExtensionData]
+    public IDictionary<string, JToken>? PrivateConfigFields { get; set; }
+
     public bool ActionGuardDefaultMigratedToR2 { get; set; } = false;
     public bool ActionGuardVfxDefaultMigratedToHeavySwing { get; set; } = false;
     public bool ActionBasicAttackDefaultMigratedToSouth { get; set; } = false;
