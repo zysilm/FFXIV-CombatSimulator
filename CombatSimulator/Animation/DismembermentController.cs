@@ -60,6 +60,7 @@ public unsafe class DismembermentController : IDisposable
         public int LimbIndex = -1;
         public Vector3 LimbRootModelPos;
         public List<(int Idx, Vector3 T, Quaternion R, Vector3 S)>? LimbSnapshot; // frozen limb pose
+        public List<TypedIndex>? Shapes; // compound + child shapes to dispose
         public BodyHandle? Body;
         public StaticHandle? GroundTile;
         public TypedIndex? GroundShape;
@@ -299,11 +300,14 @@ public unsafe class DismembermentController : IDisposable
             EnsureSimulation();
             if (simulation != null)
             {
+                // Build a compound matching the real limb shape (one capsule per bone segment) so it
+                // rolls/collides like a limb, not a stick. Body origin stays at the limb root (pivot).
+                var shape = BuildLimbShape(skel, c, out var inertia);
                 c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
                     new RigidPose(c.SeveranceWorldPos, c.SeveranceWorldRot),
                     default(BodyVelocity),
-                    limbInertia,
-                    new CollidableDescription(limbShapeIndex, 0.04f),
+                    inertia,
+                    new CollidableDescription(shape, 0.04f),
                     new BodyActivityDescription(0.01f)));
                 (c.GroundTile, c.GroundShape) = CreateTerrainPatch(c.SeveranceWorldPos.X, c.SeveranceWorldPos.Z, c.SeveranceWorldPos.Y);
             }
@@ -438,6 +442,9 @@ public unsafe class DismembermentController : IDisposable
                 if (c.GroundTile.HasValue) simulation.Statics.Remove(c.GroundTile.Value);
                 if (c.GroundShape.HasValue && bufferPool != null)
                     simulation.Shapes.RemoveAndDispose(c.GroundShape.Value, bufferPool);
+                if (c.Shapes != null && bufferPool != null)
+                    foreach (var s in c.Shapes)
+                        try { simulation.Shapes.RemoveAndDispose(s, bufferPool); } catch { }
             }
 
             // Only touch game memory while the session is alive (shutdown frees these objects).
@@ -515,6 +522,62 @@ public unsafe class DismembermentController : IDisposable
         var shape = simulation!.Shapes.Add(mesh);
         var st = simulation.Statics.Add(new StaticDescription(Vector3.Zero, Quaternion.Identity, shape));
         return (st, shape);
+    }
+
+    // Build a Bepu Compound matching the limb's real shape: one capsule per bone->child segment in
+    // the snapshot (so a whole arm = upper-arm + forearm), or a single blob for the head. Children are
+    // in the limb-root frame, so the body origin stays the limb root and the pivot drive is unchanged.
+    private TypedIndex BuildLimbShape(SkeletonAccess skel, Clone c, out BodyInertia inertia)
+    {
+        var snap = c.LimbSnapshot!;
+        var rootRot = Quaternion.Identity;
+        foreach (var s in snap) if (s.Idx == c.LimbIndex) { rootRot = Quaternion.Normalize(s.R); break; }
+        var rootInv = Quaternion.Conjugate(rootRot);
+        var root = c.LimbRootModelPos;
+        var rad = LimbSegmentRadius(c.LimbRootBone);
+
+        var segs = new List<(Vector3 C, Quaternion O, float Len)>();
+        var maxReach = 0f;
+        foreach (var s in snap)
+        foreach (var t in snap)
+        {
+            if (t.Idx == s.Idx) continue;
+            if (skel.HavokSkeleton->ParentIndices[t.Idx] != s.Idx) continue;
+            var lb = Vector3.Transform(s.T - root, rootInv);
+            var lc = Vector3.Transform(t.T - root, rootInv);
+            var dir = lc - lb; var len = dir.Length();
+            if (len < 0.02f) continue;
+            var center = (lb + lc) * 0.5f;
+            segs.Add((center, AlignYTo(dir / len), len));
+            maxReach = MathF.Max(maxReach, center.Length() + len * 0.5f);
+        }
+        if (segs.Count == 0) // head / single-bone: a small blob at the root
+            segs.Add((Vector3.Zero, Quaternion.Identity, 0.05f));
+
+        bufferPool!.Take<CompoundChild>(segs.Count, out var cbuf);
+        c.Shapes = new List<TypedIndex>();
+        for (int i = 0; i < segs.Count; i++)
+        {
+            var idx = simulation!.Shapes.Add(new Capsule(rad, segs[i].Len));
+            c.Shapes.Add(idx);
+            cbuf[i] = new CompoundChild { ShapeIndex = idx, LocalPosition = segs[i].C, LocalOrientation = segs[i].O };
+        }
+        var compoundIdx = simulation!.Shapes.Add(new Compound(cbuf));
+        c.Shapes.Add(compoundIdx);
+        inertia = new Capsule(rad, MathF.Max(0.12f, maxReach)).ComputeInertia(LimbMass);
+        return compoundIdx;
+    }
+
+    private static float LimbSegmentRadius(string bone)
+        => bone.StartsWith("j_asi", StringComparison.Ordinal) ? 0.065f : bone == "j_kao" ? 0.09f : 0.045f;
+
+    private static Quaternion AlignYTo(Vector3 dir)
+    {
+        var d = Vector3.Dot(Vector3.UnitY, dir);
+        if (d > 0.9999f) return Quaternion.Identity;
+        if (d < -0.9999f) return new Quaternion(1f, 0f, 0f, 0f); // 180° about X
+        var axis = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, dir));
+        return Quaternion.CreateFromAxisAngle(axis, MathF.Acos(Math.Clamp(d, -1f, 1f)));
     }
 
     private void EnsureSimulation()
