@@ -93,6 +93,8 @@ public partial class MainWindow : IDisposable
     // Optional experimental dev hooks — implemented only when the private module is compiled in;
     // elided to no-ops otherwise (so the public build shows no dev section / entry / PC dismember).
     partial void InitDevExperimental();
+    partial void DrawDevSidebarEntry(ref int selectedTab);
+    partial void DrawDevTabContent(int selectedTab);
     partial void DrawDevSection();
     partial void DrawPcDismemberSection();
 
@@ -256,6 +258,7 @@ public partial class MainWindow : IDisposable
             if (ImGui.Selectable(TabNames[i], selectedTab == i))
                 selectedTab = i;
         }
+        DrawDevSidebarEntry(ref selectedTab);
         ImGui.EndChild();
 
         // Draggable splitter
@@ -346,6 +349,9 @@ public partial class MainWindow : IDisposable
                 break;
             case 9: // Diagnose
                 DrawDiagnoseSection();
+                break;
+            default:
+                DrawDevTabContent(selectedTab);
                 break;
         }
         ImGui.EndChild();
