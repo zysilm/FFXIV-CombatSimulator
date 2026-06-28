@@ -45,6 +45,19 @@ public unsafe class RagdollController : IDisposable
     private float elapsed;
     private float activationDelay;
     private bool physicsStarted;
+
+    // Animation→physics handoff velocity sampling. During the activation-delay countdown the
+    // death animation drives the bones; we snapshot each frame's model-space bone poses so that
+    // at handoff InitializePhysics can finite-difference the last animated frame and seed the
+    // physics bodies with the animation's velocity (instead of starting at rest). Stored by bone
+    // INDEX to avoid a name→index map during the countdown.
+    private bool handoffSampleValid;
+    private float handoffSampleDt;
+    private Vector3 handoffSkelPos;
+    private Quaternion handoffSkelRot;
+    private Vector3[]? handoffPrevPos;
+    private Quaternion[]? handoffPrevRot;
+    private int handoffPrevCount;
     // Skeleton bone count captured at InitializePhysics. If it changes mid-ragdoll the draw
     // object was rebuilt and our bone indices are stale → deactivate.
     private int initialBoneCount;
@@ -1157,6 +1170,7 @@ public unsafe class RagdollController : IDisposable
         targetEntityId = 0;
         physicsStarted = false;
         animationFrozen = false;
+        handoffSampleValid = false;
         ragdollBoneIndices.Clear();
         activeDefByName.Clear();
         activeRagdollIsGeneric = false;
@@ -1185,7 +1199,14 @@ public unsafe class RagdollController : IDisposable
             // Wait for activation delay (death animation plays first)
             if (!physicsStarted)
             {
-                if (elapsed < activationDelay) return;
+                if (elapsed < activationDelay)
+                {
+                    // Keep sampling the animated pose so the last frame before handoff carries
+                    // its velocity into the physics bodies (no freeze on activation).
+                    if (config.RagdollCarryAnimationVelocity)
+                        SampleHandoffPose(dt);
+                    return;
+                }
                 if (!InitializePhysics()) { Deactivate(); return; }
                 physicsStarted = true;
                 frameCount = 0;
@@ -1222,7 +1243,7 @@ public unsafe class RagdollController : IDisposable
                 if (pendingWholeBodyCollapse)
                 {
                     pendingWholeBodyCollapse = false;
-                    BeginWholeBodyCollapse();
+                    BeginWholeBodyCollapse(pendingWholeBodyDirection, pendingWholeBodyFuse);
                 }
 
                 if (pendingEntryConditionedKneePowerLoss)
@@ -1274,6 +1295,63 @@ public unsafe class RagdollController : IDisposable
     //   ModelPos  = Rotate(worldPos - skelPos, skelRotInv)
     //   WorldRot  = skelRot * modelRot
     //   ModelRot  = skelRotInv * worldRot
+
+    // Snapshot the current animated bone poses (model space) + skeleton transform so the next
+    // call to InitializePhysics can derive handoff velocities. Called each frame while the
+    // activation-delay death animation plays.
+    private void SampleHandoffPose(float dt)
+    {
+        if (dt <= 1e-5f) return;
+        var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
+        if (skelNullable == null) return;
+        var skel = skelNullable.Value;
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton == null) return;
+
+        handoffSkelPos = new Vector3(
+            skeleton->Transform.Position.X, skeleton->Transform.Position.Y, skeleton->Transform.Position.Z);
+        handoffSkelRot = new Quaternion(
+            skeleton->Transform.Rotation.X, skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z, skeleton->Transform.Rotation.W);
+
+        var pose = skel.Pose;
+        var n = skel.BoneCount;
+        if (handoffPrevPos == null || handoffPrevPos.Length < n)
+        {
+            handoffPrevPos = new Vector3[n];
+            handoffPrevRot = new Quaternion[n];
+        }
+        for (int i = 0; i < n; i++)
+        {
+            ref var mt = ref pose->ModelPose.Data[i];
+            handoffPrevPos[i] = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+            handoffPrevRot![i] = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
+        }
+        handoffPrevCount = n;
+        handoffSampleDt = dt;
+        handoffSampleValid = true;
+    }
+
+    // Convert the rotation delta prev→curr into an angular-velocity vector (rad/s).
+    private static Vector3 AngularVelocityFromQuats(Quaternion prev, Quaternion curr, float dt)
+    {
+        if (dt <= 1e-5f) return Vector3.Zero;
+        var dq = Quaternion.Normalize(curr * Quaternion.Conjugate(prev));
+        if (dq.W < 0f) dq = new Quaternion(-dq.X, -dq.Y, -dq.Z, -dq.W);
+        var s = MathF.Sqrt(MathF.Max(0f, 1f - dq.W * dq.W));
+        if (s < 1e-5f) return Vector3.Zero;
+        var angle = 2f * MathF.Acos(Math.Clamp(dq.W, -1f, 1f));
+        var axis = new Vector3(dq.X, dq.Y, dq.Z) / s;
+        return axis * (angle / dt);
+    }
+
+    private static Vector3 ClampVectorLength(Vector3 v, float maxLen)
+    {
+        var lenSq = v.LengthSquared();
+        if (lenSq > maxLen * maxLen && lenSq > 1e-8f)
+            return v * (maxLen / MathF.Sqrt(lenSq));
+        return v;
+    }
 
     private Vector3 ModelToWorld(Vector3 modelPos)
         => skelWorldPos + Vector3.Transform(modelPos, skelWorldRot);
@@ -1969,6 +2047,11 @@ public unsafe class RagdollController : IDisposable
         var pose = skel.Pose;
         var boneWorldPositions = new Dictionary<string, Vector3>();
         var boneWorldRotations = new Dictionary<string, Quaternion>();
+        // Handoff velocity per bone, finite-differenced against the last animated frame so the
+        // physics bodies continue the animation's motion instead of starting at rest.
+        var handoffSeedVel = new Dictionary<string, (Vector3 Lin, Vector3 Ang)>();
+        var canSeedHandoff = config.RagdollCarryAnimationVelocity && handoffSampleValid
+            && handoffPrevPos != null && handoffSampleDt > 1e-5f;
         var initialPoseLift = Vector3.Zero;
 
         foreach (var def in BoneDefs)
@@ -1977,8 +2060,19 @@ public unsafe class RagdollController : IDisposable
             ref var mt = ref pose->ModelPose.Data[idx];
             var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
             var modelRot = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
-            boneWorldPositions[def.Name] = ModelToWorld(modelPos);
-            boneWorldRotations[def.Name] = ModelRotToWorld(modelRot);
+            var worldPos = ModelToWorld(modelPos);
+            var worldRot = ModelRotToWorld(modelRot);
+            boneWorldPositions[def.Name] = worldPos;
+            boneWorldRotations[def.Name] = worldRot;
+
+            if (canSeedHandoff && idx < handoffPrevCount)
+            {
+                var prevWorldPos = handoffSkelPos + Vector3.Transform(handoffPrevPos![idx], handoffSkelRot);
+                var prevWorldRot = Quaternion.Normalize(handoffSkelRot * handoffPrevRot![idx]);
+                var lin = (worldPos - prevWorldPos) / handoffSampleDt;
+                var ang = AngularVelocityFromQuats(prevWorldRot, worldRot, handoffSampleDt);
+                handoffSeedVel[def.Name] = (lin, ang);
+            }
         }
 
         initialPoseLift = ApplyInitialUndergroundBoneLift(boneWorldPositions);
@@ -2206,6 +2300,18 @@ public unsafe class RagdollController : IDisposable
                 new BodyActivityDescription(sleepThreshold));
 
             var bodyHandle = simulation.Bodies.Add(bodyDesc);
+
+            // Seed the body with the velocity the death animation was carrying at handoff, so an
+            // in-motion animation flows continuously into physics instead of freezing at rest.
+            if (handoffSeedVel.TryGetValue(def.Name, out var seed))
+            {
+                var maxLin = activeRagdollIsGeneric ? GenericMaxLinearVelocity : HumanMaxLinearVelocity;
+                var maxAng = activeRagdollIsGeneric ? GenericMaxAngularVelocity : HumanMaxAngularVelocity;
+                var scale = MathF.Max(0f, config.RagdollHandoffVelocityScale);
+                var br = simulation.Bodies.GetBodyReference(bodyHandle);
+                br.Velocity.Linear = ClampVectorLength(seed.Lin * scale, maxLin);
+                br.Velocity.Angular = ClampVectorLength(seed.Ang * scale, maxAng);
+            }
 
             // Resolve the constraint parent by walking up the config parent chain to
             // the nearest ancestor that actually exists in this skeleton. On a complete
@@ -3915,6 +4021,13 @@ public unsafe class RagdollController : IDisposable
             : CollapseArchetype.UniformCollapse;
         var direction = (CollapseDirection)Math.Clamp(relaxation.Direction, 0, 4);
 
+        // Fuse a whole-body COM topple with the muscle-failure spike: the body loses balance over
+        // its support base and falls like an inverted pendulum while the joints brake, instead of
+        // sagging in place plus a one-shot shove. Only for the collapsing archetype (StiffHold is a
+        // permanent hold and must not be toppled). The topple drives direction, so suppress the
+        // legacy single impulse to avoid double-pushing.
+        var topple = config.RagdollRelaxationTopple && archetype == CollapseArchetype.UniformCollapse;
+
         RequestCollapseSpikeOnReady(
             archetype,
             Math.Clamp(relaxation.Strength, 0.5f, 40f),
@@ -3922,7 +4035,10 @@ public unsafe class RagdollController : IDisposable
             Math.Clamp(relaxation.Fade, 0.05f, 8f),
             Math.Clamp(relaxation.HingeSoften, 0f, 1f),
             direction,
-            Math.Clamp(relaxation.Impulse, 0f, 8f));
+            topple ? 0f : Math.Clamp(relaxation.Impulse, 0f, 8f));
+
+        if (topple)
+            RequestWholeBodyCollapseOnReady(direction, fuseWithSpike: true);
     }
 
     /// <summary>
@@ -4697,6 +4813,8 @@ public unsafe class RagdollController : IDisposable
     // core velocities so the body loses balance. Knees are not driven to a pose; they respond
     // passively through the existing anatomical constraints, contacts, gravity, and friction.
     private bool pendingWholeBodyCollapse;
+    private CollapseDirection pendingWholeBodyDirection = CollapseDirection.Forward;
+    private bool pendingWholeBodyFuse;
     private bool wholeBodyCollapseActive;
     private float wholeBodyElapsed;
     private Vector3 wholeBodyForward;
@@ -4707,18 +4825,27 @@ public unsafe class RagdollController : IDisposable
     public bool WholeBodyCollapseActive => wholeBodyCollapseActive;
 
     public void RequestWholeBodyCollapseOnReady()
+        => RequestWholeBodyCollapseOnReady(CollapseDirection.Forward, fuseWithSpike: false);
+
+    // direction = which way to topple; fuseWithSpike = run alongside the muscle-failure collapse
+    // spike (don't tear it down) so the body topples while the joints brake — the Relaxation path.
+    public void RequestWholeBodyCollapseOnReady(CollapseDirection direction, bool fuseWithSpike)
     {
         if (IsSimulationReady)
         {
-            BeginWholeBodyCollapse();
+            BeginWholeBodyCollapse(direction, fuseWithSpike);
             return;
         }
 
         pendingWholeBodyCollapse = true;
-        log.Info("RagdollController: whole-body collapse armed for next death");
+        pendingWholeBodyDirection = direction;
+        pendingWholeBodyFuse = fuseWithSpike;
+        log.Info($"RagdollController: whole-body collapse armed for next death (dir={direction} fuse={fuseWithSpike})");
     }
 
-    public bool BeginWholeBodyCollapse()
+    public bool BeginWholeBodyCollapse() => BeginWholeBodyCollapse(CollapseDirection.Forward, false);
+
+    public bool BeginWholeBodyCollapse(CollapseDirection direction, bool fuseWithSpike)
     {
         if (simulation == null || !isActive) return false;
 
@@ -4728,19 +4855,32 @@ public unsafe class RagdollController : IDisposable
             return false;
         }
 
-        StopCollapseSpike();
-        StopDirectedCollapseSpike();
-        StopKneePowerLossPattern();
+        // When fused with the Relaxation spike, keep that spike alive (it brakes the joints while
+        // we topple). Standalone use still clears the other controllers.
+        if (!fuseWithSpike)
+        {
+            StopCollapseSpike();
+            StopDirectedCollapseSpike();
+            StopKneePowerLossPattern();
+        }
         StopWholeBodyCollapse();
 
-        wholeBodyForward = ResolveCollapseDirection(CollapseDirection.Forward);
-        wholeBodyRight = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
+        var resolved = ResolveCollapseDirection(direction == CollapseDirection.None ? CollapseDirection.Forward : direction);
+        if (resolved.LengthSquared() < 1e-4f)
+            resolved = ResolveCollapseDirection(CollapseDirection.Forward);
+        wholeBodyForward = resolved;
+        // Lateral-balance axis ⟂ to the topple direction, so the forward/pitch drive tips the body
+        // toward wholeBodyForward for ANY chosen direction (not just character-forward).
+        var rightRaw = Vector3.Cross(Vector3.UnitY, wholeBodyForward);
+        wholeBodyRight = rightRaw.LengthSquared() > 1e-4f
+            ? Vector3.Normalize(rightRaw)
+            : FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
         wholeBodyElapsed = 0f;
         wholeBodyCollapseActive = true;
 
         WakeRagdollBodiesForBiomechanicalSettle();
         BeginBiomechanicalSettle();
-        log.Info($"RagdollController: whole-body collapse begun - com=({wholeBodyInitialCom.X:F2},{wholeBodyInitialCom.Y:F2},{wholeBodyInitialCom.Z:F2}) support=({wholeBodyInitialSupport.X:F2},{wholeBodyInitialSupport.Y:F2},{wholeBodyInitialSupport.Z:F2})");
+        log.Info($"RagdollController: whole-body collapse begun - dir={direction} fuse={fuseWithSpike} com=({wholeBodyInitialCom.X:F2},{wholeBodyInitialCom.Y:F2},{wholeBodyInitialCom.Z:F2}) support=({wholeBodyInitialSupport.X:F2},{wholeBodyInitialSupport.Y:F2},{wholeBodyInitialSupport.Z:F2})");
         return true;
     }
 

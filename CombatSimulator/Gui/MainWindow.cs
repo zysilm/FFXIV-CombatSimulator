@@ -3252,7 +3252,15 @@ public class MainWindow : IDisposable
             config.Save();
         }
 
-        using (ImRaii.Disabled(s.Direction == 0))
+        var topple = config.RagdollRelaxationTopple;
+        if (ImGui.Checkbox("Whole-body topple##guidedrelax", ref topple))
+        {
+            config.RagdollRelaxationTopple = topple;
+            config.Save();
+        }
+        HelpMarker("Drive a whole-body center-of-mass topple (the body loses balance over its feet and falls like an inverted pendulum) fused with the eccentric brake, instead of only a one-shot shove. Falls in 'Topple direction'. Off = legacy single impulse below. Takes effect on next death.");
+
+        using (ImRaii.Disabled(s.Direction == 0 || config.RagdollRelaxationTopple))
         {
             var impulse = Math.Clamp(s.Impulse, 0f, 8f);
             if (ImGui.SliderFloat("Topple impulse##guidedrelax", ref impulse, 0f, 8f, "%.2f"))
@@ -3260,6 +3268,7 @@ public class MainWindow : IDisposable
                 s.Impulse = impulse;
                 config.Save();
             }
+            HelpMarker("Legacy one-shot velocity shove at death. Only used when Whole-body topple is OFF.");
         }
     }
 
@@ -3596,6 +3605,25 @@ public class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Positional stiffness of the calf->foot joint specifically. The foot takes the hardest ground-impact impulses, so it rubber-bands first; give it a firmer spring than the body default. 60 = firm, 0 = use the body Joint Stiffness above. Takes effect on next ragdoll activation.");
+
+                var carryVel = config.RagdollCarryAnimationVelocity;
+                if (ImGui.Checkbox("Carry animation velocity##ragdoll", ref carryVel))
+                {
+                    config.RagdollCarryAnimationVelocity = carryVel;
+                    config.Save();
+                }
+                HelpMarker("At the animation->physics handoff (after the activation delay), seed each body with the velocity the death animation was carrying instead of starting at rest. Removes the 'freeze' hitch when an in-motion animation hands off to physics. Takes effect on next ragdoll activation.");
+
+                using (ImRaii.Disabled(!config.RagdollCarryAnimationVelocity))
+                {
+                    var velScale = config.RagdollHandoffVelocityScale;
+                    if (ImGui.SliderFloat("Handoff velocity scale##ragdoll", ref velScale, 0f, 2f, "%.2f"))
+                    {
+                        config.RagdollHandoffVelocityScale = velScale;
+                        config.Save();
+                    }
+                    HelpMarker("Scales the carried handoff velocity. 1 = exact animation speed. Lower if a fast death animation throws the corpse too hard. Takes effect on next ragdoll activation.");
+                }
 
                 var experimentalJointFrames = config.RagdollExperimentalJointFrames;
                 if (ImGui.Checkbox("Experimental Joint Frames##ragdoll", ref experimentalJointFrames))

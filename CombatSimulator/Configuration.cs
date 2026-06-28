@@ -303,6 +303,20 @@ public class Configuration : IPluginConfiguration
     // spring than the body default. 60 = firm; falls back to RagdollJointSpringFrequency when
     // set to 0. Takes effect on next ragdoll activation.
     public float RagdollFootJointSpringFrequency { get; set; } = 60f;
+    // Animation-driven handoff: when the ragdoll activates after the death-animation delay,
+    // seed each physics body with the velocity the animation was carrying (finite-difference
+    // of the last animated frame) instead of starting at zero. Removes the "freeze" hitch
+    // when an in-motion death animation hands off to physics, and gives the topple its initial
+    // momentum. Disable to restore the old zero-velocity handoff.
+    public bool RagdollCarryAnimationVelocity { get; set; } = true;
+    // Scales the carried handoff velocity (1 = exact animation speed). Lower if a fast death
+    // animation throws the corpse too hard at handoff.
+    public float RagdollHandoffVelocityScale { get; set; } = 1.0f;
+    // Relaxation collapse also drives a whole-body center-of-mass topple (the body loses
+    // balance over its support base and falls like an inverted pendulum), fused with the
+    // muscle-failure brake, instead of only a one-shot directional shove. Off = legacy single
+    // impulse.
+    public bool RagdollRelaxationTopple { get; set; } = true;
     // Anatomical joint-frame builder for hinge axes and ball-joint twist references.
     // Keep the switch so unusual skeletons can fall back to the legacy frame builder.
     public bool RagdollExperimentalJointFrames { get; set; } = true;
