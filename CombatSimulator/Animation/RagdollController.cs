@@ -6093,6 +6093,20 @@ public unsafe class RagdollController : IDisposable
         BeginBiomechanicalSettle();
     }
 
+    /// <summary>Apply a momentum impulse (mass·velocity) at a bone, converted to a velocity change via
+    /// the body's inverse mass. Pairing this with the opposite impulse elsewhere conserves momentum
+    /// (a lighter body recoils faster, a heavier one slower) — no manual force tuning needed.</summary>
+    public void ApplyMomentumImpulse(string boneName, Vector3 impulse)
+    {
+        if (simulation == null || !isActive) return;
+        var handle = FindBodyHandle(boneName);
+        if (!handle.HasValue) return;
+        var body = simulation.Bodies.GetBodyReference(handle.Value);
+        body.Velocity.Linear += impulse * body.LocalInertia.InverseMass;
+        body.Awake = true;
+        BeginBiomechanicalSettle();
+    }
+
     /// <summary>
     /// Punt the ragdoll body nearest to <paramref name="from"/> within <paramref name="maxDist"/>.
     /// Uses the full set of ragdoll bodies (the body "point cloud") as the hit volume rather than a

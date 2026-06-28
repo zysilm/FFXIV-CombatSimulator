@@ -129,6 +129,13 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
         weaponDropController = new WeaponDropController(boneTransformService, config, log);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
+        // Recoil the body-side ragdoll at the cut so a kicked-off piece conserves momentum. The body
+        // is whichever ragdoll drives that address (an NPC's own, else the player/default).
+        dismembermentController.ReactionImpulseSink = (addr, bone, impulse) =>
+        {
+            var body = npcRagdolls.TryGetValue(addr, out var found) ? found : ragdollController;
+            body?.ApplyMomentumImpulse(bone, impulse);
+        };
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
         combatEngine = new CombatEngine(

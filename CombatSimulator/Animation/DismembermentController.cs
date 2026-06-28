@@ -54,6 +54,11 @@ public unsafe class DismembermentController : IDisposable
     public bool EnablePcDismemberNpcCollision { get; set; }
     public Func<IReadOnlyList<nint>>? PcDismemberNpcCollisionProvider { get; set; }
 
+    /// <summary>Optional sink for the equal-and-opposite reaction: (sourceAddress, body-side bone,
+    /// momentum impulse). When the limb is kicked with the activation impulse, the body-side bone
+    /// above the cut receives the opposite momentum so the severed piece's momentum is conserved.</summary>
+    public Action<nint, string, Vector3>? ReactionImpulseSink { get; set; }
+
     private sealed class Clone
     {
         public nint SourceAddress;
@@ -672,15 +677,51 @@ public unsafe class DismembermentController : IDisposable
             dir = Vector3.Normalize(dir);
 
         var velocityDelta = dir * impulse;
+
+        float limbMass = 0f;
         if (c.Rig != null)
         {
             foreach (var limbBody in c.Rig.Bodies)
+            {
                 ApplyVelocityDelta(limbBody.Body, velocityDelta);
-            return;
+                limbMass += BodyMass(limbBody.Body);
+            }
+        }
+        else if (c.Body.HasValue)
+        {
+            ApplyVelocityDelta(c.Body.Value, velocityDelta);
+            limbMass += BodyMass(c.Body.Value);
         }
 
-        if (c.Body.HasValue)
-            ApplyVelocityDelta(c.Body.Value, velocityDelta);
+        // Conservation of momentum: kick the body-side bone above the cut with the opposite momentum
+        // (limb mass × applied velocity). Automatic — scales with the impulse, no separate knob.
+        if (limbMass > 0f && ReactionImpulseSink != null)
+        {
+            var parentBone = ResolveBodyParentBone(c.SourceAddress, c.LimbRootBone);
+            if (!string.IsNullOrEmpty(parentBone))
+                ReactionImpulseSink(c.SourceAddress, parentBone!, -velocityDelta * limbMass);
+        }
+    }
+
+    private float BodyMass(BodyHandle handle)
+    {
+        if (simulation == null) return 0f;
+        var inv = simulation.Bodies.GetBodyReference(handle).LocalInertia.InverseMass;
+        return inv > 1e-9f ? 1f / inv : 0f;
+    }
+
+    /// <summary>Bone immediately above <paramref name="boneName"/> in the source skeleton — the
+    /// body-side "stump" bone that should recoil at the cut.</summary>
+    private string? ResolveBodyParentBone(nint sourceAddress, string boneName)
+    {
+        var skelN = boneService.TryGetSkeleton(sourceAddress);
+        if (skelN == null) return null;
+        var skel = skelN.Value;
+        var idx = boneService.ResolveBoneIndex(skel, boneName);
+        if (idx < 0) return null;
+        var parentIdx = skel.HavokSkeleton->ParentIndices[idx];
+        if (parentIdx < 0 || parentIdx >= skel.BoneCount) return null;
+        return skel.HavokSkeleton->Bones[parentIdx].Name.String;
     }
 
     private void ApplyVelocityDelta(BodyHandle handle, Vector3 velocityDelta)
