@@ -37,7 +37,6 @@ public unsafe class DismembermentController : IDisposable
     private const float LimbHalfLength = 0.14f;
     private const float LimbMass = 4f;
     private const int MaxPendingFrames = 120;
-    private const float CloneTtl = 25f;
 
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
@@ -69,7 +68,6 @@ public unsafe class DismembermentController : IDisposable
         public string? GlamourBase64;
         public int GlamourFramesUntil = -1;
         public int GlamourAttemptsLeft;
-        public float Ttl = CloneTtl;
     }
 
     private sealed class Pending
@@ -160,13 +158,6 @@ public unsafe class DismembermentController : IDisposable
             for (int i = clones.Count - 1; i >= 0; i--)
             {
                 var c = clones[i];
-                c.Ttl -= 1f / 60f;
-                if (c.Ttl <= 0f)
-                {
-                    DespawnClone(c);
-                    clones.RemoveAt(i);
-                    continue;
-                }
                 if (!c.DrawEnabled) continue;
                 ApplyDeferredGlamour(c);
                 UpdateClone(c);
