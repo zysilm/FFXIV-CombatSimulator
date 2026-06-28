@@ -463,11 +463,13 @@ public unsafe class DismembermentController : IDisposable
             c.LimbIndex = boneService.ResolveBoneIndex(skel, c.LimbRootBone);
         if (c.LimbIndex < 0) return; // nothing we can do until the limb resolves
 
+        var boundaryRoots = GetSelectedChildRoots(skel, c.LimbIndex, c.LimbRootBone);
+
         if (!c.Armed)
             ApplyHandoffPose(skel, c);
 
         // Each frame: show ONLY the limb (others thrown far away) and hide the clone's weapons.
-        HideAllButLimb(skel, c.LimbIndex);
+        HideAllButLimb(skel, c.LimbIndex, boundaryRoots);
         HideWeapons(c);
 
         if (!c.Armed)
@@ -486,7 +488,7 @@ public unsafe class DismembermentController : IDisposable
                 var nn = Math.Min(skel.BoneCount, skel.ParentCount);
                 for (int i = 0; i < nn; i++)
                 {
-                    if (!IsDescendantOrSelf(skel, i, c.LimbIndex)) continue;
+                    if (!IsSupportedPieceBone(skel, i, c.LimbIndex, boundaryRoots)) continue;
                     ref var bm = ref skel.Pose->ModelPose.Data[i];
                     c.LimbSnapshot.Add((i,
                         new Vector3(bm.Translation.X, bm.Translation.Y, bm.Translation.Z),
@@ -513,7 +515,7 @@ public unsafe class DismembermentController : IDisposable
                 }
                 else
                 {
-                    c.Rig = BuildLimbRig(skel, c);
+                    c.Rig = BuildLimbRig(skel, c, boundaryRoots);
                     if (c.Rig == null)
                     {
                         var shape = BuildLimbShape(skel, c, out var inertia);
@@ -551,7 +553,7 @@ public unsafe class DismembermentController : IDisposable
         if (c.Rig != null)
         {
             DriveLimbRig(skel, c);
-            HideAllButLimb(skel, c.LimbIndex);
+            HideAllButLimb(skel, c.LimbIndex, boundaryRoots);
             HideWeapons(c);
             return;
         }
@@ -583,7 +585,7 @@ public unsafe class DismembermentController : IDisposable
         ((GameObject*)c.Chara)->Position = skelPos;
     }
 
-    private LimbRig? BuildLimbRig(SkeletonAccess skel, Clone c)
+    private LimbRig? BuildLimbRig(SkeletonAccess skel, Clone c, IReadOnlyList<int> boundaryRoots)
     {
         if (simulation == null) return null;
         var skeleton = skel.CharBase->Skeleton;
@@ -601,19 +603,17 @@ public unsafe class DismembermentController : IDisposable
 
         var defs = GetRagdollBoneDefs();
         var selected = new List<RagdollController.RagdollBoneDef>();
-        var selectedNames = new HashSet<string>();
         foreach (var def in defs)
         {
             if (!IsLimbRigRole(def.AnatomicalRole) || def.SoftBody)
                 continue;
             var idx = boneService.ResolveBoneIndex(skel, def.Name);
-            if (idx < 0 || !IsDescendantOrSelf(skel, idx, c.LimbIndex))
+            if (idx < 0 || !IsPhysicsPieceBone(skel, idx, c.LimbIndex, boundaryRoots))
                 continue;
             selected.Add(def);
-            selectedNames.Add(def.Name);
         }
 
-        if (selected.Count < 2)
+        if (selected.Count < 1)
             return null;
 
         var rig = new LimbRig();
@@ -641,6 +641,11 @@ public unsafe class DismembermentController : IDisposable
             var hasSegment = false;
             var childName = FindSelectedChild(def.Name, selected);
             if (childName != null && worldPositions.TryGetValue(childName, out var childWorldPos))
+            {
+                segment = childWorldPos - boneWorldPos;
+                hasSegment = segment.LengthSquared() > 1e-6f;
+            }
+            else if (TryFindChildWorldPos(skel, skelPos, skelRot, def.Name, defs, c.LimbIndex, out childWorldPos))
             {
                 segment = childWorldPos - boneWorldPos;
                 hasSegment = segment.LengthSquared() > 1e-6f;
@@ -873,6 +878,32 @@ public unsafe class DismembermentController : IDisposable
         return null;
     }
 
+    private bool TryFindChildWorldPos(
+        SkeletonAccess skel,
+        Vector3 skelPos,
+        Quaternion skelRot,
+        string parentName,
+        RagdollController.RagdollBoneDef[] defs,
+        int limbRoot,
+        out Vector3 worldPos)
+    {
+        foreach (var def in defs)
+        {
+            if (!string.Equals(def.ParentName, parentName, StringComparison.Ordinal))
+                continue;
+            var idx = boneService.ResolveBoneIndex(skel, def.Name);
+            if (idx < 0 || !IsDescendantOrSelf(skel, idx, limbRoot))
+                continue;
+            ref var mt = ref skel.Pose->ModelPose.Data[idx];
+            var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+            worldPos = skelPos + Vector3.Transform(modelPos, skelRot);
+            return true;
+        }
+
+        worldPos = default;
+        return false;
+    }
+
     private TypedIndex CreateRigShape(RagdollController.RagdollBoneDef def, float bodyHalfLength, float mass, out BodyInertia inertia)
     {
         if (def.ColliderShape == RagdollController.RagdollColliderShape.Box)
@@ -1030,11 +1061,9 @@ public unsafe class DismembermentController : IDisposable
             obj->Name[j] = j < nameBytes.Length && j < 63 ? nameBytes[j] : (byte)0;
     }
 
-    // Collapse every bone NOT in the limb's subtree to the CUT POINT (the limb root) with exact-0
-    // scale, plus any partial skeleton not attached under the limb. Collapsing to the cut (not far
-    // away) pinches the shared seam verts at the cut instead of stretching them into a spike; exact-0
-    // scale makes the rest of the body cull to a zero-area point. Inverse of HideLimbSubtree.
-    private void HideAllButLimb(SkeletonAccess skel, int limbIdx)
+    // Collapse every bone outside this clone's visible piece. If a child piece is also selected,
+    // keep that child root as the parent's distal cut support and collapse only its descendants.
+    private void HideAllButLimb(SkeletonAccess skel, int limbIdx, IReadOnlyList<int> boundaryRoots)
     {
         var pose = skel.Pose;
         ref var lm = ref pose->ModelPose.Data[limbIdx];
@@ -1045,9 +1074,20 @@ public unsafe class DismembermentController : IDisposable
         var n = Math.Min(skel.BoneCount, skel.ParentCount);
         for (int i = 0; i < n; i++)
         {
-            if (IsDescendantOrSelf(skel, i, limbIdx)) continue;
+            if (IsSupportedPieceBone(skel, i, limbIdx, boundaryRoots)) continue;
+            var collapseX = cx;
+            var collapseY = cy;
+            var collapseZ = cz;
+            var boundaryRoot = FindContainingStrictRoot(skel, i, boundaryRoots);
+            if (boundaryRoot >= 0)
+            {
+                ref var bm = ref pose->ModelPose.Data[boundaryRoot];
+                collapseX = bm.Translation.X;
+                collapseY = bm.Translation.Y;
+                collapseZ = bm.Translation.Z;
+            }
             ref var m = ref pose->ModelPose.Data[i];
-            m.Translation.X = cx; m.Translation.Y = cy; m.Translation.Z = cz;
+            m.Translation.X = collapseX; m.Translation.Y = collapseY; m.Translation.Z = collapseZ;
             m.Scale.X = 0.0001f; m.Scale.Y = 0.0001f; m.Scale.Z = 0.0001f; // NOT 0 — singular matrix => NaN glitch
         }
 
@@ -1062,7 +1102,7 @@ public unsafe class DismembermentController : IDisposable
             if (cnt < 1) continue;
             var rootName = ppose->Skeleton->Bones[0].Name.String;
             var mainIdx = boneService.ResolveBoneIndex(skel, rootName ?? "");
-            if (mainIdx >= 0 && IsDescendantOrSelf(skel, mainIdx, limbIdx)) continue; // attached under the limb — keep
+            if (mainIdx >= 0 && IsSupportedPieceBone(skel, mainIdx, limbIdx, boundaryRoots)) continue;
             // Face/hair share NO verts with the limb, so throwing them far is safe (no seam stretch)
             // and removes the floating "collapsed head" blob that scale-only left behind.
             for (int b = 0; b < cnt; b++)
@@ -1083,6 +1123,65 @@ public unsafe class DismembermentController : IDisposable
             bone = skel.HavokSkeleton->ParentIndices[bone];
         }
         return false;
+    }
+
+    private List<int> GetSelectedChildRoots(SkeletonAccess skel, int limbIdx, string limbRootBone)
+    {
+        var result = new List<int>();
+        foreach (var selectedBone in config.DismemberPocBones)
+        {
+            if (string.Equals(selectedBone, limbRootBone, StringComparison.Ordinal))
+                continue;
+            var selectedIdx = boneService.ResolveBoneIndex(skel, selectedBone);
+            if (selectedIdx < 0 || !IsDescendantOrSelf(skel, selectedIdx, limbIdx))
+                continue;
+
+            var coveredByExisting = false;
+            for (int i = 0; i < result.Count; i++)
+            {
+                if (IsDescendantOrSelf(skel, selectedIdx, result[i]))
+                {
+                    coveredByExisting = true;
+                    break;
+                }
+
+                if (IsDescendantOrSelf(skel, result[i], selectedIdx))
+                {
+                    result[i] = selectedIdx;
+                    coveredByExisting = true;
+                    break;
+                }
+            }
+
+            if (!coveredByExisting)
+                result.Add(selectedIdx);
+        }
+        return result;
+    }
+
+    private static bool IsSupportedPieceBone(SkeletonAccess skel, int bone, int limbRoot, IReadOnlyList<int> boundaryRoots)
+    {
+        if (!IsDescendantOrSelf(skel, bone, limbRoot))
+            return false;
+        return FindContainingStrictRoot(skel, bone, boundaryRoots) < 0;
+    }
+
+    private static bool IsPhysicsPieceBone(SkeletonAccess skel, int bone, int limbRoot, IReadOnlyList<int> boundaryRoots)
+    {
+        if (!IsSupportedPieceBone(skel, bone, limbRoot, boundaryRoots))
+            return false;
+        foreach (var root in boundaryRoots)
+            if (bone == root)
+                return false;
+        return true;
+    }
+
+    private static int FindContainingStrictRoot(SkeletonAccess skel, int bone, IReadOnlyList<int> roots)
+    {
+        foreach (var root in roots)
+            if (bone != root && IsDescendantOrSelf(skel, bone, root))
+                return root;
+        return -1;
     }
 
     private void DespawnClone(Clone c)

@@ -1741,34 +1741,24 @@ public class MainWindow : IDisposable
         if (ImGui.CollapsingHeader("Dismemberment (POC)"))
         {
             HelpMarker("Proof of concept: while the player ragdoll is active (on death), collapse each selected part's bones so it vanishes from the body. Multi-select. Validates the 'hide' step before the separate rolling limb prop is added. Trigger a death to see it.");
-            if (NormalizeDismemberPartSelection())
-                config.Save();
-
             for (int i = 0; i < DismemberParts.Length; i++)
             {
                 var (label, bone) = DismemberParts[i];
                 if (label.StartsWith("R ")) ImGui.SameLine();
                 var on = config.DismemberPocBones.Contains(bone);
-                var lockedByParent = IsDismemberPartLockedByParent(bone);
-                using (ImRaii.Disabled(lockedByParent))
+                if (ImGui.Checkbox(label + "##dismember", ref on))
                 {
-                    if (ImGui.Checkbox(label + "##dismember", ref on))
+                    if (on)
                     {
-                        if (on)
-                        {
-                            if (!config.DismemberPocBones.Contains(bone))
-                                config.DismemberPocBones.Add(bone);
-                            RemoveDismemberDescendants(bone);
-                        }
-                        else
-                        {
-                            config.DismemberPocBones.Remove(bone);
-                        }
-                        config.Save();
+                        if (!config.DismemberPocBones.Contains(bone))
+                            config.DismemberPocBones.Add(bone);
                     }
+                    else
+                    {
+                        config.DismemberPocBones.Remove(bone);
+                    }
+                    config.Save();
                 }
-                if (lockedByParent && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                    ImGui.SetTooltip("Already covered by the selected parent part.");
             }
 
             ImGui.Separator();
@@ -1790,40 +1780,6 @@ public class MainWindow : IDisposable
         ("L Thigh", "j_asi_a_l"),     ("R Thigh", "j_asi_a_r"),
         ("L Shin", "j_asi_b_l"),      ("R Shin", "j_asi_b_r"),
     };
-
-    private static readonly (string Parent, string Child)[] DismemberPartDependencies =
-    {
-        ("j_ude_a_l", "j_ude_b_l"),
-        ("j_ude_a_r", "j_ude_b_r"),
-        ("j_asi_a_l", "j_asi_b_l"),
-        ("j_asi_a_r", "j_asi_b_r"),
-    };
-
-    private bool NormalizeDismemberPartSelection()
-    {
-        var changed = false;
-        foreach (var (parent, child) in DismemberPartDependencies)
-        {
-            if (!config.DismemberPocBones.Contains(parent)) continue;
-            changed |= config.DismemberPocBones.Remove(child);
-        }
-        return changed;
-    }
-
-    private bool IsDismemberPartLockedByParent(string bone)
-    {
-        foreach (var (parent, child) in DismemberPartDependencies)
-            if (child == bone && config.DismemberPocBones.Contains(parent))
-                return true;
-        return false;
-    }
-
-    private void RemoveDismemberDescendants(string bone)
-    {
-        foreach (var (parent, child) in DismemberPartDependencies)
-            if (parent == bone)
-                config.DismemberPocBones.Remove(child);
-    }
 
     private void DrawGlamourerHeaderSection()
     {
