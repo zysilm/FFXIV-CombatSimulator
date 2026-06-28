@@ -327,14 +327,16 @@ public unsafe class DismembermentController : IDisposable
             {
                 if (c.KeepTimelineRunning)
                 {
-                    // Head keeps the older single-proxy path. Building a rig from the head subtree
-                    // pulls in cosmetic partials and modded ear/hair bones that should stay visual.
-                    c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
-                        new RigidPose(c.SeveranceWorldPos, c.SeveranceWorldRot),
-                        default(BodyVelocity),
-                        limbInertia,
-                        new CollidableDescription(limbShapeIndex, 0.04f),
-                        new BodyActivityDescription(0.01f)));
+                    c.Rig = BuildHeadRig(skel, c);
+                    if (c.Rig == null)
+                    {
+                        c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
+                            new RigidPose(c.SeveranceWorldPos, c.SeveranceWorldRot),
+                            default(BodyVelocity),
+                            limbInertia,
+                            new CollidableDescription(limbShapeIndex, 0.04f),
+                            new BodyActivityDescription(0.01f)));
+                    }
                 }
                 else
                 {
@@ -529,6 +531,61 @@ public unsafe class DismembermentController : IDisposable
         return rig;
     }
 
+    private LimbRig? BuildHeadRig(SkeletonAccess skel, Clone c)
+    {
+        if (simulation == null || c.LimbIndex < 0) return null;
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton == null) return null;
+
+        var skelPos = new Vector3(
+            skeleton->Transform.Position.X,
+            skeleton->Transform.Position.Y,
+            skeleton->Transform.Position.Z);
+        var skelRot = Quaternion.Normalize(new Quaternion(
+            skeleton->Transform.Rotation.X,
+            skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z,
+            skeleton->Transform.Rotation.W));
+
+        ref var mt = ref skel.Pose->ModelPose.Data[c.LimbIndex];
+        var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+        var modelRot = Quaternion.Normalize(new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W));
+        var boneWorldPos = skelPos + Vector3.Transform(modelPos, skelRot);
+        var boneWorldRot = Quaternion.Normalize(skelRot * modelRot);
+
+        var def = ResolveHeadDef();
+        var radius = MathF.Max(0.085f, def.CapsuleRadius * 1.15f);
+        var halfY = MathF.Max(0.105f, def.CapsuleRadius + def.CapsuleHalfLength * 0.75f);
+        var halfZ = MathF.Max(0.075f, def.CapsuleRadius);
+        var box = new Box(radius * 2f, halfY * 2f, halfZ * 2f);
+        var shape = simulation.Shapes.Add(box);
+        var inertia = box.ComputeInertia(MathF.Max(1f, def.Mass));
+
+        var centerOffset = MathF.Min(0.075f, halfY * 0.6f);
+        var center = boneWorldPos + Vector3.Transform(Vector3.UnitY, boneWorldRot) * centerOffset;
+        var handle = simulation.Bodies.Add(BodyDescription.CreateDynamic(
+            new RigidPose(center, boneWorldRot),
+            default(BodyVelocity),
+            inertia,
+            new CollidableDescription(shape, 0.04f),
+            new BodyActivityDescription(0.01f)));
+
+        var rig = new LimbRig();
+        rig.Shapes.Add(shape);
+        rig.Bodies.Add(new LimbBody
+        {
+            BoneIndex = c.LimbIndex,
+            Name = c.LimbRootBone,
+            Body = handle,
+            BodyToBoneRotation = Quaternion.Identity,
+            SegmentHalfLength = centerOffset,
+            Def = def,
+        });
+        rig.BoneIndices.Add(c.LimbIndex);
+        log.Info($"Dismember: head rig idx={c.ObjectIndex}");
+        return rig;
+    }
+
     private void DriveLimbRig(SkeletonAccess skel, Clone c)
     {
         if (simulation == null || c.Rig == null) return;
@@ -570,6 +627,9 @@ public unsafe class DismembermentController : IDisposable
             boneService.WriteBoneTransform(skel, rb.BoneIndex, modelPos, modelRot, result);
         }
 
+        if (c.KeepTimelineRunning && IsHeadLimb(c.LimbRootBone))
+            boneService.PropagateToPartialSkeletons(skel, c.LimbIndex, "j_kao", result);
+
         for (int i = 0; i < skel.BoneCount && i < skel.ParentCount; i++)
         {
             if (c.Rig.BoneIndices.Contains(i) || !IsDescendantOrSelf(skel, i, c.LimbIndex))
@@ -600,6 +660,26 @@ public unsafe class DismembermentController : IDisposable
         return RagdollController.DefaultBoneDefs;
     }
 
+    private RagdollController.RagdollBoneDef ResolveHeadDef()
+    {
+        foreach (var def in GetRagdollBoneDefs())
+            if (string.Equals(def.Name, "j_kao", StringComparison.Ordinal))
+                return def;
+
+        foreach (var def in RagdollController.DefaultBoneDefs)
+            if (string.Equals(def.Name, "j_kao", StringComparison.Ordinal))
+                return def;
+
+        return new RagdollController.RagdollBoneDef
+        {
+            Name = "j_kao",
+            CapsuleRadius = 0.08f,
+            CapsuleHalfLength = 0.04f,
+            Mass = 3.5f,
+            AnatomicalRole = RagdollController.AnatomicalRole.Head,
+        };
+    }
+
     private static bool IsLimbRigRole(RagdollController.AnatomicalRole role)
         => role is RagdollController.AnatomicalRole.Shoulder
             or RagdollController.AnatomicalRole.Elbow
@@ -621,16 +701,31 @@ public unsafe class DismembermentController : IDisposable
     {
         if (def.ColliderShape == RagdollController.RagdollColliderShape.Box)
         {
-            var extents = ResolveBoxHalfExtents(def, bodyHalfLength);
+            var extents = ResolveBoxHalfExtents(def, bodyHalfLength) * RigVolumeScale(def.AnatomicalRole);
             var box = new Box(extents.X * 2f, extents.Y * 2f, extents.Z * 2f);
             inertia = box.ComputeInertia(mass);
             return simulation!.Shapes.Add(box);
         }
 
-        var capsule = new Capsule(MathF.Max(0.005f, def.CapsuleRadius), bodyHalfLength * 2f);
+        var radius = MathF.Max(MinRigRadius(def.AnatomicalRole), def.CapsuleRadius * RigVolumeScale(def.AnatomicalRole));
+        var capsule = new Capsule(radius, bodyHalfLength * 2f * 1.1f);
         inertia = capsule.ComputeInertia(mass);
         return simulation!.Shapes.Add(capsule);
     }
+
+    private static float RigVolumeScale(RagdollController.AnatomicalRole role)
+        => role is RagdollController.AnatomicalRole.Shoulder
+            or RagdollController.AnatomicalRole.Elbow
+            or RagdollController.AnatomicalRole.Hand
+            ? 1.55f
+            : 1.35f;
+
+    private static float MinRigRadius(RagdollController.AnatomicalRole role)
+        => role is RagdollController.AnatomicalRole.Shoulder
+            or RagdollController.AnatomicalRole.Elbow
+            or RagdollController.AnatomicalRole.Hand
+            ? 0.038f
+            : 0.045f;
 
     private void AddLimbRigConstraint(LimbBody child, LimbBody parent, Dictionary<string, Vector3> worldPositions)
     {
