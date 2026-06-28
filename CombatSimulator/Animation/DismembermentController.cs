@@ -293,25 +293,33 @@ public unsafe class DismembermentController : IDisposable
             ref var lm = ref skel.Pose->ModelPose.Data[c.LimbIndex];
             c.LimbRootModelPos = new Vector3(lm.Translation.X, lm.Translation.Y, lm.Translation.Z);
             ((Character*)c.Chara)->Timeline.OverallSpeed = c.KeepTimelineRunning ? 1f : 0f;
-            // Snapshot the settled limb pose so we can re-assert it every frame — guarantees the limb
-            // is a frozen rigid chunk and can't keep breathing.
-            c.LimbSnapshot = new List<(int, Vector3, Quaternion, Vector3)>();
-            var nn = Math.Min(skel.BoneCount, skel.ParentCount);
-            for (int i = 0; i < nn; i++)
+            if (!c.KeepTimelineRunning)
             {
-                if (!IsDescendantOrSelf(skel, i, c.LimbIndex)) continue;
-                ref var bm = ref skel.Pose->ModelPose.Data[i];
-                c.LimbSnapshot.Add((i,
-                    new Vector3(bm.Translation.X, bm.Translation.Y, bm.Translation.Z),
-                    new Quaternion(bm.Rotation.X, bm.Rotation.Y, bm.Rotation.Z, bm.Rotation.W),
-                    new Vector3(bm.Scale.X, bm.Scale.Y, bm.Scale.Z)));
+                // Snapshot ordinary limb poses so animation cannot keep moving the prop after arming.
+                // Head clones are deliberately excluded: their subtree contains ears/hair/face-related
+                // bones that must remain under the active timeline to avoid fighting the client pose.
+                c.LimbSnapshot = new List<(int, Vector3, Quaternion, Vector3)>();
+                var nn = Math.Min(skel.BoneCount, skel.ParentCount);
+                for (int i = 0; i < nn; i++)
+                {
+                    if (!IsDescendantOrSelf(skel, i, c.LimbIndex)) continue;
+                    ref var bm = ref skel.Pose->ModelPose.Data[i];
+                    c.LimbSnapshot.Add((i,
+                        new Vector3(bm.Translation.X, bm.Translation.Y, bm.Translation.Z),
+                        new Quaternion(bm.Rotation.X, bm.Rotation.Y, bm.Rotation.Z, bm.Rotation.W),
+                        new Vector3(bm.Scale.X, bm.Scale.Y, bm.Scale.Z)));
+                }
             }
             EnsureSimulation();
             if (simulation != null)
             {
-                // Build a compound matching the real limb shape (one capsule per bone segment) so it
-                // rolls/collides like a limb, not a stick. Body origin stays at the limb root (pivot).
-                var shape = BuildLimbShape(skel, c, out var inertia);
+                // Head keeps the older single-proxy path. Building a shape from the head subtree pulls
+                // in ears/hair bones and can fight cosmetic physics or modded skeletons.
+                var shape = limbShapeIndex;
+                var inertia = limbInertia;
+                if (!c.KeepTimelineRunning)
+                    shape = BuildLimbShape(skel, c, out inertia);
+
                 c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
                     new RigidPose(c.SeveranceWorldPos, c.SeveranceWorldRot),
                     default(BodyVelocity),
@@ -343,6 +351,11 @@ public unsafe class DismembermentController : IDisposable
         var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
         var bodyPos = bodyRef.Pose.Position;
         var bodyRot = bodyRef.Pose.Orientation;
+        if (c.KeepTimelineRunning)
+        {
+            ref var liveRoot = ref skel.Pose->ModelPose.Data[c.LimbIndex];
+            c.LimbRootModelPos = new Vector3(liveRoot.Translation.X, liveRoot.Translation.Y, liveRoot.Translation.Z);
+        }
         var skelPos = bodyPos - Vector3.Transform(c.LimbRootModelPos, bodyRot);
 
         var cb = (CharacterBase*)drawObj;
