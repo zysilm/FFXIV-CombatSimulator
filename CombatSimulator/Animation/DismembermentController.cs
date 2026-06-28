@@ -126,6 +126,22 @@ public unsafe class DismembermentController : IDisposable
     private readonly List<Pending> pending = new();
     private readonly HashSet<int> allocatedIndices = new();
 
+    private static readonly string[] HumanoidSignatureBones =
+    {
+        "j_kosi", "j_sebo_a", "j_kubi",
+        "j_ude_a_l", "j_ude_a_r",
+        "j_asi_a_l", "j_asi_a_r",
+    };
+
+    private static readonly string[] HumanoidEnemyBones =
+    {
+        "j_kao",
+        "j_ude_a_l", "j_ude_a_r",
+        "j_ude_b_l", "j_ude_b_r",
+        "j_asi_a_l", "j_asi_a_r",
+        "j_asi_b_l", "j_asi_b_r",
+    };
+
     public DismembermentController(BoneTransformService boneService, GlamourerIpc glamourerIpc,
         AnimationController animationController, IObjectTable objectTable, Configuration config, IPluginLog log)
     {
@@ -139,6 +155,28 @@ public unsafe class DismembermentController : IDisposable
     }
 
     public bool HasAny => clones.Count > 0 || pending.Count > 0;
+
+    public IReadOnlyList<string> SelectRandomEnemyBones(nint sourceAddress, int humanoidCount, float genericPercent)
+    {
+        var skelN = boneService.TryGetSkeleton(sourceAddress);
+        if (skelN == null) return Array.Empty<string>();
+        var skel = skelN.Value;
+
+        if (IsHumanoidSkeleton(skel))
+        {
+            var candidates = new List<string>();
+            foreach (var bone in HumanoidEnemyBones)
+                if (boneService.ResolveBoneIndex(skel, bone) >= 0)
+                    candidates.Add(bone);
+
+            return PickRandom(candidates, Math.Clamp(humanoidCount, 0, candidates.Count));
+        }
+
+        var genericCandidates = BuildGenericEnemyCandidates(skel);
+        var percent = Math.Clamp(genericPercent, 0f, 100f);
+        var count = (int)Math.Round(genericCandidates.Count * (percent / 100f), MidpointRounding.AwayFromZero);
+        return PickRandomNonOverlapping(skel, genericCandidates, Math.Clamp(count, 0, genericCandidates.Count));
+    }
 
     public void SyncSelectionFor(nint sourceAddress, IReadOnlyCollection<string> selectedBones, string? glamourBase64)
     {
@@ -327,7 +365,6 @@ public unsafe class DismembermentController : IDisposable
         var cloneBasePos = handoff?.SkeletonPos ?? severancePos;
 
         var src = (Character*)p.SourceAddress;
-        if (((byte*)&src->DrawData.CustomizeData)[0] == 0) { log.Warning("Dismember: source not humanoid"); return; }
 
         var clientObjMgr = ClientObjectManager.Instance();
         if (clientObjMgr == null) return;
@@ -355,6 +392,9 @@ public unsafe class DismembermentController : IDisposable
             CharacterSetupContainer.CopyFlags.ClassJob | CharacterSetupContainer.CopyFlags.WeaponHiding;
         character->CharacterSetup.CopyFromCharacter(src, flags);
         character->CharacterSetup.CopyFromCharacter(character, CharacterSetupContainer.CopyFlags.None);
+        obj->ObjectKind = ObjectKind.Pc;
+        obj->SubKind = 0;
+        obj->TargetableStatus = 0;
         WriteCloneName((GameObject*)obj, index);
         character->SetMode(CharacterModes.Normal, 0);
 
@@ -551,7 +591,7 @@ public unsafe class DismembermentController : IDisposable
             c.LimbIndex = boneService.ResolveBoneIndex(skel, c.LimbRootBone);
         if (c.LimbIndex < 0) return; // nothing we can do until the limb resolves
 
-        var boundaryRoots = GetSelectedChildRoots(skel, c.LimbIndex, c.LimbRootBone);
+        var boundaryRoots = GetSelectedChildRoots(skel, c.SourceAddress, c.LimbIndex, c.LimbRootBone);
 
         if (!c.Armed)
             ApplyHandoffPose(skel, c);
@@ -699,6 +739,12 @@ public unsafe class DismembermentController : IDisposable
             if (idx < 0 || !IsPhysicsPieceBone(skel, idx, c.LimbIndex, boundaryRoots))
                 continue;
             selected.Add(def);
+        }
+
+        if (selected.Count < 1)
+        {
+            selected = BuildGenericPieceDefs(skel, c.LimbIndex, boundaryRoots);
+            defs = selected.ToArray();
         }
 
         if (selected.Count < 1)
@@ -927,6 +973,228 @@ public unsafe class DismembermentController : IDisposable
         if (config.RagdollBoneConfigs.Count > 0)
             return RagdollController.BuildBoneDefsFromConfigs(config.RagdollBoneConfigs.ToArray());
         return RagdollController.DefaultBoneDefs;
+    }
+
+    private bool IsHumanoidSkeleton(SkeletonAccess skel)
+    {
+        foreach (var bone in HumanoidSignatureBones)
+            if (boneService.ResolveBoneIndex(skel, bone) < 0)
+                return false;
+        return true;
+    }
+
+    private List<string> BuildGenericEnemyCandidates(SkeletonAccess skel)
+    {
+        var result = new List<string>();
+        var n = Math.Min(skel.BoneCount, skel.ParentCount);
+        if (n < 2) return result;
+
+        var positions = ReadModelPositions(skel, n);
+        var children = BuildChildren(skel, n);
+        var (distToParent, longestChild, maxSegment) = MeasureSkeletonSegments(skel, positions, children, n);
+        var minSegment = Math.Clamp(maxSegment * 0.06f, 0.02f, 0.08f);
+        var subtreeCounts = ComputeSubtreeCounts(children);
+
+        for (var i = 1; i < n; i++)
+        {
+            var parent = skel.HavokSkeleton->ParentIndices[i];
+            if (parent < 0 || parent >= n) continue;
+            if (subtreeCounts[i] <= 1) continue;
+            if (subtreeCounts[i] > n * 0.55f) continue;
+            if (distToParent[i] < minSegment && longestChild[i] < minSegment) continue;
+            if (children[parent].Count == 1 && subtreeCounts[i] > n * 0.35f) continue;
+
+            var name = BoneName(skel, i);
+            if (!string.IsNullOrEmpty(name))
+                result.Add(name);
+        }
+
+        result.Sort((a, b) =>
+        {
+            var ai = boneService.ResolveBoneIndex(skel, a);
+            var bi = boneService.ResolveBoneIndex(skel, b);
+            var ac = ai >= 0 ? subtreeCounts[ai] : 0;
+            var bc = bi >= 0 ? subtreeCounts[bi] : 0;
+            return bc.CompareTo(ac);
+        });
+        return result;
+    }
+
+    private List<RagdollController.RagdollBoneDef> BuildGenericPieceDefs(
+        SkeletonAccess skel,
+        int limbRoot,
+        IReadOnlyList<int> boundaryRoots)
+    {
+        var n = Math.Min(skel.BoneCount, skel.ParentCount);
+        var result = new List<RagdollController.RagdollBoneDef>();
+        if (limbRoot < 0 || limbRoot >= n) return result;
+
+        var positions = ReadModelPositions(skel, n);
+        var children = BuildChildren(skel, n);
+        var (distToParent, longestChild, maxSegment) = MeasureSkeletonSegments(skel, positions, children, n);
+        var minSegment = Math.Clamp(maxSegment * 0.06f, 0.02f, 0.08f);
+
+        var selected = new bool[n];
+        for (var i = 0; i < n; i++)
+        {
+            if (!IsPhysicsPieceBone(skel, i, limbRoot, boundaryRoots))
+                continue;
+            if (i == limbRoot || longestChild[i] >= minSegment || distToParent[i] >= minSegment)
+                selected[i] = true;
+        }
+
+        string? SelectedAncestorName(int i)
+        {
+            var p = skel.HavokSkeleton->ParentIndices[i];
+            while (p >= 0 && p < n)
+            {
+                if (selected[p]) return BoneName(skel, p);
+                if (p == limbRoot) break;
+                p = skel.HavokSkeleton->ParentIndices[p];
+            }
+            return null;
+        }
+
+        for (var i = 0; i < n; i++)
+        {
+            if (!selected[i]) continue;
+            var name = BoneName(skel, i);
+            if (string.IsNullOrEmpty(name)) continue;
+
+            var segLen = MathF.Max(minSegment, MathF.Max(longestChild[i], distToParent[i]));
+            var radius = Math.Clamp(segLen * 0.28f, 0.02f, 0.18f);
+            result.Add(new RagdollController.RagdollBoneDef
+            {
+                Name = name,
+                ParentName = i == limbRoot ? null : SelectedAncestorName(i),
+                CapsuleRadius = radius,
+                CapsuleHalfLength = segLen * 0.45f,
+                Mass = Math.Clamp(segLen * 20f, 0.5f, 12f),
+                SwingLimit = 0.6f,
+                Joint = RagdollController.JointType.Ball,
+                TwistMinAngle = -0.35f,
+                TwistMaxAngle = 0.35f,
+                AnatomicalRole = RagdollController.AnatomicalRole.Generic,
+                ColliderShape = RagdollController.RagdollColliderShape.Capsule,
+                BoxHalfExtents = new Vector3(radius, segLen * 0.45f, radius),
+            });
+        }
+
+        return result;
+    }
+
+    private static List<string> PickRandom(List<string> candidates, int count)
+    {
+        for (var i = candidates.Count - 1; i > 0; i--)
+        {
+            var j = Random.Shared.Next(i + 1);
+            (candidates[i], candidates[j]) = (candidates[j], candidates[i]);
+        }
+        if (count >= candidates.Count) return candidates;
+        return candidates.GetRange(0, count);
+    }
+
+    private List<string> PickRandomNonOverlapping(SkeletonAccess skel, List<string> candidates, int count)
+    {
+        var shuffled = PickRandom(candidates, candidates.Count);
+        var result = new List<string>();
+        foreach (var bone in shuffled)
+        {
+            var idx = boneService.ResolveBoneIndex(skel, bone);
+            if (idx < 0) continue;
+
+            var overlaps = false;
+            foreach (var existing in result)
+            {
+                var existingIdx = boneService.ResolveBoneIndex(skel, existing);
+                if (existingIdx < 0) continue;
+                if (IsDescendantOrSelf(skel, idx, existingIdx) || IsDescendantOrSelf(skel, existingIdx, idx))
+                {
+                    overlaps = true;
+                    break;
+                }
+            }
+
+            if (overlaps) continue;
+            result.Add(bone);
+            if (result.Count >= count) break;
+        }
+        return result;
+    }
+
+    private static Vector3[] ReadModelPositions(SkeletonAccess skel, int count)
+    {
+        var result = new Vector3[count];
+        for (var i = 0; i < count; i++)
+        {
+            ref var mt = ref skel.Pose->ModelPose.Data[i];
+            result[i] = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+        }
+        return result;
+    }
+
+    private static List<int>[] BuildChildren(SkeletonAccess skel, int count)
+    {
+        var children = new List<int>[count];
+        for (var i = 0; i < count; i++)
+            children[i] = new List<int>();
+
+        for (var i = 1; i < count; i++)
+        {
+            var parent = skel.HavokSkeleton->ParentIndices[i];
+            if (parent >= 0 && parent < count)
+                children[parent].Add(i);
+        }
+        return children;
+    }
+
+    private static (float[] DistToParent, float[] LongestChild, float MaxSegment) MeasureSkeletonSegments(
+        SkeletonAccess skel,
+        Vector3[] positions,
+        List<int>[] children,
+        int count)
+    {
+        var distToParent = new float[count];
+        var longestChild = new float[count];
+        var maxSegment = 0f;
+
+        for (var i = 1; i < count; i++)
+        {
+            var parent = skel.HavokSkeleton->ParentIndices[i];
+            if (parent < 0 || parent >= count) continue;
+            var dist = Vector3.Distance(positions[i], positions[parent]);
+            distToParent[i] = dist;
+            if (dist > maxSegment) maxSegment = dist;
+        }
+
+        for (var i = 0; i < count; i++)
+            foreach (var child in children[i])
+                if (distToParent[child] > longestChild[i])
+                    longestChild[i] = distToParent[child];
+
+        return (distToParent, longestChild, maxSegment);
+    }
+
+    private static int[] ComputeSubtreeCounts(List<int>[] children)
+    {
+        var counts = new int[children.Length];
+        int Count(int i)
+        {
+            var total = 1;
+            foreach (var child in children[i])
+                total += Count(child);
+            counts[i] = total;
+            return total;
+        }
+        Count(0);
+        return counts;
+    }
+
+    private static string BoneName(SkeletonAccess skel, int index)
+    {
+        if (index < 0 || index >= skel.BoneCount)
+            return string.Empty;
+        return skel.HavokSkeleton->Bones[index].Name.String ?? string.Empty;
     }
 
     private RagdollController.RagdollBoneDef ResolveHeadDef()
@@ -1213,10 +1481,10 @@ public unsafe class DismembermentController : IDisposable
         return false;
     }
 
-    private List<int> GetSelectedChildRoots(SkeletonAccess skel, int limbIdx, string limbRootBone)
+    private List<int> GetSelectedChildRoots(SkeletonAccess skel, nint sourceAddress, int limbIdx, string limbRootBone)
     {
         var result = new List<int>();
-        foreach (var selectedBone in config.DismemberPocBones)
+        foreach (var selectedBone in GetTrackedBones(sourceAddress))
         {
             if (string.Equals(selectedBone, limbRootBone, StringComparison.Ordinal))
                 continue;

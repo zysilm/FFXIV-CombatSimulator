@@ -374,6 +374,9 @@ public class Configuration : IPluginConfiguration
     // When on, each hidden limb also spawns a clone that shows ONLY that limb and tumbles away (the
     // "rolls away" half). Off = just hide on the body. POC: local player only.
     public bool EnableDismemberRollaway { get; set; } = false;
+    public bool EnableEnemyDismemberment { get; set; } = false;
+    public int EnemyHumanoidDismembermentCount { get; set; } = 3;
+    public float EnemyMonsterDismembermentBonePercent { get; set; } = 50.0f;
 
     // Death collapse — physics-driven guided collapse on death (relaxation family + directed
     // knee power-loss). Config lives in GuidedCollapse; see DEATH_COLLAPSE_RESEARCH.md.

@@ -718,6 +718,24 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         var controller = partyMode
             ? new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses)
             : new RagdollController(boneTransformService, config, log);
+
+        IReadOnlyList<string> bones = Array.Empty<string>();
+        if (config.EnableEnemyDismemberment)
+        {
+            bones = dismembermentController.SelectRandomEnemyBones(
+                address,
+                config.EnemyHumanoidDismembermentCount,
+                config.EnemyMonsterDismembermentBonePercent);
+        }
+
+        controller.SetDismemberedBones(bones);
+        if (bones.Count > 0)
+        {
+            foreach (var bone in bones)
+                dismembermentController.SpawnFor(address, bone, config.NpcRagdollActivationDelay, null);
+            log.Info($"NPC death ragdoll: selected {bones.Count} visual parts for 0x{address:X}");
+        }
+
         controller.Activate(address, config.NpcRagdollActivationDelay);
         npcRagdolls[address] = controller;
     }
@@ -803,6 +821,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         log.Info($"Companion death ragdoll: activating for 0x{address:X}");
 
         var controller = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
+        controller.SetDismemberedBones(Array.Empty<string>());
         controller.Activate(address, config.RagdollActivationDelay);
         npcRagdolls[address] = controller;
     }

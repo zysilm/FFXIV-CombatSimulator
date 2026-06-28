@@ -108,6 +108,8 @@ public unsafe class RagdollController : IDisposable
     // because their auto-generated constraint network is stiffer/less conditioned
     // than the hand-tuned human profile.
     private bool activeRagdollIsGeneric;
+    private bool useLocalDismemberBones;
+    private readonly List<string> localDismemberBones = new();
 
     // Generic (non-humanoid) ragdoll generation tuning.
     // The min-segment threshold is adaptive to skeleton size (see BuildGenericSkeletonDefs):
@@ -569,6 +571,15 @@ public unsafe class RagdollController : IDisposable
     public enum JointType { Ball, Hinge }
     public enum AnatomicalRole { Auto, Generic, Pelvis, Spine, Head, Shoulder, Elbow, Hand, Hip, Knee, Ankle, Foot, Cloth, SoftBody, Weapon }
     public enum RagdollColliderShape { Capsule, Box }
+
+    public void SetDismemberedBones(IEnumerable<string> bones)
+    {
+        localDismemberBones.Clear();
+        foreach (var bone in bones)
+            if (!string.IsNullOrWhiteSpace(bone) && !localDismemberBones.Contains(bone))
+                localDismemberBones.Add(bone);
+        useLocalDismemberBones = true;
+    }
 
     // Ragdoll bone definition
     public struct RagdollBoneDef
@@ -1174,6 +1185,8 @@ public unsafe class RagdollController : IDisposable
         ragdollBoneIndices.Clear();
         activeDefByName.Clear();
         activeRagdollIsGeneric = false;
+        useLocalDismemberBones = false;
+        localDismemberBones.Clear();
         terrainPatchCenters.Clear();
         nHaraIndex = -1;
         kaoBodyBoneIndex = -1;
@@ -3854,7 +3867,7 @@ public unsafe class RagdollController : IDisposable
         // Dismemberment POC: collapse each selected limb's whole bone subtree to ~0 scale so it
         // vanishes from the body (the "hide" half of hide-and-substitute). Done last so it overrides
         // the physics/propagation writes for those bones.
-        var severedBones = config.DismemberPocBones;
+        var severedBones = useLocalDismemberBones ? localDismemberBones : config.DismemberPocBones;
         if (severedBones != null && severedBones.Count > 0)
             foreach (var boneName in severedBones)
                 HideLimbSubtree(skel, boneName);

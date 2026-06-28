@@ -1741,7 +1741,7 @@ public class MainWindow : IDisposable
             }
         }
 
-        if (ImGui.CollapsingHeader("Dismemberment (POC)"))
+        if (devUnlocked && ImGui.CollapsingHeader("PC Dismemberment"))
         {
             HelpMarker("Proof of concept: while the player ragdoll is active (on death), collapse each selected part's bones so it vanishes from the body. Multi-select. Validates the 'hide' step before the separate rolling limb prop is added. Trigger a death to see it.");
             for (int i = 0; i < DismemberParts.Length; i++)
@@ -1774,6 +1774,44 @@ public class MainWindow : IDisposable
                 SyncDynamicDismemberSelection();
             }
             HelpMarker("Also spawn a clone of you showing ONLY each severed limb, which tumbles to the ground (full appearance + live Glamourer if installed). Off = just hide the limb on the body. POC: local player only; one clone per selected limb.");
+
+        }
+
+        if (ImGui.CollapsingHeader("Enemy Dismemberment"))
+        {
+            if (ImGui.Button("Reset Defaults##enemy_dismemberment_defaults"))
+            {
+                config.EnableEnemyDismemberment = false;
+                config.EnemyHumanoidDismembermentCount = 3;
+                config.EnemyMonsterDismembermentBonePercent = 50.0f;
+                config.Save();
+            }
+            HelpMarker("Restore enemy settings to defaults: disabled, human limb count 3, monster bone percent 50%.");
+
+            var enemyDismember = config.EnableEnemyDismemberment;
+            if (ImGui.Checkbox("Enable for enemies##enemy_dismemberment_enable", ref enemyDismember))
+            {
+                config.EnableEnemyDismemberment = enemyDismember;
+                config.Save();
+            }
+            HelpMarker("Randomly separates visible pieces when enemy death ragdoll starts. Human enemies use a fixed count; non-human enemies use a percentage of eligible skeleton branches.");
+
+            if (config.EnableEnemyDismemberment)
+            {
+                var humanCount = Math.Clamp(config.EnemyHumanoidDismembermentCount, 0, DismemberParts.Length);
+                if (ImGui.SliderInt("Human limb count##enemy_dismemberment_human_count", ref humanCount, 0, DismemberParts.Length))
+                {
+                    config.EnemyHumanoidDismembermentCount = humanCount;
+                    config.Save();
+                }
+
+                var monsterPercent = Math.Clamp(config.EnemyMonsterDismembermentBonePercent, 0f, 100f);
+                if (ImGui.DragFloat("Monster bone percent##enemy_dismemberment_monster_percent", ref monsterPercent, 0.01f, 0f, 100f, "%.2f%%"))
+                {
+                    config.EnemyMonsterDismembermentBonePercent = monsterPercent;
+                    config.Save();
+                }
+            }
         }
     }
 
@@ -3949,6 +3987,7 @@ public class MainWindow : IDisposable
                         config.Save();
                     }
                     HelpMarker("Seconds after enemy death before ragdoll physics take over.");
+
                 }
 
                 var companionRagdoll = config.PartyCompanionDeathRagdoll;
