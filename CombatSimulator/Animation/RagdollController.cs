@@ -2777,12 +2777,13 @@ public unsafe class RagdollController : IDisposable
             }
             else
             {
-                simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                var motorHandle = simulation.Solver.Add(rb.BodyHandle, parentHandle,
                     new AngularMotor
                     {
                         TargetVelocityLocalA = Vector3.Zero,
                         Settings = new MotorSettings(float.MaxValue, motorDamping),
                     });
+                angularMotorByBone[rb.Name] = motorHandle;
             }
         }
 
@@ -3650,6 +3651,9 @@ public unsafe class RagdollController : IDisposable
             prevWorldRotations = new Quaternion[boneCount];
             hasPrevPhysicsState = false; // buffers reallocated — old snapshot is stale
         }
+
+        // Restore any recoil-relaxed joint motors whose window has elapsed.
+        TickRecoilRelaxers(dt);
 
         // Step physics with a fixed timestep, advancing as many substeps as real
         // wall-clock time has accumulated. This keeps ragdoll motion the same speed
@@ -6093,9 +6097,18 @@ public unsafe class RagdollController : IDisposable
         BeginBiomechanicalSettle();
     }
 
-    /// <summary>Add an angular velocity to a bone's body (a rotational kick). Used to make the stump
-    /// above a severed cut visibly swing/recoil instead of being shoved straight into the body, where
-    /// the rest of the ragdoll would just absorb it. The existing angular clamp keeps it sane.</summary>
+    // Each joint's angular motor (keyed by child bone) drives the parent/child relative angular
+    // velocity to zero with unlimited force — great for settling, but it instantly eats a recoil
+    // kick. We briefly drop that motor's force so the stump can actually swing, then restore it.
+    private readonly Dictionary<string, ConstraintHandle> angularMotorByBone = new();
+    private const float JointMotorDamping = 0.01f;
+    private const float RecoilRelaxDuration = 0.4f;
+    private struct RecoilRelax { public ConstraintHandle Handle; public float Remaining; }
+    private readonly List<RecoilRelax> recoilRelaxers = new();
+
+    /// <summary>Add an angular velocity to a bone's body (a rotational kick) and briefly release its
+    /// joint motor so the stump above a severed cut actually swings up instead of being held in place.
+    /// Used for the body-side recoil when a limb is kicked off.</summary>
     public void ApplyAngularVelocity(string boneName, Vector3 angularVelocityDelta)
     {
         if (simulation == null || !isActive) return;
@@ -6104,7 +6117,41 @@ public unsafe class RagdollController : IDisposable
         var body = simulation.Bodies.GetBodyReference(handle.Value);
         body.Velocity.Angular += angularVelocityDelta;
         body.Awake = true;
+        RelaxJointMotor(boneName, RecoilRelaxDuration);
         BeginBiomechanicalSettle();
+    }
+
+    // Temporarily zero a joint's angular motor force so its child can swing freely (the swing-limit
+    // constraint still bounds the range). Restored by TickRecoilRelaxers after the window.
+    private void RelaxJointMotor(string boneName, float duration)
+    {
+        if (simulation == null || !angularMotorByBone.TryGetValue(boneName, out var motorHandle))
+            return;
+        try
+        {
+            simulation.Solver.ApplyDescription(motorHandle,
+                new AngularMotor { TargetVelocityLocalA = Vector3.Zero, Settings = new MotorSettings(0f, 0f) });
+        }
+        catch { return; }
+        recoilRelaxers.Add(new RecoilRelax { Handle = motorHandle, Remaining = duration });
+    }
+
+    private void TickRecoilRelaxers(float dt)
+    {
+        if (recoilRelaxers.Count == 0 || simulation == null) return;
+        for (int i = recoilRelaxers.Count - 1; i >= 0; i--)
+        {
+            var r = recoilRelaxers[i];
+            r.Remaining -= dt;
+            if (r.Remaining > 0f) { recoilRelaxers[i] = r; continue; }
+            recoilRelaxers.RemoveAt(i);
+            try
+            {
+                simulation.Solver.ApplyDescription(r.Handle,
+                    new AngularMotor { TargetVelocityLocalA = Vector3.Zero, Settings = new MotorSettings(float.MaxValue, JointMotorDamping) });
+            }
+            catch { /* constraint gone (sim torn down) */ }
+        }
     }
 
     /// <summary>
@@ -6346,6 +6393,8 @@ public unsafe class RagdollController : IDisposable
         standingActive = false;
         standingConstraints.Clear();
         wristConstraints.Clear();
+        angularMotorByBone.Clear();
+        recoilRelaxers.Clear();
         biomechanicalSettleRemaining = 0f;
         ragdollBones.Clear();
         npcCollisionStates.Clear();
