@@ -317,6 +317,20 @@ public class Configuration : IPluginConfiguration
     // muscle-failure brake, instead of only a one-shot directional shove. Off = legacy single
     // impulse.
     public bool RagdollRelaxationTopple { get; set; } = true;
+    // Collapse asymmetry: real people never collapse symmetrically. Pick a random lead side
+    // each death — its leg buckles first and the whole-body topple leans + twists toward it —
+    // instead of a flat, mirror-image fall. 0 = perfectly symmetric (robotic), ~0.35 = natural
+    // lopsided collapse, 1 = strongly one-sided. Applies to the Relaxation topple/spike.
+    public float RagdollCollapseAsymmetry { get; set; } = 0.35f;
+    // Staged muscle failure: instead of every joint fading on one shared curve, let the muscle
+    // groups fail in sequence — legs give first, the trunk holds a beat longer, the arms trail
+    // last. More biological than a uniform limp. Off = single shared fade curve.
+    public bool RagdollStagedFailure { get; set; } = true;
+    // Momentum-steered topple: bias the fall direction toward the body's actual horizontal
+    // motion at the handoff (carried from the death animation), so a moving corpse falls the way
+    // it was going rather than a fixed preset. 0 = ignore momentum (use Topple direction only),
+    // ~0.5 = blend, 1 = fall purely along momentum when it is moving.
+    public float RagdollToppleMomentumBias { get; set; } = 0.5f;
     // Anatomical joint-frame builder for hinge axes and ball-joint twist references.
     // Keep the switch so unusual skeletons can fall back to the legacy frame builder.
     public bool RagdollExperimentalJointFrames { get; set; } = true;

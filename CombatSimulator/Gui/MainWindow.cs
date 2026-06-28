@@ -3260,6 +3260,33 @@ public class MainWindow : IDisposable
         }
         HelpMarker("Drive a whole-body center-of-mass topple (the body loses balance over its feet and falls like an inverted pendulum) fused with the eccentric brake, instead of only a one-shot shove. Falls in 'Topple direction'. Off = legacy single impulse below. Takes effect on next death.");
 
+        var asym = Math.Clamp(config.RagdollCollapseAsymmetry, 0f, 1f);
+        if (ImGui.SliderFloat("Asymmetry##guidedrelax", ref asym, 0f, 1f, "%.2f"))
+        {
+            config.RagdollCollapseAsymmetry = asym;
+            config.Save();
+        }
+        HelpMarker("Real collapses are never symmetric. Picks a random lead side each death — its leg buckles first and the body leans + twists toward it — instead of a flat mirror-image fall. 0 = symmetric (robotic), ~0.35 = natural, 1 = strongly one-sided. Takes effect on next death.");
+
+        var staged = config.RagdollStagedFailure;
+        if (ImGui.Checkbox("Staged muscle failure##guidedrelax", ref staged))
+        {
+            config.RagdollStagedFailure = staged;
+            config.Save();
+        }
+        HelpMarker("Let muscle groups fail in sequence — legs give first, trunk holds a beat longer, arms trail last — instead of every joint fading on one shared curve. Takes effect on next death.");
+
+        using (ImRaii.Disabled(!config.RagdollRelaxationTopple))
+        {
+            var momentum = Math.Clamp(config.RagdollToppleMomentumBias, 0f, 1f);
+            if (ImGui.SliderFloat("Momentum steering##guidedrelax", ref momentum, 0f, 1f, "%.2f"))
+            {
+                config.RagdollToppleMomentumBias = momentum;
+                config.Save();
+            }
+            HelpMarker("Bias the topple toward the body's actual horizontal motion at the handoff (carried from the death animation) so a moving corpse falls the way it was going. 0 = ignore momentum (use Topple direction only), ~0.5 = blend, 1 = fall along momentum when moving. Takes effect on next death.");
+        }
+
         using (ImRaii.Disabled(s.Direction == 0 || config.RagdollRelaxationTopple))
         {
             var impulse = Math.Clamp(s.Impulse, 0f, 8f);

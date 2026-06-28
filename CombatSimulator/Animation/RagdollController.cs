@@ -3962,12 +3962,16 @@ public unsafe class RagdollController : IDisposable
         public float MaxForce;    // this joint's full torque ceiling (gain multiplies this)
         public BodyHandle ChildBody;  // body A — for reading the live relative rotation
         public BodyHandle ParentBody; // body B
+        public float TimeShift;   // staged-failure + lead-side offset (s); + = this joint fails sooner
     }
 
     private readonly List<CollapseServo> collapseServos = new();
     private bool collapseSpikeActive;
     private CollapseArchetype collapseArchetype;
     private float collapseElapsed;
+    // +1 / -1: which side leads the collapse this death (its leg buckles first, body leans/twists
+    // toward it). Shared between the spike and the fused whole-body topple.
+    private float collapseLeadSign = 1f;
     private float collapseHold;
     private float collapseFade;
     private float collapseFreq;
@@ -4092,6 +4096,12 @@ public unsafe class RagdollController : IDisposable
         collapseBrakeForceFrac = Math.Clamp(relax.BrakeStrength, 0f, 1f);
         collapseBrakeFade = Math.Clamp(relax.BrakeFade, 0.05f, 4f);
 
+        // Asymmetry + staged failure: pick a lead side (its leg buckles first) and stagger the
+        // muscle groups in time so legs give before trunk before arms.
+        var asymmetry = Math.Clamp(config.RagdollCollapseAsymmetry, 0f, 1f);
+        collapseLeadSign = ShakeRng.Next(2) == 0 ? -1f : 1f;
+        var staged = config.RagdollStagedFailure;
+
         var handleByBoneIdx = new Dictionary<int, BodyHandle>();
         foreach (var rb in ragdollBones)
             handleByBoneIdx[rb.BoneIndex] = rb.BodyHandle;
@@ -4122,6 +4132,12 @@ public unsafe class RagdollController : IDisposable
             var jointFreq = isHinge ? collapseFreq * 0.6f : collapseFreq;
             var jointForce = isHinge ? collapseMaxForce * hingeFactor : collapseMaxForce;
 
+            // Per-joint failure timing: staged group stagger + lead-side leg gives soonest.
+            var timeShift = staged ? StagedTierTimeShift(tier) : 0f;
+            if (asymmetry > 0f && IsLowerLimbRole(def.AnatomicalRole)
+                && BoneSideSign(rb.Name) == collapseLeadSign)
+                timeShift += asymmetry * LeadLegTimeShift;
+
             var handle = simulation.Solver.Add(rb.BodyHandle, parentHandle,
                 new AngularServo
                 {
@@ -4133,7 +4149,7 @@ public unsafe class RagdollController : IDisposable
             collapseServos.Add(new CollapseServo
             {
                 Handle = handle, Tier = tier, Target = target, Freq = jointFreq, MaxForce = jointForce,
-                ChildBody = rb.BodyHandle, ParentBody = parentHandle,
+                ChildBody = rb.BodyHandle, ParentBody = parentHandle, TimeShift = timeShift,
             });
         }
 
@@ -4217,8 +4233,29 @@ public unsafe class RagdollController : IDisposable
         _ => 2,
     };
 
-    /// <summary>Per-tier muscle strength in [0,1] as the collapse progresses.</summary>
-    private float CollapseGain(int tier)
+    private static bool IsLowerLimbRole(AnatomicalRole role) =>
+        role is AnatomicalRole.Hip or AnatomicalRole.Knee or AnatomicalRole.Ankle or AnatomicalRole.Foot;
+
+    // +1 for left bones, -1 for right, 0 for midline — used to pick the lead (first-to-buckle) side.
+    private static float BoneSideSign(string name)
+        => name.EndsWith("_l", StringComparison.Ordinal) ? 1f
+         : name.EndsWith("_r", StringComparison.Ordinal) ? -1f : 0f;
+
+    private const float LeadLegTimeShift = 0.25f; // lead-side leg fails up to this many seconds sooner
+
+    // Staged muscle failure: shift each tier's fade earlier (+) or later (-) so groups give in
+    // sequence — legs first, trunk in the middle, arms trailing last.
+    private static float StagedTierTimeShift(int tier) => tier switch
+    {
+        0 => 0.18f,   // legs give first
+        2 => -0.18f,  // arms trail last
+        _ => 0f,      // trunk in the middle
+    };
+
+    /// <summary>Position-hold strength in [0,1] for a joint whose failure is shifted in time by
+    /// <paramref name="timeShift"/> seconds (+ = fails sooner). Drives the staged + asymmetric
+    /// collapse.</summary>
+    private float CollapseGain(float timeShift)
     {
         switch (collapseArchetype)
         {
@@ -4227,7 +4264,7 @@ public unsafe class RagdollController : IDisposable
 
             case CollapseArchetype.UniformCollapse:
             {
-                var t = collapseElapsed - collapseHold;
+                var t = collapseElapsed + timeShift - collapseHold;
                 if (t <= 0f) return 1f;
                 return Math.Clamp(1f - t / collapseFade, 0f, 1f);
             }
@@ -4258,7 +4295,7 @@ public unsafe class RagdollController : IDisposable
         for (int i = 0; i < collapseServos.Count; i++)
         {
             var s = collapseServos[i];
-            var hold = CollapseGain(s.Tier); // position-hold strength, 1 → 0
+            var hold = CollapseGain(s.TimeShift); // position-hold strength, 1 → 0
             if (hold > 0.001f || brake > 0.001f) anyAlive = true;
 
             // As the muscle releases (hold → 0) blend the captured pose target toward the *live*
@@ -4849,25 +4886,42 @@ public unsafe class RagdollController : IDisposable
     {
         if (simulation == null || !isActive) return false;
 
-        if (!TryComputeWholeBodyState(out wholeBodyInitialCom, out wholeBodyInitialSupport, out _))
+        if (!TryComputeWholeBodyState(out wholeBodyInitialCom, out wholeBodyInitialSupport, out var coreVelocity))
         {
             log.Warning("RagdollController: whole-body collapse failed - missing COM/support bodies");
             return false;
         }
 
         // When fused with the Relaxation spike, keep that spike alive (it brakes the joints while
-        // we topple). Standalone use still clears the other controllers.
+        // we topple) and reuse the lead side it already picked; standalone use clears the other
+        // controllers and rolls its own lead side.
         if (!fuseWithSpike)
         {
             StopCollapseSpike();
             StopDirectedCollapseSpike();
             StopKneePowerLossPattern();
+            collapseLeadSign = ShakeRng.Next(2) == 0 ? -1f : 1f;
         }
         StopWholeBodyCollapse();
 
         var resolved = ResolveCollapseDirection(direction == CollapseDirection.None ? CollapseDirection.Forward : direction);
         if (resolved.LengthSquared() < 1e-4f)
             resolved = ResolveCollapseDirection(CollapseDirection.Forward);
+
+        // Momentum steering: bias the topple toward the body's actual horizontal motion at handoff
+        // (carried from the death animation), so a moving corpse falls the way it was going.
+        var momentumBias = Math.Clamp(config.RagdollToppleMomentumBias, 0f, 1f);
+        if (momentumBias > 0f)
+        {
+            var horiz = new Vector3(coreVelocity.X, 0f, coreVelocity.Z);
+            if (horiz.Length() > 0.5f) // ignore near-static handoffs
+            {
+                var momentumDir = Vector3.Normalize(horiz);
+                var blended = Vector3.Lerp(resolved, momentumDir, momentumBias);
+                if (blended.LengthSquared() > 1e-4f)
+                    resolved = Vector3.Normalize(blended);
+            }
+        }
         wholeBodyForward = resolved;
         // Lateral-balance axis ⟂ to the topple direction, so the forward/pitch drive tips the body
         // toward wholeBodyForward for ANY chosen direction (not just character-forward).
@@ -4918,8 +4972,16 @@ public unsafe class RagdollController : IDisposable
         var forwardError = targetForwardOffset - forwardOffset;
         var forwardSpeed = Math.Clamp(0.35f + forwardError * 2.1f, 0f, 1.25f) * gain;
         var downSpeed = (0.20f + 0.42f * t) * gain;
-        var lateralSpeed = Math.Clamp(-lateralOffset * 2.8f - lateralVelocity * 0.65f, -0.55f, 0.55f) * gain;
         var pitchSpeed = (0.55f + 1.15f * t) * gain;
+
+        // Asymmetry: lean (and below, twist) toward the lead side so the fall is lopsided and
+        // rotating instead of a flat, mirror-image topple. The lean is folded into the lateral
+        // drive (which otherwise only corrects drift back to centre).
+        // leadSign +1 = left side leads (left leg buckles first); the body then falls toward its
+        // LEFT, i.e. -wholeBodyRight, so the lean bias is the negated lead sign.
+        var asym = Math.Clamp(config.RagdollCollapseAsymmetry, 0f, 1f);
+        var leanBias = -collapseLeadSign * asym * 0.45f;
+        var lateralSpeed = (Math.Clamp(-lateralOffset * 2.8f - lateralVelocity * 0.65f, -0.55f, 0.55f) + leanBias) * gain;
 
         ApplyCoreAxisVelocity("j_kosi", wholeBodyForward, forwardSpeed, 0.105f * stepScale);
         ApplyCoreAxisVelocity("j_kosi", -Vector3.UnitY, downSpeed, 0.090f * stepScale);
@@ -4933,6 +4995,15 @@ public unsafe class RagdollController : IDisposable
         ApplyCoreAngularVelocity("j_sebo_c", wholeBodyRight, pitchSpeed, 0.105f * stepScale);
         ApplyCoreAngularVelocity("j_sebo_b", wholeBodyRight, pitchSpeed * 0.65f, 0.075f * stepScale);
         ApplyCoreAngularVelocity("j_kosi", wholeBodyRight, pitchSpeed * 0.30f, 0.050f * stepScale);
+
+        // Asymmetry twist: a yaw about vertical so the body rotates as it falls (about a different
+        // axis than the pitch, so this does not fight the forward topple).
+        if (asym > 0f)
+        {
+            var yawSpeed = collapseLeadSign * asym * 0.9f * gain;
+            ApplyCoreAngularVelocity("j_kosi", Vector3.UnitY, yawSpeed, 0.06f * stepScale);
+            ApplyCoreAngularVelocity("j_sebo_c", Vector3.UnitY, yawSpeed * 0.7f, 0.05f * stepScale);
+        }
 
         if (wholeBodyElapsed >= 1.55f)
             StopWholeBodyCollapse();
