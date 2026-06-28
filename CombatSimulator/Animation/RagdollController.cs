@@ -6093,16 +6093,16 @@ public unsafe class RagdollController : IDisposable
         BeginBiomechanicalSettle();
     }
 
-    /// <summary>Apply a momentum impulse (mass·velocity) at a bone, converted to a velocity change via
-    /// the body's inverse mass. Pairing this with the opposite impulse elsewhere conserves momentum
-    /// (a lighter body recoils faster, a heavier one slower) — no manual force tuning needed.</summary>
-    public void ApplyMomentumImpulse(string boneName, Vector3 impulse)
+    /// <summary>Add an angular velocity to a bone's body (a rotational kick). Used to make the stump
+    /// above a severed cut visibly swing/recoil instead of being shoved straight into the body, where
+    /// the rest of the ragdoll would just absorb it. The existing angular clamp keeps it sane.</summary>
+    public void ApplyAngularVelocity(string boneName, Vector3 angularVelocityDelta)
     {
         if (simulation == null || !isActive) return;
         var handle = FindBodyHandle(boneName);
         if (!handle.HasValue) return;
         var body = simulation.Bodies.GetBodyReference(handle.Value);
-        body.Velocity.Linear += impulse * body.LocalInertia.InverseMass;
+        body.Velocity.Angular += angularVelocityDelta;
         body.Awake = true;
         BeginBiomechanicalSettle();
     }

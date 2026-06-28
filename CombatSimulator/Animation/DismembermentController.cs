@@ -54,10 +54,10 @@ public unsafe class DismembermentController : IDisposable
     public bool EnablePcDismemberNpcCollision { get; set; }
     public Func<IReadOnlyList<nint>>? PcDismemberNpcCollisionProvider { get; set; }
 
-    /// <summary>Optional sink for the equal-and-opposite reaction: (sourceAddress, body-side bone,
-    /// momentum impulse). When the limb is kicked with the activation impulse, the body-side bone
-    /// above the cut receives the opposite momentum so the severed piece's momentum is conserved.</summary>
-    public Action<nint, string, Vector3>? ReactionImpulseSink { get; set; }
+    /// <summary>Optional sink for the body-side recoil: (sourceAddress, body-side bone, angular
+    /// velocity). When the piece is kicked away with the activation impulse, the stump above the cut
+    /// is spun back so it visibly flicks up instead of being pushed straight into the body.</summary>
+    public Action<nint, string, Vector3>? ReactionRecoilSink { get; set; }
 
     private sealed class Clone
     {
@@ -678,36 +678,42 @@ public unsafe class DismembermentController : IDisposable
 
         var velocityDelta = dir * impulse;
 
-        float limbMass = 0f;
         if (c.Rig != null)
         {
             foreach (var limbBody in c.Rig.Bodies)
-            {
                 ApplyVelocityDelta(limbBody.Body, velocityDelta);
-                limbMass += BodyMass(limbBody.Body);
-            }
         }
         else if (c.Body.HasValue)
         {
             ApplyVelocityDelta(c.Body.Value, velocityDelta);
-            limbMass += BodyMass(c.Body.Value);
         }
 
-        // Conservation of momentum: kick the body-side bone above the cut with the opposite momentum
-        // (limb mass × applied velocity). Automatic — scales with the impulse, no separate knob.
-        if (limbMass > 0f && ReactionImpulseSink != null)
+        // Body-side recoil. A straight reverse impulse points into the body (perpendicular to the
+        // cut) and the rest of the ragdoll just soaks it up, so it barely shows. Instead spin the
+        // stump about the cut joint: the piece's outward kick, applied at the lever arm from the
+        // stump's pivot to the cut, becomes a rotation that flicks the stump up/back. Scales with
+        // the impulse, automatic — no separate knob.
+        if (ReactionRecoilSink != null)
         {
             var parentBone = ResolveBodyParentBone(c.SourceAddress, c.LimbRootBone);
             if (!string.IsNullOrEmpty(parentBone))
-                ReactionImpulseSink(c.SourceAddress, parentBone!, -velocityDelta * limbMass);
+            {
+                var cutPos = boneService.GetBoneWorldPos(c.SourceAddress, c.LimbRootBone);
+                var stumpPos = boneService.GetBoneWorldPos(c.SourceAddress, parentBone!);
+                if (cutPos.HasValue && stumpPos.HasValue)
+                {
+                    var seg = cutPos.Value - stumpPos.Value;       // stump pivot -> cut (lever arm)
+                    var lenSq = seg.LengthSquared();
+                    if (lenSq > 1e-6f)
+                    {
+                        const float recoilGain = 2.0f;
+                        // omega s.t. the cut end recoils opposite to the piece's departure: v = w x seg.
+                        var angularVel = Vector3.Cross(seg, -velocityDelta * recoilGain) / lenSq;
+                        ReactionRecoilSink(c.SourceAddress, parentBone!, angularVel);
+                    }
+                }
+            }
         }
-    }
-
-    private float BodyMass(BodyHandle handle)
-    {
-        if (simulation == null) return 0f;
-        var inv = simulation.Bodies.GetBodyReference(handle).LocalInertia.InverseMass;
-        return inv > 1e-9f ? 1f / inv : 0f;
     }
 
     /// <summary>Bone immediately above <paramref name="boneName"/> in the source skeleton — the
