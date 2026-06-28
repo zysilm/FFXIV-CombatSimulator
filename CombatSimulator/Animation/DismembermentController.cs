@@ -56,8 +56,12 @@ public unsafe class DismembermentController : IDisposable
 
     /// <summary>Optional sink for the body-side recoil: (sourceAddress, body-side bone, angular
     /// velocity). When the piece is kicked away with the activation impulse, the stump above the cut
-    /// is spun back so it visibly flicks up instead of being pushed straight into the body.</summary>
+    /// is spun so it visibly flicks up instead of being pushed straight into the body.</summary>
     public Action<nint, string, Vector3>? ReactionRecoilSink { get; set; }
+
+    /// <summary>How hard the stump above a cut flicks up — the cut-end recoil speed (m/s). Applied
+    /// when a piece is kicked off (needs the activation impulse to fire). 0 disables the recoil.</summary>
+    public float ReactionRecoilStrength { get; set; }
 
     private sealed class Clone
     {
@@ -688,12 +692,12 @@ public unsafe class DismembermentController : IDisposable
             ApplyVelocityDelta(c.Body.Value, velocityDelta);
         }
 
-        // Body-side recoil. A straight reverse impulse points into the body (perpendicular to the
-        // cut) and the rest of the ragdoll just soaks it up, so it barely shows. Instead spin the
-        // stump about the cut joint: the piece's outward kick, applied at the lever arm from the
-        // stump's pivot to the cut, becomes a rotation that flicks the stump up/back. Scales with
-        // the impulse, automatic — no separate knob.
-        if (ReactionRecoilSink != null)
+        // Body-side recoil. The piece flies out roughly ALONG the bone, so a lever-arm torque
+        // (seg × outwardImpulse) is ~zero (force parallel to the lever) and a straight reverse push
+        // just gets soaked up by the rest of the ragdoll — both invisible. Instead drive an explicit
+        // up-swing of the stump: rotate it so the cut end lifts (perpendicular to the bone), at a
+        // speed proportional to the impulse.
+        if (ReactionRecoilSink != null && ReactionRecoilStrength > 0f)
         {
             var parentBone = ResolveBodyParentBone(c.SourceAddress, c.LimbRootBone);
             if (!string.IsNullOrEmpty(parentBone))
@@ -702,13 +706,20 @@ public unsafe class DismembermentController : IDisposable
                 var stumpPos = boneService.GetBoneWorldPos(c.SourceAddress, parentBone!);
                 if (cutPos.HasValue && stumpPos.HasValue)
                 {
-                    var seg = cutPos.Value - stumpPos.Value;       // stump pivot -> cut (lever arm)
-                    var lenSq = seg.LengthSquared();
-                    if (lenSq > 1e-6f)
+                    var seg = cutPos.Value - stumpPos.Value;       // stump pivot -> cut
+                    var segLen = seg.Length();
+                    if (segLen > 1e-3f)
                     {
-                        const float recoilGain = 2.0f;
-                        // omega s.t. the cut end recoils opposite to the piece's departure: v = w x seg.
-                        var angularVel = Vector3.Cross(seg, -velocityDelta * recoilGain) / lenSq;
+                        var segDir = seg / segLen;
+                        // "Up" component perpendicular to the bone — the direction to lift the cut end.
+                        var liftDir = Vector3.UnitY - Vector3.Dot(Vector3.UnitY, segDir) * segDir;
+                        if (liftDir.LengthSquared() < 1e-4f) liftDir = Vector3.Cross(segDir, Vector3.UnitX);
+                        if (liftDir.LengthSquared() < 1e-4f) liftDir = Vector3.Cross(segDir, Vector3.UnitZ);
+                        liftDir = Vector3.Normalize(liftDir);
+
+                        var tipSpeed = ReactionRecoilStrength;               // cut-end recoil speed (m/s)
+                        // omega such that (omega × seg) == liftDir × tipSpeed (lifts the cut end up).
+                        var angularVel = Vector3.Cross(segDir, liftDir) * (tipSpeed / segLen);
                         ReactionRecoilSink(c.SourceAddress, parentBone!, angularVel);
                     }
                 }
