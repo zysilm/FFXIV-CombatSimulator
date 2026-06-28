@@ -18,7 +18,7 @@ using GameFramework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework
 
 namespace CombatSimulator.Dev;
 
-public unsafe class VictorySequenceController : IDisposable
+public unsafe class VictorySequenceController : IDisposable, Simulation.IVictorySequence
 {
     private readonly BoneTransformService boneService;
     private readonly EmoteTimelinePlayer emotePlayer;

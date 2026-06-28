@@ -63,7 +63,8 @@ public class CombatEngine : IDisposable
     private readonly IPluginLog log;
     private readonly RagdollController ragdollController;
     private readonly DeathCamController? deathCamController;
-    private readonly Dev.VictorySequenceController? victorySequenceController;
+    /// <summary>Optional cinematic victory sequence (dev-only); set after construction. Null = none.</summary>
+    public IVictorySequence? VictorySequence { private get; set; }
     private bool playerDeathTriggered;
     private bool victoryTriggered;
     private bool instantRagdollOverride;
@@ -165,8 +166,7 @@ public class CombatEngine : IDisposable
         NpcSelector npcSelector,
         IClientState clientState,
         IPluginLog log,
-        DeathCamController? deathCamController = null,
-        Dev.VictorySequenceController? victorySequenceController = null)
+        DeathCamController? deathCamController = null)
     {
         this.actionDataProvider = actionDataProvider;
         this.damageCalculator = damageCalculator;
@@ -179,7 +179,6 @@ public class CombatEngine : IDisposable
         this.clientState = clientState;
         this.log = log;
         this.deathCamController = deathCamController;
-        this.victorySequenceController = victorySequenceController;
     }
 
     public void StartSimulation()
@@ -220,7 +219,7 @@ public class CombatEngine : IDisposable
             actionQueue.Clear();
 
         // Stop victory sequence if running
-        victorySequenceController?.Stop();
+        VictorySequence?.Stop();
 
         // Clear approach position blocks FIRST so position restores in DeselectAll aren't blocked
         movementBlockHook.ClearApproachNpcs();
@@ -263,7 +262,7 @@ public class CombatEngine : IDisposable
     {
         State.Reset();
         CombatLog.Clear();
-        victorySequenceController?.Stop();
+        VictorySequence?.Stop();
         deathCamController?.Deactivate();
 
         // Re-initialize player state
@@ -353,7 +352,7 @@ public class CombatEngine : IDisposable
         State.SimulationTime += deltaTime;
 
         // Track player's current target for victory sequence
-        victorySequenceController?.TrackTarget(npcSelector.SelectedNpcs);
+        VictorySequence?.TrackTarget(npcSelector.SelectedNpcs);
 
         // Process queued player actions
         ProcessActionQueue();
@@ -1375,9 +1374,9 @@ public class CombatEngine : IDisposable
 
         // Try cinematic victory sequence first; fall back to normal emotes.
         SimulatedNpc? cinematicNpc = null;
-        if (victorySequenceController != null)
+        if (VictorySequence != null)
         {
-            var (started, cNpc) = victorySequenceController.TryStart(npcSelector.SelectedNpcs);
+            var (started, cNpc) = VictorySequence.TryStart(npcSelector.SelectedNpcs);
             if (started) cinematicNpc = cNpc;
         }
 

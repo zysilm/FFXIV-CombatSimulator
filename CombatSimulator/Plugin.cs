@@ -56,10 +56,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly UseActionHook useActionHook;
     private readonly DeathCamController deathCamController;
     private readonly ActiveCameraController activeCameraController;
-    private readonly Dev.VictorySequenceController victorySequenceController;
-    private readonly Dev.BoneHoldTestModeController executionModeController;
-    private readonly Dev.KoStripController koStripController;
-    private readonly Dev.MonsterModeController monsterModeController;
+    private readonly Dev.Experimental.DevExperimentalModule devExperimental;
     private readonly HookSafetyChecker hookSafetyChecker;
 
     // Action Mode (动作模式): real-time combat layer wired through narrow seams.
@@ -72,8 +69,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     // NPC ragdoll controllers (multiple concurrent, persist until sim stop/reset/zone change)
     private readonly Dictionary<nint, RagdollController> npcRagdolls = new();
 
-    // Dev: NPCs hidden by occlusion check (need to restore visibility on cleanup)
-    private readonly HashSet<nint> occlusionHiddenNpcs = new();
     private readonly MainWindow mainWindow;
     private readonly HpBarOverlay hpBarOverlay;
     private readonly CombatLogWindow combatLogWindow;
@@ -134,18 +129,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
         weaponDropController = new WeaponDropController(boneTransformService, config, log);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
-        koStripController = new Dev.KoStripController(config, glamourerIpc, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
-        monsterModeController = new Dev.MonsterModeController(keyState, gamepadState, framework, ragdollController, animationController, boneTransformService, movementBlockHook, activeCameraController, vnavmeshIpc, dismembermentController, glamourerIpc, config, log);
-        victorySequenceController = new Dev.VictorySequenceController(
-            boneTransformService, animationController.EmotePlayer,
-            movementBlockHook, ragdollController, vnavmeshIpc, clientState, targetManager, config, log);
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, ragdollController,
-            config, npcSelector, clientState, log, deathCamController,
-            victorySequenceController);
+            config, npcSelector, clientState, log, deathCamController);
         // Action Mode wiring. Seams: ActionComboSink (player input), CombatModeRouter
         // (enemy attack executor), TelegraphSystem (windup→hitbox). All gate on
         // config.ActionMode; off ⇒ behavior-equivalent simulation paths.
@@ -176,10 +165,14 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // Super-armor enemies during their telegraph windup (no flinch from player hits).
         combatEngine.IsTargetSuperArmored = telegraphSystem.IsWindingUp;
 
-        executionModeController = new Dev.BoneHoldTestModeController(
-            boneTransformService, animationController.EmotePlayer, ragdollController, animationController,
-            movementBlockHook, vnavmeshIpc, combatEngine, log);
-        monsterModeController.AttachHold(executionModeController);
+        // All experimental ("easter-egg") dev features live in one module now (Victory/Hold/KO Strip/
+        // Monster + dev-only per-frame tweaks). The engine drives the cinematic victory through the
+        // IVictorySequence seam.
+        devExperimental = new Dev.Experimental.DevExperimentalModule(
+            keyState, gamepadState, framework, ragdollController, animationController, boneTransformService,
+            movementBlockHook, activeCameraController, vnavmeshIpc, dismembermentController, glamourerIpc,
+            combatEngine, clientState, targetManager, npcSelector, FindNpcByAddress, config, log);
+        combatEngine.VictorySequence = devExperimental.Victory;
         companionManager = new CombatCompanionManager(
             objectTable, clientState, config, combatEngine, animationController,
             movementBlockHook, vnavmeshIpc, targetManager, partyEngagePlanner, terrainHeightService, log);
@@ -192,7 +185,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             combatEngine, animationController, movementBlockHook, vnavmeshIpc,
             clientState, config, partyEngagePlanner, terrainHeightService, log,
             combatModeRouter,
-            addr => victorySequenceController.ControlsNpc(addr) || monsterModeController.ControlsNpc(addr));
+            addr => devExperimental.ControlsNpc(addr));
 
         // Custom in-sim target lock system (综合提升). Takes over the game's target
         // keybinds during simulation; the engine reads the locked target for
@@ -276,8 +269,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
             dismembermentController.RemoveAll();
-            koStripController.Reset();
-            monsterModeController.Despawn();
+            devExperimental.ResetTransientState();
             activeCameraController.ResetFightingCamera();
 
             // Keep companions across a combat *reset* (IsActive stays true) when the
@@ -313,17 +305,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 foreach (var bone in config.DismemberPocBones)
                     dismembermentController.SpawnFor(addr, bone, config.RagdollActivationDelay, glam);
             }
-            koStripController.StripOnKo(addr);
-            if (config.MonsterControlKiller)
-            {
-                var killer = FindNpcByAddress(combatEngine.LastPlayerKillerAddress);
-                if (killer != null) monsterModeController.ControlKiller(killer);
-                else log.Info("MonsterMode: no valid killer to control.");
-            }
-            else if (config.MonsterSpawnOnDeath)
-            {
-                monsterModeController.Spawn();
-            }
+            devExperimental.OnPlayerDeath(addr);
             activeCameraController.NotifyCombatantDeath(addr, isPlayer: true);
         };
 
@@ -401,7 +383,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // while playing); on close the game frees everything itself.
         if (Core.Services.ObjectTable.LocalPlayer != null)
         {
-            RestoreOcclusionHiddenNpcs();
+            devExperimental.RestoreOcclusion();
             DeactivateAllNpcRagdolls();
             npcSpawner.SpawnModeActive = false;
             companionManager.DespawnAll();
@@ -422,10 +404,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         mainWindow.Dispose();
         npcAiController.Dispose();
         combatEngine.Dispose();
-        victorySequenceController.Dispose();
-        executionModeController.Dispose();
-        koStripController.Dispose();
-        monsterModeController.Dispose();
+        devExperimental.Dispose();
         ragdollController.Dispose();
         weaponDropController.Dispose();
         dismembermentController.Dispose();
@@ -531,17 +510,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         if (config.ShowActiveCamToolbar)
             mainWindow.DrawActiveCamToolbar();
 
-        if (config.ShowGrabToolbar)
-            mainWindow.DrawGrabToolbar(victorySequenceController);
-
-        if (config.ShowHoldToolbar)
-            mainWindow.DrawHoldToolbar(executionModeController);
-
-        if (config.ShowKoStripToolbar)
-            mainWindow.DrawKoStripToolbar(koStripController);
-
-        if (config.ShowMonsterToolbar)
-            mainWindow.DrawMonsterToolbar(monsterModeController);
+        devExperimental.DrawToolbars(mainWindow);
 
         if (config.ShowMainWindow)
             mainWindow.Draw();
@@ -660,25 +629,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             mapEnemyController.Tick(deltaTime);
             combatEngine.Tick(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
-            victorySequenceController.Tick(deltaTime);
-            executionModeController.Tick(deltaTime, npcSelector.SelectedNpcs);
-
-            // Dev: apply NPC scale override via DrawObject transform
-            if (config.DevNpcScale != 1.0f)
-            {
-                var s = config.DevNpcScale;
-                foreach (var npc in npcSelector.SelectedNpcs)
-                {
-                    if (npc.BattleChara == null) continue;
-                    var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
-                    if (gameObj->DrawObject == null) continue;
-                    gameObj->DrawObject->Scale = new Vector3(s, s, s);
-                    gameObj->DrawObject->NotifyTransformChanged();
-                }
-            }
-
-            // Dev: hide NPCs that block the active camera's view of the player
-            TickNpcOcclusionHide();
+            // All experimental dev ticking (Victory/Hold + NPC scale + occlusion hide) lives here now.
+            devExperimental.Tick(deltaTime);
         }
         catch (Exception ex)
         {
@@ -885,99 +837,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcRagdolls.Clear();
     }
 
-    private void TickNpcOcclusionHide()
-    {
-        if (!config.DevNpcOcclusionHide || !config.EnableActiveCamera)
-        {
-            // Feature disabled — restore any hidden NPCs
-            RestoreOcclusionHiddenNpcs();
-            return;
-        }
-
-        var camMgr = GameCameraManager.Instance();
-        if (camMgr == null || camMgr->Camera == null)
-        {
-            RestoreOcclusionHiddenNpcs();
-            return;
-        }
-
-        var cp = camMgr->Camera->LastPosition;
-        var la = camMgr->Camera->LastLookAtVector;
-        var camPos = new Vector3(cp.X, cp.Y, cp.Z);
-        var lookAt = new Vector3(la.X, la.Y, la.Z);
-        var camToTarget = lookAt - camPos;
-        var lineLen = camToTarget.Length();
-        if (lineLen < 0.01f) return;
-        var lineDir = camToTarget / lineLen;
-
-        var cinematicAddr = victorySequenceController.CinematicNpcAddress;
-        var threshold = config.DevNpcOcclusionRadius;
-
-        foreach (var npc in npcSelector.SelectedNpcs)
-        {
-            if (npc.BattleChara == null) continue;
-            var addr = npc.Address;
-
-            // Never hide the cinematic (grabbing) NPC
-            if (addr == cinematicAddr) continue;
-
-            var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
-            if (gameObj->DrawObject == null) continue;
-
-            // Check multiple heights along the NPC body (feet, knees, chest, head)
-            var baseX = gameObj->Position.X;
-            var baseY = gameObj->Position.Y;
-            var baseZ = gameObj->Position.Z;
-            bool blocking = false;
-
-            for (float yOff = 0.0f; yOff <= 1.8f; yOff += 0.45f)
-            {
-                var samplePos = new Vector3(baseX, baseY + yOff, baseZ);
-                var camToSample = samplePos - camPos;
-                var t = Vector3.Dot(camToSample, lineDir);
-
-                if (t < 0f || t > lineLen)
-                    continue;
-
-                var closestPoint = camPos + lineDir * t;
-                var perpDist = Vector3.Distance(samplePos, closestPoint);
-
-                if (perpDist < threshold)
-                {
-                    blocking = true;
-                    break;
-                }
-            }
-
-            if (blocking)
-            {
-                // Blocking — hide
-                if (occlusionHiddenNpcs.Add(addr))
-                    gameObj->DrawObject->IsVisible = false;
-            }
-            else
-            {
-                // Not blocking — restore if hidden
-                if (occlusionHiddenNpcs.Remove(addr))
-                    gameObj->DrawObject->IsVisible = true;
-            }
-        }
-    }
-
-    private void RestoreOcclusionHiddenNpcs()
-    {
-        if (occlusionHiddenNpcs.Count == 0) return;
-        foreach (var npc in npcSelector.SelectedNpcs)
-        {
-            if (npc.BattleChara == null) continue;
-            if (!occlusionHiddenNpcs.Contains(npc.Address)) continue;
-            var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
-            if (gameObj->DrawObject != null)
-                gameObj->DrawObject->IsVisible = true;
-        }
-        occlusionHiddenNpcs.Clear();
-    }
-
     private void OnTerritoryChanged(uint territoryId)
     {
         // Despawn client-spawned NPCs first (they don't survive zone changes)
@@ -991,8 +850,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         DeactivateAllNpcRagdolls();
         weaponDropController.RemoveAll();
         dismembermentController.RemoveAll();
-        koStripController.Reset();
-        monsterModeController.Despawn();
+        devExperimental.ResetTransientState();
 
         if (combatEngine.IsActive)
         {
@@ -1015,8 +873,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
             dismembermentController.RemoveAll();
-            koStripController.Reset();
-            monsterModeController.Despawn();
+            devExperimental.ResetTransientState();
             npcSpawner.DespawnAll();
             companionManager.DespawnAll();
             if (combatEngine.IsActive)
