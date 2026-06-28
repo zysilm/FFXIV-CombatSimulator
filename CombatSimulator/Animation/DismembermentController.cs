@@ -59,6 +59,7 @@ public unsafe class DismembermentController : IDisposable
         public bool Armed;         // frozen + body created + driving
         public int LimbIndex = -1;
         public Vector3 LimbRootModelPos;
+        public List<(int Idx, Vector3 T, Quaternion R, Vector3 S)>? LimbSnapshot; // frozen limb pose
         public BodyHandle? Body;
         public StaticHandle? GroundTile;
         public TypedIndex? GroundShape;
@@ -252,8 +253,8 @@ public unsafe class DismembermentController : IDisposable
         c.Chara->EnableDraw();
         c.DrawEnabled = true;
         c.SettleFrames = 8;        // let it idle into a real pose before freezing
-        c.GlamourFramesUntil = 8;
-        c.GlamourAttemptsLeft = 5;
+        c.GlamourFramesUntil = 3;  // apply WHILE the clone is still alive (frozen actors may not redraw)
+        c.GlamourAttemptsLeft = 6;
         log.Info($"Dismember: clone idx={c.ObjectIndex} drawn (settling)");
     }
 
@@ -282,6 +283,19 @@ public unsafe class DismembermentController : IDisposable
             ref var lm = ref skel.Pose->ModelPose.Data[c.LimbIndex];
             c.LimbRootModelPos = new Vector3(lm.Translation.X, lm.Translation.Y, lm.Translation.Z);
             ((Character*)c.Chara)->Timeline.OverallSpeed = 0f;
+            // Snapshot the settled limb pose so we can re-assert it every frame — guarantees the limb
+            // is a frozen rigid chunk and can't keep breathing.
+            c.LimbSnapshot = new List<(int, Vector3, Quaternion, Vector3)>();
+            var nn = Math.Min(skel.BoneCount, skel.ParentCount);
+            for (int i = 0; i < nn; i++)
+            {
+                if (!IsDescendantOrSelf(skel, i, c.LimbIndex)) continue;
+                ref var bm = ref skel.Pose->ModelPose.Data[i];
+                c.LimbSnapshot.Add((i,
+                    new Vector3(bm.Translation.X, bm.Translation.Y, bm.Translation.Z),
+                    new Quaternion(bm.Rotation.X, bm.Rotation.Y, bm.Rotation.Z, bm.Rotation.W),
+                    new Vector3(bm.Scale.X, bm.Scale.Y, bm.Scale.Z)));
+            }
             EnsureSimulation();
             if (simulation != null)
             {
@@ -298,9 +312,20 @@ public unsafe class DismembermentController : IDisposable
             return;
         }
 
-        // Armed: re-assert freeze and drive the clone skeleton from the rigid body, pivoting at the
-        // limb root so the visible chunk tumbles about its cut.
+        // Armed: re-assert freeze, re-write the frozen limb pose (no breathing), and drive the clone
+        // skeleton from the rigid body, pivoting at the limb root so the chunk tumbles about its cut.
         ((Character*)c.Chara)->Timeline.OverallSpeed = 0f;
+        if (c.LimbSnapshot != null)
+        {
+            var pose = skel.Pose;
+            foreach (var s in c.LimbSnapshot)
+            {
+                ref var m = ref pose->ModelPose.Data[s.Idx];
+                m.Translation.X = s.T.X; m.Translation.Y = s.T.Y; m.Translation.Z = s.T.Z;
+                m.Rotation.X = s.R.X; m.Rotation.Y = s.R.Y; m.Rotation.Z = s.R.Z; m.Rotation.W = s.R.W;
+                m.Scale.X = s.S.X; m.Scale.Y = s.S.Y; m.Scale.Z = s.S.Z;
+            }
+        }
         if (simulation == null || c.Body == null) return;
         var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
         var bodyPos = bodyRef.Pose.Position;
@@ -381,9 +406,12 @@ public unsafe class DismembermentController : IDisposable
             var rootName = ppose->Skeleton->Bones[0].Name.String;
             var mainIdx = boneService.ResolveBoneIndex(skel, rootName ?? "");
             if (mainIdx >= 0 && IsDescendantOrSelf(skel, mainIdx, limbIdx)) continue; // attached under the limb — keep
+            // Face/hair share NO verts with the limb, so throwing them far is safe (no seam stretch)
+            // and removes the floating "collapsed head" blob that scale-only left behind.
             for (int b = 0; b < cnt; b++)
             {
                 ref var m = ref ppose->ModelPose.Data[b];
+                m.Translation.X = 0f; m.Translation.Y = -1000f; m.Translation.Z = 0f;
                 m.Scale.X = 0.0001f; m.Scale.Y = 0.0001f; m.Scale.Z = 0.0001f;
             }
         }
@@ -438,16 +466,54 @@ public unsafe class DismembermentController : IDisposable
 
     private (StaticHandle, TypedIndex) CreateTerrainPatch(float centerX, float centerZ, float aboveY)
     {
-        // The limb spawns at body height (aboveY ~1m up), so raycast DOWN to the real floor — without
-        // this the ground box sits at limb height and the limb just floats there instead of falling.
-        var groundY = aboveY - 1.5f;
-        if (BGCollisionModule.RaycastMaterialFilter(
-                new Vector3(centerX, aboveY + 5f, centerZ), new Vector3(0, -1, 0), out var hit, 80f))
-            groundY = hit.Point.Y;
+        // A flat box floats/clips on slopes, so build a small MESH from a grid of ground raycasts
+        // (the limb spawns at body height ~1m up, so raycast from above it). Mirrors WeaponDropController.
+        const float radius = 4f;
+        const float step = 0.5f;
+        var grid = (int)(radius * 2 / step) + 1;
+        var ox = centerX - radius;
+        var oz = centerZ - radius;
 
-        var shape = simulation!.Shapes.Add(new Box(8f, 0.1f, 8f));
-        var st = simulation.Statics.Add(new StaticDescription(
-            new Vector3(centerX, groundY - 0.05f, centerZ), Quaternion.Identity, shape));
+        var patchY = aboveY - 1.5f;
+        var anyHit = false;
+        if (BGCollisionModule.RaycastMaterialFilter(new Vector3(centerX, aboveY + 5f, centerZ), new Vector3(0, -1, 0), out var ch, 80f))
+        { patchY = ch.Point.Y; anyHit = true; }
+
+        var heights = new float[grid, grid];
+        for (int gz = 0; gz < grid; gz++)
+        for (int gx = 0; gx < grid; gx++)
+        {
+            var wx = ox + gx * step; var wz = oz + gz * step;
+            if (BGCollisionModule.RaycastMaterialFilter(new Vector3(wx, patchY + 5f, wz), new Vector3(0, -1, 0), out var gh, 80f))
+            { heights[gx, gz] = gh.Point.Y; anyHit = true; }
+            else heights[gx, gz] = patchY;
+        }
+
+        if (!anyHit)
+        {
+            var box = simulation!.Shapes.Add(new Box(8f, 0.1f, 8f));
+            var bst = simulation.Statics.Add(new StaticDescription(new Vector3(centerX, patchY - 0.05f, centerZ), Quaternion.Identity, box));
+            return (bst, box);
+        }
+
+        var triCount = (grid - 1) * (grid - 1) * 2;
+        bufferPool!.Take<Triangle>(triCount, out var tris);
+        var ti = 0;
+        for (int gz = 0; gz < grid - 1; gz++)
+        for (int gx = 0; gx < grid - 1; gx++)
+        {
+            var x0 = ox + gx * step; var x1 = x0 + step;
+            var z0 = oz + gz * step; var z1 = z0 + step;
+            var v00 = new Vector3(x0, heights[gx, gz], z0);
+            var v10 = new Vector3(x1, heights[gx + 1, gz], z0);
+            var v01 = new Vector3(x0, heights[gx, gz + 1], z1);
+            var v11 = new Vector3(x1, heights[gx + 1, gz + 1], z1);
+            tris[ti++] = new Triangle(v00, v10, v01);
+            tris[ti++] = new Triangle(v10, v11, v01);
+        }
+        var mesh = new BepuPhysics.Collidables.Mesh(tris, Vector3.One, bufferPool);
+        var shape = simulation!.Shapes.Add(mesh);
+        var st = simulation.Statics.Add(new StaticDescription(Vector3.Zero, Quaternion.Identity, shape));
         return (st, shape);
     }
 
@@ -458,7 +524,8 @@ public unsafe class DismembermentController : IDisposable
         simulation = BepuSimulation.Create(
             bufferPool,
             new WeaponDropNarrowPhaseCallbacks { Friction = config.RagdollFriction, MaxRecoveryVelocity = 1.5f },
-            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -config.RagdollGravity, 0), 0.97f, 0.92f),
+            // Stronger damping than weapons (0.97/0.92) so limbs tumble a bit then settle, not roll far.
+            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -config.RagdollGravity, 0), 0.93f, 0.84f),
             new SolveDescription(4, 1));
 
         var shape = new Capsule(LimbRadius, LimbHalfLength * 2f);
