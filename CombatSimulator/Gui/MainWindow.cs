@@ -4695,6 +4695,8 @@ public class MainWindow : IDisposable
         ("Space", 0x20),
     };
 
+    private static readonly string[] MonsterStrikePartProfileNames = { "Off", "Sequential", "Random" };
+
     public void DrawMonsterToolbar(Dev.MonsterModeController ctrl)
     {
         if (!ImGui.Begin("Monster", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
@@ -4761,8 +4763,20 @@ public class MainWindow : IDisposable
 
         var moveSpeed = config.MonsterMoveSpeed;
         if (ImGui.SliderFloat("Move##monster", ref moveSpeed, 1f, 20f, "%.1f")) { config.MonsterMoveSpeed = moveSpeed; config.Save(); }
+
+        var groundWalk = config.MonsterGroundWalk;
+        if (ImGui.Checkbox("Walk on ground (no fly)##monster", ref groundWalk))
+        {
+            config.MonsterGroundWalk = groundWalk;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Clamp the creature to the floor (raycast / navmesh) so it walks instead of flying.\nOff = free flight (Q/E or L2/R2 up/down).");
+
+        ImGui.BeginDisabled(config.MonsterGroundWalk);
         var vSpeed = config.MonsterVerticalSpeed;
         if (ImGui.SliderFloat("Fly##monster", ref vSpeed, 1f, 15f, "%.1f")) { config.MonsterVerticalSpeed = vSpeed; config.Save(); }
+        ImGui.EndDisabled();
         var strikePower = config.MonsterStrikePower;
         if (ImGui.SliderFloat("Strike power##monster", ref strikePower, 0.01f, 2f, "%.2f"))
         {
@@ -4783,6 +4797,21 @@ public class MainWindow : IDisposable
             ImGui.EndCombo();
         }
 
+        ImGui.Separator();
+        var partProfileIdx = Math.Clamp(config.MonsterStrikePartProfile, 0, MonsterStrikePartProfileNames.Length - 1);
+        ImGui.SetNextItemWidth(160);
+        if (ImGui.BeginCombo("On-hit parts##monster", MonsterStrikePartProfileNames[partProfileIdx]))
+        {
+            for (int i = 0; i < MonsterStrikePartProfileNames.Length; i++)
+                if (ImGui.Selectable(MonsterStrikePartProfileNames[i], i == partProfileIdx))
+                { config.MonsterStrikePartProfile = i; config.Save(); }
+            ImGui.EndCombo();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("A swing that connects in range always sparks the player. This adds progressive part separation:\n" +
+                             "Sequential — fore-arms/shins (4 hits) → arms/thighs (4 hits) → head.\n" +
+                             "Random — any still-attached part each hit (parent supersedes its child).");
+
         if (ImGui.Button("Reset defaults##monster"))
         {
             config.MonsterMoveSpeed = 6f;
@@ -4791,6 +4820,8 @@ public class MainWindow : IDisposable
             config.MonsterAttackKey = 0x59; // Y
             config.MonsterModelId = 38;     // Bat
             config.MonsterModelNameId = 38;
+            config.MonsterGroundWalk = true;
+            config.MonsterStrikePartProfile = 0; // Off
             config.Save();
         }
 

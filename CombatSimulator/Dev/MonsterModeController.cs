@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using System.Text;
 using CombatSimulator.Animation;
 using CombatSimulator.Camera;
+using CombatSimulator.Integration;
 using CombatSimulator.Safety;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.GamePad;
@@ -39,8 +41,15 @@ public unsafe class MonsterModeController : IDisposable
     private readonly BoneTransformService boneService;
     private readonly MovementBlockHook movementBlock;
     private readonly ActiveCameraController activeCamera;
+    private readonly VNavmeshIpc vnavmesh;
+    private readonly DismembermentController dismemberment;
+    private readonly GlamourerIpc glamourer;
     private readonly Configuration config;
     private readonly IPluginLog log;
+
+    // Progressive part-separation state + delayed "connecting hit" feedback timers.
+    private readonly MonsterDismembermentPlanner partPlanner = new();
+    private readonly List<float> pendingHitTimers = new();
 
     private int monsterIndex = -1;       // ClientObjectManager index (only when we spawned the object)
     private uint monsterEntityId;
@@ -66,6 +75,7 @@ public unsafe class MonsterModeController : IDisposable
     public MonsterModeController(IKeyState keyState, IGamepadState gamepad, IFramework framework,
         RagdollController playerRagdoll, AnimationController animation, BoneTransformService boneService,
         MovementBlockHook movementBlock, ActiveCameraController activeCamera,
+        VNavmeshIpc vnavmesh, DismembermentController dismemberment, GlamourerIpc glamourer,
         Configuration config, IPluginLog log)
     {
         this.keyState = keyState;
@@ -76,6 +86,9 @@ public unsafe class MonsterModeController : IDisposable
         this.boneService = boneService;
         this.movementBlock = movementBlock;
         this.activeCamera = activeCamera;
+        this.vnavmesh = vnavmesh;
+        this.dismemberment = dismemberment;
+        this.glamourer = glamourer;
         this.config = config;
         this.log = log;
         framework.Update += OnUpdate;
@@ -199,6 +212,8 @@ public unsafe class MonsterModeController : IDisposable
     private void BeginControl(Vector3 pos, float rot)
     {
         posX = pos.X; posY = pos.Y; posZ = pos.Z; yaw = rot;
+        partPlanner.Reset();
+        pendingHitTimers.Clear();
         // Block the game from moving the actor so our writes win.
         movementBlock.AddApproachNpc(monsterAddress);
         // Camera follows per the remembered preference (monster vs character) — don't force it.
@@ -239,6 +254,7 @@ public unsafe class MonsterModeController : IDisposable
 
             TickMovement(dt);
             TickAttackKey();
+            TickPendingHits(dt);
         }
         catch (Exception ex)
         {
@@ -286,14 +302,22 @@ public unsafe class MonsterModeController : IDisposable
             yaw = MathF.Atan2(move.X, move.Z); // face travel direction
         }
 
-        // ── Vertical: keyboard Q/E + gamepad D-pad up/down. Any height, but not below ground. ──
-        var up = 0f;
-        if (Down(VirtualKey.Q)) up += 1f;
-        if (Down(VirtualKey.E)) up -= 1f;
-        if (gamepad.Raw(GamepadButtons.R2) != 0) up += 1f; // R2 ascend
-        if (gamepad.Raw(GamepadButtons.L2) != 0) up -= 1f; // L2 descend
-        posY += up * config.MonsterVerticalSpeed * dt;
-        // No ground clamp — the creature may sink below the floor (unlimited), by request.
+        if (config.MonsterGroundWalk)
+        {
+            // Walking: no flight — clamp to the floor (navmesh-guided, like the victory approach).
+            posY = SnapToFloor(posX, posY, posZ);
+        }
+        else
+        {
+            // ── Vertical: keyboard Q/E + gamepad D-pad up/down. Any height, but not below ground. ──
+            var up = 0f;
+            if (Down(VirtualKey.Q)) up += 1f;
+            if (Down(VirtualKey.E)) up -= 1f;
+            if (gamepad.Raw(GamepadButtons.R2) != 0) up += 1f; // R2 ascend
+            if (gamepad.Raw(GamepadButtons.L2) != 0) up -= 1f; // L2 descend
+            posY += up * config.MonsterVerticalSpeed * dt;
+            // No ground clamp — the creature may sink below the floor (unlimited), by request.
+        }
 
         if (moving) ActorVisualStateController.ApplyMoving(character, visualState, dt);
         else ActorVisualStateController.ClearMovement(character, visualState);
@@ -325,6 +349,92 @@ public unsafe class MonsterModeController : IDisposable
 
         if (playerRagdoll.IsActive)
             playerRagdoll.BeginAttackStrike(StrikeWindow, config.MonsterStrikePower);
+
+        // A connecting swing (player in melee reach) lands its feedback after the same delay the
+        // weapon takes to visually reach the body — see config.HitFeedbackDelay.
+        if (PlayerInReach())
+            pendingHitTimers.Add(MathF.Max(0f, config.HitFeedbackDelay));
+    }
+
+    private const float AttackReach = 3.5f; // melee reach (yalms, horizontal) for a connecting hit
+
+    private bool PlayerInReach()
+    {
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null || player.Address == nint.Zero) return false;
+        var pp = player.Position;
+        var dx = posX - pp.X;
+        var dz = posZ - pp.Z;
+        return dx * dx + dz * dz <= AttackReach * AttackReach;
+    }
+
+    /// <summary>Count down scheduled connecting hits and fire their feedback when the swing lands.</summary>
+    private void TickPendingHits(float dt)
+    {
+        for (int i = pendingHitTimers.Count - 1; i >= 0; i--)
+        {
+            var t = pendingHitTimers[i] - dt;
+            if (t > 0f) { pendingHitTimers[i] = t; continue; }
+            pendingHitTimers.RemoveAt(i);
+            FireHitFeedback();
+        }
+    }
+
+    // Mandatory hit spark on the player + optional progressive part separation (per the profile).
+    private void FireHitFeedback()
+    {
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null || player.Address == nint.Zero) return;
+
+        try { animation.SpawnHitSpark(player.Address); }
+        catch (Exception ex) { log.Warning(ex, "MonsterMode: hit spark failed"); }
+
+        var profile = (MonsterStrikePartProfile)config.MonsterStrikePartProfile;
+        if (profile == MonsterStrikePartProfile.Off || !playerRagdoll.IsActive) return;
+
+        var bone = partPlanner.NextHit(profile);
+        if (bone == null) return; // everything already detached
+
+        // Union with any manually-selected PC dismember bones so SetDismemberedBones (which switches
+        // the ragdoll to the local override list) doesn't un-hide those.
+        var bones = new List<string>();
+        foreach (var b in config.DismemberPocBones)
+            if (!string.IsNullOrWhiteSpace(b) && !bones.Contains(b)) bones.Add(b);
+        foreach (var b in partPlanner.Severed)
+            if (!bones.Contains(b)) bones.Add(b);
+
+        // Body side: collapse the limb subtree so it vanishes from the corpse (same as PC dismember).
+        playerRagdoll.SetDismemberedBones(bones);
+        // Substitute side: spawn the rolling clone that shows only the severed limb.
+        var glam = glamourer.GetStateBase64((int)player.ObjectIndex);
+        dismemberment.SyncSelectionFor(player.Address, bones, glam);
+        log.Info($"MonsterMode: detached '{bone}' (profile={profile}, total={partPlanner.Severed.Count})");
+    }
+
+    /// <summary>Floor-clamp the walking creature: raycast down, then fall back to vnavmesh.</summary>
+    private float SnapToFloor(float x, float refY, float z)
+    {
+        const float rayStart = 2f;
+        const float rayDist = 50f;
+        if (BGCollisionModule.RaycastMaterialFilter(
+                new Vector3(x, refY + rayStart, z), new Vector3(0, -1f, 0), out var hit, rayDist))
+            return hit.Point.Y;
+
+        if (vnavmesh != null)
+        {
+            vnavmesh.RefreshStatus();
+            if (vnavmesh.CanPathfind)
+            {
+                try
+                {
+                    var floor = vnavmesh.PointOnFloor(new Vector3(x, refY + 10f, z), false, 5f)
+                                ?? vnavmesh.NearestPointReachable(new Vector3(x, refY, z));
+                    if (floor.HasValue) return floor.Value.Y;
+                }
+                catch (Exception ex) { log.Verbose($"MonsterMode: floor snap failed ({ex.Message})"); }
+            }
+        }
+        return refY;
     }
 
     // Fabricate an auto-attack ActionEffect from the monster so the real animation + sound play.

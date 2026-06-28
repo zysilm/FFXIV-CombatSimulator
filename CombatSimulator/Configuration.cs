@@ -446,6 +446,10 @@ public class Configuration : IPluginConfiguration
     // Strike: during an attack the monster's collider bones impart their swing velocity (× power) to
     // nearby ragdoll bodies, so the hit lands forcefully at the limb's real contact point.
     public float MonsterStrikePower { get; set; } = 0.1f;
+    // Keep the creature on the floor (navmesh/raycast clamp) instead of free flight. Default on.
+    public bool MonsterGroundWalk { get; set; } = true;
+    // On-hit progressive part separation when a swing connects in range. 0 = Off, 1 = Sequential, 2 = Random.
+    public int MonsterStrikePartProfile { get; set; } = 0;
     public bool KoStripHead { get; set; } = false;
     public bool KoStripBody { get; set; } = true;
     public bool KoStripHands { get; set; } = true;

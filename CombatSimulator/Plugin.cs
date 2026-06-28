@@ -137,7 +137,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         koStripController = new Dev.KoStripController(config, glamourerIpc, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
-        monsterModeController = new Dev.MonsterModeController(keyState, gamepadState, framework, ragdollController, animationController, boneTransformService, movementBlockHook, activeCameraController, config, log);
+        monsterModeController = new Dev.MonsterModeController(keyState, gamepadState, framework, ragdollController, animationController, boneTransformService, movementBlockHook, activeCameraController, vnavmeshIpc, dismembermentController, glamourerIpc, config, log);
         victorySequenceController = new Dev.VictorySequenceController(
             boneTransformService, animationController.EmotePlayer,
             movementBlockHook, ragdollController, vnavmeshIpc, clientState, targetManager, config, log);
