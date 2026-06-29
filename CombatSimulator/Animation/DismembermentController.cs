@@ -1183,6 +1183,8 @@ public unsafe class DismembermentController : IDisposable
         var addresses = PcDismemberNpcCollisionProvider?.Invoke() ?? Array.Empty<nint>();
         var nextAddresses = new HashSet<nint>();
         var playerAddress = Core.Services.ObjectTable.LocalPlayer?.Address ?? nint.Zero;
+        if (playerAddress != nint.Zero)
+            nextAddresses.Add(playerAddress);
         foreach (var address in addresses)
         {
             if (address == nint.Zero || address == playerAddress)
