@@ -139,6 +139,14 @@ public unsafe class DismembermentController : IDisposable
         public HashSet<int>? GearHiddenMatSet;
         public HashSet<int>? GearMatLogged;                  // material paths already logged (diagnostics)
         public List<(int Idx, Vector3 T, Quaternion R, Vector3 S)>? GearPoseSnapshot; // frozen pose (independent)
+        public List<GearPartialPoseSnapshot>? GearPartialPoseSnapshots; // frozen non-body partial skeletons
+    }
+
+    private sealed class GearPartialPoseSnapshot
+    {
+        public int PartialIndex;
+        public string RootBoneName = "";
+        public readonly List<(int Idx, Vector3 T, Quaternion R, Vector3 S)> Bones = new();
     }
 
     private sealed class HandoffSnapshot
@@ -1650,6 +1658,7 @@ public unsafe class DismembermentController : IDisposable
                     new Quaternion(bm.Rotation.X, bm.Rotation.Y, bm.Rotation.Z, bm.Rotation.W),
                     new Vector3(bm.Scale.X, bm.Scale.Y, bm.Scale.Z)));
             }
+            CaptureGearPartialPoseSnapshots(c, skel.CharBase);
 
             EnsureSimulation();
             if (simulation != null)
@@ -1692,6 +1701,7 @@ public unsafe class DismembermentController : IDisposable
                 m.Scale.X = s.S.X; m.Scale.Y = s.S.Y; m.Scale.Z = s.S.Z;
             }
         }
+        RestoreGearPartialPoseSnapshots(c, skel.CharBase);
 
         if (simulation == null || c.Body == null) return true;
         var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
@@ -1716,6 +1726,102 @@ public unsafe class DismembermentController : IDisposable
         drawObj->Rotation = bodyRot;
         ((GameObject*)c.Chara)->Position = skelPos;
         return true;
+    }
+
+    private void CaptureGearPartialPoseSnapshots(Clone c, CharacterBase* charBase)
+    {
+        c.GearPartialPoseSnapshots = null;
+        var skeleton = charBase->Skeleton;
+        if (skeleton == null || skeleton->PartialSkeletonCount <= 1) return;
+
+        var snapshots = new List<GearPartialPoseSnapshot>();
+        for (int ps = 1; ps < skeleton->PartialSkeletonCount; ps++)
+        {
+            var partial = &skeleton->PartialSkeletons[ps];
+            var pose = partial->GetHavokPose(0);
+            if (pose == null || pose->Skeleton == null) continue;
+            var count = pose->ModelPose.Length;
+            if (count <= 0) continue;
+
+            var snapshot = new GearPartialPoseSnapshot
+            {
+                PartialIndex = ps,
+                RootBoneName = pose->Skeleton->Bones.Length > 0
+                    ? (pose->Skeleton->Bones[0].Name.String ?? "")
+                    : "",
+            };
+
+            for (int i = 0; i < count; i++)
+            {
+                ref var bm = ref pose->ModelPose.Data[i];
+                snapshot.Bones.Add((i,
+                    new Vector3(bm.Translation.X, bm.Translation.Y, bm.Translation.Z),
+                    new Quaternion(bm.Rotation.X, bm.Rotation.Y, bm.Rotation.Z, bm.Rotation.W),
+                    new Vector3(bm.Scale.X, bm.Scale.Y, bm.Scale.Z)));
+            }
+
+            snapshots.Add(snapshot);
+        }
+
+        if (snapshots.Count > 0)
+        {
+            c.GearPartialPoseSnapshots = snapshots;
+            log.Info($"GearDrop: clone idx={c.ObjectIndex} froze {snapshots.Count} partial skeleton(s)");
+        }
+    }
+
+    private void RestoreGearPartialPoseSnapshots(Clone c, CharacterBase* charBase)
+    {
+        if (c.GearPartialPoseSnapshots == null) return;
+        var skeleton = charBase->Skeleton;
+        if (skeleton == null) return;
+
+        foreach (var snapshot in c.GearPartialPoseSnapshots)
+        {
+            var ps = ResolvePartialSkeletonIndex(charBase, snapshot);
+            if (ps < 1 || ps >= skeleton->PartialSkeletonCount) continue;
+
+            var partial = &skeleton->PartialSkeletons[ps];
+            var pose = partial->GetHavokPose(0);
+            if (pose == null || pose->Skeleton == null) continue;
+
+            foreach (var s in snapshot.Bones)
+            {
+                if (s.Idx < 0 || s.Idx >= pose->ModelPose.Length) continue;
+                ref var m = ref pose->ModelPose.Data[s.Idx];
+                m.Translation.X = s.T.X; m.Translation.Y = s.T.Y; m.Translation.Z = s.T.Z;
+                m.Rotation.X = s.R.X; m.Rotation.Y = s.R.Y; m.Rotation.Z = s.R.Z; m.Rotation.W = s.R.W;
+                m.Scale.X = s.S.X; m.Scale.Y = s.S.Y; m.Scale.Z = s.S.Z;
+            }
+        }
+    }
+
+    private static int ResolvePartialSkeletonIndex(CharacterBase* charBase, GearPartialPoseSnapshot snapshot)
+    {
+        var skeleton = charBase->Skeleton;
+        if (skeleton == null) return -1;
+
+        if (snapshot.PartialIndex >= 1 && snapshot.PartialIndex < skeleton->PartialSkeletonCount)
+        {
+            var pose = skeleton->PartialSkeletons[snapshot.PartialIndex].GetHavokPose(0);
+            var name = pose != null && pose->Skeleton != null && pose->Skeleton->Bones.Length > 0
+                ? pose->Skeleton->Bones[0].Name.String
+                : null;
+            if (string.IsNullOrEmpty(snapshot.RootBoneName) || name == snapshot.RootBoneName)
+                return snapshot.PartialIndex;
+        }
+
+        if (string.IsNullOrEmpty(snapshot.RootBoneName)) return -1;
+        for (int ps = 1; ps < skeleton->PartialSkeletonCount; ps++)
+        {
+            var pose = skeleton->PartialSkeletons[ps].GetHavokPose(0);
+            var name = pose != null && pose->Skeleton != null && pose->Skeleton->Bones.Length > 0
+                ? pose->Skeleton->Bones[0].Name.String
+                : null;
+            if (name == snapshot.RootBoneName)
+                return ps;
+        }
+        return -1;
     }
 
     // Null every CharacterBase model pointer except the dropped gear slot, so only the hat/accessory
