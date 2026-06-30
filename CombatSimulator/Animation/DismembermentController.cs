@@ -138,6 +138,7 @@ public unsafe class DismembermentController : IDisposable
         public List<(int Idx, nint Ptr)>? GearHiddenMaterials; // nulled skin material pointers (restored)
         public HashSet<int>? GearHiddenMatSet;
         public HashSet<int>? GearMatLogged;                  // material paths already logged (diagnostics)
+        public List<(int Idx, Vector3 T, Quaternion R, Vector3 S)>? GearPoseSnapshot; // frozen pose (independent)
     }
 
     private sealed class HandoffSnapshot
@@ -1635,6 +1636,21 @@ public unsafe class DismembermentController : IDisposable
             c.LimbRootModelPos = new Vector3(lm.Translation.X, lm.Translation.Y, lm.Translation.Z);
             ((Character*)c.Chara)->Timeline.OverallSpeed = 0f;
 
+            // Snapshot the whole settled pose. Re-written every frame (below) so the game's animation /
+            // cloth sim can't keep moving the clone's bones — that "squirm" is what de-syncs the piece
+            // from its collision box. This is the gear analogue of the limb's frozen LimbSnapshot: the
+            // skeleton's INTERNAL pose is independent; only the root transform follows the rigid body.
+            c.GearPoseSnapshot = new List<(int, Vector3, Quaternion, Vector3)>();
+            var poseN = Math.Min(skel.BoneCount, skel.ParentCount);
+            for (int i = 0; i < poseN; i++)
+            {
+                ref var bm = ref skel.Pose->ModelPose.Data[i];
+                c.GearPoseSnapshot.Add((i,
+                    new Vector3(bm.Translation.X, bm.Translation.Y, bm.Translation.Z),
+                    new Quaternion(bm.Rotation.X, bm.Rotation.Y, bm.Rotation.Z, bm.Rotation.W),
+                    new Vector3(bm.Scale.X, bm.Scale.Y, bm.Scale.Z)));
+            }
+
             EnsureSimulation();
             if (simulation != null)
             {
@@ -1662,6 +1678,21 @@ public unsafe class DismembermentController : IDisposable
         // Armed: keep animation frozen and drive the whole clone skeleton from the rigid body so the
         // attach bone sits at the body and the gear tumbles about it (limb single-body idiom).
         ((Character*)c.Chara)->Timeline.OverallSpeed = 0f;
+
+        // Re-assert the frozen pose so the clone's bones stay rigid (no squirm syncing with the body).
+        if (c.GearPoseSnapshot != null)
+        {
+            var pose = skel.Pose;
+            foreach (var s in c.GearPoseSnapshot)
+            {
+                if (s.Idx < 0 || s.Idx >= skel.BoneCount) continue;
+                ref var m = ref pose->ModelPose.Data[s.Idx];
+                m.Translation.X = s.T.X; m.Translation.Y = s.T.Y; m.Translation.Z = s.T.Z;
+                m.Rotation.X = s.R.X; m.Rotation.Y = s.R.Y; m.Rotation.Z = s.R.Z; m.Rotation.W = s.R.W;
+                m.Scale.X = s.S.X; m.Scale.Y = s.S.Y; m.Scale.Z = s.S.Z;
+            }
+        }
+
         if (simulation == null || c.Body == null) return true;
         var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
         var bodyPos = bodyRef.Pose.Position;
