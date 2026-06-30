@@ -2479,9 +2479,9 @@ public unsafe class RagdollController : IDisposable
                 bodyInertia = capsule.ComputeInertia(effectiveMass);
             }
 
-            // SleepThreshold: 0.01 = normal (bodies sleep when settled).
-            // -1 = never sleep (settle collision keeps bodies always active for NPC interaction).
-            var sleepThreshold = (config.RagdollNpcSettleCollision && config.RagdollNpcCollision) ? -1f : 0.01f;
+            // Allow sleeping even with settle collision; external kinematic colliders can wake
+            // the corpse on contact, while permanent awake bodies keep solving tiny jitter.
+            var sleepThreshold = 0.01f;
             var bodyDesc = BodyDescription.CreateDynamic(
                 new RigidPose(capsuleCenter, capsuleWorldRot),
                 bodyInertia,
@@ -3607,7 +3607,8 @@ public unsafe class RagdollController : IDisposable
         // pose below. Applies to generic (monster) rigs too: if their auto-built network
         // never settles, prevAllAsleep simply stays false and this never triggers; if it
         // does settle, there is nothing to clamp. A grab or a moved skeleton forces a step.
-        var resting = prevAllAsleep && !grabConstraintActive && !collapseSpikeActive && !directedCollapseActive && !wholeBodyCollapseActive && !entryConditioningActive && !kneePowerLossActive && !skeletonMoved && !biomechanicalSettleActive;
+        var settleCollisionActive = config.RagdollNpcCollision && config.RagdollNpcSettleCollision;
+        var resting = !settleCollisionActive && prevAllAsleep && !grabConstraintActive && !collapseSpikeActive && !directedCollapseActive && !wholeBodyCollapseActive && !entryConditioningActive && !kneePowerLossActive && !skeletonMoved && !biomechanicalSettleActive;
 
         // Death-collapse spike: restrength the per-joint "muscle" servos before stepping so the
         // updated torque ceilings take effect this tick. Advances the fade and retires itself.
@@ -4176,8 +4177,7 @@ public unsafe class RagdollController : IDisposable
         }
         catch { }
 
-        // Restore normal sleep threshold (unless settle collision wants them awake)
-        var normalThreshold = (config.RagdollNpcSettleCollision && config.RagdollNpcCollision) ? -1f : 0.01f;
+        var normalThreshold = 0.01f;
         for (int i = 0; i < ragdollBones.Count; i++)
         {
             try
@@ -6156,7 +6156,7 @@ public unsafe class RagdollController : IDisposable
         }
         standingConstraints.Clear();
 
-        var normalThreshold = (config.RagdollNpcSettleCollision && config.RagdollNpcCollision) ? -1f : 0.01f;
+        var normalThreshold = 0.01f;
         for (int i = 0; i < ragdollBones.Count; i++)
         {
             try
@@ -6640,8 +6640,24 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         out PairMaterialProperties pairMaterial) where TManifold : unmanaged, IContactManifold<TManifold>
     {
         pairMaterial.FrictionCoefficient = Friction;
-        pairMaterial.MaximumRecoveryVelocity = 2f;
-        pairMaterial.SpringSettings = new SpringSettings(30, 1);
+
+        // Self-collision (limb vs own limb) is dynamic-vs-dynamic. At rest the corpse's
+        // capsules overlap (thighs touching, forearms on the torso, hands on legs); a crisp
+        // 2 m/s recovery shoves those overlaps apart every step, the joints pull them back,
+        // and the velocity never decays below the sleep threshold — so the body writhes
+        // forever and never settles. Give self-contacts a gentle, overdamped recovery so
+        // resting overlaps stop pumping energy and the rig can sleep. Ground (static) and
+        // external strikes (kinematic) keep the firm 2 m/s recovery for crisp response.
+        if (pair.A.Mobility == CollidableMobility.Dynamic && pair.B.Mobility == CollidableMobility.Dynamic)
+        {
+            pairMaterial.MaximumRecoveryVelocity = 0.2f;
+            pairMaterial.SpringSettings = new SpringSettings(20, 2);
+        }
+        else
+        {
+            pairMaterial.MaximumRecoveryVelocity = 2f;
+            pairMaterial.SpringSettings = new SpringSettings(30, 1);
+        }
         return true;
     }
 
