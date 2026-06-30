@@ -445,6 +445,13 @@ public unsafe class DismembermentController : IDisposable
 
         var src = (Character*)p.SourceAddress;
         var sourceIsHumanoid = IsHumanoidSkeleton(skel);
+        var sourceModelCharaId = src->ModelContainer.ModelCharaId;
+        var ids = EnemyNpcIdentityResolver?.Invoke(p.SourceAddress) ?? default;
+        // Appearance must be decided from actor/model identity, not just skeleton
+        // topology. Some monster models use human-like skeletons; routing those
+        // through the humanoid copy path bootstraps them as player-shaped clones.
+        var useMonsterAppearance = !isPlayerControlledSource &&
+            (ids.BNpcBaseId > 0 || sourceModelCharaId > 0);
 
         var clientObjMgr = ClientObjectManager.Instance();
         if (clientObjMgr == null) return;
@@ -467,7 +474,8 @@ public unsafe class DismembermentController : IDisposable
         obj->Rotation = 0f;
         WriteCloneName((GameObject*)obj, index);
 
-        SetupCloneAppearance(character, src, (GameObject*)obj, p.SourceAddress, sourceIsHumanoid);
+        SetupCloneAppearance(character, src, (GameObject*)obj, sourceIsHumanoid,
+            useMonsterAppearance, ids, sourceModelCharaId);
         character->SetMode(CharacterModes.Normal, 0);
 
         IGameObject? gameObjectRef = null;
@@ -594,14 +602,14 @@ public unsafe class DismembermentController : IDisposable
     }
 
     private void SetupCloneAppearance(Character* target, Character* source, GameObject* obj,
-        nint sourceAddress, bool sourceIsHumanoid)
+        bool sourceIsHumanoid, bool useMonsterAppearance,
+        (uint BNpcBaseId, uint BNpcNameId) ids, int sourceModelCharaId)
     {
-        if (!sourceIsHumanoid)
+        if (useMonsterAppearance || !sourceIsHumanoid)
         {
             obj->ObjectKind = ObjectKind.BattleNpc;
             obj->SubKind = (byte)BattleNpcSubKind.Combatant;
 
-            var ids = EnemyNpcIdentityResolver?.Invoke(sourceAddress) ?? default;
             if (ids.BNpcBaseId > 0)
             {
                 target->CharacterSetup.SetupBNpc(ids.BNpcBaseId, ids.BNpcNameId);
@@ -609,7 +617,7 @@ public unsafe class DismembermentController : IDisposable
             }
             else
             {
-                target->ModelContainer.ModelCharaId = source->ModelContainer.ModelCharaId;
+                target->ModelContainer.ModelCharaId = sourceModelCharaId;
                 log.Info($"Dismember: monster clone ModelCharaId={target->ModelContainer.ModelCharaId}");
             }
 
