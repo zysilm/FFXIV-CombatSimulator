@@ -57,6 +57,7 @@ public unsafe class WeaponDropController : IDisposable
         public TypedIndex? OffShape;
         public StaticHandle? GroundTile;
         public TypedIndex? GroundShape;
+        public List<BodyStaticCollider> BodyColliders = new();
     }
     private readonly Dictionary<nint, Entry> entries = new();
 
@@ -69,6 +70,20 @@ public unsafe class WeaponDropController : IDisposable
 
     private static readonly string[] WeaponMainHandBones = { "n_buki_r", "j_buki_r", "n_hte_r" };
     private static readonly string[] WeaponOffHandBones = { "n_buki_l", "j_buki_l", "n_hte_l" };
+    private const int BodyCollisionMaxSegments = 18;
+    private const float BodyCollisionMinSegmentLength = 0.08f;
+    private const float BodyCollisionMinRadius = 0.035f;
+    private const float BodyCollisionMaxRadius = 0.12f;
+    private static readonly Vector3 BodyColliderParkPos = new(0, -9999, 0);
+
+    private struct BodyStaticCollider
+    {
+        public StaticHandle Handle;
+        public TypedIndex Shape;
+        public int BoneIndex;
+        public int ParentBoneIndex;
+        public float CenterFactor;
+    }
 
     public WeaponDropController(BoneTransformService boneService, Configuration config, IPluginLog log)
     {
@@ -120,6 +135,12 @@ public unsafe class WeaponDropController : IDisposable
         if (entry.Main.HasValue) simulation.Bodies.Remove(entry.Main.Value);
         if (entry.Off.HasValue) simulation.Bodies.Remove(entry.Off.Value);
         if (entry.GroundTile.HasValue) simulation.Statics.Remove(entry.GroundTile.Value);
+        for (int i = 0; i < entry.BodyColliders.Count; i++)
+        {
+            simulation.Statics.Remove(entry.BodyColliders[i].Handle);
+            if (bufferPool != null)
+                simulation.Shapes.RemoveAndDispose(entry.BodyColliders[i].Shape, bufferPool);
+        }
         // RemoveAndDispose (not Remove): the per-drop terrain patch is a Mesh that owns a
         // pooled triangle buffer + acceleration tree. Plain Remove drops the shape but leaks
         // those buffers, and this weapon simulation lives for the whole session.
@@ -161,6 +182,9 @@ public unsafe class WeaponDropController : IDisposable
             }
 
             if (entries.Count == 0 || simulation == null) return;
+
+            foreach (var entry in entries.Values)
+                UpdateBodyColliders(entry);
 
             simulation.Timestep(1f / 60f);
 
@@ -220,10 +244,11 @@ public unsafe class WeaponDropController : IDisposable
         // ground but makes weapons visibly float or clip on slopes, so build a small mesh
         // from game collision raycasts.
         (entry.GroundTile, entry.GroundShape) = CreateTerrainPatch(skelWorldPos.X, skelWorldPos.Z, skelWorldPos.Y);
+        entry.BodyColliders = CreateBodyColliders(skel, skelWorldPos, skelWorldRot);
 
         entries[characterAddress] = entry;
         var n = (entry.Main.HasValue ? 1 : 0) + (entry.Off.HasValue ? 1 : 0);
-        log.Info($"WeaponDropController: spawned {n} weapon(s) for 0x{characterAddress:X}");
+        log.Info($"WeaponDropController: spawned {n} weapon(s) for 0x{characterAddress:X} with {entry.BodyColliders.Count} body colliders");
     }
 
     private (StaticHandle StaticHandle, TypedIndex ShapeIndex) CreateTerrainPatch(float centerX, float centerZ, float defaultGroundY)
@@ -300,6 +325,143 @@ public unsafe class WeaponDropController : IDisposable
             Quaternion.Identity,
             shapeIndex));
         return (staticHandle, shapeIndex);
+    }
+
+    private List<BodyStaticCollider> CreateBodyColliders(SkeletonAccess skel, Vector3 skelWorldPos, Quaternion skelWorldRot)
+    {
+        var result = new List<BodyStaticCollider>();
+        if (simulation == null) return result;
+
+        var candidates = new List<(float SegLen, int BoneIdx, int ParentIdx, float HalfLen, float Radius, float CenterFactor, Vector3 Center, Quaternion Rot)>();
+        var boneCount = Math.Min(skel.BoneCount, skel.ParentCount);
+        for (int i = 1; i < boneCount; i++)
+        {
+            var parentIdx = skel.HavokSkeleton->ParentIndices[i];
+            if (parentIdx < 0 || parentIdx >= skel.BoneCount) continue;
+
+            ref var parentMt = ref skel.Pose->ModelPose.Data[parentIdx];
+            var parentWorldPos = ModelToWorld(
+                new Vector3(parentMt.Translation.X, parentMt.Translation.Y, parentMt.Translation.Z),
+                skelWorldPos, skelWorldRot);
+
+            ref var childMt = ref skel.Pose->ModelPose.Data[i];
+            var childWorldPos = ModelToWorld(
+                new Vector3(childMt.Translation.X, childMt.Translation.Y, childMt.Translation.Z),
+                skelWorldPos, skelWorldRot);
+
+            var segment = childWorldPos - parentWorldPos;
+            var segLen = segment.Length();
+            if (segLen < BodyCollisionMinSegmentLength) continue;
+
+            var radius = Math.Clamp(segLen * 0.12f, BodyCollisionMinRadius, BodyCollisionMaxRadius);
+            var halfLen = MathF.Max(0.01f, (segLen * 0.5f) - radius);
+            var centerFactor = 0.5f;
+            var segDir = segment / segLen;
+            candidates.Add((segLen, i, parentIdx, halfLen, radius, centerFactor,
+                parentWorldPos + (segLen * centerFactor) * segDir,
+                RotationFromYToDirection(segment)));
+        }
+
+        if (candidates.Count > BodyCollisionMaxSegments)
+        {
+            candidates.Sort((a, b) => b.SegLen.CompareTo(a.SegLen));
+            candidates.RemoveRange(BodyCollisionMaxSegments, candidates.Count - BodyCollisionMaxSegments);
+        }
+
+        foreach (var c in candidates)
+        {
+            var shape = simulation.Shapes.Add(new Capsule(c.Radius, c.HalfLen * 2f));
+            var handle = simulation.Statics.Add(new StaticDescription(c.Center, c.Rot, shape));
+            result.Add(new BodyStaticCollider
+            {
+                Handle = handle,
+                Shape = shape,
+                BoneIndex = c.BoneIdx,
+                ParentBoneIndex = c.ParentIdx,
+                CenterFactor = c.CenterFactor,
+            });
+        }
+
+        return result;
+    }
+
+    private void UpdateBodyColliders(Entry entry)
+    {
+        if (simulation == null || entry.BodyColliders.Count == 0) return;
+
+        var skelN = boneService.TryGetSkeleton(entry.CharacterAddress);
+        if (skelN == null)
+        {
+            ParkBodyColliders(entry);
+            return;
+        }
+
+        var skel = skelN.Value;
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton == null)
+        {
+            ParkBodyColliders(entry);
+            return;
+        }
+
+        var skelWorldPos = new Vector3(
+            skeleton->Transform.Position.X,
+            skeleton->Transform.Position.Y,
+            skeleton->Transform.Position.Z);
+        var skelWorldRot = new Quaternion(
+            skeleton->Transform.Rotation.X,
+            skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z,
+            skeleton->Transform.Rotation.W);
+
+        for (int i = 0; i < entry.BodyColliders.Count; i++)
+        {
+            var bc = entry.BodyColliders[i];
+            var staticRef = simulation.Statics.GetStaticReference(bc.Handle);
+            if (bc.BoneIndex < 0 || bc.BoneIndex >= skel.BoneCount ||
+                bc.ParentBoneIndex < 0 || bc.ParentBoneIndex >= skel.BoneCount)
+            {
+                staticRef.Pose.Position = BodyColliderParkPos;
+                staticRef.UpdateBounds();
+                continue;
+            }
+
+            ref var parentMt = ref skel.Pose->ModelPose.Data[bc.ParentBoneIndex];
+            var parentWorldPos = ModelToWorld(
+                new Vector3(parentMt.Translation.X, parentMt.Translation.Y, parentMt.Translation.Z),
+                skelWorldPos, skelWorldRot);
+
+            ref var childMt = ref skel.Pose->ModelPose.Data[bc.BoneIndex];
+            var childWorldPos = ModelToWorld(
+                new Vector3(childMt.Translation.X, childMt.Translation.Y, childMt.Translation.Z),
+                skelWorldPos, skelWorldRot);
+
+            var segment = childWorldPos - parentWorldPos;
+            var segLen = segment.Length();
+            if (segLen > 0.01f)
+            {
+                var segDir = segment / segLen;
+                staticRef.Pose.Position = parentWorldPos + (segLen * bc.CenterFactor) * segDir;
+                staticRef.Pose.Orientation = RotationFromYToDirection(segment);
+            }
+            else
+            {
+                staticRef.Pose.Position = parentWorldPos;
+                staticRef.Pose.Orientation = Quaternion.Identity;
+            }
+            staticRef.UpdateBounds();
+        }
+    }
+
+    private void ParkBodyColliders(Entry entry)
+    {
+        if (simulation == null) return;
+        for (int i = 0; i < entry.BodyColliders.Count; i++)
+        {
+            var staticRef = simulation.Statics.GetStaticReference(entry.BodyColliders[i].Handle);
+            staticRef.Pose.Position = BodyColliderParkPos;
+            staticRef.UpdateBounds();
+        }
     }
 
     private BodyHandle? TryCreateWeaponBody(SkeletonAccess skel, string[] boneCandidates,
@@ -445,6 +607,22 @@ public unsafe class WeaponDropController : IDisposable
 
         // Weapon collision shapes are now built per weapon (per-drop boxes) in TryCreateWeaponBody.
         log.Info($"WeaponDropController: simulation created (gravity={simGravity:F2}, bounce={simBounce:F2}, friction={simFriction:F2}, iter={simSolverIterations})");
+    }
+
+    private static Vector3 ModelToWorld(Vector3 modelPos, Vector3 skelWorldPos, Quaternion skelWorldRot)
+        => skelWorldPos + Vector3.Transform(modelPos, skelWorldRot);
+
+    private static Quaternion RotationFromYToDirection(Vector3 dir)
+    {
+        var dirN = Vector3.Normalize(dir);
+        var dot = Vector3.Dot(Vector3.UnitY, dirN);
+
+        if (dot > 0.9999f) return Quaternion.Identity;
+        if (dot < -0.9999f) return Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI);
+
+        var axis = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, dirN));
+        var angle = MathF.Acos(Math.Clamp(dot, -1f, 1f));
+        return Quaternion.CreateFromAxisAngle(axis, angle);
     }
 
     private void DestroySimulation()
