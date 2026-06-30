@@ -1037,14 +1037,17 @@ public unsafe class RagdollController : IDisposable
         return result.ToArray();
     }
 
-    // Per-bone static collision body for an NPC (dynamically created from skeleton)
+    // Per-bone kinematic collision body for an NPC (dynamically created from skeleton)
     private struct NpcBoneStatic
     {
-        public StaticHandle Handle;
+        public BodyHandle Handle;
         public int BoneIndex;           // this bone's skeleton index
         public int ParentBoneIndex;     // parent bone for segment direction
         public float HalfLength;        // half the capsule body segment length
         public float CenterFactor;      // parent->child fraction where the capsule is centered
+        public Vector3 PreviousPosition;
+        public Quaternion PreviousOrientation;
+        public bool HasPreviousPose;
     }
 
     // Default capsule radius for dynamically discovered bones
@@ -1069,12 +1072,15 @@ public unsafe class RagdollController : IDisposable
     {
         public nint NpcAddress;
         public List<NpcBoneStatic> BoneStatics;   // populated when skeleton readable
-        public StaticHandle FallbackHandle;        // used when skeleton unreadable
+        public BodyHandle FallbackHandle;          // used when skeleton unreadable
         public bool IsFallback;
         // Convex hull mode (non-humanoid mounts/monsters)
         public bool IsConvexHull;
-        public StaticHandle ConvexHullHandle;
+        public BodyHandle ConvexHullHandle;
         public Vector3 HullCenterModelSpace; // hull centroid in skeleton-local (model) space
+        public Vector3 PreviousPosition;
+        public Quaternion PreviousOrientation;
+        public bool HasPreviousPose;
         // True while this character's statics have been parked far away because it left the
         // update radius. Prevents leaving them frozen on the corpse ("ghost" capsules) and
         // avoids re-parking every frame; cleared when it re-enters range.
@@ -2872,7 +2878,7 @@ public unsafe class RagdollController : IDisposable
 
         var totalNpcStatics = 0;
         foreach (var s in npcCollisionStates)
-            totalNpcStatics += s.IsFallback ? 1 : s.BoneStatics.Count;
+            totalNpcStatics += (s.IsFallback || s.IsConvexHull) ? 1 : s.BoneStatics.Count;
         log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, {npcCollisionStates.Count} NPCs ({totalNpcStatics} collision volumes), ground={groundY:F3}");
 
         // Initialize hair physics
@@ -3008,8 +3014,8 @@ public unsafe class RagdollController : IDisposable
     }
 
     /// <summary>
-    /// Build collision statics for a live character (enemy, companion, or player).
-    /// Discovers bones from the character's skeleton and creates one static capsule
+    /// Build collision proxies for a live character (enemy, companion, or player).
+    /// Discovers bones from the character's skeleton and creates one kinematic capsule
     /// per parent→child segment. Falls back to a single capsule when the skeleton
     /// can't be read. Works for any model (humanoid, monster, dragon).
     /// </summary>
@@ -3094,18 +3100,25 @@ public unsafe class RagdollController : IDisposable
             candidates.RemoveRange(NpcMaxCollisionSegments, candidates.Count - NpcMaxCollisionSegments);
         }
 
-        // Pass 2: create the static capsule for each kept segment.
+        // Pass 2: create the kinematic capsule for each kept segment.
         foreach (var c in candidates)
         {
             var shapeIndex = simulation!.Shapes.Add(new Capsule(c.Radius, c.HalfLen * 2f));
-            var staticHandle = simulation.Statics.Add(new StaticDescription(c.Center, c.Rot, shapeIndex));
+            var bodyHandle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
+                new RigidPose(c.Center, c.Rot),
+                default(BodyVelocity),
+                new CollidableDescription(shapeIndex, 0.04f),
+                new BodyActivityDescription(0.01f)));
             boneStatics.Add(new NpcBoneStatic
             {
-                Handle = staticHandle,
+                Handle = bodyHandle,
                 BoneIndex = c.BoneIdx,
                 ParentBoneIndex = c.ParentIdx,
                 HalfLength = c.HalfLen,
                 CenterFactor = c.CenterFactor,
+                PreviousPosition = c.Center,
+                PreviousOrientation = c.Rot,
+                HasPreviousPose = true,
             });
         }
 
@@ -3252,7 +3265,11 @@ public unsafe class RagdollController : IDisposable
 
             // The hull's local origin is at hullCenter (model space). Transform to world.
             var worldCenter = npcSkelPos + Vector3.Transform(hullCenter, npcSkelRot);
-            var staticHandle = simulation.Statics.Add(new StaticDescription(worldCenter, npcSkelRot, shapeIndex));
+            var bodyHandle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
+                new RigidPose(worldCenter, npcSkelRot),
+                default(BodyVelocity),
+                new CollidableDescription(shapeIndex, 0.04f),
+                new BodyActivityDescription(0.01f)));
 
             npcCollisionStates.Add(new NpcCollisionState
             {
@@ -3260,8 +3277,11 @@ public unsafe class RagdollController : IDisposable
                 BoneStatics = new List<NpcBoneStatic>(),
                 IsFallback = false,
                 IsConvexHull = true,
-                ConvexHullHandle = staticHandle,
+                ConvexHullHandle = bodyHandle,
                 HullCenterModelSpace = hullCenter,
+                PreviousPosition = worldCenter,
+                PreviousOrientation = npcSkelRot,
+                HasPreviousPose = true,
             });
 
             log.Info($"RagdollController: {label} convex hull collision — {boneCount} points, center=({hullCenter.X:F3},{hullCenter.Y:F3},{hullCenter.Z:F3})");
@@ -3281,43 +3301,84 @@ public unsafe class RagdollController : IDisposable
     {
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)address;
         var npcPos = new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z);
-        var handle = simulation!.Statics.Add(new StaticDescription(
-            npcPos, Quaternion.Identity, npcFallbackShapeIndex));
+        var handle = simulation!.Bodies.Add(BodyDescription.CreateKinematic(
+            new RigidPose(npcPos, Quaternion.Identity),
+            default(BodyVelocity),
+            new CollidableDescription(npcFallbackShapeIndex, 0.04f),
+            new BodyActivityDescription(0.01f)));
         npcCollisionStates.Add(new NpcCollisionState
         {
             NpcAddress = address,
             BoneStatics = new List<NpcBoneStatic>(),
             FallbackHandle = handle,
             IsFallback = true,
+            PreviousPosition = npcPos,
+            PreviousOrientation = Quaternion.Identity,
+            HasPreviousPose = true,
         });
         log.Info($"RagdollController: {label} using fallback single capsule");
     }
 
-    /// <summary>Move all of a character's collision statics to a far-away park position and
-    /// refresh their broad-phase bounds, so they stop colliding with the ragdoll.</summary>
-    private void ParkNpcStatics(NpcCollisionState npcState, Vector3 parkPos)
+    /// <summary>Move all of a character's collision proxies to a far-away park position
+    /// so they stop colliding with the ragdoll.</summary>
+    private void ParkNpcStatics(ref NpcCollisionState npcState, Vector3 parkPos, float dt = FixedTimestep)
     {
         if (simulation == null) return;
         if (npcState.IsConvexHull)
         {
-            var s = simulation.Statics.GetStaticReference(npcState.ConvexHullHandle);
-            s.Pose.Position = parkPos;
-            s.UpdateBounds();
+            MoveNpcKinematic(ref npcState, npcState.ConvexHullHandle, parkPos, Quaternion.Identity, dt);
             return;
         }
         if (npcState.IsFallback)
         {
-            var s = simulation.Statics.GetStaticReference(npcState.FallbackHandle);
-            s.Pose.Position = parkPos;
-            s.UpdateBounds();
+            MoveNpcKinematic(ref npcState, npcState.FallbackHandle, parkPos, Quaternion.Identity, dt);
             return;
         }
         for (int b = 0; b < npcState.BoneStatics.Count; b++)
         {
-            var s = simulation.Statics.GetStaticReference(npcState.BoneStatics[b].Handle);
-            s.Pose.Position = parkPos;
-            s.UpdateBounds();
+            var bs = npcState.BoneStatics[b];
+            MoveNpcBoneKinematic(ref bs, parkPos, Quaternion.Identity, dt);
+            npcState.BoneStatics[b] = bs;
         }
+    }
+
+    private void MoveNpcKinematic(ref NpcCollisionState state, BodyHandle handle,
+        Vector3 targetPosition, Quaternion targetOrientation, float dt)
+    {
+        if (simulation == null) return;
+        var body = simulation.Bodies.GetBodyReference(handle);
+        MoveKinematicBody(body, targetPosition, targetOrientation,
+            ref state.PreviousPosition, ref state.PreviousOrientation, ref state.HasPreviousPose, dt);
+    }
+
+    private void MoveNpcBoneKinematic(ref NpcBoneStatic bone, Vector3 targetPosition, Quaternion targetOrientation, float dt)
+    {
+        if (simulation == null) return;
+        var body = simulation.Bodies.GetBodyReference(bone.Handle);
+        MoveKinematicBody(body, targetPosition, targetOrientation,
+            ref bone.PreviousPosition, ref bone.PreviousOrientation, ref bone.HasPreviousPose, dt);
+    }
+
+    private static void MoveKinematicBody(BodyReference body, Vector3 targetPosition, Quaternion targetOrientation,
+        ref Vector3 previousPosition, ref Quaternion previousOrientation, ref bool hasPreviousPose, float dt)
+    {
+        targetOrientation = Quaternion.Normalize(targetOrientation);
+        var linearVelocity = hasPreviousPose && dt > 1e-5f
+            ? (targetPosition - previousPosition) / dt
+            : Vector3.Zero;
+        var angularVelocity = hasPreviousPose && dt > 1e-5f
+            ? AngularVelocityFromQuats(previousOrientation, targetOrientation, dt)
+            : Vector3.Zero;
+
+        body.Pose.Position = targetPosition;
+        body.Pose.Orientation = targetOrientation;
+        body.Velocity.Linear = linearVelocity;
+        body.Velocity.Angular = angularVelocity;
+        body.Awake = true;
+
+        previousPosition = targetPosition;
+        previousOrientation = targetOrientation;
+        hasPreviousPose = true;
     }
 
     // Clamp per-body velocity each substep as a hard ceiling against energy blow-up.
@@ -3482,25 +3543,22 @@ public unsafe class RagdollController : IDisposable
                 {
                     if (npcState.IsConvexHull)
                     {
-                        var staticRef = simulation.Statics.GetStaticReference(npcState.ConvexHullHandle);
-                        staticRef.Pose.Position = npcCollisionParkPos;
-                        staticRef.UpdateBounds();
+                        MoveNpcKinematic(ref npcState, npcState.ConvexHullHandle, npcCollisionParkPos, Quaternion.Identity, dt);
                     }
                     else if (npcState.IsFallback)
                     {
-                        var staticRef = simulation.Statics.GetStaticReference(npcState.FallbackHandle);
-                        staticRef.Pose.Position = npcCollisionParkPos;
-                        staticRef.UpdateBounds();
+                        MoveNpcKinematic(ref npcState, npcState.FallbackHandle, npcCollisionParkPos, Quaternion.Identity, dt);
                     }
                     else
                     {
                         for (int b = 0; b < npcState.BoneStatics.Count; b++)
                         {
-                            var staticRef = simulation.Statics.GetStaticReference(npcState.BoneStatics[b].Handle);
-                            staticRef.Pose.Position = npcCollisionParkPos;
-                            staticRef.UpdateBounds();
+                            var bs = npcState.BoneStatics[b];
+                            MoveNpcBoneKinematic(ref bs, npcCollisionParkPos, Quaternion.Identity, dt);
+                            npcState.BoneStatics[b] = bs;
                         }
                     }
+                    npcCollisionStates[i] = npcState;
                     continue;
                 }
 
@@ -3515,7 +3573,7 @@ public unsafe class RagdollController : IDisposable
                     // the ragdoll (invisible "ghost" collision). Skip cheaply thereafter.
                     if (!npcState.Parked)
                     {
-                        ParkNpcStatics(npcState, npcCollisionParkPos);
+                        ParkNpcStatics(ref npcState, npcCollisionParkPos, dt);
                         npcState.Parked = true;
                         npcCollisionStates[i] = npcState;
                     }
@@ -3549,10 +3607,8 @@ public unsafe class RagdollController : IDisposable
                         hullWorldPos = new Vector3(go->Position.X, go->Position.Y, go->Position.Z);
                         hullWorldRot = Quaternion.Identity;
                     }
-                    var hullRef = simulation.Statics.GetStaticReference(npcState.ConvexHullHandle);
-                    hullRef.Pose.Position = hullWorldPos;
-                    hullRef.Pose.Orientation = hullWorldRot;
-                    hullRef.UpdateBounds();
+                    MoveNpcKinematic(ref npcState, npcState.ConvexHullHandle, hullWorldPos, hullWorldRot, dt);
+                    npcCollisionStates[i] = npcState;
                     continue;
                 }
 
@@ -3560,9 +3616,10 @@ public unsafe class RagdollController : IDisposable
                 {
                     // Simple single-capsule position update
                     var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npcState.NpcAddress;
-                    var staticRef = simulation.Statics.GetStaticReference(npcState.FallbackHandle);
-                    staticRef.Pose.Position = new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z);
-                    staticRef.UpdateBounds();
+                    MoveNpcKinematic(ref npcState, npcState.FallbackHandle,
+                        new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z),
+                        Quaternion.Identity, dt);
+                    npcCollisionStates[i] = npcState;
                     continue;
                 }
 
@@ -3620,11 +3677,10 @@ public unsafe class RagdollController : IDisposable
                         capsuleRot = Quaternion.Identity;
                     }
 
-                    var staticRef = simulation.Statics.GetStaticReference(bs.Handle);
-                    var oldPos = staticRef.Pose.Position;
-                    staticRef.Pose.Position = capsuleCenter;
-                    staticRef.Pose.Orientation = capsuleRot;
-                    staticRef.UpdateBounds();
+                    var bodyRef = simulation.Bodies.GetBodyReference(bs.Handle);
+                    var oldPos = bodyRef.Pose.Position;
+                    MoveNpcBoneKinematic(ref bs, capsuleCenter, capsuleRot, dt);
+                    npcState.BoneStatics[b] = bs;
 
                     // Monster strike: this collider bone moved from oldPos→capsuleCenter this frame.
                     // During the attack window, impart that swing velocity to nearby ragdoll bodies,
@@ -3636,6 +3692,7 @@ public unsafe class RagdollController : IDisposable
                             ApplyStrikeImpulse(capsuleCenter, swingVel, StrikeContactRadius);
                     }
                 }
+                npcCollisionStates[i] = npcState;
             }
             catch { }
         }
@@ -6360,7 +6417,8 @@ public unsafe class RagdollController : IDisposable
         for (int i = npcCollisionStates.Count - 1; i >= 0; i--)
         {
             if (npcCollisionStates[i].NpcAddress != address) continue;
-            ParkNpcStatics(npcCollisionStates[i], new Vector3(0, -9999, 0));
+            var npcState = npcCollisionStates[i];
+            ParkNpcStatics(ref npcState, new Vector3(0, -9999, 0));
             npcCollisionStates.RemoveAt(i);
         }
     }
@@ -6461,6 +6519,12 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
                 return dynamicRef.Mobility == CollidableMobility.Dynamic &&
                        AllowedDynamicBodiesForRestrictedStatics.Contains(dynamicRef.BodyHandle.Value);
             }
+            return true;
+        }
+
+        if ((a.Mobility == CollidableMobility.Dynamic && b.Mobility == CollidableMobility.Kinematic) ||
+            (b.Mobility == CollidableMobility.Dynamic && a.Mobility == CollidableMobility.Kinematic))
+        {
             return true;
         }
 
