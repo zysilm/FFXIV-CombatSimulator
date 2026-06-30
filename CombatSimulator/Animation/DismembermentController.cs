@@ -144,6 +144,9 @@ public unsafe class DismembermentController : IDisposable
         public Dictionary<int, (Vector3 T, Quaternion R)>? GearCapById; // captured rest pose by bone idx (skirt hang)
         public float GearGroundY = float.NegativeInfinity;   // ground height for the skirt-hang / sink clamp
         public Vector3 GearBoxHalf;                          // collision box half-extents (for the sink clamp)
+        public int GearArmedFrames;                          // frames since the rigid body was armed
+        public int GearRestFrames;                           // consecutive near-rest frames
+        public int GearDeflateFrames;                        // bounded fake cloth-collapse progress
     }
 
     private sealed class GearPartialPoseSnapshot
@@ -1731,9 +1734,9 @@ public unsafe class DismembermentController : IDisposable
             }
             CaptureGearPartialPoseSnapshots(c, skel.CharBase);
 
-            // Clothing: cache the rest pose by bone index so the skirt-hang drive can read captured
-            // segment lengths / orientations without searching the snapshot list each frame.
-            if (c.GearKeepModelSlot == 1)
+            // Clothing/pants: cache the rest pose by bone index so the skirt-hang / deflate drives can
+            // read captured offsets without searching the snapshot list each frame.
+            if (c.GearKeepModelSlot is 1 or 3)
             {
                 c.GearCapById = new Dictionary<int, (Vector3, Quaternion)>(c.GearPoseSnapshot.Count);
                 foreach (var s in c.GearPoseSnapshot)
@@ -1802,6 +1805,7 @@ public unsafe class DismembermentController : IDisposable
         var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
         var bodyPos = bodyRef.Pose.Position;
         var bodyRot = bodyRef.Pose.Orientation;
+        UpdateGearDeflateProgress(c, bodyRef.Velocity.Linear, bodyRef.Velocity.Angular);
         // Box centre is at bone + GearExtraOffset (in the body frame), so back it out to place the bone.
         var skelPos = bodyPos - Vector3.Transform(c.LimbRootModelPos + c.GearExtraOffset, bodyRot);
 
@@ -1831,6 +1835,8 @@ public unsafe class DismembermentController : IDisposable
         drawObj->Position = skelPos;
         drawObj->Rotation = bodyRot;
         ((GameObject*)c.Chara)->Position = skelPos;
+
+        ApplyGearDeflate(skel, c);
 
         // Clothing: actively drive the skirt cloth chain to hang straight down (agreeing with gravity, so
         // it doesn't fight the game cloth sim like a static pin does), clamped above the ground.
@@ -1924,6 +1930,169 @@ public unsafe class DismembermentController : IDisposable
             m.Scale.Y = 0.0001f;
             m.Scale.Z = 0.0001f;
         }
+    }
+
+    private static bool IsDeflatableGear(Clone c)
+        => c.GearSide == 0 && c.GearKeepModelSlot is 1 or 3;
+
+    private void UpdateGearDeflateProgress(Clone c, Vector3 linearVelocity, Vector3 angularVelocity)
+    {
+        if (!IsDeflatableGear(c)) return;
+
+        c.GearArmedFrames++;
+        var nearRest = linearVelocity.LengthSquared() < 0.20f && angularVelocity.LengthSquared() < 4.0f;
+        c.GearRestFrames = nearRest
+            ? Math.Min(c.GearRestFrames + 1, 30)
+            : Math.Max(0, c.GearRestFrames - 2);
+
+        // Prefer collapse after landing/settling, but also start eventually in case the piece keeps a
+        // tiny residual velocity while resting on body colliders.
+        if (c.GearRestFrames >= 8 || c.GearArmedFrames >= 55)
+            c.GearDeflateFrames = Math.Min(c.GearDeflateFrames + 1, 45);
+    }
+
+    private void ApplyGearDeflate(SkeletonAccess skel, Clone c)
+    {
+        if (!IsDeflatableGear(c) || c.GearDeflateFrames <= 0 || c.GearCapById == null)
+            return;
+
+        var t = Math.Clamp(c.GearDeflateFrames / 45f, 0f, 1f);
+        var strength = t * t * (3f - 2f * t); // smoothstep
+        if (strength <= 0f) return;
+
+        if (c.GearKeepModelSlot == 1)
+            ApplyBodyGearDeflate(skel, c, strength);
+        else if (c.GearKeepModelSlot == 3)
+            ApplyPantsGearDeflate(skel, c, strength);
+    }
+
+    private void ApplyBodyGearDeflate(SkeletonAccess skel, Clone c, float strength)
+    {
+        if (c.GearCapById == null) return;
+        var waist = TryCapturedModelPos(skel, c, "j_kosi", out var w) ? w : c.LimbRootModelPos;
+        var n = Math.Min(skel.BoneCount, skel.ParentCount);
+
+        for (int i = 0; i < n; i++)
+        {
+            var name = BoneName(skel, i);
+            if (!IsBodyShellDeflateBone(name)) continue;
+            if (!c.GearCapById.TryGetValue(i, out var cap)) continue;
+
+            var rel = cap.T - waist;
+            var target = waist + new Vector3(rel.X * 0.58f, rel.Y * 0.46f - 0.035f, rel.Z * 0.58f);
+            target = ClampModelPositionAboveGearGround(skel, c, target);
+            WriteDeflatedBone(skel, i, cap.T, target, strength, 0.58f);
+        }
+    }
+
+    private void ApplyPantsGearDeflate(SkeletonAccess skel, Clone c, float strength)
+    {
+        if (c.GearCapById == null) return;
+        var hipCenter = TryCapturedAverageModelPos(skel, c, out var hips, "j_asi_a_l", "j_asi_a_r")
+            ? hips : c.LimbRootModelPos;
+        var n = Math.Min(skel.BoneCount, skel.ParentCount);
+
+        for (int i = 0; i < n; i++)
+        {
+            var name = BoneName(skel, i);
+            if (!name.StartsWith("j_asi_", StringComparison.Ordinal)) continue;
+            if (!c.GearCapById.TryGetValue(i, out var cap)) continue;
+
+            var tierCenter = TryCapturedLegPairCenter(skel, c, name, out var pairCenter)
+                ? pairCenter : hipCenter;
+            var rel = cap.T - tierCenter;
+            var target = tierCenter + new Vector3(rel.X * 0.35f, rel.Y * 0.82f - 0.018f, rel.Z * 0.35f);
+            target = ClampModelPositionAboveGearGround(skel, c, target);
+            WriteDeflatedBone(skel, i, cap.T, target, strength, 0.62f);
+        }
+    }
+
+    private static bool IsBodyShellDeflateBone(string name)
+        => name.StartsWith("j_sebo_", StringComparison.Ordinal)
+           || name.StartsWith("j_kubi", StringComparison.Ordinal)
+           || name.StartsWith("j_ude_", StringComparison.Ordinal)
+           || name.StartsWith("j_te_", StringComparison.Ordinal)
+           || name.StartsWith("j_mune", StringComparison.Ordinal)
+           || name.StartsWith("j_sako", StringComparison.Ordinal);
+
+    private void WriteDeflatedBone(SkeletonAccess skel, int idx, Vector3 from, Vector3 target, float strength, float minScale)
+    {
+        if (idx < 0 || idx >= skel.BoneCount) return;
+        ref var m = ref skel.Pose->ModelPose.Data[idx];
+        var t = Vector3.Lerp(from, target, strength);
+        m.Translation.X = t.X;
+        m.Translation.Y = t.Y;
+        m.Translation.Z = t.Z;
+
+        var scale = 1f + (minScale - 1f) * strength;
+        m.Scale.X *= scale;
+        m.Scale.Y *= scale;
+        m.Scale.Z *= scale;
+    }
+
+    private bool TryCapturedModelPos(SkeletonAccess skel, Clone c, string boneName, out Vector3 pos)
+    {
+        pos = Vector3.Zero;
+        if (c.GearCapById == null) return false;
+        var idx = boneService.ResolveBoneIndex(skel, boneName);
+        if (idx < 0 || !c.GearCapById.TryGetValue(idx, out var cap)) return false;
+        pos = cap.T;
+        return true;
+    }
+
+    private bool TryCapturedAverageModelPos(SkeletonAccess skel, Clone c, out Vector3 pos, params string[] boneNames)
+    {
+        pos = Vector3.Zero;
+        if (c.GearCapById == null) return false;
+        var count = 0;
+        foreach (var boneName in boneNames)
+        {
+            if (!TryCapturedModelPos(skel, c, boneName, out var p)) continue;
+            pos += p;
+            count++;
+        }
+        if (count <= 0) return false;
+        pos /= count;
+        return true;
+    }
+
+    private bool TryCapturedLegPairCenter(SkeletonAccess skel, Clone c, string boneName, out Vector3 center)
+    {
+        center = Vector3.Zero;
+        if (boneName.Length < 2) return false;
+        string left;
+        string right;
+        if (boneName.EndsWith("_l", StringComparison.Ordinal))
+        {
+            left = boneName;
+            right = boneName[..^2] + "_r";
+        }
+        else if (boneName.EndsWith("_r", StringComparison.Ordinal))
+        {
+            right = boneName;
+            left = boneName[..^2] + "_l";
+        }
+        else return false;
+
+        return TryCapturedAverageModelPos(skel, c, out center, left, right);
+    }
+
+    private Vector3 ClampModelPositionAboveGearGround(SkeletonAccess skel, Clone c, Vector3 modelPos)
+    {
+        if (float.IsNegativeInfinity(c.GearGroundY)) return modelPos;
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton == null) return modelPos;
+
+        var skelPos = new Vector3(skeleton->Transform.Position.X, skeleton->Transform.Position.Y, skeleton->Transform.Position.Z);
+        var skelRot = Quaternion.Normalize(new Quaternion(
+            skeleton->Transform.Rotation.X, skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z, skeleton->Transform.Rotation.W));
+        var world = skelPos + Vector3.Transform(modelPos, skelRot);
+        var minY = c.GearGroundY + 0.025f;
+        if (world.Y >= minY) return modelPos;
+
+        world.Y = minY;
+        return Vector3.Transform(world - skelPos, Quaternion.Inverse(skelRot));
     }
 
     // Drive the main-skeleton skirt cloth bones (j_sk_*) so each chain hangs straight down in world
