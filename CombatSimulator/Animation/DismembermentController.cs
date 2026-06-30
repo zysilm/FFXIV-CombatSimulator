@@ -14,6 +14,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using BepuSimulation = BepuPhysics.Simulation;
+using RenderModel = FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model;
 
 namespace CombatSimulator.Animation;
 
@@ -123,6 +124,13 @@ public unsafe class DismembermentController : IDisposable
         public int ExpectedSkeletonBoneCount;
         public int ExpectedSkeletonParentCount;
         public int ExpectedSkeletonSignature;
+
+        // Gear-drop mode (hats / accessories): when >= 0 this clone is NOT a severed limb but a single
+        // dropped equipment piece. Every model on the clone is hidden EXCEPT this CharacterBase model
+        // slot, so only the hat/accessory renders; it is then driven as one rigid body. -1 = limb mode.
+        public int GearKeepModelSlot = -1;
+        public List<(int Slot, nint Ptr)>? GearHiddenModels; // nulled model pointers, restored on despawn
+        public HashSet<int>? GearHiddenSlots;                // slots already cached (avoid dup caching)
     }
 
     private sealed class HandoffSnapshot
@@ -203,6 +211,7 @@ public unsafe class DismembermentController : IDisposable
         public int SourceSkeletonBoneCount;
         public int SourceSkeletonParentCount;
         public int SourceSkeletonSignature;
+        public int GearKeepModelSlot = -1;
     }
 
     private readonly List<Clone> clones = new();
@@ -343,6 +352,43 @@ public unsafe class DismembermentController : IDisposable
             LimbRootBone = limbRootBone,
             Delay = 0f,
             GlamourBase64 = glamourBase64,
+        };
+        CaptureSourceIdentity(p);
+        TryRefreshHandoff(p, 1f / 60f);
+        TrySpawn(p);
+    }
+
+    /// <summary>Drop a single equipment piece (hat / accessory) as a falling rigid body. Spawns a clone
+    /// of <paramref name="sourceAddress"/> that hides every model except CharacterBase model slot
+    /// <paramref name="keepModelSlot"/> (Head=0, Ear=5, Neck=6, Wrist=7, RFinger=8, LFinger=9), freezes
+    /// it, and tumbles it from <paramref name="attachBone"/>. The caller is expected to unequip the same
+    /// slot on the real body afterward (KO strip), so the piece looks like it fell off. Player-only.</summary>
+    public void SpawnGearDrop(nint sourceAddress, string attachBone, int keepModelSlot, string? glamourBase64)
+    {
+        if (sourceAddress == nint.Zero || string.IsNullOrEmpty(attachBone) || keepModelSlot < 0) return;
+        // Dedupe by kept model slot, not bone: hats and earrings share the j_kao attach bone.
+        if (clones.Exists(c => c.SourceAddress == sourceAddress && c.GearKeepModelSlot == keepModelSlot)) return;
+        if (pending.Exists(p => p.SourceAddress == sourceAddress && p.GearKeepModelSlot == keepModelSlot)) return;
+
+        // Only drop if the source actually RENDERS a model in that slot. This is the rendered model, so
+        // it covers Glamourer-only glamours too (a glam hat leaves the real equipment id 0 but still
+        // draws a model). No model => nothing to drop.
+        var srcDraw = ((GameObject*)sourceAddress)->DrawObject;
+        if (srcDraw == null) return;
+        var srcCb = (CharacterBase*)srcDraw;
+        if (srcCb->Models == null || keepModelSlot >= srcCb->SlotCount || srcCb->Models[keepModelSlot] == null)
+        {
+            log.Info($"GearDrop: source 0x{sourceAddress:X} renders no model in slot {keepModelSlot}; skipping");
+            return;
+        }
+
+        var p = new Pending
+        {
+            SourceAddress = sourceAddress,
+            LimbRootBone = attachBone,
+            Delay = 0f,
+            GlamourBase64 = glamourBase64,
+            GearKeepModelSlot = keepModelSlot,
         };
         CaptureSourceIdentity(p);
         TryRefreshHandoff(p, 1f / 60f);
@@ -588,6 +634,7 @@ public unsafe class DismembermentController : IDisposable
             ExpectedSkeletonBoneCount = p.SourceSkeletonBoneCount,
             ExpectedSkeletonParentCount = p.SourceSkeletonParentCount,
             ExpectedSkeletonSignature = p.SourceSkeletonSignature,
+            GearKeepModelSlot = p.GearKeepModelSlot,
         });
         log.Info($"Dismember: clone idx={index} bone={p.LimbRootBone} at ({severancePos.X:F1},{severancePos.Y:F1},{severancePos.Z:F1})");
     }
@@ -910,7 +957,7 @@ public unsafe class DismembermentController : IDisposable
         c.SettleFrames = 8;        // let it idle into a real pose before freezing
         c.GlamourFramesUntil = 1;  // apply WHILE the clone is still alive (frozen actors may not redraw)
         c.GlamourAttemptsLeft = 20;
-        if (IsHeadLimb(c.LimbRootBone))
+        if (IsHeadLimb(c.LimbRootBone) && c.GearKeepModelSlot < 0)
         {
             c.KeepTimelineRunning = true;
             animationController.PlayDeathAnimationOnActor((Character*)c.Chara, forceCombatDeath: true);
@@ -1366,6 +1413,9 @@ public unsafe class DismembermentController : IDisposable
         if (skelN == null) return !c.Armed;
         var skel = skelN.Value;
 
+        if (c.GearKeepModelSlot >= 0)
+            return UpdateGearClone(c, drawObj, skel);
+
         if (c.UseMonsterAppearance && !IsExpectedCloneSkeleton(c, skel))
         {
             // ModelContainer.ModelCharaId can update before the DrawObject/Skeleton has actually
@@ -1525,6 +1575,145 @@ public unsafe class DismembermentController : IDisposable
         drawObj->Rotation = bodyRot;
         ((GameObject*)c.Chara)->Position = skelPos;
         return true;
+    }
+
+    // Gear-drop update: a single equipment piece (hat / accessory) falling off. Unlike a limb, the piece
+    // is NOT isolated by collapsing bones (a hat shares the head bone with the face & hair); instead we
+    // hide every CharacterBase model except the dropped slot, freeze the clone, and drive its whole
+    // skeleton from one rigid body so the attach bone — and the gear skinned to it — tumbles.
+    private bool UpdateGearClone(Clone c, DrawObject* drawObj, SkeletonAccess skel)
+    {
+        if (c.LimbIndex < 0)
+            c.LimbIndex = boneService.ResolveBoneIndex(skel, c.LimbRootBone);
+        if (c.LimbIndex < 0)
+        {
+            HideEntireBody(c);
+            if (++c.ResolveFramesWaited >= MaxResolveFrames)
+            {
+                log.Warning($"GearDrop: clone idx={c.ObjectIndex} attach bone '{c.LimbRootBone}' never resolved; dropping");
+                return false;
+            }
+            return true;
+        }
+
+        // Hide face / hair / body / other gear so ONLY the dropped piece renders. Re-asserted each frame
+        // (models load a few frames after EnableDraw, and a glamour redraw can repopulate them).
+        HideNonKeptModels(c);
+        HideWeapons(c);
+
+        if (!c.Armed)
+        {
+            // Keep the clone parked off-screen until the kept gear model is actually loaded, so a full
+            // un-hidden body never flashes next to the player.
+            if (!IsKeptModelPresent(c))
+            {
+                HideEntireBody(c);
+                if (++c.ResolveFramesWaited >= MaxResolveFrames)
+                {
+                    log.Warning($"GearDrop: clone idx={c.ObjectIndex} gear model slot {c.GearKeepModelSlot} never loaded; dropping");
+                    return false;
+                }
+                return true;
+            }
+
+            ApplyHandoffPose(skel, c);
+            if (--c.SettleFrames > 0) return true;
+
+            ref var lm = ref skel.Pose->ModelPose.Data[c.LimbIndex];
+            c.LimbRootModelPos = new Vector3(lm.Translation.X, lm.Translation.Y, lm.Translation.Z);
+            ((Character*)c.Chara)->Timeline.OverallSpeed = 0f;
+
+            EnsureSimulation();
+            if (simulation != null)
+            {
+                c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
+                    new RigidPose(c.SeveranceWorldPos, c.SeveranceWorldRot),
+                    default(BodyVelocity),
+                    limbInertia,
+                    new CollidableDescription(limbShapeIndex, 0.04f),
+                    new BodyActivityDescription(0.01f)));
+                SeedBodyVelocity(c.Body.Value, c, c.LimbRootBone);
+                (c.GroundTile, c.GroundShape) = CreateTerrainPatch(c.SeveranceWorldPos.X, c.SeveranceWorldPos.Z, c.SeveranceWorldPos.Y);
+                RegisterPcCollisionBodies(c);
+                ApplyActivationImpulse(c);
+            }
+            c.Armed = true;
+            log.Info($"GearDrop: clone idx={c.ObjectIndex} armed (slot={c.GearKeepModelSlot}, bone={c.LimbRootBone})");
+            return true;
+        }
+
+        // Armed: keep animation frozen and drive the whole clone skeleton from the rigid body so the
+        // attach bone sits at the body and the gear tumbles about it (limb single-body idiom).
+        ((Character*)c.Chara)->Timeline.OverallSpeed = 0f;
+        if (simulation == null || c.Body == null) return true;
+        var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
+        var bodyPos = bodyRef.Pose.Position;
+        var bodyRot = bodyRef.Pose.Orientation;
+        var skelPos = bodyPos - Vector3.Transform(c.LimbRootModelPos, bodyRot);
+
+        var cb = (CharacterBase*)drawObj;
+        var sk = cb->Skeleton;
+        if (sk != null)
+        {
+            sk->Transform.Position.X = skelPos.X;
+            sk->Transform.Position.Y = skelPos.Y;
+            sk->Transform.Position.Z = skelPos.Z;
+            sk->Transform.Rotation.X = bodyRot.X;
+            sk->Transform.Rotation.Y = bodyRot.Y;
+            sk->Transform.Rotation.Z = bodyRot.Z;
+            sk->Transform.Rotation.W = bodyRot.W;
+        }
+        drawObj->Position = skelPos;
+        drawObj->Rotation = bodyRot;
+        ((GameObject*)c.Chara)->Position = skelPos;
+        return true;
+    }
+
+    // Null every CharacterBase model pointer except the dropped gear slot, so only the hat/accessory
+    // renders. The render loop skips null slots. Original pointers are cached and restored on despawn so
+    // the game's destructor still frees those models (a null slot would otherwise leak them).
+    private void HideNonKeptModels(Clone c)
+    {
+        if (c.Chara == null) return;
+        var drawObj = ((GameObject*)c.Chara)->DrawObject;
+        if (drawObj == null) return;
+        var cb = (CharacterBase*)drawObj;
+        if (cb->Models == null) return;
+        var slots = cb->SlotCount;
+        c.GearHiddenModels ??= new List<(int, nint)>();
+        c.GearHiddenSlots ??= new HashSet<int>();
+        for (int i = 0; i < slots; i++)
+        {
+            if (i == c.GearKeepModelSlot) continue;
+            var m = cb->Models[i];
+            if (m == null) continue;
+            if (c.GearHiddenSlots.Add(i))
+                c.GearHiddenModels.Add((i, (nint)m));
+            cb->Models[i] = null;
+        }
+    }
+
+    private bool IsKeptModelPresent(Clone c)
+    {
+        if (c.Chara == null) return false;
+        var drawObj = ((GameObject*)c.Chara)->DrawObject;
+        if (drawObj == null) return false;
+        var cb = (CharacterBase*)drawObj;
+        if (cb->Models == null) return false;
+        return c.GearKeepModelSlot >= 0 && c.GearKeepModelSlot < cb->SlotCount
+            && cb->Models[c.GearKeepModelSlot] != null;
+    }
+
+    private void RestoreHiddenModels(Clone c)
+    {
+        if (c.GearHiddenModels == null || c.Chara == null) return;
+        var drawObj = ((GameObject*)c.Chara)->DrawObject;
+        if (drawObj == null) return;
+        var cb = (CharacterBase*)drawObj;
+        if (cb->Models == null) return;
+        foreach (var (slot, ptr) in c.GearHiddenModels)
+            if (slot >= 0 && slot < cb->SlotCount && cb->Models[slot] == null)
+                cb->Models[slot] = (RenderModel*)ptr;
     }
 
     private static void ApplyCloneDrawScale(Clone c, DrawObject* drawObj)
@@ -2505,6 +2694,9 @@ public unsafe class DismembermentController : IDisposable
     {
         try
         {
+            // Put the nulled model pointers back so the game's CharacterBase destructor frees them.
+            if (c.GearHiddenModels != null) RestoreHiddenModels(c);
+
             if (simulation != null)
             {
                 UnregisterPcCollisionBodies(c);
