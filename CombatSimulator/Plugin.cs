@@ -73,7 +73,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly HpBarOverlay hpBarOverlay;
     private readonly CombatLogWindow combatLogWindow;
     private readonly RagdollDebugOverlay ragdollDebugOverlay;
-    private readonly DismemberDebugOverlay dismemberDebugOverlay;
     private readonly CombatLinkOverlay combatLinkOverlay;
     private readonly TelegraphOverlay telegraphOverlay;
     private readonly OsuParryOverlay osuParryOverlay;
@@ -355,7 +354,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, mainWindow, config, gameGui, clientState);
-        dismemberDebugOverlay = new DismemberDebugOverlay(dismembermentController, config, gameGui);
         combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
         telegraphOverlay = new TelegraphOverlay(telegraphSystem, gameGui, config);
         osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config, playerGuardController);
@@ -553,7 +551,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         }
 
         ragdollDebugOverlay.Draw();
-        dismemberDebugOverlay.Draw();
 
         if (!combatEngine.IsActive)
         {

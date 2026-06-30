@@ -98,17 +98,6 @@ public unsafe class DismembermentController : IDisposable
         public int GlamourFramesUntil = -1;
         public int GlamourAttemptsLeft;
         public HandoffSnapshot? Handoff;
-        public Vector3[]? HeadHullLocal; // hull points relative to the body centroid (debug overlay)
-    }
-
-    /// <summary>One dropped-head collision hull for the debug overlay: its current world transform
-    /// and the hull vertices already transformed to world.</summary>
-    public readonly struct HeadHullDebug
-    {
-        public readonly Vector3 Center;
-        public readonly Quaternion Orientation;
-        public readonly Vector3[] WorldPoints;
-        public HeadHullDebug(Vector3 c, Quaternion o, Vector3[] p) { Center = c; Orientation = o; WorldPoints = p; }
     }
 
     private sealed class HandoffSnapshot
@@ -210,25 +199,6 @@ public unsafe class DismembermentController : IDisposable
     }
 
     public bool HasAny => clones.Count > 0 || pending.Count > 0;
-
-    /// <summary>World-space hull vertices for every active dropped-head, for the debug overlay.</summary>
-    public List<HeadHullDebug> GetDebugHeadHulls()
-    {
-        var result = new List<HeadHullDebug>();
-        if (simulation == null) return result;
-        foreach (var c in clones)
-        {
-            if (c.HeadHullLocal == null || c.Rig == null || c.Rig.Bodies.Count == 0) continue;
-            var body = simulation.Bodies.GetBodyReference(c.Rig.Bodies[0].Body);
-            var pos = body.Pose.Position;
-            var rot = body.Pose.Orientation;
-            var pts = new Vector3[c.HeadHullLocal.Length];
-            for (int i = 0; i < pts.Length; i++)
-                pts[i] = pos + Vector3.Transform(c.HeadHullLocal[i], rot);
-            result.Add(new HeadHullDebug(pos, rot, pts));
-        }
-        return result;
-    }
 
     public IReadOnlyList<string> SelectRandomEnemyBones(nint sourceAddress, int humanoidCount, float genericPercent)
     {
@@ -1375,10 +1345,6 @@ public unsafe class DismembermentController : IDisposable
         var hull = new ConvexHull((Span<Vector3>)hullPoints, bufferPool!, out var hullCenter);
         var shape = simulation.Shapes.Add(hull);
         var inertia = hull.ComputeInertia(MathF.Max(1f, def.Mass));
-
-        // Keep the hull vertices (relative to the body centroid) for the debug overlay.
-        c.HeadHullLocal = new Vector3[hullPoints.Length];
-        for (int i = 0; i < hullPoints.Length; i++) c.HeadHullLocal[i] = hullPoints[i] - hullCenter;
 
         // Hull is in the head-bone frame (origin = bone). Place the body at its centroid; the bone
         // reconstructs at centroid - up*centerOffset, so HeadShapeDrop sinks the visible head if the
