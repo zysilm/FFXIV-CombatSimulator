@@ -131,6 +131,7 @@ public unsafe class DismembermentController : IDisposable
         // dropped equipment piece. Every model on the clone is hidden EXCEPT this CharacterBase model
         // slot, so only the hat/accessory renders; it is then driven as one rigid body. -1 = limb mode.
         public int GearKeepModelSlot = -1;
+        public int GearSide;                                  // -1 left, +1 right, 0 unsided
         public List<(int Slot, nint Ptr)>? GearHiddenModels; // nulled model pointers, restored on despawn
         public HashSet<int>? GearHiddenSlots;                // slots already cached (avoid dup caching)
         public Vector3 GearExtraOffset;                      // body-frame offset bone->piece centroid
@@ -239,6 +240,7 @@ public unsafe class DismembermentController : IDisposable
         public int SourceSkeletonParentCount;
         public int SourceSkeletonSignature;
         public int GearKeepModelSlot = -1;
+        public int GearSide;
         public bool GearHideSkin;
     }
 
@@ -392,12 +394,12 @@ public unsafe class DismembermentController : IDisposable
     /// it, and tumbles it from <paramref name="attachBone"/>. The caller is expected to unequip the same
     /// slot on the real body afterward (KO strip), so the piece looks like it fell off. Player-only.</summary>
     public void SpawnGearDrop(nint sourceAddress, string attachBone, int keepModelSlot, string? glamourBase64,
-        bool hideSkin = false)
+        bool hideSkin = false, int gearSide = 0)
     {
         if (sourceAddress == nint.Zero || string.IsNullOrEmpty(attachBone) || keepModelSlot < 0) return;
         // Dedupe by kept model slot, not bone: hats and earrings share the j_kao attach bone.
-        if (clones.Exists(c => c.SourceAddress == sourceAddress && c.GearKeepModelSlot == keepModelSlot)) return;
-        if (pending.Exists(p => p.SourceAddress == sourceAddress && p.GearKeepModelSlot == keepModelSlot)) return;
+        if (clones.Exists(c => c.SourceAddress == sourceAddress && c.GearKeepModelSlot == keepModelSlot && c.GearSide == gearSide)) return;
+        if (pending.Exists(p => p.SourceAddress == sourceAddress && p.GearKeepModelSlot == keepModelSlot && p.GearSide == gearSide)) return;
 
         // Only drop if the source actually RENDERS a model in that slot. This is the rendered model, so
         // it covers Glamourer-only glamours too (a glam hat leaves the real equipment id 0 but still
@@ -418,6 +420,7 @@ public unsafe class DismembermentController : IDisposable
             Delay = 0f,
             GlamourBase64 = glamourBase64,
             GearKeepModelSlot = keepModelSlot,
+            GearSide = gearSide,
             GearHideSkin = hideSkin,
         };
         CaptureSourceIdentity(p);
@@ -669,6 +672,7 @@ public unsafe class DismembermentController : IDisposable
             ExpectedSkeletonParentCount = p.SourceSkeletonParentCount,
             ExpectedSkeletonSignature = p.SourceSkeletonSignature,
             GearKeepModelSlot = p.GearKeepModelSlot,
+            GearSide = p.GearSide,
             GearHideSkin = p.GearHideSkin,
         });
         log.Info($"Dismember: clone idx={index} bone={p.LimbRootBone} at ({severancePos.X:F1},{severancePos.Y:F1},{severancePos.Z:F1})");
@@ -1687,6 +1691,7 @@ public unsafe class DismembermentController : IDisposable
         HideNonKeptModels(c);
         HideWeapons(c);
         if (c.GearHideSkin) HideSkinMaterials(c); // clothing: drop the baked-in body skin, keep the cloth
+        ApplyGearSideMask(skel, c);
 
         if (!c.Armed)
         {
@@ -1706,8 +1711,8 @@ public unsafe class DismembermentController : IDisposable
             ApplyHandoffPose(skel, c);
             if (--c.SettleFrames > 0) return true;
 
-            ref var lm = ref skel.Pose->ModelPose.Data[c.LimbIndex];
-            c.LimbRootModelPos = new Vector3(lm.Translation.X, lm.Translation.Y, lm.Translation.Z);
+            c.LimbRootModelPos = ResolveGearAnchorModelPos(skel, c);
+            ApplyGearSideMask(skel, c);
             ((Character*)c.Chara)->Timeline.OverallSpeed = 0f;
 
             // Snapshot the whole settled pose. Re-written every frame (below) so the game's animation /
@@ -1741,13 +1746,24 @@ public unsafe class DismembermentController : IDisposable
                 var shape = BuildGearShape(c, out var inertia, out var offsetWorld);
                 // Box is centred on the piece (bone + offset). Stash the offset in the body's frame so
                 // the drive can reconstruct the attach bone back from the tumbling body.
-                var spawnPos = c.SeveranceWorldPos + offsetWorld;
-                c.GearExtraOffset = Vector3.Transform(offsetWorld, Quaternion.Inverse(c.SeveranceWorldRot));
+                var skeleton = skel.CharBase->Skeleton;
+                var cloneSkelPos = skeleton != null
+                    ? new Vector3(skeleton->Transform.Position.X, skeleton->Transform.Position.Y, skeleton->Transform.Position.Z)
+                    : c.SeveranceWorldPos;
+                var skelRot = skeleton != null
+                    ? Quaternion.Normalize(new Quaternion(
+                        skeleton->Transform.Rotation.X, skeleton->Transform.Rotation.Y,
+                        skeleton->Transform.Rotation.Z, skeleton->Transform.Rotation.W))
+                    : c.SeveranceWorldRot;
+                var gearRot = ResolveGearInitialRotation(c, skelRot);
+                var anchorWorld = cloneSkelPos + Vector3.Transform(c.LimbRootModelPos, skelRot);
+                var spawnPos = anchorWorld + Vector3.Transform(offsetWorld, gearRot);
+                c.GearExtraOffset = Vector3.Transform(offsetWorld, Quaternion.Inverse(gearRot));
                 c.GearGroundY = BGCollisionModule.RaycastMaterialFilter(
                     new Vector3(spawnPos.X, spawnPos.Y + 5f, spawnPos.Z), new Vector3(0, -1, 0), out var groundHit, 80f)
                     ? groundHit.Point.Y : spawnPos.Y - 1.5f;
                 c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
-                    new RigidPose(spawnPos, c.SeveranceWorldRot),
+                    new RigidPose(spawnPos, gearRot),
                     default(BodyVelocity),
                     inertia,
                     new CollidableDescription(shape, 0.04f),
@@ -1780,6 +1796,7 @@ public unsafe class DismembermentController : IDisposable
             }
         }
         RestoreGearPartialPoseSnapshots(c, skel.CharBase);
+        ApplyGearSideMask(skel, c);
 
         if (simulation == null || c.Body == null) return true;
         var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
@@ -1819,6 +1836,94 @@ public unsafe class DismembermentController : IDisposable
         // it doesn't fight the game cloth sim like a static pin does), clamped above the ground.
         if (c.GearKeepModelSlot == 1) DriveSkirtHang(skel, c);
         return true;
+    }
+
+    private Vector3 ResolveGearAnchorModelPos(SkeletonAccess skel, Clone c)
+    {
+        // Some equipment slots are paired meshes. Anchoring them to the waist makes the rigid body feel
+        // torso-bound; use a virtual center from the bones that actually carry the visible slot.
+        if (c.GearKeepModelSlot == 2 && c.GearSide < 0 &&
+            TryAverageModelBonePositions(skel, out var leftHand, "j_te_l"))
+            return leftHand;
+        if (c.GearKeepModelSlot == 2 && c.GearSide > 0 &&
+            TryAverageModelBonePositions(skel, out var rightHand, "j_te_r"))
+            return rightHand;
+        if (c.GearKeepModelSlot == 2 &&
+            TryAverageModelBonePositions(skel, out var hands, "j_te_l", "j_te_r"))
+            return hands;
+
+        if (c.GearKeepModelSlot == 3 &&
+            TryAverageModelBonePositions(skel, out var legs,
+                "j_asi_a_l", "j_asi_a_r",
+                "j_asi_b_l", "j_asi_b_r",
+                "j_asi_c_l", "j_asi_c_r"))
+            return legs;
+
+        if (c.GearKeepModelSlot == 4)
+        {
+            if (c.GearSide < 0)
+            {
+                if (TryAverageModelBonePositions(skel, out var leftToes, "j_asi_e_l")) return leftToes;
+                if (TryAverageModelBonePositions(skel, out var leftFoot, "j_asi_d_l")) return leftFoot;
+            }
+            if (c.GearSide > 0)
+            {
+                if (TryAverageModelBonePositions(skel, out var rightToes, "j_asi_e_r")) return rightToes;
+                if (TryAverageModelBonePositions(skel, out var rightFoot, "j_asi_d_r")) return rightFoot;
+            }
+            if (TryAverageModelBonePositions(skel, out var toes, "j_asi_e_l", "j_asi_e_r"))
+                return toes;
+            if (TryAverageModelBonePositions(skel, out var feet, "j_asi_d_l", "j_asi_d_r"))
+                return feet;
+        }
+
+        ref var lm = ref skel.Pose->ModelPose.Data[c.LimbIndex];
+        return new Vector3(lm.Translation.X, lm.Translation.Y, lm.Translation.Z);
+    }
+
+    private bool TryAverageModelBonePositions(SkeletonAccess skel, out Vector3 average, params string[] boneNames)
+    {
+        average = Vector3.Zero;
+        var count = 0;
+        foreach (var boneName in boneNames)
+        {
+            var idx = boneService.ResolveBoneIndex(skel, boneName);
+            if (idx < 0 || idx >= skel.BoneCount) continue;
+            ref var bm = ref skel.Pose->ModelPose.Data[idx];
+            average += new Vector3(bm.Translation.X, bm.Translation.Y, bm.Translation.Z);
+            count++;
+        }
+
+        if (count <= 0) return false;
+        average /= count;
+        return true;
+    }
+
+    private static Quaternion ResolveGearInitialRotation(Clone c, Quaternion skeletonRotation)
+        => c.GearKeepModelSlot is 2 or 3 or 4 ? skeletonRotation : c.SeveranceWorldRot;
+
+    private void ApplyGearSideMask(SkeletonAccess skel, Clone c)
+    {
+        if (c.GearSide == 0 || c.GearKeepModelSlot is not (2 or 4)) return;
+        var hideSuffix = c.GearSide < 0 ? "_r" : "_l";
+        var keepIdx = c.LimbIndex;
+        if (keepIdx < 0 || keepIdx >= skel.BoneCount) keepIdx = 0;
+        ref var km = ref skel.Pose->ModelPose.Data[keepIdx];
+        var collapse = new Vector3(km.Translation.X, km.Translation.Y, km.Translation.Z);
+
+        var n = Math.Min(skel.BoneCount, skel.ParentCount);
+        for (int i = 0; i < n; i++)
+        {
+            var name = BoneName(skel, i);
+            if (!name.EndsWith(hideSuffix, StringComparison.Ordinal)) continue;
+            ref var m = ref skel.Pose->ModelPose.Data[i];
+            m.Translation.X = collapse.X;
+            m.Translation.Y = collapse.Y;
+            m.Translation.Z = collapse.Z;
+            m.Scale.X = 0.0001f;
+            m.Scale.Y = 0.0001f;
+            m.Scale.Z = 0.0001f;
+        }
     }
 
     // Drive the main-skeleton skirt cloth bones (j_sk_*) so each chain hangs straight down in world
@@ -2123,9 +2228,11 @@ public unsafe class DismembermentController : IDisposable
         {
             0 => (new Vector3(0.13f, 0.05f, 0.14f), new Vector3(0f,  0.08f, 0f)), // hat: above skull, flat
             1 => (new Vector3(0.13f, 0.16f, 0.08f), new Vector3(0f,  0.16f, 0f)), // body/top: torso, near waist
-            2 => (new Vector3(0.30f, 0.10f, 0.12f), new Vector3(0f, -0.05f, 0f)), // hands/gloves: both hands, hip-ish
-            3 => (new Vector3(0.17f, 0.30f, 0.12f), new Vector3(0f, -0.35f, 0f)), // legs/pants: both legs, below waist
-            4 => (new Vector3(0.18f, 0.07f, 0.16f), new Vector3(0f, -0.82f, 0f)), // feet/shoes: both feet, at the floor
+            2 when c.GearSide != 0 => (new Vector3(0.075f, 0.055f, 0.075f), Vector3.Zero), // one glove
+            2 => (new Vector3(0.30f, 0.10f, 0.12f), Vector3.Zero),                // hands/gloves: center between hands
+            3 => (new Vector3(0.17f, 0.30f, 0.12f), Vector3.Zero),                // legs/pants: center through both legs
+            4 when c.GearSide != 0 => (new Vector3(0.075f, 0.035f, 0.12f), new Vector3(0f, 0.03f, 0f)), // one shoe
+            4 => (new Vector3(0.18f, 0.04f, 0.16f), new Vector3(0f, 0.035f, 0f)), // feet/shoes: paired fallback
             6 => (new Vector3(0.09f, 0.08f, 0.06f), new Vector3(0f, -0.06f, 0f)), // neck: necklace drapes below
             _ => (new Vector3(0.05f, 0.05f, 0.05f), Vector3.Zero),                // ears/wrist/ring: small chunk at bone
         };
