@@ -2116,18 +2116,24 @@ public unsafe class DismembermentController : IDisposable
         // the skull, a necklace drapes below the neck). Centring the box on the PIECE (not the bone)
         // and sizing it to enclose the piece keeps the mesh from poking through the ground while the
         // box rests on it. Mostly vertical since the death pose is ~upright.
+        // Offsets are from the attach bone (j_kosi waist for clothing) to the piece centroid; mostly
+        // vertical since death pose is ~upright. Box half-extents enclose the piece (both legs/hands/
+        // feet for a shared model). All approximate - tune against the in-game piece.
         var (half, off) = c.GearKeepModelSlot switch
         {
             0 => (new Vector3(0.13f, 0.05f, 0.14f), new Vector3(0f,  0.08f, 0f)), // hat: above skull, flat
-            1 => (new Vector3(0.13f, 0.16f, 0.08f), new Vector3(0f,  0.16f, 0f)), // body/top: bottom near waist, avoids floating
+            1 => (new Vector3(0.13f, 0.16f, 0.08f), new Vector3(0f,  0.16f, 0f)), // body/top: torso, near waist
+            2 => (new Vector3(0.30f, 0.10f, 0.12f), new Vector3(0f, -0.05f, 0f)), // hands/gloves: both hands, hip-ish
+            3 => (new Vector3(0.17f, 0.30f, 0.12f), new Vector3(0f, -0.35f, 0f)), // legs/pants: both legs, below waist
+            4 => (new Vector3(0.18f, 0.07f, 0.16f), new Vector3(0f, -0.82f, 0f)), // feet/shoes: both feet, at the floor
             6 => (new Vector3(0.09f, 0.08f, 0.06f), new Vector3(0f, -0.06f, 0f)), // neck: necklace drapes below
             _ => (new Vector3(0.05f, 0.05f, 0.05f), Vector3.Zero),                // ears/wrist/ring: small chunk at bone
         };
         half *= scale;
         offsetWorld = off * scale;
         c.GearBoxHalf = half; // remembered for the ground-sink clamp in the drive
-        // Cloth/accessories are light — heavy masses make them slam and settle hard.
-        var mass = c.GearKeepModelSlot == 1 ? 0.8f : GearPieceMass;
+        // Clothing is light - heavy masses make it slam and settle hard.
+        var mass = c.GearHideSkin ? 0.8f : GearPieceMass;
         var box = new Box(half.X * 2f, half.Y * 2f, half.Z * 2f);
         inertia = box.ComputeInertia(mass);
         var idx = simulation!.Shapes.Add(box);
