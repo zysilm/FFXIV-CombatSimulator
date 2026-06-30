@@ -132,7 +132,13 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         dismembermentController.EnemyNpcIdentityResolver = address =>
         {
             var npc = FindNpcByAddress(address);
-            return npc != null ? (npc.BNpcBaseId, npc.BNpcNameId) : (0u, 0u);
+            if (npc != null) return (npc.BNpcBaseId, npc.BNpcNameId);
+            // Untracked live enemy: read its real BNpc ids straight off the actor so the severed
+            // piece is rebuilt via SetupBNpc (full appearance, incl. equipment) instead of a bare
+            // ModelCharaId — the latter shows a naked/un-geared body.
+            if (objectTable.CreateObjectReference(address) is Dalamud.Game.ClientState.Objects.Types.IBattleNpc bnpc)
+                return (bnpc.BaseId, bnpc.NameId);
+            return (0u, 0u);
         };
         // Spin the body-side stump at the cut so a kicked-off piece makes the stump visibly flick.
         // The body is whichever ragdoll drives that address (an NPC's own, else the player/default).

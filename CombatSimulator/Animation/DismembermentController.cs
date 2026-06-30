@@ -185,6 +185,13 @@ public unsafe class DismembermentController : IDisposable
         public float Delay;
         public string? GlamourBase64;
         public HandoffSnapshot? LastSample;
+        // Source identity captured at SCHEDULE time (the source is still alive then). Reading it
+        // later in TrySpawn (~0.5s after death) races the source's teardown: a dead monster reports
+        // ModelCharaId=0 and may no longer resolve, so the clone was built as a default human.
+        public bool IdentityCaptured;
+        public uint BNpcBaseId;
+        public uint BNpcNameId;
+        public int SourceModelCharaId;
     }
 
     private readonly List<Clone> clones = new();
@@ -308,6 +315,7 @@ public unsafe class DismembermentController : IDisposable
             Delay = MathF.Max(0f, delay),
             GlamourBase64 = glamourBase64,
         };
+        CaptureSourceIdentity(p);
         TryRefreshHandoff(p, 1f / 60f);
         pending.Add(p);
     }
@@ -325,8 +333,23 @@ public unsafe class DismembermentController : IDisposable
             Delay = 0f,
             GlamourBase64 = glamourBase64,
         };
+        CaptureSourceIdentity(p);
         TryRefreshHandoff(p, 1f / 60f);
         TrySpawn(p);
+    }
+
+    // Snapshot the source's BNpc identity + ModelCharaId while it is still alive (at schedule
+    // time). TrySpawn fires ~0.5s later, after the source may have been torn down, when these
+    // reads return 0/null and the clone would fall back to a default human model.
+    private void CaptureSourceIdentity(Pending p)
+    {
+        if (p.IdentityCaptured || p.SourceAddress == nint.Zero) return;
+        var ids = EnemyNpcIdentityResolver?.Invoke(p.SourceAddress) ?? default;
+        p.BNpcBaseId = ids.BNpcBaseId;
+        p.BNpcNameId = ids.BNpcNameId;
+        var src = (Character*)p.SourceAddress;
+        p.SourceModelCharaId = src->ModelContainer.ModelCharaId;
+        p.IdentityCaptured = true;
     }
 
     public void RemoveFor(nint sourceAddress)
@@ -472,8 +495,12 @@ public unsafe class DismembermentController : IDisposable
 
         var src = (Character*)p.SourceAddress;
         var sourceIsHumanoid = IsHumanoidSkeleton(skel);
-        var sourceModelCharaId = src->ModelContainer.ModelCharaId;
-        var ids = EnemyNpcIdentityResolver?.Invoke(p.SourceAddress) ?? default;
+        // Use the identity captured at SCHEDULE time (source alive). A live read here races the
+        // source's post-death teardown: a torn-down monster reports ModelCharaId=0 and may no longer
+        // resolve, so the clone would be built as a default human (the "stretched human limb" bug).
+        CaptureSourceIdentity(p); // no-op if already captured; fallback only
+        var sourceModelCharaId = p.SourceModelCharaId;
+        var ids = (BNpcBaseId: p.BNpcBaseId, BNpcNameId: p.BNpcNameId);
         // Appearance must be decided from actor/model identity, not just skeleton
         // topology. Some monster models use human-like skeletons; routing those
         // through the humanoid copy path bootstraps them as player-shaped clones.
@@ -1309,10 +1336,10 @@ public unsafe class DismembermentController : IDisposable
             // The limb bone isn't on the skeleton yet — the model/skeleton is still loading, or a
             // placeholder/wrong model got built (the cause of the rare "phantom": an un-collapsed
             // full body near the corpse, common at battle start / for big uncached monster models).
-            // Hide the WHOLE body until the bone resolves so no full figure is ever shown; the scale
-            // write is per-frame and reversible, so once the real skeleton loads HideAllButLimb takes
-            // over and the engine restores the limb. Drop the clone if it never resolves.
-            HideEntireBody(skel);
+            // Park the whole clone far away until the bone resolves so no full figure is ever shown;
+            // this touches only the root transform (restored by ApplyHandoffPose), never per-bone
+            // scale, so the limb later appears at full size. Drop the clone if it never resolves.
+            HideEntireBody(c);
             if (++c.ResolveFramesWaited >= MaxResolveFrames)
             {
                 log.Warning($"Dismember: clone idx={c.ObjectIndex} bone '{c.LimbRootBone}' never resolved on clone skeleton; dropping");
@@ -2289,34 +2316,25 @@ public unsafe class DismembermentController : IDisposable
         }
     }
 
-    // Zero-scale every bone (main + partial skeletons) so a clone whose limb bone hasn't resolved
-    // yet shows nothing instead of a full body. Same per-frame, reversible scale mechanism as
-    // HideAllButLimb: the moment we stop calling this (limb resolved) the engine rewrites each
-    // bone's scale, so HideAllButLimb cleanly reveals just the severed limb.
-    private void HideEntireBody(SkeletonAccess skel)
+    // Park the whole clone far below until its limb bone resolves, so no full body ever shows
+    // near the corpse. This moves ONLY the skeleton root transform — it does NOT touch any
+    // per-bone pose or scale, so nothing is corrupted. The instant the limb resolves,
+    // ApplyHandoffPose restores the transform and HideAllButLimb reveals just the severed limb
+    // at its true size (zeroing per-bone scale here used to leak into the armed snapshot and
+    // shrink the limb).
+    private static readonly Vector3 ParkBelow = new(0f, -10000f, 0f);
+    private void HideEntireBody(Clone c)
     {
-        var pose = skel.Pose;
-        var n = Math.Min(skel.BoneCount, skel.ParentCount);
-        for (int i = 0; i < n; i++)
-        {
-            ref var m = ref pose->ModelPose.Data[i];
-            m.Scale.X = 0.0001f; m.Scale.Y = 0.0001f; m.Scale.Z = 0.0001f; // NOT 0 — singular matrix => NaN glitch
-        }
-
-        var skeleton = skel.CharBase->Skeleton;
-        if (skeleton == null) return;
-        for (int ps = 1; ps < skeleton->PartialSkeletonCount; ps++)
-        {
-            var partial = &skeleton->PartialSkeletons[ps];
-            var ppose = partial->GetHavokPose(0);
-            if (ppose == null || ppose->Skeleton == null || ppose->ModelInSync == 0) continue;
-            var cnt = ppose->ModelPose.Length;
-            for (int b = 0; b < cnt; b++)
-            {
-                ref var m = ref ppose->ModelPose.Data[b];
-                m.Scale.X = 0.0001f; m.Scale.Y = 0.0001f; m.Scale.Z = 0.0001f;
-            }
-        }
+        var obj = (GameObject*)c.Chara;
+        obj->Position = ParkBelow;
+        var drawObj = obj->DrawObject;
+        if (drawObj == null) return;
+        drawObj->Position = ParkBelow;
+        var sk = ((CharacterBase*)drawObj)->Skeleton;
+        if (sk == null) return;
+        sk->Transform.Position.X = ParkBelow.X;
+        sk->Transform.Position.Y = ParkBelow.Y;
+        sk->Transform.Position.Z = ParkBelow.Z;
     }
 
     private static bool IsDescendantOrSelf(SkeletonAccess skel, int bone, int root)
