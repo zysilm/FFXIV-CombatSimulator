@@ -15,6 +15,7 @@ using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using BepuSimulation = BepuPhysics.Simulation;
 using RenderModel = FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model;
+using RenderMaterial = FFXIVClientStructs.FFXIV.Client.Graphics.Render.Material;
 
 namespace CombatSimulator.Animation;
 
@@ -133,6 +134,10 @@ public unsafe class DismembermentController : IDisposable
         public List<(int Slot, nint Ptr)>? GearHiddenModels; // nulled model pointers, restored on despawn
         public HashSet<int>? GearHiddenSlots;                // slots already cached (avoid dup caching)
         public Vector3 GearExtraOffset;                      // body-frame offset bone->piece centroid
+        public bool GearHideSkin;                            // clothing: hide the baked-in skin material(s)
+        public List<(int Idx, nint Ptr)>? GearHiddenMaterials; // nulled skin material pointers (restored)
+        public HashSet<int>? GearHiddenMatSet;
+        public HashSet<int>? GearMatLogged;                  // material paths already logged (diagnostics)
     }
 
     private sealed class HandoffSnapshot
@@ -214,6 +219,7 @@ public unsafe class DismembermentController : IDisposable
         public int SourceSkeletonParentCount;
         public int SourceSkeletonSignature;
         public int GearKeepModelSlot = -1;
+        public bool GearHideSkin;
     }
 
     private readonly List<Clone> clones = new();
@@ -365,7 +371,8 @@ public unsafe class DismembermentController : IDisposable
     /// <paramref name="keepModelSlot"/> (Head=0, Ear=5, Neck=6, Wrist=7, RFinger=8, LFinger=9), freezes
     /// it, and tumbles it from <paramref name="attachBone"/>. The caller is expected to unequip the same
     /// slot on the real body afterward (KO strip), so the piece looks like it fell off. Player-only.</summary>
-    public void SpawnGearDrop(nint sourceAddress, string attachBone, int keepModelSlot, string? glamourBase64)
+    public void SpawnGearDrop(nint sourceAddress, string attachBone, int keepModelSlot, string? glamourBase64,
+        bool hideSkin = false)
     {
         if (sourceAddress == nint.Zero || string.IsNullOrEmpty(attachBone) || keepModelSlot < 0) return;
         // Dedupe by kept model slot, not bone: hats and earrings share the j_kao attach bone.
@@ -391,6 +398,7 @@ public unsafe class DismembermentController : IDisposable
             Delay = 0f,
             GlamourBase64 = glamourBase64,
             GearKeepModelSlot = keepModelSlot,
+            GearHideSkin = hideSkin,
         };
         CaptureSourceIdentity(p);
         TryRefreshHandoff(p, 1f / 60f);
@@ -637,6 +645,7 @@ public unsafe class DismembermentController : IDisposable
             ExpectedSkeletonParentCount = p.SourceSkeletonParentCount,
             ExpectedSkeletonSignature = p.SourceSkeletonSignature,
             GearKeepModelSlot = p.GearKeepModelSlot,
+            GearHideSkin = p.GearHideSkin,
         });
         log.Info($"Dismember: clone idx={index} bone={p.LimbRootBone} at ({severancePos.X:F1},{severancePos.Y:F1},{severancePos.Z:F1})");
     }
@@ -1602,6 +1611,7 @@ public unsafe class DismembermentController : IDisposable
         // (models load a few frames after EnableDraw, and a glamour redraw can repopulate them).
         HideNonKeptModels(c);
         HideWeapons(c);
+        if (c.GearHideSkin) HideSkinMaterials(c); // clothing: drop the baked-in body skin, keep the cloth
 
         if (!c.Armed)
         {
@@ -1722,6 +1732,66 @@ public unsafe class DismembermentController : IDisposable
         foreach (var (slot, ptr) in c.GearHiddenModels)
             if (slot >= 0 && slot < cb->SlotCount && cb->Models[slot] == null)
                 cb->Models[slot] = (RenderModel*)ptr;
+    }
+
+    // Clothing only: an equipment "top" model bakes in the body skin as a SEPARATE material (e.g. a
+    // /body/ skin .mtrl) alongside the cloth material. Null the skin material pointer(s) on the kept
+    // model so only the cloth renders. Identified by the resource path ("/body/" = skin; cloth is
+    // "/equipment/", accessories are "/accessory/"), so this is a no-op for hats/accessories. Pointers
+    // are cached and restored on despawn. NOTE: nulling a material is riskier than a model (the renderer
+    // indexes materials per-submesh); kept behind the clothing toggle.
+    private RenderModel* GetKeptModel(Clone c)
+    {
+        if (c.Chara == null || c.GearKeepModelSlot < 0) return null;
+        var drawObj = ((GameObject*)c.Chara)->DrawObject;
+        if (drawObj == null) return null;
+        var cb = (CharacterBase*)drawObj;
+        if (cb->Models == null || c.GearKeepModelSlot >= cb->SlotCount) return null;
+        return cb->Models[c.GearKeepModelSlot];
+    }
+
+    private void HideSkinMaterials(Clone c)
+    {
+        var model = GetKeptModel(c);
+        if (model == null || model->Materials == null) return;
+        c.GearHiddenMaterials ??= new List<(int, nint)>();
+        c.GearHiddenMatSet ??= new HashSet<int>();
+
+        // Re-null already-identified skin slots each frame (survives a glamour redraw); cheap.
+        foreach (var i in c.GearHiddenMatSet)
+            if (i < model->MaterialCount) model->Materials[i] = null;
+
+        // Only read paths until armed — after that the clone is frozen and won't redraw.
+        if (c.Armed) return;
+        for (int i = 0; i < model->MaterialCount; i++)
+        {
+            if (c.GearHiddenMatSet.Contains(i)) continue;
+            var mat = model->Materials[i];
+            if (mat == null) continue;
+            var rh = mat->MaterialResourceHandle;
+            if (rh == null) continue;
+            var path = rh->FileName.ToString();
+            c.GearMatLogged ??= new HashSet<int>();
+            if (c.GearMatLogged.Add(i))
+                log.Info($"GearDrop: clone idx={c.ObjectIndex} mat[{i}] = {path}");
+            if (!string.IsNullOrEmpty(path) && path.Contains("/body/", StringComparison.OrdinalIgnoreCase))
+            {
+                c.GearHiddenMatSet.Add(i);
+                c.GearHiddenMaterials.Add((i, (nint)mat));
+                model->Materials[i] = null;
+                log.Info($"GearDrop: clone idx={c.ObjectIndex} hid skin mat[{i}]");
+            }
+        }
+    }
+
+    private void RestoreHiddenMaterials(Clone c)
+    {
+        if (c.GearHiddenMaterials == null) return;
+        var model = GetKeptModel(c);
+        if (model == null || model->Materials == null) return;
+        foreach (var (idx, ptr) in c.GearHiddenMaterials)
+            if (idx >= 0 && idx < model->MaterialCount && model->Materials[idx] == null)
+                model->Materials[idx] = (RenderMaterial*)ptr;
     }
 
     // Collision shape for a dropped gear piece. A flat box (like the weapon-drop box) instead of a
@@ -2733,7 +2803,8 @@ public unsafe class DismembermentController : IDisposable
     {
         try
         {
-            // Put the nulled model pointers back so the game's CharacterBase destructor frees them.
+            // Put the nulled model/material pointers back so the game's destructor frees them.
+            if (c.GearHiddenMaterials != null) RestoreHiddenMaterials(c);
             if (c.GearHiddenModels != null) RestoreHiddenModels(c);
 
             if (simulation != null)
