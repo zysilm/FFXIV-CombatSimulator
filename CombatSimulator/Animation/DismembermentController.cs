@@ -38,6 +38,9 @@ public unsafe class DismembermentController : IDisposable
     private const float LimbHalfLength = 0.14f;
     private const float LimbMass = 4f;
     private const int MaxPendingFrames = 120;
+    private const uint CloneSlotStart = 200;
+    private const uint CloneSlotEndExclusive = 249;
+    private const int ReservedPlayerCloneSlots = 8;
 
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
@@ -49,6 +52,7 @@ public unsafe class DismembermentController : IDisposable
     private TypedIndex limbShapeIndex;
     private BodyInertia limbInertia;
     private uint nextEntityId = 0xF2000001;
+    private long nextCloneSeq;
 
     public float DismemberActivationImpulse { get; set; }
     public bool EnablePcDismemberNpcCollision { get; set; }
@@ -79,6 +83,7 @@ public unsafe class DismembermentController : IDisposable
         public nint SourceAddress;
         public string LimbRootBone = "";
         public int ObjectIndex = -1;
+        public long CreatedSeq;
         public BattleChara* Chara;
         public IGameObject? GameObjectRef;
         public Vector3 SeveranceWorldPos;
@@ -443,12 +448,10 @@ public unsafe class DismembermentController : IDisposable
 
         var clientObjMgr = ClientObjectManager.Instance();
         if (clientObjMgr == null) return;
-        var hint = FindFreeObjectHint(clientObjMgr);
-        if (hint == 0xFFFFFFFF) { log.Warning("Dismember: no free clone slot"); return; }
-        var createResult = clientObjMgr->CreateBattleCharacter(hint);
-        if (createResult == 0xFFFFFFFF) { log.Warning($"Dismember: CreateBattleCharacter failed (hint={hint})"); return; }
+        var createResult = TryCreateCloneActor(clientObjMgr, isPlayerControlledSource, severancePos, out var index);
+        if (createResult == 0xFFFFFFFF)
+            return;
 
-        var index = (int)createResult;
         allocatedIndices.Add(index);
         var obj = clientObjMgr->GetObjectByIndex((ushort)index);
         if (obj == null) { allocatedIndices.Remove(index); log.Warning("Dismember: object null after create"); return; }
@@ -478,6 +481,7 @@ public unsafe class DismembermentController : IDisposable
             SourceAddress = p.SourceAddress,
             LimbRootBone = p.LimbRootBone,
             ObjectIndex = index,
+            CreatedSeq = nextCloneSeq++,
             Chara = chara,
             GameObjectRef = gameObjectRef,
             SeveranceWorldPos = severancePos,
@@ -488,6 +492,105 @@ public unsafe class DismembermentController : IDisposable
             Handoff = handoff,
         });
         log.Info($"Dismember: clone idx={index} bone={p.LimbRootBone} at ({severancePos.X:F1},{severancePos.Y:F1},{severancePos.Z:F1})");
+    }
+
+    private uint TryCreateCloneActor(ClientObjectManager* mgr, bool isPlayerControlledSource, Vector3 spawnPos, out int index)
+    {
+        index = -1;
+        if (!isPlayerControlledSource)
+            TrimNonPlayerClonesForReserve(spawnPos);
+
+        for (var pass = 0; pass < 2; pass++)
+        {
+            var createResult = TryCreateCloneActorInFreeSlot(mgr, isPlayerControlledSource, out index);
+            if (createResult != 0xFFFFFFFF)
+                return createResult;
+
+            if (!TryReclaimNonPlayerClone(spawnPos))
+                break;
+        }
+
+        log.Warning(isPlayerControlledSource
+            ? "Dismember: no free clone slot for player piece"
+            : "Dismember: no free clone slot for actor piece");
+        return 0xFFFFFFFF;
+    }
+
+    private uint TryCreateCloneActorInFreeSlot(ClientObjectManager* mgr, bool isPlayerControlledSource, out int index)
+    {
+        index = -1;
+        var nonPlayerLimit = (int)(CloneSlotEndExclusive - CloneSlotStart) - ReservedPlayerCloneSlots;
+        if (!isPlayerControlledSource && CountNonPlayerClones() >= nonPlayerLimit)
+            return 0xFFFFFFFF;
+
+        for (uint hint = CloneSlotStart; hint < CloneSlotEndExclusive; hint++)
+        {
+            if (allocatedIndices.Contains((int)hint)) continue;
+            if (mgr->GetObjectByIndex((ushort)hint) != null) continue;
+
+            var createResult = mgr->CreateBattleCharacter(hint);
+            if (createResult == 0xFFFFFFFF)
+            {
+                log.Warning($"Dismember: CreateBattleCharacter failed (hint={hint})");
+                continue;
+            }
+
+            index = (int)createResult;
+            return createResult;
+        }
+
+        return 0xFFFFFFFF;
+    }
+
+    private int CountNonPlayerClones()
+    {
+        var count = 0;
+        foreach (var c in clones)
+            if (!c.IsPlayerControlledSource)
+                count++;
+        return count;
+    }
+
+    private void TrimNonPlayerClonesForReserve(Vector3 spawnPos)
+    {
+        var nonPlayerLimit = (int)(CloneSlotEndExclusive - CloneSlotStart) - ReservedPlayerCloneSlots;
+        while (CountNonPlayerClones() >= nonPlayerLimit)
+        {
+            if (!TryReclaimNonPlayerClone(spawnPos))
+                return;
+        }
+    }
+
+    private bool TryReclaimNonPlayerClone(Vector3 spawnPos)
+    {
+        var victimIndex = -1;
+        long oldestSeq = long.MaxValue;
+        var farthestDistSq = -1f;
+
+        for (int i = 0; i < clones.Count; i++)
+        {
+            var c = clones[i];
+            if (c.IsPlayerControlledSource)
+                continue;
+
+            var distSq = Vector3.DistanceSquared(c.SeveranceWorldPos, spawnPos);
+            if (c.CreatedSeq < oldestSeq ||
+                (c.CreatedSeq == oldestSeq && distSq > farthestDistSq))
+            {
+                oldestSeq = c.CreatedSeq;
+                farthestDistSq = distSq;
+                victimIndex = i;
+            }
+        }
+
+        if (victimIndex < 0)
+            return false;
+
+        var victim = clones[victimIndex];
+        log.Info($"Dismember: reclaiming clone idx={victim.ObjectIndex}");
+        DespawnClone(victim);
+        clones.RemoveAt(victimIndex);
+        return true;
     }
 
     private void SetupCloneAppearance(Character* target, Character* source, GameObject* obj,
@@ -2120,21 +2223,6 @@ public unsafe class DismembermentController : IDisposable
             log.Warning(ex, $"Dismember: despawn clone idx={c.ObjectIndex} failed");
         }
         allocatedIndices.Remove(c.ObjectIndex);
-    }
-
-    private uint FindFreeObjectHint(ClientObjectManager* mgr)
-    {
-        // Window 200-299 (companions use 100-199). Must avoid slots our own live clones hold, or the
-        // game's CreateBattleCharacter collides and fails for the 2nd+ limb. Also check the real
-        // object table: deleted actors can remain present for a few frames, and stop/start may leave
-        // recently-used slots unavailable even after our bookkeeping was cleared.
-        for (uint hint = 200; hint < 300; hint++)
-        {
-            if (allocatedIndices.Contains((int)hint)) continue;
-            if (mgr->GetObjectByIndex((ushort)hint) != null) continue;
-            return hint;
-        }
-        return 0xFFFFFFFF;
     }
 
     private (StaticHandle, TypedIndex) CreateTerrainPatch(float centerX, float centerZ, float aboveY)
