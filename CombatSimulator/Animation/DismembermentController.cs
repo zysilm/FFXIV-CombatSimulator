@@ -358,8 +358,8 @@ public unsafe class DismembermentController : IDisposable
     public void SpawnFor(nint sourceAddress, string limbRootBone, float delay, string? glamourBase64)
     {
         if (sourceAddress == nint.Zero || string.IsNullOrEmpty(limbRootBone)) return;
-        if (clones.Exists(c => c.SourceAddress == sourceAddress && c.LimbRootBone == limbRootBone)) return;
-        if (pending.Exists(p => p.SourceAddress == sourceAddress && p.LimbRootBone == limbRootBone)) return;
+        if (clones.Exists(c => c.SourceAddress == sourceAddress && c.LimbRootBone == limbRootBone && c.GearKeepModelSlot < 0)) return;
+        if (pending.Exists(p => p.SourceAddress == sourceAddress && p.LimbRootBone == limbRootBone && p.GearKeepModelSlot < 0)) return;
         var p = new Pending
         {
             SourceAddress = sourceAddress,
@@ -375,8 +375,8 @@ public unsafe class DismembermentController : IDisposable
     public void SpawnForImmediate(nint sourceAddress, string limbRootBone, string? glamourBase64)
     {
         if (sourceAddress == nint.Zero || string.IsNullOrEmpty(limbRootBone)) return;
-        if (clones.Exists(c => c.SourceAddress == sourceAddress && c.LimbRootBone == limbRootBone)) return;
-        if (pending.Exists(p => p.SourceAddress == sourceAddress && p.LimbRootBone == limbRootBone)) return;
+        if (clones.Exists(c => c.SourceAddress == sourceAddress && c.LimbRootBone == limbRootBone && c.GearKeepModelSlot < 0)) return;
+        if (pending.Exists(p => p.SourceAddress == sourceAddress && p.LimbRootBone == limbRootBone && p.GearKeepModelSlot < 0)) return;
 
         var p = new Pending
         {
