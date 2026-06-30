@@ -1329,14 +1329,26 @@ public unsafe class DismembermentController : IDisposable
         var boneWorldRot = Quaternion.Normalize(skelRot * modelRot);
 
         var def = ResolveHeadDef();
-        var radius = MathF.Max(0.085f, def.CapsuleRadius * 1.15f);
-        var halfY = MathF.Max(0.105f, def.CapsuleRadius + def.CapsuleHalfLength * 0.75f);
-        var halfZ = MathF.Max(0.075f, def.CapsuleRadius);
-        var box = new Box(radius * 2f, halfY * 2f, halfZ * 2f);
-        var shape = simulation.Shapes.Add(box);
-        var inertia = box.ComputeInertia(MathF.Max(1f, def.Mass));
+        // Head shape: a skull sphere + a small forward "nose" sphere (compound), sized to the real
+        // head. A box only thuds on its flat faces and, being oversized, leaves the head floating; a
+        // sphere rolls naturally and the offset nose gives the irregular wobble of a rolling head.
+        // Cheap — two spheres, no mesh sampling.
+        var headRadius = MathF.Max(0.085f, def.CapsuleRadius * 1.05f);
+        var noseRadius = headRadius * 0.36f;
+        // Forward (+Z local) and slightly down — the face/nose side. If it reads as the wrong side,
+        // flip the Z sign.
+        var noseLocal = new Vector3(0f, -headRadius * 0.2f, headRadius * 0.92f);
 
-        var centerOffset = MathF.Min(0.075f, halfY * 0.6f);
+        var skullShape = simulation.Shapes.Add(new Sphere(headRadius));
+        var noseShape = simulation.Shapes.Add(new Sphere(noseRadius));
+        bufferPool!.Take<CompoundChild>(2, out var headChildren);
+        headChildren[0] = new CompoundChild { ShapeIndex = skullShape, LocalPosition = Vector3.Zero, LocalOrientation = Quaternion.Identity };
+        headChildren[1] = new CompoundChild { ShapeIndex = noseShape, LocalPosition = noseLocal, LocalOrientation = Quaternion.Identity };
+        var shape = simulation.Shapes.Add(new Compound(headChildren));
+        var inertia = new Sphere(headRadius).ComputeInertia(MathF.Max(1f, def.Mass));
+
+        // Center the skull on the head's visual center (the bone sits near the base of the skull).
+        var centerOffset = headRadius * 0.5f;
         var center = boneWorldPos + Vector3.Transform(Vector3.UnitY, boneWorldRot) * centerOffset;
         var handle = simulation.Bodies.Add(BodyDescription.CreateDynamic(
             new RigidPose(center, boneWorldRot),
@@ -1347,6 +1359,8 @@ public unsafe class DismembermentController : IDisposable
         SeedBodyVelocity(handle, c, c.LimbRootBone);
 
         var rig = new LimbRig();
+        rig.Shapes.Add(skullShape);
+        rig.Shapes.Add(noseShape);
         rig.Shapes.Add(shape);
         rig.Bodies.Add(new LimbBody
         {
