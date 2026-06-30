@@ -145,6 +145,7 @@ public unsafe class DismembermentController : IDisposable
         public Vector3 GearBoxHalf;                          // collision box half-extents (for the sink clamp)
         public int GearArmedFrames;                          // frames since the rigid body was armed
         public int GearRestFrames;                           // consecutive near-rest frames
+        public int GearPoseRelaxFrames;                      // bounded render-pose settling progress
         public int GearDeflateFrames;                        // bounded fake cloth-collapse progress
     }
 
@@ -1728,9 +1729,9 @@ public unsafe class DismembermentController : IDisposable
             }
             CaptureGearPartialPoseSnapshots(c, skel.CharBase);
 
-            // Clothing/pants: cache the rest pose by bone index so the skirt-hang / deflate drives can
+            // Hat/clothing/pants: cache the rest pose by bone index so the settle / deflate drives can
             // read captured offsets without searching the snapshot list each frame.
-            if (c.GearKeepModelSlot is 1 or 3)
+            if (c.GearKeepModelSlot is 0 or 1 or 3)
             {
                 c.GearCapById = new Dictionary<int, (Vector3, Quaternion)>(c.GearPoseSnapshot.Count);
                 foreach (var s in c.GearPoseSnapshot)
@@ -1798,9 +1799,10 @@ public unsafe class DismembermentController : IDisposable
         var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
         var bodyPos = bodyRef.Pose.Position;
         var bodyRot = bodyRef.Pose.Orientation;
-        UpdateGearDeflateProgress(c, bodyRef.Velocity.Linear, bodyRef.Velocity.Angular);
+        UpdateGearSettleProgress(c, bodyRef.Velocity.Linear, bodyRef.Velocity.Angular);
+        var renderRot = ResolveGearRenderRotation(c, bodyRot);
         // Box centre is at bone + GearExtraOffset (in the body frame), so back it out to place the bone.
-        var skelPos = bodyPos - Vector3.Transform(c.LimbRootModelPos + c.GearExtraOffset, bodyRot);
+        var skelPos = bodyPos - Vector3.Transform(c.LimbRootModelPos + c.GearExtraOffset, renderRot);
 
         // Keep the visible piece from sinking through the ground. The flat collision box is sized to
         // enclose the whole piece, so its lowest world point ≈ the piece's lowest point — clamp THAT
@@ -1808,7 +1810,7 @@ public unsafe class DismembermentController : IDisposable
         // through the terrain). The render is lifted; the (invisible) physics box may stay lower.
         if (!float.IsNegativeInfinity(c.GearGroundY))
         {
-            var boxLowestY = bodyPos.Y - WorldVerticalHalfExtent(bodyRot, c.GearBoxHalf);
+            var boxLowestY = bodyPos.Y - WorldVerticalHalfExtent(renderRot, c.GearBoxHalf);
             var target = c.GearGroundY + 0.02f;
             if (boxLowestY < target) skelPos.Y += target - boxLowestY;
         }
@@ -1820,13 +1822,13 @@ public unsafe class DismembermentController : IDisposable
             sk->Transform.Position.X = skelPos.X;
             sk->Transform.Position.Y = skelPos.Y;
             sk->Transform.Position.Z = skelPos.Z;
-            sk->Transform.Rotation.X = bodyRot.X;
-            sk->Transform.Rotation.Y = bodyRot.Y;
-            sk->Transform.Rotation.Z = bodyRot.Z;
-            sk->Transform.Rotation.W = bodyRot.W;
+            sk->Transform.Rotation.X = renderRot.X;
+            sk->Transform.Rotation.Y = renderRot.Y;
+            sk->Transform.Rotation.Z = renderRot.Z;
+            sk->Transform.Rotation.W = renderRot.W;
         }
         drawObj->Position = skelPos;
-        drawObj->Rotation = bodyRot;
+        drawObj->Rotation = renderRot;
         ((GameObject*)c.Chara)->Position = skelPos;
 
         ApplyGearDeflate(skel, c);
@@ -1885,38 +1887,95 @@ public unsafe class DismembermentController : IDisposable
     private static Quaternion ResolveGearInitialRotation(Clone c, Quaternion skeletonRotation)
         => c.GearKeepModelSlot is 2 or 3 or 4 ? skeletonRotation : c.SeveranceWorldRot;
 
-    private static bool IsDeflatableGear(Clone c)
-        => c.GearKeepModelSlot is 1 or 3;
+    private static bool IsPoseRelaxGear(Clone c)
+        => c.GearKeepModelSlot is 0 or 1 or 3;
 
-    private void UpdateGearDeflateProgress(Clone c, Vector3 linearVelocity, Vector3 angularVelocity)
+    private static bool IsDeflatableGear(Clone c)
+        => c.GearKeepModelSlot is 0 or 1 or 3;
+
+    private void UpdateGearSettleProgress(Clone c, Vector3 linearVelocity, Vector3 angularVelocity)
     {
-        if (!IsDeflatableGear(c)) return;
+        if (!IsPoseRelaxGear(c) && !IsDeflatableGear(c)) return;
 
         c.GearArmedFrames++;
-        var nearRest = linearVelocity.LengthSquared() < 0.20f && angularVelocity.LengthSquared() < 4.0f;
+        var nearRest = linearVelocity.LengthSquared() < 0.28f && angularVelocity.LengthSquared() < 5.0f;
         c.GearRestFrames = nearRest
             ? Math.Min(c.GearRestFrames + 1, 30)
             : Math.Max(0, c.GearRestFrames - 2);
 
-        // Prefer collapse after landing/settling, but also start eventually in case the piece keeps a
+        // Prefer settling after landing, but also start eventually in case the piece keeps a
         // tiny residual velocity while resting on body colliders.
+        if (IsPoseRelaxGear(c) && (c.GearRestFrames >= 6 || c.GearArmedFrames >= 45))
+            c.GearPoseRelaxFrames = Math.Min(c.GearPoseRelaxFrames + 1, 55);
+
         if (c.GearRestFrames >= 8 || c.GearArmedFrames >= 55)
-            c.GearDeflateFrames = Math.Min(c.GearDeflateFrames + 1, 45);
+            c.GearDeflateFrames = Math.Min(c.GearDeflateFrames + 1, 60);
     }
+
+    private Quaternion ResolveGearRenderRotation(Clone c, Quaternion bodyRot)
+    {
+        if (!IsPoseRelaxGear(c) || c.GearPoseRelaxFrames <= 0)
+            return bodyRot;
+
+        var t = Math.Clamp(c.GearPoseRelaxFrames / 55f, 0f, 1f);
+        t = t * t * (3f - 2f * t);
+
+        var target = c.GearKeepModelSlot == 0
+            ? BuildFlatHatRestRotation(bodyRot)
+            : BuildFlatGarmentRestRotation(bodyRot);
+        return Quaternion.Normalize(Quaternion.Slerp(bodyRot, target, t));
+    }
+
+    private static Quaternion BuildYawRotation(Quaternion source)
+    {
+        var fwd = Vector3.Transform(Vector3.UnitZ, source);
+        fwd.Y = 0f;
+        if (fwd.LengthSquared() < 1e-6f) return Quaternion.Identity;
+        return Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.Atan2(fwd.X, fwd.Z));
+    }
+
+    // Hat: keep the local up axis vertical so the brim/crown rest flat instead of on edge.
+    private static Quaternion BuildFlatHatRestRotation(Quaternion source)
+        => BuildYawRotation(source);
+
+    // Garments: lay the standing skeleton on its back/front. Local Y (body height) becomes horizontal,
+    // local Z becomes world-up, so the shell no longer visually spears into the ground.
+    private static Quaternion BuildFlatGarmentRestRotation(Quaternion source)
+        => Quaternion.Normalize(BuildYawRotation(source) * Quaternion.CreateFromAxisAngle(Vector3.UnitX, -MathF.PI * 0.5f));
 
     private void ApplyGearDeflate(SkeletonAccess skel, Clone c)
     {
         if (!IsDeflatableGear(c) || c.GearDeflateFrames <= 0 || c.GearCapById == null)
             return;
 
-        var t = Math.Clamp(c.GearDeflateFrames / 45f, 0f, 1f);
+        var t = Math.Clamp(c.GearDeflateFrames / 60f, 0f, 1f);
         var strength = t * t * (3f - 2f * t); // smoothstep
         if (strength <= 0f) return;
 
-        if (c.GearKeepModelSlot == 1)
+        if (c.GearKeepModelSlot == 0)
+            ApplyHatGearDeflate(skel, c, strength);
+        else if (c.GearKeepModelSlot == 1)
             ApplyBodyGearDeflate(skel, c, strength);
         else if (c.GearKeepModelSlot == 3)
             ApplyPantsGearDeflate(skel, c, strength);
+    }
+
+    private void ApplyHatGearDeflate(SkeletonAccess skel, Clone c, float strength)
+    {
+        if (!TryCapturedModelPos(skel, c, "j_kao", out var cap)) return;
+        var idx = boneService.ResolveBoneIndex(skel, "j_kao");
+        if (idx < 0 || idx >= skel.BoneCount) return;
+
+        ref var m = ref skel.Pose->ModelPose.Data[idx];
+        m.Translation.X = cap.X;
+        m.Translation.Y = cap.Y;
+        m.Translation.Z = cap.Z;
+
+        var vertical = 1f + (0.62f - 1f) * strength;
+        var spread = 1f + 0.10f * strength;
+        m.Scale.X *= spread;
+        m.Scale.Y *= vertical;
+        m.Scale.Z *= spread;
     }
 
     private void ApplyBodyGearDeflate(SkeletonAccess skel, Clone c, float strength)
@@ -1936,13 +1995,13 @@ public unsafe class DismembermentController : IDisposable
             var capWorld = ModelToWorld(cap.T, skelPos, skelRot);
             var relWorld = capWorld - waistWorld;
             var horizontal = new Vector3(relWorld.X, 0f, relWorld.Z);
-            var down = 0.035f + MathF.Min(0.16f, relWorld.Length() * 0.22f);
+            var down = 0.070f + MathF.Min(0.22f, relWorld.Length() * 0.30f);
             var targetWorld = new Vector3(
-                waistWorld.X + horizontal.X * 0.56f,
+                waistWorld.X + horizontal.X * 0.42f,
                 capWorld.Y - down,
-                waistWorld.Z + horizontal.Z * 0.56f);
+                waistWorld.Z + horizontal.Z * 0.42f);
             var target = WorldToModel(ClampWorldAboveGearGround(c, targetWorld), skelPos, skelRot);
-            WriteDeflatedBone(skel, i, cap.T, target, strength, 0.58f);
+            WriteDeflatedBone(skel, i, cap.T, target, strength, 0.46f);
         }
     }
 
@@ -1967,13 +2026,13 @@ public unsafe class DismembermentController : IDisposable
             var capWorld = ModelToWorld(cap.T, skelPos, skelRot);
             var relWorld = capWorld - centerWorld;
             var horizontal = new Vector3(relWorld.X, 0f, relWorld.Z);
-            var down = name == "j_kosi" ? 0.035f : 0.018f + MathF.Min(0.10f, relWorld.Length() * 0.15f);
+            var down = name == "j_kosi" ? 0.080f : 0.040f + MathF.Min(0.15f, relWorld.Length() * 0.22f);
             var targetWorld = new Vector3(
-                centerWorld.X + horizontal.X * 0.35f,
+                centerWorld.X + horizontal.X * 0.24f,
                 capWorld.Y - down,
-                centerWorld.Z + horizontal.Z * 0.35f);
+                centerWorld.Z + horizontal.Z * 0.24f);
             var target = WorldToModel(ClampWorldAboveGearGround(c, targetWorld), skelPos, skelRot);
-            WriteDeflatedBone(skel, i, cap.T, target, strength, 0.62f);
+            WriteDeflatedBone(skel, i, cap.T, target, strength, 0.48f);
         }
     }
 
