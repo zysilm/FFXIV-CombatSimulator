@@ -38,6 +38,10 @@ public unsafe class DismembermentController : IDisposable
     private const float LimbHalfLength = 0.14f;
     private const float LimbMass = 4f;
     private const int MaxPendingFrames = 120;
+    // A clone is drawn (per the original timing) but its limb bone may not resolve immediately
+    // on a cold model load. Keep it hidden until the bone appears; only after this many frames
+    // (~10s) do we conclude the wrong/placeholder model was built and drop the clone.
+    private const int MaxResolveFrames = 600;
     private const uint CloneSlotStart = 200;
     private const uint CloneSlotEndExclusive = 249;
     private const int ReservedPlayerCloneSlots = 8;
@@ -114,6 +118,7 @@ public unsafe class DismembermentController : IDisposable
         public int GlamourFramesUntil = -1;
         public int GlamourAttemptsLeft;
         public HandoffSnapshot? Handoff;
+        public int ResolveFramesWaited; // frames spent (hidden) waiting for the limb bone to load
     }
 
     private sealed class HandoffSnapshot
@@ -1299,7 +1304,22 @@ public unsafe class DismembermentController : IDisposable
 
         if (c.LimbIndex < 0)
             c.LimbIndex = boneService.ResolveBoneIndex(skel, c.LimbRootBone);
-        if (c.LimbIndex < 0) return true; // nothing we can do until the limb resolves
+        if (c.LimbIndex < 0)
+        {
+            // The limb bone isn't on the skeleton yet — the model/skeleton is still loading, or a
+            // placeholder/wrong model got built (the cause of the rare "phantom": an un-collapsed
+            // full body near the corpse, common at battle start / for big uncached monster models).
+            // Hide the WHOLE body until the bone resolves so no full figure is ever shown; the scale
+            // write is per-frame and reversible, so once the real skeleton loads HideAllButLimb takes
+            // over and the engine restores the limb. Drop the clone if it never resolves.
+            HideEntireBody(skel);
+            if (++c.ResolveFramesWaited >= MaxResolveFrames)
+            {
+                log.Warning($"Dismember: clone idx={c.ObjectIndex} bone '{c.LimbRootBone}' never resolved on clone skeleton; dropping");
+                return false;
+            }
+            return true;
+        }
         if (!IsCloneSkeletonCompatible(c, skel))
             return false;
 
@@ -2264,6 +2284,36 @@ public unsafe class DismembermentController : IDisposable
             {
                 ref var m = ref ppose->ModelPose.Data[b];
                 m.Translation.X = 0f; m.Translation.Y = -1000f; m.Translation.Z = 0f;
+                m.Scale.X = 0.0001f; m.Scale.Y = 0.0001f; m.Scale.Z = 0.0001f;
+            }
+        }
+    }
+
+    // Zero-scale every bone (main + partial skeletons) so a clone whose limb bone hasn't resolved
+    // yet shows nothing instead of a full body. Same per-frame, reversible scale mechanism as
+    // HideAllButLimb: the moment we stop calling this (limb resolved) the engine rewrites each
+    // bone's scale, so HideAllButLimb cleanly reveals just the severed limb.
+    private void HideEntireBody(SkeletonAccess skel)
+    {
+        var pose = skel.Pose;
+        var n = Math.Min(skel.BoneCount, skel.ParentCount);
+        for (int i = 0; i < n; i++)
+        {
+            ref var m = ref pose->ModelPose.Data[i];
+            m.Scale.X = 0.0001f; m.Scale.Y = 0.0001f; m.Scale.Z = 0.0001f; // NOT 0 — singular matrix => NaN glitch
+        }
+
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton == null) return;
+        for (int ps = 1; ps < skeleton->PartialSkeletonCount; ps++)
+        {
+            var partial = &skeleton->PartialSkeletons[ps];
+            var ppose = partial->GetHavokPose(0);
+            if (ppose == null || ppose->Skeleton == null || ppose->ModelInSync == 0) continue;
+            var cnt = ppose->ModelPose.Length;
+            for (int b = 0; b < cnt; b++)
+            {
+                ref var m = ref ppose->ModelPose.Data[b];
                 m.Scale.X = 0.0001f; m.Scale.Y = 0.0001f; m.Scale.Z = 0.0001f;
             }
         }
