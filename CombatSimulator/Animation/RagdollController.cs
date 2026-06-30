@@ -6357,7 +6357,6 @@ public unsafe class RagdollController : IDisposable
     // ragdoll bodies within this radius of the bone are hit.
     private const float StrikeMinSpeed = 1.5f;      // m/s
     private const float StrikeContactRadius = 0.6f; // m
-
     // A strike knocks the body AWAY from the contact point (outward + a little up), with strength
     // from the swing SPEED — using the raw swing velocity would drag the body along the arc (toward
     // the attacker on the retract phase).
@@ -6374,6 +6373,7 @@ public unsafe class RagdollController : IDisposable
     private void ApplyStrikeImpulse(Vector3 point, Vector3 swingVel, float radius)
     {
         if (simulation == null) return;
+        if (standingActive) return;
         var speed = swingVel.Length();
         var radiusSq = radius * radius;
         foreach (var rb in ragdollBones)
@@ -6430,6 +6430,7 @@ public unsafe class RagdollController : IDisposable
     private void ApplyStrikeImpulseSegment(Vector3 a, Vector3 b, Vector3 swingVel, float radius)
     {
         if (simulation == null) return;
+        if (standingActive) return;
         var speed = swingVel.Length();
         var ab = b - a;
         var abLenSq = ab.LengthSquared();

@@ -1801,8 +1801,11 @@ public unsafe class DismembermentController : IDisposable
         var bodyRot = bodyRef.Pose.Orientation;
         UpdateGearSettleProgress(c, bodyRef.Velocity.Linear, bodyRef.Velocity.Angular);
         var renderRot = ResolveGearRenderRotation(c, bodyRot);
-        // Box centre is at bone + GearExtraOffset (in the body frame), so back it out to place the bone.
-        var skelPos = bodyPos - Vector3.Transform(c.LimbRootModelPos + c.GearExtraOffset, renderRot);
+        var visualScale = ResolveGearVisualSquashFactor(c);
+        var visualCenterOffset = ScaleVector(c.LimbRootModelPos + c.GearExtraOffset, visualScale);
+        // Box centre is at the visual piece centre. Back out the *visually scaled* centre offset so
+        // nonuniform squash does not make the rendered shell float or sink relative to the physics body.
+        var skelPos = bodyPos - Vector3.Transform(visualCenterOffset, renderRot);
 
         // Keep the visible piece from sinking through the ground. The flat collision box is sized to
         // enclose the whole piece, so its lowest world point ≈ the piece's lowest point — clamp THAT
@@ -1810,7 +1813,8 @@ public unsafe class DismembermentController : IDisposable
         // through the terrain). The render is lifted; the (invisible) physics box may stay lower.
         if (!float.IsNegativeInfinity(c.GearGroundY))
         {
-            var boxLowestY = bodyPos.Y - WorldVerticalHalfExtent(renderRot, c.GearBoxHalf);
+            var visualHalf = ScaleVector(c.GearBoxHalf, visualScale);
+            var boxLowestY = bodyPos.Y - WorldVerticalHalfExtent(renderRot, visualHalf);
             var target = c.GearGroundY + 0.02f;
             if (boxLowestY < target) skelPos.Y += target - boxLowestY;
         }
@@ -1829,7 +1833,7 @@ public unsafe class DismembermentController : IDisposable
         }
         drawObj->Position = skelPos;
         drawObj->Rotation = renderRot;
-        ApplyGearVisualSquash(c, drawObj);
+        ApplyGearVisualSquash(c, drawObj, visualScale);
         ((GameObject*)c.Chara)->Position = skelPos;
 
         ApplyGearDeflate(skel, c);
@@ -1927,14 +1931,14 @@ public unsafe class DismembermentController : IDisposable
         return Quaternion.Normalize(Quaternion.Slerp(bodyRot, target, t));
     }
 
-    private void ApplyGearVisualSquash(Clone c, DrawObject* drawObj)
+    private Vector3 ResolveGearVisualSquashFactor(Clone c)
     {
-        if (!IsDeflatableGear(c) || c.GearDeflateFrames <= 0 || drawObj == null)
-            return;
+        if (!IsDeflatableGear(c) || c.GearDeflateFrames <= 0)
+            return Vector3.One;
 
         var t = Math.Clamp(c.GearDeflateFrames / 60f, 0f, 1f);
         var strength = t * t * (3f - 2f * t);
-        if (strength <= 0f) return;
+        if (strength <= 0f) return Vector3.One;
 
         var target = c.GearKeepModelSlot switch
         {
@@ -1944,7 +1948,15 @@ public unsafe class DismembermentController : IDisposable
             _ => Vector3.One,
         };
 
-        var factor = Vector3.Lerp(Vector3.One, target, strength);
+        return Vector3.Lerp(Vector3.One, target, strength);
+    }
+
+    private static Vector3 ScaleVector(Vector3 v, Vector3 scale)
+        => new(v.X * scale.X, v.Y * scale.Y, v.Z * scale.Z);
+
+    private void ApplyGearVisualSquash(Clone c, DrawObject* drawObj, Vector3 factor)
+    {
+        if (drawObj == null) return;
         drawObj->Scale = new Vector3(
             c.SourceScale.X * factor.X,
             c.SourceScale.Y * factor.Y,
@@ -2483,13 +2495,13 @@ public unsafe class DismembermentController : IDisposable
         // feet for a shared model). All approximate - tune against the in-game piece.
         var (half, off) = c.GearKeepModelSlot switch
         {
-            0 => (new Vector3(0.13f, 0.05f, 0.14f), new Vector3(0f,  0.08f, 0f)), // hat: above skull, flat
-            1 => (new Vector3(0.13f, 0.16f, 0.08f), new Vector3(0f,  0.16f, 0f)), // body/top: torso, near waist
+            0 => (new Vector3(0.11f, 0.035f, 0.12f), new Vector3(0f,  0.075f, 0f)), // hat: above skull, flat
+            1 => (new Vector3(0.105f, 0.13f, 0.065f), new Vector3(0f,  0.14f, 0f)), // body/top: torso, near waist
             2 => (new Vector3(0.30f, 0.10f, 0.12f), Vector3.Zero),                // hands/gloves: center between hands
-            3 => (new Vector3(0.17f, 0.30f, 0.12f), Vector3.Zero),                // legs/pants: center through both legs
+            3 => (new Vector3(0.135f, 0.24f, 0.095f), Vector3.Zero),              // legs/pants: center through both legs
             4 => (new Vector3(0.18f, 0.04f, 0.16f), new Vector3(0f, 0.035f, 0f)), // feet/shoes: paired fallback
-            6 => (new Vector3(0.09f, 0.08f, 0.06f), new Vector3(0f, -0.06f, 0f)), // neck: necklace drapes below
-            _ => (new Vector3(0.05f, 0.05f, 0.05f), Vector3.Zero),                // ears/wrist/ring: small chunk at bone
+            6 => (new Vector3(0.065f, 0.055f, 0.045f), new Vector3(0f, -0.045f, 0f)), // neck: necklace drapes below
+            _ => (new Vector3(0.035f, 0.035f, 0.035f), Vector3.Zero),             // ears/wrist/ring: small chunk at bone
         };
         half *= scale;
         offsetWorld = off * scale;
