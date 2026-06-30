@@ -30,8 +30,6 @@ public unsafe class WeaponDropController : IDisposable
     // Single shared simulation across all dropped weapons
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
-    private TypedIndex weaponShapeIndex;
-    private BodyInertia weaponInertia;
 
     // Snapshot of physics-relevant config used when sim was created.
     // If user changes any of these, we recreate the sim on next render frame
@@ -55,6 +53,8 @@ public unsafe class WeaponDropController : IDisposable
         public BodyHandle? Off;
         public int MainBoneIndex = -1;
         public int OffBoneIndex = -1;
+        public TypedIndex? MainShape;
+        public TypedIndex? OffShape;
         public StaticHandle? GroundTile;
         public TypedIndex? GroundShape;
     }
@@ -125,6 +125,11 @@ public unsafe class WeaponDropController : IDisposable
         // those buffers, and this weapon simulation lives for the whole session.
         if (entry.GroundShape.HasValue && bufferPool != null)
             simulation.Shapes.RemoveAndDispose(entry.GroundShape.Value, bufferPool);
+        // Per-weapon box shapes are created per drop, so dispose them with the entry.
+        if (entry.MainShape.HasValue && bufferPool != null)
+            simulation.Shapes.RemoveAndDispose(entry.MainShape.Value, bufferPool);
+        if (entry.OffShape.HasValue && bufferPool != null)
+            simulation.Shapes.RemoveAndDispose(entry.OffShape.Value, bufferPool);
     }
 
     private void OnRenderFrame()
@@ -201,9 +206,9 @@ public unsafe class WeaponDropController : IDisposable
 
         var entry = new Entry { CharacterAddress = characterAddress };
         if (mainDraw != null)
-            entry.Main = TryCreateWeaponBody(skel, WeaponMainHandBones, skelWorldPos, skelWorldRot, out entry.MainBoneIndex);
+            entry.Main = TryCreateWeaponBody(skel, WeaponMainHandBones, skelWorldPos, skelWorldRot, mainDraw, out entry.MainBoneIndex, out entry.MainShape);
         if (offDraw != null)
-            entry.Off = TryCreateWeaponBody(skel, WeaponOffHandBones, skelWorldPos, skelWorldRot, out entry.OffBoneIndex);
+            entry.Off = TryCreateWeaponBody(skel, WeaponOffHandBones, skelWorldPos, skelWorldRot, offDraw, out entry.OffBoneIndex, out entry.OffShape);
 
         if (!entry.Main.HasValue && !entry.Off.HasValue)
         {
@@ -298,9 +303,11 @@ public unsafe class WeaponDropController : IDisposable
     }
 
     private BodyHandle? TryCreateWeaponBody(SkeletonAccess skel, string[] boneCandidates,
-        Vector3 skelWorldPos, Quaternion skelWorldRot, out int boneIndex)
+        Vector3 skelWorldPos, Quaternion skelWorldRot, DrawObject* weaponDraw, out int boneIndex,
+        out TypedIndex? shapeIndex)
     {
         boneIndex = -1;
+        shapeIndex = null;
         foreach (var name in boneCandidates)
         {
             var idx = boneService.ResolveBoneIndex(skel, name);
@@ -314,14 +321,53 @@ public unsafe class WeaponDropController : IDisposable
         var worldPos = skelWorldPos + Vector3.Transform(modelPos, skelWorldRot);
         var worldRot = Quaternion.Normalize(skelWorldRot * modelRot);
 
+        // Per-weapon flat box: a capsule rolls forever, a box settles on a face. Length is taken from
+        // the weapon's own skeleton span where available (so a long weapon gets a long box, a small
+        // one stays small), falling back to the configured length; thin across so it lies flat.
+        var halfLength = MathF.Max(config.WeaponDropHalfLength, EstimateWeaponHalfLength(weaponDraw));
+        var halfWidth = MathF.Max(0.01f, config.WeaponDropRadius);
+        var halfThick = halfWidth * 0.4f;
+        var box = new Box(halfWidth * 2f, halfLength * 2f, halfThick * 2f);
+        var shape = simulation!.Shapes.Add(box);
+        shapeIndex = shape;
+        var inertia = box.ComputeInertia(config.WeaponDropMass);
+
         // Zero initial velocity (no jitter, no inheritance) — user requirement.
-        var handle = simulation!.Bodies.Add(BodyDescription.CreateDynamic(
+        var handle = simulation.Bodies.Add(BodyDescription.CreateDynamic(
             new RigidPose(worldPos, worldRot),
             default(BodyVelocity),
-            weaponInertia,
-            new CollidableDescription(weaponShapeIndex, 0.04f),
+            inertia,
+            new CollidableDescription(shape, 0.04f),
             new BodyActivityDescription(0.01f)));
         return handle;
+    }
+
+    /// <summary>Estimate half the weapon's longest dimension from its own skeleton's bone spread
+    /// (model space × draw scale). Returns 0 when the weapon has no usable multi-bone skeleton.</summary>
+    private float EstimateWeaponHalfLength(DrawObject* weaponDraw)
+    {
+        if (weaponDraw == null) return 0f;
+        var wskelN = boneService.TryGetSkeletonFromCharBase((CharacterBase*)weaponDraw);
+        if (wskelN == null) return 0f;
+        var wskel = wskelN.Value;
+        if (wskel.BoneCount < 2) return 0f;
+
+        var min = new Vector3(float.MaxValue);
+        var max = new Vector3(float.MinValue);
+        for (int i = 0; i < wskel.BoneCount; i++)
+        {
+            ref var b = ref wskel.Pose->ModelPose.Data[i];
+            var p = new Vector3(b.Translation.X, b.Translation.Y, b.Translation.Z);
+            min = Vector3.Min(min, p);
+            max = Vector3.Max(max, p);
+        }
+        var span = max - min;
+        var scale = weaponDraw->Scale.X <= 0f ? 1f : weaponDraw->Scale.X;
+        // Longest axis of the bone AABB; pad a little since bones rarely reach the mesh tip. Clamp to
+        // sane weapon lengths so a stray bone can't produce an absurd box.
+        var longest = MathF.Max(span.X, MathF.Max(span.Y, span.Z)) * scale;
+        if (longest < 0.05f) return 0f;
+        return Math.Clamp(longest * 0.6f, 0.05f, 0.8f);
     }
 
     /// <summary>Resolve the drawn weapon DrawObject for a slot, or null if unarmed/unloaded.</summary>
@@ -397,10 +443,7 @@ public unsafe class WeaponDropController : IDisposable
             new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -simGravity, 0), simDamping, simAngularDamping),
             new SolveDescription(simSolverIterations, 1));
 
-        var weaponShape = new Capsule(config.WeaponDropRadius, config.WeaponDropHalfLength * 2f);
-        weaponShapeIndex = simulation.Shapes.Add(weaponShape);
-        weaponInertia = weaponShape.ComputeInertia(config.WeaponDropMass);
-
+        // Weapon collision shapes are now built per weapon (per-drop boxes) in TryCreateWeaponBody.
         log.Info($"WeaponDropController: simulation created (gravity={simGravity:F2}, bounce={simBounce:F2}, friction={simFriction:F2}, iter={simSolverIterations})");
     }
 

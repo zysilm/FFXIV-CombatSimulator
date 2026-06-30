@@ -61,11 +61,16 @@ public unsafe class BoneTransformService : IDisposable
     public SkeletonAccess? TryGetSkeleton(nint characterAddress)
     {
         if (characterAddress == nint.Zero) return null;
-
         var gameObj = (GameObject*)characterAddress;
         if (gameObj->DrawObject == null) return null;
+        return TryGetSkeletonFromCharBase((CharacterBase*)gameObj->DrawObject);
+    }
 
-        var charBase = (CharacterBase*)gameObj->DrawObject;
+    /// <summary>Build skeleton access directly from a draw object's CharacterBase (e.g. a weapon's
+    /// own draw object, which has its own skeleton). Null if the pose isn't readable.</summary>
+    public SkeletonAccess? TryGetSkeletonFromCharBase(CharacterBase* charBase)
+    {
+        if (charBase == null) return null;
         var skeleton = charBase->Skeleton;
         if (skeleton == null || skeleton->PartialSkeletonCount < 1) return null;
 
