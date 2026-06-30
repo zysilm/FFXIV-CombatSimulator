@@ -168,6 +168,9 @@ public partial class Configuration : IPluginConfiguration
     public bool ActionGuardDefaultMigratedToR2 { get; set; } = false;
     public bool ActionGuardVfxDefaultMigratedToHeavySwing { get; set; } = false;
     public bool ActionBasicAttackDefaultMigratedToSouth { get; set; } = false;
+    public bool ActionMeleeRangeDefaultMigratedTo5 { get; set; } = false;
+    public bool ActionAttackShapeDefaultsMigrated20260630 { get; set; } = false;
+    public bool EnemyDismembermentDefaultsMigrated20260630 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -381,9 +384,9 @@ public partial class Configuration : IPluginConfiguration
     // When on, each hidden limb also spawns a clone that shows ONLY that limb and tumbles away (the
     // "rolls away" half). Off = just hide on the body. POC: local player only.
     public bool EnableDismemberRollaway { get; set; } = true;
-    public bool EnableEnemyDismemberment { get; set; } = false;
-    public int EnemyHumanoidDismembermentCount { get; set; } = 3;
-    public float EnemyMonsterDismembermentBonePercent { get; set; } = 50.0f;
+    public bool EnableEnemyDismemberment { get; set; } = true;
+    public int EnemyHumanoidDismembermentCount { get; set; } = 0;
+    public float EnemyMonsterDismembermentBonePercent { get; set; } = 100.0f;
 
     // Death collapse — physics-driven guided collapse on death (relaxation family + directed
     // knee power-loss). Config lives in GuidedCollapse; see DEATH_COLLAPSE_RESEARCH.md.
@@ -543,8 +546,8 @@ public partial class Configuration : IPluginConfiguration
     // Player light-combo + hitbox tuning
     public float LightComboWindow { get; set; } = 0.6f;    // time to chain the next swing
     public float LightSwingInterval { get; set; } = 0.4f;  // min time between swings (cadence)
-    public float PlayerHitboxRange { get; set; } = 4f;     // melee basic-attack reach (yalms), measured to the target's SURFACE
-    public float PlayerHitboxAngleDeg { get; set; } = 90f; // melee selection cone full angle
+    public float PlayerHitboxRange { get; set; } = 5f;     // melee basic-attack reach (yalms), measured to the target's SURFACE
+    public float PlayerHitboxAngleDeg { get; set; } = 100f; // melee selection cone full angle
     // Edge-to-edge reach: the target's hitbox radius x this is added to the melee select range, so a
     // large enemy is hittable from its surface (not its centre) while a small enemy is unchanged. This
     // is how FFXIV itself measures melee range. 0 = old centre-to-centre, 1 = exact surface, >1 = lenient.
@@ -571,7 +574,7 @@ public partial class Configuration : IPluginConfiguration
     public int LightAttackPotency { get; set; } = 120;
     // Soft-target selection: ranged basic attack / ranged skills use a longer, wider selection cone
     // and pick the smallest-angle enemy (not the nearest).
-    public float RangedBasicRange { get; set; } = 22f;
+    public float RangedBasicRange { get; set; } = 25f;
     public float RangedSelectAngleDeg { get; set; } = 160f;
 
     // Telegraph overlay
@@ -609,6 +612,9 @@ public partial class Configuration : IPluginConfiguration
         MigrateActionGuardDefaultButton();
         MigrateActionGuardVfxDefault();
         MigrateActionBasicAttackDefaultButton();
+        MigrateActionMeleeRangeDefault();
+        MigrateActionAttackShapeDefaults();
+        MigrateEnemyDismembermentDefaults();
         MigrateGuidedCollapse();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
@@ -706,6 +712,52 @@ public partial class Configuration : IPluginConfiguration
             ActionBasicAttackGamepadButton = GamepadButtons.South;
 
         ActionBasicAttackDefaultMigratedToSouth = true;
+        Save();
+    }
+
+    private void MigrateActionMeleeRangeDefault()
+    {
+        if (ActionMeleeRangeDefaultMigratedTo5)
+            return;
+
+        if (MathF.Abs(PlayerHitboxRange - 4f) < 0.001f)
+            PlayerHitboxRange = 5f;
+
+        ActionMeleeRangeDefaultMigratedTo5 = true;
+        Save();
+    }
+
+    private void MigrateActionAttackShapeDefaults()
+    {
+        if (ActionAttackShapeDefaultsMigrated20260630)
+            return;
+
+        if (MathF.Abs(PlayerHitboxRange - 4f) < 0.001f)
+            PlayerHitboxRange = 5f;
+        if (MathF.Abs(PlayerHitboxAngleDeg - 90f) < 0.001f)
+            PlayerHitboxAngleDeg = 100f;
+        if (MathF.Abs(RangedBasicRange - 22f) < 0.001f)
+            RangedBasicRange = 25f;
+
+        ActionAttackShapeDefaultsMigrated20260630 = true;
+        Save();
+    }
+
+    private void MigrateEnemyDismembermentDefaults()
+    {
+        if (EnemyDismembermentDefaultsMigrated20260630)
+            return;
+
+        if (!EnableEnemyDismemberment &&
+            EnemyHumanoidDismembermentCount == 3 &&
+            MathF.Abs(EnemyMonsterDismembermentBonePercent - 50.0f) < 0.001f)
+        {
+            EnableEnemyDismemberment = true;
+            EnemyHumanoidDismembermentCount = 0;
+            EnemyMonsterDismembermentBonePercent = 100.0f;
+        }
+
+        EnemyDismembermentDefaultsMigrated20260630 = true;
         Save();
     }
 

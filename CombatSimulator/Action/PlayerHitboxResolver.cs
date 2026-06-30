@@ -12,6 +12,11 @@ namespace CombatSimulator.ActionCombat;
 /// </summary>
 public sealed class PlayerHitboxResolver
 {
+    private const float CloseMeleeSurfaceDistance = 0.3f;
+    private const float CloseMeleeAngleDeg = 180f;
+    private const float PointBlankMeleeSurfaceDistance = 0.1f;
+    private const float PointBlankMeleeAngleDeg = 360f;
+
     private readonly CombatEngine combatEngine;
     private readonly NpcSelector npcSelector;
     private readonly Configuration config;
@@ -52,7 +57,16 @@ public sealed class PlayerHitboxResolver
             // selectable from its surface (not its centre), while a small enemy is effectively
             // unchanged. Matches how FFXIV measures melee range.
             var hitR = npc.HitboxRadius * MathF.Max(0f, config.MeleeTargetHitboxReach);
-            if (!CombatGeometry.IsInsideConeAngle(pos, aim, npos, range + hitR, selectAngleDeg))
+            var surfaceDistance = CombatGeometry.Distance2D(pos, npos) - hitR;
+            var angleDeg = selectAngleDeg;
+            if (!smallestAngle)
+            {
+                if (surfaceDistance <= PointBlankMeleeSurfaceDistance)
+                    angleDeg = PointBlankMeleeAngleDeg;
+                else if (surfaceDistance <= CloseMeleeSurfaceDistance)
+                    angleDeg = CloseMeleeAngleDeg;
+            }
+            if (!CombatGeometry.IsInsideConeAngle(pos, aim, npos, range + hitR, angleDeg))
                 continue;
 
             float metric;
@@ -66,7 +80,7 @@ public sealed class PlayerHitboxResolver
             {
                 // Nearest by SURFACE distance so a big enemy whose body is in front beats a small one
                 // whose centre is closer but whose edge is farther.
-                metric = CombatGeometry.Distance2D(pos, npos) - hitR;
+                metric = surfaceDistance;
             }
 
             if (metric < bestMetric)
