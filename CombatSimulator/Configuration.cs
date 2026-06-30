@@ -380,7 +380,7 @@ public partial class Configuration : IPluginConfiguration
     public List<string> DismemberPocBones { get; set; } = new();
     // When on, each hidden limb also spawns a clone that shows ONLY that limb and tumbles away (the
     // "rolls away" half). Off = just hide on the body. POC: local player only.
-    public bool EnableDismemberRollaway { get; set; } = false;
+    public bool EnableDismemberRollaway { get; set; } = true;
     public bool EnableEnemyDismemberment { get; set; } = false;
     public int EnemyHumanoidDismembermentCount { get; set; } = 3;
     public float EnemyMonsterDismembermentBonePercent { get; set; } = 50.0f;
