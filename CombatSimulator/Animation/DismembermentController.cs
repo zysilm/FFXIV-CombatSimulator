@@ -70,6 +70,10 @@ public unsafe class DismembermentController : IDisposable
     /// drop to sink a floating head onto the ground.</summary>
     public float HeadShapeDrop { get; set; }
 
+    /// <summary>Optional lookup for client-spawned BNpc identity. Native BNpc setup is the stable path
+    /// for monster/creature dismember clones; selected world NPCs may not have these ids cached.</summary>
+    public Func<nint, (uint BNpcBaseId, uint BNpcNameId)>? EnemyNpcIdentityResolver { get; set; }
+
     private sealed class Clone
     {
         public nint SourceAddress;
@@ -435,12 +439,14 @@ public unsafe class DismembermentController : IDisposable
         var isPlayerControlledSource = player != null && player.Address == p.SourceAddress;
 
         var src = (Character*)p.SourceAddress;
+        var sourceIsHumanoid = IsHumanoidSkeleton(skel);
 
         var clientObjMgr = ClientObjectManager.Instance();
         if (clientObjMgr == null) return;
-        var hint = FindFreeObjectHint();
+        var hint = FindFreeObjectHint(clientObjMgr);
+        if (hint == 0xFFFFFFFF) { log.Warning("Dismember: no free clone slot"); return; }
         var createResult = clientObjMgr->CreateBattleCharacter(hint);
-        if (createResult == 0xFFFFFFFF) { log.Warning("Dismember: CreateBattleCharacter failed (no slot)"); return; }
+        if (createResult == 0xFFFFFFFF) { log.Warning($"Dismember: CreateBattleCharacter failed (hint={hint})"); return; }
 
         var index = (int)createResult;
         allocatedIndices.Add(index);
@@ -458,14 +464,7 @@ public unsafe class DismembermentController : IDisposable
         obj->Rotation = 0f;
         WriteCloneName((GameObject*)obj, index);
 
-        const CharacterSetupContainer.CopyFlags flags =
-            CharacterSetupContainer.CopyFlags.ClassJob | CharacterSetupContainer.CopyFlags.WeaponHiding;
-        character->CharacterSetup.CopyFromCharacter(src, flags);
-        character->CharacterSetup.CopyFromCharacter(character, CharacterSetupContainer.CopyFlags.None);
-        obj->ObjectKind = ObjectKind.Pc;
-        obj->SubKind = 0;
-        obj->TargetableStatus = 0;
-        WriteCloneName((GameObject*)obj, index);
+        SetupCloneAppearance(character, src, (GameObject*)obj, p.SourceAddress, sourceIsHumanoid);
         character->SetMode(CharacterModes.Normal, 0);
 
         IGameObject? gameObjectRef = null;
@@ -489,6 +488,44 @@ public unsafe class DismembermentController : IDisposable
             Handoff = handoff,
         });
         log.Info($"Dismember: clone idx={index} bone={p.LimbRootBone} at ({severancePos.X:F1},{severancePos.Y:F1},{severancePos.Z:F1})");
+    }
+
+    private void SetupCloneAppearance(Character* target, Character* source, GameObject* obj,
+        nint sourceAddress, bool sourceIsHumanoid)
+    {
+        if (!sourceIsHumanoid)
+        {
+            obj->ObjectKind = ObjectKind.BattleNpc;
+            obj->SubKind = (byte)BattleNpcSubKind.Combatant;
+
+            var ids = EnemyNpcIdentityResolver?.Invoke(sourceAddress) ?? default;
+            if (ids.BNpcBaseId > 0)
+            {
+                target->CharacterSetup.SetupBNpc(ids.BNpcBaseId, ids.BNpcNameId);
+                log.Info($"Dismember: monster clone SetupBNpc({ids.BNpcBaseId}, {ids.BNpcNameId})");
+            }
+            else
+            {
+                target->ModelContainer.ModelCharaId = source->ModelContainer.ModelCharaId;
+                log.Info($"Dismember: monster clone ModelCharaId={target->ModelContainer.ModelCharaId}");
+            }
+
+            target->CharacterSetup.CopyFromCharacter(target, CharacterSetupContainer.CopyFlags.None);
+            obj->ObjectKind = ObjectKind.BattleNpc;
+            obj->SubKind = (byte)BattleNpcSubKind.Combatant;
+        }
+        else
+        {
+            const CharacterSetupContainer.CopyFlags flags =
+                CharacterSetupContainer.CopyFlags.ClassJob | CharacterSetupContainer.CopyFlags.WeaponHiding;
+            target->CharacterSetup.CopyFromCharacter(source, flags);
+            target->CharacterSetup.CopyFromCharacter(target, CharacterSetupContainer.CopyFlags.None);
+            obj->ObjectKind = ObjectKind.Pc;
+            obj->SubKind = 0;
+        }
+
+        obj->TargetableStatus = 0;
+        WriteCloneName((GameObject*)obj, (int)obj->ObjectIndex);
     }
 
     private static Vector3 ComputeOutwardDirection(
@@ -2085,13 +2122,19 @@ public unsafe class DismembermentController : IDisposable
         allocatedIndices.Remove(c.ObjectIndex);
     }
 
-    private uint FindFreeObjectHint()
+    private uint FindFreeObjectHint(ClientObjectManager* mgr)
     {
         // Window 200-299 (companions use 100-199). Must avoid slots our own live clones hold, or the
-        // game's CreateBattleCharacter collides and fails for the 2nd+ limb.
-        uint hint = 200;
-        while (hint < 300 && allocatedIndices.Contains((int)hint)) hint++;
-        return hint;
+        // game's CreateBattleCharacter collides and fails for the 2nd+ limb. Also check the real
+        // object table: deleted actors can remain present for a few frames, and stop/start may leave
+        // recently-used slots unavailable even after our bookkeeping was cleared.
+        for (uint hint = 200; hint < 300; hint++)
+        {
+            if (allocatedIndices.Contains((int)hint)) continue;
+            if (mgr->GetObjectByIndex((ushort)hint) != null) continue;
+            return hint;
+        }
+        return 0xFFFFFFFF;
     }
 
     private (StaticHandle, TypedIndex) CreateTerrainPatch(float centerX, float centerZ, float aboveY)

@@ -197,6 +197,7 @@ public unsafe class RagdollController : IDisposable
     public bool IsActive => isActive;
     public bool IsSimulationReady => isActive && simulation != null;
     public nint TargetCharacterAddress => targetCharacterAddress;
+    public uint TargetEntityId => targetEntityId;
 
     /// <summary>Debug draw data for a single ragdoll capsule body.</summary>
     public struct DebugCapsule
@@ -1377,9 +1378,12 @@ public unsafe class RagdollController : IDisposable
     {
         if (string.IsNullOrEmpty(rootName)) return;
 
-        var rootIdx = -1;
-        foreach (var rb in ragdollBones)
-            if (rb.Name == rootName) { rootIdx = rb.BoneIndex; break; }
+        var rootIdx = boneService.ResolveBoneIndex(skel, rootName);
+        if (rootIdx < 0)
+        {
+            foreach (var rb in ragdollBones)
+                if (rb.Name == rootName) { rootIdx = rb.BoneIndex; break; }
+        }
         if (rootIdx < 0) return;
 
         var pose = skel.Pose;

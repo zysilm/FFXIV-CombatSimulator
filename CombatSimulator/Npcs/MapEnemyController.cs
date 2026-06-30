@@ -14,6 +14,7 @@ namespace CombatSimulator.Npcs;
 public sealed unsafe class MapEnemyController
 {
     private const float SenseInterval = 0.35f;
+    private const uint SimulatedEntityIdFloor = 0xF0000000;
 
     private readonly IObjectTable objectTable;
     private readonly Configuration config;
@@ -203,7 +204,7 @@ public sealed unsafe class MapEnemyController
                 return false;
             if (objectTable.LocalPlayer != null && player.EntityId == objectTable.LocalPlayer.EntityId)
                 return false;
-            if (player.EntityId >= 0xF0000000)
+            if (player.EntityId >= SimulatedEntityIdFloor)
                 return false;
             if (isCompanionSourceReserved(player.EntityId))
                 return false;
@@ -215,6 +216,9 @@ public sealed unsafe class MapEnemyController
             return false;
 
         if ((byte)obj.ObjectKind != (byte)ObjectKind.BattleNpc)
+            return false;
+
+        if (obj.EntityId >= SimulatedEntityIdFloor)
             return false;
 
         return true;

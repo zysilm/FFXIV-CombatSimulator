@@ -13,6 +13,8 @@ namespace CombatSimulator.Npcs;
 
 public unsafe class NpcSelector : IDisposable
 {
+    private const uint SimulatedEntityIdFloor = 0xF0000000;
+
     private readonly IObjectTable objectTable;
     private readonly ITargetManager targetManager;
     private readonly Configuration config;
@@ -158,6 +160,8 @@ public unsafe class NpcSelector : IDisposable
     {
         if (obj is not IPlayerCharacter && (byte)obj.ObjectKind != (byte)ObjectKind.BattleNpc)
             return (null, "Target is not a BattleNpc.");
+        if (obj.EntityId >= SimulatedEntityIdFloor)
+            return (null, "Synthetic plugin actor is not a map enemy.");
 
         foreach (var existing in selectedNpcs)
         {

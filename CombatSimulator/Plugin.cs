@@ -129,6 +129,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
         weaponDropController = new WeaponDropController(boneTransformService, config, log);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
+        dismembermentController.EnemyNpcIdentityResolver = address =>
+        {
+            var npc = FindNpcByAddress(address);
+            return npc != null ? (npc.BNpcBaseId, npc.BNpcNameId) : (0u, 0u);
+        };
         // Spin the body-side stump at the cut so a kicked-off piece makes the stump visibly flick.
         // The body is whichever ragdoll drives that address (an NPC's own, else the player/default).
         dismembermentController.ReactionRecoilSink = (addr, bone, angularVel) =>
@@ -675,7 +680,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // Weapon drop is part of ragdoll — same activation delay.
         weaponDropController.SpawnFor(address, config.NpcRagdollActivationDelay);
 
-        if (npcRagdolls.ContainsKey(address)) return;
+        if (HasLiveNpcRagdoll(address)) return;
 
         log.Info($"NPC death ragdoll: activating for 0x{address:X}");
 
@@ -703,6 +708,28 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         controller.Activate(address, config.NpcRagdollActivationDelay);
         npcRagdolls[address] = controller;
+    }
+
+    private bool HasLiveNpcRagdoll(nint address)
+    {
+        if (!npcRagdolls.TryGetValue(address, out var controller))
+            return false;
+
+        var stale = !controller.IsActive || controller.TargetCharacterAddress != address;
+        if (!stale)
+        {
+            var obj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)address;
+            stale = obj == null ||
+                    (controller.TargetEntityId != 0 && obj->EntityId != 0 && obj->EntityId != controller.TargetEntityId);
+        }
+
+        if (!stale)
+            return true;
+
+        controller.Dispose();
+        npcRagdolls.Remove(address);
+        log.Info($"NPC death ragdoll: removed stale entry for 0x{address:X}");
+        return false;
     }
 
     private sealed class GlamourerApplyJob
