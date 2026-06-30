@@ -1329,27 +1329,20 @@ public unsafe class DismembermentController : IDisposable
         var boneWorldRot = Quaternion.Normalize(skelRot * modelRot);
 
         var def = ResolveHeadDef();
-        // Head shape: a skull sphere + a small forward "nose" sphere (compound), sized to the real
-        // head. A box only thuds on its flat faces and, being oversized, leaves the head floating; a
-        // sphere rolls naturally and the offset nose gives the irregular wobble of a rolling head.
-        // Cheap — two spheres, no mesh sampling.
-        var headRadius = MathF.Max(0.085f, def.CapsuleRadius * 1.05f);
-        var noseRadius = headRadius * 0.36f;
-        // Forward (+Z local) and slightly down — the face/nose side. If it reads as the wrong side,
-        // flip the Z sign.
-        var noseLocal = new Vector3(0f, -headRadius * 0.2f, headRadius * 0.92f);
+        // Head shape: a faceted convex hull roughly following the head's contour — flatter face,
+        // fuller back of skull, brow/cheek/jaw, a chin and a nose bump. Unlike a sphere it has flat
+        // regions, so a rolling head settles on the cheek/back instead of rolling forever; unlike the
+        // old box it still tumbles naturally and isn't oversized (no floating). ~2 dozen points, cheap.
+        var hs = MathF.Max(0.072f, def.CapsuleRadius * 0.92f); // head half-width unit
+        var hullPoints = BuildHeadHullPoints(hs);
+        var hull = new ConvexHull((Span<Vector3>)hullPoints, bufferPool!, out var hullCenter);
+        var shape = simulation.Shapes.Add(hull);
+        var inertia = hull.ComputeInertia(MathF.Max(1f, def.Mass));
 
-        var skullShape = simulation.Shapes.Add(new Sphere(headRadius));
-        var noseShape = simulation.Shapes.Add(new Sphere(noseRadius));
-        bufferPool!.Take<CompoundChild>(2, out var headChildren);
-        headChildren[0] = new CompoundChild { ShapeIndex = skullShape, LocalPosition = Vector3.Zero, LocalOrientation = Quaternion.Identity };
-        headChildren[1] = new CompoundChild { ShapeIndex = noseShape, LocalPosition = noseLocal, LocalOrientation = Quaternion.Identity };
-        var shape = simulation.Shapes.Add(new Compound(headChildren));
-        var inertia = new Sphere(headRadius).ComputeInertia(MathF.Max(1f, def.Mass));
-
-        // Center the skull on the head's visual center (the bone sits near the base of the skull).
-        var centerOffset = headRadius * 0.5f;
-        var center = boneWorldPos + Vector3.Transform(Vector3.UnitY, boneWorldRot) * centerOffset;
+        // The hull is built in the head-bone frame (origin = bone, +Y up, +Z face); its centroid sits
+        // up toward the skull center. Place the body there and offset the bone back down along Y.
+        var centerOffset = hullCenter.Y;
+        var center = boneWorldPos + Vector3.Transform(hullCenter, boneWorldRot);
         var handle = simulation.Bodies.Add(BodyDescription.CreateDynamic(
             new RigidPose(center, boneWorldRot),
             default(BodyVelocity),
@@ -1359,8 +1352,6 @@ public unsafe class DismembermentController : IDisposable
         SeedBodyVelocity(handle, c, c.LimbRootBone);
 
         var rig = new LimbRig();
-        rig.Shapes.Add(skullShape);
-        rig.Shapes.Add(noseShape);
         rig.Shapes.Add(shape);
         rig.Bodies.Add(new LimbBody
         {
@@ -1374,6 +1365,40 @@ public unsafe class DismembermentController : IDisposable
         rig.BoneIndices.Add(c.LimbIndex);
         log.Info($"Dismember: head rig idx={c.ObjectIndex}");
         return rig;
+    }
+
+    // Head contour as a point cloud in the head-bone frame (origin = skull base, +Y up to crown,
+    // +Z forward/face, +X right), in multiples of the half-width unit u. The face (+Z) is kept
+    // flatter and the back of the skull (-Z) fuller, with a forehead, cheeks, jaw, chin and a nose
+    // bump — so the convex hull has flat-ish facets that let a rolling head settle.
+    private static Vector3[] BuildHeadHullPoints(float u)
+    {
+        var p = new[]
+        {
+            new Vector3( 0.00f, 2.05f, -0.10f), // crown
+            new Vector3( 0.55f, 1.75f, -0.20f),
+            new Vector3(-0.55f, 1.75f, -0.20f),
+            new Vector3( 0.00f, 1.70f, -0.95f), // upper back
+            new Vector3( 0.00f, 1.65f,  0.80f), // forehead (flatter)
+            new Vector3( 0.95f, 1.20f, -0.15f), // temples
+            new Vector3(-0.95f, 1.20f, -0.15f),
+            new Vector3( 0.70f, 1.20f,  0.55f), // brow
+            new Vector3(-0.70f, 1.20f,  0.55f),
+            new Vector3( 0.00f, 1.05f, -1.15f), // occiput (fullest back)
+            new Vector3( 1.00f, 0.80f,  0.05f), // mid sides
+            new Vector3(-1.00f, 0.80f,  0.05f),
+            new Vector3( 0.70f, 0.75f,  0.70f), // cheeks
+            new Vector3(-0.70f, 0.75f,  0.70f),
+            new Vector3( 0.00f, 0.85f,  0.95f), // mid-face (flat)
+            new Vector3( 0.00f, 0.70f,  1.18f), // nose
+            new Vector3( 0.65f, 0.30f,  0.10f), // jaw
+            new Vector3(-0.65f, 0.30f,  0.10f),
+            new Vector3( 0.00f, 0.35f, -0.80f), // lower back
+            new Vector3( 0.00f, 0.00f,  0.55f), // chin (forward, low)
+            new Vector3( 0.00f, 0.05f, -0.35f), // neck base
+        };
+        for (int i = 0; i < p.Length; i++) p[i] *= u;
+        return p;
     }
 
     private void DriveLimbRig(SkeletonAccess skel, Clone c)
