@@ -661,6 +661,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         if (address == nint.Zero) return null;
         foreach (var npc in npcSelector.SelectedNpcs)
             if (npc.Address == address && npc.BattleChara != null) return npc;
+        foreach (var npc in npcSpawner.SpawnedNpcs)
+            if (npc.Address == address && npc.BattleChara != null) return npc;
         return null;
     }
 

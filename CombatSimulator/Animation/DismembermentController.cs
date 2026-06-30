@@ -41,6 +41,7 @@ public unsafe class DismembermentController : IDisposable
     private const uint CloneSlotStart = 200;
     private const uint CloneSlotEndExclusive = 249;
     private const int ReservedPlayerCloneSlots = 8;
+    private const int CloneSlotReuseCooldownFrames = 30;
 
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
@@ -53,6 +54,10 @@ public unsafe class DismembermentController : IDisposable
     private BodyInertia limbInertia;
     private uint nextEntityId = 0xF2000001;
     private long nextCloneSeq;
+    private readonly Queue<uint> freeCloneSlots = new();
+    private readonly Queue<(uint Slot, int Frames)> coolingCloneSlots = new();
+    private readonly HashSet<int> coolingCloneSlotSet = new();
+    private bool cloneSlotQueueInitialized;
 
     public float DismemberActivationImpulse { get; set; }
     public bool EnablePcDismemberNpcCollision { get; set; }
@@ -382,6 +387,8 @@ public unsafe class DismembermentController : IDisposable
     {
         try
         {
+            TickCloneSlotCooldowns();
+
             // Tick pending spawns (delay countdown).
             for (int i = pending.Count - 1; i >= 0; i--)
             {
@@ -527,19 +534,29 @@ public unsafe class DismembermentController : IDisposable
     private uint TryCreateCloneActorInFreeSlot(ClientObjectManager* mgr, bool isPlayerControlledSource, out int index)
     {
         index = -1;
+        EnsureCloneSlotQueue();
+
         var nonPlayerLimit = (int)(CloneSlotEndExclusive - CloneSlotStart) - ReservedPlayerCloneSlots;
         if (!isPlayerControlledSource && CountNonPlayerClones() >= nonPlayerLimit)
             return 0xFFFFFFFF;
 
-        for (uint hint = CloneSlotStart; hint < CloneSlotEndExclusive; hint++)
+        var attempts = freeCloneSlots.Count;
+        for (var i = 0; i < attempts; i++)
         {
+            var hint = freeCloneSlots.Dequeue();
             if (allocatedIndices.Contains((int)hint)) continue;
-            if (mgr->GetObjectByIndex((ushort)hint) != null) continue;
+            if (coolingCloneSlotSet.Contains((int)hint)) continue;
+            if (mgr->GetObjectByIndex((ushort)hint) != null)
+            {
+                freeCloneSlots.Enqueue(hint);
+                continue;
+            }
 
             var createResult = mgr->CreateBattleCharacter(hint);
             if (createResult == 0xFFFFFFFF)
             {
                 log.Warning($"Dismember: CreateBattleCharacter failed (hint={hint})");
+                CooldownCloneSlot((int)hint);
                 continue;
             }
 
@@ -548,6 +565,48 @@ public unsafe class DismembermentController : IDisposable
         }
 
         return 0xFFFFFFFF;
+    }
+
+    private void EnsureCloneSlotQueue()
+    {
+        if (cloneSlotQueueInitialized)
+            return;
+
+        for (uint hint = CloneSlotStart; hint < CloneSlotEndExclusive; hint++)
+            freeCloneSlots.Enqueue(hint);
+        cloneSlotQueueInitialized = true;
+    }
+
+    private void CooldownCloneSlot(int slot)
+    {
+        if (slot < CloneSlotStart || slot >= CloneSlotEndExclusive)
+            return;
+        if (!coolingCloneSlotSet.Add(slot))
+            return;
+        coolingCloneSlots.Enqueue(((uint)slot, CloneSlotReuseCooldownFrames));
+    }
+
+    private void TickCloneSlotCooldowns()
+    {
+        if (coolingCloneSlots.Count == 0)
+            return;
+
+        EnsureCloneSlotQueue();
+        var count = coolingCloneSlots.Count;
+        for (var i = 0; i < count; i++)
+        {
+            var item = coolingCloneSlots.Dequeue();
+            item.Frames--;
+            if (item.Frames > 0)
+            {
+                coolingCloneSlots.Enqueue(item);
+                continue;
+            }
+
+            coolingCloneSlotSet.Remove((int)item.Slot);
+            if (!allocatedIndices.Contains((int)item.Slot))
+                freeCloneSlots.Enqueue(item.Slot);
+        }
     }
 
     private int CountNonPlayerClones()
@@ -2231,6 +2290,7 @@ public unsafe class DismembermentController : IDisposable
             log.Warning(ex, $"Dismember: despawn clone idx={c.ObjectIndex} failed");
         }
         allocatedIndices.Remove(c.ObjectIndex);
+        CooldownCloneSlot(c.ObjectIndex);
     }
 
     private (StaticHandle, TypedIndex) CreateTerrainPatch(float centerX, float centerZ, float aboveY)
