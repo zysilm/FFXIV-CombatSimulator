@@ -582,6 +582,89 @@ public unsafe class RagdollController : IDisposable
         useLocalDismemberBones = true;
     }
 
+    private RagdollBoneDef[] BuildActivePhysicsDefsForDismemberment(
+        SkeletonAccess skel,
+        RagdollBoneDef[] defs,
+        Dictionary<string, int> activeNameToIndex)
+    {
+        var severedBones = useLocalDismemberBones ? localDismemberBones : config.DismemberPocBones;
+        if (severedBones == null || severedBones.Count == 0 || defs.Length == 0)
+            return defs;
+
+        var severedRoots = new List<int>();
+        foreach (var boneName in severedBones)
+        {
+            if (string.IsNullOrWhiteSpace(boneName)) continue;
+            var idx = boneService.ResolveBoneIndex(skel, boneName);
+            if (idx >= 0 && !severedRoots.Contains(idx))
+                severedRoots.Add(idx);
+        }
+        if (severedRoots.Count == 0)
+            return defs;
+
+        var physicsRoots = new List<int>();
+        foreach (var def in defs)
+            if (def.ParentName == null && activeNameToIndex.TryGetValue(def.Name, out var idx))
+                physicsRoots.Add(idx);
+
+        var removableRoots = new List<int>(severedRoots.Count);
+        foreach (var root in severedRoots)
+        {
+            var containsPhysicsRoot = false;
+            foreach (var physicsRoot in physicsRoots)
+            {
+                if (IsDescendantOrSelf(skel, physicsRoot, root))
+                {
+                    containsPhysicsRoot = true;
+                    break;
+                }
+            }
+
+            if (!containsPhysicsRoot)
+                removableRoots.Add(root);
+        }
+
+        if (removableRoots.Count == 0)
+            return defs;
+
+        var kept = new List<RagdollBoneDef>(defs.Length);
+        var removedNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var def in defs)
+        {
+            if (!activeNameToIndex.TryGetValue(def.Name, out var idx))
+                continue;
+
+            var severed = false;
+            foreach (var root in removableRoots)
+            {
+                if (IsDescendantOrSelf(skel, idx, root))
+                {
+                    severed = true;
+                    break;
+                }
+            }
+
+            if (severed)
+                removedNames.Add(def.Name);
+            else
+                kept.Add(def);
+        }
+
+        if (removedNames.Count == 0)
+            return defs;
+        if (kept.Count < 2)
+        {
+            log.Warning($"RagdollController: active dismember physics would leave {kept.Count} bodies; keeping full rig.");
+            return defs;
+        }
+
+        foreach (var name in removedNames)
+            activeNameToIndex.Remove(name);
+
+        log.Info($"RagdollController: active dismember physics removed {removedNames.Count}/{defs.Length} bodies.");
+        return kept.ToArray();
+    }
+
     // Ragdoll bone definition
     public struct RagdollBoneDef
     {
@@ -2051,6 +2134,8 @@ public unsafe class RagdollController : IDisposable
             foreach (var def in BoneDefs)
                 defByName[def.Name] = def;
         }
+
+        BoneDefs = BuildActivePhysicsDefsForDismemberment(skel, BoneDefs, nameToIndex);
 
         // Record the active defs so StepAndApply reads capsule extents from the set
         // actually in use (human or generated) rather than re-deriving the human set.
