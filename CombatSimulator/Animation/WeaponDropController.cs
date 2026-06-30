@@ -57,7 +57,7 @@ public unsafe class WeaponDropController : IDisposable
         public TypedIndex? OffShape;
         public StaticHandle? GroundTile;
         public TypedIndex? GroundShape;
-        public List<BodyStaticCollider> BodyColliders = new();
+        public List<BodyKinematicCollider> BodyColliders = new();
     }
     private readonly Dictionary<nint, Entry> entries = new();
 
@@ -65,6 +65,8 @@ public unsafe class WeaponDropController : IDisposable
     {
         public nint CharacterAddress;
         public float Delay;
+        public WeaponSpawnPose? MainPose;
+        public WeaponSpawnPose? OffPose;
     }
     private readonly List<Pending> pending = new();
 
@@ -76,13 +78,28 @@ public unsafe class WeaponDropController : IDisposable
     private const float BodyCollisionMaxRadius = 0.12f;
     private static readonly Vector3 BodyColliderParkPos = new(0, -9999, 0);
 
-    private struct BodyStaticCollider
+    private readonly struct WeaponSpawnPose
     {
-        public StaticHandle Handle;
+        public readonly Vector3 Position;
+        public readonly Quaternion Rotation;
+
+        public WeaponSpawnPose(Vector3 position, Quaternion rotation)
+        {
+            Position = position;
+            Rotation = rotation;
+        }
+    }
+
+    private struct BodyKinematicCollider
+    {
+        public BodyHandle Handle;
         public TypedIndex Shape;
         public int BoneIndex;
         public int ParentBoneIndex;
         public float CenterFactor;
+        public Vector3 PreviousPosition;
+        public Quaternion PreviousOrientation;
+        public bool HasPreviousPose;
     }
 
     public WeaponDropController(BoneTransformService boneService, Configuration config, IPluginLog log)
@@ -106,7 +123,14 @@ public unsafe class WeaponDropController : IDisposable
         if (entries.ContainsKey(characterAddress)) return;
         if (pending.Exists(p => p.CharacterAddress == characterAddress)) return;
 
-        pending.Add(new Pending { CharacterAddress = characterAddress, Delay = MathF.Max(0f, delay) });
+        var poses = CaptureWeaponSpawnPoses(characterAddress);
+        pending.Add(new Pending
+        {
+            CharacterAddress = characterAddress,
+            Delay = MathF.Max(0f, delay),
+            MainPose = poses.Main,
+            OffPose = poses.Off,
+        });
     }
 
     /// <summary>Remove weapon bodies for a character so the weapon mesh returns to default hand parenting.</summary>
@@ -137,7 +161,7 @@ public unsafe class WeaponDropController : IDisposable
         if (entry.GroundTile.HasValue) simulation.Statics.Remove(entry.GroundTile.Value);
         for (int i = 0; i < entry.BodyColliders.Count; i++)
         {
-            simulation.Statics.Remove(entry.BodyColliders[i].Handle);
+            simulation.Bodies.Remove(entry.BodyColliders[i].Handle);
             if (bufferPool != null)
                 simulation.Shapes.RemoveAndDispose(entry.BodyColliders[i].Shape, bufferPool);
         }
@@ -176,7 +200,7 @@ public unsafe class WeaponDropController : IDisposable
                     if (p.Delay <= 0f)
                     {
                         pending.RemoveAt(i);
-                        TrySpawn(p.CharacterAddress);
+                        TrySpawn(p);
                     }
                 }
             }
@@ -208,8 +232,66 @@ public unsafe class WeaponDropController : IDisposable
         }
     }
 
-    private void TrySpawn(nint characterAddress)
+    private (WeaponSpawnPose? Main, WeaponSpawnPose? Off) CaptureWeaponSpawnPoses(nint characterAddress)
     {
+        var skelN = boneService.TryGetSkeleton(characterAddress);
+        if (skelN == null) return (null, null);
+
+        var skel = skelN.Value;
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton == null) return (null, null);
+
+        var skelWorldPos = new Vector3(
+            skeleton->Transform.Position.X,
+            skeleton->Transform.Position.Y,
+            skeleton->Transform.Position.Z);
+        var skelWorldRot = new Quaternion(
+            skeleton->Transform.Rotation.X,
+            skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z,
+            skeleton->Transform.Rotation.W);
+
+        WeaponSpawnPose? main = null;
+        WeaponSpawnPose? off = null;
+        if (GetWeaponDrawObject(characterAddress, DrawDataContainer.WeaponSlot.MainHand) != null &&
+            TryResolveWeaponSpawnPose(skel, WeaponMainHandBones, skelWorldPos, skelWorldRot, out var mainPose))
+        {
+            main = mainPose;
+        }
+
+        if (GetWeaponDrawObject(characterAddress, DrawDataContainer.WeaponSlot.OffHand) != null &&
+            TryResolveWeaponSpawnPose(skel, WeaponOffHandBones, skelWorldPos, skelWorldRot, out var offPose))
+        {
+            off = offPose;
+        }
+
+        return (main, off);
+    }
+
+    private bool TryResolveWeaponSpawnPose(SkeletonAccess skel, string[] boneCandidates,
+        Vector3 skelWorldPos, Quaternion skelWorldRot, out WeaponSpawnPose pose)
+    {
+        pose = default;
+        foreach (var name in boneCandidates)
+        {
+            var boneIndex = boneService.ResolveBoneIndex(skel, name);
+            if (boneIndex < 0) continue;
+
+            ref var mt = ref skel.Pose->ModelPose.Data[boneIndex];
+            var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+            var modelRot = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
+            pose = new WeaponSpawnPose(
+                skelWorldPos + Vector3.Transform(modelPos, skelWorldRot),
+                Quaternion.Normalize(skelWorldRot * modelRot));
+            return true;
+        }
+
+        return false;
+    }
+
+    private void TrySpawn(Pending pendingSpawn)
+    {
+        var characterAddress = pendingSpawn.CharacterAddress;
         if (entries.ContainsKey(characterAddress)) return;
         var skelN = boneService.TryGetSkeleton(characterAddress);
         if (skelN == null) { log.Warning($"WeaponDropController: skeleton unavailable for 0x{characterAddress:X}"); return; }
@@ -230,9 +312,11 @@ public unsafe class WeaponDropController : IDisposable
 
         var entry = new Entry { CharacterAddress = characterAddress };
         if (mainDraw != null)
-            entry.Main = TryCreateWeaponBody(skel, WeaponMainHandBones, skelWorldPos, skelWorldRot, mainDraw, out entry.MainBoneIndex, out entry.MainShape);
+            entry.Main = TryCreateWeaponBody(skel, WeaponMainHandBones, skelWorldPos, skelWorldRot, mainDraw,
+                pendingSpawn.MainPose, out entry.MainBoneIndex, out entry.MainShape);
         if (offDraw != null)
-            entry.Off = TryCreateWeaponBody(skel, WeaponOffHandBones, skelWorldPos, skelWorldRot, offDraw, out entry.OffBoneIndex, out entry.OffShape);
+            entry.Off = TryCreateWeaponBody(skel, WeaponOffHandBones, skelWorldPos, skelWorldRot, offDraw,
+                pendingSpawn.OffPose, out entry.OffBoneIndex, out entry.OffShape);
 
         if (!entry.Main.HasValue && !entry.Off.HasValue)
         {
@@ -327,9 +411,9 @@ public unsafe class WeaponDropController : IDisposable
         return (staticHandle, shapeIndex);
     }
 
-    private List<BodyStaticCollider> CreateBodyColliders(SkeletonAccess skel, Vector3 skelWorldPos, Quaternion skelWorldRot)
+    private List<BodyKinematicCollider> CreateBodyColliders(SkeletonAccess skel, Vector3 skelWorldPos, Quaternion skelWorldRot)
     {
-        var result = new List<BodyStaticCollider>();
+        var result = new List<BodyKinematicCollider>();
         if (simulation == null) return result;
 
         var candidates = new List<(float SegLen, int BoneIdx, int ParentIdx, float HalfLen, float Radius, float CenterFactor, Vector3 Center, Quaternion Rot)>();
@@ -371,14 +455,21 @@ public unsafe class WeaponDropController : IDisposable
         foreach (var c in candidates)
         {
             var shape = simulation.Shapes.Add(new Capsule(c.Radius, c.HalfLen * 2f));
-            var handle = simulation.Statics.Add(new StaticDescription(c.Center, c.Rot, shape));
-            result.Add(new BodyStaticCollider
+            var handle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
+                new RigidPose(c.Center, c.Rot),
+                default(BodyVelocity),
+                new CollidableDescription(shape, 0.04f),
+                new BodyActivityDescription(0.01f)));
+            result.Add(new BodyKinematicCollider
             {
                 Handle = handle,
                 Shape = shape,
                 BoneIndex = c.BoneIdx,
                 ParentBoneIndex = c.ParentIdx,
                 CenterFactor = c.CenterFactor,
+                PreviousPosition = c.Center,
+                PreviousOrientation = c.Rot,
+                HasPreviousPose = true,
             });
         }
 
@@ -417,12 +508,12 @@ public unsafe class WeaponDropController : IDisposable
         for (int i = 0; i < entry.BodyColliders.Count; i++)
         {
             var bc = entry.BodyColliders[i];
-            var staticRef = simulation.Statics.GetStaticReference(bc.Handle);
+            var bodyRef = simulation.Bodies.GetBodyReference(bc.Handle);
             if (bc.BoneIndex < 0 || bc.BoneIndex >= skel.BoneCount ||
                 bc.ParentBoneIndex < 0 || bc.ParentBoneIndex >= skel.BoneCount)
             {
-                staticRef.Pose.Position = BodyColliderParkPos;
-                staticRef.UpdateBounds();
+                MoveKinematicCollider(ref bc, bodyRef, BodyColliderParkPos, Quaternion.Identity);
+                entry.BodyColliders[i] = bc;
                 continue;
             }
 
@@ -438,18 +529,22 @@ public unsafe class WeaponDropController : IDisposable
 
             var segment = childWorldPos - parentWorldPos;
             var segLen = segment.Length();
+            Vector3 targetPosition;
+            Quaternion targetOrientation;
             if (segLen > 0.01f)
             {
                 var segDir = segment / segLen;
-                staticRef.Pose.Position = parentWorldPos + (segLen * bc.CenterFactor) * segDir;
-                staticRef.Pose.Orientation = RotationFromYToDirection(segment);
+                targetPosition = parentWorldPos + (segLen * bc.CenterFactor) * segDir;
+                targetOrientation = RotationFromYToDirection(segment);
             }
             else
             {
-                staticRef.Pose.Position = parentWorldPos;
-                staticRef.Pose.Orientation = Quaternion.Identity;
+                targetPosition = parentWorldPos;
+                targetOrientation = Quaternion.Identity;
             }
-            staticRef.UpdateBounds();
+
+            MoveKinematicCollider(ref bc, bodyRef, targetPosition, targetOrientation);
+            entry.BodyColliders[i] = bc;
         }
     }
 
@@ -458,30 +553,86 @@ public unsafe class WeaponDropController : IDisposable
         if (simulation == null) return;
         for (int i = 0; i < entry.BodyColliders.Count; i++)
         {
-            var staticRef = simulation.Statics.GetStaticReference(entry.BodyColliders[i].Handle);
-            staticRef.Pose.Position = BodyColliderParkPos;
-            staticRef.UpdateBounds();
+            var bc = entry.BodyColliders[i];
+            var bodyRef = simulation.Bodies.GetBodyReference(bc.Handle);
+            MoveKinematicCollider(ref bc, bodyRef, BodyColliderParkPos, Quaternion.Identity);
+            entry.BodyColliders[i] = bc;
         }
     }
 
+    private static void MoveKinematicCollider(ref BodyKinematicCollider collider, BodyReference bodyRef,
+        Vector3 targetPosition, Quaternion targetOrientation)
+    {
+        const float dt = 1f / 60f;
+        targetOrientation = Quaternion.Normalize(targetOrientation);
+
+        var linearVelocity = collider.HasPreviousPose
+            ? (targetPosition - collider.PreviousPosition) / dt
+            : Vector3.Zero;
+        var angularVelocity = collider.HasPreviousPose
+            ? EstimateAngularVelocity(collider.PreviousOrientation, targetOrientation, dt)
+            : Vector3.Zero;
+
+        bodyRef.Pose.Position = targetPosition;
+        bodyRef.Pose.Orientation = targetOrientation;
+        bodyRef.Velocity.Linear = linearVelocity;
+        bodyRef.Velocity.Angular = angularVelocity;
+        bodyRef.Awake = true;
+
+        collider.PreviousPosition = targetPosition;
+        collider.PreviousOrientation = targetOrientation;
+        collider.HasPreviousPose = true;
+    }
+
+    private static Vector3 EstimateAngularVelocity(Quaternion previous, Quaternion current, float dt)
+    {
+        if (dt <= 0f) return Vector3.Zero;
+
+        previous = Quaternion.Normalize(previous);
+        current = Quaternion.Normalize(current);
+        var delta = Quaternion.Normalize(current * Quaternion.Inverse(previous));
+        if (delta.W < 0f)
+            delta = new Quaternion(-delta.X, -delta.Y, -delta.Z, -delta.W);
+
+        var sinHalfAngle = MathF.Sqrt(MathF.Max(0f, 1f - delta.W * delta.W));
+        if (sinHalfAngle < 1e-5f) return Vector3.Zero;
+
+        var angle = 2f * MathF.Acos(Math.Clamp(delta.W, -1f, 1f));
+        var axis = new Vector3(delta.X, delta.Y, delta.Z) / sinHalfAngle;
+        return axis * (angle / dt);
+    }
+
     private BodyHandle? TryCreateWeaponBody(SkeletonAccess skel, string[] boneCandidates,
-        Vector3 skelWorldPos, Quaternion skelWorldRot, DrawObject* weaponDraw, out int boneIndex,
-        out TypedIndex? shapeIndex)
+        Vector3 skelWorldPos, Quaternion skelWorldRot, DrawObject* weaponDraw,
+        WeaponSpawnPose? cachedSpawnPose, out int boneIndex, out TypedIndex? shapeIndex)
     {
         boneIndex = -1;
         shapeIndex = null;
-        foreach (var name in boneCandidates)
+        if (!cachedSpawnPose.HasValue)
         {
-            var idx = boneService.ResolveBoneIndex(skel, name);
-            if (idx >= 0) { boneIndex = idx; break; }
+            foreach (var name in boneCandidates)
+            {
+                var idx = boneService.ResolveBoneIndex(skel, name);
+                if (idx >= 0) { boneIndex = idx; break; }
+            }
+            if (boneIndex < 0) return null;
         }
-        if (boneIndex < 0) return null;
 
-        ref var mt = ref skel.Pose->ModelPose.Data[boneIndex];
-        var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
-        var modelRot = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
-        var worldPos = skelWorldPos + Vector3.Transform(modelPos, skelWorldRot);
-        var worldRot = Quaternion.Normalize(skelWorldRot * modelRot);
+        Vector3 worldPos;
+        Quaternion worldRot;
+        if (cachedSpawnPose.HasValue)
+        {
+            worldPos = cachedSpawnPose.Value.Position;
+            worldRot = cachedSpawnPose.Value.Rotation;
+        }
+        else
+        {
+            ref var mt = ref skel.Pose->ModelPose.Data[boneIndex];
+            var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+            var modelRot = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
+            worldPos = skelWorldPos + Vector3.Transform(modelPos, skelWorldRot);
+            worldRot = Quaternion.Normalize(skelWorldRot * modelRot);
+        }
 
         // Per-weapon flat box: a capsule rolls forever, a box settles on a face. Length is taken from
         // the weapon's own skeleton span where available (so a long weapon gets a long box, a small
@@ -493,6 +644,7 @@ public unsafe class WeaponDropController : IDisposable
         var shape = simulation!.Shapes.Add(box);
         shapeIndex = shape;
         var inertia = box.ComputeInertia(config.WeaponDropMass);
+        worldPos = LiftWeaponPoseAboveGround(worldPos, worldRot, halfWidth, halfLength, halfThick);
 
         // Zero initial velocity (no jitter, no inheritance) — user requirement.
         var handle = simulation.Bodies.Add(BodyDescription.CreateDynamic(
@@ -502,6 +654,43 @@ public unsafe class WeaponDropController : IDisposable
             new CollidableDescription(shape, 0.04f),
             new BodyActivityDescription(0.01f)));
         return handle;
+    }
+
+    private Vector3 LiftWeaponPoseAboveGround(Vector3 worldPos, Quaternion worldRot,
+        float halfWidth, float halfLength, float halfThick)
+    {
+        const float clearance = 0.02f;
+        var groundY = SampleGroundY(worldPos.X, worldPos.Z, worldPos.Y);
+        if (!groundY.HasValue) return worldPos;
+
+        var verticalHalfExtent = WorldVerticalHalfExtent(worldRot, halfWidth, halfLength, halfThick);
+        var minY = worldPos.Y - verticalHalfExtent;
+        var targetMinY = groundY.Value + clearance;
+        if (minY < targetMinY)
+            worldPos.Y += targetMinY - minY;
+        return worldPos;
+    }
+
+    private static float WorldVerticalHalfExtent(Quaternion worldRot, float halfWidth, float halfLength, float halfThick)
+    {
+        var x = Vector3.Transform(Vector3.UnitX, worldRot);
+        var y = Vector3.Transform(Vector3.UnitY, worldRot);
+        var z = Vector3.Transform(Vector3.UnitZ, worldRot);
+        return MathF.Abs(Vector3.Dot(x, Vector3.UnitY)) * halfWidth
+             + MathF.Abs(Vector3.Dot(y, Vector3.UnitY)) * halfLength
+             + MathF.Abs(Vector3.Dot(z, Vector3.UnitY)) * halfThick;
+    }
+
+    private float? SampleGroundY(float x, float z, float defaultY)
+    {
+        if (BGCollisionModule.RaycastMaterialFilter(
+                new Vector3(x, defaultY + 5.0f, z),
+                new Vector3(0, -1, 0), out var hit, 80f))
+        {
+            return hit.Point.Y;
+        }
+
+        return null;
     }
 
     /// <summary>Estimate half the weapon's longest dimension from its own skeleton's bone spread
@@ -652,9 +841,13 @@ struct WeaponDropNarrowPhaseCallbacks : INarrowPhaseCallbacks
 
     public bool AllowContactGeneration(int workerIndex, CollidableReference a, CollidableReference b, ref float speculativeMargin)
     {
-        // Only weapon-vs-static (ground tiles). Weapon-vs-weapon disabled — mainhand and offhand
-        // spawn near each other on the body, overlap on creation, and produce erratic launches.
-        return a.Mobility == CollidableMobility.Static || b.Mobility == CollidableMobility.Static;
+        // Only dynamic weapons collide with ground statics and mirrored kinematic body colliders.
+        // Weapon-vs-weapon stays disabled because mainhand/offhand can overlap on creation.
+        var aDynamic = a.Mobility == CollidableMobility.Dynamic;
+        var bDynamic = b.Mobility == CollidableMobility.Dynamic;
+        var aPassive = a.Mobility is CollidableMobility.Static or CollidableMobility.Kinematic;
+        var bPassive = b.Mobility is CollidableMobility.Static or CollidableMobility.Kinematic;
+        return (aDynamic && bPassive) || (bDynamic && aPassive);
     }
 
     public bool AllowContactGeneration(int workerIndex, CollidablePair pair, int childIndexA, int childIndexB)
