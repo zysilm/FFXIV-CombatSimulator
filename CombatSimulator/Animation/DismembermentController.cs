@@ -39,7 +39,7 @@ public unsafe class DismembermentController : IDisposable
     private const float LimbRadius = 0.06f;
     private const float LimbHalfLength = 0.14f;
     private const float LimbMass = 4f;
-    private const float GearPieceMass = 1.5f; // dropped hat/accessory mass (body shell overrides heavier)
+    private const float GearPieceMass = 0.4f; // dropped hat/accessory mass (light; body shell overrides)
     private const int MaxPendingFrames = 120;
     // A clone is drawn (per the original timing) but its limb bone may not resolve immediately
     // on a cold model load. Keep it hidden until the bone appears; only after this many frames
@@ -47,7 +47,7 @@ public unsafe class DismembermentController : IDisposable
     private const int MaxResolveFrames = 600;
     private const uint CloneSlotStart = 200;
     private const uint CloneSlotEndExclusive = 249;
-    private const int ReservedPlayerCloneSlots = 8;
+    private const int ReservedPlayerCloneSlots = 16; // headroom for a full KO strip (up to 7 gear) + PC dismember
     private const int CloneSlotReuseCooldownFrames = 30;
 
     private BufferPool? bufferPool;
@@ -140,6 +140,9 @@ public unsafe class DismembermentController : IDisposable
         public HashSet<int>? GearMatLogged;                  // material paths already logged (diagnostics)
         public List<(int Idx, Vector3 T, Quaternion R, Vector3 S)>? GearPoseSnapshot; // frozen pose (independent)
         public List<GearPartialPoseSnapshot>? GearPartialPoseSnapshots; // frozen non-body partial skeletons
+        public Dictionary<int, (Vector3 T, Quaternion R)>? GearCapById; // captured rest pose by bone idx (skirt hang)
+        public float GearGroundY = float.NegativeInfinity;   // ground height for the skirt-hang / sink clamp
+        public Vector3 GearBoxHalf;                          // collision box half-extents (for the sink clamp)
     }
 
     private sealed class GearPartialPoseSnapshot
@@ -188,22 +191,30 @@ public unsafe class DismembermentController : IDisposable
         public RagdollController.RagdollBoneDef Def;
     }
 
+    // Body-collision proxy tracking one of the player's/NPC's bone segments. KINEMATIC (not static): a
+    // static teleports each frame and traps resting pieces, whereas a kinematic body carries a velocity
+    // so it pushes pieces smoothly — better for moving multi-bone actors.
     private struct NpcBoneStatic
     {
-        public StaticHandle Handle;
+        public BodyHandle Handle;
         public TypedIndex Shape;
         public int BoneIndex;
         public int ParentBoneIndex;
         public float CenterFactor;
+        public Vector3 PreviousPosition;
+        public Quaternion PreviousOrientation;
+        public bool HasPreviousPose;
     }
 
     private struct NpcCollisionState
     {
         public nint Address;
         public List<NpcBoneStatic> BoneStatics;
-        public StaticHandle FallbackHandle;
+        public BodyHandle FallbackHandle;
         public TypedIndex FallbackShape;
         public bool IsFallback;
+        public Vector3 FallbackPrevPos;
+        public bool FallbackHasPrev;
     }
 
     private sealed class Pending
@@ -444,42 +455,46 @@ public unsafe class DismembermentController : IDisposable
         p.SourceSkeletonSignature = ComputeSkeletonSignature(skel);
     }
 
+    // Dismember-selection removal: removes ONLY dismember clones (skips gear-drop pieces, which share the
+    // clone list + source address but are owned by KO-strip, not the dismember selection). Gear is still
+    // cleared wholesale by RemoveAll on sim reset/zone change.
     public void RemoveFor(nint sourceAddress)
     {
-        pending.RemoveAll(p => p.SourceAddress == sourceAddress);
+        pending.RemoveAll(p => p.SourceAddress == sourceAddress && p.GearKeepModelSlot < 0);
         for (int i = clones.Count - 1; i >= 0; i--)
-            if (clones[i].SourceAddress == sourceAddress)
+            if (clones[i].SourceAddress == sourceAddress && clones[i].GearKeepModelSlot < 0)
             {
                 DespawnClone(clones[i]);
                 clones.RemoveAt(i);
             }
     }
 
+    // Tracked = dismember clones only; gear pieces are invisible to the dismember selection reconcile.
     private HashSet<string> GetTrackedBones(nint sourceAddress)
     {
         var result = new HashSet<string>(StringComparer.Ordinal);
         foreach (var p in pending)
-            if (p.SourceAddress == sourceAddress)
+            if (p.SourceAddress == sourceAddress && p.GearKeepModelSlot < 0)
                 result.Add(p.LimbRootBone);
         foreach (var c in clones)
-            if (c.SourceAddress == sourceAddress)
+            if (c.SourceAddress == sourceAddress && c.GearKeepModelSlot < 0)
                 result.Add(c.LimbRootBone);
         return result;
     }
 
     private bool HasTrackedBone(nint sourceAddress, string limbRootBone)
     {
-        return pending.Exists(p => p.SourceAddress == sourceAddress && p.LimbRootBone == limbRootBone) ||
-               clones.Exists(c => c.SourceAddress == sourceAddress && c.LimbRootBone == limbRootBone);
+        return pending.Exists(p => p.SourceAddress == sourceAddress && p.LimbRootBone == limbRootBone && p.GearKeepModelSlot < 0) ||
+               clones.Exists(c => c.SourceAddress == sourceAddress && c.LimbRootBone == limbRootBone && c.GearKeepModelSlot < 0);
     }
 
     private void RemoveOne(nint sourceAddress, string limbRootBone)
     {
-        pending.RemoveAll(p => p.SourceAddress == sourceAddress && p.LimbRootBone == limbRootBone);
+        pending.RemoveAll(p => p.SourceAddress == sourceAddress && p.LimbRootBone == limbRootBone && p.GearKeepModelSlot < 0);
         for (int i = clones.Count - 1; i >= 0; i--)
         {
             var c = clones[i];
-            if (c.SourceAddress != sourceAddress || c.LimbRootBone != limbRootBone) continue;
+            if (c.SourceAddress != sourceAddress || c.LimbRootBone != limbRootBone || c.GearKeepModelSlot >= 0) continue;
             DespawnClone(c);
             clones.RemoveAt(i);
         }
@@ -1113,6 +1128,21 @@ public unsafe class DismembermentController : IDisposable
         }
     }
 
+    // Gear-drop "impulse": unlike a severed limb, a dropped piece has no stump — so it must NOT fire the
+    // body-side recoil (that would spin the player's own ragdoll on every drop). Clothing gets no launch
+    // either (it should fall straight and pool at the feet); hats/accessories keep the modest outward pop
+    // that already reads well.
+    private void ApplyGearDropImpulse(Clone c)
+    {
+        if (simulation == null || c.Body == null) return;
+        if (c.GearKeepModelSlot == 1) return; // clothing: gravity only
+        var impulse = MathF.Max(0f, DismemberActivationImpulse);
+        if (impulse <= 0f) return;
+        var dir = c.OutwardWorldDir;
+        dir = dir.LengthSquared() < 1e-6f ? Vector3.UnitX : Vector3.Normalize(dir);
+        ApplyVelocityDelta(c.Body.Value, dir * impulse);
+    }
+
     /// <summary>Bone immediately above <paramref name="boneName"/> in the source skeleton — the
     /// body-side "stump" bone that should recoil at the cut.</summary>
     private string? ResolveBodyParentBone(nint sourceAddress, string boneName)
@@ -1207,7 +1237,7 @@ public unsafe class DismembermentController : IDisposable
         }
 
         for (int i = pcNpcCollisionStates.Count - 1; i >= 0; i--)
-            UpdatePcNpcCollisionState(pcNpcCollisionStates[i]);
+            pcNpcCollisionStates[i] = UpdatePcNpcCollisionState(pcNpcCollisionStates[i]);
 
         WakePcCollisionBodies();
     }
@@ -1277,8 +1307,10 @@ public unsafe class DismembermentController : IDisposable
         foreach (var c in candidates)
         {
             var shape = simulation.Shapes.Add(new Capsule(PcNpcCollisionDefaultRadius, MathF.Max(0.02f, c.Len - PcNpcCollisionDefaultRadius * 2f)));
-            var handle = simulation.Statics.Add(new StaticDescription(c.Center, c.Rot, shape));
-            restrictedStaticHandles.Add(handle.Value);
+            var handle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
+                new RigidPose(c.Center, c.Rot),
+                new CollidableDescription(shape, 0.04f),
+                new BodyActivityDescription(0.01f)));
             statics.Add(new NpcBoneStatic
             {
                 Handle = handle,
@@ -1286,6 +1318,9 @@ public unsafe class DismembermentController : IDisposable
                 BoneIndex = c.Bone,
                 ParentBoneIndex = c.Parent,
                 CenterFactor = c.CenterFactor,
+                PreviousPosition = c.Center,
+                PreviousOrientation = c.Rot,
+                HasPreviousPose = true,
             });
         }
 
@@ -1304,8 +1339,10 @@ public unsafe class DismembermentController : IDisposable
         var go = (GameObject*)address;
         var pos = new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z);
         var shape = simulation.Shapes.Add(new Capsule(PcNpcCollisionFallbackRadius, PcNpcCollisionFallbackLength));
-        var handle = simulation.Statics.Add(new StaticDescription(pos, Quaternion.Identity, shape));
-        restrictedStaticHandles.Add(handle.Value);
+        var handle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
+            new RigidPose(pos, Quaternion.Identity),
+            new CollidableDescription(shape, 0.04f),
+            new BodyActivityDescription(0.01f)));
         pcNpcCollisionStates.Add(new NpcCollisionState
         {
             Address = address,
@@ -1313,28 +1350,31 @@ public unsafe class DismembermentController : IDisposable
             FallbackHandle = handle,
             FallbackShape = shape,
             IsFallback = true,
+            FallbackPrevPos = pos,
+            FallbackHasPrev = true,
         });
     }
 
-    private void UpdatePcNpcCollisionState(NpcCollisionState state)
+    private NpcCollisionState UpdatePcNpcCollisionState(NpcCollisionState state)
     {
         if (simulation == null)
-            return;
+            return state;
 
         try
         {
             if (state.IsFallback)
             {
                 var go = (GameObject*)state.Address;
-                var staticRef = simulation.Statics.GetStaticReference(state.FallbackHandle);
-                staticRef.Pose.Position = new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z);
-                staticRef.UpdateBounds();
-                return;
+                var pos = new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z);
+                var prevRot = Quaternion.Identity;
+                MoveKinematic(state.FallbackHandle, pos, Quaternion.Identity,
+                    ref state.FallbackPrevPos, ref prevRot, ref state.FallbackHasPrev);
+                return state;
             }
 
             var skelN = boneService.TryGetSkeleton(state.Address);
             if (skelN == null || skelN.Value.CharBase->Skeleton == null)
-                return;
+                return state;
 
             var skel = skelN.Value;
             var skeleton = skel.CharBase->Skeleton;
@@ -1345,8 +1385,9 @@ public unsafe class DismembermentController : IDisposable
                 skeleton->Transform.Rotation.Z,
                 skeleton->Transform.Rotation.W));
 
-            foreach (var bs in state.BoneStatics)
+            for (int j = 0; j < state.BoneStatics.Count; j++)
             {
+                var bs = state.BoneStatics[j];
                 if (bs.BoneIndex < 0 || bs.BoneIndex >= skel.BoneCount ||
                     bs.ParentBoneIndex < 0 || bs.ParentBoneIndex >= skel.BoneCount)
                     continue;
@@ -1363,21 +1404,44 @@ public unsafe class DismembermentController : IDisposable
 
                 var segment = childWorld - parentWorld;
                 var segLen = segment.Length();
-                var staticRef = simulation.Statics.GetStaticReference(bs.Handle);
+                Vector3 targetPos;
+                Quaternion targetRot;
                 if (segLen > 0.01f)
                 {
-                    staticRef.Pose.Position = parentWorld + segment * bs.CenterFactor;
-                    staticRef.Pose.Orientation = AlignYTo(segment / segLen);
+                    targetPos = parentWorld + segment * bs.CenterFactor;
+                    targetRot = AlignYTo(segment / segLen);
                 }
                 else
                 {
-                    staticRef.Pose.Position = parentWorld;
-                    staticRef.Pose.Orientation = Quaternion.Identity;
+                    targetPos = parentWorld;
+                    targetRot = Quaternion.Identity;
                 }
-                staticRef.UpdateBounds();
+                MoveKinematic(bs.Handle, targetPos, targetRot,
+                    ref bs.PreviousPosition, ref bs.PreviousOrientation, ref bs.HasPreviousPose);
+                state.BoneStatics[j] = bs;
             }
         }
         catch { }
+        return state;
+    }
+
+    // Drive a kinematic collider to a target pose, carrying the per-frame velocity so it pushes dynamic
+    // pieces smoothly instead of teleporting through/trapping them.
+    private void MoveKinematic(BodyHandle handle, Vector3 targetPos, Quaternion targetRot,
+        ref Vector3 prevPos, ref Quaternion prevRot, ref bool hasPrev)
+    {
+        if (simulation == null) return;
+        const float dt = 1f / 60f;
+        targetRot = Quaternion.Normalize(targetRot);
+        var body = simulation.Bodies.GetBodyReference(handle);
+        body.Pose.Position = targetPos;
+        body.Pose.Orientation = targetRot;
+        body.Velocity.Linear = hasPrev ? (targetPos - prevPos) / dt : Vector3.Zero;
+        body.Velocity.Angular = hasPrev ? AngularVelocityFromQuats(prevRot, targetRot, dt) : Vector3.Zero;
+        body.Awake = true;
+        prevPos = targetPos;
+        prevRot = targetRot;
+        hasPrev = true;
     }
 
     private void ClearPcNpcCollisionStatics()
@@ -1388,7 +1452,7 @@ public unsafe class DismembermentController : IDisposable
             {
                 if (state.IsFallback)
                 {
-                    try { simulation.Statics.Remove(state.FallbackHandle); } catch { }
+                    try { simulation.Bodies.Remove(state.FallbackHandle); } catch { }
                     if (bufferPool != null)
                         try { simulation.Shapes.RemoveAndDispose(state.FallbackShape, bufferPool); } catch { }
                     continue;
@@ -1396,7 +1460,7 @@ public unsafe class DismembermentController : IDisposable
 
                 foreach (var bs in state.BoneStatics)
                 {
-                    try { simulation.Statics.Remove(bs.Handle); } catch { }
+                    try { simulation.Bodies.Remove(bs.Handle); } catch { }
                     if (bufferPool != null)
                         try { simulation.Shapes.RemoveAndDispose(bs.Shape, bufferPool); } catch { }
                 }
@@ -1662,6 +1726,15 @@ public unsafe class DismembermentController : IDisposable
             }
             CaptureGearPartialPoseSnapshots(c, skel.CharBase);
 
+            // Clothing: cache the rest pose by bone index so the skirt-hang drive can read captured
+            // segment lengths / orientations without searching the snapshot list each frame.
+            if (c.GearKeepModelSlot == 1)
+            {
+                c.GearCapById = new Dictionary<int, (Vector3, Quaternion)>(c.GearPoseSnapshot.Count);
+                foreach (var s in c.GearPoseSnapshot)
+                    c.GearCapById[s.Idx] = (s.T, s.R);
+            }
+
             EnsureSimulation();
             if (simulation != null)
             {
@@ -1670,6 +1743,9 @@ public unsafe class DismembermentController : IDisposable
                 // the drive can reconstruct the attach bone back from the tumbling body.
                 var spawnPos = c.SeveranceWorldPos + offsetWorld;
                 c.GearExtraOffset = Vector3.Transform(offsetWorld, Quaternion.Inverse(c.SeveranceWorldRot));
+                c.GearGroundY = BGCollisionModule.RaycastMaterialFilter(
+                    new Vector3(spawnPos.X, spawnPos.Y + 5f, spawnPos.Z), new Vector3(0, -1, 0), out var groundHit, 80f)
+                    ? groundHit.Point.Y : spawnPos.Y - 1.5f;
                 c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
                     new RigidPose(spawnPos, c.SeveranceWorldRot),
                     default(BodyVelocity),
@@ -1679,7 +1755,7 @@ public unsafe class DismembermentController : IDisposable
                 SeedBodyVelocity(c.Body.Value, c, c.LimbRootBone);
                 (c.GroundTile, c.GroundShape) = CreateTerrainPatch(spawnPos.X, spawnPos.Z, spawnPos.Y);
                 RegisterPcCollisionBodies(c);
-                ApplyActivationImpulse(c);
+                ApplyGearDropImpulse(c);
             }
             c.Armed = true;
             log.Info($"GearDrop: clone idx={c.ObjectIndex} armed (slot={c.GearKeepModelSlot}, bone={c.LimbRootBone})");
@@ -1712,6 +1788,17 @@ public unsafe class DismembermentController : IDisposable
         // Box centre is at bone + GearExtraOffset (in the body frame), so back it out to place the bone.
         var skelPos = bodyPos - Vector3.Transform(c.LimbRootModelPos + c.GearExtraOffset, bodyRot);
 
+        // Keep the visible piece from sinking through the ground. The flat collision box is sized to
+        // enclose the whole piece, so its lowest world point ≈ the piece's lowest point — clamp THAT
+        // above the ground (covers both the attach-bone-is-above-the-mesh case and a thin box tunnelling
+        // through the terrain). The render is lifted; the (invisible) physics box may stay lower.
+        if (!float.IsNegativeInfinity(c.GearGroundY))
+        {
+            var boxLowestY = bodyPos.Y - WorldVerticalHalfExtent(bodyRot, c.GearBoxHalf);
+            var target = c.GearGroundY + 0.02f;
+            if (boxLowestY < target) skelPos.Y += target - boxLowestY;
+        }
+
         var cb = (CharacterBase*)drawObj;
         var sk = cb->Skeleton;
         if (sk != null)
@@ -1727,7 +1814,79 @@ public unsafe class DismembermentController : IDisposable
         drawObj->Position = skelPos;
         drawObj->Rotation = bodyRot;
         ((GameObject*)c.Chara)->Position = skelPos;
+
+        // Clothing: actively drive the skirt cloth chain to hang straight down (agreeing with gravity, so
+        // it doesn't fight the game cloth sim like a static pin does), clamped above the ground.
+        if (c.GearKeepModelSlot == 1) DriveSkirtHang(skel, c);
         return true;
+    }
+
+    // Drive the main-skeleton skirt cloth bones (j_sk_*) so each chain hangs straight down in world
+    // space from its (frozen) attach bone, with the captured world orientation, clamped above ground.
+    // Runs AFTER the rigid-body root drive (reads the now-current skeleton transform). Tiers a→b→c are
+    // processed in order so each parent is updated before its child.
+    private void DriveSkirtHang(SkeletonAccess skel, Clone c)
+    {
+        if (c.GearCapById == null) return;
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton == null) return;
+        var skelPos = new Vector3(skeleton->Transform.Position.X, skeleton->Transform.Position.Y, skeleton->Transform.Position.Z);
+        var skelRot = Quaternion.Normalize(new Quaternion(
+            skeleton->Transform.Rotation.X, skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z, skeleton->Transform.Rotation.W));
+        var skelRotInv = Quaternion.Inverse(skelRot);
+        var groundY = c.GearGroundY;
+        var n = Math.Min(skel.BoneCount, skel.ParentCount);
+
+        // World-down reference = the source's HEADING only (yaw), not its full rotation. On-hit strips
+        // capture a live, leaning/turning player; using the full rotation would hang the skirt at that
+        // lean angle (reads as severe distortion). Yaw-only keeps the skirt vertical but still facing the
+        // right way (so front/back/side spread is correct).
+        var fwd = Vector3.Transform(Vector3.UnitZ, c.SeveranceWorldRot);
+        fwd.Y = 0f;
+        var hangRef = fwd.LengthSquared() < 1e-6f
+            ? Quaternion.Identity
+            : Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.Atan2(fwd.X, fwd.Z));
+
+        // tiers in order: "_a_", "_b_", "_c_" — parent of b is a, of c is b, of a is a body bone.
+        ReadOnlySpan<string> tiers = new[] { "_a_", "_b_", "_c_" };
+        foreach (var tier in tiers)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                var name = BoneName(skel, i);
+                if (!name.StartsWith("j_sk_", StringComparison.Ordinal) || !name.Contains(tier, StringComparison.Ordinal))
+                    continue;
+                if (!c.GearCapById.TryGetValue(i, out var cap)) continue;
+
+                var parentIdx = skel.HavokSkeleton->ParentIndices[i];
+                if (parentIdx < 0 || parentIdx >= skel.BoneCount) continue;
+
+                // Parent world pos (parent is already up to date: a body bone, or an earlier tier).
+                ref var pm = ref skel.Pose->ModelPose.Data[parentIdx];
+                var parentWorld = skelPos + Vector3.Transform(
+                    new Vector3(pm.Translation.X, pm.Translation.Y, pm.Translation.Z), skelRot);
+
+                // Preserve the captured offset from the parent (the skirt's natural rest spread + drape),
+                // held WORLD-fixed so the skirt keeps its shape and always hangs down regardless of how
+                // the body tumbles. This agrees with the game cloth sim (both want "down"), unlike a
+                // body-relative pin which rotates with the body and fights it (→ the stretch).
+                var capOffset = c.GearCapById.TryGetValue(parentIdx, out var capParent)
+                    ? cap.T - capParent.T
+                    : new Vector3(0f, -0.05f, 0f);
+                var targetWorld = parentWorld + Vector3.Transform(capOffset, hangRef);
+                if (targetWorld.Y < groundY + 0.02f) targetWorld.Y = groundY + 0.02f;
+
+                var modelPos = Vector3.Transform(targetWorld - skelPos, skelRotInv);
+                // Keep the bone's captured WORLD orientation (hanging-down) regardless of body tumble.
+                var capturedWorldRot = Quaternion.Normalize(hangRef * cap.R);
+                var modelRot = Quaternion.Normalize(skelRotInv * capturedWorldRot);
+
+                ref var m = ref skel.Pose->ModelPose.Data[i];
+                m.Translation.X = modelPos.X; m.Translation.Y = modelPos.Y; m.Translation.Z = modelPos.Z;
+                m.Rotation.X = modelRot.X; m.Rotation.Y = modelRot.Y; m.Rotation.Z = modelRot.Z; m.Rotation.W = modelRot.W;
+            }
+        }
     }
 
     private void CaptureGearPartialPoseSnapshots(Clone c, CharacterBase* charBase)
@@ -1741,7 +1900,9 @@ public unsafe class DismembermentController : IDisposable
         {
             var partial = &skeleton->PartialSkeletons[ps];
             var pose = partial->GetHavokPose(0);
-            if (pose == null || pose->Skeleton == null) continue;
+            // ModelInSync == 0 means the model-space pose hasn't been computed yet — skip so we don't
+            // snapshot (and later freeze to) garbage transforms.
+            if (pose == null || pose->Skeleton == null || pose->ModelInSync == 0) continue;
             var count = pose->ModelPose.Length;
             if (count <= 0) continue;
 
@@ -1768,7 +1929,7 @@ public unsafe class DismembermentController : IDisposable
         if (snapshots.Count > 0)
         {
             c.GearPartialPoseSnapshots = snapshots;
-            log.Info($"GearDrop: clone idx={c.ObjectIndex} froze {snapshots.Count} partial skeleton(s)");
+            log.Verbose($"GearDrop: clone idx={c.ObjectIndex} froze {snapshots.Count} partial skeleton(s)");
         }
     }
 
@@ -1912,13 +2073,13 @@ public unsafe class DismembermentController : IDisposable
             var path = rh->FileName.ToString();
             c.GearMatLogged ??= new HashSet<int>();
             if (c.GearMatLogged.Add(i))
-                log.Info($"GearDrop: clone idx={c.ObjectIndex} mat[{i}] = {path}");
+                log.Verbose($"GearDrop: clone idx={c.ObjectIndex} mat[{i}] = {path}");
             if (!string.IsNullOrEmpty(path) && path.Contains("/body/", StringComparison.OrdinalIgnoreCase))
             {
                 c.GearHiddenMatSet.Add(i);
                 c.GearHiddenMaterials.Add((i, (nint)mat));
                 model->Materials[i] = null;
-                log.Info($"GearDrop: clone idx={c.ObjectIndex} hid skin mat[{i}]");
+                log.Verbose($"GearDrop: clone idx={c.ObjectIndex} hid skin mat[{i}]");
             }
         }
     }
@@ -1938,6 +2099,15 @@ public unsafe class DismembermentController : IDisposable
     // mesh is driven by the skeleton, so this shape only governs how the piece tumbles and settles;
     // half-extents are piece-typed and scaled by the actor's draw scale. Box is tracked in c.Shapes
     // for disposal on despawn.
+    // How far a box of these half-extents reaches vertically (world up) in a given orientation.
+    private static float WorldVerticalHalfExtent(Quaternion rot, Vector3 half)
+    {
+        var x = Vector3.Transform(Vector3.UnitX, rot);
+        var y = Vector3.Transform(Vector3.UnitY, rot);
+        var z = Vector3.Transform(Vector3.UnitZ, rot);
+        return MathF.Abs(x.Y) * half.X + MathF.Abs(y.Y) * half.Y + MathF.Abs(z.Y) * half.Z;
+    }
+
     private TypedIndex BuildGearShape(Clone c, out BodyInertia inertia, out Vector3 offsetWorld)
     {
         var scale = c.SourceScale.X > 0f ? c.SourceScale.X : 1f;
@@ -1949,13 +2119,15 @@ public unsafe class DismembermentController : IDisposable
         var (half, off) = c.GearKeepModelSlot switch
         {
             0 => (new Vector3(0.13f, 0.05f, 0.14f), new Vector3(0f,  0.08f, 0f)), // hat: above skull, flat
-            1 => (new Vector3(0.16f, 0.28f, 0.11f), new Vector3(0f,  0.10f, 0f)), // body/top: torso slab above waist
+            1 => (new Vector3(0.13f, 0.16f, 0.08f), new Vector3(0f,  0.16f, 0f)), // body/top: bottom near waist, avoids floating
             6 => (new Vector3(0.09f, 0.08f, 0.06f), new Vector3(0f, -0.06f, 0f)), // neck: necklace drapes below
             _ => (new Vector3(0.05f, 0.05f, 0.05f), Vector3.Zero),                // ears/wrist/ring: small chunk at bone
         };
         half *= scale;
         offsetWorld = off * scale;
-        var mass = c.GearKeepModelSlot == 1 ? 6f : GearPieceMass;
+        c.GearBoxHalf = half; // remembered for the ground-sink clamp in the drive
+        // Cloth/accessories are light — heavy masses make them slam and settle hard.
+        var mass = c.GearKeepModelSlot == 1 ? 0.8f : GearPieceMass;
         var box = new Box(half.X * 2f, half.Y * 2f, half.Z * 2f);
         inertia = box.ComputeInertia(mass);
         var idx = simulation!.Shapes.Add(box);
