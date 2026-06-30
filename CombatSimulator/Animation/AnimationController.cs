@@ -56,6 +56,7 @@ public unsafe class AnimationController : IDisposable
     private readonly Configuration config;
     private readonly IDataManager dataManager;
     private readonly Dictionary<uint, float> actionAnimationDurationCache = new();
+    private readonly Dictionary<string, ushort> actionTimelineKeyCache = new(StringComparer.OrdinalIgnoreCase);
 
     // Monotonically increasing sequence number for fabricated ActionEffects
     private uint globalSequence = 0x10000000;
@@ -248,6 +249,36 @@ public unsafe class AnimationController : IDisposable
     /// Whether hit VFX spawning is available (ActorVfxCreate was resolved).
     /// </summary>
     public bool HitVfxAvailable => actorVfxCreate != null;
+
+    public ushort ResolveActionTimelineKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return 0;
+        if (actionTimelineKeyCache.TryGetValue(key, out var cached)) return cached;
+
+        try
+        {
+            var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ActionTimeline>();
+            if (sheet != null)
+            {
+                foreach (var row in sheet)
+                {
+                    if (!row.Key.ToString().Equals(key, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    cached = (ushort)row.RowId;
+                    actionTimelineKeyCache[key] = cached;
+                    return cached;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"AnimationController: failed to resolve ActionTimeline key '{key}'.");
+        }
+
+        actionTimelineKeyCache[key] = 0;
+        return 0;
+    }
 
     private void ResolvePlayDeadTimelines(IDataManager dataManager)
     {
