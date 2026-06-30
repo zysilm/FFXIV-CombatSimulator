@@ -119,6 +119,10 @@ public unsafe class DismembermentController : IDisposable
         public int GlamourAttemptsLeft;
         public HandoffSnapshot? Handoff;
         public int ResolveFramesWaited; // frames spent (hidden) waiting for the limb bone to load
+        public Vector3 SourceScale = Vector3.One; // source's draw scale, applied so big enemies' pieces match
+        public int ExpectedSkeletonBoneCount;
+        public int ExpectedSkeletonParentCount;
+        public int ExpectedSkeletonSignature;
     }
 
     private sealed class HandoffSnapshot
@@ -192,6 +196,13 @@ public unsafe class DismembermentController : IDisposable
         public uint BNpcBaseId;
         public uint BNpcNameId;
         public int SourceModelCharaId;
+        // Source's overall draw scale, also captured while alive. A scaled-up monster (the live
+        // enemy) loses its size when rebuilt via SetupBNpc/ModelCharaId (which start at scale 1),
+        // so the severed piece looked far too small versus the body.
+        public Vector3 SourceScale = Vector3.One;
+        public int SourceSkeletonBoneCount;
+        public int SourceSkeletonParentCount;
+        public int SourceSkeletonSignature;
     }
 
     private readonly List<Clone> clones = new();
@@ -349,7 +360,23 @@ public unsafe class DismembermentController : IDisposable
         p.BNpcNameId = ids.BNpcNameId;
         var src = (Character*)p.SourceAddress;
         p.SourceModelCharaId = src->ModelContainer.ModelCharaId;
+        var srcDraw = ((GameObject*)p.SourceAddress)->DrawObject;
+        if (srcDraw != null)
+        {
+            var s = srcDraw->Scale;
+            if (s.X > 0f && s.Y > 0f && s.Z > 0f)
+                p.SourceScale = s;
+        }
+        if (boneService.TryGetSkeleton(p.SourceAddress) is { } skel)
+            CaptureSourceSkeletonFingerprint(p, skel);
         p.IdentityCaptured = true;
+    }
+
+    private static void CaptureSourceSkeletonFingerprint(Pending p, SkeletonAccess skel)
+    {
+        p.SourceSkeletonBoneCount = skel.BoneCount;
+        p.SourceSkeletonParentCount = skel.ParentCount;
+        p.SourceSkeletonSignature = ComputeSkeletonSignature(skel);
     }
 
     public void RemoveFor(nint sourceAddress)
@@ -499,6 +526,8 @@ public unsafe class DismembermentController : IDisposable
         // source's post-death teardown: a torn-down monster reports ModelCharaId=0 and may no longer
         // resolve, so the clone would be built as a default human (the "stretched human limb" bug).
         CaptureSourceIdentity(p); // no-op if already captured; fallback only
+        if (p.SourceSkeletonSignature == 0)
+            CaptureSourceSkeletonFingerprint(p, skel);
         var sourceModelCharaId = p.SourceModelCharaId;
         var ids = (BNpcBaseId: p.BNpcBaseId, BNpcNameId: p.BNpcNameId);
         // Appearance must be decided from actor/model identity, not just skeleton
@@ -555,6 +584,10 @@ public unsafe class DismembermentController : IDisposable
             ExpectedModelCharaId = sourceModelCharaId,
             GlamourBase64 = p.GlamourBase64,
             Handoff = handoff,
+            SourceScale = p.SourceScale,
+            ExpectedSkeletonBoneCount = p.SourceSkeletonBoneCount,
+            ExpectedSkeletonParentCount = p.SourceSkeletonParentCount,
+            ExpectedSkeletonSignature = p.SourceSkeletonSignature,
         });
         log.Info($"Dismember: clone idx={index} bone={p.LimbRootBone} at ({severancePos.X:F1},{severancePos.Y:F1},{severancePos.Z:F1})");
     }
@@ -736,8 +769,10 @@ public unsafe class DismembermentController : IDisposable
         }
         else
         {
-            const CharacterSetupContainer.CopyFlags flags =
-                CharacterSetupContainer.CopyFlags.ClassJob | CharacterSetupContainer.CopyFlags.WeaponHiding;
+            var sourceObj = (GameObject*)source;
+            var flags = sourceObj->ObjectKind == ObjectKind.BattleNpc
+                ? CharacterSetupContainer.CopyFlags.None
+                : CharacterSetupContainer.CopyFlags.ClassJob | CharacterSetupContainer.CopyFlags.WeaponHiding;
             target->CharacterSetup.CopyFromCharacter(source, flags);
             target->CharacterSetup.CopyFromCharacter(target, CharacterSetupContainer.CopyFlags.None);
             obj->ObjectKind = ObjectKind.Pc;
@@ -929,6 +964,7 @@ public unsafe class DismembermentController : IDisposable
 
         drawObj->Position = pos;
         drawObj->Rotation = rot;
+        ApplyCloneDrawScale(c, drawObj);
         var cb = (CharacterBase*)drawObj;
         var sk = cb->Skeleton;
         if (sk == null) return;
@@ -1324,10 +1360,26 @@ public unsafe class DismembermentController : IDisposable
         if (c.Chara == null) return false;
         var drawObj = ((GameObject*)c.Chara)->DrawObject;
         if (drawObj == null) return !c.Armed;
+        ApplyCloneDrawScale(c, drawObj);
 
         var skelN = boneService.TryGetSkeleton((nint)c.Chara);
         if (skelN == null) return !c.Armed;
         var skel = skelN.Value;
+
+        if (c.UseMonsterAppearance && !IsExpectedCloneSkeleton(c, skel))
+        {
+            // ModelContainer.ModelCharaId can update before the DrawObject/Skeleton has actually
+            // swapped away from the default humanoid. If we resolve a shared bone name during that
+            // window (e.g. j_ude_b_l), the clone arms as a scaled human limb. Keep it hidden until
+            // the real source skeleton signature is present.
+            HideEntireBody(c);
+            if (++c.ResolveFramesWaited >= MaxResolveFrames)
+            {
+                log.Warning($"Dismember: clone idx={c.ObjectIndex} skeleton did not match source (got bones={skel.BoneCount}, parents={skel.ParentCount}); dropping");
+                return false;
+            }
+            return true;
+        }
 
         if (c.LimbIndex < 0)
             c.LimbIndex = boneService.ResolveBoneIndex(skel, c.LimbRootBone);
@@ -1473,6 +1525,48 @@ public unsafe class DismembermentController : IDisposable
         drawObj->Rotation = bodyRot;
         ((GameObject*)c.Chara)->Position = skelPos;
         return true;
+    }
+
+    private static void ApplyCloneDrawScale(Clone c, DrawObject* drawObj)
+    {
+        if (drawObj == null) return;
+        var s = c.SourceScale;
+        if (s.X <= 0f || s.Y <= 0f || s.Z <= 0f) return;
+        if (MathF.Abs(s.X - 1f) < 0.0001f &&
+            MathF.Abs(s.Y - 1f) < 0.0001f &&
+            MathF.Abs(s.Z - 1f) < 0.0001f)
+            return;
+
+        drawObj->Scale = s;
+        drawObj->NotifyTransformChanged();
+    }
+
+    private static bool IsExpectedCloneSkeleton(Clone c, SkeletonAccess skel)
+    {
+        if (c.ExpectedSkeletonSignature == 0)
+            return true;
+        if (skel.BoneCount != c.ExpectedSkeletonBoneCount ||
+            skel.ParentCount != c.ExpectedSkeletonParentCount)
+            return false;
+        return ComputeSkeletonSignature(skel) == c.ExpectedSkeletonSignature;
+    }
+
+    private static int ComputeSkeletonSignature(SkeletonAccess skel)
+    {
+        unchecked
+        {
+            var hash = 17;
+            var n = Math.Min(skel.BoneCount, skel.ParentCount);
+            hash = hash * 31 + skel.BoneCount;
+            hash = hash * 31 + skel.ParentCount;
+            for (int i = 0; i < n; i++)
+            {
+                hash = hash * 31 + skel.HavokSkeleton->ParentIndices[i];
+                var name = skel.HavokSkeleton->Bones[i].Name.String;
+                hash = hash * 31 + (name?.GetHashCode(StringComparison.Ordinal) ?? 0);
+            }
+            return hash == 0 ? 1 : hash;
+        }
     }
 
     private bool IsCloneSkeletonCompatible(Clone c, SkeletonAccess skel)
