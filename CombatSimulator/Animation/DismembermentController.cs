@@ -108,6 +108,8 @@ public unsafe class DismembermentController : IDisposable
         public StaticHandle? GroundTile;
         public TypedIndex? GroundShape;
         public bool KeepTimelineRunning;
+        public bool UseMonsterAppearance;
+        public int ExpectedModelCharaId;
         public string? GlamourBase64;
         public int GlamourFramesUntil = -1;
         public int GlamourAttemptsLeft;
@@ -473,8 +475,9 @@ public unsafe class DismembermentController : IDisposable
         var chara = (BattleChara*)obj;
         var character = (Character*)chara;
 
-        obj->ObjectKind = ObjectKind.Pc;
-        obj->SubKind = 0;
+        obj->DisableDraw();
+        obj->ObjectKind = useMonsterAppearance ? ObjectKind.BattleNpc : ObjectKind.Pc;
+        obj->SubKind = useMonsterAppearance ? (byte)BattleNpcSubKind.Combatant : (byte)0;
         obj->TargetableStatus = 0; // never targetable
         obj->RenderFlags = (VisibilityFlags)0;
         obj->Position = cloneBasePos;
@@ -503,6 +506,8 @@ public unsafe class DismembermentController : IDisposable
             SeveranceWorldRot = severanceRot,
             OutwardWorldDir = outwardDir,
             IsPlayerControlledSource = isPlayerControlledSource,
+            UseMonsterAppearance = useMonsterAppearance || !sourceIsHumanoid,
+            ExpectedModelCharaId = sourceModelCharaId,
             GlamourBase64 = p.GlamourBase64,
             Handoff = handoff,
         });
@@ -812,6 +817,12 @@ public unsafe class DismembermentController : IDisposable
     {
         c.FramesWaited++;
         if (c.Chara == null) return;
+        if (c.UseMonsterAppearance && !IsMonsterCloneReady(c))
+        {
+            if (c.FramesWaited == MaxPendingFrames)
+                log.Warning($"Dismember: monster clone idx={c.ObjectIndex} not ready; keeping hidden");
+            return;
+        }
         if (!c.Chara->IsReadyToDraw() && c.FramesWaited < MaxPendingFrames) return;
 
         c.Chara->EnableDraw();
@@ -825,6 +836,19 @@ public unsafe class DismembermentController : IDisposable
             animationController.PlayDeathAnimationOnActor((Character*)c.Chara, forceCombatDeath: true);
         }
         log.Info($"Dismember: clone idx={c.ObjectIndex} drawn (settling)");
+    }
+
+    private static bool IsMonsterCloneReady(Clone c)
+    {
+        var obj = (GameObject*)c.Chara;
+        if (obj->ObjectKind != ObjectKind.BattleNpc)
+            return false;
+
+        var character = (Character*)c.Chara;
+        var modelCharaId = character->ModelContainer.ModelCharaId;
+        if (c.ExpectedModelCharaId > 0)
+            return modelCharaId == c.ExpectedModelCharaId;
+        return modelCharaId > 0;
     }
 
     private void ApplyHandoffPose(SkeletonAccess skel, Clone c)
