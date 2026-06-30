@@ -1829,6 +1829,7 @@ public unsafe class DismembermentController : IDisposable
         }
         drawObj->Position = skelPos;
         drawObj->Rotation = renderRot;
+        ApplyGearVisualSquash(c, drawObj);
         ((GameObject*)c.Chara)->Position = skelPos;
 
         ApplyGearDeflate(skel, c);
@@ -1924,6 +1925,31 @@ public unsafe class DismembermentController : IDisposable
             ? BuildFlatHatRestRotation(bodyRot)
             : BuildFlatGarmentRestRotation(bodyRot);
         return Quaternion.Normalize(Quaternion.Slerp(bodyRot, target, t));
+    }
+
+    private void ApplyGearVisualSquash(Clone c, DrawObject* drawObj)
+    {
+        if (!IsDeflatableGear(c) || c.GearDeflateFrames <= 0 || drawObj == null)
+            return;
+
+        var t = Math.Clamp(c.GearDeflateFrames / 60f, 0f, 1f);
+        var strength = t * t * (3f - 2f * t);
+        if (strength <= 0f) return;
+
+        var target = c.GearKeepModelSlot switch
+        {
+            0 => new Vector3(1.16f, 0.42f, 1.16f), // hat/cap: flatten crown/cone, spread brim
+            1 => new Vector3(1.16f, 1.04f, 0.30f), // body/top after flat-rotation: local Z is thickness
+            3 => new Vector3(1.10f, 0.96f, 0.34f), // pants/shorts: flatten thickness, modest spread
+            _ => Vector3.One,
+        };
+
+        var factor = Vector3.Lerp(Vector3.One, target, strength);
+        drawObj->Scale = new Vector3(
+            c.SourceScale.X * factor.X,
+            c.SourceScale.Y * factor.Y,
+            c.SourceScale.Z * factor.Z);
+        drawObj->NotifyTransformChanged();
     }
 
     private static Quaternion BuildYawRotation(Quaternion source)
