@@ -418,8 +418,21 @@ public unsafe class DismembermentController : IDisposable
             {
                 var c = clones[i];
                 if (!c.DrawEnabled) continue;
-                ApplyDeferredGlamour(c);
-                UpdateClone(c);
+                try
+                {
+                    ApplyDeferredGlamour(c);
+                    if (!UpdateClone(c))
+                    {
+                        DespawnClone(c);
+                        clones.RemoveAt(i);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    log.Warning(ex, $"Dismember: dropping clone idx={c.ObjectIndex} after update failure");
+                    DespawnClone(c);
+                    clones.RemoveAt(i);
+                }
             }
         }
         catch (Exception ex)
@@ -1274,19 +1287,21 @@ public unsafe class DismembermentController : IDisposable
         }
     }
 
-    private void UpdateClone(Clone c)
+    private bool UpdateClone(Clone c)
     {
-        if (c.Chara == null) return;
+        if (c.Chara == null) return false;
         var drawObj = ((GameObject*)c.Chara)->DrawObject;
-        if (drawObj == null) return;
+        if (drawObj == null) return !c.Armed;
 
         var skelN = boneService.TryGetSkeleton((nint)c.Chara);
-        if (skelN == null) return;
+        if (skelN == null) return !c.Armed;
         var skel = skelN.Value;
 
         if (c.LimbIndex < 0)
             c.LimbIndex = boneService.ResolveBoneIndex(skel, c.LimbRootBone);
-        if (c.LimbIndex < 0) return; // nothing we can do until the limb resolves
+        if (c.LimbIndex < 0) return true; // nothing we can do until the limb resolves
+        if (!IsCloneSkeletonCompatible(c, skel))
+            return false;
 
         var boundaryRoots = GetSelectedChildRoots(skel, c.SourceAddress, c.LimbIndex, c.LimbRootBone);
 
@@ -1300,7 +1315,7 @@ public unsafe class DismembermentController : IDisposable
         if (!c.Armed)
         {
             // Let the pose settle (the limb gets a real shape), then freeze + spawn the body.
-            if (--c.SettleFrames > 0) return;
+            if (--c.SettleFrames > 0) return true;
             ref var lm = ref skel.Pose->ModelPose.Data[c.LimbIndex];
             c.LimbRootModelPos = new Vector3(lm.Translation.X, lm.Translation.Y, lm.Translation.Z);
             ((Character*)c.Chara)->Timeline.OverallSpeed = c.KeepTimelineRunning ? 1f : 0f;
@@ -1359,7 +1374,7 @@ public unsafe class DismembermentController : IDisposable
             }
             c.Armed = true;
             log.Info($"Dismember: clone idx={c.ObjectIndex} armed (limbIdx={c.LimbIndex})");
-            return;
+            return true;
         }
 
         // Armed: re-assert freeze, re-write the frozen limb pose (no breathing), and drive the clone
@@ -1376,15 +1391,15 @@ public unsafe class DismembermentController : IDisposable
                 m.Scale.X = s.S.X; m.Scale.Y = s.S.Y; m.Scale.Z = s.S.Z;
             }
         }
-        if (simulation == null) return;
+        if (simulation == null) return true;
         if (c.Rig != null)
         {
             DriveLimbRig(skel, c);
             HideAllButLimb(skel, c.LimbIndex, boundaryRoots);
             HideWeapons(c);
-            return;
+            return true;
         }
-        if (c.Body == null) return;
+        if (c.Body == null) return true;
         var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
         var bodyPos = bodyRef.Pose.Position;
         var bodyRot = bodyRef.Pose.Orientation;
@@ -1410,7 +1425,56 @@ public unsafe class DismembermentController : IDisposable
         drawObj->Position = skelPos;
         drawObj->Rotation = bodyRot;
         ((GameObject*)c.Chara)->Position = skelPos;
+        return true;
     }
+
+    private bool IsCloneSkeletonCompatible(Clone c, SkeletonAccess skel)
+    {
+        var n = Math.Min(skel.BoneCount, skel.ParentCount);
+        if (!IsValidBoneIndex(c.LimbIndex, n))
+        {
+            log.Warning($"Dismember: clone idx={c.ObjectIndex} limb index {c.LimbIndex} invalid after skeleton change; dropping");
+            return false;
+        }
+
+        if (c.LimbSnapshot != null)
+        {
+            foreach (var s in c.LimbSnapshot)
+            {
+                if (!IsValidBoneIndex(s.Idx, n))
+                {
+                    log.Warning($"Dismember: clone idx={c.ObjectIndex} snapshot index {s.Idx} invalid after skeleton change; dropping");
+                    return false;
+                }
+            }
+        }
+
+        if (c.Rig != null)
+        {
+            foreach (var rb in c.Rig.Bodies)
+            {
+                if (!IsValidBoneIndex(rb.BoneIndex, n))
+                {
+                    log.Warning($"Dismember: clone idx={c.ObjectIndex} rig index {rb.BoneIndex} invalid after skeleton change; dropping");
+                    return false;
+                }
+            }
+
+            foreach (var idx in c.Rig.BoneIndices)
+            {
+                if (!IsValidBoneIndex(idx, n))
+                {
+                    log.Warning($"Dismember: clone idx={c.ObjectIndex} rig set index {idx} invalid after skeleton change; dropping");
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsValidBoneIndex(int index, int count)
+        => index >= 0 && index < count;
 
     private LimbRig? BuildLimbRig(SkeletonAccess skel, Clone c, IReadOnlyList<int> boundaryRoots)
     {
@@ -1686,7 +1750,7 @@ public unsafe class DismembermentController : IDisposable
                 continue;
 
             var parentIdx = skel.HavokSkeleton->ParentIndices[i];
-            if (parentIdx < 0 || !result.HasAccumulated[parentIdx])
+            if (parentIdx < 0 || parentIdx >= skel.BoneCount || !result.HasAccumulated[parentIdx])
                 continue;
 
             var parentDelta = result.AccumulatedDeltas[parentIdx];

@@ -181,6 +181,13 @@ public unsafe class BoneTransformService : IDisposable
         Quaternion newRot,
         BoneModificationResult result)
     {
+        if (boneIndex < 0 ||
+            boneIndex >= skel.BoneCount ||
+            boneIndex >= result.OriginalRotations.Length ||
+            boneIndex >= result.AccumulatedDeltas.Length ||
+            boneIndex >= result.HasAccumulated.Length)
+            return;
+
         ref var model = ref skel.Pose->ModelPose.Data[boneIndex];
         model.Translation.X = newPos.X;
         model.Translation.Y = newPos.Y;
