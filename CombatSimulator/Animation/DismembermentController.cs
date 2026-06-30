@@ -63,6 +63,13 @@ public unsafe class DismembermentController : IDisposable
     /// when a piece is kicked off (needs the activation impulse to fire). 0 disables the recoil.</summary>
     public float ReactionRecoilStrength { get; set; }
 
+    /// <summary>Scales the dropped-head collision hull (1 = default). Tune against the debug overlay.</summary>
+    public float HeadShapeScale { get; set; } = 1f;
+
+    /// <summary>Extra downward offset of the visible head vs its collision hull (m); raises HeadShape
+    /// drop to sink a floating head onto the ground.</summary>
+    public float HeadShapeDrop { get; set; }
+
     private sealed class Clone
     {
         public nint SourceAddress;
@@ -91,6 +98,17 @@ public unsafe class DismembermentController : IDisposable
         public int GlamourFramesUntil = -1;
         public int GlamourAttemptsLeft;
         public HandoffSnapshot? Handoff;
+        public Vector3[]? HeadHullLocal; // hull points relative to the body centroid (debug overlay)
+    }
+
+    /// <summary>One dropped-head collision hull for the debug overlay: its current world transform
+    /// and the hull vertices already transformed to world.</summary>
+    public readonly struct HeadHullDebug
+    {
+        public readonly Vector3 Center;
+        public readonly Quaternion Orientation;
+        public readonly Vector3[] WorldPoints;
+        public HeadHullDebug(Vector3 c, Quaternion o, Vector3[] p) { Center = c; Orientation = o; WorldPoints = p; }
     }
 
     private sealed class HandoffSnapshot
@@ -192,6 +210,25 @@ public unsafe class DismembermentController : IDisposable
     }
 
     public bool HasAny => clones.Count > 0 || pending.Count > 0;
+
+    /// <summary>World-space hull vertices for every active dropped-head, for the debug overlay.</summary>
+    public List<HeadHullDebug> GetDebugHeadHulls()
+    {
+        var result = new List<HeadHullDebug>();
+        if (simulation == null) return result;
+        foreach (var c in clones)
+        {
+            if (c.HeadHullLocal == null || c.Rig == null || c.Rig.Bodies.Count == 0) continue;
+            var body = simulation.Bodies.GetBodyReference(c.Rig.Bodies[0].Body);
+            var pos = body.Pose.Position;
+            var rot = body.Pose.Orientation;
+            var pts = new Vector3[c.HeadHullLocal.Length];
+            for (int i = 0; i < pts.Length; i++)
+                pts[i] = pos + Vector3.Transform(c.HeadHullLocal[i], rot);
+            result.Add(new HeadHullDebug(pos, rot, pts));
+        }
+        return result;
+    }
 
     public IReadOnlyList<string> SelectRandomEnemyBones(nint sourceAddress, int humanoidCount, float genericPercent)
     {
@@ -1333,15 +1370,20 @@ public unsafe class DismembermentController : IDisposable
         // fuller back of skull, brow/cheek/jaw, a chin and a nose bump. Unlike a sphere it has flat
         // regions, so a rolling head settles on the cheek/back instead of rolling forever; unlike the
         // old box it still tumbles naturally and isn't oversized (no floating). ~2 dozen points, cheap.
-        var hs = MathF.Max(0.072f, def.CapsuleRadius * 0.92f); // head half-width unit
-        var hullPoints = BuildHeadHullPoints(hs);
+        var s = MathF.Max(0.2f, HeadShapeScale);
+        var hullPoints = BuildHeadHullPoints(0.072f * s, 0.090f * s, 0.082f * s);
         var hull = new ConvexHull((Span<Vector3>)hullPoints, bufferPool!, out var hullCenter);
         var shape = simulation.Shapes.Add(hull);
         var inertia = hull.ComputeInertia(MathF.Max(1f, def.Mass));
 
-        // The hull is built in the head-bone frame (origin = bone, +Y up, +Z face); its centroid sits
-        // up toward the skull center. Place the body there and offset the bone back down along Y.
-        var centerOffset = hullCenter.Y;
+        // Keep the hull vertices (relative to the body centroid) for the debug overlay.
+        c.HeadHullLocal = new Vector3[hullPoints.Length];
+        for (int i = 0; i < hullPoints.Length; i++) c.HeadHullLocal[i] = hullPoints[i] - hullCenter;
+
+        // Hull is in the head-bone frame (origin = bone). Place the body at its centroid; the bone
+        // reconstructs at centroid - up*centerOffset, so HeadShapeDrop sinks the visible head if the
+        // collision rests higher than the mesh (kills floating).
+        var centerOffset = hullCenter.Y + HeadShapeDrop;
         var center = boneWorldPos + Vector3.Transform(hullCenter, boneWorldRot);
         var handle = simulation.Bodies.Add(BodyDescription.CreateDynamic(
             new RigidPose(center, boneWorldRot),
@@ -1367,38 +1409,34 @@ public unsafe class DismembermentController : IDisposable
         return rig;
     }
 
-    // Head contour as a point cloud in the head-bone frame (origin = skull base, +Y up to crown,
-    // +Z forward/face, +X right), in multiples of the half-width unit u. The face (+Z) is kept
-    // flatter and the back of the skull (-Z) fuller, with a forehead, cheeks, jaw, chin and a nose
-    // bump — so the convex hull has flat-ish facets that let a rolling head settle.
-    private static Vector3[] BuildHeadHullPoints(float u)
+    // Head contour as a smooth egg in the head-bone frame (origin = head bone ~ skull center, +Y up
+    // to crown, +Z forward/face, +X right). Rings on an ellipsoid: rounded crown, tapered chin (so it
+    // rolls then settles like an egg), face side (+Z) slightly flattened, plus a nose bump. Enough
+    // points to roll; the taper/face/nose give it places to settle.
+    private static Vector3[] BuildHeadHullPoints(float rx, float ry, float rz)
     {
-        var p = new[]
+        const int rings = 5, seg = 12;
+        var p = new List<Vector3>(rings * seg + 4);
+        for (int r = 1; r < rings; r++)
         {
-            new Vector3( 0.00f, 2.05f, -0.10f), // crown
-            new Vector3( 0.55f, 1.75f, -0.20f),
-            new Vector3(-0.55f, 1.75f, -0.20f),
-            new Vector3( 0.00f, 1.70f, -0.95f), // upper back
-            new Vector3( 0.00f, 1.65f,  0.80f), // forehead (flatter)
-            new Vector3( 0.95f, 1.20f, -0.15f), // temples
-            new Vector3(-0.95f, 1.20f, -0.15f),
-            new Vector3( 0.70f, 1.20f,  0.55f), // brow
-            new Vector3(-0.70f, 1.20f,  0.55f),
-            new Vector3( 0.00f, 1.05f, -1.15f), // occiput (fullest back)
-            new Vector3( 1.00f, 0.80f,  0.05f), // mid sides
-            new Vector3(-1.00f, 0.80f,  0.05f),
-            new Vector3( 0.70f, 0.75f,  0.70f), // cheeks
-            new Vector3(-0.70f, 0.75f,  0.70f),
-            new Vector3( 0.00f, 0.85f,  0.95f), // mid-face (flat)
-            new Vector3( 0.00f, 0.70f,  1.18f), // nose
-            new Vector3( 0.65f, 0.30f,  0.10f), // jaw
-            new Vector3(-0.65f, 0.30f,  0.10f),
-            new Vector3( 0.00f, 0.35f, -0.80f), // lower back
-            new Vector3( 0.00f, 0.00f,  0.55f), // chin (forward, low)
-            new Vector3( 0.00f, 0.05f, -0.35f), // neck base
-        };
-        for (int i = 0; i < p.Length; i++) p[i] *= u;
-        return p;
+            float t = r / (float)rings;                  // 0..1 bottom->top
+            float y = -ry + 2f * ry * t;                 // chin .. crown
+            float prof = MathF.Sin(MathF.PI * t);        // 0 at poles, 1 at middle
+            float taper = 0.6f + 0.4f * t;               // narrower toward the chin
+            float ring = prof * taper;
+            for (int s = 0; s < seg; s++)
+            {
+                float a = (s / (float)seg) * MathF.Tau;
+                float x = MathF.Cos(a) * rx * ring;
+                float z = MathF.Sin(a) * rz * ring;
+                if (z > 0f) z *= 0.82f;                   // flatten the face
+                p.Add(new Vector3(x, y, z));
+            }
+        }
+        p.Add(new Vector3(0f, ry, -0.05f * rz));          // crown (slightly back)
+        p.Add(new Vector3(0f, -ry, 0.10f * rz));          // chin tip (slightly forward)
+        p.Add(new Vector3(0f, -0.15f * ry, rz * 1.02f));  // nose bump
+        return p.ToArray();
     }
 
     private void DriveLimbRig(SkeletonAccess skel, Clone c)
