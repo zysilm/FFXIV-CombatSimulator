@@ -38,6 +38,7 @@ public unsafe class DismembermentController : IDisposable
     private const float LimbRadius = 0.06f;
     private const float LimbHalfLength = 0.14f;
     private const float LimbMass = 4f;
+    private const float GearPieceMass = 1.5f; // dropped hat/accessory mass (body shell overrides heavier)
     private const int MaxPendingFrames = 120;
     // A clone is drawn (per the original timing) but its limb bone may not resolve immediately
     // on a cold model load. Keep it hidden until the bone appears; only after this many frames
@@ -131,6 +132,7 @@ public unsafe class DismembermentController : IDisposable
         public int GearKeepModelSlot = -1;
         public List<(int Slot, nint Ptr)>? GearHiddenModels; // nulled model pointers, restored on despawn
         public HashSet<int>? GearHiddenSlots;                // slots already cached (avoid dup caching)
+        public Vector3 GearExtraOffset;                      // body-frame offset bone->piece centroid
     }
 
     private sealed class HandoffSnapshot
@@ -1626,14 +1628,19 @@ public unsafe class DismembermentController : IDisposable
             EnsureSimulation();
             if (simulation != null)
             {
+                var shape = BuildGearShape(c, out var inertia, out var offsetWorld);
+                // Box is centred on the piece (bone + offset). Stash the offset in the body's frame so
+                // the drive can reconstruct the attach bone back from the tumbling body.
+                var spawnPos = c.SeveranceWorldPos + offsetWorld;
+                c.GearExtraOffset = Vector3.Transform(offsetWorld, Quaternion.Inverse(c.SeveranceWorldRot));
                 c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
-                    new RigidPose(c.SeveranceWorldPos, c.SeveranceWorldRot),
+                    new RigidPose(spawnPos, c.SeveranceWorldRot),
                     default(BodyVelocity),
-                    limbInertia,
-                    new CollidableDescription(limbShapeIndex, 0.04f),
+                    inertia,
+                    new CollidableDescription(shape, 0.04f),
                     new BodyActivityDescription(0.01f)));
                 SeedBodyVelocity(c.Body.Value, c, c.LimbRootBone);
-                (c.GroundTile, c.GroundShape) = CreateTerrainPatch(c.SeveranceWorldPos.X, c.SeveranceWorldPos.Z, c.SeveranceWorldPos.Y);
+                (c.GroundTile, c.GroundShape) = CreateTerrainPatch(spawnPos.X, spawnPos.Z, spawnPos.Y);
                 RegisterPcCollisionBodies(c);
                 ApplyActivationImpulse(c);
             }
@@ -1649,7 +1656,8 @@ public unsafe class DismembermentController : IDisposable
         var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
         var bodyPos = bodyRef.Pose.Position;
         var bodyRot = bodyRef.Pose.Orientation;
-        var skelPos = bodyPos - Vector3.Transform(c.LimbRootModelPos, bodyRot);
+        // Box centre is at bone + GearExtraOffset (in the body frame), so back it out to place the bone.
+        var skelPos = bodyPos - Vector3.Transform(c.LimbRootModelPos + c.GearExtraOffset, bodyRot);
 
         var cb = (CharacterBase*)drawObj;
         var sk = cb->Skeleton;
@@ -1714,6 +1722,37 @@ public unsafe class DismembermentController : IDisposable
         foreach (var (slot, ptr) in c.GearHiddenModels)
             if (slot >= 0 && slot < cb->SlotCount && cb->Models[slot] == null)
                 cb->Models[slot] = (RenderModel*)ptr;
+    }
+
+    // Collision shape for a dropped gear piece. A flat box (like the weapon-drop box) instead of a
+    // capsule, so the piece settles on a face rather than rolling forever like a sphere. The visible
+    // mesh is driven by the skeleton, so this shape only governs how the piece tumbles and settles;
+    // half-extents are piece-typed and scaled by the actor's draw scale. Box is tracked in c.Shapes
+    // for disposal on despawn.
+    private TypedIndex BuildGearShape(Clone c, out BodyInertia inertia, out Vector3 offsetWorld)
+    {
+        var scale = c.SourceScale.X > 0f ? c.SourceScale.X : 1f;
+        // half = collision half-extents (Y is the "thin" axis, oriented to the attach bone's up).
+        // off  = where the piece's geometry actually sits relative to the attach bone (a hat is above
+        // the skull, a necklace drapes below the neck). Centring the box on the PIECE (not the bone)
+        // and sizing it to enclose the piece keeps the mesh from poking through the ground while the
+        // box rests on it. Mostly vertical since the death pose is ~upright.
+        var (half, off) = c.GearKeepModelSlot switch
+        {
+            0 => (new Vector3(0.13f, 0.05f, 0.14f), new Vector3(0f,  0.08f, 0f)), // hat: above skull, flat
+            1 => (new Vector3(0.16f, 0.28f, 0.11f), new Vector3(0f,  0.10f, 0f)), // body/top: torso slab above waist
+            6 => (new Vector3(0.09f, 0.08f, 0.06f), new Vector3(0f, -0.06f, 0f)), // neck: necklace drapes below
+            _ => (new Vector3(0.05f, 0.05f, 0.05f), Vector3.Zero),                // ears/wrist/ring: small chunk at bone
+        };
+        half *= scale;
+        offsetWorld = off * scale;
+        var mass = c.GearKeepModelSlot == 1 ? 6f : GearPieceMass;
+        var box = new Box(half.X * 2f, half.Y * 2f, half.Z * 2f);
+        inertia = box.ComputeInertia(mass);
+        var idx = simulation!.Shapes.Add(box);
+        c.Shapes ??= new List<TypedIndex>();
+        c.Shapes.Add(idx);
+        return idx;
     }
 
     private static void ApplyCloneDrawScale(Clone c, DrawObject* drawObj)
