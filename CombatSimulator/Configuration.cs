@@ -444,17 +444,6 @@ public partial class Configuration : IPluginConfiguration
     public float ActiveCameraMinZoomDistance { get; set; } = 1.0f;
     public bool ActiveCameraPreventFade { get; set; } = false;
 
-    // Fighting Camera (1v1): frame the player + locked target together with auto-zoom,
-    // then on either death transition to the dead character's bone (active-cam follow).
-    public bool ActiveCameraFightingMode { get; set; } = false;
-    public float ActiveCameraFightingTransitionDuration { get; set; } = 1.0f;
-    public float ActiveCameraFightingZoomMargin { get; set; } = 1.3f;
-    public float ActiveCameraFightingMinDistance { get; set; } = 2.5f;
-    public float ActiveCameraFightingMaxDistance { get; set; } = 15.0f;
-    public float ActiveCameraFightingSmoothing { get; set; } = 8.0f;
-    public float ActiveCameraFightingHeightOffset { get; set; } = 0f;
-    public string ActiveCameraFightingBoneName { get; set; } = "j_sebo_b";
-
     // Legacy combined skill VFX toggle. Migrated to the split toggles below.
     public bool EnableSkillVfx { get; set; } = false;
     public bool EnableCharacterVfx { get; set; } = true;
@@ -511,6 +500,22 @@ public partial class Configuration : IPluginConfiguration
     // telegraph (起手快照) then resolve by hitbox at the active frame. When OFF,
     // every seam falls back to the original simulation behavior.
     public bool ActionMode { get; set; } = true;
+
+    // Fighting Mode (Experimental): 1v1 side-view combat layer. It owns player
+    // action routing, constrains the player/enemy pair onto a 2D lane, and drives
+    // a fighting-game camera. Mutually exclusive with Action Mode.
+    public bool FightingMode { get; set; } = false;
+    public float FightingModeLaneHalfWidth { get; set; } = 0.35f;
+    public float FightingModeMinSeparation { get; set; } = 1.8f;
+    public float FightingModeMaxSeparation { get; set; } = 10.0f;
+    public float FightingModeCameraMargin { get; set; } = 1.35f;
+    public float FightingModeCameraMinDistance { get; set; } = 5.0f;
+    public float FightingModeCameraMaxDistance { get; set; } = 18.0f;
+    public float FightingModeCameraSmoothing { get; set; } = 10.0f;
+    public float FightingModeCameraHeight { get; set; } = 1.0f;
+    public float FightingModeCameraVerticalAngle { get; set; } = -0.12f;
+    public bool FightingModeDeathActiveCameraTransition { get; set; } = false;
+    public float FightingModeDeathTransitionDuration { get; set; } = 3.0f;
 
     // Input map: put these actions on the hotbar; a press is interpreted as the
     // mapped role instead of firing the real action. 0 = unmapped.

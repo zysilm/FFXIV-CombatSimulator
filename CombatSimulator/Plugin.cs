@@ -7,6 +7,7 @@ using CombatSimulator.Animation;
 using CombatSimulator.Camera;
 using CombatSimulator.Companions;
 using CombatSimulator.Core;
+using CombatSimulator.Fighting;
 using CombatSimulator.Gui;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
@@ -56,6 +57,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly UseActionHook useActionHook;
     private readonly DeathCamController deathCamController;
     private readonly ActiveCameraController activeCameraController;
+    private readonly FightingModeController fightingModeController;
     private readonly Dev.IDevExperimental devExperimental;
     private readonly HookSafetyChecker hookSafetyChecker;
 
@@ -218,16 +220,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.GetLockedTargetId = () => playerTargetController.LockedTargetEntityId;
         combatEngine.OnPlayerHitByNpc = playerTargetController.NotifyPlayerHitBy;
 
-        // Fighting camera: frame the player + locked 1v1 target; suppress Death Cam when it owns the camera.
-        activeCameraController.GetFightingTargetAddress = () =>
-        {
-            var t = playerTargetController.LockedTarget;
-            if (t != null && t.IsSpawned && t.State.IsAlive && t.Address != nint.Zero)
-                return t.Address;
-            return null;
-        };
-        combatEngine.SuppressDeathCam = () => activeCameraController.IsFightingEngaged;
-
         mapEnemyController = new MapEnemyController(
             objectTable,
             config,
@@ -238,6 +230,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             companionManager.ForceEnemyTarget,
             () => npcSpawner.SpawnModeActive,
             log);
+        fightingModeController = new FightingModeController(
+            config, combatEngine, npcSelector, mapEnemyController, movementBlockHook,
+            activeCameraController, log);
+        activeCameraController.GetModeOrbitCenterOverride = () => fightingModeController.CameraCenterOverride;
+        combatEngine.SuppressDeathCam = () => fightingModeController.IsEngaged;
         companionManager.IsSourceEnemy = entityId => npcSelector.GetSelectedNpc(entityId) != null;
 
         companionManager.OnCompanionSpawnComplete = companion =>
@@ -293,7 +290,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             weaponDropController.RemoveAll();
             dismembermentController.RemoveAll();
             devExperimental.ResetTransientState();
-            activeCameraController.ResetFightingCamera();
+            fightingModeController.Reset();
 
             // Keep companions across a combat *reset* (IsActive stays true) when the
             // option is set — revive/heal them instead of despawning. Stopping the
@@ -329,7 +326,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                     dismembermentController.SpawnFor(addr, bone, config.RagdollActivationDelay, glam);
             }
             devExperimental.OnPlayerDeath(addr);
-            activeCameraController.NotifyCombatantDeath(addr, isPlayer: true);
         };
 
         // Hook safety checker — register native functions we CALL (not hook) that other plugins may hook.
@@ -347,7 +343,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             (nint)FFXIVClientStructs.FFXIV.Client.Game.Character.ActionEffectHandler.MemberFunctionPointers.Receive);
 
         // Safety — enable hooks immediately; they gate on internal state
-        useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, npcSpawner, config, clientState, log, playerTargetController, mapEnemyController, actionComboSink);
+        useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, npcSpawner, config, clientState, log,
+            playerTargetController, mapEnemyController, actionComboSink, fightingModeController);
         useActionHook.Enable();
         movementBlockHook.Enable();
 
@@ -621,6 +618,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             animationController.Tick(deltaTime);
 
             // Camera controllers run independently of combat
+            fightingModeController.Tick(deltaTime);
             deathCamController.Tick(deltaTime);
             activeCameraController.Tick(deltaTime);
 
@@ -675,8 +673,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private void OnNpcDeathRagdoll(nint address)
     {
         // Fighting camera death transition must run regardless of ragdoll settings.
-        activeCameraController.NotifyCombatantDeath(address, isPlayer: false);
-
         // Note: KO strip is intentionally player-only — NPC draw objects vary too much
         // (non-humanoid, partial gear) to strip reliably, so it's not applied here.
 

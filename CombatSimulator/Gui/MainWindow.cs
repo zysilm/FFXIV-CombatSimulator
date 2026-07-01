@@ -280,6 +280,7 @@ public partial class MainWindow : IDisposable
         {
             case 0: // Combat
                 DrawSimulationSection();
+                DrawFightingModeSection();
                 DrawActionModeSection();
                 break;
             case 1: // Targets
@@ -457,9 +458,24 @@ public partial class MainWindow : IDisposable
             if (ImGui.Checkbox("Action Mode", ref actionMode))
             {
                 config.ActionMode = actionMode;
+                if (actionMode)
+                    config.FightingMode = false;
                 config.Save();
             }
             HelpMarker(BuildActionModeQuickHelp());
+
+            var fightingMode = config.FightingMode;
+            if (ImGui.Checkbox("Fighting Mode [Experimental]", ref fightingMode))
+            {
+                config.FightingMode = fightingMode;
+                if (fightingMode)
+                {
+                    config.ActionMode = false;
+                    config.EnableCustomTargeting = false;
+                }
+                config.Save();
+            }
+            HelpMarker("Experimental 1v1 side-view mode. Press an attack on an enemy to lock the pair into a 2D fighting lane and side camera. Ignores profiles while active.");
         }
 
         if (compact)
@@ -1367,6 +1383,114 @@ public partial class MainWindow : IDisposable
         }
     }
 
+    private void DrawFightingModeSection()
+    {
+        if (!ImGui.CollapsingHeader("Fighting Mode [Experimental]"))
+            return;
+
+        var fightingMode = config.FightingMode;
+        if (ImGui.Checkbox("Enable Fighting Mode", ref fightingMode))
+        {
+            config.FightingMode = fightingMode;
+            if (fightingMode)
+            {
+                config.ActionMode = false;
+                config.EnableCustomTargeting = false;
+            }
+            config.Save();
+        }
+        HelpMarker("1v1 side-view combat mode. The first player attack against an enemy locks the pair into a fighting-game lane and camera. Current pass implements mode ownership, target acquisition, 2D movement/facing, and camera framing.");
+
+        if (!config.FightingMode)
+            return;
+
+        ImGui.Separator();
+        ImGui.Text("Lane");
+
+        var laneHalf = config.FightingModeLaneHalfWidth;
+        if (ImGui.SliderFloat("Lane half width##fightingmode", ref laneHalf, 0.05f, 2.0f, "%.2f"))
+        {
+            config.FightingModeLaneHalfWidth = laneHalf;
+            config.Save();
+        }
+        HelpMarker("How much sideways drift is tolerated before the player/enemy pair is projected back onto the 2D lane.");
+
+        var minSep = config.FightingModeMinSeparation;
+        if (ImGui.SliderFloat("Min separation##fightingmode", ref minSep, 0.5f, 6.0f, "%.2f"))
+        {
+            config.FightingModeMinSeparation = minSep;
+            config.Save();
+        }
+
+        var maxSep = config.FightingModeMaxSeparation;
+        if (ImGui.SliderFloat("Max separation##fightingmode", ref maxSep, 3.0f, 25.0f, "%.2f"))
+        {
+            config.FightingModeMaxSeparation = MathF.Max(maxSep, config.FightingModeMinSeparation + 0.1f);
+            config.Save();
+        }
+
+        ImGui.Separator();
+        ImGui.Text("Camera");
+
+        var margin = config.FightingModeCameraMargin;
+        if (ImGui.SliderFloat("Frame margin##fightingmode", ref margin, 1.0f, 2.5f, "%.2f"))
+        {
+            config.FightingModeCameraMargin = margin;
+            config.Save();
+        }
+
+        var minDist = config.FightingModeCameraMinDistance;
+        if (ImGui.SliderFloat("Min camera distance##fightingmode", ref minDist, 2.0f, 15.0f, "%.2f"))
+        {
+            config.FightingModeCameraMinDistance = minDist;
+            config.Save();
+        }
+
+        var maxDist = config.FightingModeCameraMaxDistance;
+        if (ImGui.SliderFloat("Max camera distance##fightingmode", ref maxDist, 5.0f, 40.0f, "%.2f"))
+        {
+            config.FightingModeCameraMaxDistance = MathF.Max(maxDist, config.FightingModeCameraMinDistance + 0.1f);
+            config.Save();
+        }
+
+        var smooth = config.FightingModeCameraSmoothing;
+        if (ImGui.SliderFloat("Camera smoothing##fightingmode", ref smooth, 1.0f, 30.0f, "%.1f"))
+        {
+            config.FightingModeCameraSmoothing = smooth;
+            config.Save();
+        }
+
+        var height = config.FightingModeCameraHeight;
+        if (ImGui.SliderFloat("Camera center height##fightingmode", ref height, 0.0f, 3.0f, "%.2f"))
+        {
+            config.FightingModeCameraHeight = height;
+            config.Save();
+        }
+
+        var vertical = config.FightingModeCameraVerticalAngle;
+        if (ImGui.SliderFloat("Vertical angle##fightingmode", ref vertical, -0.8f, 0.5f, "%.2f rad"))
+        {
+            config.FightingModeCameraVerticalAngle = vertical;
+            config.Save();
+        }
+
+        ImGui.Separator();
+        var transition = config.FightingModeDeathActiveCameraTransition;
+        if (ImGui.Checkbox("Translate defeat to Active Camera##fightingmode", ref transition))
+        {
+            config.FightingModeDeathActiveCameraTransition = transition;
+            config.Save();
+        }
+        HelpMarker("Reserved for the next pass: when the player loses, transition from Fighting Mode to Active Camera over the configured duration.");
+
+        var duration = config.FightingModeDeathTransitionDuration;
+        if (ImGui.SliderFloat("Translate duration##fightingmode", ref duration, 0.1f, 10.0f, "%.2f s"))
+        {
+            config.FightingModeDeathTransitionDuration = duration;
+            config.Save();
+        }
+    }
+
     private void DrawActionModeSection()
     {
         if (!ImGui.CollapsingHeader("Action Mode [Experimental]"))
@@ -1376,6 +1500,8 @@ public partial class MainWindow : IDisposable
         if (ImGui.Checkbox("Enable Action Mode", ref actionMode))
         {
             config.ActionMode = actionMode;
+            if (actionMode)
+                config.FightingMode = false;
             config.Save();
         }
         HelpMarker("Real-time action combat: button-driven light attacks and timed guard, with enemy attacks shown as telegraphs before hitbox resolution. Off = the normal tab-target simulation.");
@@ -3011,78 +3137,6 @@ public partial class MainWindow : IDisposable
                 }
                 HelpMarker("Prevent characters and NPCs from disappearing when the camera zooms very close.");
 
-                ImGui.Separator();
-                ImGui.TextDisabled("Fighting Camera (1v1)");
-
-                var fighting = config.ActiveCameraFightingMode;
-                if (ImGui.Checkbox("Enable Fighting Camera##activecam", ref fighting))
-                {
-                    config.ActiveCameraFightingMode = fighting;
-                    config.Save();
-                }
-                HelpMarker("During a 1v1, center the camera between you and the locked target and auto-zoom so both stay in frame (you keep manual rotation). On either death, smoothly transition to the dead character's bone (above) and suppress Death Cam.");
-
-                if (config.ActiveCameraFightingMode)
-                {
-                    // Framing bone (read from both combatants)
-                    int fBoneIdx = 0;
-                    for (int b = 0; b < bones.Length; b++)
-                        if (bones[b].BoneName == config.ActiveCameraFightingBoneName) { fBoneIdx = b; break; }
-                    if (ImGui.Combo("Framing Bone##fightcam", ref fBoneIdx, boneNames, boneNames.Length))
-                    {
-                        config.ActiveCameraFightingBoneName = bones[fBoneIdx].BoneName;
-                        config.Save();
-                    }
-                    HelpMarker("Bone on each combatant used to compute the framing midpoint.");
-
-                    var fTrans = config.ActiveCameraFightingTransitionDuration;
-                    if (ImGui.SliderFloat("Transition Duration##fightcam", ref fTrans, 0.1f, 5f, "%.2f s"))
-                    {
-                        config.ActiveCameraFightingTransitionDuration = fTrans;
-                        config.Save();
-                    }
-                    HelpMarker("How long the camera takes to move from the 1v1 framing to the dead character's bone.");
-
-                    var fMargin = config.ActiveCameraFightingZoomMargin;
-                    if (ImGui.SliderFloat("Zoom Margin##fightcam", ref fMargin, 1.0f, 2.5f, "%.2f"))
-                    {
-                        config.ActiveCameraFightingZoomMargin = fMargin;
-                        config.Save();
-                    }
-                    HelpMarker("Extra zoom-out so both fighters stay comfortably in frame. Higher = more padding.");
-
-                    var fMin = config.ActiveCameraFightingMinDistance;
-                    if (ImGui.SliderFloat("Min Distance##fightcam", ref fMin, 1.0f, 10f, "%.2f"))
-                    {
-                        config.ActiveCameraFightingMinDistance = fMin;
-                        config.Save();
-                    }
-                    HelpMarker("Closest the camera will auto-zoom when the fighters are near each other.");
-
-                    var fMax = config.ActiveCameraFightingMaxDistance;
-                    if (ImGui.SliderFloat("Max Distance##fightcam", ref fMax, 5f, 40f, "%.2f"))
-                    {
-                        config.ActiveCameraFightingMaxDistance = fMax;
-                        config.Save();
-                    }
-                    HelpMarker("Farthest the camera will auto-zoom when the fighters are far apart.");
-
-                    var fSmooth = config.ActiveCameraFightingSmoothing;
-                    if (ImGui.SliderFloat("Smoothing##fightcam", ref fSmooth, 1f, 20f, "%.1f"))
-                    {
-                        config.ActiveCameraFightingSmoothing = fSmooth;
-                        config.Save();
-                    }
-                    HelpMarker("How quickly the camera follows center/zoom changes. Higher = snappier, lower = floatier.");
-
-                    var fHeight = config.ActiveCameraFightingHeightOffset;
-                    if (ImGui.DragFloat("Center Height Offset##fightcam", ref fHeight, 0.01f, -5f, 10f, "%.2f"))
-                    {
-                        config.ActiveCameraFightingHeightOffset = fHeight;
-                        config.Save();
-                    }
-                    HelpMarker("Raises/lowers the framing midpoint.");
-                }
             }
 
             ImGui.Unindent();
