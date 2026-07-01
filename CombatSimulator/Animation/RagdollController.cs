@@ -3823,6 +3823,7 @@ public unsafe class RagdollController : IDisposable
                 hasPrevPhysicsState = true;
                 simulation.Timestep(FixedTimestep);
                 ClampVelocities(maxLinear, maxAngular);
+                ApplyStandingAnchorCorrection();
                 physicsAccumulator -= FixedTimestep;
                 substeps++;
             }
@@ -6069,6 +6070,10 @@ public unsafe class RagdollController : IDisposable
     // Legs/arms/head: fully dynamic — gravity + joints handle them naturally.
     private readonly List<ConstraintHandle> standingConstraints = new();
     private bool standingActive;
+    private BodyHandle? standingAnchorHandle;
+    private Vector3 standingAnchorTarget;
+
+    public bool IsStandingSupportActive => standingActive;
 
     private static readonly string[] StandingSpineBones = { "j_sebo_a", "j_sebo_b", "j_sebo_c" };
 
@@ -6086,6 +6091,7 @@ public unsafe class RagdollController : IDisposable
 
         BuildStandingConstraints(anchorWorldPos, uprightRot, anchorBoneName);
         standingActive = true;
+        ApplyStandingAnchorCorrection();
         log.Info($"RagdollController: Standing support created — {standingConstraints.Count} constraints, anchor={anchorBoneName} ({anchorWorldPos.X:F2},{anchorWorldPos.Y:F2},{anchorWorldPos.Z:F2})");
         return true;
     }
@@ -6098,8 +6104,10 @@ public unsafe class RagdollController : IDisposable
         foreach (var h in standingConstraints)
             try { simulation.Solver.Remove(h); } catch { }
         standingConstraints.Clear();
+        standingAnchorHandle = null;
 
         BuildStandingConstraints(anchorWorldPos, uprightRot, anchorBoneName);
+        ApplyStandingAnchorCorrection();
         return true;
     }
 
@@ -6108,6 +6116,9 @@ public unsafe class RagdollController : IDisposable
         var anchorHandle = FindBodyHandle(anchorBoneName);
         if (anchorHandle.HasValue)
         {
+            standingAnchorHandle = anchorHandle.Value;
+            standingAnchorTarget = anchorWorldPos;
+
             standingConstraints.Add(simulation.Solver.Add(anchorHandle.Value,
                 new OneBodyLinearServo
                 {
@@ -6146,6 +6157,27 @@ public unsafe class RagdollController : IDisposable
         }
     }
 
+    private void ApplyStandingAnchorCorrection()
+    {
+        if (!standingActive || simulation == null || !standingAnchorHandle.HasValue)
+            return;
+
+        var anchor = simulation.Bodies.GetBodyReference(standingAnchorHandle.Value);
+        var correction = standingAnchorTarget - anchor.Pose.Position;
+        var anchorVelocity = anchor.Velocity.Linear;
+
+        // Keep the held point fixed without disabling contact response. If collision pushes the
+        // ragdoll as a whole, translate every body back by the same delta and remove the global
+        // anchor velocity; relative limb motion from the contact is preserved.
+        foreach (var rb in ragdollBones)
+        {
+            var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            body.Pose.Position += correction;
+            body.Velocity.Linear -= anchorVelocity;
+            body.Awake = true;
+        }
+    }
+
     public void RemoveStandingSupport()
     {
         if (!standingActive || simulation == null) return;
@@ -6155,6 +6187,7 @@ public unsafe class RagdollController : IDisposable
             try { simulation.Solver.Remove(h); } catch { }
         }
         standingConstraints.Clear();
+        standingAnchorHandle = null;
 
         var normalThreshold = 0.01f;
         for (int i = 0; i < ragdollBones.Count; i++)
@@ -6520,6 +6553,7 @@ public unsafe class RagdollController : IDisposable
     /// </summary>
     public void BeginAttackStrike(float duration, float power)
     {
+        if (standingActive) return;
         strikePower = power;
         attackStrikeTimer = MathF.Max(attackStrikeTimer, duration);
         struckThisWindow.Clear(); // a fresh swing may hit each body again
