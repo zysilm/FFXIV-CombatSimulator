@@ -650,6 +650,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             mapEnemyController.Tick(deltaTime);
             combatEngine.Tick(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
+            // Re-apply after NPC AI so the final frame pose is still constrained to the 2D lane.
+            fightingModeController.Tick(deltaTime);
             // All experimental dev ticking (Victory/Hold + NPC scale + occlusion hide) lives here now.
             devExperimental.Tick(deltaTime);
         }

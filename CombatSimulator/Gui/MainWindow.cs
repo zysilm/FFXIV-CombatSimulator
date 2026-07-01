@@ -694,6 +694,20 @@ public partial class MainWindow : IDisposable
     {
         StopFastCombat(print: false);
 
+        if (config.FightingMode)
+        {
+            config.ActionMode = false;
+            config.EnableCustomTargeting = false;
+            config.EnableCombatCompanions = false;
+            config.SensePartyMembers = false;
+            config.EnableMapPlayerEnemySensing = false;
+            npcSpawner.SpawnModeActive = false;
+            mapEnemyController.ClearRecipeSettings();
+            combatEngine.StartSimulation();
+            chatGui.Print("[CombatSim] Fighting Mode started. Attack one enemy to begin a 1v1.");
+            return;
+        }
+
         config.EnableCombatCompanions = true;
         config.SensePartyMembers = recipe.Companions.Exists(c => c.Type == CompanionRecipeType.VisiblePlayers);
         config.EnableMapPlayerEnemySensing = recipe.MapEnemies.Exists(g => g.Enabled && g.IncludePlayers);
@@ -1433,21 +1447,21 @@ public partial class MainWindow : IDisposable
         ImGui.Text("Camera");
 
         var margin = config.FightingModeCameraMargin;
-        if (ImGui.SliderFloat("Frame margin##fightingmode", ref margin, 1.0f, 2.5f, "%.2f"))
+        if (ImGui.SliderFloat("Frame margin##fightingmode", ref margin, 0.4f, 1.8f, "%.2f"))
         {
             config.FightingModeCameraMargin = margin;
             config.Save();
         }
 
         var minDist = config.FightingModeCameraMinDistance;
-        if (ImGui.SliderFloat("Min camera distance##fightingmode", ref minDist, 2.0f, 15.0f, "%.2f"))
+        if (ImGui.SliderFloat("Min camera distance##fightingmode", ref minDist, 1.5f, 10.0f, "%.2f"))
         {
             config.FightingModeCameraMinDistance = minDist;
             config.Save();
         }
 
         var maxDist = config.FightingModeCameraMaxDistance;
-        if (ImGui.SliderFloat("Max camera distance##fightingmode", ref maxDist, 5.0f, 40.0f, "%.2f"))
+        if (ImGui.SliderFloat("Max camera distance##fightingmode", ref maxDist, 3.0f, 25.0f, "%.2f"))
         {
             config.FightingModeCameraMaxDistance = MathF.Max(maxDist, config.FightingModeCameraMinDistance + 0.1f);
             config.Save();

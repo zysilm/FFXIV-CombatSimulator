@@ -30,6 +30,8 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink
     private nint playerAddress;
     private nint targetAddress;
     private Vector3 laneAxis = Vector3.UnitZ;
+    private Vector3 laneOrigin;
+    private bool laneInitialized;
     private Vector3 smoothedCameraCenter;
     private float smoothedCameraDistance;
     private float savedMaxDistance;
@@ -105,7 +107,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink
         var playerObj = (GameObject*)playerAddress;
         var targetObj = (GameObject*)targetAddress;
 
-        movementBlockHook.AddApproachNpc(playerAddress);
         movementBlockHook.AddApproachNpc(targetAddress);
 
         ApplyLane(playerObj, targetObj);
@@ -166,6 +167,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink
         Disengage();
         target = npc;
         engaged = true;
+        CaptureLane();
         hadActiveCameraBeforeEngage = config.EnableActiveCamera || activeCameraController.IsActive;
         config.EnableActiveCamera = true;
         activeCameraController.SetActive(true);
@@ -189,30 +191,53 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink
         target = null;
         playerAddress = nint.Zero;
         targetAddress = nint.Zero;
+        laneInitialized = false;
         engaged = false;
+    }
+
+    private void CaptureLane()
+    {
+        var player = Services.ObjectTable.LocalPlayer;
+        if (player == null || target == null || target.Address == nint.Zero)
+            return;
+
+        var playerObj = (GameObject*)player.Address;
+        var targetObj = (GameObject*)target.Address;
+        var p = ToVector3(playerObj->Position);
+        var e = ToVector3(targetObj->Position);
+        var axis = e - p;
+        axis.Y = 0f;
+        laneAxis = axis.LengthSquared() > 0.0001f ? Vector3.Normalize(axis) : Vector3.UnitZ;
+        laneOrigin = (p + e) * 0.5f;
+        laneOrigin.Y = 0f;
+        laneInitialized = true;
     }
 
     private void ApplyLane(GameObject* playerObj, GameObject* targetObj)
     {
         var p = ToVector3(playerObj->Position);
         var e = ToVector3(targetObj->Position);
-        var flat = e - p;
-        flat.Y = 0f;
-        if (flat.LengthSquared() > 0.0001f)
-            laneAxis = Vector3.Normalize(flat);
 
-        var center = (p + e) * 0.5f;
-        var pAlong = Vector3.Dot(p - center, laneAxis);
-        var eAlong = Vector3.Dot(e - center, laneAxis);
+        if (!laneInitialized)
+            CaptureLane();
+
+        var pAlong = Vector3.Dot(new Vector3(p.X, 0f, p.Z) - laneOrigin, laneAxis);
+        var eAlong = Vector3.Dot(new Vector3(e.X, 0f, e.Z) - laneOrigin, laneAxis);
         var separation = MathF.Abs(eAlong - pAlong);
         var minSep = MathF.Max(0.1f, config.FightingModeMinSeparation);
         var maxSep = MathF.Max(minSep + 0.1f, config.FightingModeMaxSeparation);
-        separation = Math.Clamp(separation, minSep, maxSep);
 
-        var playerSign = pAlong <= eAlong ? -1f : 1f;
-        var enemySign = -playerSign;
-        var targetP = center + laneAxis * (playerSign * separation * 0.5f);
-        var targetE = center + laneAxis * (enemySign * separation * 0.5f);
+        if (separation < minSep || separation > maxSep)
+        {
+            var centerAlong = (pAlong + eAlong) * 0.5f;
+            var clampedSep = Math.Clamp(separation, minSep, maxSep);
+            var playerSign = pAlong <= eAlong ? -1f : 1f;
+            pAlong = centerAlong + playerSign * clampedSep * 0.5f;
+            eAlong = centerAlong - playerSign * clampedSep * 0.5f;
+        }
+
+        var targetP = laneOrigin + laneAxis * pAlong;
+        var targetE = laneOrigin + laneAxis * eAlong;
         targetP.Y = p.Y;
         targetE.Y = e.Y;
 
@@ -230,10 +255,12 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink
         center.Y = MathF.Min(p.Y, e.Y) + config.FightingModeCameraHeight;
 
         var sep = Vector3.Distance(new Vector3(p.X, 0f, p.Z), new Vector3(e.X, 0f, e.Z));
+        var minDistance = MathF.Min(MathF.Max(1f, config.FightingModeCameraMinDistance), 3.5f);
+        var maxDistance = MathF.Min(MathF.Max(minDistance + 0.1f, config.FightingModeCameraMaxDistance), 12f);
         var desiredDistance = Math.Clamp(
-            sep * MathF.Max(1.0f, config.FightingModeCameraMargin) + 3.5f,
-            MathF.Max(1f, config.FightingModeCameraMinDistance),
-            MathF.Max(config.FightingModeCameraMinDistance + 0.1f, config.FightingModeCameraMaxDistance));
+            sep * MathF.Max(0.4f, config.FightingModeCameraMargin) + 1.6f,
+            minDistance,
+            maxDistance);
 
         var k = 1f - MathF.Exp(-MathF.Max(0.1f, config.FightingModeCameraSmoothing) * dt);
         if (smoothedCameraDistance <= 0.01f)

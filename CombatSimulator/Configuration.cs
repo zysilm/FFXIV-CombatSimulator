@@ -508,9 +508,9 @@ public partial class Configuration : IPluginConfiguration
     public float FightingModeLaneHalfWidth { get; set; } = 0.35f;
     public float FightingModeMinSeparation { get; set; } = 1.8f;
     public float FightingModeMaxSeparation { get; set; } = 10.0f;
-    public float FightingModeCameraMargin { get; set; } = 1.35f;
-    public float FightingModeCameraMinDistance { get; set; } = 5.0f;
-    public float FightingModeCameraMaxDistance { get; set; } = 18.0f;
+    public float FightingModeCameraMargin { get; set; } = 0.75f;
+    public float FightingModeCameraMinDistance { get; set; } = 3.0f;
+    public float FightingModeCameraMaxDistance { get; set; } = 10.0f;
     public float FightingModeCameraSmoothing { get; set; } = 10.0f;
     public float FightingModeCameraHeight { get; set; } = 1.0f;
     public float FightingModeCameraVerticalAngle { get; set; } = -0.12f;

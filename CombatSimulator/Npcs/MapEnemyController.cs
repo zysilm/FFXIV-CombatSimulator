@@ -70,6 +70,11 @@ public sealed unsafe class MapEnemyController
         if (!combatEngine.IsActive)
             return;
 
+        // Fighting Mode is opt-in 1v1: do not auto-sense the map and pull a group.
+        // The selected enemy is force-registered by FightingModeController on player attack.
+        if (config.FightingMode)
+            return;
+
         var settings = CurrentSettings();
         if (settings is not { Enabled: true })
             return;
