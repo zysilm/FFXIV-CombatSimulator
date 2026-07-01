@@ -1,4 +1,5 @@
 using CombatSimulator.Gui;
+using CombatSimulator.Fighting;
 using CombatSimulator.Simulation;
 
 namespace CombatSimulator.Dev;
@@ -15,6 +16,7 @@ public sealed class DevExperimentalStub : IDevExperimental
     public void Tick(float deltaTime) { }
     public void BeforePlayerDeath() { }
     public void OnPlayerDeath(nint playerAddress) { }
+    public void SetFightingModeLane(IFightingModeLaneConstraint? lane) { }
     public void ResetTransientState() { }
     public void DrawToolbars(MainWindow mainWindow) { }
     public void RestoreOcclusion() { }

@@ -16,7 +16,14 @@ public interface IFightingModeInputSink
     bool OnPlayerAction(uint actionType, uint actionId, ulong targetId, uint extraParam);
 }
 
-public unsafe sealed class FightingModeController : IFightingModeInputSink
+public interface IFightingModeLaneConstraint
+{
+    bool IsLaneActive { get; }
+    Vector3 ConstrainToLane(Vector3 position);
+    Vector3 LaneAxis { get; }
+}
+
+public unsafe sealed class FightingModeController : IFightingModeInputSink, IFightingModeLaneConstraint
 {
     private readonly Configuration config;
     private readonly CombatEngine combatEngine;
@@ -37,9 +44,14 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink
     private float savedMaxDistance;
     private bool maxDistanceOverridden;
     private bool hadActiveCameraBeforeEngage;
+    private bool ownsActiveCamera;
+    private bool suppressDeathCameraThisDeath;
     private bool engaged;
 
     public bool IsEngaged => engaged;
+    public bool IsLaneActive => engaged && laneInitialized;
+    public Vector3 LaneAxis => laneAxis;
+    public bool ShouldSuppressDeathCamera => engaged || suppressDeathCameraThisDeath;
     public Vector3? CameraCenterOverride => engaged ? smoothedCameraCenter : null;
 
     public FightingModeController(
@@ -82,13 +94,15 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink
 
     public void Tick(float deltaTime)
     {
-        if (!config.FightingMode || !combatEngine.IsActive || !combatEngine.State.PlayerState.IsAlive)
+        if (!config.FightingMode || !combatEngine.IsActive)
         {
+            if (combatEngine.State.PlayerState.IsAlive)
+                suppressDeathCameraThisDeath = false;
             Disengage();
             return;
         }
 
-        if (target == null || !target.IsAlive || target.Address == nint.Zero)
+        if (target == null || target.Address == nint.Zero)
         {
             Disengage();
             return;
@@ -169,9 +183,16 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink
         engaged = true;
         CaptureLane();
         hadActiveCameraBeforeEngage = config.EnableActiveCamera || activeCameraController.IsActive;
-        config.EnableActiveCamera = true;
+        ownsActiveCamera = !hadActiveCameraBeforeEngage;
         activeCameraController.SetActive(true);
         log.Info($"FightingMode: engaged 1v1 with '{npc.Name}' (0x{npc.SimulatedEntityId:X}).");
+    }
+
+    public void HandlePlayerDeath()
+    {
+        suppressDeathCameraThisDeath = engaged && !config.FightingModeDeathActiveCameraTransition;
+        if (!engaged)
+            return;
     }
 
     private void Disengage()
@@ -181,17 +202,15 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink
         if (targetAddress != nint.Zero)
             movementBlockHook.RemoveApproachNpc(targetAddress);
 
-        if (!hadActiveCameraBeforeEngage && engaged)
-        {
-            config.EnableActiveCamera = false;
+        if (ownsActiveCamera && engaged)
             activeCameraController.SetActive(false);
-        }
 
         RestoreCameraMaxDistance();
         target = null;
         playerAddress = nint.Zero;
         targetAddress = nint.Zero;
         laneInitialized = false;
+        ownsActiveCamera = false;
         engaged = false;
     }
 
@@ -213,6 +232,17 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink
         laneInitialized = true;
     }
 
+    public Vector3 ConstrainToLane(Vector3 position)
+    {
+        if (!IsLaneActive)
+            return position;
+
+        var along = Vector3.Dot(new Vector3(position.X, 0f, position.Z) - laneOrigin, laneAxis);
+        var constrained = laneOrigin + laneAxis * along;
+        constrained.Y = position.Y;
+        return constrained;
+    }
+
     private void ApplyLane(GameObject* playerObj, GameObject* targetObj)
     {
         var p = ToVector3(playerObj->Position);
@@ -224,8 +254,8 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink
         var pAlong = Vector3.Dot(new Vector3(p.X, 0f, p.Z) - laneOrigin, laneAxis);
         var eAlong = Vector3.Dot(new Vector3(e.X, 0f, e.Z) - laneOrigin, laneAxis);
         var separation = MathF.Abs(eAlong - pAlong);
-        var minSep = MathF.Max(0.1f, config.FightingModeMinSeparation);
-        var maxSep = MathF.Max(minSep + 0.1f, config.FightingModeMaxSeparation);
+        var minSep = Math.Clamp(config.FightingModeMinSeparation, 0.1f, 0.65f);
+        var maxSep = Math.Clamp(config.FightingModeMaxSeparation, minSep + 0.05f, 1.05f);
 
         if (separation < minSep || separation > maxSep)
         {

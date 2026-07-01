@@ -506,8 +506,8 @@ public partial class Configuration : IPluginConfiguration
     // a fighting-game camera. Mutually exclusive with Action Mode.
     public bool FightingMode { get; set; } = false;
     public float FightingModeLaneHalfWidth { get; set; } = 0.35f;
-    public float FightingModeMinSeparation { get; set; } = 1.8f;
-    public float FightingModeMaxSeparation { get; set; } = 10.0f;
+    public float FightingModeMinSeparation { get; set; } = 0.45f;
+    public float FightingModeMaxSeparation { get; set; } = 1.0f;
     public float FightingModeCameraMargin { get; set; } = 0.75f;
     public float FightingModeCameraMinDistance { get; set; } = 3.0f;
     public float FightingModeCameraMaxDistance { get; set; } = 10.0f;

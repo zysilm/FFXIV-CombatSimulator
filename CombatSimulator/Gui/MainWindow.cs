@@ -1430,14 +1430,14 @@ public partial class MainWindow : IDisposable
         HelpMarker("How much sideways drift is tolerated before the player/enemy pair is projected back onto the 2D lane.");
 
         var minSep = config.FightingModeMinSeparation;
-        if (ImGui.SliderFloat("Min separation##fightingmode", ref minSep, 0.5f, 6.0f, "%.2f"))
+        if (ImGui.SliderFloat("Min separation##fightingmode", ref minSep, 0.1f, 1.5f, "%.2f"))
         {
             config.FightingModeMinSeparation = minSep;
             config.Save();
         }
 
         var maxSep = config.FightingModeMaxSeparation;
-        if (ImGui.SliderFloat("Max separation##fightingmode", ref maxSep, 3.0f, 25.0f, "%.2f"))
+        if (ImGui.SliderFloat("Max separation##fightingmode", ref maxSep, 0.2f, 3.0f, "%.2f"))
         {
             config.FightingModeMaxSeparation = MathF.Max(maxSep, config.FightingModeMinSeparation + 0.1f);
             config.Save();

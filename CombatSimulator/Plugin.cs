@@ -197,7 +197,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         devExperimental = new Dev.DevExperimentalStub();
 #endif
         combatEngine.VictorySequence = devExperimental.VictorySequence;
-        combatEngine.BeforePlayerDeath = devExperimental.BeforePlayerDeath;
         companionManager = new CombatCompanionManager(
             objectTable, clientState, config, combatEngine, animationController,
             movementBlockHook, vnavmeshIpc, targetManager, partyEngagePlanner, terrainHeightService, log);
@@ -233,8 +232,14 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         fightingModeController = new FightingModeController(
             config, combatEngine, npcSelector, mapEnemyController, movementBlockHook,
             activeCameraController, log);
+        devExperimental.SetFightingModeLane(fightingModeController);
         activeCameraController.GetModeOrbitCenterOverride = () => fightingModeController.CameraCenterOverride;
-        combatEngine.SuppressDeathCam = () => fightingModeController.IsEngaged;
+        combatEngine.BeforePlayerDeath = () =>
+        {
+            fightingModeController.HandlePlayerDeath();
+            devExperimental.BeforePlayerDeath();
+        };
+        combatEngine.SuppressDeathCam = () => fightingModeController.ShouldSuppressDeathCamera;
         companionManager.IsSourceEnemy = entityId => npcSelector.GetSelectedNpc(entityId) != null;
 
         companionManager.OnCompanionSpawnComplete = companion =>

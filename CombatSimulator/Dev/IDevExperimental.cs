@@ -1,4 +1,5 @@
 using System;
+using CombatSimulator.Fighting;
 using CombatSimulator.Gui;
 using CombatSimulator.Simulation;
 
@@ -20,6 +21,7 @@ public interface IDevExperimental : IDisposable
     void Tick(float deltaTime);
     void BeforePlayerDeath();
     void OnPlayerDeath(nint playerAddress);
+    void SetFightingModeLane(IFightingModeLaneConstraint? lane);
     void ResetTransientState();
     void DrawToolbars(MainWindow mainWindow);
     void RestoreOcclusion();
