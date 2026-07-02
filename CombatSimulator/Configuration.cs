@@ -514,8 +514,15 @@ public partial class Configuration : IPluginConfiguration
     public float FightingModeCameraSmoothing { get; set; } = 10.0f;
     public float FightingModeCameraHeight { get; set; } = 1.0f;
     public float FightingModeCameraVerticalAngle { get; set; } = -0.12f;
-    public bool FightingModeDeathActiveCameraTransition { get; set; } = false;
-    public float FightingModeDeathTransitionDuration { get; set; } = 3.0f;
+    public bool FightingModeTranslateCam { get; set; } = false;
+    public float FightingModeTranslateDuration { get; set; } = 3.0f;
+    public string FightingModeTranslateBoneName { get; set; } = "j_kosi";
+    public float FightingModeTranslateHeightOffset { get; set; } = 0.0f;
+    public float FightingModeTranslateSideOffset { get; set; } = 0.0f;
+    public bool FightingModeTranslateLockHorizontal { get; set; } = false;
+    public float FightingModeTranslateHorizontalAngle { get; set; } = 0.0f;
+    public bool FightingModeTranslateLockVertical { get; set; } = true;
+    public float FightingModeTranslateVerticalAngle { get; set; } = -0.12f;
 
     // Input map: put these actions on the hotbar; a press is interpreted as the
     // mapped role instead of firing the real action. 0 = unmapped.

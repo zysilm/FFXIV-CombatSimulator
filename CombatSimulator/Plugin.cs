@@ -231,7 +231,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             log);
         fightingModeController = new FightingModeController(
             config, combatEngine, npcSelector, mapEnemyController, movementBlockHook,
-            activeCameraController, log);
+            activeCameraController, boneTransformService, addr => devExperimental.ControlsNpc(addr), log);
         devExperimental.SetFightingModeLane(fightingModeController);
         activeCameraController.GetModeOrbitCenterOverride = () => fightingModeController.CameraCenterOverride;
         combatEngine.BeforePlayerDeath = () =>

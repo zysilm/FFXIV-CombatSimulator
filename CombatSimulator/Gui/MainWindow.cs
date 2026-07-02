@@ -22,6 +22,16 @@ namespace CombatSimulator.Gui;
 
 public partial class MainWindow : IDisposable
 {
+    private static readonly (string Label, string BoneName)[] FightingModeTranslateBones =
+    {
+        ("Hips (j_kosi)", "j_kosi"),
+        ("Lower Spine (j_sebo_a)", "j_sebo_a"),
+        ("Mid Spine (j_sebo_b)", "j_sebo_b"),
+        ("Upper Spine (j_sebo_c)", "j_sebo_c"),
+        ("Neck (j_kubi)", "j_kubi"),
+        ("Head (j_kao)", "j_kao"),
+    };
+
     private readonly Configuration config;
     private readonly NpcSelector npcSelector;
     private readonly NpcSpawner npcSpawner;
@@ -1489,19 +1499,91 @@ public partial class MainWindow : IDisposable
         }
 
         ImGui.Separator();
-        var transition = config.FightingModeDeathActiveCameraTransition;
-        if (ImGui.Checkbox("Translate defeat to Active Camera##fightingmode", ref transition))
+        ImGui.Text("Translate Cam");
+
+        var translate = config.FightingModeTranslateCam;
+        if (ImGui.Checkbox("Translate cam on defeat##fightingmode", ref translate))
         {
-            config.FightingModeDeathActiveCameraTransition = transition;
+            config.FightingModeTranslateCam = translate;
             config.Save();
         }
-        HelpMarker("Reserved for the next pass: when the player loses, transition from Fighting Mode to Active Camera over the configured duration.");
+        HelpMarker("When the player is defeated, smoothly transition the Fighting Mode camera to a player-bone follow camera. If enabled after defeat, it performs the translate once on the next frame.");
 
-        var duration = config.FightingModeDeathTransitionDuration;
+        var duration = config.FightingModeTranslateDuration;
         if (ImGui.SliderFloat("Translate duration##fightingmode", ref duration, 0.1f, 10.0f, "%.2f s"))
         {
-            config.FightingModeDeathTransitionDuration = duration;
+            config.FightingModeTranslateDuration = duration;
             config.Save();
+        }
+
+        var bones = FightingModeTranslateBones;
+        var boneNames = new string[bones.Length];
+        var boneIdx = 0;
+        for (int i = 0; i < bones.Length; i++)
+        {
+            boneNames[i] = bones[i].Label;
+            if (bones[i].BoneName == config.FightingModeTranslateBoneName)
+                boneIdx = i;
+        }
+
+        if (config.FightingModeTranslateBoneName == "n_hara")
+        {
+            config.FightingModeTranslateBoneName = "j_kosi";
+            config.Save();
+        }
+
+        if (ImGui.Combo("Track bone##fightingmode", ref boneIdx, boneNames, boneNames.Length))
+        {
+            config.FightingModeTranslateBoneName = bones[boneIdx].BoneName;
+            config.Save();
+        }
+
+        var translateHeight = config.FightingModeTranslateHeightOffset;
+        if (ImGui.SliderFloat("Track height offset##fightingmode", ref translateHeight, -3.0f, 5.0f, "%.2f"))
+        {
+            config.FightingModeTranslateHeightOffset = translateHeight;
+            config.Save();
+        }
+
+        var translateSide = config.FightingModeTranslateSideOffset;
+        if (ImGui.SliderFloat("Track side offset##fightingmode", ref translateSide, -5.0f, 5.0f, "%.2f"))
+        {
+            config.FightingModeTranslateSideOffset = translateSide;
+            config.Save();
+        }
+
+        var lockH = config.FightingModeTranslateLockHorizontal;
+        if (ImGui.Checkbox("Lock horizontal rotation##fightingmode", ref lockH))
+        {
+            config.FightingModeTranslateLockHorizontal = lockH;
+            config.Save();
+        }
+
+        if (config.FightingModeTranslateLockHorizontal)
+        {
+            var h = config.FightingModeTranslateHorizontalAngle;
+            if (ImGui.SliderFloat("Horizontal angle##fightingmode", ref h, -MathF.PI, MathF.PI, "%.2f rad"))
+            {
+                config.FightingModeTranslateHorizontalAngle = h;
+                config.Save();
+            }
+        }
+
+        var lockV = config.FightingModeTranslateLockVertical;
+        if (ImGui.Checkbox("Lock vertical rotation##fightingmode", ref lockV))
+        {
+            config.FightingModeTranslateLockVertical = lockV;
+            config.Save();
+        }
+
+        if (config.FightingModeTranslateLockVertical)
+        {
+            var v = config.FightingModeTranslateVerticalAngle;
+            if (ImGui.SliderFloat("Vertical angle##fightingmode", ref v, -0.8f, 0.5f, "%.2f rad"))
+            {
+                config.FightingModeTranslateVerticalAngle = v;
+                config.Save();
+            }
         }
     }
 

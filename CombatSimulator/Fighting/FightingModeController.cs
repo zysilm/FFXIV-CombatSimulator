@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using CombatSimulator.Animation;
 using CombatSimulator.Camera;
 using CombatSimulator.Core;
 using CombatSimulator.Npcs;
@@ -31,6 +32,8 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     private readonly MapEnemyController mapEnemyController;
     private readonly MovementBlockHook movementBlockHook;
     private readonly ActiveCameraController activeCameraController;
+    private readonly BoneTransformService boneService;
+    private readonly Func<nint, bool> isExternallyControlled;
     private readonly IPluginLog log;
 
     private SimulatedNpc? target;
@@ -47,12 +50,26 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     private bool ownsActiveCamera;
     private bool suppressDeathCameraThisDeath;
     private bool engaged;
+    private bool postDeathEngaged;
+    private CameraPhase cameraPhase = CameraPhase.Fighting;
+    private float translateElapsed;
+    private Vector3 translateStartCenter;
+    private float translateStartDistance;
+    private float translateStartDirH;
+    private float translateStartDirV;
+
+    private enum CameraPhase
+    {
+        Fighting,
+        Translating,
+        PlayerFollow,
+    }
 
     public bool IsEngaged => engaged;
-    public bool IsLaneActive => engaged && laneInitialized;
+    public bool IsLaneActive => (engaged || postDeathEngaged) && laneInitialized;
     public Vector3 LaneAxis => laneAxis;
-    public bool ShouldSuppressDeathCamera => engaged || suppressDeathCameraThisDeath;
-    public Vector3? CameraCenterOverride => engaged ? smoothedCameraCenter : null;
+    public bool ShouldSuppressDeathCamera => engaged || postDeathEngaged || suppressDeathCameraThisDeath;
+    public Vector3? CameraCenterOverride => engaged || postDeathEngaged ? smoothedCameraCenter : null;
 
     public FightingModeController(
         Configuration config,
@@ -61,6 +78,8 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         MapEnemyController mapEnemyController,
         MovementBlockHook movementBlockHook,
         ActiveCameraController activeCameraController,
+        BoneTransformService boneService,
+        Func<nint, bool> isExternallyControlled,
         IPluginLog log)
     {
         this.config = config;
@@ -69,6 +88,8 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         this.mapEnemyController = mapEnemyController;
         this.movementBlockHook = movementBlockHook;
         this.activeCameraController = activeCameraController;
+        this.boneService = boneService;
+        this.isExternallyControlled = isExternallyControlled;
         this.log = log;
     }
 
@@ -94,7 +115,13 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
 
     public void Tick(float deltaTime)
     {
-        if (!config.FightingMode || !combatEngine.IsActive)
+        if (!config.FightingMode)
+        {
+            Disengage();
+            return;
+        }
+
+        if (!combatEngine.IsActive && !postDeathEngaged)
         {
             if (combatEngine.State.PlayerState.IsAlive)
                 suppressDeathCameraThisDeath = false;
@@ -121,9 +148,11 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         var playerObj = (GameObject*)playerAddress;
         var targetObj = (GameObject*)targetAddress;
 
-        movementBlockHook.AddApproachNpc(targetAddress);
+        var targetControlled = isExternallyControlled(targetAddress);
+        if (!targetControlled)
+            movementBlockHook.AddApproachNpc(targetAddress);
 
-        ApplyLane(playerObj, targetObj);
+        ApplyLane(playerObj, targetObj, targetControlled);
         UpdateCamera(playerObj, targetObj, deltaTime);
     }
 
@@ -181,6 +210,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         Disengage();
         target = npc;
         engaged = true;
+        cameraPhase = CameraPhase.Fighting;
         CaptureLane();
         hadActiveCameraBeforeEngage = config.EnableActiveCamera || activeCameraController.IsActive;
         ownsActiveCamera = !hadActiveCameraBeforeEngage;
@@ -190,9 +220,13 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
 
     public void HandlePlayerDeath()
     {
-        suppressDeathCameraThisDeath = engaged && !config.FightingModeDeathActiveCameraTransition;
+        suppressDeathCameraThisDeath = engaged;
         if (!engaged)
             return;
+
+        postDeathEngaged = true;
+        if (config.FightingModeTranslateCam)
+            BeginTranslateCam();
     }
 
     private void Disengage()
@@ -211,6 +245,8 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         targetAddress = nint.Zero;
         laneInitialized = false;
         ownsActiveCamera = false;
+        postDeathEngaged = false;
+        cameraPhase = CameraPhase.Fighting;
         engaged = false;
     }
 
@@ -243,13 +279,27 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         return constrained;
     }
 
-    private void ApplyLane(GameObject* playerObj, GameObject* targetObj)
+    private void ApplyLane(GameObject* playerObj, GameObject* targetObj, bool targetControlled)
     {
         var p = ToVector3(playerObj->Position);
         var e = ToVector3(targetObj->Position);
 
         if (!laneInitialized)
             CaptureLane();
+
+        if (targetControlled)
+        {
+            // When MonsterMode owns the enemy, FightingMode must only provide the lane. Do not
+            // recenter the pair by moving the player/corpse; that couples enemy input to player
+            // translation and also fights MonsterMode's movement/animation state.
+            if (!postDeathEngaged)
+            {
+                var projectedP = ConstrainToLane(p);
+                movementBlockHook.SetApproachPosition(playerObj, projectedP.X, p.Y, projectedP.Z);
+                movementBlockHook.SetApproachRotation(playerObj, YawTo(e - p));
+            }
+            return;
+        }
 
         var pAlong = Vector3.Dot(new Vector3(p.X, 0f, p.Z) - laneOrigin, laneAxis);
         var eAlong = Vector3.Dot(new Vector3(e.X, 0f, e.Z) - laneOrigin, laneAxis);
@@ -272,13 +322,28 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         targetE.Y = e.Y;
 
         movementBlockHook.SetApproachPosition(playerObj, targetP.X, targetP.Y, targetP.Z);
-        movementBlockHook.SetApproachPosition(targetObj, targetE.X, targetE.Y, targetE.Z);
         movementBlockHook.SetApproachRotation(playerObj, YawTo(targetE - targetP));
-        movementBlockHook.SetApproachRotation(targetObj, YawTo(targetP - targetE));
+        if (!targetControlled)
+        {
+            movementBlockHook.SetApproachPosition(targetObj, targetE.X, targetE.Y, targetE.Z);
+            movementBlockHook.SetApproachRotation(targetObj, YawTo(targetP - targetE));
+        }
     }
 
     private void UpdateCamera(GameObject* playerObj, GameObject* targetObj, float dt)
     {
+        var playerDefeated = postDeathEngaged || !combatEngine.State.PlayerState.IsAlive;
+        if (playerDefeated && config.FightingModeTranslateCam)
+        {
+            if (cameraPhase == CameraPhase.Fighting)
+                BeginTranslateCam();
+            UpdateTranslateCamera(playerObj, dt);
+            return;
+        }
+
+        if (!playerDefeated && cameraPhase != CameraPhase.Fighting)
+            cameraPhase = CameraPhase.Fighting;
+
         var p = ToVector3(playerObj->Position);
         var e = ToVector3(targetObj->Position);
         var center = (p + e) * 0.5f;
@@ -329,6 +394,105 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         gameCam->InputDeltaV = 0;
         gameCam->InputDeltaHAdjusted = 0;
         gameCam->InputDeltaVAdjusted = 0;
+    }
+
+    private void BeginTranslateCam()
+    {
+        if (cameraPhase is CameraPhase.Translating or CameraPhase.PlayerFollow)
+            return;
+
+        var camMgr = GameCameraManager.Instance();
+        if (camMgr == null || camMgr->Camera == null)
+            return;
+
+        var gameCam = camMgr->Camera;
+        translateStartCenter = smoothedCameraCenter;
+        translateStartDistance = smoothedCameraDistance > 0.01f ? smoothedCameraDistance : gameCam->Distance;
+        translateStartDirH = gameCam->DirH;
+        translateStartDirV = gameCam->DirV;
+        translateElapsed = 0f;
+        cameraPhase = CameraPhase.Translating;
+    }
+
+    private void UpdateTranslateCamera(GameObject* playerObj, float dt)
+    {
+        var camMgr = GameCameraManager.Instance();
+        if (camMgr == null || camMgr->Camera == null)
+            return;
+
+        var gameCam = camMgr->Camera;
+        var targetCenter = GetTranslateTargetCenter(playerObj, gameCam->DirH);
+        var targetDistance = translateStartDistance > 0.01f ? translateStartDistance : gameCam->Distance;
+        var targetDirH = config.FightingModeTranslateLockHorizontal
+            ? config.FightingModeTranslateHorizontalAngle
+            : gameCam->DirH;
+        var targetDirV = config.FightingModeTranslateLockVertical
+            ? config.FightingModeTranslateVerticalAngle
+            : gameCam->DirV;
+
+        if (cameraPhase == CameraPhase.Translating)
+        {
+            translateElapsed += dt;
+            var duration = MathF.Max(0.01f, config.FightingModeTranslateDuration);
+            var t = Math.Clamp(translateElapsed / duration, 0f, 1f);
+            var s = t * t * (3f - 2f * t);
+            smoothedCameraCenter = Vector3.Lerp(translateStartCenter, targetCenter, s);
+            smoothedCameraDistance = Lerp(translateStartDistance, targetDistance, s);
+            gameCam->DirH = AngleLerp(translateStartDirH, targetDirH, s);
+            gameCam->DirV = Lerp(translateStartDirV, targetDirV, s);
+            if (t >= 1f)
+                cameraPhase = CameraPhase.PlayerFollow;
+        }
+        else
+        {
+            smoothedCameraCenter = targetCenter;
+            smoothedCameraDistance = targetDistance;
+            if (config.FightingModeTranslateLockHorizontal)
+                gameCam->DirH = targetDirH;
+            if (config.FightingModeTranslateLockVertical)
+                gameCam->DirV = targetDirV;
+        }
+
+        gameCam->Distance = smoothedCameraDistance;
+        gameCam->InterpDistance = smoothedCameraDistance;
+        gameCam->InputDeltaH = 0;
+        gameCam->InputDeltaV = 0;
+        gameCam->InputDeltaHAdjusted = 0;
+        gameCam->InputDeltaVAdjusted = 0;
+    }
+
+    private Vector3 GetTranslateTargetCenter(GameObject* playerObj, float dirH)
+    {
+        var boneName = config.FightingModeTranslateBoneName == "n_hara"
+            ? "j_kosi"
+            : config.FightingModeTranslateBoneName;
+        var pos = boneService.GetBoneWorldPos(playerAddress, boneName)
+                  ?? ToVector3(playerObj->Position);
+        pos.Y += config.FightingModeTranslateHeightOffset;
+
+        if (MathF.Abs(config.FightingModeTranslateSideOffset) > 0.001f)
+        {
+            var a = dirH - MathF.PI / 2f;
+            pos.X += -config.FightingModeTranslateSideOffset * MathF.Sin(a);
+            pos.Z += -config.FightingModeTranslateSideOffset * MathF.Cos(a);
+        }
+
+        return pos;
+    }
+
+    private static float Lerp(float a, float b, float t) => a + (b - a) * t;
+
+    private static float AngleLerp(float a, float b, float t)
+    {
+        var diff = NormalizeAngle(b - a);
+        return a + diff * t;
+    }
+
+    private static float NormalizeAngle(float angle)
+    {
+        while (angle > MathF.PI) angle -= MathF.Tau;
+        while (angle < -MathF.PI) angle += MathF.Tau;
+        return angle;
     }
 
     private void RestoreCameraMaxDistance()

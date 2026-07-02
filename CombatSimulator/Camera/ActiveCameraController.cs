@@ -214,6 +214,13 @@ public unsafe class ActiveCameraController : IDisposable
         {
             // Monster mode overrides the orbit center with the creature's world position —
             // takes precedence over everything else, including the fighting camera.
+            var modeCenter = GetModeOrbitCenterOverride?.Invoke();
+            if (modeCenter.HasValue)
+            {
+                *position = ApplyActiveCameraSideOffset(modeCenter.Value);
+                return;
+            }
+
             var monsterCenter = GetOrbitCenterOverride?.Invoke();
             if (monsterCenter.HasValue)
             {
@@ -225,13 +232,6 @@ public unsafe class ActiveCameraController : IDisposable
 
             // Fighting camera owns the orbit center while engaged — Tick computes the
             // fully-offset, smoothed center (midpoint while fighting, dead bone afterward).
-            var modeCenter = GetModeOrbitCenterOverride?.Invoke();
-            if (modeCenter.HasValue)
-            {
-                *position = ApplyActiveCameraSideOffset(modeCenter.Value);
-                return;
-            }
-
             var bonePos = GetBoneWorldPosition(config.ActiveCameraBoneName);
             if (bonePos == null) return;
 
