@@ -57,13 +57,16 @@ public unsafe class ActiveCameraController : IDisposable
     public bool IsActive => effectiveActive;
     public bool IsUserActive => userActive;
 
-    /// <summary>When set and returns a value, the active camera orbits that world position
-    /// instead of the local player's bone (used by Monster mode to follow the creature).</summary>
-    public Func<Vector3?>? GetOrbitCenterOverride;
+    /// <summary>Resolved orbit center from the CameraModeCoordinator (highest-priority
+    /// live request that supplied one). When it has a value it replaces the orbit
+    /// center wholesale; when null the user's configured bone follow applies.</summary>
+    public Func<Vector3?>? CoordinatorOrbitCenter;
 
-    /// <summary>Secondary orbit-center provider for mode-specific camera ownership.
-    /// The generic override above still takes precedence.</summary>
-    public Func<Vector3?>? GetModeOrbitCenterOverride;
+    /// <summary>Current camera write authority, from the CameraModeCoordinator. The
+    /// min-distance/vertical-lock overrides only apply when an active-camera
+    /// personality (user bone follow or monster follow) is in charge — not when the
+    /// fighting cameras drive angles and zoom themselves.</summary>
+    public Func<CameraOwner>? GetCurrentOwner;
 
     // Death transition (fighting → dead character's bone follow)
     public ActiveCameraController(IGameInteropProvider gameInterop, IClientState clientState,
@@ -233,23 +236,12 @@ public unsafe class ActiveCameraController : IDisposable
 
         try
         {
-            // Fighting Mode's mode center wins first: it supplies a fully-offset, smoothed
-            // center (pair midpoint while fighting, dead-bone follow afterward) and yields
-            // (returns null) while the user's Active Cam is enabled.
-            var modeCenter = GetModeOrbitCenterOverride?.Invoke();
+            // A mode-supplied center (fighting cameras, monster follow) replaces the
+            // orbit center wholesale — priority was already resolved by the coordinator.
+            var modeCenter = CoordinatorOrbitCenter?.Invoke();
             if (modeCenter.HasValue)
             {
                 *position = modeCenter.Value;
-                return;
-            }
-
-            // Then Monster mode's creature follow.
-            var monsterCenter = GetOrbitCenterOverride?.Invoke();
-            if (monsterCenter.HasValue)
-            {
-                var mc = monsterCenter.Value;
-                mc.Y += config.ActiveCameraHeightOffset;
-                *position = ApplyActiveCameraSideOffset(mc);
                 return;
             }
 
@@ -291,7 +283,10 @@ public unsafe class ActiveCameraController : IDisposable
     public void Tick(float deltaTime)
     {
         EnsureHook();
-        var modeOwnsCamera = GetModeOrbitCenterOverride?.Invoke().HasValue == true;
+        // The fighting cameras write angles/zoom themselves; don't stack the active-cam
+        // min-distance/vertical-lock overrides on top of them.
+        var owner = GetCurrentOwner?.Invoke() ?? CameraOwner.None;
+        var fightingOwnsCamera = owner is CameraOwner.Fighting2D or CameraOwner.FightingKO;
 
         // Collision patch
         bool wantCollision = IsActive && config.ActiveCameraDisableCollision;
@@ -316,7 +311,7 @@ public unsafe class ActiveCameraController : IDisposable
         }
 
         // Camera distance + vertical angle overrides
-        if (IsActive && !modeOwnsCamera)
+        if (IsActive && !fightingOwnsCamera)
         {
             try
             {

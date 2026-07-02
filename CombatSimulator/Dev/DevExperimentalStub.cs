@@ -1,3 +1,4 @@
+using CombatSimulator.Camera;
 using CombatSimulator.Gui;
 using CombatSimulator.Fighting;
 using CombatSimulator.Simulation;
@@ -17,6 +18,7 @@ public sealed class DevExperimentalStub : IDevExperimental
     public void BeforePlayerDeath() { }
     public void OnPlayerDeath(nint playerAddress) { }
     public void SetFightingModeLane(IFightingModeLaneConstraint? lane) { }
+    public void SetCameraCoordinator(CameraModeCoordinator coordinator) { }
     public void ResetTransientState() { }
     public void DrawToolbars(MainWindow mainWindow) { }
     public void RestoreOcclusion() { }

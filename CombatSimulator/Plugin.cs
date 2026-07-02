@@ -55,6 +55,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly MapEnemyController mapEnemyController;
     private readonly MovementBlockHook movementBlockHook;
     private readonly UseActionHook useActionHook;
+    private readonly CameraModeCoordinator cameraModeCoordinator;
     private readonly DeathCamController deathCamController;
     private readonly ActiveCameraController activeCameraController;
     private readonly FightingModeController fightingModeController;
@@ -149,8 +150,15 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             var body = npcRagdolls.TryGetValue(addr, out var found) ? found : ragdollController;
             body?.ApplyAngularVelocity(bone, angularVel);
         };
+        cameraModeCoordinator = new CameraModeCoordinator(config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
+        // Single camera write authority: modes submit requests, the coordinator applies
+        // the winner each frame; the two hook hosts consume its resolution.
+        deathCamController.Coordinator = cameraModeCoordinator;
+        deathCamController.GetCurrentOwner = () => cameraModeCoordinator.CurrentOwner;
+        activeCameraController.CoordinatorOrbitCenter = () => cameraModeCoordinator.CurrentOrbitCenter;
+        activeCameraController.GetCurrentOwner = () => cameraModeCoordinator.CurrentOwner;
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, ragdollController,
@@ -231,9 +239,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             log);
         fightingModeController = new FightingModeController(
             config, combatEngine, npcSelector, mapEnemyController, movementBlockHook,
-            activeCameraController, boneTransformService, addr => devExperimental.ControlsNpc(addr), log);
+            cameraModeCoordinator, boneTransformService, addr => devExperimental.ControlsNpc(addr), log);
         devExperimental.SetFightingModeLane(fightingModeController);
-        activeCameraController.GetModeOrbitCenterOverride = () => fightingModeController.CameraCenterOverride;
+        devExperimental.SetCameraCoordinator(cameraModeCoordinator);
         combatEngine.BeforePlayerDeath = () =>
         {
             fightingModeController.HandlePlayerDeath();
@@ -434,6 +442,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         weaponDropController.Dispose();
         dismembermentController.Dispose();
         boneTransformService.Dispose();
+        cameraModeCoordinator.Reset();
         deathCamController.Dispose();
         activeCameraController.Dispose();
         animationController.Dispose();
@@ -622,9 +631,13 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             animationController.Tick(deltaTime);
 
-            // Camera controllers run independently of combat
+            // Camera controllers run independently of combat. Submitters tick first,
+            // then the coordinator resolves priority and writes the camera once, and
+            // the orbit hook host reflects whether any mode supplies an orbit center.
             fightingModeController.Tick(deltaTime);
             deathCamController.Tick(deltaTime);
+            cameraModeCoordinator.Apply(deltaTime);
+            activeCameraController.SetModeActive(cameraModeCoordinator.WantsOrbitHook);
             activeCameraController.Tick(deltaTime);
 
             // Target lock upkeep (drops dead/stale locks, clears when inactive).

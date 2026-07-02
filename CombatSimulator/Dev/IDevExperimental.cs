@@ -1,4 +1,5 @@
 using System;
+using CombatSimulator.Camera;
 using CombatSimulator.Fighting;
 using CombatSimulator.Gui;
 using CombatSimulator.Simulation;
@@ -22,6 +23,10 @@ public interface IDevExperimental : IDisposable
     void BeforePlayerDeath();
     void OnPlayerDeath(nint playerAddress);
     void SetFightingModeLane(IFightingModeLaneConstraint? lane);
+
+    /// <summary>Camera arbitration seam: dev camera modes (monster follow) submit
+    /// requests to the coordinator instead of toggling the active camera directly.</summary>
+    void SetCameraCoordinator(CameraModeCoordinator coordinator);
     void ResetTransientState();
     void DrawToolbars(MainWindow mainWindow);
     void RestoreOcclusion();

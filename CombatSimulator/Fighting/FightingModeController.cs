@@ -31,7 +31,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     private readonly NpcSelector npcSelector;
     private readonly MapEnemyController mapEnemyController;
     private readonly MovementBlockHook movementBlockHook;
-    private readonly ActiveCameraController activeCameraController;
+    private readonly CameraModeCoordinator cameraCoordinator;
     private readonly BoneTransformService boneService;
     private readonly Func<nint, bool> isExternallyControlled;
     private readonly IPluginLog log;
@@ -44,8 +44,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     private bool laneInitialized;
     private Vector3 smoothedCameraCenter;
     private float smoothedCameraDistance;
-    private float savedMaxDistance;
-    private bool maxDistanceOverridden;
     private bool suppressDeathCameraThisDeath;
     private bool engaged;
     private bool postDeathEngaged;
@@ -73,9 +71,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     public bool IsLaneActive => (engaged || postDeathEngaged) && laneInitialized;
     public Vector3 LaneAxis => laneAxis;
     public bool ShouldSuppressDeathCamera => engaged || postDeathEngaged || suppressDeathCameraThisDeath;
-    public Vector3? CameraCenterOverride => !config.EnableActiveCamera && (engaged || postDeathEngaged)
-        ? smoothedCameraCenter
-        : null;
 
     public FightingModeController(
         Configuration config,
@@ -83,7 +78,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         NpcSelector npcSelector,
         MapEnemyController mapEnemyController,
         MovementBlockHook movementBlockHook,
-        ActiveCameraController activeCameraController,
+        CameraModeCoordinator cameraCoordinator,
         BoneTransformService boneService,
         Func<nint, bool> isExternallyControlled,
         IPluginLog log)
@@ -93,7 +88,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         this.npcSelector = npcSelector;
         this.mapEnemyController = mapEnemyController;
         this.movementBlockHook = movementBlockHook;
-        this.activeCameraController = activeCameraController;
+        this.cameraCoordinator = cameraCoordinator;
         this.boneService = boneService;
         this.isExternallyControlled = isExternallyControlled;
         this.log = log;
@@ -230,7 +225,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         engaged = true;
         cameraPhase = CameraPhase.Fighting;
         CaptureLane();
-        activeCameraController.SetModeActive(true);
         log.Info($"FightingMode: engaged 1v1 with '{npc.Name}' (0x{npc.SimulatedEntityId:X}).");
     }
 
@@ -252,9 +246,9 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         if (targetAddress != nint.Zero)
             movementBlockHook.RemoveApproachNpc(targetAddress);
 
-        activeCameraController.SetModeActive(false);
-
-        RestoreCameraMaxDistance();
+        cameraCoordinator.Release(CameraOwner.Fighting2D);
+        cameraCoordinator.Release(CameraOwner.FightingKO);
+        smoothedCameraDistance = 0f;
         target = null;
         playerAddress = nint.Zero;
         targetAddress = nint.Zero;
@@ -410,26 +404,16 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
             side = Vector3.UnitX;
         side = Vector3.Normalize(side);
 
-        var camMgr = GameCameraManager.Instance();
-        if (camMgr == null || camMgr->Camera == null)
-            return;
-
-        var gameCam = camMgr->Camera;
-        if (!maxDistanceOverridden)
+        cameraCoordinator.Submit(CameraOwner.Fighting2D, new CameraRequest
         {
-            savedMaxDistance = gameCam->MaxDistance;
-            maxDistanceOverridden = true;
-        }
-
-        gameCam->MaxDistance = MathF.Max(savedMaxDistance, config.FightingModeCameraMaxDistance + 2f);
-        gameCam->Distance = smoothedCameraDistance;
-        gameCam->InterpDistance = smoothedCameraDistance;
-        gameCam->DirH = MathF.Atan2(side.X, side.Z);
-        gameCam->DirV = config.FightingModeCameraVerticalAngle;
-        gameCam->InputDeltaH = 0;
-        gameCam->InputDeltaV = 0;
-        gameCam->InputDeltaHAdjusted = 0;
-        gameCam->InputDeltaVAdjusted = 0;
+            OrbitCenter = smoothedCameraCenter,
+            DirH = MathF.Atan2(side.X, side.Z),
+            DirV = config.FightingModeCameraVerticalAngle,
+            Distance = smoothedCameraDistance,
+            MaxDistanceAtLeast = config.FightingModeCameraMaxDistance + 2f,
+            ClearInputH = true,
+            ClearInputV = true,
+        });
     }
 
     private void BeginTranslateCam(bool fromActiveCamera = false)
@@ -494,6 +478,8 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
             ? config.FightingModeTranslateVerticalAngle
             : gameCam->DirV;
 
+        float? dirH = null;
+        float? dirV = null;
         if (cameraPhase == CameraPhase.Translating)
         {
             translateElapsed += dt;
@@ -503,9 +489,9 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
             smoothedCameraCenter = Vector3.Lerp(translateStartCenter, targetCenter, s);
             smoothedCameraDistance = Lerp(translateStartDistance, targetDistance, s);
             if (config.FightingModeTranslateLockHorizontal)
-                gameCam->DirH = AngleLerp(translateStartDirH, targetDirH, s);
+                dirH = AngleLerp(translateStartDirH, targetDirH, s);
             if (config.FightingModeTranslateLockVertical)
-                gameCam->DirV = Lerp(translateStartDirV, targetDirV, s);
+                dirV = Lerp(translateStartDirV, targetDirV, s);
             if (t >= 1f)
                 cameraPhase = CameraPhase.PlayerFollow;
         }
@@ -514,24 +500,21 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
             smoothedCameraCenter = targetCenter;
             smoothedCameraDistance = targetDistance;
             if (config.FightingModeTranslateLockHorizontal)
-                gameCam->DirH = targetDirH;
+                dirH = targetDirH;
             if (config.FightingModeTranslateLockVertical)
-                gameCam->DirV = targetDirV;
+                dirV = targetDirV;
         }
 
-        gameCam->MaxDistance = MathF.Max(gameCam->MaxDistance, smoothedCameraDistance + 1f);
-        gameCam->Distance = smoothedCameraDistance;
-        gameCam->InterpDistance = smoothedCameraDistance;
-        if (config.FightingModeTranslateLockHorizontal)
+        cameraCoordinator.Submit(CameraOwner.FightingKO, new CameraRequest
         {
-            gameCam->InputDeltaH = 0;
-            gameCam->InputDeltaHAdjusted = 0;
-        }
-        if (config.FightingModeTranslateLockVertical)
-        {
-            gameCam->InputDeltaV = 0;
-            gameCam->InputDeltaVAdjusted = 0;
-        }
+            OrbitCenter = smoothedCameraCenter,
+            DirH = dirH,
+            DirV = dirV,
+            Distance = smoothedCameraDistance,
+            MaxDistanceAtLeast = smoothedCameraDistance + 1f,
+            ClearInputH = config.FightingModeTranslateLockHorizontal,
+            ClearInputV = config.FightingModeTranslateLockVertical,
+        });
     }
 
     private Vector3 GetTranslateTargetCenter(GameObject* playerObj, float dirH)
@@ -566,23 +549,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         while (angle > MathF.PI) angle -= MathF.Tau;
         while (angle < -MathF.PI) angle += MathF.Tau;
         return angle;
-    }
-
-    private void RestoreCameraMaxDistance()
-    {
-        if (!maxDistanceOverridden)
-            return;
-
-        try
-        {
-            var camMgr = GameCameraManager.Instance();
-            if (camMgr != null && camMgr->Camera != null)
-                camMgr->Camera->MaxDistance = savedMaxDistance;
-        }
-        catch { }
-
-        maxDistanceOverridden = false;
-        smoothedCameraDistance = 0f;
     }
 
     private static Vector3 ToVector3(FFXIVClientStructs.FFXIV.Common.Math.Vector3 v)
