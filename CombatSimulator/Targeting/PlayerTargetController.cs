@@ -133,7 +133,9 @@ public sealed unsafe class PlayerTargetController : IDisposable
     private bool ShouldTakeOver()
         // Action Mode is soft-target only (the reticle + facing cone pick the target); the hard
         // lock/cycle targeting system is disabled so it doesn't fight the action-combat flow.
+        // Fighting Mode owns its own 1v1 target and must not be fought either.
         => combatEngine.IsActive && config.EnableCustomTargeting && !config.ActionMode
+           && !config.FightingMode
            && npcSelector.SelectedNpcs.Count > 0;
 
     /// <summary>

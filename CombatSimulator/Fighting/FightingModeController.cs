@@ -104,9 +104,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         if (!config.FightingMode || !combatEngine.IsActive)
             return false;
 
-        config.ActionMode = false;
-        config.EnableCustomTargeting = false;
-
         var npc = ResolveTarget(targetId);
         if (npc == null)
         {
@@ -160,6 +157,21 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
 
         ApplyLane(playerObj, targetObj, targetControlled);
         UpdateCamera(playerObj, targetObj, deltaTime);
+    }
+
+    /// <summary>
+    /// Re-apply only the lane constraint after NPC AI has moved actors this frame.
+    /// Camera smoothing and translate timers already advanced in Tick — running the
+    /// full Tick twice per frame made them progress at double speed.
+    /// </summary>
+    public void ReapplyLane()
+    {
+        if (!engaged || !laneInitialized)
+            return;
+        if (playerAddress == nint.Zero || targetAddress == nint.Zero)
+            return;
+
+        ApplyLane((GameObject*)playerAddress, (GameObject*)targetAddress, isExternallyControlled(targetAddress));
     }
 
     public void Reset() => Disengage();
@@ -250,6 +262,11 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         postDeathEngaged = false;
         cameraPhase = CameraPhase.Fighting;
         engaged = false;
+        // Camera handoff snapshots must not leak into the next session.
+        activeCameraWasSuppressing = false;
+        hasLastSuppressedCamera = false;
+        suppressDeathCameraThisDeath = false;
+        translateElapsed = 0f;
     }
 
     private void CaptureLane()

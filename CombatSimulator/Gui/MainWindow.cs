@@ -479,10 +479,7 @@ public partial class MainWindow : IDisposable
             {
                 config.FightingMode = fightingMode;
                 if (fightingMode)
-                {
                     config.ActionMode = false;
-                    config.EnableCustomTargeting = false;
-                }
                 config.Save();
             }
             HelpMarker("Experimental 1v1 side-view mode. Press an attack on an enemy to lock the pair into a 2D fighting lane and side camera. Ignores profiles while active.");
@@ -707,7 +704,6 @@ public partial class MainWindow : IDisposable
         if (config.FightingMode)
         {
             config.ActionMode = false;
-            config.EnableCustomTargeting = false;
             config.EnableCombatCompanions = false;
             config.SensePartyMembers = false;
             config.EnableMapPlayerEnemySensing = false;
@@ -1417,10 +1413,7 @@ public partial class MainWindow : IDisposable
         {
             config.FightingMode = fightingMode;
             if (fightingMode)
-            {
                 config.ActionMode = false;
-                config.EnableCustomTargeting = false;
-            }
             config.Save();
         }
         HelpMarker("1v1 side-view combat mode. The first player attack against an enemy locks the pair into a fighting-game lane and camera. Current pass implements mode ownership, target acquisition, 2D movement/facing, and camera framing.");
