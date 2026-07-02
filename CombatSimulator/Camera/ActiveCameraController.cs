@@ -50,7 +50,12 @@ public unsafe class ActiveCameraController : IDisposable
     private bool distanceOverridden;
     private readonly Dictionary<(nint Address, string BoneName), int> boneIndexCache = new();
 
-    public bool IsActive { get; private set; }
+    private bool userActive;
+    private bool modeActive;
+    private bool effectiveActive;
+
+    public bool IsActive => effectiveActive;
+    public bool IsUserActive => userActive;
 
     /// <summary>When set and returns a value, the active camera orbits that world position
     /// instead of the local player's bone (used by Monster mode to follow the creature).</summary>
@@ -120,13 +125,29 @@ public unsafe class ActiveCameraController : IDisposable
 
     public void SetActive(bool on)
     {
-        IsActive = on;
-        if (!on)
+        userActive = on;
+        UpdateEffectiveActive();
+    }
+
+    public void SetModeActive(bool on)
+    {
+        modeActive = on;
+        UpdateEffectiveActive();
+    }
+
+    private void UpdateEffectiveActive()
+    {
+        var on = userActive || modeActive;
+        if (effectiveActive == on)
+            return;
+
+        effectiveActive = on;
+        if (!effectiveActive)
         {
             DisableCollisionPatch();
             RestoreMinDistance();
         }
-        log.Info($"ActiveCamera: {(on ? "ON" : "OFF")}");
+        log.Info($"ActiveCamera: {(effectiveActive ? "ON" : "OFF")} (user={userActive}, mode={modeActive})");
     }
 
     private void RestoreMinDistance()
@@ -217,7 +238,7 @@ public unsafe class ActiveCameraController : IDisposable
             var modeCenter = GetModeOrbitCenterOverride?.Invoke();
             if (modeCenter.HasValue)
             {
-                *position = ApplyActiveCameraSideOffset(modeCenter.Value);
+                *position = modeCenter.Value;
                 return;
             }
 
@@ -269,6 +290,7 @@ public unsafe class ActiveCameraController : IDisposable
     public void Tick(float deltaTime)
     {
         EnsureHook();
+        var modeOwnsCamera = GetModeOrbitCenterOverride?.Invoke().HasValue == true;
 
         // Collision patch
         bool wantCollision = IsActive && config.ActiveCameraDisableCollision;
@@ -293,7 +315,7 @@ public unsafe class ActiveCameraController : IDisposable
         }
 
         // Camera distance + vertical angle overrides
-        if (IsActive)
+        if (IsActive && !modeOwnsCamera)
         {
             try
             {
@@ -438,7 +460,9 @@ public unsafe class ActiveCameraController : IDisposable
 
     public void Dispose()
     {
-        SetActive(false);
+        userActive = false;
+        modeActive = false;
+        UpdateEffectiveActive();
         RestoreMinDistance();
         shouldDrawHook?.Dispose();
         getCameraPosHook?.Dispose();

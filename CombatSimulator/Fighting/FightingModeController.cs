@@ -46,17 +46,21 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     private float smoothedCameraDistance;
     private float savedMaxDistance;
     private bool maxDistanceOverridden;
-    private bool hadActiveCameraBeforeEngage;
-    private bool ownsActiveCamera;
     private bool suppressDeathCameraThisDeath;
     private bool engaged;
     private bool postDeathEngaged;
+    private bool activeCameraWasSuppressing;
     private CameraPhase cameraPhase = CameraPhase.Fighting;
     private float translateElapsed;
     private Vector3 translateStartCenter;
     private float translateStartDistance;
     private float translateStartDirH;
     private float translateStartDirV;
+    private Vector3 lastSuppressedLookAt;
+    private float lastSuppressedDistance;
+    private float lastSuppressedDirH;
+    private float lastSuppressedDirV;
+    private bool hasLastSuppressedCamera;
 
     private enum CameraPhase
     {
@@ -69,7 +73,9 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     public bool IsLaneActive => (engaged || postDeathEngaged) && laneInitialized;
     public Vector3 LaneAxis => laneAxis;
     public bool ShouldSuppressDeathCamera => engaged || postDeathEngaged || suppressDeathCameraThisDeath;
-    public Vector3? CameraCenterOverride => engaged || postDeathEngaged ? smoothedCameraCenter : null;
+    public Vector3? CameraCenterOverride => !config.EnableActiveCamera && (engaged || postDeathEngaged)
+        ? smoothedCameraCenter
+        : null;
 
     public FightingModeController(
         Configuration config,
@@ -212,9 +218,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         engaged = true;
         cameraPhase = CameraPhase.Fighting;
         CaptureLane();
-        hadActiveCameraBeforeEngage = config.EnableActiveCamera || activeCameraController.IsActive;
-        ownsActiveCamera = !hadActiveCameraBeforeEngage;
-        activeCameraController.SetActive(true);
+        activeCameraController.SetModeActive(true);
         log.Info($"FightingMode: engaged 1v1 with '{npc.Name}' (0x{npc.SimulatedEntityId:X}).");
     }
 
@@ -236,15 +240,13 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         if (targetAddress != nint.Zero)
             movementBlockHook.RemoveApproachNpc(targetAddress);
 
-        if (ownsActiveCamera && engaged)
-            activeCameraController.SetActive(false);
+        activeCameraController.SetModeActive(false);
 
         RestoreCameraMaxDistance();
         target = null;
         playerAddress = nint.Zero;
         targetAddress = nint.Zero;
         laneInitialized = false;
-        ownsActiveCamera = false;
         postDeathEngaged = false;
         cameraPhase = CameraPhase.Fighting;
         engaged = false;
@@ -333,10 +335,27 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     private void UpdateCamera(GameObject* playerObj, GameObject* targetObj, float dt)
     {
         var playerDefeated = postDeathEngaged || !combatEngine.State.PlayerState.IsAlive;
+
+        // User-enabled Active Cam has explicit priority over Fighting Mode camera. Fighting Mode still
+        // owns combat/lane state, but it must not write camera angles, zoom, or mode-center override.
+        if (config.EnableActiveCamera)
+        {
+            CaptureSuppressedCameraState();
+            activeCameraWasSuppressing = true;
+            return;
+        }
+
+        if (activeCameraWasSuppressing)
+        {
+            activeCameraWasSuppressing = false;
+            if (playerDefeated && config.FightingModeTranslateCam)
+                BeginTranslateCam(fromActiveCamera: true);
+        }
+
         if (playerDefeated && config.FightingModeTranslateCam)
         {
             if (cameraPhase == CameraPhase.Fighting)
-                BeginTranslateCam();
+                BeginTranslateCam(fromActiveCamera: false);
             UpdateTranslateCamera(playerObj, dt);
             return;
         }
@@ -396,9 +415,9 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         gameCam->InputDeltaVAdjusted = 0;
     }
 
-    private void BeginTranslateCam()
+    private void BeginTranslateCam(bool fromActiveCamera = false)
     {
-        if (cameraPhase is CameraPhase.Translating or CameraPhase.PlayerFollow)
+        if (!fromActiveCamera && cameraPhase is CameraPhase.Translating or CameraPhase.PlayerFollow)
             return;
 
         var camMgr = GameCameraManager.Instance();
@@ -406,12 +425,40 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
             return;
 
         var gameCam = camMgr->Camera;
-        translateStartCenter = smoothedCameraCenter;
-        translateStartDistance = smoothedCameraDistance > 0.01f ? smoothedCameraDistance : gameCam->Distance;
-        translateStartDirH = gameCam->DirH;
-        translateStartDirV = gameCam->DirV;
+        var currentLookAt = gameCam->CameraBase.SceneCamera.LookAtVector;
+        translateStartCenter = fromActiveCamera
+            ? (hasLastSuppressedCamera
+                ? lastSuppressedLookAt
+                : new Vector3(currentLookAt.X, currentLookAt.Y, currentLookAt.Z))
+            : smoothedCameraCenter;
+        translateStartDistance = fromActiveCamera && hasLastSuppressedCamera
+            ? lastSuppressedDistance
+            : (smoothedCameraDistance > 0.01f ? smoothedCameraDistance : gameCam->Distance);
+        translateStartDirH = fromActiveCamera && hasLastSuppressedCamera ? lastSuppressedDirH : gameCam->DirH;
+        translateStartDirV = fromActiveCamera && hasLastSuppressedCamera ? lastSuppressedDirV : gameCam->DirV;
+        smoothedCameraCenter = translateStartCenter;
+        smoothedCameraDistance = translateStartDistance;
         translateElapsed = 0f;
         cameraPhase = CameraPhase.Translating;
+    }
+
+    private void CaptureSuppressedCameraState()
+    {
+        try
+        {
+            var camMgr = GameCameraManager.Instance();
+            if (camMgr == null || camMgr->Camera == null)
+                return;
+
+            var gameCam = camMgr->Camera;
+            var lookAt = gameCam->CameraBase.SceneCamera.LookAtVector;
+            lastSuppressedLookAt = new Vector3(lookAt.X, lookAt.Y, lookAt.Z);
+            lastSuppressedDistance = gameCam->Distance;
+            lastSuppressedDirH = gameCam->DirH;
+            lastSuppressedDirV = gameCam->DirV;
+            hasLastSuppressedCamera = true;
+        }
+        catch { }
     }
 
     private void UpdateTranslateCamera(GameObject* playerObj, float dt)
@@ -422,7 +469,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
 
         var gameCam = camMgr->Camera;
         var targetCenter = GetTranslateTargetCenter(playerObj, gameCam->DirH);
-        var targetDistance = translateStartDistance > 0.01f ? translateStartDistance : gameCam->Distance;
+        var targetDistance = Math.Clamp(config.FightingModeTranslateDistance, 1.0f, 20.0f);
         var targetDirH = config.FightingModeTranslateLockHorizontal
             ? config.FightingModeTranslateHorizontalAngle
             : gameCam->DirH;
@@ -438,8 +485,10 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
             var s = t * t * (3f - 2f * t);
             smoothedCameraCenter = Vector3.Lerp(translateStartCenter, targetCenter, s);
             smoothedCameraDistance = Lerp(translateStartDistance, targetDistance, s);
-            gameCam->DirH = AngleLerp(translateStartDirH, targetDirH, s);
-            gameCam->DirV = Lerp(translateStartDirV, targetDirV, s);
+            if (config.FightingModeTranslateLockHorizontal)
+                gameCam->DirH = AngleLerp(translateStartDirH, targetDirH, s);
+            if (config.FightingModeTranslateLockVertical)
+                gameCam->DirV = Lerp(translateStartDirV, targetDirV, s);
             if (t >= 1f)
                 cameraPhase = CameraPhase.PlayerFollow;
         }
@@ -453,12 +502,19 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
                 gameCam->DirV = targetDirV;
         }
 
+        gameCam->MaxDistance = MathF.Max(gameCam->MaxDistance, smoothedCameraDistance + 1f);
         gameCam->Distance = smoothedCameraDistance;
         gameCam->InterpDistance = smoothedCameraDistance;
-        gameCam->InputDeltaH = 0;
-        gameCam->InputDeltaV = 0;
-        gameCam->InputDeltaHAdjusted = 0;
-        gameCam->InputDeltaVAdjusted = 0;
+        if (config.FightingModeTranslateLockHorizontal)
+        {
+            gameCam->InputDeltaH = 0;
+            gameCam->InputDeltaHAdjusted = 0;
+        }
+        if (config.FightingModeTranslateLockVertical)
+        {
+            gameCam->InputDeltaV = 0;
+            gameCam->InputDeltaVAdjusted = 0;
+        }
     }
 
     private Vector3 GetTranslateTargetCenter(GameObject* playerObj, float dirH)

@@ -516,6 +516,7 @@ public partial class Configuration : IPluginConfiguration
     public float FightingModeCameraVerticalAngle { get; set; } = -0.12f;
     public bool FightingModeTranslateCam { get; set; } = false;
     public float FightingModeTranslateDuration { get; set; } = 3.0f;
+    public float FightingModeTranslateDistance { get; set; } = 4.0f;
     public string FightingModeTranslateBoneName { get; set; } = "j_kosi";
     public float FightingModeTranslateHeightOffset { get; set; } = 0.0f;
     public float FightingModeTranslateSideOffset { get; set; } = 0.0f;

@@ -1516,6 +1516,13 @@ public partial class MainWindow : IDisposable
             config.Save();
         }
 
+        var translateDistance = config.FightingModeTranslateDistance;
+        if (ImGui.SliderFloat("Translate zoom distance##fightingmode", ref translateDistance, 1.0f, 20.0f, "%.2f"))
+        {
+            config.FightingModeTranslateDistance = translateDistance;
+            config.Save();
+        }
+
         var bones = FightingModeTranslateBones;
         var boneNames = new string[bones.Length];
         var boneIdx = 0;
