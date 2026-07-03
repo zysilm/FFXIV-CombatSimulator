@@ -2075,6 +2075,89 @@ public unsafe class RagdollController : IDisposable
         }
     }
 
+    // Relaxed passive hip axial rotation. Clinical standing values are ~35°/45°
+    // (int/ext); deep flexion winds the capsular ligaments and shrinks them further,
+    // which the kneecap-facing construction below approximates by making combined
+    // flexion+rotation spend the same budget as pure rotation.
+    private static readonly float HipInternalRotationCap = D2R(30f);
+    private static readonly float HipExternalRotationCap = D2R(45f);
+
+    /// <summary>
+    /// Tier C (swing) — hip axial-rotation caps that survive any flexion angle.
+    /// BEPU's TwistLimit degenerates once the joint's swing exceeds ~90°, i.e. exactly
+    /// in the kicked-up pose where a corpse thigh would otherwise spin freely; and an
+    /// independent swing×twist box allows the anatomically impossible corner (deep
+    /// flexion + full internal rotation — capsular ligaments wind tight there).
+    /// Constrain the KNEECAP-FACING axis (⊥ femur, anterior at rest) instead: internal
+    /// rotation sweeps it medially and external laterally, while pure flexion rotates
+    /// it inside the sagittal plane and never touches these caps. Direction-vector
+    /// limits never degenerate, and flexion+rotation combos consume the same budget as
+    /// pure rotation — the swing↔twist coupling real ligaments provide.
+    /// </summary>
+    private void AddKneecapFacingLimits(
+        string boneName,
+        BodyHandle childHandle,
+        BodyHandle parentHandle,
+        BodyReference childBodyRef,
+        BodyReference parentBodyRef,
+        Vector3 segDirWorld,
+        Vector3 anchorWorld,
+        Vector3 anatForwardWorld,
+        Vector3 anatLateralWorld,
+        SpringSettings spring)
+    {
+        if (simulation == null)
+            return;
+
+        // Kneecap-forward at activation: anatomical forward made perpendicular to the
+        // femur axis. Anatomically anchored — a death pose that froze mid-rotation
+        // consumes its own budget (and gets gently un-rotated if past it).
+        var femurAxis = Vector3.Normalize(segDirWorld);
+        var kneecapFwd = anatForwardWorld - femurAxis * Vector3.Dot(anatForwardWorld, femurAxis);
+        if (kneecapFwd.LengthSquared() < 0.01f)
+            return; // femur ~aligned with anatomical forward (unusual death pose): skip
+        kneecapFwd = Vector3.Normalize(kneecapFwd);
+
+        float outSign = MathF.Sign(Vector3.Dot(anchorWorld - parentBodyRef.Pose.Position, anatLateralWorld));
+        if (outSign == 0f)
+            outSign = 1f;
+        var lateralOut = anatLateralWorld * outSign;
+
+        var kneecapLocalChild = Vector3.Normalize(Vector3.Transform(
+            kneecapFwd, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
+
+        AddCap(-lateralOut, HipInternalRotationCap, "int-rot");
+        AddCap(lateralOut, HipExternalRotationCap, "ext-rot");
+
+        void AddCap(Vector3 dir, float tilt, string label)
+        {
+            var max = MathF.PI / 2f + tilt;
+            var oppositeLocalParent = Vector3.Normalize(Vector3.Transform(
+                -dir, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
+
+            simulation!.Solver.Add(childHandle, parentHandle, new SwingLimit
+            {
+                AxisLocalA = kneecapLocalChild,
+                AxisLocalB = oppositeLocalParent,
+                MaximumSwingAngle = max,
+                SpringSettings = spring,
+            });
+
+            swingStressMonitors.Add(new SwingStressMonitor
+            {
+                Bone = boneName,
+                Child = childHandle,
+                Parent = parentHandle,
+                AxisLocalChild = kneecapLocalChild,
+                AxisLocalParent = oppositeLocalParent,
+                LimitAngle = max,
+            });
+
+            if (config.RagdollVerboseLog)
+                log.Info($"[Ragdoll ROM] '{boneName}' kneecap-facing '{label}': cap={tilt * 180f / MathF.PI:F0}°");
+        }
+    }
+
     // === Tier C (swing) debug: joint-vs-limit stress for the overlay =====================
     public readonly record struct JointLimitStress(string BoneName, Vector3 WorldPosition, float Stress);
 
@@ -2950,6 +3033,24 @@ public unsafe class RagdollController : IDisposable
                                 : jointSpring,
                     });
 
+                // Tier C (swing): hips, arm-side shoulders, and the spine chain get
+                // DIRECTIONAL anatomical limits below — a symmetric cone cannot hold
+                // flexion 95° / abduction 45° / adduction 25° at once (hip splay), and a
+                // pose-anchored cone re-zeroes at the death animation's already-flexed
+                // spine, double-counting flexion (the head-buried-between-knees fold).
+                // Directional limits are anchored to the anatomical frame instead, so a
+                // pre-flexed death pose consumes its own flexion budget; if it froze past
+                // budget, the soft edge gently unfolds it — a relaxed-body settle. With
+                // ROM on, the cone widens to the largest legal direction (pure backstop).
+                AnatomicalRom swingRom = default;
+                var hasSwingRom = config.RagdollAnatomicalRom &&
+                    (boneDef.AnatomicalRole == AnatomicalRole.Hip ||
+                     boneDef.AnatomicalRole == AnatomicalRole.Spine ||
+                     (boneDef.AnatomicalRole == AnatomicalRole.Shoulder &&
+                      rb.Name.StartsWith("j_ude_a_", StringComparison.Ordinal))) &&
+                    TryGetAnatomicalRom(rb.Name, out swingRom);
+                var hipKneecapCaps = hasSwingRom && boneDef.AnatomicalRole == AnatomicalRole.Hip;
+
                 // SwingLimit: symmetric cone limiting deviation from initial direction.
                 if (boneDef.SwingLimit > 0)
                 {
@@ -2957,23 +3058,6 @@ public unsafe class RagdollController : IDisposable
                         Quaternion.Inverse(childBodyRef.Pose.Orientation));
                     var axisParentLocal = Vector3.Transform(segDirWorld,
                         Quaternion.Inverse(parentBodyRef.Pose.Orientation));
-
-                    // Tier C (swing): hips, arm-side shoulders, and the spine chain get
-                    // DIRECTIONAL anatomical limits below — a symmetric cone cannot hold
-                    // flexion 95° / abduction 45° / adduction 25° at once (hip splay), and a
-                    // pose-anchored cone re-zeroes at the death animation's already-flexed
-                    // spine, double-counting flexion (the head-buried-between-knees fold).
-                    // Directional limits are anchored to the anatomical frame instead, so a
-                    // pre-flexed death pose consumes its own flexion budget; if it froze past
-                    // budget, the soft edge gently unfolds it — a relaxed-body settle. With
-                    // ROM on, the cone widens to the largest legal direction (pure backstop).
-                    AnatomicalRom swingRom = default;
-                    var hasSwingRom = config.RagdollAnatomicalRom &&
-                        (boneDef.AnatomicalRole == AnatomicalRole.Hip ||
-                         boneDef.AnatomicalRole == AnatomicalRole.Spine ||
-                         (boneDef.AnatomicalRole == AnatomicalRole.Shoulder &&
-                          rb.Name.StartsWith("j_ude_a_", StringComparison.Ordinal))) &&
-                        TryGetAnatomicalRom(rb.Name, out swingRom);
 
                     var effectiveCone = boneDef.SwingLimit;
                     if (hasSwingRom)
@@ -3004,6 +3088,13 @@ public unsafe class RagdollController : IDisposable
                         AddDirectionalSwingLimits(rb.Name, rb.BodyHandle, parentHandle,
                             childBodyRef, parentBodyRef, segDirWorld, anchorWorld,
                             anatForwardWorld, anatLateralWorld, swingRom, ballSwingSpring);
+
+                    // Hip axial rotation: capped via the kneecap-facing axis (below),
+                    // which stays valid at any flexion — see AddKneecapFacingLimits.
+                    if (hipKneecapCaps)
+                        AddKneecapFacingLimits(rb.Name, rb.BodyHandle, parentHandle,
+                            childBodyRef, parentBodyRef, segDirWorld, anchorWorld,
+                            anatForwardWorld, anatLateralWorld, ballSwingSpring);
                 }
 
                 // TwistLimit: asymmetric axial rotation around the bone's segment axis.
@@ -3017,7 +3108,11 @@ public unsafe class RagdollController : IDisposable
                     ballTwistMin = ballRom.AxialMin;
                     ballTwistMax = ballRom.AxialMax;
                 }
+                // Hips with ROM: the kneecap-facing caps above replace this TwistLimit —
+                // its measurement degenerates past ~90° of swing, i.e. exactly in the
+                // kicked-up poses where a corpse thigh would otherwise spin freely.
                 if ((ballTwistMin != 0 || ballTwistMax != 0) &&
+                    !hipKneecapCaps &&
                     boneDef.SwingLimit <= ballJointMaxSwing)
                 {
                     var refDir = config.RagdollExperimentalJointFrames
