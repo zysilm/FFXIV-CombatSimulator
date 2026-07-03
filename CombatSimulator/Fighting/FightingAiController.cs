@@ -164,7 +164,9 @@ public sealed unsafe class FightingAiController
                 break;
 
             case AiState.Retreat:
-                desiredAlong = npcAlong + pushSide * speed * dt;
+                // Slower than approach — a backpedal the player can run down.
+                desiredAlong = npcAlong + pushSide * speed
+                    * Math.Clamp(config.FightingAiRetreatSpeedScale, 0.1f, 1f) * dt;
                 moving = true;
                 retreatTimer -= dt;
                 if (retreatTimer <= 0f || dist >= rangeMax * 0.9f)

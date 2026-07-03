@@ -245,11 +245,13 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             companionManager.ForceEnemyTarget,
             () => npcSpawner.SpawnModeActive,
             log);
-        var fightingPlayerMotor = new FightingPlayerMotor(config, movementBlockHook, gamepadState, log);
         fightingModeController = new FightingModeController(
             config, combatEngine, npcSelector, mapEnemyController, movementBlockHook,
-            cameraModeCoordinator, boneTransformService, fightingPlayerMotor,
+            cameraModeCoordinator, boneTransformService,
             addr => devExperimental.ControlsNpc(addr), log);
+        // Death cameras must track the corpse through the ragdoll bodies — the skeleton
+        // pose read at framework time stays at the death spot even after kicks.
+        fightingModeController.GetRagdollBonePosition = bone => ragdollController.GetBodyWorldPosition(bone);
         devExperimental.SetFightingModeLane(fightingModeController);
         devExperimental.SetCameraCoordinator(cameraModeCoordinator);
         var weaponHitboxService = new WeaponHitboxService(config, boneTransformService, log);

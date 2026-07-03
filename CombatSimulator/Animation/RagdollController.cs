@@ -6304,6 +6304,23 @@ public unsafe class RagdollController : IDisposable
         BeginBiomechanicalSettle();
     }
 
+    /// <summary>
+    /// World-space position of a ragdoll rigid body by bone name; null while the
+    /// ragdoll is inactive or the bone has no body. Unlike reading the skeleton's
+    /// ModelPose at framework time (which still reflects the animation pose at the
+    /// death spot), this is where the physics actually put the body — cameras that
+    /// track a kicked-around corpse must use it.
+    /// </summary>
+    public Vector3? GetBodyWorldPosition(string boneName)
+    {
+        if (simulation == null || !isActive) return null;
+        var handle = FindBodyHandle(boneName);
+        if (!handle.HasValue) return null;
+        var body = simulation.Bodies.GetBodyReference(handle.Value);
+        var p = body.Pose.Position;
+        return new Vector3(p.X, p.Y, p.Z);
+    }
+
     // Temporarily free a joint so its child can swing: zero the angular motor force and widen the
     // swing-limit cone. Both are restored by TickRecoilRelaxers after the window.
     private void RelaxJointForRecoil(string boneName, float duration)

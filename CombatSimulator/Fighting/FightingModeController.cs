@@ -33,10 +33,8 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     private readonly MovementBlockHook movementBlockHook;
     private readonly CameraModeCoordinator cameraCoordinator;
     private readonly BoneTransformService boneService;
-    private readonly FightingPlayerMotor playerMotor;
     private readonly Func<nint, bool> isExternallyControlled;
     private readonly IPluginLog log;
-    private readonly Func<float, Vector3> alongToWorld;
 
     private SimulatedNpc? target;
     private nint playerAddress;
@@ -89,6 +87,12 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     /// When present post-death, the KO camera frames the corpse↔monster midpoint.</summary>
     public Func<Vector3?>? GetMonsterFollowCenter { get; set; }
 
+    /// <summary>Ragdoll rigid-body world position by bone name (null while no ragdoll).
+    /// The death cameras track the corpse through THIS — the skeleton pose read at
+    /// framework time still shows the animation pose at the death spot, so a corpse
+    /// kicked around by the monster would otherwise leave the camera behind.</summary>
+    public Func<string, Vector3?>? GetRagdollBonePosition { get; set; }
+
     /// <summary>True while this controller (via FightingAi) owns the engaged enemy — used by
     /// NpcAiController's externally-controlled skip.</summary>
     public bool ControlsEnemy(nint address)
@@ -102,7 +106,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         MovementBlockHook movementBlockHook,
         CameraModeCoordinator cameraCoordinator,
         BoneTransformService boneService,
-        FightingPlayerMotor playerMotor,
         Func<nint, bool> isExternallyControlled,
         IPluginLog log)
     {
@@ -113,10 +116,8 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         this.movementBlockHook = movementBlockHook;
         this.cameraCoordinator = cameraCoordinator;
         this.boneService = boneService;
-        this.playerMotor = playerMotor;
         this.isExternallyControlled = isExternallyControlled;
         this.log = log;
-        alongToWorld = along => laneOrigin + laneAxis * along;
     }
 
     public bool OnPlayerAction(uint actionType, uint actionId, ulong targetId, uint extraParam)
@@ -178,7 +179,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         if (!targetControlled)
             movementBlockHook.AddApproachNpc(targetAddress);
 
-        TickPlayerMotor(deltaTime, playerObj, targetObj);
         TickFightingAi(deltaTime, playerObj, targetObj, targetControlled);
         ApplyLane(playerObj, targetObj, targetControlled);
         UpdateCamera(playerObj, targetObj, deltaTime);
@@ -193,30 +193,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         if (!playerAlive)
             return;
 
-        var playerAlong = playerMotor.IsActive ? playerMotor.AlongPos : AlongOf(ToVector3(playerObj->Position));
-        FightingAi.Tick(dt, AlongOf(ToVector3(targetObj->Position)), playerAlong);
-    }
-
-    private void TickPlayerMotor(float dt, GameObject* playerObj, GameObject* targetObj)
-    {
-        var playerAlive = !postDeathEngaged && combatEngine.State.PlayerState.IsAlive;
-        if (!playerAlive)
-        {
-            playerMotor.End();
-            return;
-        }
-
-        if (!laneInitialized)
-            return;
-
-        if (!playerMotor.IsActive)
-        {
-            var p = ToVector3(playerObj->Position);
-            playerMotor.Begin(playerAddress, AlongOf(p), p.Y);
-        }
-
-        var e = ToVector3(targetObj->Position);
-        playerMotor.Tick(dt, AlongOf(e), alongToWorld);
+        FightingAi.Tick(dt, AlongOf(ToVector3(targetObj->Position)), AlongOf(ToVector3(playerObj->Position)));
     }
 
     private float AlongOf(Vector3 pos)
@@ -305,7 +282,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     public void HandlePlayerDeath()
     {
         suppressDeathCameraThisDeath = engaged;
-        playerMotor.End();
         FightingAi?.End();
         if (!engaged)
             return;
@@ -317,7 +293,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
 
     private void Disengage()
     {
-        playerMotor.End();
         FightingAi?.End();
         if (playerAddress != nint.Zero)
             movementBlockHook.RemoveApproachNpc(playerAddress);
@@ -380,34 +355,44 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
             CaptureLane();
 
         var playerAlive = !postDeathEngaged && combatEngine.State.PlayerState.IsAlive;
+        var minSep = MathF.Max(0.1f, config.FightingModeMinSeparation);
+        var eAlongLive = AlongOf(e);
 
-        // Player: motor-driven along the lane while alive. A dead body belongs to the
-        // ragdoll, not the lane.
-        if (playerAlive && playerMotor.IsActive)
+        // Player: NATIVE game movement projected onto the lane each frame. The local
+        // player's move controller does not route through GameObject.SetPosition, so a
+        // position-write takeover just fights it (stutter, crawl speed) — projection
+        // keeps the game's own locomotion/jump/animation and only removes lateral
+        // drift. Forward/back input is thereby approach/retreat.
+        var pAlong = AlongOf(p);
+        if (playerAlive)
         {
-            var targetP = laneOrigin + laneAxis * playerMotor.AlongPos;
-            targetP.Y = playerMotor.PosY;
+            // Min separation: the player is the mover here — clamp them out of the enemy.
+            float pSide = MathF.Sign(pAlong - eAlongLive);
+            if (pSide == 0f)
+                pSide = -1f;
+            if (MathF.Abs(pAlong - eAlongLive) < minSep)
+                pAlong = eAlongLive + pSide * minSep;
+
+            var targetP = laneOrigin + laneAxis * pAlong;
+            targetP.Y = p.Y;
             movementBlockHook.SetApproachPosition(playerObj, targetP.X, targetP.Y, targetP.Z);
             movementBlockHook.SetApproachRotation(playerObj, YawTo(e - targetP));
             p = targetP;
         }
 
         // Enemy: when MonsterMode owns it, it moves itself (lane-projected through the
-        // IFightingModeLaneConstraint seam) — hands off. Otherwise project it onto the
-        // lane at its own coordinate. Never recenter the pair: moving one actor must
-        // not translate the other.
+        // IFightingModeLaneConstraint seam) — hands off. Otherwise the fighting AI's
+        // desired coordinate (or its own, projected). Never recenter the pair: moving
+        // one actor must not translate the other.
         if (targetControlled)
             return;
 
-        var pAlong = AlongOf(p);
         var eAlong = FightingAi is { IsActive: true } && playerAlive
             ? FightingAi.DesiredAlong
-            : AlongOf(e);
+            : eAlongLive;
 
         if (playerAlive)
         {
-            // Min separation only, clamping the enemy (its AI is the mover here).
-            var minSep = Math.Clamp(config.FightingModeMinSeparation, 0.1f, 0.65f);
             float side = MathF.Sign(eAlong - pAlong);
             if (side == 0f)
                 side = 1f;
@@ -683,7 +668,10 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         var boneName = config.FightingModeTranslateBoneName == "n_hara"
             ? "j_kosi"
             : config.FightingModeTranslateBoneName;
-        var pos = boneService.GetBoneWorldPos(playerAddress, boneName)
+        // Prefer the ragdoll body: it is where the corpse actually IS after physics
+        // (kicks, shoves). The skeleton pose fallback covers pre-ragdoll frames.
+        var pos = GetRagdollBonePosition?.Invoke(boneName)
+                  ?? boneService.GetBoneWorldPos(playerAddress, boneName)
                   ?? ToVector3(playerObj->Position);
         pos.Y += config.FightingModeTranslateHeightOffset;
 

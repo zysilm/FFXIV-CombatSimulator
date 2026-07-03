@@ -171,6 +171,7 @@ public partial class Configuration : IPluginConfiguration
     public bool ActionMeleeRangeDefaultMigratedTo5 { get; set; } = false;
     public bool ActionAttackShapeDefaultsMigrated20260630 { get; set; } = false;
     public bool EnemyDismembermentDefaultsMigrated20260630 { get; set; } = false;
+    public bool FightingSpacingDefaultsMigrated20260703 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -508,31 +509,23 @@ public partial class Configuration : IPluginConfiguration
     public float FightingModeLaneHalfWidth { get; set; } = 0.35f;
     public float FightingModeMinSeparation { get; set; } = 0.45f;
     public float FightingModeMaxSeparation { get; set; } = 1.0f;
+    // Camera defaults are field-tuned in-game values.
     public float FightingModeCameraMargin { get; set; } = 0.75f;
-    public float FightingModeCameraMinDistance { get; set; } = 3.0f;
-    public float FightingModeCameraMaxDistance { get; set; } = 10.0f;
+    public float FightingModeCameraMinDistance { get; set; } = 2.31f;
+    public float FightingModeCameraMaxDistance { get; set; } = 3.0f;
     public float FightingModeCameraSmoothing { get; set; } = 10.0f;
-    public float FightingModeCameraHeight { get; set; } = 1.0f;
-    public float FightingModeCameraVerticalAngle { get; set; } = -0.12f;
-    public bool FightingModeTranslateCam { get; set; } = false;
+    public float FightingModeCameraHeight { get; set; } = 1.18f;
+    public float FightingModeCameraVerticalAngle { get; set; } = 0.31f;
+    public bool FightingModeTranslateCam { get; set; } = true;
     public float FightingModeTranslateDuration { get; set; } = 3.0f;
-    public float FightingModeTranslateDistance { get; set; } = 4.0f;
+    public float FightingModeTranslateDistance { get; set; } = 1.22f;
     public string FightingModeTranslateBoneName { get; set; } = "j_kosi";
-    public float FightingModeTranslateHeightOffset { get; set; } = 0.0f;
+    public float FightingModeTranslateHeightOffset { get; set; } = 0.44f;
     public float FightingModeTranslateSideOffset { get; set; } = 0.0f;
     public bool FightingModeTranslateLockHorizontal { get; set; } = false;
     public float FightingModeTranslateHorizontalAngle { get; set; } = 0.0f;
-    public bool FightingModeTranslateLockVertical { get; set; } = true;
-    public float FightingModeTranslateVerticalAngle { get; set; } = -0.12f;
-    // Fighting Mode 2D input: forward/back move along the lane, jump is a
-    // self-integrated parabola (the game's own movement is blocked while engaged).
-    public float FightingModeMoveSpeed { get; set; } = 4.0f;
-    public float FightingModeJumpVelocity { get; set; } = 5.5f;
-    public float FightingModeGravity { get; set; } = 16f;
-    public int FightingModeForwardKey { get; set; } = 0x57;  // W
-    public int FightingModeBackKey { get; set; } = 0x53;     // S
-    public int FightingModeJumpKey { get; set; } = 0x20;     // Space
-    public GamepadButtons FightingModeJumpGamepadButton { get; set; } = GamepadButtons.South;
+    public bool FightingModeTranslateLockVertical { get; set; } = false;
+    public float FightingModeTranslateVerticalAngle { get; set; } = 0.31f;
     // Fighting Mode guard: reuses the shared PlayerGuardController timing windows
     // (GuardActiveWindow / chain / recovery) with its own key binding.
     public int FightingModeGuardKey { get; set; } = 17;      // Ctrl
@@ -550,9 +543,11 @@ public partial class Configuration : IPluginConfiguration
     public bool FightingModeDebugDraw { get; set; } = false;
     // Fighting Mode 1v1 enemy AI (replaces NpcAiController for the engaged fighter):
     // spacing band + approach/retreat + telegraphed attacks + hitstun pushback.
-    public float FightingAiMoveSpeed { get; set; } = 3.0f;
-    public float FightingAiRangeMin { get; set; } = 1.8f;
-    public float FightingAiRangeMax { get; set; } = 3.2f;
+    // Retreats slower than it approaches so the player can actually corner it.
+    public float FightingAiMoveSpeed { get; set; } = 2.5f;
+    public float FightingAiRetreatSpeedScale { get; set; } = 0.5f;
+    public float FightingAiRangeMin { get; set; } = 0.9f;
+    public float FightingAiRangeMax { get; set; } = 2.2f;
     public float FightingAiAttackCooldown { get; set; } = 2.5f;
     public float FightingAiAttackCooldownJitter { get; set; } = 1.0f;
     public float FightingAiRetreatChance { get; set; } = 0.35f;
@@ -672,6 +667,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateActionMeleeRangeDefault();
         MigrateActionAttackShapeDefaults();
         MigrateEnemyDismembermentDefaults();
+        MigrateFightingSpacingDefaults();
         MigrateGuidedCollapse();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
@@ -715,13 +711,6 @@ public partial class Configuration : IPluginConfiguration
         FightingModeTranslateHorizontalAngle = defaults.FightingModeTranslateHorizontalAngle;
         FightingModeTranslateLockVertical = defaults.FightingModeTranslateLockVertical;
         FightingModeTranslateVerticalAngle = defaults.FightingModeTranslateVerticalAngle;
-        FightingModeMoveSpeed = defaults.FightingModeMoveSpeed;
-        FightingModeJumpVelocity = defaults.FightingModeJumpVelocity;
-        FightingModeGravity = defaults.FightingModeGravity;
-        FightingModeForwardKey = defaults.FightingModeForwardKey;
-        FightingModeBackKey = defaults.FightingModeBackKey;
-        FightingModeJumpKey = defaults.FightingModeJumpKey;
-        FightingModeJumpGamepadButton = defaults.FightingModeJumpGamepadButton;
         FightingModeGuardKey = defaults.FightingModeGuardKey;
         FightingModeGuardGamepadButton = defaults.FightingModeGuardGamepadButton;
         FightingModeWeaponLength = defaults.FightingModeWeaponLength;
@@ -734,6 +723,7 @@ public partial class Configuration : IPluginConfiguration
         FightingModeAttackActiveEndPct = defaults.FightingModeAttackActiveEndPct;
         FightingModeDebugDraw = defaults.FightingModeDebugDraw;
         FightingAiMoveSpeed = defaults.FightingAiMoveSpeed;
+        FightingAiRetreatSpeedScale = defaults.FightingAiRetreatSpeedScale;
         FightingAiRangeMin = defaults.FightingAiRangeMin;
         FightingAiRangeMax = defaults.FightingAiRangeMax;
         FightingAiAttackCooldown = defaults.FightingAiAttackCooldown;
@@ -876,6 +866,25 @@ public partial class Configuration : IPluginConfiguration
         }
 
         EnemyDismembermentDefaultsMigrated20260630 = true;
+        Save();
+    }
+
+    // Field testing showed the first fighting-AI spacing defaults made the enemy
+    // unreachable (band too wide, retreat at full speed). Move configs still on the
+    // old defaults to the retuned ones.
+    private void MigrateFightingSpacingDefaults()
+    {
+        if (FightingSpacingDefaultsMigrated20260703)
+            return;
+
+        if (MathF.Abs(FightingAiMoveSpeed - 3.0f) < 0.001f)
+            FightingAiMoveSpeed = 2.5f;
+        if (MathF.Abs(FightingAiRangeMin - 1.8f) < 0.001f)
+            FightingAiRangeMin = 0.9f;
+        if (MathF.Abs(FightingAiRangeMax - 3.2f) < 0.001f)
+            FightingAiRangeMax = 2.2f;
+
+        FightingSpacingDefaultsMigrated20260703 = true;
         Save();
     }
 
