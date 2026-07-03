@@ -2038,6 +2038,46 @@ public unsafe class RagdollController : IDisposable
         var axisChildLocal = Vector3.Normalize(Vector3.Transform(
             segDirWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
 
+        // Symmetric ROM (the spine chain: 15/15/15/15, neck ~45): the intersection of the
+        // four directional caps IS a cone around the anatomical vertical — emit ONE
+        // constraint instead of four. This matters beyond tidiness: every constraint on a
+        // shared body (the pelvis especially) occupies a solver batch slot, and pushing a
+        // body past the batch threshold lands contacts in BEPU's fallback batch, which
+        // NREs on kinematic-contact removal in 2.5.0-beta.
+        var maxCap = MathF.Max(MathF.Max(rom.FlexionMax, rom.ExtensionMax),
+                               MathF.Max(rom.AbductionMax, rom.AdductionMax));
+        var minCap = MathF.Min(MathF.Min(rom.FlexionMax, rom.ExtensionMax),
+                               MathF.Min(rom.AbductionMax, rom.AdductionMax));
+        if (maxCap - minCap < 0.12f)
+        {
+            // Anchor to whichever world vertical the segment points along (spine: up).
+            var neutralWorld = Vector3.Dot(segDirWorld, Vector3.UnitY) >= 0f ? Vector3.UnitY : -Vector3.UnitY;
+            var neutralLocalParent = Vector3.Normalize(Vector3.Transform(
+                neutralWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
+
+            simulation.Solver.Add(childHandle, parentHandle, new SwingLimit
+            {
+                AxisLocalA = axisChildLocal,
+                AxisLocalB = neutralLocalParent,
+                MaximumSwingAngle = maxCap,
+                SpringSettings = spring,
+            });
+
+            swingStressMonitors.Add(new SwingStressMonitor
+            {
+                Bone = boneName,
+                Child = childHandle,
+                Parent = parentHandle,
+                AxisLocalChild = axisChildLocal,
+                AxisLocalParent = neutralLocalParent,
+                LimitAngle = maxCap,
+            });
+
+            if (config.RagdollVerboseLog)
+                log.Info($"[Ragdoll ROM] '{boneName}' symmetric anatomical cone: {maxCap * 180f / MathF.PI:F0}°");
+            return;
+        }
+
         AddCap(anatForwardWorld, rom.FlexionMax, "flex");
         AddCap(-anatForwardWorld, rom.ExtensionMax, "ext");
         AddCap(lateralOut, rom.AbductionMax, "abd");
@@ -2383,13 +2423,20 @@ public unsafe class RagdollController : IDisposable
             solverIterations = Math.Max(solverIterations, GenericSolverIterations);
 
         bufferPool = new BufferPool();
+        // FallbackBatchThreshold raised from the default 64: the pelvis alone carries the
+        // hip/spine/cloth constraint fan-out plus self-collision and NPC-volume contacts,
+        // and 2.5.0-beta's SequentialFallbackBatch NREs when removing kinematic-body
+        // contacts that overflowed into it. Keep everything in synchronized batches.
         simulation = BepuSimulation.Create(
             bufferPool,
             new RagdollNarrowPhaseCallbacks { ConnectedPairs = connectedPairs, Friction = config.RagdollFriction },
             new RagdollPoseIntegratorCallbacks(
                 new Vector3(0, -config.RagdollGravity, 0),
                 config.RagdollDamping),
-            new SolveDescription(solverIterations, Math.Max(1, config.RagdollSolverSubsteps)));
+            new SolveDescription(solverIterations, Math.Max(1, config.RagdollSolverSubsteps))
+            {
+                FallbackBatchThreshold = 128,
+            });
 
         // Safety net: flat box well below the character prevents infinite falling
         // if the terrain mesh has gaps or winding issues.
