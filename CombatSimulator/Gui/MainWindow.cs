@@ -1432,28 +1432,13 @@ public partial class MainWindow : IDisposable
         ImGui.Separator();
         ImGui.Text("Lane");
 
-        var laneHalf = config.FightingModeLaneHalfWidth;
-        if (ImGui.SliderFloat("Lane half width##fightingmode", ref laneHalf, 0.05f, 2.0f, "%.2f"))
-        {
-            config.FightingModeLaneHalfWidth = laneHalf;
-            config.Save();
-        }
-        HelpMarker("How much sideways drift is tolerated before the player/enemy pair is projected back onto the 2D lane.");
-
         var minSep = config.FightingModeMinSeparation;
         if (ImGui.SliderFloat("Min separation##fightingmode", ref minSep, 0.1f, 1.5f, "%.2f"))
         {
             config.FightingModeMinSeparation = minSep;
             config.Save();
         }
-
-        var maxSep = config.FightingModeMaxSeparation;
-        if (ImGui.SliderFloat("Max separation##fightingmode", ref maxSep, 0.2f, 3.0f, "%.2f"))
-        {
-            config.FightingModeMaxSeparation = MathF.Max(maxSep, config.FightingModeMinSeparation + 0.1f);
-            config.Save();
-        }
-        HelpMarker("Camera framing input only — actors are no longer force-recentered by distance.");
+        HelpMarker("Closest the pair can stand: whoever moves is clamped this far from the other along the lane.");
 
         ImGui.Separator();
         ImGui.Text("2D Movement");

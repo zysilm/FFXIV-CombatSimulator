@@ -72,6 +72,10 @@ public sealed unsafe class FightingAiController
         state = AiState.Neutral;
         attackCooldown = NextCooldown() * 0.5f; // first attack comes a bit sooner
         moving = false;
+        // NpcAiController may have left a cast mid-flight; it is skipped from here on,
+        // so that cast would never complete — clear it.
+        target.State.IsCasting = false;
+        target.CurrentCastSkill = null;
         animationController.SetBattleStance(target);
         log.Debug($"FightingAi: driving '{target.Name}'.");
     }
@@ -119,8 +123,11 @@ public sealed unsafe class FightingAiController
         desiredAlong = npcAlong;
         moving = false;
 
-        // NpcAiController normally owns this decrement but skips the engaged fighter.
+        // NpcAiController normally owns these decrements but skips the engaged fighter.
         npc.State.AnimationLock = MathF.Max(0f, npc.State.AnimationLock - dt);
+        foreach (var skill in npc.Behavior.Skills)
+            if (skill.CooldownRemaining > 0)
+                skill.CooldownRemaining = MathF.Max(0f, skill.CooldownRemaining - dt);
 
         if (attackCooldown > 0f)
             attackCooldown -= dt;

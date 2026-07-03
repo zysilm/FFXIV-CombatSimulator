@@ -290,6 +290,10 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
 
         Disengage();
         target = npc;
+        // Set immediately (Tick refreshes each frame) so ControlsEnemy answers
+        // correctly from this very frame — otherwise NpcAiController drives the
+        // fighter for one more tick.
+        targetAddress = npc.Address;
         engaged = true;
         cameraPhase = CameraPhase.Fighting;
         CaptureLane();
