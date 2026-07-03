@@ -1694,6 +1694,53 @@ public partial class MainWindow : IDisposable
         }
 
         ImGui.Separator();
+        ImGui.Text("KO Camera");
+        HelpMarker("After defeat, while the controlled monster's camera-follow is on, the camera frames the midpoint of your corpse and the monster and zooms out with their separation (fighting-game KO shot). Otherwise the Translate Cam below applies.");
+
+        var koMargin = config.FightingModeKoCameraMargin;
+        if (ImGui.SliderFloat("KO distance margin##fightingmode", ref koMargin, 0.2f, 2.0f, "%.2f"))
+        {
+            config.FightingModeKoCameraMargin = koMargin;
+            config.Save();
+        }
+
+        var koBase = config.FightingModeKoCameraBase;
+        if (ImGui.SliderFloat("KO base distance##fightingmode", ref koBase, 1.0f, 10.0f, "%.1f"))
+        {
+            config.FightingModeKoCameraBase = koBase;
+            config.Save();
+        }
+
+        var koMin = config.FightingModeKoCameraMinDistance;
+        if (ImGui.SliderFloat("KO min distance##fightingmode", ref koMin, 1.0f, 10.0f, "%.1f"))
+        {
+            config.FightingModeKoCameraMinDistance = koMin;
+            config.Save();
+        }
+
+        var koMax = config.FightingModeKoCameraMaxDistance;
+        if (ImGui.SliderFloat("KO max distance##fightingmode", ref koMax, 4.0f, 30.0f, "%.1f"))
+        {
+            config.FightingModeKoCameraMaxDistance = MathF.Max(koMax, config.FightingModeKoCameraMinDistance + 0.5f);
+            config.Save();
+        }
+
+        var koHeight = config.FightingModeKoCameraHeight;
+        if (ImGui.SliderFloat("KO center height##fightingmode", ref koHeight, -1.0f, 3.0f, "%.2f"))
+        {
+            config.FightingModeKoCameraHeight = koHeight;
+            config.Save();
+        }
+
+        var koLock = config.FightingModeKoLockAngle;
+        if (ImGui.Checkbox("KO side-view lock##fightingmode", ref koLock))
+        {
+            config.FightingModeKoLockAngle = koLock;
+            config.Save();
+        }
+        HelpMarker("Keeps the camera perpendicular to the corpse-monster axis; off = you keep manual rotation.");
+
+        ImGui.Separator();
         ImGui.Text("Translate Cam");
 
         var translate = config.FightingModeTranslateCam;

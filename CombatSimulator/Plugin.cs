@@ -261,6 +261,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             config, combatModeRouter, telegraphSystem, animationController, log);
         fightingModeController.FightingAi = fightingAiController;
         fightingCombatController.OnPlayerHitLanded = _ => fightingAiController.NotifyPlayerHitLanded();
+        fightingModeController.GetMonsterFollowCenter = () => devExperimental.ControlledMonsterCenter;
         combatEngine.BeforePlayerDeath = () =>
         {
             fightingModeController.HandlePlayerDeath();

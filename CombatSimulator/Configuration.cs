@@ -560,6 +560,14 @@ public partial class Configuration : IPluginConfiguration
     public float FightingAiRecoverTime { get; set; } = 0.6f;
     public float FightingAiHitstunDuration { get; set; } = 0.35f;
     public float FightingAiHitstunPushback { get; set; } = 1.5f;
+    // Fighting Mode KO camera: after the player's defeat, when the dev-controlled
+    // monster is followed, frame the corpse↔monster midpoint and zoom with separation.
+    public float FightingModeKoCameraMargin { get; set; } = 0.8f;
+    public float FightingModeKoCameraBase { get; set; } = 3.0f;
+    public float FightingModeKoCameraMinDistance { get; set; } = 3.0f;
+    public float FightingModeKoCameraMaxDistance { get; set; } = 14.0f;
+    public float FightingModeKoCameraHeight { get; set; } = 0.8f;
+    public bool FightingModeKoLockAngle { get; set; } = true;
 
     // Input map: put these actions on the hotbar; a press is interpreted as the
     // mapped role instead of firing the real action. 0 = unmapped.

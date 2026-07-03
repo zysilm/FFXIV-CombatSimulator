@@ -61,6 +61,8 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     private float lastSuppressedDirH;
     private float lastSuppressedDirV;
     private bool hasLastSuppressedCamera;
+    private float smoothedKoDirH;
+    private bool koDirHInitialized;
 
     private enum CameraPhase
     {
@@ -82,6 +84,10 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     /// <summary>1v1 fighting AI for the engaged enemy. Set by the plugin after construction;
     /// while wired, NpcAiController skips the fighter (see ControlsEnemy).</summary>
     public FightingAiController? FightingAi { get; set; }
+
+    /// <summary>Dev-controlled monster's follow center (null when inactive / follow off).
+    /// When present post-death, the KO camera frames the corpse↔monster midpoint.</summary>
+    public Func<Vector3?>? GetMonsterFollowCenter { get; set; }
 
     /// <summary>True while this controller (via FightingAi) owns the engaged enemy — used by
     /// NpcAiController's externally-controlled skip.</summary>
@@ -329,6 +335,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         hasLastSuppressedCamera = false;
         suppressDeathCameraThisDeath = false;
         translateElapsed = 0f;
+        koDirHInitialized = false;
     }
 
     private void CaptureLane()
@@ -430,12 +437,24 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
                 BeginTranslateCam(fromActiveCamera: true);
         }
 
-        if (playerDefeated && config.FightingModeTranslateCam)
+        if (playerDefeated)
         {
-            if (cameraPhase == CameraPhase.Fighting)
-                BeginTranslateCam(fromActiveCamera: false);
-            UpdateTranslateCamera(playerObj, dt);
-            return;
+            // Fighting-game KO framing takes over whenever the dev-controlled monster is
+            // being followed: frame the corpse↔monster midpoint and zoom with separation.
+            var monsterCenter = GetMonsterFollowCenter?.Invoke();
+            if (monsterCenter.HasValue)
+            {
+                UpdateKoCamera(playerObj, monsterCenter.Value, dt);
+                return;
+            }
+
+            if (config.FightingModeTranslateCam)
+            {
+                if (cameraPhase == CameraPhase.Fighting)
+                    BeginTranslateCam(fromActiveCamera: false);
+                UpdateTranslateCamera(playerObj, dt);
+                return;
+            }
         }
 
         if (!playerDefeated && cameraPhase != CameraPhase.Fighting)
@@ -581,6 +600,77 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
             MaxDistanceAtLeast = smoothedCameraDistance + 1f,
             ClearInputH = config.FightingModeTranslateLockHorizontal,
             ClearInputV = config.FightingModeTranslateLockVertical,
+        });
+    }
+
+    /// <summary>
+    /// Fighting-game KO framing: orbit the midpoint of the player's corpse (tracked
+    /// bone) and the controlled monster, zooming out with their horizontal separation.
+    /// Side-view angle follows the corpse→monster axis when locked.
+    /// </summary>
+    private void UpdateKoCamera(GameObject* playerObj, Vector3 monsterCenter, float dt)
+    {
+        var camMgr = GameCameraManager.Instance();
+        if (camMgr == null || camMgr->Camera == null)
+            return;
+        var gameCam = camMgr->Camera;
+
+        var corpse = GetTranslateTargetCenter(playerObj, gameCam->DirH);
+        var center = (corpse + monsterCenter) * 0.5f;
+        center.Y += config.FightingModeKoCameraHeight;
+
+        var sep = Vector3.Distance(
+            new Vector3(corpse.X, 0f, corpse.Z),
+            new Vector3(monsterCenter.X, 0f, monsterCenter.Z));
+        var minD = MathF.Max(1f, config.FightingModeKoCameraMinDistance);
+        var maxD = MathF.Max(minD + 0.5f, config.FightingModeKoCameraMaxDistance);
+        var desired = Math.Clamp(
+            sep * MathF.Max(0.1f, config.FightingModeKoCameraMargin) + config.FightingModeKoCameraBase,
+            minD, maxD);
+
+        var k = 1f - MathF.Exp(-MathF.Max(0.1f, config.FightingModeCameraSmoothing) * dt);
+        if (smoothedCameraDistance <= 0.01f)
+        {
+            smoothedCameraCenter = center;
+            smoothedCameraDistance = desired;
+        }
+        else
+        {
+            smoothedCameraCenter = Vector3.Lerp(smoothedCameraCenter, center, k);
+            smoothedCameraDistance += (desired - smoothedCameraDistance) * k;
+        }
+
+        float? dirH = null;
+        if (config.FightingModeKoLockAngle)
+        {
+            var axis = monsterCenter - corpse;
+            axis.Y = 0f;
+            if (axis.LengthSquared() > 0.0001f)
+            {
+                axis = Vector3.Normalize(axis);
+                var side = new Vector3(-axis.Z, 0f, axis.X);
+                var targetDirH = MathF.Atan2(side.X, side.Z);
+                if (!koDirHInitialized)
+                {
+                    smoothedKoDirH = targetDirH;
+                    koDirHInitialized = true;
+                }
+                else
+                {
+                    smoothedKoDirH += NormalizeAngle(targetDirH - smoothedKoDirH) * k;
+                }
+                dirH = smoothedKoDirH;
+            }
+        }
+
+        cameraCoordinator.Submit(CameraOwner.FightingKO, new CameraRequest
+        {
+            OrbitCenter = smoothedCameraCenter,
+            DirH = dirH,
+            DirV = config.FightingModeCameraVerticalAngle,
+            Distance = smoothedCameraDistance,
+            MaxDistanceAtLeast = smoothedCameraDistance + 1f,
+            ClearInputH = config.FightingModeKoLockAngle,
         });
     }
 

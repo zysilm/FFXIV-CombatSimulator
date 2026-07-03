@@ -27,6 +27,11 @@ public interface IDevExperimental : IDisposable
     /// <summary>Camera arbitration seam: dev camera modes (monster follow) submit
     /// requests to the coordinator instead of toggling the active camera directly.</summary>
     void SetCameraCoordinator(CameraModeCoordinator coordinator);
+
+    /// <summary>Body-center of the dev-controlled creature while it is active AND its
+    /// camera-follow preference is on; null otherwise. Fighting Mode's KO camera frames
+    /// the midpoint of this and the player's corpse.</summary>
+    System.Numerics.Vector3? ControlledMonsterCenter { get; }
     void ResetTransientState();
     void DrawToolbars(MainWindow mainWindow);
     void RestoreOcclusion();
