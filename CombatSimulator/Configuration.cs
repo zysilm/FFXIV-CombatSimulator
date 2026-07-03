@@ -524,6 +524,15 @@ public partial class Configuration : IPluginConfiguration
     public float FightingModeTranslateHorizontalAngle { get; set; } = 0.0f;
     public bool FightingModeTranslateLockVertical { get; set; } = true;
     public float FightingModeTranslateVerticalAngle { get; set; } = -0.12f;
+    // Fighting Mode 2D input: forward/back move along the lane, jump is a
+    // self-integrated parabola (the game's own movement is blocked while engaged).
+    public float FightingModeMoveSpeed { get; set; } = 4.0f;
+    public float FightingModeJumpVelocity { get; set; } = 5.5f;
+    public float FightingModeGravity { get; set; } = 16f;
+    public int FightingModeForwardKey { get; set; } = 0x57;  // W
+    public int FightingModeBackKey { get; set; } = 0x53;     // S
+    public int FightingModeJumpKey { get; set; } = 0x20;     // Space
+    public GamepadButtons FightingModeJumpGamepadButton { get; set; } = GamepadButtons.South;
 
     // Input map: put these actions on the hotbar; a press is interpreted as the
     // mapped role instead of firing the real action. 0 = unmapped.

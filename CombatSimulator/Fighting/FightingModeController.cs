@@ -33,8 +33,10 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     private readonly MovementBlockHook movementBlockHook;
     private readonly CameraModeCoordinator cameraCoordinator;
     private readonly BoneTransformService boneService;
+    private readonly FightingPlayerMotor playerMotor;
     private readonly Func<nint, bool> isExternallyControlled;
     private readonly IPluginLog log;
+    private readonly Func<float, Vector3> alongToWorld;
 
     private SimulatedNpc? target;
     private nint playerAddress;
@@ -80,6 +82,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         MovementBlockHook movementBlockHook,
         CameraModeCoordinator cameraCoordinator,
         BoneTransformService boneService,
+        FightingPlayerMotor playerMotor,
         Func<nint, bool> isExternallyControlled,
         IPluginLog log)
     {
@@ -90,8 +93,10 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         this.movementBlockHook = movementBlockHook;
         this.cameraCoordinator = cameraCoordinator;
         this.boneService = boneService;
+        this.playerMotor = playerMotor;
         this.isExternallyControlled = isExternallyControlled;
         this.log = log;
+        alongToWorld = along => laneOrigin + laneAxis * along;
     }
 
     public bool OnPlayerAction(uint actionType, uint actionId, ulong targetId, uint extraParam)
@@ -150,9 +155,35 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         if (!targetControlled)
             movementBlockHook.AddApproachNpc(targetAddress);
 
+        TickPlayerMotor(deltaTime, playerObj, targetObj);
         ApplyLane(playerObj, targetObj, targetControlled);
         UpdateCamera(playerObj, targetObj, deltaTime);
     }
+
+    private void TickPlayerMotor(float dt, GameObject* playerObj, GameObject* targetObj)
+    {
+        var playerAlive = !postDeathEngaged && combatEngine.State.PlayerState.IsAlive;
+        if (!playerAlive)
+        {
+            playerMotor.End();
+            return;
+        }
+
+        if (!laneInitialized)
+            return;
+
+        if (!playerMotor.IsActive)
+        {
+            var p = ToVector3(playerObj->Position);
+            playerMotor.Begin(playerAddress, AlongOf(p), p.Y);
+        }
+
+        var e = ToVector3(targetObj->Position);
+        playerMotor.Tick(dt, AlongOf(e), alongToWorld);
+    }
+
+    private float AlongOf(Vector3 pos)
+        => Vector3.Dot(new Vector3(pos.X, 0f, pos.Z) - laneOrigin, laneAxis);
 
     /// <summary>
     /// Re-apply only the lane constraint after NPC AI has moved actors this frame.
@@ -231,6 +262,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     public void HandlePlayerDeath()
     {
         suppressDeathCameraThisDeath = engaged;
+        playerMotor.End();
         if (!engaged)
             return;
 
@@ -241,6 +273,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
 
     private void Disengage()
     {
+        playerMotor.End();
         if (playerAddress != nint.Zero)
             movementBlockHook.RemoveApproachNpc(playerAddress);
         if (targetAddress != nint.Zero)
@@ -300,47 +333,44 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         if (!laneInitialized)
             CaptureLane();
 
+        var playerAlive = !postDeathEngaged && combatEngine.State.PlayerState.IsAlive;
+
+        // Player: motor-driven along the lane while alive. A dead body belongs to the
+        // ragdoll, not the lane.
+        if (playerAlive && playerMotor.IsActive)
+        {
+            var targetP = laneOrigin + laneAxis * playerMotor.AlongPos;
+            targetP.Y = playerMotor.PosY;
+            movementBlockHook.SetApproachPosition(playerObj, targetP.X, targetP.Y, targetP.Z);
+            movementBlockHook.SetApproachRotation(playerObj, YawTo(e - targetP));
+            p = targetP;
+        }
+
+        // Enemy: when MonsterMode owns it, it moves itself (lane-projected through the
+        // IFightingModeLaneConstraint seam) — hands off. Otherwise project it onto the
+        // lane at its own coordinate. Never recenter the pair: moving one actor must
+        // not translate the other.
         if (targetControlled)
-        {
-            // When MonsterMode owns the enemy, FightingMode must only provide the lane. Do not
-            // recenter the pair by moving the player/corpse; that couples enemy input to player
-            // translation and also fights MonsterMode's movement/animation state.
-            if (!postDeathEngaged)
-            {
-                var projectedP = ConstrainToLane(p);
-                movementBlockHook.SetApproachPosition(playerObj, projectedP.X, p.Y, projectedP.Z);
-                movementBlockHook.SetApproachRotation(playerObj, YawTo(e - p));
-            }
             return;
-        }
 
-        var pAlong = Vector3.Dot(new Vector3(p.X, 0f, p.Z) - laneOrigin, laneAxis);
-        var eAlong = Vector3.Dot(new Vector3(e.X, 0f, e.Z) - laneOrigin, laneAxis);
-        var separation = MathF.Abs(eAlong - pAlong);
-        var minSep = Math.Clamp(config.FightingModeMinSeparation, 0.1f, 0.65f);
-        var maxSep = Math.Clamp(config.FightingModeMaxSeparation, minSep + 0.05f, 1.05f);
+        var pAlong = AlongOf(p);
+        var eAlong = AlongOf(e);
 
-        if (separation < minSep || separation > maxSep)
+        if (playerAlive)
         {
-            var centerAlong = (pAlong + eAlong) * 0.5f;
-            var clampedSep = Math.Clamp(separation, minSep, maxSep);
-            var playerSign = pAlong <= eAlong ? -1f : 1f;
-            pAlong = centerAlong + playerSign * clampedSep * 0.5f;
-            eAlong = centerAlong - playerSign * clampedSep * 0.5f;
+            // Min separation only, clamping the enemy (its AI is the mover here).
+            var minSep = Math.Clamp(config.FightingModeMinSeparation, 0.1f, 0.65f);
+            float side = MathF.Sign(eAlong - pAlong);
+            if (side == 0f)
+                side = 1f;
+            if (MathF.Abs(eAlong - pAlong) < minSep)
+                eAlong = pAlong + side * minSep;
         }
 
-        var targetP = laneOrigin + laneAxis * pAlong;
         var targetE = laneOrigin + laneAxis * eAlong;
-        targetP.Y = p.Y;
         targetE.Y = e.Y;
-
-        movementBlockHook.SetApproachPosition(playerObj, targetP.X, targetP.Y, targetP.Z);
-        movementBlockHook.SetApproachRotation(playerObj, YawTo(targetE - targetP));
-        if (!targetControlled)
-        {
-            movementBlockHook.SetApproachPosition(targetObj, targetE.X, targetE.Y, targetE.Z);
-            movementBlockHook.SetApproachRotation(targetObj, YawTo(targetP - targetE));
-        }
+        movementBlockHook.SetApproachPosition(targetObj, targetE.X, targetE.Y, targetE.Z);
+        movementBlockHook.SetApproachRotation(targetObj, YawTo(p - targetE));
     }
 
     private void UpdateCamera(GameObject* playerObj, GameObject* targetObj, float dt)

@@ -1445,6 +1445,54 @@ public partial class MainWindow : IDisposable
             config.FightingModeMaxSeparation = MathF.Max(maxSep, config.FightingModeMinSeparation + 0.1f);
             config.Save();
         }
+        HelpMarker("Camera framing input only — actors are no longer force-recentered by distance.");
+
+        ImGui.Separator();
+        ImGui.Text("2D Movement");
+
+        var moveSpeed = config.FightingModeMoveSpeed;
+        if (ImGui.SliderFloat("Move speed##fightingmode", ref moveSpeed, 0.5f, 12.0f, "%.1f"))
+        {
+            config.FightingModeMoveSpeed = moveSpeed;
+            config.Save();
+        }
+        HelpMarker("While engaged, the game's own movement is blocked: forward/back keys (and gamepad stick) approach/retreat along the lane, sideways input is ignored.");
+
+        var jumpVel = config.FightingModeJumpVelocity;
+        if (ImGui.SliderFloat("Jump velocity##fightingmode", ref jumpVel, 1.0f, 15.0f, "%.1f"))
+        {
+            config.FightingModeJumpVelocity = jumpVel;
+            config.Save();
+        }
+
+        var gravity = config.FightingModeGravity;
+        if (ImGui.SliderFloat("Gravity##fightingmode", ref gravity, 2.0f, 50.0f, "%.1f"))
+        {
+            config.FightingModeGravity = gravity;
+            config.Save();
+        }
+
+        var fwdKey = config.FightingModeForwardKey;
+        if (ImGui.InputInt("Forward key##fightingmode", ref fwdKey))
+        {
+            config.FightingModeForwardKey = Math.Clamp(fwdKey, 1, 254);
+            config.Save();
+        }
+        HelpMarker("Virtual-key codes. Defaults: forward 0x57 (W), back 0x53 (S), jump 0x20 (Space).");
+
+        var backKey = config.FightingModeBackKey;
+        if (ImGui.InputInt("Back key##fightingmode", ref backKey))
+        {
+            config.FightingModeBackKey = Math.Clamp(backKey, 1, 254);
+            config.Save();
+        }
+
+        var jumpKey = config.FightingModeJumpKey;
+        if (ImGui.InputInt("Jump key##fightingmode", ref jumpKey))
+        {
+            config.FightingModeJumpKey = Math.Clamp(jumpKey, 1, 254);
+            config.Save();
+        }
 
         ImGui.Separator();
         ImGui.Text("Camera");
