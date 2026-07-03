@@ -2028,7 +2028,8 @@ public unsafe class RagdollController : IDisposable
         Vector3 anatForwardWorld,
         Vector3 anatLateralWorld,
         AnatomicalRom rom,
-        SpringSettings spring)
+        SpringSettings coneSpring,
+        SpringSettings capSpring)
     {
         if (simulation == null)
             return;
@@ -2063,7 +2064,7 @@ public unsafe class RagdollController : IDisposable
                 AxisLocalA = axisChildLocal,
                 AxisLocalB = neutralLocalParent,
                 MaximumSwingAngle = maxCap,
-                SpringSettings = spring,
+                SpringSettings = coneSpring,
             });
 
             swingStressMonitors.Add(new SwingStressMonitor
@@ -2086,6 +2087,18 @@ public unsafe class RagdollController : IDisposable
         AddCap(lateralOut, rom.AbductionMax, "abd");
         AddCap(-lateralOut, rom.AdductionMax, "add");
 
+        // Diagonal caps: four cardinal caps alone leave the 45°-azimuth corners
+        // inflated — a tilt toward forward+out projects only its cosine onto the pure
+        // abduction cap, so a leg can rise ~80° on the flex-abd diagonal while the 45°
+        // abduction cap stays satisfied. That diagonal IS the M-spread pose. Cap the
+        // corners with neighbour-interpolated tilts to round the box toward the real
+        // elliptical envelope.
+        var diag = 1f / MathF.Sqrt(2f);
+        AddCap((anatForwardWorld + lateralOut) * diag, (rom.FlexionMax + rom.AbductionMax) * 0.5f, "flex-abd");
+        AddCap((anatForwardWorld - lateralOut) * diag, (rom.FlexionMax + rom.AdductionMax) * 0.5f, "flex-add");
+        AddCap((-anatForwardWorld + lateralOut) * diag, (rom.ExtensionMax + rom.AbductionMax) * 0.5f, "ext-abd");
+        AddCap((-anatForwardWorld - lateralOut) * diag, (rom.ExtensionMax + rom.AdductionMax) * 0.5f, "ext-add");
+
         void AddCap(Vector3 dir, float tilt, string label)
         {
             var max = MathF.PI / 2f + tilt;
@@ -2100,7 +2113,7 @@ public unsafe class RagdollController : IDisposable
                 AxisLocalA = axisChildLocal,
                 AxisLocalB = oppositeLocalParent,
                 MaximumSwingAngle = max,
-                SpringSettings = spring,
+                SpringSettings = capSpring,
             });
 
             swingStressMonitors.Add(new SwingStressMonitor
@@ -2261,7 +2274,7 @@ public unsafe class RagdollController : IDisposable
     //                     are invariant, so visually the foot simply snaps back forward.
     private const float HingeHemisphereLockAngle = 1.3f;  // ~75°; untouched by legal motion
     private const float TwistGuardMaxRate = 6f;           // rad/s relative to the parent
-    private const float HipTwistCeiling = 0.9f;           // ~52°; legal hip rotation caps 30/45°
+    private const float HipTwistCeiling = 0.65f;          // ~37°; legal hip rotation caps 30/45°
     private const float KneeTwistCeiling = 0.35f;         // ~20°; legal knee twist ±11°
     private const float AnkleTwistCeiling = 0.9f;         // ~52°; legal ankle twist ±37°
     private const float TwistGuardLogThreshold = 1.4f;    // log genuine flips (>80°), not grazes
@@ -3336,17 +3349,22 @@ public unsafe class RagdollController : IDisposable
                         LimitAngle = effectiveCone,
                     });
 
+                    // Anatomical boundary caps are WALLS (hard limitSpring): riding them on
+                    // the soft-edge spring let body weight shove the legs 40° past every
+                    // limit (the unconstrained-hip look). The soft spring stays only on
+                    // the symmetric bounding cone, where the settle aesthetic belongs.
                     if (hasSwingRom)
                         AddDirectionalSwingLimits(rb.Name, rb.BodyHandle, parentHandle,
                             childBodyRef, parentBodyRef, segDirWorld, anchorWorld,
-                            anatForwardWorld, anatLateralWorld, swingRom, ballSwingSpring);
+                            anatForwardWorld, anatLateralWorld, swingRom,
+                            ballSwingSpring, limitSpring);
 
                     // Hip axial rotation: capped via the kneecap-facing axis (below),
                     // which stays valid at any flexion — see AddKneecapFacingLimits.
                     if (hipKneecapCaps)
                         AddKneecapFacingLimits(rb.Name, rb.BodyHandle, parentHandle,
                             childBodyRef, parentBodyRef, segDirWorld, anchorWorld,
-                            anatForwardWorld, anatLateralWorld, ballSwingSpring);
+                            anatForwardWorld, anatLateralWorld, limitSpring);
                 }
 
                 // Twist governor bookkeeping: hips and ankles have the same twist-wrap /
