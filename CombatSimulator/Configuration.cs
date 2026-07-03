@@ -172,6 +172,7 @@ public partial class Configuration : IPluginConfiguration
     public bool ActionAttackShapeDefaultsMigrated20260630 { get; set; } = false;
     public bool EnemyDismembermentDefaultsMigrated20260630 { get; set; } = false;
     public bool FightingSpacingDefaultsMigrated20260703 { get; set; } = false;
+    public bool ThinnerProfileTuningMigrated20260704 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -692,6 +693,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateActionAttackShapeDefaults();
         MigrateEnemyDismembermentDefaults();
         MigrateFightingSpacingDefaults();
+        MigrateThinnerProfileTuning();
         MigrateGuidedCollapse();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
@@ -928,6 +930,62 @@ public partial class Configuration : IPluginConfiguration
 
         FightingSpacingDefaultsMigrated20260703 = true;
         Save();
+    }
+
+    // Field-tuned bone values promoted into the built-in Thinner Volumes profiles
+    // (tighter hip cone/twist, tighter clavicle twist, slimmer upper arms, stronger
+    // knee rest bias). The seeder only adds MISSING profiles, so saved copies in
+    // existing configs must be patched here — targeted per-field so any other user
+    // divergence in those profiles is preserved.
+    private void MigrateThinnerProfileTuning()
+    {
+        if (ThinnerProfileTuningMigrated20260704)
+            return;
+
+        var changed = false;
+        foreach (var profile in RagdollBoneProfiles)
+        {
+            if (profile?.Name != "Thinner Volumes I" && profile?.Name != "Thinner Volumes II")
+                continue;
+            if (profile.Bones == null)
+                continue;
+
+            foreach (var bone in profile.Bones)
+            {
+                switch (bone.Name)
+                {
+                    case "j_asi_a_l":
+                    case "j_asi_a_r":
+                        bone.SwingLimit = 0.95f;
+                        bone.TwistMinAngle = -0.15f;
+                        bone.TwistMaxAngle = 0.15f;
+                        changed = true;
+                        break;
+                    case "j_sako_l":
+                    case "j_sako_r":
+                        bone.TwistMinAngle = -0.15f;
+                        bone.TwistMaxAngle = 0.15f;
+                        changed = true;
+                        break;
+                    case "j_ude_a_l":
+                    case "j_ude_a_r":
+                        bone.CapsuleRadius = 0.02f;
+                        bone.BoxHalfExtentZ = 0.024f;
+                        changed = true;
+                        break;
+                    case "j_asi_b_l":
+                    case "j_asi_b_r":
+                        bone.HingeRestSpringFreq = 3.5f;
+                        bone.HingeRestMaxForce = 50f;
+                        changed = true;
+                        break;
+                }
+            }
+        }
+
+        ThinnerProfileTuningMigrated20260704 = true;
+        if (changed)
+            Save();
     }
 
     private void MigrateGuidedCollapse()
