@@ -100,7 +100,6 @@ public sealed class ActionModeController
             guardKeyWasDown = false;
             basicAttackKeyWasDown = false;
             comboSink.Clear();
-            telegraphs.Tick(dt);
             return;
         }
 
@@ -113,8 +112,8 @@ public sealed class ActionModeController
             if (comboTimer <= 0f) comboStep = 0;
         }
 
-        guard.Tick(dt);
-        telegraphs.Tick(dt);
+        // guard/telegraph ticking moved to the plugin's frame loop — they are shared
+        // with Fighting Mode and must advance whichever mode is active.
         SuppressGuardGamepadInputIfNeeded();
         SuppressBasicAttackGamepadInputIfNeeded();
         TickGuardKey();

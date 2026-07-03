@@ -533,6 +533,10 @@ public partial class Configuration : IPluginConfiguration
     public int FightingModeBackKey { get; set; } = 0x53;     // S
     public int FightingModeJumpKey { get; set; } = 0x20;     // Space
     public GamepadButtons FightingModeJumpGamepadButton { get; set; } = GamepadButtons.South;
+    // Fighting Mode guard: reuses the shared PlayerGuardController timing windows
+    // (GuardActiveWindow / chain / recovery) with its own key binding.
+    public int FightingModeGuardKey { get; set; } = 17;      // Ctrl
+    public GamepadButtons FightingModeGuardGamepadButton { get; set; } = GamepadButtons.East;
 
     // Input map: put these actions on the hotbar; a press is interpreted as the
     // mapped role instead of firing the real action. 0 = unmapped.

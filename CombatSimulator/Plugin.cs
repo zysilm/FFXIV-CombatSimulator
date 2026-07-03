@@ -66,8 +66,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly CombatSimulator.ActionCombat.ActionComboSink actionComboSink;
     private readonly CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter;
     private readonly CombatSimulator.ActionCombat.TelegraphSystem telegraphSystem;
+    private readonly CombatSimulator.ActionCombat.PlayerGuardController playerGuardController;
     private readonly CombatSimulator.ActionCombat.ActionModeController actionModeController;
     private readonly CombatSimulator.ActionCombat.HitFeedbackController hitFeedbackController;
+    private readonly FightingCombatController fightingCombatController;
 
     // NPC ragdoll controllers (multiple concurrent, persist until sim stop/reset/zone change)
     private readonly Dictionary<nint, RagdollController> npcRagdolls = new();
@@ -167,7 +169,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // (enemy attack executor), TelegraphSystem (windup→hitbox). All gate on
         // config.ActionMode; off ⇒ behavior-equivalent simulation paths.
         actionComboSink = new CombatSimulator.ActionCombat.ActionComboSink(config);
-        var playerGuardController = new CombatSimulator.ActionCombat.PlayerGuardController(
+        playerGuardController = new CombatSimulator.ActionCombat.PlayerGuardController(
             animationController,
             config,
             () => combatEngine.State.PlayerState.IsAlive,
@@ -185,7 +187,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatModeRouter = new CombatSimulator.ActionCombat.CombatModeRouter(
             config,
             new CombatSimulator.ActionCombat.InstantAttackExecutor(combatEngine),
-            new CombatSimulator.ActionCombat.TelegraphedAttackExecutor(telegraphSystem, config));
+            new CombatSimulator.ActionCombat.TelegraphedAttackExecutor(telegraphSystem, config),
+            // Deferred: fightingModeController is constructed later in this ctor; the
+            // router only queries at attack time.
+            () => fightingModeController?.IsEngaged == true);
         // Clear any live telegraphs when a combat session ends.
         combatEngine.OnSimulationReset += telegraphSystem.Clear;
         // Release any outstanding hitstop freezes when combat ends so no enemy is left frozen.
@@ -244,6 +249,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             addr => devExperimental.ControlsNpc(addr), log);
         devExperimental.SetFightingModeLane(fightingModeController);
         devExperimental.SetCameraCoordinator(cameraModeCoordinator);
+        fightingCombatController = new FightingCombatController(
+            config, playerGuardController, fightingModeController, combatEngine, gamepadState, log);
         combatEngine.BeforePlayerDeath = () =>
         {
             fightingModeController.HandlePlayerDeath();
@@ -379,7 +386,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, mainWindow, config, gameGui, clientState);
         combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
         telegraphOverlay = new TelegraphOverlay(telegraphSystem, gameGui, config);
-        osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config, playerGuardController);
+        osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config, playerGuardController)
+        {
+            AlsoEnabled = () => fightingModeController.IsEngaged,
+        };
         reticleOverlay = new ReticleOverlay(playerHitboxResolver, combatEngine, gameGui, config);
 
         // Register
@@ -567,7 +577,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             if (config.ShowCombatLinkArcs || config.ShowLockMarker)
                 combatLinkOverlay.Draw();
 
-            if (config.ActionMode && config.ShowTelegraphs)
+            if ((config.ActionMode || fightingModeController.IsEngaged) && config.ShowTelegraphs)
                 telegraphOverlay.Draw();
 
             osuParryOverlay.Draw();
@@ -645,6 +655,15 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // Target lock upkeep (drops dead/stale locks, clears when inactive).
             // Runs every frame so the lock is cleared the moment the sim stops.
             playerTargetController.Tick(deltaTime);
+
+            // Guard + telegraphs are shared by Action Mode and Fighting Mode — tick
+            // them centrally so neither mode owns their lifecycle (inert when nothing
+            // is active).
+            playerGuardController.Tick(deltaTime);
+            telegraphSystem.Tick(deltaTime);
+
+            // Fighting Mode combat input (guard key); gates internally on engagement.
+            fightingCombatController.Tick(deltaTime);
 
             // Action Mode loop (player combo/guard + enemy telegraphs). Runs every
             // frame so guard windows and toggle-off cleanup are handled even

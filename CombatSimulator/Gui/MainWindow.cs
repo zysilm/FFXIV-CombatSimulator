@@ -1494,6 +1494,14 @@ public partial class MainWindow : IDisposable
             config.Save();
         }
 
+        var guardKey = config.FightingModeGuardKey;
+        if (ImGui.InputInt("Guard key##fightingmode", ref guardKey))
+        {
+            config.FightingModeGuardKey = Math.Clamp(guardKey, 1, 254);
+            config.Save();
+        }
+        HelpMarker("Timed guard against telegraphed enemy attacks (default 17 = Ctrl). Uses the shared guard windows configured under Action Mode.");
+
         ImGui.Separator();
         ImGui.Text("Camera");
 
