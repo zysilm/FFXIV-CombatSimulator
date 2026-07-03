@@ -2243,6 +2243,161 @@ public unsafe class RagdollController : IDisposable
             output.Add(entry);
     }
 
+    // === Knee anti-flip guard ============================================================
+    // Twist about a bone's own long axis leaves its segment direction unchanged, so every
+    // direction-based constraint is blind to it. The knee's only twist witnesses are the
+    // soft ±11° TwistLimit (10 Hz; its measurement wraps at ±180° and then actively holds
+    // the flip) and the planar AngularHinge (anti-parallel axes = saddle point). One hard
+    // off-axis impulse through the foot can therefore leave the shin twisted ~180° with
+    // the foot facing backwards — permanently. Three layers:
+    //   L2 (build time) — hinge-axis hemisphere SwingLimit (see the hinge branch).
+    //   L1 (per step)   — clamp the twist RATE about the shin axis relative to the thigh,
+    //                     so an impulse can't tunnel through the soft wall in one step.
+    //   L3 (per step)   — measure the actual twist; past ~100° teleport-unwind the shin
+    //                     and everything below it about the shin axis. Points on the axis
+    //                     are invariant, so visually the foot simply snaps back forward.
+    private const float HingeHemisphereLockAngle = 1.3f;  // ~75°; untouched by legal motion
+    private const float KneeFlipTwistThreshold = 1.75f;   // ~100°; legal knee twist is ±11°
+    private const float KneeMaxTwistRate = 6f;            // rad/s relative to the thigh
+    private const float KneeFlipRecoveryCooldown = 0.5f;  // per-knee re-fire guard
+
+    private sealed class KneeFlipMonitor
+    {
+        public string Bone = "";
+        public BodyHandle Child;
+        public BodyHandle Parent;
+        public Quaternion InitialRelative;
+        public List<BodyHandle> UnwindBodies = new();
+        public float Cooldown;
+    }
+
+    private readonly List<KneeFlipMonitor> kneeFlipMonitors = new();
+
+    private void RegisterKneeFlipMonitor(string boneName, int boneIndex, BodyHandle childHandle,
+        BodyHandle parentHandle, BodyReference childBodyRef, BodyReference parentBodyRef)
+    {
+        var monitor = new KneeFlipMonitor
+        {
+            Bone = boneName,
+            Child = childHandle,
+            Parent = parentHandle,
+            InitialRelative = Quaternion.Normalize(
+                Quaternion.Inverse(parentBodyRef.Pose.Orientation) * childBodyRef.Pose.Orientation),
+        };
+
+        // The shin plus every ragdoll descendant (calf, foot, toes) — they all ride the
+        // unwind rotation so the leg below the knee moves as one piece.
+        monitor.UnwindBodies.Add(childHandle);
+        var indices = new HashSet<int> { boneIndex };
+        bool grew = true;
+        while (grew)
+        {
+            grew = false;
+            foreach (var other in ragdollBones)
+            {
+                if (indices.Contains(other.BoneIndex))
+                    continue;
+                if (other.ParentBoneIndex >= 0 && indices.Contains(other.ParentBoneIndex))
+                {
+                    indices.Add(other.BoneIndex);
+                    monitor.UnwindBodies.Add(other.BodyHandle);
+                    grew = true;
+                }
+            }
+        }
+
+        kneeFlipMonitors.Add(monitor);
+    }
+
+    /// <summary>Signed twist (rad, wrapped to ±π) of the shin relative to the thigh about
+    /// the shin's long axis, measured against the build-time reference.</summary>
+    private float MeasureKneeTwist(KneeFlipMonitor m, out Vector3 axisWorld)
+    {
+        var child = simulation!.Bodies.GetBodyReference(m.Child);
+        var parent = simulation.Bodies.GetBodyReference(m.Parent);
+        axisWorld = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, child.Pose.Orientation));
+
+        var relNow = Quaternion.Normalize(
+            Quaternion.Inverse(parent.Pose.Orientation) * child.Pose.Orientation);
+        var err = Quaternion.Normalize(relNow * Quaternion.Inverse(m.InitialRelative));
+        var axisParentLocal = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, relNow));
+
+        // Swing-twist decomposition: project the error's vector part onto the twist axis.
+        var proj = err.X * axisParentLocal.X + err.Y * axisParentLocal.Y + err.Z * axisParentLocal.Z;
+        var twist = 2f * MathF.Atan2(proj, err.W);
+        while (twist > MathF.PI) twist -= MathF.Tau;
+        while (twist < -MathF.PI) twist += MathF.Tau;
+        return twist;
+    }
+
+    /// <summary>L1: cap the below-knee bodies' angular rate about the shin axis, relative
+    /// to the thigh, so one impulse can't spin past the soft twist wall within a step.</summary>
+    private void ClampKneeTwistRates()
+    {
+        if (simulation == null || kneeFlipMonitors.Count == 0)
+            return;
+
+        foreach (var m in kneeFlipMonitors)
+        {
+            var child = simulation.Bodies.GetBodyReference(m.Child);
+            var parent = simulation.Bodies.GetBodyReference(m.Parent);
+            var axis = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, child.Pose.Orientation));
+            var parentRate = Vector3.Dot(parent.Velocity.Angular, axis);
+
+            foreach (var handle in m.UnwindBodies)
+            {
+                var body = simulation.Bodies.GetBodyReference(handle);
+                var w = body.Velocity.Angular;
+                var rate = Vector3.Dot(w, axis);
+                var relative = rate - parentRate;
+                if (MathF.Abs(relative) <= KneeMaxTwistRate)
+                    continue;
+                var clamped = parentRate + MathF.Sign(relative) * KneeMaxTwistRate;
+                body.Velocity.Angular = w + axis * (clamped - rate);
+            }
+        }
+    }
+
+    /// <summary>L3: unwind a knee that flipped anyway (unknown path, extreme workloads).</summary>
+    private void TickKneeFlipRecovery(float dt)
+    {
+        if (simulation == null || kneeFlipMonitors.Count == 0)
+            return;
+
+        foreach (var m in kneeFlipMonitors)
+        {
+            if (m.Cooldown > 0f)
+            {
+                m.Cooldown -= dt;
+                continue;
+            }
+
+            var twist = MeasureKneeTwist(m, out var axisWorld);
+            if (MathF.Abs(twist) < KneeFlipTwistThreshold)
+                continue;
+
+            var child = simulation.Bodies.GetBodyReference(m.Child);
+            var delta = Quaternion.CreateFromAxisAngle(axisWorld, -twist);
+            var pivot = child.Pose.Position;
+
+            foreach (var handle in m.UnwindBodies)
+            {
+                var body = simulation.Bodies.GetBodyReference(handle);
+                body.Pose.Position = pivot + Vector3.Transform(body.Pose.Position - pivot, delta);
+                body.Pose.Orientation = Quaternion.Normalize(delta * body.Pose.Orientation);
+                // Strip the twist-rate that caused this and damp the rest so the joint
+                // doesn't immediately wind back up.
+                var w = body.Velocity.Angular;
+                w -= axisWorld * Vector3.Dot(w, axisWorld);
+                body.Velocity.Angular = w * 0.5f;
+                body.Awake = true;
+            }
+
+            m.Cooldown = KneeFlipRecoveryCooldown;
+            log.Info($"[Ragdoll] '{m.Bone}' twist flip unwound ({twist * 180f / MathF.PI:F0}°).");
+        }
+    }
+
     private void BeginBiomechanicalSettle(float duration = BiomechanicalSettleDuration)
     {
         biomechanicalSettleRemaining = MathF.Max(biomechanicalSettleRemaining, duration);
@@ -2843,6 +2998,7 @@ public unsafe class RagdollController : IDisposable
         var anatForwardWorld = new Vector3(MathF.Sin(anatYaw), 0f, MathF.Cos(anatYaw));
         var anatLateralWorld = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, anatForwardWorld));
         swingStressMonitors.Clear();
+        kneeFlipMonitors.Clear();
 
         // BEPU's TwistLimit measurement degenerates once a ball joint's swing exceeds ~90
         // degrees. Keep the full configured swing cone and skip twist limits on wide joints.
@@ -2986,6 +3142,43 @@ public unsafe class RagdollController : IDisposable
                                 Math.Clamp(config.RagdollKneeHingeFrequency, 1f, 60f), 1f),
                         });
                 }
+
+                // Hemisphere lock (anti-flip L2): the AngularHinge above keeps the two hinge
+                // axes PARALLEL but treats the 180°-flipped (anti-parallel) state as a saddle
+                // point it cannot escape, and the soft axial TwistLimit below wraps at ±180°
+                // and then HOLDS the flip — the "shin twisted backwards, foot facing the
+                // wrong way" stable failure. A direction-vector SwingLimit between the same
+                // two axes never engages in legal motion (they stay parallel) but produces a
+                // monotonic restoring torque from any flip angle, so the flipped state stops
+                // being an equilibrium.
+                {
+                    var hemiChild = Vector3.Normalize(Vector3.Transform(
+                        hingeAxisWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
+                    var hemiParent = Vector3.Normalize(Vector3.Transform(
+                        hingeAxisWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle, new SwingLimit
+                    {
+                        AxisLocalA = hemiChild,
+                        AxisLocalB = hemiParent,
+                        MaximumSwingAngle = HingeHemisphereLockAngle,
+                        SpringSettings = limitSpring,
+                    });
+                    swingStressMonitors.Add(new SwingStressMonitor
+                    {
+                        Bone = rb.Name,
+                        Child = rb.BodyHandle,
+                        Parent = parentHandle,
+                        AxisLocalChild = hemiChild,
+                        AxisLocalParent = hemiParent,
+                        LimitAngle = HingeHemisphereLockAngle,
+                    });
+                }
+
+                // Anti-flip L1+L3 bookkeeping (knees only — the foot's ground-contact lever
+                // makes them the exposed joint; elbows have no such lever).
+                if (boneDef.AnatomicalRole == AnatomicalRole.Knee)
+                    RegisterKneeFlipMonitor(rb.Name, rb.BoneIndex, rb.BodyHandle, parentHandle,
+                        childBodyRef, parentBodyRef);
 
                 // Tier C — asymmetric ROM for this hinge (knee/elbow). Resolved once here so
                 // it drives the fold-stop cap (C3), the directional flexion limit (C3) and the
@@ -4144,6 +4337,8 @@ public unsafe class RagdollController : IDisposable
                 hasPrevPhysicsState = true;
                 simulation.Timestep(FixedTimestep);
                 ClampVelocities(maxLinear, maxAngular);
+                ClampKneeTwistRates();
+                TickKneeFlipRecovery(FixedTimestep);
                 ApplyStandingAnchorCorrection();
                 physicsAccumulator -= FixedTimestep;
                 substeps++;
