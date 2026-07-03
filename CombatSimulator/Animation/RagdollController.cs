@@ -904,7 +904,10 @@ public unsafe class RagdollController : IDisposable
     private static readonly Dictionary<string, AnatomicalRom> AnatomicalRomTable = new()
     {
         // Hinge joints
-        { "j_asi_b", new AnatomicalRom(D2R(140f), D2R(5f),   0f,        0f,        D2R(-10f), D2R(10f)) }, // Knee (shin)
+        // Knee flexion: relaxed passive max is ~135-145° (thigh↔shin interior angle
+        // 35-45°). Connected pairs don't collide, so there is no soft-tissue backstop —
+        // use the conservative end or the shin folds visibly INTO the thigh.
+        { "j_asi_b", new AnatomicalRom(D2R(135f), D2R(5f),   0f,        0f,        D2R(-10f), D2R(10f)) }, // Knee (shin)
         { "j_ude_b", new AnatomicalRom(D2R(145f), D2R(5f),   0f,        0f,        D2R(-80f), D2R(80f)) }, // Elbow (forearm)
         // Ball joints (axial wired now; swing fields deferred to Tier A)
         // Hip flexion: 120° is the CLINICAL value measured with a bent knee. With the knee
@@ -3238,7 +3241,10 @@ public unsafe class RagdollController : IDisposable
                             LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * twistBasis),
                             MinimumAngle = twistMin,
                             MaximumAngle = twistMax,
-                            SpringSettings = new SpringSettings(10f, 1f),
+                            // 10 Hz predates the substep solver and was tunnelled by any
+                            // decent impact (the twist-flip failure). Inequality constraint —
+                            // only fires at the boundary, so stiff is safe with 8 substeps.
+                            SpringSettings = new SpringSettings(40f, 1f),
                         });
                 }
 

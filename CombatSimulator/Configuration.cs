@@ -173,6 +173,7 @@ public partial class Configuration : IPluginConfiguration
     public bool EnemyDismembermentDefaultsMigrated20260630 { get; set; } = false;
     public bool FightingSpacingDefaultsMigrated20260703 { get; set; } = false;
     public bool ThinnerProfileTuningMigrated20260704 { get; set; } = false;
+    public bool KneeHingeStiffnessMigrated20260704 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -363,7 +364,10 @@ public partial class Configuration : IPluginConfiguration
     // sideways under load, too high relative to the 60 Hz step = jitter/freeze. Takes
     // effect on next ragdoll activation.
     public bool RagdollKneeElbowPlanarHinge { get; set; } = true;
-    public float RagdollKneeHingeFrequency { get; set; } = 18f;
+    // 18 Hz was calibrated before SolverSubsteps existed; with 8 substeps the solver
+    // holds far stiffer angular constraints without freezing, and a soft planar hinge
+    // is exactly what lets impacts wobble/tunnel the knee sideways and in twist.
+    public float RagdollKneeHingeFrequency { get; set; } = 50f;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
 
@@ -694,6 +698,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateEnemyDismembermentDefaults();
         MigrateFightingSpacingDefaults();
         MigrateThinnerProfileTuning();
+        MigrateKneeHingeStiffness();
         MigrateGuidedCollapse();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
@@ -929,6 +934,20 @@ public partial class Configuration : IPluginConfiguration
             FightingModeCameraMaxDistance = 3.5f;
 
         FightingSpacingDefaultsMigrated20260703 = true;
+        Save();
+    }
+
+    // Knee hinge stack stiffened (see RagdollKneeHingeFrequency comment): 18 Hz predates
+    // the substep solver and lets impacts wobble/tunnel the knee.
+    private void MigrateKneeHingeStiffness()
+    {
+        if (KneeHingeStiffnessMigrated20260704)
+            return;
+
+        if (MathF.Abs(RagdollKneeHingeFrequency - 18f) < 0.001f)
+            RagdollKneeHingeFrequency = 50f;
+
+        KneeHingeStiffnessMigrated20260704 = true;
         Save();
     }
 
