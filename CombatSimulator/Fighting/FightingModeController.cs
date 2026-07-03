@@ -73,6 +73,11 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     public bool IsLaneActive => (engaged || postDeathEngaged) && laneInitialized;
     public Vector3 LaneAxis => laneAxis;
     public bool ShouldSuppressDeathCamera => engaged || postDeathEngaged || suppressDeathCameraThisDeath;
+    public SimulatedNpc? CurrentTarget => target;
+
+    /// <summary>Weapon-contact attack path (FightingCombatController.OnAttackInput). Set by the
+    /// plugin after construction; when unset, attacks fall back to the classic queued resolve.</summary>
+    public Func<uint, SimulatedNpc, bool>? AttackSink { get; set; }
 
     public FightingModeController(
         Configuration config,
@@ -112,7 +117,10 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         }
 
         Engage(npc);
-        combatEngine.EnqueuePlayerAction(actionType, actionId, npc.SimulatedEntityId, extraParam);
+        if (AttackSink != null)
+            AttackSink(actionId, npc);
+        else
+            combatEngine.EnqueuePlayerAction(actionType, actionId, npc.SimulatedEntityId, extraParam);
         return true;
     }
 

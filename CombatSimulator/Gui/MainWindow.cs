@@ -1503,6 +1503,76 @@ public partial class MainWindow : IDisposable
         HelpMarker("Timed guard against telegraphed enemy attacks (default 17 = Ctrl). Uses the shared guard windows configured under Action Mode.");
 
         ImGui.Separator();
+        ImGui.Text("Weapon Combat");
+
+        var debugDraw = config.FightingModeDebugDraw;
+        if (ImGui.Checkbox("Debug draw##fightingmode", ref debugDraw))
+        {
+            config.FightingModeDebugDraw = debugDraw;
+            config.Save();
+        }
+        HelpMarker("Draws the live weapon segment (yellow; red while the hit window is open) and the enemy hurtbox capsule. Essential for tuning the values below.");
+
+        var weaponLen = config.FightingModeWeaponLength;
+        if (ImGui.SliderFloat("Weapon length##fightingmode", ref weaponLen, 0.2f, 3.0f, "%.2f"))
+        {
+            config.FightingModeWeaponLength = weaponLen;
+            config.Save();
+        }
+        HelpMarker("Used for single-bone weapons and the unarmed/hand-bone fallback. Multi-bone weapons derive length from their own skeleton.");
+
+        var weaponScale = config.FightingModeWeaponLengthScale;
+        if (ImGui.SliderFloat("Weapon length scale##fightingmode", ref weaponScale, 0.5f, 2.0f, "%.2f"))
+        {
+            config.FightingModeWeaponLengthScale = weaponScale;
+            config.Save();
+        }
+
+        var weaponRadius = config.FightingModeWeaponRadius;
+        if (ImGui.SliderFloat("Weapon radius##fightingmode", ref weaponRadius, 0.02f, 0.6f, "%.2f"))
+        {
+            config.FightingModeWeaponRadius = weaponRadius;
+            config.Save();
+        }
+
+        var weaponAxis = config.FightingModeWeaponAxis;
+        if (ImGui.Combo("Weapon axis##fightingmode", ref weaponAxis, "X\0Y\0Z\0"))
+        {
+            config.FightingModeWeaponAxis = Math.Clamp(weaponAxis, 0, 2);
+            config.Save();
+        }
+        HelpMarker("Blade direction in the weapon's local space, for single-bone weapons only.");
+
+        var hurtHeight = config.FightingModeHurtboxHeight;
+        if (ImGui.SliderFloat("Hurtbox height##fightingmode", ref hurtHeight, 0.5f, 5.0f, "%.2f"))
+        {
+            config.FightingModeHurtboxHeight = hurtHeight;
+            config.Save();
+        }
+
+        var hurtScale = config.FightingModeHurtboxRadiusScale;
+        if (ImGui.SliderFloat("Hurtbox radius scale##fightingmode", ref hurtScale, 0.3f, 3.0f, "%.2f"))
+        {
+            config.FightingModeHurtboxRadiusScale = hurtScale;
+            config.Save();
+        }
+
+        var activeStart = config.FightingModeAttackActiveStartPct;
+        if (ImGui.SliderFloat("Hit window start##fightingmode", ref activeStart, 0f, 0.9f, "%.2f"))
+        {
+            config.FightingModeAttackActiveStartPct = activeStart;
+            config.Save();
+        }
+        HelpMarker("Active hit window as a fraction of the attack animation: contact only counts between start and end.");
+
+        var activeEnd = config.FightingModeAttackActiveEndPct;
+        if (ImGui.SliderFloat("Hit window end##fightingmode", ref activeEnd, 0.1f, 1f, "%.2f"))
+        {
+            config.FightingModeAttackActiveEndPct = MathF.Max(activeEnd, config.FightingModeAttackActiveStartPct + 0.05f);
+            config.Save();
+        }
+
+        ImGui.Separator();
         ImGui.Text("Camera");
 
         var margin = config.FightingModeCameraMargin;

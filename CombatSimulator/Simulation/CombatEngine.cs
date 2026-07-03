@@ -1762,7 +1762,8 @@ public class CombatEngine : IDisposable
     /// basic attack). Reuses the same shape module + feedback (swing/impact sound/hit-react/flytext)
     /// normal mode uses. Returns the number of enemies hit; 0 = whiff (caller plays animation-only).
     /// </summary>
-    public int ApplyPlayerActionMode(uint actionId, ulong primaryEntityId, int potencyOverride = 0, float animationDuration = 0f)
+    public int ApplyPlayerActionMode(uint actionId, ulong primaryEntityId, int potencyOverride = 0, float animationDuration = 0f,
+        bool suppressCasterActionEffect = false)
     {
         var ps = State.PlayerState;
         if (!ps.IsAlive)
@@ -1814,13 +1815,29 @@ public class CombatEngine : IDisposable
             RestoreMp(ps, BasicAttackMpRestore);
 
         OnPlayerDamageDealt?.Invoke(total);
-        TriggerActionEffect(ps, actionData, hits);
+        if (suppressCasterActionEffect)
+            // Weapon-contact hit (Fighting Mode): the swing animation is already playing;
+            // fire impact-only feedback instead of restarting the caster's action effect.
+            TriggerManualPlayerHitFeedback(hits);
+        else
+            TriggerActionEffect(ps, actionData, hits);
 
         foreach (var hit in hits)
             if (!hit.Target.IsAlive)
                 OnEntityDeath(hit.Target);
 
         return hits.Count;
+    }
+
+    private void TriggerManualPlayerHitFeedback(IReadOnlyList<AppliedActionDamage> hits)
+    {
+        foreach (var hit in hits)
+        {
+            if (hit.DamageResult.Damage <= 0)
+                continue;
+
+            PlayHitReactionOnTarget(hit.Target, isDamage: true);
+        }
     }
 
     private static ActionData ScaleActionPotency(ActionData actionData, int actualTargets)

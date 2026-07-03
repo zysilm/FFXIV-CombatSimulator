@@ -537,6 +537,17 @@ public partial class Configuration : IPluginConfiguration
     // (GuardActiveWindow / chain / recovery) with its own key binding.
     public int FightingModeGuardKey { get; set; } = 17;      // Ctrl
     public GamepadButtons FightingModeGuardGamepadButton { get; set; } = GamepadButtons.East;
+    // Fighting Mode weapon-contact hit detection: the main-hand weapon segment must
+    // sweep through the enemy hurtbox capsule during the swing's active window.
+    public float FightingModeWeaponLength { get; set; } = 1.2f;       // fallback/single-bone length
+    public float FightingModeWeaponLengthScale { get; set; } = 1.1f;  // pad on skeleton-derived length
+    public int FightingModeWeaponAxis { get; set; } = 1;              // 0=X 1=Y 2=Z (single-bone weapons)
+    public float FightingModeWeaponRadius { get; set; } = 0.15f;
+    public float FightingModeHurtboxHeight { get; set; } = 2.0f;
+    public float FightingModeHurtboxRadiusScale { get; set; } = 1.0f;
+    public float FightingModeAttackActiveStartPct { get; set; } = 0.25f;
+    public float FightingModeAttackActiveEndPct { get; set; } = 0.70f;
+    public bool FightingModeDebugDraw { get; set; } = false;
 
     // Input map: put these actions on the hotbar; a press is interpreted as the
     // mapped role instead of firing the real action. 0 = unmapped.

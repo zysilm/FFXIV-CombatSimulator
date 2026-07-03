@@ -82,6 +82,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly TelegraphOverlay telegraphOverlay;
     private readonly OsuParryOverlay osuParryOverlay;
     private readonly ReticleOverlay reticleOverlay;
+    private readonly FightingDebugOverlay fightingDebugOverlay;
     private bool hookSafetyScanned;
     private bool wasLoggedIn;
 
@@ -249,8 +250,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             addr => devExperimental.ControlsNpc(addr), log);
         devExperimental.SetFightingModeLane(fightingModeController);
         devExperimental.SetCameraCoordinator(cameraModeCoordinator);
+        var weaponHitboxService = new WeaponHitboxService(config, boneTransformService, log);
         fightingCombatController = new FightingCombatController(
-            config, playerGuardController, fightingModeController, combatEngine, gamepadState, log);
+            config, playerGuardController, fightingModeController, combatEngine,
+            animationController, weaponHitboxService, hitFeedbackController, gamepadState, log);
+        fightingModeController.AttackSink = fightingCombatController.OnAttackInput;
         combatEngine.BeforePlayerDeath = () =>
         {
             fightingModeController.HandlePlayerDeath();
@@ -391,6 +395,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             AlsoEnabled = () => fightingModeController.IsEngaged,
         };
         reticleOverlay = new ReticleOverlay(playerHitboxResolver, combatEngine, gameGui, config);
+        fightingDebugOverlay = new FightingDebugOverlay(
+            fightingModeController, fightingCombatController, weaponHitboxService, gameGui, config);
 
         // Register
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -582,6 +588,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             osuParryOverlay.Draw();
             reticleOverlay.Draw();
+            fightingDebugOverlay.Draw();
         }
 
         ragdollDebugOverlay.Draw();
