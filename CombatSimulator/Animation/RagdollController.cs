@@ -907,7 +907,12 @@ public unsafe class RagdollController : IDisposable
         { "j_asi_b", new AnatomicalRom(D2R(140f), D2R(5f),   0f,        0f,        D2R(-10f), D2R(10f)) }, // Knee (shin)
         { "j_ude_b", new AnatomicalRom(D2R(145f), D2R(5f),   0f,        0f,        D2R(-80f), D2R(80f)) }, // Elbow (forearm)
         // Ball joints (axial wired now; swing fields deferred to Tier A)
-        { "j_asi_a", new AnatomicalRom(D2R(120f), D2R(20f),  D2R(45f),  D2R(25f),  D2R(-40f), D2R(40f)) }, // Hip (thigh)
+        // Hip flexion: 120° is the CLINICAL value measured with a bent knee. With the knee
+        // extended the two-joint hamstrings cap passive flexion at ~80–90°; death poses mostly
+        // have near-straight legs, so 95° is the relaxed-body compromise (no cross-joint
+        // hamstring constraint is modelled). This is what stops the seated corpse folding
+        // its chest flat onto its legs.
+        { "j_asi_a", new AnatomicalRom(D2R(95f),  D2R(20f),  D2R(45f),  D2R(25f),  D2R(-40f), D2R(40f)) }, // Hip (thigh)
         { "j_ude_a", new AnatomicalRom(D2R(170f), D2R(50f),  D2R(170f), D2R(40f),  D2R(-90f), D2R(90f)) }, // Shoulder (upper arm)
         { "j_sako",  new AnatomicalRom(D2R(170f), D2R(50f),  D2R(170f), D2R(40f),  D2R(-90f), D2R(90f)) }, // Shoulder (clavicle)
         { "j_asi_d", new AnatomicalRom(D2R(20f),  D2R(45f),  0f,        0f,        D2R(-20f), D2R(20f)) }, // Ankle (foot): dorsi/plantar + inv/ev
@@ -2953,14 +2958,19 @@ public unsafe class RagdollController : IDisposable
                     var axisParentLocal = Vector3.Transform(segDirWorld,
                         Quaternion.Inverse(parentBodyRef.Pose.Orientation));
 
-                    // Tier C (swing): hips and shoulders get DIRECTIONAL anatomical limits
-                    // below — a symmetric cone cannot hold flexion 120° / abduction 45° /
-                    // adduction 25° at once; sized for flexion it lets the legs splay to a
-                    // split under body weight. With ROM on, the cone widens to the largest
-                    // legal direction and becomes a pure backstop.
+                    // Tier C (swing): hips, arm-side shoulders, and the spine chain get
+                    // DIRECTIONAL anatomical limits below — a symmetric cone cannot hold
+                    // flexion 95° / abduction 45° / adduction 25° at once (hip splay), and a
+                    // pose-anchored cone re-zeroes at the death animation's already-flexed
+                    // spine, double-counting flexion (the head-buried-between-knees fold).
+                    // Directional limits are anchored to the anatomical frame instead, so a
+                    // pre-flexed death pose consumes its own flexion budget; if it froze past
+                    // budget, the soft edge gently unfolds it — a relaxed-body settle. With
+                    // ROM on, the cone widens to the largest legal direction (pure backstop).
                     AnatomicalRom swingRom = default;
                     var hasSwingRom = config.RagdollAnatomicalRom &&
                         (boneDef.AnatomicalRole == AnatomicalRole.Hip ||
+                         boneDef.AnatomicalRole == AnatomicalRole.Spine ||
                          (boneDef.AnatomicalRole == AnatomicalRole.Shoulder &&
                           rb.Name.StartsWith("j_ude_a_", StringComparison.Ordinal))) &&
                         TryGetAnatomicalRom(rb.Name, out swingRom);
