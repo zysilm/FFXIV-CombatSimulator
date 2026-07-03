@@ -2329,7 +2329,15 @@ public unsafe class RagdollController : IDisposable
     }
 
     /// <summary>Signed twist (rad, wrapped to ±π) of the child relative to its parent about
-    /// the child's long axis, measured against the build-time reference.</summary>
+    /// the child's long axis, measured against the build-time reference.
+    ///
+    /// The delta MUST be composed and decomposed in the CHILD-LOCAL frame: a parent-frame
+    /// decomposition books most of the twist as swing once the joint is also flexed, so a
+    /// bent knee could sit fully flipped while measuring near-zero twist (the governor
+    /// then never fires — the original "bent knee still flips" failure). The local
+    /// swing-twist factorisation q_local = q_swing ∘ q_twist(Y) extracts the exact twist
+    /// component at any flexion, and unwinding by −twist about the child's current world
+    /// Y removes exactly that factor, leaving pure swing.</summary>
     private float MeasureGuardTwist(TwistGuardMonitor m, out Vector3 axisWorld)
     {
         var child = simulation!.Bodies.GetBodyReference(m.Child);
@@ -2338,12 +2346,9 @@ public unsafe class RagdollController : IDisposable
 
         var relNow = Quaternion.Normalize(
             Quaternion.Inverse(parent.Pose.Orientation) * child.Pose.Orientation);
-        var err = Quaternion.Normalize(relNow * Quaternion.Inverse(m.InitialRelative));
-        var axisParentLocal = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, relNow));
+        var qLocal = Quaternion.Normalize(Quaternion.Inverse(m.InitialRelative) * relNow);
 
-        // Swing-twist decomposition: project the error's vector part onto the twist axis.
-        var proj = err.X * axisParentLocal.X + err.Y * axisParentLocal.Y + err.Z * axisParentLocal.Z;
-        var twist = 2f * MathF.Atan2(proj, err.W);
+        var twist = 2f * MathF.Atan2(qLocal.Y, qLocal.W);
         while (twist > MathF.PI) twist -= MathF.Tau;
         while (twist < -MathF.PI) twist += MathF.Tau;
         return twist;
