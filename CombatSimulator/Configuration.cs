@@ -303,6 +303,15 @@ public partial class Configuration : IPluginConfiguration
     // 120 = very firm (needs substeps to stay stable), 90 = balanced default. Takes
     // effect on next ragdoll activation.
     public float RagdollLimitSpringFrequency { get; set; } = 90f;
+    // Soft-edge swing limits (ball joints): replace the hard 90Hz wall on swing cones and
+    // the Tier-C directional limits with a low-frequency, overdamped spring, so a joint
+    // sliding toward its range edge decelerates and settles instead of pinning at the
+    // extreme angle (the visual cause of splayed "spread-eagle" corpse poses freezing at
+    // their limits). Hinges (knee/elbow) keep the hard wall — a soft knee reads as
+    // hyperextension. Takes effect on next ragdoll activation.
+    public bool RagdollSoftLimits { get; set; } = true;
+    public float RagdollSoftLimitFrequency { get; set; } = 12f;
+    public float RagdollSoftLimitDamping { get; set; } = 4f;
     // Spring frequency (Hz) of the POSITIONAL joints (the BallSocket/Weld that hold bones
     // together at the joint), as opposed to the limit walls above. Higher = bones separate
     // less under large impulses ("rubber-band" stretch); too high relative to the step needs

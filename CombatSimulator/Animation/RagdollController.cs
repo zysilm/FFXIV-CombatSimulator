@@ -1999,6 +1999,122 @@ public unsafe class RagdollController : IDisposable
             log.Info($"[Ragdoll Constraint] '{boneDef.Name}' passive hinge rest: angle={boneDef.HingeRestAngle:F2} freq={boneDef.HingeRestSpringFreq:F2} force={boneDef.HingeRestMaxForce:F2}");
     }
 
+    /// <summary>
+    /// Tier C (swing) — directional anatomical limits for ball joints (hips, arm-side
+    /// shoulders). Expresses per-direction tilt caps a symmetric cone cannot: each
+    /// direction d with cap θ becomes one SwingLimit between the child segment axis and
+    /// −d with MaximumSwingAngle = 90° + θ ("stay at least 90°−θ away from d").
+    /// Near-unbounded directions (90°+θ ≈ 180°) are skipped — the widened bounding cone
+    /// owns those. Axes are anatomical (character facing at activation), baked into the
+    /// parent body's local frame; lateral-out is resolved from which side of the parent
+    /// the joint anchor sits on, so left/right need no handedness convention.
+    /// </summary>
+    private void AddDirectionalSwingLimits(
+        string boneName,
+        BodyHandle childHandle,
+        BodyHandle parentHandle,
+        BodyReference childBodyRef,
+        BodyReference parentBodyRef,
+        Vector3 segDirWorld,
+        Vector3 anchorWorld,
+        Vector3 anatForwardWorld,
+        Vector3 anatLateralWorld,
+        AnatomicalRom rom,
+        SpringSettings spring)
+    {
+        if (simulation == null)
+            return;
+
+        float outSign = MathF.Sign(Vector3.Dot(anchorWorld - parentBodyRef.Pose.Position, anatLateralWorld));
+        if (outSign == 0f)
+            outSign = 1f;
+        var lateralOut = anatLateralWorld * outSign;
+
+        var axisChildLocal = Vector3.Normalize(Vector3.Transform(
+            segDirWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
+
+        AddCap(anatForwardWorld, rom.FlexionMax, "flex");
+        AddCap(-anatForwardWorld, rom.ExtensionMax, "ext");
+        AddCap(lateralOut, rom.AbductionMax, "abd");
+        AddCap(-lateralOut, rom.AdductionMax, "add");
+
+        void AddCap(Vector3 dir, float tilt, string label)
+        {
+            var max = MathF.PI / 2f + tilt;
+            if (max >= MathF.PI - 0.15f)
+                return; // effectively unbounded — the cone backstop covers it
+
+            var oppositeLocalParent = Vector3.Normalize(Vector3.Transform(
+                -dir, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
+
+            simulation!.Solver.Add(childHandle, parentHandle, new SwingLimit
+            {
+                AxisLocalA = axisChildLocal,
+                AxisLocalB = oppositeLocalParent,
+                MaximumSwingAngle = max,
+                SpringSettings = spring,
+            });
+
+            swingStressMonitors.Add(new SwingStressMonitor
+            {
+                Bone = boneName,
+                Child = childHandle,
+                Parent = parentHandle,
+                AxisLocalChild = axisChildLocal,
+                AxisLocalParent = oppositeLocalParent,
+                LimitAngle = max,
+            });
+
+            if (config.RagdollVerboseLog)
+                log.Info($"[Ragdoll ROM] '{boneName}' directional swing '{label}': tilt cap={tilt * 180f / MathF.PI:F0}° (swing max={max * 180f / MathF.PI:F0}°)");
+        }
+    }
+
+    // === Tier C (swing) debug: joint-vs-limit stress for the overlay =====================
+    public readonly record struct JointLimitStress(string BoneName, Vector3 WorldPosition, float Stress);
+
+    private struct SwingStressMonitor
+    {
+        public string Bone;
+        public BodyHandle Child;
+        public BodyHandle Parent;
+        public Vector3 AxisLocalChild;
+        public Vector3 AxisLocalParent;
+        public float LimitAngle;
+    }
+
+    private readonly List<SwingStressMonitor> swingStressMonitors = new();
+    private readonly Dictionary<string, JointLimitStress> stressWorstByBone = new();
+
+    /// <summary>
+    /// Per-bone worst swing-limit utilisation (current angle / limit angle; ≈1 = the joint
+    /// is pinned on its range edge). Covers ball cones and the Tier-C directional limits.
+    /// Overlay diagnostic for "spread-eagle" poses: pinned joints light up.
+    /// </summary>
+    public void CollectJointLimitStress(List<JointLimitStress> output)
+    {
+        output.Clear();
+        if (simulation == null || !isActive || swingStressMonitors.Count == 0)
+            return;
+
+        stressWorstByBone.Clear();
+        foreach (var m in swingStressMonitors)
+        {
+            var child = simulation.Bodies.GetBodyReference(m.Child);
+            var parent = simulation.Bodies.GetBodyReference(m.Parent);
+            var a = Vector3.Transform(m.AxisLocalChild, child.Pose.Orientation);
+            var b = Vector3.Transform(m.AxisLocalParent, parent.Pose.Orientation);
+            var angle = MathF.Acos(Math.Clamp(Vector3.Dot(Vector3.Normalize(a), Vector3.Normalize(b)), -1f, 1f));
+            var stress = m.LimitAngle > 0.01f ? angle / m.LimitAngle : 0f;
+
+            if (!stressWorstByBone.TryGetValue(m.Bone, out var worst) || stress > worst.Stress)
+                stressWorstByBone[m.Bone] = new JointLimitStress(m.Bone, child.Pose.Position, stress);
+        }
+
+        foreach (var entry in stressWorstByBone.Values)
+            output.Add(entry);
+    }
+
     private void BeginBiomechanicalSettle(float duration = BiomechanicalSettleDuration)
     {
         biomechanicalSettleRemaining = MathF.Max(biomechanicalSettleRemaining, duration);
@@ -2570,7 +2686,28 @@ public unsafe class RagdollController : IDisposable
             : config.RagdollJointSpringFrequency;
         var footJointSpring = new SpringSettings(footJointFreq, 1);
         var limitSpring = new SpringSettings(config.RagdollLimitSpringFrequency, 1);
+        // Tier C (swing) — soft-edge spring for BALL swing limits: low frequency +
+        // overdamped, so a joint sliding into its range edge decelerates and settles
+        // instead of pinning on a hard 90 Hz wall at the extreme angle. Hinges keep
+        // the hard wall (a soft knee fold-stop reads as hyperextension).
+        var ballSwingSpring = config.RagdollSoftLimits
+            ? new SpringSettings(
+                Math.Clamp(config.RagdollSoftLimitFrequency, 1f, 60f),
+                MathF.Max(0.5f, config.RagdollSoftLimitDamping))
+            : limitSpring;
         var motorDamping = 0.01f;
+
+        // Tier C (swing) — anatomical reference axes for the directional ball limits,
+        // taken from the character's facing at activation (deaths start standing) and
+        // baked into the PARENT body's local frame so they tumble with the body. NOT
+        // taken from each limb's death pose — a mid-stride leg must not shift its own
+        // abduction/adduction window sideways.
+        var anatYaw = targetCharacterAddress != nint.Zero
+            ? ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress)->Rotation
+            : 0f;
+        var anatForwardWorld = new Vector3(MathF.Sin(anatYaw), 0f, MathF.Cos(anatYaw));
+        var anatLateralWorld = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, anatForwardWorld));
+        swingStressMonitors.Clear();
 
         // BEPU's TwistLimit measurement degenerates once a ball joint's swing exceeds ~90
         // degrees. Keep the full configured swing cone and skip twist limits on wide joints.
@@ -2816,15 +2953,47 @@ public unsafe class RagdollController : IDisposable
                     var axisParentLocal = Vector3.Transform(segDirWorld,
                         Quaternion.Inverse(parentBodyRef.Pose.Orientation));
 
+                    // Tier C (swing): hips and shoulders get DIRECTIONAL anatomical limits
+                    // below — a symmetric cone cannot hold flexion 120° / abduction 45° /
+                    // adduction 25° at once; sized for flexion it lets the legs splay to a
+                    // split under body weight. With ROM on, the cone widens to the largest
+                    // legal direction and becomes a pure backstop.
+                    AnatomicalRom swingRom = default;
+                    var hasSwingRom = config.RagdollAnatomicalRom &&
+                        (boneDef.AnatomicalRole == AnatomicalRole.Hip ||
+                         (boneDef.AnatomicalRole == AnatomicalRole.Shoulder &&
+                          rb.Name.StartsWith("j_ude_a_", StringComparison.Ordinal))) &&
+                        TryGetAnatomicalRom(rb.Name, out swingRom);
+
+                    var effectiveCone = boneDef.SwingLimit;
+                    if (hasSwingRom)
+                        effectiveCone = MathF.Max(effectiveCone, MathF.Max(
+                            MathF.Max(swingRom.FlexionMax, swingRom.ExtensionMax),
+                            MathF.Max(swingRom.AbductionMax, swingRom.AdductionMax)));
+
                     var swingLimit = new SwingLimit
                     {
                         AxisLocalA = axisChildLocal,
                         AxisLocalB = axisParentLocal,
-                        MaximumSwingAngle = boneDef.SwingLimit,
-                        SpringSettings = limitSpring, // stiff wall even for soft bodies
+                        MaximumSwingAngle = effectiveCone,
+                        SpringSettings = ballSwingSpring,
                     };
                     var swingHandle = simulation.Solver.Add(rb.BodyHandle, parentHandle, swingLimit);
                     swingLimitByBone[rb.Name] = (swingHandle, swingLimit);
+                    swingStressMonitors.Add(new SwingStressMonitor
+                    {
+                        Bone = rb.Name,
+                        Child = rb.BodyHandle,
+                        Parent = parentHandle,
+                        AxisLocalChild = axisChildLocal,
+                        AxisLocalParent = axisParentLocal,
+                        LimitAngle = effectiveCone,
+                    });
+
+                    if (hasSwingRom)
+                        AddDirectionalSwingLimits(rb.Name, rb.BodyHandle, parentHandle,
+                            childBodyRef, parentBodyRef, segDirWorld, anchorWorld,
+                            anatForwardWorld, anatLateralWorld, swingRom, ballSwingSpring);
                 }
 
                 // TwistLimit: asymmetric axial rotation around the bone's segment axis.

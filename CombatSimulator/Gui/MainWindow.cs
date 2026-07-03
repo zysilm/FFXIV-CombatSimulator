@@ -4162,6 +4162,32 @@ public partial class MainWindow : IDisposable
                 }
                 HelpMarker("Spring frequency of the joint LIMIT walls (swing cones + twist ranges). Higher = firmer wall so joints don't over-rotate past their range, but too high for the substep count over-drives the solver into jitter. 60 = soft, 90 = balanced default, 120+ = firm (raise Solver Substeps to match). Takes effect on next ragdoll activation.");
 
+                var softLimits = config.RagdollSoftLimits;
+                if (ImGui.Checkbox("Soft Swing Limits (balls)##ragdoll", ref softLimits))
+                {
+                    config.RagdollSoftLimits = softLimits;
+                    config.Save();
+                }
+                HelpMarker("Ball joints (hips/shoulders/spine) get a low-frequency, overdamped spring on their swing limits instead of the hard wall above: a limb sliding toward its range edge decelerates and settles rather than pinning at the extreme angle (the frozen 'spread-eagle' look). Knees/elbows keep the hard wall. Takes effect on next ragdoll activation.");
+
+                if (config.RagdollSoftLimits)
+                {
+                    var softFreq = config.RagdollSoftLimitFrequency;
+                    if (ImGui.SliderFloat("Soft Limit Frequency (Hz)##ragdoll", ref softFreq, 2f, 40f, "%.0f"))
+                    {
+                        config.RagdollSoftLimitFrequency = softFreq;
+                        config.Save();
+                    }
+
+                    var softDamp = config.RagdollSoftLimitDamping;
+                    if (ImGui.SliderFloat("Soft Limit Damping##ragdoll", ref softDamp, 0.5f, 10f, "%.1f"))
+                    {
+                        config.RagdollSoftLimitDamping = softDamp;
+                        config.Save();
+                    }
+                    HelpMarker("Damping ratio at the soft edge. 1 = critical (springy), 4 = overdamped default (sinks and stays), higher = syrupy.");
+                }
+
                 var jointFreq = config.RagdollJointSpringFrequency;
                 if (ImGui.SliderFloat("Joint Stiffness (Hz)##ragdoll", ref jointFreq, 15f, 120f, "%.0f"))
                 {
