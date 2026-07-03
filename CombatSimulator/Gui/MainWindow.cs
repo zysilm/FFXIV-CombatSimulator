@@ -1416,10 +1416,18 @@ public partial class MainWindow : IDisposable
                 config.ActionMode = false;
             config.Save();
         }
-        HelpMarker("1v1 side-view combat mode. The first player attack against an enemy locks the pair into a fighting-game lane and camera. Current pass implements mode ownership, target acquisition, 2D movement/facing, and camera framing.");
+        HelpMarker("1v1 side-view combat mode. The first player attack against an enemy locks the pair into a fighting-game lane and camera: 2D movement (forward/back + jump), weapon-contact hit detection, timed guard against telegraphs, a dedicated fighting AI, and KO/death cameras.");
 
         if (!config.FightingMode)
             return;
+
+        ImGui.SameLine();
+        if (ImGui.Button("Reset defaults##fightingmode"))
+        {
+            config.ResetFightingModeDefaults();
+            config.Save();
+        }
+        HelpMarker("Reset every Fighting Mode setting (movement, combat, AI, cameras) to defaults. Keeps the mode enabled.");
 
         ImGui.Separator();
         ImGui.Text("Lane");

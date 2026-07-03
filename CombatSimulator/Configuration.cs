@@ -690,6 +690,67 @@ public partial class Configuration : IPluginConfiguration
             GuidedCollapse.Enabled = enabled;
     }
 
+    public void ResetFightingModeDefaults(bool preserveEnabled = true)
+    {
+        var enabled = FightingMode;
+        var defaults = new Configuration();
+
+        FightingMode = preserveEnabled ? enabled : defaults.FightingMode;
+        FightingModeLaneHalfWidth = defaults.FightingModeLaneHalfWidth;
+        FightingModeMinSeparation = defaults.FightingModeMinSeparation;
+        FightingModeMaxSeparation = defaults.FightingModeMaxSeparation;
+        FightingModeCameraMargin = defaults.FightingModeCameraMargin;
+        FightingModeCameraMinDistance = defaults.FightingModeCameraMinDistance;
+        FightingModeCameraMaxDistance = defaults.FightingModeCameraMaxDistance;
+        FightingModeCameraSmoothing = defaults.FightingModeCameraSmoothing;
+        FightingModeCameraHeight = defaults.FightingModeCameraHeight;
+        FightingModeCameraVerticalAngle = defaults.FightingModeCameraVerticalAngle;
+        FightingModeTranslateCam = defaults.FightingModeTranslateCam;
+        FightingModeTranslateDuration = defaults.FightingModeTranslateDuration;
+        FightingModeTranslateDistance = defaults.FightingModeTranslateDistance;
+        FightingModeTranslateBoneName = defaults.FightingModeTranslateBoneName;
+        FightingModeTranslateHeightOffset = defaults.FightingModeTranslateHeightOffset;
+        FightingModeTranslateSideOffset = defaults.FightingModeTranslateSideOffset;
+        FightingModeTranslateLockHorizontal = defaults.FightingModeTranslateLockHorizontal;
+        FightingModeTranslateHorizontalAngle = defaults.FightingModeTranslateHorizontalAngle;
+        FightingModeTranslateLockVertical = defaults.FightingModeTranslateLockVertical;
+        FightingModeTranslateVerticalAngle = defaults.FightingModeTranslateVerticalAngle;
+        FightingModeMoveSpeed = defaults.FightingModeMoveSpeed;
+        FightingModeJumpVelocity = defaults.FightingModeJumpVelocity;
+        FightingModeGravity = defaults.FightingModeGravity;
+        FightingModeForwardKey = defaults.FightingModeForwardKey;
+        FightingModeBackKey = defaults.FightingModeBackKey;
+        FightingModeJumpKey = defaults.FightingModeJumpKey;
+        FightingModeJumpGamepadButton = defaults.FightingModeJumpGamepadButton;
+        FightingModeGuardKey = defaults.FightingModeGuardKey;
+        FightingModeGuardGamepadButton = defaults.FightingModeGuardGamepadButton;
+        FightingModeWeaponLength = defaults.FightingModeWeaponLength;
+        FightingModeWeaponLengthScale = defaults.FightingModeWeaponLengthScale;
+        FightingModeWeaponAxis = defaults.FightingModeWeaponAxis;
+        FightingModeWeaponRadius = defaults.FightingModeWeaponRadius;
+        FightingModeHurtboxHeight = defaults.FightingModeHurtboxHeight;
+        FightingModeHurtboxRadiusScale = defaults.FightingModeHurtboxRadiusScale;
+        FightingModeAttackActiveStartPct = defaults.FightingModeAttackActiveStartPct;
+        FightingModeAttackActiveEndPct = defaults.FightingModeAttackActiveEndPct;
+        FightingModeDebugDraw = defaults.FightingModeDebugDraw;
+        FightingAiMoveSpeed = defaults.FightingAiMoveSpeed;
+        FightingAiRangeMin = defaults.FightingAiRangeMin;
+        FightingAiRangeMax = defaults.FightingAiRangeMax;
+        FightingAiAttackCooldown = defaults.FightingAiAttackCooldown;
+        FightingAiAttackCooldownJitter = defaults.FightingAiAttackCooldownJitter;
+        FightingAiRetreatChance = defaults.FightingAiRetreatChance;
+        FightingAiRetreatDuration = defaults.FightingAiRetreatDuration;
+        FightingAiRecoverTime = defaults.FightingAiRecoverTime;
+        FightingAiHitstunDuration = defaults.FightingAiHitstunDuration;
+        FightingAiHitstunPushback = defaults.FightingAiHitstunPushback;
+        FightingModeKoCameraMargin = defaults.FightingModeKoCameraMargin;
+        FightingModeKoCameraBase = defaults.FightingModeKoCameraBase;
+        FightingModeKoCameraMinDistance = defaults.FightingModeKoCameraMinDistance;
+        FightingModeKoCameraMaxDistance = defaults.FightingModeKoCameraMaxDistance;
+        FightingModeKoCameraHeight = defaults.FightingModeKoCameraHeight;
+        FightingModeKoLockAngle = defaults.FightingModeKoLockAngle;
+    }
+
     public void ResetActionModeDefaults(bool preserveEnabled = true)
     {
         var enabled = ActionMode;
