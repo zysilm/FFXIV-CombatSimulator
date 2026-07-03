@@ -512,7 +512,7 @@ public partial class Configuration : IPluginConfiguration
     // Camera defaults are field-tuned in-game values.
     public float FightingModeCameraMargin { get; set; } = 0.75f;
     public float FightingModeCameraMinDistance { get; set; } = 2.31f;
-    public float FightingModeCameraMaxDistance { get; set; } = 3.0f;
+    public float FightingModeCameraMaxDistance { get; set; } = 3.5f;
     public float FightingModeCameraSmoothing { get; set; } = 10.0f;
     public float FightingModeCameraHeight { get; set; } = 1.18f;
     public float FightingModeCameraVerticalAngle { get; set; } = 0.31f;
@@ -914,6 +914,8 @@ public partial class Configuration : IPluginConfiguration
             FightingAiAttackCooldown = 1.1f;
         if (MathF.Abs(FightingAiAttackCooldownJitter - 1.0f) < 0.001f)
             FightingAiAttackCooldownJitter = 0.7f;
+        if (MathF.Abs(FightingModeCameraMaxDistance - 3.0f) < 0.001f)
+            FightingModeCameraMaxDistance = 3.5f;
 
         FightingSpacingDefaultsMigrated20260703 = true;
         Save();
