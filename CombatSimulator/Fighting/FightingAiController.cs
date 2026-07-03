@@ -10,11 +10,13 @@ namespace CombatSimulator.Fighting;
 
 /// <summary>
 /// 1v1 fighting-game AI for the engaged enemy, independent of NpcAiController (which
-/// skips this NPC while engaged). Works entirely in lane coordinates: keeps a spacing
-/// band, approaches/retreats, commits to telegraphed attacks through the shared
-/// CombatModeRouter (always telegraphed while engaged, so the player's guard works
-/// against every attack), and takes hitstun pushback from weapon-contact hits.
-/// FightingModeController remains the single position writer — it reads DesiredAlong.
+/// skips this NPC while engaged). Works in lane coordinates: keeps a spacing band,
+/// approaches (sometimes dashing), retreats, commits to telegraphed attacks — singly
+/// or in combo strings — hops over the player to switch sides, and takes hitstun
+/// pushback from weapon-contact hits. Attacks route through the shared
+/// CombatModeRouter (always telegraphed while engaged, so guard works against every
+/// attack). FightingModeController remains the single position writer — it reads
+/// DesiredAlong / DesiredY.
 /// </summary>
 public sealed unsafe class FightingAiController
 {
@@ -22,8 +24,11 @@ public sealed unsafe class FightingAiController
     {
         Neutral,
         Approach,
+        Dash,
         Retreat,
         Committing,
+        ComboGap,
+        JumpOver,
         Recover,
         Hitstun,
     }
@@ -45,8 +50,24 @@ public sealed unsafe class FightingAiController
     private float desiredAlong;
     private bool moving;
 
+    // Combo string
+    private int comboRemaining;
+    private float comboGapTimer;
+
+    // Jump-over arc
+    private float jumpElapsed;
+    private float jumpFrom;
+    private float jumpTo;
+    private float groundY;
+    private bool groundYInitialized;
+    private bool airborne;
+
     public bool IsActive => npc != null;
     public float DesiredAlong => desiredAlong;
+    /// <summary>Enemy Y the lane writer should use (ground, or the jump arc). Null until
+    /// the first tick seeds the ground height.</summary>
+    public float? DesiredY { get; private set; }
+    public bool IsAirborne => airborne;
     public bool IsMoving => moving;
 
     public FightingAiController(
@@ -72,6 +93,10 @@ public sealed unsafe class FightingAiController
         state = AiState.Neutral;
         attackCooldown = NextCooldown() * 0.5f; // first attack comes a bit sooner
         moving = false;
+        airborne = false;
+        groundYInitialized = false;
+        DesiredY = null;
+        comboRemaining = 0;
         // NpcAiController may have left a cast mid-flight; it is skipped from here on,
         // so that cast would never complete — clear it.
         target.State.IsCasting = false;
@@ -95,6 +120,8 @@ public sealed unsafe class FightingAiController
         npc = null;
         state = AiState.Neutral;
         moving = false;
+        airborne = false;
+        DesiredY = null;
     }
 
     /// <summary>Weapon-contact hit landed on the enemy: hitstun + pushback, unless it is
@@ -108,16 +135,25 @@ public sealed unsafe class FightingAiController
 
         state = AiState.Hitstun;
         hitstunTimer = MathF.Max(0.05f, config.FightingAiHitstunDuration);
+        comboRemaining = 0;
+        airborne = false; // knocked out of a hop
     }
 
-    public void Tick(float dt, float npcAlong, float playerAlong)
+    public void Tick(float dt, float npcAlong, float playerAlong, float npcY)
     {
         if (npc == null)
             return;
         if (!npc.IsAlive)
         {
             moving = false;
+            airborne = false;
             return;
+        }
+
+        if (!groundYInitialized)
+        {
+            groundY = npcY;
+            groundYInitialized = true;
         }
 
         desiredAlong = npcAlong;
@@ -146,14 +182,16 @@ public sealed unsafe class FightingAiController
         {
             case AiState.Neutral:
                 if (dist > rangeMax)
-                    state = AiState.Approach;
+                    state = random.NextSingle() < Math.Clamp(config.FightingAiDashChance, 0f, 1f)
+                        ? AiState.Dash
+                        : AiState.Approach;
                 else if (dist < rangeMin)
                 {
                     state = AiState.Retreat;
                     retreatTimer = MathF.Max(0.1f, config.FightingAiRetreatDuration);
                 }
                 else if (attackCooldown <= 0f)
-                    CommitAttack();
+                    DecideOffense(npcAlong, playerAlong, rangeMin);
                 break;
 
             case AiState.Approach:
@@ -161,6 +199,18 @@ public sealed unsafe class FightingAiController
                 moving = true;
                 if (dist <= (rangeMin + rangeMax) * 0.5f)
                     state = AiState.Neutral;
+                break;
+
+            case AiState.Dash:
+                // Burst approach — closes distance fast, reads as a fighting-game dash-in.
+                desiredAlong = npcAlong - pushSide * speed
+                    * MathF.Max(1.2f, config.FightingAiDashSpeedScale) * dt;
+                moving = true;
+                if (dist <= (rangeMin + rangeMax) * 0.5f)
+                {
+                    state = AiState.Neutral;
+                    attackCooldown = 0f; // dash-in wants an immediate follow-up
+                }
                 break;
 
             case AiState.Retreat:
@@ -177,9 +227,38 @@ public sealed unsafe class FightingAiController
                 // Locked into the telegraphed swing until windup + animation lock resolve.
                 if (!telegraphs.IsWindingUp(npc.SimulatedEntityId) && npc.State.AnimationLock <= 0f)
                 {
+                    if (comboRemaining > 0 && dist <= rangeMax * 1.25f)
+                    {
+                        comboGapTimer = MathF.Max(0.05f, config.FightingAiComboGap);
+                        state = AiState.ComboGap;
+                    }
+                    else
+                    {
+                        comboRemaining = 0;
+                        state = AiState.Recover;
+                        recoverTimer = MathF.Max(0.05f, config.FightingAiRecoverTime);
+                    }
+                }
+                break;
+
+            case AiState.ComboGap:
+                // Short breath between combo hits; drop the string if the player escaped.
+                comboGapTimer -= dt;
+                if (dist > rangeMax * 1.25f)
+                {
+                    comboRemaining = 0;
                     state = AiState.Recover;
                     recoverTimer = MathF.Max(0.05f, config.FightingAiRecoverTime);
                 }
+                else if (comboGapTimer <= 0f)
+                {
+                    comboRemaining--;
+                    CommitAttack();
+                }
+                break;
+
+            case AiState.JumpOver:
+                TickJumpOver(dt, playerAlong, rangeMin);
                 break;
 
             case AiState.Recover:
@@ -206,7 +285,65 @@ public sealed unsafe class FightingAiController
                 break;
         }
 
+        DesiredY = airborne ? DesiredY : groundY;
         UpdateVisualState(dt);
+    }
+
+    /// <summary>In-band, off-cooldown offense: hop over the player, open a combo
+    /// string, or throw a single attack.</summary>
+    private void DecideOffense(float npcAlong, float playerAlong, float rangeMin)
+    {
+        var roll = random.NextSingle();
+        if (roll < Math.Clamp(config.FightingAiJumpOverChance, 0f, 1f))
+        {
+            StartJumpOver(npcAlong, playerAlong, rangeMin);
+            return;
+        }
+
+        comboRemaining = random.NextSingle() < Math.Clamp(config.FightingAiComboChance, 0f, 1f)
+            ? random.Next(1, Math.Max(2, config.FightingAiMaxComboHits))
+            : 0;
+        CommitAttack();
+    }
+
+    private void StartJumpOver(float npcAlong, float playerAlong, float rangeMin)
+    {
+        jumpFrom = npcAlong;
+        // Land on the player's OTHER side, at preferred min range.
+        jumpTo = playerAlong - pushSide * rangeMin;
+        jumpElapsed = 0f;
+        airborne = true;
+        state = AiState.JumpOver;
+    }
+
+    private void TickJumpOver(float dt, float playerAlong, float rangeMin)
+    {
+        jumpElapsed += dt;
+        var duration = MathF.Max(0.2f, config.FightingAiJumpDuration);
+        var t = Math.Clamp(jumpElapsed / duration, 0f, 1f);
+        var s = t * t * (3f - 2f * t);
+        desiredAlong = jumpFrom + (jumpTo - jumpFrom) * s;
+        DesiredY = groundY + MathF.Max(0.2f, config.FightingAiJumpHeight) * 4f * t * (1f - t);
+        moving = true;
+
+        if (t >= 1f)
+        {
+            airborne = false;
+            DesiredY = groundY;
+            // Jump-in pressure: often attack straight off the landing.
+            if (random.NextSingle() < Math.Clamp(config.FightingAiJumpInAttackChance, 0f, 1f))
+            {
+                comboRemaining = 0;
+                CommitAttack();
+                if (state != AiState.Committing)
+                    state = AiState.Neutral;
+            }
+            else
+            {
+                state = AiState.Neutral;
+                attackCooldown = MathF.Min(attackCooldown, 0.4f);
+            }
+        }
     }
 
     private void CommitAttack()
@@ -243,7 +380,11 @@ public sealed unsafe class FightingAiController
         if (ok)
             state = AiState.Committing;
         else
+        {
+            comboRemaining = 0;
             attackCooldown = 0.5f; // brief re-try backoff instead of spamming
+            state = AiState.Neutral;
+        }
     }
 
     private float NextCooldown()
@@ -258,7 +399,7 @@ public sealed unsafe class FightingAiController
         try
         {
             var character = (Character*)npc.BattleChara;
-            if (npc.State.AnimationLock > 0f || state == AiState.Committing)
+            if (npc.State.AnimationLock > 0f || state is AiState.Committing or AiState.ComboGap)
                 ActorVisualStateController.ApplyActionLocked(character, npc.VisualState);
             else if (moving)
                 ActorVisualStateController.ApplyMoving(character, npc.VisualState, dt);

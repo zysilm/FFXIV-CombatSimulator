@@ -1442,7 +1442,22 @@ public partial class MainWindow : IDisposable
 
         ImGui.Separator();
         ImGui.Text("Input");
-        HelpMarker("Movement is the game's own (run, jump), projected onto the 2D lane: forward/back approach/retreat, sideways drift is removed.");
+        HelpMarker("Movement is the game's own (run, jump), projected onto the 2D lane: forward/back approach/retreat, sideways drift is removed. A second jump press mid-air vaults over the enemy to the other side.");
+
+        var vaultKey = config.FightingModeVaultKey;
+        if (ImGui.InputInt("Vault key##fightingmode", ref vaultKey))
+        {
+            config.FightingModeVaultKey = Math.Clamp(vaultKey, 1, 254);
+            config.Save();
+        }
+        HelpMarker("Pressed again while airborne to vault over the enemy (default 0x20 = Space, same as jump).");
+
+        var vaultDur = config.FightingModeVaultDuration;
+        if (ImGui.SliderFloat("Vault duration##fightingmode", ref vaultDur, 0.2f, 1.2f, "%.2f s"))
+        {
+            config.FightingModeVaultDuration = vaultDur;
+            config.Save();
+        }
 
         var guardKey = config.FightingModeGuardKey;
         if (ImGui.InputInt("Guard key##fightingmode", ref guardKey))
@@ -1569,6 +1584,73 @@ public partial class MainWindow : IDisposable
             config.Save();
         }
 
+        var aiCombo = config.FightingAiComboChance;
+        if (ImGui.SliderFloat("Combo chance##fightingai", ref aiCombo, 0f, 1f, "%.2f"))
+        {
+            config.FightingAiComboChance = aiCombo;
+            config.Save();
+        }
+        HelpMarker("Probability an attack opens a combo string (up to Max combo hits, chained with a short gap).");
+
+        var aiComboMax = config.FightingAiMaxComboHits;
+        if (ImGui.SliderInt("Max combo hits##fightingai", ref aiComboMax, 2, 5))
+        {
+            config.FightingAiMaxComboHits = aiComboMax;
+            config.Save();
+        }
+
+        var aiComboGap = config.FightingAiComboGap;
+        if (ImGui.SliderFloat("Combo gap##fightingai", ref aiComboGap, 0.05f, 0.8f, "%.2f s"))
+        {
+            config.FightingAiComboGap = aiComboGap;
+            config.Save();
+        }
+
+        var aiDash = config.FightingAiDashChance;
+        if (ImGui.SliderFloat("Dash-in chance##fightingai", ref aiDash, 0f, 1f, "%.2f"))
+        {
+            config.FightingAiDashChance = aiDash;
+            config.Save();
+        }
+        HelpMarker("When out of range, chance to burst-dash in (at the speed scale below) and attack immediately.");
+
+        var aiDashScale = config.FightingAiDashSpeedScale;
+        if (ImGui.SliderFloat("Dash speed scale##fightingai", ref aiDashScale, 1.2f, 4.0f, "%.1f"))
+        {
+            config.FightingAiDashSpeedScale = aiDashScale;
+            config.Save();
+        }
+
+        var aiJumpOver = config.FightingAiJumpOverChance;
+        if (ImGui.SliderFloat("Jump-over chance##fightingai", ref aiJumpOver, 0f, 1f, "%.2f"))
+        {
+            config.FightingAiJumpOverChance = aiJumpOver;
+            config.Save();
+        }
+        HelpMarker("Chance the enemy hops over you to the other side instead of attacking.");
+
+        var aiJumpDur = config.FightingAiJumpDuration;
+        if (ImGui.SliderFloat("Jump duration##fightingai", ref aiJumpDur, 0.3f, 1.2f, "%.2f s"))
+        {
+            config.FightingAiJumpDuration = aiJumpDur;
+            config.Save();
+        }
+
+        var aiJumpHeight = config.FightingAiJumpHeight;
+        if (ImGui.SliderFloat("Jump height##fightingai", ref aiJumpHeight, 0.5f, 4.0f, "%.1f"))
+        {
+            config.FightingAiJumpHeight = aiJumpHeight;
+            config.Save();
+        }
+
+        var aiJumpIn = config.FightingAiJumpInAttackChance;
+        if (ImGui.SliderFloat("Jump-in attack chance##fightingai", ref aiJumpIn, 0f, 1f, "%.2f"))
+        {
+            config.FightingAiJumpInAttackChance = aiJumpIn;
+            config.Save();
+        }
+        HelpMarker("Chance to attack immediately on landing a jump-over.");
+
         var aiRetreat = config.FightingAiRetreatChance;
         if (ImGui.SliderFloat("Retreat chance##fightingai", ref aiRetreat, 0f, 1f, "%.2f"))
         {
@@ -1608,6 +1690,14 @@ public partial class MainWindow : IDisposable
 
         ImGui.Separator();
         ImGui.Text("Camera");
+
+        var camSide = config.FightingModeCameraSide;
+        if (ImGui.Combo("Camera side##fightingmode", ref camSide, "Right\0Left\0"))
+        {
+            config.FightingModeCameraSide = Math.Clamp(camSide, 0, 1);
+            config.Save();
+        }
+        HelpMarker("Which side of the fighting lane the 2D camera views from. Also applies to the KO camera's side-view lock.");
 
         var margin = config.FightingModeCameraMargin;
         if (ImGui.SliderFloat("Frame margin##fightingmode", ref margin, 0.4f, 1.8f, "%.2f"))

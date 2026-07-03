@@ -526,6 +526,11 @@ public partial class Configuration : IPluginConfiguration
     public float FightingModeTranslateHorizontalAngle { get; set; } = 0.0f;
     public bool FightingModeTranslateLockVertical { get; set; } = false;
     public float FightingModeTranslateVerticalAngle { get; set; } = 0.31f;
+    // Which side of the lane the 2D camera sits on (0 = right of the engage axis, 1 = left).
+    public int FightingModeCameraSide { get; set; } = 0;
+    // Double-jump vault: a second jump press mid-air carries the player over the enemy.
+    public int FightingModeVaultKey { get; set; } = 0x20;   // Space
+    public float FightingModeVaultDuration { get; set; } = 0.45f;
     // Fighting Mode guard: reuses the shared PlayerGuardController timing windows
     // (GuardActiveWindow / chain / recovery) with its own key binding.
     public int FightingModeGuardKey { get; set; } = 17;      // Ctrl
@@ -548,8 +553,18 @@ public partial class Configuration : IPluginConfiguration
     public float FightingAiRetreatSpeedScale { get; set; } = 0.5f;
     public float FightingAiRangeMin { get; set; } = 0.9f;
     public float FightingAiRangeMax { get; set; } = 2.2f;
-    public float FightingAiAttackCooldown { get; set; } = 2.5f;
-    public float FightingAiAttackCooldownJitter { get; set; } = 1.0f;
+    public float FightingAiAttackCooldown { get; set; } = 1.1f;
+    public float FightingAiAttackCooldownJitter { get; set; } = 0.7f;
+    // Fighting-game move variety: combo strings, dash-ins, and side-switching hops.
+    public float FightingAiComboChance { get; set; } = 0.35f;
+    public float FightingAiComboGap { get; set; } = 0.18f;
+    public int FightingAiMaxComboHits { get; set; } = 3;
+    public float FightingAiDashChance { get; set; } = 0.35f;
+    public float FightingAiDashSpeedScale { get; set; } = 2.2f;
+    public float FightingAiJumpOverChance { get; set; } = 0.15f;
+    public float FightingAiJumpDuration { get; set; } = 0.55f;
+    public float FightingAiJumpHeight { get; set; } = 1.6f;
+    public float FightingAiJumpInAttackChance { get; set; } = 0.5f;
     public float FightingAiRetreatChance { get; set; } = 0.35f;
     public float FightingAiRetreatDuration { get; set; } = 0.8f;
     public float FightingAiRecoverTime { get; set; } = 0.6f;
@@ -722,12 +737,24 @@ public partial class Configuration : IPluginConfiguration
         FightingModeAttackActiveStartPct = defaults.FightingModeAttackActiveStartPct;
         FightingModeAttackActiveEndPct = defaults.FightingModeAttackActiveEndPct;
         FightingModeDebugDraw = defaults.FightingModeDebugDraw;
+        FightingModeCameraSide = defaults.FightingModeCameraSide;
+        FightingModeVaultKey = defaults.FightingModeVaultKey;
+        FightingModeVaultDuration = defaults.FightingModeVaultDuration;
         FightingAiMoveSpeed = defaults.FightingAiMoveSpeed;
         FightingAiRetreatSpeedScale = defaults.FightingAiRetreatSpeedScale;
         FightingAiRangeMin = defaults.FightingAiRangeMin;
         FightingAiRangeMax = defaults.FightingAiRangeMax;
         FightingAiAttackCooldown = defaults.FightingAiAttackCooldown;
         FightingAiAttackCooldownJitter = defaults.FightingAiAttackCooldownJitter;
+        FightingAiComboChance = defaults.FightingAiComboChance;
+        FightingAiComboGap = defaults.FightingAiComboGap;
+        FightingAiMaxComboHits = defaults.FightingAiMaxComboHits;
+        FightingAiDashChance = defaults.FightingAiDashChance;
+        FightingAiDashSpeedScale = defaults.FightingAiDashSpeedScale;
+        FightingAiJumpOverChance = defaults.FightingAiJumpOverChance;
+        FightingAiJumpDuration = defaults.FightingAiJumpDuration;
+        FightingAiJumpHeight = defaults.FightingAiJumpHeight;
+        FightingAiJumpInAttackChance = defaults.FightingAiJumpInAttackChance;
         FightingAiRetreatChance = defaults.FightingAiRetreatChance;
         FightingAiRetreatDuration = defaults.FightingAiRetreatDuration;
         FightingAiRecoverTime = defaults.FightingAiRecoverTime;
@@ -883,6 +910,10 @@ public partial class Configuration : IPluginConfiguration
             FightingAiRangeMin = 0.9f;
         if (MathF.Abs(FightingAiRangeMax - 3.2f) < 0.001f)
             FightingAiRangeMax = 2.2f;
+        if (MathF.Abs(FightingAiAttackCooldown - 2.5f) < 0.001f)
+            FightingAiAttackCooldown = 1.1f;
+        if (MathF.Abs(FightingAiAttackCooldownJitter - 1.0f) < 0.001f)
+            FightingAiAttackCooldownJitter = 0.7f;
 
         FightingSpacingDefaultsMigrated20260703 = true;
         Save();

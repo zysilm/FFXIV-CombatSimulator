@@ -62,6 +62,14 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     private float smoothedKoDirH;
     private bool koDirHInitialized;
 
+    // Double-jump vault: a second jump press mid-air carries the player over the
+    // enemy to the other side (lateral arc; the native jump owns the vertical).
+    private bool vaultActive;
+    private float vaultElapsed;
+    private float vaultFrom;
+    private float vaultTo;
+    private bool vaultKeyWasDown;
+
     private enum CameraPhase
     {
         Fighting,
@@ -179,6 +187,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         if (!targetControlled)
             movementBlockHook.AddApproachNpc(targetAddress);
 
+        TickVault(deltaTime, playerObj, targetObj);
         TickFightingAi(deltaTime, playerObj, targetObj, targetControlled);
         ApplyLane(playerObj, targetObj, targetControlled);
         UpdateCamera(playerObj, targetObj, deltaTime);
@@ -193,7 +202,78 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         if (!playerAlive)
             return;
 
-        FightingAi.Tick(dt, AlongOf(ToVector3(targetObj->Position)), AlongOf(ToVector3(playerObj->Position)));
+        var e = ToVector3(targetObj->Position);
+        FightingAi.Tick(dt, AlongOf(e), AlongOf(ToVector3(playerObj->Position)), e.Y);
+    }
+
+    private static bool IsPlayerJumping()
+    {
+        try
+        {
+            return Services.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.Jumping];
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Double-jump vault: while airborne from the game's own jump, a second press of
+    /// the jump key starts a lateral arc that carries the player over the enemy and
+    /// lands them on the other side. Vertical motion stays native.
+    /// </summary>
+    private void TickVault(float dt, GameObject* playerObj, GameObject* targetObj)
+    {
+        var playerAlive = !postDeathEngaged && combatEngine.State.PlayerState.IsAlive;
+        if (!playerAlive || !laneInitialized)
+        {
+            vaultActive = false;
+            vaultKeyWasDown = false;
+            return;
+        }
+
+        var jumping = IsPlayerJumping();
+        var down = false;
+        try
+        {
+            var io = Dalamud.Bindings.ImGui.ImGui.GetIO();
+            if (!io.WantCaptureKeyboard && !io.WantTextInput)
+            {
+                var fw = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework.Instance();
+                if (fw != null)
+                    down = fw->KeyboardInputs.KeyState[config.FightingModeVaultKey]
+                        .HasFlag(FFXIVClientStructs.FFXIV.Client.System.Input.KeyStateFlags.Down);
+            }
+        }
+        catch { }
+
+        var pressed = down && !vaultKeyWasDown;
+        vaultKeyWasDown = down;
+
+        if (!vaultActive && jumping && pressed)
+        {
+            var pAlong = AlongOf(ToVector3(playerObj->Position));
+            var eAlong = AlongOf(ToVector3(targetObj->Position));
+            float side = MathF.Sign(pAlong - eAlong);
+            if (side == 0f)
+                side = 1f;
+
+            vaultFrom = pAlong;
+            vaultTo = eAlong - side * MathF.Max(0.45f, config.FightingModeMinSeparation) * 1.5f;
+            vaultElapsed = 0f;
+            vaultActive = true;
+        }
+
+        if (vaultActive)
+        {
+            vaultElapsed += dt;
+            var duration = MathF.Max(0.15f, config.FightingModeVaultDuration);
+            // End when the arc completes, or when the player has landed (don't slide
+            // them across the ground).
+            if (vaultElapsed >= duration || (!jumping && vaultElapsed > 0.1f))
+                vaultActive = false;
+        }
     }
 
     private float AlongOf(Vector3 pos)
@@ -315,6 +395,8 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         suppressDeathCameraThisDeath = false;
         translateElapsed = 0f;
         koDirHInitialized = false;
+        vaultActive = false;
+        vaultKeyWasDown = false;
     }
 
     private void CaptureLane()
@@ -366,12 +448,24 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         var pAlong = AlongOf(p);
         if (playerAlive)
         {
-            // Min separation: the player is the mover here — clamp them out of the enemy.
-            float pSide = MathF.Sign(pAlong - eAlongLive);
-            if (pSide == 0f)
-                pSide = -1f;
-            if (MathF.Abs(pAlong - eAlongLive) < minSep)
-                pAlong = eAlongLive + pSide * minSep;
+            var playerAirborne = IsPlayerJumping();
+            if (vaultActive)
+            {
+                // Double-jump vault: lateral arc over the enemy — position is authored.
+                var t = Math.Clamp(vaultElapsed / MathF.Max(0.15f, config.FightingModeVaultDuration), 0f, 1f);
+                var s = t * t * (3f - 2f * t);
+                pAlong = vaultFrom + (vaultTo - vaultFrom) * s;
+            }
+            else if (!playerAirborne)
+            {
+                // Min separation: the player is the mover here — clamp them out of the
+                // enemy. Airborne players may cross (that's how you jump over).
+                float pSide = MathF.Sign(pAlong - eAlongLive);
+                if (pSide == 0f)
+                    pSide = -1f;
+                if (MathF.Abs(pAlong - eAlongLive) < minSep)
+                    pAlong = eAlongLive + pSide * minSep;
+            }
 
             var targetP = laneOrigin + laneAxis * pAlong;
             targetP.Y = p.Y;
@@ -387,11 +481,11 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         if (targetControlled)
             return;
 
-        var eAlong = FightingAi is { IsActive: true } && playerAlive
-            ? FightingAi.DesiredAlong
-            : eAlongLive;
+        var aiDrives = FightingAi is { IsActive: true } && playerAlive;
+        var eAlong = aiDrives ? FightingAi!.DesiredAlong : eAlongLive;
 
-        if (playerAlive)
+        // Airborne enemies may cross the player (jump-over); grounded ones are clamped.
+        if (playerAlive && !(aiDrives && FightingAi!.IsAirborne))
         {
             float side = MathF.Sign(eAlong - pAlong);
             if (side == 0f)
@@ -401,7 +495,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         }
 
         var targetE = laneOrigin + laneAxis * eAlong;
-        targetE.Y = e.Y;
+        targetE.Y = aiDrives && FightingAi!.DesiredY.HasValue ? FightingAi.DesiredY.Value : e.Y;
         movementBlockHook.SetApproachPosition(targetObj, targetE.X, targetE.Y, targetE.Z);
         movementBlockHook.SetApproachRotation(targetObj, YawTo(p - targetE));
     }
@@ -478,6 +572,8 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         if (side.LengthSquared() < 0.0001f)
             side = Vector3.UnitX;
         side = Vector3.Normalize(side);
+        if (config.FightingModeCameraSide == 1)
+            side = -side;
 
         cameraCoordinator.Submit(CameraOwner.Fighting2D, new CameraRequest
         {
@@ -638,6 +734,8 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
             {
                 axis = Vector3.Normalize(axis);
                 var side = new Vector3(-axis.Z, 0f, axis.X);
+                if (config.FightingModeCameraSide == 1)
+                    side = -side;
                 var targetDirH = MathF.Atan2(side.X, side.Z);
                 if (!koDirHInitialized)
                 {
