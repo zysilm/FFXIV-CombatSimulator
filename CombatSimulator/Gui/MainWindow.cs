@@ -1573,6 +1573,82 @@ public partial class MainWindow : IDisposable
         }
 
         ImGui.Separator();
+        ImGui.Text("Fighting AI");
+
+        var aiSpeed = config.FightingAiMoveSpeed;
+        if (ImGui.SliderFloat("AI move speed##fightingai", ref aiSpeed, 0.5f, 8.0f, "%.1f"))
+        {
+            config.FightingAiMoveSpeed = aiSpeed;
+            config.Save();
+        }
+
+        var aiRangeMin = config.FightingAiRangeMin;
+        if (ImGui.SliderFloat("Preferred range min##fightingai", ref aiRangeMin, 0.5f, 6.0f, "%.1f"))
+        {
+            config.FightingAiRangeMin = aiRangeMin;
+            config.Save();
+        }
+
+        var aiRangeMax = config.FightingAiRangeMax;
+        if (ImGui.SliderFloat("Preferred range max##fightingai", ref aiRangeMax, 1.0f, 10.0f, "%.1f"))
+        {
+            config.FightingAiRangeMax = MathF.Max(aiRangeMax, config.FightingAiRangeMin + 0.2f);
+            config.Save();
+        }
+        HelpMarker("The enemy holds this spacing band: approaches when farther, backs off when closer, attacks from inside it.");
+
+        var aiCooldown = config.FightingAiAttackCooldown;
+        if (ImGui.SliderFloat("Attack cooldown##fightingai", ref aiCooldown, 0.3f, 8.0f, "%.1f s"))
+        {
+            config.FightingAiAttackCooldown = aiCooldown;
+            config.Save();
+        }
+
+        var aiJitter = config.FightingAiAttackCooldownJitter;
+        if (ImGui.SliderFloat("Cooldown jitter##fightingai", ref aiJitter, 0f, 4.0f, "%.1f s"))
+        {
+            config.FightingAiAttackCooldownJitter = aiJitter;
+            config.Save();
+        }
+
+        var aiRetreat = config.FightingAiRetreatChance;
+        if (ImGui.SliderFloat("Retreat chance##fightingai", ref aiRetreat, 0f, 1f, "%.2f"))
+        {
+            config.FightingAiRetreatChance = aiRetreat;
+            config.Save();
+        }
+        HelpMarker("Probability of backing off after each attack instead of staying in.");
+
+        var aiRetreatDur = config.FightingAiRetreatDuration;
+        if (ImGui.SliderFloat("Retreat duration##fightingai", ref aiRetreatDur, 0.2f, 3.0f, "%.1f s"))
+        {
+            config.FightingAiRetreatDuration = aiRetreatDur;
+            config.Save();
+        }
+
+        var aiRecover = config.FightingAiRecoverTime;
+        if (ImGui.SliderFloat("Recover time##fightingai", ref aiRecover, 0.1f, 3.0f, "%.1f s"))
+        {
+            config.FightingAiRecoverTime = aiRecover;
+            config.Save();
+        }
+
+        var aiHitstun = config.FightingAiHitstunDuration;
+        if (ImGui.SliderFloat("Hitstun duration##fightingai", ref aiHitstun, 0.05f, 1.5f, "%.2f s"))
+        {
+            config.FightingAiHitstunDuration = aiHitstun;
+            config.Save();
+        }
+
+        var aiPushback = config.FightingAiHitstunPushback;
+        if (ImGui.SliderFloat("Hitstun pushback##fightingai", ref aiPushback, 0f, 5.0f, "%.1f"))
+        {
+            config.FightingAiHitstunPushback = aiPushback;
+            config.Save();
+        }
+        HelpMarker("Distance the enemy is shoved back along the lane by a weapon-contact hit (super-armored during its own windup).");
+
+        ImGui.Separator();
         ImGui.Text("Camera");
 
         var margin = config.FightingModeCameraMargin;

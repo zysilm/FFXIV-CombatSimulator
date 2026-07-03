@@ -548,6 +548,18 @@ public partial class Configuration : IPluginConfiguration
     public float FightingModeAttackActiveStartPct { get; set; } = 0.25f;
     public float FightingModeAttackActiveEndPct { get; set; } = 0.70f;
     public bool FightingModeDebugDraw { get; set; } = false;
+    // Fighting Mode 1v1 enemy AI (replaces NpcAiController for the engaged fighter):
+    // spacing band + approach/retreat + telegraphed attacks + hitstun pushback.
+    public float FightingAiMoveSpeed { get; set; } = 3.0f;
+    public float FightingAiRangeMin { get; set; } = 1.8f;
+    public float FightingAiRangeMax { get; set; } = 3.2f;
+    public float FightingAiAttackCooldown { get; set; } = 2.5f;
+    public float FightingAiAttackCooldownJitter { get; set; } = 1.0f;
+    public float FightingAiRetreatChance { get; set; } = 0.35f;
+    public float FightingAiRetreatDuration { get; set; } = 0.8f;
+    public float FightingAiRecoverTime { get; set; } = 0.6f;
+    public float FightingAiHitstunDuration { get; set; } = 0.35f;
+    public float FightingAiHitstunPushback { get; set; } = 1.5f;
 
     // Input map: put these actions on the hotbar; a press is interpreted as the
     // mapped role instead of firing the real action. 0 = unmapped.

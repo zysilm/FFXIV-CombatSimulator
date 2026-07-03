@@ -79,6 +79,15 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     /// plugin after construction; when unset, attacks fall back to the classic queued resolve.</summary>
     public Func<uint, SimulatedNpc, bool>? AttackSink { get; set; }
 
+    /// <summary>1v1 fighting AI for the engaged enemy. Set by the plugin after construction;
+    /// while wired, NpcAiController skips the fighter (see ControlsEnemy).</summary>
+    public FightingAiController? FightingAi { get; set; }
+
+    /// <summary>True while this controller (via FightingAi) owns the engaged enemy — used by
+    /// NpcAiController's externally-controlled skip.</summary>
+    public bool ControlsEnemy(nint address)
+        => engaged && targetAddress == address && FightingAi != null;
+
     public FightingModeController(
         Configuration config,
         CombatEngine combatEngine,
@@ -164,8 +173,22 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
             movementBlockHook.AddApproachNpc(targetAddress);
 
         TickPlayerMotor(deltaTime, playerObj, targetObj);
+        TickFightingAi(deltaTime, playerObj, targetObj, targetControlled);
         ApplyLane(playerObj, targetObj, targetControlled);
         UpdateCamera(playerObj, targetObj, deltaTime);
+    }
+
+    private void TickFightingAi(float dt, GameObject* playerObj, GameObject* targetObj, bool targetControlled)
+    {
+        if (FightingAi == null || targetControlled || !laneInitialized)
+            return;
+
+        var playerAlive = !postDeathEngaged && combatEngine.State.PlayerState.IsAlive;
+        if (!playerAlive)
+            return;
+
+        var playerAlong = playerMotor.IsActive ? playerMotor.AlongPos : AlongOf(ToVector3(playerObj->Position));
+        FightingAi.Tick(dt, AlongOf(ToVector3(targetObj->Position)), playerAlong);
     }
 
     private void TickPlayerMotor(float dt, GameObject* playerObj, GameObject* targetObj)
@@ -264,6 +287,8 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         engaged = true;
         cameraPhase = CameraPhase.Fighting;
         CaptureLane();
+        if (!isExternallyControlled(npc.Address))
+            FightingAi?.Begin(npc);
         log.Info($"FightingMode: engaged 1v1 with '{npc.Name}' (0x{npc.SimulatedEntityId:X}).");
     }
 
@@ -271,6 +296,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     {
         suppressDeathCameraThisDeath = engaged;
         playerMotor.End();
+        FightingAi?.End();
         if (!engaged)
             return;
 
@@ -282,6 +308,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     private void Disengage()
     {
         playerMotor.End();
+        FightingAi?.End();
         if (playerAddress != nint.Zero)
             movementBlockHook.RemoveApproachNpc(playerAddress);
         if (targetAddress != nint.Zero)
@@ -362,7 +389,9 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
             return;
 
         var pAlong = AlongOf(p);
-        var eAlong = AlongOf(e);
+        var eAlong = FightingAi is { IsActive: true } && playerAlive
+            ? FightingAi.DesiredAlong
+            : AlongOf(e);
 
         if (playerAlive)
         {

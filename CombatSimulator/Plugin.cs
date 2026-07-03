@@ -223,7 +223,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             combatEngine, animationController, movementBlockHook, vnavmeshIpc,
             clientState, config, partyEngagePlanner, terrainHeightService, log,
             combatModeRouter,
-            addr => devExperimental.ControlsNpc(addr));
+            // Deferred: fightingModeController is constructed later in this ctor; the
+            // AI only queries during framework ticks.
+            addr => devExperimental.ControlsNpc(addr) || fightingModeController?.ControlsEnemy(addr) == true);
 
         // Custom in-sim target lock system (综合提升). Takes over the game's target
         // keybinds during simulation; the engine reads the locked target for
@@ -255,6 +257,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             config, playerGuardController, fightingModeController, combatEngine,
             animationController, weaponHitboxService, hitFeedbackController, gamepadState, log);
         fightingModeController.AttackSink = fightingCombatController.OnAttackInput;
+        var fightingAiController = new FightingAiController(
+            config, combatModeRouter, telegraphSystem, animationController, log);
+        fightingModeController.FightingAi = fightingAiController;
+        fightingCombatController.OnPlayerHitLanded = _ => fightingAiController.NotifyPlayerHitLanded();
         combatEngine.BeforePlayerDeath = () =>
         {
             fightingModeController.HandlePlayerDeath();
