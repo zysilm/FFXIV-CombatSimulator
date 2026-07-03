@@ -3325,17 +3325,35 @@ public unsafe class RagdollController : IDisposable
                         Quaternion.Inverse(parentBodyRef.Pose.Orientation));
 
                     var effectiveCone = boneDef.SwingLimit;
+                    var coneAxisParentLocal = axisParentLocal;
+                    var coneSpring = ballSwingSpring;
                     if (hasSwingRom)
+                    {
                         effectiveCone = MathF.Max(effectiveCone, MathF.Max(
                             MathF.Max(swingRom.FlexionMax, swingRom.ExtensionMax),
                             MathF.Max(swingRom.AbductionMax, swingRom.AdductionMax)));
 
+                        // Pure-flexion caps beyond 90° are inexpressible as directional
+                        // SwingLimits (90°+θ exceeds 180°), and the diagonal caps only see
+                        // a forward tilt's cosine projection — this bounding cone IS the
+                        // flexion stop. It must therefore be a hard wall anchored on the
+                        // anatomical vertical, not a soft suggestion around the death pose
+                        // (side-lying gravity folds the top leg to the chest through a
+                        // 12 Hz cone).
+                        var anatConeAxis = Vector3.Dot(segDirWorld, Vector3.UnitY) >= 0f
+                            ? Vector3.UnitY
+                            : -Vector3.UnitY;
+                        coneAxisParentLocal = Vector3.Normalize(Vector3.Transform(
+                            anatConeAxis, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
+                        coneSpring = limitSpring;
+                    }
+
                     var swingLimit = new SwingLimit
                     {
                         AxisLocalA = axisChildLocal,
-                        AxisLocalB = axisParentLocal,
+                        AxisLocalB = coneAxisParentLocal,
                         MaximumSwingAngle = effectiveCone,
-                        SpringSettings = ballSwingSpring,
+                        SpringSettings = coneSpring,
                     };
                     var swingHandle = simulation.Solver.Add(rb.BodyHandle, parentHandle, swingLimit);
                     swingLimitByBone[rb.Name] = (swingHandle, swingLimit);
@@ -3345,7 +3363,7 @@ public unsafe class RagdollController : IDisposable
                         Child = rb.BodyHandle,
                         Parent = parentHandle,
                         AxisLocalChild = axisChildLocal,
-                        AxisLocalParent = axisParentLocal,
+                        AxisLocalParent = coneAxisParentLocal,
                         LimitAngle = effectiveCone,
                     });
 
