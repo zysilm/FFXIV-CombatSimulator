@@ -2391,7 +2391,12 @@ public unsafe class DismembermentController : IDisposable
         if (!rightOk)
             right = Vector3.Transform(Vector3.UnitX, referenceRot);
 
-        return TryCreateGarmentFrameRotation(up, right, referenceRot, out rotation);
+        // Skeleton-root forward is the reliable front anchor: the root transform is
+        // yaw-only (never tumbles in death), whereas individual bone local axes are
+        // ~90 deg off the model convention. Used to resolve the 180 deg front/back
+        // ambiguity in the cross-product frame below.
+        var frontHint = Vector3.Transform(Vector3.UnitZ, skelRot);
+        return TryCreateGarmentFrameRotation(up, right, referenceRot, frontHint, out rotation);
     }
 
     private bool TryBoneDelta(SkeletonAccess skel, Vector3 skelPos, Quaternion skelRot,
@@ -2435,7 +2440,7 @@ public unsafe class DismembermentController : IDisposable
     }
 
     private static bool TryCreateGarmentFrameRotation(Vector3 upCandidate, Vector3 rightCandidate,
-        Quaternion referenceRot, out Quaternion rotation)
+        Quaternion referenceRot, Vector3 frontHint, out Quaternion rotation)
     {
         rotation = Quaternion.Identity;
         if (upCandidate.LengthSquared() < 1e-6f || rightCandidate.LengthSquared() < 1e-6f)
@@ -2453,6 +2458,18 @@ public unsafe class DismembermentController : IDisposable
         x = NormalizeOrFallback(x, refRight);
 
         var z = NormalizeOrFallback(Vector3.Cross(x, y), refForward);
+
+        // The l/r bone-delta that seeds x can be antiparallel to the model's own +X
+        // (FFXIV bone naming polarity), which rotates the whole frame 180 deg about
+        // up -- garment front ends up on the back. Resolve against the skeleton root's
+        // forward (a reliable, yaw-only anchor); flipping x and z keeps up untouched,
+        // so the death-pose lean is preserved.
+        if (frontHint.LengthSquared() > 1e-6f && Vector3.Dot(z, frontHint) < 0f)
+        {
+            x = -x;
+            z = -z;
+        }
+
         x = NormalizeOrFallback(Vector3.Cross(y, z), x);
 
         var m = new Matrix4x4(
