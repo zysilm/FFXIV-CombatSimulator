@@ -368,40 +368,7 @@ public unsafe class RagdollController : IDisposable
 
         try
         {
-            var shapes = new List<TypedIndex>(parts.Count + 1);
-            TypedIndex shapeIndex;
-            if (parts.Count == 1 &&
-                parts[0].LocalPosition.LengthSquared() < 1e-6f &&
-                IsIdentity(parts[0].LocalOrientation))
-            {
-                var h = parts[0].HalfExtents;
-                shapeIndex = simulation.Shapes.Add(new Box(h.X * 2f, h.Y * 2f, h.Z * 2f));
-                shapes.Add(shapeIndex);
-            }
-            else
-            {
-                bufferPool.Take<CompoundChild>(parts.Count, out var children);
-                for (int i = 0; i < parts.Count; i++)
-                {
-                    var p = parts[i];
-                    var h = p.HalfExtents;
-                    var childShape = simulation.Shapes.Add(new Box(h.X * 2f, h.Y * 2f, h.Z * 2f));
-                    shapes.Add(childShape);
-                    children[i] = new CompoundChild
-                    {
-                        ShapeIndex = childShape,
-                        LocalPosition = p.LocalPosition,
-                        LocalOrientation = p.LocalOrientation,
-                    };
-                }
-
-                shapeIndex = simulation.Shapes.Add(new Compound(children));
-                shapes.Add(shapeIndex);
-            }
-
-            var half = ComputeExternalShapeHalf(parts);
-            var inertia = new Box(half.X * 2f, half.Y * 2f, half.Z * 2f)
-                .ComputeInertia(MathF.Max(0.01f, mass));
+            var shapeIndex = CreateExternalBodyShape(parts, out var shapes, out var inertia, mass);
             var bodyHandle = simulation.Bodies.Add(BodyDescription.CreateDynamic(
                 new RigidPose(position, Quaternion.Normalize(orientation)),
                 default(BodyVelocity),
@@ -432,6 +399,84 @@ public unsafe class RagdollController : IDisposable
             log.Warning(ex, "RagdollController: failed to create external body");
             return false;
         }
+    }
+
+    public bool TrySetExternalBodyShape(ExternalBodyHandle? handle,
+        IReadOnlyList<ExternalShapePart> parts, float mass)
+    {
+        if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration ||
+            simulation == null || bufferPool == null || parts.Count == 0)
+            return false;
+
+        TypedIndex[]? newShapes = null;
+        try
+        {
+            var newShape = CreateExternalBodyShape(parts, out var shapeList, out var inertia, mass);
+            newShapes = shapeList.ToArray();
+            var oldShapes = handle.Shapes;
+
+            simulation.Bodies.SetShape(handle.Body, newShape);
+            simulation.Bodies.SetLocalInertia(handle.Body, in inertia);
+            var body = simulation.Bodies.GetBodyReference(handle.Body);
+            body.Awake = true;
+
+            handle.Shapes = newShapes;
+            foreach (var shape in oldShapes)
+                try { simulation.Shapes.RemoveAndDispose(shape, bufferPool); } catch { }
+
+            WakeRagdollBodiesForBiomechanicalSettle();
+            prevAllAsleep = false;
+            BeginBiomechanicalSettle(0.25f);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (newShapes != null)
+                foreach (var shape in newShapes)
+                    try { simulation?.Shapes.RemoveAndDispose(shape, bufferPool); } catch { }
+            log.Warning(ex, "RagdollController: failed to replace external body shape");
+            return false;
+        }
+    }
+
+    private TypedIndex CreateExternalBodyShape(IReadOnlyList<ExternalShapePart> parts,
+        out List<TypedIndex> shapes, out BodyInertia inertia, float mass)
+    {
+        shapes = new List<TypedIndex>(parts.Count + 1);
+        TypedIndex shapeIndex;
+        if (parts.Count == 1 &&
+            parts[0].LocalPosition.LengthSquared() < 1e-6f &&
+            IsIdentity(parts[0].LocalOrientation))
+        {
+            var h = parts[0].HalfExtents;
+            shapeIndex = simulation!.Shapes.Add(new Box(h.X * 2f, h.Y * 2f, h.Z * 2f));
+            shapes.Add(shapeIndex);
+        }
+        else
+        {
+            bufferPool!.Take<CompoundChild>(parts.Count, out var children);
+            for (int i = 0; i < parts.Count; i++)
+            {
+                var p = parts[i];
+                var h = p.HalfExtents;
+                var childShape = simulation!.Shapes.Add(new Box(h.X * 2f, h.Y * 2f, h.Z * 2f));
+                shapes.Add(childShape);
+                children[i] = new CompoundChild
+                {
+                    ShapeIndex = childShape,
+                    LocalPosition = p.LocalPosition,
+                    LocalOrientation = p.LocalOrientation,
+                };
+            }
+
+            shapeIndex = simulation!.Shapes.Add(new Compound(children));
+            shapes.Add(shapeIndex);
+        }
+
+        var half = ComputeExternalShapeHalf(parts);
+        inertia = new Box(half.X * 2f, half.Y * 2f, half.Z * 2f)
+            .ComputeInertia(MathF.Max(0.01f, mass));
+        return shapeIndex;
     }
 
     public bool TryGetExternalBodyPose(ExternalBodyHandle? handle, out Vector3 position, out Quaternion orientation,

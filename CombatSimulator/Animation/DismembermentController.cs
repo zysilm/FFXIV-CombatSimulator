@@ -60,6 +60,7 @@ public unsafe class DismembermentController : IDisposable
     private const int MdlShapeHeaderSize = 16;
     private const int MdlBoundingBoxSize = 32;
     private const int MdlModelDataSafetyLimit = 4 * 1024 * 1024;
+    private const int GearPhysicsCollapseFrame = 60;
 
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
@@ -159,6 +160,8 @@ public unsafe class DismembermentController : IDisposable
         public Vector3 GearBoxHalf;                          // collision proxy half-extents (for the sink clamp)
         public GearShapePart[]? GearShapeParts;              // local proxy parts used for visual ground settling
         public float GearShapeScale = 1f;
+        public float GearMass = GearPieceMass;
+        public bool GearCollapsedPhysicsApplied;              // Bepu shape replaced to match final visual deflate
         public float GearGroundVisualOffset;                  // smoothed visual-only downward ground settle offset
         public int GearArmedFrames;                          // frames since the rigid body was armed
         public int GearRestFrames;                           // consecutive near-rest frames
@@ -1964,6 +1967,8 @@ public unsafe class DismembermentController : IDisposable
             c.GearBoxHalf = shapeSpec.Half;
             c.GearShapeParts = shapeSpec.Parts;
             c.GearShapeScale = shapeSpec.Scale;
+            c.GearMass = shapeSpec.Mass;
+            c.GearCollapsedPhysicsApplied = false;
 
             if (ShouldWaitForPlayerRagdoll(c))
             {
@@ -2044,6 +2049,7 @@ public unsafe class DismembermentController : IDisposable
             renderRot = bodyRot;
         }
         var visualScale = ResolveGearVisualSquashFactor(c);
+        TryApplyGearCollapsedPhysicsShape(c);
         var hasGroundStats = TryEstimateGearGroundStats(c, bodyPos, renderRot, visualScale,
             out var averageGroundHeight, out var lowestGroundHeight);
         if (hasGroundStats)
@@ -2198,8 +2204,6 @@ public unsafe class DismembermentController : IDisposable
 
     private void UpdateGearSettleProgress(Clone c, Vector3 linearVelocity, Vector3 angularVelocity)
     {
-        if (!IsPoseRelaxGear(c) && !IsDeflatableGear(c)) return;
-
         c.GearArmedFrames++;
         var nearRest = linearVelocity.LengthSquared() < 0.28f && angularVelocity.LengthSquared() < 5.0f;
         c.GearRestFrames = nearRest
@@ -2247,6 +2251,114 @@ public unsafe class DismembermentController : IDisposable
         };
 
         return Vector3.Lerp(Vector3.One, target, strength);
+    }
+
+    private bool TryApplyGearCollapsedPhysicsShape(Clone c)
+    {
+        if (c.GearCollapsedPhysicsApplied ||
+            c.GearKeepModelSlot == 1 ||
+            !IsDeflatableGear(c) ||
+            c.GearDeflateFrames < GearPhysicsCollapseFrame ||
+            c.GearShapeParts == null ||
+            c.GearShapeParts.Length == 0)
+            return false;
+
+        var factor = ResolveGearFinalSquashFactor(c);
+        if (factor == Vector3.One)
+        {
+            c.GearCollapsedPhysicsApplied = true;
+            return false;
+        }
+
+        var parts = ScaleGearShapeParts(c.GearShapeParts, factor);
+        var success = false;
+
+        if (c.GearRagdollBody != null)
+        {
+            var externalParts = BuildExternalShapeParts(parts, c.GearShapeScale);
+            success = PlayerRagdollController?.TrySetExternalBodyShape(c.GearRagdollBody, externalParts, c.GearMass) == true;
+        }
+        else if (simulation != null && c.Body.HasValue)
+        {
+            success = TryReplaceLocalGearShape(c, parts);
+        }
+
+        if (!success)
+            return false;
+
+        c.GearCollapsedPhysicsApplied = true;
+        log.Verbose($"GearDrop: clone idx={c.ObjectIndex} slot={c.GearKeepModelSlot} applied collapsed physics shape");
+        return true;
+    }
+
+    private static Vector3 ResolveGearFinalSquashFactor(Clone c)
+        => c.GearKeepModelSlot switch
+        {
+            0 => new Vector3(1.16f, 0.42f, 1.16f),
+            3 => new Vector3(1.10f, 0.96f, 0.34f),
+            _ => Vector3.One,
+        };
+
+    private bool TryReplaceLocalGearShape(Clone c, GearShapePart[] parts)
+    {
+        if (simulation == null || !c.Body.HasValue || bufferPool == null)
+            return false;
+
+        List<TypedIndex>? newShapes = null;
+        try
+        {
+            var shape = CreateGearShape(parts, c.GearShapeScale, c.GearMass, out var inertia, out newShapes);
+            var oldShapes = c.Shapes;
+
+            simulation.Bodies.SetShape(c.Body.Value, shape);
+            simulation.Bodies.SetLocalInertia(c.Body.Value, in inertia);
+            var body = simulation.Bodies.GetBodyReference(c.Body.Value);
+            body.Awake = true;
+
+            c.Shapes = newShapes;
+            if (oldShapes != null)
+                foreach (var s in oldShapes)
+                    try { simulation.Shapes.RemoveAndDispose(s, bufferPool); } catch { }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (newShapes != null)
+                foreach (var s in newShapes)
+                    try { simulation.Shapes.RemoveAndDispose(s, bufferPool); } catch { }
+            log.Warning(ex, "GearDrop: failed to replace local gear physics shape");
+            return false;
+        }
+    }
+
+    private static GearShapePart[] ScaleGearShapeParts(GearShapePart[] parts, Vector3 factor)
+    {
+        var scaled = new GearShapePart[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+        {
+            var p = parts[i];
+            scaled[i] = new GearShapePart(
+                ScaleVector(p.Half, factor),
+                ScaleVector(p.Center, factor),
+                p.Rotation);
+        }
+
+        return scaled;
+    }
+
+    private static RagdollController.ExternalShapePart[] BuildExternalShapeParts(GearShapePart[] parts, float scale)
+    {
+        var externalParts = new RagdollController.ExternalShapePart[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+        {
+            var p = parts[i];
+            externalParts[i] = new RagdollController.ExternalShapePart(
+                p.Half * scale,
+                p.Center * scale,
+                p.Rotation);
+        }
+
+        return externalParts;
     }
 
     private static Vector3 ScaleVector(Vector3 v, Vector3 scale)
@@ -3214,34 +3326,43 @@ public unsafe class DismembermentController : IDisposable
     private TypedIndex BuildGearShape(Clone c, GearShapeSpec spec, out BodyInertia inertia)
     {
         c.GearBoxHalf = spec.Half; // remembered for the ground-sink clamp in the drive
-        inertia = new Box(spec.Half.X * 2f, spec.Half.Y * 2f, spec.Half.Z * 2f).ComputeInertia(spec.Mass);
+        var shape = CreateGearShape(spec.Parts, spec.Scale, spec.Mass, out inertia, out var shapes);
+        c.Shapes = shapes;
+        return shape;
+    }
 
-        c.Shapes = new List<TypedIndex>();
-        if (spec.Parts.Length == 1 && spec.Parts[0].Center.LengthSquared() < 1e-6f)
+    private TypedIndex CreateGearShape(GearShapePart[] parts, float scale, float mass,
+        out BodyInertia inertia, out List<TypedIndex> shapes)
+    {
+        var half = ComputeGearShapeHalf(parts) * scale;
+        inertia = new Box(half.X * 2f, half.Y * 2f, half.Z * 2f).ComputeInertia(mass);
+
+        shapes = new List<TypedIndex>();
+        if (parts.Length == 1 && parts[0].Center.LengthSquared() < 1e-6f)
         {
-            var p = spec.Parts[0];
-            var idx = simulation!.Shapes.Add(new Box(p.Half.X * spec.Scale * 2f, p.Half.Y * spec.Scale * 2f, p.Half.Z * spec.Scale * 2f));
-            c.Shapes.Add(idx);
+            var p = parts[0];
+            var idx = simulation!.Shapes.Add(new Box(p.Half.X * scale * 2f, p.Half.Y * scale * 2f, p.Half.Z * scale * 2f));
+            shapes.Add(idx);
             return idx;
         }
 
-        bufferPool!.Take<CompoundChild>(spec.Parts.Length, out var children);
-        for (int i = 0; i < spec.Parts.Length; i++)
+        bufferPool!.Take<CompoundChild>(parts.Length, out var children);
+        for (int i = 0; i < parts.Length; i++)
         {
-            var p = spec.Parts[i];
-            var childHalf = p.Half * spec.Scale;
+            var p = parts[i];
+            var childHalf = p.Half * scale;
             var shape = simulation!.Shapes.Add(new Box(childHalf.X * 2f, childHalf.Y * 2f, childHalf.Z * 2f));
-            c.Shapes.Add(shape);
+            shapes.Add(shape);
             children[i] = new CompoundChild
             {
                 ShapeIndex = shape,
-                LocalPosition = p.Center * spec.Scale,
+                LocalPosition = p.Center * scale,
                 LocalOrientation = p.Rotation,
             };
         }
 
         var compound = simulation!.Shapes.Add(new Compound(children));
-        c.Shapes.Add(compound);
+        shapes.Add(compound);
         return compound;
     }
 
