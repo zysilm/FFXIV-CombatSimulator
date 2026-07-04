@@ -25,6 +25,7 @@ namespace CombatSimulator;
 public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 {
     private const string CommandName = "/combatsim";
+    private const int NpcRagdollActivationsPerFrame = 1;
 
     private readonly IDalamudPluginInterface pluginInterface;
     private readonly ICommandManager commandManager;
@@ -73,6 +74,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     // NPC ragdoll controllers (multiple concurrent, persist until sim stop/reset/zone change)
     private readonly Dictionary<nint, RagdollController> npcRagdolls = new();
+    private readonly Queue<nint> pendingNpcRagdolls = new();
+    private readonly HashSet<nint> pendingNpcRagdollAddresses = new();
 
     private readonly MainWindow mainWindow;
     private readonly HpBarOverlay hpBarOverlay;
@@ -705,6 +708,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             mapEnemyController.Tick(deltaTime);
             combatEngine.Tick(deltaTime);
+            ProcessPendingNpcRagdolls();
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
             // Re-apply after NPC AI so the final frame pose is still constrained to the 2D lane.
             // Lane only — the full Tick already ran this frame; running it again would advance
@@ -736,10 +740,39 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // Note: KO strip is intentionally player-only — NPC draw objects vary too much
         // (non-humanoid, partial gear) to strip reliably, so it's not applied here.
 
-        if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
+        if (address == nint.Zero || !config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
+            return;
+
+        if (HasLiveNpcRagdoll(address) || pendingNpcRagdollAddresses.Contains(address))
+            return;
+
+        pendingNpcRagdolls.Enqueue(address);
+        pendingNpcRagdollAddresses.Add(address);
+    }
+
+    private void ProcessPendingNpcRagdolls()
+    {
+        if (pendingNpcRagdolls.Count == 0)
+            return;
+
+        if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll || !combatEngine.IsActive)
         {
+            ClearPendingNpcRagdolls();
             return;
         }
+
+        for (var i = 0; i < NpcRagdollActivationsPerFrame && pendingNpcRagdolls.Count > 0; i++)
+        {
+            var address = pendingNpcRagdolls.Dequeue();
+            pendingNpcRagdollAddresses.Remove(address);
+            ActivateNpcDeathRagdoll(address);
+        }
+    }
+
+    private void ActivateNpcDeathRagdoll(nint address)
+    {
+        if (address == nint.Zero || !config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
+            return;
 
         // Weapon drop is part of ragdoll — same activation delay.
         weaponDropController.SpawnFor(address, config.NpcRagdollActivationDelay);
@@ -772,6 +805,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         controller.Activate(address, config.NpcRagdollActivationDelay);
         npcRagdolls[address] = controller;
+    }
+
+    private void ClearPendingNpcRagdolls()
+    {
+        pendingNpcRagdolls.Clear();
+        pendingNpcRagdollAddresses.Clear();
     }
 
     private bool HasLiveNpcRagdoll(nint address)
@@ -935,6 +974,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void DeactivateAllNpcRagdolls()
     {
+        ClearPendingNpcRagdolls();
         foreach (var controller in npcRagdolls.Values)
             controller.Dispose();
         npcRagdolls.Clear();
