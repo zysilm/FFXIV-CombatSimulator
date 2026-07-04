@@ -98,6 +98,7 @@ public unsafe class RagdollController : IDisposable
     // Bone-to-body mapping
     private readonly List<RagdollBone> ragdollBones = new();
     private readonly List<ExternalBodyHandle> externalBodies = new();
+    private readonly HashSet<int> externalDynamicBodyHandles = new();
 
     // Bone defs actually used for the active ragdoll, keyed by name. For humanoid
     // skeletons these are the tuned human defs; for non-humanoid skeletons they are
@@ -405,13 +406,14 @@ public unsafe class RagdollController : IDisposable
                 new RigidPose(position, Quaternion.Normalize(orientation)),
                 default(BodyVelocity),
                 inertia,
-                new CollidableDescription(shapeIndex, 0.04f),
+                new CollidableDescription(shapeIndex, 0.016f),
                 new BodyActivityDescription(0.01f)));
 
             var body = simulation.Bodies.GetBodyReference(bodyHandle);
             body.Velocity.Linear = linearVelocity;
             body.Velocity.Angular = angularVelocity;
             body.Awake = true;
+            externalDynamicBodyHandles.Add(bodyHandle.Value);
             WakeRagdollBodiesForBiomechanicalSettle();
 
             handle = new ExternalBodyHandle
@@ -495,6 +497,31 @@ public unsafe class RagdollController : IDisposable
         }
     }
 
+    public bool TryDampenExternalBodyVelocity(ExternalBodyHandle? handle,
+        float horizontalScale, float verticalScale, float angularScale)
+    {
+        if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
+            return false;
+
+        try
+        {
+            horizontalScale = Math.Clamp(horizontalScale, 0f, 1f);
+            verticalScale = Math.Clamp(verticalScale, 0f, 1f);
+            angularScale = Math.Clamp(angularScale, 0f, 1f);
+
+            var body = simulation.Bodies.GetBodyReference(handle.Body);
+            var lin = body.Velocity.Linear;
+            body.Velocity.Linear = new Vector3(lin.X * horizontalScale, lin.Y * verticalScale, lin.Z * horizontalScale);
+            body.Velocity.Angular *= angularScale;
+            body.Awake = true;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public void RemoveExternalBody(ExternalBodyHandle? handle)
     {
         if (handle == null || handle.Removed)
@@ -507,6 +534,7 @@ public unsafe class RagdollController : IDisposable
                 try { simulation.Shapes.RemoveAndDispose(shape, bufferPool); } catch { }
         }
 
+        externalDynamicBodyHandles.Remove(handle.Body.Value);
         handle.Removed = true;
         externalBodies.Remove(handle);
     }
@@ -522,6 +550,7 @@ public unsafe class RagdollController : IDisposable
             var handle = externalBodies[i];
             if (handle.Removed || handle.Generation != externalBodyGeneration)
             {
+                externalDynamicBodyHandles.Remove(handle.Body.Value);
                 externalBodies.RemoveAt(i);
                 continue;
             }
@@ -533,6 +562,7 @@ public unsafe class RagdollController : IDisposable
             }
             catch
             {
+                externalDynamicBodyHandles.Remove(handle.Body.Value);
                 handle.Removed = true;
                 externalBodies.RemoveAt(i);
             }
@@ -2853,7 +2883,12 @@ public unsafe class RagdollController : IDisposable
         // contacts that overflowed into it. Keep everything in synchronized batches.
         simulation = BepuSimulation.Create(
             bufferPool,
-            new RagdollNarrowPhaseCallbacks { ConnectedPairs = connectedPairs, Friction = config.RagdollFriction },
+            new RagdollNarrowPhaseCallbacks
+            {
+                ConnectedPairs = connectedPairs,
+                ExternalDynamicBodies = externalDynamicBodyHandles,
+                Friction = config.RagdollFriction,
+            },
             new RagdollPoseIntegratorCallbacks(
                 new Vector3(0, -config.RagdollGravity, 0),
                 config.RagdollDamping),
@@ -7442,6 +7477,7 @@ public unsafe class RagdollController : IDisposable
         biomechanicalSettleRemaining = 0f;
         ragdollBones.Clear();
         externalBodies.Clear();
+        externalDynamicBodyHandles.Clear();
         npcCollisionStates.Clear();
         npcFallbackShapeReady = false;
         attackStrikeTimer = 0f;
@@ -7470,6 +7506,7 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     // Connected body pairs that should NOT collide (parent-child joints).
     // All other body-body pairs DO collide (arms vs torso, etc.).
     public HashSet<(int, int)> ConnectedPairs;
+    public HashSet<int>? ExternalDynamicBodies;
     public HashSet<int>? RestrictedStatics;
     public HashSet<int>? AllowedDynamicBodiesForRestrictedStatics;
 
@@ -7480,11 +7517,15 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         // Always allow body-static collisions (ragdoll vs ground)
         if (a.Mobility == CollidableMobility.Static || b.Mobility == CollidableMobility.Static)
         {
+            var dynamicRef = a.Mobility == CollidableMobility.Dynamic ? a :
+                b.Mobility == CollidableMobility.Dynamic ? b : default;
+            if (dynamicRef.Mobility == CollidableMobility.Dynamic && IsExternalDynamic(dynamicRef.BodyHandle.Value))
+                speculativeMargin = MathF.Min(speculativeMargin, 0.016f);
+
             if (RestrictedStatics != null && AllowedDynamicBodiesForRestrictedStatics != null &&
                 ((a.Mobility == CollidableMobility.Static && RestrictedStatics.Contains(a.StaticHandle.Value)) ||
                  (b.Mobility == CollidableMobility.Static && RestrictedStatics.Contains(b.StaticHandle.Value))))
             {
-                var dynamicRef = a.Mobility == CollidableMobility.Dynamic ? a : b;
                 return dynamicRef.Mobility == CollidableMobility.Dynamic &&
                        AllowedDynamicBodiesForRestrictedStatics.Contains(dynamicRef.BodyHandle.Value);
             }
@@ -7499,8 +7540,17 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 
         // Body-body: allow UNLESS they are directly connected by a joint.
         // Connected pairs would explode because they share a constraint anchor point.
-        if (ConnectedPairs != null && a.Mobility == CollidableMobility.Dynamic && b.Mobility == CollidableMobility.Dynamic)
+        if (a.Mobility == CollidableMobility.Dynamic && b.Mobility == CollidableMobility.Dynamic)
         {
+            if (IsExternalDynamic(a.BodyHandle.Value) || IsExternalDynamic(b.BodyHandle.Value))
+            {
+                speculativeMargin = MathF.Min(speculativeMargin, 0.016f);
+                return true;
+            }
+
+            if (ConnectedPairs == null)
+                return false;
+
             var idA = a.BodyHandle.Value;
             var idB = b.BodyHandle.Value;
             var lo = Math.Min(idA, idB);
@@ -7528,7 +7578,13 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         // forever and never settles. Give self-contacts a gentle, overdamped recovery so
         // resting overlaps stop pumping energy and the rig can sleep. Ground (static) and
         // external strikes (kinematic) keep the firm 2 m/s recovery for crisp response.
-        if (pair.A.Mobility == CollidableMobility.Dynamic && pair.B.Mobility == CollidableMobility.Dynamic)
+        if (IsGearContact(pair))
+        {
+            pairMaterial.MaximumRecoveryVelocity = 0.35f;
+            pairMaterial.FrictionCoefficient = MathF.Max(Friction, 4.0f);
+            pairMaterial.SpringSettings = new SpringSettings(16, 3);
+        }
+        else if (pair.A.Mobility == CollidableMobility.Dynamic && pair.B.Mobility == CollidableMobility.Dynamic)
         {
             pairMaterial.MaximumRecoveryVelocity = 0.2f;
             pairMaterial.SpringSettings = new SpringSettings(20, 2);
@@ -7545,6 +7601,16 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         ref ConvexContactManifold manifold) => true;
 
     public void Dispose() { }
+
+    private bool IsExternalDynamic(int bodyHandle)
+        => ExternalDynamicBodies != null && ExternalDynamicBodies.Contains(bodyHandle);
+
+    private bool IsGearContact(CollidablePair pair)
+    {
+        var aExternal = pair.A.Mobility == CollidableMobility.Dynamic && IsExternalDynamic(pair.A.BodyHandle.Value);
+        var bExternal = pair.B.Mobility == CollidableMobility.Dynamic && IsExternalDynamic(pair.B.BodyHandle.Value);
+        return aExternal || bExternal;
+    }
 }
 
 struct RagdollPoseIntegratorCallbacks : IPoseIntegratorCallbacks

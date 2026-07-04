@@ -55,6 +55,7 @@ public unsafe class DismembermentController : IDisposable
     private readonly HashSet<(int, int)> connectedPairs = new();
     private readonly HashSet<int> restrictedStaticHandles = new();
     private readonly HashSet<int> pcCollisionBodyHandles = new();
+    private readonly HashSet<int> gearDynamicBodyHandles = new();
     private readonly List<NpcCollisionState> pcNpcCollisionStates = new();
     private readonly HashSet<nint> pcNpcCollisionAddresses = new();
     private TypedIndex limbShapeIndex;
@@ -145,6 +146,9 @@ public unsafe class DismembermentController : IDisposable
         public Dictionary<int, (Vector3 T, Quaternion R)>? GearCapById; // captured rest pose by bone idx (skirt hang)
         public float GearGroundY = float.NegativeInfinity;   // ground height for the skirt-hang / sink clamp
         public Vector3 GearBoxHalf;                          // collision proxy half-extents (for the sink clamp)
+        public GearShapePart[]? GearShapeParts;              // local proxy parts used for visual ground settling
+        public float GearShapeScale = 1f;
+        public float GearGroundVisualOffset;                  // smoothed visual-only downward ground settle offset
         public int GearArmedFrames;                          // frames since the rigid body was armed
         public int GearRestFrames;                           // consecutive near-rest frames
         public int GearPoseRelaxFrames;                      // bounded render-pose settling progress
@@ -1947,6 +1951,8 @@ public unsafe class DismembermentController : IDisposable
 
             var shapeSpec = BuildGearShapeSpec(c);
             c.GearBoxHalf = shapeSpec.Half;
+            c.GearShapeParts = shapeSpec.Parts;
+            c.GearShapeScale = shapeSpec.Scale;
 
             if (ShouldWaitForPlayerRagdoll(c))
             {
@@ -1983,6 +1989,7 @@ public unsafe class DismembermentController : IDisposable
                         inertia,
                         new CollidableDescription(shape, 0.04f),
                         new BodyActivityDescription(0.01f)));
+                    gearDynamicBodyHandles.Add(c.Body.Value.Value);
                     SeedBodyVelocity(c.Body.Value, c, c.LimbRootBone);
                     (c.GroundTile, c.GroundShape) = CreateTerrainPatch(spawnPos.X, spawnPos.Z, spawnPos.Y);
                     RegisterPcCollisionBodies(c);
@@ -2028,10 +2035,16 @@ public unsafe class DismembermentController : IDisposable
             bodyPos = bodyRef.Pose.Position;
         }
         var visualScale = ResolveGearVisualSquashFactor(c);
+        var hasGroundStats = TryEstimateGearGroundStats(c, bodyPos, renderRot, visualScale,
+            out var averageGroundHeight, out var lowestGroundHeight);
+        if (hasGroundStats)
+            ApplyGearGroundContactDamping(c, averageGroundHeight, lowestGroundHeight);
+        var groundVisualOffset = ResolveGearGroundVisualOffset(c, hasGroundStats, averageGroundHeight, lowestGroundHeight);
         var visualCenterOffset = ScaleVector(c.LimbRootModelPos + c.GearExtraOffset, visualScale);
         // Box centre is at the visual piece centre. Back out the *visually scaled* centre offset so
         // nonuniform squash does not make the rendered shell float or sink relative to the physics body.
         var skelPos = bodyPos - Vector3.Transform(visualCenterOffset, renderRot);
+        skelPos.Y -= groundVisualOffset;
 
         // Keep the visible piece from sinking through the ground. GearBoxHalf is the local AABB of the
         // enclose the whole piece, so its lowest world point ≈ the piece's lowest point — clamp THAT
@@ -2039,8 +2052,8 @@ public unsafe class DismembermentController : IDisposable
         if (!float.IsNegativeInfinity(c.GearGroundY))
         {
             var visualHalf = ScaleVector(c.GearBoxHalf, visualScale);
-            var boxLowestY = bodyPos.Y - WorldVerticalHalfExtent(renderRot, visualHalf);
-            var target = c.GearGroundY + 0.02f;
+            var boxLowestY = bodyPos.Y - groundVisualOffset - WorldVerticalHalfExtent(renderRot, visualHalf);
+            var target = c.GearGroundY + 0.004f;
             if (boxLowestY < target) skelPos.Y += target - boxLowestY;
         }
 
@@ -2229,6 +2242,130 @@ public unsafe class DismembermentController : IDisposable
 
     private static Vector3 ScaleVector(Vector3 v, Vector3 scale)
         => new(v.X * scale.X, v.Y * scale.Y, v.Z * scale.Z);
+
+    private bool TryEstimateGearGroundStats(Clone c, Vector3 bodyPos, Quaternion bodyRot, Vector3 visualScale,
+        out float averageHeight, out float lowestHeight)
+    {
+        averageHeight = 0f;
+        lowestHeight = 0f;
+        if (float.IsNegativeInfinity(c.GearGroundY))
+            return false;
+
+        var sum = 0f;
+        var count = 0;
+        var lowest = float.MaxValue;
+
+        var parts = c.GearShapeParts;
+        if (parts != null && parts.Length > 0)
+        {
+            foreach (var p in parts)
+            {
+                var half = ScaleVector(p.Half * c.GearShapeScale, visualScale);
+                var center = ScaleVector(p.Center * c.GearShapeScale, visualScale);
+                AccumulateGearBoxGroundStats(bodyPos, bodyRot, p.Rotation, center, half, c.GearGroundY,
+                    ref sum, ref count, ref lowest);
+            }
+        }
+        else if (c.GearBoxHalf.LengthSquared() > 1e-8f)
+        {
+            AccumulateGearBoxGroundStats(bodyPos, bodyRot, Quaternion.Identity, Vector3.Zero,
+                ScaleVector(c.GearBoxHalf, visualScale), c.GearGroundY, ref sum, ref count, ref lowest);
+        }
+
+        if (count <= 0 || lowest == float.MaxValue)
+            return false;
+
+        averageHeight = sum / count;
+        lowestHeight = lowest;
+        return true;
+    }
+
+    private static void AccumulateGearBoxGroundStats(Vector3 bodyPos, Quaternion bodyRot, Quaternion localRot,
+        Vector3 center, Vector3 half, float groundY, ref float sum, ref int count, ref float lowest)
+    {
+        for (var sx = -1; sx <= 1; sx += 2)
+        for (var sy = -1; sy <= 1; sy += 2)
+        for (var sz = -1; sz <= 1; sz += 2)
+        {
+            var corner = new Vector3(half.X * sx, half.Y * sy, half.Z * sz);
+            var local = center + Vector3.Transform(corner, localRot);
+            var height = bodyPos.Y + Vector3.Transform(local, bodyRot).Y - groundY;
+            sum += height;
+            count++;
+            lowest = MathF.Min(lowest, height);
+        }
+    }
+
+    private float ResolveGearGroundVisualOffset(Clone c, bool hasGroundStats, float averageHeight, float lowestHeight)
+    {
+        if (!hasGroundStats || c.GearArmedFrames < 12)
+        {
+            c.GearGroundVisualOffset *= 0.82f;
+            if (c.GearGroundVisualOffset < 0.0005f) c.GearGroundVisualOffset = 0f;
+            return c.GearGroundVisualOffset;
+        }
+
+        var settled = c.GearRestFrames >= 3 || c.GearArmedFrames >= 70;
+        if (!settled || lowestHeight <= 0.004f)
+        {
+            c.GearGroundVisualOffset *= 0.90f;
+            if (c.GearGroundVisualOffset < 0.0005f) c.GearGroundVisualOffset = 0f;
+            return c.GearGroundVisualOffset;
+        }
+
+        var requested = MathF.Max(0f, averageHeight - 0.002f);
+        var safeByLowestVertex = MathF.Max(0f, lowestHeight - 0.002f);
+        var target = MathF.Min(requested, safeByLowestVertex);
+        target = MathF.Min(target, c.GearKeepModelSlot == 1 ? 0.055f : 0.035f);
+
+        var restBlend = Math.Clamp((c.GearRestFrames - 2) / 10f, 0f, 1f);
+        if (c.GearArmedFrames >= 70)
+            restBlend = MathF.Max(restBlend, 0.35f);
+        target *= restBlend;
+
+        c.GearGroundVisualOffset += (target - c.GearGroundVisualOffset) * 0.18f;
+        if (c.GearGroundVisualOffset < 0.0005f) c.GearGroundVisualOffset = 0f;
+        return c.GearGroundVisualOffset;
+    }
+
+    private void ApplyGearGroundContactDamping(Clone c, float averageHeight, float lowestHeight)
+    {
+        if (c.GearArmedFrames < 8 || c.GearRestFrames < 2)
+            return;
+
+        if (lowestHeight > 0.055f && averageHeight > 0.11f)
+            return;
+
+        var restBlend = Math.Clamp(c.GearRestFrames / 12f, 0f, 1f);
+        var targetHorizontal = c.GearKeepModelSlot == 1 ? 0.74f : 0.82f;
+        var horizontalScale = 0.96f + (targetHorizontal - 0.96f) * restBlend;
+        var verticalScale = 1f + (0.84f - 1f) * restBlend;
+        var angularScale = 0.94f + (0.78f - 0.94f) * restBlend;
+        DampenGearBodyVelocity(c, horizontalScale, verticalScale, angularScale);
+    }
+
+    private void DampenGearBodyVelocity(Clone c, float horizontalScale, float verticalScale, float angularScale)
+    {
+        horizontalScale = Math.Clamp(horizontalScale, 0f, 1f);
+        verticalScale = Math.Clamp(verticalScale, 0f, 1f);
+        angularScale = Math.Clamp(angularScale, 0f, 1f);
+
+        if (c.GearRagdollBody != null)
+        {
+            PlayerRagdollController?.TryDampenExternalBodyVelocity(c.GearRagdollBody,
+                horizontalScale, verticalScale, angularScale);
+            return;
+        }
+
+        if (simulation == null || c.Body == null)
+            return;
+
+        var body = simulation.Bodies.GetBodyReference(c.Body.Value);
+        var lin = body.Velocity.Linear;
+        body.Velocity.Linear = new Vector3(lin.X * horizontalScale, lin.Y * verticalScale, lin.Z * horizontalScale);
+        body.Velocity.Angular *= angularScale;
+        body.Awake = true;
+    }
 
     private void ApplyGearVisualSquash(Clone c, DrawObject* drawObj, Vector3 factor)
     {
@@ -2448,7 +2585,7 @@ public unsafe class DismembermentController : IDisposable
     private Vector3 ClampWorldAboveGearGround(Clone c, Vector3 world)
     {
         if (float.IsNegativeInfinity(c.GearGroundY)) return world;
-        var minY = c.GearGroundY + 0.025f;
+        var minY = c.GearGroundY + 0.004f;
         if (world.Y < minY) world.Y = minY;
         return world;
     }
@@ -2464,7 +2601,7 @@ public unsafe class DismembermentController : IDisposable
             skeleton->Transform.Rotation.X, skeleton->Transform.Rotation.Y,
             skeleton->Transform.Rotation.Z, skeleton->Transform.Rotation.W));
         var world = skelPos + Vector3.Transform(modelPos, skelRot);
-        var minY = c.GearGroundY + 0.025f;
+        var minY = c.GearGroundY + 0.004f;
         if (world.Y >= minY) return modelPos;
 
         world.Y = minY;
@@ -2525,7 +2662,7 @@ public unsafe class DismembermentController : IDisposable
                     ? cap.T - capParent.T
                     : new Vector3(0f, -0.05f, 0f);
                 var targetWorld = parentWorld + Vector3.Transform(capOffset, hangRef);
-                if (targetWorld.Y < groundY + 0.02f) targetWorld.Y = groundY + 0.02f;
+                if (targetWorld.Y < groundY + 0.004f) targetWorld.Y = groundY + 0.004f;
 
                 var modelPos = Vector3.Transform(targetWorld - skelPos, skelRotInv);
                 // Keep the bone's captured WORLD orientation (hanging-down) regardless of body tumble.
@@ -3885,7 +4022,11 @@ public unsafe class DismembermentController : IDisposable
             if (simulation != null)
             {
                 UnregisterPcCollisionBodies(c);
-                if (c.Body.HasValue) simulation.Bodies.Remove(c.Body.Value);
+                if (c.Body.HasValue)
+                {
+                    gearDynamicBodyHandles.Remove(c.Body.Value.Value);
+                    simulation.Bodies.Remove(c.Body.Value);
+                }
                 if (c.Rig != null)
                 {
                     foreach (var pair in c.Rig.ConnectedPairs)
@@ -4151,6 +4292,7 @@ public unsafe class DismembermentController : IDisposable
             new RagdollNarrowPhaseCallbacks
             {
                 ConnectedPairs = connectedPairs,
+                ExternalDynamicBodies = gearDynamicBodyHandles,
                 Friction = config.RagdollFriction,
                 RestrictedStatics = restrictedStaticHandles,
                 AllowedDynamicBodiesForRestrictedStatics = pcCollisionBodyHandles,
@@ -4171,6 +4313,7 @@ public unsafe class DismembermentController : IDisposable
         simulation = null;
         connectedPairs.Clear();
         pcCollisionBodyHandles.Clear();
+        gearDynamicBodyHandles.Clear();
         pcNpcCollisionStates.Clear();
         pcNpcCollisionAddresses.Clear();
         restrictedStaticHandles.Clear();
