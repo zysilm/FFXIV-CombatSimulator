@@ -174,6 +174,7 @@ public partial class Configuration : IPluginConfiguration
     public bool FightingSpacingDefaultsMigrated20260703 { get; set; } = false;
     public bool ThinnerProfileTuningMigrated20260704 { get; set; } = false;
     public bool KneeHingeStiffnessMigrated20260704 { get; set; } = false;
+    public bool AnatomicalDefaultsOffMigrated20260704 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -375,13 +376,15 @@ public partial class Configuration : IPluginConfiguration
     // resolved as (Winter Table 3.1 body-mass fraction) x RagdollBodyMass instead of the
     // hand-picked per-bone Mass values. Fixes wrong inertia (thigh too heavy, trunk not
     // pelvis-heavy). Cloth/weapon/breast bones keep their tiny existing masses.
-    public bool RagdollAnthropometricMass { get; set; } = true;
+    // Default OFF after field testing: only useful in specific setups.
+    public bool RagdollAnthropometricMass { get; set; } = false;
     public float RagdollBodyMass { get; set; } = 70f; // Total body mass (kg) anthropometric fractions scale against.
     // Tier B — Anatomy-fixed knee/elbow hinge axis. When on, the hinge axis is derived
     // from the skeleton medial-lateral (character RIGHT) axis projected perpendicular to
     // the bone, instead of Cross(thighDir, shinDir) which is degenerate for a near-straight
     // limb and produced an asymmetric (one knee sideways, one forward) axis at death.
-    public bool RagdollAnatomicalHingeAxis { get; set; } = true;
+    // Default OFF after field testing: only useful in specific setups.
+    public bool RagdollAnatomicalHingeAxis { get; set; } = false;
     // Tier C — Asymmetric swing-twist range of motion. When on, joints draw their axial
     // twist range (all joints) and the knee/elbow flexion/hyperextension bounds from a
     // clinical/ISB anatomical ROM table instead of the hand-set per-bone twist values and
@@ -389,7 +392,9 @@ public partial class Configuration : IPluginConfiguration
     // anatomical violation) and gives each joint a correct asymmetric axial range. The
     // ball-joint (hip/shoulder) asymmetric SWING ellipse is deferred to Tier A. Takes
     // effect on next ragdoll activation.
-    public bool RagdollAnatomicalRom { get; set; } = true;
+    // Default OFF after field testing: only useful in specific setups. The twist
+    // governors, hemisphere locks, and profile-table limits stay active regardless.
+    public bool RagdollAnatomicalRom { get; set; } = false;
 
     // Dismemberment POC: while the player ragdoll is active, collapse each selected limb's bone
     // subtree to ~0 scale so it vanishes from the body. Multi-select: stores the root bone name of
@@ -699,6 +704,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateFightingSpacingDefaults();
         MigrateThinnerProfileTuning();
         MigrateKneeHingeStiffness();
+        MigrateAnatomicalDefaultsOff();
         MigrateGuidedCollapse();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
@@ -1005,6 +1011,23 @@ public partial class Configuration : IPluginConfiguration
         ThinnerProfileTuningMigrated20260704 = true;
         if (changed)
             Save();
+    }
+
+    // Field testing verdict: the anatomical hinge axis, anatomical ROM, and
+    // anthropometric mass experiments are only useful in specific setups — flip
+    // configs still carrying the old ON defaults to OFF. (They stay available in
+    // the GUI for those specific cases.)
+    private void MigrateAnatomicalDefaultsOff()
+    {
+        if (AnatomicalDefaultsOffMigrated20260704)
+            return;
+
+        RagdollAnatomicalHingeAxis = false;
+        RagdollAnatomicalRom = false;
+        RagdollAnthropometricMass = false;
+
+        AnatomicalDefaultsOffMigrated20260704 = true;
+        Save();
     }
 
     private void MigrateGuidedCollapse()
