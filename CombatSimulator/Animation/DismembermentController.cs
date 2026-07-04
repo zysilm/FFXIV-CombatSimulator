@@ -49,6 +49,9 @@ public unsafe class DismembermentController : IDisposable
     private const uint CloneSlotEndExclusive = 249;
     private const int ReservedPlayerCloneSlots = 16; // headroom for a full KO strip (up to 7 gear) + PC dismember
     private const int CloneSlotReuseCooldownFrames = 30;
+    private const float GearGroundClearance = 0.012f;
+    private const float GearHatGroundClearance = 0.024f;
+    private const float GearGroundVisualSkin = 0.006f;
 
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
@@ -2051,7 +2054,7 @@ public unsafe class DismembermentController : IDisposable
         {
             var visualHalf = ScaleVector(c.GearBoxHalf, visualScale);
             var boxLowestY = bodyPos.Y - groundVisualOffset - WorldVerticalHalfExtent(renderRot, visualHalf);
-            var target = c.GearGroundY + 0.004f;
+            var target = c.GearGroundY + ResolveGearGroundClearance(c);
             if (boxLowestY < target) skelPos.Y += target - boxLowestY;
         }
 
@@ -2241,6 +2244,17 @@ public unsafe class DismembermentController : IDisposable
     private static Vector3 ScaleVector(Vector3 v, Vector3 scale)
         => new(v.X * scale.X, v.Y * scale.Y, v.Z * scale.Z);
 
+    private static float ResolveGearGroundClearance(Clone c)
+        => c.GearKeepModelSlot == 0 ? GearHatGroundClearance : GearGroundClearance;
+
+    private static float ResolveGearGroundVisualDropLimit(Clone c)
+        => c.GearKeepModelSlot switch
+        {
+            0 => 0.006f,
+            1 => 0.025f,
+            _ => 0.018f,
+        };
+
     private bool TryEstimateGearGroundStats(Clone c, Vector3 bodyPos, Quaternion bodyRot, Vector3 visualScale,
         out float averageHeight, out float lowestHeight)
     {
@@ -2304,15 +2318,16 @@ public unsafe class DismembermentController : IDisposable
         }
 
         var settled = c.GearRestFrames >= 3 || c.GearArmedFrames >= 70;
-        if (!settled || lowestHeight <= 0.004f)
+        var clearance = ResolveGearGroundClearance(c);
+        if (!settled || lowestHeight <= clearance)
         {
             c.GearGroundVisualOffset *= 0.90f;
             if (c.GearGroundVisualOffset < 0.0005f) c.GearGroundVisualOffset = 0f;
             return c.GearGroundVisualOffset;
         }
 
-        var target = MathF.Max(0f, lowestHeight - 0.002f);
-        target = MathF.Min(target, c.GearKeepModelSlot == 1 ? 0.055f : 0.035f);
+        var target = MathF.Max(0f, lowestHeight - GearGroundVisualSkin);
+        target = MathF.Min(target, ResolveGearGroundVisualDropLimit(c));
 
         var restBlend = Math.Clamp((c.GearRestFrames - 2) / 10f, 0f, 1f);
         if (c.GearArmedFrames >= 70)
@@ -2579,7 +2594,7 @@ public unsafe class DismembermentController : IDisposable
     private Vector3 ClampWorldAboveGearGround(Clone c, Vector3 world)
     {
         if (float.IsNegativeInfinity(c.GearGroundY)) return world;
-        var minY = c.GearGroundY + 0.004f;
+        var minY = c.GearGroundY + ResolveGearGroundClearance(c);
         if (world.Y < minY) world.Y = minY;
         return world;
     }
@@ -2595,7 +2610,7 @@ public unsafe class DismembermentController : IDisposable
             skeleton->Transform.Rotation.X, skeleton->Transform.Rotation.Y,
             skeleton->Transform.Rotation.Z, skeleton->Transform.Rotation.W));
         var world = skelPos + Vector3.Transform(modelPos, skelRot);
-        var minY = c.GearGroundY + 0.004f;
+        var minY = c.GearGroundY + ResolveGearGroundClearance(c);
         if (world.Y >= minY) return modelPos;
 
         world.Y = minY;
@@ -2656,7 +2671,8 @@ public unsafe class DismembermentController : IDisposable
                     ? cap.T - capParent.T
                     : new Vector3(0f, -0.05f, 0f);
                 var targetWorld = parentWorld + Vector3.Transform(capOffset, hangRef);
-                if (targetWorld.Y < groundY + 0.004f) targetWorld.Y = groundY + 0.004f;
+                var minY = groundY + ResolveGearGroundClearance(c);
+                if (targetWorld.Y < minY) targetWorld.Y = minY;
 
                 var modelPos = Vector3.Transform(targetWorld - skelPos, skelRotInv);
                 // Keep the bone's captured WORLD orientation (hanging-down) regardless of body tumble.
