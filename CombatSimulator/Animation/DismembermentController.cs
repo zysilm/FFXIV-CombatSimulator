@@ -1970,12 +1970,6 @@ public unsafe class DismembermentController : IDisposable
             c.GearMass = shapeSpec.Mass;
             c.GearCollapsedPhysicsApplied = false;
 
-            if (ShouldWaitForPlayerRagdoll(c))
-            {
-                HideEntireBody(c);
-                return true;
-            }
-
             var skeleton = skel.CharBase->Skeleton;
             var cloneSkelPos = skeleton != null
                 ? new Vector3(skeleton->Transform.Position.X, skeleton->Transform.Position.Y, skeleton->Transform.Position.Z)
@@ -2200,7 +2194,7 @@ public unsafe class DismembermentController : IDisposable
         => c.GearKeepModelSlot is 0 or 1 or 3;
 
     private static bool IsDeflatableGear(Clone c)
-        => c.GearKeepModelSlot is 0 or 1 or 3;
+        => c.GearKeepModelSlot >= 0;
 
     private void UpdateGearSettleProgress(Clone c, Vector3 linearVelocity, Vector3 angularVelocity)
     {
@@ -2242,13 +2236,7 @@ public unsafe class DismembermentController : IDisposable
         var strength = t * t * (3f - 2f * t);
         if (strength <= 0f) return Vector3.One;
 
-        var target = c.GearKeepModelSlot switch
-        {
-            0 => new Vector3(1.16f, 0.42f, 1.16f), // hat/cap: flatten crown/cone, spread brim
-            1 => new Vector3(1.16f, 1.04f, 0.30f), // body/top after flat-rotation: local Z is thickness
-            3 => new Vector3(1.10f, 0.96f, 0.34f), // pants/shorts: flatten thickness, modest spread
-            _ => Vector3.One,
-        };
+        var target = ResolveGearFinalSquashFactor(c);
 
         return Vector3.Lerp(Vector3.One, target, strength);
     }
@@ -2295,8 +2283,15 @@ public unsafe class DismembermentController : IDisposable
         => c.GearKeepModelSlot switch
         {
             0 => new Vector3(1.16f, 0.42f, 1.16f),
+            1 => new Vector3(1.16f, 1.04f, 0.30f),
+            2 => new Vector3(1.04f, 0.72f, 0.78f),
             3 => new Vector3(1.10f, 0.96f, 0.34f),
-            _ => Vector3.One,
+            4 => new Vector3(1.06f, 0.68f, 0.88f),
+            5 => new Vector3(1.08f, 0.55f, 1.08f),
+            6 => new Vector3(1.06f, 0.52f, 1.06f),
+            7 => new Vector3(1.05f, 0.58f, 1.05f),
+            8 or 9 => new Vector3(1.04f, 0.54f, 1.04f),
+            _ => new Vector3(1.04f, 0.70f, 0.92f),
         };
 
     private bool TryReplaceLocalGearShape(Clone c, GearShapePart[] parts)
@@ -3100,7 +3095,7 @@ public unsafe class DismembermentController : IDisposable
         if (!TryResolveGearModelTargetHalf(c.GearKeepModelSlot, bounds.Half, templateHalf, out var targetHalf))
             return false;
 
-        var fittedParts = ScaleGearShapePartsToHalf(templateParts, templateHalf, targetHalf);
+        var fittedParts = BuildModelDrivenGearShapeParts(c.GearKeepModelSlot, targetHalf, templateParts, templateHalf);
         var half = ComputeGearShapeHalf(fittedParts) * scale;
         spec = new GearShapeSpec(fittedParts, scale, half, templateOffset * scale,
             c.GearHideSkin ? 0.8f : GearPieceMass);
@@ -3251,11 +3246,35 @@ public unsafe class DismembermentController : IDisposable
                 ClampModelAxis(modelHalf.X, templateHalf.X, 0.70f, 1.60f),
                 ClampModelAxis(modelHalf.Y * 0.55f, templateHalf.Y, 0.55f, 1.10f),
                 ClampModelAxis(modelHalf.Z, templateHalf.Z, 0.70f, 1.60f)),
+            2 => new Vector3(
+                ClampModelAxis(modelHalf.X, templateHalf.X, 0.60f, 1.90f),
+                ClampModelAxis(modelHalf.Y, templateHalf.Y, 0.60f, 1.65f),
+                ClampModelAxis(modelHalf.Z, templateHalf.Z, 0.55f, 1.75f)),
             // Pants flatten mostly in local thickness. Let height/width follow the item, but keep thickness thin.
             3 => new Vector3(
                 ClampModelAxis(modelHalf.X, templateHalf.X, 0.65f, 1.45f),
                 ClampModelAxis(modelHalf.Y, templateHalf.Y, 0.65f, 1.35f),
                 ClampModelAxis(modelHalf.Z * 0.55f, templateHalf.Z, 0.55f, 1.10f)),
+            4 => new Vector3(
+                ClampModelAxis(modelHalf.X, templateHalf.X, 0.60f, 1.90f),
+                ClampModelAxis(modelHalf.Y, templateHalf.Y, 0.50f, 1.45f),
+                ClampModelAxis(modelHalf.Z, templateHalf.Z, 0.60f, 1.90f)),
+            5 => new Vector3(
+                ClampModelAxis(modelHalf.X, templateHalf.X, 0.45f, 2.40f),
+                ClampModelAxis(modelHalf.Y, templateHalf.Y, 0.45f, 1.85f),
+                ClampModelAxis(modelHalf.Z, templateHalf.Z, 0.45f, 2.10f)),
+            6 => new Vector3(
+                ClampModelAxis(modelHalf.X, templateHalf.X, 0.55f, 2.20f),
+                ClampModelAxis(modelHalf.Y, templateHalf.Y, 0.45f, 1.45f),
+                ClampModelAxis(modelHalf.Z, templateHalf.Z, 0.55f, 2.20f)),
+            7 => new Vector3(
+                ClampModelAxis(modelHalf.X, templateHalf.X, 0.50f, 2.35f),
+                ClampModelAxis(modelHalf.Y, templateHalf.Y, 0.45f, 1.65f),
+                ClampModelAxis(modelHalf.Z, templateHalf.Z, 0.50f, 2.10f)),
+            8 or 9 => new Vector3(
+                ClampModelAxis(modelHalf.X, templateHalf.X, 0.50f, 2.00f),
+                ClampModelAxis(modelHalf.Y, templateHalf.Y, 0.45f, 1.45f),
+                ClampModelAxis(modelHalf.Z, templateHalf.Z, 0.50f, 2.00f)),
             _ => new Vector3(
                 ClampModelAxis(modelHalf.X, templateHalf.X, 0.65f, 1.65f),
                 ClampModelAxis(modelHalf.Y, templateHalf.Y, 0.65f, 1.65f),
@@ -3263,6 +3282,63 @@ public unsafe class DismembermentController : IDisposable
         };
 
         return targetHalf.X > 1e-5f && targetHalf.Y > 1e-5f && targetHalf.Z > 1e-5f;
+    }
+
+    private static GearShapePart[] BuildModelDrivenGearShapeParts(int slot, Vector3 targetHalf,
+        GearShapePart[] templateParts, Vector3 templateHalf)
+    {
+        var x = MathF.Max(targetHalf.X, 0.01f);
+        var y = MathF.Max(targetHalf.Y, 0.008f);
+        var z = MathF.Max(targetHalf.Z, 0.008f);
+
+        return slot switch
+        {
+            0 => new[]
+            {
+                new GearShapePart(new Vector3(x, MathF.Max(0.006f, y * 0.18f), z),
+                    new Vector3(0f, -y * 0.34f, 0f)),
+                new GearShapePart(new Vector3(x * 0.56f, MathF.Max(0.008f, y * 0.44f), z * 0.56f),
+                    new Vector3(0f, y * 0.18f, 0f)),
+            },
+            2 => new[]
+            {
+                new GearShapePart(new Vector3(x * 0.36f, y, z * 0.82f), new Vector3(-x * 0.54f, 0f, 0f)),
+                new GearShapePart(new Vector3(x * 0.36f, y, z * 0.82f), new Vector3( x * 0.54f, 0f, 0f)),
+            },
+            3 => new[]
+            {
+                new GearShapePart(new Vector3(x * 0.36f, y * 0.82f, z), new Vector3(-x * 0.36f, -y * 0.06f, 0f)),
+                new GearShapePart(new Vector3(x * 0.36f, y * 0.82f, z), new Vector3( x * 0.36f, -y * 0.06f, 0f)),
+                new GearShapePart(new Vector3(x, MathF.Max(0.010f, y * 0.22f), z), new Vector3(0f, y * 0.58f, 0f)),
+            },
+            4 => new[]
+            {
+                new GearShapePart(new Vector3(x * 0.42f, y, z), new Vector3(-x * 0.40f, 0f, 0f)),
+                new GearShapePart(new Vector3(x * 0.42f, y, z), new Vector3( x * 0.40f, 0f, 0f)),
+            },
+            5 => new[]
+            {
+                new GearShapePart(new Vector3(x * 0.24f, y * 0.78f, z * 0.58f), new Vector3(-x * 0.62f, 0f, 0f)),
+                new GearShapePart(new Vector3(x * 0.24f, y * 0.78f, z * 0.58f), new Vector3( x * 0.62f, 0f, 0f)),
+            },
+            6 => new[]
+            {
+                new GearShapePart(new Vector3(x * 0.28f, y, z * 0.32f), new Vector3(-x * 0.58f, 0f, 0f)),
+                new GearShapePart(new Vector3(x * 0.28f, y, z * 0.32f), new Vector3( x * 0.58f, 0f, 0f)),
+                new GearShapePart(new Vector3(x * 0.55f, y, z * 0.18f), new Vector3(0f, 0f, -z * 0.58f)),
+                new GearShapePart(new Vector3(x * 0.55f, y, z * 0.18f), new Vector3(0f, 0f,  z * 0.58f)),
+            },
+            7 => new[]
+            {
+                new GearShapePart(new Vector3(x * 0.30f, y, z * 0.72f), new Vector3(-x * 0.58f, 0f, 0f)),
+                new GearShapePart(new Vector3(x * 0.30f, y, z * 0.72f), new Vector3( x * 0.58f, 0f, 0f)),
+            },
+            8 or 9 => new[]
+            {
+                new GearShapePart(new Vector3(x * 0.76f, y, z * 0.76f), Vector3.Zero),
+            },
+            _ => ScaleGearShapePartsToHalf(templateParts, templateHalf, targetHalf),
+        };
     }
 
     private static GearShapePart[] ScaleGearShapePartsToHalf(GearShapePart[] parts, Vector3 currentHalf,
@@ -3401,6 +3477,20 @@ public unsafe class DismembermentController : IDisposable
             {
                 new GearShapePart(new Vector3(0.070f, 0.025f, 0.050f), Vector3.Zero),
             }, new Vector3(0f, -0.045f, 0f)),
+            5 => (new[]
+            {
+                new GearShapePart(new Vector3(0.020f, 0.030f, 0.018f), new Vector3(-0.055f, 0f, 0f)),
+                new GearShapePart(new Vector3(0.020f, 0.030f, 0.018f), new Vector3( 0.055f, 0f, 0f)),
+            }, Vector3.Zero),
+            7 => (new[]
+            {
+                new GearShapePart(new Vector3(0.028f, 0.020f, 0.030f), new Vector3(-0.050f, 0f, 0f)),
+                new GearShapePart(new Vector3(0.028f, 0.020f, 0.030f), new Vector3( 0.050f, 0f, 0f)),
+            }, Vector3.Zero),
+            8 or 9 => (new[]
+            {
+                new GearShapePart(new Vector3(0.024f, 0.014f, 0.024f), Vector3.Zero),
+            }, Vector3.Zero),
             _ => (new[]
             {
                 new GearShapePart(new Vector3(0.035f, 0.035f, 0.035f), Vector3.Zero),
