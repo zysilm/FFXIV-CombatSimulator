@@ -13,6 +13,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
+using Lumina.Data.Parsing;
 using BepuSimulation = BepuPhysics.Simulation;
 using RenderModel = FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model;
 using RenderMaterial = FFXIVClientStructs.FFXIV.Client.Graphics.Render.Material;
@@ -52,6 +53,13 @@ public unsafe class DismembermentController : IDisposable
     private const float GearGroundClearance = 0.012f;
     private const float GearHatGroundClearance = 0.024f;
     private const float GearGroundVisualSkin = 0.006f;
+    private const int MdlStringTableHeaderSize = 8;
+    private const int MdlModelHeaderSize = 56;
+    private const int MdlElementIdSize = 32;
+    private const int MdlMeshHeaderSize = 36;
+    private const int MdlShapeHeaderSize = 16;
+    private const int MdlBoundingBoxSize = 32;
+    private const int MdlModelDataSafetyLimit = 4 * 1024 * 1024;
 
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
@@ -2909,11 +2917,34 @@ public unsafe class DismembermentController : IDisposable
         public readonly Quaternion Rotation;
 
         public GearShapePart(Vector3 half, Vector3 center)
+            : this(half, center, Quaternion.Identity)
+        {
+        }
+
+        public GearShapePart(Vector3 half, Vector3 center, Quaternion rotation)
         {
             Half = half;
             Center = center;
-            Rotation = Quaternion.Identity;
+            Rotation = rotation;
         }
+    }
+
+    private readonly struct MdlBounds
+    {
+        public readonly Vector3 Min;
+        public readonly Vector3 Max;
+
+        public MdlBounds(Vector3 min, Vector3 max)
+        {
+            Min = min;
+            Max = max;
+        }
+
+        public Vector3 Center => (Min + Max) * 0.5f;
+        public Vector3 Half => (Max - Min) * 0.5f;
+        public float Volume => MathF.Max(0f, Max.X - Min.X) *
+                               MathF.Max(0f, Max.Y - Min.Y) *
+                               MathF.Max(0f, Max.Z - Min.Z);
     }
 
     private readonly struct GearShapeSpec
@@ -2938,9 +2969,247 @@ public unsafe class DismembermentController : IDisposable
     {
         var scale = c.SourceScale.X > 0f ? c.SourceScale.X : 1f;
         var (parts, off) = BuildGearShapeParts(c.GearKeepModelSlot);
+        if (c.GearKeepModelSlot != 1 &&
+            TryBuildGearShapeSpecFromModelBounds(c, parts, off, scale, out var modelSpec))
+            return modelSpec;
+
         var half = ComputeGearShapeHalf(parts) * scale;
         return new GearShapeSpec(parts, scale, half, off * scale, c.GearHideSkin ? 0.8f : GearPieceMass);
     }
+
+    private bool TryBuildGearShapeSpecFromModelBounds(Clone c, GearShapePart[] templateParts,
+        Vector3 templateOffset, float scale, out GearShapeSpec spec)
+    {
+        spec = default;
+        if (!TryReadKeptModelBounds(c, out var bounds, out var modelPath))
+            return false;
+
+        var templateHalf = ComputeGearShapeHalf(templateParts);
+        if (!TryResolveGearModelTargetHalf(c.GearKeepModelSlot, bounds.Half, templateHalf, out var targetHalf))
+            return false;
+
+        var fittedParts = ScaleGearShapePartsToHalf(templateParts, templateHalf, targetHalf);
+        var half = ComputeGearShapeHalf(fittedParts) * scale;
+        spec = new GearShapeSpec(fittedParts, scale, half, templateOffset * scale,
+            c.GearHideSkin ? 0.8f : GearPieceMass);
+
+        log.Verbose(
+            $"GearDrop: clone idx={c.ObjectIndex} slot={c.GearKeepModelSlot} mdl proxy path={modelPath} " +
+            $"boundsHalf=({bounds.Half.X:F3},{bounds.Half.Y:F3},{bounds.Half.Z:F3}) " +
+            $"targetHalf=({targetHalf.X:F3},{targetHalf.Y:F3},{targetHalf.Z:F3})");
+        return true;
+    }
+
+    private bool TryReadKeptModelBounds(Clone c, out MdlBounds bounds, out string modelPath)
+    {
+        bounds = default;
+        modelPath = string.Empty;
+        var model = GetKeptModel(c);
+        var handle = model != null ? model->ModelResourceHandle : null;
+        if (handle == null || handle->ModelData == null)
+            return false;
+
+        modelPath = handle->FileName.ToString();
+        var maxBytes = MdlModelDataSafetyLimit;
+        if (handle->FileSize2 > 0)
+            maxBytes = (int)Math.Min((uint)MdlModelDataSafetyLimit, handle->FileSize2);
+        else if (handle->FileSize > 0)
+            maxBytes = (int)Math.Min((uint)MdlModelDataSafetyLimit, handle->FileSize);
+
+        return TryReadMdlBoundsFromModelData(handle->ModelData, maxBytes, out bounds);
+    }
+
+    private static bool TryReadMdlBoundsFromModelData(byte* data, int maxBytes, out MdlBounds bounds)
+    {
+        bounds = default;
+        if (data == null || maxBytes < MdlStringTableHeaderSize + MdlModelHeaderSize)
+            return false;
+
+        var stringSize = ReadUInt32(data, 4);
+        if (stringSize > MdlModelDataSafetyLimit || stringSize > (uint)(maxBytes - MdlStringTableHeaderSize))
+            return false;
+
+        var offset = MdlStringTableHeaderSize + (int)stringSize;
+        if (!CanRead(offset, MdlModelHeaderSize, maxBytes))
+            return false;
+
+        var header = offset;
+        var meshCount = ReadUInt16(data, header + 4);
+        var attributeCount = ReadUInt16(data, header + 6);
+        var submeshCount = ReadUInt16(data, header + 8);
+        var materialCount = ReadUInt16(data, header + 10);
+        var boneCount = ReadUInt16(data, header + 12);
+        var boneTableCount = ReadUInt16(data, header + 14);
+        var shapeCount = ReadUInt16(data, header + 16);
+        var shapeMeshCount = ReadUInt16(data, header + 18);
+        var shapeValueCount = ReadUInt16(data, header + 20);
+        var lodCount = data[header + 22];
+        var elementIdCount = ReadUInt16(data, header + 24);
+        var terrainShadowMeshCount = data[header + 26];
+        var flags2 = (MdlStructs.ModelFlags2)data[header + 27];
+        var terrainShadowSubmeshCount = ReadUInt16(data, header + 38);
+        var boneTableArrayCountTotal = ReadUInt16(data, header + 44);
+        if (lodCount == 0 || lodCount > 3 ||
+            meshCount > 4096 || attributeCount > 4096 || submeshCount > 8192 ||
+            materialCount > 4096 || boneCount > 2048 || boneTableCount > 4096 ||
+            shapeCount > 4096 || shapeMeshCount > 16384 || shapeValueCount > 60000 ||
+            elementIdCount > 4096 || terrainShadowSubmeshCount > 8192)
+            return false;
+
+        offset += MdlModelHeaderSize;
+        if (!AdvanceBlock(ref offset, elementIdCount, MdlElementIdSize, maxBytes)) return false;
+        if (!AdvanceBlock(ref offset, 3, sizeof(MdlStructs.LodStruct), maxBytes)) return false;
+        if ((flags2 & MdlStructs.ModelFlags2.ExtraLodEnabled) != 0 &&
+            !AdvanceBlock(ref offset, 3, sizeof(MdlStructs.ExtraLodStruct), maxBytes))
+            return false;
+        if (!AdvanceBlock(ref offset, meshCount, MdlMeshHeaderSize, maxBytes)) return false;
+        if (!AdvanceBlock(ref offset, attributeCount, sizeof(uint), maxBytes)) return false;
+        if (!AdvanceBlock(ref offset, terrainShadowMeshCount, sizeof(MdlStructs.TerrainShadowMeshStruct), maxBytes)) return false;
+        if (!AdvanceBlock(ref offset, submeshCount, sizeof(MdlStructs.SubmeshStruct), maxBytes)) return false;
+        if (!AdvanceBlock(ref offset, terrainShadowSubmeshCount, sizeof(MdlStructs.TerrainShadowSubmeshStruct), maxBytes)) return false;
+        if (!AdvanceBlock(ref offset, materialCount, sizeof(uint), maxBytes)) return false;
+        if (!AdvanceBlock(ref offset, boneCount, sizeof(uint), maxBytes)) return false;
+        if (!AdvanceBlock(ref offset, boneTableCount, sizeof(uint), maxBytes)) return false;
+        if (!AdvanceBlock(ref offset, boneTableArrayCountTotal, sizeof(ushort), maxBytes)) return false;
+        if (!AdvanceBlock(ref offset, shapeCount, MdlShapeHeaderSize, maxBytes)) return false;
+        if (!AdvanceBlock(ref offset, shapeMeshCount, sizeof(MdlStructs.ShapeMeshStruct), maxBytes)) return false;
+        if (!AdvanceBlock(ref offset, shapeValueCount, sizeof(MdlStructs.ShapeValueStruct), maxBytes)) return false;
+        if (!CanRead(offset, sizeof(uint), maxBytes)) return false;
+
+        var submeshBoneMapSize = ReadUInt32(data, offset);
+        if (submeshBoneMapSize > 1024 * 1024)
+            return false;
+        offset += sizeof(uint);
+        if (!AdvanceBytes(ref offset, (int)submeshBoneMapSize, maxBytes)) return false;
+        if (!CanRead(offset, 1, maxBytes)) return false;
+        var padding = data[offset++];
+        if (!AdvanceBytes(ref offset, padding, maxBytes)) return false;
+        if (!CanRead(offset, MdlBoundingBoxSize * 2, maxBytes)) return false;
+
+        var bounds0 = ReadMdlBounds(data, offset);
+        var modelBounds = ReadMdlBounds(data, offset + MdlBoundingBoxSize);
+        return TryChooseMdlBounds(bounds0, modelBounds, out bounds);
+    }
+
+    private static bool TryChooseMdlBounds(MdlBounds bounds0, MdlBounds modelBounds, out MdlBounds chosen)
+    {
+        var valid0 = IsValidMdlBounds(bounds0);
+        var validModel = IsValidMdlBounds(modelBounds);
+        if (!valid0 && !validModel)
+        {
+            chosen = default;
+            return false;
+        }
+
+        if (valid0 && validModel)
+            chosen = modelBounds.Volume <= bounds0.Volume ? modelBounds : bounds0;
+        else
+            chosen = validModel ? modelBounds : bounds0;
+        return true;
+    }
+
+    private static MdlBounds ReadMdlBounds(byte* data, int offset)
+    {
+        var min = new Vector3(ReadSingle(data, offset), ReadSingle(data, offset + 4), ReadSingle(data, offset + 8));
+        var max = new Vector3(ReadSingle(data, offset + 16), ReadSingle(data, offset + 20), ReadSingle(data, offset + 24));
+        return new MdlBounds(min, max);
+    }
+
+    private static bool IsValidMdlBounds(MdlBounds bounds)
+    {
+        var half = bounds.Half;
+        return IsFinite(bounds.Min) && IsFinite(bounds.Max) &&
+               half.X > 0.001f && half.Y > 0.001f && half.Z > 0.001f &&
+               half.X < 3f && half.Y < 3f && half.Z < 3f &&
+               bounds.Volume > 1e-8f;
+    }
+
+    private static bool TryResolveGearModelTargetHalf(int slot, Vector3 modelHalf, Vector3 templateHalf,
+        out Vector3 targetHalf)
+    {
+        targetHalf = default;
+        if (!IsFinite(modelHalf) || !IsFinite(templateHalf) ||
+            templateHalf.X <= 1e-5f || templateHalf.Y <= 1e-5f || templateHalf.Z <= 1e-5f)
+            return false;
+
+        targetHalf = slot switch
+        {
+            // Hats visually deflate vertically; keep the contact hull closer to that eventual silhouette.
+            0 => new Vector3(
+                ClampModelAxis(modelHalf.X, templateHalf.X, 0.70f, 1.60f),
+                ClampModelAxis(modelHalf.Y * 0.55f, templateHalf.Y, 0.55f, 1.10f),
+                ClampModelAxis(modelHalf.Z, templateHalf.Z, 0.70f, 1.60f)),
+            // Pants flatten mostly in local thickness. Let height/width follow the item, but keep thickness thin.
+            3 => new Vector3(
+                ClampModelAxis(modelHalf.X, templateHalf.X, 0.65f, 1.45f),
+                ClampModelAxis(modelHalf.Y, templateHalf.Y, 0.65f, 1.35f),
+                ClampModelAxis(modelHalf.Z * 0.55f, templateHalf.Z, 0.55f, 1.10f)),
+            _ => new Vector3(
+                ClampModelAxis(modelHalf.X, templateHalf.X, 0.65f, 1.65f),
+                ClampModelAxis(modelHalf.Y, templateHalf.Y, 0.65f, 1.65f),
+                ClampModelAxis(modelHalf.Z, templateHalf.Z, 0.65f, 1.65f)),
+        };
+
+        return targetHalf.X > 1e-5f && targetHalf.Y > 1e-5f && targetHalf.Z > 1e-5f;
+    }
+
+    private static GearShapePart[] ScaleGearShapePartsToHalf(GearShapePart[] parts, Vector3 currentHalf,
+        Vector3 targetHalf)
+    {
+        var axisScale = new Vector3(
+            currentHalf.X > 1e-5f ? targetHalf.X / currentHalf.X : 1f,
+            currentHalf.Y > 1e-5f ? targetHalf.Y / currentHalf.Y : 1f,
+            currentHalf.Z > 1e-5f ? targetHalf.Z / currentHalf.Z : 1f);
+
+        var fitted = new GearShapePart[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+        {
+            var p = parts[i];
+            fitted[i] = new GearShapePart(
+                ScaleVector(p.Half, axisScale),
+                ScaleVector(p.Center, axisScale),
+                p.Rotation);
+        }
+
+        return fitted;
+    }
+
+    private static float ClampModelAxis(float value, float fallback, float minScale, float maxScale)
+    {
+        if (!float.IsFinite(value) || value <= 1e-5f)
+            value = fallback;
+        return Math.Clamp(value, fallback * minScale, fallback * maxScale);
+    }
+
+    private static bool IsFinite(Vector3 v)
+        => float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z);
+
+    private static bool AdvanceBlock(ref int offset, int count, int stride, int maxBytes)
+    {
+        if (count < 0 || stride < 0 || count > maxBytes / Math.Max(1, stride))
+            return false;
+        return AdvanceBytes(ref offset, count * stride, maxBytes);
+    }
+
+    private static bool AdvanceBytes(ref int offset, int bytes, int maxBytes)
+    {
+        if (bytes < 0 || !CanRead(offset, bytes, maxBytes))
+            return false;
+        offset += bytes;
+        return true;
+    }
+
+    private static bool CanRead(int offset, int bytes, int maxBytes)
+        => offset >= 0 && bytes >= 0 && offset <= maxBytes - bytes;
+
+    private static ushort ReadUInt16(byte* data, int offset)
+        => *(ushort*)(data + offset);
+
+    private static uint ReadUInt32(byte* data, int offset)
+        => *(uint*)(data + offset);
+
+    private static float ReadSingle(byte* data, int offset)
+        => *(float*)(data + offset);
 
     private TypedIndex BuildGearShape(Clone c, GearShapeSpec spec, out BodyInertia inertia)
     {
