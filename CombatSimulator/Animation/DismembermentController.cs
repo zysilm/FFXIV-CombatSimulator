@@ -69,6 +69,7 @@ public unsafe class DismembermentController : IDisposable
     public float DismemberActivationImpulse { get; set; }
     public bool EnablePcDismemberNpcCollision { get; set; }
     public Func<IReadOnlyList<nint>>? PcDismemberNpcCollisionProvider { get; set; }
+    public RagdollController? PlayerRagdollController { get; set; }
 
     /// <summary>Optional sink for the body-side recoil: (sourceAddress, body-side bone, angular
     /// velocity). When the piece is kicked away with the activation impulse, the stump above the cut
@@ -111,6 +112,7 @@ public unsafe class DismembermentController : IDisposable
         public List<(int Idx, Vector3 T, Quaternion R, Vector3 S)>? LimbSnapshot; // frozen limb pose
         public List<TypedIndex>? Shapes; // compound + child shapes to dispose
         public BodyHandle? Body;
+        public RagdollController.ExternalBodyHandle? GearRagdollBody;
         public LimbRig? Rig;
         public StaticHandle? GroundTile;
         public TypedIndex? GroundShape;
@@ -204,6 +206,7 @@ public unsafe class DismembermentController : IDisposable
         public TypedIndex Shape;
         public int BoneIndex;
         public int ParentBoneIndex;
+        public string BoneName;
         public float CenterFactor;
         public Vector3 PreviousPosition;
         public Quaternion PreviousOrientation;
@@ -217,6 +220,7 @@ public unsafe class DismembermentController : IDisposable
         public BodyHandle FallbackHandle;
         public TypedIndex FallbackShape;
         public bool IsFallback;
+        public bool UsesRagdollDebug;
         public Vector3 FallbackPrevPos;
         public bool FallbackHasPrev;
     }
@@ -1065,11 +1069,20 @@ public unsafe class DismembermentController : IDisposable
 
     private void SeedBodyVelocity(BodyHandle handle, Clone c, string boneName)
     {
-        if (simulation == null || c.Handoff == null) return;
-        if (!c.Handoff.Bones.TryGetValue(boneName, out var bone)) return;
+        if (simulation == null) return;
+        var seed = ResolveBodySeedVelocity(c, boneName);
+        if (!seed.HasValue) return;
         var body = simulation.Bodies.GetBodyReference(handle);
-        body.Velocity.Linear = bone.LinearVelocity;
-        body.Velocity.Angular = bone.AngularVelocity;
+        body.Velocity.Linear = seed.Value.Linear;
+        body.Velocity.Angular = seed.Value.Angular;
+    }
+
+    private static (Vector3 Linear, Vector3 Angular)? ResolveBodySeedVelocity(Clone c, string boneName)
+    {
+        if (c.Handoff == null) return null;
+        return c.Handoff.Bones.TryGetValue(boneName, out var bone)
+            ? (bone.LinearVelocity, bone.AngularVelocity)
+            : null;
     }
 
     private void ApplyActivationImpulse(Clone c)
@@ -1145,6 +1158,58 @@ public unsafe class DismembermentController : IDisposable
         var dir = c.OutwardWorldDir;
         dir = dir.LengthSquared() < 1e-6f ? Vector3.UnitX : Vector3.Normalize(dir);
         ApplyVelocityDelta(c.Body.Value, dir * impulse);
+    }
+
+    private bool ShouldWaitForPlayerRagdoll(Clone c)
+    {
+        var ragdoll = PlayerRagdollController;
+        return c.IsPlayerControlledSource &&
+               ragdoll != null &&
+               ragdoll.IsActive &&
+               ragdoll.TargetCharacterAddress == c.SourceAddress &&
+               !ragdoll.IsSimulationReady;
+    }
+
+    private bool TryCreateRagdollGearBody(Clone c, GearShapeSpec spec, Vector3 spawnPos, Quaternion gearRot)
+    {
+        var ragdoll = PlayerRagdollController;
+        if (!c.IsPlayerControlledSource ||
+            ragdoll == null ||
+            !ragdoll.IsSimulationReady ||
+            ragdoll.TargetCharacterAddress != c.SourceAddress)
+            return false;
+
+        var seed = ResolveBodySeedVelocity(c, c.LimbRootBone);
+        var linear = seed?.Linear ?? Vector3.Zero;
+        var angular = seed?.Angular ?? Vector3.Zero;
+
+        if (c.GearKeepModelSlot != 1)
+        {
+            var impulse = MathF.Max(0f, DismemberActivationImpulse);
+            if (impulse > 0f)
+            {
+                var dir = c.OutwardWorldDir;
+                dir = dir.LengthSquared() < 1e-6f ? Vector3.UnitX : Vector3.Normalize(dir);
+                linear += dir * impulse;
+            }
+        }
+
+        var parts = new RagdollController.ExternalShapePart[spec.Parts.Length];
+        for (int i = 0; i < spec.Parts.Length; i++)
+        {
+            var p = spec.Parts[i];
+            parts[i] = new RagdollController.ExternalShapePart(
+                p.Half * spec.Scale,
+                p.Center * spec.Scale,
+                p.Rotation);
+        }
+
+        if (!ragdoll.TryCreateExternalDynamicBody(parts, spec.Mass, spawnPos, gearRot,
+                linear, angular, out var handle))
+            return false;
+
+        c.GearRagdollBody = handle;
+        return true;
     }
 
     /// <summary>Bone immediately above <paramref name="boneName"/> in the source skeleton — the
@@ -1233,7 +1298,20 @@ public unsafe class DismembermentController : IDisposable
             return;
         }
 
-        if (!pcNpcCollisionAddresses.SetEquals(nextAddresses))
+        var rebuild = !pcNpcCollisionAddresses.SetEquals(nextAddresses);
+        if (!rebuild)
+        {
+            foreach (var state in pcNpcCollisionStates)
+            {
+                if (!state.UsesRagdollDebug && TryGetRagdollDebugCapsules(state.Address, out _))
+                {
+                    rebuild = true;
+                    break;
+                }
+            }
+        }
+
+        if (rebuild)
         {
             ClearPcNpcCollisionStatics();
             foreach (var address in nextAddresses)
@@ -1251,6 +1329,12 @@ public unsafe class DismembermentController : IDisposable
     {
         if (simulation == null)
             return;
+
+        if (TryGetRagdollDebugCapsules(address, out var ragdollCapsules))
+        {
+            BuildPcNpcCollisionFromRagdoll(address, ragdollCapsules);
+            return;
+        }
 
         var skelN = boneService.TryGetSkeleton(address);
         if (skelN == null || skelN.Value.CharBase->Skeleton == null)
@@ -1323,6 +1407,7 @@ public unsafe class DismembermentController : IDisposable
                 Shape = shape,
                 BoneIndex = c.Bone,
                 ParentBoneIndex = c.Parent,
+                BoneName = BoneName(skel, c.Bone),
                 CenterFactor = c.CenterFactor,
                 PreviousPosition = c.Center,
                 PreviousOrientation = c.Rot,
@@ -1335,6 +1420,65 @@ public unsafe class DismembermentController : IDisposable
             Address = address,
             BoneStatics = statics,
         });
+    }
+
+    private bool TryGetRagdollDebugCapsules(nint address, out List<RagdollController.DebugCapsule> capsules)
+    {
+        capsules = new List<RagdollController.DebugCapsule>();
+        var ragdoll = PlayerRagdollController;
+        if (ragdoll == null ||
+            !ragdoll.IsSimulationReady ||
+            ragdoll.TargetCharacterAddress != address)
+            return false;
+
+        capsules = ragdoll.GetDebugCapsules();
+        return capsules.Count > 0;
+    }
+
+    private void BuildPcNpcCollisionFromRagdoll(nint address, IReadOnlyList<RagdollController.DebugCapsule> capsules)
+    {
+        if (simulation == null)
+            return;
+
+        var statics = new List<NpcBoneStatic>();
+        foreach (var cap in capsules)
+        {
+            var shape = CreateRagdollMirrorShape(cap);
+            var handle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
+                new RigidPose(cap.Position, cap.Orientation),
+                new CollidableDescription(shape, 0.04f),
+                new BodyActivityDescription(0.01f)));
+            statics.Add(new NpcBoneStatic
+            {
+                Handle = handle,
+                Shape = shape,
+                BoneIndex = -1,
+                ParentBoneIndex = -1,
+                BoneName = cap.Name,
+                CenterFactor = 0.5f,
+                PreviousPosition = cap.Position,
+                PreviousOrientation = cap.Orientation,
+                HasPreviousPose = true,
+            });
+        }
+
+        pcNpcCollisionStates.Add(new NpcCollisionState
+        {
+            Address = address,
+            BoneStatics = statics,
+            UsesRagdollDebug = true,
+        });
+    }
+
+    private TypedIndex CreateRagdollMirrorShape(RagdollController.DebugCapsule cap)
+    {
+        if (cap.ColliderShape == RagdollController.RagdollColliderShape.Box)
+        {
+            var h = cap.BoxHalfExtents;
+            return simulation!.Shapes.Add(new Box(h.X * 2f, h.Y * 2f, h.Z * 2f));
+        }
+
+        return simulation!.Shapes.Add(new Capsule(cap.Radius, MathF.Max(0.02f, cap.HalfLength * 2f)));
     }
 
     private static float PcNpcCollisionRadius(string boneName, string parentName, float segmentLength)
@@ -1398,6 +1542,9 @@ public unsafe class DismembermentController : IDisposable
                 return state;
             }
 
+            if (state.UsesRagdollDebug)
+                return UpdateRagdollDebugCollisionState(state);
+
             var skelN = boneService.TryGetSkeleton(state.Address);
             if (skelN == null || skelN.Value.CharBase->Skeleton == null)
                 return state;
@@ -1449,6 +1596,44 @@ public unsafe class DismembermentController : IDisposable
         }
         catch { }
         return state;
+    }
+
+    private NpcCollisionState UpdateRagdollDebugCollisionState(NpcCollisionState state)
+    {
+        if (simulation == null)
+            return state;
+
+        if (!TryGetRagdollDebugCapsules(state.Address, out var capsules))
+            return state;
+
+        for (int i = 0; i < state.BoneStatics.Count; i++)
+        {
+            var bs = state.BoneStatics[i];
+            if (!TryFindRagdollCapsule(capsules, bs.BoneName, out var cap))
+                continue;
+
+            MoveKinematic(bs.Handle, cap.Position, cap.Orientation,
+                ref bs.PreviousPosition, ref bs.PreviousOrientation, ref bs.HasPreviousPose);
+            state.BoneStatics[i] = bs;
+        }
+
+        return state;
+    }
+
+    private static bool TryFindRagdollCapsule(IReadOnlyList<RagdollController.DebugCapsule> capsules,
+        string name, out RagdollController.DebugCapsule capsule)
+    {
+        for (int i = 0; i < capsules.Count; i++)
+        {
+            if (capsules[i].Name != name)
+                continue;
+
+            capsule = capsules[i];
+            return true;
+        }
+
+        capsule = default;
+        return false;
     }
 
     // Drive a kinematic collider to a target pose, carrying the per-frame velocity so it pushes dynamic
@@ -1760,38 +1945,49 @@ public unsafe class DismembermentController : IDisposable
                     c.GearCapById[s.Idx] = (s.T, s.R);
             }
 
-            EnsureSimulation();
-            if (simulation != null)
+            var shapeSpec = BuildGearShapeSpec(c);
+            c.GearBoxHalf = shapeSpec.Half;
+
+            if (ShouldWaitForPlayerRagdoll(c))
             {
-                var shape = BuildGearShape(c, out var inertia, out var offsetWorld);
-                // Box is centred on the piece (bone + offset). Stash the offset in the body's frame so
-                // the drive can reconstruct the attach bone back from the tumbling body.
-                var skeleton = skel.CharBase->Skeleton;
-                var cloneSkelPos = skeleton != null
-                    ? new Vector3(skeleton->Transform.Position.X, skeleton->Transform.Position.Y, skeleton->Transform.Position.Z)
-                    : c.SeveranceWorldPos;
-                var skelRot = skeleton != null
-                    ? Quaternion.Normalize(new Quaternion(
-                        skeleton->Transform.Rotation.X, skeleton->Transform.Rotation.Y,
-                        skeleton->Transform.Rotation.Z, skeleton->Transform.Rotation.W))
-                    : c.SeveranceWorldRot;
-                var gearRot = ResolveGearInitialRotation(c, skelRot);
-                var anchorWorld = cloneSkelPos + Vector3.Transform(c.LimbRootModelPos, skelRot);
-                var spawnPos = anchorWorld + Vector3.Transform(offsetWorld, gearRot);
-                c.GearExtraOffset = Vector3.Transform(offsetWorld, Quaternion.Inverse(gearRot));
-                c.GearGroundY = BGCollisionModule.RaycastMaterialFilter(
-                    new Vector3(spawnPos.X, spawnPos.Y + 5f, spawnPos.Z), new Vector3(0, -1, 0), out var groundHit, 80f)
-                    ? groundHit.Point.Y : spawnPos.Y - 1.5f;
-                c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
-                    new RigidPose(spawnPos, gearRot),
-                    default(BodyVelocity),
-                    inertia,
-                    new CollidableDescription(shape, 0.04f),
-                    new BodyActivityDescription(0.01f)));
-                SeedBodyVelocity(c.Body.Value, c, c.LimbRootBone);
-                (c.GroundTile, c.GroundShape) = CreateTerrainPatch(spawnPos.X, spawnPos.Z, spawnPos.Y);
-                RegisterPcCollisionBodies(c);
-                ApplyGearDropImpulse(c);
+                HideEntireBody(c);
+                return true;
+            }
+
+            var skeleton = skel.CharBase->Skeleton;
+            var cloneSkelPos = skeleton != null
+                ? new Vector3(skeleton->Transform.Position.X, skeleton->Transform.Position.Y, skeleton->Transform.Position.Z)
+                : c.SeveranceWorldPos;
+            var skelRot = skeleton != null
+                ? Quaternion.Normalize(new Quaternion(
+                    skeleton->Transform.Rotation.X, skeleton->Transform.Rotation.Y,
+                    skeleton->Transform.Rotation.Z, skeleton->Transform.Rotation.W))
+                : c.SeveranceWorldRot;
+            var gearRot = ResolveGearInitialRotation(c, skelRot);
+            var anchorWorld = cloneSkelPos + Vector3.Transform(c.LimbRootModelPos, skelRot);
+            var spawnPos = anchorWorld + Vector3.Transform(shapeSpec.OffsetWorld, gearRot);
+            c.GearExtraOffset = Vector3.Transform(shapeSpec.OffsetWorld, Quaternion.Inverse(gearRot));
+            c.GearGroundY = BGCollisionModule.RaycastMaterialFilter(
+                new Vector3(spawnPos.X, spawnPos.Y + 5f, spawnPos.Z), new Vector3(0, -1, 0), out var groundHit, 80f)
+                ? groundHit.Point.Y : spawnPos.Y - 1.5f;
+
+            if (!TryCreateRagdollGearBody(c, shapeSpec, spawnPos, gearRot))
+            {
+                EnsureSimulation();
+                if (simulation != null)
+                {
+                    var shape = BuildGearShape(c, shapeSpec, out var inertia);
+                    c.Body = simulation.Bodies.Add(BodyDescription.CreateDynamic(
+                        new RigidPose(spawnPos, gearRot),
+                        default(BodyVelocity),
+                        inertia,
+                        new CollidableDescription(shape, 0.04f),
+                        new BodyActivityDescription(0.01f)));
+                    SeedBodyVelocity(c.Body.Value, c, c.LimbRootBone);
+                    (c.GroundTile, c.GroundShape) = CreateTerrainPatch(spawnPos.X, spawnPos.Z, spawnPos.Y);
+                    RegisterPcCollisionBodies(c);
+                    ApplyGearDropImpulse(c);
+                }
             }
             c.Armed = true;
             log.Info($"GearDrop: clone idx={c.ObjectIndex} armed (slot={c.GearKeepModelSlot}, bone={c.LimbRootBone})");
@@ -1817,15 +2013,20 @@ public unsafe class DismembermentController : IDisposable
         }
         RestoreGearPartialPoseSnapshots(c, skel.CharBase);
 
-        if (simulation == null || c.Body == null) return true;
-        var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
-        var bodyPos = bodyRef.Pose.Position;
-        var bodyRot = bodyRef.Pose.Orientation;
-        UpdateGearSettleProgress(c, bodyRef.Velocity.Linear, bodyRef.Velocity.Angular);
+        if (!TryGetGearBodyState(c, out var bodyPos, out var bodyRot, out var linearVelocity, out var angularVelocity))
+            return true;
+
+        UpdateGearSettleProgress(c, linearVelocity, angularVelocity);
         var renderRot = ResolveGearRenderRotation(c, bodyRot);
-        SyncGearBodyToRenderRotation(c, ref bodyRef, renderRot);
-        bodyRot = bodyRef.Pose.Orientation;
-        bodyPos = bodyRef.Pose.Position;
+        SyncGearBodyToRenderRotation(c, renderRot);
+        if (c.GearRagdollBody != null)
+            bodyRot = renderRot;
+        else if (simulation != null && c.Body != null)
+        {
+            var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
+            bodyRot = bodyRef.Pose.Orientation;
+            bodyPos = bodyRef.Pose.Position;
+        }
         var visualScale = ResolveGearVisualSquashFactor(c);
         var visualCenterOffset = ScaleVector(c.LimbRootModelPos + c.GearExtraOffset, visualScale);
         // Box centre is at the visual piece centre. Back out the *visually scaled* centre offset so
@@ -1868,15 +2069,55 @@ public unsafe class DismembermentController : IDisposable
         return true;
     }
 
-    private static void SyncGearBodyToRenderRotation(Clone c, ref BodyReference bodyRef, Quaternion renderRot)
+    private bool TryGetGearBodyState(Clone c, out Vector3 position, out Quaternion orientation,
+        out Vector3 linearVelocity, out Vector3 angularVelocity)
+    {
+        position = Vector3.Zero;
+        orientation = Quaternion.Identity;
+        linearVelocity = Vector3.Zero;
+        angularVelocity = Vector3.Zero;
+
+        if (c.GearRagdollBody != null &&
+            PlayerRagdollController?.TryGetExternalBodyPose(c.GearRagdollBody, out position, out orientation,
+                out linearVelocity, out angularVelocity) == true)
+            return true;
+
+        if (simulation == null || c.Body == null)
+            return false;
+
+        var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
+        position = bodyRef.Pose.Position;
+        orientation = bodyRef.Pose.Orientation;
+        linearVelocity = bodyRef.Velocity.Linear;
+        angularVelocity = bodyRef.Velocity.Angular;
+        return true;
+    }
+
+    private void SyncGearBodyToRenderRotation(Clone c, Quaternion renderRot)
     {
         if (!IsPoseRelaxGear(c) || c.GearPoseRelaxFrames <= 0)
             return;
 
+        var angularScale = ResolveGearSettleAngularVelocityScale(c);
+        if (c.GearRagdollBody != null)
+        {
+            PlayerRagdollController?.TrySetExternalBodyRotation(c.GearRagdollBody, renderRot, angularScale);
+            return;
+        }
+
+        if (simulation == null || c.Body == null)
+            return;
+
+        var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
         bodyRef.Pose.Orientation = Quaternion.Normalize(renderRot);
-        var settle = Math.Clamp(c.GearPoseRelaxFrames / 55f, 0f, 1f);
-        bodyRef.Velocity.Angular *= 1f - 0.85f * settle;
+        bodyRef.Velocity.Angular *= angularScale;
         bodyRef.Awake = true;
+    }
+
+    private static float ResolveGearSettleAngularVelocityScale(Clone c)
+    {
+        var settle = Math.Clamp(c.GearPoseRelaxFrames / 55f, 0f, 1f);
+        return 1f - 0.85f * settle;
     }
 
     private Vector3 ResolveGearAnchorModelPos(SkeletonAccess skel, Clone c)
@@ -2528,36 +2769,57 @@ public unsafe class DismembermentController : IDisposable
         }
     }
 
-    private TypedIndex BuildGearShape(Clone c, out BodyInertia inertia, out Vector3 offsetWorld)
+    private readonly struct GearShapeSpec
+    {
+        public readonly GearShapePart[] Parts;
+        public readonly float Scale;
+        public readonly Vector3 Half;
+        public readonly Vector3 OffsetWorld;
+        public readonly float Mass;
+
+        public GearShapeSpec(GearShapePart[] parts, float scale, Vector3 half, Vector3 offsetWorld, float mass)
+        {
+            Parts = parts;
+            Scale = scale;
+            Half = half;
+            OffsetWorld = offsetWorld;
+            Mass = mass;
+        }
+    }
+
+    private GearShapeSpec BuildGearShapeSpec(Clone c)
     {
         var scale = c.SourceScale.X > 0f ? c.SourceScale.X : 1f;
         var (parts, off) = BuildGearShapeParts(c.GearKeepModelSlot);
         var half = ComputeGearShapeHalf(parts) * scale;
-        offsetWorld = off * scale;
-        c.GearBoxHalf = half; // remembered for the ground-sink clamp in the drive
-        var mass = c.GearHideSkin ? 0.8f : GearPieceMass;
-        inertia = new Box(half.X * 2f, half.Y * 2f, half.Z * 2f).ComputeInertia(mass);
+        return new GearShapeSpec(parts, scale, half, off * scale, c.GearHideSkin ? 0.8f : GearPieceMass);
+    }
+
+    private TypedIndex BuildGearShape(Clone c, GearShapeSpec spec, out BodyInertia inertia)
+    {
+        c.GearBoxHalf = spec.Half; // remembered for the ground-sink clamp in the drive
+        inertia = new Box(spec.Half.X * 2f, spec.Half.Y * 2f, spec.Half.Z * 2f).ComputeInertia(spec.Mass);
 
         c.Shapes = new List<TypedIndex>();
-        if (parts.Length == 1 && parts[0].Center.LengthSquared() < 1e-6f)
+        if (spec.Parts.Length == 1 && spec.Parts[0].Center.LengthSquared() < 1e-6f)
         {
-            var p = parts[0];
-            var idx = simulation!.Shapes.Add(new Box(p.Half.X * scale * 2f, p.Half.Y * scale * 2f, p.Half.Z * scale * 2f));
+            var p = spec.Parts[0];
+            var idx = simulation!.Shapes.Add(new Box(p.Half.X * spec.Scale * 2f, p.Half.Y * spec.Scale * 2f, p.Half.Z * spec.Scale * 2f));
             c.Shapes.Add(idx);
             return idx;
         }
 
-        bufferPool!.Take<CompoundChild>(parts.Length, out var children);
-        for (int i = 0; i < parts.Length; i++)
+        bufferPool!.Take<CompoundChild>(spec.Parts.Length, out var children);
+        for (int i = 0; i < spec.Parts.Length; i++)
         {
-            var p = parts[i];
-            var childHalf = p.Half * scale;
+            var p = spec.Parts[i];
+            var childHalf = p.Half * spec.Scale;
             var shape = simulation!.Shapes.Add(new Box(childHalf.X * 2f, childHalf.Y * 2f, childHalf.Z * 2f));
             c.Shapes.Add(shape);
             children[i] = new CompoundChild
             {
                 ShapeIndex = shape,
-                LocalPosition = p.Center * scale,
+                LocalPosition = p.Center * spec.Scale,
                 LocalOrientation = p.Rotation,
             };
         }
@@ -3641,6 +3903,8 @@ public unsafe class DismembermentController : IDisposable
                     foreach (var s in c.Shapes)
                         try { simulation.Shapes.RemoveAndDispose(s, bufferPool); } catch { }
             }
+            PlayerRagdollController?.RemoveExternalBody(c.GearRagdollBody);
+            c.GearRagdollBody = null;
 
             // Only touch game memory while the session is alive (shutdown frees these objects).
             var clientObjMgr = ClientObjectManager.Instance();

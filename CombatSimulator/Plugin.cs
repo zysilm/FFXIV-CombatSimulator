@@ -135,6 +135,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
         weaponDropController = new WeaponDropController(boneTransformService, config, log);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
+        dismembermentController.PlayerRagdollController = ragdollController;
         dismembermentController.EnemyNpcIdentityResolver = address =>
         {
             var npc = FindNpcByAddress(address);

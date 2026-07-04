@@ -32,6 +32,7 @@ public unsafe class RagdollController : IDisposable
     // Physics simulation
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
+    private int externalBodyGeneration;
 
     // State
     private bool isActive;
@@ -96,6 +97,7 @@ public unsafe class RagdollController : IDisposable
 
     // Bone-to-body mapping
     private readonly List<RagdollBone> ragdollBones = new();
+    private readonly List<ExternalBodyHandle> externalBodies = new();
 
     // Bone defs actually used for the active ragdoll, keyed by name. For humanoid
     // skeletons these are the tuned human defs; for non-humanoid skeletons they are
@@ -211,6 +213,28 @@ public unsafe class RagdollController : IDisposable
         public string Name;
         public JointType Joint;
         public float SwingLimit;
+    }
+
+    public readonly struct ExternalShapePart
+    {
+        public readonly Vector3 HalfExtents;
+        public readonly Vector3 LocalPosition;
+        public readonly Quaternion LocalOrientation;
+
+        public ExternalShapePart(Vector3 halfExtents, Vector3 localPosition, Quaternion localOrientation)
+        {
+            HalfExtents = halfExtents;
+            LocalPosition = localPosition;
+            LocalOrientation = localOrientation;
+        }
+    }
+
+    public sealed class ExternalBodyHandle
+    {
+        internal BodyHandle Body;
+        internal TypedIndex[] Shapes = Array.Empty<TypedIndex>();
+        internal int Generation;
+        internal bool Removed;
     }
 
     /// <summary>Debug data for visualizing joint rotation limits.</summary>
@@ -331,6 +355,223 @@ public unsafe class RagdollController : IDisposable
             });
         }
         return result;
+    }
+
+    public bool TryCreateExternalDynamicBody(IReadOnlyList<ExternalShapePart> parts, float mass,
+        Vector3 position, Quaternion orientation, Vector3 linearVelocity, Vector3 angularVelocity,
+        out ExternalBodyHandle? handle)
+    {
+        handle = null;
+        if (!isActive || simulation == null || bufferPool == null || parts.Count == 0)
+            return false;
+
+        try
+        {
+            var shapes = new List<TypedIndex>(parts.Count + 1);
+            TypedIndex shapeIndex;
+            if (parts.Count == 1 &&
+                parts[0].LocalPosition.LengthSquared() < 1e-6f &&
+                IsIdentity(parts[0].LocalOrientation))
+            {
+                var h = parts[0].HalfExtents;
+                shapeIndex = simulation.Shapes.Add(new Box(h.X * 2f, h.Y * 2f, h.Z * 2f));
+                shapes.Add(shapeIndex);
+            }
+            else
+            {
+                bufferPool.Take<CompoundChild>(parts.Count, out var children);
+                for (int i = 0; i < parts.Count; i++)
+                {
+                    var p = parts[i];
+                    var h = p.HalfExtents;
+                    var childShape = simulation.Shapes.Add(new Box(h.X * 2f, h.Y * 2f, h.Z * 2f));
+                    shapes.Add(childShape);
+                    children[i] = new CompoundChild
+                    {
+                        ShapeIndex = childShape,
+                        LocalPosition = p.LocalPosition,
+                        LocalOrientation = p.LocalOrientation,
+                    };
+                }
+
+                shapeIndex = simulation.Shapes.Add(new Compound(children));
+                shapes.Add(shapeIndex);
+            }
+
+            var half = ComputeExternalShapeHalf(parts);
+            var inertia = new Box(half.X * 2f, half.Y * 2f, half.Z * 2f)
+                .ComputeInertia(MathF.Max(0.01f, mass));
+            var bodyHandle = simulation.Bodies.Add(BodyDescription.CreateDynamic(
+                new RigidPose(position, Quaternion.Normalize(orientation)),
+                default(BodyVelocity),
+                inertia,
+                new CollidableDescription(shapeIndex, 0.04f),
+                new BodyActivityDescription(0.01f)));
+
+            var body = simulation.Bodies.GetBodyReference(bodyHandle);
+            body.Velocity.Linear = linearVelocity;
+            body.Velocity.Angular = angularVelocity;
+            body.Awake = true;
+            WakeRagdollBodiesForBiomechanicalSettle();
+
+            handle = new ExternalBodyHandle
+            {
+                Body = bodyHandle,
+                Shapes = shapes.ToArray(),
+                Generation = externalBodyGeneration,
+            };
+            externalBodies.Add(handle);
+            prevAllAsleep = false;
+            BeginBiomechanicalSettle(0.35f);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "RagdollController: failed to create external body");
+            return false;
+        }
+    }
+
+    public bool TryGetExternalBodyPose(ExternalBodyHandle? handle, out Vector3 position, out Quaternion orientation,
+        out Vector3 linearVelocity, out Vector3 angularVelocity)
+    {
+        position = Vector3.Zero;
+        orientation = Quaternion.Identity;
+        linearVelocity = Vector3.Zero;
+        angularVelocity = Vector3.Zero;
+
+        if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
+            return false;
+
+        try
+        {
+            var body = simulation.Bodies.GetBodyReference(handle.Body);
+            position = body.Pose.Position;
+            orientation = body.Pose.Orientation;
+            linearVelocity = body.Velocity.Linear;
+            angularVelocity = body.Velocity.Angular;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public bool TrySetExternalBodyRotation(ExternalBodyHandle? handle, Quaternion orientation, float angularVelocityScale)
+    {
+        if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
+            return false;
+
+        try
+        {
+            var body = simulation.Bodies.GetBodyReference(handle.Body);
+            body.Pose.Orientation = Quaternion.Normalize(orientation);
+            body.Velocity.Angular *= Math.Clamp(angularVelocityScale, 0f, 1f);
+            body.Awake = true;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public bool TryApplyExternalVelocityDelta(ExternalBodyHandle? handle, Vector3 velocityDelta)
+    {
+        if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
+            return false;
+
+        try
+        {
+            var body = simulation.Bodies.GetBodyReference(handle.Body);
+            body.Velocity.Linear += velocityDelta;
+            body.Awake = true;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public void RemoveExternalBody(ExternalBodyHandle? handle)
+    {
+        if (handle == null || handle.Removed)
+            return;
+
+        if (simulation != null && bufferPool != null && handle.Generation == externalBodyGeneration)
+        {
+            try { simulation.Bodies.Remove(handle.Body); } catch { }
+            foreach (var shape in handle.Shapes)
+                try { simulation.Shapes.RemoveAndDispose(shape, bufferPool); } catch { }
+        }
+
+        handle.Removed = true;
+        externalBodies.Remove(handle);
+    }
+
+    private bool AnyExternalBodyAwake()
+    {
+        if (simulation == null || externalBodies.Count == 0)
+            return false;
+
+        var anyAwake = false;
+        for (int i = externalBodies.Count - 1; i >= 0; i--)
+        {
+            var handle = externalBodies[i];
+            if (handle.Removed || handle.Generation != externalBodyGeneration)
+            {
+                externalBodies.RemoveAt(i);
+                continue;
+            }
+
+            try
+            {
+                if (simulation.Bodies.GetBodyReference(handle.Body).Awake)
+                    anyAwake = true;
+            }
+            catch
+            {
+                handle.Removed = true;
+                externalBodies.RemoveAt(i);
+            }
+        }
+
+        return anyAwake;
+    }
+
+    private static bool IsIdentity(Quaternion q)
+        => MathF.Abs(q.X) < 1e-5f && MathF.Abs(q.Y) < 1e-5f &&
+           MathF.Abs(q.Z) < 1e-5f && MathF.Abs(q.W - 1f) < 1e-5f;
+
+    private static Vector3 ComputeExternalShapeHalf(IReadOnlyList<ExternalShapePart> parts)
+    {
+        var min = new Vector3(float.MaxValue);
+        var max = new Vector3(float.MinValue);
+
+        foreach (var p in parts)
+        {
+            var half = RotatedLocalHalfExtent(p.LocalOrientation, p.HalfExtents);
+            min = Vector3.Min(min, p.LocalPosition - half);
+            max = Vector3.Max(max, p.LocalPosition + half);
+        }
+
+        return new Vector3(
+            MathF.Max(MathF.Abs(min.X), MathF.Abs(max.X)),
+            MathF.Max(MathF.Abs(min.Y), MathF.Abs(max.Y)),
+            MathF.Max(MathF.Abs(min.Z), MathF.Abs(max.Z)));
+    }
+
+    private static Vector3 RotatedLocalHalfExtent(Quaternion rot, Vector3 half)
+    {
+        var x = Vector3.Transform(Vector3.UnitX, rot);
+        var y = Vector3.Transform(Vector3.UnitY, rot);
+        var z = Vector3.Transform(Vector3.UnitZ, rot);
+        return new Vector3(
+            MathF.Abs(x.X) * half.X + MathF.Abs(y.X) * half.Y + MathF.Abs(z.X) * half.Z,
+            MathF.Abs(x.Y) * half.X + MathF.Abs(y.Y) * half.Y + MathF.Abs(z.Y) * half.Z,
+            MathF.Abs(x.Z) * half.X + MathF.Abs(y.Z) * half.Y + MathF.Abs(z.Z) * half.Z);
     }
 
     /// <summary>
@@ -4188,7 +4429,8 @@ public unsafe class RagdollController : IDisposable
         // never settles, prevAllAsleep simply stays false and this never triggers; if it
         // does settle, there is nothing to clamp. A grab or a moved skeleton forces a step.
         var settleCollisionActive = config.RagdollNpcCollision && config.RagdollNpcSettleCollision;
-        var resting = !settleCollisionActive && prevAllAsleep && !grabConstraintActive && !collapseSpikeActive && !directedCollapseActive && !wholeBodyCollapseActive && !entryConditioningActive && !kneePowerLossActive && !skeletonMoved && !biomechanicalSettleActive;
+        var externalBodyAwake = AnyExternalBodyAwake();
+        var resting = !settleCollisionActive && prevAllAsleep && !externalBodyAwake && !grabConstraintActive && !collapseSpikeActive && !directedCollapseActive && !wholeBodyCollapseActive && !entryConditioningActive && !kneePowerLossActive && !skeletonMoved && !biomechanicalSettleActive;
 
         // Death-collapse spike: restrength the per-joint "muscle" servos before stepping so the
         // updated torque ceilings take effect this tick. Advances the fade and retires itself.
@@ -4491,6 +4733,7 @@ public unsafe class RagdollController : IDisposable
 
             boneValid[i] = true;
         }
+        if (AnyExternalBodyAwake()) anyAwake = true;
 
         EnsureTerrainPatchCoverage(worldPositions, boneValid, boneCount);
 
@@ -7187,6 +7430,7 @@ public unsafe class RagdollController : IDisposable
 
     private void DestroySimulation()
     {
+        externalBodyGeneration++;
         grabConstraintActive = false;
         suspendedNpcAddress = nint.Zero;
         standingActive = false;
@@ -7197,6 +7441,7 @@ public unsafe class RagdollController : IDisposable
         recoilRelaxers.Clear();
         biomechanicalSettleRemaining = 0f;
         ragdollBones.Clear();
+        externalBodies.Clear();
         npcCollisionStates.Clear();
         npcFallbackShapeReady = false;
         attackStrikeTimer = 0f;
