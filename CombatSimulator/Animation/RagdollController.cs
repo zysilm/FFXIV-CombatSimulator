@@ -7590,8 +7590,12 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         {
             if (IsExternalDynamic(a.BodyHandle.Value) || IsExternalDynamic(b.BodyHandle.Value))
             {
-                speculativeMargin = MathF.Min(speculativeMargin, 0.016f);
-                return true;
+                // Dropped gear falls independently straight to the ground: it must NOT rest on the
+                // corpse's invisible limb capsules or pile on other dropped pieces. That dynamic-vs-
+                // dynamic stacking is what left garments hanging in the air (and only dropping when an
+                // NPC kick knocked the stack loose). Ground (static) and NPC strikes (kinematic) are
+                // handled above, so gear still lands and can still be struck.
+                return false;
             }
 
             if (ConnectedPairs == null)
