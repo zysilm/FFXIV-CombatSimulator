@@ -53,6 +53,17 @@ public unsafe class DismembermentController : IDisposable
     private const float GearGroundClearance = 0.012f;
     private const float GearHatGroundClearance = 0.024f;
     private const float GearGroundVisualSkin = 0.006f;
+    private const int GearGarmentHandoffFrames = 30;
+    private const float GearGarmentHandoffSpring = 3.0f;
+    private const float GearGarmentHandoffMaxFollowSpeed = 1.4f;
+    private const float GearGarmentHandoffMaxVelocityDelta = 0.16f;
+    private const float GearGarmentHandoffReleaseDistance = 0.65f;
+    private const float GearGarmentHandoffGroundReleaseHeight = 0.11f;
+    private const float GearBodyHandoffSlip = 0.10f;
+    private const float GearLegsHandoffSlip = 0.06f;
+    private const int GearGarmentVisualBindFrames = 18;
+    private const float GearBodyVisualBindSlip = 0.12f;
+    private const float GearLegsVisualBindSlip = 0.07f;
     private const int MdlStringTableHeaderSize = 8;
     private const int MdlModelHeaderSize = 56;
     private const int MdlElementIdSize = 32;
@@ -167,6 +178,17 @@ public unsafe class DismembermentController : IDisposable
         public int GearRestFrames;                           // consecutive near-rest frames
         public int GearPoseRelaxFrames;                      // bounded render-pose settling progress
         public int GearDeflateFrames;                        // bounded fake cloth-collapse progress
+        public Vector3 GearHandoffPrevAnchorWorld;           // source-body anchor used for short garment drag
+        public bool GearHandoffHasPrevAnchor;
+        public Quaternion GearHandoffPrevAnchorRot = Quaternion.Identity;
+        public Vector3 GearHandoffReleaseVelocity;
+        public Vector3 GearHandoffReleaseAngularVelocity;
+        public bool GearHandoffHasReleaseVelocity;
+        public int GearVisualBindFramesRemaining;
+        public bool GearVisualBindStarted;
+        public Vector3 GearVisualBindLastRootPos;
+        public Quaternion GearVisualBindLastRootRot = Quaternion.Identity;
+        public bool GearVisualBindHasLastPose;
     }
 
     private sealed class GearPartialPoseSnapshot
@@ -271,6 +293,21 @@ public unsafe class DismembermentController : IDisposable
     private readonly List<Clone> clones = new();
     private readonly List<Pending> pending = new();
     private readonly HashSet<int> allocatedIndices = new();
+
+    private static readonly string[] BodyGearHandoffBones =
+    {
+        "j_kosi", "j_sebo_a", "j_sebo_b", "j_sebo_c",
+    };
+
+    private static readonly string[] BodyGearVisualBindBones =
+    {
+        "j_kosi", "j_sebo_a", "j_sebo_b", "j_sebo_c",
+    };
+
+    private static readonly string[] LegsGearHandoffBones =
+    {
+        "j_kosi", "j_asi_a_l", "j_asi_a_r", "j_asi_b_l", "j_asi_b_r", "j_asi_c_l", "j_asi_c_r",
+    };
 
     private static readonly string[] HumanoidSignatureBones =
     {
@@ -1197,7 +1234,7 @@ public unsafe class DismembermentController : IDisposable
             ragdoll.TargetCharacterAddress != c.SourceAddress)
             return false;
 
-        var seed = ResolveBodySeedVelocity(c, c.LimbRootBone);
+        var seed = ResolveGearBodySeedVelocity(c);
         var linear = seed?.Linear ?? Vector3.Zero;
         var angular = seed?.Angular ?? Vector3.Zero;
 
@@ -1933,6 +1970,13 @@ public unsafe class DismembermentController : IDisposable
             }
 
             ApplyHandoffPose(skel, c);
+            if (TryUpdateGarmentVisualBind(skel, c))
+                return true;
+            if (IsGarmentHandoffGear(c) && c.GearVisualBindStarted)
+            {
+                ApplyLastGarmentVisualBindPose(c);
+                c.SettleFrames = 0;
+            }
             if (--c.SettleFrames > 0) return true;
 
             c.LimbRootModelPos = ResolveGearAnchorModelPos(skel, c);
@@ -1969,6 +2013,7 @@ public unsafe class DismembermentController : IDisposable
             c.GearShapeScale = shapeSpec.Scale;
             c.GearMass = shapeSpec.Mass;
             c.GearCollapsedPhysicsApplied = false;
+            c.GearHandoffHasPrevAnchor = false;
 
             var skeleton = skel.CharBase->Skeleton;
             var cloneSkelPos = skeleton != null
@@ -2000,7 +2045,7 @@ public unsafe class DismembermentController : IDisposable
                         new CollidableDescription(shape, 0.04f),
                         new BodyActivityDescription(0.01f)));
                     gearDynamicBodyHandles.Add(c.Body.Value.Value);
-                    SeedBodyVelocity(c.Body.Value, c, c.LimbRootBone);
+                    SeedGearBodyVelocity(c.Body.Value, c);
                     (c.GroundTile, c.GroundShape) = CreateTerrainPatch(spawnPos.X, spawnPos.Z, spawnPos.Y);
                     RegisterPcCollisionBodies(c);
                     ApplyGearDropImpulse(c);
@@ -2043,6 +2088,7 @@ public unsafe class DismembermentController : IDisposable
             renderRot = bodyRot;
         }
         var visualScale = ResolveGearVisualSquashFactor(c);
+        ApplyGarmentHandoffDrag(c, bodyPos, linearVelocity);
         TryApplyGearCollapsedPhysicsShape(c);
         var hasGroundStats = TryEstimateGearGroundStats(c, bodyPos, renderRot, visualScale,
             out var averageGroundHeight, out var lowestGroundHeight);
@@ -2188,13 +2234,387 @@ public unsafe class DismembermentController : IDisposable
     }
 
     private static Quaternion ResolveGearInitialRotation(Clone c, Quaternion skeletonRotation)
-        => c.GearKeepModelSlot is 2 or 3 or 4 ? skeletonRotation : c.SeveranceWorldRot;
+        => c.GearKeepModelSlot is 2 or 3 or 4 || (c.GearKeepModelSlot == 1 && c.GearVisualBindStarted)
+            ? skeletonRotation
+            : c.SeveranceWorldRot;
 
     private static bool IsPoseRelaxGear(Clone c)
         => c.GearKeepModelSlot is 0 or 1 or 3;
 
     private static bool IsDeflatableGear(Clone c)
         => c.GearKeepModelSlot >= 0;
+
+    private static bool IsGarmentHandoffGear(Clone c)
+        => c.GearKeepModelSlot is 1 or 3;
+
+    private bool TryUpdateGarmentVisualBind(SkeletonAccess skel, Clone c)
+    {
+        if (!IsGarmentHandoffGear(c))
+            return false;
+
+        if (!c.GearVisualBindStarted)
+        {
+            c.GearVisualBindStarted = true;
+            c.GearVisualBindFramesRemaining = GearGarmentVisualBindFrames;
+            c.GearHandoffHasPrevAnchor = false;
+            c.GearVisualBindHasLastPose = false;
+        }
+
+        if (c.GearVisualBindFramesRemaining <= 0)
+            return false;
+
+        if (!TryResolveGarmentVisualBindPose(skel, c, out var rootPos, out var rootRot,
+                out var releaseVelocity, out var releaseAngularVelocity))
+        {
+            c.GearVisualBindFramesRemaining = 0;
+            return false;
+        }
+
+        SetCloneBaseTransform(c, rootPos, rootRot);
+        c.GearVisualBindLastRootPos = rootPos;
+        c.GearVisualBindLastRootRot = rootRot;
+        c.GearVisualBindHasLastPose = true;
+        c.GearHandoffReleaseVelocity = releaseVelocity;
+        c.GearHandoffReleaseAngularVelocity = releaseAngularVelocity;
+        c.GearHandoffHasReleaseVelocity = true;
+        c.GearVisualBindFramesRemaining--;
+        return true;
+    }
+
+    private void ApplyLastGarmentVisualBindPose(Clone c)
+    {
+        if (c.GearVisualBindHasLastPose)
+            SetCloneBaseTransform(c, c.GearVisualBindLastRootPos, c.GearVisualBindLastRootRot);
+    }
+
+    private bool TryResolveGarmentVisualBindPose(SkeletonAccess skel, Clone c,
+        out Vector3 rootPos, out Quaternion rootRot, out Vector3 releaseVelocity,
+        out Vector3 releaseAngularVelocity)
+    {
+        rootPos = Vector3.Zero;
+        rootRot = Quaternion.Identity;
+        releaseVelocity = Vector3.Zero;
+        releaseAngularVelocity = Vector3.Zero;
+
+        var bones = c.GearKeepModelSlot == 1 ? BodyGearVisualBindBones : LegsGearHandoffBones;
+        if (!TryAverageSourceBoneWorldPositions(c.SourceAddress, bones, out var anchorWorld))
+            return false;
+
+        if (!TryResolveGarmentVisualBindRotation(c, out rootRot))
+            rootRot = c.Handoff?.SkeletonRot ?? Quaternion.Identity;
+
+        var progress = 1f - Math.Clamp(c.GearVisualBindFramesRemaining / (float)GearGarmentVisualBindFrames, 0f, 1f);
+        var slip = (c.GearKeepModelSlot == 1 ? GearBodyVisualBindSlip : GearLegsVisualBindSlip) *
+                   (progress * progress);
+        anchorWorld.Y -= slip;
+
+        var anchorModel = TryAverageModelBonePositions(skel, out var modelAnchor, bones)
+            ? modelAnchor
+            : ResolveGearAnchorModelPos(skel, c);
+        rootPos = anchorWorld - Vector3.Transform(anchorModel, rootRot);
+
+        const float dt = 1f / 60f;
+        if (c.GearHandoffHasPrevAnchor)
+        {
+            releaseVelocity = ClampVectorLength((anchorWorld - c.GearHandoffPrevAnchorWorld) / dt, 5f);
+            releaseAngularVelocity = ClampVectorLength(
+                AngularVelocityFromQuats(c.GearHandoffPrevAnchorRot, rootRot, dt), 20f);
+        }
+        else
+        {
+            var seed = ResolveBodySeedVelocity(c, c.LimbRootBone);
+            if (seed.HasValue)
+            {
+                releaseVelocity = ClampVectorLength(seed.Value.Linear, 5f);
+                releaseAngularVelocity = ClampVectorLength(seed.Value.Angular, 20f);
+            }
+        }
+
+        c.GearHandoffPrevAnchorWorld = anchorWorld;
+        c.GearHandoffPrevAnchorRot = rootRot;
+        c.GearHandoffHasPrevAnchor = true;
+        return true;
+    }
+
+    private bool TryResolveGarmentVisualBindRotation(Clone c, out Quaternion rotation)
+    {
+        rotation = Quaternion.Identity;
+        if (TryBuildSourceGarmentFrame(c.SourceAddress, c.GearKeepModelSlot == 3, out rotation))
+            return true;
+
+        var primary = c.GearKeepModelSlot == 1 ? "j_sebo_b" : "j_kosi";
+        if (TryGetSourceBoneWorldRotation(c.SourceAddress, primary, out rotation))
+            return true;
+
+        return c.GearKeepModelSlot == 1 &&
+               TryGetSourceBoneWorldRotation(c.SourceAddress, "j_kosi", out rotation);
+    }
+
+    private bool TryBuildSourceGarmentFrame(nint sourceAddress, bool legs, out Quaternion rotation)
+    {
+        rotation = Quaternion.Identity;
+        var skelN = boneService.TryGetSkeleton(sourceAddress);
+        if (skelN == null)
+            return false;
+
+        var skel = skelN.Value;
+        if (!TryGetSkeletonWorldTransform(skel, out var skelPos, out var skelRot))
+            return false;
+
+        var referenceBone = legs ? "j_kosi" : "j_sebo_b";
+        if (!TryGetBoneWorldRotation(skel, skelRot, referenceBone, out var referenceRot) &&
+            !TryGetBoneWorldRotation(skel, skelRot, "j_kosi", out referenceRot))
+            referenceRot = skelRot;
+
+        var upOk = legs
+            ? TryBoneDelta(skel, skelPos, skelRot, "j_kosi", "j_sebo_b", out var up)
+            : TryBoneDelta(skel, skelPos, skelRot, "j_kosi", "j_sebo_c", out up);
+        if (!upOk)
+            upOk = TryBoneDelta(skel, skelPos, skelRot, "j_kosi", "j_sebo_a", out up);
+        if (!upOk)
+            up = Vector3.Transform(Vector3.UnitY, referenceRot);
+
+        var rightOk = legs
+            ? TryBoneDelta(skel, skelPos, skelRot, "j_asi_a_l", "j_asi_a_r", out var right)
+            : TryBoneDelta(skel, skelPos, skelRot, "j_sako_l", "j_sako_r", out right);
+        if (!rightOk && !legs)
+            rightOk = TryBoneDelta(skel, skelPos, skelRot, "j_ude_a_l", "j_ude_a_r", out right);
+        if (!rightOk)
+            rightOk = TryBoneDelta(skel, skelPos, skelRot, "j_asi_a_l", "j_asi_a_r", out right);
+        if (!rightOk)
+            right = Vector3.Transform(Vector3.UnitX, referenceRot);
+
+        return TryCreateGarmentFrameRotation(up, right, referenceRot, out rotation);
+    }
+
+    private bool TryBoneDelta(SkeletonAccess skel, Vector3 skelPos, Quaternion skelRot,
+        string fromBone, string toBone, out Vector3 delta)
+    {
+        delta = Vector3.Zero;
+        if (!TryGetBoneWorldPosition(skel, skelPos, skelRot, fromBone, out var from) ||
+            !TryGetBoneWorldPosition(skel, skelPos, skelRot, toBone, out var to))
+            return false;
+
+        delta = to - from;
+        return delta.LengthSquared() > 1e-6f;
+    }
+
+    private bool TryGetBoneWorldPosition(SkeletonAccess skel, Vector3 skelPos, Quaternion skelRot,
+        string boneName, out Vector3 position)
+    {
+        position = Vector3.Zero;
+        var idx = boneService.ResolveBoneIndex(skel, boneName);
+        if (idx < 0 || idx >= skel.BoneCount)
+            return false;
+
+        ref var m = ref skel.Pose->ModelPose.Data[idx];
+        var modelPos = new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z);
+        position = ModelToWorld(modelPos, skelPos, skelRot);
+        return true;
+    }
+
+    private bool TryGetBoneWorldRotation(SkeletonAccess skel, Quaternion skelRot,
+        string boneName, out Quaternion rotation)
+    {
+        rotation = Quaternion.Identity;
+        var idx = boneService.ResolveBoneIndex(skel, boneName);
+        if (idx < 0 || idx >= skel.BoneCount)
+            return false;
+
+        ref var m = ref skel.Pose->ModelPose.Data[idx];
+        var modelRot = Quaternion.Normalize(new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W));
+        rotation = Quaternion.Normalize(skelRot * modelRot);
+        return true;
+    }
+
+    private static bool TryCreateGarmentFrameRotation(Vector3 upCandidate, Vector3 rightCandidate,
+        Quaternion referenceRot, out Quaternion rotation)
+    {
+        rotation = Quaternion.Identity;
+        if (upCandidate.LengthSquared() < 1e-6f || rightCandidate.LengthSquared() < 1e-6f)
+            return false;
+
+        var refUp = Vector3.Transform(Vector3.UnitY, referenceRot);
+        var refRight = Vector3.Transform(Vector3.UnitX, referenceRot);
+        var refForward = Vector3.Transform(Vector3.UnitZ, referenceRot);
+
+        var y = NormalizeOrFallback(upCandidate, refUp);
+        if (Vector3.Dot(y, refUp) < 0f) y = -y;
+
+        var x = ProjectOntoPlane(rightCandidate, y);
+        if (x.LengthSquared() < 1e-6f)
+            x = ProjectOntoPlane(refRight, y);
+        x = NormalizeOrFallback(x, refRight);
+        if (Vector3.Dot(x, refRight) < 0f) x = -x;
+
+        var z = NormalizeOrFallback(Vector3.Cross(x, y), refForward);
+        x = NormalizeOrFallback(Vector3.Cross(y, z), x);
+
+        var m = new Matrix4x4(
+            x.X, x.Y, x.Z, 0f,
+            y.X, y.Y, y.Z, 0f,
+            z.X, z.Y, z.Z, 0f,
+            0f, 0f, 0f, 1f);
+        rotation = Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(m));
+        return true;
+    }
+
+    private void ApplyGarmentHandoffDrag(Clone c, Vector3 bodyPos, Vector3 linearVelocity)
+    {
+        if (!IsGarmentHandoffGear(c) || c.GearArmedFrames > GearGarmentHandoffFrames)
+            return;
+
+        if (!float.IsNegativeInfinity(c.GearGroundY) &&
+            c.GearArmedFrames > 8 &&
+            bodyPos.Y < c.GearGroundY + GearGarmentHandoffGroundReleaseHeight)
+            return;
+
+        if (!TryResolveGarmentHandoffTarget(c, out var targetPos, out var targetVelocity))
+            return;
+
+        var toTarget = targetPos - bodyPos;
+        var distance = toTarget.Length();
+        if (!float.IsFinite(distance) || distance > GearGarmentHandoffReleaseDistance)
+            return;
+
+        var t = Math.Clamp(c.GearArmedFrames / (float)GearGarmentHandoffFrames, 0f, 1f);
+        var strength = (1f - t) * (1f - t);
+        if (strength <= 0.01f)
+            return;
+
+        var followVelocity = ClampVectorLength(toTarget * GearGarmentHandoffSpring, GearGarmentHandoffMaxFollowSpeed);
+        var desiredVelocity = targetVelocity + followVelocity;
+        var velocityDelta = ClampVectorLength((desiredVelocity - linearVelocity) * (0.18f * strength),
+            GearGarmentHandoffMaxVelocityDelta * strength);
+
+        if (velocityDelta.LengthSquared() > 1e-8f)
+            ApplyGearVelocityDelta(c, velocityDelta);
+
+        var horizontalScale = 1f - 0.10f * strength;
+        var angularScale = 1f - 0.30f * strength;
+        DampenGearBodyVelocity(c, horizontalScale, 1f, angularScale);
+    }
+
+    private bool TryResolveGarmentHandoffTarget(Clone c, out Vector3 targetPos, out Vector3 targetVelocity)
+    {
+        targetPos = Vector3.Zero;
+        targetVelocity = Vector3.Zero;
+
+        var bones = c.GearKeepModelSlot == 1 ? BodyGearHandoffBones : LegsGearHandoffBones;
+        if (!TryAverageSourceBoneWorldPositions(c.SourceAddress, bones, out targetPos))
+            return false;
+
+        var slip = (c.GearKeepModelSlot == 1 ? GearBodyHandoffSlip : GearLegsHandoffSlip) *
+                   Math.Clamp(c.GearArmedFrames / (float)GearGarmentHandoffFrames, 0f, 1f);
+        targetPos.Y -= slip;
+
+        const float dt = 1f / 60f;
+        if (c.GearHandoffHasPrevAnchor)
+        {
+            targetVelocity = ClampVectorLength((targetPos - c.GearHandoffPrevAnchorWorld) / dt, 4f);
+        }
+        else
+        {
+            var seed = ResolveGearBodySeedVelocity(c);
+            if (seed.HasValue)
+                targetVelocity = ClampVectorLength(seed.Value.Linear, 4f);
+        }
+
+        c.GearHandoffPrevAnchorWorld = targetPos;
+        c.GearHandoffHasPrevAnchor = true;
+        return true;
+    }
+
+    private bool TryAverageSourceBoneWorldPositions(nint sourceAddress, IReadOnlyList<string> boneNames,
+        out Vector3 average)
+    {
+        average = Vector3.Zero;
+        var skelN = boneService.TryGetSkeleton(sourceAddress);
+        if (skelN == null)
+            return false;
+
+        var skel = skelN.Value;
+        if (!TryGetSkeletonWorldTransform(skel, out var skelPos, out var skelRot))
+            return false;
+
+        var count = 0;
+        foreach (var boneName in boneNames)
+        {
+            var idx = boneService.ResolveBoneIndex(skel, boneName);
+            if (idx < 0 || idx >= skel.BoneCount)
+                continue;
+
+            ref var m = ref skel.Pose->ModelPose.Data[idx];
+            var modelPos = new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z);
+            average += ModelToWorld(modelPos, skelPos, skelRot);
+            count++;
+        }
+
+        if (count <= 0)
+            return false;
+
+        average /= count;
+        return true;
+    }
+
+    private bool TryGetSourceBoneWorldRotation(nint sourceAddress, string boneName, out Quaternion rotation)
+    {
+        rotation = Quaternion.Identity;
+        var skelN = boneService.TryGetSkeleton(sourceAddress);
+        if (skelN == null)
+            return false;
+
+        var skel = skelN.Value;
+        if (!TryGetSkeletonWorldTransform(skel, out _, out var skelRot))
+            return false;
+
+        var idx = boneService.ResolveBoneIndex(skel, boneName);
+        if (idx < 0 || idx >= skel.BoneCount)
+            return false;
+
+        ref var m = ref skel.Pose->ModelPose.Data[idx];
+        var modelRot = Quaternion.Normalize(new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W));
+        rotation = Quaternion.Normalize(skelRot * modelRot);
+        return true;
+    }
+
+    private void ApplyGearVelocityDelta(Clone c, Vector3 velocityDelta)
+    {
+        if (c.GearRagdollBody != null)
+        {
+            PlayerRagdollController?.TryApplyExternalVelocityDelta(c.GearRagdollBody, velocityDelta);
+            return;
+        }
+
+        if (simulation == null || c.Body == null)
+            return;
+
+        var body = simulation.Bodies.GetBodyReference(c.Body.Value);
+        body.Velocity.Linear += velocityDelta;
+        body.Awake = true;
+    }
+
+    private (Vector3 Linear, Vector3 Angular)? ResolveGearBodySeedVelocity(Clone c)
+    {
+        if (c.GearHandoffHasReleaseVelocity)
+            return (c.GearHandoffReleaseVelocity, c.GearHandoffReleaseAngularVelocity);
+
+        return ResolveBodySeedVelocity(c, c.LimbRootBone);
+    }
+
+    private void SeedGearBodyVelocity(BodyHandle handle, Clone c)
+    {
+        if (simulation == null)
+            return;
+
+        var seed = ResolveGearBodySeedVelocity(c);
+        if (!seed.HasValue)
+            return;
+
+        var body = simulation.Bodies.GetBodyReference(handle);
+        body.Velocity.Linear = seed.Value.Linear;
+        body.Velocity.Angular = seed.Value.Angular;
+    }
 
     private void UpdateGearSettleProgress(Clone c, Vector3 linearVelocity, Vector3 angularVelocity)
     {
