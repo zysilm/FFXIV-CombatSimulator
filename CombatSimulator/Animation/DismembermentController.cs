@@ -142,7 +142,7 @@ public unsafe class DismembermentController : IDisposable
         public List<GearPartialPoseSnapshot>? GearPartialPoseSnapshots; // frozen non-body partial skeletons
         public Dictionary<int, (Vector3 T, Quaternion R)>? GearCapById; // captured rest pose by bone idx (skirt hang)
         public float GearGroundY = float.NegativeInfinity;   // ground height for the skirt-hang / sink clamp
-        public Vector3 GearBoxHalf;                          // collision box half-extents (for the sink clamp)
+        public Vector3 GearBoxHalf;                          // collision proxy half-extents (for the sink clamp)
         public int GearArmedFrames;                          // frames since the rigid body was armed
         public int GearRestFrames;                           // consecutive near-rest frames
         public int GearPoseRelaxFrames;                      // bounded render-pose settling progress
@@ -1200,7 +1200,8 @@ public unsafe class DismembermentController : IDisposable
             pcCollisionBodyHandles.Remove(c.Body.Value.Value);
     }
 
-    private const float PcNpcCollisionDefaultRadius = 0.045f;
+    private const float PcNpcCollisionMinRadius = 0.035f;
+    private const float PcNpcCollisionMaxRadius = 0.12f;
     private const float PcNpcCollisionFallbackRadius = 0.32f;
     private const float PcNpcCollisionFallbackLength = 1.2f;
     private const float PcNpcCollisionMinSegmentLength = 0.05f;
@@ -1267,7 +1268,7 @@ public unsafe class DismembermentController : IDisposable
             skeleton->Transform.Rotation.Z,
             skeleton->Transform.Rotation.W));
 
-        var candidates = new List<(float Len, int Bone, int Parent, float CenterFactor, Vector3 Center, Quaternion Rot)>();
+        var candidates = new List<(float Len, int Bone, int Parent, float Radius, float CenterFactor, Vector3 Center, Quaternion Rot)>();
         var boneCount = Math.Min(skel.BoneCount, skel.ParentCount);
         for (int i = 1; i < boneCount; i++)
         {
@@ -1292,7 +1293,8 @@ public unsafe class DismembermentController : IDisposable
 
             var centerFactor = 0.5f;
             var center = parentWorld + segment * centerFactor;
-            candidates.Add((segLen, i, parentIdx, centerFactor, center, AlignYTo(segment / segLen)));
+            var radius = PcNpcCollisionRadius(BoneName(skel, i), BoneName(skel, parentIdx), segLen);
+            candidates.Add((segLen, i, parentIdx, radius, centerFactor, center, AlignYTo(segment / segLen)));
         }
 
         if (candidates.Count > PcNpcCollisionMaxSegments)
@@ -1310,7 +1312,7 @@ public unsafe class DismembermentController : IDisposable
         var statics = new List<NpcBoneStatic>();
         foreach (var c in candidates)
         {
-            var shape = simulation.Shapes.Add(new Capsule(PcNpcCollisionDefaultRadius, MathF.Max(0.02f, c.Len - PcNpcCollisionDefaultRadius * 2f)));
+            var shape = simulation.Shapes.Add(new Capsule(c.Radius, MathF.Max(0.02f, c.Len - c.Radius * 2f)));
             var handle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
                 new RigidPose(c.Center, c.Rot),
                 new CollidableDescription(shape, 0.04f),
@@ -1333,6 +1335,26 @@ public unsafe class DismembermentController : IDisposable
             Address = address,
             BoneStatics = statics,
         });
+    }
+
+    private static float PcNpcCollisionRadius(string boneName, string parentName, float segmentLength)
+    {
+        var radius = Math.Clamp(segmentLength * 0.14f, PcNpcCollisionMinRadius, PcNpcCollisionMaxRadius);
+
+        if (boneName.StartsWith("j_sebo_", StringComparison.Ordinal) ||
+            parentName == "j_kosi" ||
+            boneName == "j_kubi")
+            radius = MathF.Max(radius, 0.095f);
+        else if (boneName.StartsWith("j_asi_a", StringComparison.Ordinal) ||
+                 boneName.StartsWith("j_asi_b", StringComparison.Ordinal) ||
+                 boneName.StartsWith("j_siri", StringComparison.Ordinal))
+            radius = MathF.Max(radius, 0.070f);
+        else if (boneName.StartsWith("j_ude_a", StringComparison.Ordinal))
+            radius = MathF.Max(radius, 0.055f);
+        else if (boneName == "j_kao")
+            radius = MathF.Max(radius, 0.075f);
+
+        return Math.Clamp(radius, PcNpcCollisionMinRadius, PcNpcCollisionMaxRadius);
     }
 
     private void CreatePcNpcFallbackCollision(nint address)
@@ -1801,16 +1823,18 @@ public unsafe class DismembermentController : IDisposable
         var bodyRot = bodyRef.Pose.Orientation;
         UpdateGearSettleProgress(c, bodyRef.Velocity.Linear, bodyRef.Velocity.Angular);
         var renderRot = ResolveGearRenderRotation(c, bodyRot);
+        SyncGearBodyToRenderRotation(c, ref bodyRef, renderRot);
+        bodyRot = bodyRef.Pose.Orientation;
+        bodyPos = bodyRef.Pose.Position;
         var visualScale = ResolveGearVisualSquashFactor(c);
         var visualCenterOffset = ScaleVector(c.LimbRootModelPos + c.GearExtraOffset, visualScale);
         // Box centre is at the visual piece centre. Back out the *visually scaled* centre offset so
         // nonuniform squash does not make the rendered shell float or sink relative to the physics body.
         var skelPos = bodyPos - Vector3.Transform(visualCenterOffset, renderRot);
 
-        // Keep the visible piece from sinking through the ground. The flat collision box is sized to
+        // Keep the visible piece from sinking through the ground. GearBoxHalf is the local AABB of the
         // enclose the whole piece, so its lowest world point ≈ the piece's lowest point — clamp THAT
-        // above the ground (covers both the attach-bone-is-above-the-mesh case and a thin box tunnelling
-        // through the terrain). The render is lifted; the (invisible) physics box may stay lower.
+        // collision proxy, so clamp that proxy's lowest rendered point above the terrain.
         if (!float.IsNegativeInfinity(c.GearGroundY))
         {
             var visualHalf = ScaleVector(c.GearBoxHalf, visualScale);
@@ -1842,6 +1866,17 @@ public unsafe class DismembermentController : IDisposable
         // it doesn't fight the game cloth sim like a static pin does), clamped above the ground.
         if (c.GearKeepModelSlot == 1) DriveSkirtHang(skel, c);
         return true;
+    }
+
+    private static void SyncGearBodyToRenderRotation(Clone c, ref BodyReference bodyRef, Quaternion renderRot)
+    {
+        if (!IsPoseRelaxGear(c) || c.GearPoseRelaxFrames <= 0)
+            return;
+
+        bodyRef.Pose.Orientation = Quaternion.Normalize(renderRot);
+        var settle = Math.Clamp(c.GearPoseRelaxFrames / 55f, 0f, 1f);
+        bodyRef.Velocity.Angular *= 1f - 0.85f * settle;
+        bodyRef.Awake = true;
     }
 
     private Vector3 ResolveGearAnchorModelPos(SkeletonAccess skel, Clone c)
@@ -2468,11 +2503,8 @@ public unsafe class DismembermentController : IDisposable
                 model->Materials[idx] = (RenderMaterial*)ptr;
     }
 
-    // Collision shape for a dropped gear piece. A flat box (like the weapon-drop box) instead of a
-    // capsule, so the piece settles on a face rather than rolling forever like a sphere. The visible
-    // mesh is driven by the skeleton, so this shape only governs how the piece tumbles and settles;
-    // half-extents are piece-typed and scaled by the actor's draw scale. Box is tracked in c.Shapes
-    // for disposal on despawn.
+    // Collision shape for a dropped gear piece. Uses a slot-specific compound of small boxes instead
+    // of one inflated box, so collapsed hats/tops/pants rest closer to their rendered silhouette.
     // How far a box of these half-extents reaches vertically (world up) in a given orientation.
     private static float WorldVerticalHalfExtent(Quaternion rot, Vector3 half)
     {
@@ -2482,38 +2514,128 @@ public unsafe class DismembermentController : IDisposable
         return MathF.Abs(x.Y) * half.X + MathF.Abs(y.Y) * half.Y + MathF.Abs(z.Y) * half.Z;
     }
 
+    private readonly struct GearShapePart
+    {
+        public readonly Vector3 Half;
+        public readonly Vector3 Center;
+        public readonly Quaternion Rotation;
+
+        public GearShapePart(Vector3 half, Vector3 center)
+        {
+            Half = half;
+            Center = center;
+            Rotation = Quaternion.Identity;
+        }
+    }
+
     private TypedIndex BuildGearShape(Clone c, out BodyInertia inertia, out Vector3 offsetWorld)
     {
         var scale = c.SourceScale.X > 0f ? c.SourceScale.X : 1f;
-        // half = collision half-extents (Y is the "thin" axis, oriented to the attach bone's up).
-        // off  = where the piece's geometry actually sits relative to the attach bone (a hat is above
-        // the skull, a necklace drapes below the neck). Centring the box on the PIECE (not the bone)
-        // and sizing it to enclose the piece keeps the mesh from poking through the ground while the
-        // box rests on it. Mostly vertical since the death pose is ~upright.
-        // Offsets are from the attach bone (j_kosi waist for clothing) to the piece centroid; mostly
-        // vertical since death pose is ~upright. Box half-extents enclose the piece (both legs/hands/
-        // feet for a shared model). All approximate - tune against the in-game piece.
-        var (half, off) = c.GearKeepModelSlot switch
-        {
-            0 => (new Vector3(0.11f, 0.035f, 0.12f), new Vector3(0f,  0.075f, 0f)), // hat: above skull, flat
-            1 => (new Vector3(0.105f, 0.13f, 0.065f), new Vector3(0f,  0.14f, 0f)), // body/top: torso, near waist
-            2 => (new Vector3(0.30f, 0.10f, 0.12f), Vector3.Zero),                // hands/gloves: center between hands
-            3 => (new Vector3(0.135f, 0.24f, 0.095f), Vector3.Zero),              // legs/pants: center through both legs
-            4 => (new Vector3(0.18f, 0.04f, 0.16f), new Vector3(0f, 0.035f, 0f)), // feet/shoes: paired fallback
-            6 => (new Vector3(0.065f, 0.055f, 0.045f), new Vector3(0f, -0.045f, 0f)), // neck: necklace drapes below
-            _ => (new Vector3(0.035f, 0.035f, 0.035f), Vector3.Zero),             // ears/wrist/ring: small chunk at bone
-        };
-        half *= scale;
+        var (parts, off) = BuildGearShapeParts(c.GearKeepModelSlot);
+        var half = ComputeGearShapeHalf(parts) * scale;
         offsetWorld = off * scale;
         c.GearBoxHalf = half; // remembered for the ground-sink clamp in the drive
-        // Clothing is light - heavy masses make it slam and settle hard.
         var mass = c.GearHideSkin ? 0.8f : GearPieceMass;
-        var box = new Box(half.X * 2f, half.Y * 2f, half.Z * 2f);
-        inertia = box.ComputeInertia(mass);
-        var idx = simulation!.Shapes.Add(box);
-        c.Shapes ??= new List<TypedIndex>();
-        c.Shapes.Add(idx);
-        return idx;
+        inertia = new Box(half.X * 2f, half.Y * 2f, half.Z * 2f).ComputeInertia(mass);
+
+        c.Shapes = new List<TypedIndex>();
+        if (parts.Length == 1 && parts[0].Center.LengthSquared() < 1e-6f)
+        {
+            var p = parts[0];
+            var idx = simulation!.Shapes.Add(new Box(p.Half.X * scale * 2f, p.Half.Y * scale * 2f, p.Half.Z * scale * 2f));
+            c.Shapes.Add(idx);
+            return idx;
+        }
+
+        bufferPool!.Take<CompoundChild>(parts.Length, out var children);
+        for (int i = 0; i < parts.Length; i++)
+        {
+            var p = parts[i];
+            var childHalf = p.Half * scale;
+            var shape = simulation!.Shapes.Add(new Box(childHalf.X * 2f, childHalf.Y * 2f, childHalf.Z * 2f));
+            c.Shapes.Add(shape);
+            children[i] = new CompoundChild
+            {
+                ShapeIndex = shape,
+                LocalPosition = p.Center * scale,
+                LocalOrientation = p.Rotation,
+            };
+        }
+
+        var compound = simulation!.Shapes.Add(new Compound(children));
+        c.Shapes.Add(compound);
+        return compound;
+    }
+
+    private static (GearShapePart[] Parts, Vector3 Offset) BuildGearShapeParts(int slot)
+    {
+        return slot switch
+        {
+            0 => (new[]
+            {
+                new GearShapePart(new Vector3(0.135f, 0.010f, 0.145f), new Vector3(0f, -0.012f, 0f)),
+                new GearShapePart(new Vector3(0.078f, 0.020f, 0.080f), new Vector3(0f,  0.014f, 0f)),
+            }, new Vector3(0f, 0.075f, 0f)),
+            1 => (new[]
+            {
+                new GearShapePart(new Vector3(0.135f, 0.155f, 0.030f), Vector3.Zero),
+                new GearShapePart(new Vector3(0.175f, 0.035f, 0.032f), new Vector3(0f,  0.105f, 0f)),
+                new GearShapePart(new Vector3(0.120f, 0.035f, 0.026f), new Vector3(0f, -0.120f, 0f)),
+            }, new Vector3(0f, 0.14f, 0f)),
+            2 => (new[]
+            {
+                new GearShapePart(new Vector3(0.075f, 0.075f, 0.055f), new Vector3(-0.18f, 0f, 0f)),
+                new GearShapePart(new Vector3(0.075f, 0.075f, 0.055f), new Vector3( 0.18f, 0f, 0f)),
+            }, Vector3.Zero),
+            3 => (new[]
+            {
+                new GearShapePart(new Vector3(0.055f, 0.205f, 0.034f), new Vector3(-0.055f, -0.020f, 0f)),
+                new GearShapePart(new Vector3(0.055f, 0.205f, 0.034f), new Vector3( 0.055f, -0.020f, 0f)),
+                new GearShapePart(new Vector3(0.135f, 0.055f, 0.038f), new Vector3(0f,  0.145f, 0f)),
+            }, Vector3.Zero),
+            4 => (new[]
+            {
+                new GearShapePart(new Vector3(0.075f, 0.035f, 0.125f), new Vector3(-0.080f, 0f, 0f)),
+                new GearShapePart(new Vector3(0.075f, 0.035f, 0.125f), new Vector3( 0.080f, 0f, 0f)),
+            }, new Vector3(0f, 0.035f, 0f)),
+            6 => (new[]
+            {
+                new GearShapePart(new Vector3(0.070f, 0.025f, 0.050f), Vector3.Zero),
+            }, new Vector3(0f, -0.045f, 0f)),
+            _ => (new[]
+            {
+                new GearShapePart(new Vector3(0.035f, 0.035f, 0.035f), Vector3.Zero),
+            }, Vector3.Zero),
+        };
+    }
+
+    private static Vector3 ComputeGearShapeHalf(GearShapePart[] parts)
+    {
+        var min = new Vector3(float.MaxValue);
+        var max = new Vector3(float.MinValue);
+
+        foreach (var p in parts)
+        {
+            var half = RotatedLocalHalfExtent(p.Rotation, p.Half);
+            min = Vector3.Min(min, p.Center - half);
+            max = Vector3.Max(max, p.Center + half);
+        }
+
+        return new Vector3(
+            MathF.Max(MathF.Abs(min.X), MathF.Abs(max.X)),
+            MathF.Max(MathF.Abs(min.Y), MathF.Abs(max.Y)),
+            MathF.Max(MathF.Abs(min.Z), MathF.Abs(max.Z)));
+    }
+
+    private static Vector3 RotatedLocalHalfExtent(Quaternion rot, Vector3 half)
+    {
+        var x = Vector3.Transform(Vector3.UnitX, rot);
+        var y = Vector3.Transform(Vector3.UnitY, rot);
+        var z = Vector3.Transform(Vector3.UnitZ, rot);
+        return new Vector3(
+            MathF.Abs(x.X) * half.X + MathF.Abs(y.X) * half.Y + MathF.Abs(z.X) * half.Z,
+            MathF.Abs(x.Y) * half.X + MathF.Abs(y.Y) * half.Y + MathF.Abs(z.Y) * half.Z,
+            MathF.Abs(x.Z) * half.X + MathF.Abs(y.Z) * half.Y + MathF.Abs(z.Z) * half.Z);
     }
 
     private static void ApplyCloneDrawScale(Clone c, DrawObject* drawObj)
