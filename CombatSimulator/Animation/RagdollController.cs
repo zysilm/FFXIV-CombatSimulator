@@ -2932,6 +2932,7 @@ public unsafe class RagdollController : IDisposable
                 ConnectedPairs = connectedPairs,
                 ExternalDynamicBodies = externalDynamicBodyHandles,
                 Friction = config.RagdollFriction,
+                Config = config,
             },
             new RagdollPoseIntegratorCallbacks(
                 new Vector3(0, -config.RagdollGravity, 0),
@@ -7546,6 +7547,7 @@ public unsafe class RagdollController : IDisposable
 struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 {
     public float Friction;
+    public Configuration? Config;
 
     // Connected body pairs that should NOT collide (parent-child joints).
     // All other body-body pairs DO collide (arms vs torso, etc.).
@@ -7622,13 +7624,13 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         // forever and never settles. Give self-contacts a gentle, overdamped recovery so
         // resting overlaps stop pumping energy and the rig can sleep. Ground (static) and
         // external strikes (kinematic) keep the firm 2 m/s recovery for crisp response.
-        if (IsGearGroundContact(pair))
+        if (UseAdvancedGearContactFriction() && IsGearGroundContact(pair))
         {
             pairMaterial.MaximumRecoveryVelocity = 0.25f;
             pairMaterial.FrictionCoefficient = MathF.Max(Friction, 3.5f);
             pairMaterial.SpringSettings = new SpringSettings(12, 3);
         }
-        else if (IsGearContact(pair))
+        else if (UseAdvancedGearContactFriction() && IsGearContact(pair))
         {
             pairMaterial.MaximumRecoveryVelocity = 0.08f;
             pairMaterial.FrictionCoefficient = Math.Clamp(Friction, 0.45f, 0.9f);
@@ -7654,6 +7656,10 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 
     private bool IsExternalDynamic(int bodyHandle)
         => ExternalDynamicBodies != null && ExternalDynamicBodies.Contains(bodyHandle);
+
+    private bool UseAdvancedGearContactFriction()
+        => Config?.KoStripPhysicsDropClothing == true &&
+           Config.KoStripAdvancedClothPhysics;
 
     private bool IsGearContact(CollidablePair pair)
     {

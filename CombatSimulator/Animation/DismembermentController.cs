@@ -1972,7 +1972,7 @@ public unsafe class DismembermentController : IDisposable
             ApplyHandoffPose(skel, c);
             if (TryUpdateGarmentVisualBind(skel, c))
                 return true;
-            if (IsGarmentHandoffGear(c) && c.GearVisualBindStarted)
+            if (UseAdvancedGarmentPhysics(c) && c.GearVisualBindStarted)
             {
                 ApplyLastGarmentVisualBindPose(c);
                 c.SettleFrames = 0;
@@ -2087,13 +2087,15 @@ public unsafe class DismembermentController : IDisposable
             bodyPos = bodyRef.Pose.Position;
             renderRot = bodyRot;
         }
-        var visualScale = ResolveGearVisualSquashFactor(c);
         ApplyGarmentHandoffDrag(c, bodyPos, linearVelocity);
-        TryApplyGearCollapsedPhysicsShape(c);
+        var visualScale = ResolveGearVisualSquashFactor(c);
         var hasGroundStats = TryEstimateGearGroundStats(c, bodyPos, renderRot, visualScale,
             out var averageGroundHeight, out var lowestGroundHeight);
         if (hasGroundStats)
             ApplyGearGroundContactDamping(c, averageGroundHeight, lowestGroundHeight);
+        UpdateGearDeflateProgress(c, hasGroundStats, averageGroundHeight, lowestGroundHeight);
+        visualScale = ResolveGearVisualSquashFactor(c);
+        TryApplyGearCollapsedPhysicsShape(c);
         var groundVisualOffset = ResolveGearGroundVisualOffset(c, hasGroundStats, averageGroundHeight, lowestGroundHeight);
         var visualCenterOffset = ScaleVector(c.LimbRootModelPos + c.GearExtraOffset, visualScale);
         // Box centre is at the visual piece centre. Back out the *visually scaled* centre offset so
@@ -2247,9 +2249,14 @@ public unsafe class DismembermentController : IDisposable
     private static bool IsGarmentHandoffGear(Clone c)
         => c.GearKeepModelSlot is 1 or 3;
 
+    private bool UseAdvancedGarmentPhysics(Clone c)
+        => config.KoStripPhysicsDropClothing &&
+           config.KoStripAdvancedClothPhysics &&
+           IsGarmentHandoffGear(c);
+
     private bool TryUpdateGarmentVisualBind(SkeletonAccess skel, Clone c)
     {
-        if (!IsGarmentHandoffGear(c))
+        if (!UseAdvancedGarmentPhysics(c))
             return false;
 
         if (!c.GearVisualBindStarted)
@@ -2439,13 +2446,11 @@ public unsafe class DismembermentController : IDisposable
         var refForward = Vector3.Transform(Vector3.UnitZ, referenceRot);
 
         var y = NormalizeOrFallback(upCandidate, refUp);
-        if (Vector3.Dot(y, refUp) < 0f) y = -y;
 
         var x = ProjectOntoPlane(rightCandidate, y);
         if (x.LengthSquared() < 1e-6f)
             x = ProjectOntoPlane(refRight, y);
         x = NormalizeOrFallback(x, refRight);
-        if (Vector3.Dot(x, refRight) < 0f) x = -x;
 
         var z = NormalizeOrFallback(Vector3.Cross(x, y), refForward);
         x = NormalizeOrFallback(Vector3.Cross(y, z), x);
@@ -2461,7 +2466,7 @@ public unsafe class DismembermentController : IDisposable
 
     private void ApplyGarmentHandoffDrag(Clone c, Vector3 bodyPos, Vector3 linearVelocity)
     {
-        if (!IsGarmentHandoffGear(c) || c.GearArmedFrames > GearGarmentHandoffFrames)
+        if (!UseAdvancedGarmentPhysics(c) || c.GearArmedFrames > GearGarmentHandoffFrames)
             return;
 
         if (!float.IsNegativeInfinity(c.GearGroundY) &&
@@ -2626,11 +2631,44 @@ public unsafe class DismembermentController : IDisposable
 
         // Prefer settling after landing, but also start eventually in case the piece keeps a
         // tiny residual velocity while resting on body colliders.
-        if (IsPoseRelaxGear(c) && (c.GearRestFrames >= 6 || c.GearArmedFrames >= 45))
+        if (IsPoseRelaxGear(c) &&
+            (!IsGarmentHandoffGear(c) || UseAdvancedGarmentPhysics(c)) &&
+            (c.GearRestFrames >= 6 || c.GearArmedFrames >= 45))
             c.GearPoseRelaxFrames = Math.Min(c.GearPoseRelaxFrames + 1, 55);
+
+    }
+
+    private void UpdateGearDeflateProgress(Clone c, bool hasGroundStats, float averageHeight, float lowestHeight)
+    {
+        if (!IsDeflatableGear(c))
+            return;
+
+        if (UseAdvancedGarmentPhysics(c))
+        {
+            if (c.GearArmedFrames <= GearGarmentHandoffFrames)
+                return;
+
+            var nearGround = IsGearNearGroundContact(c, hasGroundStats, averageHeight, lowestHeight);
+            var settledOnGround = nearGround && c.GearRestFrames >= 4;
+            var settledOnSupport = c.GearRestFrames >= 16 && c.GearArmedFrames >= GearGarmentHandoffFrames + 20;
+
+            if (settledOnGround || settledOnSupport)
+                c.GearDeflateFrames = Math.Min(c.GearDeflateFrames + 1, 60);
+
+            return;
+        }
 
         if (c.GearRestFrames >= 8 || c.GearArmedFrames >= 55)
             c.GearDeflateFrames = Math.Min(c.GearDeflateFrames + 1, 60);
+    }
+
+    private static bool IsGearNearGroundContact(Clone c, bool hasGroundStats, float averageHeight, float lowestHeight)
+    {
+        if (!hasGroundStats)
+            return false;
+
+        var clearance = ResolveGearGroundClearance(c);
+        return lowestHeight <= clearance + 0.055f || averageHeight <= clearance + 0.11f;
     }
 
     private Quaternion ResolveGearRenderRotation(Clone c, Quaternion bodyRot)
@@ -2876,6 +2914,9 @@ public unsafe class DismembermentController : IDisposable
 
     private void ApplyGearGroundContactDamping(Clone c, float averageHeight, float lowestHeight)
     {
+        if (IsGarmentHandoffGear(c) && !UseAdvancedGarmentPhysics(c))
+            return;
+
         if (c.GearArmedFrames < 8 || c.GearRestFrames < 2)
             return;
 
@@ -5204,6 +5245,7 @@ public unsafe class DismembermentController : IDisposable
                 ConnectedPairs = connectedPairs,
                 ExternalDynamicBodies = gearDynamicBodyHandles,
                 Friction = config.RagdollFriction,
+                Config = config,
                 RestrictedStatics = restrictedStaticHandles,
                 AllowedDynamicBodiesForRestrictedStatics = pcCollisionBodyHandles,
             },
