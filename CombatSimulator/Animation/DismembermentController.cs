@@ -2024,15 +2024,13 @@ public unsafe class DismembermentController : IDisposable
             return true;
 
         UpdateGearSettleProgress(c, linearVelocity, angularVelocity);
-        var renderRot = ResolveGearRenderRotation(c, bodyRot);
-        SyncGearBodyToRenderRotation(c, renderRot);
-        if (c.GearRagdollBody != null)
-            bodyRot = renderRot;
-        else if (simulation != null && c.Body != null)
+        var renderRot = bodyRot;
+        if (simulation != null && c.Body != null)
         {
             var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
             bodyRot = bodyRef.Pose.Orientation;
             bodyPos = bodyRef.Pose.Position;
+            renderRot = bodyRot;
         }
         var visualScale = ResolveGearVisualSquashFactor(c);
         var hasGroundStats = TryEstimateGearGroundStats(c, bodyPos, renderRot, visualScale,
@@ -2313,9 +2311,7 @@ public unsafe class DismembermentController : IDisposable
             return c.GearGroundVisualOffset;
         }
 
-        var requested = MathF.Max(0f, averageHeight - 0.002f);
-        var safeByLowestVertex = MathF.Max(0f, lowestHeight - 0.002f);
-        var target = MathF.Min(requested, safeByLowestVertex);
+        var target = MathF.Max(0f, lowestHeight - 0.002f);
         target = MathF.Min(target, c.GearKeepModelSlot == 1 ? 0.055f : 0.035f);
 
         var restBlend = Math.Clamp((c.GearRestFrames - 2) / 10f, 0f, 1f);
@@ -2339,9 +2335,8 @@ public unsafe class DismembermentController : IDisposable
         var restBlend = Math.Clamp(c.GearRestFrames / 12f, 0f, 1f);
         var targetHorizontal = c.GearKeepModelSlot == 1 ? 0.74f : 0.82f;
         var horizontalScale = 0.96f + (targetHorizontal - 0.96f) * restBlend;
-        var verticalScale = 1f + (0.84f - 1f) * restBlend;
         var angularScale = 0.94f + (0.78f - 0.94f) * restBlend;
-        DampenGearBodyVelocity(c, horizontalScale, verticalScale, angularScale);
+        DampenGearBodyVelocity(c, horizontalScale, 1f, angularScale);
     }
 
     private void DampenGearBodyVelocity(Clone c, float horizontalScale, float verticalScale, float angularScale)
@@ -2364,7 +2359,6 @@ public unsafe class DismembermentController : IDisposable
         var lin = body.Velocity.Linear;
         body.Velocity.Linear = new Vector3(lin.X * horizontalScale, lin.Y * verticalScale, lin.Z * horizontalScale);
         body.Velocity.Angular *= angularScale;
-        body.Awake = true;
     }
 
     private void ApplyGearVisualSquash(Clone c, DrawObject* drawObj, Vector3 factor)

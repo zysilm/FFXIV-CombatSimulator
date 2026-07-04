@@ -513,7 +513,6 @@ public unsafe class RagdollController : IDisposable
             var lin = body.Velocity.Linear;
             body.Velocity.Linear = new Vector3(lin.X * horizontalScale, lin.Y * verticalScale, lin.Z * horizontalScale);
             body.Velocity.Angular *= angularScale;
-            body.Awake = true;
             return true;
         }
         catch
@@ -7578,11 +7577,17 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         // forever and never settles. Give self-contacts a gentle, overdamped recovery so
         // resting overlaps stop pumping energy and the rig can sleep. Ground (static) and
         // external strikes (kinematic) keep the firm 2 m/s recovery for crisp response.
-        if (IsGearContact(pair))
+        if (IsGearGroundContact(pair))
         {
-            pairMaterial.MaximumRecoveryVelocity = 0.35f;
-            pairMaterial.FrictionCoefficient = MathF.Max(Friction, 4.0f);
-            pairMaterial.SpringSettings = new SpringSettings(16, 3);
+            pairMaterial.MaximumRecoveryVelocity = 0.25f;
+            pairMaterial.FrictionCoefficient = MathF.Max(Friction, 3.5f);
+            pairMaterial.SpringSettings = new SpringSettings(12, 3);
+        }
+        else if (IsGearContact(pair))
+        {
+            pairMaterial.MaximumRecoveryVelocity = 0.08f;
+            pairMaterial.FrictionCoefficient = Math.Clamp(Friction, 0.45f, 0.9f);
+            pairMaterial.SpringSettings = new SpringSettings(6, 4);
         }
         else if (pair.A.Mobility == CollidableMobility.Dynamic && pair.B.Mobility == CollidableMobility.Dynamic)
         {
@@ -7610,6 +7615,14 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         var aExternal = pair.A.Mobility == CollidableMobility.Dynamic && IsExternalDynamic(pair.A.BodyHandle.Value);
         var bExternal = pair.B.Mobility == CollidableMobility.Dynamic && IsExternalDynamic(pair.B.BodyHandle.Value);
         return aExternal || bExternal;
+    }
+
+    private bool IsGearGroundContact(CollidablePair pair)
+    {
+        var aExternal = pair.A.Mobility == CollidableMobility.Dynamic && IsExternalDynamic(pair.A.BodyHandle.Value);
+        var bExternal = pair.B.Mobility == CollidableMobility.Dynamic && IsExternalDynamic(pair.B.BodyHandle.Value);
+        return (aExternal && pair.B.Mobility == CollidableMobility.Static) ||
+               (bExternal && pair.A.Mobility == CollidableMobility.Static);
     }
 }
 
