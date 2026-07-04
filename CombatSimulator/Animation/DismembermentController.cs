@@ -176,7 +176,6 @@ public unsafe class DismembermentController : IDisposable
         public float GearGroundVisualOffset;                  // smoothed visual-only downward ground settle offset
         public int GearArmedFrames;                          // frames since the rigid body was armed
         public int GearRestFrames;                           // consecutive near-rest frames
-        public int GearPoseRelaxFrames;                      // bounded render-pose settling progress
         public int GearDeflateFrames;                        // bounded fake cloth-collapse progress
         public Vector3 GearHandoffPrevAnchorWorld;           // source-body anchor used for short garment drag
         public bool GearHandoffHasPrevAnchor;
@@ -2163,33 +2162,6 @@ public unsafe class DismembermentController : IDisposable
         return true;
     }
 
-    private void SyncGearBodyToRenderRotation(Clone c, Quaternion renderRot)
-    {
-        if (!IsPoseRelaxGear(c) || c.GearPoseRelaxFrames <= 0)
-            return;
-
-        var angularScale = ResolveGearSettleAngularVelocityScale(c);
-        if (c.GearRagdollBody != null)
-        {
-            PlayerRagdollController?.TrySetExternalBodyRotation(c.GearRagdollBody, renderRot, angularScale);
-            return;
-        }
-
-        if (simulation == null || c.Body == null)
-            return;
-
-        var bodyRef = simulation.Bodies.GetBodyReference(c.Body.Value);
-        bodyRef.Pose.Orientation = Quaternion.Normalize(renderRot);
-        bodyRef.Velocity.Angular *= angularScale;
-        bodyRef.Awake = true;
-    }
-
-    private static float ResolveGearSettleAngularVelocityScale(Clone c)
-    {
-        var settle = Math.Clamp(c.GearPoseRelaxFrames / 55f, 0f, 1f);
-        return 1f - 0.85f * settle;
-    }
-
     private Vector3 ResolveGearAnchorModelPos(SkeletonAccess skel, Clone c)
     {
         // Some equipment slots are paired meshes. Anchoring them to the waist makes the rigid body feel
@@ -2239,9 +2211,6 @@ public unsafe class DismembermentController : IDisposable
         => c.GearKeepModelSlot is 2 or 3 or 4 || (c.GearKeepModelSlot == 1 && c.GearVisualBindStarted)
             ? skeletonRotation
             : c.SeveranceWorldRot;
-
-    private static bool IsPoseRelaxGear(Clone c)
-        => c.GearKeepModelSlot is 0 or 1 or 3;
 
     private bool IsDeflatableGear(Clone c)
         => c.GearKeepModelSlot >= 0 && config.IsKoStripCollapseEnabled(c.GearKeepModelSlot);
@@ -2674,14 +2643,6 @@ public unsafe class DismembermentController : IDisposable
         c.GearRestFrames = nearRest
             ? Math.Min(c.GearRestFrames + 1, 30)
             : Math.Max(0, c.GearRestFrames - 2);
-
-        // Prefer settling after landing, but also start eventually in case the piece keeps a
-        // tiny residual velocity while resting on body colliders.
-        if (IsPoseRelaxGear(c) &&
-            (!IsGarmentHandoffGear(c) || UseAdvancedGarmentPhysics(c)) &&
-            (c.GearRestFrames >= 6 || c.GearArmedFrames >= 45))
-            c.GearPoseRelaxFrames = Math.Min(c.GearPoseRelaxFrames + 1, 55);
-
     }
 
     private void UpdateGearDeflateProgress(Clone c, bool hasGroundStats, float averageHeight, float lowestHeight)
@@ -2715,20 +2676,6 @@ public unsafe class DismembermentController : IDisposable
 
         var clearance = ResolveGearGroundClearance(c);
         return lowestHeight <= clearance + 0.055f || averageHeight <= clearance + 0.11f;
-    }
-
-    private Quaternion ResolveGearRenderRotation(Clone c, Quaternion bodyRot)
-    {
-        if (!IsPoseRelaxGear(c) || c.GearPoseRelaxFrames <= 0)
-            return bodyRot;
-
-        var t = Math.Clamp(c.GearPoseRelaxFrames / 55f, 0f, 1f);
-        t = t * t * (3f - 2f * t);
-
-        var target = c.GearKeepModelSlot == 0
-            ? BuildFlatHatRestRotation(bodyRot)
-            : BuildFlatGarmentRestRotation(bodyRot);
-        return Quaternion.Normalize(Quaternion.Slerp(bodyRot, target, t));
     }
 
     private Vector3 ResolveGearVisualSquashFactor(Clone c)
@@ -3007,23 +2954,6 @@ public unsafe class DismembermentController : IDisposable
             c.SourceScale.Z * factor.Z);
         drawObj->NotifyTransformChanged();
     }
-
-    private static Quaternion BuildYawRotation(Quaternion source)
-    {
-        var fwd = Vector3.Transform(Vector3.UnitZ, source);
-        fwd.Y = 0f;
-        if (fwd.LengthSquared() < 1e-6f) return Quaternion.Identity;
-        return Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.Atan2(fwd.X, fwd.Z));
-    }
-
-    // Hat: keep the local up axis vertical so the brim/crown rest flat instead of on edge.
-    private static Quaternion BuildFlatHatRestRotation(Quaternion source)
-        => BuildYawRotation(source);
-
-    // Garments: lay the standing skeleton on its back/front. Local Y (body height) becomes horizontal,
-    // local Z becomes world-up, so the shell no longer visually spears into the ground.
-    private static Quaternion BuildFlatGarmentRestRotation(Quaternion source)
-        => Quaternion.Normalize(BuildYawRotation(source) * Quaternion.CreateFromAxisAngle(Vector3.UnitX, -MathF.PI * 0.5f));
 
     private void ApplyGearDeflate(SkeletonAccess skel, Clone c)
     {
