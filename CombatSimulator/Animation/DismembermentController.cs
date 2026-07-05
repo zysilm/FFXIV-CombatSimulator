@@ -90,6 +90,20 @@ public unsafe class DismembermentController : IDisposable
     private readonly HashSet<int> coolingCloneSlotSet = new();
     private bool cloneSlotQueueInitialized;
 
+    // Frame-rate decoupling. Physics steps at a FIXED 1/60 via an accumulator so it advances at real
+    // wall-clock speed at any render framerate (was one hard 1/60 step per rendered frame -> slow-motion
+    // above 60fps, fast below). substepsThisFrame = fixed steps taken this frame; the gear timing
+    // counters advance by it so their transitions stay locked to the physics. Every conversion here is
+    // an exact identity at 60fps (dt ~= 1/60 -> exactly one substep per frame).
+    private readonly System.Diagnostics.Stopwatch frameClock = System.Diagnostics.Stopwatch.StartNew();
+    private double physicsAccumulator;
+    private float frameDt = 1f / 60f;
+    private int substepsThisFrame = 1;
+    private const float FixedStep = 1f / 60f;
+    private const float MinFrameDt = 1f / 240f;
+    private const float MaxFrameDt = 1f / 30f;
+    private const int MaxSubstepsPerFrame = 4;
+
     public float DismemberActivationImpulse { get; set; }
     public bool EnablePcDismemberNpcCollision { get; set; }
     public Func<IReadOnlyList<nint>>? PcDismemberNpcCollisionProvider { get; set; }
@@ -188,6 +202,10 @@ public unsafe class DismembermentController : IDisposable
         public Vector3 GearVisualBindLastRootPos;
         public Quaternion GearVisualBindLastRootRot = Quaternion.Identity;
         public bool GearVisualBindHasLastPose;
+        public float GearGroundSampleX;                       // last horizontal position the ground was sampled at
+        public float GearGroundSampleZ;
+        public bool GearGroundHasSample;
+        public int GearSquashAxis = -1;                       // locked gravity-aligned crush axis (-1 = unset)
     }
 
     private sealed class GearPartialPoseSnapshot
@@ -586,13 +604,18 @@ public unsafe class DismembermentController : IDisposable
     {
         try
         {
+            // Real wall-clock delta for this render frame (clamped so a hitch can't inject a huge step).
+            var elapsed = (float)frameClock.Elapsed.TotalSeconds;
+            frameClock.Restart();
+            frameDt = Math.Clamp(elapsed, MinFrameDt, MaxFrameDt);
+
             TickCloneSlotCooldowns();
 
             // Tick pending spawns (delay countdown).
             for (int i = pending.Count - 1; i >= 0; i--)
             {
                 var p = pending[i];
-                const float dt = 1f / 60f;
+                var dt = frameDt;
                 TryRefreshHandoff(p, dt);
                 p.Delay -= dt;
                 if (p.Delay <= 0f)
@@ -609,7 +632,18 @@ public unsafe class DismembermentController : IDisposable
                 if (!c.DrawEnabled) TryEnableDraw(c);
 
             UpdatePcNpcCollisionStatics();
-            if (simulation != null) simulation.Timestep(1f / 60f);
+            // Advance physics in fixed 1/60 substeps (preserves the per-substep integrator damping and
+            // solver tuning exactly) as many times as the accumulated wall-clock time allows.
+            physicsAccumulator += frameDt;
+            substepsThisFrame = 0;
+            while (physicsAccumulator >= FixedStep && substepsThisFrame < MaxSubstepsPerFrame)
+            {
+                if (simulation != null) simulation.Timestep(FixedStep);
+                physicsAccumulator -= FixedStep;
+                substepsThisFrame++;
+            }
+            if (substepsThisFrame >= MaxSubstepsPerFrame)
+                physicsAccumulator = 0; // drop backlog to avoid a spiral of death after a long hitch
 
             for (int i = clones.Count - 1; i >= 0; i--)
             {
@@ -1976,7 +2010,8 @@ public unsafe class DismembermentController : IDisposable
                 ApplyLastGarmentVisualBindPose(c);
                 c.SettleFrames = 0;
             }
-            if (--c.SettleFrames > 0) return true;
+            c.SettleFrames -= substepsThisFrame;
+            if (c.SettleFrames > 0) return true;
 
             c.LimbRootModelPos = ResolveGearAnchorModelPos(skel, c);
             ((Character*)c.Chara)->Timeline.OverallSpeed = 0f;
@@ -2026,7 +2061,11 @@ public unsafe class DismembermentController : IDisposable
             var gearRot = ResolveGearInitialRotation(c, skelRot);
             var anchorWorld = cloneSkelPos + Vector3.Transform(c.LimbRootModelPos, skelRot);
             var spawnPos = anchorWorld + Vector3.Transform(shapeSpec.OffsetWorld, gearRot);
-            c.GearExtraOffset = Vector3.Transform(shapeSpec.OffsetWorld, Quaternion.Inverse(gearRot));
+            // Local-frame bone->box-centre offset. The render each frame backs this out with the SAME
+            // rotation the box is drawn at (skelPos = bodyPos - R*(anchor + this)), so the rendered piece
+            // sits exactly on its collision box for any orientation. (Was inverse-rotated, which left a
+            // constant (R-I)*offset world gap that only vanished for an upright, yaw-only death pose.)
+            c.GearExtraOffset = shapeSpec.OffsetWorld;
             c.GearGroundY = BGCollisionModule.RaycastMaterialFilter(
                 new Vector3(spawnPos.X, spawnPos.Y + 5f, spawnPos.Z), new Vector3(0, -1, 0), out var groundHit, 80f)
                 ? groundHit.Point.Y : spawnPos.Y - 1.5f;
@@ -2087,12 +2126,14 @@ public unsafe class DismembermentController : IDisposable
             renderRot = bodyRot;
         }
         ApplyGarmentHandoffDrag(c, bodyPos, linearVelocity);
+        MaybeResampleGearGround(c, bodyPos);
         var visualScale = ResolveGearVisualSquashFactor(c);
         var hasGroundStats = TryEstimateGearGroundStats(c, bodyPos, renderRot, visualScale,
             out var averageGroundHeight, out var lowestGroundHeight);
         if (hasGroundStats)
             ApplyGearGroundContactDamping(c, averageGroundHeight, lowestGroundHeight);
         UpdateGearDeflateProgress(c, hasGroundStats, averageGroundHeight, lowestGroundHeight);
+        LockGearSquashAxisIfNeeded(c, renderRot);
         visualScale = ResolveGearVisualSquashFactor(c);
         TryApplyGearCollapsedPhysicsShape(c);
         var groundVisualOffset = ResolveGearGroundVisualOffset(c, hasGroundStats, averageGroundHeight, lowestGroundHeight);
@@ -2253,7 +2294,7 @@ public unsafe class DismembermentController : IDisposable
         c.GearHandoffReleaseVelocity = releaseVelocity;
         c.GearHandoffReleaseAngularVelocity = releaseAngularVelocity;
         c.GearHandoffHasReleaseVelocity = true;
-        c.GearVisualBindFramesRemaining--;
+        c.GearVisualBindFramesRemaining -= substepsThisFrame;
         return true;
     }
 
@@ -2289,12 +2330,17 @@ public unsafe class DismembermentController : IDisposable
             : ResolveGearAnchorModelPos(skel, c);
         rootPos = anchorWorld - Vector3.Transform(anchorModel, rootRot);
 
-        const float dt = 1f / 60f;
+        var dt = frameDt;
         if (c.GearHandoffHasPrevAnchor)
         {
             releaseVelocity = ClampVectorLength((anchorWorld - c.GearHandoffPrevAnchorWorld) / dt, 5f);
-            releaseAngularVelocity = ClampVectorLength(
-                AngularVelocityFromQuats(c.GearHandoffPrevAnchorRot, rootRot, dt), 20f);
+            // A large frame-to-frame root swing here is the garment-frame front/back sign flip snapping,
+            // not a real spin; differencing it would seed a bogus ~20 rad/s release. Carry the prior
+            // (smooth) angular estimate across such a discontinuity.
+            releaseAngularVelocity =
+                QuatAngle(c.GearHandoffPrevAnchorRot, rootRot) > 1.2f && c.GearHandoffHasReleaseVelocity
+                    ? c.GearHandoffReleaseAngularVelocity
+                    : ClampVectorLength(AngularVelocityFromQuats(c.GearHandoffPrevAnchorRot, rootRot, dt), 20f);
         }
         else
         {
@@ -2499,7 +2545,7 @@ public unsafe class DismembermentController : IDisposable
                    Math.Clamp(c.GearArmedFrames / (float)GearGarmentHandoffFrames, 0f, 1f);
         targetPos.Y -= slip;
 
-        const float dt = 1f / 60f;
+        var dt = frameDt;
         if (c.GearHandoffHasPrevAnchor)
         {
             targetVelocity = ClampVectorLength((targetPos - c.GearHandoffPrevAnchorWorld) / dt, 4f);
@@ -2609,11 +2655,11 @@ public unsafe class DismembermentController : IDisposable
 
     private void UpdateGearSettleProgress(Clone c, Vector3 linearVelocity, Vector3 angularVelocity)
     {
-        c.GearArmedFrames++;
+        c.GearArmedFrames += substepsThisFrame;
         var nearRest = linearVelocity.LengthSquared() < 0.28f && angularVelocity.LengthSquared() < 5.0f;
         c.GearRestFrames = nearRest
-            ? Math.Min(c.GearRestFrames + 1, 30)
-            : Math.Max(0, c.GearRestFrames - 2);
+            ? Math.Min(c.GearRestFrames + substepsThisFrame, 30)
+            : Math.Max(0, c.GearRestFrames - 2 * substepsThisFrame);
     }
 
     private void UpdateGearDeflateProgress(Clone c, bool hasGroundStats, float averageHeight, float lowestHeight)
@@ -2631,13 +2677,17 @@ public unsafe class DismembermentController : IDisposable
             var settledOnSupport = c.GearRestFrames >= 16 && c.GearArmedFrames >= GearGarmentHandoffFrames + 20;
 
             if (settledOnGround || settledOnSupport)
-                c.GearDeflateFrames = Math.Min(c.GearDeflateFrames + 1, 60);
+                c.GearDeflateFrames = Math.Min(c.GearDeflateFrames + substepsThisFrame, 60);
 
             return;
         }
 
-        if (c.GearRestFrames >= 8 || c.GearArmedFrames >= 55)
-            c.GearDeflateFrames = Math.Min(c.GearDeflateFrames + 1, 60);
+        // Deflate only once the piece is resting NEAR the ground (was also firing on any low-velocity
+        // frame, e.g. the apex of a launch arc, so a hat could visibly deflate mid-air). Keep a long hard
+        // fallback so a piece that never settles still eventually collapses.
+        var nearGroundSimple = IsGearNearGroundContact(c, hasGroundStats, averageHeight, lowestHeight);
+        if ((c.GearRestFrames >= 8 && nearGroundSimple) || c.GearArmedFrames >= 120)
+            c.GearDeflateFrames = Math.Min(c.GearDeflateFrames + substepsThisFrame, 60);
     }
 
     private static bool IsGearNearGroundContact(Clone c, bool hasGroundStats, float averageHeight, float lowestHeight)
@@ -2658,9 +2708,77 @@ public unsafe class DismembermentController : IDisposable
         var strength = t * t * (3f - 2f * t);
         if (strength <= 0f) return Vector3.One;
 
-        var target = ResolveGearFinalSquashFactor(c);
+        var target = ApplyGravitySquashAxis(c, ResolveGearFinalSquashFactor(c));
 
         return Vector3.Lerp(Vector3.One, target, strength);
+    }
+
+    // Symmetric-spread slots (round hat + point-like accessories): the deflate "flatten" component can be
+    // re-pointed to any local axis with no side effect, since the other two spread components are equal.
+    // Asymmetric garments (body / pants / gloves / boots) keep their authored crush axis.
+    private static readonly HashSet<int> SymmetricSquashSlots = new() { 0, 5, 6, 7, 8, 9 };
+
+    // Lock (once, at deflate onset) which LOCAL axis the crush follows so a piece lying on its side
+    // flattens toward the ground instead of always along local-Y. An upright piece resolves to Y and is
+    // therefore unchanged.
+    private void LockGearSquashAxisIfNeeded(Clone c, Quaternion renderRot)
+    {
+        if (c.GearSquashAxis >= 0 || c.GearDeflateFrames <= 0) return;
+        if (!SymmetricSquashSlots.Contains(c.GearKeepModelSlot)) return;
+        var up = Vector3.Transform(Vector3.UnitY, Quaternion.Inverse(renderRot)); // world-up in local frame
+        var ax = MathF.Abs(up.X);
+        var ay = MathF.Abs(up.Y);
+        var az = MathF.Abs(up.Z);
+        c.GearSquashAxis = ax >= ay && ax >= az ? 0 : (az >= ax && az >= ay ? 2 : 1);
+    }
+
+    // Re-point the crush component of a symmetric squash factor onto the locked gravity axis. No-op until
+    // the axis is locked, and for asymmetric slots.
+    private Vector3 ApplyGravitySquashAxis(Clone c, Vector3 factor)
+    {
+        if (c.GearSquashAxis < 0 || !SymmetricSquashSlots.Contains(c.GearKeepModelSlot))
+            return factor;
+        var flat = MathF.Min(factor.X, MathF.Min(factor.Y, factor.Z));
+        var spread = MathF.Max(factor.X, MathF.Max(factor.Y, factor.Z));
+        return c.GearSquashAxis switch
+        {
+            0 => new Vector3(flat, spread, spread),
+            2 => new Vector3(spread, spread, flat),
+            _ => new Vector3(spread, flat, spread),
+        };
+    }
+
+    private static float QuatAngle(Quaternion a, Quaternion b)
+    {
+        var d = Math.Clamp(MathF.Abs(Quaternion.Dot(a, b)), 0f, 1f);
+        return 2f * MathF.Acos(d);
+    }
+
+    // The physics terrain patch (a mesh) tracks slopes, but the VISUAL ground height GearGroundY is a
+    // single scalar sampled once at spawn. A piece that slides along a slope would otherwise clamp against
+    // a stale height (float above / sink into the terrain). Re-sample under the body once it has slid far
+    // enough, easing toward the new height so the clamp never pops. Only accept a hit at or below the body
+    // so an overhang above it can't yank the ground up.
+    private void MaybeResampleGearGround(Clone c, Vector3 bodyPos)
+    {
+        if (float.IsNegativeInfinity(c.GearGroundY)) return;
+        if (!c.GearGroundHasSample)
+        {
+            c.GearGroundSampleX = bodyPos.X;
+            c.GearGroundSampleZ = bodyPos.Z;
+            c.GearGroundHasSample = true;
+            return;
+        }
+
+        var dx = bodyPos.X - c.GearGroundSampleX;
+        var dz = bodyPos.Z - c.GearGroundSampleZ;
+        if (dx * dx + dz * dz < 0.25f * 0.25f) return;
+        c.GearGroundSampleX = bodyPos.X;
+        c.GearGroundSampleZ = bodyPos.Z;
+        if (BGCollisionModule.RaycastMaterialFilter(
+                new Vector3(bodyPos.X, bodyPos.Y + 5f, bodyPos.Z), new Vector3(0, -1, 0), out var hit, 80f)
+            && hit.Point.Y <= bodyPos.Y + 0.05f)
+            c.GearGroundY += (hit.Point.Y - c.GearGroundY) * 0.5f;
     }
 
     private bool TryApplyGearCollapsedPhysicsShape(Clone c)
@@ -2673,7 +2791,7 @@ public unsafe class DismembermentController : IDisposable
             c.GearShapeParts.Length == 0)
             return false;
 
-        var factor = ResolveGearFinalSquashFactor(c);
+        var factor = ApplyGravitySquashAxis(c, ResolveGearFinalSquashFactor(c));
         if (factor == Vector3.One)
         {
             c.GearCollapsedPhysicsApplied = true;
@@ -3161,7 +3279,12 @@ public unsafe class DismembermentController : IDisposable
         // capture a live, leaning/turning player; using the full rotation would hang the skirt at that
         // lean angle (reads as severe distortion). Yaw-only keeps the skirt vertical but still facing the
         // right way (so front/back/side spread is correct).
-        var fwd = Vector3.Transform(Vector3.UnitZ, c.SeveranceWorldRot);
+        // Heading anchor = the source skeleton ROOT yaw (Handoff.SkeletonRot), never a bone rotation:
+        // per this project's garment-frame lesson, bone local axes sit ~90 deg off the model convention,
+        // whereas the root transform is a reliable yaw-only front anchor. Falls back to the captured
+        // severance rot only when no handoff was taken.
+        var headingRot = c.Handoff?.SkeletonRot ?? c.SeveranceWorldRot;
+        var fwd = Vector3.Transform(Vector3.UnitZ, headingRot);
         fwd.Y = 0f;
         var hangRef = fwd.LengthSquared() < 1e-6f
             ? Quaternion.Identity
