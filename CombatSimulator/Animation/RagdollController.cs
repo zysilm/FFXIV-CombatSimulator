@@ -1836,6 +1836,7 @@ public unsafe class RagdollController : IDisposable
             // This partial attaches to its root bone (e.g. "j_kao"); collapse it only if that bone is
             // inside the hidden subtree.
             var rootName = pose->Skeleton->Bones[0].Name.String;
+            if (string.IsNullOrEmpty(rootName)) continue;
             var mainIdx = boneService.ResolveBoneIndex(skel, rootName);
             if (mainIdx < 0 || !IsDescendantOrSelf(skel, mainIdx, rootIdx)) continue;
 
@@ -2292,7 +2293,8 @@ public unsafe class RagdollController : IDisposable
         // now provides velocity damping that lets gravity drive extension naturally — the
         // gravity torque on the hanging shin/forearm decelerates to zero as the joint
         // reaches straight, so no active spring constraint is needed.
-        return;
+        if (!AnatomicalHingeRestBiasEnabled())
+            return;
 
         if (!HasPassiveHingeRest(boneDef.AnatomicalRole, boneDef.Name) ||
             boneDef.HingeRestSpringFreq <= 0 ||
@@ -2321,6 +2323,8 @@ public unsafe class RagdollController : IDisposable
         if (config.RagdollVerboseLog)
             log.Info($"[Ragdoll Constraint] '{boneDef.Name}' passive hinge rest: angle={boneDef.HingeRestAngle:F2} freq={boneDef.HingeRestSpringFreq:F2} force={boneDef.HingeRestMaxForce:F2}");
     }
+
+    private static bool AnatomicalHingeRestBiasEnabled() => false;
 
     /// <summary>
     /// Tier C (swing) — directional anatomical limits for ball joints (hips, arm-side
@@ -7019,13 +7023,16 @@ public unsafe class RagdollController : IDisposable
 
     private void BuildStandingConstraints(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName)
     {
+        var sim = simulation;
+        if (sim == null) return;
+
         var anchorHandle = FindBodyHandle(anchorBoneName);
         if (anchorHandle.HasValue)
         {
             standingAnchorHandle = anchorHandle.Value;
             standingAnchorTarget = anchorWorldPos;
 
-            standingConstraints.Add(simulation.Solver.Add(anchorHandle.Value,
+            standingConstraints.Add(sim.Solver.Add(anchorHandle.Value,
                 new OneBodyLinearServo
                 {
                     LocalOffset    = Vector3.Zero,
@@ -7034,7 +7041,7 @@ public unsafe class RagdollController : IDisposable
                     SpringSettings = new SpringSettings(120f, 1f),
                 }));
 
-            standingConstraints.Add(simulation.Solver.Add(anchorHandle.Value,
+            standingConstraints.Add(sim.Solver.Add(anchorHandle.Value,
                 new OneBodyAngularServo
                 {
                     TargetOrientation = uprightRot,
@@ -7050,7 +7057,7 @@ public unsafe class RagdollController : IDisposable
             var h = FindBodyHandle(name);
             if (h.HasValue)
             {
-                standingConstraints.Add(simulation.Solver.Add(h.Value,
+                standingConstraints.Add(sim.Solver.Add(h.Value,
                     new OneBodyAngularServo
                     {
                         TargetOrientation = uprightRot,
@@ -7551,7 +7558,7 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 
     // Connected body pairs that should NOT collide (parent-child joints).
     // All other body-body pairs DO collide (arms vs torso, etc.).
-    public HashSet<(int, int)> ConnectedPairs;
+    public HashSet<(int, int)>? ConnectedPairs;
     public HashSet<int>? ExternalDynamicBodies;
     public HashSet<int>? RestrictedStatics;
     public HashSet<int>? AllowedDynamicBodiesForRestrictedStatics;
