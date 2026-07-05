@@ -301,7 +301,10 @@ public partial class MainWindow : IDisposable
         {
             case 0: // Combat
                 DrawSimulationSection();
-                DrawFightingModeSection();
+                // Hidden pending a security review (see update log 2.6.0.1); only
+                // reachable via the Dev Experimental unlock.
+                if (DevExperimentalUnlocked)
+                    DrawFightingModeSection();
                 DrawActionModeSection();
                 break;
             case 1: // Targets
@@ -485,15 +488,20 @@ public partial class MainWindow : IDisposable
             }
             HelpMarker(BuildActionModeQuickHelp());
 
-            var fightingMode = config.FightingMode;
-            if (ImGui.Checkbox("Fighting Mode [Experimental]", ref fightingMode))
+            // Hidden pending a security review of its direct position/rotation writes
+            // (see update log 2.6.0.1) — only reachable via the Dev Experimental unlock.
+            if (DevExperimentalUnlocked)
             {
-                config.FightingMode = fightingMode;
-                if (fightingMode)
-                    config.ActionMode = false;
-                config.Save();
+                var fightingMode = config.FightingMode;
+                if (ImGui.Checkbox("Fighting Mode [Experimental]", ref fightingMode))
+                {
+                    config.FightingMode = fightingMode;
+                    if (fightingMode)
+                        config.ActionMode = false;
+                    config.Save();
+                }
+                HelpMarker("Experimental 1v1 side-view mode. Press an attack on an enemy to lock the pair into a 2D fighting lane and side camera. Ignores profiles while active.");
             }
-            HelpMarker("Experimental 1v1 side-view mode. Press an attack on an enemy to lock the pair into a 2D fighting lane and side camera. Ignores profiles while active.");
         }
 
         if (compact)
