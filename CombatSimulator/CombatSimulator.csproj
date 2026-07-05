@@ -1,6 +1,6 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>2.6.0.1</Version>
+    <Version>2.6.0.2</Version>
     <Authors>zysilm</Authors>
     <Description>A combat sandbox that makes FFXIV feel more like an action RPG, with responsive fights and advanced ragdoll physics.</Description>
     <IsPackable>false</IsPackable>
