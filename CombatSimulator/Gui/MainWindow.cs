@@ -32,6 +32,13 @@ public partial class MainWindow : IDisposable
         ("Head (j_kao)", "j_kao"),
     };
 
+    private static readonly string[] NpcCollisionModeLabels =
+    {
+        "Bone capsule",
+        "Convex hull",
+        "Mesh (skinned)",
+    };
+
     private readonly Configuration config;
     private readonly NpcSelector npcSelector;
     private readonly NpcSpawner npcSpawner;
@@ -355,6 +362,7 @@ public partial class MainWindow : IDisposable
                     // NPC Collision
                     config.RagdollNpcCollision = true;
                     config.RagdollNpcCollisionConvexHull = false;
+                    config.RagdollNpcCollisionMode = RagdollNpcCollisionMode.BoneCapsule;
                     // NPC Collision (Settle)
                     config.RagdollNpcSettleCollision = true;
                     config.Save();
@@ -4475,13 +4483,16 @@ public partial class MainWindow : IDisposable
             {
                 ImGui.Indent();
 
-                var convexHull = config.RagdollNpcCollisionConvexHull;
-                if (ImGui.Checkbox("Convex hull collision##npccolconvex", ref convexHull))
+                var collisionMode = (int)config.RagdollNpcCollisionMode;
+                if (collisionMode < 0 || collisionMode >= NpcCollisionModeLabels.Length)
+                    collisionMode = (int)RagdollNpcCollisionMode.BoneCapsule;
+                if (ImGui.Combo("Collision shape##npccolmode", ref collisionMode, NpcCollisionModeLabels, NpcCollisionModeLabels.Length))
                 {
-                    config.RagdollNpcCollisionConvexHull = convexHull;
+                    config.RagdollNpcCollisionMode = (RagdollNpcCollisionMode)collisionMode;
+                    config.RagdollNpcCollisionConvexHull = config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.ConvexHull;
                     config.Save();
                 }
-                HelpMarker("Each collision target uses a single convex hull built from all bone positions. Eliminates inter-capsule gaps on mounts and monsters. Shape is a snapshot of the activation pose; root position/rotation tracks animation. Takes effect on next ragdoll activation.");
+                HelpMarker("Bone capsule uses the existing per-bone capsule proxies. Convex hull uses a single activation-pose hull built from bone positions. Mesh (skinned) snapshots the rendered model mesh with the current Havok pose and tracks the root transform. Takes effect on next ragdoll activation.");
 
                 ImGui.Unindent();
             }

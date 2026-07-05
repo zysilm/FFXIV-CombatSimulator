@@ -155,6 +155,13 @@ public class RecentNpcEntry
     public uint BNpcNameId { get; set; }
 }
 
+public enum RagdollNpcCollisionMode
+{
+    BoneCapsule = 0,
+    ConvexHull = 1,
+    Mesh = 2,
+}
+
 [Serializable]
 public partial class Configuration : IPluginConfiguration
 {
@@ -175,6 +182,7 @@ public partial class Configuration : IPluginConfiguration
     public bool ThinnerProfileTuningMigrated20260704 { get; set; } = false;
     public bool KneeHingeStiffnessMigrated20260704 { get; set; } = false;
     public bool AnatomicalDefaultsOffMigrated20260704 { get; set; } = false;
+    public bool NpcCollisionModeMigrated20260705 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -536,6 +544,7 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollNpcCollisionAutoSize { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcCollisionConvexHull { get; set; } = false;
+    public RagdollNpcCollisionMode RagdollNpcCollisionMode { get; set; } = RagdollNpcCollisionMode.BoneCapsule;
     public bool RagdollNpcSettleCollision { get; set; } = true;
 
     // Auto-engage: NPC enemy targets attack the player automatically on
@@ -793,6 +802,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateThinnerProfileTuning();
         MigrateKneeHingeStiffness();
         MigrateAnatomicalDefaultsOff();
+        MigrateNpcCollisionMode();
         MigrateGuidedCollapse();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
@@ -1112,6 +1122,18 @@ public partial class Configuration : IPluginConfiguration
         RagdollAnthropometricMass = false;
 
         AnatomicalDefaultsOffMigrated20260704 = true;
+        Save();
+    }
+
+    private void MigrateNpcCollisionMode()
+    {
+        if (NpcCollisionModeMigrated20260705)
+            return;
+
+        RagdollNpcCollisionMode = RagdollNpcCollisionConvexHull
+            ? RagdollNpcCollisionMode.ConvexHull
+            : RagdollNpcCollisionMode.BoneCapsule;
+        NpcCollisionModeMigrated20260705 = true;
         Save();
     }
 

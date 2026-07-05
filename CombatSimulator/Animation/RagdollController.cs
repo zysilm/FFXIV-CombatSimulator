@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Text;
 using CombatSimulator.Animation.CollapseProfiles;
+using CombatSimulator.Core;
 using BepuPhysics;
 using BepuPhysics.Collidables;
 using BepuPhysics.CollisionDetection;
@@ -11,8 +13,13 @@ using BepuUtilities.Memory;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
+using FFXIVClientStructs.FFXIV.Client.System.Resource.Handle;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using BepuSimulation = BepuPhysics.Simulation;
+using HkQsTransform = FFXIVClientStructs.Havok.Common.Base.Math.QsTransform.hkQsTransformf;
+using LuminaModel = Lumina.Models.Models.Model;
+using LuminaMesh = Lumina.Models.Models.Mesh;
+using LuminaVertex = Lumina.Models.Models.Vertex;
 
 namespace CombatSimulator.Animation;
 
@@ -1469,6 +1476,7 @@ public unsafe class RagdollController : IDisposable
     // limbs, head) and drop the rest. Bounds the per-frame static-update cost so a wave
     // of high-bone-count enemies can't add tens of thousands of UpdateBounds calls.
     private const int NpcMaxCollisionSegments = 24;
+    private const int MeshCollisionMaxTriangles = 8000;
     // A character whose root is farther than this (metres) from the corpse is skipped in
     // the per-frame static update — it cannot contact the ragdoll, so tracking its bones
     // is wasted work. It still resumes updating if it moves back into range.
@@ -1485,6 +1493,8 @@ public unsafe class RagdollController : IDisposable
         public bool IsConvexHull;
         public BodyHandle ConvexHullHandle;
         public Vector3 HullCenterModelSpace; // hull centroid in skeleton-local (model) space
+        public bool IsMesh;
+        public BodyHandle MeshHandle;
         public Vector3 PreviousPosition;
         public Quaternion PreviousOrientation;
         public bool HasPreviousPose;
@@ -3872,7 +3882,7 @@ public unsafe class RagdollController : IDisposable
 
         var totalNpcStatics = 0;
         foreach (var s in npcCollisionStates)
-            totalNpcStatics += (s.IsFallback || s.IsConvexHull) ? 1 : s.BoneStatics.Count;
+            totalNpcStatics += (s.IsFallback || s.IsConvexHull || s.IsMesh) ? 1 : s.BoneStatics.Count;
         log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, {npcCollisionStates.Count} NPCs ({totalNpcStatics} collision volumes), ground={groundY:F3}");
 
         // Initialize hair physics
@@ -4043,11 +4053,15 @@ public unsafe class RagdollController : IDisposable
         // Convex hull mode: one hull shape per character built from the bone point cloud.
         // Eliminates inter-capsule gaps on any skeleton type; the shape is a snapshot of
         // the activation pose and tracks only root translation/rotation each frame.
-        if (config.RagdollNpcCollisionConvexHull)
+        if (config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.ConvexHull)
         {
             BuildConvexHullCollision(address, ns, npcSkelPos, npcSkelRot, label);
             return;
         }
+
+        if (config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.Mesh &&
+            BuildMeshCollision(address, ns, npcSkelPos, npcSkelRot, label))
+            return;
 
         var boneStatics = new List<NpcBoneStatic>();
         var autoSize = config.RagdollNpcCollisionAutoSize;
@@ -4226,6 +4240,284 @@ public unsafe class RagdollController : IDisposable
         return Math.Clamp(MathF.Min(radius, segmentLength * 0.7f), NpcAutoMinRadius, NpcAutoMaxRadius);
     }
 
+    private bool BuildMeshCollision(nint address, SkeletonAccess ns, Vector3 npcSkelPos, Quaternion npcSkelRot, string label)
+    {
+        if (simulation == null || bufferPool == null)
+            return false;
+
+        try
+        {
+            if (!TryBuildSkinDeltas(ns, out var skinDeltas))
+            {
+                log.Warning($"RagdollController: {label} mesh collision skipped; skin transforms unavailable");
+                return false;
+            }
+
+            var triangles = new List<Triangle>(Math.Min(MeshCollisionMaxTriangles, 1024));
+            var slotCount = Math.Clamp(ns.CharBase->SlotCount, 0, 32);
+            var loadedModels = 0;
+            var processedMeshes = 0;
+            for (int slot = 0; slot < slotCount && triangles.Count < MeshCollisionMaxTriangles; slot++)
+            {
+                var renderModel = ns.CharBase->Models == null ? null : ns.CharBase->Models[slot];
+                if (renderModel == null || renderModel->ModelResourceHandle == null)
+                    continue;
+
+                var resourceHandle = (ResourceHandle*)renderModel->ModelResourceHandle;
+                var modelPath = resourceHandle->FileName.ToString();
+                if (string.IsNullOrWhiteSpace(modelPath) ||
+                    !modelPath.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                try
+                {
+                    var model = new LuminaModel(Services.DataManager.GameData, modelPath, LuminaModel.ModelLod.Low);
+                    loadedModels++;
+                    foreach (var mesh in model.Meshes)
+                    {
+                        AppendSkinnedMeshTriangles(model, mesh, ns, skinDeltas, triangles);
+                        processedMeshes++;
+                        if (triangles.Count >= MeshCollisionMaxTriangles)
+                            break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    log.Warning(ex, $"RagdollController: {label} mesh collision failed to load slot {slot} '{modelPath}'");
+                }
+            }
+
+            if (triangles.Count < 4)
+            {
+                log.Warning($"RagdollController: {label} mesh collision produced {triangles.Count} triangles from {loadedModels} models; using bone capsules");
+                return false;
+            }
+
+            Buffer<Triangle> triangleBuffer = default;
+            var ownsTriangleBuffer = false;
+            try
+            {
+                bufferPool.Take<Triangle>(triangles.Count, out triangleBuffer);
+                ownsTriangleBuffer = true;
+                for (int i = 0; i < triangles.Count; i++)
+                    triangleBuffer[i] = triangles[i];
+
+                var meshShape = new BepuPhysics.Collidables.Mesh(triangleBuffer, Vector3.One, bufferPool);
+                ownsTriangleBuffer = false;
+                var shapeIndex = simulation.Shapes.Add(meshShape);
+                var rootRot = Quaternion.Normalize(npcSkelRot);
+                var bodyHandle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
+                    new RigidPose(npcSkelPos, rootRot),
+                    default(BodyVelocity),
+                    new CollidableDescription(shapeIndex, 0.04f),
+                    new BodyActivityDescription(0.01f)));
+
+                npcCollisionStates.Add(new NpcCollisionState
+                {
+                    NpcAddress = address,
+                    BoneStatics = new List<NpcBoneStatic>(),
+                    IsFallback = false,
+                    IsMesh = true,
+                    MeshHandle = bodyHandle,
+                    PreviousPosition = npcSkelPos,
+                    PreviousOrientation = rootRot,
+                    HasPreviousPose = true,
+                });
+
+                log.Info($"RagdollController: {label} mesh collision - {triangles.Count} triangles from {loadedModels} models/{processedMeshes} meshes");
+                return true;
+            }
+            finally
+            {
+                if (ownsTriangleBuffer)
+                    bufferPool.Return(ref triangleBuffer);
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"RagdollController: {label} mesh collision build failed; using bone capsules");
+            return false;
+        }
+    }
+
+    private bool TryBuildSkinDeltas(SkeletonAccess ns, out Matrix4x4[] skinDeltas)
+    {
+        skinDeltas = Array.Empty<Matrix4x4>();
+        if (ns.HavokSkeleton == null || ns.Pose == null ||
+            ns.HavokSkeleton->ReferencePose.Data == null ||
+            ns.Pose->ModelPose.Data == null)
+            return false;
+
+        var boneCount = Math.Min(ns.BoneCount, Math.Min(ns.ParentCount,
+            Math.Min(ns.HavokSkeleton->ReferencePose.Length, ns.Pose->ModelPose.Length)));
+        if (boneCount <= 0)
+            return false;
+
+        var refModel = new Matrix4x4[boneCount];
+        skinDeltas = new Matrix4x4[boneCount];
+
+        for (int i = 0; i < boneCount; i++)
+        {
+            var refLocal = QsToMatrix(ns.HavokSkeleton->ReferencePose.Data[i]);
+            var parent = ns.HavokSkeleton->ParentIndices[i];
+            refModel[i] = parent >= 0 && parent < i
+                ? refLocal * refModel[parent]
+                : refLocal;
+        }
+
+        for (int i = 0; i < boneCount; i++)
+        {
+            var curModel = QsToMatrix(ns.Pose->ModelPose.Data[i]);
+            if (!Matrix4x4.Invert(refModel[i], out var invRef))
+                invRef = Matrix4x4.Identity;
+            skinDeltas[i] = invRef * curModel;
+        }
+
+        return true;
+    }
+
+    private void AppendSkinnedMeshTriangles(
+        LuminaModel model,
+        LuminaMesh mesh,
+        SkeletonAccess ns,
+        Matrix4x4[] skinDeltas,
+        List<Triangle> triangles)
+    {
+        var vertices = mesh.Vertices;
+        var indices = mesh.Indices;
+        if (vertices == null || indices == null || vertices.Length == 0 || indices.Length < 3)
+            return;
+
+        var localToHavok = BuildMeshBoneMap(model, mesh, ns);
+        var skinnedVertices = new Vector3[vertices.Length];
+        for (int i = 0; i < vertices.Length; i++)
+            skinnedVertices[i] = SkinVertex(vertices[i], localToHavok, skinDeltas);
+
+        for (int i = 0; i + 2 < indices.Length && triangles.Count < MeshCollisionMaxTriangles; i += 3)
+        {
+            var ia = indices[i];
+            var ib = indices[i + 1];
+            var ic = indices[i + 2];
+            if (ia >= skinnedVertices.Length || ib >= skinnedVertices.Length || ic >= skinnedVertices.Length)
+                continue;
+
+            var a = skinnedVertices[ia];
+            var b = skinnedVertices[ib];
+            var c = skinnedVertices[ic];
+            if (!IsFinite(a) || !IsFinite(b) || !IsFinite(c))
+                continue;
+            if (Vector3.Cross(b - a, c - a).LengthSquared() < 1e-8f)
+                continue;
+
+            triangles.Add(new Triangle(a, b, c));
+        }
+    }
+
+    private int[] BuildMeshBoneMap(LuminaModel model, LuminaMesh mesh, SkeletonAccess ns)
+    {
+        var boneTable = mesh.BoneTable;
+        if (boneTable == null || boneTable.Length == 0 || model.File == null)
+            return Array.Empty<int>();
+
+        var result = new int[boneTable.Length];
+        Array.Fill(result, -1);
+
+        var boneNameOffsets = model.File.BoneNameOffsets;
+        var strings = model.File.Strings;
+        if (boneNameOffsets == null || strings == null)
+            return result;
+
+        for (int i = 0; i < boneTable.Length; i++)
+        {
+            var globalBoneIndex = boneTable[i];
+            if (globalBoneIndex >= boneNameOffsets.Length)
+                continue;
+
+            var boneName = ReadNullTerminatedString(strings, boneNameOffsets[globalBoneIndex]);
+            if (string.IsNullOrEmpty(boneName))
+                continue;
+
+            result[i] = boneService.ResolveBoneIndex(ns, boneName);
+        }
+
+        return result;
+    }
+
+    private static Vector3 SkinVertex(LuminaVertex vertex, int[] localToHavok, Matrix4x4[] skinDeltas)
+    {
+        if (vertex.Position == null)
+            return Vector3.Zero;
+
+        var p4 = vertex.Position.Value;
+        var bindPos = new Vector3(p4.X, p4.Y, p4.Z);
+        if (vertex.BlendWeights == null || vertex.BlendIndices == null || localToHavok.Length == 0)
+            return bindPos;
+
+        var weights = vertex.BlendWeights.Value;
+        var blendIndices = vertex.BlendIndices;
+        var skinned = Vector3.Zero;
+        var weightSum = 0f;
+        var influenceCount = Math.Min(4, blendIndices.Length);
+        for (int i = 0; i < influenceCount; i++)
+        {
+            var weight = GetBlendWeight(weights, i);
+            if (weight <= 0f)
+                continue;
+
+            var localBoneIndex = blendIndices[i];
+            if (localBoneIndex >= localToHavok.Length)
+                continue;
+
+            var havokIndex = localToHavok[localBoneIndex];
+            if (havokIndex < 0 || havokIndex >= skinDeltas.Length)
+                continue;
+
+            skinned += Vector3.Transform(bindPos, skinDeltas[havokIndex]) * weight;
+            weightSum += weight;
+        }
+
+        return weightSum > 1e-5f ? skinned / weightSum : bindPos;
+    }
+
+    private static float GetBlendWeight(Vector4 weights, int index) => index switch
+    {
+        0 => weights.X,
+        1 => weights.Y,
+        2 => weights.Z,
+        3 => weights.W,
+        _ => 0f,
+    };
+
+    private static Matrix4x4 QsToMatrix(HkQsTransform transform)
+    {
+        var scale = new Vector3(transform.Scale.X, transform.Scale.Y, transform.Scale.Z);
+        var rotation = Quaternion.Normalize(new Quaternion(
+            transform.Rotation.X,
+            transform.Rotation.Y,
+            transform.Rotation.Z,
+            transform.Rotation.W));
+        var translation = new Vector3(transform.Translation.X, transform.Translation.Y, transform.Translation.Z);
+        return Matrix4x4.CreateScale(scale) *
+               Matrix4x4.CreateFromQuaternion(rotation) *
+               Matrix4x4.CreateTranslation(translation);
+    }
+
+    private static string ReadNullTerminatedString(byte[] strings, uint offset)
+    {
+        if (offset >= strings.Length)
+            return string.Empty;
+
+        var start = (int)offset;
+        var end = start;
+        while (end < strings.Length && strings[end] != 0)
+            end++;
+
+        return Encoding.UTF8.GetString(strings, start, end - start);
+    }
+
+    private static bool IsFinite(Vector3 v) =>
+        float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z);
+
     /// <summary>
     /// Build a single convex hull collision static for a non-humanoid character (mount,
     /// monster). Collects all bone MODEL-space positions as input points, constructs a
@@ -4318,6 +4610,11 @@ public unsafe class RagdollController : IDisposable
     private void ParkNpcStatics(ref NpcCollisionState npcState, Vector3 parkPos, float dt = FixedTimestep)
     {
         if (simulation == null) return;
+        if (npcState.IsMesh)
+        {
+            MoveNpcKinematic(ref npcState, npcState.MeshHandle, parkPos, Quaternion.Identity, dt);
+            return;
+        }
         if (npcState.IsConvexHull)
         {
             MoveNpcKinematic(ref npcState, npcState.ConvexHullHandle, parkPos, Quaternion.Identity, dt);
@@ -4537,7 +4834,11 @@ public unsafe class RagdollController : IDisposable
             {
                 if (suspendedNpcAddress != nint.Zero && npcState.NpcAddress == suspendedNpcAddress)
                 {
-                    if (npcState.IsConvexHull)
+                    if (npcState.IsMesh)
+                    {
+                        MoveNpcKinematic(ref npcState, npcState.MeshHandle, npcCollisionParkPos, Quaternion.Identity, dt);
+                    }
+                    else if (npcState.IsConvexHull)
                     {
                         MoveNpcKinematic(ref npcState, npcState.ConvexHullHandle, npcCollisionParkPos, Quaternion.Identity, dt);
                     }
@@ -4580,6 +4881,29 @@ public unsafe class RagdollController : IDisposable
                     // Back in range — the reposition below snaps the statics onto the skeleton.
                     npcState.Parked = false;
                     npcCollisionStates[i] = npcState;
+                }
+
+                if (npcState.IsMesh)
+                {
+                    var npcSkelMesh = boneService.TryGetSkeleton(npcState.NpcAddress);
+                    Vector3 meshWorldPos;
+                    Quaternion meshWorldRot;
+                    if (npcSkelMesh != null && npcSkelMesh.Value.CharBase->Skeleton != null)
+                    {
+                        var sk = npcSkelMesh.Value.CharBase->Skeleton;
+                        meshWorldPos = new Vector3(sk->Transform.Position.X, sk->Transform.Position.Y, sk->Transform.Position.Z);
+                        meshWorldRot = new Quaternion(sk->Transform.Rotation.X, sk->Transform.Rotation.Y, sk->Transform.Rotation.Z, sk->Transform.Rotation.W);
+                    }
+                    else
+                    {
+                        var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npcState.NpcAddress;
+                        meshWorldPos = new Vector3(go->Position.X, go->Position.Y, go->Position.Z);
+                        meshWorldRot = Quaternion.Identity;
+                    }
+
+                    MoveNpcKinematic(ref npcState, npcState.MeshHandle, meshWorldPos, meshWorldRot, dt);
+                    npcCollisionStates[i] = npcState;
+                    continue;
                 }
 
                 if (npcState.IsConvexHull)
