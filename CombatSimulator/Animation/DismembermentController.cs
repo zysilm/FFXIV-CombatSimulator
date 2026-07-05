@@ -61,7 +61,6 @@ public unsafe class DismembermentController : IDisposable
     private const float GearGarmentHandoffGroundReleaseHeight = 0.11f;
     private const float GearBodyHandoffSlip = 0.10f;
     private const float GearLegsHandoffSlip = 0.06f;
-    private const int GearGarmentVisualBindFrames = 18;
     private const float GearBodyVisualBindSlip = 0.12f;
     private const float GearLegsVisualBindSlip = 0.07f;
     private const int MdlStringTableHeaderSize = 8;
@@ -198,6 +197,7 @@ public unsafe class DismembermentController : IDisposable
         public Vector3 GearHandoffReleaseAngularVelocity;
         public bool GearHandoffHasReleaseVelocity;
         public int GearVisualBindFramesRemaining;
+        public int GearVisualBindFramesTotal;                 // hold length this drop (config-driven), for progress normalization
         public bool GearVisualBindStarted;
         public Vector3 GearVisualBindLastRootPos;
         public Quaternion GearVisualBindLastRootRot = Quaternion.Identity;
@@ -2272,7 +2272,11 @@ public unsafe class DismembermentController : IDisposable
         if (!c.GearVisualBindStarted)
         {
             c.GearVisualBindStarted = true;
-            c.GearVisualBindFramesRemaining = GearGarmentVisualBindFrames;
+            // Config-driven hold length, in 60fps-equivalent frames (the countdown decrements by
+            // substepsThisFrame, so this is real wall-clock seconds at any framerate). 0s => 0 frames =>
+            // the <= 0 guard below returns immediately, dropping with no hold.
+            c.GearVisualBindFramesTotal = Math.Max(0, (int)MathF.Round(config.KoStripClothHoldSeconds * 60f));
+            c.GearVisualBindFramesRemaining = c.GearVisualBindFramesTotal;
             c.GearHandoffHasPrevAnchor = false;
             c.GearVisualBindHasLastPose = false;
         }
@@ -2320,7 +2324,7 @@ public unsafe class DismembermentController : IDisposable
         if (!TryResolveGarmentVisualBindRotation(c, out rootRot))
             rootRot = c.Handoff?.SkeletonRot ?? Quaternion.Identity;
 
-        var progress = 1f - Math.Clamp(c.GearVisualBindFramesRemaining / (float)GearGarmentVisualBindFrames, 0f, 1f);
+        var progress = 1f - Math.Clamp(c.GearVisualBindFramesRemaining / (float)Math.Max(1, c.GearVisualBindFramesTotal), 0f, 1f);
         var slip = (c.GearKeepModelSlot == 1 ? GearBodyVisualBindSlip : GearLegsVisualBindSlip) *
                    (progress * progress);
         anchorWorld.Y -= slip;
