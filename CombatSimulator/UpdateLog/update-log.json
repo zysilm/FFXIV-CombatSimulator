@@ -1,14 +1,12 @@
 [
   {
-    "version": "2.5.0.0",
+    "version": "2.6.0.0",
     "date": "2026-07-05",
-    "title": "Armor Detachment is now available from Professional Mode.",
+    "title": "Combat Simulator 2.6.0.0",
     "changes": [
       "Added the Armor Detachment control window under Professional Mode > Effects.",
-      "Added automatic slide-to-floor detachment so loose armor follows the body and collapses when it reaches the ground.",
-      "Default detachment modes are now off until explicitly enabled.",
-      "Detach on monster hit is hidden unless Dev Experimental is available.",
-      "Standardized plugin versioning to the four-part Dalamud assembly version format."
+      "Added Fighting Mode (experimental).",
+      "Improved ragdoll physics tuning and stability overall."
     ]
   }
 ]
