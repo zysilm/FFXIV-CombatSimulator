@@ -4,6 +4,7 @@ using CombatSimulator.ActionCombat;
 using CombatSimulator.Animation;
 using CombatSimulator.Npcs;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game.ClientState.GamePad;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.System.Input;
 using GameFramework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework;
@@ -39,6 +40,7 @@ public sealed unsafe class FightingCombatController
     private readonly IPluginLog log;
 
     private bool guardWasDown;
+    private bool basicAttackWasDown;
 
     private SwingPhase swingPhase = SwingPhase.Idle;
     private float swingTimer;
@@ -80,14 +82,19 @@ public sealed unsafe class FightingCombatController
 
     public void Tick(float dt)
     {
-        if (!config.FightingMode || !fighting.IsEngaged || !combatEngine.State.PlayerState.IsAlive)
+        // Guard + basic-attack must work from the moment Fighting Mode is on — NOT only once
+        // engaged. Engagement happens on the first attack, so gating input on it made guarding
+        // (and the basic attack itself) impossible until you had already attacked.
+        if (!config.FightingMode || !combatEngine.State.PlayerState.IsAlive)
         {
             guardWasDown = false;
+            basicAttackWasDown = false;
             ResetSwing();
             return;
         }
 
         TickGuardInput();
+        TickBasicAttackInput();
         TickSwing(dt);
     }
 
@@ -247,6 +254,8 @@ public sealed unsafe class FightingCombatController
         return new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z);
     }
 
+    // Guard shares Action Mode's bind (no separate Fighting Mode key), so both modes guard
+    // with the same key/button and there is one place to configure it.
     private void TickGuardInput()
     {
         var down = false;
@@ -256,16 +265,41 @@ public sealed unsafe class FightingCombatController
             if (!io.WantCaptureKeyboard && !io.WantTextInput)
             {
                 var fw = GameFramework.Instance();
-                if (fw != null)
-                    down = fw->KeyboardInputs.KeyState[config.FightingModeGuardKey].HasFlag(KeyStateFlags.Down);
+                if (fw != null && config.ActionGuardKey is > 0 and < 256)
+                    down = fw->KeyboardInputs.KeyState[config.ActionGuardKey].HasFlag(KeyStateFlags.Down);
             }
 
-            down |= gamepad.Raw(config.FightingModeGuardGamepadButton) != 0;
+            if (config.ActionGuardGamepadButton != GamepadButtons.None)
+                down |= gamepad.Raw(config.ActionGuardGamepadButton) != 0;
         }
         catch { }
 
         if (down && !guardWasDown)
             guard.TryGuard();
         guardWasDown = down;
+    }
+
+    // Basic attack shares Action Mode's basic-attack bind: a weapon swing with no hotbar action.
+    private void TickBasicAttackInput()
+    {
+        var down = false;
+        try
+        {
+            var io = ImGui.GetIO();
+            if (!io.WantCaptureKeyboard && !io.WantTextInput)
+            {
+                var fw = GameFramework.Instance();
+                if (fw != null && config.ActionBasicAttackKey is > 0 and < 256)
+                    down = fw->KeyboardInputs.KeyState[config.ActionBasicAttackKey].HasFlag(KeyStateFlags.Down);
+            }
+
+            if (config.ActionBasicAttackGamepadButton != GamepadButtons.None)
+                down |= gamepad.Raw(config.ActionBasicAttackGamepadButton) != 0;
+        }
+        catch { }
+
+        if (down && !basicAttackWasDown)
+            fighting.TryBasicAttack();
+        basicAttackWasDown = down;
     }
 }

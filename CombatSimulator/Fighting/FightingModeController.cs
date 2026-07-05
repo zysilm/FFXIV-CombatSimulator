@@ -26,6 +26,10 @@ public interface IFightingModeLaneConstraint
 
 public unsafe sealed class FightingModeController : IFightingModeInputSink, IFightingModeLaneConstraint
 {
+    // The game's default jump virtual-key (Space). Jump is not exposed as a logical InputCode and
+    // is virtually never rebound, so the mid-air vault reads it directly instead of a config key.
+    private const int GameJumpKey = 0x20;
+
     private readonly Configuration config;
     private readonly CombatEngine combatEngine;
     private readonly NpcSelector npcSelector;
@@ -148,6 +152,23 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         return true;
     }
 
+    /// <summary>Basic-attack input (shared with Action Mode's basic-attack key). Resolves the
+    /// nearest enemy, engages the 1v1, and throws an auto-attack swing through the weapon-contact
+    /// path — so Fighting Mode needs no attack key of its own.</summary>
+    public bool TryBasicAttack()
+    {
+        if (!config.FightingMode || !combatEngine.IsActive)
+            return false;
+
+        var npc = ResolveTarget(0);
+        if (npc == null)
+            return false;
+
+        Engage(npc);
+        const uint AutoAttackId = 7;
+        return AttackSink?.Invoke(AutoAttackId, npc) ?? false;
+    }
+
     public void Tick(float deltaTime)
     {
         if (!config.FightingMode)
@@ -234,6 +255,9 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         }
 
         var jumping = IsPlayerJumping();
+        // Vault triggers on a second press of the game's jump (default Space) while already
+        // airborne — no separate Fighting Mode key to configure. Jump has no logical InputCode,
+        // and it is virtually always Space, so read that raw key directly.
         var down = false;
         try
         {
@@ -242,7 +266,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
             {
                 var fw = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework.Instance();
                 if (fw != null)
-                    down = fw->KeyboardInputs.KeyState[config.FightingModeVaultKey]
+                    down = fw->KeyboardInputs.KeyState[GameJumpKey]
                         .HasFlag(FFXIVClientStructs.FFXIV.Client.System.Input.KeyStateFlags.Down);
             }
         }

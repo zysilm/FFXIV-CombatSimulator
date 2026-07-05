@@ -547,13 +547,10 @@ public partial class Configuration : IPluginConfiguration
     public float FightingModeTranslateVerticalAngle { get; set; } = 0.31f;
     // Which side of the lane the 2D camera sits on (0 = right of the engage axis, 1 = left).
     public int FightingModeCameraSide { get; set; } = 0;
-    // Double-jump vault: a second jump press mid-air carries the player over the enemy.
-    public int FightingModeVaultKey { get; set; } = 0x20;   // Space
+    // Double-jump vault: a second press of the game's own JUMP bind mid-air carries the player
+    // over the enemy. Fighting Mode has no key config of its own — jump inherits the game bind,
+    // and the basic attack / guard reuse the Action Mode binds.
     public float FightingModeVaultDuration { get; set; } = 0.45f;
-    // Fighting Mode guard: reuses the shared PlayerGuardController timing windows
-    // (GuardActiveWindow / chain / recovery) with its own key binding.
-    public int FightingModeGuardKey { get; set; } = 17;      // Ctrl
-    public GamepadButtons FightingModeGuardGamepadButton { get; set; } = GamepadButtons.East;
     // Fighting Mode weapon-contact hit detection: the main-hand weapon segment must
     // sweep through the enemy hurtbox capsule during the swing's active window.
     public float FightingModeWeaponLength { get; set; } = 1.2f;       // fallback/single-bone length
@@ -748,8 +745,6 @@ public partial class Configuration : IPluginConfiguration
         FightingModeTranslateHorizontalAngle = defaults.FightingModeTranslateHorizontalAngle;
         FightingModeTranslateLockVertical = defaults.FightingModeTranslateLockVertical;
         FightingModeTranslateVerticalAngle = defaults.FightingModeTranslateVerticalAngle;
-        FightingModeGuardKey = defaults.FightingModeGuardKey;
-        FightingModeGuardGamepadButton = defaults.FightingModeGuardGamepadButton;
         FightingModeWeaponLength = defaults.FightingModeWeaponLength;
         FightingModeWeaponLengthScale = defaults.FightingModeWeaponLengthScale;
         FightingModeWeaponAxis = defaults.FightingModeWeaponAxis;
@@ -760,7 +755,6 @@ public partial class Configuration : IPluginConfiguration
         FightingModeAttackActiveEndPct = defaults.FightingModeAttackActiveEndPct;
         FightingModeDebugDraw = defaults.FightingModeDebugDraw;
         FightingModeCameraSide = defaults.FightingModeCameraSide;
-        FightingModeVaultKey = defaults.FightingModeVaultKey;
         FightingModeVaultDuration = defaults.FightingModeVaultDuration;
         FightingAiMoveSpeed = defaults.FightingAiMoveSpeed;
         FightingAiRetreatSpeedScale = defaults.FightingAiRetreatSpeedScale;

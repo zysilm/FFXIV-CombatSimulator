@@ -1442,15 +1442,7 @@ public partial class MainWindow : IDisposable
 
         ImGui.Separator();
         ImGui.Text("Input");
-        HelpMarker("Movement is the game's own (run, jump), projected onto the 2D lane: forward/back approach/retreat, sideways drift is removed. A second jump press mid-air vaults over the enemy to the other side.");
-
-        var vaultKey = config.FightingModeVaultKey;
-        if (ImGui.InputInt("Vault key##fightingmode", ref vaultKey))
-        {
-            config.FightingModeVaultKey = Math.Clamp(vaultKey, 1, 254);
-            config.Save();
-        }
-        HelpMarker("Pressed again while airborne to vault over the enemy (default 0x20 = Space, same as jump).");
+        HelpMarker("Fighting Mode uses no keys of its own. Movement, run and jump are the game's own bindings (projected onto the 2D lane); a second jump press mid-air vaults over the enemy. The basic attack and guard reuse the Action Mode binds — configure them under Action Mode.");
 
         var vaultDur = config.FightingModeVaultDuration;
         if (ImGui.SliderFloat("Vault duration##fightingmode", ref vaultDur, 0.2f, 1.2f, "%.2f s"))
@@ -1458,14 +1450,7 @@ public partial class MainWindow : IDisposable
             config.FightingModeVaultDuration = vaultDur;
             config.Save();
         }
-
-        var guardKey = config.FightingModeGuardKey;
-        if (ImGui.InputInt("Guard key##fightingmode", ref guardKey))
-        {
-            config.FightingModeGuardKey = Math.Clamp(guardKey, 1, 254);
-            config.Save();
-        }
-        HelpMarker("Timed guard against telegraphed enemy attacks (default 17 = Ctrl). Uses the shared guard windows configured under Action Mode.");
+        HelpMarker("How long the mid-air vault arc over the enemy lasts. Triggered by a second press of your game jump bind while airborne.");
 
         ImGui.Separator();
         ImGui.Text("Weapon Combat");
