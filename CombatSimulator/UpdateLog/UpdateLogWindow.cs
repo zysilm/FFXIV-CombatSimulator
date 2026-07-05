@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 
@@ -7,8 +8,7 @@ namespace CombatSimulator.UpdateLog;
 public sealed class UpdateLogWindow
 {
     private readonly Action onClose;
-    private UpdateLogEntry? entry;
-    private string version = "";
+    private IReadOnlyList<UpdateLogEntry> entries = Array.Empty<UpdateLogEntry>();
     private bool isOpen;
 
     public UpdateLogWindow(Action onClose)
@@ -16,19 +16,19 @@ public sealed class UpdateLogWindow
         this.onClose = onClose;
     }
 
-    public void Open(UpdateLogEntry entry, string version)
+    /// <summary>Show the given entries, newest first. Caller controls ordering/count.</summary>
+    public void Open(IReadOnlyList<UpdateLogEntry> entries)
     {
-        this.entry = entry;
-        this.version = version;
+        this.entries = entries;
         isOpen = true;
     }
 
     public void Draw()
     {
-        if (!isOpen || entry == null)
+        if (!isOpen || entries.Count == 0)
             return;
 
-        ImGui.SetNextWindowSize(new Vector2(540, 360), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(new Vector2(560, 480), ImGuiCond.FirstUseEver);
         var open = isOpen;
         if (!ImGui.Begin("Combat Simulator Update##CombatSimUpdateLog", ref open,
                 ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoSavedSettings))
@@ -39,22 +39,23 @@ public sealed class UpdateLogWindow
             return;
         }
 
-        ImGui.Text($"Version {version}");
-        if (!string.IsNullOrWhiteSpace(entry.Date))
-            ImGui.TextDisabled(entry.Date);
-
+        ImGui.TextDisabled($"Most recent {entries.Count} update{(entries.Count == 1 ? "" : "s")}, newest first.");
         ImGui.Separator();
-        ImGui.TextWrapped(entry.Title);
         ImGui.Spacing();
 
-        foreach (var change in entry.Changes)
+        ImGui.BeginChild("##UpdateLogScroll", new Vector2(0, -ImGui.GetFrameHeightWithSpacing()));
+        for (var i = 0; i < entries.Count; i++)
         {
-            if (string.IsNullOrWhiteSpace(change))
-                continue;
-            DrawBulletWrapped(change);
+            DrawEntry(entries[i]);
+            if (i < entries.Count - 1)
+            {
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.Spacing();
+            }
         }
+        ImGui.EndChild();
 
-        ImGui.Spacing();
         ImGui.Separator();
         if (ImGui.Button("Close"))
             open = false;
@@ -63,6 +64,28 @@ public sealed class UpdateLogWindow
 
         if (!open)
             Close();
+    }
+
+    private static void DrawEntry(UpdateLogEntry entry)
+    {
+        ImGui.Text($"Version {entry.Version}");
+        if (!string.IsNullOrWhiteSpace(entry.Date))
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled($"({entry.Date})");
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Title))
+            ImGui.TextWrapped(entry.Title);
+
+        ImGui.Spacing();
+
+        foreach (var change in entry.Changes)
+        {
+            if (string.IsNullOrWhiteSpace(change))
+                continue;
+            DrawBulletWrapped(change);
+        }
     }
 
     private void Close()

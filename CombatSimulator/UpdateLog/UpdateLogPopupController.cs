@@ -51,14 +51,15 @@ public sealed class UpdateLogPopupController
         if (!config.ShowUpdateLogOnUpdate)
             return;
 
-        var entry = catalog.Find(currentVersion);
-        if (entry == null)
+        if (catalog.Find(currentVersion) == null)
         {
             log.Warning($"UpdateLog: no entry found for plugin version {currentVersion}.");
             return;
         }
 
-        window.Open(entry, currentVersion);
+        // Show the current version plus its recent history (newest first) so a user who
+        // skipped several updates can catch up in one popup, not just the latest entry.
+        window.Open(catalog.RecentEntries());
     }
 
     private void MarkCurrentVersionSeen()
