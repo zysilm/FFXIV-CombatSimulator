@@ -410,7 +410,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         activeCameraController.SetActive(config.EnableActiveCamera);
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, deathCamController, activeCameraController, hookSafetyChecker, useActionHook, playerTargetController, clientState, dataManager, chatGui, log);
         armorDetachmentController.AllowOnHitDetach = () => mainWindow.DevExperimentalUnlocked;
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
