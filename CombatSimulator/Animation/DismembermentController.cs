@@ -2520,35 +2520,6 @@ public unsafe class DismembermentController : IDisposable
         out Vector3 average)
     {
         average = Vector3.Zero;
-
-        // Prefer the live ragdoll body positions. Once the corpse tips over, the framework-time
-        // ModelPose still reports the frozen death-instant (standing) pose — anchoring a garment to
-        // it leaves the piece hanging where the body USED to stand, not where it now lies. The BEPU
-        // bodies are where the corpse actually is. All-or-nothing to avoid mixing frames: only when
-        // the ragdoll owns this source AND at least one requested bone has a body; otherwise fall
-        // through to the pose read (pre-ragdoll frames, or non-player sources).
-        var ragdoll = PlayerRagdollController;
-        if (ragdoll != null && ragdoll.IsSimulationReady && ragdoll.TargetCharacterAddress == sourceAddress)
-        {
-            var rsum = Vector3.Zero;
-            var rcount = 0;
-            foreach (var boneName in boneNames)
-            {
-                var bp = ragdoll.GetBodyWorldPosition(boneName);
-                if (bp.HasValue)
-                {
-                    rsum += bp.Value;
-                    rcount++;
-                }
-            }
-
-            if (rcount > 0)
-            {
-                average = rsum / rcount;
-                return true;
-            }
-        }
-
         var skelN = boneService.TryGetSkeleton(sourceAddress);
         if (skelN == null)
             return false;
