@@ -63,6 +63,18 @@ public unsafe class DismembermentController : IDisposable
     private const float GearLegsHandoffSlip = 0.06f;
     private const float GearBodyVisualBindSlip = 0.12f;
     private const float GearLegsVisualBindSlip = 0.07f;
+    // Auto cloth hold (event-driven release). Presets pick a rest dwell + safety cap; slide-to-floor
+    // slides down until the garment reaches the ground. All frame counts are 60fps-equivalent.
+    private const int ClothHoldPresetQuick = 0;
+    private const int ClothHoldPresetNatural = 1;
+    private const int ClothHoldPresetClingy = 2;
+    private const int ClothHoldPresetSlideToFloor = 3;
+    private const int ClothHoldMinFrames = 18;             // always attach at least ~0.3s
+    private const float ClothHoldRestSpeed = 0.15f;        // anchor speed (m/s) below which the body is "settled"
+    private const float ClothHoldSlideSpeed = 0.20f;       // slide-to-floor descent speed (m/s)
+    private const float ClothHoldSlideEaseFrames = 60f;    // ease in to full slide speed over ~1s
+    private const float ClothHoldSlideMaxDrop = 0.8f;      // slide-to-floor: release after this far even without a floor hit
+    private const float ClothHoldFloorMargin = 0.02f;
     private const int MdlStringTableHeaderSize = 8;
     private const int MdlModelHeaderSize = 56;
     private const int MdlElementIdSize = 32;
@@ -202,6 +214,15 @@ public unsafe class DismembermentController : IDisposable
         public Vector3 GearVisualBindLastRootPos;
         public Quaternion GearVisualBindLastRootRot = Quaternion.Identity;
         public bool GearVisualBindHasLastPose;
+        public int GearBindElapsedFrames;                     // auto hold: 60fps-equiv frames since bind start
+        public int GearBindRestFrames;                        // auto hold: consecutive near-rest frames (anchor settled)
+        public float GearBindSlip;                            // auto hold: accumulated garment slide-down (m), monotonic
+        public float GearBindGroundY = float.NegativeInfinity;// auto hold (slide-to-floor): ground under the anchor
+        public Vector3 GearBindHalf;                          // auto hold (slide-to-floor): garment half-extents for the floor test
+        public Vector3 GearBindAnchorWorld;                   // auto hold: current (slipped) anchor world pos, for the floor test
+        public float GearBindGroundSampleX;
+        public float GearBindGroundSampleZ;
+        public bool GearBindGroundHasSample;
         public float GearGroundSampleX;                       // last horizontal position the ground was sampled at
         public float GearGroundSampleZ;
         public bool GearGroundHasSample;
@@ -2272,24 +2293,58 @@ public unsafe class DismembermentController : IDisposable
         if (!c.GearVisualBindStarted)
         {
             c.GearVisualBindStarted = true;
-            // Config-driven hold length, in 60fps-equivalent frames (the countdown decrements by
-            // substepsThisFrame, so this is real wall-clock seconds at any framerate). 0s => 0 frames =>
-            // the <= 0 guard below returns immediately, dropping with no hold.
+            // Manual-mode countdown length, in 60fps-equivalent frames (decrements by substepsThisFrame,
+            // so real wall-clock seconds at any framerate). 0s => 0 frames => drops immediately.
             c.GearVisualBindFramesTotal = Math.Max(0, (int)MathF.Round(config.KoStripClothHoldSeconds * 60f));
             c.GearVisualBindFramesRemaining = c.GearVisualBindFramesTotal;
+            c.GearBindElapsedFrames = 0;
+            c.GearBindRestFrames = 0;
+            c.GearBindSlip = 0f;
+            c.GearBindGroundY = float.NegativeInfinity;
+            c.GearBindHalf = Vector3.Zero;
+            c.GearBindGroundHasSample = false;
             c.GearHandoffHasPrevAnchor = false;
             c.GearVisualBindHasLastPose = false;
         }
 
-        if (c.GearVisualBindFramesRemaining <= 0)
-            return false;
+        var slipMax = c.GearKeepModelSlot == 1 ? GearBodyVisualBindSlip : GearLegsVisualBindSlip;
 
-        if (!TryResolveGarmentVisualBindPose(skel, c, out var rootPos, out var rootRot,
-                out var releaseVelocity, out var releaseAngularVelocity))
+        // Manual mode: fixed countdown, slip driven by the elapsed fraction (legacy behavior).
+        if (!config.KoStripClothHoldAuto)
         {
-            c.GearVisualBindFramesRemaining = 0;
-            return false;
+            if (c.GearVisualBindFramesRemaining <= 0)
+                return false;
+            var progress = 1f - Math.Clamp(
+                c.GearVisualBindFramesRemaining / (float)Math.Max(1, c.GearVisualBindFramesTotal), 0f, 1f);
+            if (!ApplyGarmentBindPose(skel, c, slipMax * progress * progress))
+            {
+                c.GearVisualBindFramesRemaining = 0;
+                return false;
+            }
+            c.GearVisualBindFramesRemaining -= substepsThisFrame;
+            return true;
         }
+
+        // Auto mode: release on an event (body settled, or garment slid to the floor), not a timer.
+        if (!ApplyGarmentBindPose(skel, c, ComputeAutoBindSlip(c, slipMax)))
+            return false; // source skeleton gone -> arm now
+
+        c.GearBindElapsedFrames += substepsThisFrame;
+        // Rest test uses the RAW anchor velocity (see ApplyGarmentBindPose): the true body motion, free of
+        // the garment's own slide-down, so a settling body is detected instead of being masked by the slip.
+        var resting = c.GearHandoffReleaseVelocity.Length() < ClothHoldRestSpeed;
+        c.GearBindRestFrames = resting
+            ? Math.Min(c.GearBindRestFrames + substepsThisFrame, 3600)
+            : Math.Max(0, c.GearBindRestFrames - 2 * substepsThisFrame);
+
+        return !ShouldReleaseGarmentBind(c);
+    }
+
+    private bool ApplyGarmentBindPose(SkeletonAccess skel, Clone c, float slip)
+    {
+        if (!TryResolveGarmentVisualBindPose(skel, c, slip, out var rootPos, out var rootRot,
+                out var releaseVelocity, out var releaseAngularVelocity))
+            return false;
 
         SetCloneBaseTransform(c, rootPos, rootRot);
         c.GearVisualBindLastRootPos = rootPos;
@@ -2298,9 +2353,89 @@ public unsafe class DismembermentController : IDisposable
         c.GearHandoffReleaseVelocity = releaseVelocity;
         c.GearHandoffReleaseAngularVelocity = releaseAngularVelocity;
         c.GearHandoffHasReleaseVelocity = true;
-        c.GearVisualBindFramesRemaining -= substepsThisFrame;
         return true;
     }
+
+    // Slip (garment slide-down, metres) for auto mode. Rest presets slide the full slipMax over the dwell
+    // window (monotonic, only once the body is settling); slide-to-floor accumulates unbounded at a steady
+    // descent speed so the garment keeps sliding until it reaches the ground.
+    private float ComputeAutoBindSlip(Clone c, float slipMax)
+    {
+        if (config.KoStripClothHoldPreset == ClothHoldPresetSlideToFloor)
+        {
+            var ease = Math.Clamp(c.GearBindElapsedFrames / ClothHoldSlideEaseFrames, 0f, 1f);
+            c.GearBindSlip += ClothHoldSlideSpeed * ease * frameDt;
+            return c.GearBindSlip;
+        }
+
+        var dwell = Math.Max(1, ClothHoldRestDwellFrames(config.KoStripClothHoldPreset));
+        var restProgress = Math.Clamp(c.GearBindRestFrames / (float)dwell, 0f, 1f);
+        var target = slipMax * restProgress * restProgress;
+        if (target > c.GearBindSlip) c.GearBindSlip = target; // monotonic - never slide back up
+        return c.GearBindSlip;
+    }
+
+    private bool ShouldReleaseGarmentBind(Clone c)
+    {
+        if (c.GearBindElapsedFrames < ClothHoldMinFrames)
+            return false;
+
+        var preset = config.KoStripClothHoldPreset;
+        if (c.GearBindElapsedFrames >= ClothHoldCapFrames(preset))
+            return true;
+
+        if (preset == ClothHoldPresetSlideToFloor)
+            return c.GearBindSlip >= ClothHoldSlideMaxDrop || GarmentBindReachedFloor(c);
+
+        return c.GearBindRestFrames >= ClothHoldRestDwellFrames(preset);
+    }
+
+    // Slide-to-floor release test: the garment's lowest point has reached the ground under the anchor.
+    // Re-sample when the corpse is dragged far enough horizontally so the target floor follows slopes.
+    private bool GarmentBindReachedFloor(Clone c)
+    {
+        var p = c.GearBindAnchorWorld;
+        var needsSample = !c.GearBindGroundHasSample || float.IsNegativeInfinity(c.GearBindGroundY);
+        if (!needsSample)
+        {
+            var dx = p.X - c.GearBindGroundSampleX;
+            var dz = p.Z - c.GearBindGroundSampleZ;
+            needsSample = dx * dx + dz * dz >= 0.25f * 0.25f;
+        }
+
+        if (needsSample)
+        {
+            c.GearBindGroundY = BGCollisionModule.RaycastMaterialFilter(
+                new Vector3(p.X, p.Y + 5f, p.Z), new Vector3(0, -1, 0), out var hit, 80f)
+                ? hit.Point.Y : float.NaN;
+            c.GearBindGroundSampleX = p.X;
+            c.GearBindGroundSampleZ = p.Z;
+            c.GearBindGroundHasSample = true;
+            var scale = c.SourceScale.X > 0f ? c.SourceScale.X : 1f;
+            c.GearBindHalf = ComputeGearShapeHalf(BuildGearShapeParts(c.GearKeepModelSlot).Parts) * scale;
+        }
+
+        if (float.IsNaN(c.GearBindGroundY))
+            return false; // no ground found -> rely on the slide-max / cap fallbacks
+
+        var halfY = WorldVerticalHalfExtent(c.GearVisualBindLastRootRot, c.GearBindHalf);
+        return c.GearBindAnchorWorld.Y - halfY <= c.GearBindGroundY + ClothHoldFloorMargin;
+    }
+
+    private static int ClothHoldRestDwellFrames(int preset) => preset switch
+    {
+        ClothHoldPresetQuick => 9,    // ~0.15s
+        ClothHoldPresetClingy => 72,  // ~1.2s
+        _ => 24,                       // Natural ~0.4s
+    };
+
+    private static int ClothHoldCapFrames(int preset) => preset switch
+    {
+        ClothHoldPresetQuick => 180,          // 3s
+        ClothHoldPresetClingy => 1500,        // 25s
+        ClothHoldPresetSlideToFloor => 3600,  // 60s
+        _ => 600,                              // Natural 10s
+    };
 
     private void ApplyLastGarmentVisualBindPose(Clone c)
     {
@@ -2308,7 +2443,7 @@ public unsafe class DismembermentController : IDisposable
             SetCloneBaseTransform(c, c.GearVisualBindLastRootPos, c.GearVisualBindLastRootRot);
     }
 
-    private bool TryResolveGarmentVisualBindPose(SkeletonAccess skel, Clone c,
+    private bool TryResolveGarmentVisualBindPose(SkeletonAccess skel, Clone c, float slip,
         out Vector3 rootPos, out Quaternion rootRot, out Vector3 releaseVelocity,
         out Vector3 releaseAngularVelocity)
     {
@@ -2324,16 +2459,8 @@ public unsafe class DismembermentController : IDisposable
         if (!TryResolveGarmentVisualBindRotation(c, out rootRot))
             rootRot = c.Handoff?.SkeletonRot ?? Quaternion.Identity;
 
-        var progress = 1f - Math.Clamp(c.GearVisualBindFramesRemaining / (float)Math.Max(1, c.GearVisualBindFramesTotal), 0f, 1f);
-        var slip = (c.GearKeepModelSlot == 1 ? GearBodyVisualBindSlip : GearLegsVisualBindSlip) *
-                   (progress * progress);
-        anchorWorld.Y -= slip;
-
-        var anchorModel = TryAverageModelBonePositions(skel, out var modelAnchor, bones)
-            ? modelAnchor
-            : ResolveGearAnchorModelPos(skel, c);
-        rootPos = anchorWorld - Vector3.Transform(anchorModel, rootRot);
-
+        // Velocity from the RAW anchor (before slip): the true body motion, so the settle test and the
+        // release seed aren't polluted by the garment's own downward slide.
         var dt = frameDt;
         if (c.GearHandoffHasPrevAnchor)
         {
@@ -2359,6 +2486,14 @@ public unsafe class DismembermentController : IDisposable
         c.GearHandoffPrevAnchorWorld = anchorWorld;
         c.GearHandoffPrevAnchorRot = rootRot;
         c.GearHandoffHasPrevAnchor = true;
+
+        anchorWorld.Y -= slip;
+        c.GearBindAnchorWorld = anchorWorld;
+
+        var anchorModel = TryAverageModelBonePositions(skel, out var modelAnchor, bones)
+            ? modelAnchor
+            : ResolveGearAnchorModelPos(skel, c);
+        rootPos = anchorWorld - Vector3.Transform(anchorModel, rootRot);
         return true;
     }
 
