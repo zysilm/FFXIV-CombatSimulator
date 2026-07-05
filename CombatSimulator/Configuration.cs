@@ -171,6 +171,10 @@ public partial class Configuration : IPluginConfiguration
     public bool ActionMeleeRangeDefaultMigratedTo5 { get; set; } = false;
     public bool ActionAttackShapeDefaultsMigrated20260630 { get; set; } = false;
     public bool EnemyDismembermentDefaultsMigrated20260630 { get; set; } = false;
+    public bool FightingSpacingDefaultsMigrated20260703 { get; set; } = false;
+    public bool ThinnerProfileTuningMigrated20260704 { get; set; } = false;
+    public bool KneeHingeStiffnessMigrated20260704 { get; set; } = false;
+    public bool AnatomicalDefaultsOffMigrated20260704 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -221,6 +225,96 @@ public partial class Configuration : IPluginConfiguration
     // "" = None — the clone keeps its own (inherited) equipment. Also the effective
     // behavior when Glamourer is not installed.
     public string PartyCompanionGlamourerDesignId { get; set; } = "";
+
+    // Armor Detachment: compact floating control UI, opened from Professional Mode > Effects.
+    public bool ShowArmorDetachmentControls { get; set; } = false;
+
+    // Armor Detachment: visually detach configured player gear slots on KO. Monster-hit detachment is
+    // a dev-only extension and is additionally runtime-gated by the dev unlock state.
+    public bool KoStripEnabled { get; set; } = false;
+    public bool KoStripOnHitEnabled { get; set; } = false;
+    public bool KoStripSyncWithRagdoll { get; set; } = true;
+    public bool KoStripHead { get; set; } = false;
+    public bool KoStripBody { get; set; } = true;
+    public bool KoStripHands { get; set; } = true;
+    public bool KoStripLegs { get; set; } = true;
+    public bool KoStripFeet { get; set; } = true;
+    public bool KoStripEars { get; set; } = false;
+    public bool KoStripNeck { get; set; } = false;
+    public bool KoStripWrists { get; set; } = false;
+    public bool KoStripRFinger { get; set; } = false;
+    public bool KoStripLFinger { get; set; } = false;
+
+    // Physically drop hats / accessories (separate models, not fused with skin) as falling rigid
+    // bodies instead of just hiding them. Head + accessory slots. Default off.
+    public bool KoStripPhysicsDrop { get; set; } = false;
+
+    // Physically drop supported clothing (Body / Legs) as falling shells. Still includes the body skin
+    // baked into those equipment models, so it remains opt-in. Default off.
+    public bool KoStripPhysicsDropClothing { get; set; } = false;
+
+    // Garment polish layered on top of clothing physics drop: short visual body follow, body/ground
+    // friction damping, and delayed cloth collapse. Default off.
+    public bool KoStripAdvancedClothPhysics { get; set; } = false;
+
+    // Manual fallback duration (seconds) for the "still attached" visual hold with Advanced clothing
+    // settle on. Auto mode is the default path; this only applies when Auto cloth hold is disabled.
+    public const float KoStripClothHoldSecondsDefault = 0.3f;
+    public float KoStripClothHoldSeconds { get; set; } = KoStripClothHoldSecondsDefault;
+
+    // Auto cloth hold: release the garment on an event (body settled, or slid down to the floor)
+    // rather than the fixed KoStripClothHoldSeconds timer.
+    public bool KoStripClothHoldAuto { get; set; } = true;
+
+    // Auto-hold feel: 0 Quick, 1 Natural, 2 Clingy, 3 Slide-to-floor. Default Slide-to-floor.
+    public int KoStripClothHoldPreset { get; set; } = 3;
+
+    // Per-slot "collapse on drop" toggles for the physics-drop pieces. When a slot is enabled the
+    // dropped piece deflates/flattens like cloth; when disabled it keeps its full rigid shape (better
+    // for armor / rigid gear). Indexed via GearKeepModelSlot (0 Head,1 Body,2 Hands,3 Legs,4 Feet,
+    // 5 Ears,6 Neck,7 Wrists,8 RFinger,9 LFinger).
+    public bool KoStripCollapseHead { get; set; } = true;
+    public bool KoStripCollapseBody { get; set; } = true;
+    public bool KoStripCollapseHands { get; set; } = true;
+    public bool KoStripCollapseLegs { get; set; } = true;
+    public bool KoStripCollapseFeet { get; set; } = true;
+    public bool KoStripCollapseEars { get; set; } = false;
+    public bool KoStripCollapseNeck { get; set; } = false;
+    public bool KoStripCollapseWrists { get; set; } = false;
+    public bool KoStripCollapseRFinger { get; set; } = false;
+    public bool KoStripCollapseLFinger { get; set; } = false;
+
+    /// <summary>Whether the dropped piece for the given GearKeepModelSlot should collapse/deflate.
+    /// Unknown slots default to collapsing (matches the historic all-gear-deflates behavior).</summary>
+    public bool IsKoStripCollapseEnabled(int gearKeepModelSlot) => gearKeepModelSlot switch
+    {
+        0 => KoStripCollapseHead,
+        1 => KoStripCollapseBody,
+        2 => KoStripCollapseHands,
+        3 => KoStripCollapseLegs,
+        4 => KoStripCollapseFeet,
+        5 => KoStripCollapseEars,
+        6 => KoStripCollapseNeck,
+        7 => KoStripCollapseWrists,
+        8 => KoStripCollapseRFinger,
+        9 => KoStripCollapseLFinger,
+        _ => true,
+    };
+
+    /// <summary>Restore the default collapse mask: clothing collapses, accessories stay rigid.</summary>
+    public void ResetKoStripCollapseDefaults()
+    {
+        KoStripCollapseHead = true;
+        KoStripCollapseBody = true;
+        KoStripCollapseHands = true;
+        KoStripCollapseLegs = true;
+        KoStripCollapseFeet = true;
+        KoStripCollapseEars = false;
+        KoStripCollapseNeck = false;
+        KoStripCollapseWrists = false;
+        KoStripCollapseRFinger = false;
+        KoStripCollapseLFinger = false;
+    }
 
     // Shortcuts bar
     public bool ShowShortcuts { get; set; } = false;
@@ -302,6 +396,15 @@ public partial class Configuration : IPluginConfiguration
     // 120 = very firm (needs substeps to stay stable), 90 = balanced default. Takes
     // effect on next ragdoll activation.
     public float RagdollLimitSpringFrequency { get; set; } = 90f;
+    // Soft-edge swing limits (ball joints): replace the hard 90Hz wall on swing cones and
+    // the Tier-C directional limits with a low-frequency, overdamped spring, so a joint
+    // sliding toward its range edge decelerates and settles instead of pinning at the
+    // extreme angle (the visual cause of splayed "spread-eagle" corpse poses freezing at
+    // their limits). Hinges (knee/elbow) keep the hard wall — a soft knee reads as
+    // hyperextension. Takes effect on next ragdoll activation.
+    public bool RagdollSoftLimits { get; set; } = true;
+    public float RagdollSoftLimitFrequency { get; set; } = 12f;
+    public float RagdollSoftLimitDamping { get; set; } = 4f;
     // Spring frequency (Hz) of the POSITIONAL joints (the BallSocket/Weld that hold bones
     // together at the joint), as opposed to the limit walls above. Higher = bones separate
     // less under large impulses ("rubber-band" stretch); too high relative to the step needs
@@ -352,7 +455,10 @@ public partial class Configuration : IPluginConfiguration
     // sideways under load, too high relative to the 60 Hz step = jitter/freeze. Takes
     // effect on next ragdoll activation.
     public bool RagdollKneeElbowPlanarHinge { get; set; } = true;
-    public float RagdollKneeHingeFrequency { get; set; } = 18f;
+    // 18 Hz was calibrated before SolverSubsteps existed; with 8 substeps the solver
+    // holds far stiffer angular constraints without freezing, and a soft planar hinge
+    // is exactly what lets impacts wobble/tunnel the knee sideways and in twist.
+    public float RagdollKneeHingeFrequency { get; set; } = 50f;
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
 
@@ -360,13 +466,15 @@ public partial class Configuration : IPluginConfiguration
     // resolved as (Winter Table 3.1 body-mass fraction) x RagdollBodyMass instead of the
     // hand-picked per-bone Mass values. Fixes wrong inertia (thigh too heavy, trunk not
     // pelvis-heavy). Cloth/weapon/breast bones keep their tiny existing masses.
-    public bool RagdollAnthropometricMass { get; set; } = true;
+    // Default OFF after field testing: only useful in specific setups.
+    public bool RagdollAnthropometricMass { get; set; } = false;
     public float RagdollBodyMass { get; set; } = 70f; // Total body mass (kg) anthropometric fractions scale against.
     // Tier B — Anatomy-fixed knee/elbow hinge axis. When on, the hinge axis is derived
     // from the skeleton medial-lateral (character RIGHT) axis projected perpendicular to
     // the bone, instead of Cross(thighDir, shinDir) which is degenerate for a near-straight
     // limb and produced an asymmetric (one knee sideways, one forward) axis at death.
-    public bool RagdollAnatomicalHingeAxis { get; set; } = true;
+    // Default OFF after field testing: only useful in specific setups.
+    public bool RagdollAnatomicalHingeAxis { get; set; } = false;
     // Tier C — Asymmetric swing-twist range of motion. When on, joints draw their axial
     // twist range (all joints) and the knee/elbow flexion/hyperextension bounds from a
     // clinical/ISB anatomical ROM table instead of the hand-set per-bone twist values and
@@ -374,7 +482,9 @@ public partial class Configuration : IPluginConfiguration
     // anatomical violation) and gives each joint a correct asymmetric axial range. The
     // ball-joint (hip/shoulder) asymmetric SWING ellipse is deferred to Tier A. Takes
     // effect on next ragdoll activation.
-    public bool RagdollAnatomicalRom { get; set; } = true;
+    // Default OFF after field testing: only useful in specific setups. The twist
+    // governors, hemisphere locks, and profile-table limits stay active regardless.
+    public bool RagdollAnatomicalRom { get; set; } = false;
 
     // Dismemberment POC: while the player ragdoll is active, collapse each selected limb's bone
     // subtree to ~0 scale so it vanishes from the body. Multi-select: stores the root bone name of
@@ -444,17 +554,6 @@ public partial class Configuration : IPluginConfiguration
     public float ActiveCameraMinZoomDistance { get; set; } = 1.0f;
     public bool ActiveCameraPreventFade { get; set; } = false;
 
-    // Fighting Camera (1v1): frame the player + locked target together with auto-zoom,
-    // then on either death transition to the dead character's bone (active-cam follow).
-    public bool ActiveCameraFightingMode { get; set; } = false;
-    public float ActiveCameraFightingTransitionDuration { get; set; } = 1.0f;
-    public float ActiveCameraFightingZoomMargin { get; set; } = 1.3f;
-    public float ActiveCameraFightingMinDistance { get; set; } = 2.5f;
-    public float ActiveCameraFightingMaxDistance { get; set; } = 15.0f;
-    public float ActiveCameraFightingSmoothing { get; set; } = 8.0f;
-    public float ActiveCameraFightingHeightOffset { get; set; } = 0f;
-    public string ActiveCameraFightingBoneName { get; set; } = "j_sebo_b";
-
     // Legacy combined skill VFX toggle. Migrated to the split toggles below.
     public bool EnableSkillVfx { get; set; } = false;
     public bool EnableCharacterVfx { get; set; } = true;
@@ -511,6 +610,80 @@ public partial class Configuration : IPluginConfiguration
     // telegraph (起手快照) then resolve by hitbox at the active frame. When OFF,
     // every seam falls back to the original simulation behavior.
     public bool ActionMode { get; set; } = true;
+
+    // Fighting Mode (Experimental): 1v1 side-view combat layer. It owns player
+    // action routing, constrains the player/enemy pair onto a 2D lane, and drives
+    // a fighting-game camera. Mutually exclusive with Action Mode.
+    public bool FightingMode { get; set; } = false;
+    public float FightingModeLaneHalfWidth { get; set; } = 0.35f;
+    public float FightingModeMinSeparation { get; set; } = 0.45f;
+    public float FightingModeMaxSeparation { get; set; } = 1.0f;
+    // Camera defaults are field-tuned in-game values.
+    public float FightingModeCameraMargin { get; set; } = 0.75f;
+    public float FightingModeCameraMinDistance { get; set; } = 2.31f;
+    public float FightingModeCameraMaxDistance { get; set; } = 3.5f;
+    public float FightingModeCameraSmoothing { get; set; } = 10.0f;
+    public float FightingModeCameraHeight { get; set; } = 1.18f;
+    public float FightingModeCameraVerticalAngle { get; set; } = 0.31f;
+    public bool FightingModeTranslateCam { get; set; } = true;
+    public float FightingModeTranslateDuration { get; set; } = 3.0f;
+    public float FightingModeTranslateDistance { get; set; } = 1.22f;
+    public string FightingModeTranslateBoneName { get; set; } = "j_kosi";
+    public float FightingModeTranslateHeightOffset { get; set; } = 0.44f;
+    public float FightingModeTranslateSideOffset { get; set; } = 0.0f;
+    public bool FightingModeTranslateLockHorizontal { get; set; } = false;
+    public float FightingModeTranslateHorizontalAngle { get; set; } = 0.0f;
+    public bool FightingModeTranslateLockVertical { get; set; } = false;
+    public float FightingModeTranslateVerticalAngle { get; set; } = 0.31f;
+    // Which side of the lane the 2D camera sits on (0 = right of the engage axis, 1 = left).
+    public int FightingModeCameraSide { get; set; } = 0;
+    // Double-jump vault: a second press of the game's own JUMP bind mid-air carries the player
+    // over the enemy. Fighting Mode has no key config of its own — jump inherits the game bind,
+    // and the basic attack / guard reuse the Action Mode binds.
+    public float FightingModeVaultDuration { get; set; } = 0.45f;
+    // Fighting Mode weapon-contact hit detection: the main-hand weapon segment must
+    // sweep through the enemy hurtbox capsule during the swing's active window.
+    public float FightingModeWeaponLength { get; set; } = 1.2f;       // fallback/single-bone length
+    public float FightingModeWeaponLengthScale { get; set; } = 1.1f;  // pad on skeleton-derived length
+    public int FightingModeWeaponAxis { get; set; } = 1;              // 0=X 1=Y 2=Z (single-bone weapons)
+    public float FightingModeWeaponRadius { get; set; } = 0.15f;
+    public float FightingModeHurtboxHeight { get; set; } = 2.0f;
+    public float FightingModeHurtboxRadiusScale { get; set; } = 1.0f;
+    public float FightingModeAttackActiveStartPct { get; set; } = 0.25f;
+    public float FightingModeAttackActiveEndPct { get; set; } = 0.70f;
+    public bool FightingModeDebugDraw { get; set; } = false;
+    // Fighting Mode 1v1 enemy AI (replaces NpcAiController for the engaged fighter):
+    // spacing band + approach/retreat + telegraphed attacks + hitstun pushback.
+    // Retreats slower than it approaches so the player can actually corner it.
+    public float FightingAiMoveSpeed { get; set; } = 2.5f;
+    public float FightingAiRetreatSpeedScale { get; set; } = 0.5f;
+    public float FightingAiRangeMin { get; set; } = 0.9f;
+    public float FightingAiRangeMax { get; set; } = 2.2f;
+    public float FightingAiAttackCooldown { get; set; } = 1.1f;
+    public float FightingAiAttackCooldownJitter { get; set; } = 0.7f;
+    // Fighting-game move variety: combo strings, dash-ins, and side-switching hops.
+    public float FightingAiComboChance { get; set; } = 0.35f;
+    public float FightingAiComboGap { get; set; } = 0.18f;
+    public int FightingAiMaxComboHits { get; set; } = 3;
+    public float FightingAiDashChance { get; set; } = 0.35f;
+    public float FightingAiDashSpeedScale { get; set; } = 2.2f;
+    public float FightingAiJumpOverChance { get; set; } = 0.15f;
+    public float FightingAiJumpDuration { get; set; } = 0.55f;
+    public float FightingAiJumpHeight { get; set; } = 1.6f;
+    public float FightingAiJumpInAttackChance { get; set; } = 0.5f;
+    public float FightingAiRetreatChance { get; set; } = 0.35f;
+    public float FightingAiRetreatDuration { get; set; } = 0.8f;
+    public float FightingAiRecoverTime { get; set; } = 0.6f;
+    public float FightingAiHitstunDuration { get; set; } = 0.35f;
+    public float FightingAiHitstunPushback { get; set; } = 1.5f;
+    // Fighting Mode KO camera: after the player's defeat, when the dev-controlled
+    // monster is followed, frame the corpse↔monster midpoint and zoom with separation.
+    public float FightingModeKoCameraMargin { get; set; } = 0.8f;
+    public float FightingModeKoCameraBase { get; set; } = 3.0f;
+    public float FightingModeKoCameraMinDistance { get; set; } = 3.0f;
+    public float FightingModeKoCameraMaxDistance { get; set; } = 14.0f;
+    public float FightingModeKoCameraHeight { get; set; } = 0.8f;
+    public bool FightingModeKoLockAngle { get; set; } = true;
 
     // Input map: put these actions on the hotbar; a press is interpreted as the
     // mapped role instead of firing the real action. 0 = unmapped.
@@ -615,6 +788,10 @@ public partial class Configuration : IPluginConfiguration
         MigrateActionMeleeRangeDefault();
         MigrateActionAttackShapeDefaults();
         MigrateEnemyDismembermentDefaults();
+        MigrateFightingSpacingDefaults();
+        MigrateThinnerProfileTuning();
+        MigrateKneeHingeStiffness();
+        MigrateAnatomicalDefaultsOff();
         MigrateGuidedCollapse();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
@@ -631,6 +808,70 @@ public partial class Configuration : IPluginConfiguration
         GuidedCollapse.ResetDefaults();
         if (preserveEnabled)
             GuidedCollapse.Enabled = enabled;
+    }
+
+    public void ResetFightingModeDefaults(bool preserveEnabled = true)
+    {
+        var enabled = FightingMode;
+        var defaults = new Configuration();
+
+        FightingMode = preserveEnabled ? enabled : defaults.FightingMode;
+        FightingModeLaneHalfWidth = defaults.FightingModeLaneHalfWidth;
+        FightingModeMinSeparation = defaults.FightingModeMinSeparation;
+        FightingModeMaxSeparation = defaults.FightingModeMaxSeparation;
+        FightingModeCameraMargin = defaults.FightingModeCameraMargin;
+        FightingModeCameraMinDistance = defaults.FightingModeCameraMinDistance;
+        FightingModeCameraMaxDistance = defaults.FightingModeCameraMaxDistance;
+        FightingModeCameraSmoothing = defaults.FightingModeCameraSmoothing;
+        FightingModeCameraHeight = defaults.FightingModeCameraHeight;
+        FightingModeCameraVerticalAngle = defaults.FightingModeCameraVerticalAngle;
+        FightingModeTranslateCam = defaults.FightingModeTranslateCam;
+        FightingModeTranslateDuration = defaults.FightingModeTranslateDuration;
+        FightingModeTranslateDistance = defaults.FightingModeTranslateDistance;
+        FightingModeTranslateBoneName = defaults.FightingModeTranslateBoneName;
+        FightingModeTranslateHeightOffset = defaults.FightingModeTranslateHeightOffset;
+        FightingModeTranslateSideOffset = defaults.FightingModeTranslateSideOffset;
+        FightingModeTranslateLockHorizontal = defaults.FightingModeTranslateLockHorizontal;
+        FightingModeTranslateHorizontalAngle = defaults.FightingModeTranslateHorizontalAngle;
+        FightingModeTranslateLockVertical = defaults.FightingModeTranslateLockVertical;
+        FightingModeTranslateVerticalAngle = defaults.FightingModeTranslateVerticalAngle;
+        FightingModeWeaponLength = defaults.FightingModeWeaponLength;
+        FightingModeWeaponLengthScale = defaults.FightingModeWeaponLengthScale;
+        FightingModeWeaponAxis = defaults.FightingModeWeaponAxis;
+        FightingModeWeaponRadius = defaults.FightingModeWeaponRadius;
+        FightingModeHurtboxHeight = defaults.FightingModeHurtboxHeight;
+        FightingModeHurtboxRadiusScale = defaults.FightingModeHurtboxRadiusScale;
+        FightingModeAttackActiveStartPct = defaults.FightingModeAttackActiveStartPct;
+        FightingModeAttackActiveEndPct = defaults.FightingModeAttackActiveEndPct;
+        FightingModeDebugDraw = defaults.FightingModeDebugDraw;
+        FightingModeCameraSide = defaults.FightingModeCameraSide;
+        FightingModeVaultDuration = defaults.FightingModeVaultDuration;
+        FightingAiMoveSpeed = defaults.FightingAiMoveSpeed;
+        FightingAiRetreatSpeedScale = defaults.FightingAiRetreatSpeedScale;
+        FightingAiRangeMin = defaults.FightingAiRangeMin;
+        FightingAiRangeMax = defaults.FightingAiRangeMax;
+        FightingAiAttackCooldown = defaults.FightingAiAttackCooldown;
+        FightingAiAttackCooldownJitter = defaults.FightingAiAttackCooldownJitter;
+        FightingAiComboChance = defaults.FightingAiComboChance;
+        FightingAiComboGap = defaults.FightingAiComboGap;
+        FightingAiMaxComboHits = defaults.FightingAiMaxComboHits;
+        FightingAiDashChance = defaults.FightingAiDashChance;
+        FightingAiDashSpeedScale = defaults.FightingAiDashSpeedScale;
+        FightingAiJumpOverChance = defaults.FightingAiJumpOverChance;
+        FightingAiJumpDuration = defaults.FightingAiJumpDuration;
+        FightingAiJumpHeight = defaults.FightingAiJumpHeight;
+        FightingAiJumpInAttackChance = defaults.FightingAiJumpInAttackChance;
+        FightingAiRetreatChance = defaults.FightingAiRetreatChance;
+        FightingAiRetreatDuration = defaults.FightingAiRetreatDuration;
+        FightingAiRecoverTime = defaults.FightingAiRecoverTime;
+        FightingAiHitstunDuration = defaults.FightingAiHitstunDuration;
+        FightingAiHitstunPushback = defaults.FightingAiHitstunPushback;
+        FightingModeKoCameraMargin = defaults.FightingModeKoCameraMargin;
+        FightingModeKoCameraBase = defaults.FightingModeKoCameraBase;
+        FightingModeKoCameraMinDistance = defaults.FightingModeKoCameraMinDistance;
+        FightingModeKoCameraMaxDistance = defaults.FightingModeKoCameraMaxDistance;
+        FightingModeKoCameraHeight = defaults.FightingModeKoCameraHeight;
+        FightingModeKoLockAngle = defaults.FightingModeKoLockAngle;
     }
 
     public void ResetActionModeDefaults(bool preserveEnabled = true)
@@ -758,6 +999,118 @@ public partial class Configuration : IPluginConfiguration
         }
 
         EnemyDismembermentDefaultsMigrated20260630 = true;
+        Save();
+    }
+
+    // Field testing showed the first fighting-AI spacing defaults made the enemy
+    // unreachable (band too wide, retreat at full speed). Move configs still on the
+    // old defaults to the retuned ones.
+    private void MigrateFightingSpacingDefaults()
+    {
+        if (FightingSpacingDefaultsMigrated20260703)
+            return;
+
+        if (MathF.Abs(FightingAiMoveSpeed - 3.0f) < 0.001f)
+            FightingAiMoveSpeed = 2.5f;
+        if (MathF.Abs(FightingAiRangeMin - 1.8f) < 0.001f)
+            FightingAiRangeMin = 0.9f;
+        if (MathF.Abs(FightingAiRangeMax - 3.2f) < 0.001f)
+            FightingAiRangeMax = 2.2f;
+        if (MathF.Abs(FightingAiAttackCooldown - 2.5f) < 0.001f)
+            FightingAiAttackCooldown = 1.1f;
+        if (MathF.Abs(FightingAiAttackCooldownJitter - 1.0f) < 0.001f)
+            FightingAiAttackCooldownJitter = 0.7f;
+        if (MathF.Abs(FightingModeCameraMaxDistance - 3.0f) < 0.001f)
+            FightingModeCameraMaxDistance = 3.5f;
+
+        FightingSpacingDefaultsMigrated20260703 = true;
+        Save();
+    }
+
+    // Knee hinge stack stiffened (see RagdollKneeHingeFrequency comment): 18 Hz predates
+    // the substep solver and lets impacts wobble/tunnel the knee.
+    private void MigrateKneeHingeStiffness()
+    {
+        if (KneeHingeStiffnessMigrated20260704)
+            return;
+
+        if (MathF.Abs(RagdollKneeHingeFrequency - 18f) < 0.001f)
+            RagdollKneeHingeFrequency = 50f;
+
+        KneeHingeStiffnessMigrated20260704 = true;
+        Save();
+    }
+
+    // Field-tuned bone values promoted into the built-in Thinner Volumes profiles
+    // (tighter hip cone/twist, tighter clavicle twist, slimmer upper arms, stronger
+    // knee rest bias). The seeder only adds MISSING profiles, so saved copies in
+    // existing configs must be patched here — targeted per-field so any other user
+    // divergence in those profiles is preserved.
+    private void MigrateThinnerProfileTuning()
+    {
+        if (ThinnerProfileTuningMigrated20260704)
+            return;
+
+        var changed = false;
+        foreach (var profile in RagdollBoneProfiles)
+        {
+            if (profile?.Name != "Thinner Volumes I" && profile?.Name != "Thinner Volumes II")
+                continue;
+            if (profile.Bones == null)
+                continue;
+
+            foreach (var bone in profile.Bones)
+            {
+                switch (bone.Name)
+                {
+                    case "j_asi_a_l":
+                    case "j_asi_a_r":
+                        bone.SwingLimit = 0.95f;
+                        bone.TwistMinAngle = -0.15f;
+                        bone.TwistMaxAngle = 0.15f;
+                        changed = true;
+                        break;
+                    case "j_sako_l":
+                    case "j_sako_r":
+                        bone.TwistMinAngle = -0.15f;
+                        bone.TwistMaxAngle = 0.15f;
+                        changed = true;
+                        break;
+                    case "j_ude_a_l":
+                    case "j_ude_a_r":
+                        bone.CapsuleRadius = 0.02f;
+                        bone.BoxHalfExtentZ = 0.024f;
+                        changed = true;
+                        break;
+                    case "j_asi_b_l":
+                    case "j_asi_b_r":
+                        bone.HingeRestSpringFreq = 3.5f;
+                        bone.HingeRestMaxForce = 50f;
+                        changed = true;
+                        break;
+                }
+            }
+        }
+
+        ThinnerProfileTuningMigrated20260704 = true;
+        if (changed)
+            Save();
+    }
+
+    // Field testing verdict: the anatomical hinge axis, anatomical ROM, and
+    // anthropometric mass experiments are only useful in specific setups — flip
+    // configs still carrying the old ON defaults to OFF. (They stay available in
+    // the GUI for those specific cases.)
+    private void MigrateAnatomicalDefaultsOff()
+    {
+        if (AnatomicalDefaultsOffMigrated20260704)
+            return;
+
+        RagdollAnatomicalHingeAxis = false;
+        RagdollAnatomicalRom = false;
+        RagdollAnthropometricMass = false;
+
+        AnatomicalDefaultsOffMigrated20260704 = true;
         Save();
     }
 

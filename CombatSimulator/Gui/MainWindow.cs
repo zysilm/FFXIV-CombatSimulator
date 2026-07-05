@@ -22,6 +22,16 @@ namespace CombatSimulator.Gui;
 
 public partial class MainWindow : IDisposable
 {
+    private static readonly (string Label, string BoneName)[] FightingModeTranslateBones =
+    {
+        ("Hips (j_kosi)", "j_kosi"),
+        ("Lower Spine (j_sebo_a)", "j_sebo_a"),
+        ("Mid Spine (j_sebo_b)", "j_sebo_b"),
+        ("Upper Spine (j_sebo_c)", "j_sebo_c"),
+        ("Neck (j_kubi)", "j_kubi"),
+        ("Head (j_kao)", "j_kao"),
+    };
+
     private readonly Configuration config;
     private readonly NpcSelector npcSelector;
     private readonly NpcSpawner npcSpawner;
@@ -97,6 +107,17 @@ public partial class MainWindow : IDisposable
     partial void DrawDevTabContent(int selectedTab);
     partial void DrawDevSection();
     partial void DrawPcDismemberSection();
+    partial void GetDevExperimentalUnlocked(ref bool unlocked);
+
+    public bool DevExperimentalUnlocked
+    {
+        get
+        {
+            var unlocked = false;
+            GetDevExperimentalUnlocked(ref unlocked);
+            return unlocked;
+        }
+    }
 
     // Virtual Enemies section state
     private NpcCatalog? npcCatalog;
@@ -280,6 +301,7 @@ public partial class MainWindow : IDisposable
         {
             case 0: // Combat
                 DrawSimulationSection();
+                DrawFightingModeSection();
                 DrawActionModeSection();
                 break;
             case 1: // Targets
@@ -290,6 +312,7 @@ public partial class MainWindow : IDisposable
                 break;
             case 3: // Effects
                 DrawHitVfxSection();
+                DrawArmorDetachmentEntrySection();
                 DrawGlamourerHeaderSection();
                 break;
             case 4: // Camera
@@ -457,9 +480,21 @@ public partial class MainWindow : IDisposable
             if (ImGui.Checkbox("Action Mode", ref actionMode))
             {
                 config.ActionMode = actionMode;
+                if (actionMode)
+                    config.FightingMode = false;
                 config.Save();
             }
             HelpMarker(BuildActionModeQuickHelp());
+
+            var fightingMode = config.FightingMode;
+            if (ImGui.Checkbox("Fighting Mode [Experimental]", ref fightingMode))
+            {
+                config.FightingMode = fightingMode;
+                if (fightingMode)
+                    config.ActionMode = false;
+                config.Save();
+            }
+            HelpMarker("Experimental 1v1 side-view mode. Press an attack on an enemy to lock the pair into a 2D fighting lane and side camera. Ignores profiles while active.");
         }
 
         if (compact)
@@ -677,6 +712,19 @@ public partial class MainWindow : IDisposable
     private void StartRecipe(CombatRecipe recipe)
     {
         StopFastCombat(print: false);
+
+        if (config.FightingMode)
+        {
+            config.ActionMode = false;
+            config.EnableCombatCompanions = false;
+            config.SensePartyMembers = false;
+            config.EnableMapPlayerEnemySensing = false;
+            npcSpawner.SpawnModeActive = false;
+            mapEnemyController.ClearRecipeSettings();
+            combatEngine.StartSimulation();
+            chatGui.Print("[CombatSim] Fighting Mode started. Attack one enemy to begin a 1v1.");
+            return;
+        }
 
         config.EnableCombatCompanions = true;
         config.SensePartyMembers = recipe.Companions.Exists(c => c.Type == CompanionRecipeType.VisiblePlayers);
@@ -1367,6 +1415,472 @@ public partial class MainWindow : IDisposable
         }
     }
 
+    private void DrawFightingModeSection()
+    {
+        if (!ImGui.CollapsingHeader("Fighting Mode [Experimental]"))
+            return;
+
+        var fightingMode = config.FightingMode;
+        if (ImGui.Checkbox("Enable Fighting Mode", ref fightingMode))
+        {
+            config.FightingMode = fightingMode;
+            if (fightingMode)
+                config.ActionMode = false;
+            config.Save();
+        }
+        HelpMarker("1v1 side-view combat mode. The first player attack against an enemy locks the pair into a fighting-game lane and camera: 2D movement (forward/back + jump), weapon-contact hit detection, timed guard against telegraphs, a dedicated fighting AI, and KO/death cameras.");
+
+        if (!config.FightingMode)
+            return;
+
+        ImGui.SameLine();
+        if (ImGui.Button("Reset defaults##fightingmode"))
+        {
+            config.ResetFightingModeDefaults();
+            config.Save();
+        }
+        HelpMarker("Reset every Fighting Mode setting (movement, combat, AI, cameras) to defaults. Keeps the mode enabled.");
+
+        ImGui.Separator();
+        ImGui.Text("Lane");
+
+        var minSep = config.FightingModeMinSeparation;
+        if (ImGui.SliderFloat("Min separation##fightingmode", ref minSep, 0.1f, 1.5f, "%.2f"))
+        {
+            config.FightingModeMinSeparation = minSep;
+            config.Save();
+        }
+        HelpMarker("Closest the pair can stand: whoever moves is clamped this far from the other along the lane.");
+
+        ImGui.Separator();
+        ImGui.Text("Input");
+        HelpMarker("Fighting Mode uses no keys of its own. Movement, run and jump are the game's own bindings (projected onto the 2D lane); a second jump press mid-air vaults over the enemy. The basic attack and guard reuse the Action Mode binds — configure them under Action Mode.");
+
+        var vaultDur = config.FightingModeVaultDuration;
+        if (ImGui.SliderFloat("Vault duration##fightingmode", ref vaultDur, 0.2f, 1.2f, "%.2f s"))
+        {
+            config.FightingModeVaultDuration = vaultDur;
+            config.Save();
+        }
+        HelpMarker("How long the mid-air vault arc over the enemy lasts. Triggered by a second press of your game jump bind while airborne.");
+
+        ImGui.Separator();
+        ImGui.Text("Weapon Combat");
+
+        var debugDraw = config.FightingModeDebugDraw;
+        if (ImGui.Checkbox("Debug draw##fightingmode", ref debugDraw))
+        {
+            config.FightingModeDebugDraw = debugDraw;
+            config.Save();
+        }
+        HelpMarker("Draws the live weapon segment (yellow; red while the hit window is open) and the enemy hurtbox capsule. Essential for tuning the values below.");
+
+        var weaponLen = config.FightingModeWeaponLength;
+        if (ImGui.SliderFloat("Weapon length##fightingmode", ref weaponLen, 0.2f, 3.0f, "%.2f"))
+        {
+            config.FightingModeWeaponLength = weaponLen;
+            config.Save();
+        }
+        HelpMarker("Used for single-bone weapons and the unarmed/hand-bone fallback. Multi-bone weapons derive length from their own skeleton.");
+
+        var weaponScale = config.FightingModeWeaponLengthScale;
+        if (ImGui.SliderFloat("Weapon length scale##fightingmode", ref weaponScale, 0.5f, 2.0f, "%.2f"))
+        {
+            config.FightingModeWeaponLengthScale = weaponScale;
+            config.Save();
+        }
+
+        var weaponRadius = config.FightingModeWeaponRadius;
+        if (ImGui.SliderFloat("Weapon radius##fightingmode", ref weaponRadius, 0.02f, 0.6f, "%.2f"))
+        {
+            config.FightingModeWeaponRadius = weaponRadius;
+            config.Save();
+        }
+
+        var weaponAxis = config.FightingModeWeaponAxis;
+        if (ImGui.Combo("Weapon axis##fightingmode", ref weaponAxis, "X\0Y\0Z\0"))
+        {
+            config.FightingModeWeaponAxis = Math.Clamp(weaponAxis, 0, 2);
+            config.Save();
+        }
+        HelpMarker("Blade direction in the weapon's local space, for single-bone weapons only.");
+
+        var hurtHeight = config.FightingModeHurtboxHeight;
+        if (ImGui.SliderFloat("Hurtbox height##fightingmode", ref hurtHeight, 0.5f, 5.0f, "%.2f"))
+        {
+            config.FightingModeHurtboxHeight = hurtHeight;
+            config.Save();
+        }
+
+        var hurtScale = config.FightingModeHurtboxRadiusScale;
+        if (ImGui.SliderFloat("Hurtbox radius scale##fightingmode", ref hurtScale, 0.3f, 3.0f, "%.2f"))
+        {
+            config.FightingModeHurtboxRadiusScale = hurtScale;
+            config.Save();
+        }
+
+        var activeStart = config.FightingModeAttackActiveStartPct;
+        if (ImGui.SliderFloat("Hit window start##fightingmode", ref activeStart, 0f, 0.9f, "%.2f"))
+        {
+            config.FightingModeAttackActiveStartPct = activeStart;
+            config.Save();
+        }
+        HelpMarker("Active hit window as a fraction of the attack animation: contact only counts between start and end.");
+
+        var activeEnd = config.FightingModeAttackActiveEndPct;
+        if (ImGui.SliderFloat("Hit window end##fightingmode", ref activeEnd, 0.1f, 1f, "%.2f"))
+        {
+            config.FightingModeAttackActiveEndPct = MathF.Max(activeEnd, config.FightingModeAttackActiveStartPct + 0.05f);
+            config.Save();
+        }
+
+        ImGui.Separator();
+        ImGui.Text("Fighting AI");
+
+        var aiSpeed = config.FightingAiMoveSpeed;
+        if (ImGui.SliderFloat("AI move speed##fightingai", ref aiSpeed, 0.5f, 8.0f, "%.1f"))
+        {
+            config.FightingAiMoveSpeed = aiSpeed;
+            config.Save();
+        }
+
+        var aiRetreatScale = config.FightingAiRetreatSpeedScale;
+        if (ImGui.SliderFloat("Retreat speed scale##fightingai", ref aiRetreatScale, 0.1f, 1.0f, "%.2f"))
+        {
+            config.FightingAiRetreatSpeedScale = aiRetreatScale;
+            config.Save();
+        }
+        HelpMarker("Backpedal speed as a fraction of move speed — keep it below your run speed or the enemy is uncatchable.");
+
+        var aiRangeMin = config.FightingAiRangeMin;
+        if (ImGui.SliderFloat("Preferred range min##fightingai", ref aiRangeMin, 0.5f, 6.0f, "%.1f"))
+        {
+            config.FightingAiRangeMin = aiRangeMin;
+            config.Save();
+        }
+
+        var aiRangeMax = config.FightingAiRangeMax;
+        if (ImGui.SliderFloat("Preferred range max##fightingai", ref aiRangeMax, 1.0f, 10.0f, "%.1f"))
+        {
+            config.FightingAiRangeMax = MathF.Max(aiRangeMax, config.FightingAiRangeMin + 0.2f);
+            config.Save();
+        }
+        HelpMarker("The enemy holds this spacing band: approaches when farther, backs off when closer, attacks from inside it.");
+
+        var aiCooldown = config.FightingAiAttackCooldown;
+        if (ImGui.SliderFloat("Attack cooldown##fightingai", ref aiCooldown, 0.3f, 8.0f, "%.1f s"))
+        {
+            config.FightingAiAttackCooldown = aiCooldown;
+            config.Save();
+        }
+
+        var aiJitter = config.FightingAiAttackCooldownJitter;
+        if (ImGui.SliderFloat("Cooldown jitter##fightingai", ref aiJitter, 0f, 4.0f, "%.1f s"))
+        {
+            config.FightingAiAttackCooldownJitter = aiJitter;
+            config.Save();
+        }
+
+        var aiCombo = config.FightingAiComboChance;
+        if (ImGui.SliderFloat("Combo chance##fightingai", ref aiCombo, 0f, 1f, "%.2f"))
+        {
+            config.FightingAiComboChance = aiCombo;
+            config.Save();
+        }
+        HelpMarker("Probability an attack opens a combo string (up to Max combo hits, chained with a short gap).");
+
+        var aiComboMax = config.FightingAiMaxComboHits;
+        if (ImGui.SliderInt("Max combo hits##fightingai", ref aiComboMax, 2, 5))
+        {
+            config.FightingAiMaxComboHits = aiComboMax;
+            config.Save();
+        }
+
+        var aiComboGap = config.FightingAiComboGap;
+        if (ImGui.SliderFloat("Combo gap##fightingai", ref aiComboGap, 0.05f, 0.8f, "%.2f s"))
+        {
+            config.FightingAiComboGap = aiComboGap;
+            config.Save();
+        }
+
+        var aiDash = config.FightingAiDashChance;
+        if (ImGui.SliderFloat("Dash-in chance##fightingai", ref aiDash, 0f, 1f, "%.2f"))
+        {
+            config.FightingAiDashChance = aiDash;
+            config.Save();
+        }
+        HelpMarker("When out of range, chance to burst-dash in (at the speed scale below) and attack immediately.");
+
+        var aiDashScale = config.FightingAiDashSpeedScale;
+        if (ImGui.SliderFloat("Dash speed scale##fightingai", ref aiDashScale, 1.2f, 4.0f, "%.1f"))
+        {
+            config.FightingAiDashSpeedScale = aiDashScale;
+            config.Save();
+        }
+
+        var aiJumpOver = config.FightingAiJumpOverChance;
+        if (ImGui.SliderFloat("Jump-over chance##fightingai", ref aiJumpOver, 0f, 1f, "%.2f"))
+        {
+            config.FightingAiJumpOverChance = aiJumpOver;
+            config.Save();
+        }
+        HelpMarker("Chance the enemy hops over you to the other side instead of attacking.");
+
+        var aiJumpDur = config.FightingAiJumpDuration;
+        if (ImGui.SliderFloat("Jump duration##fightingai", ref aiJumpDur, 0.3f, 1.2f, "%.2f s"))
+        {
+            config.FightingAiJumpDuration = aiJumpDur;
+            config.Save();
+        }
+
+        var aiJumpHeight = config.FightingAiJumpHeight;
+        if (ImGui.SliderFloat("Jump height##fightingai", ref aiJumpHeight, 0.5f, 4.0f, "%.1f"))
+        {
+            config.FightingAiJumpHeight = aiJumpHeight;
+            config.Save();
+        }
+
+        var aiJumpIn = config.FightingAiJumpInAttackChance;
+        if (ImGui.SliderFloat("Jump-in attack chance##fightingai", ref aiJumpIn, 0f, 1f, "%.2f"))
+        {
+            config.FightingAiJumpInAttackChance = aiJumpIn;
+            config.Save();
+        }
+        HelpMarker("Chance to attack immediately on landing a jump-over.");
+
+        var aiRetreat = config.FightingAiRetreatChance;
+        if (ImGui.SliderFloat("Retreat chance##fightingai", ref aiRetreat, 0f, 1f, "%.2f"))
+        {
+            config.FightingAiRetreatChance = aiRetreat;
+            config.Save();
+        }
+        HelpMarker("Probability of backing off after each attack instead of staying in.");
+
+        var aiRetreatDur = config.FightingAiRetreatDuration;
+        if (ImGui.SliderFloat("Retreat duration##fightingai", ref aiRetreatDur, 0.2f, 3.0f, "%.1f s"))
+        {
+            config.FightingAiRetreatDuration = aiRetreatDur;
+            config.Save();
+        }
+
+        var aiRecover = config.FightingAiRecoverTime;
+        if (ImGui.SliderFloat("Recover time##fightingai", ref aiRecover, 0.1f, 3.0f, "%.1f s"))
+        {
+            config.FightingAiRecoverTime = aiRecover;
+            config.Save();
+        }
+
+        var aiHitstun = config.FightingAiHitstunDuration;
+        if (ImGui.SliderFloat("Hitstun duration##fightingai", ref aiHitstun, 0.05f, 1.5f, "%.2f s"))
+        {
+            config.FightingAiHitstunDuration = aiHitstun;
+            config.Save();
+        }
+
+        var aiPushback = config.FightingAiHitstunPushback;
+        if (ImGui.SliderFloat("Hitstun pushback##fightingai", ref aiPushback, 0f, 5.0f, "%.1f"))
+        {
+            config.FightingAiHitstunPushback = aiPushback;
+            config.Save();
+        }
+        HelpMarker("Distance the enemy is shoved back along the lane by a weapon-contact hit (super-armored during its own windup).");
+
+        ImGui.Separator();
+        ImGui.Text("Camera");
+
+        var camSide = config.FightingModeCameraSide;
+        if (ImGui.Combo("Camera side##fightingmode", ref camSide, "Right\0Left\0"))
+        {
+            config.FightingModeCameraSide = Math.Clamp(camSide, 0, 1);
+            config.Save();
+        }
+        HelpMarker("Which side of the fighting lane the 2D camera views from. Also applies to the KO camera's side-view lock.");
+
+        var margin = config.FightingModeCameraMargin;
+        if (ImGui.SliderFloat("Frame margin##fightingmode", ref margin, 0.4f, 1.8f, "%.2f"))
+        {
+            config.FightingModeCameraMargin = margin;
+            config.Save();
+        }
+
+        var minDist = config.FightingModeCameraMinDistance;
+        if (ImGui.SliderFloat("Min camera distance##fightingmode", ref minDist, 1.5f, 10.0f, "%.2f"))
+        {
+            config.FightingModeCameraMinDistance = minDist;
+            config.Save();
+        }
+
+        var maxDist = config.FightingModeCameraMaxDistance;
+        if (ImGui.SliderFloat("Max camera distance##fightingmode", ref maxDist, 3.0f, 25.0f, "%.2f"))
+        {
+            config.FightingModeCameraMaxDistance = MathF.Max(maxDist, config.FightingModeCameraMinDistance + 0.1f);
+            config.Save();
+        }
+
+        var smooth = config.FightingModeCameraSmoothing;
+        if (ImGui.SliderFloat("Camera smoothing##fightingmode", ref smooth, 1.0f, 30.0f, "%.1f"))
+        {
+            config.FightingModeCameraSmoothing = smooth;
+            config.Save();
+        }
+
+        var height = config.FightingModeCameraHeight;
+        if (ImGui.SliderFloat("Camera center height##fightingmode", ref height, 0.0f, 3.0f, "%.2f"))
+        {
+            config.FightingModeCameraHeight = height;
+            config.Save();
+        }
+
+        var vertical = config.FightingModeCameraVerticalAngle;
+        if (ImGui.SliderFloat("Vertical angle##fightingmode", ref vertical, -0.8f, 0.5f, "%.2f rad"))
+        {
+            config.FightingModeCameraVerticalAngle = vertical;
+            config.Save();
+        }
+
+        ImGui.Separator();
+        ImGui.Text("KO Camera");
+        HelpMarker("After defeat, while the controlled monster's camera-follow is on, the camera frames the midpoint of your corpse and the monster and zooms out with their separation (fighting-game KO shot). Otherwise the Translate Cam below applies.");
+
+        var koMargin = config.FightingModeKoCameraMargin;
+        if (ImGui.SliderFloat("KO distance margin##fightingmode", ref koMargin, 0.2f, 2.0f, "%.2f"))
+        {
+            config.FightingModeKoCameraMargin = koMargin;
+            config.Save();
+        }
+
+        var koBase = config.FightingModeKoCameraBase;
+        if (ImGui.SliderFloat("KO base distance##fightingmode", ref koBase, 1.0f, 10.0f, "%.1f"))
+        {
+            config.FightingModeKoCameraBase = koBase;
+            config.Save();
+        }
+
+        var koMin = config.FightingModeKoCameraMinDistance;
+        if (ImGui.SliderFloat("KO min distance##fightingmode", ref koMin, 1.0f, 10.0f, "%.1f"))
+        {
+            config.FightingModeKoCameraMinDistance = koMin;
+            config.Save();
+        }
+
+        var koMax = config.FightingModeKoCameraMaxDistance;
+        if (ImGui.SliderFloat("KO max distance##fightingmode", ref koMax, 4.0f, 30.0f, "%.1f"))
+        {
+            config.FightingModeKoCameraMaxDistance = MathF.Max(koMax, config.FightingModeKoCameraMinDistance + 0.5f);
+            config.Save();
+        }
+
+        var koHeight = config.FightingModeKoCameraHeight;
+        if (ImGui.SliderFloat("KO center height##fightingmode", ref koHeight, -1.0f, 3.0f, "%.2f"))
+        {
+            config.FightingModeKoCameraHeight = koHeight;
+            config.Save();
+        }
+
+        var koLock = config.FightingModeKoLockAngle;
+        if (ImGui.Checkbox("KO side-view lock##fightingmode", ref koLock))
+        {
+            config.FightingModeKoLockAngle = koLock;
+            config.Save();
+        }
+        HelpMarker("Keeps the camera perpendicular to the corpse-monster axis; off = you keep manual rotation.");
+
+        ImGui.Separator();
+        ImGui.Text("Translate Cam");
+
+        var translate = config.FightingModeTranslateCam;
+        if (ImGui.Checkbox("Translate cam on defeat##fightingmode", ref translate))
+        {
+            config.FightingModeTranslateCam = translate;
+            config.Save();
+        }
+        HelpMarker("When the player is defeated, smoothly transition the Fighting Mode camera to a player-bone follow camera. If enabled after defeat, it performs the translate once on the next frame.");
+
+        var duration = config.FightingModeTranslateDuration;
+        if (ImGui.SliderFloat("Translate duration##fightingmode", ref duration, 0.1f, 10.0f, "%.2f s"))
+        {
+            config.FightingModeTranslateDuration = duration;
+            config.Save();
+        }
+
+        var translateDistance = config.FightingModeTranslateDistance;
+        if (ImGui.SliderFloat("Translate zoom distance##fightingmode", ref translateDistance, 1.0f, 20.0f, "%.2f"))
+        {
+            config.FightingModeTranslateDistance = translateDistance;
+            config.Save();
+        }
+
+        var bones = FightingModeTranslateBones;
+        var boneNames = new string[bones.Length];
+        var boneIdx = 0;
+        for (int i = 0; i < bones.Length; i++)
+        {
+            boneNames[i] = bones[i].Label;
+            if (bones[i].BoneName == config.FightingModeTranslateBoneName)
+                boneIdx = i;
+        }
+
+        if (config.FightingModeTranslateBoneName == "n_hara")
+        {
+            config.FightingModeTranslateBoneName = "j_kosi";
+            config.Save();
+        }
+
+        if (ImGui.Combo("Track bone##fightingmode", ref boneIdx, boneNames, boneNames.Length))
+        {
+            config.FightingModeTranslateBoneName = bones[boneIdx].BoneName;
+            config.Save();
+        }
+
+        var translateHeight = config.FightingModeTranslateHeightOffset;
+        if (ImGui.SliderFloat("Track height offset##fightingmode", ref translateHeight, -3.0f, 5.0f, "%.2f"))
+        {
+            config.FightingModeTranslateHeightOffset = translateHeight;
+            config.Save();
+        }
+
+        var translateSide = config.FightingModeTranslateSideOffset;
+        if (ImGui.SliderFloat("Track side offset##fightingmode", ref translateSide, -5.0f, 5.0f, "%.2f"))
+        {
+            config.FightingModeTranslateSideOffset = translateSide;
+            config.Save();
+        }
+
+        var lockH = config.FightingModeTranslateLockHorizontal;
+        if (ImGui.Checkbox("Lock horizontal rotation##fightingmode", ref lockH))
+        {
+            config.FightingModeTranslateLockHorizontal = lockH;
+            config.Save();
+        }
+
+        if (config.FightingModeTranslateLockHorizontal)
+        {
+            var h = config.FightingModeTranslateHorizontalAngle;
+            if (ImGui.SliderFloat("Horizontal angle##fightingmode", ref h, -MathF.PI, MathF.PI, "%.2f rad"))
+            {
+                config.FightingModeTranslateHorizontalAngle = h;
+                config.Save();
+            }
+        }
+
+        var lockV = config.FightingModeTranslateLockVertical;
+        if (ImGui.Checkbox("Lock vertical rotation##fightingmode", ref lockV))
+        {
+            config.FightingModeTranslateLockVertical = lockV;
+            config.Save();
+        }
+
+        if (config.FightingModeTranslateLockVertical)
+        {
+            var v = config.FightingModeTranslateVerticalAngle;
+            if (ImGui.SliderFloat("Vertical angle##fightingmode", ref v, -0.8f, 0.5f, "%.2f rad"))
+            {
+                config.FightingModeTranslateVerticalAngle = v;
+                config.Save();
+            }
+        }
+    }
+
     private void DrawActionModeSection()
     {
         if (!ImGui.CollapsingHeader("Action Mode [Experimental]"))
@@ -1376,6 +1890,8 @@ public partial class MainWindow : IDisposable
         if (ImGui.Checkbox("Enable Action Mode", ref actionMode))
         {
             config.ActionMode = actionMode;
+            if (actionMode)
+                config.FightingMode = false;
             config.Save();
         }
         HelpMarker("Real-time action combat: button-driven light attacks and timed guard, with enemy attacks shown as telegraphs before hitbox resolution. Off = the normal tab-target simulation.");
@@ -3011,78 +3527,6 @@ public partial class MainWindow : IDisposable
                 }
                 HelpMarker("Prevent characters and NPCs from disappearing when the camera zooms very close.");
 
-                ImGui.Separator();
-                ImGui.TextDisabled("Fighting Camera (1v1)");
-
-                var fighting = config.ActiveCameraFightingMode;
-                if (ImGui.Checkbox("Enable Fighting Camera##activecam", ref fighting))
-                {
-                    config.ActiveCameraFightingMode = fighting;
-                    config.Save();
-                }
-                HelpMarker("During a 1v1, center the camera between you and the locked target and auto-zoom so both stay in frame (you keep manual rotation). On either death, smoothly transition to the dead character's bone (above) and suppress Death Cam.");
-
-                if (config.ActiveCameraFightingMode)
-                {
-                    // Framing bone (read from both combatants)
-                    int fBoneIdx = 0;
-                    for (int b = 0; b < bones.Length; b++)
-                        if (bones[b].BoneName == config.ActiveCameraFightingBoneName) { fBoneIdx = b; break; }
-                    if (ImGui.Combo("Framing Bone##fightcam", ref fBoneIdx, boneNames, boneNames.Length))
-                    {
-                        config.ActiveCameraFightingBoneName = bones[fBoneIdx].BoneName;
-                        config.Save();
-                    }
-                    HelpMarker("Bone on each combatant used to compute the framing midpoint.");
-
-                    var fTrans = config.ActiveCameraFightingTransitionDuration;
-                    if (ImGui.SliderFloat("Transition Duration##fightcam", ref fTrans, 0.1f, 5f, "%.2f s"))
-                    {
-                        config.ActiveCameraFightingTransitionDuration = fTrans;
-                        config.Save();
-                    }
-                    HelpMarker("How long the camera takes to move from the 1v1 framing to the dead character's bone.");
-
-                    var fMargin = config.ActiveCameraFightingZoomMargin;
-                    if (ImGui.SliderFloat("Zoom Margin##fightcam", ref fMargin, 1.0f, 2.5f, "%.2f"))
-                    {
-                        config.ActiveCameraFightingZoomMargin = fMargin;
-                        config.Save();
-                    }
-                    HelpMarker("Extra zoom-out so both fighters stay comfortably in frame. Higher = more padding.");
-
-                    var fMin = config.ActiveCameraFightingMinDistance;
-                    if (ImGui.SliderFloat("Min Distance##fightcam", ref fMin, 1.0f, 10f, "%.2f"))
-                    {
-                        config.ActiveCameraFightingMinDistance = fMin;
-                        config.Save();
-                    }
-                    HelpMarker("Closest the camera will auto-zoom when the fighters are near each other.");
-
-                    var fMax = config.ActiveCameraFightingMaxDistance;
-                    if (ImGui.SliderFloat("Max Distance##fightcam", ref fMax, 5f, 40f, "%.2f"))
-                    {
-                        config.ActiveCameraFightingMaxDistance = fMax;
-                        config.Save();
-                    }
-                    HelpMarker("Farthest the camera will auto-zoom when the fighters are far apart.");
-
-                    var fSmooth = config.ActiveCameraFightingSmoothing;
-                    if (ImGui.SliderFloat("Smoothing##fightcam", ref fSmooth, 1f, 20f, "%.1f"))
-                    {
-                        config.ActiveCameraFightingSmoothing = fSmooth;
-                        config.Save();
-                    }
-                    HelpMarker("How quickly the camera follows center/zoom changes. Higher = snappier, lower = floatier.");
-
-                    var fHeight = config.ActiveCameraFightingHeightOffset;
-                    if (ImGui.DragFloat("Center Height Offset##fightcam", ref fHeight, 0.01f, -5f, 10f, "%.2f"))
-                    {
-                        config.ActiveCameraFightingHeightOffset = fHeight;
-                        config.Save();
-                    }
-                    HelpMarker("Raises/lowers the framing midpoint.");
-                }
             }
 
             ImGui.Unindent();
@@ -3714,6 +4158,32 @@ public partial class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Spring frequency of the joint LIMIT walls (swing cones + twist ranges). Higher = firmer wall so joints don't over-rotate past their range, but too high for the substep count over-drives the solver into jitter. 60 = soft, 90 = balanced default, 120+ = firm (raise Solver Substeps to match). Takes effect on next ragdoll activation.");
+
+                var softLimits = config.RagdollSoftLimits;
+                if (ImGui.Checkbox("Soft Swing Limits (balls)##ragdoll", ref softLimits))
+                {
+                    config.RagdollSoftLimits = softLimits;
+                    config.Save();
+                }
+                HelpMarker("Ball joints (hips/shoulders/spine) get a low-frequency, overdamped spring on their swing limits instead of the hard wall above: a limb sliding toward its range edge decelerates and settles rather than pinning at the extreme angle (the frozen 'spread-eagle' look). Knees/elbows keep the hard wall. Takes effect on next ragdoll activation.");
+
+                if (config.RagdollSoftLimits)
+                {
+                    var softFreq = config.RagdollSoftLimitFrequency;
+                    if (ImGui.SliderFloat("Soft Limit Frequency (Hz)##ragdoll", ref softFreq, 2f, 40f, "%.0f"))
+                    {
+                        config.RagdollSoftLimitFrequency = softFreq;
+                        config.Save();
+                    }
+
+                    var softDamp = config.RagdollSoftLimitDamping;
+                    if (ImGui.SliderFloat("Soft Limit Damping##ragdoll", ref softDamp, 0.5f, 10f, "%.1f"))
+                    {
+                        config.RagdollSoftLimitDamping = softDamp;
+                        config.Save();
+                    }
+                    HelpMarker("Damping ratio at the soft edge. 1 = critical (springy), 4 = overdamped default (sinks and stays), higher = syrupy.");
+                }
 
                 var jointFreq = config.RagdollJointSpringFrequency;
                 if (ImGui.SliderFloat("Joint Stiffness (Hz)##ragdoll", ref jointFreq, 15f, 120f, "%.0f"))

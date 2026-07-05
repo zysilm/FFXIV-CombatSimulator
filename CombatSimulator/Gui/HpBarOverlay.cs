@@ -73,7 +73,7 @@ public class HpBarOverlay : IDisposable
 
         // Get camera + player bone positions for NPC HP bar occlusion
         Vector3 camPos = default;
-        Vector3[] playerBodyPoints = null;
+        Vector3[]? playerBodyPoints = null;
         if (config.HpBarOcclusion)
         {
             var player = Core.Services.ObjectTable.LocalPlayer;

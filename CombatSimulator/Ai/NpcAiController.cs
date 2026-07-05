@@ -194,6 +194,8 @@ public unsafe class NpcAiController : IDisposable
         {
             if (!npc.IsSpawned)
                 continue;
+            if (isExternallyControlled(npc.Address))
+                continue;
 
             // Keep active targets in battle stance (drawn weapon / combat idle)
             if (npc.BattleChara != null && npc.AiState != NpcAiState.Dead)
@@ -299,8 +301,10 @@ public unsafe class NpcAiController : IDisposable
         }
         else
         {
-            // Clear all approach blocks when feature is disabled
-            movementBlockHook.ClearApproachNpcs();
+            // Clear this controller's approach blocks when feature is disabled, but leave dev
+            // controllers (Monster/Victory/Hold) alone; they share MovementBlockHook for their
+            // own explicitly-driven actors.
+            movementBlockHook.ClearApproachNpcsExcept(isExternallyControlled);
             StopAllApproachMoveAnims();
             approachPaths.Clear();
             approachLockedGoals.Clear();

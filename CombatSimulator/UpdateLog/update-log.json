@@ -1,0 +1,12 @@
+[
+  {
+    "version": "2.6.0.0",
+    "date": "2026-07-05",
+    "title": "Combat Simulator 2.6.0.0",
+    "changes": [
+      "Added the Armor Detachment control window under Professional Mode > Effects.",
+      "Added Fighting Mode (experimental).",
+      "Improved ragdoll physics tuning and stability overall."
+    ]
+  }
+]

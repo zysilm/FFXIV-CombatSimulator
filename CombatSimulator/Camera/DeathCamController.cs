@@ -66,6 +66,15 @@ public unsafe class DeathCamController : IDisposable
     private delegate void CameraUpdateDelegate(CameraBase* thisPtr);
     private Hook<CameraUpdateDelegate>? cameraUpdateHook;
 
+    /// <summary>Camera arbitration (soft): the death cam keeps its own hook, but it
+    /// declares ownership to the coordinator while active and yields all writes when
+    /// a higher-priority owner is live. Wired by the plugin after construction.</summary>
+    public CameraModeCoordinator? Coordinator { get; set; }
+    public Func<CameraOwner>? GetCurrentOwner { get; set; }
+
+    private bool OutrankedByCoordinator()
+        => (GetCurrentOwner?.Invoke() ?? CameraOwner.None) > CameraOwner.DeathCam;
+
     public DeathCamState State => state;
     public bool IsPreviewActive { get; private set; }
     public bool CollisionPatchAvailable => collisionPatchAddress != nint.Zero;
@@ -204,6 +213,14 @@ public unsafe class DeathCamController : IDisposable
         {
             // Normal gameplay: no death-cam framing, but layer the combat hit-shake on top of
             // whatever the final view is (Active/Fight cam already applied via Original()).
+            ApplyHitShake(thisPtr);
+            return;
+        }
+
+        // Soft arbitration: a higher-priority camera mode owns this frame — keep the
+        // hit-shake layer but do not fight over the framing.
+        if (OutrankedByCoordinator())
+        {
             ApplyHitShake(thisPtr);
             return;
         }
@@ -682,6 +699,13 @@ public unsafe class DeathCamController : IDisposable
         }
 
         if (state == DeathCamState.Inactive)
+            return;
+
+        // Declare ownership while active; yield the orbit writes when outranked
+        // (interp timers pause with them — the death cam resumes if the higher
+        // owner releases).
+        Coordinator?.Submit(CameraOwner.DeathCam, default);
+        if (OutrankedByCoordinator())
             return;
 
         try

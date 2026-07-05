@@ -43,6 +43,8 @@ public unsafe class MovementBlockHook : IDisposable
     public void AddApproachNpc(nint address) => approachBlockedAddresses.Add(address);
     public void RemoveApproachNpc(nint address) => approachBlockedAddresses.Remove(address);
     public void ClearApproachNpcs() => approachBlockedAddresses.Clear();
+    public void ClearApproachNpcsExcept(Func<nint, bool> keep)
+        => approachBlockedAddresses.RemoveWhere(address => !keep(address));
 
     /// <summary>
     /// Move an approach-controlled NPC by calling the real SetPosition,

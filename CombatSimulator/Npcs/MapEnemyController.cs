@@ -70,6 +70,11 @@ public sealed unsafe class MapEnemyController
         if (!combatEngine.IsActive)
             return;
 
+        // Fighting Mode is opt-in 1v1: do not auto-sense the map and pull a group.
+        // The selected enemy is force-registered by FightingModeController on player attack.
+        if (config.FightingMode)
+            return;
+
         var settings = CurrentSettings();
         if (settings is not { Enabled: true })
             return;
@@ -82,7 +87,7 @@ public sealed unsafe class MapEnemyController
         SenseMapEnemies(settings);
     }
 
-    public SimulatedNpc? TryRegisterByEntityId(ulong targetId)
+    public SimulatedNpc? TryRegisterByEntityId(ulong targetId, bool force = false)
     {
         if (targetId == 0 || targetId == 0xE0000000)
             return null;
@@ -90,7 +95,19 @@ public sealed unsafe class MapEnemyController
         if (!combatEngine.IsActive)
             return null;
 
-        var settings = CurrentSettings();
+        var settings = force
+            ? new MapEnemySettings
+            {
+                Enabled = true,
+                IncludeBattleNpcs = true,
+                IncludePlayers = false,
+                MaxCount = Math.Max(1, config.MaxTargets),
+                SenseRange = Math.Max(0.1f, config.MapEnemySenseRange),
+                Level = Math.Clamp(config.DefaultNpcLevel, 1, 300),
+                HpMultiplier = Math.Max(0.0001f, config.DefaultNpcHpMultiplier),
+                BehaviorType = NpcBehaviorType.BasicMelee,
+            }
+            : CurrentSettings();
         if (settings is not { Enabled: true })
             return null;
 

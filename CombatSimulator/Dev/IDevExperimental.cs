@@ -1,4 +1,6 @@
 using System;
+using CombatSimulator.Camera;
+using CombatSimulator.Fighting;
 using CombatSimulator.Gui;
 using CombatSimulator.Simulation;
 
@@ -20,6 +22,16 @@ public interface IDevExperimental : IDisposable
     void Tick(float deltaTime);
     void BeforePlayerDeath();
     void OnPlayerDeath(nint playerAddress);
+    void SetFightingModeLane(IFightingModeLaneConstraint? lane);
+
+    /// <summary>Camera arbitration seam: dev camera modes (monster follow) submit
+    /// requests to the coordinator instead of toggling the active camera directly.</summary>
+    void SetCameraCoordinator(CameraModeCoordinator coordinator);
+
+    /// <summary>Body-center of the dev-controlled creature while it is active AND its
+    /// camera-follow preference is on; null otherwise. Fighting Mode's KO camera frames
+    /// the midpoint of this and the player's corpse.</summary>
+    System.Numerics.Vector3? ControlledMonsterCenter { get; }
     void ResetTransientState();
     void DrawToolbars(MainWindow mainWindow);
     void RestoreOcclusion();

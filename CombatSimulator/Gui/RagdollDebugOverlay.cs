@@ -128,6 +128,31 @@ public class RagdollDebugOverlay
             if (jv.Valid)
                 DrawJointLimits(drawList, jv, editParam);
         }
+
+        DrawLimitStress(drawList);
+    }
+
+    private readonly List<RagdollController.JointLimitStress> stressBuffer = new();
+
+    /// <summary>Highlight joints pinned against their swing limits — the diagnostic for
+    /// unrealistic "spread-eagle" poses (which joints froze at their range edge).</summary>
+    private void DrawLimitStress(ImDrawListPtr drawList)
+    {
+        ragdollController.CollectJointLimitStress(stressBuffer);
+        foreach (var s in stressBuffer)
+        {
+            if (s.Stress < 0.85f)
+                continue;
+
+            var t = Math.Clamp((s.Stress - 0.85f) / 0.15f, 0f, 1f);
+            // Yellow approaching the limit → red pinned on it.
+            var color = ImGui.GetColorU32(new Vector4(1f, 1f - t * 0.8f, 0.1f, 0.95f));
+            if (!gameGui.WorldToScreen(s.WorldPosition, out var screen))
+                continue;
+
+            drawList.AddCircleFilled(screen, 4f + 3f * t, color);
+            drawList.AddText(screen + new Vector2(8f, -8f), color, $"{s.BoneName} {s.Stress * 100f:F0}%");
+        }
     }
 
     private void DrawBox3D(ImDrawListPtr drawList, Vector3 center, Vector3 xAxis, Vector3 yAxis, Vector3 zAxis,

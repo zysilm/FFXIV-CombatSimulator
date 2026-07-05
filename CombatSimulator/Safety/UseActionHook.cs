@@ -1,4 +1,5 @@
 using System;
+using CombatSimulator.Fighting;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 using CombatSimulator.Targeting;
@@ -20,6 +21,7 @@ public unsafe class UseActionHook : IDisposable
     private readonly PlayerTargetController targetController;
     private readonly MapEnemyController mapEnemyController;
     private readonly CombatSimulator.ActionCombat.IPlayerActionSink actionSink;
+    private readonly IFightingModeInputSink fightingModeSink;
 
     private delegate bool UseActionDelegate(
         ActionManager* actionManager,
@@ -51,7 +53,8 @@ public unsafe class UseActionHook : IDisposable
         IPluginLog log,
         PlayerTargetController targetController,
         MapEnemyController mapEnemyController,
-        CombatSimulator.ActionCombat.IPlayerActionSink actionSink)
+        CombatSimulator.ActionCombat.IPlayerActionSink actionSink,
+        IFightingModeInputSink fightingModeSink)
     {
         this.combatEngine = combatEngine;
         this.npcSelector = npcSelector;
@@ -62,6 +65,7 @@ public unsafe class UseActionHook : IDisposable
         this.targetController = targetController;
         this.mapEnemyController = mapEnemyController;
         this.actionSink = actionSink;
+        this.fightingModeSink = fightingModeSink;
 
         try
         {
@@ -118,6 +122,13 @@ public unsafe class UseActionHook : IDisposable
             if (actionType != ActionType.Action)
                 return useActionHook!.Original(actionManager, actionType, actionId,
                     targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
+
+            if (config.FightingMode)
+            {
+                log.Debug($"Fighting Mode input: actionId={actionId}, targetId=0x{targetId:X}");
+                if (fightingModeSink.OnPlayerAction((uint)actionType, actionId, targetId, extraParam))
+                    return true;
+            }
 
             // Action Mode: hotbar presses are remapped to action-combat inputs
             // (light attack / guard / skill) and never reach the server. Bypasses all

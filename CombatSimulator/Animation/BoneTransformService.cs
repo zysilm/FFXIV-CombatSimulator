@@ -302,6 +302,40 @@ public unsafe class BoneTransformService : IDisposable
         return skelPos + Vector3.Transform(modelPos, skelRot);
     }
 
+    /// <summary>
+    /// Get a bone's world-space position AND rotation (skeleton transform composed with
+    /// the model-space bone pose). Null if the skeleton is unavailable or the bone is
+    /// not found.
+    /// </summary>
+    public (Vector3 Position, Quaternion Rotation)? GetBoneWorldTransform(nint characterAddress, string boneName)
+    {
+        if (characterAddress == nint.Zero) return null;
+        var skel = TryGetSkeleton(characterAddress);
+        if (skel == null) return null;
+        var ns = skel.Value;
+
+        var idx = ResolveBoneIndex(ns, boneName);
+        if (idx < 0 || idx >= ns.BoneCount) return null;
+
+        var skeleton = ns.CharBase->Skeleton;
+        if (skeleton == null) return null;
+
+        var skelPos = new Vector3(
+            skeleton->Transform.Position.X,
+            skeleton->Transform.Position.Y,
+            skeleton->Transform.Position.Z);
+        var skelRot = new Quaternion(
+            skeleton->Transform.Rotation.X,
+            skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z,
+            skeleton->Transform.Rotation.W);
+
+        ref var mt = ref ns.Pose->ModelPose.Data[idx];
+        var modelPos = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+        var modelRot = new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W);
+        return (skelPos + Vector3.Transform(modelPos, skelRot), Quaternion.Normalize(skelRot * modelRot));
+    }
+
     public void Dispose()
     {
         OnRenderFrame = null;
