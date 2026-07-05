@@ -19,6 +19,9 @@ jobs:
       - name: Verify public build has no experimental module
         run: test ! -e ${{ env.SOLUTION_DIR }}/Dev/Experimental/DevExperimentalModule.cs
 
+      - name: Verify version and update log
+        run: python3 .github/scripts/verify-update-log.py ${{ env.SOLUTION_DIR }} ${{ env.PLUGIN_NAME }}
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:

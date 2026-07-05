@@ -14,6 +14,7 @@ using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using CombatSimulator.Targeting;
+using CombatSimulator.UpdateLog;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.Command;
 using Dalamud.Plugin;
@@ -63,6 +64,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly FightingModeController fightingModeController;
     private readonly Dev.IDevExperimental devExperimental;
     private readonly HookSafetyChecker hookSafetyChecker;
+    private readonly UpdateLogPopupController updateLogPopupController;
 
     // Action Mode (动作模式): real-time combat layer wired through narrow seams.
     private readonly CombatSimulator.ActionCombat.ActionComboSink actionComboSink;
@@ -119,6 +121,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             gameInterop, dataManager, gameGui, chatGui, condition, log);
 
         // Configuration
+        var hadExistingConfig = pluginInterface.ConfigFile.Exists;
         config = pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         config.Initialize(pluginInterface);
 
@@ -415,6 +418,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         reticleOverlay = new ReticleOverlay(playerHitboxResolver, combatEngine, gameGui, config);
         fightingDebugOverlay = new FightingDebugOverlay(
             fightingModeController, fightingCombatController, weaponHitboxService, gameGui, config);
+        updateLogPopupController = new UpdateLogPopupController(config, log, hadExistingConfig);
 
         // Register
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -593,6 +597,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             mainWindow.DrawProfessional();
 
         mainWindow.DrawDefeatRevivePopup();
+        updateLogPopupController.Draw();
 
         if (combatEngine.IsActive)
         {

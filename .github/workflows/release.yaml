@@ -17,6 +17,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Verify version and update log
+        run: python3 .github/scripts/verify-update-log.py ${{ env.SOLUTION_DIR }} ${{ env.PLUGIN_NAME }}
+
       - name: Checkout experimental module
         env:
           DEV_EXPERIMENTAL_REPO_TOKEN: ${{ secrets.DEV_EXPERIMENTAL_REPO_TOKEN }}
@@ -68,11 +71,11 @@ jobs:
           import json, os
           with open('${{ env.SOLUTION_DIR }}/${{ env.PLUGIN_NAME }}.json') as f:
               data = json.load(f)
-          # SDK 15 pads the bundled CombatSimulator.json AssemblyVersion to 4-part
-          # (e.g. 1.9.4 → 1.9.4.0). Dalamud strict-compares the manifest inside the
-          # zip against pluginmaster.json's AssemblyVersion, so we must match.
           version = '${{ steps.version.outputs.version }}'
-          data['AssemblyVersion'] = version if version.count('.') >= 3 else f'{version}.0'
+          actual_version = data.get('AssemblyVersion')
+          if actual_version != version:
+              raise SystemExit(f'CombatSimulator.json AssemblyVersion {actual_version} does not match {version}')
+          data['AssemblyVersion'] = version
           data['InternalName'] = '${{ env.PLUGIN_NAME }}'
           data['RepoUrl'] = 'https://github.com/${{ github.repository }}'
           dl = 'https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/${{ env.PLUGIN_NAME }}.zip'
