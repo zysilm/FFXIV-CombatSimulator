@@ -2392,9 +2392,16 @@ public unsafe class DismembermentController : IDisposable
             !TryGetBoneWorldRotation(skel, skelRot, "j_kosi", out referenceRot))
             referenceRot = skelRot;
 
+        // Legs: orient by the PELVIS (knee-centre -> hip-centre), NOT the torso. The old waist->spine "up"
+        // tracked the torso, which bends at the waist independently of the hips and during ragdoll
+        // tilts/flips — swinging the whole pants ~0.5m off the hips (out of the body, up toward the chest).
+        // The pelvis stays rigid with the legs the pants are skinned to. Body keeps the spine "up".
+        Vector3 up;
         var upOk = legs
-            ? TryBoneDelta(skel, skelPos, skelRot, "j_kosi", "j_sebo_b", out var up)
+            ? TryPelvisUpAxis(skel, skelPos, skelRot, out up)
             : TryBoneDelta(skel, skelPos, skelRot, "j_kosi", "j_sebo_c", out up);
+        if (!upOk && legs)
+            upOk = TryBoneDelta(skel, skelPos, skelRot, "j_asi_b_l", "j_asi_a_l", out up); // one-leg knee->hip fallback
         if (!upOk)
             upOk = TryBoneDelta(skel, skelPos, skelRot, "j_kosi", "j_sebo_a", out up);
         if (!upOk)
@@ -2416,6 +2423,35 @@ public unsafe class DismembermentController : IDisposable
         // ambiguity in the cross-product frame below.
         var frontHint = Vector3.Transform(Vector3.UnitZ, skelRot);
         return TryCreateGarmentFrameRotation(up, right, referenceRot, frontHint, out rotation);
+    }
+
+    // Pelvis "up" for the legs garment frame: knee-centre -> hip-centre, averaged over both legs. Follows
+    // how the HIPS are tilted (the pelvis stays rigid) instead of the torso, which bends at the waist.
+    private bool TryPelvisUpAxis(SkeletonAccess skel, Vector3 skelPos, Quaternion skelRot, out Vector3 up)
+    {
+        up = Vector3.Zero;
+        if (!TryAverageBoneWorldPos(skel, skelPos, skelRot, out var hip, "j_asi_a_l", "j_asi_a_r") ||
+            !TryAverageBoneWorldPos(skel, skelPos, skelRot, out var knee, "j_asi_b_l", "j_asi_b_r"))
+            return false;
+        up = hip - knee;
+        return up.LengthSquared() > 1e-6f;
+    }
+
+    private bool TryAverageBoneWorldPos(SkeletonAccess skel, Vector3 skelPos, Quaternion skelRot,
+        out Vector3 average, params string[] boneNames)
+    {
+        average = Vector3.Zero;
+        var count = 0;
+        foreach (var name in boneNames)
+        {
+            if (!TryGetBoneWorldPosition(skel, skelPos, skelRot, name, out var p)) continue;
+            average += p;
+            count++;
+        }
+
+        if (count <= 0) return false;
+        average /= count;
+        return true;
     }
 
     private bool TryBoneDelta(SkeletonAccess skel, Vector3 skelPos, Quaternion skelRot,
