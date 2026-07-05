@@ -46,6 +46,21 @@ public sealed class UpdateLogCatalog
         return entries.FirstOrDefault(e => NormalizeVersion(e.Version) == normalized);
     }
 
+    /// <summary>The most recent entries, newest first, capped at <paramref name="maxCount"/>.</summary>
+    public IReadOnlyList<UpdateLogEntry> RecentEntries(int maxCount = 10)
+    {
+        return entries
+            .OrderByDescending(ParseVersion)
+            .Take(maxCount)
+            .ToList();
+    }
+
+    private static Version ParseVersion(UpdateLogEntry entry)
+    {
+        var normalized = NormalizeVersion(entry.Version);
+        return Version.TryParse(normalized, out var parsed) ? parsed : new Version(0, 0, 0, 0);
+    }
+
     public static string NormalizeVersion(string? version)
     {
         var trimmed = (version ?? "").Trim();
