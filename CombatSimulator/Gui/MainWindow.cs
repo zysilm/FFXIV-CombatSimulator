@@ -301,7 +301,10 @@ public partial class MainWindow : IDisposable
         {
             case 0: // Combat
                 DrawSimulationSection();
-                DrawFightingModeSection();
+                // Hidden pending a security review (see update log 2.6.0.1); only
+                // reachable via the Dev Experimental unlock.
+                if (DevExperimentalUnlocked)
+                    DrawFightingModeSection();
                 DrawActionModeSection();
                 break;
             case 1: // Targets
@@ -449,8 +452,7 @@ public partial class MainWindow : IDisposable
     private void DrawFastCombatPanel(bool compact)
     {
         var recipes = recipeBook.Recipes;
-        if (selectedRecipeIndex < 0 || selectedRecipeIndex >= recipes.Count)
-            selectedRecipeIndex = 0;
+        SyncSelectedRecipeFromConfig(recipes);
 
         if (!compact)
         {
@@ -486,15 +488,20 @@ public partial class MainWindow : IDisposable
             }
             HelpMarker(BuildActionModeQuickHelp());
 
-            var fightingMode = config.FightingMode;
-            if (ImGui.Checkbox("Fighting Mode [Experimental]", ref fightingMode))
+            // Hidden pending a security review of its direct position/rotation writes
+            // (see update log 2.6.0.1) — only reachable via the Dev Experimental unlock.
+            if (DevExperimentalUnlocked)
             {
-                config.FightingMode = fightingMode;
-                if (fightingMode)
-                    config.ActionMode = false;
-                config.Save();
+                var fightingMode = config.FightingMode;
+                if (ImGui.Checkbox("Fighting Mode [Experimental]", ref fightingMode))
+                {
+                    config.FightingMode = fightingMode;
+                    if (fightingMode)
+                        config.ActionMode = false;
+                    config.Save();
+                }
+                HelpMarker("Experimental 1v1 side-view mode. Press an attack on an enemy to lock the pair into a 2D fighting lane and side camera. Ignores profiles while active.");
             }
-            HelpMarker("Experimental 1v1 side-view mode. Press an attack on an enemy to lock the pair into a 2D fighting lane and side camera. Ignores profiles while active.");
         }
 
         if (compact)
@@ -635,6 +642,7 @@ public partial class MainWindow : IDisposable
     private void DrawRecipeCombo(string id, float width)
     {
         var recipes = recipeBook.Recipes;
+        SyncSelectedRecipeFromConfig(recipes);
         var preview = recipes.Count > 0 ? recipes[selectedRecipeIndex].Name : "(No recipes)";
         if (width != 0)
             ImGui.SetNextItemWidth(width);
@@ -648,12 +656,45 @@ public partial class MainWindow : IDisposable
         {
             var selected = i == selectedRecipeIndex;
             if (ImGui.Selectable(recipes[i].Name, selected))
+            {
                 selectedRecipeIndex = i;
+                config.FastCombatRecipeName = recipes[i].Name;
+                config.Save();
+            }
             if (selected)
                 ImGui.SetItemDefaultFocus();
         }
 
         ImGui.EndCombo();
+    }
+
+    private void SyncSelectedRecipeFromConfig(IReadOnlyList<CombatRecipe> recipes)
+    {
+        if (recipes.Count == 0)
+        {
+            selectedRecipeIndex = 0;
+            return;
+        }
+
+        if (selectedRecipeIndex >= 0 &&
+            selectedRecipeIndex < recipes.Count &&
+            recipes[selectedRecipeIndex].Name == config.FastCombatRecipeName)
+            return;
+
+        if (!string.IsNullOrWhiteSpace(config.FastCombatRecipeName))
+        {
+            for (var i = 0; i < recipes.Count; i++)
+            {
+                if (string.Equals(recipes[i].Name, config.FastCombatRecipeName, StringComparison.Ordinal))
+                {
+                    selectedRecipeIndex = i;
+                    return;
+                }
+            }
+        }
+
+        if (selectedRecipeIndex < 0 || selectedRecipeIndex >= recipes.Count)
+            selectedRecipeIndex = 0;
     }
 
     public void DrawFastCombatToolbar()
@@ -835,6 +876,7 @@ public partial class MainWindow : IDisposable
         if (!combatEngine.IsActive)
         {
             var recipes = recipeBook.Recipes;
+            SyncSelectedRecipeFromConfig(recipes);
             if (recipes.Count > 0)
                 StartRecipe(recipes[selectedRecipeIndex]);
             return;
