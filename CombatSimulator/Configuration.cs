@@ -321,6 +321,7 @@ public partial class Configuration : IPluginConfiguration
     public bool ShowProfessionalWindow { get; set; } = false;
     public bool ShowFastCombatToolbar { get; set; } = false;
     public bool ShowDefeatRevivePopup { get; set; } = true;
+    public string FastCombatRecipeName { get; set; } = "";
     public int FastCombatLevel { get; set; } = 90;
 
     // Death Cam toolbar

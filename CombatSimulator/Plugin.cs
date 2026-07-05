@@ -394,14 +394,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         useActionHook.Enable();
         movementBlockHook.Enable();
 
-        // Do not auto-enable Active Camera on plugin/game startup. The camera and
-        // skeleton stack can still be settling during login; users can enable it
-        // manually once in-world.
-        if (config.EnableActiveCamera)
-        {
-            config.EnableActiveCamera = false;
-            config.Save();
-        }
+        activeCameraController.SetActive(config.EnableActiveCamera);
 
         // GUI
         mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
