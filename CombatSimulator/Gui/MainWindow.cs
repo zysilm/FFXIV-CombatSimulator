@@ -107,6 +107,17 @@ public partial class MainWindow : IDisposable
     partial void DrawDevTabContent(int selectedTab);
     partial void DrawDevSection();
     partial void DrawPcDismemberSection();
+    partial void GetDevExperimentalUnlocked(ref bool unlocked);
+
+    public bool DevExperimentalUnlocked
+    {
+        get
+        {
+            var unlocked = false;
+            GetDevExperimentalUnlocked(ref unlocked);
+            return unlocked;
+        }
+    }
 
     // Virtual Enemies section state
     private NpcCatalog? npcCatalog;
@@ -301,6 +312,7 @@ public partial class MainWindow : IDisposable
                 break;
             case 3: // Effects
                 DrawHitVfxSection();
+                DrawArmorDetachmentEntrySection();
                 DrawGlamourerHeaderSection();
                 break;
             case 4: // Camera

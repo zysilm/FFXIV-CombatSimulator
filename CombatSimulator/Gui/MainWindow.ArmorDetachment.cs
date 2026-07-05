@@ -1,0 +1,278 @@
+using System;
+using System.Numerics;
+using CombatSimulator.Dev;
+using Dalamud.Bindings.ImGui;
+
+namespace CombatSimulator.Gui;
+
+public partial class MainWindow
+{
+    private static readonly string[] ArmorDetachmentClothHoldPresetLabels =
+    {
+        "Quick",
+        "Natural",
+        "Clingy",
+        "Slide to floor",
+    };
+
+    private void DrawArmorDetachmentEntrySection()
+    {
+        if (!ImGui.CollapsingHeader("Armor Detachment"))
+            return;
+
+        var showControls = config.ShowArmorDetachmentControls;
+        if (ImGui.Checkbox("Show Armor Detachment controls", ref showControls))
+        {
+            config.ShowArmorDetachmentControls = showControls;
+            config.Save();
+        }
+        HelpMarker("Open the compact Armor Detachment control window. Detachment modes stay off until enabled there.");
+    }
+
+    public void DrawArmorDetachmentControls(KoStripController ctrl)
+    {
+        var showWindow = config.ShowArmorDetachmentControls;
+        if (!ImGui.Begin("Armor Detachment", ref showWindow,
+                ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            if (config.ShowArmorDetachmentControls != showWindow)
+            {
+                config.ShowArmorDetachmentControls = showWindow;
+                config.Save();
+            }
+            ImGui.End();
+            return;
+        }
+
+        if (config.ShowArmorDetachmentControls != showWindow)
+        {
+            config.ShowArmorDetachmentControls = showWindow;
+            config.Save();
+        }
+
+        var enabled = config.KoStripEnabled;
+        if (ImGui.Checkbox("Detach on KO##armordetach", ref enabled))
+        {
+            config.KoStripEnabled = enabled;
+            if (enabled) config.KoStripOnHitEnabled = false;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When you are knocked out, visually detach the selected armor slots.\nYour character only. Visual only.");
+
+        if (DevExperimentalUnlocked)
+        {
+            var onHit = config.KoStripOnHitEnabled;
+            if (ImGui.Checkbox("Detach on monster hit##armordetach_onhit", ref onHit))
+            {
+                config.KoStripOnHitEnabled = onHit;
+                if (onHit) config.KoStripEnabled = false;
+                config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Dev experimental: when a monster attack connects with your KO'd character,\n" +
+                                 "detach one configured armor slot first. Once configured gear is gone,\n" +
+                                 "monster part-separation profiles continue as usual.");
+        }
+        else if (config.KoStripOnHitEnabled)
+        {
+            config.KoStripOnHitEnabled = false;
+            config.Save();
+        }
+
+        var syncWithRagdoll = config.KoStripSyncWithRagdoll;
+        if (ImGui.Checkbox("Sync with ragdoll##armordetach_sync_ragdoll", ref syncWithRagdoll))
+        {
+            config.KoStripSyncWithRagdoll = syncWithRagdoll;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When Detach on KO is enabled, delay detachment by the player ragdoll activation delay.\n" +
+                             "Disable this to detach immediately on death while ragdoll can still be delayed.");
+
+        ImGui.Separator();
+        ImGui.TextDisabled("Slots");
+
+        ArmorDetachmentSlotCheckbox("Head", () => config.KoStripHead, v => config.KoStripHead = v);
+        ImGui.SameLine();
+        ArmorDetachmentSlotCheckbox("Body", () => config.KoStripBody, v => config.KoStripBody = v);
+        ImGui.SameLine();
+        ArmorDetachmentSlotCheckbox("Hands", () => config.KoStripHands, v => config.KoStripHands = v);
+        ArmorDetachmentSlotCheckbox("Legs", () => config.KoStripLegs, v => config.KoStripLegs = v);
+        ImGui.SameLine();
+        ArmorDetachmentSlotCheckbox("Feet", () => config.KoStripFeet, v => config.KoStripFeet = v);
+
+        ImGui.TextDisabled("Accessories");
+        ArmorDetachmentSlotCheckbox("Ears", () => config.KoStripEars, v => config.KoStripEars = v);
+        ImGui.SameLine();
+        ArmorDetachmentSlotCheckbox("Neck", () => config.KoStripNeck, v => config.KoStripNeck = v);
+        ImGui.SameLine();
+        ArmorDetachmentSlotCheckbox("Wrists", () => config.KoStripWrists, v => config.KoStripWrists = v);
+        ArmorDetachmentSlotCheckbox("R.Finger", () => config.KoStripRFinger, v => config.KoStripRFinger = v);
+        ImGui.SameLine();
+        ArmorDetachmentSlotCheckbox("L.Finger", () => config.KoStripLFinger, v => config.KoStripLFinger = v);
+
+        ImGui.Separator();
+
+        var physicsDrop = config.KoStripPhysicsDrop;
+        if (ImGui.Checkbox("Physics drop: hat / accessories##armordetachdrop", ref physicsDrop))
+        {
+            config.KoStripPhysicsDrop = physicsDrop;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Let droppable hat/accessory slots (Head, Ears, Neck, Wrists, Rings)\n" +
+                             "physically fall and tumble to the ground instead of just vanishing.");
+
+        var physicsDropCloth = config.KoStripPhysicsDropClothing;
+        if (ImGui.Checkbox("Physics drop: clothing##armordetachdropcloth", ref physicsDropCloth))
+        {
+            config.KoStripPhysicsDropClothing = physicsDropCloth;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Drop supported clothing slots (Body / Legs) as falling shells. Work in progress: the\n" +
+                             "equipment model bakes in body skin, so the dropped shell still carries\n" +
+                             "a layer of skin.");
+
+        var advancedCloth = config.KoStripAdvancedClothPhysics;
+        ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing);
+        if (ImGui.Checkbox("Advanced clothing settle##armordetachclothadvanced", ref advancedCloth))
+        {
+            config.KoStripAdvancedClothPhysics = advancedCloth;
+            config.Save();
+        }
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Optional polish for Body / Legs physics drop: short visual follow on the\n" +
+                             "dying body, stronger contact friction/damping, and delayed collapse until\n" +
+                             "the garment is closer to rest. Default off.");
+
+        ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing || !config.KoStripAdvancedClothPhysics);
+        var clothHoldAuto = config.KoStripClothHoldAuto;
+        if (ImGui.Checkbox("Auto cloth hold##armordetachclothholdauto", ref clothHoldAuto))
+        {
+            config.KoStripClothHoldAuto = clothHoldAuto;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Automatically release the garment when the source body settles, or in\n" +
+                             "Slide to floor mode when the garment reaches the ground. Turn off to use\n" +
+                             "the manual hold timer below.");
+
+        if (config.KoStripClothHoldAuto)
+        {
+            var preset = Math.Clamp(config.KoStripClothHoldPreset, 0, ArmorDetachmentClothHoldPresetLabels.Length - 1);
+            ImGui.SetNextItemWidth(200f);
+            if (ImGui.Combo("Cloth hold preset##armordetachclothholdpreset", ref preset,
+                    ArmorDetachmentClothHoldPresetLabels, ArmorDetachmentClothHoldPresetLabels.Length))
+            {
+                config.KoStripClothHoldPreset = preset;
+                config.Save();
+            }
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip("Quick: release soon after the body rests.\n" +
+                                 "Natural: a short settling dwell.\n" +
+                                 "Clingy: waits longer and follows dragged bodies.\n" +
+                                 "Slide to floor: default, keeps sliding down until it touches the ground, then drops.");
+        }
+        else
+        {
+            var clothHold = config.KoStripClothHoldSeconds;
+            ImGui.SetNextItemWidth(200f);
+            if (ImGui.SliderFloat("Manual cloth hold##armordetachclothhold", ref clothHold, 0f, 20f, "%.1f s"))
+            {
+                config.KoStripClothHoldSeconds = Math.Clamp(MathF.Round(clothHold * 10f) / 10f, 0f, 20f);
+                config.Save();
+            }
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip("How long the garment stays visually attached to the dying body before it\n" +
+                                 "drops as a free rigid body. 0 = drop immediately.\n" +
+                                 $"Default {Configuration.KoStripClothHoldSecondsDefault:0.00}s.");
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Reset##armordetachclothholdreset"))
+        {
+            config.KoStripClothHoldAuto = true;
+            config.KoStripClothHoldPreset = 3;
+            config.KoStripClothHoldSeconds = Configuration.KoStripClothHoldSecondsDefault;
+            config.Save();
+        }
+        ImGui.EndDisabled();
+
+        ImGui.Separator();
+
+        ImGui.TextDisabled("Collapse on drop");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Per-slot: checked = the dropped piece deflates/flattens like cloth.\n" +
+                             "Unchecked = it keeps its full rigid shape (better for armor / rigid gear).\n" +
+                             "Only affects physically-dropped pieces. Default: clothing collapses,\n" +
+                             "accessories stay rigid.");
+
+        var anyPhysicsDrop = config.KoStripPhysicsDrop || config.KoStripPhysicsDropClothing;
+        ImGui.BeginDisabled(!anyPhysicsDrop);
+
+        ImGui.TextDisabled("Clothing");
+        ArmorDetachmentCollapseCheckbox("Head", () => config.KoStripCollapseHead, v => config.KoStripCollapseHead = v);
+        ImGui.SameLine();
+        ArmorDetachmentCollapseCheckbox("Body", () => config.KoStripCollapseBody, v => config.KoStripCollapseBody = v);
+        ImGui.SameLine();
+        ArmorDetachmentCollapseCheckbox("Hands", () => config.KoStripCollapseHands, v => config.KoStripCollapseHands = v);
+        ArmorDetachmentCollapseCheckbox("Legs", () => config.KoStripCollapseLegs, v => config.KoStripCollapseLegs = v);
+        ImGui.SameLine();
+        ArmorDetachmentCollapseCheckbox("Feet", () => config.KoStripCollapseFeet, v => config.KoStripCollapseFeet = v);
+
+        ImGui.TextDisabled("Accessories");
+        ArmorDetachmentCollapseCheckbox("Ears", () => config.KoStripCollapseEars, v => config.KoStripCollapseEars = v);
+        ImGui.SameLine();
+        ArmorDetachmentCollapseCheckbox("Neck", () => config.KoStripCollapseNeck, v => config.KoStripCollapseNeck = v);
+        ImGui.SameLine();
+        ArmorDetachmentCollapseCheckbox("Wrists", () => config.KoStripCollapseWrists, v => config.KoStripCollapseWrists = v);
+        ArmorDetachmentCollapseCheckbox("R.Finger", () => config.KoStripCollapseRFinger, v => config.KoStripCollapseRFinger = v);
+        ImGui.SameLine();
+        ArmorDetachmentCollapseCheckbox("L.Finger", () => config.KoStripCollapseLFinger, v => config.KoStripCollapseLFinger = v);
+
+        if (ImGui.Button("Reset collapse defaults##armordetachcollapsereset"))
+        {
+            config.ResetKoStripCollapseDefaults();
+            config.Save();
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Restore defaults: clothing collapses, accessories stay rigid.");
+
+        ImGui.EndDisabled();
+
+        ImGui.Separator();
+
+        if (ImGui.Button("Detach Now##armordetach"))
+        {
+            var player = CombatSimulator.Core.Services.ObjectTable.LocalPlayer;
+            if (player != null) ctrl.StripNow(player.Address);
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Detach configured armor from your character right now (test).");
+
+        ImGui.End();
+    }
+
+    private void ArmorDetachmentSlotCheckbox(string label, Func<bool> get, Action<bool> set)
+    {
+        var v = get();
+        if (ImGui.Checkbox($"{label}##armorDetachSlot", ref v))
+        {
+            set(v);
+            config.Save();
+        }
+    }
+
+    private void ArmorDetachmentCollapseCheckbox(string label, Func<bool> get, Action<bool> set)
+    {
+        var v = get();
+        if (ImGui.Checkbox($"{label}##armorDetachCollapse", ref v))
+        {
+            set(v);
+            config.Save();
+        }
+    }
+}

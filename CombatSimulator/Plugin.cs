@@ -49,6 +49,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly RagdollController ragdollController;
     private readonly WeaponDropController weaponDropController;
     private readonly DismembermentController dismembermentController;
+    private readonly Dev.KoStripController armorDetachmentController;
     private readonly CombatEngine combatEngine;
     private readonly CombatCompanionManager companionManager;
     private readonly NpcAiController npcAiController;
@@ -157,6 +158,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             var body = npcRagdolls.TryGetValue(addr, out var found) ? found : ragdollController;
             body?.ApplyAngularVelocity(bone, angularVel);
         };
+        armorDetachmentController = new Dev.KoStripController(config, glamourerIpc, dismembermentController, log);
         cameraModeCoordinator = new CameraModeCoordinator(config, log);
         deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
@@ -203,14 +205,14 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // Super-armor enemies during their telegraph windup (no flinch from player hits).
         combatEngine.IsTargetSuperArmored = telegraphSystem.IsWindingUp;
 
-        // All experimental ("easter-egg") dev features live in one module now (Victory/Hold/KO Strip/
+        // All experimental ("easter-egg") dev features live in one module now (Victory/Hold/
         // Monster + dev-only per-frame tweaks). The engine drives the cinematic victory through the
         // IVictorySequence seam.
 #if DEV_EXPERIMENTAL
         devExperimental = new Dev.Experimental.DevExperimentalModule(
             keyState, gamepadState, framework, ragdollController, animationController, boneTransformService,
             movementBlockHook, activeCameraController, vnavmeshIpc, dismembermentController, glamourerIpc,
-            combatEngine, clientState, targetManager, npcSelector, FindNpcByAddress, config, log);
+            armorDetachmentController, combatEngine, clientState, targetManager, npcSelector, FindNpcByAddress, config, log);
 #else
         devExperimental = new Dev.DevExperimentalStub();
 #endif
@@ -328,6 +330,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
             dismembermentController.RemoveAll();
+            armorDetachmentController.Reset();
             devExperimental.ResetTransientState();
             fightingModeController.Reset();
 
@@ -354,6 +357,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnPlayerDeath = addr =>
         {
             weaponDropController.SpawnFor(addr, config.RagdollActivationDelay);
+            armorDetachmentController.StripOnKo(addr);
             if (config.EnableDismemberRollaway && config.DismemberPocBones is { Count: > 0 })
             {
                 // Capture the player's LIVE Glamourer state once (null if Glamourer absent) and spawn one
@@ -398,6 +402,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         // GUI
         mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
+        armorDetachmentController.AllowOnHitDetach = () => mainWindow.DevExperimentalUnlocked;
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, mainWindow, config, gameGui, clientState);
@@ -469,6 +474,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcAiController.Dispose();
         combatEngine.Dispose();
         devExperimental.Dispose();
+        armorDetachmentController.Dispose();
         ragdollController.Dispose();
         weaponDropController.Dispose();
         dismembermentController.Dispose();
@@ -575,6 +581,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         if (config.ShowActiveCamToolbar)
             mainWindow.DrawActiveCamToolbar();
 
+        if (config.ShowArmorDetachmentControls)
+            mainWindow.DrawArmorDetachmentControls(armorDetachmentController);
+
         devExperimental.DrawToolbars(mainWindow);
 
         if (config.ShowMainWindow)
@@ -662,6 +671,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             ProcessPendingGlamourerApplies();
 
             animationController.Tick(deltaTime);
+            armorDetachmentController.Tick(deltaTime);
 
             // Camera controllers run independently of combat. Submitters tick first,
             // then the coordinator resolves priority and writes the camera once, and
@@ -993,6 +1003,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         DeactivateAllNpcRagdolls();
         weaponDropController.RemoveAll();
         dismembermentController.RemoveAll();
+        armorDetachmentController.Reset();
         devExperimental.ResetTransientState();
 
         if (combatEngine.IsActive)
@@ -1016,6 +1027,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
             dismembermentController.RemoveAll();
+            armorDetachmentController.Reset();
             devExperimental.ResetTransientState();
             npcSpawner.DespawnAll();
             companionManager.DespawnAll();

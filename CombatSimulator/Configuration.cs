@@ -226,6 +226,96 @@ public partial class Configuration : IPluginConfiguration
     // behavior when Glamourer is not installed.
     public string PartyCompanionGlamourerDesignId { get; set; } = "";
 
+    // Armor Detachment: compact floating control UI, opened from Professional Mode > Effects.
+    public bool ShowArmorDetachmentControls { get; set; } = false;
+
+    // Armor Detachment: visually detach configured player gear slots on KO. Monster-hit detachment is
+    // a dev-only extension and is additionally runtime-gated by the dev unlock state.
+    public bool KoStripEnabled { get; set; } = false;
+    public bool KoStripOnHitEnabled { get; set; } = false;
+    public bool KoStripSyncWithRagdoll { get; set; } = true;
+    public bool KoStripHead { get; set; } = false;
+    public bool KoStripBody { get; set; } = true;
+    public bool KoStripHands { get; set; } = true;
+    public bool KoStripLegs { get; set; } = true;
+    public bool KoStripFeet { get; set; } = true;
+    public bool KoStripEars { get; set; } = false;
+    public bool KoStripNeck { get; set; } = false;
+    public bool KoStripWrists { get; set; } = false;
+    public bool KoStripRFinger { get; set; } = false;
+    public bool KoStripLFinger { get; set; } = false;
+
+    // Physically drop hats / accessories (separate models, not fused with skin) as falling rigid
+    // bodies instead of just hiding them. Head + accessory slots. Default off.
+    public bool KoStripPhysicsDrop { get; set; } = false;
+
+    // Physically drop supported clothing (Body / Legs) as falling shells. Still includes the body skin
+    // baked into those equipment models, so it remains opt-in. Default off.
+    public bool KoStripPhysicsDropClothing { get; set; } = false;
+
+    // Garment polish layered on top of clothing physics drop: short visual body follow, body/ground
+    // friction damping, and delayed cloth collapse. Default off.
+    public bool KoStripAdvancedClothPhysics { get; set; } = false;
+
+    // Manual fallback duration (seconds) for the "still attached" visual hold with Advanced clothing
+    // settle on. Auto mode is the default path; this only applies when Auto cloth hold is disabled.
+    public const float KoStripClothHoldSecondsDefault = 0.3f;
+    public float KoStripClothHoldSeconds { get; set; } = KoStripClothHoldSecondsDefault;
+
+    // Auto cloth hold: release the garment on an event (body settled, or slid down to the floor)
+    // rather than the fixed KoStripClothHoldSeconds timer.
+    public bool KoStripClothHoldAuto { get; set; } = true;
+
+    // Auto-hold feel: 0 Quick, 1 Natural, 2 Clingy, 3 Slide-to-floor. Default Slide-to-floor.
+    public int KoStripClothHoldPreset { get; set; } = 3;
+
+    // Per-slot "collapse on drop" toggles for the physics-drop pieces. When a slot is enabled the
+    // dropped piece deflates/flattens like cloth; when disabled it keeps its full rigid shape (better
+    // for armor / rigid gear). Indexed via GearKeepModelSlot (0 Head,1 Body,2 Hands,3 Legs,4 Feet,
+    // 5 Ears,6 Neck,7 Wrists,8 RFinger,9 LFinger).
+    public bool KoStripCollapseHead { get; set; } = true;
+    public bool KoStripCollapseBody { get; set; } = true;
+    public bool KoStripCollapseHands { get; set; } = true;
+    public bool KoStripCollapseLegs { get; set; } = true;
+    public bool KoStripCollapseFeet { get; set; } = true;
+    public bool KoStripCollapseEars { get; set; } = false;
+    public bool KoStripCollapseNeck { get; set; } = false;
+    public bool KoStripCollapseWrists { get; set; } = false;
+    public bool KoStripCollapseRFinger { get; set; } = false;
+    public bool KoStripCollapseLFinger { get; set; } = false;
+
+    /// <summary>Whether the dropped piece for the given GearKeepModelSlot should collapse/deflate.
+    /// Unknown slots default to collapsing (matches the historic all-gear-deflates behavior).</summary>
+    public bool IsKoStripCollapseEnabled(int gearKeepModelSlot) => gearKeepModelSlot switch
+    {
+        0 => KoStripCollapseHead,
+        1 => KoStripCollapseBody,
+        2 => KoStripCollapseHands,
+        3 => KoStripCollapseLegs,
+        4 => KoStripCollapseFeet,
+        5 => KoStripCollapseEars,
+        6 => KoStripCollapseNeck,
+        7 => KoStripCollapseWrists,
+        8 => KoStripCollapseRFinger,
+        9 => KoStripCollapseLFinger,
+        _ => true,
+    };
+
+    /// <summary>Restore the default collapse mask: clothing collapses, accessories stay rigid.</summary>
+    public void ResetKoStripCollapseDefaults()
+    {
+        KoStripCollapseHead = true;
+        KoStripCollapseBody = true;
+        KoStripCollapseHands = true;
+        KoStripCollapseLegs = true;
+        KoStripCollapseFeet = true;
+        KoStripCollapseEars = false;
+        KoStripCollapseNeck = false;
+        KoStripCollapseWrists = false;
+        KoStripCollapseRFinger = false;
+        KoStripCollapseLFinger = false;
+    }
+
     // Shortcuts bar
     public bool ShowShortcuts { get; set; } = false;
     public bool ShowProfessionalWindow { get; set; } = false;
