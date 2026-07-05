@@ -160,6 +160,7 @@ public enum RagdollNpcCollisionMode
     BoneCapsule = 0,
     ConvexHull = 1,
     Mesh = 2,
+    AnimatedMesh = 3,
 }
 
 [Serializable]

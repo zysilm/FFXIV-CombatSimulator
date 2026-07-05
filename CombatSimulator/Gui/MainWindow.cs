@@ -37,6 +37,7 @@ public partial class MainWindow : IDisposable
         "Bone capsule",
         "Convex hull",
         "Mesh (skinned)",
+        "Animated mesh (experimental)",
     };
 
     private readonly Configuration config;
@@ -4492,7 +4493,7 @@ public partial class MainWindow : IDisposable
                     config.RagdollNpcCollisionConvexHull = config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.ConvexHull;
                     config.Save();
                 }
-                HelpMarker("Bone capsule uses the existing per-bone capsule proxies. Convex hull uses a single activation-pose hull built from bone positions. Mesh (skinned) snapshots the rendered model mesh with the current Havok pose and tracks the root transform. Takes effect on next ragdoll activation.");
+                HelpMarker("Bone capsule uses the existing per-bone capsule proxies. Convex hull uses a single activation-pose hull built from bone positions. Mesh (skinned) snapshots the rendered model mesh with the current Havok pose and tracks the root transform. Animated mesh is experimental: mount-only, low-frequency real skinned mesh rebuilds with soft contacts. Takes effect on next ragdoll activation.");
 
                 ImGui.Unindent();
             }

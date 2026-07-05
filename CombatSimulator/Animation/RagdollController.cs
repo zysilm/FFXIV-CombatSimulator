@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using System.Text;
 using CombatSimulator.Animation.CollapseProfiles;
@@ -13,6 +14,7 @@ using BepuUtilities;
 using BepuUtilities.Memory;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using FFXIVClientStructs.FFXIV.Client.System.Resource.Handle;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
@@ -106,6 +108,7 @@ public unsafe class RagdollController : IDisposable
     private readonly List<RagdollBone> ragdollBones = new();
     private readonly List<ExternalBodyHandle> externalBodies = new();
     private readonly HashSet<int> externalDynamicBodyHandles = new();
+    private readonly HashSet<int> softKinematicBodyHandles = new();
 
     // Bone defs actually used for the active ragdoll, keyed by name. For humanoid
     // skeletons these are the tuned human defs; for non-humanoid skeletons they are
@@ -1477,7 +1480,11 @@ public unsafe class RagdollController : IDisposable
     // of high-bone-count enemies can't add tens of thousands of UpdateBounds calls.
     private const int NpcMaxCollisionSegments = 24;
     private const int MeshCollisionMaxTriangles = 8000;
-    private const int MeshCollisionPreferredLod = 2; // Low LOD: enough silhouette for collision, cheaper than render LOD0.
+    private const int MeshCollisionPreferredLod = 0; // LOD0: matches the on-screen silhouette exactly (Low LOD shrank/coarsened the collision hull).
+    private const float AnimatedMeshUpdateInterval = 0.15f;
+    private const float AnimatedMeshSlowUpdateBackoff = 0.5f;
+    private const float AnimatedMeshSlowUpdateMs = 5f;
+    private const int AnimatedMeshInitialUpdateLogCount = 3;
     // A character whose root is farther than this (metres) from the corpse is skipped in
     // the per-frame static update — it cannot contact the ragdoll, so tracking its bones
     // is wasted work. It still resumes updating if it moves back into range.
@@ -1495,7 +1502,13 @@ public unsafe class RagdollController : IDisposable
         public BodyHandle ConvexHullHandle;
         public Vector3 HullCenterModelSpace; // hull centroid in skeleton-local (model) space
         public bool IsMesh;
+        public bool IsAnimatedMesh;
         public BodyHandle MeshHandle;
+        public TypedIndex MeshShapeIndex;
+        public List<AnimatedMeshCollisionModel> AnimatedMeshModels;
+        public float AnimatedMeshNextUpdateElapsed;
+        public int AnimatedMeshTriangleCount;
+        public int AnimatedMeshUpdateCount;
         public Vector3 PreviousPosition;
         public Quaternion PreviousOrientation;
         public bool HasPreviousPose;
@@ -1503,6 +1516,15 @@ public unsafe class RagdollController : IDisposable
         // update radius. Prevents leaving them frozen on the corpse ("ghost" capsules) and
         // avoids re-parking every frame; cleared when it re-enters range.
         public bool Parked;
+    }
+
+    private sealed class AnimatedMeshCollisionModel
+    {
+        public string ModelPath = string.Empty;
+        public MeshCollisionMdlData Mdl = new();
+        public int LodIndex;
+        public int[] MeshIndices = Array.Empty<int>();
+        public Dictionary<int, int[]> BoneMapsByMeshIndex = new();
     }
 
     public RagdollController(BoneTransformService boneService, Npcs.NpcSelector npcSelector,
@@ -2946,6 +2968,7 @@ public unsafe class RagdollController : IDisposable
             {
                 ConnectedPairs = connectedPairs,
                 ExternalDynamicBodies = externalDynamicBodyHandles,
+                SoftKinematicBodies = softKinematicBodyHandles,
                 Friction = config.RagdollFriction,
                 Config = config,
             },
@@ -4060,6 +4083,14 @@ public unsafe class RagdollController : IDisposable
             return;
         }
 
+        if (config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.AnimatedMesh)
+        {
+            if (IsMountObject(address) && BuildAnimatedMeshCollision(address, ns, npcSkelPos, npcSkelRot, label))
+                return;
+            if (BuildMeshCollision(address, ns, npcSkelPos, npcSkelRot, label))
+                return;
+        }
+
         if (config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.Mesh &&
             BuildMeshCollision(address, ns, npcSkelPos, npcSkelRot, label))
             return;
@@ -4315,18 +4346,8 @@ public unsafe class RagdollController : IDisposable
                 return false;
             }
 
-            Buffer<Triangle> triangleBuffer = default;
-            var ownsTriangleBuffer = false;
-            try
+            if (TryCreateMeshShape(triangles, GetSkeletonScale(ns), out var shapeIndex))
             {
-                bufferPool.Take<Triangle>(triangles.Count, out triangleBuffer);
-                ownsTriangleBuffer = true;
-                for (int i = 0; i < triangles.Count; i++)
-                    triangleBuffer[i] = triangles[i];
-
-                var meshShape = new BepuPhysics.Collidables.Mesh(triangleBuffer, Vector3.One, bufferPool);
-                ownsTriangleBuffer = false;
-                var shapeIndex = simulation.Shapes.Add(meshShape);
                 var rootRot = Quaternion.Normalize(npcSkelRot);
                 var bodyHandle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
                     new RigidPose(npcSkelPos, rootRot),
@@ -4341,6 +4362,7 @@ public unsafe class RagdollController : IDisposable
                     IsFallback = false,
                     IsMesh = true,
                     MeshHandle = bodyHandle,
+                    MeshShapeIndex = shapeIndex,
                     PreviousPosition = npcSkelPos,
                     PreviousOrientation = rootRot,
                     HasPreviousPose = true,
@@ -4349,17 +4371,293 @@ public unsafe class RagdollController : IDisposable
                 log.Info($"RagdollController: {label} mesh collision - {triangles.Count} triangles from {loadedModels} models/{processedMeshes} meshes");
                 return true;
             }
-            finally
-            {
-                if (ownsTriangleBuffer)
-                    bufferPool.Return(ref triangleBuffer);
-            }
+
+            log.Warning($"RagdollController: {label} mesh collision failed to create BEPU mesh shape; using bone capsules");
+            return false;
         }
         catch (Exception ex)
         {
             log.Warning(ex, $"RagdollController: {label} mesh collision build failed; using bone capsules");
             return false;
         }
+    }
+
+    private bool BuildAnimatedMeshCollision(nint address, SkeletonAccess ns, Vector3 npcSkelPos, Quaternion npcSkelRot, string label)
+    {
+        if (simulation == null || bufferPool == null)
+            return false;
+
+        try
+        {
+            if (!TryBuildSkinDeltas(ns, out var skinDeltas))
+            {
+                log.Warning($"RagdollController: {label} animated mesh collision skipped; skin transforms unavailable");
+                return false;
+            }
+
+            var models = new List<AnimatedMeshCollisionModel>();
+            var slotCount = Math.Clamp(ns.CharBase->SlotCount, 0, 32);
+            for (int slot = 0; slot < slotCount; slot++)
+            {
+                var renderModel = ns.CharBase->Models == null ? null : ns.CharBase->Models[slot];
+                if (renderModel == null || renderModel->ModelResourceHandle == null)
+                    continue;
+
+                var resourceHandle = (ResourceHandle*)renderModel->ModelResourceHandle;
+                var modelPath = resourceHandle->FileName.ToString();
+                if (string.IsNullOrWhiteSpace(modelPath) ||
+                    !modelPath.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (TryLoadMeshCollisionMdlData(label, slot, modelPath, out var mdl) &&
+                    TryCreateAnimatedMeshCollisionModel(modelPath, mdl, ns, out var model))
+                {
+                    models.Add(model);
+                }
+            }
+
+            if (models.Count == 0)
+            {
+                log.Warning($"RagdollController: {label} animated mesh collision found no usable models; using static mesh/bone fallback");
+                return false;
+            }
+
+            var triangles = new List<Triangle>(Math.Min(MeshCollisionMaxTriangles, 1024));
+            var processedMeshes = AppendAnimatedMeshTriangles(models, skinDeltas, triangles);
+            if (triangles.Count < 4)
+            {
+                log.Warning($"RagdollController: {label} animated mesh collision produced {triangles.Count} triangles from {models.Count} models; using static mesh/bone fallback");
+                return false;
+            }
+
+            if (!TryCreateMeshShape(triangles, GetSkeletonScale(ns), out var shapeIndex))
+            {
+                log.Warning($"RagdollController: {label} animated mesh collision failed to create BEPU mesh shape; using static mesh/bone fallback");
+                return false;
+            }
+
+            var rootRot = Quaternion.Normalize(npcSkelRot);
+            var bodyHandle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
+                new RigidPose(npcSkelPos, rootRot),
+                default(BodyVelocity),
+                new CollidableDescription(shapeIndex, 0.04f),
+                new BodyActivityDescription(0.01f)));
+            softKinematicBodyHandles.Add(bodyHandle.Value);
+
+            npcCollisionStates.Add(new NpcCollisionState
+            {
+                NpcAddress = address,
+                BoneStatics = new List<NpcBoneStatic>(),
+                IsFallback = false,
+                IsMesh = true,
+                IsAnimatedMesh = true,
+                MeshHandle = bodyHandle,
+                MeshShapeIndex = shapeIndex,
+                AnimatedMeshModels = models,
+                AnimatedMeshNextUpdateElapsed = elapsed + AnimatedMeshUpdateInterval,
+                AnimatedMeshTriangleCount = triangles.Count,
+                AnimatedMeshUpdateCount = 0,
+                PreviousPosition = npcSkelPos,
+                PreviousOrientation = rootRot,
+                HasPreviousPose = true,
+            });
+
+            log.Info($"RagdollController: {label} animated mesh collision - {triangles.Count} triangles from {models.Count} models/{processedMeshes} meshes, kind={GetObjectKindName(address)}, update={AnimatedMeshUpdateInterval:F2}s");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"RagdollController: {label} animated mesh collision build failed; using static mesh/bone fallback");
+            return false;
+        }
+    }
+
+    private bool TryLoadMeshCollisionMdlData(string label, int slot, string modelPath, out MeshCollisionMdlData mdl)
+    {
+        mdl = new MeshCollisionMdlData();
+        try
+        {
+            var luminaMdl = Services.DataManager.GameData.GetFile<MdlFile>(modelPath);
+            if (luminaMdl == null)
+            {
+                log.Warning($"RagdollController: {label} mesh collision slot {slot} '{modelPath}' returned null MdlFile");
+                return false;
+            }
+
+            mdl = MeshCollisionMdlData.FromMdlFile(luminaMdl);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            var rawData = TryGetRawFileData(modelPath);
+            string? rawParseError = null;
+            if (rawData != null && TryParseRawMdlCollisionData(rawData, out var rawMdl, out rawParseError))
+            {
+                mdl = rawMdl;
+                log.Warning($"RagdollController: {label} mesh collision mdl parser failed for slot {slot} '{modelPath}', raw geometry fallback used");
+                return true;
+            }
+
+            var rawLength = rawData?.Length ?? -1;
+            log.Warning(ex, $"RagdollController: {label} mesh collision failed to load mdl slot {slot} '{modelPath}' (rawBytes={(rawLength >= 0 ? rawLength.ToString() : "unavailable")}, rawFallback={rawParseError ?? "unavailable"})");
+            return false;
+        }
+    }
+
+    private bool TryCreateAnimatedMeshCollisionModel(string modelPath, MeshCollisionMdlData mdl, SkeletonAccess ns, out AnimatedMeshCollisionModel model)
+    {
+        model = new AnimatedMeshCollisionModel();
+        if (!TrySelectMdlLod(mdl, out var lodIndex, out var lod))
+        {
+            log.Warning($"RagdollController: animated mesh collision '{modelPath}' has no usable LOD");
+            return false;
+        }
+
+        if (mdl.Data.Length == 0 || mdl.Meshes.Length == 0 || mdl.VertexDeclarations.Length == 0 ||
+            mdl.BoneTables.Length == 0 || mdl.BoneNameOffsets.Length == 0 || mdl.Strings.Length == 0)
+        {
+            log.Warning($"RagdollController: animated mesh collision '{modelPath}' has incomplete MdlFile data");
+            return false;
+        }
+
+        if (mdl.FileHeader.VertexOffset == null || mdl.FileHeader.VertexBufferSize == null ||
+            mdl.FileHeader.IndexOffset == null || mdl.FileHeader.IndexBufferSize == null ||
+            lodIndex >= mdl.FileHeader.VertexOffset.Length || lodIndex >= mdl.FileHeader.VertexBufferSize.Length ||
+            lodIndex >= mdl.FileHeader.IndexOffset.Length || lodIndex >= mdl.FileHeader.IndexBufferSize.Length)
+        {
+            log.Warning($"RagdollController: animated mesh collision '{modelPath}' has incomplete LOD{lodIndex} buffer header");
+            return false;
+        }
+
+        if (!TryGetIntRange(mdl.FileHeader.VertexOffset[lodIndex], mdl.FileHeader.VertexBufferSize[lodIndex], mdl.Data.Length, out _, out _) ||
+            !TryGetIntRange(mdl.FileHeader.IndexOffset[lodIndex], mdl.FileHeader.IndexBufferSize[lodIndex], mdl.Data.Length, out _, out _))
+        {
+            log.Warning($"RagdollController: animated mesh collision '{modelPath}' LOD{lodIndex} buffer ranges are outside file data");
+            return false;
+        }
+
+        var processedMeshIndices = new HashSet<int>();
+        AddAnimatedMeshRange(mdl, lod.MeshIndex, lod.MeshCount, processedMeshIndices);
+        if (mdl.ExtraLodEnabled && lodIndex < mdl.ExtraLods.Length)
+        {
+            var extra = mdl.ExtraLods[lodIndex];
+            AddAnimatedMeshRange(mdl, extra.GlassMeshIndex, extra.GlassMeshCount, processedMeshIndices);
+            AddAnimatedMeshRange(mdl, extra.MaterialChangeMeshIndex, extra.MaterialChangeMeshCount, processedMeshIndices);
+            AddAnimatedMeshRange(mdl, extra.CrestChangeMeshIndex, extra.CrestChangeMeshCount, processedMeshIndices);
+        }
+
+        if (processedMeshIndices.Count == 0)
+            return false;
+
+        var boneMaps = new Dictionary<int, int[]>();
+        foreach (var meshIndex in processedMeshIndices)
+        {
+            if (meshIndex < 0 || meshIndex >= mdl.Meshes.Length)
+                continue;
+            boneMaps[meshIndex] = BuildMdlMeshBoneMap(mdl, mdl.Meshes[meshIndex], ns);
+        }
+
+        model = new AnimatedMeshCollisionModel
+        {
+            ModelPath = modelPath,
+            Mdl = mdl,
+            LodIndex = lodIndex,
+            MeshIndices = processedMeshIndices.OrderBy(x => x).ToArray(),
+            BoneMapsByMeshIndex = boneMaps,
+        };
+        return true;
+    }
+
+    private static void AddAnimatedMeshRange(MeshCollisionMdlData mdl, ushort meshStart, ushort meshCount, HashSet<int> meshIndices)
+    {
+        var meshEnd = Math.Min(mdl.Meshes.Length, meshStart + meshCount);
+        for (int meshIndex = meshStart; meshIndex < meshEnd; meshIndex++)
+            meshIndices.Add(meshIndex);
+    }
+
+    private int AppendAnimatedMeshTriangles(List<AnimatedMeshCollisionModel> models, Matrix4x4[] skinDeltas, List<Triangle> triangles)
+    {
+        var processedMeshes = 0;
+        foreach (var model in models)
+        {
+            foreach (var meshIndex in model.MeshIndices)
+            {
+                if (triangles.Count >= MeshCollisionMaxTriangles)
+                    return processedMeshes;
+                if (!model.BoneMapsByMeshIndex.TryGetValue(meshIndex, out var localToHavok))
+                    localToHavok = Array.Empty<int>();
+                if (AppendSkinnedMdlMeshTriangles(model.ModelPath, model.Mdl, model.LodIndex, meshIndex, localToHavok, skinDeltas, triangles))
+                    processedMeshes++;
+            }
+        }
+
+        return processedMeshes;
+    }
+
+    // Read the skeleton root's world scale. Skinned vertices live in the skeleton's local
+    // model space (unscaled); the visible model applies the root Transform's scale on top,
+    // so we must bake it into the BEPU mesh shape or the collision hull ends up the wrong
+    // size (many mounts render at a non-unit root scale).
+    private static Vector3 GetSkeletonScale(SkeletonAccess ns)
+    {
+        if (ns.CharBase == null || ns.CharBase->Skeleton == null)
+            return Vector3.One;
+
+        var s = ns.CharBase->Skeleton->Transform.Scale;
+        var scale = new Vector3(s.X, s.Y, s.Z);
+        if (!IsFinite(scale) || scale.X <= 0f || scale.Y <= 0f || scale.Z <= 0f)
+            return Vector3.One;
+
+        return scale;
+    }
+
+    private bool TryCreateMeshShape(List<Triangle> triangles, Vector3 scale, out TypedIndex shapeIndex)
+    {
+        shapeIndex = default;
+        if (simulation == null || bufferPool == null || triangles.Count < 4)
+            return false;
+
+        Buffer<Triangle> triangleBuffer = default;
+        var ownsTriangleBuffer = false;
+        try
+        {
+            bufferPool.Take<Triangle>(triangles.Count, out triangleBuffer);
+            ownsTriangleBuffer = true;
+            for (int i = 0; i < triangles.Count; i++)
+                triangleBuffer[i] = triangles[i];
+
+            var meshShape = new BepuPhysics.Collidables.Mesh(triangleBuffer, scale, bufferPool);
+            ownsTriangleBuffer = false;
+            shapeIndex = simulation.Shapes.Add(meshShape);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (ownsTriangleBuffer)
+                bufferPool.Return(ref triangleBuffer);
+        }
+    }
+
+    private static bool IsMountObject(nint address)
+    {
+        if (address == nint.Zero)
+            return false;
+
+        var go = (GameObject*)address;
+        return go->ObjectKind == ObjectKind.Mount;
+    }
+
+    private static string GetObjectKindName(nint address)
+    {
+        if (address == nint.Zero)
+            return "None";
+
+        var go = (GameObject*)address;
+        return go->ObjectKind.ToString();
     }
 
     private bool TryBuildSkinDeltas(SkeletonAccess ns, out Matrix4x4[] skinDeltas)
@@ -4523,8 +4821,27 @@ public unsafe class RagdollController : IDisposable
         if (mesh.VertexCount == 0 || mesh.IndexCount < 3)
             return false;
 
-        var skinnedVertices = new Vector3[mesh.VertexCount];
         var localToHavok = BuildMdlMeshBoneMap(mdl, mesh, ns);
+        return AppendSkinnedMdlMeshTriangles(modelPath, mdl, lodIndex, meshIndex, localToHavok, skinDeltas, triangles);
+    }
+
+    private bool AppendSkinnedMdlMeshTriangles(
+        string modelPath,
+        MeshCollisionMdlData mdl,
+        int lodIndex,
+        int meshIndex,
+        int[] localToHavok,
+        Matrix4x4[] skinDeltas,
+        List<Triangle> triangles)
+    {
+        if (meshIndex < 0 || meshIndex >= mdl.Meshes.Length || meshIndex >= mdl.VertexDeclarations.Length)
+            return false;
+
+        var mesh = mdl.Meshes[meshIndex];
+        if (mesh.VertexCount == 0 || mesh.IndexCount < 3)
+            return false;
+
+        var skinnedVertices = new Vector3[mesh.VertexCount];
         for (int i = 0; i < skinnedVertices.Length; i++)
         {
             var vertex = ReadMdlCollisionVertex(mdl.Data, mdl.FileHeader.VertexOffset[lodIndex],
@@ -5328,6 +5645,64 @@ public unsafe class RagdollController : IDisposable
             ref state.PreviousPosition, ref state.PreviousOrientation, ref state.HasPreviousPose, dt);
     }
 
+    private void TryUpdateAnimatedMeshCollision(ref NpcCollisionState state, SkeletonAccess ns, float nowElapsed)
+    {
+        if (!state.IsAnimatedMesh || state.AnimatedMeshModels == null || state.AnimatedMeshModels.Count == 0 ||
+            simulation == null || bufferPool == null || nowElapsed < state.AnimatedMeshNextUpdateElapsed)
+            return;
+
+        state.AnimatedMeshNextUpdateElapsed = nowElapsed + AnimatedMeshUpdateInterval;
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            if (!TryBuildSkinDeltas(ns, out var skinDeltas))
+            {
+                state.AnimatedMeshNextUpdateElapsed = nowElapsed + AnimatedMeshSlowUpdateBackoff;
+                return;
+            }
+
+            var triangles = new List<Triangle>(Math.Min(MeshCollisionMaxTriangles, Math.Max(1024, state.AnimatedMeshTriangleCount)));
+            var processedMeshes = AppendAnimatedMeshTriangles(state.AnimatedMeshModels, skinDeltas, triangles);
+            if (triangles.Count < 4 || !TryCreateMeshShape(triangles, GetSkeletonScale(ns), out var newShapeIndex))
+            {
+                state.AnimatedMeshNextUpdateElapsed = nowElapsed + AnimatedMeshSlowUpdateBackoff;
+                if (config.RagdollVerboseLog)
+                    log.Warning($"RagdollController: animated mesh update skipped for 0x{state.NpcAddress:X}; triangles={triangles.Count}, meshes={processedMeshes}");
+                return;
+            }
+
+            var oldShapeIndex = state.MeshShapeIndex;
+            simulation.Bodies.SetShape(state.MeshHandle, newShapeIndex);
+            var body = simulation.Bodies.GetBodyReference(state.MeshHandle);
+            body.Awake = true;
+            state.MeshShapeIndex = newShapeIndex;
+            state.AnimatedMeshTriangleCount = triangles.Count;
+            state.AnimatedMeshUpdateCount++;
+
+            try { simulation.Shapes.RemoveAndDispose(oldShapeIndex, bufferPool); } catch { }
+
+            stopwatch.Stop();
+            if (state.AnimatedMeshUpdateCount <= AnimatedMeshInitialUpdateLogCount ||
+                (config.RagdollVerboseLog && state.AnimatedMeshUpdateCount % 30 == 0))
+            {
+                log.Info($"RagdollController: animated mesh updated for 0x{state.NpcAddress:X} - #{state.AnimatedMeshUpdateCount}, {triangles.Count} triangles/{processedMeshes} meshes in {stopwatch.Elapsed.TotalMilliseconds:F2}ms");
+            }
+
+            if (stopwatch.Elapsed.TotalMilliseconds > AnimatedMeshSlowUpdateMs)
+            {
+                state.AnimatedMeshNextUpdateElapsed = nowElapsed + AnimatedMeshSlowUpdateBackoff;
+                if (config.RagdollVerboseLog)
+                    log.Info($"RagdollController: animated mesh update throttled for 0x{state.NpcAddress:X}; {stopwatch.Elapsed.TotalMilliseconds:F2}ms, triangles={triangles.Count}, meshes={processedMeshes}");
+            }
+        }
+        catch (Exception ex)
+        {
+            state.AnimatedMeshNextUpdateElapsed = nowElapsed + AnimatedMeshSlowUpdateBackoff;
+            if (config.RagdollVerboseLog)
+                log.Warning(ex, $"RagdollController: animated mesh update failed for 0x{state.NpcAddress:X}");
+        }
+    }
+
     private void MoveNpcBoneKinematic(ref NpcBoneStatic bone, Vector3 targetPosition, Quaternion targetOrientation, float dt)
     {
         if (simulation == null) return;
@@ -5579,6 +5954,8 @@ public unsafe class RagdollController : IDisposable
                         var sk = npcSkelMesh.Value.CharBase->Skeleton;
                         meshWorldPos = new Vector3(sk->Transform.Position.X, sk->Transform.Position.Y, sk->Transform.Position.Z);
                         meshWorldRot = new Quaternion(sk->Transform.Rotation.X, sk->Transform.Rotation.Y, sk->Transform.Rotation.Z, sk->Transform.Rotation.W);
+                        if (npcState.IsAnimatedMesh)
+                            TryUpdateAnimatedMeshCollision(ref npcState, npcSkelMesh.Value, elapsed);
                     }
                     else
                     {
@@ -8540,6 +8917,7 @@ public unsafe class RagdollController : IDisposable
         ragdollBones.Clear();
         externalBodies.Clear();
         externalDynamicBodyHandles.Clear();
+        softKinematicBodyHandles.Clear();
         npcCollisionStates.Clear();
         npcFallbackShapeReady = false;
         attackStrikeTimer = 0f;
@@ -8570,6 +8948,7 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     // All other body-body pairs DO collide (arms vs torso, etc.).
     public HashSet<(int, int)>? ConnectedPairs;
     public HashSet<int>? ExternalDynamicBodies;
+    public HashSet<int>? SoftKinematicBodies;
     public HashSet<int>? RestrictedStatics;
     public HashSet<int>? AllowedDynamicBodiesForRestrictedStatics;
 
@@ -8662,6 +9041,11 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
             pairMaterial.MaximumRecoveryVelocity = 0.2f;
             pairMaterial.SpringSettings = new SpringSettings(20, 2);
         }
+        else if (IsSoftKinematicContact(pair))
+        {
+            pairMaterial.MaximumRecoveryVelocity = 0.25f;
+            pairMaterial.SpringSettings = new SpringSettings(12, 3);
+        }
         else
         {
             pairMaterial.MaximumRecoveryVelocity = 2f;
@@ -8677,6 +9061,11 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 
     private bool IsExternalDynamic(int bodyHandle)
         => ExternalDynamicBodies != null && ExternalDynamicBodies.Contains(bodyHandle);
+
+    private bool IsSoftKinematicContact(CollidablePair pair)
+        => SoftKinematicBodies != null &&
+           ((pair.A.Mobility == CollidableMobility.Kinematic && SoftKinematicBodies.Contains(pair.A.BodyHandle.Value)) ||
+            (pair.B.Mobility == CollidableMobility.Kinematic && SoftKinematicBodies.Contains(pair.B.BodyHandle.Value)));
 
     private bool UseAdvancedGearContactFriction()
         => Config?.KoStripPhysicsDropClothing == true &&
