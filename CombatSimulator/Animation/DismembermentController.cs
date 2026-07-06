@@ -2023,7 +2023,8 @@ public unsafe class DismembermentController : IDisposable
                 return true;
             }
 
-            ApplyHandoffPose(skel, c);
+            if (!TryApplyLiveGarmentBindPose(skel, c))
+                ApplyHandoffPose(skel, c);
             if (TryUpdateGarmentVisualBind(skel, c))
                 return true;
             if (UseAdvancedGarmentPhysics(c) && c.GearVisualBindStarted)
@@ -2343,7 +2344,10 @@ public unsafe class DismembermentController : IDisposable
     private bool ApplyGarmentBindPose(SkeletonAccess skel, Clone c, float slip)
     {
         if (!TryResolveGarmentVisualBindPose(skel, c, slip, out var rootPos, out var rootRot,
-                out var releaseVelocity, out var releaseAngularVelocity))
+                out var releaseVelocity, out var releaseAngularVelocity, out var liveMirrorRoot))
+            return false;
+
+        if (liveMirrorRoot && !TryApplyLiveGarmentBindPose(skel, c, slip))
             return false;
 
         SetCloneBaseTransform(c, rootPos, rootRot);
@@ -2443,20 +2447,91 @@ public unsafe class DismembermentController : IDisposable
             SetCloneBaseTransform(c, c.GearVisualBindLastRootPos, c.GearVisualBindLastRootRot);
     }
 
+    private bool TryApplyLiveGarmentBindPose(SkeletonAccess skel, Clone c, float slip = 0f)
+    {
+        if (!UseAdvancedGarmentPhysics(c))
+            return false;
+
+        var sourceSkelN = boneService.TryGetSkeleton(c.SourceAddress);
+        if (sourceSkelN == null)
+            return false;
+
+        var sourceSkel = sourceSkelN.Value;
+        if (sourceSkel.BoneCount != skel.BoneCount ||
+            sourceSkel.ParentCount != skel.ParentCount ||
+            ComputeSkeletonSignature(sourceSkel) != ComputeSkeletonSignature(skel))
+        {
+            return false;
+        }
+
+        var count = Math.Min(sourceSkel.BoneCount, skel.BoneCount);
+        for (var i = 0; i < count; i++)
+        {
+            ref var src = ref sourceSkel.Pose->ModelPose.Data[i];
+            ref var dst = ref skel.Pose->ModelPose.Data[i];
+            dst.Translation.X = src.Translation.X;
+            dst.Translation.Y = src.Translation.Y;
+            dst.Translation.Z = src.Translation.Z;
+            dst.Rotation.X = src.Rotation.X;
+            dst.Rotation.Y = src.Rotation.Y;
+            dst.Rotation.Z = src.Rotation.Z;
+            dst.Rotation.W = src.Rotation.W;
+            dst.Scale.X = src.Scale.X;
+            dst.Scale.Y = src.Scale.Y;
+            dst.Scale.Z = src.Scale.Z;
+        }
+
+        if (slip > 0.0001f &&
+            TryGetSkeletonWorldTransform(sourceSkel, out var sourceRootPos, out var sourceRootRot))
+        {
+            ApplyLiveGarmentBindSlip(sourceSkel, skel, c, sourceRootPos, sourceRootRot, slip);
+        }
+
+        return true;
+    }
+
     private bool TryResolveGarmentVisualBindPose(SkeletonAccess skel, Clone c, float slip,
         out Vector3 rootPos, out Quaternion rootRot, out Vector3 releaseVelocity,
-        out Vector3 releaseAngularVelocity)
+        out Vector3 releaseAngularVelocity, out bool liveMirrorRoot)
     {
         rootPos = Vector3.Zero;
         rootRot = Quaternion.Identity;
         releaseVelocity = Vector3.Zero;
         releaseAngularVelocity = Vector3.Zero;
+        liveMirrorRoot = false;
 
         var bones = c.GearKeepModelSlot == 1 ? BodyGearVisualBindBones : LegsGearHandoffBones;
-        if (!TryAverageSourceBoneWorldPositions(c.SourceAddress, bones, out var anchorWorld))
-            return false;
+        var sourceRootPos = Vector3.Zero;
+        var sourceRootRot = Quaternion.Identity;
+        var slipDir = -Vector3.UnitY;
+        var anchorWorld = Vector3.Zero;
 
-        if (!TryResolveGarmentVisualBindRotation(c, out rootRot))
+        var sourceSkelN = boneService.TryGetSkeleton(c.SourceAddress);
+        if (sourceSkelN != null)
+        {
+            var sourceSkel = sourceSkelN.Value;
+            liveMirrorRoot = sourceSkel.BoneCount == skel.BoneCount &&
+                             sourceSkel.ParentCount == skel.ParentCount &&
+                             ComputeSkeletonSignature(sourceSkel) == ComputeSkeletonSignature(skel) &&
+                             TryGetSkeletonWorldTransform(sourceSkel, out sourceRootPos, out sourceRootRot) &&
+                             TryAverageBoneWorldPos(sourceSkel, sourceRootPos, sourceRootRot, out anchorWorld, bones);
+
+            if (liveMirrorRoot)
+            {
+                rootRot = sourceRootRot;
+                slipDir = ResolveGarmentSlipDirection(sourceSkel, sourceRootPos, sourceRootRot, c.GearKeepModelSlot);
+            }
+            else if (!TryAverageSourceBoneWorldPositions(c.SourceAddress, bones, out anchorWorld))
+            {
+                return false;
+            }
+        }
+        else if (!TryAverageSourceBoneWorldPositions(c.SourceAddress, bones, out anchorWorld))
+        {
+            return false;
+        }
+
+        if (!liveMirrorRoot && !TryResolveGarmentVisualBindRotation(c, out rootRot))
             rootRot = c.Handoff?.SkeletonRot ?? Quaternion.Identity;
 
         // Velocity from the RAW anchor (before slip): the true body motion, so the settle test and the
@@ -2487,14 +2562,178 @@ public unsafe class DismembermentController : IDisposable
         c.GearHandoffPrevAnchorRot = rootRot;
         c.GearHandoffHasPrevAnchor = true;
 
-        anchorWorld.Y -= slip;
-        c.GearBindAnchorWorld = anchorWorld;
+        var slippedAnchor = anchorWorld + slipDir * MathF.Max(0f, slip);
+        c.GearBindAnchorWorld = slippedAnchor;
 
-        var anchorModel = TryAverageModelBonePositions(skel, out var modelAnchor, bones)
-            ? modelAnchor
-            : ResolveGearAnchorModelPos(skel, c);
-        rootPos = anchorWorld - Vector3.Transform(anchorModel, rootRot);
+        if (liveMirrorRoot)
+        {
+            // The clone's ModelPose was copied from the live source just before this call. Keep the same
+            // skeleton root transform; per-bone offsets do the actual slide so bent legs/sleeves can
+            // follow their own local axes instead of dragging the whole garment as one rigid shell.
+            rootPos = sourceRootPos;
+        }
+        else
+        {
+            var anchorModel = TryAverageModelBonePositions(skel, out var modelAnchor, bones)
+                ? modelAnchor
+                : ResolveGearAnchorModelPos(skel, c);
+            rootPos = slippedAnchor - Vector3.Transform(anchorModel, rootRot);
+        }
         return true;
+    }
+
+    private void ApplyLiveGarmentBindSlip(
+        SkeletonAccess sourceSkel,
+        SkeletonAccess targetSkel,
+        Clone c,
+        Vector3 sourceRootPos,
+        Quaternion sourceRootRot,
+        float slip)
+    {
+        var rootRotInv = Quaternion.Inverse(sourceRootRot);
+        if (c.GearKeepModelSlot == 3)
+        {
+            var waistDir = ResolveGarmentSlipDirection(sourceSkel, sourceRootPos, sourceRootRot, 3);
+            OffsetModelBoneWorld(targetSkel, "j_kosi", waistDir * slip * 0.65f, rootRotInv);
+            ApplyLegBindSlip(sourceSkel, targetSkel, sourceRootPos, sourceRootRot, rootRotInv, "l", slip, waistDir);
+            ApplyLegBindSlip(sourceSkel, targetSkel, sourceRootPos, sourceRootRot, rootRotInv, "r", slip, waistDir);
+            return;
+        }
+
+        if (c.GearKeepModelSlot == 1)
+        {
+            var bodyDir = ResolveGarmentSlipDirection(sourceSkel, sourceRootPos, sourceRootRot, 1);
+            OffsetModelBoneWorld(targetSkel, "j_kosi", bodyDir * slip * 0.45f, rootRotInv);
+            OffsetModelBoneWorld(targetSkel, "j_sebo_a", bodyDir * slip * 0.70f, rootRotInv);
+            OffsetModelBoneWorld(targetSkel, "j_sebo_b", bodyDir * slip * 0.90f, rootRotInv);
+            OffsetModelBoneWorld(targetSkel, "j_sebo_c", bodyDir * slip, rootRotInv);
+            OffsetModelBoneWorld(targetSkel, "j_kubi", bodyDir * slip, rootRotInv);
+            ApplyArmBindSlip(sourceSkel, targetSkel, sourceRootPos, sourceRootRot, rootRotInv, "l", slip, bodyDir);
+            ApplyArmBindSlip(sourceSkel, targetSkel, sourceRootPos, sourceRootRot, rootRotInv, "r", slip, bodyDir);
+            ApplySkirtBindSlip(targetSkel, bodyDir * slip, rootRotInv);
+        }
+    }
+
+    private void ApplyLegBindSlip(
+        SkeletonAccess sourceSkel,
+        SkeletonAccess targetSkel,
+        Vector3 sourceRootPos,
+        Quaternion sourceRootRot,
+        Quaternion rootRotInv,
+        string side,
+        float slip,
+        Vector3 fallbackDir)
+    {
+        var thighDir = fallbackDir;
+        if (TryBoneDelta(sourceSkel, sourceRootPos, sourceRootRot, $"j_asi_a_{side}", $"j_asi_b_{side}", out var thighAxis))
+            thighDir = NormalizeOrFallback(thighAxis, fallbackDir);
+
+        var shinDir = thighDir;
+        if (TryBoneDelta(sourceSkel, sourceRootPos, sourceRootRot, $"j_asi_b_{side}", $"j_asi_d_{side}", out var shinAxis) ||
+            TryBoneDelta(sourceSkel, sourceRootPos, sourceRootRot, $"j_asi_b_{side}", $"j_asi_c_{side}", out shinAxis))
+        {
+            shinDir = NormalizeOrFallback(shinAxis, thighDir);
+        }
+
+        OffsetModelBoneWorld(targetSkel, $"j_asi_a_{side}", thighDir * slip, rootRotInv);
+        OffsetModelBoneWorld(targetSkel, $"j_asi_b_{side}", shinDir * slip, rootRotInv);
+        OffsetModelBoneWorld(targetSkel, $"j_asi_c_{side}", shinDir * slip, rootRotInv);
+        OffsetModelBoneWorld(targetSkel, $"j_asi_d_{side}", shinDir * slip * 0.85f, rootRotInv);
+        OffsetModelBoneWorld(targetSkel, $"j_asi_e_{side}", shinDir * slip * 0.85f, rootRotInv);
+    }
+
+    private void ApplyArmBindSlip(
+        SkeletonAccess sourceSkel,
+        SkeletonAccess targetSkel,
+        Vector3 sourceRootPos,
+        Quaternion sourceRootRot,
+        Quaternion rootRotInv,
+        string side,
+        float slip,
+        Vector3 fallbackDir)
+    {
+        var armDir = fallbackDir;
+        if (TryBoneDelta(sourceSkel, sourceRootPos, sourceRootRot, $"j_ude_a_{side}", $"j_te_{side}", out var armAxis) ||
+            TryBoneDelta(sourceSkel, sourceRootPos, sourceRootRot, $"j_ude_a_{side}", $"j_ude_b_{side}", out armAxis))
+        {
+            armDir = NormalizeOrFallback(armAxis, fallbackDir);
+        }
+
+        var sleeveSlip = slip * 0.45f;
+        OffsetModelBoneWorld(targetSkel, $"j_sako_{side}", armDir * sleeveSlip * 0.35f, rootRotInv);
+        OffsetModelBoneWorld(targetSkel, $"j_ude_a_{side}", armDir * sleeveSlip, rootRotInv);
+        OffsetModelBoneWorld(targetSkel, $"j_ude_b_{side}", armDir * sleeveSlip, rootRotInv);
+        OffsetModelBoneWorld(targetSkel, $"j_te_{side}", armDir * sleeveSlip * 0.85f, rootRotInv);
+    }
+
+    private static void OffsetModelBoneWorld(SkeletonAccess skel, string boneName, Vector3 worldOffset, Quaternion rootRotInv)
+    {
+        var idx = FindBoneIndexByName(skel, boneName);
+        if (idx < 0 || idx >= skel.BoneCount)
+            return;
+
+        OffsetModelBoneWorld(skel, idx, worldOffset, rootRotInv);
+    }
+
+    private static void OffsetModelBoneWorld(SkeletonAccess skel, int boneIndex, Vector3 worldOffset, Quaternion rootRotInv)
+    {
+        if (worldOffset.LengthSquared() <= 1e-10f)
+            return;
+
+        var modelOffset = Vector3.Transform(worldOffset, rootRotInv);
+        ref var m = ref skel.Pose->ModelPose.Data[boneIndex];
+        m.Translation.X += modelOffset.X;
+        m.Translation.Y += modelOffset.Y;
+        m.Translation.Z += modelOffset.Z;
+    }
+
+    private static int FindBoneIndexByName(SkeletonAccess skel, string boneName)
+    {
+        var count = Math.Min(skel.BoneCount, skel.ParentCount);
+        for (var i = 0; i < count; i++)
+        {
+            var name = skel.HavokSkeleton->Bones[i].Name.String;
+            if (string.Equals(name, boneName, StringComparison.Ordinal))
+                return i;
+        }
+
+        return -1;
+    }
+
+    private static void ApplySkirtBindSlip(SkeletonAccess skel, Vector3 worldOffset, Quaternion rootRotInv)
+    {
+        var count = Math.Min(skel.BoneCount, skel.ParentCount);
+        for (var i = 0; i < count; i++)
+        {
+            var name = skel.HavokSkeleton->Bones[i].Name.String;
+            if (name != null && name.StartsWith("j_sk_", StringComparison.Ordinal))
+                OffsetModelBoneWorld(skel, i, worldOffset, rootRotInv);
+        }
+    }
+
+    private Vector3 ResolveGarmentSlipDirection(SkeletonAccess skel, Vector3 skelPos, Quaternion skelRot, int slot)
+    {
+        Vector3 axis;
+        if (slot == 3)
+        {
+            if (TryPelvisUpAxis(skel, skelPos, skelRot, out axis) ||
+                TryBoneDelta(skel, skelPos, skelRot, "j_asi_b_l", "j_asi_a_l", out axis) ||
+                TryBoneDelta(skel, skelPos, skelRot, "j_asi_b_r", "j_asi_a_r", out axis))
+            {
+                return NormalizeOrFallback(-axis, -Vector3.UnitY);
+            }
+        }
+        else if (slot == 1)
+        {
+            if (TryBoneDelta(skel, skelPos, skelRot, "j_kosi", "j_sebo_c", out axis) ||
+                TryBoneDelta(skel, skelPos, skelRot, "j_kosi", "j_sebo_b", out axis) ||
+                TryBoneDelta(skel, skelPos, skelRot, "j_kosi", "j_sebo_a", out axis))
+            {
+                return NormalizeOrFallback(-axis, -Vector3.UnitY);
+            }
+        }
+
+        return -Vector3.UnitY;
     }
 
     private bool TryResolveGarmentVisualBindRotation(Clone c, out Quaternion rotation)
@@ -2888,10 +3127,10 @@ public unsafe class DismembermentController : IDisposable
         return Vector3.Lerp(Vector3.One, target, strength);
     }
 
-    // Symmetric-spread slots (round hat + point-like accessories): the deflate "flatten" component can be
-    // re-pointed to any local axis with no side effect, since the other two spread components are equal.
-    // Asymmetric garments (body / pants / gloves / boots) keep their authored crush axis.
-    private static readonly HashSet<int> SymmetricSquashSlots = new() { 0, 5, 6, 7, 8, 9 };
+    // Slots whose deflate "flatten" component follows gravity. Hats/accessories are symmetric enough
+    // that this is a pure axis remap; body and pants opt in because an authored local crush axis can
+    // leave the garment standing upright after it comes to rest on its side/end.
+    private static readonly HashSet<int> GravitySquashAxisSlots = new() { 0, 1, 3, 5, 6, 7, 8, 9 };
 
     // Lock (once, at deflate onset) which LOCAL axis the crush follows so a piece lying on its side
     // flattens toward the ground instead of always along local-Y. An upright piece resolves to Y and is
@@ -2899,7 +3138,7 @@ public unsafe class DismembermentController : IDisposable
     private void LockGearSquashAxisIfNeeded(Clone c, Quaternion renderRot)
     {
         if (c.GearSquashAxis >= 0 || c.GearDeflateFrames <= 0) return;
-        if (!SymmetricSquashSlots.Contains(c.GearKeepModelSlot)) return;
+        if (!GravitySquashAxisSlots.Contains(c.GearKeepModelSlot)) return;
         var up = Vector3.Transform(Vector3.UnitY, Quaternion.Inverse(renderRot)); // world-up in local frame
         var ax = MathF.Abs(up.X);
         var ay = MathF.Abs(up.Y);
@@ -2907,11 +3146,11 @@ public unsafe class DismembermentController : IDisposable
         c.GearSquashAxis = ax >= ay && ax >= az ? 0 : (az >= ax && az >= ay ? 2 : 1);
     }
 
-    // Re-point the crush component of a symmetric squash factor onto the locked gravity axis. No-op until
-    // the axis is locked, and for asymmetric slots.
+    // Re-point the crush component onto the locked gravity axis. No-op until the axis is locked, and for
+    // slots where the authored axis is still preferred.
     private Vector3 ApplyGravitySquashAxis(Clone c, Vector3 factor)
     {
-        if (c.GearSquashAxis < 0 || !SymmetricSquashSlots.Contains(c.GearKeepModelSlot))
+        if (c.GearSquashAxis < 0 || !GravitySquashAxisSlots.Contains(c.GearKeepModelSlot))
             return factor;
         var flat = MathF.Min(factor.X, MathF.Min(factor.Y, factor.Z));
         var spread = MathF.Max(factor.X, MathF.Max(factor.Y, factor.Z));
