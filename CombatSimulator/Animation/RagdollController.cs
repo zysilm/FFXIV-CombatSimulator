@@ -107,7 +107,10 @@ public unsafe class RagdollController : IDisposable
     // Bone-to-body mapping
     private readonly List<RagdollBone> ragdollBones = new();
     private readonly List<ExternalBodyHandle> externalBodies = new();
+    private readonly List<ExternalRigHandle> externalRigs = new();
     private readonly HashSet<int> externalDynamicBodyHandles = new();
+    private readonly HashSet<int> externalRigDynamicBodyHandles = new();
+    private readonly HashSet<(int, int)> externalRigConnectedPairs = new();
     private readonly HashSet<int> softKinematicBodyHandles = new();
 
     // Bone defs actually used for the active ragdoll, keyed by name. For humanoid
@@ -244,6 +247,60 @@ public unsafe class RagdollController : IDisposable
     {
         internal BodyHandle Body;
         internal TypedIndex[] Shapes = Array.Empty<TypedIndex>();
+        internal int Generation;
+        internal bool Removed;
+    }
+
+    public readonly struct ExternalRigBodySpec
+    {
+        public readonly string Name;
+        public readonly IReadOnlyList<ExternalShapePart> Parts;
+        public readonly float Mass;
+        public readonly Vector3 Position;
+        public readonly Quaternion Orientation;
+        public readonly Vector3 LinearVelocity;
+        public readonly Vector3 AngularVelocity;
+
+        public ExternalRigBodySpec(
+            string name,
+            IReadOnlyList<ExternalShapePart> parts,
+            float mass,
+            Vector3 position,
+            Quaternion orientation,
+            Vector3 linearVelocity,
+            Vector3 angularVelocity)
+        {
+            Name = name;
+            Parts = parts;
+            Mass = mass;
+            Position = position;
+            Orientation = orientation;
+            LinearVelocity = linearVelocity;
+            AngularVelocity = angularVelocity;
+        }
+    }
+
+    public readonly struct ExternalRigJointSpec
+    {
+        public readonly int ParentIndex;
+        public readonly int ChildIndex;
+        public readonly Vector3 AnchorWorld;
+        public readonly float SwingLimit;
+
+        public ExternalRigJointSpec(int parentIndex, int childIndex, Vector3 anchorWorld, float swingLimit)
+        {
+            ParentIndex = parentIndex;
+            ChildIndex = childIndex;
+            AnchorWorld = anchorWorld;
+            SwingLimit = swingLimit;
+        }
+    }
+
+    public sealed class ExternalRigHandle
+    {
+        internal readonly List<ExternalBodyHandle> Bodies = new();
+        internal readonly List<ConstraintHandle> Constraints = new();
+        internal readonly List<(int, int)> ConnectedPairs = new();
         internal int Generation;
         internal bool Removed;
     }
@@ -411,6 +468,122 @@ public unsafe class RagdollController : IDisposable
         }
     }
 
+    public bool TryCreateExternalRig(
+        IReadOnlyList<ExternalRigBodySpec> bodySpecs,
+        IReadOnlyList<ExternalRigJointSpec> jointSpecs,
+        out ExternalRigHandle? handle)
+    {
+        handle = null;
+        if (!isActive || simulation == null || bufferPool == null || bodySpecs.Count == 0)
+            return false;
+
+        var rig = new ExternalRigHandle { Generation = externalBodyGeneration };
+        try
+        {
+            for (var i = 0; i < bodySpecs.Count; i++)
+            {
+                var spec = bodySpecs[i];
+                if (spec.Parts.Count == 0)
+                    throw new InvalidOperationException($"External rig body '{spec.Name}' has no shapes.");
+
+                var shapeIndex = CreateExternalBodyShape(spec.Parts, out var shapes, out var inertia, spec.Mass);
+                var bodyHandle = simulation.Bodies.Add(BodyDescription.CreateDynamic(
+                    new RigidPose(spec.Position, Quaternion.Normalize(spec.Orientation)),
+                    default(BodyVelocity),
+                    inertia,
+                    new CollidableDescription(shapeIndex, 0.016f),
+                    new BodyActivityDescription(0.01f)));
+
+                var body = simulation.Bodies.GetBodyReference(bodyHandle);
+                body.Velocity.Linear = spec.LinearVelocity;
+                body.Velocity.Angular = spec.AngularVelocity;
+                body.Awake = true;
+
+                var bodyHandleWrapper = new ExternalBodyHandle
+                {
+                    Body = bodyHandle,
+                    Shapes = shapes.ToArray(),
+                    Generation = externalBodyGeneration,
+                };
+                rig.Bodies.Add(bodyHandleWrapper);
+                externalBodies.Add(bodyHandleWrapper);
+                externalDynamicBodyHandles.Add(bodyHandle.Value);
+                externalRigDynamicBodyHandles.Add(bodyHandle.Value);
+            }
+
+            foreach (var joint in jointSpecs)
+            {
+                if (joint.ParentIndex < 0 || joint.ParentIndex >= rig.Bodies.Count ||
+                    joint.ChildIndex < 0 || joint.ChildIndex >= rig.Bodies.Count ||
+                    joint.ParentIndex == joint.ChildIndex)
+                    continue;
+
+                AddExternalRigJoint(rig, joint);
+            }
+
+            externalRigs.Add(rig);
+            handle = rig;
+            prevAllAsleep = false;
+            WakeRagdollBodiesForBiomechanicalSettle();
+            BeginBiomechanicalSettle(0.45f);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "RagdollController: failed to create external rig");
+            RemoveExternalRig(rig);
+            return false;
+        }
+    }
+
+    private void AddExternalRigJoint(ExternalRigHandle rig, ExternalRigJointSpec joint)
+    {
+        if (simulation == null)
+            return;
+
+        var parent = rig.Bodies[joint.ParentIndex];
+        var child = rig.Bodies[joint.ChildIndex];
+        var parentBody = simulation.Bodies.GetBodyReference(parent.Body);
+        var childBody = simulation.Bodies.GetBodyReference(child.Body);
+
+        var anchorWorld = joint.AnchorWorld;
+        var childLocalAnchor = Vector3.Transform(anchorWorld - childBody.Pose.Position, Quaternion.Inverse(childBody.Pose.Orientation));
+        var parentLocalAnchor = Vector3.Transform(anchorWorld - parentBody.Pose.Position, Quaternion.Inverse(parentBody.Pose.Orientation));
+        var jointSpring = new SpringSettings(9f, 1.4f);
+        var limitSpring = new SpringSettings(5f, 1.6f);
+
+        rig.Constraints.Add(simulation.Solver.Add(child.Body, parent.Body, new BallSocket
+        {
+            LocalOffsetA = childLocalAnchor,
+            LocalOffsetB = parentLocalAnchor,
+            SpringSettings = jointSpring,
+        }));
+
+        var childAxisWorld = NormalizeOrFallback(Vector3.Transform(Vector3.UnitY, childBody.Pose.Orientation), Vector3.UnitY);
+        if (joint.SwingLimit > 0f)
+        {
+            rig.Constraints.Add(simulation.Solver.Add(child.Body, parent.Body, new SwingLimit
+            {
+                AxisLocalA = Vector3.Normalize(Vector3.Transform(childAxisWorld, Quaternion.Inverse(childBody.Pose.Orientation))),
+                AxisLocalB = Vector3.Normalize(Vector3.Transform(childAxisWorld, Quaternion.Inverse(parentBody.Pose.Orientation))),
+                MaximumSwingAngle = Math.Clamp(joint.SwingLimit, 0.05f, MathF.PI - 0.05f),
+                SpringSettings = limitSpring,
+            }));
+        }
+
+        rig.Constraints.Add(simulation.Solver.Add(child.Body, parent.Body, new AngularMotor
+        {
+            TargetVelocityLocalA = Vector3.Zero,
+            Settings = new MotorSettings(0.65f, 0.45f),
+        }));
+
+        var lo = Math.Min(parent.Body.Value, child.Body.Value);
+        var hi = Math.Max(parent.Body.Value, child.Body.Value);
+        var pair = (lo, hi);
+        rig.ConnectedPairs.Add(pair);
+        externalRigConnectedPairs.Add(pair);
+    }
+
     public bool TrySetExternalBodyShape(ExternalBodyHandle? handle,
         IReadOnlyList<ExternalShapePart> parts, float mass)
     {
@@ -515,6 +688,72 @@ public unsafe class RagdollController : IDisposable
         }
     }
 
+    public bool TryGetExternalRigBodyPose(ExternalRigHandle? handle, int bodyIndex,
+        out Vector3 position, out Quaternion orientation, out Vector3 linearVelocity, out Vector3 angularVelocity)
+    {
+        position = Vector3.Zero;
+        orientation = Quaternion.Identity;
+        linearVelocity = Vector3.Zero;
+        angularVelocity = Vector3.Zero;
+
+        if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration ||
+            simulation == null || bodyIndex < 0 || bodyIndex >= handle.Bodies.Count)
+            return false;
+
+        return TryGetExternalBodyPose(handle.Bodies[bodyIndex], out position, out orientation,
+            out linearVelocity, out angularVelocity);
+    }
+
+    public bool TryApplyExternalRigVelocityDelta(ExternalRigHandle? handle, Vector3 velocityDelta)
+    {
+        if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
+            return false;
+
+        foreach (var bodyHandle in handle.Bodies)
+        {
+            try
+            {
+                var body = simulation.Bodies.GetBodyReference(bodyHandle.Body);
+                body.Velocity.Linear += velocityDelta;
+                body.Awake = true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public bool TryDampenExternalRigVelocity(ExternalRigHandle? handle,
+        float horizontalScale, float verticalScale, float angularScale)
+    {
+        if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
+            return false;
+
+        horizontalScale = Math.Clamp(horizontalScale, 0f, 1f);
+        verticalScale = Math.Clamp(verticalScale, 0f, 1f);
+        angularScale = Math.Clamp(angularScale, 0f, 1f);
+
+        foreach (var bodyHandle in handle.Bodies)
+        {
+            try
+            {
+                var body = simulation.Bodies.GetBodyReference(bodyHandle.Body);
+                var lin = body.Velocity.Linear;
+                body.Velocity.Linear = new Vector3(lin.X * horizontalScale, lin.Y * verticalScale, lin.Z * horizontalScale);
+                body.Velocity.Angular *= angularScale;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public bool TrySetExternalBodyRotation(ExternalBodyHandle? handle, Quaternion orientation, float angularVelocityScale)
     {
         if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
@@ -591,6 +830,33 @@ public unsafe class RagdollController : IDisposable
         externalDynamicBodyHandles.Remove(handle.Body.Value);
         handle.Removed = true;
         externalBodies.Remove(handle);
+    }
+
+    public void RemoveExternalRig(ExternalRigHandle? handle)
+    {
+        if (handle == null || handle.Removed)
+            return;
+
+        if (simulation != null && handle.Generation == externalBodyGeneration)
+        {
+            foreach (var constraint in handle.Constraints)
+                try { simulation.Solver.Remove(constraint); } catch { }
+        }
+
+        foreach (var pair in handle.ConnectedPairs)
+            externalRigConnectedPairs.Remove(pair);
+        handle.Constraints.Clear();
+        handle.ConnectedPairs.Clear();
+
+        foreach (var bodyHandle in handle.Bodies)
+        {
+            externalRigDynamicBodyHandles.Remove(bodyHandle.Body.Value);
+            RemoveExternalBody(bodyHandle);
+        }
+
+        handle.Bodies.Clear();
+        handle.Removed = true;
+        externalRigs.Remove(handle);
     }
 
     private bool AnyExternalBodyAwake()
@@ -2968,6 +3234,8 @@ public unsafe class RagdollController : IDisposable
             {
                 ConnectedPairs = connectedPairs,
                 ExternalDynamicBodies = externalDynamicBodyHandles,
+                ExternalRigDynamicBodies = externalRigDynamicBodyHandles,
+                ExternalRigConnectedPairs = externalRigConnectedPairs,
                 SoftKinematicBodies = softKinematicBodyHandles,
                 Friction = config.RagdollFriction,
                 Config = config,
@@ -8958,7 +9226,10 @@ public unsafe class RagdollController : IDisposable
         biomechanicalSettleRemaining = 0f;
         ragdollBones.Clear();
         externalBodies.Clear();
+        externalRigs.Clear();
         externalDynamicBodyHandles.Clear();
+        externalRigDynamicBodyHandles.Clear();
+        externalRigConnectedPairs.Clear();
         softKinematicBodyHandles.Clear();
         npcCollisionStates.Clear();
         npcFallbackShapeReady = false;
@@ -8990,6 +9261,8 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     // All other body-body pairs DO collide (arms vs torso, etc.).
     public HashSet<(int, int)>? ConnectedPairs;
     public HashSet<int>? ExternalDynamicBodies;
+    public HashSet<int>? ExternalRigDynamicBodies;
+    public HashSet<(int, int)>? ExternalRigConnectedPairs;
     public HashSet<int>? SoftKinematicBodies;
     public HashSet<int>? RestrictedStatics;
     public HashSet<int>? AllowedDynamicBodiesForRestrictedStatics;
@@ -9026,7 +9299,28 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         // Connected pairs would explode because they share a constraint anchor point.
         if (a.Mobility == CollidableMobility.Dynamic && b.Mobility == CollidableMobility.Dynamic)
         {
-            if (IsExternalDynamic(a.BodyHandle.Value) || IsExternalDynamic(b.BodyHandle.Value))
+            var aId = a.BodyHandle.Value;
+            var bId = b.BodyHandle.Value;
+            var aExternal = IsExternalDynamic(aId);
+            var bExternal = IsExternalDynamic(bId);
+            var aRig = IsExternalRigDynamic(aId);
+            var bRig = IsExternalRigDynamic(bId);
+            if (aRig || bRig)
+            {
+                var rigLo = Math.Min(aId, bId);
+                var rigHi = Math.Max(aId, bId);
+                if (ExternalRigConnectedPairs != null && ExternalRigConnectedPairs.Contains((rigLo, rigHi)))
+                    return false;
+
+                // The garment rig should collide with the corpse ragdoll, but not with legacy
+                // single-piece dropped gear. Single gear remains ground-only by design below.
+                if ((aRig && bExternal && !bRig) || (bRig && aExternal && !aRig))
+                    return false;
+
+                return true;
+            }
+
+            if (aExternal || bExternal)
             {
                 // Dropped gear falls independently straight to the ground: it must NOT rest on the
                 // corpse's invisible limb capsules or pile on other dropped pieces. That dynamic-vs-
@@ -9039,10 +9333,8 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
             if (ConnectedPairs == null)
                 return false;
 
-            var idA = a.BodyHandle.Value;
-            var idB = b.BodyHandle.Value;
-            var lo = Math.Min(idA, idB);
-            var hi = Math.Max(idA, idB);
+            var lo = Math.Min(aId, bId);
+            var hi = Math.Max(aId, bId);
             if (ConnectedPairs.Contains((lo, hi)))
                 return false;
             return true;
@@ -9103,6 +9395,9 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 
     private bool IsExternalDynamic(int bodyHandle)
         => ExternalDynamicBodies != null && ExternalDynamicBodies.Contains(bodyHandle);
+
+    private bool IsExternalRigDynamic(int bodyHandle)
+        => ExternalRigDynamicBodies != null && ExternalRigDynamicBodies.Contains(bodyHandle);
 
     private bool IsSoftKinematicContact(CollidablePair pair)
         => SoftKinematicBodies != null &&

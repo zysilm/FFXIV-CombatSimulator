@@ -162,6 +162,8 @@ public unsafe class DismembermentController : IDisposable
         public List<TypedIndex>? Shapes; // compound + child shapes to dispose
         public BodyHandle? Body;
         public RagdollController.ExternalBodyHandle? GearRagdollBody;
+        public RagdollController.ExternalRigHandle? GearRagdollRig;
+        public GarmentRig? GearGarmentRig;
         public LimbRig? Rig;
         public StaticHandle? GroundTile;
         public TypedIndex? GroundShape;
@@ -263,6 +265,23 @@ public unsafe class DismembermentController : IDisposable
         public readonly HashSet<int> BoneIndices = new();
         public readonly List<(int, int)> ConnectedPairs = new();
         public readonly List<TypedIndex> Shapes = new();
+    }
+
+    private sealed class GarmentRig
+    {
+        public readonly List<GarmentRigBody> Bodies = new();
+        public readonly HashSet<int> BoneIndices = new();
+        public float MaxHalfExtent;
+    }
+
+    private struct GarmentRigBody
+    {
+        public int BoneIndex;
+        public string BoneName;
+        public int ExternalIndex;
+        public Quaternion BodyToBoneRotation;
+        public float SegmentHalfLength;
+        public Vector3 HalfExtents;
     }
 
     private struct LimbBody
@@ -1321,6 +1340,197 @@ public unsafe class DismembermentController : IDisposable
         return true;
     }
 
+    /// <summary>Create a small articulated garment rig inside the player's ragdoll simulation.</summary>
+    private bool TryCreateRagdollGarmentRig(SkeletonAccess skel, Clone c, GearShapeSpec spec)
+    {
+        var ragdoll = PlayerRagdollController;
+        if (!c.IsPlayerControlledSource ||
+            ragdoll == null ||
+            !ragdoll.IsSimulationReady ||
+            ragdoll.TargetCharacterAddress != c.SourceAddress ||
+            !TryGetSkeletonWorldTransform(skel, out var skelPos, out var skelRot))
+        {
+            return false;
+        }
+
+        var rig = new GarmentRig();
+        var bodySpecs = new List<RagdollController.ExternalRigBodySpec>();
+        var joints = new List<RagdollController.ExternalRigJointSpec>();
+        var indexByName = new Dictionary<string, int>(StringComparer.Ordinal);
+        var seed = ResolveGearBodySeedVelocity(c);
+        var baseLinear = seed?.Linear ?? Vector3.Zero;
+        var baseAngular = seed?.Angular ?? Vector3.Zero;
+
+        if (c.GearKeepModelSlot != 1)
+        {
+            var impulse = MathF.Max(0f, DismemberActivationImpulse);
+            if (impulse > 0f)
+            {
+                var dir = c.OutwardWorldDir;
+                dir = dir.LengthSquared() < 1e-6f ? Vector3.UnitX : Vector3.Normalize(dir);
+                baseLinear += dir * impulse;
+            }
+        }
+
+        var mass = MathF.Max(0.05f, spec.Mass);
+        if (c.GearKeepModelSlot == 3)
+        {
+            var hipHalf = new Vector3(
+                MathF.Max(0.045f, spec.Half.X * 0.75f),
+                MathF.Max(0.018f, spec.Half.Y * 0.16f),
+                MathF.Max(0.035f, spec.Half.Z * 0.65f));
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_kosi", null,
+                skelPos, skelRot, hipHalf, mass * 0.24f, baseLinear, baseAngular);
+
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_asi_a_l", "j_asi_b_l",
+                skelPos, skelRot, new Vector3(0.042f, 0.11f, 0.034f) * spec.Scale, mass * 0.19f, baseLinear, baseAngular);
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_asi_b_l", "j_asi_d_l",
+                skelPos, skelRot, new Vector3(0.035f, 0.11f, 0.030f) * spec.Scale, mass * 0.19f, baseLinear, baseAngular);
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_asi_a_r", "j_asi_b_r",
+                skelPos, skelRot, new Vector3(0.042f, 0.11f, 0.034f) * spec.Scale, mass * 0.19f, baseLinear, baseAngular);
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_asi_b_r", "j_asi_d_r",
+                skelPos, skelRot, new Vector3(0.035f, 0.11f, 0.030f) * spec.Scale, mass * 0.19f, baseLinear, baseAngular);
+
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_kosi", "j_asi_a_l", "j_asi_a_l", 2.35f);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_asi_a_l", "j_asi_b_l", "j_asi_b_l", 2.15f);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_kosi", "j_asi_a_r", "j_asi_a_r", 2.35f);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_asi_a_r", "j_asi_b_r", "j_asi_b_r", 2.15f);
+        }
+        else if (c.GearKeepModelSlot == 1)
+        {
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_kosi", "j_sebo_b",
+                skelPos, skelRot, new Vector3(
+                    MathF.Max(0.060f, spec.Half.X * 0.70f),
+                    MathF.Max(0.070f, spec.Half.Y * 0.34f),
+                    MathF.Max(0.034f, spec.Half.Z * 0.70f)), mass * 0.26f, baseLinear, baseAngular);
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_sebo_b", "j_sebo_c",
+                skelPos, skelRot, new Vector3(
+                    MathF.Max(0.070f, spec.Half.X * 0.76f),
+                    MathF.Max(0.045f, spec.Half.Y * 0.20f),
+                    MathF.Max(0.034f, spec.Half.Z * 0.72f)), mass * 0.22f, baseLinear, baseAngular);
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_ude_a_l", "j_ude_b_l",
+                skelPos, skelRot, new Vector3(0.034f, 0.075f, 0.030f) * spec.Scale, mass * 0.13f, baseLinear, baseAngular);
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_ude_b_l", "j_te_l",
+                skelPos, skelRot, new Vector3(0.030f, 0.065f, 0.026f) * spec.Scale, mass * 0.11f, baseLinear, baseAngular);
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_ude_a_r", "j_ude_b_r",
+                skelPos, skelRot, new Vector3(0.034f, 0.075f, 0.030f) * spec.Scale, mass * 0.13f, baseLinear, baseAngular);
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_ude_b_r", "j_te_r",
+                skelPos, skelRot, new Vector3(0.030f, 0.065f, 0.026f) * spec.Scale, mass * 0.11f, baseLinear, baseAngular);
+
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_kosi", "j_sebo_b", "j_sebo_b", 2.05f);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_b", "j_ude_a_l", "j_sako_l", 2.35f);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_ude_a_l", "j_ude_b_l", "j_ude_b_l", 2.10f);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_b", "j_ude_a_r", "j_sako_r", 2.35f);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_ude_a_r", "j_ude_b_r", "j_ude_b_r", 2.10f);
+        }
+
+        if (bodySpecs.Count < 3 || joints.Count == 0)
+            return false;
+
+        if (!ragdoll.TryCreateExternalRig(bodySpecs, joints, out var handle))
+            return false;
+
+        c.GearRagdollRig = handle;
+        c.GearGarmentRig = rig;
+        log.Info($"GearDrop: clone idx={c.ObjectIndex} created garment rig slot={c.GearKeepModelSlot} bodies={bodySpecs.Count}");
+        return true;
+    }
+
+    private bool AddGarmentRigBody(
+        SkeletonAccess skel,
+        Clone c,
+        GarmentRig rig,
+        List<RagdollController.ExternalRigBodySpec> specs,
+        Dictionary<string, int> indexByName,
+        string boneName,
+        string? childName,
+        Vector3 skelPos,
+        Quaternion skelRot,
+        Vector3 requestedHalf,
+        float mass,
+        Vector3 baseLinear,
+        Vector3 baseAngular)
+    {
+        if (!TryGetBoneWorldPosition(skel, skelPos, skelRot, boneName, out var boneWorldPos) ||
+            !TryGetBoneWorldRotation(skel, skelRot, boneName, out var boneWorldRot))
+        {
+            return false;
+        }
+
+        var bodyPos = boneWorldPos;
+        var bodyRot = boneWorldRot;
+        var segmentHalf = 0f;
+        var half = requestedHalf;
+        if (!string.IsNullOrEmpty(childName) &&
+            TryGetBoneWorldPosition(skel, skelPos, skelRot, childName, out var childWorldPos))
+        {
+            var segment = childWorldPos - boneWorldPos;
+            var len = segment.Length();
+            if (len > 0.02f)
+            {
+                segmentHalf = MathF.Min(MathF.Max(0.035f, requestedHalf.Y), len * 0.45f);
+                var axis = segment / len;
+                bodyPos = boneWorldPos + axis * segmentHalf;
+                bodyRot = CreateCapsuleRotation(segment, boneWorldRot);
+                half = requestedHalf with { Y = segmentHalf };
+            }
+        }
+
+        var idx = boneService.ResolveBoneIndex(skel, boneName);
+        if (idx < 0 || idx >= skel.BoneCount)
+            return false;
+
+        var bodyIndex = specs.Count;
+        var parts = new[]
+        {
+            new RagdollController.ExternalShapePart(half, Vector3.Zero, Quaternion.Identity),
+        };
+        var boneSeed = ResolveBodySeedVelocity(c, boneName);
+        specs.Add(new RagdollController.ExternalRigBodySpec(
+            boneName,
+            parts,
+            MathF.Max(0.05f, mass),
+            bodyPos,
+            bodyRot,
+            baseLinear + (boneSeed?.Linear ?? Vector3.Zero) * 0.25f,
+            baseAngular + (boneSeed?.Angular ?? Vector3.Zero) * 0.25f));
+
+        rig.Bodies.Add(new GarmentRigBody
+        {
+            BoneIndex = idx,
+            BoneName = boneName,
+            ExternalIndex = bodyIndex,
+            BodyToBoneRotation = Quaternion.Normalize(Quaternion.Inverse(bodyRot) * boneWorldRot),
+            SegmentHalfLength = segmentHalf,
+            HalfExtents = half,
+        });
+        rig.BoneIndices.Add(idx);
+        rig.MaxHalfExtent = MathF.Max(rig.MaxHalfExtent, MathF.Max(half.X, MathF.Max(half.Y, half.Z)));
+        indexByName[boneName] = bodyIndex;
+        return true;
+    }
+
+    private void AddGarmentRigJoint(
+        SkeletonAccess skel,
+        Vector3 skelPos,
+        Quaternion skelRot,
+        Dictionary<string, int> indexByName,
+        List<RagdollController.ExternalRigJointSpec> joints,
+        string parentName,
+        string childName,
+        string anchorBoneName,
+        float swingLimit)
+    {
+        if (!indexByName.TryGetValue(parentName, out var parent) ||
+            !indexByName.TryGetValue(childName, out var child) ||
+            !TryGetBoneWorldPosition(skel, skelPos, skelRot, anchorBoneName, out var anchor))
+        {
+            return;
+        }
+
+        joints.Add(new RagdollController.ExternalRigJointSpec(parent, child, anchor, swingLimit));
+    }
+
     /// <summary>Bone immediately above <paramref name="boneName"/> in the source skeleton — the
     /// body-side "stump" bone that should recoil at the cut.</summary>
     private string? ResolveBodyParentBone(nint sourceAddress, string boneName)
@@ -2092,7 +2302,12 @@ public unsafe class DismembermentController : IDisposable
                 new Vector3(spawnPos.X, spawnPos.Y + 5f, spawnPos.Z), new Vector3(0, -1, 0), out var groundHit, 80f)
                 ? groundHit.Point.Y : spawnPos.Y - 1.5f;
 
-            if (!TryCreateRagdollGearBody(c, shapeSpec, spawnPos, gearRot))
+            if (UseAdvancedGarmentPhysics(c) && TryCreateRagdollGarmentRig(skel, c, shapeSpec))
+            {
+                c.Body = null;
+                c.GearRagdollBody = null;
+            }
+            else if (!TryCreateRagdollGearBody(c, shapeSpec, spawnPos, gearRot))
             {
                 EnsureSimulation();
                 if (simulation != null)
@@ -2134,6 +2349,9 @@ public unsafe class DismembermentController : IDisposable
             }
         }
         RestoreGearPartialPoseSnapshots(c, skel.CharBase);
+
+        if (c.GearRagdollRig != null && c.GearGarmentRig != null)
+            return UpdateGarmentRigClone(skel, c, drawObj);
 
         if (!TryGetGearBodyState(c, out var bodyPos, out var bodyRot, out var linearVelocity, out var angularVelocity))
             return true;
@@ -2223,6 +2441,177 @@ public unsafe class DismembermentController : IDisposable
         linearVelocity = bodyRef.Velocity.Linear;
         angularVelocity = bodyRef.Velocity.Angular;
         return true;
+    }
+
+    private bool UpdateGarmentRigClone(SkeletonAccess skel, Clone c, DrawObject* drawObj)
+    {
+        var rig = c.GearGarmentRig;
+        var handle = c.GearRagdollRig;
+        var ragdoll = PlayerRagdollController;
+        if (rig == null || handle == null || ragdoll == null || rig.Bodies.Count == 0)
+            return true;
+
+        var posSum = Vector3.Zero;
+        var linearSum = Vector3.Zero;
+        var angularSum = Vector3.Zero;
+        var maxLinear = Vector3.Zero;
+        var maxAngular = Vector3.Zero;
+        var maxLinearSq = 0f;
+        var maxAngularSq = 0f;
+        var count = 0;
+
+        foreach (var rb in rig.Bodies)
+        {
+            if (!ragdoll.TryGetExternalRigBodyPose(handle, rb.ExternalIndex,
+                    out var pos, out _, out var linear, out var angular))
+                return true;
+
+            posSum += pos;
+            linearSum += linear;
+            angularSum += angular;
+            count++;
+
+            var linearSq = linear.LengthSquared();
+            if (linearSq > maxLinearSq)
+            {
+                maxLinearSq = linearSq;
+                maxLinear = linear;
+            }
+
+            var angularSq = angular.LengthSquared();
+            if (angularSq > maxAngularSq)
+            {
+                maxAngularSq = angularSq;
+                maxAngular = angular;
+            }
+        }
+
+        if (count <= 0)
+            return true;
+
+        var invCount = 1f / count;
+        var avgPos = posSum * invCount;
+        var avgLinear = linearSum * invCount;
+        var avgAngular = angularSum * invCount;
+        var settleLinear = maxLinearSq > avgLinear.LengthSquared() ? maxLinear : avgLinear;
+        var settleAngular = maxAngularSq > avgAngular.LengthSquared() ? maxAngular : avgAngular;
+
+        UpdateGearSettleProgress(c, settleLinear, settleAngular);
+        ApplyGarmentHandoffDrag(c, avgPos, avgLinear);
+        MaybeResampleGearGround(c, avgPos);
+
+        if (TryEstimateGarmentRigGroundStats(c, rig, out var averageGroundHeight, out var lowestGroundHeight))
+            ApplyGearGroundContactDamping(c, averageGroundHeight, lowestGroundHeight);
+
+        c.GearDeflateFrames = 0;
+        c.GearGroundVisualOffset = 0f;
+        SetCloneBaseTransform(c, avgPos, Quaternion.Identity);
+        if (drawObj != null)
+            ApplyGearVisualSquash(c, drawObj, Vector3.One);
+
+        if (!TryGetSkeletonWorldTransform(skel, out var skelPos, out var skelRot))
+            return true;
+
+        DriveGarmentRigBones(skel, c, rig, skelPos, skelRot);
+        if (c.GearKeepModelSlot == 1)
+            DriveSkirtHang(skel, c);
+        return true;
+    }
+
+    private bool TryEstimateGarmentRigGroundStats(Clone c, GarmentRig rig,
+        out float averageHeight, out float lowestHeight)
+    {
+        averageHeight = 0f;
+        lowestHeight = 0f;
+        if (float.IsNegativeInfinity(c.GearGroundY))
+            return false;
+
+        var ragdoll = PlayerRagdollController;
+        if (ragdoll == null || c.GearRagdollRig == null)
+            return false;
+
+        var sum = 0f;
+        var count = 0;
+        var lowest = float.MaxValue;
+
+        foreach (var rb in rig.Bodies)
+        {
+            if (!ragdoll.TryGetExternalRigBodyPose(c.GearRagdollRig, rb.ExternalIndex,
+                    out var pos, out var rot, out _, out _))
+                continue;
+
+            AccumulateGearBoxGroundStats(pos, Quaternion.Normalize(rot), Quaternion.Identity,
+                Vector3.Zero, rb.HalfExtents, c.GearGroundY, ref sum, ref count, ref lowest);
+        }
+
+        if (count <= 0 || lowest == float.MaxValue)
+            return false;
+
+        averageHeight = sum / count;
+        lowestHeight = lowest;
+        return true;
+    }
+
+    private void DriveGarmentRigBones(SkeletonAccess skel, Clone c, GarmentRig rig,
+        Vector3 skelPos, Quaternion skelRot)
+    {
+        var ragdoll = PlayerRagdollController;
+        if (ragdoll == null || c.GearRagdollRig == null)
+            return;
+
+        var skelRotInv = Quaternion.Inverse(skelRot);
+        var result = new BoneModificationResult(skel.BoneCount);
+        for (int i = 0; i < skel.BoneCount; i++)
+        {
+            ref var m = ref skel.Pose->ModelPose.Data[i];
+            result.OriginalPositions[i] = new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z);
+            result.OriginalRotations[i] = Quaternion.Normalize(new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W));
+        }
+
+        foreach (var rb in rig.Bodies)
+        {
+            if (rb.BoneIndex < 0 || rb.BoneIndex >= skel.BoneCount)
+                continue;
+
+            if (!ragdoll.TryGetExternalRigBodyPose(c.GearRagdollRig, rb.ExternalIndex,
+                    out var bodyPos, out var bodyRot, out _, out _))
+                continue;
+
+            bodyRot = Quaternion.Normalize(bodyRot);
+            var boneWorldRot = Quaternion.Normalize(bodyRot * rb.BodyToBoneRotation);
+            var boneWorldPos = bodyPos;
+            if (rb.SegmentHalfLength > 0f)
+            {
+                var yAxis = Vector3.Transform(Vector3.UnitY, bodyRot);
+                boneWorldPos -= yAxis * rb.SegmentHalfLength;
+            }
+
+            var modelPos = Vector3.Transform(boneWorldPos - skelPos, skelRotInv);
+            var modelRot = Quaternion.Normalize(skelRotInv * boneWorldRot);
+            boneService.WriteBoneTransform(skel, rb.BoneIndex, modelPos, modelRot, result);
+        }
+
+        for (int i = 0; i < skel.BoneCount && i < skel.ParentCount; i++)
+        {
+            if (rig.BoneIndices.Contains(i))
+                continue;
+
+            var parentIdx = skel.HavokSkeleton->ParentIndices[i];
+            if (parentIdx < 0 || parentIdx >= skel.BoneCount || !result.HasAccumulated[parentIdx])
+                continue;
+
+            var parentDelta = result.AccumulatedDeltas[parentIdx];
+            var parentOrigPos = result.OriginalPositions[parentIdx];
+            ref var parentModel = ref skel.Pose->ModelPose.Data[parentIdx];
+            var parentNewPos = new Vector3(parentModel.Translation.X, parentModel.Translation.Y, parentModel.Translation.Z);
+
+            var relPos = result.OriginalPositions[i] - parentOrigPos;
+            relPos = Vector3.Transform(relPos, parentDelta);
+            var newPos = parentOrigPos + relPos + (parentNewPos - parentOrigPos);
+            var newRot = Quaternion.Normalize(parentDelta * result.OriginalRotations[i]);
+
+            boneService.WriteBoneTransform(skel, i, newPos, newRot, result);
+        }
     }
 
     private Vector3 ResolveGearAnchorModelPos(SkeletonAccess skel, Clone c)
@@ -3031,6 +3420,12 @@ public unsafe class DismembermentController : IDisposable
 
     private void ApplyGearVelocityDelta(Clone c, Vector3 velocityDelta)
     {
+        if (c.GearRagdollRig != null)
+        {
+            PlayerRagdollController?.TryApplyExternalRigVelocityDelta(c.GearRagdollRig, velocityDelta);
+            return;
+        }
+
         if (c.GearRagdollBody != null)
         {
             PlayerRagdollController?.TryApplyExternalVelocityDelta(c.GearRagdollBody, velocityDelta);
@@ -3078,6 +3473,9 @@ public unsafe class DismembermentController : IDisposable
 
     private void UpdateGearDeflateProgress(Clone c, bool hasGroundStats, float averageHeight, float lowestHeight)
     {
+        if (c.GearRagdollRig != null)
+            return;
+
         if (!IsDeflatableGear(c))
             return;
 
@@ -3115,6 +3513,9 @@ public unsafe class DismembermentController : IDisposable
 
     private Vector3 ResolveGearVisualSquashFactor(Clone c)
     {
+        if (c.GearRagdollRig != null)
+            return Vector3.One;
+
         if (!IsDeflatableGear(c) || c.GearDeflateFrames <= 0)
             return Vector3.One;
 
@@ -3198,6 +3599,7 @@ public unsafe class DismembermentController : IDisposable
     private bool TryApplyGearCollapsedPhysicsShape(Clone c)
     {
         if (c.GearCollapsedPhysicsApplied ||
+            c.GearRagdollRig != null ||
             c.GearKeepModelSlot == 1 ||
             !IsDeflatableGear(c) ||
             c.GearDeflateFrames < GearPhysicsCollapseFrame ||
@@ -3432,6 +3834,13 @@ public unsafe class DismembermentController : IDisposable
         verticalScale = Math.Clamp(verticalScale, 0f, 1f);
         angularScale = Math.Clamp(angularScale, 0f, 1f);
 
+        if (c.GearRagdollRig != null)
+        {
+            PlayerRagdollController?.TryDampenExternalRigVelocity(c.GearRagdollRig,
+                horizontalScale, verticalScale, angularScale);
+            return;
+        }
+
         if (c.GearRagdollBody != null)
         {
             PlayerRagdollController?.TryDampenExternalBodyVelocity(c.GearRagdollBody,
@@ -3460,6 +3869,9 @@ public unsafe class DismembermentController : IDisposable
 
     private void ApplyGearDeflate(SkeletonAccess skel, Clone c)
     {
+        if (c.GearRagdollRig != null)
+            return;
+
         if (!IsDeflatableGear(c) || c.GearDeflateFrames <= 0 || c.GearCapById == null)
             return;
 
@@ -5481,6 +5893,9 @@ public unsafe class DismembermentController : IDisposable
             }
             PlayerRagdollController?.RemoveExternalBody(c.GearRagdollBody);
             c.GearRagdollBody = null;
+            PlayerRagdollController?.RemoveExternalRig(c.GearRagdollRig);
+            c.GearRagdollRig = null;
+            c.GearGarmentRig = null;
 
             // Only touch game memory while the session is alive (shutdown frees these objects).
             var clientObjMgr = ClientObjectManager.Instance();
