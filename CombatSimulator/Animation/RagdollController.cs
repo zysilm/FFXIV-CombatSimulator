@@ -4330,7 +4330,7 @@ public unsafe class RagdollController : IDisposable
                         var beforeMeshes = processedMeshes;
                         var beforeTriangles = triangles.Count;
                         processedMeshes += AppendSkinnedMdlTriangles(modelPath, rawMdl, ns, skinDeltas, triangles);
-                        log.Warning($"RagdollController: {label} mesh collision mdl parser failed for slot {slot} '{modelPath}', raw geometry fallback used: meshes={processedMeshes - beforeMeshes}, triangles={triangles.Count - beforeTriangles}");
+                        log.Warning($"RagdollController: {label} mesh collision mdl parser failed for slot {slot} '{modelPath}' ({ex.GetType().Name}: {ex.Message}), raw geometry fallback used: meshes={processedMeshes - beforeMeshes}, triangles={triangles.Count - beforeTriangles}");
                     }
                     else
                     {
@@ -4368,7 +4368,8 @@ public unsafe class RagdollController : IDisposable
                     HasPreviousPose = true,
                 });
 
-                log.Info($"RagdollController: {label} mesh collision - {triangles.Count} triangles from {loadedModels} models/{processedMeshes} meshes");
+                var meshScale = GetSkeletonScale(ns);
+                log.Info($"RagdollController: {label} mesh collision - {triangles.Count} triangles from {loadedModels} models/{processedMeshes} meshes, rootScale=({meshScale.X:F3},{meshScale.Y:F3},{meshScale.Z:F3})");
                 return true;
             }
 
@@ -4462,7 +4463,8 @@ public unsafe class RagdollController : IDisposable
                 HasPreviousPose = true,
             });
 
-            log.Info($"RagdollController: {label} animated mesh collision - {triangles.Count} triangles from {models.Count} models/{processedMeshes} meshes, kind={GetObjectKindName(address)}, update={AnimatedMeshUpdateInterval:F2}s");
+            var animMeshScale = GetSkeletonScale(ns);
+            log.Info($"RagdollController: {label} animated mesh collision - {triangles.Count} triangles from {models.Count} models/{processedMeshes} meshes, kind={GetObjectKindName(address)}, rootScale=({animMeshScale.X:F3},{animMeshScale.Y:F3},{animMeshScale.Z:F3}), update={AnimatedMeshUpdateInterval:F2}s");
             return true;
         }
         catch (Exception ex)
@@ -4494,7 +4496,7 @@ public unsafe class RagdollController : IDisposable
             if (rawData != null && TryParseRawMdlCollisionData(rawData, out var rawMdl, out rawParseError))
             {
                 mdl = rawMdl;
-                log.Warning($"RagdollController: {label} mesh collision mdl parser failed for slot {slot} '{modelPath}', raw geometry fallback used");
+                log.Warning($"RagdollController: {label} mesh collision mdl parser failed for slot {slot} '{modelPath}' ({ex.GetType().Name}: {ex.Message}), raw geometry fallback used");
                 return true;
             }
 
@@ -4893,6 +4895,8 @@ public unsafe class RagdollController : IDisposable
         var result = new int[boneTable.Length];
         Array.Fill(result, -1);
 
+        var resolved = 0;
+        string? firstUnresolved = null;
         for (int i = 0; i < boneTable.Length; i++)
         {
             var globalBoneIndex = boneTable[i];
@@ -4904,7 +4908,34 @@ public unsafe class RagdollController : IDisposable
                 continue;
 
             result[i] = boneService.ResolveBoneIndex(ns, boneName);
+            if (result[i] >= 0)
+                resolved++;
+            else
+                firstUnresolved ??= boneName;
         }
+
+        // When no bone name resolves against the target skeleton, every vertex weighted to this
+        // mesh falls back to its bind pose in SkinVertex — the collision hull freezes in the
+        // reference pose instead of the animated one. Surface that: it's the prime suspect for a
+        // mesh whose shape doesn't match the on-screen (posed) model.
+        if (resolved == 0)
+        {
+            // Decisive dump: is the bone table / bone-name-offset section drifted, or is the
+            // string base off? Show the raw global bone indices, the offsets they map to, and
+            // the strings actually read there, plus the section sizes.
+            var probe = new System.Text.StringBuilder();
+            var probeCount = Math.Min(6, boneTable.Length);
+            for (int i = 0; i < probeCount; i++)
+            {
+                var gi = boneTable[i];
+                var off = gi < mdl.BoneNameOffsets.Length ? (long)mdl.BoneNameOffsets[gi] : -1;
+                var name = off >= 0 ? ReadNullTerminatedString(mdl.Strings, (uint)off) : "<oob>";
+                probe.Append($" [{i}]gi={gi}->off={off}'{name}'");
+            }
+            log.Warning($"RagdollController: mesh collision bone map resolved 0/{boneTable.Length} bones (e.g. '{firstUnresolved}'); btIdx={mesh.BoneTableIndex}, boneNameOffsets={mdl.BoneNameOffsets.Length}, stringsLen={mdl.Strings.Length};{probe}");
+        }
+        else if (config.RagdollVerboseLog)
+            log.Info($"RagdollController: mesh collision bone map resolved {resolved}/{boneTable.Length} bones");
 
         return result;
     }
@@ -5144,7 +5175,12 @@ public unsafe class RagdollController : IDisposable
                 return FailRawMdl("attribute offsets truncated", out mdl, out error);
             if (!TrySkip(span, ref offset, checked(header.TerrainShadowMeshCount * 20)))
                 return FailRawMdl("terrain shadow meshes truncated", out mdl, out error);
-            if (!TrySkip(span, ref offset, checked(header.SubmeshCount * 20)))
+            // SubmeshStruct is 16 bytes (uint IndexOffset + uint IndexCount + uint
+            // AttributeIndexMask + ushort BoneStartIndex + ushort BoneCount), NOT 20.
+            // Over-skipping by 4 bytes/submesh drifted the cursor past BoneNameOffsets into
+            // the bone tables, so bone name lookups read garbage and skinning silently fell
+            // back to the bind pose.
+            if (!TrySkip(span, ref offset, checked(header.SubmeshCount * 16)))
                 return FailRawMdl("submeshes truncated", out mdl, out error);
             if (!TrySkip(span, ref offset, checked(header.TerrainShadowSubmeshCount * 12)))
                 return FailRawMdl("terrain shadow submeshes truncated", out mdl, out error);
