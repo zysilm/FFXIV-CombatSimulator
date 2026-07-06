@@ -90,6 +90,10 @@ public unsafe class DismembermentController : IDisposable
     private readonly HashSet<int> restrictedStaticHandles = new();
     private readonly HashSet<int> pcCollisionBodyHandles = new();
     private readonly HashSet<int> gearDynamicBodyHandles = new();
+    // Local-sim garment rig bodies + their jointed pairs, so the narrow phase lets a garment rig
+    // collide with the corpse proxies/ground while its own directly-jointed segments do not explode.
+    private readonly HashSet<int> gearRigDynamicBodyHandles = new();
+    private readonly HashSet<(int, int)> gearRigConnectedPairs = new();
     private readonly List<NpcCollisionState> pcNpcCollisionStates = new();
     private readonly HashSet<nint> pcNpcCollisionAddresses = new();
     private TypedIndex limbShapeIndex;
@@ -272,13 +276,18 @@ public unsafe class DismembermentController : IDisposable
         public readonly List<GarmentRigBody> Bodies = new();
         public readonly HashSet<int> BoneIndices = new();
         public float MaxHalfExtent;
+        // Local-sim rig only (GearRagdollRig == null): shapes + connected joint pairs to unwind on despawn.
+        public readonly List<TypedIndex> Shapes = new();
+        public readonly List<(int, int)> ConnectedPairs = new();
+        public bool IsLocal;
     }
 
     private struct GarmentRigBody
     {
         public int BoneIndex;
         public string BoneName;
-        public int ExternalIndex;
+        public int ExternalIndex;      // index into the ragdoll ExternalRig body list (ragdoll rig)
+        public BodyHandle? LocalBody;   // local-sim body handle (local rig)
         public Quaternion BodyToBoneRotation;
         public float SegmentHalfLength;
         public Vector3 HalfExtents;
@@ -6143,6 +6152,8 @@ public unsafe class DismembermentController : IDisposable
             {
                 ConnectedPairs = connectedPairs,
                 ExternalDynamicBodies = gearDynamicBodyHandles,
+                ExternalRigDynamicBodies = gearRigDynamicBodyHandles,
+                ExternalRigConnectedPairs = gearRigConnectedPairs,
                 Friction = config.RagdollFriction,
                 Config = config,
                 RestrictedStatics = restrictedStaticHandles,
@@ -6165,6 +6176,8 @@ public unsafe class DismembermentController : IDisposable
         connectedPairs.Clear();
         pcCollisionBodyHandles.Clear();
         gearDynamicBodyHandles.Clear();
+        gearRigDynamicBodyHandles.Clear();
+        gearRigConnectedPairs.Clear();
         pcNpcCollisionStates.Clear();
         pcNpcCollisionAddresses.Clear();
         restrictedStaticHandles.Clear();
