@@ -4877,7 +4877,13 @@ public unsafe class RagdollController : IDisposable
             if (Vector3.Cross(b - a, c - a).LengthSquared() < 1e-8f)
                 continue;
 
-            triangles.Add(new Triangle(a, b, c));
+            // Reverse the model's triangle winding. BEPU meshes are one-sided (a body only
+            // collides with a triangle's front face). FFXIV model geometry is authored in a
+            // left-handed space, so feeding its raw winding into BEPU's right-handed normal
+            // convention points every face INWARD — the ragdoll then falls straight through
+            // the mount's outer shell and catches on the interior. Swapping b/c flips the
+            // normals outward so the corpse rests on the surface.
+            triangles.Add(new Triangle(a, c, b));
         }
 
         return true;
