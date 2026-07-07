@@ -110,6 +110,7 @@ public unsafe class RagdollController : IDisposable
     private readonly List<ExternalRigHandle> externalRigs = new();
     private readonly HashSet<int> externalDynamicBodyHandles = new();
     private readonly HashSet<int> externalRigDynamicBodyHandles = new();
+    private readonly HashSet<int> externalRigNoRagdollContactBodyHandles = new();
     private readonly HashSet<(int, int)> externalRigConnectedPairs = new();
     private readonly HashSet<int> softKinematicBodyHandles = new();
 
@@ -488,7 +489,8 @@ public unsafe class RagdollController : IDisposable
     public bool TryCreateExternalRig(
         IReadOnlyList<ExternalRigBodySpec> bodySpecs,
         IReadOnlyList<ExternalRigJointSpec> jointSpecs,
-        out ExternalRigHandle? handle)
+        out ExternalRigHandle? handle,
+        bool collideWithRagdoll = true)
     {
         handle = null;
         if (!isActive || simulation == null || bufferPool == null || bodySpecs.Count == 0)
@@ -526,6 +528,8 @@ public unsafe class RagdollController : IDisposable
                 externalBodies.Add(bodyHandleWrapper);
                 externalDynamicBodyHandles.Add(bodyHandle.Value);
                 externalRigDynamicBodyHandles.Add(bodyHandle.Value);
+                if (!collideWithRagdoll)
+                    externalRigNoRagdollContactBodyHandles.Add(bodyHandle.Value);
             }
 
             foreach (var joint in jointSpecs)
@@ -909,6 +913,7 @@ public unsafe class RagdollController : IDisposable
 
         foreach (var bodyHandle in handle.Bodies)
         {
+            externalRigNoRagdollContactBodyHandles.Remove(bodyHandle.Body.Value);
             externalRigDynamicBodyHandles.Remove(bodyHandle.Body.Value);
             RemoveExternalBody(bodyHandle);
         }
@@ -3320,6 +3325,7 @@ public unsafe class RagdollController : IDisposable
                 ConnectedPairs = connectedPairs,
                 ExternalDynamicBodies = externalDynamicBodyHandles,
                 ExternalRigDynamicBodies = externalRigDynamicBodyHandles,
+                ExternalRigNoRagdollContactBodies = externalRigNoRagdollContactBodyHandles,
                 ExternalRigConnectedPairs = externalRigConnectedPairs,
                 SoftKinematicBodies = softKinematicBodyHandles,
                 Friction = config.RagdollFriction,
@@ -9367,6 +9373,7 @@ public unsafe class RagdollController : IDisposable
         externalRigs.Clear();
         externalDynamicBodyHandles.Clear();
         externalRigDynamicBodyHandles.Clear();
+        externalRigNoRagdollContactBodyHandles.Clear();
         externalRigConnectedPairs.Clear();
         softKinematicBodyHandles.Clear();
         npcCollisionStates.Clear();
@@ -9400,6 +9407,7 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     public HashSet<(int, int)>? ConnectedPairs;
     public HashSet<int>? ExternalDynamicBodies;
     public HashSet<int>? ExternalRigDynamicBodies;
+    public HashSet<int>? ExternalRigNoRagdollContactBodies;
     public HashSet<(int, int)>? ExternalRigConnectedPairs;
     public HashSet<int>? SoftKinematicBodies;
     public HashSet<int>? RestrictedStatics;
@@ -9453,6 +9461,14 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
                 // The garment rig should collide with the corpse ragdoll, but not with legacy
                 // single-piece dropped gear. Single gear remains ground-only by design below.
                 if ((aRig && bExternal && !bRig) || (bRig && aExternal && !aRig))
+                    return false;
+
+                // Body garments spawn around the torso, where the corpse ragdoll capsules overlap the
+                // visual clothing volume. Let those rigs keep ground/static contacts but skip corpse
+                // dynamic contacts so handoff does not shove the shirt backward in one frame.
+                var aNoRagdoll = IsExternalRigNoRagdollContact(aId);
+                var bNoRagdoll = IsExternalRigNoRagdollContact(bId);
+                if ((aNoRagdoll && !bExternal && !bRig) || (bNoRagdoll && !aExternal && !aRig))
                     return false;
 
                 return true;
@@ -9536,6 +9552,9 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 
     private bool IsExternalRigDynamic(int bodyHandle)
         => ExternalRigDynamicBodies != null && ExternalRigDynamicBodies.Contains(bodyHandle);
+
+    private bool IsExternalRigNoRagdollContact(int bodyHandle)
+        => ExternalRigNoRagdollContactBodies != null && ExternalRigNoRagdollContactBodies.Contains(bodyHandle);
 
     private bool IsSoftKinematicContact(CollidablePair pair)
         => SoftKinematicBodies != null &&

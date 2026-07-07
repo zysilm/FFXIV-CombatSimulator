@@ -1382,7 +1382,8 @@ public unsafe class DismembermentController : IDisposable
         if (!TryBuildGarmentRigSpecs(skel, c, spec, skelPos, skelRot, out var rig, out var bodySpecs, out var joints))
             return false;
 
-        if (!ragdoll.TryCreateExternalRig(bodySpecs, joints, out var handle))
+        if (!ragdoll.TryCreateExternalRig(bodySpecs, joints, out var handle,
+                collideWithRagdoll: c.GearKeepModelSlot != 1))
             return false;
 
         c.GearRagdollRig = handle;
@@ -1438,29 +1439,41 @@ public unsafe class DismembermentController : IDisposable
         }
         else if (c.GearKeepModelSlot == 1)
         {
-            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_kosi", "j_sebo_b",
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_kosi", "j_sebo_a",
                 skelPos, skelRot, new Vector3(
-                    MathF.Max(0.060f, spec.Half.X * 0.70f),
-                    MathF.Max(0.070f, spec.Half.Y * 0.34f),
-                    MathF.Max(0.034f, spec.Half.Z * 0.70f)), mass * 0.26f, baseLinear, baseAngular);
+                    MathF.Max(0.058f, spec.Half.X * 0.66f),
+                    MathF.Max(0.040f, spec.Half.Y * 0.16f),
+                    MathF.Max(0.032f, spec.Half.Z * 0.66f)), mass * 0.15f, baseLinear, baseAngular);
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_sebo_a", "j_sebo_b",
+                skelPos, skelRot, new Vector3(
+                    MathF.Max(0.064f, spec.Half.X * 0.72f),
+                    MathF.Max(0.040f, spec.Half.Y * 0.16f),
+                    MathF.Max(0.033f, spec.Half.Z * 0.70f)), mass * 0.16f, baseLinear, baseAngular);
             AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_sebo_b", "j_sebo_c",
                 skelPos, skelRot, new Vector3(
                     MathF.Max(0.070f, spec.Half.X * 0.76f),
-                    MathF.Max(0.045f, spec.Half.Y * 0.20f),
-                    MathF.Max(0.034f, spec.Half.Z * 0.72f)), mass * 0.22f, baseLinear, baseAngular);
+                    MathF.Max(0.040f, spec.Half.Y * 0.16f),
+                    MathF.Max(0.034f, spec.Half.Z * 0.72f)), mass * 0.16f, baseLinear, baseAngular);
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_sebo_c", "j_kubi",
+                skelPos, skelRot, new Vector3(
+                    MathF.Max(0.064f, spec.Half.X * 0.68f),
+                    MathF.Max(0.034f, spec.Half.Y * 0.12f),
+                    MathF.Max(0.032f, spec.Half.Z * 0.66f)), mass * 0.10f, baseLinear, baseAngular);
             AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_ude_a_l", "j_ude_b_l",
-                skelPos, skelRot, new Vector3(0.034f, 0.075f, 0.030f) * spec.Scale, mass * 0.13f, baseLinear, baseAngular);
+                skelPos, skelRot, new Vector3(0.034f, 0.075f, 0.030f) * spec.Scale, mass * 0.12f, baseLinear, baseAngular);
             AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_ude_b_l", "j_te_l",
-                skelPos, skelRot, new Vector3(0.030f, 0.065f, 0.026f) * spec.Scale, mass * 0.11f, baseLinear, baseAngular);
+                skelPos, skelRot, new Vector3(0.030f, 0.065f, 0.026f) * spec.Scale, mass * 0.10f, baseLinear, baseAngular);
             AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_ude_a_r", "j_ude_b_r",
-                skelPos, skelRot, new Vector3(0.034f, 0.075f, 0.030f) * spec.Scale, mass * 0.13f, baseLinear, baseAngular);
+                skelPos, skelRot, new Vector3(0.034f, 0.075f, 0.030f) * spec.Scale, mass * 0.12f, baseLinear, baseAngular);
             AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_ude_b_r", "j_te_r",
-                skelPos, skelRot, new Vector3(0.030f, 0.065f, 0.026f) * spec.Scale, mass * 0.11f, baseLinear, baseAngular);
+                skelPos, skelRot, new Vector3(0.030f, 0.065f, 0.026f) * spec.Scale, mass * 0.10f, baseLinear, baseAngular);
 
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_kosi", "j_sebo_b", "j_sebo_b", 2.05f);
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_b", "j_ude_a_l", "j_sako_l", 2.35f);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_kosi", "j_sebo_a", "j_sebo_a", 1.45f);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_a", "j_sebo_b", "j_sebo_b", 1.55f);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_b", "j_sebo_c", "j_sebo_c", 1.65f);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_c", "j_ude_a_l", "j_sako_l", 2.20f);
             AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_ude_a_l", "j_ude_b_l", "j_ude_b_l", 2.10f);
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_b", "j_ude_a_r", "j_sako_r", 2.35f);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_c", "j_ude_a_r", "j_sako_r", 2.20f);
             AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_ude_a_r", "j_ude_b_r", "j_ude_b_r", 2.10f);
         }
 
@@ -2784,7 +2797,8 @@ public unsafe class DismembermentController : IDisposable
         c.GearDeflateFrames = 0;
         c.GearGroundVisualOffset = 0f;
         var rootRot = ResolveGarmentRigRootRotation(c);
-        SetCloneBaseTransform(c, avgPos, rootRot);
+        var rootPos = ResolveGarmentRigRootPosition(skel, c, rig, avgPos, rootRot);
+        SetCloneBaseTransform(c, rootPos, rootRot);
         if (drawObj != null)
             ApplyGearVisualSquash(c, drawObj, Vector3.One);
 
@@ -2803,6 +2817,45 @@ public unsafe class DismembermentController : IDisposable
             ? c.GearVisualBindLastRootRot
             : c.Handoff?.SkeletonRot ?? c.SeveranceWorldRot;
         return Quaternion.Normalize(rot);
+    }
+
+    private Vector3 ResolveGarmentRigRootPosition(SkeletonAccess skel, Clone c, GarmentRig rig,
+        Vector3 fallback, Quaternion rootRot)
+    {
+        if (c.GearKeepModelSlot != 1 ||
+            !TryGetGarmentRigBoneWorldPosition(c, rig, "j_kosi", out var waistWorld))
+        {
+            return fallback;
+        }
+
+        var anchorModel = TryCapturedModelPos(skel, c, "j_kosi", out var waistModel)
+            ? waistModel
+            : c.LimbRootModelPos;
+        return waistWorld - Vector3.Transform(anchorModel, rootRot);
+    }
+
+    private bool TryGetGarmentRigBoneWorldPosition(Clone c, GarmentRig rig, string boneName, out Vector3 boneWorldPos)
+    {
+        boneWorldPos = Vector3.Zero;
+        foreach (var rb in rig.Bodies)
+        {
+            if (!string.Equals(rb.BoneName, boneName, StringComparison.Ordinal))
+                continue;
+
+            if (!TryGetGarmentRigBodyPose(c, rb, out var bodyPos, out var bodyRot, out _, out _))
+                return false;
+
+            boneWorldPos = bodyPos;
+            if (rb.SegmentHalfLength > 0f)
+            {
+                bodyRot = Quaternion.Normalize(bodyRot);
+                var yAxis = Vector3.Transform(Vector3.UnitY, bodyRot);
+                boneWorldPos -= yAxis * rb.SegmentHalfLength;
+            }
+            return true;
+        }
+
+        return false;
     }
 
     private bool TryEstimateGarmentRigGroundStats(Clone c, GarmentRig rig,
