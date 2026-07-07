@@ -287,13 +287,16 @@ public unsafe class RagdollController : IDisposable
         public readonly int ChildIndex;
         public readonly Vector3 AnchorWorld;
         public readonly float SwingLimit;
+        public readonly float InitialSwingFactor;
 
-        public ExternalRigJointSpec(int parentIndex, int childIndex, Vector3 anchorWorld, float swingLimit)
+        public ExternalRigJointSpec(int parentIndex, int childIndex, Vector3 anchorWorld, float swingLimit,
+            float initialSwingFactor = 0.28f)
         {
             ParentIndex = parentIndex;
             ChildIndex = childIndex;
             AnchorWorld = anchorWorld;
             SwingLimit = swingLimit;
+            InitialSwingFactor = Math.Clamp(initialSwingFactor, 0.05f, 1f);
         }
     }
 
@@ -587,11 +590,12 @@ public unsafe class RagdollController : IDisposable
             var axisLocalB = Vector3.Normalize(Vector3.Transform(childAxisWorld, Quaternion.Inverse(parentBody.Pose.Orientation)));
             // Spawn at a fraction of the target ROM so the garment holds its worn shape on handoff, then
             // relax to full via RelaxExternalRigSwingLimits over ~1s.
+            var target = Math.Clamp(joint.SwingLimit, 0.05f, MathF.PI - 0.05f);
             var handle = simulation.Solver.Add(child.Body, parent.Body, new SwingLimit
             {
                 AxisLocalA = axisLocalA,
                 AxisLocalB = axisLocalB,
-                MaximumSwingAngle = Math.Clamp(joint.SwingLimit * GarmentRigInitialSwingFactor, 0.05f, MathF.PI - 0.05f),
+                MaximumSwingAngle = Math.Clamp(target * joint.InitialSwingFactor, 0.05f, MathF.PI - 0.05f),
                 SpringSettings = limitSpring,
             });
             rig.Constraints.Add(handle);
@@ -601,7 +605,7 @@ public unsafe class RagdollController : IDisposable
                 AxisLocalA = axisLocalA,
                 AxisLocalB = axisLocalB,
                 Spring = limitSpring,
-                TargetSwing = Math.Clamp(joint.SwingLimit, 0.05f, MathF.PI - 0.05f),
+                TargetSwing = target,
             });
         }
 

@@ -88,6 +88,9 @@ public unsafe class DismembermentController : IDisposable
     // widen to full over this many 60fps-equivalent frames (~1s), so the garment holds its worn shape at
     // the instant of physics handoff, then softens to drape/slide.
     private const int GarmentSwingRelaxFrames = 60;
+    private const float BodyGarmentInitialSwingFactor = 0.16f;
+    private const int BodyGarmentSwingHoldFrames = 10;
+    private const int BodyGarmentSwingRelaxFrames = 96;
 
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
@@ -1468,13 +1471,13 @@ public unsafe class DismembermentController : IDisposable
             AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_ude_b_r", "j_te_r",
                 skelPos, skelRot, new Vector3(0.030f, 0.065f, 0.026f) * spec.Scale, mass * 0.10f, baseLinear, baseAngular);
 
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_kosi", "j_sebo_a", "j_sebo_a", 1.45f);
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_a", "j_sebo_b", "j_sebo_b", 1.55f);
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_b", "j_sebo_c", "j_sebo_c", 1.65f);
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_c", "j_ude_a_l", "j_sako_l", 2.20f);
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_ude_a_l", "j_ude_b_l", "j_ude_b_l", 2.10f);
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_c", "j_ude_a_r", "j_sako_r", 2.20f);
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_ude_a_r", "j_ude_b_r", "j_ude_b_r", 2.10f);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_kosi", "j_sebo_a", "j_sebo_a", 1.45f, BodyGarmentInitialSwingFactor);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_a", "j_sebo_b", "j_sebo_b", 1.55f, BodyGarmentInitialSwingFactor);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_b", "j_sebo_c", "j_sebo_c", 1.65f, BodyGarmentInitialSwingFactor);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_c", "j_ude_a_l", "j_sako_l", 2.20f, BodyGarmentInitialSwingFactor);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_ude_a_l", "j_ude_b_l", "j_ude_b_l", 2.10f, BodyGarmentInitialSwingFactor);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_c", "j_ude_a_r", "j_sako_r", 2.20f, BodyGarmentInitialSwingFactor);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_ude_a_r", "j_ude_b_r", "j_ude_b_r", 2.10f, BodyGarmentInitialSwingFactor);
         }
 
         return bodySpecs.Count >= 3 && joints.Count > 0;
@@ -1597,7 +1600,7 @@ public unsafe class DismembermentController : IDisposable
             {
                 AxisLocalA = axisLocalA,
                 AxisLocalB = axisLocalB,
-                MaximumSwingAngle = Math.Clamp(target * RagdollController.GarmentRigInitialSwingFactor, 0.05f, MathF.PI - 0.05f),
+                MaximumSwingAngle = Math.Clamp(target * joint.InitialSwingFactor, 0.05f, MathF.PI - 0.05f),
                 SpringSettings = limitSpring,
             });
             rig.SwingConstraints.Add(new GarmentSwingConstraint
@@ -1623,14 +1626,26 @@ public unsafe class DismembermentController : IDisposable
         gearRigConnectedPairs.Add(pair);
     }
 
-    // Swing-limit relaxation multiplier (GarmentRigInitialSwingFactor .. 1) for a garment rig this many
-    // frames after handoff. Smoothstep from the tight spawn ROM to full over GarmentSwingRelaxFrames.
-    private static float GarmentSwingFactor(int armedFrames)
+    private static int GarmentSwingRelaxFrameCount(Clone c)
+        => c.GearKeepModelSlot == 1 ? BodyGarmentSwingRelaxFrames : GarmentSwingRelaxFrames;
+
+    private static int GarmentSwingHoldFrameCount(Clone c)
+        => c.GearKeepModelSlot == 1 ? BodyGarmentSwingHoldFrames : 0;
+
+    private static float GarmentInitialSwingFactor(Clone c)
+        => c.GearKeepModelSlot == 1 ? BodyGarmentInitialSwingFactor : RagdollController.GarmentRigInitialSwingFactor;
+
+    // Swing-limit relaxation multiplier (initial .. 1) for a garment rig this many frames after handoff.
+    // Body garments keep a short tight hold and then relax slower than pants, reducing the first-frame
+    // waist/chest fold while still allowing the top to soften after it has settled.
+    private static float GarmentSwingFactor(Clone c)
     {
-        var t = Math.Clamp(armedFrames / (float)GarmentSwingRelaxFrames, 0f, 1f);
+        var holdFrames = GarmentSwingHoldFrameCount(c);
+        var relaxFrames = Math.Max(1, GarmentSwingRelaxFrameCount(c));
+        var t = Math.Clamp((c.GearArmedFrames - holdFrames) / (float)relaxFrames, 0f, 1f);
         t = t * t * (3f - 2f * t);
-        return RagdollController.GarmentRigInitialSwingFactor
-               + (1f - RagdollController.GarmentRigInitialSwingFactor) * t;
+        var initial = GarmentInitialSwingFactor(c);
+        return initial + (1f - initial) * t;
     }
 
     private void RelaxLocalGarmentRigSwings(GarmentRig rig, float factor)
@@ -1798,7 +1813,8 @@ public unsafe class DismembermentController : IDisposable
         string parentName,
         string childName,
         string anchorBoneName,
-        float swingLimit)
+        float swingLimit,
+        float initialSwingFactor = RagdollController.GarmentRigInitialSwingFactor)
     {
         if (!indexByName.TryGetValue(parentName, out var parent) ||
             !indexByName.TryGetValue(childName, out var child) ||
@@ -1807,7 +1823,7 @@ public unsafe class DismembermentController : IDisposable
             return;
         }
 
-        joints.Add(new RagdollController.ExternalRigJointSpec(parent, child, anchor, swingLimit));
+        joints.Add(new RagdollController.ExternalRigJointSpec(parent, child, anchor, swingLimit, initialSwingFactor));
     }
 
     /// <summary>Bone immediately above <paramref name="boneName"/> in the source skeleton — the
@@ -2780,9 +2796,10 @@ public unsafe class DismembermentController : IDisposable
         UpdateGearSettleProgress(c, settleLinear, settleAngular);
         // Widen the rig's swing limits from their tight spawn ROM toward full over ~1s. Only while relaxing
         // (once at full ROM there's nothing to re-apply). Routed to whichever sim hosts the rig.
-        if (c.GearArmedFrames <= GarmentSwingRelaxFrames + substepsThisFrame)
+        var relaxUntilFrame = GarmentSwingHoldFrameCount(c) + GarmentSwingRelaxFrameCount(c);
+        if (c.GearArmedFrames <= relaxUntilFrame + substepsThisFrame)
         {
-            var swingFactor = GarmentSwingFactor(c.GearArmedFrames);
+            var swingFactor = GarmentSwingFactor(c);
             if (rig.IsLocal)
                 RelaxLocalGarmentRigSwings(rig, swingFactor);
             else
