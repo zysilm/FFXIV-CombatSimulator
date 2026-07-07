@@ -69,6 +69,7 @@ public unsafe class DismembermentController : IDisposable
     private const int ClothHoldPresetNatural = 1;
     private const int ClothHoldPresetClingy = 2;
     private const int ClothHoldPresetSlideToFloor = 3;
+    private const int ClothHoldPresetVisualOnly = 4;
     private const int ClothHoldMinFrames = 18;             // always attach at least ~0.3s
     private const float ClothHoldRestSpeed = 0.15f;        // anchor speed (m/s) below which the body is "settled"
     private const float ClothHoldSlideSpeed = 0.20f;       // slide-to-floor descent speed (m/s)
@@ -83,6 +84,10 @@ public unsafe class DismembermentController : IDisposable
     private const int MdlBoundingBoxSize = 32;
     private const int MdlModelDataSafetyLimit = 4 * 1024 * 1024;
     private const int GearPhysicsCollapseFrame = 60;
+    // Garment rig swing-limit relaxation: joints spawn at GarmentRigInitialSwingFactor of their ROM and
+    // widen to full over this many 60fps-equivalent frames (~1s), so the garment holds its worn shape at
+    // the instant of physics handoff, then softens to drape/slide.
+    private const int GarmentSwingRelaxFrames = 60;
 
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
@@ -279,7 +284,19 @@ public unsafe class DismembermentController : IDisposable
         // Local-sim rig only (GearRagdollRig == null): shapes + connected joint pairs to unwind on despawn.
         public readonly List<TypedIndex> Shapes = new();
         public readonly List<(int, int)> ConnectedPairs = new();
+        // Local-sim swing constraints, relaxed from their tight spawn ROM to full over ~1s (the ragdoll-host
+        // rig keeps its own copy inside ExternalRigHandle).
+        public readonly List<GarmentSwingConstraint> SwingConstraints = new();
         public bool IsLocal;
+    }
+
+    private struct GarmentSwingConstraint
+    {
+        public ConstraintHandle Handle;
+        public Vector3 AxisLocalA;
+        public Vector3 AxisLocalB;
+        public SpringSettings Spring;
+        public float TargetSwing;
     }
 
     private struct GarmentRigBody
@@ -1390,16 +1407,10 @@ public unsafe class DismembermentController : IDisposable
         var baseLinear = seed?.Linear ?? Vector3.Zero;
         var baseAngular = seed?.Angular ?? Vector3.Zero;
 
-        if (c.GearKeepModelSlot != 1)
-        {
-            var impulse = MathF.Max(0f, DismemberActivationImpulse);
-            if (impulse > 0f)
-            {
-                var dir = c.OutwardWorldDir;
-                dir = dir.LengthSquared() < 1e-6f ? Vector3.UnitX : Vector3.Normalize(dir);
-                baseLinear += dir * impulse;
-            }
-        }
+        // No activation impulse: the garment inherits only the body's real release velocity (seed). The
+        // old outward kick (DismemberActivationImpulse, borrowed from limb dismemberment) launched every
+        // rig body sideways at ~3.5 m/s, so on physics handoff the pieces raked across the corpse capsules
+        // and folded the rig into a knot. A settling garment should just slide/drape, not be flung.
 
         var mass = MathF.Max(0.05f, spec.Mass);
         if (c.GearKeepModelSlot == 3)
@@ -1565,12 +1576,24 @@ public unsafe class DismembermentController : IDisposable
         var childAxisWorld = NormalizeOrFallback(Vector3.Transform(Vector3.UnitY, childBody.Pose.Orientation), Vector3.UnitY);
         if (joint.SwingLimit > 0f)
         {
-            simulation.Solver.Add(child.LocalBody.Value, parent.LocalBody.Value, new SwingLimit
+            var axisLocalA = Vector3.Normalize(Vector3.Transform(childAxisWorld, Quaternion.Inverse(childBody.Pose.Orientation)));
+            var axisLocalB = Vector3.Normalize(Vector3.Transform(childAxisWorld, Quaternion.Inverse(parentBody.Pose.Orientation)));
+            var target = Math.Clamp(joint.SwingLimit, 0.05f, MathF.PI - 0.05f);
+            // Spawn tight (holds worn shape on handoff), relaxed to full each frame by RelaxLocalGarmentRigSwings.
+            var handle = simulation.Solver.Add(child.LocalBody.Value, parent.LocalBody.Value, new SwingLimit
             {
-                AxisLocalA = Vector3.Normalize(Vector3.Transform(childAxisWorld, Quaternion.Inverse(childBody.Pose.Orientation))),
-                AxisLocalB = Vector3.Normalize(Vector3.Transform(childAxisWorld, Quaternion.Inverse(parentBody.Pose.Orientation))),
-                MaximumSwingAngle = Math.Clamp(joint.SwingLimit, 0.05f, MathF.PI - 0.05f),
+                AxisLocalA = axisLocalA,
+                AxisLocalB = axisLocalB,
+                MaximumSwingAngle = Math.Clamp(target * RagdollController.GarmentRigInitialSwingFactor, 0.05f, MathF.PI - 0.05f),
                 SpringSettings = limitSpring,
+            });
+            rig.SwingConstraints.Add(new GarmentSwingConstraint
+            {
+                Handle = handle,
+                AxisLocalA = axisLocalA,
+                AxisLocalB = axisLocalB,
+                Spring = limitSpring,
+                TargetSwing = target,
             });
         }
 
@@ -1585,6 +1608,41 @@ public unsafe class DismembermentController : IDisposable
         var pair = (lo, hi);
         rig.ConnectedPairs.Add(pair);
         gearRigConnectedPairs.Add(pair);
+    }
+
+    // Swing-limit relaxation multiplier (GarmentRigInitialSwingFactor .. 1) for a garment rig this many
+    // frames after handoff. Smoothstep from the tight spawn ROM to full over GarmentSwingRelaxFrames.
+    private static float GarmentSwingFactor(int armedFrames)
+    {
+        var t = Math.Clamp(armedFrames / (float)GarmentSwingRelaxFrames, 0f, 1f);
+        t = t * t * (3f - 2f * t);
+        return RagdollController.GarmentRigInitialSwingFactor
+               + (1f - RagdollController.GarmentRigInitialSwingFactor) * t;
+    }
+
+    private void RelaxLocalGarmentRigSwings(GarmentRig rig, float factor)
+    {
+        if (simulation == null || rig.SwingConstraints.Count == 0)
+            return;
+
+        factor = Math.Clamp(factor, 0f, 1f);
+        foreach (var s in rig.SwingConstraints)
+        {
+            try
+            {
+                simulation.Solver.ApplyDescription(s.Handle, new SwingLimit
+                {
+                    AxisLocalA = s.AxisLocalA,
+                    AxisLocalB = s.AxisLocalB,
+                    MaximumSwingAngle = Math.Clamp(s.TargetSwing * factor, 0.05f, MathF.PI - 0.05f),
+                    SpringSettings = s.Spring,
+                });
+            }
+            catch
+            {
+                // A constraint may have been removed (rig teardown mid-frame); ignore.
+            }
+        }
     }
 
     private void CleanupLocalGarmentRig(GarmentRig? rig)
@@ -2707,6 +2765,16 @@ public unsafe class DismembermentController : IDisposable
         var settleAngular = maxAngularSq > avgAngular.LengthSquared() ? maxAngular : avgAngular;
 
         UpdateGearSettleProgress(c, settleLinear, settleAngular);
+        // Widen the rig's swing limits from their tight spawn ROM toward full over ~1s. Only while relaxing
+        // (once at full ROM there's nothing to re-apply). Routed to whichever sim hosts the rig.
+        if (c.GearArmedFrames <= GarmentSwingRelaxFrames + substepsThisFrame)
+        {
+            var swingFactor = GarmentSwingFactor(c.GearArmedFrames);
+            if (rig.IsLocal)
+                RelaxLocalGarmentRigSwings(rig, swingFactor);
+            else
+                PlayerRagdollController?.RelaxExternalRigSwingLimits(c.GearRagdollRig, swingFactor);
+        }
         ApplyGarmentHandoffDrag(c, avgPos, avgLinear);
         MaybeResampleGearGround(c, avgPos);
 
@@ -2715,7 +2783,8 @@ public unsafe class DismembermentController : IDisposable
 
         c.GearDeflateFrames = 0;
         c.GearGroundVisualOffset = 0f;
-        SetCloneBaseTransform(c, avgPos, Quaternion.Identity);
+        var rootRot = ResolveGarmentRigRootRotation(c);
+        SetCloneBaseTransform(c, avgPos, rootRot);
         if (drawObj != null)
             ApplyGearVisualSquash(c, drawObj, Vector3.One);
 
@@ -2726,6 +2795,14 @@ public unsafe class DismembermentController : IDisposable
         if (c.GearKeepModelSlot == 1)
             DriveSkirtHang(skel, c);
         return true;
+    }
+
+    private static Quaternion ResolveGarmentRigRootRotation(Clone c)
+    {
+        var rot = c.GearVisualBindHasLastPose
+            ? c.GearVisualBindLastRootRot
+            : c.Handoff?.SkeletonRot ?? c.SeveranceWorldRot;
+        return Quaternion.Normalize(rot);
     }
 
     private bool TryEstimateGarmentRigGroundStats(Clone c, GarmentRig rig,
@@ -2910,7 +2987,13 @@ public unsafe class DismembermentController : IDisposable
         if (!config.KoStripClothHoldAuto)
         {
             if (c.GearVisualBindFramesRemaining <= 0)
+            {
+                // The frame before arming starts by mirroring the live source with zero slip. If the
+                // timer has already expired, re-apply the final slipped garment pose before handing it to
+                // physics; otherwise the rig is born from an unslipped pose and the visible garment snaps.
+                ApplyGarmentBindPose(skel, c, c.GearVisualBindFramesTotal <= 0 ? 0f : slipMax);
                 return false;
+            }
             var progress = 1f - Math.Clamp(
                 c.GearVisualBindFramesRemaining / (float)Math.Max(1, c.GearVisualBindFramesTotal), 0f, 1f);
             if (!ApplyGarmentBindPose(skel, c, slipMax * progress * progress))
@@ -2958,11 +3041,18 @@ public unsafe class DismembermentController : IDisposable
 
     // Slip (garment slide-down, metres) for auto mode. Rest presets slide the full slipMax over the dwell
     // window (monotonic, only once the body is settling); slide-to-floor accumulates unbounded at a steady
-    // descent speed so the garment keeps sliding until it reaches the ground.
+    // descent speed so the garment keeps sliding until it reaches the ground. Visual-only uses the same
+    // slide, then stays attached instead of handing off to physics.
     private float ComputeAutoBindSlip(Clone c, float slipMax)
     {
-        if (config.KoStripClothHoldPreset == ClothHoldPresetSlideToFloor)
+        if (config.KoStripClothHoldPreset is ClothHoldPresetSlideToFloor or ClothHoldPresetVisualOnly)
         {
+            if (config.KoStripClothHoldPreset == ClothHoldPresetVisualOnly &&
+                (c.GearBindSlip >= ClothHoldSlideMaxDrop || GarmentBindReachedFloor(c)))
+            {
+                return c.GearBindSlip;
+            }
+
             var ease = Math.Clamp(c.GearBindElapsedFrames / ClothHoldSlideEaseFrames, 0f, 1f);
             c.GearBindSlip += ClothHoldSlideSpeed * ease * frameDt;
             return c.GearBindSlip;
@@ -2981,6 +3071,9 @@ public unsafe class DismembermentController : IDisposable
             return false;
 
         var preset = config.KoStripClothHoldPreset;
+        if (preset == ClothHoldPresetVisualOnly)
+            return false;
+
         if (c.GearBindElapsedFrames >= ClothHoldCapFrames(preset))
             return true;
 
@@ -3026,6 +3119,7 @@ public unsafe class DismembermentController : IDisposable
     {
         ClothHoldPresetQuick => 9,    // ~0.15s
         ClothHoldPresetClingy => 72,  // ~1.2s
+        ClothHoldPresetVisualOnly => int.MaxValue,
         _ => 24,                       // Natural ~0.4s
     };
 
@@ -3034,6 +3128,7 @@ public unsafe class DismembermentController : IDisposable
         ClothHoldPresetQuick => 180,          // 3s
         ClothHoldPresetClingy => 1500,        // 25s
         ClothHoldPresetSlideToFloor => 3600,  // 60s
+        ClothHoldPresetVisualOnly => int.MaxValue,
         _ => 600,                              // Natural 10s
     };
 

@@ -13,6 +13,7 @@ public partial class MainWindow
         "Natural",
         "Clingy",
         "Slide to floor",
+        "Visual only",
     };
 
     private void DrawArmorDetachmentEntrySection()
@@ -174,7 +175,8 @@ public partial class MainWindow
                 ImGui.SetTooltip("Quick: release soon after the body rests.\n" +
                                  "Natural: a short settling dwell.\n" +
                                  "Clingy: waits longer and follows dragged bodies.\n" +
-                                 "Slide to floor: default, keeps sliding down until it touches the ground, then drops.");
+                                 "Slide to floor: default, keeps sliding down until it touches the ground, then drops.\n" +
+                                 "Visual only: slides to the floor and stays visual, never handing off to physics.");
         }
         else
         {

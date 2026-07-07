@@ -275,7 +275,7 @@ public partial class Configuration : IPluginConfiguration
     // rather than the fixed KoStripClothHoldSeconds timer.
     public bool KoStripClothHoldAuto { get; set; } = true;
 
-    // Auto-hold feel: 0 Quick, 1 Natural, 2 Clingy, 3 Slide-to-floor. Default Slide-to-floor.
+    // Auto-hold feel: 0 Quick, 1 Natural, 2 Clingy, 3 Slide-to-floor, 4 Visual-only. Default Slide-to-floor.
     public int KoStripClothHoldPreset { get; set; } = 3;
 
     // Per-slot "collapse on drop" toggles for the physics-drop pieces. When a slot is enabled the

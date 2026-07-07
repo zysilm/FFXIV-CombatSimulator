@@ -301,9 +301,26 @@ public unsafe class RagdollController : IDisposable
         internal readonly List<ExternalBodyHandle> Bodies = new();
         internal readonly List<ConstraintHandle> Constraints = new();
         internal readonly List<(int, int)> ConnectedPairs = new();
+        // Swing-limit constraints that start tight (hold garment shape at spawn) and relax to their full
+        // ROM over the first ~second. Kept separately from Constraints so the target ROM can be re-applied
+        // each frame without re-scanning the mixed constraint list.
+        internal readonly List<RigSwingConstraint> SwingConstraints = new();
         internal int Generation;
         internal bool Removed;
     }
+
+    internal struct RigSwingConstraint
+    {
+        public ConstraintHandle Handle;
+        public Vector3 AxisLocalA;
+        public Vector3 AxisLocalB;
+        public SpringSettings Spring;
+        public float TargetSwing;
+    }
+
+    /// <summary>Fraction of a garment joint's full swing ROM used at spawn, before it relaxes to full over
+    /// ~1s. Shared with the DismembermentController local-sim rig so both hosts spawn equally stiff.</summary>
+    public const float GarmentRigInitialSwingFactor = 0.28f;
 
     /// <summary>Debug data for visualizing joint rotation limits.</summary>
     public struct DebugJointVis
@@ -562,13 +579,26 @@ public unsafe class RagdollController : IDisposable
         var childAxisWorld = NormalizeOrFallback(Vector3.Transform(Vector3.UnitY, childBody.Pose.Orientation), Vector3.UnitY);
         if (joint.SwingLimit > 0f)
         {
-            rig.Constraints.Add(simulation.Solver.Add(child.Body, parent.Body, new SwingLimit
+            var axisLocalA = Vector3.Normalize(Vector3.Transform(childAxisWorld, Quaternion.Inverse(childBody.Pose.Orientation)));
+            var axisLocalB = Vector3.Normalize(Vector3.Transform(childAxisWorld, Quaternion.Inverse(parentBody.Pose.Orientation)));
+            // Spawn at a fraction of the target ROM so the garment holds its worn shape on handoff, then
+            // relax to full via RelaxExternalRigSwingLimits over ~1s.
+            var handle = simulation.Solver.Add(child.Body, parent.Body, new SwingLimit
             {
-                AxisLocalA = Vector3.Normalize(Vector3.Transform(childAxisWorld, Quaternion.Inverse(childBody.Pose.Orientation))),
-                AxisLocalB = Vector3.Normalize(Vector3.Transform(childAxisWorld, Quaternion.Inverse(parentBody.Pose.Orientation))),
-                MaximumSwingAngle = Math.Clamp(joint.SwingLimit, 0.05f, MathF.PI - 0.05f),
+                AxisLocalA = axisLocalA,
+                AxisLocalB = axisLocalB,
+                MaximumSwingAngle = Math.Clamp(joint.SwingLimit * GarmentRigInitialSwingFactor, 0.05f, MathF.PI - 0.05f),
                 SpringSettings = limitSpring,
-            }));
+            });
+            rig.Constraints.Add(handle);
+            rig.SwingConstraints.Add(new RigSwingConstraint
+            {
+                Handle = handle,
+                AxisLocalA = axisLocalA,
+                AxisLocalB = axisLocalB,
+                Spring = limitSpring,
+                TargetSwing = Math.Clamp(joint.SwingLimit, 0.05f, MathF.PI - 0.05f),
+            });
         }
 
         rig.Constraints.Add(simulation.Solver.Add(child.Body, parent.Body, new AngularMotor
@@ -744,6 +774,35 @@ public unsafe class RagdollController : IDisposable
                 var lin = body.Velocity.Linear;
                 body.Velocity.Linear = new Vector3(lin.X * horizontalScale, lin.Y * verticalScale, lin.Z * horizontalScale);
                 body.Velocity.Angular *= angularScale;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Re-apply each garment swing constraint's ROM as <paramref name="factor"/> (0..1) of its
+    /// stored target, widening the joints from their tight spawn ROM to full as the garment settles.</summary>
+    public bool RelaxExternalRigSwingLimits(ExternalRigHandle? handle, float factor)
+    {
+        if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
+            return false;
+
+        factor = Math.Clamp(factor, 0f, 1f);
+        foreach (var s in handle.SwingConstraints)
+        {
+            try
+            {
+                simulation.Solver.ApplyDescription(s.Handle, new SwingLimit
+                {
+                    AxisLocalA = s.AxisLocalA,
+                    AxisLocalB = s.AxisLocalB,
+                    MaximumSwingAngle = Math.Clamp(s.TargetSwing * factor, 0.05f, MathF.PI - 0.05f),
+                    SpringSettings = s.Spring,
+                });
             }
             catch
             {
@@ -9487,19 +9546,27 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         => Config?.KoStripPhysicsDropClothing == true &&
            Config.KoStripAdvancedClothPhysics;
 
+    // "Gear" for contact-material purposes = single dropped pieces (ExternalDynamic) AND articulated
+    // garment-rig bodies (ExternalRigDynamic). In the player-ragdoll host sim a rig body is in BOTH sets,
+    // so folding the rig set in changes nothing there; it only matters in the DismembermentController's
+    // LOCAL fallback sim, where rig bodies are ExternalRigDynamic-only. Without this, local-sim garments
+    // fell through to the firm 2 m/s / (30,1) default material and visibly popped apart on the first step.
+    private bool IsGearDynamic(int bodyHandle)
+        => IsExternalDynamic(bodyHandle) || IsExternalRigDynamic(bodyHandle);
+
     private bool IsGearContact(CollidablePair pair)
     {
-        var aExternal = pair.A.Mobility == CollidableMobility.Dynamic && IsExternalDynamic(pair.A.BodyHandle.Value);
-        var bExternal = pair.B.Mobility == CollidableMobility.Dynamic && IsExternalDynamic(pair.B.BodyHandle.Value);
-        return aExternal || bExternal;
+        var aGear = pair.A.Mobility == CollidableMobility.Dynamic && IsGearDynamic(pair.A.BodyHandle.Value);
+        var bGear = pair.B.Mobility == CollidableMobility.Dynamic && IsGearDynamic(pair.B.BodyHandle.Value);
+        return aGear || bGear;
     }
 
     private bool IsGearGroundContact(CollidablePair pair)
     {
-        var aExternal = pair.A.Mobility == CollidableMobility.Dynamic && IsExternalDynamic(pair.A.BodyHandle.Value);
-        var bExternal = pair.B.Mobility == CollidableMobility.Dynamic && IsExternalDynamic(pair.B.BodyHandle.Value);
-        return (aExternal && pair.B.Mobility == CollidableMobility.Static) ||
-               (bExternal && pair.A.Mobility == CollidableMobility.Static);
+        var aGear = pair.A.Mobility == CollidableMobility.Dynamic && IsGearDynamic(pair.A.BodyHandle.Value);
+        var bGear = pair.B.Mobility == CollidableMobility.Dynamic && IsGearDynamic(pair.B.BodyHandle.Value);
+        return (aGear && pair.B.Mobility == CollidableMobility.Static) ||
+               (bGear && pair.A.Mobility == CollidableMobility.Static);
     }
 }
 
