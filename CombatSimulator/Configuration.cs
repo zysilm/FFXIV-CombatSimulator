@@ -537,7 +537,7 @@ public partial class Configuration : IPluginConfiguration
 
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollVerboseLog { get; set; } = false;
-    public bool RagdollFollowPosition { get; set; } = false; // Update GameObject.Position to follow ragdoll root (prevents model unload on long falls)
+    public bool RagdollFollowPosition { get; set; } = false; // Follow ragdoll root to keep the flung corpse from being culled/unloaded on long falls. Local player moves render-only (DrawObject.Position); NPC phantoms move full position.
     public bool RagdollLiftUndergroundBonesOnStart { get; set; } = false;
     public bool DevCompanionAppearanceVariant { get; set; } = false;
     public bool DevPartyApproachDebugLog { get; set; } = false;

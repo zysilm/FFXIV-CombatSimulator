@@ -1878,6 +1878,32 @@ public unsafe class RagdollController : IDisposable
             }
         }
 
+        // If follow moved the local player's client-side render transform, snap the DrawObject
+        // back to the frozen death position so there is no one-frame pop before the game
+        // re-syncs it from the (never-moved) logical position on revive. NPC phantoms are left
+        // as-is (they despawn or are repositioned elsewhere), matching the prior behaviour.
+        if (followWasActive && targetCharacterAddress != nint.Zero && Core.Services.ObjectTable.LocalPlayer != null)
+        {
+            try
+            {
+                var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress;
+                if (gameObj->ObjectIndex == 0)
+                {
+                    var drawObject = gameObj->DrawObject;
+                    if (drawObject != null)
+                    {
+                        ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)drawObject)->Position = savedCharacterPosition;
+                        drawObject->NotifyTransformChanged();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Warning(ex, "RagdollController: Failed to restore DrawObject position on deactivate");
+            }
+        }
+        followWasActive = false;
+
         StopCollapseSpike();
         pendingCollapseSpike = false;
         StopDirectedCollapseSpike();
@@ -6124,6 +6150,12 @@ public unsafe class RagdollController : IDisposable
         var character = (Character*)targetCharacterAddress;
         character->Timeline.OverallSpeed = 0f;
 
+        // The local player is always object-table index 0. Used below to choose a render-only
+        // follow (DrawObject.Position, never the packet-synced GameObject.Position) and to
+        // suppress the self-induced biomechanical settle while follow drags the corpse.
+        var isLocalPlayerTarget =
+            ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress)->ObjectIndex == 0;
+
         // Update skeleton transform for WorldToModel conversion.
         // The game may reposition the character root (e.g., dismount, death transition).
         // Physics bodies stay at correct world positions; we just need the current
@@ -6141,7 +6173,14 @@ public unsafe class RagdollController : IDisposable
             var skelDist = (newSkelPos - skelWorldPos).Length();
             if (skelDist > 0.1f)
             {
-                skeletonMoved = true;
+                // A follow-driven move (we pushed the DrawObject to track the flung corpse)
+                // must not restart the biomechanical settle — otherwise a corpse sliding under
+                // follow wakes its bodies every frame and never rests. Only settle on EXTERNAL
+                // repositions (dismount / death transition). followWasActive means we wrote a
+                // follow position on the previous frame, so this frame's skeleton move is ours.
+                // Ground is still re-raycast below in both cases so the floor tracks the corpse.
+                if (!(config.RagdollFollowPosition && followWasActive && isLocalPlayerTarget))
+                    skeletonMoved = true;
                 if (config.RagdollVerboseLog)
                     log.Info($"[Ragdoll F{frameCount}] Skeleton moved {skelDist:F3}m: ({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3})→({newSkelPos.X:F3},{newSkelPos.Y:F3},{newSkelPos.Z:F3})");
                 if (BGCollisionModule.RaycastMaterialFilter(
@@ -6644,28 +6683,68 @@ public unsafe class RagdollController : IDisposable
                 substeps * FixedTimestep);
         }
 
-        // (Dev) Update GameObject.Position to follow ragdoll root bone.
-        // Prevents model unload when ragdoll falls far from the frozen position.
-        if (config.RagdollFollowPosition && movementBlockHook != null && ragdollBones.Count > 0 && targetCharacterAddress != nint.Zero)
+        // (Dev) Keep the character visible when the ragdoll is flung far from the frozen death
+        // position. Culling tests the DrawObject's bounding sphere, whose centre tracks the
+        // DrawObject's own position — NOT the skinned bone positions — so a corpse that flies
+        // out of the original frustum gets culled even though its bones are drawn far away.
+        //
+        // Local player: move ONLY the DrawObject (client-side render transform). We must never
+        // touch GameObject.Position here — that logical position feeds the server position-sync
+        // packets, and teleporting it is a bannable action. DrawObject.Position is pure render
+        // state (the knob SimpleHeels/Brio drive) and never leaves the client. The game
+        // re-derives skeleton->Transform.Position from it, so next frame our world→model bone
+        // conversion re-centres on the new root and the corpse renders in the exact same world
+        // spot — only the culling sphere now follows it. GameObject.Position stays frozen at the
+        // death spot (as MovementBlockHook already enforces), so the server sees no movement.
+        //
+        // NPC phantoms: the server has no knowledge of them, so we keep moving the real
+        // GameObject.Position via SetApproachPosition, which also drags their nameplate / HP-bar
+        // anchor along with the flying corpse.
+        if (config.RagdollFollowPosition && ragdollBones.Count > 0 && targetCharacterAddress != nint.Zero)
         {
             try
             {
                 var rootBody = simulation.Bodies.GetBodyReference(ragdollBones[0].BodyHandle);
                 var rootPos = rootBody.Pose.Position;
                 var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress;
-                movementBlockHook.SetApproachPosition(gameObj, rootPos.X, rootPos.Y, rootPos.Z);
+
+                if (isLocalPlayerTarget)
+                {
+                    var drawObject = gameObj->DrawObject;
+                    if (drawObject != null)
+                    {
+                        ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)drawObject)->Position = rootPos;
+                        drawObject->NotifyTransformChanged();
+                    }
+                }
+                else if (movementBlockHook != null)
+                {
+                    movementBlockHook.SetApproachPosition(gameObj, rootPos.X, rootPos.Y, rootPos.Z);
+                }
             }
             catch { }
             followWasActive = true;
         }
-        else if (followWasActive && movementBlockHook != null && targetCharacterAddress != nint.Zero)
+        else if (followWasActive && targetCharacterAddress != nint.Zero)
         {
-            // Toggled off — restore original position
+            // Toggled off — restore the frozen death position on whichever transform we moved.
             try
             {
                 var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress;
-                movementBlockHook.SetApproachPosition(gameObj,
-                    savedCharacterPosition.X, savedCharacterPosition.Y, savedCharacterPosition.Z);
+                if (isLocalPlayerTarget)
+                {
+                    var drawObject = gameObj->DrawObject;
+                    if (drawObject != null)
+                    {
+                        ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)drawObject)->Position = savedCharacterPosition;
+                        drawObject->NotifyTransformChanged();
+                    }
+                }
+                else if (movementBlockHook != null)
+                {
+                    movementBlockHook.SetApproachPosition(gameObj,
+                        savedCharacterPosition.X, savedCharacterPosition.Y, savedCharacterPosition.Z);
+                }
             }
             catch { }
             followWasActive = false;
