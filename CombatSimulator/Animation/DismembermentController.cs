@@ -1362,9 +1362,29 @@ public unsafe class DismembermentController : IDisposable
             return false;
         }
 
-        var rig = new GarmentRig();
-        var bodySpecs = new List<RagdollController.ExternalRigBodySpec>();
-        var joints = new List<RagdollController.ExternalRigJointSpec>();
+        if (!TryBuildGarmentRigSpecs(skel, c, spec, skelPos, skelRot, out var rig, out var bodySpecs, out var joints))
+            return false;
+
+        if (!ragdoll.TryCreateExternalRig(bodySpecs, joints, out var handle))
+            return false;
+
+        c.GearRagdollRig = handle;
+        c.GearGarmentRig = rig;
+        log.Info($"GearDrop: clone idx={c.ObjectIndex} created garment rig slot={c.GearKeepModelSlot} bodies={bodySpecs.Count}");
+        return true;
+    }
+
+    /// <summary>Build the sim-agnostic body/joint specs for a garment rig (slots 1/3). Returns false if
+    /// too few bones resolved to make a rig. Shared by the ragdoll-sim and local-sim rig builders.</summary>
+    private bool TryBuildGarmentRigSpecs(SkeletonAccess skel, Clone c, GearShapeSpec spec,
+        Vector3 skelPos, Quaternion skelRot,
+        out GarmentRig rig,
+        out List<RagdollController.ExternalRigBodySpec> bodySpecs,
+        out List<RagdollController.ExternalRigJointSpec> joints)
+    {
+        rig = new GarmentRig();
+        bodySpecs = new List<RagdollController.ExternalRigBodySpec>();
+        joints = new List<RagdollController.ExternalRigJointSpec>();
         var indexByName = new Dictionary<string, int>(StringComparer.Ordinal);
         var seed = ResolveGearBodySeedVelocity(c);
         var baseLinear = seed?.Linear ?? Vector3.Zero;
@@ -1433,16 +1453,195 @@ public unsafe class DismembermentController : IDisposable
             AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_ude_a_r", "j_ude_b_r", "j_ude_b_r", 2.10f);
         }
 
-        if (bodySpecs.Count < 3 || joints.Count == 0)
+        return bodySpecs.Count >= 3 && joints.Count > 0;
+    }
+
+    /// <summary>Create the garment rig inside the DismembermentController's own local simulation, used when
+    /// no player ragdoll sim is available to host it (the slide runs on config flags alone, so without this
+    /// the piece would fall back to the rigid single-body + deflate path). Mirrors RagdollController's
+    /// external-rig body/joint construction against the local BEPU sim, with corpse + ground collision.</summary>
+    private bool TryCreateLocalGarmentRig(SkeletonAccess skel, Clone c, GearShapeSpec spec, Vector3 spawnPos)
+    {
+        if (!TryGetSkeletonWorldTransform(skel, out var skelPos, out var skelRot))
             return false;
 
-        if (!ragdoll.TryCreateExternalRig(bodySpecs, joints, out var handle))
+        if (!TryBuildGarmentRigSpecs(skel, c, spec, skelPos, skelRot, out var rig, out var bodySpecs, out var joints))
             return false;
 
-        c.GearRagdollRig = handle;
-        c.GearGarmentRig = rig;
-        log.Info($"GearDrop: clone idx={c.ObjectIndex} created garment rig slot={c.GearKeepModelSlot} bodies={bodySpecs.Count}");
-        return true;
+        EnsureSimulation();
+        if (simulation == null)
+            return false;
+
+        rig.IsLocal = true;
+        try
+        {
+            // bodySpecs and rig.Bodies are appended 1:1 in the same order, so index i lines them up.
+            for (int i = 0; i < bodySpecs.Count; i++)
+            {
+                var bspec = bodySpecs[i];
+                var shapeIndex = BuildLocalRigBodyShape(bspec.Parts, out var shapeList, out var inertia, bspec.Mass);
+                var handle = simulation.Bodies.Add(BodyDescription.CreateDynamic(
+                    new RigidPose(bspec.Position, Quaternion.Normalize(bspec.Orientation)),
+                    default(BodyVelocity),
+                    inertia,
+                    new CollidableDescription(shapeIndex, 0.016f),
+                    new BodyActivityDescription(0.01f)));
+
+                var body = simulation.Bodies.GetBodyReference(handle);
+                body.Velocity.Linear = bspec.LinearVelocity;
+                body.Velocity.Angular = bspec.AngularVelocity;
+                body.Awake = true;
+
+                var rb = rig.Bodies[i];
+                rb.LocalBody = handle;
+                rig.Bodies[i] = rb;
+                rig.Shapes.AddRange(shapeList);
+                gearRigDynamicBodyHandles.Add(handle.Value);
+            }
+
+            foreach (var joint in joints)
+                AddLocalGarmentRigJoint(rig, joint);
+
+            (c.GroundTile, c.GroundShape) = CreateTerrainPatch(spawnPos.X, spawnPos.Z, spawnPos.Y);
+
+            c.GearRagdollRig = null;
+            c.GearGarmentRig = rig;
+            log.Info($"GearDrop: clone idx={c.ObjectIndex} created LOCAL garment rig slot={c.GearKeepModelSlot} bodies={rig.Bodies.Count}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"GearDrop: clone idx={c.ObjectIndex} local garment rig build failed");
+            CleanupLocalGarmentRig(rig);
+            return false;
+        }
+    }
+
+    private TypedIndex BuildLocalRigBodyShape(IReadOnlyList<RagdollController.ExternalShapePart> parts,
+        out List<TypedIndex> shapes, out BodyInertia inertia, float mass)
+    {
+        // Garment rig bodies are always a single origin-centred box (see AddGarmentRigBody).
+        shapes = new List<TypedIndex>(1);
+        var h = parts[0].HalfExtents;
+        var box = new Box(h.X * 2f, h.Y * 2f, h.Z * 2f);
+        var idx = simulation!.Shapes.Add(box);
+        shapes.Add(idx);
+        inertia = box.ComputeInertia(MathF.Max(0.01f, mass));
+        return idx;
+    }
+
+    // Local-sim equivalent of RagdollController.AddExternalRigJoint: BallSocket (position) + SwingLimit
+    // (cone ROM) + AngularMotor targeting zero (floppy angular damping, not a rest-pose servo).
+    private void AddLocalGarmentRigJoint(GarmentRig rig, RagdollController.ExternalRigJointSpec joint)
+    {
+        if (simulation == null)
+            return;
+        if (joint.ParentIndex < 0 || joint.ParentIndex >= rig.Bodies.Count ||
+            joint.ChildIndex < 0 || joint.ChildIndex >= rig.Bodies.Count ||
+            joint.ParentIndex == joint.ChildIndex)
+            return;
+
+        var parent = rig.Bodies[joint.ParentIndex];
+        var child = rig.Bodies[joint.ChildIndex];
+        if (!parent.LocalBody.HasValue || !child.LocalBody.HasValue)
+            return;
+
+        var parentBody = simulation.Bodies.GetBodyReference(parent.LocalBody.Value);
+        var childBody = simulation.Bodies.GetBodyReference(child.LocalBody.Value);
+
+        var anchorWorld = joint.AnchorWorld;
+        var childLocalAnchor = Vector3.Transform(anchorWorld - childBody.Pose.Position, Quaternion.Inverse(childBody.Pose.Orientation));
+        var parentLocalAnchor = Vector3.Transform(anchorWorld - parentBody.Pose.Position, Quaternion.Inverse(parentBody.Pose.Orientation));
+        var jointSpring = new SpringSettings(9f, 1.4f);
+        var limitSpring = new SpringSettings(5f, 1.6f);
+
+        simulation.Solver.Add(child.LocalBody.Value, parent.LocalBody.Value, new BallSocket
+        {
+            LocalOffsetA = childLocalAnchor,
+            LocalOffsetB = parentLocalAnchor,
+            SpringSettings = jointSpring,
+        });
+
+        var childAxisWorld = NormalizeOrFallback(Vector3.Transform(Vector3.UnitY, childBody.Pose.Orientation), Vector3.UnitY);
+        if (joint.SwingLimit > 0f)
+        {
+            simulation.Solver.Add(child.LocalBody.Value, parent.LocalBody.Value, new SwingLimit
+            {
+                AxisLocalA = Vector3.Normalize(Vector3.Transform(childAxisWorld, Quaternion.Inverse(childBody.Pose.Orientation))),
+                AxisLocalB = Vector3.Normalize(Vector3.Transform(childAxisWorld, Quaternion.Inverse(parentBody.Pose.Orientation))),
+                MaximumSwingAngle = Math.Clamp(joint.SwingLimit, 0.05f, MathF.PI - 0.05f),
+                SpringSettings = limitSpring,
+            });
+        }
+
+        simulation.Solver.Add(child.LocalBody.Value, parent.LocalBody.Value, new AngularMotor
+        {
+            TargetVelocityLocalA = Vector3.Zero,
+            Settings = new MotorSettings(0.65f, 0.45f),
+        });
+
+        var lo = Math.Min(parent.LocalBody.Value.Value, child.LocalBody.Value.Value);
+        var hi = Math.Max(parent.LocalBody.Value.Value, child.LocalBody.Value.Value);
+        var pair = (lo, hi);
+        rig.ConnectedPairs.Add(pair);
+        gearRigConnectedPairs.Add(pair);
+    }
+
+    private void CleanupLocalGarmentRig(GarmentRig? rig)
+    {
+        if (rig == null || simulation == null)
+            return;
+
+        foreach (var pair in rig.ConnectedPairs)
+            gearRigConnectedPairs.Remove(pair);
+        rig.ConnectedPairs.Clear();
+
+        foreach (var rb in rig.Bodies)
+        {
+            if (!rb.LocalBody.HasValue)
+                continue;
+            gearRigDynamicBodyHandles.Remove(rb.LocalBody.Value.Value);
+            try { simulation.Bodies.Remove(rb.LocalBody.Value); } catch { }
+        }
+
+        if (bufferPool != null)
+            foreach (var s in rig.Shapes)
+                try { simulation.Shapes.RemoveAndDispose(s, bufferPool); } catch { }
+        rig.Shapes.Clear();
+    }
+
+    /// <summary>Read a garment-rig body's pose/velocity from whichever sim hosts it (player ragdoll rig or
+    /// this controller's local sim).</summary>
+    private bool TryGetGarmentRigBodyPose(Clone c, GarmentRigBody rb,
+        out Vector3 position, out Quaternion orientation, out Vector3 linearVelocity, out Vector3 angularVelocity)
+    {
+        position = Vector3.Zero;
+        orientation = Quaternion.Identity;
+        linearVelocity = Vector3.Zero;
+        angularVelocity = Vector3.Zero;
+
+        if (c.GearRagdollRig != null)
+            return PlayerRagdollController?.TryGetExternalRigBodyPose(
+                c.GearRagdollRig, rb.ExternalIndex, out position, out orientation, out linearVelocity, out angularVelocity) == true;
+
+        if (rb.LocalBody.HasValue && simulation != null)
+        {
+            try
+            {
+                var body = simulation.Bodies.GetBodyReference(rb.LocalBody.Value);
+                position = body.Pose.Position;
+                orientation = body.Pose.Orientation;
+                linearVelocity = body.Velocity.Linear;
+                angularVelocity = body.Velocity.Angular;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        return false;
     }
 
     private bool AddGarmentRigBody(
@@ -2316,6 +2515,11 @@ public unsafe class DismembermentController : IDisposable
                 c.Body = null;
                 c.GearRagdollBody = null;
             }
+            else if (UseAdvancedGarmentPhysics(c) && TryCreateLocalGarmentRig(skel, c, shapeSpec, spawnPos))
+            {
+                c.Body = null;
+                c.GearRagdollBody = null;
+            }
             else if (!TryCreateRagdollGearBody(c, shapeSpec, spawnPos, gearRot))
             {
                 EnsureSimulation();
@@ -2359,7 +2563,7 @@ public unsafe class DismembermentController : IDisposable
         }
         RestoreGearPartialPoseSnapshots(c, skel.CharBase);
 
-        if (c.GearRagdollRig != null && c.GearGarmentRig != null)
+        if (c.GearGarmentRig != null)
             return UpdateGarmentRigClone(skel, c, drawObj);
 
         if (!TryGetGearBodyState(c, out var bodyPos, out var bodyRot, out var linearVelocity, out var angularVelocity))
@@ -2455,9 +2659,7 @@ public unsafe class DismembermentController : IDisposable
     private bool UpdateGarmentRigClone(SkeletonAccess skel, Clone c, DrawObject* drawObj)
     {
         var rig = c.GearGarmentRig;
-        var handle = c.GearRagdollRig;
-        var ragdoll = PlayerRagdollController;
-        if (rig == null || handle == null || ragdoll == null || rig.Bodies.Count == 0)
+        if (rig == null || rig.Bodies.Count == 0)
             return true;
 
         var posSum = Vector3.Zero;
@@ -2471,8 +2673,7 @@ public unsafe class DismembermentController : IDisposable
 
         foreach (var rb in rig.Bodies)
         {
-            if (!ragdoll.TryGetExternalRigBodyPose(handle, rb.ExternalIndex,
-                    out var pos, out _, out var linear, out var angular))
+            if (!TryGetGarmentRigBodyPose(c, rb, out var pos, out _, out var linear, out var angular))
                 return true;
 
             posSum += pos;
@@ -2535,18 +2736,13 @@ public unsafe class DismembermentController : IDisposable
         if (float.IsNegativeInfinity(c.GearGroundY))
             return false;
 
-        var ragdoll = PlayerRagdollController;
-        if (ragdoll == null || c.GearRagdollRig == null)
-            return false;
-
         var sum = 0f;
         var count = 0;
         var lowest = float.MaxValue;
 
         foreach (var rb in rig.Bodies)
         {
-            if (!ragdoll.TryGetExternalRigBodyPose(c.GearRagdollRig, rb.ExternalIndex,
-                    out var pos, out var rot, out _, out _))
+            if (!TryGetGarmentRigBodyPose(c, rb, out var pos, out var rot, out _, out _))
                 continue;
 
             AccumulateGearBoxGroundStats(pos, Quaternion.Normalize(rot), Quaternion.Identity,
@@ -2564,10 +2760,6 @@ public unsafe class DismembermentController : IDisposable
     private void DriveGarmentRigBones(SkeletonAccess skel, Clone c, GarmentRig rig,
         Vector3 skelPos, Quaternion skelRot)
     {
-        var ragdoll = PlayerRagdollController;
-        if (ragdoll == null || c.GearRagdollRig == null)
-            return;
-
         var skelRotInv = Quaternion.Inverse(skelRot);
         var result = new BoneModificationResult(skel.BoneCount);
         for (int i = 0; i < skel.BoneCount; i++)
@@ -2582,8 +2774,7 @@ public unsafe class DismembermentController : IDisposable
             if (rb.BoneIndex < 0 || rb.BoneIndex >= skel.BoneCount)
                 continue;
 
-            if (!ragdoll.TryGetExternalRigBodyPose(c.GearRagdollRig, rb.ExternalIndex,
-                    out var bodyPos, out var bodyRot, out _, out _))
+            if (!TryGetGarmentRigBodyPose(c, rb, out var bodyPos, out var bodyRot, out _, out _))
                 continue;
 
             bodyRot = Quaternion.Normalize(bodyRot);
@@ -2683,6 +2874,13 @@ public unsafe class DismembermentController : IDisposable
         => config.KoStripPhysicsDropClothing &&
            config.KoStripAdvancedClothPhysics &&
            IsGarmentHandoffGear(c);
+
+    // Advanced garments (slot 1/3 with cloth physics on) never do the visual "deflate" squash: an
+    // articulated rig settles them, and even the single-body fallback (rig couldn't build) should just
+    // rest, not squash — the squash-through-body/standing-up artifacts are exactly what we're removing.
+    // Legacy (advanced off) garments and rigid slots (hat/gloves/boots) keep deflate.
+    private bool ShouldSkipGarmentDeflate(Clone c)
+        => c.GearGarmentRig != null || UseAdvancedGarmentPhysics(c);
 
     private bool TryUpdateGarmentVisualBind(SkeletonAccess skel, Clone c)
     {
@@ -3435,6 +3633,19 @@ public unsafe class DismembermentController : IDisposable
             return;
         }
 
+        if (c.GearGarmentRig != null && c.GearGarmentRig.IsLocal)
+        {
+            if (simulation != null)
+                foreach (var rb in c.GearGarmentRig.Bodies)
+                    if (rb.LocalBody.HasValue)
+                    {
+                        var b = simulation.Bodies.GetBodyReference(rb.LocalBody.Value);
+                        b.Velocity.Linear += velocityDelta;
+                        b.Awake = true;
+                    }
+            return;
+        }
+
         if (c.GearRagdollBody != null)
         {
             PlayerRagdollController?.TryApplyExternalVelocityDelta(c.GearRagdollBody, velocityDelta);
@@ -3482,7 +3693,7 @@ public unsafe class DismembermentController : IDisposable
 
     private void UpdateGearDeflateProgress(Clone c, bool hasGroundStats, float averageHeight, float lowestHeight)
     {
-        if (c.GearRagdollRig != null)
+        if (ShouldSkipGarmentDeflate(c))
             return;
 
         if (!IsDeflatableGear(c))
@@ -3522,7 +3733,7 @@ public unsafe class DismembermentController : IDisposable
 
     private Vector3 ResolveGearVisualSquashFactor(Clone c)
     {
-        if (c.GearRagdollRig != null)
+        if (ShouldSkipGarmentDeflate(c))
             return Vector3.One;
 
         if (!IsDeflatableGear(c) || c.GearDeflateFrames <= 0)
@@ -3608,7 +3819,7 @@ public unsafe class DismembermentController : IDisposable
     private bool TryApplyGearCollapsedPhysicsShape(Clone c)
     {
         if (c.GearCollapsedPhysicsApplied ||
-            c.GearRagdollRig != null ||
+            ShouldSkipGarmentDeflate(c) ||
             c.GearKeepModelSlot == 1 ||
             !IsDeflatableGear(c) ||
             c.GearDeflateFrames < GearPhysicsCollapseFrame ||
@@ -3850,6 +4061,20 @@ public unsafe class DismembermentController : IDisposable
             return;
         }
 
+        if (c.GearGarmentRig != null && c.GearGarmentRig.IsLocal)
+        {
+            if (simulation != null)
+                foreach (var rb in c.GearGarmentRig.Bodies)
+                    if (rb.LocalBody.HasValue)
+                    {
+                        var b = simulation.Bodies.GetBodyReference(rb.LocalBody.Value);
+                        var l = b.Velocity.Linear;
+                        b.Velocity.Linear = new Vector3(l.X * horizontalScale, l.Y * verticalScale, l.Z * horizontalScale);
+                        b.Velocity.Angular *= angularScale;
+                    }
+            return;
+        }
+
         if (c.GearRagdollBody != null)
         {
             PlayerRagdollController?.TryDampenExternalBodyVelocity(c.GearRagdollBody,
@@ -3878,7 +4103,7 @@ public unsafe class DismembermentController : IDisposable
 
     private void ApplyGearDeflate(SkeletonAccess skel, Clone c)
     {
-        if (c.GearRagdollRig != null)
+        if (ShouldSkipGarmentDeflate(c))
             return;
 
         if (!IsDeflatableGear(c) || c.GearDeflateFrames <= 0 || c.GearCapById == null)
@@ -5893,6 +6118,8 @@ public unsafe class DismembermentController : IDisposable
                         foreach (var s in c.Rig.Shapes)
                             try { simulation.Shapes.RemoveAndDispose(s, bufferPool); } catch { }
                 }
+                if (c.GearGarmentRig != null && c.GearGarmentRig.IsLocal)
+                    CleanupLocalGarmentRig(c.GearGarmentRig);
                 if (c.GroundTile.HasValue) simulation.Statics.Remove(c.GroundTile.Value);
                 if (c.GroundShape.HasValue && bufferPool != null)
                     simulation.Shapes.RemoveAndDispose(c.GroundShape.Value, bufferPool);
