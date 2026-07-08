@@ -3565,13 +3565,16 @@ public unsafe class DismembermentController : IDisposable
 
     private bool ShouldReleaseGarmentBind(Clone c)
     {
+        // Tube: hand off as soon as its own configurable hold has elapsed — the tube physics does the
+        // sliding, so there is no reason to keep the garment stuck to the body (presets don't apply).
+        if (UseGarmentTube(c))
+        {
+            var tubeHoldFrames = Math.Max(1, (int)MathF.Round(config.KoStripGarmentTubeHoldSeconds * 60f));
+            return c.GearBindElapsedFrames >= tubeHoldFrames;
+        }
+
         if (c.GearBindElapsedFrames < ClothHoldMinFrames)
             return false;
-
-        // Tube: hand off as soon as the minimum bind has elapsed — the tube physics does the sliding, so
-        // there is no reason to keep the garment stuck to the body (presets don't apply to the tube).
-        if (UseGarmentTube(c))
-            return true;
 
         var preset = config.KoStripClothHoldPreset;
         if (preset == ClothHoldPresetVisualOnly)

@@ -274,6 +274,21 @@ public partial class Configuration : IPluginConfiguration
     // Draw the garment tube's ring bodies as a wireframe overlay (tuning aid). Not saved-critical.
     public bool KoStripGarmentTubeDebugDraw { get; set; } = false;
 
+    // Friction the tube uses against the corpse (higher = clings/slides slower). Defaults match the
+    // values the tube shipped with (Math.Clamp(RagdollFriction, 0.45, 0.9) at RagdollFriction=1.0).
+    public const float KoStripGarmentTubeBodyFrictionDefault = 0.9f;
+    public float KoStripGarmentTubeBodyFriction { get; set; } = KoStripGarmentTubeBodyFrictionDefault;
+
+    // Friction the tube uses against the ground once it slides off the body. Default matches the
+    // value the tube shipped with (MathF.Max(RagdollFriction, 3.5) at RagdollFriction=1.0).
+    public const float KoStripGarmentTubeGroundFrictionDefault = 3.5f;
+    public float KoStripGarmentTubeGroundFriction { get; set; } = KoStripGarmentTubeGroundFrictionDefault;
+
+    // How long the tube stays visually bound to the body pose before handoff to physics. Default matches
+    // the value the tube shipped with (ClothHoldMinFrames = 18 frames @ 60fps).
+    public const float KoStripGarmentTubeHoldSecondsDefault = 0.3f;
+    public float KoStripGarmentTubeHoldSeconds { get; set; } = KoStripGarmentTubeHoldSecondsDefault;
+
     // Manual fallback duration (seconds) for the "still attached" visual hold with Advanced clothing
     // settle on. Auto mode is the default path; this only applies when Auto cloth hold is disabled.
     public const float KoStripClothHoldSecondsDefault = 0.3f;

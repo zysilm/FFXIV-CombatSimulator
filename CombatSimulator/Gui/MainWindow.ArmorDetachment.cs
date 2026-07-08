@@ -173,6 +173,49 @@ public partial class MainWindow
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip("Draw the tube's ring bodies as a wireframe to see how the physics model behaves.");
 
+        ImGui.BeginDisabled(!config.KoStripGarmentTubeModel);
+        ImGui.SetNextItemWidth(200f);
+        var tubeBodyFriction = config.KoStripGarmentTubeBodyFriction;
+        if (ImGui.SliderFloat("Tube body friction##armordetachtubebodyfriction", ref tubeBodyFriction, 0.1f, 3f, "%.2f"))
+        {
+            config.KoStripGarmentTubeBodyFriction = tubeBodyFriction;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Friction between the tube and the corpse. Higher = the shirt clings and\n" +
+                             $"slides down more slowly. Default {Configuration.KoStripGarmentTubeBodyFrictionDefault:0.00}.");
+
+        ImGui.SetNextItemWidth(200f);
+        var tubeGroundFriction = config.KoStripGarmentTubeGroundFriction;
+        if (ImGui.SliderFloat("Tube ground friction##armordetachtubegroundfriction", ref tubeGroundFriction, 0.1f, 6f, "%.2f"))
+        {
+            config.KoStripGarmentTubeGroundFriction = tubeGroundFriction;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Friction between the tube and the ground once it slides off the body.\n" +
+                             $"Default {Configuration.KoStripGarmentTubeGroundFrictionDefault:0.00}.");
+
+        ImGui.SetNextItemWidth(200f);
+        var tubeHoldSeconds = config.KoStripGarmentTubeHoldSeconds;
+        if (ImGui.SliderFloat("Tube handoff delay##armordetachtubehold", ref tubeHoldSeconds, 0f, 3f, "%.2f s"))
+        {
+            config.KoStripGarmentTubeHoldSeconds = Math.Clamp(tubeHoldSeconds, 0f, 3f);
+            config.Save();
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("How long the tube stays visually bound to the body pose before physics takes\n" +
+                             $"over. Default {Configuration.KoStripGarmentTubeHoldSecondsDefault:0.00}s.");
+
+        if (ImGui.Button("Reset tube tuning##armordetachtubereset"))
+        {
+            config.KoStripGarmentTubeBodyFriction = Configuration.KoStripGarmentTubeBodyFrictionDefault;
+            config.KoStripGarmentTubeGroundFriction = Configuration.KoStripGarmentTubeGroundFrictionDefault;
+            config.KoStripGarmentTubeHoldSeconds = Configuration.KoStripGarmentTubeHoldSecondsDefault;
+            config.Save();
+        }
+        ImGui.EndDisabled();
+
         ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing || !config.KoStripAdvancedClothPhysics);
         var clothHoldAuto = config.KoStripClothHoldAuto;
         if (ImGui.Checkbox("Auto cloth hold##armordetachclothholdauto", ref clothHoldAuto))

@@ -9658,6 +9658,33 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     {
         pairMaterial.FrictionCoefficient = Friction;
 
+        // Garment tube contacts get their own configurable friction (separate from the legacy chain-rig
+        // gear material below): the tube relies on real sliding contact against the corpse, so this is
+        // the primary "how fast does it slide off" tuning knob. Bodies are tube-tagged via the self-
+        // collide group dict, which only tube rigs populate (selfCollide: false).
+        var aTube = pair.A.Mobility == CollidableMobility.Dynamic && IsTubeBody(pair.A.BodyHandle.Value);
+        var bTube = pair.B.Mobility == CollidableMobility.Dynamic && IsTubeBody(pair.B.BodyHandle.Value);
+        if (aTube || bTube)
+        {
+            var tubeOnGround = (aTube && pair.B.Mobility == CollidableMobility.Static) ||
+                                (bTube && pair.A.Mobility == CollidableMobility.Static);
+            if (tubeOnGround)
+            {
+                pairMaterial.MaximumRecoveryVelocity = 0.25f;
+                pairMaterial.FrictionCoefficient = Config?.KoStripGarmentTubeGroundFriction
+                    ?? Configuration.KoStripGarmentTubeGroundFrictionDefault;
+                pairMaterial.SpringSettings = new SpringSettings(12, 3);
+            }
+            else
+            {
+                pairMaterial.MaximumRecoveryVelocity = 0.08f;
+                pairMaterial.FrictionCoefficient = Config?.KoStripGarmentTubeBodyFriction
+                    ?? Configuration.KoStripGarmentTubeBodyFrictionDefault;
+                pairMaterial.SpringSettings = new SpringSettings(6, 4);
+            }
+            return true;
+        }
+
         // Self-collision (limb vs own limb) is dynamic-vs-dynamic. At rest the corpse's
         // capsules overlap (thighs touching, forearms on the torso, hands on legs); a crisp
         // 2 m/s recovery shoves those overlaps apart every step, the joints pull them back,
@@ -9714,6 +9741,11 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
            ExternalRigSelfCollideGroupByBody.TryGetValue(aHandle, out var ga) &&
            ExternalRigSelfCollideGroupByBody.TryGetValue(bHandle, out var gb) &&
            ga == gb;
+
+    // Only the garment tube currently spawns with selfCollide:false, so membership in this dict doubles
+    // as a "this body belongs to a tube rig" tag for contact-material purposes.
+    private bool IsTubeBody(int bodyHandle)
+        => ExternalRigSelfCollideGroupByBody != null && ExternalRigSelfCollideGroupByBody.ContainsKey(bodyHandle);
 
     private bool IsSoftKinematicContact(CollidablePair pair)
         => SoftKinematicBodies != null &&
