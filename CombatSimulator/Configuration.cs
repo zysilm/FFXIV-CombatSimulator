@@ -271,6 +271,9 @@ public partial class Configuration : IPluginConfiguration
     // instead of folding. Host ragdoll only; falls back to the chain rig when unavailable. Default off.
     public bool KoStripGarmentTubeModel { get; set; } = false;
 
+    // Draw the garment tube's ring bodies as a wireframe overlay (tuning aid). Not saved-critical.
+    public bool KoStripGarmentTubeDebugDraw { get; set; } = false;
+
     // Manual fallback duration (seconds) for the "still attached" visual hold with Advanced clothing
     // settle on. Auto mode is the default path; this only applies when Auto cloth hold is disabled.
     public const float KoStripClothHoldSecondsDefault = 0.3f;

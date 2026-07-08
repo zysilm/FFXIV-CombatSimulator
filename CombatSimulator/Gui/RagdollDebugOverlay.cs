@@ -15,15 +15,17 @@ namespace CombatSimulator.Gui;
 public class RagdollDebugOverlay
 {
     private readonly RagdollController ragdollController;
+    private readonly DismembermentController dismemberment;
     private readonly MainWindow mainWindow;
     private readonly Configuration config;
     private readonly IGameGui gameGui;
     private readonly IClientState clientState;
 
-    public RagdollDebugOverlay(RagdollController ragdollController, MainWindow mainWindow,
-        Configuration config, IGameGui gameGui, IClientState clientState)
+    public RagdollDebugOverlay(RagdollController ragdollController, DismembermentController dismemberment,
+        MainWindow mainWindow, Configuration config, IGameGui gameGui, IClientState clientState)
     {
         this.ragdollController = ragdollController;
+        this.dismemberment = dismemberment;
         this.mainWindow = mainWindow;
         this.config = config;
         this.gameGui = gameGui;
@@ -32,6 +34,7 @@ public class RagdollDebugOverlay
 
     public void Draw()
     {
+        DrawGarmentTubes();
         if (!config.RagdollDebugOverlay || !ragdollController.IsActive) return;
 
         var capsules = ragdollController.GetDebugCapsules();
@@ -130,6 +133,27 @@ public class RagdollDebugOverlay
         }
 
         DrawLimitStress(drawList);
+    }
+
+    private readonly List<DismembermentController.DebugGarmentBox> tubeBuffer = new();
+
+    /// <summary>Wireframe of the garment tube's ring bodies — the tuning aid for the tube physics model.
+    /// Independent of the ragdoll overlay so it can be watched on its own.</summary>
+    private void DrawGarmentTubes()
+    {
+        if (!config.KoStripGarmentTubeDebugDraw) return;
+        dismemberment.CollectDebugGarmentTubeBoxes(tubeBuffer);
+        if (tubeBuffer.Count == 0) return;
+
+        var drawList = ImGui.GetForegroundDrawList();
+        var color = ImGui.GetColorU32(new Vector4(0.2f, 0.7f, 1f, 0.9f));
+        foreach (var box in tubeBuffer)
+        {
+            var xAxis = Vector3.Transform(Vector3.UnitX, box.Orientation);
+            var yAxis = Vector3.Transform(Vector3.UnitY, box.Orientation);
+            var zAxis = Vector3.Transform(Vector3.UnitZ, box.Orientation);
+            DrawBox3D(drawList, box.Position, xAxis, yAxis, zAxis, box.HalfExtents, color, 1.5f);
+        }
     }
 
     private readonly List<RagdollController.JointLimitStress> stressBuffer = new();

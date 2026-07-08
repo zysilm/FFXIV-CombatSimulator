@@ -162,6 +162,17 @@ public partial class MainWindow
                              "wraps the body, so the shirt slides down off the corpse instead of folding.\n" +
                              "Host ragdoll only; falls back to the chain rig otherwise. Default off.");
 
+        ImGui.BeginDisabled(!config.KoStripGarmentTubeModel);
+        var tubeDebug = config.KoStripGarmentTubeDebugDraw;
+        if (ImGui.Checkbox("Tube debug wireframe##armordetachtubedebug", ref tubeDebug))
+        {
+            config.KoStripGarmentTubeDebugDraw = tubeDebug;
+            config.Save();
+        }
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Draw the tube's ring bodies as a wireframe to see how the physics model behaves.");
+
         ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing || !config.KoStripAdvancedClothPhysics);
         var clothHoldAuto = config.KoStripClothHoldAuto;
         if (ImGui.Checkbox("Auto cloth hold##armordetachclothholdauto", ref clothHoldAuto))

@@ -723,6 +723,33 @@ public unsafe class DismembermentController : IDisposable
         ClearPcNpcCollisionStatics();
     }
 
+    public readonly struct DebugGarmentBox
+    {
+        public readonly Vector3 Position;
+        public readonly Quaternion Orientation;
+        public readonly Vector3 HalfExtents;
+        public DebugGarmentBox(Vector3 position, Quaternion orientation, Vector3 halfExtents)
+        {
+            Position = position;
+            Orientation = orientation;
+            HalfExtents = halfExtents;
+        }
+    }
+
+    /// <summary>Collect the live world boxes of every active garment-tube ring body, for the debug overlay.</summary>
+    public void CollectDebugGarmentTubeBoxes(List<DebugGarmentBox> buffer)
+    {
+        buffer.Clear();
+        foreach (var c in clones)
+        {
+            if (c.GearGarmentRig is not { IsTube: true } rig)
+                continue;
+            foreach (var rb in rig.Bodies)
+                if (TryGetGarmentRigBodyPose(c, rb, out var pos, out var rot, out _, out _))
+                    buffer.Add(new DebugGarmentBox(pos, Quaternion.Normalize(rot), rb.HalfExtents));
+        }
+    }
+
     private void OnRenderFrame()
     {
         try
