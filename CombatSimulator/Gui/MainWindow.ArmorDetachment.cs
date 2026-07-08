@@ -176,7 +176,7 @@ public partial class MainWindow
         ImGui.BeginDisabled(!config.KoStripGarmentTubeModel);
         ImGui.SetNextItemWidth(200f);
         var tubeBodyFriction = config.KoStripGarmentTubeBodyFriction;
-        if (ImGui.SliderFloat("Tube body friction##armordetachtubebodyfriction", ref tubeBodyFriction, 0.1f, 3f, "%.2f"))
+        if (ImGui.SliderFloat("Tube body friction##armordetachtubebodyfriction", ref tubeBodyFriction, 0.1f, 10f, "%.2f"))
         {
             config.KoStripGarmentTubeBodyFriction = tubeBodyFriction;
             config.Save();
@@ -187,7 +187,7 @@ public partial class MainWindow
 
         ImGui.SetNextItemWidth(200f);
         var tubeGroundFriction = config.KoStripGarmentTubeGroundFriction;
-        if (ImGui.SliderFloat("Tube ground friction##armordetachtubegroundfriction", ref tubeGroundFriction, 0.1f, 6f, "%.2f"))
+        if (ImGui.SliderFloat("Tube ground friction##armordetachtubegroundfriction", ref tubeGroundFriction, 0.1f, 10f, "%.2f"))
         {
             config.KoStripGarmentTubeGroundFriction = tubeGroundFriction;
             config.Save();
@@ -198,9 +198,9 @@ public partial class MainWindow
 
         ImGui.SetNextItemWidth(200f);
         var tubeHoldSeconds = config.KoStripGarmentTubeHoldSeconds;
-        if (ImGui.SliderFloat("Tube handoff delay##armordetachtubehold", ref tubeHoldSeconds, 0f, 3f, "%.2f s"))
+        if (ImGui.SliderFloat("Tube handoff delay##armordetachtubehold", ref tubeHoldSeconds, 0f, 10f, "%.2f s"))
         {
-            config.KoStripGarmentTubeHoldSeconds = Math.Clamp(tubeHoldSeconds, 0f, 3f);
+            config.KoStripGarmentTubeHoldSeconds = Math.Clamp(tubeHoldSeconds, 0f, 10f);
             config.Save();
         }
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
