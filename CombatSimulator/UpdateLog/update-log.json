@@ -1,5 +1,17 @@
 [
   {
+    "version": "2.7.0.0",
+    "date": "2026-07-08",
+    "title": "Combat Simulator 2.7.0.0",
+    "changes": [
+      "Added an experimental cloth tube physics model for Armor Detachment (Body and Legs) — garments now wrap the body and slide down naturally instead of folding.",
+      "Added tube tuning options (friction, handoff delay), a debug wireframe, and a new Visual Only cloth hold profile.",
+      "Improved Advanced Clothing Settle stability, with less deformation on physics handoff and per-segment coat skirt draping.",
+      "NPC ragdolls can now collide with and rest on skinned meshes such as mounts and other characters.",
+      "Fixed mounted-death dismemberment being enabled by default."
+    ]
+  },
+  {
     "version": "2.6.0.2",
     "date": "2026-07-05",
     "title": "Combat Simulator 2.6.0.2",
