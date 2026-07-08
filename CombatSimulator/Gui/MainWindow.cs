@@ -370,6 +370,13 @@ public partial class MainWindow : IDisposable
                     config.RagdollHairGravityStrength = 0.5f;
                     config.RagdollHairDamping = 0.92f;
                     config.RagdollHairStiffness = 0.1f;
+                    config.RagdollHairRigMode = false;
+                    config.RagdollHairRigSegmentMass = 0.02f;
+                    config.RagdollHairRigThickness = 0.008f;
+                    config.RagdollHairRigSwingLimit = 0.6f;
+                    config.RagdollHairRigInitialSwingFactor = 0.28f;
+                    config.RagdollHairRigPoseGuideForce = 4f;
+                    config.RagdollHairRigSettleSeconds = 1.0f;
                     // NPC Collision
                     config.RagdollNpcCollision = true;
                     config.RagdollNpcCollisionConvexHull = false;
@@ -4509,13 +4516,74 @@ public partial class MainWindow : IDisposable
                         config.Save();
                     }
 
-                    var hairStiffness = config.RagdollHairStiffness;
-                    if (ImGui.SliderFloat("Hair Stiffness##ragdoll", ref hairStiffness, 0.0f, 0.5f, "%.2f"))
+                    var hairRigMode = config.RagdollHairRigMode;
+                    if (ImGui.Checkbox("Rigid-body hair rig (experimental)##ragdoll", ref hairRigMode))
                     {
-                        config.RagdollHairStiffness = hairStiffness;
+                        config.RagdollHairRigMode = hairRigMode;
                         config.Save();
                     }
-                    HelpMarker("Resistance to gravity. Higher = stiffer hair that holds its shape.");
+                    HelpMarker("Simulate hair as real jointed rigid-body strands (like the garment cloth rig): " +
+                               "true collision with the corpse + ground, and head-driven inertia/whip. Works for any " +
+                               "hairstyle. When off, the lightweight pendulum sliders above are used instead. " +
+                               "Takes effect on next ragdoll activation.");
+
+                    if (config.RagdollHairRigMode)
+                    {
+                        ImGui.Indent();
+
+                        var swing = config.RagdollHairRigSwingLimit;
+                        if (ImGui.SliderFloat("Strand swing ROM (rad)##hairrig", ref swing, 0.1f, 1.5f, "%.2f"))
+                        {
+                            config.RagdollHairRigSwingLimit = swing;
+                            config.Save();
+                        }
+                        HelpMarker("How far each strand joint can bend. Higher = floppier hair.");
+
+                        var mass = config.RagdollHairRigSegmentMass;
+                        if (ImGui.SliderFloat("Strand mass##hairrig", ref mass, 0.005f, 0.1f, "%.3f"))
+                        {
+                            config.RagdollHairRigSegmentMass = mass;
+                            config.Save();
+                        }
+
+                        var thickness = config.RagdollHairRigThickness;
+                        if (ImGui.SliderFloat("Strand thickness (m)##hairrig", ref thickness, 0.003f, 0.02f, "%.3f"))
+                        {
+                            config.RagdollHairRigThickness = thickness;
+                            config.Save();
+                        }
+                        HelpMarker("Collision thickness of a strand against the body/ground.");
+
+                        var poseForce = config.RagdollHairRigPoseGuideForce;
+                        if (ImGui.SliderFloat("Style-hold force##hairrig", ref poseForce, 0.0f, 20.0f, "%.1f"))
+                        {
+                            config.RagdollHairRigPoseGuideForce = poseForce;
+                            config.Save();
+                        }
+                        HelpMarker("Servo force that holds the hairstyle at the death instant, then fades over the settle window.");
+
+                        var settle = config.RagdollHairRigSettleSeconds;
+                        if (ImGui.SliderFloat("Settle time (s)##hairrig", ref settle, 0.2f, 3.0f, "%.1f"))
+                        {
+                            config.RagdollHairRigSettleSeconds = settle;
+                            config.Save();
+                        }
+                        HelpMarker("Time to relax strand ROM to full and fade the style-hold servo to zero.");
+
+                        if (ImGui.Button("Reset hair rig params##hairrig"))
+                        {
+                            config.RagdollHairRigSegmentMass = 0.02f;
+                            config.RagdollHairRigThickness = 0.008f;
+                            config.RagdollHairRigSwingLimit = 0.6f;
+                            config.RagdollHairRigInitialSwingFactor = 0.28f;
+                            config.RagdollHairRigPoseGuideForce = 4f;
+                            config.RagdollHairRigSettleSeconds = 1.0f;
+                            config.Save();
+                        }
+                        HelpMarker("Restore the strand tuning sliders to their defaults. Takes effect on next ragdoll activation.");
+
+                        ImGui.Unindent();
+                    }
                 }
 
                 ImGui.Separator();

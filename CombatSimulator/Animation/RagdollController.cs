@@ -25,7 +25,7 @@ using Lumina.Data.Parsing;
 
 namespace CombatSimulator.Animation;
 
-public unsafe class RagdollController : IDisposable
+public unsafe partial class RagdollController : IDisposable
 {
     private readonly BoneTransformService boneService;
     private readonly Npcs.NpcSelector? npcSelector;
@@ -2137,6 +2137,7 @@ public unsafe class RagdollController : IDisposable
         kaoBodyBoneIndex = -1;
         hairPhysics?.Reset();
         hairPhysics = null;
+        RemoveHairRig();
 
         DestroySimulation();
         log.Info("RagdollController: Deactivated");
@@ -4412,11 +4413,19 @@ public unsafe class RagdollController : IDisposable
             totalNpcStatics += (s.IsFallback || s.IsConvexHull || s.IsMesh) ? 1 : s.BoneStatics.Count;
         log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, {npcCollisionStates.Count} NPCs ({totalNpcStatics} collision volumes), ground={groundY:F3}");
 
-        // Initialize hair physics
+        // Initialize hair physics — prefer the BEPU rig (real jointed strands + collision) when
+        // enabled; fall back to the legacy pendulum simulator otherwise, or if the rig cannot build
+        // (e.g. no head ragdoll body / no simulatable hair partial).
         if (config.RagdollHairPhysics && kaoBodyBoneIndex >= 0)
         {
-            hairPhysics = new HairPhysicsSimulator(config, log);
-            hairPhysics.Initialize(skel.CharBase, kaoBodyBoneIndex);
+            if (config.RagdollHairRigMode)
+                BuildHairRig(skel);
+
+            if (!hairRigActive)
+            {
+                hairPhysics = new HairPhysicsSimulator(config, log);
+                hairPhysics.Initialize(skel.CharBase, kaoBodyBoneIndex);
+            }
         }
 
         return ragdollBones.Count > 0;
@@ -6673,8 +6682,10 @@ public unsafe class RagdollController : IDisposable
                 CapturePrevBodyPoses(boneCount);
                 hasPrevPhysicsState = true;
                 ClampTwistRates(); // pre-step too: the solver's substeps integrate poses internally
+                UpdateHairKinematicRoots(); // drive hair anchors from the head before integrating
                 simulation.Timestep(FixedTimestep);
                 ClampVelocities(maxLinear, maxAngular);
+                ClampHairRigVelocities();
                 ClampTwistRates();
                 ApplyTwistGuards();
                 ApplyStandingAnchorCorrection();
@@ -6882,7 +6893,17 @@ public unsafe class RagdollController : IDisposable
 
         // Apply hair physics (after rigid j_kao propagation). Skipped while resting —
         // the body is settled, so hair has settled too.
-        if (hairPhysics != null && kaoBodyBoneIndex >= 0 && !resting)
+        if (hairRigActive)
+        {
+            // BEPU strands already integrated inside simulation.Timestep above (same simulation).
+            // Read their poses back into the hair bones and advance the settle (ROM relax + servo fade).
+            if (!resting)
+            {
+                ReadbackHairRig(skel);
+                TickHairRigSettle(substeps * FixedTimestep);
+            }
+        }
+        else if (hairPhysics != null && kaoBodyBoneIndex >= 0 && !resting)
         {
             // Advance hair by exactly the time the body physics advanced this frame,
             // so hair stays in step with the ragdoll across framerates (zero if no substep ran).
@@ -9585,6 +9606,12 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         if ((a.Mobility == CollidableMobility.Dynamic && b.Mobility == CollidableMobility.Kinematic) ||
             (b.Mobility == CollidableMobility.Dynamic && a.Mobility == CollidableMobility.Kinematic))
         {
+            // Hair strands (and their kinematic follow-anchor) are flagged no-ragdoll-contact: they are
+            // driven purely by joints, so they must not collide with any kinematic body — neither their
+            // own anchor (which sits on the scalp) nor NPC collision proxies. Without this the anchor
+            // punts the strands and they whip the corpse.
+            if (IsExternalRigNoRagdollContact(a.BodyHandle.Value) || IsExternalRigNoRagdollContact(b.BodyHandle.Value))
+                return false;
             return true;
         }
 
