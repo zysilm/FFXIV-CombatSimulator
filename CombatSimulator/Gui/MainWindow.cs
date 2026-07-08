@@ -11,6 +11,7 @@ using CombatSimulator.Npcs;
 using CombatSimulator.Recipes;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
+using CombatSimulator.Targeting;
 using Dalamud.Game.ClientState.GamePad;
 using Dalamud.Interface;
 using Dalamud.Interface.Utility.Raii;
@@ -54,6 +55,8 @@ public partial class MainWindow : IDisposable
     private readonly DeathCamController deathCamController;
     private readonly ActiveCameraController activeCameraController;
     private readonly HookSafetyChecker hookSafetyChecker;
+    private readonly UseActionHook useActionHook;
+    private readonly PlayerTargetController playerTargetController;
     private readonly IClientState clientState;
     private readonly IDataManager dataManager;
     private readonly IChatGui chatGui;
@@ -169,6 +172,8 @@ public partial class MainWindow : IDisposable
         DeathCamController deathCamController,
         ActiveCameraController activeCameraController,
         HookSafetyChecker hookSafetyChecker,
+        UseActionHook useActionHook,
+        PlayerTargetController playerTargetController,
         IClientState clientState,
         IDataManager dataManager,
         IChatGui chatGui,
@@ -188,6 +193,8 @@ public partial class MainWindow : IDisposable
         this.deathCamController = deathCamController;
         this.activeCameraController = activeCameraController;
         this.hookSafetyChecker = hookSafetyChecker;
+        this.useActionHook = useActionHook;
+        this.playerTargetController = playerTargetController;
         this.clientState = clientState;
         this.dataManager = dataManager;
         this.chatGui = chatGui;
@@ -309,7 +316,10 @@ public partial class MainWindow : IDisposable
         {
             case 0: // Combat
                 DrawSimulationSection();
-                DrawFightingModeSection();
+                // Hidden pending a security review (see update log 2.6.0.1); only
+                // reachable via the Dev Experimental unlock.
+                if (DevExperimentalUnlocked)
+                    DrawFightingModeSection();
                 DrawActionModeSection();
                 break;
             case 1: // Targets
@@ -494,15 +504,20 @@ public partial class MainWindow : IDisposable
             }
             HelpMarker(BuildActionModeQuickHelp());
 
-            var fightingMode = config.FightingMode;
-            if (ImGui.Checkbox("Fighting Mode [Experimental]", ref fightingMode))
+            // Hidden pending a security review of its direct position/rotation writes
+            // (see update log 2.6.0.1) — only reachable via the Dev Experimental unlock.
+            if (DevExperimentalUnlocked)
             {
-                config.FightingMode = fightingMode;
-                if (fightingMode)
-                    config.ActionMode = false;
-                config.Save();
+                var fightingMode = config.FightingMode;
+                if (ImGui.Checkbox("Fighting Mode [Experimental]", ref fightingMode))
+                {
+                    config.FightingMode = fightingMode;
+                    if (fightingMode)
+                        config.ActionMode = false;
+                    config.Save();
+                }
+                HelpMarker("Experimental 1v1 side-view mode. Press an attack on an enemy to lock the pair into a 2D fighting lane and side camera. Ignores profiles while active.");
             }
-            HelpMarker("Experimental 1v1 side-view mode. Press an attack on an enemy to lock the pair into a 2D fighting lane and side camera. Ignores profiles while active.");
         }
 
         if (compact)
@@ -2860,6 +2875,9 @@ public partial class MainWindow : IDisposable
 
     private void DrawDiagnoseSection()
     {
+        DrawSafetyHookStatus();
+        ImGui.Spacing();
+
         ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Plugin Conflict Diagnostics");
         ImGui.Separator();
         ImGui.Spacing();
@@ -2963,6 +2981,75 @@ public partial class MainWindow : IDisposable
             ImGui.TextDisabled("No native functions registered for checking.");
         }
 
+    }
+
+    // Health of our OWN safety hooks — the barriers that keep simulated combat from ever
+    // reaching the server. Unlike the conflict table below (other plugins hooking us),
+    // this shows whether our interceptors are actually installed right now. A red row
+    // means simulated actions/targets could leak to the server.
+    private void DrawSafetyHookStatus()
+    {
+        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Client-Side Safety");
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var actionOk = useActionHook.IsHealthy;
+        var targetGuardOk = playerTargetController.IsHardTargetGuardHealthy;
+        var allOk = actionOk && targetGuardOk;
+
+        using (ImRaii.PushFont(UiBuilder.IconFont))
+        {
+            ImGui.TextColored(
+                allOk ? new Vector4(0.4f, 1f, 0.4f, 1f) : new Vector4(1f, 0.4f, 0.4f, 1f),
+                (allOk ? FontAwesomeIcon.ShieldAlt : FontAwesomeIcon.ExclamationTriangle).ToIconString());
+        }
+        ImGui.SameLine();
+        if (allOk)
+            ImGui.TextColored(new Vector4(0.4f, 1f, 0.4f, 1f), "All client-side safety barriers active");
+        else
+            ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), "A safety barrier is DOWN — simulated combat may reach the server");
+
+        ImGui.Spacing();
+
+        if (ImGui.BeginTable("##SafetyHookTable", 3, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg))
+        {
+            ImGui.TableSetupColumn("Barrier", ImGuiTableColumnFlags.WidthFixed, 190);
+            ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 80);
+            ImGui.TableSetupColumn("Protects against", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableHeadersRow();
+
+            DrawSafetyHookRow("UseAction interceptor", actionOk,
+                "Simulated actions being sent to the server as real action packets.");
+            DrawSafetyHookRow("Hard-target guard", targetGuardOk,
+                "Clicking a simulated actor syncing a fake target id to the server.");
+
+            ImGui.EndTable();
+        }
+
+        if (!allOk)
+        {
+            ImGui.Spacing();
+            ImGui.TextWrapped(
+                "If a barrier is down, restart the game or reload Combat Simulator to reinstall its hooks. " +
+                "The simulation also auto-stops if the UseAction interceptor fails while combat is active.");
+        }
+    }
+
+    private static void DrawSafetyHookRow(string name, bool healthy, string protects)
+    {
+        ImGui.TableNextRow();
+
+        ImGui.TableNextColumn();
+        ImGui.Text(name);
+
+        ImGui.TableNextColumn();
+        if (healthy)
+            ImGui.TextColored(new Vector4(0.4f, 1f, 0.4f, 1f), "Active");
+        else
+            ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), "DOWN");
+
+        ImGui.TableNextColumn();
+        ImGui.TextWrapped(protects);
     }
 
     private void DrawGuiSettingsSection()

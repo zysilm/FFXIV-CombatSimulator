@@ -91,6 +91,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly FightingDebugOverlay fightingDebugOverlay;
     private bool hookSafetyScanned;
     private bool wasLoggedIn;
+    private bool wasDevExperimentalUnlocked;
 
     public CombatSimulatorPlugin(
         IDalamudPluginInterface pluginInterface,
@@ -124,6 +125,18 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         var hadExistingConfig = pluginInterface.ConfigFile.Exists;
         config = pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         config.Initialize(pluginInterface);
+
+        // Security: Fighting Mode drives the local player's position/rotation directly
+        // (lane projection, min-separation clamp, vault) and is under review for movement
+        // patterns a server could flag. Force it off on every load regardless of the
+        // persisted value — see update log 2.6.0.1. The UI entry is also now hidden unless
+        // Dev Experimental is unlocked (see OnFrameworkUpdate / MainWindow).
+        if (config.FightingMode)
+        {
+            config.FightingMode = false;
+            config.Save();
+            log.Info("Fighting Mode force-disabled on load (security).");
+        }
 
         // Simulation
         actionDataProvider = new ActionDataProvider(dataManager, log, config);
@@ -397,7 +410,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         activeCameraController.SetActive(config.EnableActiveCamera);
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, deathCamController, activeCameraController, hookSafetyChecker, clientState, dataManager, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, deathCamController, activeCameraController, hookSafetyChecker, useActionHook, playerTargetController, clientState, dataManager, chatGui, log);
         armorDetachmentController.AllowOnHitDetach = () => mainWindow.DevExperimentalUnlocked;
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
@@ -659,6 +672,18 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 hookSafetyScanned = true;
                 hookSafetyChecker.Scan();
             }
+
+            // Security: Fighting Mode is a hidden Dev Experimental feature (see MainWindow
+            // gating). Force it off the moment Dev Experimental gets unlocked in a session,
+            // so it can never be silently re-armed by a stale config value.
+            var devUnlocked = mainWindow.DevExperimentalUnlocked;
+            if (devUnlocked && !wasDevExperimentalUnlocked && config.FightingMode)
+            {
+                config.FightingMode = false;
+                config.Save();
+                log.Info("Fighting Mode force-disabled on Dev Experimental unlock (security).");
+            }
+            wasDevExperimentalUnlocked = devUnlocked;
 
             // Validate selected NPCs still exist
             npcSelector.Tick();

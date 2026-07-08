@@ -43,6 +43,17 @@ public sealed unsafe class PlayerTargetController : IDisposable
     private delegate void HandleTargetingKeybindsDelegate(TargetSystem* thisPtr);
     private Hook<HandleTargetingKeybindsDelegate>? keybindHook;
 
+    // The two flag params are declared as byte (not bool) to sidestep 1-byte-vs-4-byte
+    // bool marshalling ambiguity; we never read them, only pass them straight through.
+    private delegate bool SetHardTargetDelegate(TargetSystem* thisPtr, GameObject* obj, byte ignoreTargetModes, byte a4, int a5);
+    private Hook<SetHardTargetDelegate>? hardTargetHook;
+
+    // Client-only simulated actors (spawned NPCs, companions, sensed map enemies we
+    // re-id) are assigned entity ids at/above this floor. The game's HARD target is
+    // synced to the server, so such an id must never become the native hard target — see
+    // SetHardTargetDetour. Mirror of NpcSelector.SimulatedEntityIdFloor.
+    private const uint SimulatedEntityIdFloor = 0xF0000000;
+
     private SimulatedNpc? lockedTarget;
 
     // Auto-counter state machine: armed by default; pressing cancel suppresses it
@@ -84,6 +95,60 @@ public sealed unsafe class PlayerTargetController : IDisposable
         {
             log.Error(ex, "Failed to hook HandleTargetingKeybinds — custom targeting input will not work.");
         }
+
+        try
+        {
+            hardTargetHook = gameInterop.HookFromAddress<SetHardTargetDelegate>(
+                (nint)TargetSystem.MemberFunctionPointers.SetHardTarget,
+                SetHardTargetDetour);
+            hardTargetHook.Enable();
+            log.Info("SetHardTarget guard hook created and enabled.");
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Failed to hook SetHardTarget — simulated actors could be hard-targeted and leak to the server.");
+        }
+    }
+
+    /// <summary>
+    /// True when the SetHardTarget guard hook is installed. When false, a mouse click on a
+    /// simulated actor could set it as the native hard target and sync a fake entity id to
+    /// the server — surfaced in the Diagnose tab.
+    /// </summary>
+    public bool IsHardTargetGuardHealthy => hardTargetHook is { IsDisposed: false };
+
+    // The game's hard target is sent to the server. A client-only simulated actor must
+    // never become it: intercept SetHardTarget and, when the requested object is one of
+    // ours (entity id at/above the simulated floor), suppress the native target entirely.
+    // While our own custom targeting is driving an active sim, the click is instead routed
+    // into our internal lock so clicking a simulated enemy still selects it — with no
+    // packet ever leaving the client.
+    private bool SetHardTargetDetour(TargetSystem* thisPtr, GameObject* obj, byte ignoreTargetModes, byte a4, int a5)
+    {
+        try
+        {
+            if (obj != null && obj->EntityId >= SimulatedEntityIdFloor)
+            {
+                if (config.EnableCustomTargeting && combatEngine.IsActive)
+                {
+                    var npc = npcSelector.GetSelectedNpc(obj->EntityId);
+                    if (npc != null && IsValidCandidate(npc))
+                    {
+                        lockedTarget = npc;
+                        autoCounterSuppressed = false;
+                    }
+                }
+
+                log.Debug($"Suppressed native hard-target of simulated actor 0x{obj->EntityId:X} (no server sync).");
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Error in SetHardTarget detour.");
+        }
+
+        return hardTargetHook!.Original(thisPtr, obj, ignoreTargetModes, a4, a5);
     }
 
     /// <summary>The currently locked enemy, or null.</summary>
@@ -375,6 +440,18 @@ public sealed unsafe class PlayerTargetController : IDisposable
             log.Warning(ex, "Error disposing targeting keybind hook.");
         }
         keybindHook = null;
+
+        try
+        {
+            hardTargetHook?.Disable();
+            hardTargetHook?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Error disposing SetHardTarget guard hook.");
+        }
+        hardTargetHook = null;
+
         lockedTarget = null;
     }
 }

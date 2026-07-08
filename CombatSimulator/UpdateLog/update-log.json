@@ -1,5 +1,22 @@
 [
   {
+    "version": "2.6.0.2",
+    "date": "2026-07-05",
+    "title": "Combat Simulator 2.6.0.2",
+    "changes": [
+      "Improved plugin security.",
+      "Camera and combat recipe selections are now remembered between sessions."
+    ]
+  },
+  {
+    "version": "2.6.0.1",
+    "date": "2026-07-05",
+    "title": "Combat Simulator 2.6.0.1",
+    "changes": [
+      "Disable Fighting Mode due to security concerns."
+    ]
+  },
+  {
     "version": "2.6.0.0",
     "date": "2026-07-05",
     "title": "Combat Simulator 2.6.0.0",

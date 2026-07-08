@@ -23,6 +23,11 @@ public unsafe class UseActionHook : IDisposable
     private readonly CombatSimulator.ActionCombat.IPlayerActionSink actionSink;
     private readonly IFightingModeInputSink fightingModeSink;
 
+    // Client-only simulated actors are assigned entity ids at/above this floor. Such an
+    // id exists only inside our local simulation — the server never issued it — so it must
+    // never be handed to the real ActionManager (see CallOriginalGuarded).
+    private const ulong SimulatedEntityIdFloor = 0xF0000000;
+
     private delegate bool UseActionDelegate(
         ActionManager* actionManager,
         ActionType actionType,
@@ -116,11 +121,11 @@ public unsafe class UseActionHook : IDisposable
             log.Debug($"UseAction called: type={actionType}, actionId={actionId}, targetId=0x{targetId:X}, active={combatEngine.IsActive}");
 
             if (!combatEngine.IsActive)
-                return useActionHook!.Original(actionManager, actionType, actionId,
+                return CallOriginalGuarded(actionManager, actionType, actionId,
                     targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
 
             if (actionType != ActionType.Action)
-                return useActionHook!.Original(actionManager, actionType, actionId,
+                return CallOriginalGuarded(actionManager, actionType, actionId,
                     targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
 
             if (config.FightingMode)
@@ -201,7 +206,7 @@ public unsafe class UseActionHook : IDisposable
             log.Info($"UseAction check: actionId={actionId}, targetId=0x{targetId:X}, isSelected={isSelected}");
 
             if (!isSelected)
-                return useActionHook!.Original(actionManager, actionType, actionId,
+                return CallOriginalGuarded(actionManager, actionType, actionId,
                     targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
 
             // Intercept — route to simulation, don't send to server
@@ -212,9 +217,38 @@ public unsafe class UseActionHook : IDisposable
         catch (Exception ex)
         {
             log.Error(ex, "Error in UseAction hook, passing through to original.");
-            return useActionHook!.Original(actionManager, actionType, actionId,
+            return CallOriginalGuarded(actionManager, actionType, actionId,
                 targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
         }
+    }
+
+    /// <summary>
+    /// Invoke the real UseAction — unless the target id belongs to a client-only simulated
+    /// actor (>= <see cref="SimulatedEntityIdFloor"/>), in which case swallow the call
+    /// instead of passing it through. Every pass-through path (sim inactive, non-Action
+    /// type, unselected target, and the exception fallback) routes through here so that a
+    /// fake target id — e.g. one Spawn mode rewrote onto <c>targetId</c> before an
+    /// exception — can never leave the client as a real action packet.
+    /// </summary>
+    private bool CallOriginalGuarded(
+        ActionManager* actionManager,
+        ActionType actionType,
+        uint actionId,
+        ulong targetId,
+        uint extraParam,
+        uint mode,
+        uint comboRouteId,
+        bool* outOptAreaTargeted)
+    {
+        if (targetId >= SimulatedEntityIdFloor)
+        {
+            log.Warning($"Suppressed UseAction pass-through: actionId={actionId} targets simulated 0x{targetId:X} " +
+                        "(would leak an action packet to the server).");
+            return true;
+        }
+
+        return useActionHook!.Original(actionManager, actionType, actionId,
+            targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
     }
 
     /// <summary>
