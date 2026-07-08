@@ -138,6 +138,20 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             log.Info("Fighting Mode force-disabled on load (security).");
         }
 
+#if DEV_EXPERIMENTAL
+        // One-time default fix: mounted-death dismemberment shipped defaulting to on, firing on every
+        // player death while mounted with no unlock gate — never the intent. Existing configs already
+        // have it persisted as true, so the corrected default alone won't reach them; force it off once
+        // per config, then leave the user's own choice (via the Dev Experimental panel) alone from then on.
+        if (!config.MigratedMountedDeathDismembermentDefault)
+        {
+            config.EnableMountedDeathDismemberment = false;
+            config.MigratedMountedDeathDismembermentDefault = true;
+            config.Save();
+            log.Info("Mounted-death dismemberment default corrected to off (one-time migration).");
+        }
+#endif
+
         // Simulation
         actionDataProvider = new ActionDataProvider(dataManager, log, config);
         NpcWeaponClassifier.Initialize(dataManager, log);
