@@ -320,8 +320,19 @@ public unsafe class DismembermentController : IDisposable
         // Tube model only: rings of bodies that collectively drive one spine bone each. Empty for the
         // chain rig. When non-empty, IsTube is set and the drive path switches to ring frames.
         public readonly List<GarmentRing> Rings = new();
+        // Tube model only: coat/robe skirt-top bones each pinned to one hem-ring body, so the hem drapes
+        // per-segment as the ring deforms. Empty when the garment has no skirt bones.
+        public readonly List<TubeSkirtAttach> SkirtAttachments = new();
         public bool IsTube;
         public bool IsLocal;
+    }
+
+    private struct TubeSkirtAttach
+    {
+        public int SkirtBoneIndex;
+        public int RingBodyIndex;       // index into GarmentRig.Bodies (the hem-ring body it rides)
+        public Vector3 LocalOffset;     // skirtBoneWorldPos - ringBodyPos, in the (stable) ring frame
+        public Quaternion FrameToSkirtRot;
     }
 
     // A ring of tube bodies encircling the torso at one spine bone. The ring's bodies drive that bone's
@@ -1736,7 +1747,64 @@ public unsafe class DismembermentController : IDisposable
             }
         }
 
+        if (rig.Rings.Count > 0)
+            BuildTubeSkirtAttachments(skel, rig, bodySpecs, skelPos, skelRot);
+
         return rig.Rings.Count >= 2 && bodySpecs.Count >= TubeRingSegments * 2;
+    }
+
+    // Pin each coat/robe skirt-top bone (a j_sk_* bone whose parent is not itself a skirt bone) to the
+    // nearest hem-ring body, so the hem follows the ring per-segment. Children of the top propagate.
+    private void BuildTubeSkirtAttachments(SkeletonAccess skel, GarmentRig rig,
+        List<RagdollController.ExternalRigBodySpec> bodySpecs, Vector3 skelPos, Quaternion skelRot)
+    {
+        if (rig.Rings.Count == 0) return;
+        var hem = rig.Rings[0];
+        if (hem.BodyIndices.Length == 0) return;
+
+        // Birth ring frame (stable orientation reference); ring bodies themselves spin freely (distance-
+        // limit only), so the skirt takes position from the nearest body but orientation from the frame.
+        var frameBirth = Quaternion.Normalize(Quaternion.Inverse(hem.CapturedFrameInv));
+        var frameBirthInv = Quaternion.Inverse(frameBirth);
+
+        for (var i = 0; i < skel.BoneCount && i < skel.ParentCount; i++)
+        {
+            var name = skel.HavokSkeleton->Bones[i].Name.String;
+            if (name == null || !name.StartsWith("j_sk_", StringComparison.Ordinal))
+                continue;
+            var parentIdx = skel.HavokSkeleton->ParentIndices[i];
+            if (parentIdx >= 0 && parentIdx < skel.BoneCount)
+            {
+                var parentName = skel.HavokSkeleton->Bones[parentIdx].Name.String;
+                if (parentName != null && parentName.StartsWith("j_sk_", StringComparison.Ordinal))
+                    continue; // not a top segment
+            }
+
+            if (!TryGetBoneWorldPosition(skel, skelPos, skelRot, name, out var skirtWorldPos) ||
+                !TryGetBoneWorldRotation(skel, skelRot, name, out var skirtWorldRot))
+                continue;
+
+            // Nearest hem-ring body by birth world distance.
+            var best = -1;
+            var bestDistSq = float.MaxValue;
+            foreach (var bodyIndex in hem.BodyIndices)
+            {
+                if (bodyIndex < 0 || bodyIndex >= bodySpecs.Count) continue;
+                var d = (bodySpecs[bodyIndex].Position - skirtWorldPos).LengthSquared();
+                if (d < bestDistSq) { bestDistSq = d; best = bodyIndex; }
+            }
+            if (best < 0) continue;
+
+            var bodyPos = bodySpecs[best].Position;
+            rig.SkirtAttachments.Add(new TubeSkirtAttach
+            {
+                SkirtBoneIndex = i,
+                RingBodyIndex = best,
+                LocalOffset = Vector3.Transform(skirtWorldPos - bodyPos, frameBirthInv),
+                FrameToSkirtRot = Quaternion.Normalize(frameBirthInv * skirtWorldRot),
+            });
+            rig.BoneIndices.Add(i); // driven, not propagated
+        }
     }
 
     private static Vector3 RingCentroid(IReadOnlyList<Vector3> positions)
@@ -3379,6 +3447,28 @@ public unsafe class DismembermentController : IDisposable
             var modelPos = Vector3.Transform(boneWorldPos - skelPos, skelRotInv);
             var modelRot = Quaternion.Normalize(skelRotInv * boneWorldRot);
             boneService.WriteBoneTransform(skel, ring.BoneIndex, modelPos, modelRot, result);
+        }
+
+        // Skirt-top bones ride their pinned hem-ring body's position, oriented by the (stable) hem ring
+        // frame — the ring bodies spin freely, so their orientation must not drive the skirt. Children
+        // propagate from these writes in the propagation pass.
+        if (rig.SkirtAttachments.Count > 0 && rig.Rings.Count > 0)
+        {
+            var hemFrame = rig.Rings[0].SmoothedFrame;
+            foreach (var attach in rig.SkirtAttachments)
+            {
+                if (attach.SkirtBoneIndex < 0 || attach.SkirtBoneIndex >= skel.BoneCount ||
+                    attach.RingBodyIndex < 0 || attach.RingBodyIndex >= rig.Bodies.Count)
+                    continue;
+                if (!TryGetGarmentRigBodyPose(c, rig.Bodies[attach.RingBodyIndex], out var bodyPos, out _, out _, out _))
+                    continue;
+
+                var skirtWorldPos = bodyPos + Vector3.Transform(attach.LocalOffset, hemFrame);
+                var skirtWorldRot = Quaternion.Normalize(hemFrame * attach.FrameToSkirtRot);
+                var modelPos = Vector3.Transform(skirtWorldPos - skelPos, skelRotInv);
+                var modelRot = Quaternion.Normalize(skelRotInv * skirtWorldRot);
+                boneService.WriteBoneTransform(skel, attach.SkirtBoneIndex, modelPos, modelRot, result);
+            }
         }
     }
 

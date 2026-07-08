@@ -168,12 +168,18 @@ tube(host) → chain(host) → chain(local) → 单刚体 → 纯视觉。
 
 ## 12. 分阶段落地
 
-- **Phase 0**:ExternalRig API 扩展(约束类型字段)+ `RagdollDebugOverlay` 增加
-  garment rig 刚体/约束线框绘制开关。无行为变化。
-- **Phase 1**:slot-1 躯干 3 环 + 手臂链,host-only,骨骼回写 + 退化处理。
-  验收:KO 掉衣,衣服套在尸体上→沿躯干侧滑到地→压扁摊平,无爆开、无穿墙。
-- **Phase 2**:hem 环→裙摆骨映射;摩擦/材质调参;堆叠观感。
-- **Phase 3**:slot-3 裤子(胯环 + 每腿 1–2 环);视需要做本地 sim 尸体代理。
+- **Phase 0 ✅**:ExternalRig API 扩展(DistanceLimit 约束类型 + per-rig 自碰撞组)
+  + `RagdollDebugOverlay` 蓝色 tube 线框开关。
+- **Phase 1 ✅**:slot-1 躯干 3 环,host-only,环→脊柱骨回写 + 退化处理。**偏离**:
+  手臂未做链式,袖子/裙摆通过父子传播跟随被驱动的脊柱骨(rings-only)。
+- **Phase 2 ✅(部分)**:摩擦/hold GUI 滑条(body/ground friction + handoff delay,
+  默认值 = 出厂行为);hem 环→裙摆骨映射(每个 j_sk_*_a 顶段 pin 到最近的 hem 环刚体,
+  位置随刚体 per-segment,朝向取自稳定的环坐标系)。**关键教训**:tube 环刚体只有
+  DistanceLimit(约束位置不约束朝向),会自由自旋,所以任何"骨骼跟随刚体"的驱动都
+  **只能用刚体位置 + 环坐标系朝向**,绝不能用单个刚体的 orientation。待做:堆叠观感、
+  袖子环化。
+- **Phase 3**:slot-3 裤子(胯环 + 每腿 1–2 环,Y 形分叉需处理裆部连接);
+  视需要做本地 sim 尸体代理。
 - **远期**:XPBD 粒子代理 + shape-matching 回写(复用 §6 的骨骼映射层)。
 
 ## 13. 开关
