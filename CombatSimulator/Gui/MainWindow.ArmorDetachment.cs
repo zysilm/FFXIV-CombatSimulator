@@ -150,6 +150,19 @@ public partial class MainWindow
                              "the garment is closer to rest. Default off.");
 
         ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing || !config.KoStripAdvancedClothPhysics);
+        var tubeModel = config.KoStripGarmentTubeModel;
+        if (ImGui.Checkbox("Tube model (Body, experimental)##armordetachtube", ref tubeModel))
+        {
+            config.KoStripGarmentTubeModel = tubeModel;
+            config.Save();
+        }
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Experimental: drive the upper garment with a ring-tube physics model that\n" +
+                             "wraps the body, so the shirt slides down off the corpse instead of folding.\n" +
+                             "Host ragdoll only; falls back to the chain rig otherwise. Default off.");
+
+        ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing || !config.KoStripAdvancedClothPhysics);
         var clothHoldAuto = config.KoStripClothHoldAuto;
         if (ImGui.Checkbox("Auto cloth hold##armordetachclothholdauto", ref clothHoldAuto))
         {

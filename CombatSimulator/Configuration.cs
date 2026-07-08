@@ -266,6 +266,11 @@ public partial class Configuration : IPluginConfiguration
     // friction damping, and delayed cloth collapse. Default off.
     public bool KoStripAdvancedClothPhysics { get; set; } = false;
 
+    // Experimental: drive the upper garment (Body slot) with a ring-tube physics model instead of the
+    // chain-of-boxes rig. The tube wraps the corpse capsules, so the shirt slides down off the body
+    // instead of folding. Host ragdoll only; falls back to the chain rig when unavailable. Default off.
+    public bool KoStripGarmentTubeModel { get; set; } = false;
+
     // Manual fallback duration (seconds) for the "still attached" visual hold with Advanced clothing
     // settle on. Auto mode is the default path; this only applies when Auto cloth hold is disabled.
     public const float KoStripClothHoldSecondsDefault = 0.3f;

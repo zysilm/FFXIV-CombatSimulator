@@ -112,6 +112,11 @@ public unsafe class RagdollController : IDisposable
     private readonly HashSet<int> externalRigDynamicBodyHandles = new();
     private readonly HashSet<int> externalRigNoRagdollContactBodyHandles = new();
     private readonly HashSet<(int, int)> externalRigConnectedPairs = new();
+    // Bodies that must not collide with OTHER bodies in the same rig (a whole garment tube marked non-self-
+    // colliding at once — cheaper than enumerating every O(N^2) internal pair as connected). Keyed by body
+    // handle -> group id; two dynamics with the same non-zero group skip contact generation.
+    private readonly Dictionary<int, int> externalRigSelfCollideGroupByBody = new();
+    private int nextExternalRigSelfCollideGroup = 1;
     private readonly HashSet<int> softKinematicBodyHandles = new();
 
     // Bone defs actually used for the active ragdoll, keyed by name. For humanoid
@@ -281,19 +286,38 @@ public unsafe class RagdollController : IDisposable
         }
     }
 
+    public enum ExternalRigJointKind
+    {
+        // BallSocket + optional SwingLimit + AngularMotor + optional pose-guide servo (chain garments/limbs).
+        BallSocketSwing = 0,
+        // A single DistanceLimit between two anchor points: inextensible above MaxDistance, compressible to
+        // MinDistance. The edge primitive of the garment tube (ring-adjacent + ring-to-ring + diagonals).
+        DistanceLimit = 1,
+    }
+
     public readonly struct ExternalRigJointSpec
     {
+        public readonly ExternalRigJointKind Kind;
         public readonly int ParentIndex;
         public readonly int ChildIndex;
+        // Ball-socket fields.
         public readonly Vector3 AnchorWorld;
         public readonly float SwingLimit;
         public readonly float InitialSwingFactor;
         public readonly float PoseGuideMaxForce;
         public readonly float PoseGuideFrequency;
+        // Distance-limit fields (Kind == DistanceLimit). Offsets are in each body's local frame.
+        public readonly Vector3 LocalOffsetChild;
+        public readonly Vector3 LocalOffsetParent;
+        public readonly float MinDistance;
+        public readonly float MaxDistance;
+        public readonly float DistanceFrequency;
+        public readonly float DistanceDamping;
 
         public ExternalRigJointSpec(int parentIndex, int childIndex, Vector3 anchorWorld, float swingLimit,
             float initialSwingFactor = 0.28f, float poseGuideMaxForce = 0f, float poseGuideFrequency = 5f)
         {
+            Kind = ExternalRigJointKind.BallSocketSwing;
             ParentIndex = parentIndex;
             ChildIndex = childIndex;
             AnchorWorld = anchorWorld;
@@ -301,7 +325,38 @@ public unsafe class RagdollController : IDisposable
             InitialSwingFactor = Math.Clamp(initialSwingFactor, 0.05f, 1f);
             PoseGuideMaxForce = MathF.Max(0f, poseGuideMaxForce);
             PoseGuideFrequency = MathF.Max(0.1f, poseGuideFrequency);
+            LocalOffsetChild = Vector3.Zero;
+            LocalOffsetParent = Vector3.Zero;
+            MinDistance = 0f;
+            MaxDistance = 0f;
+            DistanceFrequency = 0f;
+            DistanceDamping = 0f;
         }
+
+        private ExternalRigJointSpec(int parentIndex, int childIndex,
+            Vector3 localOffsetChild, Vector3 localOffsetParent,
+            float minDistance, float maxDistance, float frequency, float damping)
+        {
+            Kind = ExternalRigJointKind.DistanceLimit;
+            ParentIndex = parentIndex;
+            ChildIndex = childIndex;
+            AnchorWorld = Vector3.Zero;
+            SwingLimit = 0f;
+            InitialSwingFactor = 1f;
+            PoseGuideMaxForce = 0f;
+            PoseGuideFrequency = 5f;
+            LocalOffsetChild = localOffsetChild;
+            LocalOffsetParent = localOffsetParent;
+            MinDistance = MathF.Max(0f, minDistance);
+            MaxDistance = MathF.Max(MinDistance, maxDistance);
+            DistanceFrequency = MathF.Max(0.1f, frequency);
+            DistanceDamping = Math.Clamp(damping, 0f, 8f);
+        }
+
+        /// <summary>A center-to-center (or offset) distance limit edge, e.g. a garment tube seam.</summary>
+        public static ExternalRigJointSpec MakeDistanceLimit(int childIndex, int parentIndex,
+            float minDistance, float maxDistance, float frequency = 15f, float damping = 1.5f)
+            => new(parentIndex, childIndex, Vector3.Zero, Vector3.Zero, minDistance, maxDistance, frequency, damping);
     }
 
     public sealed class ExternalRigHandle
@@ -506,12 +561,14 @@ public unsafe class RagdollController : IDisposable
         IReadOnlyList<ExternalRigBodySpec> bodySpecs,
         IReadOnlyList<ExternalRigJointSpec> jointSpecs,
         out ExternalRigHandle? handle,
-        bool collideWithRagdoll = true)
+        bool collideWithRagdoll = true,
+        bool selfCollide = true)
     {
         handle = null;
         if (!isActive || simulation == null || bufferPool == null || bodySpecs.Count == 0)
             return false;
 
+        var selfCollideGroup = selfCollide ? 0 : nextExternalRigSelfCollideGroup++;
         var rig = new ExternalRigHandle { Generation = externalBodyGeneration };
         try
         {
@@ -546,6 +603,8 @@ public unsafe class RagdollController : IDisposable
                 externalRigDynamicBodyHandles.Add(bodyHandle.Value);
                 if (!collideWithRagdoll)
                     externalRigNoRagdollContactBodyHandles.Add(bodyHandle.Value);
+                if (selfCollideGroup != 0)
+                    externalRigSelfCollideGroupByBody[bodyHandle.Value] = selfCollideGroup;
             }
 
             foreach (var joint in jointSpecs)
@@ -580,6 +639,26 @@ public unsafe class RagdollController : IDisposable
 
         var parent = rig.Bodies[joint.ParentIndex];
         var child = rig.Bodies[joint.ChildIndex];
+
+        if (joint.Kind == ExternalRigJointKind.DistanceLimit)
+        {
+            rig.Constraints.Add(simulation.Solver.Add(child.Body, parent.Body, new DistanceLimit
+            {
+                LocalOffsetA = joint.LocalOffsetChild,
+                LocalOffsetB = joint.LocalOffsetParent,
+                MinimumDistance = joint.MinDistance,
+                MaximumDistance = joint.MaxDistance,
+                SpringSettings = new SpringSettings(joint.DistanceFrequency, joint.DistanceDamping),
+            }));
+
+            var loD = Math.Min(parent.Body.Value, child.Body.Value);
+            var hiD = Math.Max(parent.Body.Value, child.Body.Value);
+            var pairD = (loD, hiD);
+            rig.ConnectedPairs.Add(pairD);
+            externalRigConnectedPairs.Add(pairD);
+            return;
+        }
+
         var parentBody = simulation.Bodies.GetBodyReference(parent.Body);
         var childBody = simulation.Bodies.GetBodyReference(child.Body);
 
@@ -978,6 +1057,7 @@ public unsafe class RagdollController : IDisposable
         {
             externalRigNoRagdollContactBodyHandles.Remove(bodyHandle.Body.Value);
             externalRigDynamicBodyHandles.Remove(bodyHandle.Body.Value);
+            externalRigSelfCollideGroupByBody.Remove(bodyHandle.Body.Value);
             RemoveExternalBody(bodyHandle);
         }
 
@@ -3390,6 +3470,7 @@ public unsafe class RagdollController : IDisposable
                 ExternalRigDynamicBodies = externalRigDynamicBodyHandles,
                 ExternalRigNoRagdollContactBodies = externalRigNoRagdollContactBodyHandles,
                 ExternalRigConnectedPairs = externalRigConnectedPairs,
+                ExternalRigSelfCollideGroupByBody = externalRigSelfCollideGroupByBody,
                 SoftKinematicBodies = softKinematicBodyHandles,
                 Friction = config.RagdollFriction,
                 Config = config,
@@ -9438,6 +9519,8 @@ public unsafe class RagdollController : IDisposable
         externalRigDynamicBodyHandles.Clear();
         externalRigNoRagdollContactBodyHandles.Clear();
         externalRigConnectedPairs.Clear();
+        externalRigSelfCollideGroupByBody.Clear();
+        nextExternalRigSelfCollideGroup = 1;
         softKinematicBodyHandles.Clear();
         npcCollisionStates.Clear();
         npcFallbackShapeReady = false;
@@ -9472,6 +9555,7 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     public HashSet<int>? ExternalRigDynamicBodies;
     public HashSet<int>? ExternalRigNoRagdollContactBodies;
     public HashSet<(int, int)>? ExternalRigConnectedPairs;
+    public Dictionary<int, int>? ExternalRigSelfCollideGroupByBody;
     public HashSet<int>? SoftKinematicBodies;
     public HashSet<int>? RestrictedStatics;
     public HashSet<int>? AllowedDynamicBodiesForRestrictedStatics;
@@ -9519,6 +9603,12 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
                 var rigLo = Math.Min(aId, bId);
                 var rigHi = Math.Max(aId, bId);
                 if (ExternalRigConnectedPairs != null && ExternalRigConnectedPairs.Contains((rigLo, rigHi)))
+                    return false;
+
+                // Bodies inside the same non-self-colliding rig (e.g. a garment tube) never collide with
+                // each other: the tube is held in shape by its distance-limit edges, and letting its own
+                // panels pile up on each other makes it jitter and refuse to settle.
+                if (aRig && bRig && IsSameSelfCollideGroup(aId, bId))
                     return false;
 
                 // The garment rig should collide with the corpse ragdoll, but not with legacy
@@ -9618,6 +9708,12 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 
     private bool IsExternalRigNoRagdollContact(int bodyHandle)
         => ExternalRigNoRagdollContactBodies != null && ExternalRigNoRagdollContactBodies.Contains(bodyHandle);
+
+    private bool IsSameSelfCollideGroup(int aHandle, int bHandle)
+        => ExternalRigSelfCollideGroupByBody != null &&
+           ExternalRigSelfCollideGroupByBody.TryGetValue(aHandle, out var ga) &&
+           ExternalRigSelfCollideGroupByBody.TryGetValue(bHandle, out var gb) &&
+           ga == gb;
 
     private bool IsSoftKinematicContact(CollidablePair pair)
         => SoftKinematicBodies != null &&
