@@ -118,6 +118,24 @@ public unsafe class DismembermentController : IDisposable
         ("j_sebo_c", "j_kubi",   0.110f),  // chest
     };
 
+    // === Garment tube model (experimental, slot-3 trousers) ===
+    // A hip ring around the pelvis + two rings per leg. The hip ring drives j_kosi; the leg rings drive
+    // their thigh/shin bones; feet propagate. Legs are joined to the hip by nearest-body distance edges
+    // (the Y junction). Legs are thinner, so they use fewer segments.
+    private const int TubeLegRingSegments = 5;
+    private const float TubePantsHipRadius = 0.115f;
+    // Per leg: (bone driven, bone toward which the ring axis points, radius). Down the leg.
+    private static readonly (string Bone, string AxisToward, float Radius)[] TubePantsLegRingsLeft =
+    {
+        ("j_asi_a_l", "j_asi_b_l", 0.080f),  // upper thigh
+        ("j_asi_b_l", "j_asi_d_l", 0.065f),  // lower thigh / knee
+    };
+    private static readonly (string Bone, string AxisToward, float Radius)[] TubePantsLegRingsRight =
+    {
+        ("j_asi_a_r", "j_asi_b_r", 0.080f),
+        ("j_asi_b_r", "j_asi_d_r", 0.065f),
+    };
+
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
     private readonly HashSet<(int, int)> connectedPairs = new();
@@ -1504,7 +1522,7 @@ public unsafe class DismembermentController : IDisposable
     }
 
     private bool UseGarmentTube(Clone c)
-        => config.KoStripGarmentTubeModel && c.GearKeepModelSlot == 1 && UseAdvancedGarmentPhysics(c);
+        => config.KoStripGarmentTubeModel && (c.GearKeepModelSlot is 1 or 3) && UseAdvancedGarmentPhysics(c);
 
     /// <summary>Build the sim-agnostic body/joint specs for a garment rig (slots 1/3). Returns false if
     /// too few bones resolved to make a rig. Shared by the ragdoll-sim and local-sim rig builders.</summary>
@@ -1643,114 +1661,209 @@ public unsafe class DismembermentController : IDisposable
         var baseAngular = seed?.Angular ?? Vector3.Zero;
         var scale = c.SourceScale.X > 0f ? c.SourceScale.X : 1f;
         var totalMass = MathF.Max(0.1f, spec.Mass);
-        var ringBodyMass = totalMass * 0.9f / (TubeRingDefs.Length * TubeRingSegments);
 
+        return c.GearKeepModelSlot == 3
+            ? BuildPantsTube(skel, rig, bodySpecs, joints, skelPos, skelRot, totalMass, scale, baseLinear, baseAngular)
+            : BuildTorsoTube(skel, rig, bodySpecs, joints, skelPos, skelRot, totalMass, scale, baseLinear, baseAngular);
+    }
+
+    private bool BuildTorsoTube(SkeletonAccess skel, GarmentRig rig,
+        List<RagdollController.ExternalRigBodySpec> bodySpecs, List<RagdollController.ExternalRigJointSpec> joints,
+        Vector3 skelPos, Quaternion skelRot, float totalMass, float scale, Vector3 baseLinear, Vector3 baseAngular)
+    {
+        var ringBodyMass = totalMass * 0.9f / (TubeRingDefs.Length * TubeRingSegments);
         var rings = new List<GarmentRing>();
         foreach (var def in TubeRingDefs)
         {
-            if (!TryGetBoneWorldPosition(skel, skelPos, skelRot, def.Bone, out var center) ||
-                !TryGetBoneWorldRotation(skel, skelRot, def.Bone, out var boneRot))
-                continue;
-
-            // Ring axis (up the spine): toward the next bone, else the bone's own local Y.
-            var axis = TryGetBoneWorldPosition(skel, skelPos, skelRot, def.AxisToward, out var nextPos) &&
-                       (nextPos - center).LengthSquared() > 1e-6f
-                ? Vector3.Normalize(nextPos - center)
-                : NormalizeOrFallback(Vector3.Transform(Vector3.UnitY, boneRot), Vector3.UnitY);
-
-            // In-plane basis: seam u toward character forward projected onto the ring plane, v = axis × u.
-            var forward = Vector3.Transform(Vector3.UnitZ, boneRot);
-            var u = forward - Vector3.Dot(forward, axis) * axis;
-            u = u.LengthSquared() > 1e-6f ? Vector3.Normalize(u) : BuildAnyPerpendicular(axis);
-            var v = Vector3.Normalize(Vector3.Cross(axis, u));
-
-            var radius = def.Radius * scale + TubeRingClearance;
-            var tangentialHalf = MathF.Max(0.02f, (MathF.PI * radius / TubeRingSegments) * 0.92f);
-            var idx = boneService.ResolveBoneIndex(skel, def.Bone);
-            if (idx < 0 || idx >= skel.BoneCount) continue;
-
-            var ring = new GarmentRing { BoneIndex = idx, BoneName = def.Bone };
-            var bodyIndices = new int[TubeRingSegments];
-            var positions = new Vector3[TubeRingSegments];
-            for (var i = 0; i < TubeRingSegments; i++)
-            {
-                var theta = MathF.Tau * i / TubeRingSegments;
-                var radial = MathF.Cos(theta) * u + MathF.Sin(theta) * v;
-                radial = Vector3.Normalize(radial);
-                var pos = center + radius * radial;
-                positions[i] = pos;
-
-                var tangent = Vector3.Normalize(Vector3.Cross(axis, radial));
-                var bodyRot = QuaternionFromBasis(tangent, axis, radial);
-                var half = new Vector3(tangentialHalf, TubeRingAxialHalf * scale, TubeRingRadialHalf);
-
-                var bodyIndex = bodySpecs.Count;
-                var parts = new[] { new RagdollController.ExternalShapePart(half, Vector3.Zero, Quaternion.Identity) };
-                bodySpecs.Add(new RagdollController.ExternalRigBodySpec(
-                    def.Bone, parts, MathF.Max(0.03f, ringBodyMass), pos, bodyRot, baseLinear, baseAngular));
-                rig.Bodies.Add(new GarmentRigBody
-                {
-                    BoneIndex = -1,             // ring bodies do not drive a bone individually
-                    BoneName = def.Bone,
-                    ExternalIndex = bodyIndex,
-                    BodyToBoneRotation = Quaternion.Identity,
-                    SegmentHalfLength = 0f,
-                    HalfExtents = half,
-                });
-                bodyIndices[i] = bodyIndex;
-                rig.MaxHalfExtent = MathF.Max(rig.MaxHalfExtent, MathF.Max(half.X, MathF.Max(half.Y, half.Z)));
-            }
-
-            // Capture the birth frame so the ring can drive its bone's world transform each step.
-            var centroid = RingCentroid(positions);
-            var frame = ComputeRingFrame(positions, centroid, axis);
-            ring.BodyIndices = bodyIndices;
-            ring.CapturedFrameInv = Quaternion.Inverse(frame);
-            ring.CapturedBoneWorldRot = boneRot;
-            ring.CapturedOffsetLocal = Vector3.Transform(center - centroid, Quaternion.Inverse(frame));
-            ring.SmoothedFrame = frame;
-            ring.HasSmoothed = true;
-            rig.Rings.Add(ring);
-            rig.BoneIndices.Add(idx);
-            rings.Add(ring);
-
-            // Ring-adjacent edges: inextensible around the circumference, compressible.
-            for (var i = 0; i < TubeRingSegments; i++)
-            {
-                var a = bodyIndices[i];
-                var b = bodyIndices[(i + 1) % TubeRingSegments];
-                var rest = (positions[i] - positions[(i + 1) % TubeRingSegments]).Length();
-                joints.Add(RagdollController.ExternalRigJointSpec.MakeDistanceLimit(
-                    a, b, rest * 0.3f, rest * 1.05f, TubeEdgeFrequency, TubeEdgeDamping));
-            }
+            var ring = AddTubeRing(skel, rig, bodySpecs, joints, skelPos, skelRot,
+                def.Bone, def.AxisToward, def.Radius, TubeRingSegments, TubeRingAxialHalf,
+                ringBodyMass, baseLinear, baseAngular, scale);
+            if (ring != null) rings.Add(ring);
         }
 
-        // Ring-to-ring edges + one diagonal per quad: tie the rings into a tube and resist shear.
+        // Stack the spine rings into a tube (vertical + diagonal edges between adjacent rings).
         for (var k = 0; k + 1 < rings.Count; k++)
-        {
-            var lower = rings[k];
-            var upper = rings[k + 1];
-            if (lower.BodyIndices.Length != TubeRingSegments || upper.BodyIndices.Length != TubeRingSegments)
-                continue;
-            for (var i = 0; i < TubeRingSegments; i++)
-            {
-                var lo = lower.BodyIndices[i];
-                var up = upper.BodyIndices[i];
-                var restV = (bodySpecs[lo].Position - bodySpecs[up].Position).Length();
-                joints.Add(RagdollController.ExternalRigJointSpec.MakeDistanceLimit(
-                    lo, up, restV * 0.2f, restV * 1.10f, TubeEdgeFrequency, TubeEdgeDamping));
-
-                var upDiag = upper.BodyIndices[(i + 1) % TubeRingSegments];
-                var restD = (bodySpecs[lo].Position - bodySpecs[upDiag].Position).Length();
-                joints.Add(RagdollController.ExternalRigJointSpec.MakeDistanceLimit(
-                    lo, upDiag, 0f, restD * 1.15f, TubeEdgeFrequency, TubeEdgeDamping));
-            }
-        }
+            AddTubeRingToRingEdges(rig, joints, bodySpecs, rings[k], rings[k + 1]);
 
         if (rig.Rings.Count > 0)
             BuildTubeSkirtAttachments(skel, rig, bodySpecs, skelPos, skelRot);
 
         return rig.Rings.Count >= 2 && bodySpecs.Count >= TubeRingSegments * 2;
+    }
+
+    private bool BuildPantsTube(SkeletonAccess skel, GarmentRig rig,
+        List<RagdollController.ExternalRigBodySpec> bodySpecs, List<RagdollController.ExternalRigJointSpec> joints,
+        Vector3 skelPos, Quaternion skelRot, float totalMass, float scale, Vector3 baseLinear, Vector3 baseAngular)
+    {
+        // Mass split: hip ring ~30%, each leg ~35% over its two rings.
+        var hipMass = totalMass * 0.30f / TubeRingSegments;
+        var legMass = totalMass * 0.35f / (TubePantsLegRingsLeft.Length * TubeLegRingSegments);
+
+        var hip = AddTubeRing(skel, rig, bodySpecs, joints, skelPos, skelRot,
+            "j_kosi", "j_sebo_a", TubePantsHipRadius, TubeRingSegments, TubeRingAxialHalf,
+            hipMass, baseLinear, baseAngular, scale);
+
+        BuildPantsLeg(skel, rig, bodySpecs, joints, skelPos, skelRot, TubePantsLegRingsLeft,
+            hip, legMass, scale, baseLinear, baseAngular);
+        BuildPantsLeg(skel, rig, bodySpecs, joints, skelPos, skelRot, TubePantsLegRingsRight,
+            hip, legMass, scale, baseLinear, baseAngular);
+
+        // Pants have no skirt bones; skip skirt attachment (would grab a coat's skirt by mistake).
+        return rig.Rings.Count >= 3 && bodySpecs.Count >= TubeRingSegments + TubeLegRingSegments * 2;
+    }
+
+    private void BuildPantsLeg(SkeletonAccess skel, GarmentRig rig,
+        List<RagdollController.ExternalRigBodySpec> bodySpecs, List<RagdollController.ExternalRigJointSpec> joints,
+        Vector3 skelPos, Quaternion skelRot,
+        (string Bone, string AxisToward, float Radius)[] legDefs, GarmentRing? hip,
+        float legMass, float scale, Vector3 baseLinear, Vector3 baseAngular)
+    {
+        var legRings = new List<GarmentRing>();
+        foreach (var def in legDefs)
+        {
+            var ring = AddTubeRing(skel, rig, bodySpecs, joints, skelPos, skelRot,
+                def.Bone, def.AxisToward, def.Radius, TubeLegRingSegments, TubeRingAxialHalf,
+                legMass, baseLinear, baseAngular, scale);
+            if (ring != null) legRings.Add(ring);
+        }
+
+        for (var k = 0; k + 1 < legRings.Count; k++)
+            AddTubeRingToRingEdges(rig, joints, bodySpecs, legRings[k], legRings[k + 1]);
+
+        // Y junction: tie the leg's top ring to the hip ring by nearest-body distance edges.
+        if (hip != null && legRings.Count > 0)
+            AddTubeJunctionEdges(joints, bodySpecs, hip, legRings[0]);
+    }
+
+    /// <summary>Build one ring of <paramref name="segments"/> boxes around <paramref name="boneName"/>,
+    /// add its circumferential distance-limit edges, capture its birth frame, and register it to drive the
+    /// bone. Returns null (nothing added) if the bone doesn't resolve.</summary>
+    private GarmentRing? AddTubeRing(SkeletonAccess skel, GarmentRig rig,
+        List<RagdollController.ExternalRigBodySpec> bodySpecs, List<RagdollController.ExternalRigJointSpec> joints,
+        Vector3 skelPos, Quaternion skelRot,
+        string boneName, string axisTowardBone, float radius, int segments, float axialHalf,
+        float ringBodyMass, Vector3 baseLinear, Vector3 baseAngular, float scale)
+    {
+        if (!TryGetBoneWorldPosition(skel, skelPos, skelRot, boneName, out var center) ||
+            !TryGetBoneWorldRotation(skel, skelRot, boneName, out var boneRot))
+            return null;
+
+        var idx = boneService.ResolveBoneIndex(skel, boneName);
+        if (idx < 0 || idx >= skel.BoneCount) return null;
+
+        // Ring axis (along the limb/spine): toward the next bone, else the bone's own local Y.
+        var axis = TryGetBoneWorldPosition(skel, skelPos, skelRot, axisTowardBone, out var nextPos) &&
+                   (nextPos - center).LengthSquared() > 1e-6f
+            ? Vector3.Normalize(nextPos - center)
+            : NormalizeOrFallback(Vector3.Transform(Vector3.UnitY, boneRot), Vector3.UnitY);
+
+        // In-plane basis: seam u toward character forward projected onto the ring plane, v = axis × u.
+        var forward = Vector3.Transform(Vector3.UnitZ, boneRot);
+        var u = forward - Vector3.Dot(forward, axis) * axis;
+        u = u.LengthSquared() > 1e-6f ? Vector3.Normalize(u) : BuildAnyPerpendicular(axis);
+        var v = Vector3.Normalize(Vector3.Cross(axis, u));
+
+        var r = radius * scale + TubeRingClearance;
+        var tangentialHalf = MathF.Max(0.02f, (MathF.PI * r / segments) * 0.92f);
+
+        var ring = new GarmentRing { BoneIndex = idx, BoneName = boneName };
+        var bodyIndices = new int[segments];
+        var positions = new Vector3[segments];
+        for (var i = 0; i < segments; i++)
+        {
+            var theta = MathF.Tau * i / segments;
+            var radial = Vector3.Normalize(MathF.Cos(theta) * u + MathF.Sin(theta) * v);
+            var pos = center + r * radial;
+            positions[i] = pos;
+
+            var tangent = Vector3.Normalize(Vector3.Cross(axis, radial));
+            var bodyRot = QuaternionFromBasis(tangent, axis, radial);
+            var half = new Vector3(tangentialHalf, axialHalf * scale, TubeRingRadialHalf);
+
+            var bodyIndex = bodySpecs.Count;
+            var parts = new[] { new RagdollController.ExternalShapePart(half, Vector3.Zero, Quaternion.Identity) };
+            bodySpecs.Add(new RagdollController.ExternalRigBodySpec(
+                boneName, parts, MathF.Max(0.03f, ringBodyMass), pos, bodyRot, baseLinear, baseAngular));
+            rig.Bodies.Add(new GarmentRigBody
+            {
+                BoneIndex = -1,
+                BoneName = boneName,
+                ExternalIndex = bodyIndex,
+                BodyToBoneRotation = Quaternion.Identity,
+                SegmentHalfLength = 0f,
+                HalfExtents = half,
+            });
+            bodyIndices[i] = bodyIndex;
+            rig.MaxHalfExtent = MathF.Max(rig.MaxHalfExtent, MathF.Max(half.X, MathF.Max(half.Y, half.Z)));
+        }
+
+        var centroid = RingCentroid(positions);
+        var frame = ComputeRingFrame(positions, centroid, axis);
+        ring.BodyIndices = bodyIndices;
+        ring.CapturedFrameInv = Quaternion.Inverse(frame);
+        ring.CapturedBoneWorldRot = boneRot;
+        ring.CapturedOffsetLocal = Vector3.Transform(center - centroid, Quaternion.Inverse(frame));
+        ring.SmoothedFrame = frame;
+        ring.HasSmoothed = true;
+        rig.Rings.Add(ring);
+        rig.BoneIndices.Add(idx);
+
+        for (var i = 0; i < segments; i++)
+        {
+            var a = bodyIndices[i];
+            var b = bodyIndices[(i + 1) % segments];
+            var rest = (positions[i] - positions[(i + 1) % segments]).Length();
+            joints.Add(RagdollController.ExternalRigJointSpec.MakeDistanceLimit(
+                a, b, rest * 0.3f, rest * 1.05f, TubeEdgeFrequency, TubeEdgeDamping));
+        }
+
+        return ring;
+    }
+
+    // Vertical + one-diagonal-per-quad distance edges between two equal-segment rings (stacks them).
+    private void AddTubeRingToRingEdges(GarmentRig rig, List<RagdollController.ExternalRigJointSpec> joints,
+        List<RagdollController.ExternalRigBodySpec> bodySpecs, GarmentRing lower, GarmentRing upper)
+    {
+        var n = lower.BodyIndices.Length;
+        if (n == 0 || upper.BodyIndices.Length != n)
+            return;
+        for (var i = 0; i < n; i++)
+        {
+            var lo = lower.BodyIndices[i];
+            var up = upper.BodyIndices[i];
+            var restV = (bodySpecs[lo].Position - bodySpecs[up].Position).Length();
+            joints.Add(RagdollController.ExternalRigJointSpec.MakeDistanceLimit(
+                lo, up, restV * 0.2f, restV * 1.10f, TubeEdgeFrequency, TubeEdgeDamping));
+
+            var upDiag = upper.BodyIndices[(i + 1) % n];
+            var restD = (bodySpecs[lo].Position - bodySpecs[upDiag].Position).Length();
+            joints.Add(RagdollController.ExternalRigJointSpec.MakeDistanceLimit(
+                lo, upDiag, 0f, restD * 1.15f, TubeEdgeFrequency, TubeEdgeDamping));
+        }
+    }
+
+    // Y junction: connect each body of `to` to its nearest body in `from` (rings of differing segment
+    // counts, e.g. hip ring → leg top ring).
+    private void AddTubeJunctionEdges(List<RagdollController.ExternalRigJointSpec> joints,
+        List<RagdollController.ExternalRigBodySpec> bodySpecs, GarmentRing from, GarmentRing to)
+    {
+        foreach (var tb in to.BodyIndices)
+        {
+            if (tb < 0 || tb >= bodySpecs.Count) continue;
+            var tp = bodySpecs[tb].Position;
+            var best = -1;
+            var bestSq = float.MaxValue;
+            foreach (var fb in from.BodyIndices)
+            {
+                if (fb < 0 || fb >= bodySpecs.Count) continue;
+                var d = (bodySpecs[fb].Position - tp).LengthSquared();
+                if (d < bestSq) { bestSq = d; best = fb; }
+            }
+            if (best < 0) continue;
+            var rest = MathF.Sqrt(bestSq);
+            joints.Add(RagdollController.ExternalRigJointSpec.MakeDistanceLimit(
+                tb, best, rest * 0.2f, rest * 1.15f, TubeEdgeFrequency, TubeEdgeDamping));
+        }
     }
 
     // Pin each coat/robe skirt-top bone (a j_sk_* bone whose parent is not itself a skirt bone) to the

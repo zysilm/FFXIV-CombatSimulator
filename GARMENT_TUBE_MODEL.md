@@ -178,9 +178,12 @@ tube(host) → chain(host) → chain(local) → 单刚体 → 纯视觉。
   DistanceLimit(约束位置不约束朝向),会自由自旋,所以任何"骨骼跟随刚体"的驱动都
   **只能用刚体位置 + 环坐标系朝向**,绝不能用单个刚体的 orientation。待做:堆叠观感、
   袖子环化。
-- **Phase 3**:slot-3 裤子(胯环 + 每腿 1–2 环,Y 形分叉需处理裆部连接);
-  视需要做本地 sim 尸体代理。
-- **远期**:XPBD 粒子代理 + shape-matching 回写(复用 §6 的骨骼映射层)。
+- **Phase 3 ✅**:slot-3 裤子——胯环(j_kosi,6 段)+ 每腿 2 环(j_asi_a/j_asi_b,5 段),
+  腿环用最近刚体距离边连到胯环(Y 形裆部连接,`AddTubeJunctionEdges`)。环构建抽成
+  `AddTubeRing` 由躯干/裤子共用。Tube 开关现同时覆盖 Body + Legs。裤子无裙摆骨,跳过
+  裙摆映射。**未做**:本地 sim 尸体代理(host-only,host 不可用时退链式)。
+- **远期**:XPBD 粒子代理 + shape-matching 回写(复用 §6 的骨骼映射层);袖子/腿的
+  独立摆动环化;堆叠观感。
 
 ## 13. 开关
 

@@ -151,16 +151,16 @@ public partial class MainWindow
 
         ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing || !config.KoStripAdvancedClothPhysics);
         var tubeModel = config.KoStripGarmentTubeModel;
-        if (ImGui.Checkbox("Tube model (Body, experimental)##armordetachtube", ref tubeModel))
+        if (ImGui.Checkbox("Tube model (Body / Legs, experimental)##armordetachtube", ref tubeModel))
         {
             config.KoStripGarmentTubeModel = tubeModel;
             config.Save();
         }
         ImGui.EndDisabled();
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Experimental: drive the upper garment with a ring-tube physics model that\n" +
-                             "wraps the body, so the shirt slides down off the corpse instead of folding.\n" +
-                             "Host ragdoll only; falls back to the chain rig otherwise. Default off.");
+            ImGui.SetTooltip("Experimental: drive the Body and Legs garments with a ring-tube physics model\n" +
+                             "that wraps the body, so the garment slides down off the corpse instead of\n" +
+                             "folding. Host ragdoll only; falls back to the chain rig otherwise. Default off.");
 
         ImGui.BeginDisabled(!config.KoStripGarmentTubeModel);
         var tubeDebug = config.KoStripGarmentTubeDebugDraw;
