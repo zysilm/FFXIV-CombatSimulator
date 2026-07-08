@@ -216,7 +216,14 @@ public partial class MainWindow
         }
         ImGui.EndDisabled();
 
-        ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing || !config.KoStripAdvancedClothPhysics);
+        if (config.KoStripGarmentTubeModel)
+            ImGui.TextDisabled("Tube model uses 'Tube handoff delay' above —\nthe cloth hold profile below is inactive.");
+
+        // The cloth hold profile / delay only governs the chain rig. When the tube model is on it takes
+        // over the handoff timing entirely (see ShouldReleaseGarmentBind), so grey these out to avoid the
+        // "adjusting this does nothing" confusion.
+        ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing || !config.KoStripAdvancedClothPhysics
+            || config.KoStripGarmentTubeModel);
         var clothHoldAuto = config.KoStripClothHoldAuto;
         if (ImGui.Checkbox("Auto cloth hold##armordetachclothholdauto", ref clothHoldAuto))
         {
