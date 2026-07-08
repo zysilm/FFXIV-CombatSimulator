@@ -176,7 +176,7 @@ public partial class MainWindow
                                  "Natural: a short settling dwell.\n" +
                                  "Clingy: waits longer and follows dragged bodies.\n" +
                                  "Slide to floor: default, keeps sliding down until it touches the ground, then drops.\n" +
-                                 "Visual only: slides to the floor and stays visual, never handing off to physics.");
+                                 "Visual only: slowly slides to the floor and stays visual, never handing off to physics.");
         }
         else
         {

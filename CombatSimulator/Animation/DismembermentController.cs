@@ -74,6 +74,8 @@ public unsafe class DismembermentController : IDisposable
     private const float ClothHoldRestSpeed = 0.15f;        // anchor speed (m/s) below which the body is "settled"
     private const float ClothHoldSlideSpeed = 0.20f;       // slide-to-floor descent speed (m/s)
     private const float ClothHoldSlideEaseFrames = 60f;    // ease in to full slide speed over ~1s
+    private const float ClothHoldVisualOnlySlideSpeed = 0.07f;       // slower visual-only descent (m/s)
+    private const float ClothHoldVisualOnlySlideEaseFrames = 150f;   // ease in over ~2.5s
     private const float ClothHoldSlideMaxDrop = 0.8f;      // slide-to-floor: release after this far even without a floor hit
     private const float ClothHoldFloorMargin = 0.02f;
     private const int MdlStringTableHeaderSize = 8;
@@ -91,6 +93,12 @@ public unsafe class DismembermentController : IDisposable
     private const float BodyGarmentInitialSwingFactor = 0.16f;
     private const int BodyGarmentSwingHoldFrames = 10;
     private const int BodyGarmentSwingRelaxFrames = 96;
+    private const int BodyGarmentPoseGuideHoldFrames = 16;
+    private const int BodyGarmentPoseGuideFadeFrames = 100;
+    private const float BodyGarmentPoseGuideFrequency = 5.5f;
+    private const float BodyGarmentPoseGuideTorsoForce = 0.95f;
+    private const float BodyGarmentPoseGuideShoulderForce = 0.70f;
+    private const float BodyGarmentPoseGuideArmForce = 0.42f;
 
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
@@ -290,6 +298,7 @@ public unsafe class DismembermentController : IDisposable
         // Local-sim swing constraints, relaxed from their tight spawn ROM to full over ~1s (the ragdoll-host
         // rig keeps its own copy inside ExternalRigHandle).
         public readonly List<GarmentSwingConstraint> SwingConstraints = new();
+        public readonly List<GarmentPoseGuideConstraint> PoseGuideConstraints = new();
         public bool IsLocal;
     }
 
@@ -300,6 +309,14 @@ public unsafe class DismembermentController : IDisposable
         public Vector3 AxisLocalB;
         public SpringSettings Spring;
         public float TargetSwing;
+    }
+
+    private struct GarmentPoseGuideConstraint
+    {
+        public ConstraintHandle Handle;
+        public Quaternion TargetRelativeRotationLocalA;
+        public float Frequency;
+        public float MaxForce;
     }
 
     private struct GarmentRigBody
@@ -1462,22 +1479,53 @@ public unsafe class DismembermentController : IDisposable
                     MathF.Max(0.064f, spec.Half.X * 0.68f),
                     MathF.Max(0.034f, spec.Half.Y * 0.12f),
                     MathF.Max(0.032f, spec.Half.Z * 0.66f)), mass * 0.10f, baseLinear, baseAngular);
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_sako_l", "j_ude_a_l",
+                skelPos, skelRot, new Vector3(0.040f, 0.045f, 0.030f) * spec.Scale, mass * 0.06f, baseLinear, baseAngular);
             AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_ude_a_l", "j_ude_b_l",
-                skelPos, skelRot, new Vector3(0.034f, 0.075f, 0.030f) * spec.Scale, mass * 0.12f, baseLinear, baseAngular);
+                skelPos, skelRot, new Vector3(0.034f, 0.075f, 0.030f) * spec.Scale, mass * 0.10f, baseLinear, baseAngular);
             AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_ude_b_l", "j_te_l",
-                skelPos, skelRot, new Vector3(0.030f, 0.065f, 0.026f) * spec.Scale, mass * 0.10f, baseLinear, baseAngular);
+                skelPos, skelRot, new Vector3(0.030f, 0.065f, 0.026f) * spec.Scale, mass * 0.09f, baseLinear, baseAngular);
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_sako_r", "j_ude_a_r",
+                skelPos, skelRot, new Vector3(0.040f, 0.045f, 0.030f) * spec.Scale, mass * 0.06f, baseLinear, baseAngular);
             AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_ude_a_r", "j_ude_b_r",
-                skelPos, skelRot, new Vector3(0.034f, 0.075f, 0.030f) * spec.Scale, mass * 0.12f, baseLinear, baseAngular);
+                skelPos, skelRot, new Vector3(0.034f, 0.075f, 0.030f) * spec.Scale, mass * 0.10f, baseLinear, baseAngular);
             AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, "j_ude_b_r", "j_te_r",
-                skelPos, skelRot, new Vector3(0.030f, 0.065f, 0.026f) * spec.Scale, mass * 0.10f, baseLinear, baseAngular);
+                skelPos, skelRot, new Vector3(0.030f, 0.065f, 0.026f) * spec.Scale, mass * 0.09f, baseLinear, baseAngular);
 
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_kosi", "j_sebo_a", "j_sebo_a", 1.45f, BodyGarmentInitialSwingFactor);
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_a", "j_sebo_b", "j_sebo_b", 1.55f, BodyGarmentInitialSwingFactor);
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_b", "j_sebo_c", "j_sebo_c", 1.65f, BodyGarmentInitialSwingFactor);
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_c", "j_ude_a_l", "j_sako_l", 2.20f, BodyGarmentInitialSwingFactor);
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_ude_a_l", "j_ude_b_l", "j_ude_b_l", 2.10f, BodyGarmentInitialSwingFactor);
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_c", "j_ude_a_r", "j_sako_r", 2.20f, BodyGarmentInitialSwingFactor);
-            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_ude_a_r", "j_ude_b_r", "j_ude_b_r", 2.10f, BodyGarmentInitialSwingFactor);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_kosi", "j_sebo_a", "j_sebo_a", 1.45f,
+                BodyGarmentInitialSwingFactor, BodyGarmentPoseGuideTorsoForce);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_a", "j_sebo_b", "j_sebo_b", 1.55f,
+                BodyGarmentInitialSwingFactor, BodyGarmentPoseGuideTorsoForce);
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_b", "j_sebo_c", "j_sebo_c", 1.65f,
+                BodyGarmentInitialSwingFactor, BodyGarmentPoseGuideTorsoForce);
+            if (indexByName.ContainsKey("j_sako_l"))
+            {
+                AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_c", "j_sako_l", "j_sako_l", 1.80f,
+                    BodyGarmentInitialSwingFactor, BodyGarmentPoseGuideShoulderForce);
+                AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sako_l", "j_ude_a_l", "j_ude_a_l", 1.95f,
+                    BodyGarmentInitialSwingFactor, BodyGarmentPoseGuideArmForce);
+            }
+            else
+            {
+                AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_c", "j_ude_a_l", "j_ude_a_l", 2.20f,
+                    BodyGarmentInitialSwingFactor, BodyGarmentPoseGuideShoulderForce);
+            }
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_ude_a_l", "j_ude_b_l", "j_ude_b_l", 2.10f,
+                BodyGarmentInitialSwingFactor, BodyGarmentPoseGuideArmForce);
+            if (indexByName.ContainsKey("j_sako_r"))
+            {
+                AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_c", "j_sako_r", "j_sako_r", 1.80f,
+                    BodyGarmentInitialSwingFactor, BodyGarmentPoseGuideShoulderForce);
+                AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sako_r", "j_ude_a_r", "j_ude_a_r", 1.95f,
+                    BodyGarmentInitialSwingFactor, BodyGarmentPoseGuideArmForce);
+            }
+            else
+            {
+                AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_sebo_c", "j_ude_a_r", "j_ude_a_r", 2.20f,
+                    BodyGarmentInitialSwingFactor, BodyGarmentPoseGuideShoulderForce);
+            }
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints, "j_ude_a_r", "j_ude_b_r", "j_ude_b_r", 2.10f,
+                BodyGarmentInitialSwingFactor, BodyGarmentPoseGuideArmForce);
         }
 
         return bodySpecs.Count >= 3 && joints.Count > 0;
@@ -1619,6 +1667,24 @@ public unsafe class DismembermentController : IDisposable
             Settings = new MotorSettings(0.65f, 0.45f),
         });
 
+        if (joint.PoseGuideMaxForce > 0f)
+        {
+            var target = Quaternion.Normalize(Quaternion.Inverse(childBody.Pose.Orientation) * parentBody.Pose.Orientation);
+            var handle = simulation.Solver.Add(child.LocalBody.Value, parent.LocalBody.Value, new AngularServo
+            {
+                TargetRelativeRotationLocalA = target,
+                SpringSettings = new SpringSettings(joint.PoseGuideFrequency, 1.15f),
+                ServoSettings = new ServoSettings(6f, 0f, joint.PoseGuideMaxForce),
+            });
+            rig.PoseGuideConstraints.Add(new GarmentPoseGuideConstraint
+            {
+                Handle = handle,
+                TargetRelativeRotationLocalA = target,
+                Frequency = joint.PoseGuideFrequency,
+                MaxForce = joint.PoseGuideMaxForce,
+            });
+        }
+
         var lo = Math.Min(parent.LocalBody.Value.Value, child.LocalBody.Value.Value);
         var hi = Math.Max(parent.LocalBody.Value.Value, child.LocalBody.Value.Value);
         var pair = (lo, hi);
@@ -1648,6 +1714,23 @@ public unsafe class DismembermentController : IDisposable
         return initial + (1f - initial) * t;
     }
 
+    private static int GarmentPoseGuideFrameCount(Clone c)
+        => c.GearKeepModelSlot == 1 ? BodyGarmentPoseGuideHoldFrames + BodyGarmentPoseGuideFadeFrames : 0;
+
+    private static float GarmentPoseGuideStrength(Clone c)
+    {
+        if (c.GearKeepModelSlot != 1)
+            return 0f;
+
+        var elapsed = c.GearArmedFrames - BodyGarmentPoseGuideHoldFrames;
+        if (elapsed <= 0)
+            return 1f;
+
+        var t = Math.Clamp(elapsed / (float)Math.Max(1, BodyGarmentPoseGuideFadeFrames), 0f, 1f);
+        t = t * t * (3f - 2f * t);
+        return 1f - t;
+    }
+
     private void RelaxLocalGarmentRigSwings(GarmentRig rig, float factor)
     {
         if (simulation == null || rig.SwingConstraints.Count == 0)
@@ -1664,6 +1747,30 @@ public unsafe class DismembermentController : IDisposable
                     AxisLocalB = s.AxisLocalB,
                     MaximumSwingAngle = Math.Clamp(s.TargetSwing * factor, 0.05f, MathF.PI - 0.05f),
                     SpringSettings = s.Spring,
+                });
+            }
+            catch
+            {
+                // A constraint may have been removed (rig teardown mid-frame); ignore.
+            }
+        }
+    }
+
+    private void ApplyLocalGarmentRigPoseGuidance(GarmentRig rig, float strength)
+    {
+        if (simulation == null || rig.PoseGuideConstraints.Count == 0)
+            return;
+
+        strength = Math.Clamp(strength, 0f, 1f);
+        foreach (var s in rig.PoseGuideConstraints)
+        {
+            try
+            {
+                simulation.Solver.ApplyDescription(s.Handle, new AngularServo
+                {
+                    TargetRelativeRotationLocalA = s.TargetRelativeRotationLocalA,
+                    SpringSettings = new SpringSettings(s.Frequency, 1.15f),
+                    ServoSettings = new ServoSettings(6f, 0f, s.MaxForce * strength),
                 });
             }
             catch
@@ -1814,7 +1921,9 @@ public unsafe class DismembermentController : IDisposable
         string childName,
         string anchorBoneName,
         float swingLimit,
-        float initialSwingFactor = RagdollController.GarmentRigInitialSwingFactor)
+        float initialSwingFactor = RagdollController.GarmentRigInitialSwingFactor,
+        float poseGuideMaxForce = 0f,
+        float poseGuideFrequency = BodyGarmentPoseGuideFrequency)
     {
         if (!indexByName.TryGetValue(parentName, out var parent) ||
             !indexByName.TryGetValue(childName, out var child) ||
@@ -1823,7 +1932,8 @@ public unsafe class DismembermentController : IDisposable
             return;
         }
 
-        joints.Add(new RagdollController.ExternalRigJointSpec(parent, child, anchor, swingLimit, initialSwingFactor));
+        joints.Add(new RagdollController.ExternalRigJointSpec(parent, child, anchor, swingLimit, initialSwingFactor,
+            poseGuideMaxForce, poseGuideFrequency));
     }
 
     /// <summary>Bone immediately above <paramref name="boneName"/> in the source skeleton — the
@@ -2805,6 +2915,15 @@ public unsafe class DismembermentController : IDisposable
             else
                 PlayerRagdollController?.RelaxExternalRigSwingLimits(c.GearRagdollRig, swingFactor);
         }
+        var poseGuideUntilFrame = GarmentPoseGuideFrameCount(c);
+        if (poseGuideUntilFrame > 0 && c.GearArmedFrames <= poseGuideUntilFrame + substepsThisFrame)
+        {
+            var poseGuideStrength = GarmentPoseGuideStrength(c);
+            if (rig.IsLocal)
+                ApplyLocalGarmentRigPoseGuidance(rig, poseGuideStrength);
+            else
+                PlayerRagdollController?.ApplyExternalRigPoseGuidance(c.GearRagdollRig, poseGuideStrength);
+        }
         ApplyGarmentHandoffDrag(c, avgPos, avgLinear);
         MaybeResampleGearGround(c, avgPos);
 
@@ -3117,14 +3236,17 @@ public unsafe class DismembermentController : IDisposable
     {
         if (config.KoStripClothHoldPreset is ClothHoldPresetSlideToFloor or ClothHoldPresetVisualOnly)
         {
-            if (config.KoStripClothHoldPreset == ClothHoldPresetVisualOnly &&
+            var visualOnly = config.KoStripClothHoldPreset == ClothHoldPresetVisualOnly;
+            if (visualOnly &&
                 (c.GearBindSlip >= ClothHoldSlideMaxDrop || GarmentBindReachedFloor(c)))
             {
                 return c.GearBindSlip;
             }
 
-            var ease = Math.Clamp(c.GearBindElapsedFrames / ClothHoldSlideEaseFrames, 0f, 1f);
-            c.GearBindSlip += ClothHoldSlideSpeed * ease * frameDt;
+            var easeFrames = visualOnly ? ClothHoldVisualOnlySlideEaseFrames : ClothHoldSlideEaseFrames;
+            var slideSpeed = visualOnly ? ClothHoldVisualOnlySlideSpeed : ClothHoldSlideSpeed;
+            var ease = Math.Clamp(c.GearBindElapsedFrames / easeFrames, 0f, 1f);
+            c.GearBindSlip += slideSpeed * ease * frameDt;
             return c.GearBindSlip;
         }
 

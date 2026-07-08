@@ -288,15 +288,19 @@ public unsafe class RagdollController : IDisposable
         public readonly Vector3 AnchorWorld;
         public readonly float SwingLimit;
         public readonly float InitialSwingFactor;
+        public readonly float PoseGuideMaxForce;
+        public readonly float PoseGuideFrequency;
 
         public ExternalRigJointSpec(int parentIndex, int childIndex, Vector3 anchorWorld, float swingLimit,
-            float initialSwingFactor = 0.28f)
+            float initialSwingFactor = 0.28f, float poseGuideMaxForce = 0f, float poseGuideFrequency = 5f)
         {
             ParentIndex = parentIndex;
             ChildIndex = childIndex;
             AnchorWorld = anchorWorld;
             SwingLimit = swingLimit;
             InitialSwingFactor = Math.Clamp(initialSwingFactor, 0.05f, 1f);
+            PoseGuideMaxForce = MathF.Max(0f, poseGuideMaxForce);
+            PoseGuideFrequency = MathF.Max(0.1f, poseGuideFrequency);
         }
     }
 
@@ -309,6 +313,7 @@ public unsafe class RagdollController : IDisposable
         // ROM over the first ~second. Kept separately from Constraints so the target ROM can be re-applied
         // each frame without re-scanning the mixed constraint list.
         internal readonly List<RigSwingConstraint> SwingConstraints = new();
+        internal readonly List<RigPoseGuideConstraint> PoseGuideConstraints = new();
         internal int Generation;
         internal bool Removed;
     }
@@ -320,6 +325,14 @@ public unsafe class RagdollController : IDisposable
         public Vector3 AxisLocalB;
         public SpringSettings Spring;
         public float TargetSwing;
+    }
+
+    internal struct RigPoseGuideConstraint
+    {
+        public ConstraintHandle Handle;
+        public Quaternion TargetRelativeRotationLocalA;
+        public float Frequency;
+        public float MaxForce;
     }
 
     /// <summary>Fraction of a garment joint's full swing ROM used at spawn, before it relaxes to full over
@@ -615,6 +628,25 @@ public unsafe class RagdollController : IDisposable
             Settings = new MotorSettings(0.65f, 0.45f),
         }));
 
+        if (joint.PoseGuideMaxForce > 0f)
+        {
+            var target = Quaternion.Normalize(Quaternion.Inverse(childBody.Pose.Orientation) * parentBody.Pose.Orientation);
+            var handle = simulation.Solver.Add(child.Body, parent.Body, new AngularServo
+            {
+                TargetRelativeRotationLocalA = target,
+                SpringSettings = new SpringSettings(joint.PoseGuideFrequency, 1.15f),
+                ServoSettings = new ServoSettings(6f, 0f, joint.PoseGuideMaxForce),
+            });
+            rig.Constraints.Add(handle);
+            rig.PoseGuideConstraints.Add(new RigPoseGuideConstraint
+            {
+                Handle = handle,
+                TargetRelativeRotationLocalA = target,
+                Frequency = joint.PoseGuideFrequency,
+                MaxForce = joint.PoseGuideMaxForce,
+            });
+        }
+
         var lo = Math.Min(parent.Body.Value, child.Body.Value);
         var hi = Math.Max(parent.Body.Value, child.Body.Value);
         var pair = (lo, hi);
@@ -810,6 +842,33 @@ public unsafe class RagdollController : IDisposable
                     AxisLocalB = s.AxisLocalB,
                     MaximumSwingAngle = Math.Clamp(s.TargetSwing * factor, 0.05f, MathF.PI - 0.05f),
                     SpringSettings = s.Spring,
+                });
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Fade temporary garment pose-guide servos from their captured handoff pose toward zero force.</summary>
+    public bool ApplyExternalRigPoseGuidance(ExternalRigHandle? handle, float strength)
+    {
+        if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
+            return false;
+
+        strength = Math.Clamp(strength, 0f, 1f);
+        foreach (var s in handle.PoseGuideConstraints)
+        {
+            try
+            {
+                simulation.Solver.ApplyDescription(s.Handle, new AngularServo
+                {
+                    TargetRelativeRotationLocalA = s.TargetRelativeRotationLocalA,
+                    SpringSettings = new SpringSettings(s.Frequency, 1.15f),
+                    ServoSettings = new ServoSettings(6f, 0f, s.MaxForce * strength),
                 });
             }
             catch
