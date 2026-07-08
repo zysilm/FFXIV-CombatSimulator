@@ -301,6 +301,15 @@ public partial class Configuration : IPluginConfiguration
     // Auto-hold feel: 0 Quick, 1 Natural, 2 Clingy, 3 Slide-to-floor, 4 Visual-only. Default Slide-to-floor.
     public int KoStripClothHoldPreset { get; set; } = 3;
 
+    // Visual-only preset tuning: how far (metres) and how fast (m/s) the garment slides down the body
+    // before it freezes and stays visual. Only used by the Visual-only preset — Slide-to-floor keeps its
+    // own fixed 0.8m / 0.20 m/s behaviour. Raise the distance if the garment stops short of the ground
+    // in a standing KO; raise the speed if the slide looks too slow.
+    public const float KoStripClothVisualOnlySlideDistanceDefault = 0.8f;
+    public float KoStripClothVisualOnlySlideDistance { get; set; } = KoStripClothVisualOnlySlideDistanceDefault;
+    public const float KoStripClothVisualOnlySlideSpeedDefault = 0.07f;
+    public float KoStripClothVisualOnlySlideSpeed { get; set; } = KoStripClothVisualOnlySlideSpeedDefault;
+
     // Per-slot "collapse on drop" toggles for the physics-drop pieces. When a slot is enabled the
     // dropped piece deflates/flattens like cloth; when disabled it keeps its full rigid shape (better
     // for armor / rigid gear). Indexed via GearKeepModelSlot (0 Head,1 Body,2 Hands,3 Legs,4 Feet,

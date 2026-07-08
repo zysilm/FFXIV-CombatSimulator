@@ -3746,14 +3746,18 @@ public unsafe class DismembermentController : IDisposable
         if (config.KoStripClothHoldPreset is ClothHoldPresetSlideToFloor or ClothHoldPresetVisualOnly)
         {
             var visualOnly = config.KoStripClothHoldPreset == ClothHoldPresetVisualOnly;
+            // Visual-only distance/speed are user-tunable; slide-to-floor keeps its fixed constants.
+            var visualOnlyMaxDrop = MathF.Max(0.05f, config.KoStripClothVisualOnlySlideDistance);
             if (visualOnly &&
-                (c.GearBindSlip >= ClothHoldSlideMaxDrop || GarmentBindReachedFloor(c)))
+                (c.GearBindSlip >= visualOnlyMaxDrop || GarmentBindReachedFloor(c)))
             {
                 return c.GearBindSlip;
             }
 
             var easeFrames = visualOnly ? ClothHoldVisualOnlySlideEaseFrames : ClothHoldSlideEaseFrames;
-            var slideSpeed = visualOnly ? ClothHoldVisualOnlySlideSpeed : ClothHoldSlideSpeed;
+            var slideSpeed = visualOnly
+                ? MathF.Max(0.005f, config.KoStripClothVisualOnlySlideSpeed)
+                : ClothHoldSlideSpeed;
             var ease = Math.Clamp(c.GearBindElapsedFrames / easeFrames, 0f, 1f);
             c.GearBindSlip += slideSpeed * ease * frameDt;
             return c.GearBindSlip;
