@@ -653,6 +653,10 @@ public partial class Configuration : IPluginConfiguration
     // Spawn Enemy defaults
     public int SpawnDirection { get; set; } = 0;       // 0=Front, 1=Behind, 2=Left, 3=Right
     public float SpawnDistance { get; set; } = 5.0f;    // yalms from player
+    // When true, virtual enemies spawn directly in front of the player using the character's real
+    // in-game facing (GameObject.Rotation, NOT any ragdoll/visual facing), instead of a random
+    // direction around the player. Also governs regenerate/refresh on combat reset. Default off.
+    public bool SpawnInFront { get; set; } = false;
 
     // Recent NPCs (for spawn enemy UI)
     public List<uint> RecentNpcIds { get; set; } = new();

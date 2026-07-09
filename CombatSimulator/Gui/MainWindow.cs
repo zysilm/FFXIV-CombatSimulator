@@ -1231,14 +1231,28 @@ public partial class MainWindow : IDisposable
 
         // Spawn settings
         ImGui.Spacing();
+        var inFront = config.SpawnInFront;
+        if (ImGui.Checkbox("Front##spawninfront", ref inFront))
+        {
+            config.SpawnInFront = inFront;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Spawn virtual enemies directly in front of your character, using its real\n" +
+                             "in-game facing (not any ragdoll/visual facing). Also applies when combat\n" +
+                             "reset regenerates/refreshes enemies. Off = random direction around you.");
+        ImGui.SameLine();
+
         var dist = config.SpawnDistance;
         ImGui.SetNextItemWidth(-1);
-        if (ImGui.SliderFloat("Distance", ref dist, 1.0f, 15.0f, "%.1f yalms"))
+        if (ImGui.SliderFloat("Distance", ref dist, 0.0f, 15.0f, "%.1f yalms"))
         {
             config.SpawnDistance = dist;
             config.Save();
         }
-        HelpMarker("Spawn direction is randomized around your character.");
+        HelpMarker(config.SpawnInFront
+            ? "Enemies spawn in front of your character (real in-game facing)."
+            : "Spawn direction is randomized around your character.");
 
         // Behavior
         var behaviorIdx = config.DefaultNpcBehaviorType;
@@ -1391,6 +1405,16 @@ public partial class MainWindow : IDisposable
         if (player == null) return Vector3.Zero;
 
         var playerPos = player.Position;
+
+        if (config.SpawnInFront)
+        {
+            // Exactly in front of the player using the character's real in-game facing (yaw).
+            // No randomness. Forward convention matches PartyEngagePlanner: yaw R -> (sin R, 0, cos R).
+            var yaw = player.Rotation;
+            var fwd = new Vector3(MathF.Sin(yaw), 0, MathF.Cos(yaw));
+            return playerPos + fwd * distance;
+        }
+
         var angle = Random.Shared.NextSingle() * MathF.Tau;
         var dir = new Vector3(-MathF.Sin(angle), 0, -MathF.Cos(angle));
         return playerPos + dir * distance;
