@@ -301,6 +301,15 @@ public partial class Configuration : IPluginConfiguration
     // Auto-hold feel: 0 Quick, 1 Natural, 2 Clingy, 3 Slide-to-floor, 4 Visual-only. Default Slide-to-floor.
     public int KoStripClothHoldPreset { get; set; } = 3;
 
+    // Visual-only preset tuning: how far (metres) and how fast (m/s) the garment slides down the body
+    // before it freezes and stays visual. Only used by the Visual-only preset — Slide-to-floor keeps its
+    // own fixed 0.8m / 0.20 m/s behaviour. Raise the distance if the garment stops short of the ground
+    // in a standing KO; raise the speed if the slide looks too slow.
+    public const float KoStripClothVisualOnlySlideDistanceDefault = 0.8f;
+    public float KoStripClothVisualOnlySlideDistance { get; set; } = KoStripClothVisualOnlySlideDistanceDefault;
+    public const float KoStripClothVisualOnlySlideSpeedDefault = 0.07f;
+    public float KoStripClothVisualOnlySlideSpeed { get; set; } = KoStripClothVisualOnlySlideSpeedDefault;
+
     // Per-slot "collapse on drop" toggles for the physics-drop pieces. When a slot is enabled the
     // dropped piece deflates/flattens like cloth; when disabled it keeps its full rigid shape (better
     // for armor / rigid gear). Indexed via GearKeepModelSlot (0 Head,1 Body,2 Hands,3 Legs,4 Feet,
@@ -549,6 +558,18 @@ public partial class Configuration : IPluginConfiguration
     public float RagdollHairGravityStrength { get; set; } = 0.5f;
     public float RagdollHairDamping { get; set; } = 0.92f;
     public float RagdollHairStiffness { get; set; } = 0.1f;
+    // Hair physics — BEPU rig mode: real jointed rigid-body strands (reuses the garment tube rig:
+    // BallSocket + relaxing SwingLimit + damping AngularMotor + fading pose-guide servo), anchored to
+    // the head ragdoll body and colliding with the corpse + ground. When false, the legacy pendulum
+    // simulator (fields above) is used instead. Works for any hairstyle — the rig is built from the
+    // hair partial-skeleton bone tree, so it is name-/style-agnostic (mod hairstyles included).
+    public bool RagdollHairRigMode { get; set; } = false;
+    public float RagdollHairRigSegmentMass { get; set; } = 0.02f;        // per-segment mass (very light)
+    public float RagdollHairRigThickness { get; set; } = 0.008f;         // strand box half-thickness (m)
+    public float RagdollHairRigSwingLimit { get; set; } = 0.6f;          // per-joint swing ROM (radians)
+    public float RagdollHairRigInitialSwingFactor { get; set; } = 0.28f; // spawn ROM fraction (holds style, relaxes to full)
+    public float RagdollHairRigPoseGuideForce { get; set; } = 4f;        // servo force holding the style at spawn, fades out
+    public float RagdollHairRigSettleSeconds { get; set; } = 1.0f;       // time to relax ROM to full + fade the pose guide
     // Ragdoll debug overlay — renders capsules and joint limits in 3D
     public bool RagdollDebugOverlay { get; set; } = false;
     // Ragdoll bone configs (Advanced) — per-bone physics parameters
@@ -632,6 +653,10 @@ public partial class Configuration : IPluginConfiguration
     // Spawn Enemy defaults
     public int SpawnDirection { get; set; } = 0;       // 0=Front, 1=Behind, 2=Left, 3=Right
     public float SpawnDistance { get; set; } = 5.0f;    // yalms from player
+    // When true, virtual enemies spawn directly in front of the player using the character's real
+    // in-game facing (GameObject.Rotation, NOT any ragdoll/visual facing), instead of a random
+    // direction around the player. Also governs regenerate/refresh on combat reset. Default off.
+    public bool SpawnInFront { get; set; } = false;
 
     // Recent NPCs (for spawn enemy UI)
     public List<uint> RecentNpcIds { get; set; } = new();

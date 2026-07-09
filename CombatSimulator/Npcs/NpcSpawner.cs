@@ -491,7 +491,8 @@ public unsafe class NpcSpawner : IDisposable
             toRespawn.Add(cloned);
         }
 
-        log.Info($"[SpawnDbg] RegenerateAll: regenerating {toRespawn.Count} virtual enemies at random positions.");
+        log.Info($"[SpawnDbg] RegenerateAll: regenerating {toRespawn.Count} virtual enemies " +
+                 $"({(config.SpawnInFront ? "in front of player" : "at random positions")}).");
 
         DespawnAll();
 
@@ -720,12 +721,23 @@ public unsafe class NpcSpawner : IDisposable
         if (player != null)
         {
             var playerPos = player.Position;
+            var distance = MathF.Max(0f, config.SpawnDistance);
+
+            // Spawn exactly in front of the player using the character's real in-game facing (yaw),
+            // with no randomness. Forward convention matches PartyEngagePlanner: yaw R -> (sin R, 0, cos R).
+            if (config.SpawnInFront)
+            {
+                var yaw = player.Rotation;
+                var fwd = new Vector3(MathF.Sin(yaw), 0, MathF.Cos(yaw));
+                return playerPos + fwd * distance;
+            }
+
             var angle = Random.Shared.NextSingle() * MathF.Tau;
             var forward = new Vector3(
                 -MathF.Sin(angle),
                 0,
                 -MathF.Cos(angle));
-            return playerPos + forward * MathF.Max(1.0f, config.SpawnDistance);
+            return playerPos + forward * distance;
         }
 
         return Vector3.Zero;

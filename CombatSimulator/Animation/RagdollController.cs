@@ -25,7 +25,7 @@ using Lumina.Data.Parsing;
 
 namespace CombatSimulator.Animation;
 
-public unsafe class RagdollController : IDisposable
+public unsafe partial class RagdollController : IDisposable
 {
     private readonly BoneTransformService boneService;
     private readonly Npcs.NpcSelector? npcSelector;
@@ -51,7 +51,9 @@ public unsafe class RagdollController : IDisposable
     // and write ragdoll bones onto the newcomer).
     private uint targetEntityId;
     private Vector3 savedCharacterPosition; // original position before follow moved it
+#if DEV_EXPERIMENTAL
     private bool followWasActive;           // tracks toggle-off to restore position
+#endif
     private float elapsed;
     private float activationDelay;
     private bool physicsStarted;
@@ -1020,6 +1022,43 @@ public unsafe class RagdollController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Remove every constraint still attached to <paramref name="body"/>. BEPU corrupts the solver if a
+    /// body is removed while constraints reference it: the constraint keeps a now-dangling body index,
+    /// and the next island-sleeper traversal (Solver.EnumerateConnectedBodyReferences) faults on it —
+    /// far from the real cause. The debug assert that would catch this is compiled out in release, so
+    /// every body removal must run this first. Idempotent: a body whose constraints are already gone
+    /// enumerates an empty list.
+    /// </summary>
+    private void RemoveConstraintsOnBody(BodyHandle body)
+    {
+        if (simulation == null) return;
+        try
+        {
+            var bodyRef = simulation.Bodies.GetBodyReference(body);
+            ref var attached = ref bodyRef.Constraints;
+            if (attached.Count == 0) return;
+
+            // Snapshot first — Solver.Remove mutates the body's constraint list as we go.
+            var handles = new ConstraintHandle[attached.Count];
+            for (var i = 0; i < attached.Count; i++)
+                handles[i] = attached[i].ConnectingConstraintHandle;
+
+            foreach (var h in handles)
+            {
+                try { simulation.Solver.Remove(h); }
+                catch (Exception ex)
+                {
+                    log.Warning(ex, $"RagdollController: failed to remove constraint {h.Value} on body {body.Value}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"RagdollController: failed to enumerate constraints on body {body.Value}");
+        }
+    }
+
     public void RemoveExternalBody(ExternalBodyHandle? handle)
     {
         if (handle == null || handle.Removed)
@@ -1027,7 +1066,9 @@ public unsafe class RagdollController : IDisposable
 
         if (simulation != null && bufferPool != null && handle.Generation == externalBodyGeneration)
         {
-            try { simulation.Bodies.Remove(handle.Body); } catch { }
+            RemoveConstraintsOnBody(handle.Body);
+            try { simulation.Bodies.Remove(handle.Body); }
+            catch (Exception ex) { log.Warning(ex, $"RagdollController: failed to remove body {handle.Body.Value}"); }
             foreach (var shape in handle.Shapes)
                 try { simulation.Shapes.RemoveAndDispose(shape, bufferPool); } catch { }
         }
@@ -1044,8 +1085,17 @@ public unsafe class RagdollController : IDisposable
 
         if (simulation != null && handle.Generation == externalBodyGeneration)
         {
+            // Never swallow this silently: a constraint that survives here is exactly what turns the
+            // body removal below into solver corruption. RemoveExternalBody sweeps any leftovers, but
+            // a failure here means our bookkeeping is wrong and we want to see it.
             foreach (var constraint in handle.Constraints)
-                try { simulation.Solver.Remove(constraint); } catch { }
+            {
+                try { simulation.Solver.Remove(constraint); }
+                catch (Exception ex)
+                {
+                    log.Warning(ex, $"RagdollController: failed to remove rig constraint {constraint.Value}");
+                }
+            }
         }
 
         foreach (var pair in handle.ConnectedPairs)
@@ -2043,7 +2093,9 @@ public unsafe class RagdollController : IDisposable
         elapsed = 0f;
         physicsStarted = false;
         animationFrozen = false;
+#if DEV_EXPERIMENTAL
         followWasActive = false;
+#endif
         isActive = true;
         lastFrameTimestamp = 0;
         physicsAccumulator = 0f;
@@ -2089,6 +2141,7 @@ public unsafe class RagdollController : IDisposable
         // back to the frozen death position so there is no one-frame pop before the game
         // re-syncs it from the (never-moved) logical position on revive. NPC phantoms are left
         // as-is (they despawn or are repositioned elsewhere), matching the prior behaviour.
+#if DEV_EXPERIMENTAL
         if (followWasActive && targetCharacterAddress != nint.Zero && Core.Services.ObjectTable.LocalPlayer != null)
         {
             try
@@ -2110,6 +2163,7 @@ public unsafe class RagdollController : IDisposable
             }
         }
         followWasActive = false;
+#endif
 
         StopCollapseSpike();
         pendingCollapseSpike = false;
@@ -2137,6 +2191,7 @@ public unsafe class RagdollController : IDisposable
         kaoBodyBoneIndex = -1;
         hairPhysics?.Reset();
         hairPhysics = null;
+        RemoveHairRig();
 
         DestroySimulation();
         log.Info("RagdollController: Deactivated");
@@ -4412,11 +4467,19 @@ public unsafe class RagdollController : IDisposable
             totalNpcStatics += (s.IsFallback || s.IsConvexHull || s.IsMesh) ? 1 : s.BoneStatics.Count;
         log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, {npcCollisionStates.Count} NPCs ({totalNpcStatics} collision volumes), ground={groundY:F3}");
 
-        // Initialize hair physics
+        // Initialize hair physics — prefer the BEPU rig (real jointed strands + collision) when
+        // enabled; fall back to the legacy pendulum simulator otherwise, or if the rig cannot build
+        // (e.g. no head ragdoll body / no simulatable hair partial).
         if (config.RagdollHairPhysics && kaoBodyBoneIndex >= 0)
         {
-            hairPhysics = new HairPhysicsSimulator(config, log);
-            hairPhysics.Initialize(skel.CharBase, kaoBodyBoneIndex);
+            if (config.RagdollHairRigMode)
+                BuildHairRig(skel);
+
+            if (!hairRigActive)
+            {
+                hairPhysics = new HairPhysicsSimulator(config, log);
+                hairPhysics.Initialize(skel.CharBase, kaoBodyBoneIndex);
+            }
         }
 
         return ragdollBones.Count > 0;
@@ -6324,6 +6387,23 @@ public unsafe class RagdollController : IDisposable
         }
     }
 
+    /// <summary>
+    /// True when the ragdoll target is still a live object. Matches against the object table rather
+    /// than dereferencing <see cref="targetCharacterAddress"/> — once the actor is freed, its memory
+    /// often still reads back the stale EntityId, so a pointer-based check happily passes and we hand
+    /// a dangling pointer to native game code (that is an access violation, not a catchable exception).
+    /// </summary>
+    private bool TargetObjectAlive()
+    {
+        if (targetCharacterAddress == nint.Zero) return false;
+        foreach (var o in Core.Services.ObjectTable)
+        {
+            if (o.Address != targetCharacterAddress) continue;
+            return targetEntityId == 0 || o.EntityId == targetEntityId;
+        }
+        return false;
+    }
+
     private void StepAndApply(float dt)
     {
         if (simulation == null) return;
@@ -6388,8 +6468,12 @@ public unsafe class RagdollController : IDisposable
                 // repositions (dismount / death transition). followWasActive means we wrote a
                 // follow position on the previous frame, so this frame's skeleton move is ours.
                 // Ground is still re-raycast below in both cases so the floor tracks the corpse.
+#if DEV_EXPERIMENTAL
                 if (!(config.RagdollFollowPosition && followWasActive && isLocalPlayerTarget))
                     skeletonMoved = true;
+#else
+                skeletonMoved = true;
+#endif
                 if (config.RagdollVerboseLog)
                     log.Info($"[Ragdoll F{frameCount}] Skeleton moved {skelDist:F3}m: ({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3})→({newSkelPos.X:F3},{newSkelPos.Y:F3},{newSkelPos.Z:F3})");
                 if (BGCollisionModule.RaycastMaterialFilter(
@@ -6673,8 +6757,10 @@ public unsafe class RagdollController : IDisposable
                 CapturePrevBodyPoses(boneCount);
                 hasPrevPhysicsState = true;
                 ClampTwistRates(); // pre-step too: the solver's substeps integrate poses internally
+                UpdateHairKinematicRoots(); // drive hair anchors from the head before integrating
                 simulation.Timestep(FixedTimestep);
                 ClampVelocities(maxLinear, maxAngular);
+                ClampHairRigVelocities();
                 ClampTwistRates();
                 ApplyTwistGuards();
                 ApplyStandingAnchorCorrection();
@@ -6882,7 +6968,17 @@ public unsafe class RagdollController : IDisposable
 
         // Apply hair physics (after rigid j_kao propagation). Skipped while resting —
         // the body is settled, so hair has settled too.
-        if (hairPhysics != null && kaoBodyBoneIndex >= 0 && !resting)
+        if (hairRigActive)
+        {
+            // BEPU strands already integrated inside simulation.Timestep above (same simulation).
+            // Read their poses back into the hair bones and advance the settle (ROM relax + servo fade).
+            if (!resting)
+            {
+                ReadbackHairRig(skel);
+                TickHairRigSettle(substeps * FixedTimestep);
+            }
+        }
+        else if (hairPhysics != null && kaoBodyBoneIndex >= 0 && !resting)
         {
             // Advance hair by exactly the time the body physics advanced this frame,
             // so hair stays in step with the ragdoll across framerates (zero if no substep ran).
@@ -6909,6 +7005,11 @@ public unsafe class RagdollController : IDisposable
         // NPC phantoms: the server has no knowledge of them, so we keep moving the real
         // GameObject.Position via SetApproachPosition, which also drags their nameplate / HP-bar
         // anchor along with the flying corpse.
+        //
+        // Dev-only. The toggle lives in the private Dev/Experimental UI, but this code used to ship
+        // in public builds while only the checkbox was hidden — so a stale or hand-edited config
+        // could reach it. Compile it out entirely unless the dev module is present.
+#if DEV_EXPERIMENTAL
         if (config.RagdollFollowPosition && ragdollBones.Count > 0 && targetCharacterAddress != nint.Zero)
         {
             try
@@ -6922,11 +7023,14 @@ public unsafe class RagdollController : IDisposable
                     var drawObject = gameObj->DrawObject;
                     if (drawObject != null)
                     {
+                        // Note: the game re-syncs DrawObject.Position from the (frozen)
+                        // GameObject.Position each frame, which is why this never actually kept the
+                        // corpse from being culled. Kept as-is; the follow is dev-only.
                         ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)drawObject)->Position = rootPos;
                         drawObject->NotifyTransformChanged();
                     }
                 }
-                else if (movementBlockHook != null)
+                else if (movementBlockHook != null && TargetObjectAlive())
                 {
                     movementBlockHook.SetApproachPosition(gameObj, rootPos.X, rootPos.Y, rootPos.Z);
                 }
@@ -6949,7 +7053,7 @@ public unsafe class RagdollController : IDisposable
                         drawObject->NotifyTransformChanged();
                     }
                 }
-                else if (movementBlockHook != null)
+                else if (movementBlockHook != null && TargetObjectAlive())
                 {
                     movementBlockHook.SetApproachPosition(gameObj,
                         savedCharacterPosition.X, savedCharacterPosition.Y, savedCharacterPosition.Z);
@@ -6958,6 +7062,7 @@ public unsafe class RagdollController : IDisposable
             catch { }
             followWasActive = false;
         }
+#endif
     }
 
     // --- Grab constraint API (for cinematic victory sequence) ---
@@ -9585,6 +9690,12 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         if ((a.Mobility == CollidableMobility.Dynamic && b.Mobility == CollidableMobility.Kinematic) ||
             (b.Mobility == CollidableMobility.Dynamic && a.Mobility == CollidableMobility.Kinematic))
         {
+            // Hair strands (and their kinematic follow-anchor) are flagged no-ragdoll-contact: they are
+            // driven purely by joints, so they must not collide with any kinematic body — neither their
+            // own anchor (which sits on the scalp) nor NPC collision proxies. Without this the anchor
+            // punts the strands and they whip the corpse.
+            if (IsExternalRigNoRagdollContact(a.BodyHandle.Value) || IsExternalRigNoRagdollContact(b.BodyHandle.Value))
+                return false;
             return true;
         }
 

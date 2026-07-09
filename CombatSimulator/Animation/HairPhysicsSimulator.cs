@@ -309,12 +309,15 @@ public unsafe class HairPhysicsSimulator
         var rootName = bones[0].Name.String;
         if (rootName != "j_kao") return false;
 
-        // Must contain at least one hair bone
+        // Must contain at least one hair bone. Modern hair bones are "j_ex_h<NNNN>_<pos>"
+        // (e.g. j_ex_h0193_back_l); the classic form is "j_kami_*". The digit after "j_ex_h"
+        // distinguishes hair from other j_ex_ accessory partials (helmets "j_ex_met_*" etc.).
         for (int i = 1; i < bones.Length; i++)
         {
             var name = bones[i].Name.String;
             if (name == null) continue;
             if (name.StartsWith("j_kami_")) return true;
+            if (name.StartsWith("j_ex_h") && name.Length > 6 && char.IsDigit(name[6])) return true;
             if (name.StartsWith("j_ex_h") && name.Contains("_ke_")) return true;
         }
         return false;

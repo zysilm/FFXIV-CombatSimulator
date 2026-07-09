@@ -176,7 +176,7 @@ public partial class MainWindow
         ImGui.BeginDisabled(!config.KoStripGarmentTubeModel);
         ImGui.SetNextItemWidth(200f);
         var tubeBodyFriction = config.KoStripGarmentTubeBodyFriction;
-        if (ImGui.SliderFloat("Tube body friction##armordetachtubebodyfriction", ref tubeBodyFriction, 0.1f, 3f, "%.2f"))
+        if (ImGui.SliderFloat("Tube body friction##armordetachtubebodyfriction", ref tubeBodyFriction, 0.1f, 10f, "%.2f"))
         {
             config.KoStripGarmentTubeBodyFriction = tubeBodyFriction;
             config.Save();
@@ -187,7 +187,7 @@ public partial class MainWindow
 
         ImGui.SetNextItemWidth(200f);
         var tubeGroundFriction = config.KoStripGarmentTubeGroundFriction;
-        if (ImGui.SliderFloat("Tube ground friction##armordetachtubegroundfriction", ref tubeGroundFriction, 0.1f, 6f, "%.2f"))
+        if (ImGui.SliderFloat("Tube ground friction##armordetachtubegroundfriction", ref tubeGroundFriction, 0.1f, 10f, "%.2f"))
         {
             config.KoStripGarmentTubeGroundFriction = tubeGroundFriction;
             config.Save();
@@ -198,9 +198,9 @@ public partial class MainWindow
 
         ImGui.SetNextItemWidth(200f);
         var tubeHoldSeconds = config.KoStripGarmentTubeHoldSeconds;
-        if (ImGui.SliderFloat("Tube handoff delay##armordetachtubehold", ref tubeHoldSeconds, 0f, 3f, "%.2f s"))
+        if (ImGui.SliderFloat("Tube handoff delay##armordetachtubehold", ref tubeHoldSeconds, 0f, 10f, "%.2f s"))
         {
-            config.KoStripGarmentTubeHoldSeconds = Math.Clamp(tubeHoldSeconds, 0f, 3f);
+            config.KoStripGarmentTubeHoldSeconds = Math.Clamp(tubeHoldSeconds, 0f, 10f);
             config.Save();
         }
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
@@ -251,6 +251,44 @@ public partial class MainWindow
                                  "Clingy: waits longer and follows dragged bodies.\n" +
                                  "Slide to floor: default, keeps sliding down until it touches the ground, then drops.\n" +
                                  "Visual only: slowly slides to the floor and stays visual, never handing off to physics.");
+
+            // Visual-only slide tuning (preset index 4). Only this preset uses these; slide-to-floor is fixed.
+            if (preset == 4)
+            {
+                ImGui.Indent();
+
+                var vSlideDist = config.KoStripClothVisualOnlySlideDistance;
+                ImGui.SetNextItemWidth(200f);
+                if (ImGui.SliderFloat("Visual-only slide distance##armordetachvisualslidedist", ref vSlideDist, 0.2f, 3.0f, "%.2f m"))
+                {
+                    config.KoStripClothVisualOnlySlideDistance = vSlideDist;
+                    config.Save();
+                }
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    ImGui.SetTooltip("How far the garment slides down the body before it freezes (or until it\n" +
+                                     "reaches the ground). Raise it if the garment stops short in a standing KO.\n" +
+                                     $"Default {Configuration.KoStripClothVisualOnlySlideDistanceDefault:0.00}m.");
+
+                var vSlideSpeed = config.KoStripClothVisualOnlySlideSpeed;
+                ImGui.SetNextItemWidth(200f);
+                if (ImGui.SliderFloat("Visual-only slide speed##armordetachvisualslidespeed", ref vSlideSpeed, 0.02f, 0.5f, "%.2f m/s"))
+                {
+                    config.KoStripClothVisualOnlySlideSpeed = vSlideSpeed;
+                    config.Save();
+                }
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    ImGui.SetTooltip("How fast the garment slides down. Raise it if the slide looks too slow.\n" +
+                                     $"Default {Configuration.KoStripClothVisualOnlySlideSpeedDefault:0.00} m/s.");
+
+                if (ImGui.Button("Reset##armordetachvisualslidereset"))
+                {
+                    config.KoStripClothVisualOnlySlideDistance = Configuration.KoStripClothVisualOnlySlideDistanceDefault;
+                    config.KoStripClothVisualOnlySlideSpeed = Configuration.KoStripClothVisualOnlySlideSpeedDefault;
+                    config.Save();
+                }
+
+                ImGui.Unindent();
+            }
         }
         else
         {

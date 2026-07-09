@@ -1,5 +1,17 @@
 [
   {
+    "version": "2.7.0.1",
+    "date": "2026-07-09",
+    "title": "Combat Simulator 2.7.0.1",
+    "changes": [
+      "Added BEPU-based hair physics for ragdolls.",
+      "Added tuning options for visual-only cloth detachment.",
+      "Added an option to spawn virtual enemies directly in front of the player.",
+      "Fixed several ragdoll and dismemberment crash issues.",
+      "Improved overall stability for public builds."
+    ]
+  },
+  {
     "version": "2.7.0.0",
     "date": "2026-07-08",
     "title": "Combat Simulator 2.7.0.0",
