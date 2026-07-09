@@ -2211,6 +2211,42 @@ public unsafe class DismembermentController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Remove every constraint still attached to <paramref name="body"/> before the body itself goes.
+    /// Removing a jointed body leaves the constraint holding a dangling body index; BEPU's debug assert
+    /// for this is compiled out in release, and the corruption only surfaces later as an access
+    /// violation deep in the island sleeper. This rig's joints (BallSocket/SwingLimit/AngularMotor/
+    /// AngularServo) were previously never removed at all. Idempotent.
+    /// </summary>
+    private void RemoveConstraintsOnBody(BodyHandle body)
+    {
+        if (simulation == null) return;
+        try
+        {
+            var bodyRef = simulation.Bodies.GetBodyReference(body);
+            ref var attached = ref bodyRef.Constraints;
+            if (attached.Count == 0) return;
+
+            // Snapshot first — Solver.Remove mutates the body's constraint list as we go.
+            var handles = new ConstraintHandle[attached.Count];
+            for (var i = 0; i < attached.Count; i++)
+                handles[i] = attached[i].ConnectingConstraintHandle;
+
+            foreach (var h in handles)
+            {
+                try { simulation.Solver.Remove(h); }
+                catch (Exception ex)
+                {
+                    log.Warning(ex, $"Dismember: failed to remove constraint {h.Value} on body {body.Value}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"Dismember: failed to enumerate constraints on body {body.Value}");
+        }
+    }
+
     private void CleanupLocalGarmentRig(GarmentRig? rig)
     {
         if (rig == null || simulation == null)
@@ -2225,6 +2261,7 @@ public unsafe class DismembermentController : IDisposable
             if (!rb.LocalBody.HasValue)
                 continue;
             gearRigDynamicBodyHandles.Remove(rb.LocalBody.Value.Value);
+            RemoveConstraintsOnBody(rb.LocalBody.Value);
             try { simulation.Bodies.Remove(rb.LocalBody.Value); } catch { }
         }
 
@@ -6914,6 +6951,7 @@ public unsafe class DismembermentController : IDisposable
                 if (c.Body.HasValue)
                 {
                     gearDynamicBodyHandles.Remove(c.Body.Value.Value);
+                    RemoveConstraintsOnBody(c.Body.Value);
                     simulation.Bodies.Remove(c.Body.Value);
                 }
                 if (c.Rig != null)
@@ -6921,7 +6959,10 @@ public unsafe class DismembermentController : IDisposable
                     foreach (var pair in c.Rig.ConnectedPairs)
                         connectedPairs.Remove(pair);
                     foreach (var rb in c.Rig.Bodies)
+                    {
+                        RemoveConstraintsOnBody(rb.Body);
                         try { simulation.Bodies.Remove(rb.Body); } catch { }
+                    }
                     if (bufferPool != null)
                         foreach (var s in c.Rig.Shapes)
                             try { simulation.Shapes.RemoveAndDispose(s, bufferPool); } catch { }

@@ -1020,6 +1020,43 @@ public unsafe partial class RagdollController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Remove every constraint still attached to <paramref name="body"/>. BEPU corrupts the solver if a
+    /// body is removed while constraints reference it: the constraint keeps a now-dangling body index,
+    /// and the next island-sleeper traversal (Solver.EnumerateConnectedBodyReferences) faults on it —
+    /// far from the real cause. The debug assert that would catch this is compiled out in release, so
+    /// every body removal must run this first. Idempotent: a body whose constraints are already gone
+    /// enumerates an empty list.
+    /// </summary>
+    private void RemoveConstraintsOnBody(BodyHandle body)
+    {
+        if (simulation == null) return;
+        try
+        {
+            var bodyRef = simulation.Bodies.GetBodyReference(body);
+            ref var attached = ref bodyRef.Constraints;
+            if (attached.Count == 0) return;
+
+            // Snapshot first — Solver.Remove mutates the body's constraint list as we go.
+            var handles = new ConstraintHandle[attached.Count];
+            for (var i = 0; i < attached.Count; i++)
+                handles[i] = attached[i].ConnectingConstraintHandle;
+
+            foreach (var h in handles)
+            {
+                try { simulation.Solver.Remove(h); }
+                catch (Exception ex)
+                {
+                    log.Warning(ex, $"RagdollController: failed to remove constraint {h.Value} on body {body.Value}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"RagdollController: failed to enumerate constraints on body {body.Value}");
+        }
+    }
+
     public void RemoveExternalBody(ExternalBodyHandle? handle)
     {
         if (handle == null || handle.Removed)
@@ -1027,7 +1064,9 @@ public unsafe partial class RagdollController : IDisposable
 
         if (simulation != null && bufferPool != null && handle.Generation == externalBodyGeneration)
         {
-            try { simulation.Bodies.Remove(handle.Body); } catch { }
+            RemoveConstraintsOnBody(handle.Body);
+            try { simulation.Bodies.Remove(handle.Body); }
+            catch (Exception ex) { log.Warning(ex, $"RagdollController: failed to remove body {handle.Body.Value}"); }
             foreach (var shape in handle.Shapes)
                 try { simulation.Shapes.RemoveAndDispose(shape, bufferPool); } catch { }
         }
@@ -1044,8 +1083,17 @@ public unsafe partial class RagdollController : IDisposable
 
         if (simulation != null && handle.Generation == externalBodyGeneration)
         {
+            // Never swallow this silently: a constraint that survives here is exactly what turns the
+            // body removal below into solver corruption. RemoveExternalBody sweeps any leftovers, but
+            // a failure here means our bookkeeping is wrong and we want to see it.
             foreach (var constraint in handle.Constraints)
-                try { simulation.Solver.Remove(constraint); } catch { }
+            {
+                try { simulation.Solver.Remove(constraint); }
+                catch (Exception ex)
+                {
+                    log.Warning(ex, $"RagdollController: failed to remove rig constraint {constraint.Value}");
+                }
+            }
         }
 
         foreach (var pair in handle.ConnectedPairs)
@@ -2097,11 +2145,9 @@ public unsafe partial class RagdollController : IDisposable
                 if (gameObj->ObjectIndex == 0)
                 {
                     var drawObject = gameObj->DrawObject;
+                    // No NotifyTransformChanged(): Deactivate can run from inside the render hook.
                     if (drawObject != null)
-                    {
                         ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)drawObject)->Position = savedCharacterPosition;
-                        drawObject->NotifyTransformChanged();
-                    }
                 }
             }
             catch (Exception ex)
@@ -6333,6 +6379,23 @@ public unsafe partial class RagdollController : IDisposable
         }
     }
 
+    /// <summary>
+    /// True when the ragdoll target is still a live object. Matches against the object table rather
+    /// than dereferencing <see cref="targetCharacterAddress"/> — once the actor is freed, its memory
+    /// often still reads back the stale EntityId, so a pointer-based check happily passes and we hand
+    /// a dangling pointer to native game code (that is an access violation, not a catchable exception).
+    /// </summary>
+    private bool TargetObjectAlive()
+    {
+        if (targetCharacterAddress == nint.Zero) return false;
+        foreach (var o in Core.Services.ObjectTable)
+        {
+            if (o.Address != targetCharacterAddress) continue;
+            return targetEntityId == 0 || o.EntityId == targetEntityId;
+        }
+        return false;
+    }
+
     private void StepAndApply(float dt)
     {
         if (simulation == null) return;
@@ -6943,11 +7006,14 @@ public unsafe partial class RagdollController : IDisposable
                     var drawObject = gameObj->DrawObject;
                     if (drawObject != null)
                     {
+                        // Plain render-transform field write. Deliberately NOT followed by
+                        // NotifyTransformChanged(): we run inside the game's skeleton render
+                        // callback, and forcing a scene-graph/bounds update while the game is
+                        // mid-traversal of its render lists corrupts them.
                         ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)drawObject)->Position = rootPos;
-                        drawObject->NotifyTransformChanged();
                     }
                 }
-                else if (movementBlockHook != null)
+                else if (movementBlockHook != null && TargetObjectAlive())
                 {
                     movementBlockHook.SetApproachPosition(gameObj, rootPos.X, rootPos.Y, rootPos.Z);
                 }
@@ -6965,12 +7031,9 @@ public unsafe partial class RagdollController : IDisposable
                 {
                     var drawObject = gameObj->DrawObject;
                     if (drawObject != null)
-                    {
                         ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)drawObject)->Position = savedCharacterPosition;
-                        drawObject->NotifyTransformChanged();
-                    }
                 }
-                else if (movementBlockHook != null)
+                else if (movementBlockHook != null && TargetObjectAlive())
                 {
                     movementBlockHook.SetApproachPosition(gameObj,
                         savedCharacterPosition.X, savedCharacterPosition.Y, savedCharacterPosition.Z);
