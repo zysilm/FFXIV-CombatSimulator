@@ -2150,9 +2150,11 @@ public unsafe partial class RagdollController : IDisposable
                 if (gameObj->ObjectIndex == 0)
                 {
                     var drawObject = gameObj->DrawObject;
-                    // No NotifyTransformChanged(): Deactivate can run from inside the render hook.
                     if (drawObject != null)
+                    {
                         ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)drawObject)->Position = savedCharacterPosition;
+                        drawObject->NotifyTransformChanged();
+                    }
                 }
             }
             catch (Exception ex)
@@ -7021,11 +7023,11 @@ public unsafe partial class RagdollController : IDisposable
                     var drawObject = gameObj->DrawObject;
                     if (drawObject != null)
                     {
-                        // Plain render-transform field write. Deliberately NOT followed by
-                        // NotifyTransformChanged(): we run inside the game's skeleton render
-                        // callback, and forcing a scene-graph/bounds update while the game is
-                        // mid-traversal of its render lists corrupts them.
+                        // Note: the game re-syncs DrawObject.Position from the (frozen)
+                        // GameObject.Position each frame, which is why this never actually kept the
+                        // corpse from being culled. Kept as-is; the follow is dev-only.
                         ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)drawObject)->Position = rootPos;
+                        drawObject->NotifyTransformChanged();
                     }
                 }
                 else if (movementBlockHook != null && TargetObjectAlive())
@@ -7046,7 +7048,10 @@ public unsafe partial class RagdollController : IDisposable
                 {
                     var drawObject = gameObj->DrawObject;
                     if (drawObject != null)
+                    {
                         ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)drawObject)->Position = savedCharacterPosition;
+                        drawObject->NotifyTransformChanged();
+                    }
                 }
                 else if (movementBlockHook != null && TargetObjectAlive())
                 {
