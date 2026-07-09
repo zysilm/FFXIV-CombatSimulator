@@ -51,7 +51,9 @@ public unsafe partial class RagdollController : IDisposable
     // and write ragdoll bones onto the newcomer).
     private uint targetEntityId;
     private Vector3 savedCharacterPosition; // original position before follow moved it
+#if DEV_EXPERIMENTAL
     private bool followWasActive;           // tracks toggle-off to restore position
+#endif
     private float elapsed;
     private float activationDelay;
     private bool physicsStarted;
@@ -2091,7 +2093,9 @@ public unsafe partial class RagdollController : IDisposable
         elapsed = 0f;
         physicsStarted = false;
         animationFrozen = false;
+#if DEV_EXPERIMENTAL
         followWasActive = false;
+#endif
         isActive = true;
         lastFrameTimestamp = 0;
         physicsAccumulator = 0f;
@@ -2137,6 +2141,7 @@ public unsafe partial class RagdollController : IDisposable
         // back to the frozen death position so there is no one-frame pop before the game
         // re-syncs it from the (never-moved) logical position on revive. NPC phantoms are left
         // as-is (they despawn or are repositioned elsewhere), matching the prior behaviour.
+#if DEV_EXPERIMENTAL
         if (followWasActive && targetCharacterAddress != nint.Zero && Core.Services.ObjectTable.LocalPlayer != null)
         {
             try
@@ -2156,6 +2161,7 @@ public unsafe partial class RagdollController : IDisposable
             }
         }
         followWasActive = false;
+#endif
 
         StopCollapseSpike();
         pendingCollapseSpike = false;
@@ -6460,8 +6466,12 @@ public unsafe partial class RagdollController : IDisposable
                 // repositions (dismount / death transition). followWasActive means we wrote a
                 // follow position on the previous frame, so this frame's skeleton move is ours.
                 // Ground is still re-raycast below in both cases so the floor tracks the corpse.
+#if DEV_EXPERIMENTAL
                 if (!(config.RagdollFollowPosition && followWasActive && isLocalPlayerTarget))
                     skeletonMoved = true;
+#else
+                skeletonMoved = true;
+#endif
                 if (config.RagdollVerboseLog)
                     log.Info($"[Ragdoll F{frameCount}] Skeleton moved {skelDist:F3}m: ({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3})→({newSkelPos.X:F3},{newSkelPos.Y:F3},{newSkelPos.Z:F3})");
                 if (BGCollisionModule.RaycastMaterialFilter(
@@ -6993,6 +7003,11 @@ public unsafe partial class RagdollController : IDisposable
         // NPC phantoms: the server has no knowledge of them, so we keep moving the real
         // GameObject.Position via SetApproachPosition, which also drags their nameplate / HP-bar
         // anchor along with the flying corpse.
+        //
+        // Dev-only. The toggle lives in the private Dev/Experimental UI, but this code used to ship
+        // in public builds while only the checkbox was hidden — so a stale or hand-edited config
+        // could reach it. Compile it out entirely unless the dev module is present.
+#if DEV_EXPERIMENTAL
         if (config.RagdollFollowPosition && ragdollBones.Count > 0 && targetCharacterAddress != nint.Zero)
         {
             try
@@ -7042,6 +7057,7 @@ public unsafe partial class RagdollController : IDisposable
             catch { }
             followWasActive = false;
         }
+#endif
     }
 
     // --- Grab constraint API (for cinematic victory sequence) ---
