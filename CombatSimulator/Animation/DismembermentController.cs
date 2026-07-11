@@ -1672,10 +1672,10 @@ public unsafe class DismembermentController : IDisposable
 
         return c.GearKeepModelSlot == 3
             ? BuildPantsTube(skel, rig, bodySpecs, joints, skelPos, skelRot, totalMass, scale, baseLinear, baseAngular)
-            : BuildTorsoTube(skel, rig, bodySpecs, joints, skelPos, skelRot, totalMass, scale, baseLinear, baseAngular);
+            : BuildTorsoTube(skel, c, rig, bodySpecs, joints, skelPos, skelRot, totalMass, scale, baseLinear, baseAngular);
     }
 
-    private bool BuildTorsoTube(SkeletonAccess skel, GarmentRig rig,
+    private bool BuildTorsoTube(SkeletonAccess skel, Clone c, GarmentRig rig,
         List<RagdollController.ExternalRigBodySpec> bodySpecs, List<RagdollController.ExternalRigJointSpec> joints,
         Vector3 skelPos, Quaternion skelRot, float totalMass, float scale, Vector3 baseLinear, Vector3 baseAngular)
     {
@@ -1693,8 +1693,15 @@ public unsafe class DismembermentController : IDisposable
         for (var k = 0; k + 1 < rings.Count; k++)
             AddTubeRingToRingEdges(rig, joints, bodySpecs, rings[k], rings[k + 1]);
 
+        // Chains and pins are alternatives, not layers: a pinned skirt-top bone is written straight from
+        // its ring body every frame, which would simply overwrite whatever the chain solved for it.
         if (rig.Rings.Count > 0)
-            BuildTubeSkirtAttachments(skel, rig, bodySpecs, skelPos, skelRot);
+        {
+            if (config.KoStripGarmentSkirtPhysics)
+                BuildTubeSkirtChains(skel, c, rig, bodySpecs, joints, skelPos, skelRot, scale, baseLinear, baseAngular);
+            else
+                BuildTubeSkirtAttachments(skel, rig, bodySpecs, skelPos, skelRot);
+        }
 
         return rig.Rings.Count >= 2 && bodySpecs.Count >= TubeRingSegments * 2;
     }
@@ -1774,31 +1781,9 @@ public unsafe class DismembermentController : IDisposable
         foreach (var clone in clones)
         {
             if (!ReferenceEquals(clone.GearRagdollRig, rig)) continue;
-
-            var worn = IsGarmentWorn(clone, out var on, out var total, out var bestRatio);
-            if (ShouldLogGarmentCarry(clone.GearKeepModelSlot))
-                log.Info($"GarmentCarry: slot {clone.GearKeepModelSlot} " +
-                         $"({(clone.GearGarmentRig?.IsTube == true ? "tube" : "chain")}) — " +
-                         $"{on}/{total} pieces still on the body (closest sits at {bestRatio:F2}x its " +
-                         $"threshold) -> {(worn ? "carried" : "left behind")}");
-            return worn;
+            return IsGarmentWorn(clone);
         }
-
-        if (ShouldLogGarmentCarry(int.MinValue))
-            log.Info("GarmentCarry: an external rig in the ragdoll has no owning clone -> left behind");
-        return false;
-    }
-
-    // The carry test runs once per rig per physics substep; the log must not. Keyed by slot, because a
-    // single shared budget let whichever garment was tested first eat it and hid the other one.
-    private readonly Dictionary<int, long> lastGarmentCarryLogTick = new();
-
-    private bool ShouldLogGarmentCarry(int slot)
-    {
-        var now = Environment.TickCount64;
-        if (lastGarmentCarryLogTick.TryGetValue(slot, out var last) && now - last < 1000) return false;
-        lastGarmentCarryLogTick[slot] = now;
-        return true;
+        return false; // not a piece of ours
     }
 
     /// <summary>
@@ -1809,11 +1794,10 @@ public unsafe class DismembermentController : IDisposable
     /// around — a worn tube has the spine running through its rings; a shed one is a flat loop with
     /// nothing inside it.
     /// </summary>
-    private bool IsGarmentWorn(Clone c, out int on, out int total, out float bestRatio)
+    private bool IsGarmentWorn(Clone c)
     {
-        on = 0;
-        total = 0;
-        bestRatio = float.PositiveInfinity;
+        var on = 0;
+        var total = 0;
 
         var rig = c.GearGarmentRig;
         var ragdoll = PlayerRagdollController;
@@ -1846,10 +1830,8 @@ public unsafe class DismembermentController : IDisposable
                 // Distance to the capsule's AXIS, not its centre: the centre sits half a bone-length
                 // along the segment from the bone origin the ring was built on, so a perfectly worn
                 // thigh ring would otherwise start out most of the way to its own threshold.
-                var threshold = ring.Radius * WornRingFactor;
-                var ratio = DistanceToCapsuleAxis(capsule, centroid) / MathF.Max(1e-4f, threshold);
-                bestRatio = MathF.Min(bestRatio, ratio);
-                if (ratio <= 1f) on++;
+                if (DistanceToCapsuleAxis(capsule, centroid) <= ring.Radius * WornRingFactor)
+                    on++;
             }
         }
         else
@@ -1863,13 +1845,10 @@ public unsafe class DismembermentController : IDisposable
 
                 // How far clear of the skin it is, so cloth thickness is all that has to be tolerated.
                 var surfaceGap = MathF.Max(0f, DistanceToCapsuleAxis(capsule, position) - capsule.Radius);
-                var ratio = surfaceGap / WornChainMargin;
-                bestRatio = MathF.Min(bestRatio, ratio);
-                if (ratio <= 1f) on++;
+                if (surfaceGap <= WornChainMargin) on++;
             }
         }
 
-        if (float.IsPositiveInfinity(bestRatio)) bestRatio = -1f;
         return total > 0 && on >= total * WornFraction;
     }
 
@@ -2047,6 +2026,160 @@ public unsafe class DismembermentController : IDisposable
             joints.Add(RagdollController.ExternalRigJointSpec.MakeDistanceLimit(
                 tb, best, rest * 0.2f, rest * 1.15f, TubeEdgeFrequency, TubeEdgeDamping));
         }
+    }
+
+    // === Garment tube skirt chains (experimental) ===
+    // A coat's j_sk_* bones carry no physics in either rig: the tube pins each column's TOP bone to the
+    // hem ring and every tier below it rides along rigidly, and the chain rig poses them procedurally to
+    // hang straight down. Give each column a chain of bodies hanging off the hem instead and it swings
+    // and folds — and because the rig already collides with the corpse and the ground, the skirt drapes
+    // over the legs and pools on the floor rather than passing through them.
+    //
+    // Costs a body and a joint per skirt bone (~18 on a typical coat), which is why it is opt-in.
+    private const int MaxSkirtColumnJoints = 5;         // coats run 3 tiers; a cap keeps an odd rig sane
+    private const float SkirtSegmentHalfThickness = 0.012f;
+    private const float SkirtSegmentHalfLengthHint = 0.05f; // clamped against the real bone length
+    private const float SkirtSegmentMinHalfWidth = 0.03f;
+
+    private void BuildTubeSkirtChains(SkeletonAccess skel, Clone c, GarmentRig rig,
+        List<RagdollController.ExternalRigBodySpec> bodySpecs,
+        List<RagdollController.ExternalRigJointSpec> joints,
+        Vector3 skelPos, Quaternion skelRot, float scale, Vector3 baseLinear, Vector3 baseAngular)
+    {
+        if (rig.Rings.Count == 0) return;
+        var hem = rig.Rings[0];
+        if (hem.BodyIndices.Length == 0) return;
+
+        var mass = Math.Clamp(config.KoStripSkirtSegmentMass, 0.02f, 0.5f);
+        var swing = Math.Clamp(config.KoStripSkirtSwingLimit, 0.1f, 2.0f);
+        var initialSwing = Math.Clamp(config.KoStripSkirtInitialSwing, 0.05f, 1f);
+
+        // Width the panels to fill the hem between them. A fixed width leaves gaps a leg can poke
+        // straight through, and the columns are all the skirt has — so each one has to cover its own
+        // share of the circumference. Panels never collide with each other (the rig is built
+        // non-self-colliding), so erring wide costs nothing and closes the skirt.
+        var columnCount = CountSkirtColumns(skel);
+        if (columnCount == 0) return;
+
+        var panelHalfWidth = MathF.Max(
+            SkirtSegmentMinHalfWidth, MathF.PI * hem.Radius / columnCount * 0.95f);
+        var half = new Vector3(
+            panelHalfWidth, SkirtSegmentHalfLengthHint, SkirtSegmentHalfThickness * scale);
+
+        var indexByName = new Dictionary<string, int>();
+        var columns = 0;
+        var segments = 0;
+
+        for (var i = 0; i < skel.BoneCount && i < skel.ParentCount; i++)
+        {
+            if (!IsSkirtColumnTop(skel, i, out var topName)) continue;
+
+            // Walk the column down. Tier count and column count both vary by model, so follow the
+            // skeleton rather than assuming the usual a/b/c.
+            var column = new List<string> { topName };
+            var current = i;
+            while (column.Count < MaxSkirtColumnJoints)
+            {
+                var child = FirstSkirtChild(skel, current);
+                if (child < 0) break;
+                var childName = skel.HavokSkeleton->Bones[child].Name.String;
+                if (string.IsNullOrEmpty(childName)) break;
+                column.Add(childName);
+                current = child;
+            }
+
+            // One body per bone, each aimed at the next so the segment (and thus the bone it drives)
+            // comes out right; AddGarmentRigBody already owns that convention.
+            var columnBodies = new List<int>();
+            for (var tier = 0; tier < column.Count; tier++)
+            {
+                var childName = tier + 1 < column.Count ? column[tier + 1] : null;
+                if (!AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, column[tier], childName,
+                        skelPos, skelRot, half, mass, baseLinear, baseAngular))
+                    break;
+                columnBodies.Add(indexByName[column[tier]]);
+            }
+            if (columnBodies.Count == 0) continue;
+
+            // Hang the column off whichever hem body it was born nearest, then joint tier to tier. The
+            // hem ring is already the thing that follows the waist, so the skirt inherits that for free.
+            if (TryGetBoneWorldPosition(skel, skelPos, skelRot, column[0], out var topPos))
+            {
+                var anchor = NearestHemBody(hem, bodySpecs, topPos);
+                if (anchor >= 0)
+                    joints.Add(new RagdollController.ExternalRigJointSpec(
+                        anchor, columnBodies[0], topPos, swing, initialSwing));
+            }
+
+            for (var tier = 0; tier + 1 < columnBodies.Count; tier++)
+            {
+                if (!TryGetBoneWorldPosition(skel, skelPos, skelRot, column[tier + 1], out var jointPos))
+                    continue;
+                joints.Add(new RagdollController.ExternalRigJointSpec(
+                    columnBodies[tier], columnBodies[tier + 1], jointPos, swing, initialSwing));
+            }
+
+            columns++;
+            segments += columnBodies.Count;
+        }
+
+        if (columns > 0)
+            log.Info($"GearDrop: clone idx={c.ObjectIndex} skirt chains — {columns} column(s), " +
+                     $"{segments} segment(s), panel width {panelHalfWidth * 2f:F3}m");
+    }
+
+    private static int CountSkirtColumns(SkeletonAccess skel)
+    {
+        var count = 0;
+        for (var i = 0; i < skel.BoneCount && i < skel.ParentCount; i++)
+            if (IsSkirtColumnTop(skel, i, out _)) count++;
+        return count;
+    }
+
+    /// <summary>A skirt bone whose parent is NOT a skirt bone: the top of one hanging column.</summary>
+    private static bool IsSkirtColumnTop(SkeletonAccess skel, int index, out string name)
+    {
+        name = string.Empty;
+
+        var bone = skel.HavokSkeleton->Bones[index].Name.String;
+        if (bone == null || !bone.StartsWith("j_sk_", StringComparison.Ordinal)) return false;
+
+        var parent = skel.HavokSkeleton->ParentIndices[index];
+        if (parent >= 0 && parent < skel.BoneCount)
+        {
+            var parentName = skel.HavokSkeleton->Bones[parent].Name.String;
+            if (parentName != null && parentName.StartsWith("j_sk_", StringComparison.Ordinal))
+                return false;
+        }
+
+        name = bone;
+        return true;
+    }
+
+    private static int FirstSkirtChild(SkeletonAccess skel, int parent)
+    {
+        var count = Math.Min(skel.BoneCount, skel.ParentCount);
+        for (var i = 0; i < count; i++)
+        {
+            if (skel.HavokSkeleton->ParentIndices[i] != parent) continue;
+            var name = skel.HavokSkeleton->Bones[i].Name.String;
+            if (name != null && name.StartsWith("j_sk_", StringComparison.Ordinal)) return i;
+        }
+        return -1;
+    }
+
+    private static int NearestHemBody(GarmentRing hem,
+        List<RagdollController.ExternalRigBodySpec> bodySpecs, Vector3 point)
+    {
+        var best = -1;
+        var bestDistSq = float.MaxValue;
+        foreach (var bodyIndex in hem.BodyIndices)
+        {
+            if (bodyIndex < 0 || bodyIndex >= bodySpecs.Count) continue;
+            var d = (bodySpecs[bodyIndex].Position - point).LengthSquared();
+            if (d < bestDistSq) { bestDistSq = d; best = bodyIndex; }
+        }
+        return best;
     }
 
     // Pin each coat/robe skirt-top bone (a j_sk_* bone whose parent is not itself a skirt bone) to the

@@ -274,6 +274,20 @@ public partial class Configuration : IPluginConfiguration
     // Draw the garment tube's ring bodies as a wireframe overlay (tuning aid). Not saved-critical.
     public bool KoStripGarmentTubeDebugDraw { get; set; } = false;
 
+    // Give a coat's j_sk_* columns real bodies hanging off the hem ring, instead of riding it rigidly.
+    // They then swing and fold, and — since the rig already collides with the body — drape over the legs
+    // and pool on the ground rather than passing through them. Costs roughly one body and one joint per
+    // skirt bone (~18 on a typical coat); only reachable when the tube model is on, which already brings
+    // a rig of its own.
+    public bool KoStripGarmentSkirtPhysics { get; set; } = true;
+    public float KoStripSkirtSegmentMass { get; set; } = 0.06f;
+    // Radians a segment may swing away from its parent. Too tight reads as a board; too loose lets a
+    // panel fold back through the leg it is hanging on.
+    public float KoStripSkirtSwingLimit { get; set; } = 0.9f;
+    // How much of that swing is allowed at birth. The rig relaxes from this to the full range over the
+    // first second, so a skirt does not burst out of its rest shape on the frame it is created.
+    public float KoStripSkirtInitialSwing { get; set; } = 0.3f;
+
     // Pieces still attached to the body travel with it when the body is moved as a whole. Nothing but
     // contact holds them on, so without this they are simply left where they were. Pieces that have
     // already come away stay put; which is which is decided by whether the piece still wraps the bones

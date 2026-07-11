@@ -175,6 +175,60 @@ public partial class MainWindow
                              "Anything already detached stays where it fell. Default on.");
 
         ImGui.BeginDisabled(!config.KoStripGarmentTubeModel);
+        var skirtPhysics = config.KoStripGarmentSkirtPhysics;
+        if (ImGui.Checkbox("Skirt physics##armordetachskirt", ref skirtPhysics))
+        {
+            config.KoStripGarmentSkirtPhysics = skirtPhysics;
+            config.Save();
+        }
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Hang a coat's skirt columns off the hem as real chains instead of letting them ride it\n" +
+                             "rigidly, so they swing, fold, and drape over the legs and the ground rather than passing\n" +
+                             "through them.\n\n" +
+                             "Adds roughly one body and one joint per skirt bone (about 18 on a typical coat). Turn off\n" +
+                             "if that cost matters. Takes effect on the next drop.");
+
+        if (config.KoStripGarmentTubeModel && config.KoStripGarmentSkirtPhysics)
+        {
+            ImGui.Indent();
+
+            var skirtMass = config.KoStripSkirtSegmentMass;
+            if (ImGui.SliderFloat("Skirt segment mass##armordetachskirtmass", ref skirtMass, 0.02f, 0.5f, "%.3f kg"))
+            {
+                config.KoStripSkirtSegmentMass = skirtMass;
+                config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Heavier hangs stiffer and settles sooner; too light and the solver has a hard time\n" +
+                                 "holding a long thin chain together at all. Takes effect on the next drop.");
+
+            var skirtSwing = config.KoStripSkirtSwingLimit;
+            if (ImGui.SliderFloat("Skirt swing limit##armordetachskirtswing", ref skirtSwing, 0.1f, 2.0f, "%.2f rad"))
+            {
+                config.KoStripSkirtSwingLimit = skirtSwing;
+                config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("How far a segment may swing from the one above it. Too tight reads as a board;\n" +
+                                 "too loose lets a panel fold back through the leg it is hanging on.\n" +
+                                 "Takes effect on the next drop.");
+
+            var skirtInitial = config.KoStripSkirtInitialSwing;
+            if (ImGui.SliderFloat("Skirt birth tightness##armordetachskirtinit", ref skirtInitial, 0.05f, 1f, "%.2f"))
+            {
+                config.KoStripSkirtInitialSwing = skirtInitial;
+                config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Fraction of the swing range allowed at birth, relaxed to the full range over the\n" +
+                                 "first second. Low keeps the skirt in its rest shape as physics takes over instead of\n" +
+                                 "letting it burst open on frame one. Takes effect on the next drop.");
+
+            ImGui.Unindent();
+        }
+
+        ImGui.BeginDisabled(!config.KoStripGarmentTubeModel);
         var tubeDebug = config.KoStripGarmentTubeDebugDraw;
         if (ImGui.Checkbox("Tube debug wireframe##armordetachtubedebug", ref tubeDebug))
         {
