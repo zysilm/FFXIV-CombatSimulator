@@ -7204,6 +7204,22 @@ public unsafe partial class RagdollController : IDisposable
     }
 
     /// <summary>
+    /// The bones the ragdoll currently has bodies for, in build order (root outwards) — exactly the
+    /// set a grab can attach to, since <see cref="CreateGrabConstraint"/> resolves its bone against
+    /// these. Empty while nothing is simulating; a caller offering a bone picker before death should
+    /// fall back to the enabled bone configs, which is what the bodies get built from.
+    /// </summary>
+    public IReadOnlyList<string> GetSimulatedBoneNames()
+    {
+        if (!isActive || !physicsStarted) return Array.Empty<string>();
+
+        var names = new List<string>(ragdollBones.Count);
+        foreach (var rb in ragdollBones)
+            names.Add(rb.Name);
+        return names;
+    }
+
+    /// <summary>
     /// Retune a live grab. <see cref="UpdateGrabTarget"/> re-applies the stored servo/spring settings
     /// every frame, so a caller driving the grab from sliders needs this to make them take effect
     /// without tearing the constraint down and rebuilding it.
