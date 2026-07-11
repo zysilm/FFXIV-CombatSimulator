@@ -7135,6 +7135,78 @@ public unsafe partial class RagdollController : IDisposable
     public bool GrabRigid { get; set; }
 
     /// <summary>
+    /// Owner-supplied test: should this external rig ride along when the ragdoll is projected onto an
+    /// anchor (a grab, or the standing hold)?
+    ///
+    /// A garment rig is held to the corpse by nothing but contact and friction — there is no joint
+    /// tying it on. So when a projection teleports the body into a grabber's hand, the clothes are
+    /// simply left behind on the ground: the body vanishes out of them. Carrying them by the same
+    /// delta keeps them exactly where they sat on the body, drape and all.
+    ///
+    /// But only garments still BEING WORN may come along; one that already slid off and is puddled on
+    /// the floor must stay there, even though the corpse is very likely lying right on top of it. Only
+    /// the rig's owner can tell those apart, so it supplies the test. Null = carry nothing (the old
+    /// behaviour).
+    /// </summary>
+    public Func<ExternalRigHandle, bool>? CarryExternalRigOnAnchor { get; set; }
+
+    private readonly List<ExternalRigHandle> carriedRigs = new();
+
+    /// <summary>
+    /// Work out which rigs come along — BEFORE the body is moved.
+    ///
+    /// The test asks whether a garment is still on the corpse, so it has to be asked while the corpse
+    /// is still under it. Ask afterwards and the answer is always no: the body is already in the
+    /// grabber's fist and the clothes are still on the floor a metre below. That answer then locks
+    /// itself in, because a garment that is never carried never closes the gap.
+    /// </summary>
+    private void CollectCarriedExternalRigs()
+    {
+        carriedRigs.Clear();
+        if (CarryExternalRigOnAnchor == null || simulation == null) return;
+
+        foreach (var rig in externalRigs)
+        {
+            if (rig.Removed || rig.Generation != externalBodyGeneration) continue;
+            if (CarryExternalRigOnAnchor(rig)) carriedRigs.Add(rig);
+        }
+    }
+
+    // A carried garment's panels weigh a fraction of a limb, so an impulse a corpse would barely
+    // register throws them clear across the room. The ragdoll's own bodies have had a per-substep
+    // ceiling for exactly this reason (see ClampVelocities); external rigs never did, and being
+    // teleported around a live scene is precisely when they need one.
+    private const float CarriedRigMaxLinearVelocity = 6f;   // m/s
+    private const float CarriedRigMaxAngularVelocity = 20f; // rad/s
+
+    /// <summary>Move the rigs collected above by the same delta the ragdoll just took. Uniform
+    /// translation, so a garment's shape and its position ON the body both survive.</summary>
+    private void TranslateCarriedExternalRigs(Vector3 correction, Vector3 anchorVelocity)
+    {
+        if (simulation == null) return;
+
+        foreach (var rig in carriedRigs)
+        {
+            if (rig.Removed || rig.Generation != externalBodyGeneration) continue;
+
+            foreach (var handle in rig.Bodies)
+            {
+                if (handle.Removed || handle.Generation != externalBodyGeneration) continue;
+                // Kinematic rig bodies are driven from elsewhere; moving them here would fight that.
+                if (!externalRigDynamicBodyHandles.Contains(handle.Body.Value)) continue;
+
+                var body = simulation.Bodies.GetBodyReference(handle.Body);
+                body.Pose.Position += correction;
+                body.Velocity.Linear = ClampVectorLength(
+                    body.Velocity.Linear - anchorVelocity, CarriedRigMaxLinearVelocity);
+                body.Velocity.Angular = ClampVectorLength(
+                    body.Velocity.Angular, CarriedRigMaxAngularVelocity);
+                body.Awake = true;
+            }
+        }
+    }
+
+    /// <summary>
     /// Create a OneBodyLinearServo constraint that pins a ragdoll bone to a world-space
     /// target position. The target is updated each frame via UpdateGrabTarget().
     /// Also ensures all ragdoll bodies stay awake (SleepThreshold = -1).
@@ -7223,6 +7295,9 @@ public unsafe partial class RagdollController : IDisposable
         var correction = grabTargetPosition - anchor.Pose.Position;
         var anchorVelocity = anchor.Velocity.Linear;
 
+        // Decide first, move second — see CollectCarriedExternalRigs.
+        CollectCarriedExternalRigs();
+
         foreach (var rb in ragdollBones)
         {
             var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
@@ -7230,6 +7305,8 @@ public unsafe partial class RagdollController : IDisposable
             body.Velocity.Linear -= anchorVelocity;
             body.Awake = true;
         }
+
+        TranslateCarriedExternalRigs(correction, anchorVelocity);
     }
 
     /// <summary>
@@ -9312,6 +9389,10 @@ public unsafe partial class RagdollController : IDisposable
         var correction = standingAnchorTarget - anchor.Pose.Position;
         var anchorVelocity = anchor.Velocity.Linear;
 
+        // Clothes still on the corpse come with it; the hold left them behind on the floor for the same
+        // reason the grab did. Decide first, move second — see CollectCarriedExternalRigs.
+        CollectCarriedExternalRigs();
+
         // Keep the held point fixed without disabling contact response. If collision pushes the
         // ragdoll as a whole, translate every body back by the same delta and remove the global
         // anchor velocity; relative limb motion from the contact is preserved.
@@ -9322,6 +9403,8 @@ public unsafe partial class RagdollController : IDisposable
             body.Velocity.Linear -= anchorVelocity;
             body.Awake = true;
         }
+
+        TranslateCarriedExternalRigs(correction, anchorVelocity);
     }
 
     public void RemoveStandingSupport()

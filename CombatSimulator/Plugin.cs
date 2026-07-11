@@ -170,6 +170,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         weaponDropController = new WeaponDropController(boneTransformService, config, log);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
         dismembermentController.PlayerRagdollController = ragdollController;
+        // Clothes still on the corpse ride along when it is picked up; the dismemberment side owns the
+        // question of which garments are still being worn.
+        ragdollController.CarryExternalRigOnAnchor = dismembermentController.ShouldCarryExternalRig;
         dismembermentController.EnemyNpcIdentityResolver = address =>
         {
             var npc = FindNpcByAddress(address);

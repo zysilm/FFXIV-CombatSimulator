@@ -368,6 +368,7 @@ public unsafe class DismembermentController : IDisposable
         public int[] BodyIndices = Array.Empty<int>();  // indices into GarmentRig.Bodies (== ExternalIndex)
         public int BoneIndex;
         public string BoneName = string.Empty;
+        public float Radius;                            // built ring radius; the yardstick for IsGarmentWorn
         public Quaternion CapturedFrameInv;             // inverse of the birth ring frame
         public Quaternion CapturedBoneWorldRot;         // bone world rotation at birth
         public Vector3 CapturedOffsetLocal;             // (boneWorldPos - centroid) at birth, in ring frame
@@ -1745,6 +1746,149 @@ public unsafe class DismembermentController : IDisposable
     /// <summary>Build one ring of <paramref name="segments"/> boxes around <paramref name="boneName"/>,
     /// add its circumferential distance-limit edges, capture its birth frame, and register it to drive the
     /// bone. Returns null (nothing added) if the bone doesn't resolve.</summary>
+    // === Is the garment still being worn? (see ShouldCarryExternalRig) ===
+    // A ring still has its bone inside it while the bone's body centre is within this much of the
+    // ring's centroid, as a multiple of the ring radius. A ring that has slid off the body encircles
+    // nothing, and its distance to the bone it used to sit on runs well past this — which is what
+    // separates a garment still worn from one the corpse merely happens to be lying on. Distance to
+    // the corpse cannot tell those two apart; being wrapped AROUND it can.
+    private const float WornRingFactor = 1.5f;
+    // Chain rig: a piece is still on its bone while it is within this far of that bone's capsule.
+    private const float WornChainMargin = 0.12f;
+    // How much of a garment must still be on the body for the whole thing to come along. Half, so a
+    // coat hanging off one shoulder with its hem on the floor still counts as worn.
+    private const float WornFraction = 0.5f;
+
+    /// <summary>
+    /// Should this garment rig ride along when the corpse is picked up? Handed to the ragdoll, which
+    /// calls it while projecting the body onto a grab or a hold.
+    ///
+    /// Nothing ties a garment to the body but contact, so a projection that teleports the corpse into
+    /// a fist leaves the clothes standing on the ground. Carrying them fixes that — but only the ones
+    /// still ON the body. See <see cref="IsGarmentWorn"/> for how that is decided.
+    /// </summary>
+    public bool ShouldCarryExternalRig(RagdollController.ExternalRigHandle rig)
+    {
+        if (!config.KoStripGarmentFollowsBody) return false;
+
+        foreach (var clone in clones)
+        {
+            if (!ReferenceEquals(clone.GearRagdollRig, rig)) continue;
+
+            var worn = IsGarmentWorn(clone, out var on, out var total, out var bestRatio);
+            if (ShouldLogGarmentCarry(clone.GearKeepModelSlot))
+                log.Info($"GarmentCarry: slot {clone.GearKeepModelSlot} " +
+                         $"({(clone.GearGarmentRig?.IsTube == true ? "tube" : "chain")}) — " +
+                         $"{on}/{total} pieces still on the body (closest sits at {bestRatio:F2}x its " +
+                         $"threshold) -> {(worn ? "carried" : "left behind")}");
+            return worn;
+        }
+
+        if (ShouldLogGarmentCarry(int.MinValue))
+            log.Info("GarmentCarry: an external rig in the ragdoll has no owning clone -> left behind");
+        return false;
+    }
+
+    // The carry test runs once per rig per physics substep; the log must not. Keyed by slot, because a
+    // single shared budget let whichever garment was tested first eat it and hid the other one.
+    private readonly Dictionary<int, long> lastGarmentCarryLogTick = new();
+
+    private bool ShouldLogGarmentCarry(int slot)
+    {
+        var now = Environment.TickCount64;
+        if (lastGarmentCarryLogTick.TryGetValue(slot, out var last) && now - last < 1000) return false;
+        lastGarmentCarryLogTick[slot] = now;
+        return true;
+    }
+
+    /// <summary>
+    /// Is this garment still on the body, rather than lying on the floor next to it?
+    ///
+    /// Geometry, not proximity: a fallen coat is often DIRECTLY under the corpse, so distance says
+    /// nothing. What says everything is whether the garment still encloses the bones it was built
+    /// around — a worn tube has the spine running through its rings; a shed one is a flat loop with
+    /// nothing inside it.
+    /// </summary>
+    private bool IsGarmentWorn(Clone c, out int on, out int total, out float bestRatio)
+    {
+        on = 0;
+        total = 0;
+        bestRatio = float.PositiveInfinity;
+
+        var rig = c.GearGarmentRig;
+        var ragdoll = PlayerRagdollController;
+        if (rig == null || ragdoll == null || c.GearRagdollRig == null) return false;
+
+        if (rig.IsTube)
+        {
+            foreach (var ring in rig.Rings)
+            {
+                if (ring.BodyIndices.Length == 0) continue;
+                if (!ragdoll.TryGetBoneCapsule(ring.BoneName, out var capsule)) continue;
+                total++;
+
+                var centroid = Vector3.Zero;
+                var counted = 0;
+                foreach (var bodyListIndex in ring.BodyIndices)
+                {
+                    // BodyIndices index the garment's OWN body list; the pose lives behind that body's
+                    // ExternalIndex. Same hop DriveTubeRings makes.
+                    if (bodyListIndex < 0 || bodyListIndex >= rig.Bodies.Count) continue;
+                    if (!TryGetGarmentRigBodyPose(c, rig.Bodies[bodyListIndex],
+                            out var position, out _, out _, out _))
+                        continue;
+                    centroid += position;
+                    counted++;
+                }
+                if (counted == 0) continue;
+                centroid /= counted;
+
+                // Distance to the capsule's AXIS, not its centre: the centre sits half a bone-length
+                // along the segment from the bone origin the ring was built on, so a perfectly worn
+                // thigh ring would otherwise start out most of the way to its own threshold.
+                var threshold = ring.Radius * WornRingFactor;
+                var ratio = DistanceToCapsuleAxis(capsule, centroid) / MathF.Max(1e-4f, threshold);
+                bestRatio = MathF.Min(bestRatio, ratio);
+                if (ratio <= 1f) on++;
+            }
+        }
+        else
+        {
+            foreach (var body in rig.Bodies)
+            {
+                if (string.IsNullOrEmpty(body.BoneName)) continue;
+                if (!ragdoll.TryGetBoneCapsule(body.BoneName, out var capsule)) continue;
+                if (!TryGetGarmentRigBodyPose(c, body, out var position, out _, out _, out _)) continue;
+                total++;
+
+                // How far clear of the skin it is, so cloth thickness is all that has to be tolerated.
+                var surfaceGap = MathF.Max(0f, DistanceToCapsuleAxis(capsule, position) - capsule.Radius);
+                var ratio = surfaceGap / WornChainMargin;
+                bestRatio = MathF.Min(bestRatio, ratio);
+                if (ratio <= 1f) on++;
+            }
+        }
+
+        if (float.IsPositiveInfinity(bestRatio)) bestRatio = -1f;
+        return total > 0 && on >= total * WornFraction;
+    }
+
+    /// <summary>Shortest distance from a point to the capsule's axis segment — i.e. how far off the
+    /// bone it is, with the bone's own length taken out of the answer.</summary>
+    private static float DistanceToCapsuleAxis(in RagdollController.BoneCapsule capsule, Vector3 point)
+    {
+        var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
+        var a = capsule.Center - axis * capsule.HalfLength;
+        var b = capsule.Center + axis * capsule.HalfLength;
+
+        var ab = b - a;
+        var lengthSq = ab.LengthSquared();
+        if (lengthSq < 1e-8f) return Vector3.Distance(point, capsule.Center);
+
+        var t = Math.Clamp(Vector3.Dot(point - a, ab) / lengthSq, 0f, 1f);
+        return Vector3.Distance(point, a + ab * t);
+    }
+
     /// <summary>
     /// How far this bone's body has moved from the stock rig, as a ratio of capsule radii.
     ///
@@ -1805,7 +1949,7 @@ public unsafe class DismembermentController : IDisposable
         if (MathF.Abs(bodyRatio - 1f) > 0.02f)
             log.Info($"GarmentTube: ring '{boneName}' tracks the body profile — radius {radius:F3} -> {radius * bodyRatio:F3} (ratio {bodyRatio:F2})");
 
-        var ring = new GarmentRing { BoneIndex = idx, BoneName = boneName };
+        var ring = new GarmentRing { BoneIndex = idx, BoneName = boneName, Radius = r };
         var bodyIndices = new int[segments];
         var positions = new Vector3[segments];
         for (var i = 0; i < segments; i++)

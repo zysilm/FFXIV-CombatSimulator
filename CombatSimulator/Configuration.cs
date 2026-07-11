@@ -274,6 +274,12 @@ public partial class Configuration : IPluginConfiguration
     // Draw the garment tube's ring bodies as a wireframe overlay (tuning aid). Not saved-critical.
     public bool KoStripGarmentTubeDebugDraw { get; set; } = false;
 
+    // Pieces still attached to the body travel with it when the body is moved as a whole. Nothing but
+    // contact holds them on, so without this they are simply left where they were. Pieces that have
+    // already come away stay put; which is which is decided by whether the piece still wraps the bones
+    // it was built around, not by how near the body it happens to lie.
+    public bool KoStripGarmentFollowsBody { get; set; } = true;
+
     // Friction the tube uses against the corpse (higher = clings/slides slower). Defaults match the
     // values the tube shipped with (Math.Clamp(RagdollFriction, 0.45, 0.9) at RagdollFriction=1.0).
     public const float KoStripGarmentTubeBodyFrictionDefault = 0.9f;

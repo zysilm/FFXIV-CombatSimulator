@@ -162,6 +162,18 @@ public partial class MainWindow
                              "that wraps the body, so the garment slides down off the corpse instead of\n" +
                              "folding. Host ragdoll only; falls back to the chain rig otherwise. Default off.");
 
+        ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing);
+        var followsBody = config.KoStripGarmentFollowsBody;
+        if (ImGui.Checkbox("Still-attached pieces follow the body##armordetachfollow", ref followsBody))
+        {
+            config.KoStripGarmentFollowsBody = followsBody;
+            config.Save();
+        }
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Anything still on the body travels with it when the body is moved as a whole.\n" +
+                             "Anything already detached stays where it fell. Default on.");
+
         ImGui.BeginDisabled(!config.KoStripGarmentTubeModel);
         var tubeDebug = config.KoStripGarmentTubeDebugDraw;
         if (ImGui.Checkbox("Tube debug wireframe##armordetachtubedebug", ref tubeDebug))
