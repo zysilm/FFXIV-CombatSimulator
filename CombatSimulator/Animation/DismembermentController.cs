@@ -110,13 +110,20 @@ public unsafe class DismembermentController : IDisposable
     private const float TubeEdgeFrequency = 15f;      // distance-limit spring stiffness
     private const float TubeEdgeDamping = 1.5f;
     private const float TubeRingFrameSmooth = 0.35f;  // per-frame slerp toward the fresh ring frame
-    // Ring definitions: (spine bone driven, bone toward which the ring axis points, body-capsule radius).
+    // Ring definitions: (spine bone driven, bone toward which the ring axis points, ring radius).
+    // The radii are authored against the STOCK body — they sit proud of the stock capsules, because a
+    // clothed torso is fatter than the crude capsule the physics uses. A rig whose profile changes
+    // those capsules moves them by BodyRadiusRatio; see there.
     private static readonly (string Bone, string AxisToward, float Radius)[] TubeRingDefs =
     {
         ("j_kosi",   "j_sebo_a", 0.115f),  // hem / hips
         ("j_sebo_b", "j_sebo_c", 0.105f),  // waist
         ("j_sebo_c", "j_kubi",   0.110f),  // chest
     };
+    // Guard rails on that ratio: a rig can be tuned to extremes, and neither a tube collapsed inside
+    // the body nor one blown out into a hoop is worth honouring.
+    private const float MinBodyRadiusRatio = 0.35f;
+    private const float MaxBodyRadiusRatio = 2.5f;
 
     // === Garment tube model (experimental, slot-3 trousers) ===
     // A hip ring around the pelvis + two rings per leg. The hip ring drives j_kosi; the leg rings drive
@@ -1738,6 +1745,34 @@ public unsafe class DismembermentController : IDisposable
     /// <summary>Build one ring of <paramref name="segments"/> boxes around <paramref name="boneName"/>,
     /// add its circumferential distance-limit edges, capture its birth frame, and register it to drive the
     /// bone. Returns null (nothing added) if the bone doesn't resolve.</summary>
+    /// <summary>
+    /// How far this bone's body has moved from the stock rig, as a ratio of capsule radii.
+    ///
+    /// The tube collides with the corpse's capsules — that contact is the ONLY thing holding the
+    /// garment up. So a ring sized for the stock body on a rig whose torso profile is slim hangs clear
+    /// of it with nothing to catch on, and the clothes slide straight off.
+    ///
+    /// The authored ring radii cannot simply be replaced by the live capsule radius: they deliberately
+    /// sit proud of the stock capsules (a clothed thigh is nearly twice its physics capsule), and
+    /// swapping them out would yank the tube tight on every rig that works today. What a profile tells
+    /// us is only how the BODY moved relative to stock — so move the garment with it by the same ratio.
+    /// A stock profile lands on exactly 1 and reproduces the authored numbers untouched.
+    /// </summary>
+    private float BodyRadiusRatio(string boneName)
+    {
+        var stock = 0f;
+        foreach (var def in RagdollController.AllBoneDefaults)
+            if (def.Name == boneName) { stock = def.CapsuleRadius; break; }
+        if (stock <= 1e-4f) return 1f;
+
+        var live = 0f;
+        foreach (var bone in config.RagdollBoneConfigs)
+            if (bone.Name == boneName) { live = bone.CapsuleRadius; break; }
+        if (live <= 1e-4f) return 1f;
+
+        return Math.Clamp(live / stock, MinBodyRadiusRatio, MaxBodyRadiusRatio);
+    }
+
     private GarmentRing? AddTubeRing(SkeletonAccess skel, GarmentRig rig,
         List<RagdollController.ExternalRigBodySpec> bodySpecs, List<RagdollController.ExternalRigJointSpec> joints,
         Vector3 skelPos, Quaternion skelRot,
@@ -1763,8 +1798,12 @@ public unsafe class DismembermentController : IDisposable
         u = u.LengthSquared() > 1e-6f ? Vector3.Normalize(u) : BuildAnyPerpendicular(axis);
         var v = Vector3.Normalize(Vector3.Cross(axis, u));
 
-        var r = radius * scale + TubeRingClearance;
+        var bodyRatio = BodyRadiusRatio(boneName);
+        var r = radius * bodyRatio * scale + TubeRingClearance;
         var tangentialHalf = MathF.Max(0.02f, (MathF.PI * r / segments) * 0.92f);
+
+        if (MathF.Abs(bodyRatio - 1f) > 0.02f)
+            log.Info($"GarmentTube: ring '{boneName}' tracks the body profile — radius {radius:F3} -> {radius * bodyRatio:F3} (ratio {bodyRatio:F2})");
 
         var ring = new GarmentRing { BoneIndex = idx, BoneName = boneName };
         var bodyIndices = new int[segments];
