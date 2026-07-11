@@ -6805,6 +6805,7 @@ public unsafe partial class RagdollController : IDisposable
                 ClampTwistRates();
                 ApplyTwistGuards();
                 ApplyStandingAnchorCorrection();
+                ApplyGrabAnchorCorrection();
                 physicsAccumulator -= FixedTimestep;
                 substeps++;
             }
@@ -7117,6 +7118,21 @@ public unsafe partial class RagdollController : IDisposable
     private SpringSettings grabSpringSettings;
     // Address of the grabbing NPC whose collision is parked during grab (0 = none)
     private nint suspendedNpcAddress;
+    private Vector3 grabTargetPosition;
+
+    /// <summary>
+    /// Hold the grabbed bone exactly on its target instead of asking a spring to pull it there.
+    ///
+    /// A OneBodyLinearServo is a force: it has to accelerate the whole rig up off the ground, and it
+    /// forever trails a hand that keeps moving — so the body gets dragged up slowly and lags behind a
+    /// walking grabber. Projecting the position every substep removes both. The bone is where the hand
+    /// is on the frame the grab lands, and on every frame after.
+    ///
+    /// This is the same technique the standing support uses (<see cref="CreateStandingSupport"/>),
+    /// which is exactly why that one feels crisp and this one did not. Set it before
+    /// <see cref="CreateGrabConstraint"/> for the grab to land instantly.
+    /// </summary>
+    public bool GrabRigid { get; set; }
 
     /// <summary>
     /// Create a OneBodyLinearServo constraint that pins a ragdoll bone to a world-space
@@ -7176,9 +7192,44 @@ public unsafe partial class RagdollController : IDisposable
 
         grabConstraintActive = true;
         suspendedNpcAddress = grabbingNpcAddress;
+        grabTargetPosition = initialTarget;
 
-        log.Info($"RagdollController: Grab constraint created on '{boneName}' → ({initialTarget.X:F2},{initialTarget.Y:F2},{initialTarget.Z:F2}), suspend NPC 0x{grabbingNpcAddress:X}");
+        // Land the grab on this frame rather than winching the body up over the next second.
+        ApplyGrabAnchorCorrection();
+
+        log.Info($"RagdollController: Grab constraint created on '{boneName}' → ({initialTarget.X:F2},{initialTarget.Y:F2},{initialTarget.Z:F2}), rigid={GrabRigid}, suspend NPC 0x{grabbingNpcAddress:X}");
         return true;
+    }
+
+    /// <summary>
+    /// Put the grabbed bone exactly on its target by translating the WHOLE rig by the error, and take
+    /// the rig's bulk velocity off every body.
+    ///
+    /// Every body moves by the same delta, so the pose is untouched and the limbs keep whatever
+    /// relative motion they had — a corpse hanging from a fist still swings and still reacts to being
+    /// shoved. Only the drift of the rig as a whole is cancelled, which is the part a servo could never
+    /// keep up with.
+    /// </summary>
+    private void ApplyGrabAnchorCorrection()
+    {
+        if (!GrabRigid || !grabConstraintActive || simulation == null) return;
+
+        // The standing support projects the rig onto ITS anchor every substep too. Two projections
+        // arguing over the same bodies would just undo each other, so leave the rig to whichever one
+        // is holding it up.
+        if (standingActive) return;
+
+        var anchor = simulation.Bodies.GetBodyReference(grabBodyHandle);
+        var correction = grabTargetPosition - anchor.Pose.Position;
+        var anchorVelocity = anchor.Velocity.Linear;
+
+        foreach (var rb in ragdollBones)
+        {
+            var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            body.Pose.Position += correction;
+            body.Velocity.Linear -= anchorVelocity;
+            body.Awake = true;
+        }
     }
 
     /// <summary>
@@ -7236,6 +7287,8 @@ public unsafe partial class RagdollController : IDisposable
     public void UpdateGrabTarget(Vector3 worldTarget)
     {
         if (!grabConstraintActive || simulation == null) return;
+
+        grabTargetPosition = worldTarget;
 
         try
         {
