@@ -1553,7 +1553,19 @@ public unsafe partial class RagdollController : IDisposable
         // the capsule center (at segment midpoint) back to the bone origin position.
         // 0 for leaf bones and degenerate (zero-length) segments.
         public float SegmentHalfLength;
+        // The collision volume this body was actually given (a box bone stores the largest capsule
+        // that fits inside it). Exposed through TryGetBoneCapsule so callers can conform to the
+        // body's real surface.
+        public float CapsuleRadius;
+        public float CapsuleHalfLength;
     }
+
+    /// <summary>A ragdoll bone's collision volume in world space. The capsule axis is local Y.</summary>
+    public readonly record struct BoneCapsule(
+        Vector3 Center,
+        Quaternion Orientation,
+        float Radius,
+        float HalfLength);
 
     // Bone definitions for the ragdoll skeleton
     // Ball joints: SwingLimit = cone angle, TwistMin/Max = axial rotation range
@@ -3815,12 +3827,18 @@ public unsafe partial class RagdollController : IDisposable
 
             TypedIndex shapeIndex;
             BodyInertia bodyInertia;
+            // Kept alongside the body so callers can ask for the volume the physics is actually
+            // using (see TryGetBoneCapsule) rather than re-deriving it from the defs.
+            float shapeRadius, shapeHalfLength;
             if (def.ColliderShape == RagdollColliderShape.Box)
             {
                 var extents = ResolveBoxHalfExtents(def, effectiveHalfLength);
                 var box = new Box(extents.X * 2f, extents.Y * 2f, extents.Z * 2f);
                 shapeIndex = simulation.Shapes.Add(box);
                 bodyInertia = box.ComputeInertia(effectiveMass);
+                // Largest capsule that fits inside the box — a conservative stand-in for the box.
+                shapeRadius = MathF.Min(extents.X, extents.Z);
+                shapeHalfLength = extents.Y;
             }
             else
             {
@@ -3828,6 +3846,8 @@ public unsafe partial class RagdollController : IDisposable
                 var capsule = new Capsule(def.CapsuleRadius, capsuleLength);
                 shapeIndex = simulation.Shapes.Add(capsule);
                 bodyInertia = capsule.ComputeInertia(effectiveMass);
+                shapeRadius = def.CapsuleRadius;
+                shapeHalfLength = effectiveHalfLength;
             }
 
             // Allow sleeping even with settle collision; external kinematic colliders can wake
@@ -3885,6 +3905,8 @@ public unsafe partial class RagdollController : IDisposable
                 Name = def.Name,
                 CapsuleToBoneOffset = capsuleToBoneOffset,
                 SegmentHalfLength = segmentHalfLength,
+                CapsuleRadius = shapeRadius,
+                CapsuleHalfLength = shapeHalfLength,
             });
 
             // Log initial state for diagnostics
@@ -6319,14 +6341,33 @@ public unsafe partial class RagdollController : IDisposable
             ref bone.PreviousPosition, ref bone.PreviousOrientation, ref bone.HasPreviousPose, dt);
     }
 
+    /// <summary>
+    /// Speed past which a kinematic's move is a teleport, not motion.
+    ///
+    /// Collision proxies get parked kilometres below the world and snapped back again — the grab
+    /// suspends the grabber's proxies, and out-of-range culling parks anyone who walks away. Finite-
+    /// differencing THAT into a velocity gives six figures of m/s, which the solver then faithfully
+    /// applies to whatever the proxy reappears inside, firing the corpse into the sky. The velocity
+    /// clamp downstream cannot save it: that runs after Timestep, by which point the position has
+    /// already been integrated across the substeps.
+    ///
+    /// No real bone travels anywhere near this fast, so anything above it is a teleport: place the
+    /// body and give it no velocity at all.
+    /// </summary>
+    private const float KinematicTeleportSpeed = 60f; // m/s
+
     private static void MoveKinematicBody(BodyReference body, Vector3 targetPosition, Quaternion targetOrientation,
         ref Vector3 previousPosition, ref Quaternion previousOrientation, ref bool hasPreviousPose, float dt)
     {
         targetOrientation = Quaternion.Normalize(targetOrientation);
-        var linearVelocity = hasPreviousPose && dt > 1e-5f
+
+        var teleported = hasPreviousPose && dt > 1e-5f &&
+                         Vector3.Distance(targetPosition, previousPosition) > KinematicTeleportSpeed * dt;
+
+        var linearVelocity = hasPreviousPose && !teleported && dt > 1e-5f
             ? (targetPosition - previousPosition) / dt
             : Vector3.Zero;
-        var angularVelocity = hasPreviousPose && dt > 1e-5f
+        var angularVelocity = hasPreviousPose && !teleported && dt > 1e-5f
             ? AngularVelocityFromQuats(previousOrientation, targetOrientation, dt)
             : Vector3.Zero;
 
@@ -7138,6 +7179,39 @@ public unsafe partial class RagdollController : IDisposable
 
         log.Info($"RagdollController: Grab constraint created on '{boneName}' → ({initialTarget.X:F2},{initialTarget.Y:F2},{initialTarget.Z:F2}), suspend NPC 0x{grabbingNpcAddress:X}");
         return true;
+    }
+
+    /// <summary>
+    /// The world-space collision volume of a ragdoll bone — the surface the physics itself uses.
+    /// Callers that need something to conform to (a hand closing around a throat) can hit-test
+    /// against this instead of guessing a shape from the bone origin. False if the bone has no body
+    /// or the ragdoll isn't simulating yet.
+    /// </summary>
+    public bool TryGetBoneCapsule(string boneName, out BoneCapsule capsule)
+    {
+        capsule = default;
+        if (simulation == null || !isActive || !physicsStarted) return false;
+
+        foreach (var rb in ragdollBones)
+        {
+            if (rb.Name != boneName) continue;
+            var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            capsule = new BoneCapsule(
+                body.Pose.Position, body.Pose.Orientation, rb.CapsuleRadius, rb.CapsuleHalfLength);
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Retune a live grab. <see cref="UpdateGrabTarget"/> re-applies the stored servo/spring settings
+    /// every frame, so a caller driving the grab from sliders needs this to make them take effect
+    /// without tearing the constraint down and rebuilding it.
+    /// </summary>
+    public void SetGrabTuning(float maxForce, float maxSpeed, float springFreq)
+    {
+        grabServoSettings = new ServoSettings(maxSpeed, 1f, maxForce);
+        grabSpringSettings = new SpringSettings(springFreq, 1);
     }
 
     /// <summary>
