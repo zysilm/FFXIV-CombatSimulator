@@ -1558,6 +1558,9 @@ public unsafe partial class RagdollController : IDisposable
         // body's real surface.
         public float CapsuleRadius;
         public float CapsuleHalfLength;
+        // The mass this body was actually built with, so the joint above it can size its friction
+        // against the weight it is holding rather than against a constant.
+        public float Mass;
     }
 
     /// <summary>A ragdoll bone's collision volume in world space. The capsule axis is local Y.</summary>
@@ -3909,6 +3912,7 @@ public unsafe partial class RagdollController : IDisposable
                 SegmentHalfLength = segmentHalfLength,
                 CapsuleRadius = shapeRadius,
                 CapsuleHalfLength = shapeHalfLength,
+                Mass = effectiveMass,
             });
 
             // Log initial state for diagnostics
@@ -4404,13 +4408,14 @@ public unsafe partial class RagdollController : IDisposable
             }
             else
             {
-                var motorHandle = simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                    new AngularMotor
-                    {
-                        TargetVelocityLocalA = Vector3.Zero,
-                        Settings = new MotorSettings(float.MaxValue, motorDamping),
-                    });
-                angularMotorByBone[rb.Name] = motorHandle;
+                // Friction, not a weld — see JointFrictionFraction.
+                var motor = new AngularMotor
+                {
+                    TargetVelocityLocalA = Vector3.Zero,
+                    Settings = new MotorSettings(ResolveJointFriction(rb), motorDamping),
+                };
+                angularMotorByBone[rb.Name] = (
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle, motor), motor);
             }
         }
 
@@ -9876,7 +9881,7 @@ public unsafe partial class RagdollController : IDisposable
     // unlimited force, and a SwingLimit caps the cone the child may swing into — together they make
     // a recoil kick invisible. For a brief window we drop the motor force AND widen the swing limit
     // (keyed by child bone), so the stump actually swings up, then restore both.
-    private readonly Dictionary<string, ConstraintHandle> angularMotorByBone = new();
+    private readonly Dictionary<string, (ConstraintHandle Handle, AngularMotor Original)> angularMotorByBone = new();
     private readonly Dictionary<string, (ConstraintHandle Handle, SwingLimit Original)> swingLimitByBone = new();
 
     // --- Positional joints, kept so their stiffness can be raised while the rig is being carried ---
@@ -9938,6 +9943,39 @@ public unsafe partial class RagdollController : IDisposable
         log.Info($"RagdollController: positional joints {(stiff ? $"firmed to {CarryJointSpringFrequency:F0}Hz for the carry" : "released to rest stiffness")} ({positionalJoints.Count} joints)");
     }
     private const float JointMotorDamping = 0.01f;
+
+    /// <summary>
+    /// The joint motor's torque budget, as a fraction of the torque gravity puts on the limb it holds.
+    ///
+    /// That motor is a damper: it drives the relative angular velocity between a bone and its parent to
+    /// zero. At rest it does nothing at all — but hand it an UNLIMITED force ceiling, which is what this
+    /// rig did, and any relative rotation is annihilated the instant it appears. Gravity turns a thigh
+    /// about the hip, the thigh begins to turn, the motor erases the turn. An unlimited velocity damper
+    /// is not a joint. It is a weld, and it is the whole reason the corpse reads stiff.
+    ///
+    /// The rig had already caught itself at this: to make a severed limb actually swing, the recoil pass
+    /// drops this motor's force to ZERO for a moment and puts it back afterwards. Zero and infinity were
+    /// the only two settings it had. Every other motor in the file — the ones on garments and external
+    /// limbs — was given a finite force from the outset.
+    ///
+    /// Give it a budget and it stops being a weld and becomes the thing it was always meant to be:
+    /// friction. Sized against the limb's own weight, it damps the jitter a light body picks up while
+    /// leaving gravity and an impact the authority to genuinely throw the limb around. Below 1 the limb
+    /// always wins in the end, which is exactly what a dead limb does.
+    /// </summary>
+    private const float JointFrictionFraction = 0.35f;
+
+    /// <summary>
+    /// How much torque a bone's joint may spend resisting rotation, taken from the weight it carries. A
+    /// heavier limb on a longer lever gets a proportionally firmer joint, so a neck and a thigh both
+    /// behave like joints instead of one being a hinge and the other a rag.
+    /// </summary>
+    private float ResolveJointFriction(in RagdollBone bone)
+    {
+        var lever = MathF.Max(0.04f, bone.CapsuleHalfLength);
+        var gravityTorque = MathF.Max(0.01f, bone.Mass) * MathF.Max(0.1f, config.RagdollGravity) * lever;
+        return MathF.Max(0.05f, gravityTorque * JointFrictionFraction);
+    }
     private const float RecoilRelaxDuration = 0.45f;
     private const float RecoilSwingAngle = 1.7f; // ~97° — wide arc during the recoil window
     private struct RecoilRelax { public string Bone; public float Remaining; }
@@ -9981,11 +10019,11 @@ public unsafe partial class RagdollController : IDisposable
     {
         if (simulation == null) return;
         var relaxed = false;
-        if (angularMotorByBone.TryGetValue(boneName, out var motorHandle))
+        if (angularMotorByBone.TryGetValue(boneName, out var motor))
         {
             try
             {
-                simulation.Solver.ApplyDescription(motorHandle,
+                simulation.Solver.ApplyDescription(motor.Handle,
                     new AngularMotor { TargetVelocityLocalA = Vector3.Zero, Settings = new MotorSettings(0f, 0f) });
                 relaxed = true;
             }
@@ -10011,9 +10049,10 @@ public unsafe partial class RagdollController : IDisposable
             r.Remaining -= dt;
             if (r.Remaining > 0f) { recoilRelaxers[i] = r; continue; }
             recoilRelaxers.RemoveAt(i);
-            if (angularMotorByBone.TryGetValue(r.Bone, out var motorHandle))
-                try { simulation.Solver.ApplyDescription(motorHandle,
-                    new AngularMotor { TargetVelocityLocalA = Vector3.Zero, Settings = new MotorSettings(float.MaxValue, JointMotorDamping) }); }
+            // Restore the motor the joint was BUILT with, rather than re-inventing one. This used to put
+            // an unlimited force back — so any joint the recoil had freed came back welded.
+            if (angularMotorByBone.TryGetValue(r.Bone, out var motor))
+                try { simulation.Solver.ApplyDescription(motor.Handle, motor.Original); }
                 catch { /* constraint gone (sim torn down) */ }
             if (swingLimitByBone.TryGetValue(r.Bone, out var swing))
                 try { simulation.Solver.ApplyDescription(swing.Handle, swing.Original); }
