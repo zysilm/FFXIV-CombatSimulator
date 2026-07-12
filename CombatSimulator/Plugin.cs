@@ -221,6 +221,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         hitFeedbackController = new CombatSimulator.ActionCombat.HitFeedbackController(
             config, npcSelector.GetSelectedNpc, animationController, log);
         deathCamController.HitShakeProvider = () => hitFeedbackController.CurrentShakeOffset;
+        // A corpse landing hard shakes the view like any other impact. The death cam is watching the
+        // body at exactly that moment, so this is where it pays.
+        ragdollController.HardLanding += hitFeedbackController.ShakeForHardLanding;
         actionModeController = new CombatSimulator.ActionCombat.ActionModeController(
             config, actionComboSink, playerHitboxResolver, playerGuardController,
             telegraphSystem, combatEngine, animationController, hitFeedbackController, gamepadState, log);

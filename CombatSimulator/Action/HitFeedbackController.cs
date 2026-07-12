@@ -89,6 +89,25 @@ public sealed class HitFeedbackController
         }
     }
 
+    // A corpse hitting the ground shakes the view like anything else that hits hard. Half of what makes
+    // an impact read heavy happens outside the body — take the camera away and the very same landing
+    // goes back to looking weightless.
+    private const float ImpactShakePerSpeed = 0.055f; // shake units per m/s of descent
+    private const float ImpactShakeMax = 0.55f;       // a long fall must not throw the view off the body
+    private const float ImpactShakeDuration = 0.22f;
+
+    /// <summary>Shake for a corpse landing, scaled by how hard it came down. Rides the same decay as a
+    /// landed blow, so it belongs to the same game.</summary>
+    public void ShakeForHardLanding(float descentSpeed)
+    {
+        var magnitude = MathF.Min(descentSpeed * ImpactShakePerSpeed, ImpactShakeMax);
+        if (magnitude <= 0.001f) return;
+
+        shakeMagnitude = magnitude;
+        shakeDuration = ImpactShakeDuration;
+        shakeTime = shakeDuration;
+    }
+
     public void Tick(float dt)
     {
         // Scheduled hits: count down and fire when the weapon connects, re-resolving so a target

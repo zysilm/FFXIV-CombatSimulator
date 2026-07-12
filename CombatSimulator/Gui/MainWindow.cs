@@ -4362,6 +4362,19 @@ public partial class MainWindow : IDisposable
                 }
                 HelpMarker("Positional stiffness of the calf->foot joint specifically. The foot takes the hardest ground-impact impulses, so it rubber-bands first; give it a firmer spring than the body default. 60 = firm, 0 = use the body Joint Stiffness above. Takes effect on next ragdoll activation.");
 
+                var impactWeight = config.RagdollImpactWeight;
+                if (ImGui.Checkbox("Impact weight##ragdoll", ref impactWeight))
+                {
+                    config.RagdollImpactWeight = impactWeight;
+                    config.Save();
+                }
+                HelpMarker("Stage a hard landing rather than only simulating one: a few dozen milliseconds of freeze, " +
+                           "one heavy heave with a whip through the limbs, and a shake of the camera.\n\n" +
+                           "Physics on its own cannot make a body read heavy, and turning up bounciness is the wrong " +
+                           "instinct — a real coefficient of restitution gives you the decaying patter of a beach ball, " +
+                           "which reads LIGHTER the more you add. The weight comes from the freeze frame and the camera. " +
+                           "That is how a fighting game does it, and it is not simulation at all.");
+
                 var carryVel = config.RagdollCarryAnimationVelocity;
                 if (ImGui.Checkbox("Carry animation velocity##ragdoll", ref carryVel))
                 {

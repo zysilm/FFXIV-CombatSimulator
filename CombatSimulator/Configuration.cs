@@ -491,6 +491,12 @@ public partial class Configuration : IPluginConfiguration
     // balance over its support base and falls like an inverted pendulum), fused with the
     // muscle-failure brake, instead of only a one-shot directional shove. Off = legacy single
     // impulse.
+    // Stage a hard landing instead of merely simulating it: a brief freeze, one heavy heave with a whip
+    // on the limbs, and a camera shake. Physics alone cannot make a corpse read heavy — and restitution
+    // is the wrong lever, since a real one gives the decaying patter of a beach ball. The weight comes
+    // from the freeze frame and the camera, which is exactly how a fighting game does it.
+    public bool RagdollImpactWeight { get; set; } = true;
+
     public bool RagdollRelaxationTopple { get; set; } = true;
     // Collapse asymmetry: real people never collapse symmetrically. Pick a random lead side
     // each death — its leg buckles first and the whole-body topple leans + twists toward it —

@@ -6392,6 +6392,112 @@ public unsafe partial class RagdollController : IDisposable
         hasPreviousPose = true;
     }
 
+    // === Impact weight ===
+    //
+    // A body that hits the ground hard should land like it weighs something. Physics alone will not do
+    // it, and turning up restitution is the wrong instinct: a real coefficient of restitution produces a
+    // decaying patter of little hops, which is what a beach ball does — the more of it you add, the
+    // LIGHTER the corpse reads. (BEPU has no restitution anyway; it approximates elasticity through
+    // contact springs and a recovery-velocity cap, which the ground contacts hold at 2 m/s so the rig
+    // can settle at all.)
+    //
+    // What a fighting game does instead is stage the landing, once:
+    //   1. a freeze — the corpse stops dead for a few dozen milliseconds,
+    //   2. ONE heavy heave upward, scaled to the blow, and a whip on the limbs,
+    //   3. a camera shake, so the impact is felt outside the body as well.
+    // None of that is simulation. It is choreography, and it is where the weight comes from.
+    private const float ImpactSpeed = 5f;          // m/s of descent that counts as a hard landing
+    private const float ImpactArrestRatio = 0.45f; // ...and how much of it the ground must have taken
+    private const float ImpactFreezeSeconds = 0.055f;
+    private const float ImpactBounceFraction = 0.30f; // of the speed it came down at
+    private const float ImpactMaxBounce = 3.2f;       // m/s — a heave, never a trampoline
+    private const float ImpactWhip = 0.9f;            // rad/s per m/s of impact, spread over the limbs
+    private const float ImpactCooldown = 0.7f;        // one landing, not a stutter of them
+
+    private float impactFreezeRemaining;
+    private float impactCooldownRemaining;
+    private float previousDescentSpeed;
+
+    /// <summary>Fired when the corpse lands hard, with the speed it came down at (m/s). The camera hangs
+    /// off this — an impact you only see in the body is half an impact.</summary>
+    public event Action<float>? HardLanding;
+
+    /// <summary>
+    /// Watch the rig's descent collapse. A hard landing is simply a fast fall that the ground took most
+    /// of in a single step — no contact bookkeeping needed, and it works whether the corpse lands on
+    /// terrain, on a monster, or on its own dropped gear.
+    /// </summary>
+    private void DetectImpact(float dt)
+    {
+        if (!config.RagdollImpactWeight || simulation == null || ragdollBones.Count == 0) return;
+
+        if (impactCooldownRemaining > 0f)
+            impactCooldownRemaining = MathF.Max(0f, impactCooldownRemaining - dt);
+
+        var descent = 0f;
+        foreach (var rb in ragdollBones)
+            descent -= simulation.Bodies.GetBodyReference(rb.BodyHandle).Velocity.Linear.Y;
+        descent /= ragdollBones.Count;
+
+        var before = previousDescentSpeed;
+        previousDescentSpeed = descent;
+
+        if (impactCooldownRemaining > 0f) return;
+        if (before < ImpactSpeed) return;                    // was not coming down hard
+        if (descent > before * ImpactArrestRatio) return;    // ground has not taken it yet
+
+        StageImpact(before);
+    }
+
+    private void StageImpact(float speed)
+    {
+        if (simulation == null) return;
+
+        impactCooldownRemaining = ImpactCooldown;
+        impactFreezeRemaining = ImpactFreezeSeconds;
+
+        var heave = MathF.Min(speed * ImpactBounceFraction, ImpactMaxBounce);
+        var whip = speed * ImpactWhip;
+
+        foreach (var rb in ragdollBones)
+        {
+            var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+
+            // The heave is dealt out unevenly on purpose. A uniform one lifts the corpse like a plank;
+            // scattering it lets the joints turn the difference into a body that folds and flops as it
+            // comes back down.
+            var lift = heave * (0.75f + NextImpactJitter() * 0.5f);
+            var velocity = body.Velocity.Linear;
+            velocity.Y = MathF.Max(velocity.Y, lift);
+            body.Velocity.Linear = velocity;
+
+            // Whip. Limbs that arrive limp read as cloth; limbs that snap read as bone.
+            body.Velocity.Angular += new Vector3(
+                (NextImpactJitter() - 0.5f) * whip,
+                (NextImpactJitter() - 0.5f) * whip * 0.5f,
+                (NextImpactJitter() - 0.5f) * whip);
+
+            body.Awake = true;
+        }
+
+        // The rig is emphatically not at rest any more.
+        BeginBiomechanicalSettle();
+
+        log.Info($"RagdollController: hard landing at {speed:F1} m/s — {ImpactFreezeSeconds * 1000f:F0}ms freeze, {heave:F1} m/s heave");
+        HardLanding?.Invoke(speed);
+    }
+
+    private uint impactRandomState = 0x9E3779B9u;
+
+    private float NextImpactJitter()
+    {
+        // xorshift — deterministic per corpse, and no allocation on a per-substep path.
+        impactRandomState ^= impactRandomState << 13;
+        impactRandomState ^= impactRandomState >> 17;
+        impactRandomState ^= impactRandomState << 5;
+        return (impactRandomState & 0xFFFFFF) / (float)0x1000000;
+    }
+
     // Clamp per-body velocity each substep as a hard ceiling against energy blow-up.
     // Generic rigs inject energy through their stiff auto-built constraint network (small
     // bodies + dense joints); human rigs are normally stable but can still have the solver
@@ -6796,7 +6902,19 @@ public unsafe partial class RagdollController : IDisposable
         // 60fps some frames take zero — render interpolation (below) keeps motion smooth.
         // When resting (fully settled) we skip stepping entirely.
         int substeps = 0;
-        if (!resting)
+        if (impactFreezeRemaining > 0f)
+        {
+            // Impact hitstop. The corpse simply stops, mid-air, for a few dozen milliseconds — and this
+            // is where most of the weight actually comes from. The same motion with a freeze frame in it
+            // reads heavy; without one it reads light. It is why a fighting game's knockdown lands like
+            // a sack of cement while a physically identical ragdoll reads like a balloon.
+            //
+            // The accumulator is dropped rather than banked, or the frozen time would all come back at
+            // once as a burst of catch-up substeps and undo the pause.
+            impactFreezeRemaining -= dt;
+            physicsAccumulator = 0f;
+        }
+        else if (!resting)
         {
             physicsAccumulator += dt;
             var maxLinear = activeRagdollIsGeneric ? GenericMaxLinearVelocity : HumanMaxLinearVelocity;
@@ -6817,8 +6935,17 @@ public unsafe partial class RagdollController : IDisposable
                 ClampTwistRates();
                 ApplyTwistGuards();
                 ApplyStandingAnchorCorrection();
+                DetectImpact(FixedTimestep);
                 physicsAccumulator -= FixedTimestep;
                 substeps++;
+
+                // The impact staged a hitstop: stop stepping NOW, or the rest of this frame's catch-up
+                // substeps would step straight through the pause we just asked for.
+                if (impactFreezeRemaining > 0f)
+                {
+                    physicsAccumulator = 0f;
+                    break;
+                }
             }
             // If we hit the substep cap (severe hitch / very low fps), drop the backlog so
             // we don't fire a burst of catch-up steps on the next frame (spiral of death).
@@ -10035,6 +10162,9 @@ public unsafe partial class RagdollController : IDisposable
     private void DestroySimulation()
     {
         externalBodyGeneration++;
+        impactFreezeRemaining = 0f;
+        impactCooldownRemaining = 0f;
+        previousDescentSpeed = 0f;
         grabConstraintActive = false;
         grabServoActive = false;
         grabIsRigid = false;
@@ -10325,12 +10455,51 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     }
 }
 
+/// <summary>
+/// Gravity and damping.
+///
+/// The damping here is a numerical crutch — it exists to bleed energy out of a solver that might
+/// otherwise diverge — and applying it flat turned out to be the single biggest reason the ragdoll reads
+/// weightless. At the configured 0.97 per 60Hz frame it takes 84% of a body's speed away every second,
+/// which pins terminal velocity at
+///
+///     v = g·dt·d / (1 − d)  ≈  9.8/60 × 0.97/0.03  ≈  5.3 m/s
+///
+/// A person who falls 1.4 m is already past that. So nothing in this rig has ever been able to fall
+/// faster than a brisk walk — every corpse has been sinking through syrup, and the whip a limb should
+/// have on impact was drained out of it before it landed. It also explains why raising mass never
+/// helped: mass cancels out of free fall entirely (Galileo), and out of the joint forces too, so
+/// scaling the whole rig changes nothing at all about how it moves.
+///
+/// The fix is to charge the crutch only where it is needed. A body that is settling keeps the full
+/// damping — every bit of the settle and collapse tuning behaves exactly as before, because below the
+/// settle threshold this is bit-for-bit the old code — while a body that is falling keeps almost none
+/// of it and accelerates the way it should. A little always survives, so a solver that does start to
+/// diverge still bleeds energy rather than parking on the velocity clamp.
+/// </summary>
 struct RagdollPoseIntegratorCallbacks : IPoseIntegratorCallbacks
 {
+    /// <summary>At or below this speed, the configured damping applies in full (settle unchanged).</summary>
+    private const float SettleSpeed = 3f;        // m/s
+    /// <summary>At or above this speed, the body is falling and is left alone.</summary>
+    private const float FreeFallSpeed = 6f;      // m/s
+    private const float SettleAngularSpeed = 4f; // rad/s
+    private const float FreeAngularSpeed = 9f;   // rad/s
+    /// <summary>What survives at speed. Not 1: terminal works out around 32 m/s, well past the velocity
+    /// clamp, so this is free fall in practice — but a diverging solver still has something pulling it
+    /// back down instead of sitting at the ceiling.</summary>
+    private const float FreeDamping = 0.995f;
+
     private Vector3 gravity;
     private float linearDamping;
     private Vector3Wide gravityDt;
-    private Vector<float> dampingDt;
+    private Vector<float> settleDamping;
+    private Vector<float> freeDamping;
+
+    private Vector<float> settleSpeed;
+    private Vector<float> freeSpeed;
+    private Vector<float> settleAngular;
+    private Vector<float> freeAngular;
 
     public readonly AngularIntegrationMode AngularIntegrationMode => AngularIntegrationMode.Nonconserving;
     public readonly bool AllowSubstepsForUnconstrainedBodies => false;
@@ -10341,7 +10510,12 @@ struct RagdollPoseIntegratorCallbacks : IPoseIntegratorCallbacks
         this.gravity = gravity;
         this.linearDamping = linearDamping;
         this.gravityDt = default;
-        this.dampingDt = default;
+        this.settleDamping = default;
+        this.freeDamping = default;
+        this.settleSpeed = default;
+        this.freeSpeed = default;
+        this.settleAngular = default;
+        this.freeAngular = default;
     }
 
     public void Initialize(BepuSimulation simulation) { }
@@ -10351,7 +10525,14 @@ struct RagdollPoseIntegratorCallbacks : IPoseIntegratorCallbacks
         gravityDt.X = new Vector<float>(gravity.X * dt);
         gravityDt.Y = new Vector<float>(gravity.Y * dt);
         gravityDt.Z = new Vector<float>(gravity.Z * dt);
-        dampingDt = new Vector<float>(MathF.Pow(linearDamping, dt * 60f));
+
+        settleDamping = new Vector<float>(MathF.Pow(linearDamping, dt * 60f));
+        freeDamping = new Vector<float>(MathF.Pow(FreeDamping, dt * 60f));
+
+        settleSpeed = new Vector<float>(SettleSpeed);
+        freeSpeed = new Vector<float>(FreeFallSpeed);
+        settleAngular = new Vector<float>(SettleAngularSpeed);
+        freeAngular = new Vector<float>(FreeAngularSpeed);
     }
 
     public void IntegrateVelocity(
@@ -10359,11 +10540,33 @@ struct RagdollPoseIntegratorCallbacks : IPoseIntegratorCallbacks
         BodyInertiaWide localInertia, Vector<int> integrationMask, int workerIndex,
         Vector<float> dt, ref BodyVelocityWide velocity)
     {
-        velocity.Linear.X = (velocity.Linear.X + gravityDt.X) * dampingDt;
-        velocity.Linear.Y = (velocity.Linear.Y + gravityDt.Y) * dampingDt;
-        velocity.Linear.Z = (velocity.Linear.Z + gravityDt.Z) * dampingDt;
-        velocity.Angular.X *= dampingDt;
-        velocity.Angular.Y *= dampingDt;
-        velocity.Angular.Z *= dampingDt;
+        velocity.Linear.X += gravityDt.X;
+        velocity.Linear.Y += gravityDt.Y;
+        velocity.Linear.Z += gravityDt.Z;
+
+        Vector3Wide.Length(velocity.Linear, out var linearSpeed);
+        var linear = Blend(linearSpeed, settleSpeed, freeSpeed, settleDamping, freeDamping);
+        velocity.Linear.X *= linear;
+        velocity.Linear.Y *= linear;
+        velocity.Linear.Z *= linear;
+
+        // Gated on its OWN speed: a limb whipping round a body that is barely translating is still
+        // moving fast, and draining it is exactly what robs an impact of its snap.
+        Vector3Wide.Length(velocity.Angular, out var angularSpeed);
+        var angular = Blend(angularSpeed, settleAngular, freeAngular, settleDamping, freeDamping);
+        velocity.Angular.X *= angular;
+        velocity.Angular.Y *= angular;
+        velocity.Angular.Z *= angular;
+    }
+
+    /// <summary>Smoothstep from the settle damping to the free damping across the speed band.</summary>
+    private static Vector<float> Blend(
+        Vector<float> speed, Vector<float> low, Vector<float> high,
+        Vector<float> atLow, Vector<float> atHigh)
+    {
+        var t = (speed - low) / (high - low);
+        t = Vector.Min(Vector<float>.One, Vector.Max(Vector<float>.Zero, t));
+        t = t * t * (new Vector<float>(3f) - new Vector<float>(2f) * t);
+        return atLow + (atHigh - atLow) * t;
     }
 }
