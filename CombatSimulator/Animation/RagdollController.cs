@@ -3921,6 +3921,10 @@ public unsafe partial class RagdollController : IDisposable
             }
         }
 
+        // What the rig actually weighs, kept so that anything asked to pick it up can size itself
+        // against it instead of against a number somebody guessed once.
+        ragdollTotalMass = resolvedTotalMass;
+
         // Tier D — one-time sanity log: resolved total should be ~RagdollBodyMass minus the
         // excluded cloth/weapon/breast bones (which keep their tiny literal masses).
         if (config.RagdollAnthropometricMass)
@@ -4048,13 +4052,15 @@ public unsafe partial class RagdollController : IDisposable
                 if (boneDef.AnatomicalRole == AnatomicalRole.Knee || boneDef.AnatomicalRole == AnatomicalRole.Elbow)
                     log.Info($"[Ragdoll Joint] '{rb.Name}' hinge axis=({hingeAxisWorld.X:F2},{hingeAxisWorld.Y:F2},{hingeAxisWorld.Z:F2}) anatomical={config.RagdollAnatomicalHingeAxis}");
 
-                simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                    new BallSocket
-                    {
-                        LocalOffsetA = childLocalAnchor,
-                        LocalOffsetB = parentLocalAnchor,
-                        SpringSettings = jointSpring,
-                    });
+                var hingeBallSocket = new BallSocket
+                {
+                    LocalOffsetA = childLocalAnchor,
+                    LocalOffsetB = parentLocalAnchor,
+                    SpringSettings = jointSpring,
+                };
+                positionalJoints.Add(new PositionalJoint(
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle, hingeBallSocket),
+                    hingeBallSocket, stiffenable: true));
 
                 // SwingLimit: bending range for the knee/elbow.
                 // AxisLocalA = child segment direction; AxisLocalB = "forward" on parent body
@@ -4230,17 +4236,21 @@ public unsafe partial class RagdollController : IDisposable
 
                 // BallSocket: positional connection
                 // Soft bodies use low frequency + low damping for jiggle
-                simulation.Solver.Add(rb.BodyHandle, parentHandle,
-                    new BallSocket
-                    {
-                        LocalOffsetA = childLocalAnchor,
-                        LocalOffsetB = parentLocalAnchor,
-                        SpringSettings = boneDef.SoftBody
-                            ? new SpringSettings(boneDef.SoftSpringFreq, boneDef.SoftSpringDamp)
-                            : boneDef.AnatomicalRole == AnatomicalRole.Foot
-                                ? footJointSpring
-                                : jointSpring,
-                    });
+                var ballSocket = new BallSocket
+                {
+                    LocalOffsetA = childLocalAnchor,
+                    LocalOffsetB = parentLocalAnchor,
+                    SpringSettings = boneDef.SoftBody
+                        ? new SpringSettings(boneDef.SoftSpringFreq, boneDef.SoftSpringDamp)
+                        : boneDef.AnatomicalRole == AnatomicalRole.Foot
+                            ? footJointSpring
+                            : jointSpring,
+                };
+                // A jiggle joint is soft on purpose — firming it up for a carry would just make the
+                // chest rigid.
+                positionalJoints.Add(new PositionalJoint(
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle, ballSocket),
+                    ballSocket, stiffenable: !boneDef.SoftBody));
 
                 // Tier C (swing): hips, arm-side shoulders, and the spine chain get
                 // DIRECTIONAL anatomical limits below — a symmetric cone cannot hold
@@ -6799,13 +6809,14 @@ public unsafe partial class RagdollController : IDisposable
                 hasPrevPhysicsState = true;
                 ClampTwistRates(); // pre-step too: the solver's substeps integrate poses internally
                 UpdateHairKinematicRoots(); // drive hair anchors from the head before integrating
+                DriveGrabKinematicBone(FixedTimestep); // the caught bone is kinematic — drive it, then let
+                                                       // the solver haul the body along by the joints
                 simulation.Timestep(FixedTimestep);
                 ClampVelocities(maxLinear, maxAngular);
                 ClampHairRigVelocities();
                 ClampTwistRates();
                 ApplyTwistGuards();
                 ApplyStandingAnchorCorrection();
-                ApplyGrabAnchorCorrection();
                 physicsAccumulator -= FixedTimestep;
                 substeps++;
             }
@@ -7118,19 +7129,68 @@ public unsafe partial class RagdollController : IDisposable
     private SpringSettings grabSpringSettings;
     // Address of the grabbing NPC whose collision is parked during grab (0 = none)
     private nint suspendedNpcAddress;
-    private Vector3 grabTargetPosition;
+
+    // --- Rigid grab: catch, reel, hold ---
+    private bool grabIsRigid;          // captured at Create; the mode cannot change mid-grab
+    private bool grabServoActive;      // a spring grab has a constraint; a rigid one does not need one
+    private bool grabBodyIsKinematic;  // the caught body was made kinematic and owes a restore
+    private BodyInertia grabBodyRestInertia;
+    private Vector3 grabTargetPosition;   // the grabber's grip, live
+    private Vector3 grabCapturePosition;  // where the caught bone lay at the moment it was caught
+    private Vector3 grabAppliedTarget;    // where it was put last substep, for the follow velocity
+    private float grabReelElapsed;
+    private bool grabHasApplied;
+
+    /// <summary>What the rig actually weighs, summed at InitializePhysics.</summary>
+    private float ragdollTotalMass;
 
     /// <summary>
-    /// Hold the grabbed bone exactly on its target instead of asking a spring to pull it there.
+    /// Headroom over the rig's own weight that a spring grab is given.
     ///
-    /// A OneBodyLinearServo is a force: it has to accelerate the whole rig up off the ground, and it
-    /// forever trails a hand that keeps moving — so the body gets dragged up slowly and lags behind a
-    /// walking grabber. Projecting the position every substep removes both. The bone is where the hand
-    /// is on the frame the grab lands, and on every frame after.
+    /// A servo's force ceiling was a flat 1000 N. That is 1.5x the weight of a default 70 kg body — it
+    /// lifts, but with so little left over that the pull feels like a winch — and at 200 kg the body
+    /// weighs 1960 N, so the servo could not have held it up, let alone raised it. A ceiling that does
+    /// not scale with the thing it is lifting is just a hidden weight limit.
     ///
-    /// This is the same technique the standing support uses (<see cref="CreateStandingSupport"/>),
-    /// which is exactly why that one feels crisp and this one did not. Set it before
-    /// <see cref="CreateGrabConstraint"/> for the grab to land instantly.
+    /// So the floor is derived from the rig's real mass: enough to carry it, plus enough again to
+    /// accelerate it and to chase a walking grabber.
+    /// </summary>
+    private const float GrabServoWeightHeadroom = 2.5f;
+
+    /// <summary>Force floor for a spring grab: whatever the caller asked for, or enough to actually
+    /// pick this body up, whichever is greater.</summary>
+    private float ResolveGrabServoForce(float requested)
+    {
+        if (ragdollTotalMass <= 0f) return requested;
+        var needed = ragdollTotalMass * MathF.Max(0.1f, config.RagdollGravity) * GrabServoWeightHeadroom;
+        return MathF.Max(requested, needed);
+    }
+
+    /// <summary>
+    /// How long the caught bone takes to travel from where it was caught to the grabber's grip.
+    ///
+    /// A grab has to be instant in the sense that matters — the bone is HELD from the frame the grab
+    /// lands — without the body teleporting to make that true. So the hold is established where the
+    /// bone already lies, and the bone is then reeled to the grip over this long. Long enough to read
+    /// as a pull rather than a cut, short enough that nobody would call it slow.
+    /// </summary>
+    private const float GrabReelSeconds = 0.25f;
+
+    /// <summary>
+    /// Hold the caught bone exactly, rather than asking a spring to drag it there.
+    ///
+    /// A OneBodyLinearServo is a force: it must accelerate the whole rig off the ground, and it never
+    /// catches a grip that keeps moving, so the body was winched up slowly and then trailed behind a
+    /// walking grabber. Projecting the bone's position every substep removes both.
+    ///
+    /// Only the CAUGHT bone is projected. The rest of the body is left to its joints, so it is dragged,
+    /// swings and hangs — which is what a grab looks like. (This is where the standing support and a
+    /// grab part company: the standing support projects the WHOLE rig, because its job really is to put
+    /// the entire body somewhere. Borrowing that for a grab put the caught bone in the right place by
+    /// teleporting everything else, so the corpse blinked out of the ground and reappeared in mid-air —
+    /// and catching a wrist hauled the body to the hand instead of the wrist to the hand.)
+    ///
+    /// Read once, at <see cref="CreateGrabConstraint"/>.
     /// </summary>
     public bool GrabRigid { get; set; }
 
@@ -7139,14 +7199,17 @@ public unsafe partial class RagdollController : IDisposable
     /// anchor (a grab, or the standing hold)?
     ///
     /// A garment rig is held to the corpse by nothing but contact and friction — there is no joint
-    /// tying it on. So when a projection teleports the body into a grabber's hand, the clothes are
-    /// simply left behind on the ground: the body vanishes out of them. Carrying them by the same
+    /// tying it on. So when the standing support relocates the WHOLE rig in one step, the clothes are
+    /// simply left standing on the ground: the body vanishes out of them. Carrying them by the same
     /// delta keeps them exactly where they sat on the body, drape and all.
+    ///
+    /// (A grab needs none of this. It holds only the bone it caught and lets the joints haul the rest,
+    /// so the body travels continuously and its clothes come along by the contact that was holding them
+    /// on in the first place. It is a relocation that leaves them behind, not motion.)
     ///
     /// But only garments still BEING WORN may come along; one that already slid off and is puddled on
     /// the floor must stay there, even though the corpse is very likely lying right on top of it. Only
-    /// the rig's owner can tell those apart, so it supplies the test. Null = carry nothing (the old
-    /// behaviour).
+    /// the rig's owner can tell those apart, so it supplies the test. Null = carry nothing.
     /// </summary>
     public Func<ExternalRigHandle, bool>? CarryExternalRigOnAnchor { get; set; }
 
@@ -7248,65 +7311,118 @@ public unsafe partial class RagdollController : IDisposable
         // The rig is no longer resting; force a full physics step next frame.
         BeginBiomechanicalSettle();
 
+        grabIsRigid = GrabRigid;
+
         // Remember the tuning so UpdateGrabTarget reuses it instead of resetting to defaults.
-        grabServoSettings = new ServoSettings(maxSpeed, 1f, maxForce);
+        var servoForce = ResolveGrabServoForce(maxForce);
+        grabServoSettings = new ServoSettings(maxSpeed, 1f, servoForce);
         grabSpringSettings = new SpringSettings(springFreq, 1);
 
-        // Create OneBodyLinearServo: pins a body to a world-space target
-        grabConstraintHandle = simulation.Solver.Add(grabBodyHandle,
-            new OneBodyLinearServo
-            {
-                LocalOffset = Vector3.Zero,
-                Target = initialTarget,
-                ServoSettings = grabServoSettings,
-                SpringSettings = grabSpringSettings,
-            });
+        // A rigid grab gets no servo. The bone is held by being kinematic; a spring pulling at the grip
+        // as well would just be a second, disagreeing opinion about where it belongs.
+        grabServoActive = false;
+        grabBodyIsKinematic = false;
+
+        var caught = simulation.Bodies.GetBodyReference(grabBodyHandle);
+
+        if (grabIsRigid)
+        {
+            // Infinite mass, for the duration. The solver can no longer move the caught bone — so it
+            // cannot fight the grip — but it can still move everything hanging off it.
+            grabBodyRestInertia = caught.LocalInertia;
+            caught.BecomeKinematic();
+            grabBodyIsKinematic = true;
+        }
+        else
+        {
+            grabConstraintHandle = simulation.Solver.Add(grabBodyHandle,
+                new OneBodyLinearServo
+                {
+                    LocalOffset = Vector3.Zero,
+                    Target = initialTarget,
+                    ServoSettings = grabServoSettings,
+                    SpringSettings = grabSpringSettings,
+                });
+            grabServoActive = true;
+        }
+
+        // Either way the whole body is now hanging off one joint, and the heavier it is the harder that
+        // joint is pulled. Firm the positional joints up for as long as the carry lasts, or the load
+        // path stretches — see SetCarryJointStiffness. A spring grab needs this MORE, not less: its
+        // force ceiling now scales with the body's weight, and all of that force goes through the same
+        // joints.
+        SetCarryJointStiffness(true);
 
         grabConstraintActive = true;
         suspendedNpcAddress = grabbingNpcAddress;
         grabTargetPosition = initialTarget;
 
-        // Land the grab on this frame rather than winching the body up over the next second.
-        ApplyGrabAnchorCorrection();
+        // Caught where it lies. Nothing moves on this frame — the bone is simply held from now on, and
+        // the reel walks it to the grip from here.
+        grabCapturePosition = caught.Pose.Position;
+        grabAppliedTarget = grabCapturePosition;
+        grabHasApplied = false;
+        grabReelElapsed = 0f;
 
-        log.Info($"RagdollController: Grab constraint created on '{boneName}' → ({initialTarget.X:F2},{initialTarget.Y:F2},{initialTarget.Z:F2}), rigid={GrabRigid}, suspend NPC 0x{grabbingNpcAddress:X}");
+        log.Info($"RagdollController: Grab created on '{boneName}' — caught at ({grabCapturePosition.X:F2},{grabCapturePosition.Y:F2},{grabCapturePosition.Z:F2}), " +
+                 $"reeling to ({initialTarget.X:F2},{initialTarget.Y:F2},{initialTarget.Z:F2}), rigid={grabIsRigid}, " +
+                 $"rig weighs {ragdollTotalMass:F1}kg" +
+                 (grabIsRigid ? "" : $" so the servo gets {servoForce:F0}N (asked for {maxForce:F0}N)") +
+                 $", suspend NPC 0x{grabbingNpcAddress:X}");
         return true;
     }
 
     /// <summary>
-    /// Put the grabbed bone exactly on its target by translating the WHOLE rig by the error, and take
-    /// the rig's bulk velocity off every body.
+    /// Drive the caught bone along the reel path. Runs BEFORE the solver, not after it.
     ///
-    /// Every body moves by the same delta, so the pose is untouched and the limbs keep whatever
-    /// relative motion they had — a corpse hanging from a fist still swings and still reacts to being
-    /// shoved. Only the drift of the rig as a whole is cancelled, which is the part a servo could never
-    /// keep up with.
+    /// The bone is made KINEMATIC for the duration of the grab, which is the whole point. A kinematic
+    /// body has infinite mass: the solver cannot move it, so it stays exactly where the grabber's hand
+    /// is — no tug-of-war, nothing to jitter. But it can move everything attached to it, so the body is
+    /// hauled up by the joints, swinging and hanging off the bone that is holding it. That is a hand
+    /// closing on a wrist, expressed in the only terms the solver understands.
+    ///
+    /// The two things this replaces both wrote the bone's position AFTER Timestep, outside the solver,
+    /// which is why neither worked. Moving the WHOLE rig by one delta at least kept the joints
+    /// self-consistent (nothing moved relative to anything else) — but it relocated the corpse bodily,
+    /// so it blinked out of the ground and reappeared mid-air, and catching a wrist dragged the body to
+    /// the hand rather than the wrist. Moving the ONE caught body instead violated every joint on it by
+    /// the full distance, every substep; the solver spent the next substep hauling the light caught bone
+    /// back toward the heavy body it hangs off (the cheaper way to satisfy the joint), and we shoved it
+    /// forward again — sixty times eight per second. That fight is the jitter, and it is why the bone
+    /// would never stay pinned.
+    ///
+    /// This is the same technique the hair rig already uses one line above the Timestep call.
     /// </summary>
-    private void ApplyGrabAnchorCorrection()
+    private void DriveGrabKinematicBone(float dt)
     {
-        if (!GrabRigid || !grabConstraintActive || simulation == null) return;
+        if (!grabIsRigid || !grabConstraintActive || !grabBodyIsKinematic || simulation == null) return;
 
-        // The standing support projects the rig onto ITS anchor every substep too. Two projections
-        // arguing over the same bodies would just undo each other, so leave the rig to whichever one
-        // is holding it up.
+        // The standing support owns the whole rig when it is up; leave the body to it.
         if (standingActive) return;
 
-        var anchor = simulation.Bodies.GetBodyReference(grabBodyHandle);
-        var correction = grabTargetPosition - anchor.Pose.Position;
-        var anchorVelocity = anchor.Velocity.Linear;
+        // Reel: caught where it lay, walked to the grip. Smoothstep so it neither snaps away at the
+        // start nor arrives with a jolt.
+        grabReelElapsed = MathF.Min(grabReelElapsed + dt, GrabReelSeconds);
+        var t = GrabReelSeconds <= 1e-4f ? 1f : grabReelElapsed / GrabReelSeconds;
+        t = t * t * (3f - 2f * t);
+        var target = Vector3.Lerp(grabCapturePosition, grabTargetPosition, t);
 
-        // Decide first, move second — see CollectCarriedExternalRigs.
-        CollectCarriedExternalRigs();
+        var previous = grabHasApplied ? grabAppliedTarget : target;
+        var maxLinear = activeRagdollIsGeneric ? GenericMaxLinearVelocity : HumanMaxLinearVelocity;
 
-        foreach (var rb in ragdollBones)
-        {
-            var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
-            body.Pose.Position += correction;
-            body.Velocity.Linear -= anchorVelocity;
-            body.Awake = true;
-        }
+        var body = simulation.Bodies.GetBodyReference(grabBodyHandle);
+        body.Pose.Position = target;
+        // The velocity the reel path is travelling at. A kinematic body's velocity is what the joints
+        // read to know how hard they are being pulled; leave it at zero and they would see a bone that
+        // teleports between steps rather than one that is towing them.
+        body.Velocity.Linear = dt > 1e-5f
+            ? ClampVectorLength((target - previous) / dt, maxLinear)
+            : Vector3.Zero;
+        body.Velocity.Angular = Vector3.Zero; // held: the grip does not let it spin of its own accord
+        body.Awake = true;
 
-        TranslateCarriedExternalRigs(correction, anchorVelocity);
+        grabAppliedTarget = target;
+        grabHasApplied = true;
     }
 
     /// <summary>
@@ -7354,7 +7470,7 @@ public unsafe partial class RagdollController : IDisposable
     /// </summary>
     public void SetGrabTuning(float maxForce, float maxSpeed, float springFreq)
     {
-        grabServoSettings = new ServoSettings(maxSpeed, 1f, maxForce);
+        grabServoSettings = new ServoSettings(maxSpeed, 1f, ResolveGrabServoForce(maxForce));
         grabSpringSettings = new SpringSettings(springFreq, 1);
     }
 
@@ -7366,6 +7482,9 @@ public unsafe partial class RagdollController : IDisposable
         if (!grabConstraintActive || simulation == null) return;
 
         grabTargetPosition = worldTarget;
+
+        // A rigid grab has no servo to retarget; the reel reads grabTargetPosition directly.
+        if (!grabServoActive) return;
 
         try
         {
@@ -7392,11 +7511,30 @@ public unsafe partial class RagdollController : IDisposable
     {
         if (!grabConstraintActive || simulation == null) return;
 
-        try
+        if (grabServoActive)
         {
-            simulation.Solver.Remove(grabConstraintHandle);
+            try
+            {
+                simulation.Solver.Remove(grabConstraintHandle);
+            }
+            catch { }
         }
-        catch { }
+
+        // Hand the caught bone back to physics: its own mass, and whatever velocity the reel was
+        // carrying it at, so letting go of a body mid-swing lets it go rather than stopping it dead.
+        if (grabBodyIsKinematic)
+        {
+            try
+            {
+                var caught = simulation.Bodies.GetBodyReference(grabBodyHandle);
+                caught.SetLocalInertia(grabBodyRestInertia);
+                caught.Awake = true;
+            }
+            catch { }
+            grabBodyIsKinematic = false;
+        }
+
+        SetCarryJointStiffness(false);
 
         var normalThreshold = 0.01f;
         for (int i = 0; i < ragdollBones.Count; i++)
@@ -7411,6 +7549,10 @@ public unsafe partial class RagdollController : IDisposable
         }
 
         grabConstraintActive = false;
+        grabServoActive = false;
+        grabIsRigid = false;
+        grabHasApplied = false;
+        grabReelElapsed = 0f;
         suspendedNpcAddress = nint.Zero;
         BeginBiomechanicalSettle();
 
@@ -9512,6 +9654,65 @@ public unsafe partial class RagdollController : IDisposable
     // (keyed by child bone), so the stump actually swings up, then restore both.
     private readonly Dictionary<string, ConstraintHandle> angularMotorByBone = new();
     private readonly Dictionary<string, (ConstraintHandle Handle, SwingLimit Original)> swingLimitByBone = new();
+
+    // --- Positional joints, kept so their stiffness can be raised while the rig is being carried ---
+    //
+    // A BEPU joint is a SPRING: under a sustained load it sags by roughly force / (effective mass x w^2).
+    // Hanging a whole corpse from one caught bone is the heaviest sustained load this rig ever sees —
+    // ~590 N through a joint whose two bodies weigh a couple of kilos between them — and at the default
+    // 30 Hz that works out to over a centimetre at EVERY joint on the load path. Down a spine or an arm
+    // it adds up to the limb visibly stretching.
+    //
+    // Frequency is the only lever that touches this (the codebase says so itself, on
+    // RagdollJointSpringFrequency: "Higher = bones separate less under large impulses (the 'rubber-band'
+    // stretch)... Raise Solver Substeps to support higher values"), and there is precedent —
+    // RagdollFootJointSpringFrequency already firms up the ankle for the same reason. Nothing had ever
+    // done it for a grab. Quadrupling the frequency cuts the sag by sixteen, which takes it out of sight.
+    //
+    // Soft/jiggle joints are excluded: they are soft on purpose.
+    private readonly struct PositionalJoint
+    {
+        public readonly ConstraintHandle Handle;
+        public readonly BallSocket Rest;
+        public readonly bool Stiffenable;
+
+        public PositionalJoint(ConstraintHandle handle, BallSocket rest, bool stiffenable)
+        {
+            Handle = handle;
+            Rest = rest;
+            Stiffenable = stiffenable;
+        }
+    }
+
+    private readonly List<PositionalJoint> positionalJoints = new();
+    private bool jointsStiffenedForCarry;
+
+    /// <summary>Spring frequency the positional joints are held at while a grab carries the body.</summary>
+    private const float CarryJointSpringFrequency = 120f;
+
+    /// <summary>
+    /// Firm up (or release) every positional joint for the duration of a carry. Idempotent.
+    /// </summary>
+    private void SetCarryJointStiffness(bool stiff)
+    {
+        if (simulation == null || jointsStiffenedForCarry == stiff) return;
+
+        foreach (var joint in positionalJoints)
+        {
+            if (!joint.Stiffenable) continue;
+            try
+            {
+                var desc = joint.Rest;
+                if (stiff)
+                    desc.SpringSettings = new SpringSettings(CarryJointSpringFrequency, 1f);
+                simulation.Solver.ApplyDescription(joint.Handle, desc);
+            }
+            catch { }
+        }
+
+        jointsStiffenedForCarry = stiff;
+        log.Info($"RagdollController: positional joints {(stiff ? $"firmed to {CarryJointSpringFrequency:F0}Hz for the carry" : "released to rest stiffness")} ({positionalJoints.Count} joints)");
+    }
     private const float JointMotorDamping = 0.01f;
     private const float RecoilRelaxDuration = 0.45f;
     private const float RecoilSwingAngle = 1.7f; // ~97° — wide arc during the recoil window
@@ -9835,6 +10036,13 @@ public unsafe partial class RagdollController : IDisposable
     {
         externalBodyGeneration++;
         grabConstraintActive = false;
+        grabServoActive = false;
+        grabIsRigid = false;
+        grabBodyIsKinematic = false;
+        grabHasApplied = false;
+        grabReelElapsed = 0f;
+        jointsStiffenedForCarry = false;
+        positionalJoints.Clear();
         suspendedNpcAddress = nint.Zero;
         standingActive = false;
         standingConstraints.Clear();
