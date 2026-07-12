@@ -3850,6 +3850,8 @@ public unsafe partial class RagdollController : IDisposable
                 shapeHalfLength = effectiveHalfLength;
             }
 
+            bodyInertia = ApplyLimbInertia(bodyInertia);
+
             // Allow sleeping even with settle collision; external kinematic colliders can wake
             // the corpse on contact, while permanent awake bodies keep solving tiny jitter.
             var sleepThreshold = 0.01f;
@@ -6392,6 +6394,100 @@ public unsafe partial class RagdollController : IDisposable
         hasPreviousPose = true;
     }
 
+    // === Heavy body: limb inertia ===
+    //
+    // This is the lever that mass is NOT. Gravity's torque on a limb scales with its mass and its
+    // resistance to being turned scales with its mass too — so multiplying the whole rig's mass cancels
+    // out exactly, and the corpse moves identically. That is why turning the mass up never did anything.
+    // Inertia is a different quantity: raise it without touching mass and a limb takes longer to spin up
+    // and longer to stop, which is the whole visual signature of something being heavy. An oak door and
+    // a cardboard one of the same size swing quite differently.
+    //
+    // And ours are too low to begin with, not merely to taste. Inertia goes as the square of the radius,
+    // and the capsules are thinner than the limbs they stand for — a shin is modelled at a 35mm radius
+    // where a real one is nearer 60mm. That alone accounts for a factor of three. A capsule is also
+    // nearly a line about its own long axis, so it barrel-rolls for almost nothing, which is exactly the
+    // twitchiness that reads as weightless.
+    //
+    // So this is a correction as much as a stylisation. Mass is left alone: it is the one thing that
+    // provably does not matter.
+    private const float LimbInertiaScale = 2.5f;
+
+    private BodyInertia ApplyLimbInertia(BodyInertia inertia)
+    {
+        if (!config.RagdollHeavyBody || LimbInertiaScale <= 1.0001f) return inertia;
+
+        // The solver stores the INVERSE tensor, so scaling inertia up means scaling this down.
+        var inverse = 1f / LimbInertiaScale;
+        inertia.InverseInertiaTensor.XX *= inverse;
+        inertia.InverseInertiaTensor.YX *= inverse;
+        inertia.InverseInertiaTensor.YY *= inverse;
+        inertia.InverseInertiaTensor.ZX *= inverse;
+        inertia.InverseInertiaTensor.ZY *= inverse;
+        inertia.InverseInertiaTensor.ZZ *= inverse;
+        return inertia;
+    }
+
+    // === Heavy body: fall gravity ===
+    //
+    // True gravity is not the gravity an action game runs on. A game camera's distance and field of
+    // view flatten vertical travel, and an audience's sense of how fast things should fall comes from
+    // films and from other games, not from a stopwatch — which is why nearly every action game falls at
+    // one and a half to two and a half g, and why engines ship a "fall gravity multiplier" as standard.
+    // A knockdown in a fighting game drops harder still. We were running at an honest 9.8, and honest
+    // read as floaty.
+    //
+    // Applied only on the way DOWN, which is the usual shape of the trick: the arc a blow throws the
+    // body into keeps its silhouette, and only the descent is made to bite.
+    //
+    // Falling is a property of the RIG, not of a body. Asked per body, against the ground height, the
+    // answer is wrong in the most ordinary case there is: an arm draped over the chest, a shin crossed
+    // over a thigh, a limb resting on a rock. Those sit well clear of the floor and are not falling at
+    // all — something is holding them up. Push them anyway and they are driven into whatever holds them,
+    // the contact shoves them back, and the two of them buzz. Worse, the answer differs from limb to
+    // limb, so the joints see a relative violation on top.
+    //
+    // So the question is asked once, of the whole rig — is anything touching down, and is the thing as a
+    // whole on its way down — and the answer is applied to every body identically. Uniform means no
+    // joint sees anything at all, and there is nothing for the solver to argue with.
+    private const float FallGravityMultiplier = 1.8f;
+    private const float AirborneClearance = 0.06f;  // m of daylight before the rig counts as off the floor
+    private const float FallGravityMinDescent = 1f; // m/s — below this it is not falling, it is sitting
+
+    private void ApplyFallGravity(float dt)
+    {
+        if (!config.RagdollHeavyBody || simulation == null || ragdollBones.Count == 0) return;
+
+        // Being held is not falling.
+        if (grabConstraintActive || standingActive) return;
+
+        var extra = MathF.Max(0f, config.RagdollGravity) * (FallGravityMultiplier - 1f) * dt;
+        if (extra <= 0f) return;
+
+        var lowest = float.MaxValue;
+        var descent = 0f;
+        foreach (var rb in ragdollBones)
+        {
+            var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            lowest = MathF.Min(lowest, body.Pose.Position.Y - rb.CapsuleRadius);
+            descent -= body.Velocity.Linear.Y;
+        }
+        descent /= ragdollBones.Count;
+
+        if (lowest <= groundY + AirborneClearance) return; // something is touching down: nobody is falling
+        if (descent < FallGravityMinDescent) return;       // airborne, but not on its way down
+
+        foreach (var rb in ragdollBones)
+        {
+            var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            if (body.Kinematic) continue; // a caught bone is driven, not falling
+
+            var velocity = body.Velocity.Linear;
+            velocity.Y -= extra;
+            body.Velocity.Linear = velocity;
+        }
+    }
+
     // === Impact weight ===
     //
     // A body that hits the ground hard should land like it weighs something. Physics alone will not do
@@ -6929,6 +7025,7 @@ public unsafe partial class RagdollController : IDisposable
                 UpdateHairKinematicRoots(); // drive hair anchors from the head before integrating
                 DriveGrabKinematicBone(FixedTimestep); // the caught bone is kinematic — drive it, then let
                                                        // the solver haul the body along by the joints
+                ApplyFallGravity(FixedTimestep); // a descent that bites, on top of the integrator's honest g
                 simulation.Timestep(FixedTimestep);
                 ClampVelocities(maxLinear, maxAngular);
                 ClampHairRigVelocities();

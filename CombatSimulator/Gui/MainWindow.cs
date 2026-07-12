@@ -4375,6 +4375,23 @@ public partial class MainWindow : IDisposable
                            "which reads LIGHTER the more you add. The weight comes from the freeze frame and the camera. " +
                            "That is how a fighting game does it, and it is not simulation at all.");
 
+                var heavyBody = config.RagdollHeavyBody;
+                if (ImGui.Checkbox("Heavy body##ragdoll", ref heavyBody))
+                {
+                    config.RagdollHeavyBody = heavyBody;
+                    config.Save();
+                }
+                HelpMarker("Make the body itself read heavy, as opposed to its landing.\n\n" +
+                           "It falls harder than true gravity — no action game runs at an honest 9.8, because a game " +
+                           "camera flattens vertical travel and an audience's sense of how fast things fall comes from " +
+                           "films, not from a stopwatch. Only the descent is weighted, so the arc a blow throws the body " +
+                           "into keeps its shape.\n\n" +
+                           "And its limbs get the rotational inertia a real limb has, instead of the little a thin " +
+                           "capsule implies (inertia goes as the square of the radius, and a shin is modelled at 35mm " +
+                           "where a real one is nearer 60). This is the lever that mass is not: mass cancels out of free " +
+                           "fall AND out of the joint forces, which is precisely why turning it up never did anything.\n\n" +
+                           "Unlike Impact weight, this changes trajectories. Takes effect on the next ragdoll.");
+
                 var carryVel = config.RagdollCarryAnimationVelocity;
                 if (ImGui.Checkbox("Carry animation velocity##ragdoll", ref carryVel))
                 {

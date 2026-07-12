@@ -497,6 +497,12 @@ public partial class Configuration : IPluginConfiguration
     // from the freeze frame and the camera, which is exactly how a fighting game does it.
     public bool RagdollImpactWeight { get; set; } = true;
 
+    // Make the body itself read heavy, as opposed to the landing: fall harder than true gravity, and
+    // give the limbs the rotational inertia a real one has rather than the little a thin capsule
+    // implies. Kept separate from the landing staging above because unlike that, this changes
+    // trajectories — how far a kicked corpse flies, and how fast it tumbles on the way.
+    public bool RagdollHeavyBody { get; set; } = true;
+
     public bool RagdollRelaxationTopple { get; set; } = true;
     // Collapse asymmetry: real people never collapse symmetrically. Pick a random lead side
     // each death — its leg buckles first and the whole-body topple leans + twists toward it —
