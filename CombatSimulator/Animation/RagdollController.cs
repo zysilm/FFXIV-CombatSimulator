@@ -100,6 +100,11 @@ public unsafe partial class RagdollController : IDisposable
     // contact-supported kneel or bent-elbow pose as a permanent "resting" posture.
     private float biomechanicalSettleRemaining;
 
+    // The character's facing at activation (deaths start standing, so the root yaw is trustworthy).
+    // The anatomical anchor for anything that must NOT depend on the pose the body happened to die in —
+    // the directional ball ROM already used it; the hinges now do too.
+    private Vector3 anatomicalForward = Vector3.UnitZ;
+
     // Skeleton world transform (captured at activation from Skeleton.Transform)
     // ModelPose is in skeleton-local space; these convert to/from world space.
     private Vector3 skelWorldPos;
@@ -2663,20 +2668,28 @@ public unsafe partial class RagdollController : IDisposable
     private Vector3 ComputeProfileHingeAxis(AnatomicalRole role, Vector3 parentSegmentDir, Vector3 childSegmentDir, Quaternion childBodyRot)
     {
         var childN = NormalizeOrFallback(childSegmentDir, Vector3.UnitY);
+        var parentN = NormalizeOrFallback(parentSegmentDir, Vector3.UnitY);
 
-        // Tier B — anatomy-fixed hinge axis. Derive the knee/elbow hinge from the
-        // skeleton's medial-lateral (character RIGHT) axis projected perpendicular to the
-        // bone segment, instead of Cross(parent,child) which is degenerate for a near-
-        // straight limb. This is stable regardless of how bent the limb is, so both knees
-        // resolve to near-mirror axes (~±character-right) rather than one sideways + one
-        // forward. Sign is aligned to the legacy axis so flexion direction is preserved.
-        if (config.RagdollAnatomicalHingeAxis &&
-            (role == AnatomicalRole.Knee || role == AnatomicalRole.Elbow))
+        // Tier B — anatomy fixes the hinge axis AND its sign.
+        //
+        // Cross(parentSegment, foldDirection) is perpendicular to both: it is the medial-lateral axis a
+        // knee actually turns about. And by construction Cross(axis, parentSegment) comes straight back
+        // out as the fold direction — which is precisely the vector ComputeHingeForward hands to the
+        // SwingLimit. So the axis and the limit's reference cannot disagree with each other, whatever
+        // pose the body died in.
+        //
+        // This is the piece the previous anatomical axis was missing. It got the LINE right — a stable
+        // character left-right axis, instead of Cross(parent, child), which is degenerate for a limb
+        // that happens to be straight — and then deliberately took its SIGN from the legacy axis. For a
+        // straight leg the legacy axis falls back to Cross(vertical shin, character forward), whose fold
+        // direction points FORWARD. The axis was right and it was wired to the wrong sign, which is
+        // exactly why switching it on bent every knee the wrong way. It was never the wrong idea.
+        var flexion = ComputeAnatomicalFlexionDirection(role, parentN);
+        if (flexion.HasValue)
         {
-            var anatAxis = ComputeAnatomicalHingeAxis(parentSegmentDir, childN);
-            if (anatAxis.HasValue)
-                return anatAxis.Value;
-            // Degenerate (e.g. limb segment is itself along character-right): fall through.
+            var axis = Vector3.Cross(parentN, flexion.Value);
+            if (axis.LengthSquared() > 0.001f)
+                return Vector3.Normalize(axis);
         }
 
         if (config.RagdollExperimentalJointFrames &&
@@ -2697,43 +2710,63 @@ public unsafe partial class RagdollController : IDisposable
     }
 
     /// <summary>
-    /// Tier B — stable knee/elbow hinge axis = skeleton medial-lateral (character RIGHT)
-    /// axis projected perpendicular to the child bone segment, normalized. Returns null
-    /// when the projection is degenerate (segment nearly parallel to character-right), so
-    /// the caller can fall back to the legacy pose-derived axis. The sign is aligned to the
-    /// legacy ComputeExperimentalHingeAxis so the flexion direction (and all downstream
-    /// SwingLimit / AngularHinge / FoldStop / TwistBasis math) is unchanged.
+    /// Which way this joint folds — read off the body, not off the pose it died in.
+    ///
+    /// A knee folds the shin BACKWARD. An elbow folds the forearm FORWARD. Relative to the character
+    /// those are simply facts, and they have nothing whatever to do with whether the corpse was
+    /// standing, kneeling or mid-stride at the moment physics took over.
+    ///
+    /// The rig was reading them off the pose regardless. ComputeHingeForward decided its sign with
+    ///
+    ///     if (Dot(forward, childSegment) &lt; 0) forward = -forward;
+    ///
+    /// which points the fold wherever the limb HAPPENED to be leaning. On a straight leg the shin is
+    /// perpendicular to that vector, the dot product is ~0, and the sign falls out of floating-point
+    /// noise — independently for each leg, which is why one knee would bend sideways and the other
+    /// forward. Whichever leg lost the coin toss had its swing limit treat normal flexion as
+    /// hyperextension and locked. Activate from a kneel instead and the fold direction came out right,
+    /// because the shin really was leaning back. That is the whole of "the stiffness depends on the
+    /// death pose".
+    ///
+    /// Null when the limb happens to lie along the fold direction and the projection is degenerate, so
+    /// the caller can fall back.
     /// </summary>
-    private Vector3? ComputeAnatomicalHingeAxis(Vector3 parentSegmentDir, Vector3 childSegmentDir)
+    private Vector3? ComputeAnatomicalFlexionDirection(AnatomicalRole role, Vector3 parentSegmentDir)
     {
-        var childN = NormalizeOrFallback(childSegmentDir, Vector3.UnitY);
-        var right = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
+        if (!config.RagdollAnatomicalHingeAxis) return null;
+        if (role != AnatomicalRole.Knee && role != AnatomicalRole.Elbow) return null;
 
-        var projected = ProjectOntoPlane(right, childN);
+        var forward = FlatNormalize(anatomicalForward, Vector3.UnitZ);
+        var fold = role == AnatomicalRole.Knee ? -forward : forward;
+
+        // Perpendicular to the parent segment, because that is the frame the SwingLimit measures in.
+        var projected = ProjectOntoPlane(fold, NormalizeOrFallback(parentSegmentDir, Vector3.UnitY));
         if (projected.LengthSquared() < 0.001f)
             return null;
 
-        var axis = Vector3.Normalize(projected);
-
-        // Keep the same sign as the legacy axis so both knees flex identically (shin swings
-        // backward = flexion). The legacy/experimental fallback already enforces a consistent
-        // sign relative to the world-up cross.
-        var legacy = ComputeExperimentalHingeAxis(parentSegmentDir, childN);
-        if (Vector3.Dot(axis, legacy) < 0)
-            axis = -axis;
-
-        return axis;
+        return Vector3.Normalize(projected);
     }
 
-    private Vector3 ComputeHingeForward(Vector3 hingeAxis, Vector3 parentSegmentDir, Vector3 childSegmentDir)
+    /// <summary>The direction the child limb swings toward as the joint flexes — the SwingLimit's
+    /// reference on the parent body.</summary>
+    private Vector3 ComputeHingeForward(AnatomicalRole role, Vector3 hingeAxis, Vector3 parentSegmentDir, Vector3 childSegmentDir)
     {
         var parentN = NormalizeOrFallback(parentSegmentDir, Vector3.UnitY);
+
+        // Anatomy first. Which way a knee folds is a fact about the body.
+        var flexion = ComputeAnatomicalFlexionDirection(role, parentN);
+        if (flexion.HasValue)
+            return flexion.Value;
+
         var childN = NormalizeOrFallback(childSegmentDir, Vector3.UnitY);
         var forward = Vector3.Cross(hingeAxis, parentN);
         if (forward.LengthSquared() < 0.001f)
             forward = ProjectOntoPlane(childN, hingeAxis);
 
         forward = NormalizeOrFallback(forward, childN);
+
+        // The legacy sign: point the fold wherever the limb is leaning. This IS the pose dependence,
+        // kept only for joints anatomy has nothing to say about.
         if (Vector3.Dot(forward, childN) < 0)
             forward = -forward;
 
@@ -3974,6 +4007,9 @@ public unsafe partial class RagdollController : IDisposable
             : 0f;
         var anatForwardWorld = new Vector3(MathF.Sin(anatYaw), 0f, MathF.Cos(anatYaw));
         var anatLateralWorld = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, anatForwardWorld));
+        // Same anchor the hinge fold direction reads (see ComputeAnatomicalFlexionDirection), so the
+        // hinges and the directional ball ROM cannot end up facing different ways.
+        anatomicalForward = anatForwardWorld;
         swingStressMonitors.Clear();
         twistGuards.Clear();
 
@@ -4077,7 +4113,7 @@ public unsafe partial class RagdollController : IDisposable
                 {
                     // "Forward" direction on the parent body = Cross(hingeAxis, parentSegDir).
                     // This is the direction the child limb swings toward during flexion.
-                    var forwardWorld = ComputeHingeForward(hingeAxisWorld, parentSegDir, segDirWorld);
+                    var forwardWorld = ComputeHingeForward(boneDef.AnatomicalRole, hingeAxisWorld, parentSegDir, segDirWorld);
 
                     var swingAxisLocalParent = Vector3.Normalize(Vector3.Transform(
                         forwardWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));

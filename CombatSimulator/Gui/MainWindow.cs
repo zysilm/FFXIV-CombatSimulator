@@ -4425,7 +4425,16 @@ public partial class MainWindow : IDisposable
                     config.RagdollAnatomicalHingeAxis = anatomicalHinge;
                     config.Save();
                 }
-                HelpMarker("Tier B: derive the knee/elbow hinge axis from the skeleton medial-lateral (character left-right) axis instead of Cross(thigh,shin), which is degenerate for a near-straight limb and made one knee hinge sideways and the other forward. ON gives stable, near-mirror L/R knee axes. Takes effect on next ragdoll activation.");
+                HelpMarker("Take the knee/elbow hinge from the body rather than from the pose it died in. A knee folds the shin " +
+                           "backward and an elbow folds the forearm forward — facts about the body, with nothing to do with whether " +
+                           "it was standing or kneeling when physics took over.\n\n" +
+                           "The fold direction used to be read off whichever way the limb happened to be leaning. On a straight leg " +
+                           "that vector is perpendicular, so the sign fell out of floating-point noise — separately for each leg, which " +
+                           "is why one knee would lock while the other bent the wrong way, and why the stiffness changed with the death " +
+                           "pose.\n\n" +
+                           "This shipped OFF because it fixed the axis and then took the axis's SIGN from the very thing it was " +
+                           "replacing, which bent every knee forward. Both are derived from anatomy now. Takes effect on next ragdoll " +
+                           "activation.");
 
                 var anatomicalRom = config.RagdollAnatomicalRom;
                 if (ImGui.Checkbox("Anatomical ROM (asymmetric)##ragdoll", ref anatomicalRom))

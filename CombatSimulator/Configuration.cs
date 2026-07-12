@@ -183,6 +183,7 @@ public partial class Configuration : IPluginConfiguration
     public bool ThinnerProfileTuningMigrated20260704 { get; set; } = false;
     public bool KneeHingeStiffnessMigrated20260704 { get; set; } = false;
     public bool AnatomicalDefaultsOffMigrated20260704 { get; set; } = false;
+    public bool AnatomicalHingeSignFixMigrated { get; set; } = false;
     public bool NpcCollisionModeMigrated20260705 { get; set; } = false;
 
     // General
@@ -543,12 +544,17 @@ public partial class Configuration : IPluginConfiguration
     // Default OFF after field testing: only useful in specific setups.
     public bool RagdollAnthropometricMass { get; set; } = false;
     public float RagdollBodyMass { get; set; } = 70f; // Total body mass (kg) anthropometric fractions scale against.
-    // Tier B — Anatomy-fixed knee/elbow hinge axis. When on, the hinge axis is derived
-    // from the skeleton medial-lateral (character RIGHT) axis projected perpendicular to
-    // the bone, instead of Cross(thighDir, shinDir) which is degenerate for a near-straight
-    // limb and produced an asymmetric (one knee sideways, one forward) axis at death.
-    // Default OFF after field testing: only useful in specific setups.
-    public bool RagdollAnatomicalHingeAxis { get; set; } = false;
+    // Tier B — Anatomy-fixed knee/elbow hinge. A knee folds the shin backward and an elbow folds the
+    // forearm forward, relative to the character: facts about the body, not about the pose it died in.
+    // Both the hinge axis and the fold direction are taken from the character's facing, replacing
+    // Cross(thighDir, shinDir) — degenerate for a near-straight limb — and a fold sign that was read off
+    // whichever way the limb happened to be leaning (perpendicular on a straight leg, so it fell out of
+    // floating-point noise, one knee sideways and the other forward).
+    //
+    // This shipped OFF because it fixed the axis and then deliberately took its SIGN from the very axis
+    // it was replacing, which bent every knee forward. The idea was right; the sign was miswired. On by
+    // default now that it derives both.
+    public bool RagdollAnatomicalHingeAxis { get; set; } = true;
     // Tier C — Asymmetric swing-twist range of motion. When on, joints draw their axial
     // twist range (all joints) and the knee/elbow flexion/hyperextension bounds from a
     // clinical/ISB anatomical ROM table instead of the hand-set per-bone twist values and
@@ -883,6 +889,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateThinnerProfileTuning();
         MigrateKneeHingeStiffness();
         MigrateAnatomicalDefaultsOff();
+        MigrateAnatomicalHingeSignFix(); // must run AFTER the off-migration, whose verdict it lifts
         MigrateNpcCollisionMode();
         MigrateGuidedCollapse();
         RenameLegacyBoneProfiles();
@@ -1203,6 +1210,27 @@ public partial class Configuration : IPluginConfiguration
         RagdollAnthropometricMass = false;
 
         AnatomicalDefaultsOffMigrated20260704 = true;
+        Save();
+    }
+
+    /// <summary>
+    /// The anatomical hinge was turned off — here and in every config that had already run — because it
+    /// bent knees forward. That turned out not to be the idea's fault: it derived the hinge AXIS from
+    /// anatomy and then took the axis's SIGN from the very pose-derived axis it was replacing, and on a
+    /// straight leg that sign points the fold forward. Both are derived from anatomy now, so the verdict
+    /// no longer holds and the migration that recorded it has to be lifted — otherwise the fix reaches
+    /// nobody who ever ran the old build.
+    ///
+    /// Only the hinge is restored. The other two the old migration turned off are untouched: nothing has
+    /// changed about them.
+    /// </summary>
+    private void MigrateAnatomicalHingeSignFix()
+    {
+        if (AnatomicalHingeSignFixMigrated)
+            return;
+
+        RagdollAnatomicalHingeAxis = true;
+        AnatomicalHingeSignFixMigrated = true;
         Save();
     }
 
