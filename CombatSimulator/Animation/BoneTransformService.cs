@@ -257,6 +257,29 @@ public unsafe class BoneTransformService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Every bone on a character's skeleton, in skeleton order. The real thing, not a curated list —
+    /// so ears, tails, horns, whiskers and whatever else a race or a creature happens to carry are all
+    /// in here. Empty when the skeleton isn't readable.
+    /// </summary>
+    public IReadOnlyList<string> GetBoneNames(nint characterAddress)
+    {
+        var skel = TryGetSkeleton(characterAddress);
+        if (skel == null) return Array.Empty<string>();
+        var access = skel.Value;
+
+        var bones = access.HavokSkeleton->Bones;
+        var count = Math.Min(access.BoneCount, bones.Length);
+
+        var names = new List<string>(count);
+        for (int i = 0; i < count; i++)
+        {
+            var name = bones[i].Name.String;
+            if (!string.IsNullOrEmpty(name)) names.Add(name);
+        }
+        return names;
+    }
+
     /// <summary>Resolve a bone index by name. Returns -1 if not found.</summary>
     public int ResolveBoneIndex(SkeletonAccess skel, string boneName)
     {
