@@ -344,47 +344,12 @@ public partial class MainWindow : IDisposable
                 DrawNpcSettleCollisionSection();
                 ImGui.Separator();
                 if (ImGui.Button("Reset All to Defaults##ragdollpage"))
-                {
-                    // Ragdoll
-                    config.RagdollActivationDelay = 1.0f;
-                    config.EnableNpcDeathRagdoll = true;
-                    config.NpcRagdollActivationDelay = 0.5f;
-                    config.PartyCompanionDeathRagdoll = true;
-                    config.PartyEnemyDeathRagdoll = true;
-                    config.RagdollGravity = 9.8f;
-                    config.RagdollDamping = 0.97f;
-                    config.RagdollSolverIterations = 8;
-                    config.RagdollSelfCollision = true;
-                    config.RagdollFriction = 1.0f;
-                    config.ResetGuidedCollapseDefaults();
-                    config.WeaponDropGravity = 9.8f;
-                    config.WeaponDropDamping = 0.99f;
-                    config.WeaponDropAngularDamping = 0.85f;
-                    config.WeaponDropMass = 1.5f;
-                    config.WeaponDropRadius = 0.025f;
-                    config.WeaponDropHalfLength = 0.4f;
-                    config.WeaponDropBounce = 1.5f;
-                    config.WeaponDropFriction = 0.6f;
-                    config.WeaponDropSolverIterations = 4;
-                    config.RagdollHairPhysics = false;
-                    config.RagdollHairGravityStrength = 0.5f;
-                    config.RagdollHairDamping = 0.92f;
-                    config.RagdollHairStiffness = 0.1f;
-                    config.RagdollHairRigMode = false;
-                    config.RagdollHairRigSegmentMass = 0.02f;
-                    config.RagdollHairRigThickness = 0.008f;
-                    config.RagdollHairRigSwingLimit = 0.6f;
-                    config.RagdollHairRigInitialSwingFactor = 0.28f;
-                    config.RagdollHairRigPoseGuideForce = 4f;
-                    config.RagdollHairRigSettleSeconds = 1.0f;
-                    // NPC Collision
-                    config.RagdollNpcCollision = true;
-                    config.RagdollNpcCollisionConvexHull = false;
-                    config.RagdollNpcCollisionMode = RagdollNpcCollisionMode.BoneCapsule;
-                    // NPC Collision (Settle)
-                    config.RagdollNpcSettleCollision = true;
-                    config.Save();
-                }
+                    config.ResetRagdollPageDefaults();
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Restore every option on this page — ragdoll, guided collapse, NPC collision and its settle pass.\n\n" +
+                                     "Leaves Enable Ragdoll alone (resetting it would switch the feature off and take the page with it), " +
+                                     "and leaves the per-bone table and your saved profiles alone: the Advanced page has its own reset for " +
+                                     "the table, and the profiles are your work.");
                 break;
             case 6: // Ragdoll (Advanced)
                 DrawRagdollAdvancedSection();

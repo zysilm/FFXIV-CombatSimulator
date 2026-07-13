@@ -184,6 +184,7 @@ public partial class Configuration : IPluginConfiguration
     public bool KneeHingeStiffnessMigrated20260704 { get; set; } = false;
     public bool AnatomicalDefaultsOffMigrated20260704 { get; set; } = false;
     public bool AnatomicalHingeSignFixMigrated { get; set; } = false;
+    public bool NpcCollisionMeshDefaultMigrated { get; set; } = false;
     public bool NpcCollisionModeMigrated20260705 { get; set; } = false;
 
     // General
@@ -627,7 +628,10 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollNpcCollisionAutoSize { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcCollisionConvexHull { get; set; } = false;
-    public RagdollNpcCollisionMode RagdollNpcCollisionMode { get; set; } = RagdollNpcCollisionMode.BoneCapsule;
+    // Mesh (skinned): a snapshot of the rendered model taken with the pose it is actually in, rather
+    // than a stack of capsules standing in for it. A corpse falling against a creature meets the shape
+    // the player can see instead of an approximation of it.
+    public RagdollNpcCollisionMode RagdollNpcCollisionMode { get; set; } = RagdollNpcCollisionMode.Mesh;
     public bool RagdollNpcSettleCollision { get; set; } = true;
 
     // Auto-engage: NPC enemy targets attack the player automatically on
@@ -891,6 +895,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateAnatomicalDefaultsOff();
         MigrateAnatomicalHingeSignFix(); // must run AFTER the off-migration, whose verdict it lifts
         MigrateNpcCollisionMode();
+        MigrateNpcCollisionMeshDefault(); // after the mode migration above, whose old default it lifts
         MigrateGuidedCollapse();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
@@ -899,6 +904,76 @@ public partial class Configuration : IPluginConfiguration
     public void Save()
     {
         pluginInterface?.SavePluginConfig(this);
+    }
+
+    /// <summary>
+    /// Options the Ragdoll page owns but does not name after itself.
+    /// </summary>
+    private static readonly HashSet<string> RagdollPageExtraOptions = new(StringComparer.Ordinal)
+    {
+        nameof(ExtendTerrainDetection),
+        nameof(EnableNpcDeathRagdoll),
+        nameof(NpcRagdollActivationDelay),
+        nameof(MaxNpcRagdolls),
+        nameof(PartyCompanionDeathRagdoll),
+        nameof(PartyEnemyDeathRagdoll),
+    };
+
+    /// <summary>
+    /// Named like the page, but not the page's to reset.
+    /// </summary>
+    private static readonly HashSet<string> RagdollPageResetExclusions = new(StringComparer.Ordinal)
+    {
+        // The master switch. Resetting it would turn the whole feature off and take the page with it,
+        // which reads as the button having broken something rather than having restored it.
+        nameof(EnableRagdoll),
+
+        // Data, not options. The per-bone table has its own reset on the Advanced page, and the saved
+        // profiles are the user's own work — a defaults button has no business destroying either.
+        nameof(RagdollBoneConfigs),
+        nameof(RagdollBoneProfiles),
+
+        // Dev-only switches. They live on the hidden panel, not this page.
+        nameof(RagdollVerboseLog),
+        nameof(RagdollFollowPosition),
+        nameof(RagdollLiftUndergroundBonesOnStart),
+    };
+
+    private static bool IsRagdollPageOption(string name)
+    {
+        if (RagdollPageResetExclusions.Contains(name)) return false;
+
+        return name.StartsWith("Ragdoll", StringComparison.Ordinal)
+            || name.StartsWith("WeaponDrop", StringComparison.Ordinal)
+            || RagdollPageExtraOptions.Contains(name);
+    }
+
+    /// <summary>
+    /// Restore everything on the Ragdoll page — the ragdoll options themselves, guided collapse, NPC
+    /// collision and its settle pass — to defaults.
+    ///
+    /// Done by reflection against a fresh Configuration rather than by a hand-written list of
+    /// assignments, because a hand-written list is exactly what this replaces. That one had drifted
+    /// until most of the page was missing from it: every option added since had to remember to enrol
+    /// itself, and they stopped. A field is now restored by virtue of being named after the page it
+    /// belongs to, and the only things that need naming are the exceptions.
+    /// </summary>
+    public void ResetRagdollPageDefaults()
+    {
+        var defaults = new Configuration();
+
+        foreach (var property in typeof(Configuration).GetProperties(
+                     System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+        {
+            if (!property.CanRead || !property.CanWrite) continue;
+            if (property.GetIndexParameters().Length > 0) continue;
+            if (!IsRagdollPageOption(property.Name)) continue;
+
+            property.SetValue(this, property.GetValue(defaults));
+        }
+
+        ResetGuidedCollapseDefaults();
+        Save();
     }
 
     public void ResetGuidedCollapseDefaults(bool preserveEnabled = false)
@@ -1243,6 +1318,25 @@ public partial class Configuration : IPluginConfiguration
             ? RagdollNpcCollisionMode.ConvexHull
             : RagdollNpcCollisionMode.BoneCapsule;
         NpcCollisionModeMigrated20260705 = true;
+        Save();
+    }
+
+    /// <summary>
+    /// The skinned mesh is the default now: a corpse falling against a creature should meet the shape
+    /// the player can see, not a stack of capsules standing in for it.
+    ///
+    /// Only configs still sitting on the OLD default are moved. Anyone who went and picked a mode
+    /// deliberately picked it, and a change of default is no reason to overrule them.
+    /// </summary>
+    private void MigrateNpcCollisionMeshDefault()
+    {
+        if (NpcCollisionMeshDefaultMigrated)
+            return;
+
+        if (RagdollNpcCollisionMode == RagdollNpcCollisionMode.BoneCapsule)
+            RagdollNpcCollisionMode = RagdollNpcCollisionMode.Mesh;
+
+        NpcCollisionMeshDefaultMigrated = true;
         Save();
     }
 

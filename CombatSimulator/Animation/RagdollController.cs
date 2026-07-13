@@ -3964,6 +3964,13 @@ public unsafe partial class RagdollController : IDisposable
         // against it instead of against a number somebody guessed once.
         ragdollTotalMass = resolvedTotalMass;
 
+        // The bodies that actually arrive when this rig lands. Empty on a rig with no recognisable torso
+        // (a non-humanoid), and IsTorsoBody then falls back to treating every body as one.
+        torsoBodyIndices.Clear();
+        for (int i = 0; i < ragdollBones.Count; i++)
+            if (Array.IndexOf(TorsoBones, ragdollBones[i].Name) >= 0)
+                torsoBodyIndices.Add(i);
+
         // Tier D — one-time sanity log: resolved total should be ~RagdollBodyMass minus the
         // excluded cloth/weapon/breast bones (which keep their tiny literal masses).
         if (config.RagdollAnthropometricMass)
@@ -6437,35 +6444,51 @@ public unsafe partial class RagdollController : IDisposable
 
     // === Heavy body: limb inertia ===
     //
-    // This is the lever that mass is NOT. Gravity's torque on a limb scales with its mass and its
-    // resistance to being turned scales with its mass too — so multiplying the whole rig's mass cancels
-    // out exactly, and the corpse moves identically. That is why turning the mass up never did anything.
-    // Inertia is a different quantity: raise it without touching mass and a limb takes longer to spin up
-    // and longer to stop, which is the whole visual signature of something being heavy. An oak door and
-    // a cardboard one of the same size swing quite differently.
+    // This is the lever that mass is NOT. Gravity's torque on a limb scales with its mass, and the
+    // limb's resistance to being turned scales with its mass too — they cancel exactly, so multiplying
+    // the whole rig's mass moves it not one bit differently. That is the entire answer to why turning
+    // the mass up never did anything. Inertia is a different quantity: raise it and a limb takes longer
+    // to spin up and longer to stop, which is the whole visual signature of weight. An oak door and a
+    // cardboard one of the same size swing quite differently.
     //
-    // And ours are too low to begin with, not merely to taste. Inertia goes as the square of the radius,
-    // and the capsules are thinner than the limbs they stand for — a shin is modelled at a 35mm radius
-    // where a real one is nearer 60mm. That alone accounts for a factor of three. A capsule is also
-    // nearly a line about its own long axis, so it barrel-rolls for almost nothing, which is exactly the
-    // twitchiness that reads as weightless.
+    // But the correction has to be ANISOTROPIC, and the first attempt at this was not — it scaled the
+    // whole tensor by 2.5, and that is where the syrupy, stiff feel came from.
     //
-    // So this is a correction as much as a stylisation. Mass is left alone: it is the one thing that
-    // provably does not matter.
-    private const float LimbInertiaScale = 2.5f;
+    // Inertia goes as the square of the radius, so the error in these capsules is not spread evenly:
+    //   - About the limb's own LONG axis (a shin barrel-rolling about itself) inertia is governed almost
+    //     entirely by the radius. Ours is 35mm where a real shin is nearer 60mm — an underestimate of
+    //     roughly threefold. A capsule is very nearly a line about this axis, so it barrel-rolls for
+    //     almost nothing: exactly the twitchiness that reads as weightless.
+    //   - About the TRANSVERSE axes (the shin swinging end-over-end about the knee) inertia is dominated
+    //     by the limb's LENGTH, which the model gets right. That number was already close to correct.
+    //
+    // Slowing the transverse axes by 2.5 therefore did not add weight; it added treacle, and it did it
+    // on precisely the swings a body's weight is read from. Fix the axis that is wrong and leave the one
+    // that is right.
+    private const float LimbInertiaLongAxis = 3f;      // barrel-roll: badly underestimated
+    private const float LimbInertiaTransverse = 1.2f;  // end-over-end: already about right
 
+    /// <summary>
+    /// Both the capsule and the box shapes here are built with their LOCAL Y along the bone segment (see
+    /// CreateCapsuleRotation), so Y is the long axis and X/Z are the transverse ones — and for these
+    /// shapes the tensor is diagonal in that frame, which is what makes this clean.
+    /// </summary>
     private BodyInertia ApplyLimbInertia(BodyInertia inertia)
     {
-        if (!config.RagdollHeavyBody || LimbInertiaScale <= 1.0001f) return inertia;
+        if (!config.RagdollHeavyBody) return inertia;
 
         // The solver stores the INVERSE tensor, so scaling inertia up means scaling this down.
-        var inverse = 1f / LimbInertiaScale;
-        inertia.InverseInertiaTensor.XX *= inverse;
-        inertia.InverseInertiaTensor.YX *= inverse;
-        inertia.InverseInertiaTensor.YY *= inverse;
-        inertia.InverseInertiaTensor.ZX *= inverse;
-        inertia.InverseInertiaTensor.ZY *= inverse;
-        inertia.InverseInertiaTensor.ZZ *= inverse;
+        var longAxis = 1f / MathF.Max(0.01f, LimbInertiaLongAxis);
+        var transverse = 1f / MathF.Max(0.01f, LimbInertiaTransverse);
+
+        inertia.InverseInertiaTensor.XX *= transverse;
+        inertia.InverseInertiaTensor.YY *= longAxis;
+        inertia.InverseInertiaTensor.ZZ *= transverse;
+        // Off-diagonals are zero for these shapes in their own frame; scale them with the transverse
+        // terms anyway so a future non-diagonal shape degrades sensibly rather than silently.
+        inertia.InverseInertiaTensor.YX *= transverse;
+        inertia.InverseInertiaTensor.ZX *= transverse;
+        inertia.InverseInertiaTensor.ZY *= transverse;
         return inertia;
     }
 
@@ -6538,31 +6561,85 @@ public unsafe partial class RagdollController : IDisposable
     // contact springs and a recovery-velocity cap, which the ground contacts hold at 2 m/s so the rig
     // can settle at all.)
     //
-    // What a fighting game does instead is stage the landing, once:
+    // What a fighting game does instead is stage the landing:
     //   1. a freeze — the corpse stops dead for a few dozen milliseconds,
-    //   2. ONE heavy heave upward, scaled to the blow, and a whip on the limbs,
-    //   3. a camera shake, so the impact is felt outside the body as well.
-    // None of that is simulation. It is choreography, and it is where the weight comes from.
-    private const float ImpactSpeed = 5f;          // m/s of descent that counts as a hard landing
-    private const float ImpactArrestRatio = 0.45f; // ...and how much of it the ground must have taken
-    private const float ImpactFreezeSeconds = 0.055f;
-    private const float ImpactBounceFraction = 0.30f; // of the speed it came down at
-    private const float ImpactMaxBounce = 3.2f;       // m/s — a heave, never a trampoline
-    private const float ImpactWhip = 0.9f;            // rad/s per m/s of impact, spread over the limbs
-    private const float ImpactCooldown = 0.7f;        // one landing, not a stutter of them
+    //   2. the limbs carry on through, because a body's mass is legible in what keeps moving AFTER the
+    //      part that stopped,
+    //   3. on a genuinely hard blow, and only then, a heave that folds the body about its hips,
+    //   4. a camera shake, so the impact is felt outside the body as well.
+    //
+    // The freeze is not merely a trick, either. A real body arrests over 50-100ms of soft tissue
+    // crushing — flesh deforming, absorbing the energy — and a rigid capsule has no way to do that: it
+    // simply stops, in one step. The hitstop stands in for the crush, and its duration lands in the same
+    // 20-55ms band by no coincidence at all. It is the cheapest possible model of the one thing this
+    // engine genuinely cannot do.
+    //
+    // The impact is measured at the TORSO, not across the rig. A body falls about a pivot: the hips and
+    // chest are what arrive, while the feet have been on the floor the whole way down. Averaging the
+    // whole rig let the stationary feet drag the number under any plausible threshold, so an ordinary
+    // knockdown never registered as a landing at all — only a fall from a height did.
+    private const float ImpactSpeed = 2.5f;        // m/s of TORSO descent that counts as a landing
+    private const float ImpactHardSpeed = 8f;      // ...and where a landing has become a slam
+    private const float ImpactArrestRatio = 0.45f; // how much of it the ground must have taken
+    private const float ImpactFreezeMin = 0.020f;  // a knockdown gets a beat
+    private const float ImpactFreezeMax = 0.055f;  // a slam gets a full one
+    private const float ImpactBounceFraction = 0.30f;
+    private const float ImpactMaxBounce = 3.2f;    // m/s — a heave, never a trampoline
+    private const float ImpactLimbBounceShare = 0.12f;
+    private const float ImpactFollowThroughSeconds = 0.35f;
+    private const float ImpactCooldown = 0.7f;     // one landing, not a stutter of them
+
+    /// <summary>The bodies that actually arrive when a body falls. Everything else is along for the
+    /// ride — and the feet, in an ordinary collapse, never left the floor.</summary>
+    private static readonly string[] TorsoBones =
+        { "j_kosi", "n_hara", "j_sebo_a", "j_sebo_b", "j_sebo_c" };
+
+    /// <summary>
+    /// The joints released on impact so the limbs can follow through.
+    ///
+    /// This is the part of a landing that actually reads as mass, and it is the twelve principles'
+    /// "overlapping action": what tells you a thing is heavy is not the part that stops, it is
+    /// everything that keeps going afterwards. An arm that was travelling down keeps travelling down
+    /// after the shoulder has arrived; the head whips (the same mechanism that gives a real fall its
+    /// secondary head strike).
+    ///
+    /// And the engine would do all of this by itself. The joint motors were stopping it. So rather than
+    /// invent motion — the old pass scattered random angular velocity across every body, which reads as
+    /// flailing, not as weight, because it points nowhere in particular — simply take the brakes off and
+    /// let the momentum the limbs already have express itself. The swing limits stay on, so a limb
+    /// follows through within its anatomy instead of hyperextending.
+    /// </summary>
+    private static readonly string[] FollowThroughBones =
+    {
+        "j_sako_l", "j_sako_r",
+        "j_ude_a_l", "j_ude_a_r",
+        "j_ude_b_l", "j_ude_b_r",
+        "j_te_l", "j_te_r",
+        "j_kubi", "j_kao",
+    };
 
     private float impactFreezeRemaining;
     private float impactCooldownRemaining;
     private float previousDescentSpeed;
+    private readonly List<int> torsoBodyIndices = new();
 
-    /// <summary>Fired when the corpse lands hard, with the speed it came down at (m/s). The camera hangs
-    /// off this — an impact you only see in the body is half an impact.</summary>
+    /// <summary>Fired when the corpse lands, with the speed it came down at (m/s). The camera hangs off
+    /// this — an impact you only see in the body is half an impact.</summary>
     public event Action<float>? HardLanding;
 
+    /// <summary>Where this landing sits between "a knockdown" and "a slam", smoothed.</summary>
+    private static float ImpactSeverity(float speed)
+    {
+        var t = Math.Clamp((speed - ImpactSpeed) / (ImpactHardSpeed - ImpactSpeed), 0f, 1f);
+        return t * t * (3f - 2f * t);
+    }
+
+    private bool IsTorsoBody(int index) => torsoBodyIndices.Count == 0 || torsoBodyIndices.Contains(index);
+
     /// <summary>
-    /// Watch the rig's descent collapse. A hard landing is simply a fast fall that the ground took most
-    /// of in a single step — no contact bookkeeping needed, and it works whether the corpse lands on
-    /// terrain, on a monster, or on its own dropped gear.
+    /// Watch the torso's descent collapse. A landing is simply a fall that the ground took most of in a
+    /// single step — no contact bookkeeping needed, and it works whether the corpse lands on terrain, on
+    /// a monster, or on its own dropped gear.
     /// </summary>
     private void DetectImpact(float dt)
     {
@@ -6572,15 +6649,21 @@ public unsafe partial class RagdollController : IDisposable
             impactCooldownRemaining = MathF.Max(0f, impactCooldownRemaining - dt);
 
         var descent = 0f;
-        foreach (var rb in ragdollBones)
-            descent -= simulation.Bodies.GetBodyReference(rb.BodyHandle).Velocity.Linear.Y;
-        descent /= ragdollBones.Count;
+        var counted = 0;
+        for (int i = 0; i < ragdollBones.Count; i++)
+        {
+            if (!IsTorsoBody(i)) continue;
+            descent -= simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle).Velocity.Linear.Y;
+            counted++;
+        }
+        if (counted == 0) return;
+        descent /= counted;
 
         var before = previousDescentSpeed;
         previousDescentSpeed = descent;
 
         if (impactCooldownRemaining > 0f) return;
-        if (before < ImpactSpeed) return;                    // was not coming down hard
+        if (before < ImpactSpeed) return;                    // was not coming down
         if (descent > before * ImpactArrestRatio) return;    // ground has not taken it yet
 
         StageImpact(before);
@@ -6590,37 +6673,44 @@ public unsafe partial class RagdollController : IDisposable
     {
         if (simulation == null) return;
 
+        var severity = ImpactSeverity(speed);
+
         impactCooldownRemaining = ImpactCooldown;
-        impactFreezeRemaining = ImpactFreezeSeconds;
+        impactFreezeRemaining = ImpactFreezeMin + (ImpactFreezeMax - ImpactFreezeMin) * severity;
 
-        var heave = MathF.Min(speed * ImpactBounceFraction, ImpactMaxBounce);
-        var whip = speed * ImpactWhip;
+        // Real bodies do not bounce. Flesh is a lousy spring: a coefficient of restitution of maybe 0.1,
+        // which is why a dropped body goes "thud" and stays there. The heave is therefore NOT a physical
+        // bounce — it is the fighting game's deliberate stylisation of one, and like theirs it earns its
+        // place only on a genuinely hard blow. So it scales in from nothing: an ordinary knockdown gets
+        // no heave at all, just the beat and the follow-through, which is what a real body does.
+        var heave = MathF.Min(speed * ImpactBounceFraction, ImpactMaxBounce) * severity;
 
-        foreach (var rb in ragdollBones)
+        if (heave > 0.01f)
         {
-            var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            for (int i = 0; i < ragdollBones.Count; i++)
+            {
+                var body = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
 
-            // The heave is dealt out unevenly on purpose. A uniform one lifts the corpse like a plank;
-            // scattering it lets the joints turn the difference into a body that folds and flops as it
-            // comes back down.
-            var lift = heave * (0.75f + NextImpactJitter() * 0.5f);
-            var velocity = body.Velocity.Linear;
-            velocity.Y = MathF.Max(velocity.Y, lift);
-            body.Velocity.Linear = velocity;
-
-            // Whip. Limbs that arrive limp read as cloth; limbs that snap read as bone.
-            body.Velocity.Angular += new Vector3(
-                (NextImpactJitter() - 0.5f) * whip,
-                (NextImpactJitter() - 0.5f) * whip * 0.5f,
-                (NextImpactJitter() - 0.5f) * whip);
-
-            body.Awake = true;
+                // The torso takes the heave and the limbs barely do, so the body FOLDS about its hips on
+                // the way up instead of rising like a plank. A uniform lift is neither physical nor
+                // cinematic; it is a third thing, and it looks like a board.
+                var share = IsTorsoBody(i) ? 1f : ImpactLimbBounceShare;
+                var velocity = body.Velocity.Linear;
+                velocity.Y = MathF.Max(velocity.Y, heave * share);
+                body.Velocity.Linear = velocity;
+                body.Awake = true;
+            }
         }
+
+        // Take the brakes off, and the limbs' own momentum carries them through. See FollowThroughBones.
+        foreach (var bone in FollowThroughBones)
+            ReleaseJointForFollowThrough(bone, ImpactFollowThroughSeconds);
 
         // The rig is emphatically not at rest any more.
         BeginBiomechanicalSettle();
 
-        log.Info($"RagdollController: hard landing at {speed:F1} m/s — {ImpactFreezeSeconds * 1000f:F0}ms freeze, {heave:F1} m/s heave");
+        log.Info($"RagdollController: landing at {speed:F1} m/s (severity {severity:F2}) — " +
+                 $"{impactFreezeRemaining * 1000f:F0}ms freeze, {heave:F2} m/s heave, follow-through released");
         HardLanding?.Invoke(speed);
     }
 
@@ -10052,6 +10142,17 @@ public unsafe partial class RagdollController : IDisposable
     // Temporarily free a joint so its child can swing: zero the angular motor force and widen the
     // swing-limit cone. Both are restored by TickRecoilRelaxers after the window.
     private void RelaxJointForRecoil(string boneName, float duration)
+        => RelaxJoint(boneName, duration, widenSwing: true);
+
+    /// <summary>
+    /// Release a joint's motor on impact so the limb hanging off it carries its own momentum through.
+    /// The swing limits are left ALONE — unlike a recoil, which is a limb being kicked and wants room to
+    /// fly, a follow-through is a limb continuing under its own steam and must stay inside its anatomy.
+    /// </summary>
+    private void ReleaseJointForFollowThrough(string boneName, float duration)
+        => RelaxJoint(boneName, duration, widenSwing: false);
+
+    private void RelaxJoint(string boneName, float duration, bool widenSwing)
     {
         if (simulation == null) return;
         var relaxed = false;
@@ -10065,7 +10166,7 @@ public unsafe partial class RagdollController : IDisposable
             }
             catch { }
         }
-        if (swingLimitByBone.TryGetValue(boneName, out var swing))
+        if (widenSwing && swingLimitByBone.TryGetValue(boneName, out var swing))
         {
             var wide = swing.Original;
             wide.MaximumSwingAngle = MathF.Max(swing.Original.MaximumSwingAngle, RecoilSwingAngle);
@@ -10337,6 +10438,7 @@ public unsafe partial class RagdollController : IDisposable
         impactFreezeRemaining = 0f;
         impactCooldownRemaining = 0f;
         previousDescentSpeed = 0f;
+        torsoBodyIndices.Clear();
         grabConstraintActive = false;
         grabServoActive = false;
         grabIsRigid = false;
