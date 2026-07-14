@@ -131,20 +131,23 @@ public sealed unsafe class DynamicCameraController : IDisposable
     // the measured pitch next frame. If the pitch consistently moves the wrong way, the
     // belief is wrong — flip the sign once and carry on. Getting this wrong statically is
     // exactly how v1 put the camera underground.
-    private float dirVSign = -1f; // belief: DirV = −χ (camera above at negative DirV)
-    private float pitchFlipEvidence;
-    private float chiRealPrev;
-    private float pendingExpectedChiDelta;
-    private bool havePendingChiProbe;
+    /// <summary>DirV runs opposite to χ: the struct documents "positive is looking up",
+    /// and χ is down-positive. Fixed by documentation, not probed — the probe-and-flip
+    /// servo this replaces was itself a source of oscillation.</summary>
+    private const float DirVSignForChi = -1f;
 
-    // OUR DirV during the death shot, written as an absolute value every frame. Stepping off
-    // the live DirV (read-modify-write) let anything else that touched DirV — the game
-    // applying a drag the clear missed, another mode's write — flow straight into our
-    // baseline and stay there, and the full-gain step on top of the game's nonlinear tilt
-    // response rang the loop (the violent shake when pitching down). Absolute writes stomp
-    // foreign edits within a frame; the reduced gain keeps the feedback from ringing.
+    // Death-shot pitch is OPEN LOOP: DirV slews toward the slider's value at a fixed rate
+    // and nothing measures-and-corrects it. Every closed-loop variant tried — read-modify-
+    // write feedback, absolute-write feedback with reduced gain, composition fitted at the
+    // measured pitch — oscillated in testing, and the last one made it worse: the measured
+    // pitch carries the game's distance-dependent tilt, so routing it back into the
+    // composition (whose solve moves the distance) closed a positive feedback loop. The
+    // measured pitch is still USED, but only forward: a heavily smoothed copy tells the fit
+    // what the lens actually sees. Nothing downstream of that smoothed value writes DirV.
     private float dirVOwned;
     private bool hasDirVOwned;
+    private float chiFitSmoothed;
+    private bool hasChiFit;
 
     // Orbit-placement feedback. The game rebuilds the camera at pivot + orbitDir·Distance,
     // and its orbit direction is NOT the reverse of the view direction — the view carries an
@@ -184,16 +187,10 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private float combatBaseDistance;
     private float lastShareSetting;
 
-    // Death-shot preferences, seeded from the sliders and then driven by INTERCEPTED input.
-    //
-    // During the death shot the player's pitch and zoom inputs never reach the game camera:
-    // we consume the raw input deltas ourselves and clear them (ClearInputV / rewriting
-    // Distance every frame), then translate them into these preferences. This is the fix for
-    // the input fighting testing kept finding — with the game also applying the same inputs
-    // to DirV/Distance, every axis had two writers, our "was that the player?" readback loops
-    // chased the game's own writes, and the coupled loops oscillated (violent shake when
-    // pitching down; a zoom multiplier that ratcheted up and pushed the shot out).
-    private float deathAnglePref;
+    // Death-shot preferences. The ANGLE is slider-only by decision: after three attempts at
+    // live pitch adjustment (each a differently-shaped feedback loop, each one shaking), the
+    // vertical axis is simply locked during the shot — ClearInputV eats the input, the slider
+    // is the sole authority. The wheel still drives coverage/zoom-out below.
     /// <summary>Runtime body coverage the wheel drives (the coverage slider seeds it).
     /// Zooming in tightens the shot toward head-and-chest; zooming out first restores full
     /// coverage, then backs the camera off (deathZoomOut) up to DeathZoomMax.</summary>
@@ -239,9 +236,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
     public string StatusText { get; private set; } = "off";
     public float DebugGroundY { get; private set; }
     public float DebugStandoff { get; private set; }
-    /// <summary>Current belief about which way DirV runs (+1: DirV = χ, −1: DirV = −χ).</summary>
-    public float PitchWriteSign => dirVSign;
-
     /// <summary>Raw mouse wheel from the plugin's ImGui draw pass — the only reliable place
     /// to read it, since the camera struct exposes no pending zoom input to intercept.
     /// Consumed by the death shot; ignored (and discarded) everywhere else.</summary>
@@ -253,6 +247,11 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// <summary>Runtime wheel-driven coverage / zoom-out (death shot), for the overlay.</summary>
     public float DeathCoverage => deathCoveragePref;
     public float DeathZoomOut => deathZoomOut;
+    /// <summary>Wheel input received but not yet consumed — nonzero here across frames means
+    /// the ImGui wheel arrives but the death tick never spends it.</summary>
+    public float DebugPendingWheel => pendingWheel;
+    /// <summary>Whether the zoom pin (MinDistance == MaxDistance == ours) is engaged.</summary>
+    public bool DebugZoomPinned => distanceLimitsOverridden;
 
     /// <summary>Camera write authority, from the coordinator. Only used for the status readout —
     /// arbitration itself is the coordinator's job.</summary>
@@ -321,7 +320,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         haveMeasuredOrbitDir = false;
         haveLastSubmittedPivot = false;
         hasDirVOwned = false;
-        deathAnglePref = Math.Clamp(config.DynCamDeathAngle, DeathAngleMin, DeathAngleMax);
+        hasChiFit = false;
         deathCoveragePref = Math.Clamp(config.DynCamDeathBodyVisibility, 0.25f, 1f);
         lastDeathCoverageSetting = config.DynCamDeathBodyVisibility;
 
@@ -349,17 +348,9 @@ public sealed unsafe class DynamicCameraController : IDisposable
             startDistance = cam->Distance;
             startFov = cam->FoV;
 
-            // The starting angle is MEASURED, not derived from DirV — the whole point of the
-            // χ-space design is never to interpret DirV ourselves.
+            // The starting position is MEASURED where possible.
             if (GameCameraView.TryRead(out var v))
-            {
-                DynamicCameraSolver.MeasureAngles(v.Forward, out _, out startChi);
                 startCam = v.Position;
-            }
-            else
-            {
-                startChi = 0f;
-            }
 
             // If combat framing was already running, start from what it was showing rather
             // than from the game's raw look-at (they can differ by the shoulder offset).
@@ -372,12 +363,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
             curCam = startCam;
             curPivot = startPivot;
             curDistance = startDistance;
-            curChi = startChi;
             curFov = startFov;
             hasCurState = true;
-            chiRealPrev = startChi;
-            havePendingChiProbe = false;
-            pitchFlipEvidence = 0f;
         }
         catch { }
     }
@@ -831,19 +818,10 @@ public sealed unsafe class DynamicCameraController : IDisposable
             distanceLimitsOverridden = true;
         }
 
-        // INTERCEPT the player's pitch before the game applies it. The raw delta becomes an
-        // angle nudge; the request below clears the vertical input so the game never also
-        // writes DirV. One writer per axis — the shake was two.
-        var rawPitchInput = gameCam->InputDeltaVAdjusted != 0f ? gameCam->InputDeltaVAdjusted : gameCam->InputDeltaV;
-        if (MathF.Abs(rawPitchInput) > 0.0001f)
-        {
-            // Same sign belief the DirV write feedback maintains: the drag nudges χ the way
-            // the camera would have pitched. Scaled down — the death shot wants fine trim,
-            // not free look.
-            deathAnglePref = Math.Clamp(
-                deathAnglePref + dirVSign * rawPitchInput * 0.6f,
-                DeathAngleMin, DeathAngleMax);
-        }
+        // Vertical camera input is fully locked during the death shot (the request below
+        // clears it every frame). The angle is the slider's alone — three attempts at live
+        // pitch adjustment each shook, and the call was made to lock it rather than keep
+        // fighting the game's pitch pipeline.
 
         // The wheel's intent, read raw (ImGui) because the game's zoom is pinned shut below.
         // One notch ≈ ±1. Zooming in spends zoom-out headroom first, then tightens coverage
@@ -887,7 +865,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
         // Where the camera ACTUALLY is and points, measured. Yaw is the player's, always —
         // we take whatever it currently is and solve around it.
         DynamicCameraSolver.MeasureAngles(view.Forward, out var yawReal, out var chiReal);
-        UpdatePitchSignBelief(chiReal);
 
         // Measure the game's orbit direction: where it put the camera relative to the pivot
         // we handed it last frame. This is the exact mapping the pivot decomposition needs.
@@ -903,16 +880,24 @@ public sealed unsafe class DynamicCameraController : IDisposable
         }
 
         // χ is the photographer's angle (positive = raised a little, looking down; negative
-        // = flat on the ground looking up at the killer).
-        var chiTarget = Math.Clamp(deathAnglePref, DeathAngleMin, DeathAngleMax);
+        // = flat on the ground looking up at the killer). Slider-only, by decision.
+        var chiTarget = Math.Clamp(config.DynCamDeathAngle, DeathAngleMin, DeathAngleMax);
 
-        // The composition is solved at the pitch the camera ACTUALLY has, not the pitch we
-        // are steering toward. The DirV feedback moves reality toward the target over a few
-        // frames; fitting at the target meanwhile rendered frames that were composed for an
-        // angle the camera did not yet have — at steeper angles the mismatch was big enough
-        // to read as "the solve breaks when I pitch down". Fit what is; steer toward what
-        // should be.
-        var solved = SolveDeathFraming(playerAddress, yawReal, chiReal, in view, dt,
+        // The fit uses a HEAVILY smoothed copy of the measured pitch: forward-only, so the
+        // composition always matches what the lens really sees (including the game's
+        // distance-dependent tilt), but too slow to close a loop with the solve that moves
+        // the distance — feeding the raw measurement back in is what amplified the shake.
+        if (!hasChiFit)
+        {
+            chiFitSmoothed = chiReal;
+            hasChiFit = true;
+        }
+        else
+        {
+            chiFitSmoothed += (chiReal - chiFitSmoothed) * (1f - MathF.Exp(-2.5f * dt));
+        }
+
+        var solved = SolveDeathFraming(playerAddress, yawReal, chiFitSmoothed, in view, dt,
             out var solvedCam, out var distance, out var fov);
 
         LastSolveOk = solved;
@@ -930,7 +915,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
             SolvedYaw = yawReal;
         }
 
-        var targetChi = solved ? chiTarget : curChi;
         var targetFov = solved ? fov : curFov;
         var targetDistance = solved ? distance : curDistance;
         var targetCam = solved ? solvedCam : curCam;
@@ -948,7 +932,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
             }
             else
             {
-                DynamicCameraSolver.BasisFromAngles(yawReal, chiReal, out var zf, out _, out _);
+                DynamicCameraSolver.BasisFromAngles(yawReal, chiFitSmoothed, out var zf, out _, out _);
                 away = -zf;
             }
             targetCam += away * (distance * (deathZoomOut - 1f));
@@ -964,7 +948,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
             curCam = Vector3.Lerp(startCam, targetCam, s);
             curDistance = Lerp(startDistance, targetDistance, s);
-            curChi = Lerp(startChi, targetChi, s);
             curFov = Lerp(startFov, targetFov, s);
 
             if (t >= 1f)
@@ -984,7 +967,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
             curCam = Vector3.Lerp(curCam, targetCam, pk);
             curDistance += (targetDistance - curDistance) * dk;
-            curChi += (targetChi - curChi) * dk;
             curFov += (targetFov - curFov) * sk;
 
             StatusText = killerFit switch
@@ -1014,29 +996,23 @@ public sealed unsafe class DynamicCameraController : IDisposable
             gameCam->MaxDistance = curDistance;
         }
 
-        // Pitch is written by FEEDBACK against OUR OWN DirV state, as an absolute value: step
-        // it in the direction the sign belief says moves the real pitch toward curChi, verify
-        // against the measured pitch next frame (UpdatePitchSignBelief), and flip the belief
-        // if it consistently moves the wrong way. Never read-modify-write the live DirV — any
-        // foreign edit (a drag the clear missed, another mode) would flow into the baseline
-        // and stay. The 0.35 gain is deliberate: full-gain stepping against the game's
-        // nonlinear tilt response is what rang the loop into visible shaking.
+        // Pitch, OPEN LOOP: our DirV state slews toward the slider's value at a fixed rate,
+        // and no measurement ever writes it back. Every closed-loop variant oscillated in
+        // testing — the plant (the game's DirV→view mapping, with its distance-dependent
+        // tilt) is not the clean unit gain a per-frame servo assumes. The slider maps to
+        // DirV by the documented convention (DirV positive = looking up = −χ); whatever
+        // small optical offset remains is absorbed by fitting at the measured pitch above,
+        // and by the user tuning the slider by eye.
         if (!hasDirVOwned)
         {
             dirVOwned = gameCam->DirV;
             hasDirVOwned = true;
         }
 
-        var chiErr = curChi - chiReal;
-        var maxStep = 3.0f * dt;
-        var dirVStep = MathF.Abs(chiErr) > 0.004f
-            ? Math.Clamp(dirVSign * chiErr * 0.35f, -maxStep, maxStep)
-            : 0f;
-        dirVOwned = ClampToGamePitch(gameCam, dirVOwned + dirVStep);
+        var dirVDesired = ClampToGamePitch(gameCam, DirVSignForChi * chiTarget);
+        var slew = 0.8f * dt;
+        dirVOwned = ClampToGamePitch(gameCam, dirVOwned + Math.Clamp(dirVDesired - dirVOwned, -slew, slew));
         var dirVOut = dirVOwned;
-        pendingExpectedChiDelta = dirVSign * dirVStep;
-        havePendingChiProbe = MathF.Abs(pendingExpectedChiDelta) > 0.0025f;
-        chiRealPrev = chiReal;
 
         // Hand the game an orbit centre that reconstructs the camera we want: it rebuilds the
         // camera at pivot + orbitDir·Distance, so pivot = curCam − orbitDir·Distance lands it
@@ -1052,8 +1028,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         {
             // First frame: approximate with the reversed view direction; the measurement
             // takes over next frame and the springs absorb the correction.
-            var chiExpected = chiReal + pendingExpectedChiDelta;
-            DynamicCameraSolver.BasisFromAngles(yawReal, chiExpected, out var fwd0, out _, out _);
+            DynamicCameraSolver.BasisFromAngles(yawReal, chiFitSmoothed, out var fwd0, out _, out _);
             orbitDir = -fwd0;
         }
         curPivot = curCam - orbitDir * curDistance;
@@ -1071,48 +1046,11 @@ public sealed unsafe class DynamicCameraController : IDisposable
             Distance = curDistance,
             Fov = curFov,
             // No MaxDistanceAtLeast: the coordinator's raise machinery would undo the zoom
-            // pin above. Vertical input was consumed as an angle nudge; clearing it keeps
-            // the game from ALSO applying it to DirV (the second writer the shake came
-            // from). Yaw stays untouched — the player keeps horizontal control for real.
+            // pin above. Vertical input is locked (slider-only angle); clearing it keeps
+            // the game from applying it to DirV. Yaw stays untouched — the player keeps
+            // horizontal control for real.
             ClearInputV = true,
         });
-    }
-
-    /// <summary>
-    /// Verify last frame's pitch write against what the camera actually did, and flip the
-    /// DirV sign belief if the evidence says it is backwards. Evidence only counts when the
-    /// player is not touching the camera and we actually own it.
-    /// </summary>
-    private void UpdatePitchSignBelief(float chiReal)
-    {
-        if (!havePendingChiProbe)
-            return;
-        havePendingChiProbe = false;
-
-        if (rotateHold > 0f)
-            return;
-        var beliefOwner = GetCurrentOwner?.Invoke() ?? CameraOwner.None;
-        if (beliefOwner is not (CameraOwner.DynamicCam or CameraOwner.DynamicDeath))
-            return;
-
-        var actualDelta = chiReal - chiRealPrev;
-        if (MathF.Abs(actualDelta) < 0.0005f)
-            return;
-
-        if (actualDelta * pendingExpectedChiDelta < 0f)
-        {
-            pitchFlipEvidence += MathF.Abs(pendingExpectedChiDelta);
-            if (pitchFlipEvidence > 0.04f)
-            {
-                dirVSign = -dirVSign;
-                pitchFlipEvidence = 0f;
-                log.Warning($"DynamicCam: pitch moved against every write — DirV runs the other way. Sign belief flipped to {dirVSign:+0;-0}.");
-            }
-        }
-        else
-        {
-            pitchFlipEvidence = MathF.Max(0f, pitchFlipEvidence - MathF.Abs(pendingExpectedChiDelta) * 0.5f);
-        }
     }
 
     /// <summary>
