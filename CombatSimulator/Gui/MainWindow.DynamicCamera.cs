@@ -233,11 +233,13 @@ public partial class MainWindow
             config.DynCamDeathBodyVisibility = body;
             config.Save();
         }
-        HelpMarker("How much of your body is guaranteed to stay in shot.\n\n" +
+        HelpMarker("How much of your body is guaranteed to stay in shot, counted from the head.\n\n" +
                    "1.00 — head to feet\n" +
-                   "0.50 — roughly half the body\n" +
+                   "0.50 — head to waist\n" +
                    "0.25 — head and chest only\n\n" +
-                   "Asking for less lets the camera sit closer and tighter.");
+                   "Asking for less lets the camera sit closer and tighter. During the death shot the " +
+                   "SCROLL WHEEL drives this live — zooming in tightens toward the head, zooming out " +
+                   "restores full coverage and then backs the camera off.");
 
         var bodyBand = config.DynCamDeathBodyBand;
         if (ImGui.SliderFloat("Body position in frame##dyncam", ref bodyBand, -0.85f, 0.3f, "%.2f"))
@@ -262,7 +264,9 @@ public partial class MainWindow
                    "Positive — propped up on the elbows, looking down. Shows the ground and reads more as a body on the floor.\n\n" +
                    "Tipping further down needs more height and distance to still fit the killer; the shot works that out for you, " +
                    "so expect it to pull back as you raise this.\n\n" +
-                   "Dragging the camera up and down during the shot nudges this live.");
+                   "During the death shot, vertical camera drag is taken over and trims this directly (within the slider's " +
+                   "range) — the game no longer free-looks vertically, which is what used to make the shot fight your hand " +
+                   "and shake. Horizontal orbit stays fully yours.");
 
         var maximize = config.DynCamDeathMaximizeBody;
         if (ImGui.Checkbox("Maximize body in frame##dyncam", ref maximize))

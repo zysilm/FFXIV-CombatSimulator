@@ -159,9 +159,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
     // Player-intent tracking. We write some axes, so "what the player did" is the
     // difference between what the game reports and what we last wrote.
     private float lastWrittenDistance;
-    private float lastWrittenPitch;
     private bool wroteDistance;
-    private bool wrotePitch;
     private float prevObservedDistance;
 
     private float zoomHold;
@@ -175,12 +173,29 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private float combatBaseDistance;
     private float lastShareSetting;
 
-    /// <summary>Death-shot camera angle χ (positive = looking down), seeded from the slider
-    /// and then nudged by the player's vertical drags. χ lives in "photographer space";
-    /// the game's DirV is its negation (negative DirV = camera above, looking down).</summary>
+    // Death-shot preferences, seeded from the sliders and then driven by INTERCEPTED input.
+    //
+    // During the death shot the player's pitch and zoom inputs never reach the game camera:
+    // we consume the raw input deltas ourselves and clear them (ClearInputV / rewriting
+    // Distance every frame), then translate them into these preferences. This is the fix for
+    // the input fighting testing kept finding — with the game also applying the same inputs
+    // to DirV/Distance, every axis had two writers, our "was that the player?" readback loops
+    // chased the game's own writes, and the coupled loops oscillated (violent shake when
+    // pitching down; a zoom multiplier that ratcheted up and pushed the shot out).
     private float deathAnglePref;
-    private float deathZoomMul = 1f;
+    /// <summary>Runtime body coverage the wheel drives (the coverage slider seeds it).
+    /// Zooming in tightens the shot toward head-and-chest; zooming out first restores full
+    /// coverage, then backs the camera off (deathZoomOut) up to DeathZoomMax.</summary>
+    private float deathCoveragePref = 1f;
+    private float deathZoomOut = 1f;
+    private float lastDeathCoverageSetting;
     private float smoothedShoulder;
+
+    // The game's own MinDistance (~1.5y by default) silently clamps the close-up distances
+    // the maximize fit produces — another reason "maximize" looked like it did nothing.
+    // Lower it during the death shot; restore on the way out.
+    private float savedMinDistance;
+    private bool minDistanceOverridden;
     /// <summary>Which side the character currently sits on (±1). Held across frames so the
     /// choice is stable and so it can be frozen while the player is orbiting.</summary>
     private float shoulderSide;
@@ -208,6 +223,9 @@ public sealed unsafe class DynamicCameraController : IDisposable
     public float DebugStandoff { get; private set; }
     /// <summary>Current belief about which way DirV runs (+1: DirV = χ, −1: DirV = −χ).</summary>
     public float PitchWriteSign => dirVSign;
+    /// <summary>Runtime wheel-driven coverage / zoom-out (death shot), for the overlay.</summary>
+    public float DeathCoverage => deathCoveragePref;
+    public float DeathZoomOut => deathZoomOut;
 
     /// <summary>Camera write authority, from the coordinator. Only used for the status readout —
     /// arbitration itself is the coordinator's job.</summary>
@@ -268,11 +286,13 @@ public sealed unsafe class DynamicCameraController : IDisposable
         killerFit = KillerFit.FullBody;
         ladderLevel = 0;
         ladderDwell = 0f;
-        deathZoomMul = 1f;
+        deathZoomOut = 1f;
         hasGroundSample = false;
         haveMeasuredOrbitDir = false;
         haveLastSubmittedPivot = false;
         deathAnglePref = Math.Clamp(config.DynCamDeathAngle, DeathAngleMin, DeathAngleMax);
+        deathCoveragePref = Math.Clamp(config.DynCamDeathBodyVisibility, 0.25f, 1f);
+        lastDeathCoverageSetting = config.DynCamDeathBodyVisibility;
 
         CaptureTranslateStart();
         phase = Phase.DeathTranslate;
@@ -339,18 +359,18 @@ public sealed unsafe class DynamicCameraController : IDisposable
         hasCurState = false;
         curCam = default;
         wroteDistance = false;
-        wrotePitch = false;
         killerAddress = nint.Zero;
         killerEntityId = 0;
         killerFit = KillerFit.FullBody;
         ladderLevel = 0;
         combatZoomBias = 1f;
-        deathZoomMul = 1f;
+        deathZoomOut = 1f;
         smoothedShoulder = 0f;
         shoulderSide = 0f;
         hasGroundSample = false;
         haveMeasuredOrbitDir = false;
         haveLastSubmittedPivot = false;
+        RestoreMinDistance();
         requiredPoints.Clear();
         StatusText = "off";
         coordinator.Release(CameraOwner.DynamicCam);
@@ -425,6 +445,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         {
             phase = Phase.Combat;
             DisableCollisionPatch();
+            RestoreMinDistance();
         }
 
         if (!alive)
@@ -436,6 +457,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
             {
                 coordinator.Release(CameraOwner.DynamicCam);
                 DisableCollisionPatch();
+                RestoreMinDistance();
                 phase = Phase.Off;
                 hasCurState = false;
                 StatusText = "death framing off — Death Cam has it";
@@ -504,44 +526,23 @@ public sealed unsafe class DynamicCameraController : IDisposable
             MathF.Abs(gameCam->InputDeltaV) > 0.0001f || MathF.Abs(gameCam->InputDeltaVAdjusted) > 0.0001f)
             rotateHold = hold;
 
+        // COMBAT-mode zoom adoption only. Death mode does not read intent back from the
+        // camera at all any more — its inputs are intercepted at the source in TickDeath,
+        // which is what ended the two-writers fighting (shake, ratcheting zoom).
         var observedDistance = gameCam->Distance;
         var reference = wroteDistance ? lastWrittenDistance : prevObservedDistance;
         var zoomDelta = observedDistance - reference;
-        if (MathF.Abs(zoomDelta) > 0.02f && prevObservedDistance > 0f)
+        if (phase == Phase.Combat && MathF.Abs(zoomDelta) > 0.02f && prevObservedDistance > 0f)
         {
             zoomHold = hold;
 
-            if (phase == Phase.Combat)
-            {
-                // Adopt their zoom as a bias on the framing distance, so we never drag them
-                // back to ours — the screen-share adaptation just rides on top of it. Measured
-                // against the UNBIASED distance, otherwise each scroll multiplies the last.
-                var basis = MathF.Max(0.5f, combatBaseDistance);
-                combatZoomBias = Math.Clamp(observedDistance / basis, 0.4f, 3.0f);
-            }
-            else
-            {
-                var basis = MathF.Max(0.5f, SolvedDistance);
-                deathZoomMul = Math.Clamp(observedDistance / basis, 1.0f, DeathZoomMax);
-            }
+            // Adopt their zoom as a bias on the framing distance, so we never drag them
+            // back to ours — the screen-share adaptation just rides on top of it. Measured
+            // against the UNBIASED distance, otherwise each scroll multiplies the last.
+            var basis = MathF.Max(0.5f, combatBaseDistance);
+            combatZoomBias = Math.Clamp(observedDistance / basis, 0.4f, 3.0f);
         }
         prevObservedDistance = observedDistance;
-
-        // Only while the player is ACTUALLY rotating. The game adjusts DirV on its own too
-        // (its aim offset moves with zoom), and testing showed that counting every DirV
-        // discrepancy as player intent walks the angle preference far off its slider —
-        // the shot drifted from +0.01 to −0.18 rad with nobody touching the camera.
-        if (wrotePitch && rotateHold > 0f && phase is Phase.DeathTranslate or Phase.DeathHold)
-        {
-            var pitchDelta = gameCam->DirV - lastWrittenPitch;
-            if (MathF.Abs(pitchDelta) > 0.0005f)
-            {
-                // A vertical drag lands in DirV; convert it into χ with the same sign belief
-                // the write feedback uses (and auto-corrects), so a drag always nudges the
-                // preference the way the player pulled.
-                deathAnglePref = Math.Clamp(deathAnglePref + dirVSign * pitchDelta, DeathAngleMin, DeathAngleMax);
-            }
-        }
 
         // The slider is the user speaking directly — it overrides anything we learned.
         if (MathF.Abs(config.DynCamSubjectScreenShare - lastShareSetting) > 0.0001f)
@@ -551,7 +552,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
         }
 
         wroteDistance = false;
-        wrotePitch = false;
     }
 
     // ------------------------------------------------------------------
@@ -758,6 +758,61 @@ public sealed unsafe class DynamicCameraController : IDisposable
         if (wantCollisionOff && !collisionPatchActive) EnableCollisionPatch();
         else if (!wantCollisionOff && collisionPatchActive) DisableCollisionPatch();
 
+        // The game's default MinDistance quietly clamps the close-up distances the fit asks
+        // for (~1.5y floor) — with it in place, "maximize body" could never actually close in.
+        if (!minDistanceOverridden)
+        {
+            savedMinDistance = gameCam->MinDistance;
+            minDistanceOverridden = true;
+        }
+        gameCam->MinDistance = 0.3f;
+
+        // INTERCEPT the player's pitch and zoom before the game applies them. Their raw
+        // deltas become preference nudges; the request below clears the vertical input so
+        // the game never also writes DirV, and Distance is rewritten every frame anyway.
+        // One writer per axis — the shake was two.
+        var rawPitchInput = gameCam->InputDeltaVAdjusted != 0f ? gameCam->InputDeltaVAdjusted : gameCam->InputDeltaV;
+        if (MathF.Abs(rawPitchInput) > 0.0001f)
+        {
+            // Same sign belief the DirV write feedback maintains: the drag nudges χ the way
+            // the camera would have pitched. Scaled down — the death shot wants fine trim,
+            // not free look.
+            deathAnglePref = Math.Clamp(
+                deathAnglePref + dirVSign * rawPitchInput * 0.6f,
+                DeathAngleMin, DeathAngleMax);
+        }
+
+        if (wroteDistance)
+        {
+            var wheel = gameCam->Distance - lastWrittenDistance;
+            if (MathF.Abs(wheel) > 0.01f)
+            {
+                if (wheel > 0f)
+                {
+                    // Zoom out: restore coverage toward full first, then back the camera off.
+                    if (deathCoveragePref < 1f)
+                        deathCoveragePref = MathF.Min(1f, deathCoveragePref + wheel * 0.25f);
+                    else
+                        deathZoomOut = MathF.Min(DeathZoomMax, deathZoomOut * (1f + wheel * 0.10f));
+                }
+                else
+                {
+                    // Zoom in: shed the zoom-out headroom first, then tighten the coverage.
+                    if (deathZoomOut > 1.001f)
+                        deathZoomOut = MathF.Max(1f, deathZoomOut * (1f + wheel * 0.10f));
+                    else
+                        deathCoveragePref = MathF.Max(0.25f, deathCoveragePref + wheel * 0.25f);
+                }
+            }
+        }
+
+        // The coverage slider is the user speaking directly — reseed the wheel-driven pref.
+        if (MathF.Abs(config.DynCamDeathBodyVisibility - lastDeathCoverageSetting) > 0.0001f)
+        {
+            lastDeathCoverageSetting = config.DynCamDeathBodyVisibility;
+            deathCoveragePref = Math.Clamp(config.DynCamDeathBodyVisibility, 0.25f, 1f);
+        }
+
         BuildDeathAnchors(playerAddress, killerFit);
         if (requiredPoints.Count < 2)
         {
@@ -810,11 +865,11 @@ public sealed unsafe class DynamicCameraController : IDisposable
         var targetDistance = solved ? distance : curDistance;
         var targetCam = solved ? solvedCam : curCam;
 
-        // The player's zoom pulls the camera back along the ORBIT ray (that is what the game
-        // does with the distance). Backing the camera off by d·(μ−1) while asking for a
-        // distance of d·μ leaves the pivot exactly where it was — anchored on the body — so
+        // The wheel's zoom-out headroom pulls the camera back along the ORBIT ray (what the
+        // game itself does with distance). Backing the camera off by d·(μ−1) while asking for
+        // a distance of d·μ leaves the pivot exactly where it was — anchored on the body — so
         // zooming out never breaks the composition, it only makes it smaller.
-        if (solved && deathZoomMul > 1.0001f)
+        if (solved && deathZoomOut > 1.0001f)
         {
             Vector3 away;
             if (haveMeasuredOrbitDir)
@@ -826,8 +881,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
                 DynamicCameraSolver.BasisFromAngles(yawReal, chiTarget, out var zf, out _, out _);
                 away = -zf;
             }
-            targetCam += away * (distance * (deathZoomMul - 1f));
-            targetDistance = distance * deathZoomMul;
+            targetCam += away * (distance * (deathZoomOut - 1f));
+            targetDistance = distance * deathZoomOut;
         }
 
         if (phase == Phase.DeathTranslate)
@@ -914,9 +969,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
         hasCurState = true;
         lastWrittenDistance = curDistance;
-        lastWrittenPitch = dirVOut;
         wroteDistance = true;
-        wrotePitch = true;
 
         coordinator.Submit(CameraOwner.DynamicCam, new CameraRequest
         {
@@ -925,7 +978,10 @@ public sealed unsafe class DynamicCameraController : IDisposable
             Distance = curDistance,
             Fov = curFov,
             MaxDistanceAtLeast = curDistance + 1f,
-            // No DirH, no ClearInput: the player keeps the yaw and the camera keeps working.
+            // Vertical input was consumed above as an angle nudge; clearing it keeps the game
+            // from ALSO applying it to DirV (the second writer the shake came from). Yaw stays
+            // untouched — the player keeps horizontal control for real.
+            ClearInputV = true,
         });
     }
 
@@ -1180,11 +1236,11 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
         var fallback = ReadObjectPosition(playerAddress);
 
-        // Corpse: a prefix of the head→feet chain, sized by the coverage slider. Coverage
-        // counts FROM THE HEAD: 0.5 must mean head-to-waist, so the head can never be the
-        // part that goes missing.
+        // Corpse: a prefix of the head→feet chain, sized by the runtime coverage (slider-
+        // seeded, wheel-driven). Coverage counts FROM THE HEAD: 0.5 must mean head-to-waist,
+        // so the head can never be the part that goes missing.
         var levels = Math.Clamp(
-            (int)MathF.Ceiling(Math.Clamp(config.DynCamDeathBodyVisibility, 0.25f, 1f) * CorpseChain.Length),
+            (int)MathF.Ceiling(Math.Clamp(deathCoveragePref, 0.25f, 1f) * CorpseChain.Length),
             2, CorpseChain.Length);
 
         // The head needs care the rest of the chain does not. The j_kao bone sits at the
@@ -1322,6 +1378,22 @@ public sealed unsafe class DynamicCameraController : IDisposable
             return Vector3.Zero;
         var obj = (GameObject*)npc.BattleChara;
         return new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z);
+    }
+
+    /// <summary>Give back the game's own zoom floor once the death shot no longer needs
+    /// close-up distances.</summary>
+    private void RestoreMinDistance()
+    {
+        if (!minDistanceOverridden)
+            return;
+        try
+        {
+            var camMgr = GameCameraManager.Instance();
+            if (camMgr != null && camMgr->Camera != null)
+                camMgr->Camera->MinDistance = savedMinDistance;
+        }
+        catch { }
+        minDistanceOverridden = false;
     }
 
     /// <summary>

@@ -147,7 +147,7 @@ public sealed unsafe class DynamicCameraDebugOverlay
                 ? new Vector4(1f, 0.3f, 0.3f, 1f)   // camera at or below the floor — the v1 failure
                 : new Vector4(0.6f, 0.9f, 0.6f, 1f);
             ImGui.TextColored(color, $"ground {dynamicCam.DebugGroundY:F2}   cam {camY:F2}   above {aboveGround:+0.00;-0.00}");
-            ImGui.TextUnformatted($"standoff {dynamicCam.DebugStandoff:F2} y from body");
+            ImGui.TextUnformatted($"standoff {dynamicCam.DebugStandoff:F2} y   coverage {dynamicCam.DeathCoverage:F2}   zoomOut {dynamicCam.DeathZoomOut:F2}x");
         }
 
         ImGui.Separator();
@@ -173,7 +173,7 @@ public sealed unsafe class DynamicCameraDebugOverlay
         sb.AppendLine($"phase {dynamicCam.CurrentPhase} | {dynamicCam.StatusText}");
         sb.AppendLine($"solve ok={dynamicCam.LastSolveOk} distance={dynamicCam.SolvedDistance:F3} chi={dynamicCam.SolvedChi:F4} fov={dynamicCam.SolvedFov:F4} yaw={dynamicCam.SolvedYaw:F4}");
         sb.AppendLine($"anchors={dynamicCam.RequiredPoints.Count} killer={dynamicCam.CurrentKillerFit} ladder={dynamicCam.LadderLevel}");
-        sb.AppendLine($"ground={dynamicCam.DebugGroundY:F3} standoff={dynamicCam.DebugStandoff:F3} pitchSignBelief={dynamicCam.PitchWriteSign:+0;-0}");
+        sb.AppendLine($"ground={dynamicCam.DebugGroundY:F3} standoff={dynamicCam.DebugStandoff:F3} pitchSignBelief={dynamicCam.PitchWriteSign:+0;-0} coverage={dynamicCam.DeathCoverage:F2} zoomOut={dynamicCam.DeathZoomOut:F2}");
         sb.AppendLine($"screen={screen.X:F0}x{screen.Y:F0}");
 
         if (haveView)
