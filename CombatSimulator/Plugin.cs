@@ -618,6 +618,14 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         if (!clientState.IsLoggedIn)
             return;
 
+        // Raw mouse wheel for the dynamic camera's death shot: its zoom is pinned shut at
+        // the game camera, so the wheel's INTENT has to be read here — the camera struct
+        // has no pending-zoom field to intercept. Skipped while ImGui wants the mouse
+        // (scrolling one of our own windows must not retune the shot).
+        var imguiIo = Dalamud.Bindings.ImGui.ImGui.GetIO();
+        if (!imguiIo.WantCaptureMouse && imguiIo.MouseWheel != 0f)
+            dynamicCameraController.NotifyMouseWheel(imguiIo.MouseWheel);
+
         if (config.ShowShortcuts)
             mainWindow.DrawShortcutsBar();
 

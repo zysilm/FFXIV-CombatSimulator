@@ -191,11 +191,18 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private float lastDeathCoverageSetting;
     private float smoothedShoulder;
 
-    // The game's own MinDistance (~1.5y by default) silently clamps the close-up distances
-    // the maximize fit produces — another reason "maximize" looked like it did nothing.
-    // Lower it during the death shot; restore on the way out.
+    // During the death shot the game's zoom is PINNED (MinDistance = MaxDistance = ours):
+    // there is no pending-input field for the wheel to intercept the way pitch has
+    // InputDeltaV, and testing proved that merely rewriting Distance every frame loses to
+    // the game's own wheel handling (it applies input after our write — the wheel stayed
+    // fully functional and dragged the camera off the solved pose, corpse anchors out of
+    // frame). With the pin, the wheel's intent is read from ImGui's raw wheel instead
+    // (forwarded by the plugin's draw handler) and spent on coverage / zoom-out headroom.
     private float savedMinDistance;
-    private bool minDistanceOverridden;
+    private float savedMaxDistance;
+    private bool distanceLimitsOverridden;
+    private int distanceLimitSaveDelay;
+    private float pendingWheel;
     /// <summary>Which side the character currently sits on (±1). Held across frames so the
     /// choice is stable and so it can be frozen while the player is orbiting.</summary>
     private float shoulderSide;
@@ -223,6 +230,15 @@ public sealed unsafe class DynamicCameraController : IDisposable
     public float DebugStandoff { get; private set; }
     /// <summary>Current belief about which way DirV runs (+1: DirV = χ, −1: DirV = −χ).</summary>
     public float PitchWriteSign => dirVSign;
+
+    /// <summary>Raw mouse wheel from the plugin's ImGui draw pass — the only reliable place
+    /// to read it, since the camera struct exposes no pending zoom input to intercept.
+    /// Consumed by the death shot; ignored (and discarded) everywhere else.</summary>
+    public void NotifyMouseWheel(float wheel)
+    {
+        if (wheel != 0f && phase is Phase.DeathTranslate or Phase.DeathHold)
+            pendingWheel += wheel;
+    }
     /// <summary>Runtime wheel-driven coverage / zoom-out (death shot), for the overlay.</summary>
     public float DeathCoverage => deathCoveragePref;
     public float DeathZoomOut => deathZoomOut;
@@ -287,6 +303,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
         ladderLevel = 0;
         ladderDwell = 0f;
         deathZoomOut = 1f;
+        pendingWheel = 0f;
+        distanceLimitSaveDelay = 0;
         hasGroundSample = false;
         haveMeasuredOrbitDir = false;
         haveLastSubmittedPivot = false;
@@ -758,19 +776,21 @@ public sealed unsafe class DynamicCameraController : IDisposable
         if (wantCollisionOff && !collisionPatchActive) EnableCollisionPatch();
         else if (!wantCollisionOff && collisionPatchActive) DisableCollisionPatch();
 
-        // The game's default MinDistance quietly clamps the close-up distances the fit asks
-        // for (~1.5y floor) — with it in place, "maximize body" could never actually close in.
-        if (!minDistanceOverridden)
+        // Save the game's distance band once — but not on the very first death tick. Combat
+        // framing raises MaxDistance through the coordinator, and the coordinator gives that
+        // raise back during the FIRST Apply after we stop requesting it (this frame). Saving
+        // then would capture the raised value and ratchet it back in on restore; one tick
+        // later the band is the game's own again.
+        if (!distanceLimitsOverridden && ++distanceLimitSaveDelay >= 2)
         {
             savedMinDistance = gameCam->MinDistance;
-            minDistanceOverridden = true;
+            savedMaxDistance = gameCam->MaxDistance;
+            distanceLimitsOverridden = true;
         }
-        gameCam->MinDistance = 0.3f;
 
-        // INTERCEPT the player's pitch and zoom before the game applies them. Their raw
-        // deltas become preference nudges; the request below clears the vertical input so
-        // the game never also writes DirV, and Distance is rewritten every frame anyway.
-        // One writer per axis — the shake was two.
+        // INTERCEPT the player's pitch before the game applies it. The raw delta becomes an
+        // angle nudge; the request below clears the vertical input so the game never also
+        // writes DirV. One writer per axis — the shake was two.
         var rawPitchInput = gameCam->InputDeltaVAdjusted != 0f ? gameCam->InputDeltaVAdjusted : gameCam->InputDeltaV;
         if (MathF.Abs(rawPitchInput) > 0.0001f)
         {
@@ -782,27 +802,28 @@ public sealed unsafe class DynamicCameraController : IDisposable
                 DeathAngleMin, DeathAngleMax);
         }
 
-        if (wroteDistance)
+        // The wheel's intent, read raw (ImGui) because the game's zoom is pinned shut below.
+        // One notch ≈ ±1. Zooming in spends zoom-out headroom first, then tightens coverage
+        // toward the head; zooming out restores coverage first, then backs the camera off.
+        var wheel = pendingWheel;
+        pendingWheel = 0f;
+        if (MathF.Abs(wheel) > 0.001f)
         {
-            var wheel = gameCam->Distance - lastWrittenDistance;
-            if (MathF.Abs(wheel) > 0.01f)
+            if (wheel > 0f)
             {
-                if (wheel > 0f)
-                {
-                    // Zoom out: restore coverage toward full first, then back the camera off.
-                    if (deathCoveragePref < 1f)
-                        deathCoveragePref = MathF.Min(1f, deathCoveragePref + wheel * 0.25f);
-                    else
-                        deathZoomOut = MathF.Min(DeathZoomMax, deathZoomOut * (1f + wheel * 0.10f));
-                }
+                // Wheel up = zoom in (FFXIV convention).
+                if (deathZoomOut > 1.001f)
+                    deathZoomOut = MathF.Max(1f, deathZoomOut / (1f + wheel * 0.12f));
                 else
-                {
-                    // Zoom in: shed the zoom-out headroom first, then tighten the coverage.
-                    if (deathZoomOut > 1.001f)
-                        deathZoomOut = MathF.Max(1f, deathZoomOut * (1f + wheel * 0.10f));
-                    else
-                        deathCoveragePref = MathF.Max(0.25f, deathCoveragePref + wheel * 0.25f);
-                }
+                    deathCoveragePref = MathF.Max(0.25f, deathCoveragePref - wheel * 0.08f);
+            }
+            else
+            {
+                var w = -wheel;
+                if (deathCoveragePref < 1f)
+                    deathCoveragePref = MathF.Min(1f, deathCoveragePref + w * 0.08f);
+                else
+                    deathZoomOut = MathF.Min(DeathZoomMax, deathZoomOut * (1f + w * 0.12f));
             }
         }
 
@@ -931,7 +952,18 @@ public sealed unsafe class DynamicCameraController : IDisposable
         if (hasGroundSample)
             curCam.Y = MathF.Max(curCam.Y, smoothedGroundY + 0.15f);
 
-        curDistance = ClampToGameDistance(gameCam, curDistance);
+        curDistance = MathF.Max(0.3f, curDistance);
+
+        // Pin the game's zoom shut on exactly our distance: with min == max == ours, the
+        // wheel handler the game runs AFTER our write has nowhere to move the camera. This
+        // is what actually disables the game zoom — rewriting Distance alone demonstrably
+        // did not (the game re-applied the wheel on top every frame). Waits for the limit
+        // save above so the original band can be given back cleanly.
+        if (distanceLimitsOverridden)
+        {
+            gameCam->MinDistance = curDistance;
+            gameCam->MaxDistance = curDistance;
+        }
 
         // Pitch is written by FEEDBACK, not by value: step DirV in the direction the sign
         // belief says moves the real pitch toward curChi, verify against the measured pitch
@@ -977,10 +1009,10 @@ public sealed unsafe class DynamicCameraController : IDisposable
             DirV = dirVOut,
             Distance = curDistance,
             Fov = curFov,
-            MaxDistanceAtLeast = curDistance + 1f,
-            // Vertical input was consumed above as an angle nudge; clearing it keeps the game
-            // from ALSO applying it to DirV (the second writer the shake came from). Yaw stays
-            // untouched — the player keeps horizontal control for real.
+            // No MaxDistanceAtLeast: the coordinator's raise machinery would undo the zoom
+            // pin above. Vertical input was consumed as an angle nudge; clearing it keeps
+            // the game from ALSO applying it to DirV (the second writer the shake came
+            // from). Yaw stays untouched — the player keeps horizontal control for real.
             ClearInputV = true,
         });
     }
@@ -1277,6 +1309,19 @@ public sealed unsafe class DynamicCameraController : IDisposable
             }
         }
 
+        // The ragdoll lets extremities settle INTO the floor (a foot 0.1y under ground in
+        // testing). Requiring a below-ground point in frame drags the whole shot back for a
+        // spot nobody can see — clamp the corpse anchors to the visible side of the ground.
+        if (hasGroundSample)
+        {
+            var floor = smoothedGroundY + 0.03f;
+            for (var i = 0; i < requiredPoints.Count; i++)
+            {
+                if (requiredPoints[i].Y < floor)
+                    requiredPoints[i] = new Vector3(requiredPoints[i].X, floor, requiredPoints[i].Z);
+            }
+        }
+
         if (requiredPoints.Count == 0)
             requiredPoints.Add(fallback + new Vector3(0f, 0.5f, 0f));
 
@@ -1380,20 +1425,25 @@ public sealed unsafe class DynamicCameraController : IDisposable
         return new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z);
     }
 
-    /// <summary>Give back the game's own zoom floor once the death shot no longer needs
-    /// close-up distances.</summary>
+    /// <summary>Unpin the game's zoom once the death shot ends: give back the original
+    /// distance band so the wheel works normally again.</summary>
     private void RestoreMinDistance()
     {
-        if (!minDistanceOverridden)
+        if (!distanceLimitsOverridden)
             return;
         try
         {
             var camMgr = GameCameraManager.Instance();
             if (camMgr != null && camMgr->Camera != null)
+            {
                 camMgr->Camera->MinDistance = savedMinDistance;
+                camMgr->Camera->MaxDistance = savedMaxDistance;
+            }
         }
         catch { }
-        minDistanceOverridden = false;
+        distanceLimitsOverridden = false;
+        distanceLimitSaveDelay = 0;
+        pendingWheel = 0f;
     }
 
     /// <summary>

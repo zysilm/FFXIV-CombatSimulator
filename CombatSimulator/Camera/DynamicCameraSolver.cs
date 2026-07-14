@@ -145,16 +145,29 @@ public static class DynamicCameraSolver
         // the pivot→camera direction for this yaw.
         var back = new Vector3(MathF.Sin(yaw), 0f, MathF.Cos(yaw));
 
-        Vector3 CamAt(float t) => new(
-            corpseAnchor.X + back.X * t,
-            cameraHeight,
-            corpseAnchor.Z + back.Z * t);
+        // Lateral slide along the view's right axis. Backing away is the fit's main variable,
+        // but on its own it wastes frame: the camera retreats along the ray through the
+        // corpse anchor, so a body sprawled to one side binds against one frame edge while
+        // the other stays empty (testing showed the body pinned at x≈0.94 with everything
+        // left of centre vacant). Sliding sideways to centre the horizontal span lets the
+        // same subjects fit at a smaller standoff — strictly bigger on screen. The view
+        // DIRECTION never changes, so the player's yaw is untouched.
+        var lateral = 0f;
 
-        (bool fits, float maxAbsX, float maxAbsY) Measure(float t)
+        Vector3 CamAt(float t) => new(
+            corpseAnchor.X + back.X * t + right.X * lateral,
+            cameraHeight,
+            corpseAnchor.Z + back.Z * t + right.Z * lateral);
+
+        (bool fits, float maxAbsX, float maxAbsY, float minX, float maxX, float depthMinX, float depthMaxX) Measure(float t)
         {
             var cam = CamAt(t);
-            var maxX = 0f;
-            var maxY = 0f;
+            var maxAbsX = 0f;
+            var maxAbsY = 0f;
+            var minX = float.MaxValue;
+            var maxX = float.MinValue;
+            var depthMinX = 1f;
+            var depthMaxX = 1f;
             var ok = true;
             foreach (var p in required)
             {
@@ -164,23 +177,22 @@ public static class DynamicCameraSolver
                     ok = false;
                     continue;
                 }
-                maxX = MathF.Max(maxX, MathF.Abs(ndc.X));
-                maxY = MathF.Max(maxY, MathF.Abs(ndc.Y));
+                maxAbsX = MathF.Max(maxAbsX, MathF.Abs(ndc.X));
+                maxAbsY = MathF.Max(maxAbsY, MathF.Abs(ndc.Y));
+                if (ndc.X < minX) { minX = ndc.X; depthMinX = ndc.Z; }
+                if (ndc.X > maxX) { maxX = ndc.X; depthMaxX = ndc.Z; }
             }
-            ok = ok && maxX <= safeX && maxY <= safeY;
-            return (ok, maxX, maxY);
+            ok = ok && maxAbsX <= safeX && maxAbsY <= safeY;
+            return (ok, maxAbsX, maxAbsY, minX, maxX, depthMinX, depthMaxX);
         }
 
-        // Geometric scan out from the close-up distance for the first t that fits.
-        var prev = minStandoff;
-        var found = -1f;
-        var prevFit = Measure(minStandoff);
-        if (prevFit.fits)
+        float FindStandoff()
         {
-            found = minStandoff;
-        }
-        else
-        {
+            var prev = minStandoff;
+            if (Measure(minStandoff).fits)
+                return minStandoff;
+
+            var found = -1f;
             var t = minStandoff;
             for (var i = 0; i < 14 && t < maxStandoff; i++)
             {
@@ -194,14 +206,10 @@ public static class DynamicCameraSolver
                 if (t >= maxStandoff)
                     break;
             }
-        }
+            if (found < 0f)
+                return -1f;
 
-        if (found < 0f)
-            return default;
-
-        // Bisect the non-fit/fit boundary so the shot stays as close as it may.
-        if (found > minStandoff)
-        {
+            // Bisect the non-fit/fit boundary so the shot stays as close as it may.
             var lo = prev;    // known not to fit
             var hi = found;   // known to fit
             for (var i = 0; i < 10; i++)
@@ -212,11 +220,43 @@ public static class DynamicCameraSolver
                 else
                     lo = mid;
             }
-            found = hi;
+            return hi;
         }
 
-        var final = Measure(found);
-        return new GroundedFitResult(true, CamAt(found), found, final.maxAbsX, final.maxAbsY);
+        var standoff = FindStandoff();
+        if (standoff < 0f)
+            return default;
+
+        // Centre the horizontal span, then let the standoff shrink into the freed room.
+        // Two passes settle it; the slide solve accounts for the two extremes' depths
+        // (a shift changes each anchor's x by −δ/(depth·tanHalfH), signs included).
+        for (var pass = 0; pass < 2; pass++)
+        {
+            var m = Measure(standoff);
+            if (!m.fits || m.maxX < m.minX)
+                break;
+
+            var centre = (m.minX + m.maxX) * 0.5f;
+            if (MathF.Abs(centre) < 0.03f)
+                break;
+
+            var k = 0.5f * (1f / (m.depthMinX * localLens.TanHalfH) + 1f / (m.depthMaxX * localLens.TanHalfH));
+            if (MathF.Abs(k) < 1e-5f)
+                break;
+
+            lateral += centre / k;
+            var refit = FindStandoff();
+            if (refit < 0f)
+            {
+                // Centering somehow broke the fit (degenerate geometry) — undo and stop.
+                lateral -= centre / k;
+                break;
+            }
+            standoff = refit;
+        }
+
+        var final = Measure(standoff);
+        return new GroundedFitResult(true, CamAt(standoff), standoff, final.maxAbsX, final.maxAbsY);
     }
 
     /// <summary>
