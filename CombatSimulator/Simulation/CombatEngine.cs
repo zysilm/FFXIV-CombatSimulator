@@ -102,6 +102,9 @@ public class CombatEngine : IDisposable
     public string LastPlayerDefeatedBy { get; private set; } = string.Empty;
     /// <summary>Address of the NPC that landed the killing blow on the player (0 if none).</summary>
     public nint LastPlayerKillerAddress { get; private set; }
+    /// <summary>Simulated entity id of the killer, so it stays resolvable through the
+    /// NpcSelector even if the raw address goes stale (0 if none).</summary>
+    public uint LastPlayerKillerEntityId { get; private set; }
 
     /// <summary>
     /// Fired at the end of StopSimulation and ResetState — i.e. whenever the
@@ -201,6 +204,7 @@ public class CombatEngine : IDisposable
         playerDeathTriggered = false;
         LastPlayerDefeatedBy = string.Empty;
         LastPlayerKillerAddress = nint.Zero;
+        LastPlayerKillerEntityId = 0;
         victoryTriggered = false;
         glamourerApplied = false;
         playerInitiatedCombat = false;
@@ -258,6 +262,7 @@ public class CombatEngine : IDisposable
         playerInitiatedCombat = false;
         LastPlayerDefeatedBy = string.Empty;
         LastPlayerKillerAddress = nint.Zero;
+        LastPlayerKillerEntityId = 0;
 
         AddLogEntry("Combat simulation stopped.", CombatLogType.Info);
         log.Info("Combat simulation stopped.");
@@ -308,6 +313,7 @@ public class CombatEngine : IDisposable
         playerDeathTriggered = false;
         LastPlayerDefeatedBy = string.Empty;
         LastPlayerKillerAddress = nint.Zero;
+        LastPlayerKillerEntityId = 0;
         victoryTriggered = false;
         glamourerApplied = false;
         playerInitiatedCombat = false;
@@ -340,6 +346,7 @@ public class CombatEngine : IDisposable
         playerDeathTriggered = false;
         LastPlayerDefeatedBy = string.Empty;
         LastPlayerKillerAddress = nint.Zero;
+        LastPlayerKillerEntityId = 0;
         animationController.ResetPlayerDeathAnimation();
         animationController.RestorePlayerCombatVisualState();
         movementBlockHook.IsBlocking = false;
@@ -716,6 +723,7 @@ public class CombatEngine : IDisposable
             {
                 LastPlayerDefeatedBy = npc.Name;
                 LastPlayerKillerAddress = npc.Address;
+                LastPlayerKillerEntityId = npc.SimulatedEntityId;
             }
             result.TargetKilled = true;
             OnEntityDeath(target);
@@ -729,6 +737,7 @@ public class CombatEngine : IDisposable
             {
                 LastPlayerDefeatedBy = npc.Name;
                 LastPlayerKillerAddress = npc.Address;
+                LastPlayerKillerEntityId = npc.SimulatedEntityId;
             }
             OnEntityDeath(hit.Target);
         }

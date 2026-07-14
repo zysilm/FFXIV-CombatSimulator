@@ -283,10 +283,12 @@ public unsafe class ActiveCameraController : IDisposable
     public void Tick(float deltaTime)
     {
         EnsureHook();
-        // The fighting cameras write angles/zoom themselves; don't stack the active-cam
-        // min-distance/vertical-lock overrides on top of them.
+        // Modes that write their own angles/zoom borrow this controller's getCameraPosition
+        // hook to place their orbit centre, which switches us on via SetModeActive. Do not
+        // stack the active-cam min-distance/vertical-lock overrides on top of them — the
+        // vertical lock in particular would overwrite the pitch they just solved for.
         var owner = GetCurrentOwner?.Invoke() ?? CameraOwner.None;
-        var fightingOwnsCamera = owner is CameraOwner.Fighting2D or CameraOwner.FightingKO;
+        var modeOwnsAngles = owner is CameraOwner.Fighting2D or CameraOwner.FightingKO or CameraOwner.DynamicCam;
 
         // Collision patch
         bool wantCollision = IsActive && config.ActiveCameraDisableCollision;
@@ -311,7 +313,7 @@ public unsafe class ActiveCameraController : IDisposable
         }
 
         // Camera distance + vertical angle overrides
-        if (IsActive && !fightingOwnsCamera)
+        if (IsActive && !modeOwnsAngles)
         {
             try
             {

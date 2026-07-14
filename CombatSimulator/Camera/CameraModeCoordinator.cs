@@ -13,6 +13,9 @@ public enum CameraOwner
     None = 0,
     /// <summary>Death cam (independent CameraBase.Update hook); registered for arbitration only.</summary>
     DeathCam = 10,
+    /// <summary>Dynamic Camera (over-the-shoulder combat framing / two-subject death framing).
+    /// Outranks the death cam it replaces; yields to every mode that owns player movement.</summary>
+    DynamicCam = 15,
     /// <summary>Monster mode creature follow (orbit center only, user keeps rotation/zoom).</summary>
     MonsterFollow = 20,
     /// <summary>Fighting Mode side-view combat camera.</summary>
@@ -38,6 +41,10 @@ public struct CameraRequest
     /// <summary>Raise-only MaxDistance override; the coordinator saves the original
     /// once and restores it when no live request asks for a raise.</summary>
     public float? MaxDistanceAtLeast;
+    /// <summary>Vertical field of view in radians. The coordinator widens the game's
+    /// FoV limits while a request is live and restores them (and the original FoV)
+    /// when none is.</summary>
+    public float? Fov;
     public bool ClearInputH;
     public bool ClearInputV;
 }
@@ -73,6 +80,7 @@ public sealed unsafe class CameraModeCoordinator
         CameraOwner.FightingKO,
         CameraOwner.Fighting2D,
         CameraOwner.MonsterFollow,
+        CameraOwner.DynamicCam,
         CameraOwner.DeathCam,
     };
 
@@ -80,6 +88,10 @@ public sealed unsafe class CameraModeCoordinator
 
     private float savedMaxDistance;
     private bool maxDistanceOverridden;
+    private float savedFoV;
+    private float savedMinFoV;
+    private float savedMaxFoV;
+    private bool fovOverridden;
     private CameraOwner lastLoggedOwner = CameraOwner.None;
 
     /// <summary>Winner of the last Apply pass (scalar write authority).</summary>
@@ -178,6 +190,29 @@ public sealed unsafe class CameraModeCoordinator
                     maxDistanceOverridden = false;
                 }
 
+                // FoV: widen the game's limits so our value is not clamped, and keep the
+                // original around so releasing the camera restores the player's lens.
+                if (winning.Fov.HasValue)
+                {
+                    if (!fovOverridden)
+                    {
+                        savedFoV = gameCam->FoV;
+                        savedMinFoV = gameCam->MinFoV;
+                        savedMaxFoV = gameCam->MaxFoV;
+                        fovOverridden = true;
+                    }
+                    gameCam->MinFoV = 0.01f;
+                    gameCam->MaxFoV = 3.0f;
+                    gameCam->FoV = winning.Fov.Value;
+                }
+                else if (fovOverridden)
+                {
+                    gameCam->FoV = savedFoV;
+                    gameCam->MinFoV = savedMinFoV;
+                    gameCam->MaxFoV = savedMaxFoV;
+                    fovOverridden = false;
+                }
+
                 if (winning.DirH.HasValue)
                     gameCam->DirH = winning.DirH.Value;
                 if (winning.DirV.HasValue)
@@ -218,22 +253,33 @@ public sealed unsafe class CameraModeCoordinator
         }
     }
 
-    /// <summary>Drop all requests and restore MaxDistance (plugin unload / hard reset).</summary>
+    /// <summary>Drop all requests and restore MaxDistance / FoV (plugin unload / hard reset).</summary>
     public void Reset()
     {
         slots.Clear();
         CurrentOwner = CameraOwner.None;
         CurrentOrbitCenter = null;
 
-        if (!maxDistanceOverridden)
+        if (!maxDistanceOverridden && !fovOverridden)
             return;
         try
         {
             var camMgr = GameCameraManager.Instance();
             if (camMgr != null && camMgr->Camera != null)
-                camMgr->Camera->MaxDistance = savedMaxDistance;
+            {
+                var gameCam = camMgr->Camera;
+                if (maxDistanceOverridden)
+                    gameCam->MaxDistance = savedMaxDistance;
+                if (fovOverridden)
+                {
+                    gameCam->FoV = savedFoV;
+                    gameCam->MinFoV = savedMinFoV;
+                    gameCam->MaxFoV = savedMaxFoV;
+                }
+            }
         }
         catch { }
         maxDistanceOverridden = false;
+        fovOverridden = false;
     }
 }

@@ -897,6 +897,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateNpcCollisionMode();
         MigrateNpcCollisionMeshDefault(); // after the mode migration above, whose old default it lifts
         MigrateGuidedCollapse();
+        MigrateDynamicCameraPivotBone();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
     }

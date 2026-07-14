@@ -54,6 +54,7 @@ public partial class MainWindow : IDisposable
     private readonly DismembermentController dismembermentController;
     private readonly DeathCamController deathCamController;
     private readonly ActiveCameraController activeCameraController;
+    private readonly DynamicCameraController dynamicCameraController;
     private readonly HookSafetyChecker hookSafetyChecker;
     private readonly UseActionHook useActionHook;
     private readonly PlayerTargetController playerTargetController;
@@ -171,6 +172,7 @@ public partial class MainWindow : IDisposable
         DismembermentController dismembermentController,
         DeathCamController deathCamController,
         ActiveCameraController activeCameraController,
+        DynamicCameraController dynamicCameraController,
         HookSafetyChecker hookSafetyChecker,
         UseActionHook useActionHook,
         PlayerTargetController playerTargetController,
@@ -192,6 +194,7 @@ public partial class MainWindow : IDisposable
         this.dismembermentController = dismembermentController;
         this.deathCamController = deathCamController;
         this.activeCameraController = activeCameraController;
+        this.dynamicCameraController = dynamicCameraController;
         this.hookSafetyChecker = hookSafetyChecker;
         this.useActionHook = useActionHook;
         this.playerTargetController = playerTargetController;
@@ -217,12 +220,17 @@ public partial class MainWindow : IDisposable
         "Party",
         "Effects",
         "Camera",
+        "Dynamic Cam",
         "Ragdoll",
         "Ragdoll (Adv)",
         "Virtual Enemies",
         "Settings",
         "Diagnose",
     };
+
+    /// <summary>Sidebar index of a tab by name. Jump targets resolve through this rather than
+    /// hardcoding an index — inserting a tab used to silently repoint every jump below it.</summary>
+    private static int TabIndex(string name) => Array.IndexOf(TabNames, name);
 
     public void Draw()
     {
@@ -337,7 +345,10 @@ public partial class MainWindow : IDisposable
                 DrawActiveCamSection();
                 DrawDeathCamSection();
                 break;
-            case 5: // Ragdoll
+            case 5: // Dynamic Cam
+                DrawDynamicCamSection();
+                break;
+            case 6: // Ragdoll
                 DrawRagdollSection();
                 DrawGuidedCollapseSection();
                 DrawNpcCollisionSection();
@@ -351,16 +362,16 @@ public partial class MainWindow : IDisposable
                                      "and leaves the per-bone table and your saved profiles alone: the Advanced page has its own reset for " +
                                      "the table, and the profiles are your work.");
                 break;
-            case 6: // Ragdoll (Advanced)
+            case 7: // Ragdoll (Advanced)
                 DrawRagdollAdvancedSection();
                 break;
-            case 7: // Virtual Enemies
+            case 8: // Virtual Enemies
                 DrawVirtualEnemiesTab();
                 break;
-            case 8: // Settings
+            case 9: // Settings
                 DrawGuiSettingsSection();
                 break;
-            case 9: // Diagnose
+            case 10: // Diagnose
                 DrawDiagnoseSection();
                 break;
             default:
@@ -419,7 +430,7 @@ public partial class MainWindow : IDisposable
                 ImGui.EndTooltip();
             }
             if (ImGui.IsItemClicked())
-                selectedTab = 9; // Jump to Diagnose tab
+                selectedTab = TabIndex("Diagnose");
         }
 
         if (simActive && combatEngine.State.CombatDuration > 0)
@@ -2414,7 +2425,9 @@ public partial class MainWindow : IDisposable
             ImGui.SameLine();
             if (ImGui.Button("Go to Diagnose", new Vector2(120, 0)))
             {
-                selectedTab = 8;
+                // Was hardcoded to 8, which had been the Settings tab — the button never went
+                // where it said it did.
+                selectedTab = TabIndex("Diagnose");
                 ImGui.CloseCurrentPopup();
             }
 
@@ -3142,6 +3155,14 @@ public partial class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Show a floating toolbar to quickly adjust active camera bone, zoom, and offsets.");
+
+            var showDynToolbar = config.ShowDynamicCamToolbar;
+            if (ImGui.Checkbox("Show Dynamic Cam Toolbar", ref showDynToolbar))
+            {
+                config.ShowDynamicCamToolbar = showDynToolbar;
+                config.Save();
+            }
+            HelpMarker("Show a floating toolbar to tune dynamic camera framing (body size, shoulder offset, death shot) while playing.");
 
             if (ImGui.TreeNode("Player HP Bar Labels & Offsets"))
             {
