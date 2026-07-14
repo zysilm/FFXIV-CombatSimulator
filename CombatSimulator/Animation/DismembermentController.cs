@@ -5255,10 +5255,22 @@ public unsafe class DismembermentController : IDisposable
     private void ApplyGearVisualSquash(Clone c, DrawObject* drawObj, Vector3 factor)
     {
         if (drawObj == null) return;
-        drawObj->Scale = new Vector3(
+        var target = new Vector3(
             c.SourceScale.X * factor.X,
             c.SourceScale.Y * factor.Y,
             c.SourceScale.Z * factor.Z);
+
+        // This runs inside the render hook, and NotifyTransformChanged mutates render
+        // bookkeeping the game may be iterating right now (the recurring skeleton-list
+        // crash). Only touch it on frames where the scale actually changes — squash
+        // settles quickly, so this turns an every-frame hazard into a brief transition.
+        var cur = drawObj->Scale;
+        if (MathF.Abs(cur.X - target.X) < 0.0005f &&
+            MathF.Abs(cur.Y - target.Y) < 0.0005f &&
+            MathF.Abs(cur.Z - target.Z) < 0.0005f)
+            return;
+
+        drawObj->Scale = target;
         drawObj->NotifyTransformChanged();
     }
 
@@ -6287,6 +6299,16 @@ public unsafe class DismembermentController : IDisposable
         if (MathF.Abs(s.X - 1f) < 0.0001f &&
             MathF.Abs(s.Y - 1f) < 0.0001f &&
             MathF.Abs(s.Z - 1f) < 0.0001f)
+            return;
+
+        // Already at the target scale: skip the write AND the notify. This is called every
+        // frame from the render hook, and NotifyTransformChanged from inside the render pass
+        // is the prime suspect for the recurring skeleton-list crash — don't ring the bell
+        // when nothing changed.
+        var cur = drawObj->Scale;
+        if (MathF.Abs(cur.X - s.X) < 0.0005f &&
+            MathF.Abs(cur.Y - s.Y) < 0.0005f &&
+            MathF.Abs(cur.Z - s.Z) < 0.0005f)
             return;
 
         drawObj->Scale = s;

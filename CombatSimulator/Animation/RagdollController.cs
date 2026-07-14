@@ -2083,6 +2083,7 @@ public unsafe partial class RagdollController : IDisposable
         collapseProfileBook = new CollapseProfileBook(log);
 
         boneService.OnRenderFrame += OnRenderFrame;
+        Core.Services.Framework.Update += ApplyDeferredFollowTransform;
     }
 
     /// <summary>Lightweight constructor for NPC ragdolls (no NPC collision volumes or movement blocking).</summary>
@@ -2097,6 +2098,49 @@ public unsafe partial class RagdollController : IDisposable
         collapseProfileBook = new CollapseProfileBook(log);
 
         boneService.OnRenderFrame += OnRenderFrame;
+        Core.Services.Framework.Update += ApplyDeferredFollowTransform;
+    }
+
+    // --- Follow-position transform, deferred out of the render hook ---
+    //
+    // The follow feature moves the corpse's DrawObject (or the NPC phantom's GameObject) to
+    // the ragdoll root so the culling sphere tracks a thrown body. Doing that write INSIDE
+    // the render hook — where the physics step runs — mutates the render scene graph while
+    // the game is iterating it, and the corruption detonates later as the recurring native
+    // crash in the skeleton-list walk (next=0xFFFF; two dumps today alone). The render pass
+    // only records the desired position here; the write happens on the framework tick,
+    // between walks instead of during one.
+    private Vector3? pendingFollowPos;
+    private bool pendingFollowIsLocalPlayer;
+
+    private unsafe void ApplyDeferredFollowTransform(Dalamud.Plugin.Services.IFramework _)
+    {
+        if (!pendingFollowPos.HasValue)
+            return;
+        var pos = pendingFollowPos.Value;
+        pendingFollowPos = null;
+
+        if (targetCharacterAddress == nint.Zero || Core.Services.ObjectTable.LocalPlayer == null)
+            return;
+
+        try
+        {
+            var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress;
+            if (pendingFollowIsLocalPlayer)
+            {
+                var drawObject = gameObj->DrawObject;
+                if (drawObject != null)
+                {
+                    ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)drawObject)->Position = pos;
+                    drawObject->NotifyTransformChanged();
+                }
+            }
+            else if (movementBlockHook != null && TargetObjectAlive())
+            {
+                movementBlockHook.SetApproachPosition(gameObj, pos.X, pos.Y, pos.Z);
+            }
+        }
+        catch { }
     }
 
     public void Activate(nint characterAddress)
@@ -7422,52 +7466,22 @@ public unsafe partial class RagdollController : IDisposable
         {
             try
             {
+                // Record only — the actual transform write is deferred to the framework tick
+                // (ApplyDeferredFollowTransform). Writing it here, inside the render hook,
+                // corrupts the scene graph the game is currently walking.
                 var rootBody = simulation.Bodies.GetBodyReference(ragdollBones[0].BodyHandle);
-                var rootPos = rootBody.Pose.Position;
-                var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress;
-
-                if (isLocalPlayerTarget)
-                {
-                    var drawObject = gameObj->DrawObject;
-                    if (drawObject != null)
-                    {
-                        // Note: the game re-syncs DrawObject.Position from the (frozen)
-                        // GameObject.Position each frame, which is why this never actually kept the
-                        // corpse from being culled. Kept as-is; the follow is dev-only.
-                        ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)drawObject)->Position = rootPos;
-                        drawObject->NotifyTransformChanged();
-                    }
-                }
-                else if (movementBlockHook != null && TargetObjectAlive())
-                {
-                    movementBlockHook.SetApproachPosition(gameObj, rootPos.X, rootPos.Y, rootPos.Z);
-                }
+                pendingFollowPos = rootBody.Pose.Position;
+                pendingFollowIsLocalPlayer = isLocalPlayerTarget;
             }
             catch { }
             followWasActive = true;
         }
         else if (followWasActive && targetCharacterAddress != nint.Zero)
         {
-            // Toggled off — restore the frozen death position on whichever transform we moved.
-            try
-            {
-                var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress;
-                if (isLocalPlayerTarget)
-                {
-                    var drawObject = gameObj->DrawObject;
-                    if (drawObject != null)
-                    {
-                        ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)drawObject)->Position = savedCharacterPosition;
-                        drawObject->NotifyTransformChanged();
-                    }
-                }
-                else if (movementBlockHook != null && TargetObjectAlive())
-                {
-                    movementBlockHook.SetApproachPosition(gameObj,
-                        savedCharacterPosition.X, savedCharacterPosition.Y, savedCharacterPosition.Z);
-                }
-            }
-            catch { }
+            // Toggled off — restore the frozen death position on whichever transform we moved
+            // (same deferral).
+            pendingFollowPos = savedCharacterPosition;
+            pendingFollowIsLocalPlayer = isLocalPlayerTarget;
             followWasActive = false;
         }
 #endif
@@ -10579,6 +10593,7 @@ public unsafe partial class RagdollController : IDisposable
     {
         Deactivate();
         boneService.OnRenderFrame -= OnRenderFrame;
+        Core.Services.Framework.Update -= ApplyDeferredFollowTransform;
     }
 }
 
