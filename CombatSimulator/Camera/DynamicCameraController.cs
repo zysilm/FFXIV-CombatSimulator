@@ -993,7 +993,15 @@ public sealed unsafe class DynamicCameraController : IDisposable
         const float fovMax = DeathFovMax;
         const float maxDist = DeathMaxDistance;
         var baseFov = Math.Clamp(startFov, fovMin, fovMax);
-        var minStandoff = Math.Clamp(config.DynCamDeathCloseUpDistance, 0.1f, 6f);
+
+        // Maximize mode: no distance floor at all — the fit returns the SMALLEST standoff at
+        // which every required point sits in frame, so the body presses right up against the
+        // safe margins (a body lying across the view spans the frame edge to edge) and the
+        // camera tracks the killer in and out at the constraint boundary. Otherwise the
+        // close-up slider is the floor.
+        var minStandoff = config.DynCamDeathMaximizeBody
+            ? 0.25f
+            : Math.Clamp(config.DynCamDeathCloseUpDistance, 0.1f, 6f);
 
         // The lens each rung will fit with: the measured projection, rescaled for the FoV
         // value the rung plans to write. The rescale is anchored on the measured
@@ -1172,12 +1180,38 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
         var fallback = ReadObjectPosition(playerAddress);
 
-        // Corpse: a prefix of the head→feet chain, sized by the visibility slider.
+        // Corpse: a prefix of the head→feet chain, sized by the coverage slider. Coverage
+        // counts FROM THE HEAD: 0.5 must mean head-to-waist, so the head can never be the
+        // part that goes missing.
         var levels = Math.Clamp(
             (int)MathF.Ceiling(Math.Clamp(config.DynCamDeathBodyVisibility, 0.25f, 1f) * CorpseChain.Length),
             2, CorpseChain.Length);
 
-        for (var i = 0; i < levels; i++)
+        // The head needs care the rest of the chain does not. The j_kao bone sits at the
+        // skull BASE, so guaranteeing it on-screen still lets the top half of the head clip
+        // the frame edge (reported in testing as "head not visible at 50% coverage") — pad
+        // outward along the body axis to the head's far side. And if the head bone cannot be
+        // read at all, synthesize it from the chest/hips axis rather than silently dropping
+        // the one anchor the coverage semantics are counted from.
+        var chest = CorpsePoint(playerAddress, "j_sebo_c");
+        var hips = CorpsePoint(playerAddress, "j_kosi");
+        var head = CorpsePoint(playerAddress, "j_kao");
+        if (!head.HasValue && chest.HasValue && hips.HasValue)
+            head = chest.Value + (chest.Value - hips.Value) * 0.9f;
+
+        if (head.HasValue)
+        {
+            requiredPoints.Add(head.Value);
+            var axisRef = chest ?? hips;
+            if (axisRef.HasValue)
+            {
+                var axis = head.Value - axisRef.Value;
+                if (axis.LengthSquared() > 1e-4f)
+                    requiredPoints.Add(head.Value + Vector3.Normalize(axis) * 0.18f);
+            }
+        }
+
+        for (var i = 1; i < levels; i++)
         {
             foreach (var bone in CorpseChain[i])
             {
@@ -1193,18 +1227,18 @@ public sealed unsafe class DynamicCameraController : IDisposable
         if (fit == KillerFit.Dropped)
             return;
 
-        if (!TryGetKillerExtent(out var feet, out var head))
+        if (!TryGetKillerExtent(out var killerFeet, out var killerHead))
             return;
 
         if (fit == KillerFit.FullBody)
         {
-            requiredPoints.Add(feet);
-            requiredPoints.Add(head);
+            requiredPoints.Add(killerFeet);
+            requiredPoints.Add(killerHead);
         }
         else
         {
-            requiredPoints.Add(head);
-            requiredPoints.Add(Vector3.Lerp(feet, head, 0.45f));
+            requiredPoints.Add(killerHead);
+            requiredPoints.Add(Vector3.Lerp(killerFeet, killerHead, 0.45f));
         }
     }
 

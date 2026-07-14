@@ -215,7 +215,7 @@ public sealed unsafe class DynamicCameraDebugOverlay
         }
 
         sb.AppendLine("--- config ---");
-        sb.AppendLine($"bodyBand={config.DynCamDeathBodyBand:F2} angle={config.DynCamDeathAngle:F3} closeUp={config.DynCamDeathCloseUpDistance:F2} body={config.DynCamDeathBodyVisibility:F2}");
+        sb.AppendLine($"bodyBand={config.DynCamDeathBodyBand:F2} angle={config.DynCamDeathAngle:F3} maximize={config.DynCamDeathMaximizeBody} closeUp={config.DynCamDeathCloseUpDistance:F2} body={config.DynCamDeathBodyVisibility:F2}");
         sb.AppendLine($"share={config.DynCamSubjectScreenShare:F2} shoulder={config.DynCamShoulderScreenFrac:F2} duration={config.DynCamDeathTranslateDuration:F1}");
         return sb.ToString();
     }

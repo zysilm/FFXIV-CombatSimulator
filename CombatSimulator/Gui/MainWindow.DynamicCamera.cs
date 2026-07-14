@@ -264,16 +264,32 @@ public partial class MainWindow
                    "so expect it to pull back as you raise this.\n\n" +
                    "Dragging the camera up and down during the shot nudges this live.");
 
-        var closeUp = config.DynCamDeathCloseUpDistance;
-        if (ImGui.SliderFloat("Close-up distance##dyncam", ref closeUp, 0.1f, 6f, "%.1f y"))
+        var maximize = config.DynCamDeathMaximizeBody;
+        if (ImGui.Checkbox("Maximize body in frame##dyncam", ref maximize))
         {
-            config.DynCamDeathCloseUpDistance = closeUp;
+            config.DynCamDeathMaximizeBody = maximize;
             config.Save();
+        }
+        HelpMarker("The camera comes in as close as it can while keeping everything required in shot — the covered part of " +
+                   "your body presses against the frame edges (a body lying across the view spans it edge to edge), and the " +
+                   "killer stays fully visible. As the killer walks closer the shot tightens with them; as they back off it " +
+                   "widens just enough.\n\n" +
+                   "While this is on, the close-up distance below is ignored — the constraints ARE the distance.");
+
+        using (var d = Dalamud.Interface.Utility.Raii.ImRaii.Disabled(config.DynCamDeathMaximizeBody))
+        {
+            var closeUp = config.DynCamDeathCloseUpDistance;
+            if (ImGui.SliderFloat("Close-up distance##dyncam", ref closeUp, 0.1f, 6f, "%.1f y"))
+            {
+                config.DynCamDeathCloseUpDistance = closeUp;
+                config.Save();
+            }
         }
         HelpMarker("How close to your body the shot wants to sit. It only backs off from this when the killer (or the rest of " +
                    "your body, per the coverage slider) would not otherwise fit — so this is the tightest the shot will ever be, " +
                    "not a fixed distance.\n\n" +
-                   "Very small values get very intimate; lower Body coverage if the shot refuses to come as close as you ask.");
+                   "Very small values get very intimate; lower Body coverage if the shot refuses to come as close as you ask.\n\n" +
+                   "Greyed out while Maximize body in frame is on.");
 
         var duration = config.DynCamDeathTranslateDuration;
         if (ImGui.SliderFloat("Move duration##dyncam", ref duration, 0.2f, 6f, "%.1f s"))

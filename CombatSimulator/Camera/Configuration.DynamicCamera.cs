@@ -67,8 +67,15 @@ public partial class Configuration
     /// distance to still hold the killer in frame — the fit does that for you.</summary>
     public float DynCamDeathAngle { get; set; } = -0.05f;
 
+    /// <summary>Fill the frame with the body: the camera comes in as close as the constraints
+    /// allow (every required body point, plus the killer, still in frame), with no distance
+    /// floor. A body lying across the view ends up spanning the frame edge to edge. When off,
+    /// the close-up distance below acts as the floor instead.</summary>
+    public bool DynCamDeathMaximizeBody { get; set; } = true;
+
     /// <summary>How close the shot wants to sit to the body, in yalms. The fit only backs
-    /// away from this when the killer will not otherwise fit.</summary>
+    /// away from this when the killer will not otherwise fit. Ignored while
+    /// <see cref="DynCamDeathMaximizeBody"/> is on.</summary>
     public float DynCamDeathCloseUpDistance { get; set; } = 1.5f;
 
     public float DynCamDeathTranslateDuration { get; set; } = 2.0f;
@@ -121,6 +128,7 @@ public partial class Configuration
         DynCamDeathBodyVisibility = d.DynCamDeathBodyVisibility;
         DynCamDeathBodyBand = d.DynCamDeathBodyBand;
         DynCamDeathAngle = d.DynCamDeathAngle;
+        DynCamDeathMaximizeBody = d.DynCamDeathMaximizeBody;
         DynCamDeathCloseUpDistance = d.DynCamDeathCloseUpDistance;
         DynCamDeathTranslateDuration = d.DynCamDeathTranslateDuration;
         DynCamDeathDisableCollision = d.DynCamDeathDisableCollision;
