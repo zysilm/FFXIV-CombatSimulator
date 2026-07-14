@@ -24,6 +24,12 @@ public readonly struct GameCameraView
 {
     public readonly Vector3 Position;
     public readonly Vector3 Forward;
+    /// <summary>SIGNED projection scales for the no-roll basis built by
+    /// DynamicCameraSolver.BasisFromForward. Magnitudes come off the projection matrix
+    /// diagonal; SIGNS come from comparing our cross-product right/up against the view
+    /// matrix's actual axes — our construction has no way to know the game's handedness,
+    /// and getting it wrong mirrors the frame (which showed up in testing as every
+    /// projected point sitting at the right height on the wrong side).</summary>
     public readonly float TanHalfH;
     public readonly float TanHalfV;
     /// <summary>The game camera's FoV FIELD (what we write), whatever it means optically.
@@ -31,9 +37,12 @@ public readonly struct GameCameraView
     public readonly float GameFov;
     public readonly float DirH;
     public readonly float DirV;
+    /// <summary>Diagnostics for the overlay: which matrix convention won, and how well.</summary>
+    public readonly bool AxesAreRows;
+    public readonly float AxisScore;
 
     private GameCameraView(Vector3 position, Vector3 forward, float tanHalfH, float tanHalfV,
-        float gameFov, float dirH, float dirV)
+        float gameFov, float dirH, float dirV, bool axesAreRows, float axisScore)
     {
         Position = position;
         Forward = forward;
@@ -42,6 +51,8 @@ public readonly struct GameCameraView
         GameFov = gameFov;
         DirH = dirH;
         DirV = dirV;
+        AxesAreRows = axesAreRows;
+        AxisScore = axisScore;
     }
 
     public static unsafe bool TryRead(out GameCameraView view)
@@ -67,30 +78,75 @@ public readonly struct GameCameraView
             lookDir = Vector3.Normalize(lookDir);
 
             // The view matrix's axes are its rows or its columns depending on the library's
-            // vector convention, and the z axis may point either way. Rather than trust any
-            // of that, try all four candidates and keep the one that agrees with where the
-            // camera is actually looking.
+            // vector convention, and the z axis may point either way. Decide by which z
+            // candidate best lines up with where the camera is actually looking.
             var m = sceneCam->ViewMatrix;
             var rowZ = new Vector3(m.M31, m.M32, m.M33);
             var colZ = new Vector3(m.M13, m.M23, m.M33);
-            var fwd = PickForward(lookDir, rowZ, colZ);
-            if (fwd.LengthSquared() < 1e-6f)
-                return false;
+            var rowScore = AlignScore(rowZ, lookDir);
+            var colScore = AlignScore(colZ, lookDir);
+            var axesAreRows = rowScore >= colScore;
+            var score = MathF.Max(rowScore, colScore);
 
-            // Real lens, straight off the projection matrix WorldToScreen uses:
-            // for a perspective matrix, M11 = 1/tan(fovH/2) and M22 = 1/tan(fovV/2).
+            Vector3 zAxis, xAxis, yAxis;
+            if (axesAreRows)
+            {
+                zAxis = rowZ;
+                xAxis = new Vector3(m.M11, m.M12, m.M13);
+                yAxis = new Vector3(m.M21, m.M22, m.M23);
+            }
+            else
+            {
+                zAxis = colZ;
+                xAxis = new Vector3(m.M11, m.M21, m.M31);
+                yAxis = new Vector3(m.M12, m.M22, m.M32);
+            }
+
+            Vector3 fwd;
+            if (score > 0.5f && zAxis.LengthSquared() > 1e-6f)
+            {
+                fwd = Vector3.Normalize(zAxis);
+                if (Vector3.Dot(fwd, lookDir) < 0f)
+                    fwd = -fwd; // z axis may be −forward (right-handed view); right/up rows stay as they are
+            }
+            else
+            {
+                // Matrix torn mid-update or a convention we did not anticipate: the look
+                // direction is always approximately right, and the axis signs below fall
+                // back to + (cross-product construction).
+                fwd = lookDir;
+                xAxis = Vector3.Zero;
+                yAxis = Vector3.Zero;
+            }
+
+            // Our no-roll basis for this forward — the one every projection in the solver
+            // and the overlay actually uses.
+            var myRight = Vector3.Cross(Vector3.UnitY, fwd);
+            if (myRight.LengthSquared() < 1e-6f)
+                myRight = new Vector3(-fwd.Z, 0f, fwd.X);
+            myRight = Vector3.Normalize(myRight);
+            var myUp = Vector3.Cross(fwd, myRight);
+
+            var signH = xAxis.LengthSquared() > 1e-6f && Vector3.Dot(myRight, xAxis) < 0f ? -1f : 1f;
+            var signV = yAxis.LengthSquared() > 1e-6f && Vector3.Dot(myUp, yAxis) < 0f ? -1f : 1f;
+
+            // Real lens, straight off the projection matrix WorldToScreen uses: for a
+            // perspective matrix the diagonal is 1/tan(half-fov) per axis. Signs of the
+            // diagonal itself carry through — only the axis-handedness sign is ours to fix.
             var proj = rc->ProjectionMatrix;
             if (MathF.Abs(proj.M11) < 1e-6f || MathF.Abs(proj.M22) < 1e-6f)
                 return false;
 
             view = new GameCameraView(
                 origin,
-                Vector3.Normalize(fwd),
-                1f / proj.M11,
-                1f / proj.M22,
+                fwd,
+                signH / proj.M11,
+                signV / proj.M22,
                 gameCam->FoV,
                 gameCam->DirH,
-                gameCam->DirV);
+                gameCam->DirV,
+                axesAreRows,
+                score);
             return true;
         }
         catch
@@ -99,24 +155,11 @@ public readonly struct GameCameraView
         }
     }
 
-    private static Vector3 PickForward(Vector3 lookDir, Vector3 rowZ, Vector3 colZ)
+    private static float AlignScore(Vector3 candidate, Vector3 lookDir)
     {
-        var best = Vector3.Zero;
-        var bestDot = 0.5f; // demand at least rough agreement with the look direction
-        foreach (var candidate in stackalloc[] { rowZ, -rowZ, colZ, -colZ })
-        {
-            var len = candidate.Length();
-            if (len < 1e-4f)
-                continue;
-            var dot = Vector3.Dot(candidate / len, lookDir);
-            if (dot > bestDot)
-            {
-                bestDot = dot;
-                best = candidate;
-            }
-        }
-        // Matrices torn mid-update (or a convention we did not anticipate): fall back to
-        // the look direction itself, which is always approximately right.
-        return best == Vector3.Zero ? lookDir : best;
+        var len = candidate.Length();
+        if (len < 1e-4f)
+            return 0f;
+        return MathF.Abs(Vector3.Dot(candidate / len, lookDir));
     }
 }

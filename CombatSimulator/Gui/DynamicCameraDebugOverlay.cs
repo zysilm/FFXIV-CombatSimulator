@@ -155,6 +155,68 @@ public sealed unsafe class DynamicCameraDebugOverlay
         ImGui.TextDisabled("magenta = our projection on the measured view");
         ImGui.TextDisabled("they must coincide");
 
+        ImGui.Separator();
+        if (ImGui.Button("Copy all diagnostics##dyncam"))
+            ImGui.SetClipboardText(BuildDiagnostics(screen, haveView, in view));
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Copies every number on this panel plus the per-anchor projections (game vs ours, with deltas) to the clipboard.");
+
         ImGui.End();
+    }
+
+    /// <summary>Everything the panel knows, as text — one click instead of reading numbers
+    /// off the screen mid-death.</summary>
+    private string BuildDiagnostics(Vector2 screen, bool haveView, in GameCameraView view)
+    {
+        var sb = new System.Text.StringBuilder(2048);
+        sb.AppendLine("=== Dynamic Camera diagnostics ===");
+        sb.AppendLine($"phase {dynamicCam.CurrentPhase} | {dynamicCam.StatusText}");
+        sb.AppendLine($"solve ok={dynamicCam.LastSolveOk} distance={dynamicCam.SolvedDistance:F3} chi={dynamicCam.SolvedChi:F4} fov={dynamicCam.SolvedFov:F4} yaw={dynamicCam.SolvedYaw:F4}");
+        sb.AppendLine($"anchors={dynamicCam.RequiredPoints.Count} killer={dynamicCam.CurrentKillerFit} ladder={dynamicCam.LadderLevel}");
+        sb.AppendLine($"ground={dynamicCam.DebugGroundY:F3} standoff={dynamicCam.DebugStandoff:F3} pitchSignBelief={dynamicCam.PitchWriteSign:+0;-0}");
+        sb.AppendLine($"screen={screen.X:F0}x{screen.Y:F0}");
+
+        if (haveView)
+        {
+            DynamicCameraSolver.MeasureAngles(view.Forward, out var yawReal, out var chiReal);
+            var tanGame = MathF.Tan(Math.Clamp(view.GameFov, 0.05f, 2.8f) * 0.5f);
+            sb.AppendLine("--- measured view ---");
+            sb.AppendLine($"pos=({view.Position.X:F2},{view.Position.Y:F2},{view.Position.Z:F2}) fwd=({view.Forward.X:F3},{view.Forward.Y:F3},{view.Forward.Z:F3})");
+            sb.AppendLine($"yawReal={yawReal:F4} chiReal={chiReal:F4} | DirH={view.DirH:F4} DirV={view.DirV:F4} (-DirV={-view.DirV:F4})");
+            sb.AppendLine($"tanHalfH={view.TanHalfH:F4} tanHalfV={view.TanHalfV:F4} | gameFov={view.GameFov:F4} tan(fov/2)={tanGame:F4}");
+            sb.AppendLine($"viewMatrixAxes={(view.AxesAreRows ? "rows" : "cols")} axisScore={view.AxisScore:F3}");
+
+            var lens = new DynamicCameraSolver.Lens(view.TanHalfH, view.TanHalfV);
+            DynamicCameraSolver.BasisFromForward(view.Forward, out var right, out var up);
+
+            sb.AppendLine("--- anchors: game px | ours px | delta ---");
+            var points = dynamicCam.RequiredPoints;
+            for (var i = 0; i < points.Count; i++)
+            {
+                var world = points[i];
+                var haveGame = gameGui.WorldToScreen(world, out var gamePt);
+                var ndc = DynamicCameraSolver.Project(world, view.Position, view.Forward, right, up, lens);
+                var oursVisible = ndc.Z > 0.05f;
+                var oursPt = new Vector2(
+                    (ndc.X * 0.5f + 0.5f) * screen.X,
+                    (0.5f - ndc.Y * 0.5f) * screen.Y);
+
+                sb.Append($"[{i}] world=({world.X:F2},{world.Y:F2},{world.Z:F2}) ");
+                sb.Append(haveGame ? $"game=({gamePt.X:F0},{gamePt.Y:F0}) " : "game=offscreen ");
+                sb.Append(oursVisible ? $"ours=({oursPt.X:F0},{oursPt.Y:F0}) ndc=({ndc.X:F3},{ndc.Y:F3},{ndc.Z:F2}) " : "ours=behind ");
+                if (haveGame && oursVisible)
+                    sb.Append($"delta=({oursPt.X - gamePt.X:F0},{oursPt.Y - gamePt.Y:F0})");
+                sb.AppendLine();
+            }
+        }
+        else
+        {
+            sb.AppendLine("no render camera view available");
+        }
+
+        sb.AppendLine("--- config ---");
+        sb.AppendLine($"height={config.DynCamDeathCamHeight:F2} angle={config.DynCamDeathAngle:F3} closeUp={config.DynCamDeathCloseUpDistance:F2} body={config.DynCamDeathBodyVisibility:F2}");
+        sb.AppendLine($"margin={config.DynCamDeathSafeMargin:F2} fov=[{config.DynCamDeathFovMin:F2},{config.DynCamDeathFovMax:F2}] maxDist={config.DynCamDeathMaxDistance:F0} share={config.DynCamSubjectScreenShare:F2} shoulder={config.DynCamShoulderScreenFrac:F2}");
+        return sb.ToString();
     }
 }
