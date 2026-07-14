@@ -56,7 +56,7 @@ public sealed unsafe class DynamicCameraDebugOverlay
             or DynamicCameraController.Phase.DeathHold))
             return;
 
-        var margin = Math.Clamp(config.DynCamDeathSafeMargin, 0.01f, 0.4f);
+        var margin = DynamicCameraController.DeathSafeMargin;
         var half = new Vector2(screen.X * 0.5f, screen.Y * 0.5f);
         var inset = new Vector2(half.X * margin, half.Y * margin);
 
@@ -216,7 +216,7 @@ public sealed unsafe class DynamicCameraDebugOverlay
 
         sb.AppendLine("--- config ---");
         sb.AppendLine($"bodyBand={config.DynCamDeathBodyBand:F2} angle={config.DynCamDeathAngle:F3} closeUp={config.DynCamDeathCloseUpDistance:F2} body={config.DynCamDeathBodyVisibility:F2}");
-        sb.AppendLine($"margin={config.DynCamDeathSafeMargin:F2} fov=[{config.DynCamDeathFovMin:F2},{config.DynCamDeathFovMax:F2}] maxDist={config.DynCamDeathMaxDistance:F0} share={config.DynCamSubjectScreenShare:F2} shoulder={config.DynCamShoulderScreenFrac:F2}");
+        sb.AppendLine($"share={config.DynCamSubjectScreenShare:F2} shoulder={config.DynCamShoulderScreenFrac:F2} duration={config.DynCamDeathTranslateDuration:F1}");
         return sb.ToString();
     }
 }

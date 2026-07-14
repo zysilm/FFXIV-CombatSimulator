@@ -69,24 +69,18 @@ public partial class Configuration
 
     /// <summary>How close the shot wants to sit to the body, in yalms. The fit only backs
     /// away from this when the killer will not otherwise fit.</summary>
-    public float DynCamDeathCloseUpDistance { get; set; } = 2.0f;
+    public float DynCamDeathCloseUpDistance { get; set; } = 1.5f;
 
     public float DynCamDeathTranslateDuration { get; set; } = 2.0f;
 
-    /// <summary>Distance from frame edge kept clear of the subjects (fraction of half-height).</summary>
-    public float DynCamDeathSafeMargin { get; set; } = 0.08f;
-
-    public float DynCamDeathFovMin { get; set; } = 0.60f;
-    public float DynCamDeathFovMax { get; set; } = 1.20f;
-
-    /// <summary>Beyond this the killer is too far to frame with the corpse and gets
-    /// dropped from the composition rather than pushing the camera into orbit.</summary>
-    public float DynCamDeathMaxDistance { get; set; } = 25.0f;
-
-    /// <summary>How far past the solved distance the player may zoom out.</summary>
-    public float DynCamDeathZoomMax { get; set; } = 2.5f;
-
     public bool DynCamDeathDisableCollision { get; set; } = true;
+
+    // The safe margin, lens band, give-up distance and zoom headroom used to be sliders here.
+    // They are internal solver bounds now (constants on DynamicCameraController): in testing
+    // they either did nothing a player could see or, worse, could be mis-set in ways that
+    // silently broke the shot (an inverted lens range pinned the whole composition to a
+    // super-wide 1.2 rad and shrank everyone). What the shot LOOKS like is fully expressed by
+    // the sliders that remain — body coverage, body position, angle, close-up, duration.
 
     /// <summary>One-shot: the first build framed combat on the mid spine, which put the aim at
     /// the waist once you zoomed in. The shot now blends up toward the head as it closes, and
@@ -129,12 +123,9 @@ public partial class Configuration
         DynCamDeathAngle = d.DynCamDeathAngle;
         DynCamDeathCloseUpDistance = d.DynCamDeathCloseUpDistance;
         DynCamDeathTranslateDuration = d.DynCamDeathTranslateDuration;
-        DynCamDeathSafeMargin = d.DynCamDeathSafeMargin;
-        DynCamDeathFovMin = d.DynCamDeathFovMin;
-        DynCamDeathFovMax = d.DynCamDeathFovMax;
-        DynCamDeathMaxDistance = d.DynCamDeathMaxDistance;
-        DynCamDeathZoomMax = d.DynCamDeathZoomMax;
         DynCamDeathDisableCollision = d.DynCamDeathDisableCollision;
+
+        DynCamDebugOverlay = d.DynCamDebugOverlay;
 
         Save();
     }

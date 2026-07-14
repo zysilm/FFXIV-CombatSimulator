@@ -50,6 +50,15 @@ public partial class MainWindow
         DrawDynamicCamCombatGroup();
         DrawDynamicCamDeathGroup();
         DrawDynamicCamDebugGroup();
+
+        // Page-level, always visible — a reset that hides inside a collapsed header is a
+        // reset nobody finds when their sliders are in a bad place.
+        ImGui.Separator();
+        if (ImGui.Button("Reset All to Defaults##dyncam"))
+            config.ResetDynamicCameraDefaults();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Restore every option on this page to its shipped default. Leaves Enable Dynamic Camera itself " +
+                             "alone — resetting it would switch the feature off and take the page with it.");
     }
 
     private void DrawDynamicCamStatus()
@@ -219,7 +228,7 @@ public partial class MainWindow
         }
 
         var body = config.DynCamDeathBodyVisibility;
-        if (ImGui.SliderFloat("Body in frame##dyncam", ref body, 0.25f, 1f, "%.2f"))
+        if (ImGui.SliderFloat("Body coverage##dyncam", ref body, 0.25f, 1f, "%.2f"))
         {
             config.DynCamDeathBodyVisibility = body;
             config.Save();
@@ -256,13 +265,15 @@ public partial class MainWindow
                    "Dragging the camera up and down during the shot nudges this live.");
 
         var closeUp = config.DynCamDeathCloseUpDistance;
-        if (ImGui.SliderFloat("Close-up distance##dyncam", ref closeUp, 1.2f, 6f, "%.1f y"))
+        if (ImGui.SliderFloat("Close-up distance##dyncam", ref closeUp, 0.1f, 6f, "%.1f y"))
         {
             config.DynCamDeathCloseUpDistance = closeUp;
             config.Save();
         }
-        HelpMarker("How close to your body the shot wants to sit. It only backs off from this when the killer would not " +
-                   "otherwise fit in frame — so this is the tightest the shot will ever be, not a fixed distance.");
+        HelpMarker("How close to your body the shot wants to sit. It only backs off from this when the killer (or the rest of " +
+                   "your body, per the coverage slider) would not otherwise fit — so this is the tightest the shot will ever be, " +
+                   "not a fixed distance.\n\n" +
+                   "Very small values get very intimate; lower Body coverage if the shot refuses to come as close as you ask.");
 
         var duration = config.DynCamDeathTranslateDuration;
         if (ImGui.SliderFloat("Move duration##dyncam", ref duration, 0.2f, 6f, "%.1f s"))
@@ -272,59 +283,13 @@ public partial class MainWindow
         }
         HelpMarker("How long the camera takes to travel from wherever it was into the death composition.");
 
-        if (ImGui.TreeNode("Advanced##dyncamdeath"))
+        var noCollide = config.DynCamDeathDisableCollision;
+        if (ImGui.Checkbox("Ignore terrain collision##dyncam", ref noCollide))
         {
-            var margin = config.DynCamDeathSafeMargin;
-            if (ImGui.SliderFloat("Edge margin##dyncam", ref margin, 0.02f, 0.3f, "%.2f"))
-            {
-                config.DynCamDeathSafeMargin = margin;
-                config.Save();
-            }
-            HelpMarker("Clear space kept between the subjects and the edge of the screen.");
-
-            var fovMin = config.DynCamDeathFovMin;
-            if (ImGui.SliderFloat("Narrowest lens##dyncam", ref fovMin, 0.3f, 1.2f, "%.2f rad"))
-            {
-                config.DynCamDeathFovMin = fovMin;
-                config.Save();
-            }
-
-            var fovMax = config.DynCamDeathFovMax;
-            if (ImGui.SliderFloat("Widest lens##dyncam", ref fovMax, 0.5f, 2f, "%.2f rad"))
-            {
-                config.DynCamDeathFovMax = fovMax;
-                config.Save();
-            }
-            HelpMarker("The shot widens the lens before it backs the camera away, so it can stay down close to the body even " +
-                       "when the killer is standing right over it.");
-
-            var maxDist = config.DynCamDeathMaxDistance;
-            if (ImGui.SliderFloat("Give-up distance##dyncam", ref maxDist, 8f, 60f, "%.0f y"))
-            {
-                config.DynCamDeathMaxDistance = maxDist;
-                config.Save();
-            }
-            HelpMarker("If framing the killer would need the camera further away than this, it stops trying to hold them: " +
-                       "first their legs, then them entirely, falling back to a shot of just your body.");
-
-            var zoomMax = config.DynCamDeathZoomMax;
-            if (ImGui.SliderFloat("Zoom-out headroom##dyncam", ref zoomMax, 1f, 5f, "%.1fx"))
-            {
-                config.DynCamDeathZoomMax = zoomMax;
-                config.Save();
-            }
-            HelpMarker("How far past the framed distance you may pull the camera back with the scroll wheel.");
-
-            var noCollide = config.DynCamDeathDisableCollision;
-            if (ImGui.Checkbox("Ignore terrain collision##dyncam", ref noCollide))
-            {
-                config.DynCamDeathDisableCollision = noCollide;
-                config.Save();
-            }
-            HelpMarker("The death shot sits low and can graze the ground; this stops the game shoving the camera in to avoid it.");
-
-            ImGui.TreePop();
+            config.DynCamDeathDisableCollision = noCollide;
+            config.Save();
         }
+        HelpMarker("The death shot sits low and can graze the ground; this stops the game shoving the camera in to avoid it.");
 
         ImGui.Unindent();
     }
@@ -345,13 +310,6 @@ public partial class MainWindow
         HelpMarker("Draws the safe frame and every point the shot is required to keep visible, plus what the solver came up with.\n\n" +
                    "Each point is plotted twice: green from the game's own projection, magenta from the framing maths. " +
                    "They must sit on top of each other — if they do not, the framing is working from a wrong idea of the camera.");
-
-        ImGui.Separator();
-        if (ImGui.Button("Reset All to Defaults##dyncam"))
-            config.ResetDynamicCameraDefaults();
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Restore every option on this page. Leaves Enable Dynamic Camera alone — resetting it would switch " +
-                             "the feature off and take the page with it.");
 
         ImGui.Unindent();
     }

@@ -72,6 +72,16 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private const float DeathAngleMin = -0.35f;
     private const float DeathAngleMax = 0.45f;
 
+    // Internal solver bounds for the death shot. These were sliders once; nothing a player
+    // wants is expressed through them that the remaining sliders do not cover, and a mis-set
+    // lens range proved able to quietly wreck the composition (see Configuration partial).
+    /// <summary>Frame-edge clearance as a fraction of half-height. Public: the overlay draws it.</summary>
+    public const float DeathSafeMargin = 0.08f;
+    private const float DeathFovMin = 0.60f;
+    private const float DeathFovMax = 1.20f;
+    private const float DeathMaxDistance = 25f;
+    private const float DeathZoomMax = 2.5f;
+
     private readonly Configuration config;
     private readonly CameraModeCoordinator coordinator;
     private readonly CombatEngine combatEngine;
@@ -512,7 +522,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
             else
             {
                 var basis = MathF.Max(0.5f, SolvedDistance);
-                deathZoomMul = Math.Clamp(observedDistance / basis, 1.0f, MathF.Max(1.0f, config.DynCamDeathZoomMax));
+                deathZoomMul = Math.Clamp(observedDistance / basis, 1.0f, DeathZoomMax);
             }
         }
         prevObservedDistance = observedDistance;
@@ -977,18 +987,13 @@ public sealed unsafe class DynamicCameraController : IDisposable
         distance = 0f;
         fov = curFov;
 
-        var safeY = 1f - Math.Clamp(config.DynCamDeathSafeMargin, 0.01f, 0.4f);
+        var safeY = 1f - DeathSafeMargin;
         var safeX = safeY;
-        // Take the range whichever way round the sliders ended up: an inverted pair silently
-        // clamped the BASE lens to the wide end (everything small — testing found the sliders
-        // set to min 1.2 / max 0.5 and the shot stuck at 1.2).
-        var fovA = Math.Clamp(config.DynCamDeathFovMin, 0.2f, 2.5f);
-        var fovB = Math.Clamp(config.DynCamDeathFovMax, 0.2f, 2.5f);
-        var fovMin = MathF.Min(fovA, fovB);
-        var fovMax = MathF.Max(fovMin + 0.05f, MathF.Max(fovA, fovB));
-        var maxDist = MathF.Max(5f, config.DynCamDeathMaxDistance);
+        const float fovMin = DeathFovMin;
+        const float fovMax = DeathFovMax;
+        const float maxDist = DeathMaxDistance;
         var baseFov = Math.Clamp(startFov, fovMin, fovMax);
-        var minStandoff = Math.Clamp(config.DynCamDeathCloseUpDistance, 1.2f, 6f);
+        var minStandoff = Math.Clamp(config.DynCamDeathCloseUpDistance, 0.1f, 6f);
 
         // The lens each rung will fit with: the measured projection, rescaled for the FoV
         // value the rung plans to write. The rescale is anchored on the measured
