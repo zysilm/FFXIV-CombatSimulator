@@ -5,69 +5,103 @@ using System.Numerics;
 namespace CombatSimulator.Camera;
 
 /// <summary>
-/// Framing math for the Dynamic Camera. Pure functions over the game's orbit model
-/// (pivot + DirH + DirV + Distance + FoV) — no game pointers, no state.
+/// Framing math for the Dynamic Camera. Pure functions — no game pointers, no state.
 ///
-/// The death shot uses a "prone photographer" parameterisation: the camera is PINNED
-/// near the ground at a human-scale height and a small pitch, close to the fallen
-/// body, and the only solved variable is how far it backs away from the corpse until
-/// the killer fits in frame too. Composition (body low in frame, killer towering)
-/// then emerges from the depth difference between the two subjects instead of being
-/// imposed as screen-line constraints. The previous approach — solving the full 3D
-/// camera position from three screen-plane equations — was algebraically sound and
-/// cinematically arbitrary: nothing tied the camera to the ground plane or to a
-/// sensible height, which is how it ended up underground.
+/// Everything here runs in the solver's OWN angle convention: yaw ψ is the azimuth of the
+/// pivot→camera direction ((sinψ, cosψ) in xz), and χ is the photographer's angle, positive
+/// tipping the lens down (camera above, looking down). Game conventions never enter: the
+/// current view is measured (<see cref="GameCameraView"/>), planned views are built with
+/// <see cref="BasisFromAngles"/>, and both are projected through a measured <see cref="Lens"/>.
+/// The controller closes the loop between χ and whatever the game's DirV turns out to mean.
+///
+/// The death shot uses a "prone photographer" parameterisation: the camera is PINNED near
+/// the ground at a human-scale height and a small angle, close to the fallen body, and the
+/// only solved variable is how far it backs away from the corpse until the killer fits in
+/// frame too. Composition (body low and large, killer towering) emerges from the depth
+/// difference between the subjects instead of being imposed as screen-line constraints —
+/// the previous 3-plane closed-form solve was algebraically sound and cinematically
+/// arbitrary, which is how it ended up underground.
 /// </summary>
 public static class DynamicCameraSolver
 {
-    /// <summary>
-    /// Camera basis for the game's orbit angles.
-    ///
-    /// Sign convention (verified against the game's own asymmetric pitch limits,
-    /// DirVMin ≈ −1.48 / DirVMax ≈ +0.79, and the in-game behaviour that you can look
-    /// down on your character almost vertically but up only ~45°):
-    /// NEGATIVE DirV puts the camera ABOVE the pivot looking down;
-    /// positive DirV sinks it below, looking up.
-    /// </summary>
-    public static void Basis(float dirH, float dirV, out Vector3 fwd, out Vector3 right, out Vector3 up)
+    /// <summary>Projection scales: tan of the half field of view per axis. Read off the
+    /// game's projection matrix for the current view; scaled for planned views.</summary>
+    public readonly record struct Lens(float TanHalfH, float TanHalfV)
     {
-        var cv = MathF.Cos(dirV);
-        var sv = MathF.Sin(dirV);
-        var sh = MathF.Sin(dirH);
-        var ch = MathF.Cos(dirH);
+        public bool IsValid => MathF.Abs(TanHalfH) > 1e-4f && MathF.Abs(TanHalfV) > 1e-4f;
 
-        // Vector from pivot to camera, per the game's orbit convention.
-        var toCamera = new Vector3(sh * cv, -sv, ch * cv);
-        fwd = -toCamera;
+        /// <summary>The lens a planned FoV value would produce, assuming the game maps its
+        /// FoV field to the projection by a fixed scale — measured from the current pair
+        /// (<paramref name="currentGameFov"/> → this lens), which absorbs whether the field
+        /// is a vertical angle, a horizontal angle, or anything else linear in tan-space.</summary>
+        public Lens ScaledToFov(float plannedGameFov, float currentGameFov)
+        {
+            var tanNow = MathF.Tan(Math.Clamp(currentGameFov, 0.05f, 2.8f) * 0.5f);
+            var tanPlan = MathF.Tan(Math.Clamp(plannedGameFov, 0.05f, 2.8f) * 0.5f);
+            if (tanNow < 1e-4f)
+                return this;
+            var k = tanPlan / tanNow;
+            return new Lens(TanHalfH * k, TanHalfV * k);
+        }
+    }
 
+    /// <summary>Basis for a PLANNED camera at the solver's angles (χ positive = looking
+    /// down). Self-consistent with <see cref="MeasureAngles"/> and <see cref="Project"/>.</summary>
+    public static void BasisFromAngles(float yaw, float chi, out Vector3 fwd, out Vector3 right, out Vector3 up)
+    {
+        var cc = MathF.Cos(chi);
+        var sc = MathF.Sin(chi);
+        var sy = MathF.Sin(yaw);
+        var cy = MathF.Cos(yaw);
+
+        // Pivot→camera = (sinψ·cosχ, sinχ, cosψ·cosχ); the camera looks back along it.
+        fwd = new Vector3(-sy * cc, -sc, -cy * cc);
+        FinishBasis(fwd, yaw, out right, out up);
+    }
+
+    /// <summary>Basis for the MEASURED view direction (no-roll assumption; the dynamic
+    /// camera never writes roll).</summary>
+    public static void BasisFromForward(Vector3 fwd, out Vector3 right, out Vector3 up)
+    {
+        FinishBasis(fwd, MeasureYaw(fwd), out right, out up);
+    }
+
+    private static void FinishBasis(Vector3 fwd, float yawForDegenerate, out Vector3 right, out Vector3 up)
+    {
         var r = Vector3.Cross(Vector3.UnitY, fwd);
         if (r.LengthSquared() < 1e-6f)
         {
             // Looking straight up/down: the horizontal cross product degenerates.
-            r = new Vector3(-ch, 0f, sh);
+            r = new Vector3(-MathF.Cos(yawForDegenerate), 0f, MathF.Sin(yawForDegenerate));
         }
         right = Vector3.Normalize(r);
         up = Vector3.Cross(fwd, right);
     }
 
-    public static float TanHalfV(float fov) => MathF.Tan(Math.Clamp(fov, 0.05f, 2.8f) * 0.5f);
+    /// <summary>Solver angles of a measured view direction. Inverse of
+    /// <see cref="BasisFromAngles"/>.</summary>
+    public static void MeasureAngles(Vector3 fwd, out float yaw, out float chi)
+    {
+        yaw = MeasureYaw(fwd);
+        chi = -MathF.Asin(Math.Clamp(fwd.Y, -1f, 1f));
+    }
 
-    public static float TanHalfH(float fov, float aspect) => TanHalfV(fov) * MathF.Max(0.1f, aspect);
+    private static float MeasureYaw(Vector3 fwd) => MathF.Atan2(-fwd.X, -fwd.Z);
 
     /// <summary>
     /// Normalised device coords of a world point: x,y ∈ [-1,1] inside the frame.
     /// z is view depth (negative = behind the camera).
     /// </summary>
     public static Vector3 Project(Vector3 x, Vector3 cam, in Vector3 fwd, in Vector3 right, in Vector3 up,
-        float fov, float aspect)
+        in Lens lens)
     {
         var v = x - cam;
         var depth = Vector3.Dot(fwd, v);
         if (MathF.Abs(depth) < 1e-4f)
             depth = depth < 0f ? -1e-4f : 1e-4f;
 
-        var ndcX = Vector3.Dot(right, v) / (depth * TanHalfH(fov, aspect));
-        var ndcY = Vector3.Dot(up, v) / (depth * TanHalfV(fov));
+        var ndcX = Vector3.Dot(right, v) / (depth * lens.TanHalfH);
+        var ndcY = Vector3.Dot(up, v) / (depth * lens.TanHalfV);
         return new Vector3(ndcX, ndcY, depth);
     }
 
@@ -83,34 +117,33 @@ public static class DynamicCameraSolver
     ///
     /// The camera sits at absolute height <paramref name="cameraHeight"/> (the caller
     /// anchors this to the terrain) on the horizontal ray that backs away from
-    /// <paramref name="corpseAnchor"/> in the direction the orbit angles dictate; view
-    /// orientation is fixed by (dirH, dirV). The single unknown is the horizontal
-    /// standoff t from the corpse. Starting at <paramref name="minStandoff"/> (the
-    /// close-up the shot WANTS), t grows only as far as needed for every required
-    /// point to sit inside the safe frame.
+    /// <paramref name="corpseAnchor"/> along the view yaw; orientation is fixed by
+    /// (yaw, χ). The single unknown is the horizontal standoff t from the corpse.
+    /// Starting at <paramref name="minStandoff"/> (the close-up the shot WANTS), t grows
+    /// only as far as needed for every required point to sit inside the safe frame.
     ///
-    /// The fit region in t need not be a half-line — at strong pitches distant points
-    /// drift toward the horizon line, which may itself sit outside the safe frame —
-    /// so this scans geometrically for the first fitting t and then bisects the
-    /// boundary below it, rather than assuming monotonicity.
+    /// The fit region in t need not be a half-line — at strong angles distant points
+    /// drift toward the horizon line, which may itself sit outside the safe frame — so
+    /// this scans geometrically for the first fitting t and then bisects the boundary
+    /// below it, rather than assuming monotonicity.
     /// </summary>
     public static GroundedFitResult GroundedFit(
         IReadOnlyList<Vector3> required,
         Vector3 corpseAnchor,
-        float dirH, float dirV, float fov, float aspect,
+        float yaw, float chi, in Lens lens,
         float safeX, float safeY,
         float cameraHeight,
         float minStandoff, float maxStandoff)
     {
-        if (required.Count == 0 || maxStandoff <= minStandoff)
+        if (required.Count == 0 || maxStandoff <= minStandoff || !lens.IsValid)
             return default;
 
-        Basis(dirH, dirV, out var fwd, out var right, out var up);
+        var localLens = lens; // local copy: `in` params cannot be captured by local functions
+        BasisFromAngles(yaw, chi, out var fwd, out var right, out var up);
 
-        // Horizontal direction from the corpse toward the camera. This is exactly the
-        // horizontal part of the game's pivot→camera vector for dirH, so the pivot we
-        // hand back reconstructs this same camera.
-        var back = new Vector3(MathF.Sin(dirH), 0f, MathF.Cos(dirH));
+        // Horizontal direction from the corpse toward the camera — the horizontal part of
+        // the pivot→camera direction for this yaw.
+        var back = new Vector3(MathF.Sin(yaw), 0f, MathF.Cos(yaw));
 
         Vector3 CamAt(float t) => new(
             corpseAnchor.X + back.X * t,
@@ -125,7 +158,7 @@ public static class DynamicCameraSolver
             var ok = true;
             foreach (var p in required)
             {
-                var ndc = Project(p, cam, fwd, right, up, fov, aspect);
+                var ndc = Project(p, cam, fwd, right, up, localLens);
                 if (ndc.Z <= 0.2f)
                 {
                     ok = false;
@@ -188,13 +221,14 @@ public static class DynamicCameraSolver
 
     /// <summary>
     /// Distance at which a subject of height h fills <paramref name="share"/> of the
-    /// screen height. Inverse of the vertical projection — used by combat framing to
-    /// hold the character at a constant on-screen size.
+    /// screen height, for a lens with the given vertical scale. Inverse of the vertical
+    /// projection — used by combat framing to hold the character at a constant on-screen
+    /// size.
     /// </summary>
-    public static float DistanceForScreenShare(float height, float share, float fov)
+    public static float DistanceForScreenShare(float height, float share, float tanHalfV)
     {
         var s = Math.Clamp(share, 0.05f, 0.95f);
-        var half = MathF.Tan(Math.Clamp(fov, 0.05f, 2.8f) * 0.5f) * s;
+        var half = MathF.Abs(tanHalfV) * s;
         if (half < 1e-4f)
             return 10f;
         return MathF.Max(0.5f, height * 0.5f / half);

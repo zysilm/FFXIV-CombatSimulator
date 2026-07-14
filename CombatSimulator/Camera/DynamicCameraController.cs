@@ -97,10 +97,13 @@ public sealed unsafe class DynamicCameraController : IDisposable
     // drift off the solved point whenever the two springs are out of step, and "off the solved
     // point" includes "under the floor". Owning the camera position means the ground clearance
     // is enforced by construction, on every frame, mid-transition included.
+    //
+    // Angles are kept in the solver's χ space (positive = looking down); the game's DirV is
+    // only ever touched through the feedback loop below.
     private Vector3 curCam;
     private Vector3 curPivot;
     private float curDistance;
-    private float curPitch;
+    private float curChi;
     private float curFov;
     private bool hasCurState;
 
@@ -108,9 +111,21 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private Vector3 startCam;
     private Vector3 startPivot;
     private float startDistance;
-    private float startPitch;
+    private float startChi;
     private float startFov;
     private float translateElapsed;
+
+    // DirV write feedback. What the game's DirV means optically is the one convention we
+    // cannot measure from the matrices, so we do not assume it: each frame we step DirV in
+    // the direction we BELIEVE moves the real pitch toward the target, then verify against
+    // the measured pitch next frame. If the pitch consistently moves the wrong way, the
+    // belief is wrong — flip the sign once and carry on. Getting this wrong statically is
+    // exactly how v1 put the camera underground.
+    private float dirVSign = -1f; // belief: DirV = −χ (camera above at negative DirV)
+    private float pitchFlipEvidence;
+    private float chiRealPrev;
+    private float pendingExpectedChiDelta;
+    private bool havePendingChiProbe;
 
     // Death subjects.
     private nint killerAddress;
@@ -162,13 +177,15 @@ public sealed unsafe class DynamicCameraController : IDisposable
     public int LadderLevel => ladderLevel;
     public bool LastSolveOk { get; private set; }
     public float SolvedDistance { get; private set; }
-    public float SolvedPitch { get; private set; }
+    /// <summary>Solver-space χ (positive = looking down), not the game's DirV.</summary>
+    public float SolvedChi { get; private set; }
     public float SolvedFov { get; private set; }
     public float SolvedYaw { get; private set; }
-    public float Aspect { get; private set; } = 16f / 9f;
     public string StatusText { get; private set; } = "off";
     public float DebugGroundY { get; private set; }
     public float DebugStandoff { get; private set; }
+    /// <summary>Current belief about which way DirV runs (+1: DirV = χ, −1: DirV = −χ).</summary>
+    public float PitchWriteSign => dirVSign;
 
     /// <summary>Camera write authority, from the coordinator. Only used for the status readout —
     /// arbitration itself is the coordinator's job.</summary>
@@ -255,8 +272,19 @@ public sealed unsafe class DynamicCameraController : IDisposable
             startPivot = new Vector3(lookAt.X, lookAt.Y, lookAt.Z);
             startCam = new Vector3(scenePos.X, scenePos.Y, scenePos.Z);
             startDistance = cam->Distance;
-            startPitch = cam->DirV;
             startFov = cam->FoV;
+
+            // The starting angle is MEASURED, not derived from DirV — the whole point of the
+            // χ-space design is never to interpret DirV ourselves.
+            if (GameCameraView.TryRead(out var v))
+            {
+                DynamicCameraSolver.MeasureAngles(v.Forward, out _, out startChi);
+                startCam = v.Position;
+            }
+            else
+            {
+                startChi = 0f;
+            }
 
             // If combat framing was already running, start from what it was showing rather
             // than from the game's raw look-at (they can differ by the shoulder offset).
@@ -269,9 +297,12 @@ public sealed unsafe class DynamicCameraController : IDisposable
             curCam = startCam;
             curPivot = startPivot;
             curDistance = startDistance;
-            curPitch = startPitch;
+            curChi = startChi;
             curFov = startFov;
             hasCurState = true;
+            chiRealPrev = startChi;
+            havePendingChiProbe = false;
+            pitchFlipEvidence = 0f;
         }
         catch { }
     }
@@ -351,7 +382,14 @@ public sealed unsafe class DynamicCameraController : IDisposable
             return;
         var gameCam = camMgr->Camera;
 
-        Aspect = ReadAspect();
+        // Everything downstream reasons about the view the renderer is ACTUALLY using —
+        // matrices, not orbit angles. No view, no framing.
+        if (!GameCameraView.TryRead(out var view))
+        {
+            StatusText = "no render camera";
+            return;
+        }
+
         ReadPlayerIntent(gameCam, dt);
 
         var alive = combatEngine.State.PlayerState.IsAlive;
@@ -396,7 +434,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
                     StatusText = "combat framing off";
                     return;
                 }
-                TickCombat(player.Address, gameCam, dt);
+                TickCombat(player.Address, gameCam, in view, dt);
                 break;
 
             case Phase.DeathTranslate:
@@ -407,7 +445,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
                     StatusText = "death framing off";
                     return;
                 }
-                TickDeath(player.Address, gameCam, dt);
+                TickDeath(player.Address, gameCam, in view, dt);
                 break;
 
             default:
@@ -468,9 +506,10 @@ public sealed unsafe class DynamicCameraController : IDisposable
             var pitchDelta = gameCam->DirV - lastWrittenPitch;
             if (MathF.Abs(pitchDelta) > 0.0005f)
             {
-                // Game DirV and our χ run in opposite directions (negative DirV = camera
-                // above looking down = positive χ), so a drag's delta enters negated.
-                deathAnglePref = Math.Clamp(deathAnglePref - pitchDelta, DeathAngleMin, DeathAngleMax);
+                // A vertical drag lands in DirV; convert it into χ with the same sign belief
+                // the write feedback uses (and auto-corrects), so a drag always nudges the
+                // preference the way the player pulled.
+                deathAnglePref = Math.Clamp(deathAnglePref + dirVSign * pitchDelta, DeathAngleMin, DeathAngleMax);
             }
         }
 
@@ -485,32 +524,17 @@ public sealed unsafe class DynamicCameraController : IDisposable
         wrotePitch = false;
     }
 
-    private static float ReadAspect()
-    {
-        try
-        {
-            var device = FFXIVClientStructs.FFXIV.Client.Graphics.Kernel.Device.Instance();
-            if (device != null && device->Height > 0)
-            {
-                var a = (float)device->Width / device->Height;
-                if (a > 0.5f && a < 5f)
-                    return a;
-            }
-        }
-        catch { }
-        return 16f / 9f;
-    }
-
     // ------------------------------------------------------------------
     // Combat framing
     // ------------------------------------------------------------------
 
-    private void TickCombat(nint playerAddress, FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam, float dt)
+    private void TickCombat(nint playerAddress, FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam,
+        in GameCameraView view, float dt)
     {
-        var dirH = gameCam->DirH;
-        var dirV = gameCam->DirV;
-        var fov = gameCam->FoV;
-        DynamicCameraSolver.Basis(dirH, dirV, out var fwd, out var right, out var up);
+        var lens = new DynamicCameraSolver.Lens(view.TanHalfH, view.TanHalfV);
+        var fwd = view.Forward;
+        DynamicCameraSolver.BasisFromForward(fwd, out var right, out var up);
+        DynamicCameraSolver.MeasureAngles(fwd, out var yawReal, out var chiReal);
 
         var anchor = boneService.GetBoneWorldPos(playerAddress, config.DynCamPivotBoneName)
                      ?? ReadObjectPosition(playerAddress) + new Vector3(0f, 1.2f, 0f);
@@ -548,7 +572,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
             shoulderSide = side;
 
             var offWorld = Math.Clamp(
-                config.DynCamShoulderScreenFrac * refDistance * DynamicCameraSolver.TanHalfH(fov, Aspect),
+                config.DynCamShoulderScreenFrac * refDistance * MathF.Abs(lens.TanHalfH),
                 0f, 1.5f);
             targetShoulder = side * offWorld;
         }
@@ -560,8 +584,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
         // Hold the body at a constant on-screen size.
         var height = MeasurePlayerHeight(playerAddress);
-        var desired = DynamicCameraSolver.DistanceForScreenShare(height, config.DynCamSubjectScreenShare, fov);
-        desired *= CrowdingRelief(gameCam, fwd, right, up, fov);
+        var desired = DynamicCameraSolver.DistanceForScreenShare(height, config.DynCamSubjectScreenShare, lens.TanHalfV);
+        desired *= CrowdingRelief(view.Position, fwd, right, up, lens);
         combatBaseDistance = Math.Clamp(desired, 1.0f, 30f);
 
         desired = Math.Clamp(desired * combatZoomBias, 1.0f, 30f);
@@ -602,9 +626,9 @@ public sealed unsafe class DynamicCameraController : IDisposable
         }
 
         LastSolveOk = true;
-        SolvedPitch = dirV;
-        SolvedFov = fov;
-        SolvedYaw = dirH;
+        SolvedChi = chiReal;
+        SolvedFov = view.GameFov;
+        SolvedYaw = yawReal;
         StatusText = zoomHold > 0f ? "combat framing (player zooming)" : "combat framing";
 
         coordinator.Submit(CameraOwner.DynamicCam, new CameraRequest
@@ -641,21 +665,18 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// is the one place we deliberately depart from the game we're imitating: its tight
     /// framing is exactly what players complain about once a crowd shows up.
     /// </summary>
-    private float CrowdingRelief(FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam,
-        in Vector3 fwd, in Vector3 right, in Vector3 up, float fov)
+    private float CrowdingRelief(Vector3 cam,
+        in Vector3 fwd, in Vector3 right, in Vector3 up, in DynamicCameraSolver.Lens lens)
     {
         if (config.DynCamCrowdingRelief <= 0.001f)
             return 1f;
-
-        var scenePos = gameCam->CameraBase.SceneCamera.Position;
-        var cam = new Vector3(scenePos.X, scenePos.Y, scenePos.Z);
 
         var maxAbsX = 0f;
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             if (npc.BattleChara == null || !npc.IsAlive || !npc.IsEngaged)
                 continue;
-            var ndc = DynamicCameraSolver.Project(EnemyPosition(npc), cam, fwd, right, up, fov, Aspect);
+            var ndc = DynamicCameraSolver.Project(EnemyPosition(npc), cam, fwd, right, up, lens);
             if (ndc.Z <= 0.1f)
                 continue;
             maxAbsX = MathF.Max(maxAbsX, MathF.Abs(ndc.X));
@@ -700,7 +721,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
     // Death framing
     // ------------------------------------------------------------------
 
-    private void TickDeath(nint playerAddress, FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam, float dt)
+    private void TickDeath(nint playerAddress, FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam,
+        in GameCameraView view, float dt)
     {
         var wantCollisionOff = config.DynCamDeathDisableCollision;
         if (wantCollisionOff && !collisionPatchActive) EnableCollisionPatch();
@@ -713,22 +735,17 @@ public sealed unsafe class DynamicCameraController : IDisposable
             return;
         }
 
-        // Yaw is the player's, always. We only ever add a small bias on top, and give it
-        // straight back the moment they touch the stick.
-        var playerYaw = gameCam->DirH;
+        // Where the camera ACTUALLY is and points, measured. Yaw is the player's, always —
+        // we take whatever it currently is and solve around it.
+        DynamicCameraSolver.MeasureAngles(view.Forward, out var yawReal, out var chiReal);
+        UpdatePitchSignBelief(chiReal);
 
         // χ is the photographer's angle (positive = raised a little, looking down; negative
-        // = flat on the ground looking up). The game's DirV is its negation. Clamp through
-        // the game's own DirV band too: the game silently clamping our write would read back
-        // as a phantom player drag and walk the preference away.
-        var chi = Math.Clamp(deathAnglePref, DeathAngleMin, DeathAngleMax);
-        chi = -ClampToGamePitch(gameCam, -chi);
-        deathAnglePref = chi;
+        // = flat on the ground looking up at the killer).
+        var chiTarget = Math.Clamp(deathAnglePref, DeathAngleMin, DeathAngleMax);
 
-        var solved = SolveDeathFraming(playerAddress, playerYaw, chi, dt,
-            out var solvedCam, out var distance, out var fov, out var yaw);
-
-        var pitch = -chi; // game-space DirV target for the shot
+        var solved = SolveDeathFraming(playerAddress, yawReal, chiTarget, in view, dt,
+            out var solvedCam, out var distance, out var fov);
 
         LastSolveOk = solved;
         if (!solved)
@@ -740,12 +757,12 @@ public sealed unsafe class DynamicCameraController : IDisposable
         else
         {
             SolvedDistance = distance;
-            SolvedPitch = pitch;
+            SolvedChi = chiTarget;
             SolvedFov = fov;
-            SolvedYaw = yaw;
+            SolvedYaw = yawReal;
         }
 
-        var targetPitch = solved ? pitch : curPitch;
+        var targetChi = solved ? chiTarget : curChi;
         var targetFov = solved ? fov : curFov;
         var targetDistance = solved ? distance : curDistance;
         var targetCam = solved ? solvedCam : curCam;
@@ -756,7 +773,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         // it only makes it smaller.
         if (solved && deathZoomMul > 1.0001f)
         {
-            DynamicCameraSolver.Basis(yaw, pitch, out var zf, out _, out _);
+            DynamicCameraSolver.BasisFromAngles(yawReal, chiTarget, out var zf, out _, out _);
             targetCam -= zf * (distance * (deathZoomMul - 1f));
             targetDistance = distance * deathZoomMul;
         }
@@ -770,7 +787,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
             curCam = Vector3.Lerp(startCam, targetCam, s);
             curDistance = Lerp(startDistance, targetDistance, s);
-            curPitch = Lerp(startPitch, targetPitch, s);
+            curChi = Lerp(startChi, targetChi, s);
             curFov = Lerp(startFov, targetFov, s);
 
             if (t >= 1f)
@@ -790,7 +807,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
             curCam = Vector3.Lerp(curCam, targetCam, pk);
             curDistance += (targetDistance - curDistance) * dk;
-            curPitch += (targetPitch - curPitch) * dk;
+            curChi += (targetChi - curChi) * dk;
             curFov += (targetFov - curFov) * sk;
 
             StatusText = killerFit switch
@@ -808,28 +825,78 @@ public sealed unsafe class DynamicCameraController : IDisposable
             curCam.Y = MathF.Max(curCam.Y, smoothedGroundY + 0.15f);
 
         curDistance = ClampToGameDistance(gameCam, curDistance);
-        curPitch = ClampToGamePitch(gameCam, curPitch);
+
+        // Pitch is written by FEEDBACK, not by value: step DirV in the direction the sign
+        // belief says moves the real pitch toward curChi, verify against the measured pitch
+        // next frame (UpdatePitchSignBelief), and flip the belief if it consistently moves
+        // the wrong way. This is what makes the DirV convention un-guessable-wrong.
+        var chiErr = curChi - chiReal;
+        var maxStep = 3.0f * dt;
+        var dirVStep = Math.Clamp(dirVSign * chiErr, -maxStep, maxStep);
+        var dirVOut = ClampToGamePitch(gameCam, gameCam->DirV + dirVStep);
+        pendingExpectedChiDelta = dirVSign * (dirVOut - gameCam->DirV);
+        havePendingChiProbe = MathF.Abs(pendingExpectedChiDelta) > 0.0025f;
+        chiRealPrev = chiReal;
 
         // Hand the game an orbit centre that reconstructs the camera we want: it rebuilds the
-        // camera at pivot − fwd·Distance, so pivot = camera + fwd·Distance lands it on curCam.
-        DynamicCameraSolver.Basis(gameCam->DirH, curPitch, out var fwd, out _, out _);
+        // camera at pivot − toCamera·Distance, so pivot = camera + fwd·Distance lands it on
+        // curCam. Built at the pitch the camera is EXPECTED to have next frame, so position
+        // and orientation land together instead of the pivot leading the pitch.
+        var chiExpected = chiReal + pendingExpectedChiDelta;
+        DynamicCameraSolver.BasisFromAngles(yawReal, chiExpected, out var fwd, out _, out _);
         curPivot = curCam + fwd * curDistance;
 
         hasCurState = true;
         lastWrittenDistance = curDistance;
-        lastWrittenPitch = curPitch;
+        lastWrittenPitch = dirVOut;
         wroteDistance = true;
         wrotePitch = true;
 
         coordinator.Submit(CameraOwner.DynamicCam, new CameraRequest
         {
             OrbitCenter = curPivot,
-            DirV = curPitch,
+            DirV = dirVOut,
             Distance = curDistance,
             Fov = curFov,
             MaxDistanceAtLeast = curDistance + 1f,
             // No DirH, no ClearInput: the player keeps the yaw and the camera keeps working.
         });
+    }
+
+    /// <summary>
+    /// Verify last frame's pitch write against what the camera actually did, and flip the
+    /// DirV sign belief if the evidence says it is backwards. Evidence only counts when the
+    /// player is not touching the camera and we actually own it.
+    /// </summary>
+    private void UpdatePitchSignBelief(float chiReal)
+    {
+        if (!havePendingChiProbe)
+            return;
+        havePendingChiProbe = false;
+
+        if (rotateHold > 0f)
+            return;
+        if ((GetCurrentOwner?.Invoke() ?? CameraOwner.None) != CameraOwner.DynamicCam)
+            return;
+
+        var actualDelta = chiReal - chiRealPrev;
+        if (MathF.Abs(actualDelta) < 0.0005f)
+            return;
+
+        if (actualDelta * pendingExpectedChiDelta < 0f)
+        {
+            pitchFlipEvidence += MathF.Abs(pendingExpectedChiDelta);
+            if (pitchFlipEvidence > 0.04f)
+            {
+                dirVSign = -dirVSign;
+                pitchFlipEvidence = 0f;
+                log.Warning($"DynamicCam: pitch moved against every write — DirV runs the other way. Sign belief flipped to {dirVSign:+0;-0}.");
+            }
+        }
+        else
+        {
+            pitchFlipEvidence = MathF.Max(0f, pitchFlipEvidence - MathF.Abs(pendingExpectedChiDelta) * 0.5f);
+        }
     }
 
     /// <summary>
@@ -847,13 +914,12 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// rendered at the unbiased angle and the fit was simply wrong. Backing away shrinks
     /// horizontal spread anyway, so the rung was never needed — the standoff subsumes it.
     /// </summary>
-    private bool SolveDeathFraming(nint playerAddress, float playerYaw, float chi, float dt,
-        out Vector3 cam, out float distance, out float fov, out float yaw)
+    private bool SolveDeathFraming(nint playerAddress, float yawReal, float chi, in GameCameraView view, float dt,
+        out Vector3 cam, out float distance, out float fov)
     {
         cam = default;
         distance = 0f;
         fov = curFov;
-        yaw = playerYaw;
 
         var safeY = 1f - Math.Clamp(config.DynCamDeathSafeMargin, 0.01f, 0.4f);
         var safeX = safeY;
@@ -862,6 +928,14 @@ public sealed unsafe class DynamicCameraController : IDisposable
         var maxDist = MathF.Max(5f, config.DynCamDeathMaxDistance);
         var baseFov = Math.Clamp(startFov, fovMin, fovMax);
         var minStandoff = Math.Clamp(config.DynCamDeathCloseUpDistance, 1.2f, 6f);
+
+        // The lens each rung will fit with: the measured projection, rescaled for the FoV
+        // value the rung plans to write. The rescale is anchored on the measured
+        // (game FoV value → real lens) pair, so whatever the FoV field actually means
+        // optically is carried through instead of assumed.
+        var lensNow = new DynamicCameraSolver.Lens(view.TanHalfH, view.TanHalfV);
+        var lensBase = lensNow.ScaledToFov(baseFov, view.GameFov);
+        var lensWide = lensNow.ScaledToFov(fovMax, view.GameFov);
 
         // The shot is anchored on the corpse's chest: standoff is measured from it, and the
         // zoom the player is handed works against it.
@@ -889,9 +963,9 @@ public sealed unsafe class DynamicCameraController : IDisposable
         var needed = -1;
         for (var level = 0; level <= 3; level++)
         {
-            if (TrySolveAtLevel(playerAddress, level, corpseMain, playerYaw, chi,
-                    baseFov, fovMax, safeX, safeY, cameraHeight, minStandoff, maxDist,
-                    out _, out _))
+            if (TrySolveAtLevel(playerAddress, level, corpseMain, yawReal, chi,
+                    baseFov, fovMax, in lensBase, in lensWide, safeX, safeY,
+                    cameraHeight, minStandoff, maxDist, out _, out _))
             {
                 needed = level;
                 break;
@@ -924,9 +998,9 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
         // Commit to the rung the hysteresis settled on — NOT the one we just found; solving at
         // `needed` would make the dwell decorative. ladderLevel ≥ needed, so this fits.
-        if (!TrySolveAtLevel(playerAddress, ladderLevel, corpseMain, playerYaw, chi,
-                baseFov, fovMax, safeX, safeY, cameraHeight, minStandoff, maxDist,
-                out var final, out var chosenFov))
+        if (!TrySolveAtLevel(playerAddress, ladderLevel, corpseMain, yawReal, chi,
+                baseFov, fovMax, in lensBase, in lensWide, safeX, safeY,
+                cameraHeight, minStandoff, maxDist, out var final, out var chosenFov))
             return false;
 
         killerFit = LevelToFit(ladderLevel);
@@ -937,8 +1011,9 @@ public sealed unsafe class DynamicCameraController : IDisposable
         var groundAtCam = SampleGroundHeight(final.Camera.X, final.Camera.Z, corpseMain.Y);
         if (groundAtCam.HasValue && MathF.Abs(groundAtCam.Value - smoothedGroundY) > 0.15f)
         {
+            var lensChosen = ladderLevel >= 1 ? lensWide : lensBase;
             var corrected = DynamicCameraSolver.GroundedFit(
-                requiredPoints, corpseMain, playerYaw, -chi, chosenFov, Aspect,
+                requiredPoints, corpseMain, yawReal, chi, in lensChosen,
                 safeX, safeY, CameraHeightAbove(groundAtCam.Value), minStandoff, maxDist);
             if (corrected.Ok)
                 final = corrected;
@@ -952,7 +1027,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
         cam = final.Camera;
         distance = MathF.Max(0.5f, Vector3.Distance(final.Camera, corpseMain));
         fov = chosenFov;
-        yaw = playerYaw;
         return true;
     }
 
@@ -976,20 +1050,21 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// 3 — drop the killer; a close-up of the body alone
     /// </summary>
     private bool TrySolveAtLevel(
-        nint playerAddress, int level, Vector3 corpseMain, float playerYaw, float chi,
-        float baseFov, float fovMax, float safeX, float safeY,
-        float cameraHeight, float minStandoff, float maxDist,
+        nint playerAddress, int level, Vector3 corpseMain, float yawReal, float chi,
+        float baseFov, float fovMax, in DynamicCameraSolver.Lens lensBase, in DynamicCameraSolver.Lens lensWide,
+        float safeX, float safeY, float cameraHeight, float minStandoff, float maxDist,
         out DynamicCameraSolver.GroundedFitResult result, out float usedFov)
     {
         result = default;
         usedFov = level >= 1 ? fovMax : baseFov;
+        var lens = level >= 1 ? lensWide : lensBase;
 
         BuildDeathAnchors(playerAddress, LevelToFit(level));
         if (requiredPoints.Count == 0)
             return false;
 
         result = DynamicCameraSolver.GroundedFit(
-            requiredPoints, corpseMain, playerYaw, -chi, usedFov, Aspect,
+            requiredPoints, corpseMain, yawReal, chi, in lens,
             safeX, safeY, cameraHeight, minStandoff, maxDist);
         return result.Ok;
     }

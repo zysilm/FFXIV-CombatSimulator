@@ -3,7 +3,6 @@ using System.Numerics;
 using CombatSimulator.Camera;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Plugin.Services;
-using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager;
 
 namespace CombatSimulator.Gui;
 
@@ -11,12 +10,13 @@ namespace CombatSimulator.Gui;
 /// Dynamic Camera tuning overlay. Draws the safe frame, every anchor the framing solver
 /// is required to keep in shot, and a readout of what it solved.
 ///
-/// It also does one job that is not cosmetic: each anchor is plotted twice — once from
-/// the game's own WorldToScreen (green) and once from the solver's projection maths
-/// (magenta). If the two ever disagree, the solver's idea of the camera basis is wrong,
-/// and every framing bug downstream would be misattributed. They should sit on top of
-/// each other; a systematic mirror or offset says the DirH/DirV/FoV convention needs
-/// fixing, not the framing.
+/// Each anchor is plotted twice — green from the game's own WorldToScreen, magenta from
+/// our projection built on the MEASURED view (ViewMatrix basis + projection-matrix lens).
+/// These must coincide; if they do not, our projection maths itself is broken, not a
+/// convention. The convention questions (what DirV means, what the FoV field means) are
+/// answered numerically in the readout instead: it prints the measured pitch against
+/// ±DirV and the measured lens against tan(FoV/2), so one glance settles what the game
+/// actually does.
 /// </summary>
 public sealed unsafe class DynamicCameraDebugOverlay
 {
@@ -42,9 +42,12 @@ public sealed unsafe class DynamicCameraDebugOverlay
         if (screen.X < 1f || screen.Y < 1f)
             return;
 
+        var haveView = GameCameraView.TryRead(out var view);
+
         DrawSafeFrame(drawList, screen);
-        DrawAnchors(drawList, screen);
-        DrawReadout(screen);
+        if (haveView)
+            DrawAnchors(drawList, screen, in view);
+        DrawReadout(screen, haveView, in view);
     }
 
     private void DrawSafeFrame(ImDrawListPtr drawList, Vector2 screen)
@@ -64,14 +67,14 @@ public sealed unsafe class DynamicCameraDebugOverlay
             0f, ImDrawFlags.None, 2f);
     }
 
-    private void DrawAnchors(ImDrawListPtr drawList, Vector2 screen)
+    private void DrawAnchors(ImDrawListPtr drawList, Vector2 screen, in GameCameraView view)
     {
         var points = dynamicCam.RequiredPoints;
         if (points.Count == 0)
             return;
 
-        var haveSolverView = TryGetCameraView(out var cam, out var dirH, out var dirV, out var fov);
-        DynamicCameraSolver.Basis(dirH, dirV, out var fwd, out var right, out var up);
+        var lens = new DynamicCameraSolver.Lens(view.TanHalfH, view.TanHalfV);
+        DynamicCameraSolver.BasisFromForward(view.Forward, out var right, out var up);
 
         var gameColor = ImGui.GetColorU32(new Vector4(0.3f, 1f, 0.4f, 0.95f));
         var solverColor = ImGui.GetColorU32(new Vector4(1f, 0.3f, 0.9f, 0.8f));
@@ -83,10 +86,7 @@ public sealed unsafe class DynamicCameraDebugOverlay
             if (gameGui.WorldToScreen(world, out var gamePt))
                 drawList.AddCircleFilled(gamePt, 5f, gameColor);
 
-            if (!haveSolverView)
-                continue;
-
-            var ndc = DynamicCameraSolver.Project(world, cam, fwd, right, up, fov, dynamicCam.Aspect);
+            var ndc = DynamicCameraSolver.Project(world, view.Position, view.Forward, right, up, lens);
             if (ndc.Z <= 0.05f)
                 continue;
 
@@ -98,7 +98,7 @@ public sealed unsafe class DynamicCameraDebugOverlay
         }
     }
 
-    private void DrawReadout(Vector2 screen)
+    private void DrawReadout(Vector2 screen, bool haveView, in GameCameraView view)
     {
         ImGui.SetNextWindowPos(new Vector2(20f, screen.Y * 0.35f), ImGuiCond.FirstUseEver);
         ImGui.SetNextWindowBgAlpha(0.7f);
@@ -118,14 +118,30 @@ public sealed unsafe class DynamicCameraDebugOverlay
         else
             ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), "solve: FAILED (holding last frame)");
 
-        ImGui.TextUnformatted($"distance {dynamicCam.SolvedDistance:F2}   DirV {dynamicCam.SolvedPitch:F3}");
-        ImGui.TextUnformatted($"fov {dynamicCam.SolvedFov:F3}   yaw {dynamicCam.SolvedYaw:F3}   aspect {dynamicCam.Aspect:F2}");
+        ImGui.TextUnformatted($"distance {dynamicCam.SolvedDistance:F2}   chi {dynamicCam.SolvedChi:F3}");
+        ImGui.TextUnformatted($"fov {dynamicCam.SolvedFov:F3}   yaw {dynamicCam.SolvedYaw:F3}");
         ImGui.TextUnformatted($"anchors {dynamicCam.RequiredPoints.Count}   killer {dynamicCam.CurrentKillerFit}   ladder {dynamicCam.LadderLevel}");
+
+        if (haveView)
+        {
+            ImGui.Separator();
+
+            // The convention report. chiReal is measured off the actual view direction;
+            // whichever ±DirV column tracks it is the game's mapping. Same for the lens:
+            // whichever tan column matches TanHalfV says what the FoV field means.
+            DynamicCameraSolver.MeasureAngles(view.Forward, out var yawReal, out var chiReal);
+            ImGui.TextUnformatted($"chi(real) {chiReal:+0.000;-0.000}   -DirV {-view.DirV:+0.000;-0.000}   +DirV {view.DirV:+0.000;-0.000}");
+            var tanGame = MathF.Tan(Math.Clamp(view.GameFov, 0.05f, 2.8f) * 0.5f);
+            var aspect = MathF.Abs(view.TanHalfV) > 1e-4f ? view.TanHalfH / view.TanHalfV : 0f;
+            ImGui.TextUnformatted($"tanHalfV {view.TanHalfV:F3}   tan(fov/2) {tanGame:F3}   tan/aspect {(aspect != 0f ? tanGame / MathF.Abs(aspect) : 0f):F3}");
+            ImGui.TextUnformatted($"tanHalfH {view.TanHalfH:F3}   aspect {aspect:F2}   pitch-sign belief {dynamicCam.PitchWriteSign:+0;-0}");
+        }
 
         if (dynamicCam.CurrentPhase is DynamicCameraController.Phase.DeathTranslate
             or DynamicCameraController.Phase.DeathHold)
         {
-            var camY = TryGetCameraView(out var camPos, out _, out _, out _) ? camPos.Y : float.NaN;
+            ImGui.Separator();
+            var camY = haveView ? view.Position.Y : float.NaN;
             var aboveGround = camY - dynamicCam.DebugGroundY;
             var color = aboveGround < 0.05f
                 ? new Vector4(1f, 0.3f, 0.3f, 1f)   // camera at or below the floor — the v1 failure
@@ -136,36 +152,9 @@ public sealed unsafe class DynamicCameraDebugOverlay
 
         ImGui.Separator();
         ImGui.TextDisabled("green = game WorldToScreen");
-        ImGui.TextDisabled("magenta = solver projection");
+        ImGui.TextDisabled("magenta = our projection on the measured view");
         ImGui.TextDisabled("they must coincide");
 
         ImGui.End();
-    }
-
-    private static bool TryGetCameraView(out Vector3 cam, out float dirH, out float dirV, out float fov)
-    {
-        cam = default;
-        dirH = 0f;
-        dirV = 0f;
-        fov = 0.78f;
-
-        try
-        {
-            var camMgr = GameCameraManager.Instance();
-            if (camMgr == null || camMgr->Camera == null)
-                return false;
-
-            var gameCam = camMgr->Camera;
-            var pos = gameCam->CameraBase.SceneCamera.Position;
-            cam = new Vector3(pos.X, pos.Y, pos.Z);
-            dirH = gameCam->DirH;
-            dirV = gameCam->DirV;
-            fov = gameCam->FoV;
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
     }
 }
