@@ -137,6 +137,15 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private float pendingExpectedChiDelta;
     private bool havePendingChiProbe;
 
+    // OUR DirV during the death shot, written as an absolute value every frame. Stepping off
+    // the live DirV (read-modify-write) let anything else that touched DirV — the game
+    // applying a drag the clear missed, another mode's write — flow straight into our
+    // baseline and stay there, and the full-gain step on top of the game's nonlinear tilt
+    // response rang the loop (the violent shake when pitching down). Absolute writes stomp
+    // foreign edits within a frame; the reduced gain keeps the feedback from ringing.
+    private float dirVOwned;
+    private bool hasDirVOwned;
+
     // Orbit-placement feedback. The game rebuilds the camera at pivot + orbitDir·Distance,
     // and its orbit direction is NOT the reverse of the view direction — the view carries an
     // aim offset (measured ~0.23 rad at close range), so decomposing the pivot with the view
@@ -166,8 +175,10 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private float rotateHold;
 
     /// <summary>Player's zoom preference in combat, as a multiple of the framing distance.
-    /// Learned from their scroll wheel so we adapt to them instead of dragging them back.</summary>
+    /// Learned from their scroll wheel so we adapt to them instead of dragging them back.
+    /// Seeded from (and persisted to) config so a new fight resumes at their zoom.</summary>
     private float combatZoomBias = 1f;
+    private bool combatZoomDirty;
     /// <summary>Last combat framing distance BEFORE the zoom bias was applied. The bias has to
     /// be measured against this, not against the biased result, or it compounds every scroll.</summary>
     private float combatBaseDistance;
@@ -273,6 +284,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         this.log = log;
 
         lastShareSetting = config.DynCamSubjectScreenShare;
+        combatZoomBias = Math.Clamp(config.DynCamCombatZoomMemory, 0.4f, 3.0f);
 
         try
         {
@@ -308,6 +320,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         hasGroundSample = false;
         haveMeasuredOrbitDir = false;
         haveLastSubmittedPivot = false;
+        hasDirVOwned = false;
         deathAnglePref = Math.Clamp(config.DynCamDeathAngle, DeathAngleMin, DeathAngleMax);
         deathCoveragePref = Math.Clamp(config.DynCamDeathBodyVisibility, 0.25f, 1f);
         lastDeathCoverageSetting = config.DynCamDeathBodyVisibility;
@@ -381,17 +394,22 @@ public sealed unsafe class DynamicCameraController : IDisposable
         killerEntityId = 0;
         killerFit = KillerFit.FullBody;
         ladderLevel = 0;
-        combatZoomBias = 1f;
+        // Combat zoom survives resets by design: persist what was learned, then reseed from
+        // the persisted value — a new fight resumes at the zoom the player last settled on.
+        PersistCombatZoom();
+        combatZoomBias = Math.Clamp(config.DynCamCombatZoomMemory, 0.4f, 3.0f);
         deathZoomOut = 1f;
         smoothedShoulder = 0f;
         shoulderSide = 0f;
         hasGroundSample = false;
         haveMeasuredOrbitDir = false;
         haveLastSubmittedPivot = false;
+        hasDirVOwned = false;
         RestoreMinDistance();
         requiredPoints.Clear();
         StatusText = "off";
         coordinator.Release(CameraOwner.DynamicCam);
+        coordinator.Release(CameraOwner.DynamicDeath);
         DisableCollisionPatch();
     }
 
@@ -474,6 +492,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
             if (!config.DynCamDeathFraming)
             {
                 coordinator.Release(CameraOwner.DynamicCam);
+                coordinator.Release(CameraOwner.DynamicDeath);
                 DisableCollisionPatch();
                 RestoreMinDistance();
                 phase = Phase.Off;
@@ -507,7 +526,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
             case Phase.DeathHold:
                 if (!config.DynCamDeathFraming)
                 {
-                    coordinator.Release(CameraOwner.DynamicCam);
+                    coordinator.Release(CameraOwner.DynamicDeath);
                     StatusText = "death framing off";
                     return;
                 }
@@ -516,11 +535,15 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
             default:
                 coordinator.Release(CameraOwner.DynamicCam);
+                coordinator.Release(CameraOwner.DynamicDeath);
                 break;
         }
 
         var owner = GetCurrentOwner?.Invoke() ?? CameraOwner.None;
-        if (owner > CameraOwner.DynamicCam)
+        var ourRank = phase is Phase.DeathTranslate or Phase.DeathHold
+            ? CameraOwner.DynamicDeath
+            : CameraOwner.DynamicCam;
+        if (owner > ourRank)
             StatusText = $"yielding — {owner} owns the camera";
     }
 
@@ -559,14 +582,21 @@ public sealed unsafe class DynamicCameraController : IDisposable
             // against the UNBIASED distance, otherwise each scroll multiplies the last.
             var basis = MathF.Max(0.5f, combatBaseDistance);
             combatZoomBias = Math.Clamp(observedDistance / basis, 0.4f, 3.0f);
+            combatZoomDirty = true;
         }
         prevObservedDistance = observedDistance;
+
+        // Persist the learned zoom once the gesture settles (one config write per gesture,
+        // not per wheel notch).
+        if (combatZoomDirty && zoomHold <= 0f)
+            PersistCombatZoom();
 
         // The slider is the user speaking directly — it overrides anything we learned.
         if (MathF.Abs(config.DynCamSubjectScreenShare - lastShareSetting) > 0.0001f)
         {
             lastShareSetting = config.DynCamSubjectScreenShare;
             combatZoomBias = 1f;
+            PersistCombatZoom(force: true);
         }
 
         wroteDistance = false;
@@ -772,6 +802,19 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private void TickDeath(nint playerAddress, FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam,
         in GameCameraView view, float dt)
     {
+        // Soft yield to anything that still outranks the death shot (fighting cameras, the
+        // user's Active Cam): keep declaring presence so we resume the instant they release,
+        // but take none of the direct actions — pinning the zoom or consuming inputs for a
+        // camera someone else is driving would corrupt THEIR frame.
+        var currentOwner = GetCurrentOwner?.Invoke() ?? CameraOwner.None;
+        if (currentOwner > CameraOwner.DynamicDeath)
+        {
+            RestoreMinDistance();
+            coordinator.Submit(CameraOwner.DynamicDeath, default);
+            StatusText = $"yielding — {currentOwner} owns the camera";
+            return;
+        }
+
         var wantCollisionOff = config.DynCamDeathDisableCollision;
         if (wantCollisionOff && !collisionPatchActive) EnableCollisionPatch();
         else if (!wantCollisionOff && collisionPatchActive) DisableCollisionPatch();
@@ -863,7 +906,13 @@ public sealed unsafe class DynamicCameraController : IDisposable
         // = flat on the ground looking up at the killer).
         var chiTarget = Math.Clamp(deathAnglePref, DeathAngleMin, DeathAngleMax);
 
-        var solved = SolveDeathFraming(playerAddress, yawReal, chiTarget, in view, dt,
+        // The composition is solved at the pitch the camera ACTUALLY has, not the pitch we
+        // are steering toward. The DirV feedback moves reality toward the target over a few
+        // frames; fitting at the target meanwhile rendered frames that were composed for an
+        // angle the camera did not yet have — at steeper angles the mismatch was big enough
+        // to read as "the solve breaks when I pitch down". Fit what is; steer toward what
+        // should be.
+        var solved = SolveDeathFraming(playerAddress, yawReal, chiReal, in view, dt,
             out var solvedCam, out var distance, out var fov);
 
         LastSolveOk = solved;
@@ -899,7 +948,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
             }
             else
             {
-                DynamicCameraSolver.BasisFromAngles(yawReal, chiTarget, out var zf, out _, out _);
+                DynamicCameraSolver.BasisFromAngles(yawReal, chiReal, out var zf, out _, out _);
                 away = -zf;
             }
             targetCam += away * (distance * (deathZoomOut - 1f));
@@ -965,15 +1014,27 @@ public sealed unsafe class DynamicCameraController : IDisposable
             gameCam->MaxDistance = curDistance;
         }
 
-        // Pitch is written by FEEDBACK, not by value: step DirV in the direction the sign
-        // belief says moves the real pitch toward curChi, verify against the measured pitch
-        // next frame (UpdatePitchSignBelief), and flip the belief if it consistently moves
-        // the wrong way. This is what makes the DirV convention un-guessable-wrong.
+        // Pitch is written by FEEDBACK against OUR OWN DirV state, as an absolute value: step
+        // it in the direction the sign belief says moves the real pitch toward curChi, verify
+        // against the measured pitch next frame (UpdatePitchSignBelief), and flip the belief
+        // if it consistently moves the wrong way. Never read-modify-write the live DirV — any
+        // foreign edit (a drag the clear missed, another mode) would flow into the baseline
+        // and stay. The 0.35 gain is deliberate: full-gain stepping against the game's
+        // nonlinear tilt response is what rang the loop into visible shaking.
+        if (!hasDirVOwned)
+        {
+            dirVOwned = gameCam->DirV;
+            hasDirVOwned = true;
+        }
+
         var chiErr = curChi - chiReal;
         var maxStep = 3.0f * dt;
-        var dirVStep = Math.Clamp(dirVSign * chiErr, -maxStep, maxStep);
-        var dirVOut = ClampToGamePitch(gameCam, gameCam->DirV + dirVStep);
-        pendingExpectedChiDelta = dirVSign * (dirVOut - gameCam->DirV);
+        var dirVStep = MathF.Abs(chiErr) > 0.004f
+            ? Math.Clamp(dirVSign * chiErr * 0.35f, -maxStep, maxStep)
+            : 0f;
+        dirVOwned = ClampToGamePitch(gameCam, dirVOwned + dirVStep);
+        var dirVOut = dirVOwned;
+        pendingExpectedChiDelta = dirVSign * dirVStep;
         havePendingChiProbe = MathF.Abs(pendingExpectedChiDelta) > 0.0025f;
         chiRealPrev = chiReal;
 
@@ -1003,7 +1064,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         lastWrittenDistance = curDistance;
         wroteDistance = true;
 
-        coordinator.Submit(CameraOwner.DynamicCam, new CameraRequest
+        coordinator.Submit(CameraOwner.DynamicDeath, new CameraRequest
         {
             OrbitCenter = curPivot,
             DirV = dirVOut,
@@ -1030,7 +1091,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
         if (rotateHold > 0f)
             return;
-        if ((GetCurrentOwner?.Invoke() ?? CameraOwner.None) != CameraOwner.DynamicCam)
+        var beliefOwner = GetCurrentOwner?.Invoke() ?? CameraOwner.None;
+        if (beliefOwner is not (CameraOwner.DynamicCam or CameraOwner.DynamicDeath))
             return;
 
         var actualDelta = chiReal - chiRealPrev;
@@ -1423,6 +1485,19 @@ public sealed unsafe class DynamicCameraController : IDisposable
             return Vector3.Zero;
         var obj = (GameObject*)npc.BattleChara;
         return new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z);
+    }
+
+    /// <summary>Write the learned combat zoom through to config — throttled to gesture ends
+    /// and resets so the wheel does not turn into disk IO.</summary>
+    private void PersistCombatZoom(bool force = false)
+    {
+        if (!combatZoomDirty && !force)
+            return;
+        combatZoomDirty = false;
+        if (MathF.Abs(config.DynCamCombatZoomMemory - combatZoomBias) < 0.001f)
+            return;
+        config.DynCamCombatZoomMemory = combatZoomBias;
+        config.Save();
     }
 
     /// <summary>Unpin the game's zoom once the death shot ends: give back the original

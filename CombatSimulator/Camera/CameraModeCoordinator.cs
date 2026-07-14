@@ -13,11 +13,16 @@ public enum CameraOwner
     None = 0,
     /// <summary>Death cam (independent CameraBase.Update hook); registered for arbitration only.</summary>
     DeathCam = 10,
-    /// <summary>Dynamic Camera (over-the-shoulder combat framing / two-subject death framing).
-    /// Outranks the death cam it replaces; yields to every mode that owns player movement.</summary>
+    /// <summary>Dynamic Camera combat framing (over-the-shoulder). Outranks the death cam;
+    /// yields to every mode that owns player movement, including monster follow.</summary>
     DynamicCam = 15,
     /// <summary>Monster mode creature follow (orbit center only, user keeps rotation/zoom).</summary>
     MonsterFollow = 20,
+    /// <summary>Dynamic Camera DEATH shot. Deliberately above MonsterFollow: the marquee use
+    /// of monster mode after a death is the monster handling the corpse, and testing showed
+    /// the follow centre stealing the camera away from the body the moment a grab started —
+    /// the death shot is the one framing that scene and must keep the camera through it.</summary>
+    DynamicDeath = 25,
     /// <summary>Fighting Mode side-view combat camera.</summary>
     Fighting2D = 30,
     /// <summary>Fighting Mode post-defeat camera (translate / bone follow / KO framing).</summary>
@@ -79,6 +84,7 @@ public sealed unsafe class CameraModeCoordinator
         CameraOwner.UserActiveCam,
         CameraOwner.FightingKO,
         CameraOwner.Fighting2D,
+        CameraOwner.DynamicDeath,
         CameraOwner.MonsterFollow,
         CameraOwner.DynamicCam,
         CameraOwner.DeathCam,

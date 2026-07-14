@@ -46,6 +46,11 @@ public partial class Configuration
     /// framing resumes adapting. Never a lock — only a pause on OUR adjustments.</summary>
     public float DynCamInputHold { get; set; } = 2.0f;
 
+    /// <summary>The combat zoom the player last settled on, as a multiple of the framing
+    /// distance. Learned from the scroll wheel and persisted so a new fight (or re-enabling
+    /// the feature) starts at the zoom they chose, not at ours. Combat framing only.</summary>
+    public float DynCamCombatZoomMemory { get; set; } = 1.0f;
+
     // ---- Death framing (prone-photographer shot) ----
 
     public bool DynCamDeathFraming { get; set; } = true;
@@ -123,6 +128,7 @@ public partial class Configuration
         DynCamPivotSmoothing = d.DynCamPivotSmoothing;
         DynCamDistanceSmoothing = d.DynCamDistanceSmoothing;
         DynCamInputHold = d.DynCamInputHold;
+        DynCamCombatZoomMemory = d.DynCamCombatZoomMemory;
 
         DynCamDeathFraming = d.DynCamDeathFraming;
         DynCamDeathBodyVisibility = d.DynCamDeathBodyVisibility;
