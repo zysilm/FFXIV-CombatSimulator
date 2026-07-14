@@ -54,11 +54,12 @@ public partial class Configuration
     /// 0.5 ≈ half the body, 0.25 = head and chest only.</summary>
     public float DynCamDeathBodyVisibility { get; set; } = 1.0f;
 
-    /// <summary>How high above the GROUND the camera lies, in yalms. This is what makes the
-    /// shot read as a photographer down on the floor with the body — and, because the height
-    /// is anchored to a terrain raycast rather than solved for, it is also what makes it
-    /// impossible for the camera to end up underground.</summary>
-    public float DynCamDeathCamHeight { get; set; } = 0.55f;
+    /// <summary>Where the body sits on screen, in NDC (−1 = bottom edge, 0 = centre). The
+    /// camera HEIGHT is derived from this each frame — placing the body low is the whole
+    /// fallen-hero look, and solving the height from it beats hand-tuning a height that only
+    /// works for one angle. Testing bore this out: a manually-dialled height left the body
+    /// dead-centre and the shot feeling like a portrait, not a knockdown.</summary>
+    public float DynCamDeathBodyBand { get; set; } = -0.45f;
 
     /// <summary>Camera angle in radians. POSITIVE tips the lens down (the photographer
     /// raises up on their elbows); NEGATIVE tips it up (flat on the ground, looking up past
@@ -124,7 +125,7 @@ public partial class Configuration
 
         DynCamDeathFraming = d.DynCamDeathFraming;
         DynCamDeathBodyVisibility = d.DynCamDeathBodyVisibility;
-        DynCamDeathCamHeight = d.DynCamDeathCamHeight;
+        DynCamDeathBodyBand = d.DynCamDeathBodyBand;
         DynCamDeathAngle = d.DynCamDeathAngle;
         DynCamDeathCloseUpDistance = d.DynCamDeathCloseUpDistance;
         DynCamDeathTranslateDuration = d.DynCamDeathTranslateDuration;

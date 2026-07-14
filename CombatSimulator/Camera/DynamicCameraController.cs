@@ -127,6 +127,18 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private float pendingExpectedChiDelta;
     private bool havePendingChiProbe;
 
+    // Orbit-placement feedback. The game rebuilds the camera at pivot + orbitDir·Distance,
+    // and its orbit direction is NOT the reverse of the view direction — the view carries an
+    // aim offset (measured ~0.23 rad at close range), so decomposing the pivot with the view
+    // forward landed the actual camera ~0.3y below the solved spot, straight through the
+    // ground floor we thought we had enforced. Instead of modelling the offset, measure the
+    // orbit direction directly: we know the pivot we submitted and where the camera actually
+    // ended up; their difference IS the game's orbit direction for the current angles.
+    private Vector3 measuredOrbitDir;
+    private bool haveMeasuredOrbitDir;
+    private Vector3 lastSubmittedPivot;
+    private bool haveLastSubmittedPivot;
+
     // Death subjects.
     private nint killerAddress;
     private uint killerEntityId;
@@ -248,6 +260,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
         ladderDwell = 0f;
         deathZoomMul = 1f;
         hasGroundSample = false;
+        haveMeasuredOrbitDir = false;
+        haveLastSubmittedPivot = false;
         deathAnglePref = Math.Clamp(config.DynCamDeathAngle, DeathAngleMin, DeathAngleMax);
 
         CaptureTranslateStart();
@@ -325,6 +339,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
         smoothedShoulder = 0f;
         shoulderSide = 0f;
         hasGroundSample = false;
+        haveMeasuredOrbitDir = false;
+        haveLastSubmittedPivot = false;
         requiredPoints.Clear();
         StatusText = "off";
         coordinator.Release(CameraOwner.DynamicCam);
@@ -501,7 +517,11 @@ public sealed unsafe class DynamicCameraController : IDisposable
         }
         prevObservedDistance = observedDistance;
 
-        if (wrotePitch && phase is Phase.DeathTranslate or Phase.DeathHold)
+        // Only while the player is ACTUALLY rotating. The game adjusts DirV on its own too
+        // (its aim offset moves with zoom), and testing showed that counting every DirV
+        // discrepancy as player intent walks the angle preference far off its slider —
+        // the shot drifted from +0.01 to −0.18 rad with nobody touching the camera.
+        if (wrotePitch && rotateHold > 0f && phase is Phase.DeathTranslate or Phase.DeathHold)
         {
             var pitchDelta = gameCam->DirV - lastWrittenPitch;
             if (MathF.Abs(pitchDelta) > 0.0005f)
@@ -740,6 +760,19 @@ public sealed unsafe class DynamicCameraController : IDisposable
         DynamicCameraSolver.MeasureAngles(view.Forward, out var yawReal, out var chiReal);
         UpdatePitchSignBelief(chiReal);
 
+        // Measure the game's orbit direction: where it put the camera relative to the pivot
+        // we handed it last frame. This is the exact mapping the pivot decomposition needs.
+        if (haveLastSubmittedPivot)
+        {
+            var orbit = view.Position - lastSubmittedPivot;
+            var len = orbit.Length();
+            if (len > 0.25f)
+            {
+                measuredOrbitDir = orbit / len;
+                haveMeasuredOrbitDir = true;
+            }
+        }
+
         // χ is the photographer's angle (positive = raised a little, looking down; negative
         // = flat on the ground looking up at the killer).
         var chiTarget = Math.Clamp(deathAnglePref, DeathAngleMin, DeathAngleMax);
@@ -767,14 +800,23 @@ public sealed unsafe class DynamicCameraController : IDisposable
         var targetDistance = solved ? distance : curDistance;
         var targetCam = solved ? solvedCam : curCam;
 
-        // The player's zoom pulls the camera straight back along the view axis. Backing the
-        // camera off by d·(μ−1) while asking for a distance of d·μ leaves the pivot exactly
-        // where it was — anchored on the body — so zooming out never breaks the composition,
-        // it only makes it smaller.
+        // The player's zoom pulls the camera back along the ORBIT ray (that is what the game
+        // does with the distance). Backing the camera off by d·(μ−1) while asking for a
+        // distance of d·μ leaves the pivot exactly where it was — anchored on the body — so
+        // zooming out never breaks the composition, it only makes it smaller.
         if (solved && deathZoomMul > 1.0001f)
         {
-            DynamicCameraSolver.BasisFromAngles(yawReal, chiTarget, out var zf, out _, out _);
-            targetCam -= zf * (distance * (deathZoomMul - 1f));
+            Vector3 away;
+            if (haveMeasuredOrbitDir)
+            {
+                away = measuredOrbitDir;
+            }
+            else
+            {
+                DynamicCameraSolver.BasisFromAngles(yawReal, chiTarget, out var zf, out _, out _);
+                away = -zf;
+            }
+            targetCam += away * (distance * (deathZoomMul - 1f));
             targetDistance = distance * deathZoomMul;
         }
 
@@ -839,12 +881,26 @@ public sealed unsafe class DynamicCameraController : IDisposable
         chiRealPrev = chiReal;
 
         // Hand the game an orbit centre that reconstructs the camera we want: it rebuilds the
-        // camera at pivot − toCamera·Distance, so pivot = camera + fwd·Distance lands it on
-        // curCam. Built at the pitch the camera is EXPECTED to have next frame, so position
-        // and orientation land together instead of the pivot leading the pitch.
-        var chiExpected = chiReal + pendingExpectedChiDelta;
-        DynamicCameraSolver.BasisFromAngles(yawReal, chiExpected, out var fwd, out _, out _);
-        curPivot = curCam + fwd * curDistance;
+        // camera at pivot + orbitDir·Distance, so pivot = curCam − orbitDir·Distance lands it
+        // on curCam. The orbit direction is the MEASURED one — the view forward is not its
+        // reverse (the game aims above the pivot), and using it here is what used to sink the
+        // real camera ~0.3y below the solved spot, through the ground guarantee.
+        Vector3 orbitDir;
+        if (haveMeasuredOrbitDir)
+        {
+            orbitDir = measuredOrbitDir;
+        }
+        else
+        {
+            // First frame: approximate with the reversed view direction; the measurement
+            // takes over next frame and the springs absorb the correction.
+            var chiExpected = chiReal + pendingExpectedChiDelta;
+            DynamicCameraSolver.BasisFromAngles(yawReal, chiExpected, out var fwd0, out _, out _);
+            orbitDir = -fwd0;
+        }
+        curPivot = curCam - orbitDir * curDistance;
+        lastSubmittedPivot = curPivot;
+        haveLastSubmittedPivot = true;
 
         hasCurState = true;
         lastWrittenDistance = curDistance;
@@ -923,8 +979,13 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
         var safeY = 1f - Math.Clamp(config.DynCamDeathSafeMargin, 0.01f, 0.4f);
         var safeX = safeY;
-        var fovMin = Math.Clamp(config.DynCamDeathFovMin, 0.2f, 2.0f);
-        var fovMax = MathF.Max(fovMin + 0.05f, Math.Clamp(config.DynCamDeathFovMax, 0.2f, 2.5f));
+        // Take the range whichever way round the sliders ended up: an inverted pair silently
+        // clamped the BASE lens to the wide end (everything small — testing found the sliders
+        // set to min 1.2 / max 0.5 and the shot stuck at 1.2).
+        var fovA = Math.Clamp(config.DynCamDeathFovMin, 0.2f, 2.5f);
+        var fovB = Math.Clamp(config.DynCamDeathFovMax, 0.2f, 2.5f);
+        var fovMin = MathF.Min(fovA, fovB);
+        var fovMax = MathF.Max(fovMin + 0.05f, MathF.Max(fovA, fovB));
         var maxDist = MathF.Max(5f, config.DynCamDeathMaxDistance);
         var baseFov = Math.Clamp(startFov, fovMin, fovMax);
         var minStandoff = Math.Clamp(config.DynCamDeathCloseUpDistance, 1.2f, 6f);
@@ -956,7 +1017,16 @@ public sealed unsafe class DynamicCameraController : IDisposable
             var gk = 1f - MathF.Exp(-5f * dt);
             smoothedGroundY += (ground - smoothedGroundY) * gk;
         }
-        var cameraHeight = CameraHeightAbove(smoothedGroundY);
+        // Camera height is DERIVED, not dialled: from where the body should sit on screen.
+        // The chest's angle above the view axis must be atan(band·tanHalfV); subtract the
+        // view angle χ and the height difference over the standoff follows. This is what
+        // produces the fallen-hero look — body low in frame — for ANY angle the player
+        // picks, instead of asking them to hand-tune a height that happens to work.
+        var band = Math.Clamp(config.DynCamDeathBodyBand, -0.85f, 0.3f);
+        var xRef = Math.Clamp(DebugStandoff > 0.1f ? DebugStandoff : minStandoff, minStandoff, maxDist);
+        var drop = MathF.Tan(MathF.Atan(band * MathF.Abs(lensBase.TanHalfV)) - chi);
+        var desiredCamY = corpseMain.Y - xRef * drop;
+        var cameraHeight = Math.Clamp(desiredCamY, smoothedGroundY + 0.15f, smoothedGroundY + 3.5f);
         DebugGroundY = smoothedGroundY;
 
         // Find the cheapest rung that fits.
@@ -1012,9 +1082,10 @@ public sealed unsafe class DynamicCameraController : IDisposable
         if (groundAtCam.HasValue && MathF.Abs(groundAtCam.Value - smoothedGroundY) > 0.15f)
         {
             var lensChosen = ladderLevel >= 1 ? lensWide : lensBase;
+            var correctedHeight = Math.Clamp(desiredCamY, groundAtCam.Value + 0.15f, groundAtCam.Value + 3.5f);
             var corrected = DynamicCameraSolver.GroundedFit(
                 requiredPoints, corpseMain, yawReal, chi, in lensChosen,
-                safeX, safeY, CameraHeightAbove(groundAtCam.Value), minStandoff, maxDist);
+                safeX, safeY, correctedHeight, minStandoff, maxDist);
             if (corrected.Ok)
                 final = corrected;
         }
@@ -1029,9 +1100,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
         fov = chosenFov;
         return true;
     }
-
-    private float CameraHeightAbove(float ground)
-        => ground + MathF.Max(0.15f, Math.Clamp(config.DynCamDeathCamHeight, 0.15f, 3f));
 
     private static KillerFit LevelToFit(int level) => level switch
     {

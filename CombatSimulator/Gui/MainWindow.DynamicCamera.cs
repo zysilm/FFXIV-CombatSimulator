@@ -230,16 +230,16 @@ public partial class MainWindow
                    "0.25 — head and chest only\n\n" +
                    "Asking for less lets the camera sit closer and tighter.");
 
-        var camHeight = config.DynCamDeathCamHeight;
-        if (ImGui.SliderFloat("Camera height##dyncam", ref camHeight, 0.15f, 3f, "%.2f y"))
+        var bodyBand = config.DynCamDeathBodyBand;
+        if (ImGui.SliderFloat("Body position in frame##dyncam", ref bodyBand, -0.85f, 0.3f, "%.2f"))
         {
-            config.DynCamDeathCamHeight = camHeight;
+            config.DynCamDeathBodyBand = bodyBand;
             config.Save();
         }
-        HelpMarker("How high the camera lies above the GROUND. Small values put it on the floor with the body, which is what " +
-                   "sells the shot; larger values lift it into a more conventional overhead view.\n\n" +
-                   "The height is measured from a terrain probe, not solved for — so the camera cannot end up under the floor " +
-                   "no matter what the framing asks for.");
+        HelpMarker("Where your body sits on screen: −0.85 is hard against the bottom edge, 0 is dead centre. Low values are " +
+                   "what make the shot read as a knockdown.\n\n" +
+                   "The camera's height above the ground is worked out from this (together with the angle below) every frame — " +
+                   "you say where the body should be, it finds the height. A terrain probe keeps it out of the floor.");
 
         var angle = config.DynCamDeathAngle;
         if (ImGui.SliderFloat("Camera angle##dyncam", ref angle, -0.35f, 0.45f, "%.2f rad"))
@@ -406,13 +406,13 @@ public partial class MainWindow
         }
 
         ImGui.SameLine();
-        ImGui.Text("KO height");
+        ImGui.Text("KO body pos");
         ImGui.SameLine();
-        var camHeight = config.DynCamDeathCamHeight;
+        var bodyBand = config.DynCamDeathBodyBand;
         ImGui.SetNextItemWidth(70);
-        if (ImGui.DragFloat("##dcHeight", ref camHeight, 0.02f, 0.15f, 3f, "%.2f"))
+        if (ImGui.DragFloat("##dcBand", ref bodyBand, 0.01f, -0.85f, 0.3f, "%.2f"))
         {
-            config.DynCamDeathCamHeight = camHeight;
+            config.DynCamDeathBodyBand = bodyBand;
             config.Save();
         }
 
