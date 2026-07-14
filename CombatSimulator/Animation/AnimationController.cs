@@ -940,6 +940,11 @@ public unsafe class AnimationController : IDisposable
         if (tracked.Ptr == nint.Zero || actorVfxRemove == null)
             return;
 
+        // World teardown frees the vfx objects with their owners; still untrack (above), but
+        // calling the native remove on the stale pointer is an uncatchable AV.
+        if (Core.Services.ObjectTable.LocalPlayer == null)
+            return;
+
         try
         {
             actorVfxRemove(tracked.Ptr, (char)0);
@@ -1363,6 +1368,12 @@ public unsafe class AnimationController : IDisposable
     public void ResetDeathAnimation(FFXIVClientStructs.FFXIV.Client.Game.Character.BattleChara* battleChara)
     {
         if (battleChara == null) return;
+
+        // World teardown (logout/shutdown) frees every actor before our cleanup gets to run;
+        // a pointer null-check cannot see that, and the native AV that follows is uncatchable
+        // by the try below — it produced a crash dump from exactly this path (ResetEmote on a
+        // freed Character during HandleLoggedOut).
+        if (Core.Services.ObjectTable.LocalPlayer == null) return;
 
         try
         {

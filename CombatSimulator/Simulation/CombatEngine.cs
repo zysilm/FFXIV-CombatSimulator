@@ -229,8 +229,16 @@ public class CombatEngine : IDisposable
         lock (queueLock)
             actionQueue.Clear();
 
-        // Stop victory sequence if running
-        VictorySequence?.Stop();
+        // Everything below that WRITES into actors needs the world to still exist. On logout
+        // the game frees the actors before our framework tick sees IsLoggedIn go false, and
+        // the native AV from touching them is uncatchable — today's crash dumps came from
+        // this method (ResetDeathAnimation on a freed NPC) during HandleLoggedOut. The leaf
+        // methods gate themselves too; this check just keeps the loop honest.
+        var worldAlive = Core.Services.ObjectTable.LocalPlayer != null;
+
+        // Stop victory sequence if running (it animates actors — skip when they are gone)
+        if (worldAlive)
+            VictorySequence?.Stop();
 
         // Clear approach position blocks FIRST so position restores in DeselectAll aren't blocked
         movementBlockHook.ClearApproachNpcs();
@@ -241,7 +249,7 @@ public class CombatEngine : IDisposable
             UnregisterNpcEntity(npc.SimulatedEntityId);
             unsafe
             {
-                if (npc.BattleChara != null)
+                if (worldAlive && npc.BattleChara != null)
                 {
                     animationController.ResetDeathAnimation(npc.BattleChara);
                     animationController.ClearBattleStance(npc);

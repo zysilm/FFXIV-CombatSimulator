@@ -199,7 +199,10 @@ public unsafe class NpcSelector : IDisposable
             return;
         }
 
-        if (npc.BattleChara != null)
+        // The restore writes into the live actor, so it needs the world to still exist —
+        // at logout the game frees map NPCs before our cleanup runs, and the try below
+        // cannot catch the native AV that dereferencing them raises.
+        if (npc.BattleChara != null && Core.Services.ObjectTable.LocalPlayer != null)
         {
             try
             {

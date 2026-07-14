@@ -99,6 +99,12 @@ public unsafe class EmoteTimelinePlayer
     {
         if (native == null) return;
 
+        // This is a cleanup leaf with a dozen callers, several of which run during logout —
+        // when the game has already freed the actor behind the pointer. Dereferencing it then
+        // is a native AV the catch below cannot catch (crash dump 2026-07-14 17:28 came from
+        // this exact write). No world, no writes.
+        if (Core.Services.ObjectTable.LocalPlayer == null) return;
+
         try
         {
             native->Timeline.BaseOverride = 0;

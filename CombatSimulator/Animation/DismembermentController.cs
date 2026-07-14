@@ -7257,9 +7257,17 @@ public unsafe class DismembermentController : IDisposable
     {
         try
         {
-            // Put the nulled model/material pointers back so the game's destructor frees them.
-            if (c.GearHiddenMaterials != null) RestoreHiddenMaterials(c);
-            if (c.GearHiddenModels != null) RestoreHiddenModels(c);
+            // Only touch the clone's draw-object memory while the session is alive. At logout
+            // and shutdown the game frees the draw objects before our cleanup runs, and the
+            // restore walk (GetKeptModel → Materials) on the freed model is an uncatchable AV
+            // — it produced a crash dump from exactly this line during HandleLoggedOut.
+            var worldAlive = Core.Services.ObjectTable.LocalPlayer != null;
+            if (worldAlive)
+            {
+                // Put the nulled model/material pointers back so the game's destructor frees them.
+                if (c.GearHiddenMaterials != null) RestoreHiddenMaterials(c);
+                if (c.GearHiddenModels != null) RestoreHiddenModels(c);
+            }
 
             if (simulation != null)
             {
@@ -7298,9 +7306,9 @@ public unsafe class DismembermentController : IDisposable
             c.GearRagdollRig = null;
             c.GearGarmentRig = null;
 
-            // Only touch game memory while the session is alive (shutdown frees these objects).
+            // Same session-alive gate for the actor itself.
             var clientObjMgr = ClientObjectManager.Instance();
-            if (clientObjMgr != null && c.ObjectIndex >= 0 && Core.Services.ObjectTable.LocalPlayer != null)
+            if (clientObjMgr != null && c.ObjectIndex >= 0 && worldAlive)
             {
                 if (c.Chara != null) ((GameObject*)c.Chara)->DisableDraw();
                 clientObjMgr->DeleteObjectByIndex((ushort)c.ObjectIndex, 0);
