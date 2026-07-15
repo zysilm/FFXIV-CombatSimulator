@@ -969,7 +969,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
             deathCoveragePref = Math.Clamp(config.DynCamDeathBodyVisibility, 0.25f, 1f);
         }
 
-        BuildDeathAnchors(playerAddress, killerFit);
+        BuildDeathAnchors(playerAddress,
+            config.DynCamDeathIgnoreKiller ? KillerFit.Dropped : killerFit);
         if (requiredPoints.Count < 2)
         {
             StatusText = "death framing — no anchors";
@@ -1109,7 +1110,9 @@ public sealed unsafe class DynamicCameraController : IDisposable
             {
                 KillerFit.FullBody => "death framing — corpse + killer (full body)",
                 KillerFit.HeadTorso => "death framing — corpse + killer (head/torso)",
-                _ => "death framing — corpse only (killer out of reach)",
+                _ => config.DynCamDeathIgnoreKiller
+                    ? "death framing — corpse only (killer ignored)"
+                    : "death framing — corpse only (killer out of reach)",
             };
         }
 
@@ -1322,51 +1325,72 @@ public sealed unsafe class DynamicCameraController : IDisposable
         var cameraHeight = Math.Clamp(desiredCamY, floorY + 0.15f, floorY + 3.5f);
         DebugGroundY = floorY;
 
-        // Find the cheapest rung that fits.
-        var needed = -1;
-        for (var level = 0; level <= 3; level++)
-        {
-            if (TrySolveAtLevel(playerAddress, level, corpseMain, yawReal, chi,
-                    baseFov, fovMax, in lensBase, in lensWide, safeX, safeY,
-                    cameraHeight, minStandoff, maxDist, out _, out _))
-            {
-                needed = level;
-                break;
-            }
-        }
+        DynamicCameraSolver.GroundedFitResult final;
+        float chosenFov;
 
-        if (needed < 0)
-            return false;
+        if (config.DynCamDeathIgnoreKiller)
+        {
+            // Explicit corpse-only mode: use the player's covered body points and the base
+            // lens directly. Reusing ladder level 3 would also select the wide lens, making
+            // the subject unnecessarily small even though no killer needs accommodation.
+            BuildDeathAnchors(playerAddress, KillerFit.Dropped);
+            final = DynamicCameraSolver.GroundedFit(
+                requiredPoints, corpseMain, yawReal, chi, in lensBase,
+                safeX, safeY, cameraHeight, minStandoff, maxDist);
+            if (!final.Ok)
+                return false;
 
-        // Ladder hysteresis: climb the moment we must, come back down only once the cheaper
-        // rung has been safe for a while.
-        if (needed > ladderLevel)
-        {
-            ladderLevel = needed;
-            ladderDwell = 0f;
-        }
-        else if (needed < ladderLevel)
-        {
-            ladderDwell += dt;
-            if (ladderDwell > 1.0f)
-            {
-                ladderLevel--;
-                ladderDwell = 0f;
-            }
+            chosenFov = baseFov;
+            killerFit = KillerFit.Dropped;
         }
         else
         {
-            ladderDwell = 0f;
+            // Find the cheapest rung that fits.
+            var needed = -1;
+            for (var level = 0; level <= 3; level++)
+            {
+                if (TrySolveAtLevel(playerAddress, level, corpseMain, yawReal, chi,
+                        baseFov, fovMax, in lensBase, in lensWide, safeX, safeY,
+                        cameraHeight, minStandoff, maxDist, out _, out _))
+                {
+                    needed = level;
+                    break;
+                }
+            }
+
+            if (needed < 0)
+                return false;
+
+            // Ladder hysteresis: climb the moment we must, come back down only once the cheaper
+            // rung has been safe for a while.
+            if (needed > ladderLevel)
+            {
+                ladderLevel = needed;
+                ladderDwell = 0f;
+            }
+            else if (needed < ladderLevel)
+            {
+                ladderDwell += dt;
+                if (ladderDwell > 1.0f)
+                {
+                    ladderLevel--;
+                    ladderDwell = 0f;
+                }
+            }
+            else
+            {
+                ladderDwell = 0f;
+            }
+
+            // Commit to the rung the hysteresis settled on — NOT the one we just found;
+            // solving at `needed` would make the dwell decorative. ladderLevel ≥ needed.
+            if (!TrySolveAtLevel(playerAddress, ladderLevel, corpseMain, yawReal, chi,
+                    baseFov, fovMax, in lensBase, in lensWide, safeX, safeY,
+                    cameraHeight, minStandoff, maxDist, out final, out chosenFov))
+                return false;
+
+            killerFit = LevelToFit(ladderLevel);
         }
-
-        // Commit to the rung the hysteresis settled on — NOT the one we just found; solving at
-        // `needed` would make the dwell decorative. ladderLevel ≥ needed, so this fits.
-        if (!TrySolveAtLevel(playerAddress, ladderLevel, corpseMain, yawReal, chi,
-                baseFov, fovMax, in lensBase, in lensWide, safeX, safeY,
-                cameraHeight, minStandoff, maxDist, out var final, out var chosenFov))
-            return false;
-
-        killerFit = LevelToFit(ladderLevel);
 
         // (Terrain under the camera is handled up front by the smoothed camGround probe that
         // feeds floorY — no per-frame refit branch here, which is what used to flip-flop the

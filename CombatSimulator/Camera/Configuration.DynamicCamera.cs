@@ -61,6 +61,10 @@ public partial class Configuration
 
     public bool DynCamDeathFraming { get; set; } = true;
 
+    /// <summary>Frame only the controlled character during the death shot. When enabled the
+    /// killer contributes no required anchors and cannot force a wider lens or longer shot.</summary>
+    public bool DynCamDeathIgnoreKiller { get; set; } = false;
+
     /// <summary>How much of the corpse must stay in frame: 1.0 = head to feet,
     /// 0.5 ≈ half the body, 0.25 = head and chest only.</summary>
     public float DynCamDeathBodyVisibility { get; set; } = 1.0f;
@@ -139,6 +143,7 @@ public partial class Configuration
         DynCamCombatPitchMemoryValid = d.DynCamCombatPitchMemoryValid;
 
         DynCamDeathFraming = d.DynCamDeathFraming;
+        DynCamDeathIgnoreKiller = d.DynCamDeathIgnoreKiller;
         DynCamDeathBodyVisibility = d.DynCamDeathBodyVisibility;
         DynCamDeathBodyBand = d.DynCamDeathBodyBand;
         DynCamDeathAngle = d.DynCamDeathAngle;

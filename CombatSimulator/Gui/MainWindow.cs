@@ -698,6 +698,7 @@ public partial class MainWindow : IDisposable
 
     public void DrawFastCombatToolbar()
     {
+        using var toolbarStyle = PushCompactToolbarStyle();
         ImGui.SetNextWindowSize(new Vector2(620, 46), ImGuiCond.FirstUseEver);
         var showToolbar = config.ShowFastCombatToolbar;
         if (!ImGui.Begin("Combat Simulator Fast Combat", ref showToolbar,
@@ -711,6 +712,7 @@ public partial class MainWindow : IDisposable
             ImGui.End();
             return;
         }
+        RestoreToolbarFontScale();
 
         if (config.ShowFastCombatToolbar != showToolbar)
         {
@@ -4818,15 +4820,17 @@ public partial class MainWindow : IDisposable
 
     public void DrawShortcutsBar()
     {
+        using var toolbarStyle = PushCompactToolbarStyle();
         ImGui.SetNextWindowSize(new Vector2(320, 0), ImGuiCond.FirstUseEver);
         if (!ImGui.Begin("Combat Shortcuts", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
         {
             ImGui.End();
             return;
         }
+        RestoreToolbarFontScale();
 
         var isActive = combatEngine.IsActive;
-        var btnSize = new Vector2(95, 28);
+        var btnSize = new Vector2(95, 0);
 
         if (!isActive)
         {
@@ -4875,12 +4879,14 @@ public partial class MainWindow : IDisposable
 
     public void DrawDeathCamToolbar()
     {
+        using var toolbarStyle = PushCompactToolbarStyle();
         var presets = config.DeathCamPresets;
         if (presets.Count == 0)
         {
             ImGui.SetNextWindowSize(new Vector2(200, 0), ImGuiCond.FirstUseEver);
             if (ImGui.Begin("Death Cam Presets", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
             {
+                RestoreToolbarFontScale();
                 ImGui.TextDisabled("No presets saved.");
             }
             ImGui.End();
@@ -4896,8 +4902,9 @@ public partial class MainWindow : IDisposable
             ImGui.End();
             return;
         }
+        RestoreToolbarFontScale();
 
-        var arrowSize = new Vector2(28, 28);
+        var arrowSize = new Vector2(28, 0);
 
         var atStart = selectedPresetIndex <= 0;
         if (atStart) ImGui.BeginDisabled();
@@ -4935,11 +4942,13 @@ public partial class MainWindow : IDisposable
 
     public void DrawActiveCamToolbar()
     {
+        using var toolbarStyle = PushCompactToolbarStyle();
         if (!ImGui.Begin("Active Cam", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
         {
             ImGui.End();
             return;
         }
+        RestoreToolbarFontScale();
 
         var enabled = config.EnableActiveCamera;
         if (ImGui.Checkbox("##acEnable", ref enabled))

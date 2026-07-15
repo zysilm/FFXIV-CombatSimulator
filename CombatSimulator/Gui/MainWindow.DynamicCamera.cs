@@ -337,87 +337,28 @@ public partial class MainWindow
     /// <summary>Floating toolbar for tuning the framing in-game without the settings window in the way.</summary>
     public void DrawDynamicCamToolbar()
     {
+        using var toolbarStyle = PushCompactToolbarStyle();
         if (!ImGui.Begin("Dynamic Cam", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
         {
             ImGui.End();
             return;
         }
-
-        var enabled = config.EnableDynamicCamera;
-        if (ImGui.Checkbox("##dcEnable", ref enabled))
+        RestoreToolbarFontScale();
+        var ignoreKiller = config.DynCamDeathIgnoreKiller;
+        if (ImGui.Checkbox("##dcIgnoreKiller", ref ignoreKiller))
         {
-            config.EnableDynamicCamera = enabled;
+            config.DynCamDeathIgnoreKiller = ignoreKiller;
             config.Save();
         }
 
-        ImGui.SameLine();
-        ImGui.Text("Body");
-        ImGui.SameLine();
-        var share = config.DynCamSubjectScreenShare;
-        ImGui.SetNextItemWidth(70);
-        if (ImGui.DragFloat("##dcShare", ref share, 0.005f, 0.35f, 0.75f, "%.2f"))
-        {
-            config.DynCamSubjectScreenShare = share;
-            config.Save();
-        }
-
-        ImGui.SameLine();
-        ImGui.Text("Shoulder");
-        ImGui.SameLine();
-        var shoulder = config.DynCamShoulderScreenFrac;
-        ImGui.SetNextItemWidth(70);
-        if (ImGui.DragFloat("##dcShoulder", ref shoulder, 0.005f, 0f, 0.4f, "%.2f"))
-        {
-            config.DynCamShoulderScreenFrac = shoulder;
-            config.Save();
-        }
-
-        ImGui.SameLine();
-        ImGui.Text("KO body");
         ImGui.SameLine();
         var body = config.DynCamDeathBodyVisibility;
-        ImGui.SetNextItemWidth(70);
-        if (ImGui.DragFloat("##dcBody", ref body, 0.01f, 0.25f, 1f, "%.2f"))
+        ImGui.SetNextItemWidth(100);
+        if (ImGui.SliderFloat("##dcBody", ref body, 0.25f, 1f, "%.2f"))
         {
             config.DynCamDeathBodyVisibility = body;
             config.Save();
         }
-
-        ImGui.SameLine();
-        ImGui.Text("KO body pos");
-        ImGui.SameLine();
-        var bodyBand = config.DynCamDeathBodyBand;
-        ImGui.SetNextItemWidth(70);
-        if (ImGui.DragFloat("##dcBand", ref bodyBand, 0.01f, -0.85f, 0.3f, "%.2f"))
-        {
-            config.DynCamDeathBodyBand = bodyBand;
-            config.Save();
-        }
-
-        ImGui.SameLine();
-        ImGui.Text("KO angle");
-        ImGui.SameLine();
-        var angle = config.DynCamDeathAngle;
-        ImGui.SetNextItemWidth(70);
-        if (ImGui.DragFloat("##dcAngle", ref angle, 0.01f, -0.42f, 0.80f, "%.2f"))
-        {
-            config.DynCamDeathAngle = angle;
-            config.Save();
-        }
-
-        ImGui.SameLine();
-        ImGui.Text("KO dist");
-        ImGui.SameLine();
-        var closeUp = config.DynCamDeathCloseUpDistance;
-        ImGui.SetNextItemWidth(70);
-        if (ImGui.DragFloat("##dcCloseUp", ref closeUp, 0.05f, 1.2f, 6f, "%.1f"))
-        {
-            config.DynCamDeathCloseUpDistance = closeUp;
-            config.Save();
-        }
-
-        ImGui.SameLine();
-        ImGui.TextDisabled($"| {dynamicCameraController.StatusText}");
 
         ImGui.End();
     }
