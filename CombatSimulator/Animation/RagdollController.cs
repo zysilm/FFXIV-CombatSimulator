@@ -1863,7 +1863,7 @@ public unsafe partial class RagdollController : IDisposable
         if (IsUpperArmBone(bone.Name))
             return new Vector3(MathF.Max(0.032f, bone.CapsuleRadius * 1.15f), MathF.Max(0.075f, bone.CapsuleHalfLength), MathF.Max(0.024f, bone.CapsuleRadius * 0.85f));
         if (IsShinBone(bone.Name))
-            return new Vector3(MathF.Max(0.042f, bone.CapsuleRadius * 1.15f), MathF.Max(0.09f, bone.CapsuleHalfLength), MathF.Max(0.030f, bone.CapsuleRadius * 0.85f));
+            return new Vector3(MathF.Max(0.042f, bone.CapsuleRadius * 1.15f), 0.035f, MathF.Max(0.030f, bone.CapsuleRadius * 0.85f));
         if (IsForearmBone(bone.Name))
             return new Vector3(MathF.Max(0.030f, bone.CapsuleRadius * 1.10f), MathF.Max(0.060f, bone.CapsuleHalfLength), MathF.Max(0.022f, bone.CapsuleRadius * 0.85f));
         if (IsFootBone(bone.Name))

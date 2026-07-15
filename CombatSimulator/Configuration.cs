@@ -186,6 +186,7 @@ public partial class Configuration : IPluginConfiguration
     public bool AnatomicalHingeSignFixMigrated { get; set; } = false;
     public bool NpcCollisionMeshDefaultMigrated { get; set; } = false;
     public bool NpcCollisionModeMigrated20260705 { get; set; } = false;
+    public bool RagdollShinBoxHalfYMigrated20260716 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -883,6 +884,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateSkirtParentChains();
         MigrateRagdollProfileMetadata();
         MigrateAnatomicalHinges();
+        MigrateRagdollShinBoxHalfY();
         MigrateActionGuardDefaultButton();
         MigrateActionGuardVfxDefault();
         MigrateActionBasicAttackDefaultButton();
@@ -1456,6 +1458,42 @@ public partial class Configuration : IPluginConfiguration
         if (changed) Save();
     }
 
+    /// <summary>
+    /// Promote the shorter knee/shin collision box into every saved profile and the live
+    /// advanced-bone list. Built-in profiles are copied into user config on first install,
+    /// so changing only the embedded JSON would leave every existing installation on 0.11.
+    /// </summary>
+    private void MigrateRagdollShinBoxHalfY()
+    {
+        if (RagdollShinBoxHalfYMigrated20260716)
+            return;
+
+        SetRagdollShinBoxHalfY(RagdollBoneConfigs);
+        foreach (var profile in RagdollBoneProfiles)
+            if (profile?.Bones != null)
+                SetRagdollShinBoxHalfY(profile.Bones);
+
+        RagdollShinBoxHalfYMigrated20260716 = true;
+        // Save even if no profiles exist yet, so the one-shot migration is recorded. A new
+        // install is seeded later in Initialize from the already-updated embedded profiles.
+        Save();
+    }
+
+    private static bool SetRagdollShinBoxHalfY(List<RagdollBoneConfig> bones)
+    {
+        var changed = false;
+        foreach (var bone in bones)
+        {
+            if (bone.Name is not ("j_asi_b_l" or "j_asi_b_r") ||
+                MathF.Abs(bone.BoxHalfExtentY - 0.035f) < 0.0001f)
+                continue;
+
+            bone.BoxHalfExtentY = 0.035f;
+            changed = true;
+        }
+        return changed;
+    }
+
     private static bool MigrateAnatomicalHingeList(List<RagdollBoneConfig> bones)
     {
         bool changed = false;
@@ -1494,7 +1532,7 @@ public partial class Configuration : IPluginConfiguration
                 }
 
                 var minX = isLowerLimb ? 0.042f : 0.030f;
-                var minY = isLowerLimb ? 0.090f : 0.060f;
+                var minY = isLowerLimb ? 0.035f : 0.060f;
                 var minZ = isLowerLimb ? 0.030f : 0.022f;
                 if (bone.BoxHalfExtentX < minX) { bone.BoxHalfExtentX = minX; changed = true; }
                 if (bone.BoxHalfExtentY < minY) { bone.BoxHalfExtentY = minY; changed = true; }
