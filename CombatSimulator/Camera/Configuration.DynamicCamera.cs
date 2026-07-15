@@ -51,6 +51,12 @@ public partial class Configuration
     /// the feature) starts at the zoom they chose, not at ours. Combat framing only.</summary>
     public float DynCamCombatZoomMemory { get; set; } = 1.0f;
 
+    /// <summary>The camera pitch (game DirV) the player last held in combat, persisted so it
+    /// survives the death shot (which forces its own angle) and is restored when combat
+    /// framing resumes — the same memory the combat zoom already has, now for the angle.</summary>
+    public float DynCamCombatPitchMemory { get; set; } = 0f;
+    public bool DynCamCombatPitchMemoryValid { get; set; } = false;
+
     // ---- Death framing (prone-photographer shot) ----
 
     public bool DynCamDeathFraming { get; set; } = true;
@@ -129,6 +135,8 @@ public partial class Configuration
         DynCamDistanceSmoothing = d.DynCamDistanceSmoothing;
         DynCamInputHold = d.DynCamInputHold;
         DynCamCombatZoomMemory = d.DynCamCombatZoomMemory;
+        DynCamCombatPitchMemory = d.DynCamCombatPitchMemory;
+        DynCamCombatPitchMemoryValid = d.DynCamCombatPitchMemoryValid;
 
         DynCamDeathFraming = d.DynCamDeathFraming;
         DynCamDeathBodyVisibility = d.DynCamDeathBodyVisibility;

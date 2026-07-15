@@ -68,10 +68,10 @@ public sealed unsafe class DynamicCameraController : IDisposable
     };
 
     /// <summary>Bounds on the death-shot camera angle χ (positive = raised, looking down;
-    /// negative = flat/below, looking up at the killer). Wide: χ=+0.8 → DirV=−0.8 (steep
-    /// downward, well within the game's −1.48 floor); χ=−0.7 → DirV=+0.7 (near the game's
-    /// +0.79 look-up ceiling). Both ends usable.</summary>
-    private const float DeathAngleMin = -0.70f;
+    /// negative = flat/below, looking up at the killer). The up end stops at −0.42: steeper
+    /// look-up pushes the camera far and low where framing gets unstable, and it is past the
+    /// point of diminishing dramatic return anyway.</summary>
+    private const float DeathAngleMin = -0.42f;
     private const float DeathAngleMax = 0.80f;
 
     // Internal solver bounds for the death shot. These were sliders once; nothing a player
@@ -186,6 +186,17 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// be measured against this, not against the biased result, or it compounds every scroll.</summary>
     private float combatBaseDistance;
     private float lastShareSetting;
+
+    /// <summary>Player's combat pitch (game DirV), remembered across the death shot the same way
+    /// the zoom is. Restored once when combat framing (re)starts; tracked continuously while in
+    /// combat. Persisted so it survives sessions.</summary>
+    private float combatPitchMemory;
+    private bool combatPitchMemoryValid;
+    private bool combatPitchDirty;
+    /// <summary>Set on entry into the Combat phase so the next TickCombat writes the remembered
+    /// pitch once, then hands the axis back to the player.</summary>
+    private bool combatPitchRestorePending;
+    private Phase prevPhase = Phase.Off;
 
     // Death-shot preferences. The ANGLE is slider-only by decision: after three attempts at
     // live pitch adjustment (each a differently-shaped feedback loop, each one shaking), the
@@ -328,6 +339,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
         lastShareSetting = config.DynCamSubjectScreenShare;
         combatZoomBias = Math.Clamp(config.DynCamCombatZoomMemory, 0.4f, 3.0f);
+        combatPitchMemory = config.DynCamCombatPitchMemory;
+        combatPitchMemoryValid = config.DynCamCombatPitchMemoryValid;
 
         try
         {
@@ -427,10 +440,15 @@ public sealed unsafe class DynamicCameraController : IDisposable
         killerEntityId = 0;
         killerFit = KillerFit.FullBody;
         ladderLevel = 0;
-        // Combat zoom survives resets by design: persist what was learned, then reseed from
-        // the persisted value — a new fight resumes at the zoom the player last settled on.
+        // Combat zoom and pitch survive resets by design: persist what was learned, then reseed
+        // from the persisted values — a new fight resumes at the zoom and angle last settled on.
         PersistCombatZoom();
+        PersistCombatPitch();
         combatZoomBias = Math.Clamp(config.DynCamCombatZoomMemory, 0.4f, 3.0f);
+        combatPitchMemory = config.DynCamCombatPitchMemory;
+        combatPitchMemoryValid = config.DynCamCombatPitchMemoryValid;
+        combatPitchRestorePending = false;
+        prevPhase = Phase.Off;
         deathZoomOut = 1f;
         smoothedShoulder = 0f;
         shoulderSide = 0f;
@@ -546,6 +564,15 @@ public sealed unsafe class DynamicCameraController : IDisposable
         if (alive && phase == Phase.Off)
             phase = Phase.Combat;
 
+        // Combat pitch memory: arm a one-shot restore when we enter combat framing, and save
+        // the last-held pitch when we leave it (the death shot, or the mode going Off) — the
+        // same lifecycle the combat zoom already has.
+        if (phase == Phase.Combat && prevPhase != Phase.Combat)
+            combatPitchRestorePending = true;
+        else if (phase != Phase.Combat && prevPhase == Phase.Combat)
+            PersistCombatPitch();
+        prevPhase = phase;
+
         switch (phase)
         {
             case Phase.Combat:
@@ -649,6 +676,33 @@ public sealed unsafe class DynamicCameraController : IDisposable
         var fwd = view.Forward;
         DynamicCameraSolver.BasisFromForward(fwd, out var right, out var up);
         DynamicCameraSolver.MeasureAngles(fwd, out var yawReal, out var chiReal);
+
+        // Combat pitch memory. On the first frame of a combat session, restore the pitch the
+        // player last held (unless we have never recorded one, in which case we adopt the
+        // current pitch as the starting memory). After that the player owns the axis, and we
+        // just remember where they leave it — this is what survives the death shot's forced
+        // angle so reviving does not dump them at the death camera's tilt.
+        if (combatPitchRestorePending)
+        {
+            combatPitchRestorePending = false;
+            if (combatPitchMemoryValid)
+            {
+                gameCam->DirV = ClampToGamePitch(gameCam, combatPitchMemory);
+                gameCam->InputDeltaV = 0f;
+                gameCam->InputDeltaVAdjusted = 0f;
+            }
+            else
+            {
+                combatPitchMemory = gameCam->DirV;
+                combatPitchMemoryValid = true;
+            }
+        }
+        else if (MathF.Abs(gameCam->DirV - combatPitchMemory) > 0.0005f)
+        {
+            combatPitchMemory = gameCam->DirV;
+            combatPitchMemoryValid = true;
+            combatPitchDirty = true;
+        }
 
         var anchor = boneService.GetBoneWorldPos(playerAddress, config.DynCamPivotBoneName)
                      ?? ReadObjectPosition(playerAddress) + new Vector3(0f, 1.2f, 0f);
@@ -1551,6 +1605,18 @@ public sealed unsafe class DynamicCameraController : IDisposable
         if (MathF.Abs(config.DynCamCombatZoomMemory - combatZoomBias) < 0.001f)
             return;
         config.DynCamCombatZoomMemory = combatZoomBias;
+        config.Save();
+    }
+
+    /// <summary>Write the remembered combat pitch through to config — on leaving combat and on
+    /// reset, so it is not a per-frame disk write.</summary>
+    private void PersistCombatPitch()
+    {
+        if (!combatPitchDirty)
+            return;
+        combatPitchDirty = false;
+        config.DynCamCombatPitchMemory = combatPitchMemory;
+        config.DynCamCombatPitchMemoryValid = combatPitchMemoryValid;
         config.Save();
     }
 
