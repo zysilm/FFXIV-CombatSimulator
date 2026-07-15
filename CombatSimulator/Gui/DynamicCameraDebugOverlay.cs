@@ -131,7 +131,7 @@ public sealed unsafe class DynamicCameraDebugOverlay
             // whichever ±DirV column tracks it is the game's mapping. Same for the lens:
             // whichever tan column matches TanHalfV says what the FoV field means.
             DynamicCameraSolver.MeasureAngles(view.Forward, out var yawReal, out var chiReal);
-            ImGui.TextUnformatted($"chi(real) {chiReal:+0.000;-0.000}   -DirV {-view.DirV:+0.000;-0.000}   +DirV {view.DirV:+0.000;-0.000}");
+            ImGui.TextUnformatted($"chi(real) {chiReal:+0.000;-0.000}   -DirV {-view.DirV:+0.000;-0.000}   tiltWas {dynamicCam.DebugTiltOffset:+0.000;-0.000}");
             var tanGame = MathF.Tan(Math.Clamp(view.GameFov, 0.05f, 2.8f) * 0.5f);
             var aspect = MathF.Abs(view.TanHalfV) > 1e-4f ? view.TanHalfH / view.TanHalfV : 0f;
             ImGui.TextUnformatted($"tanHalfV {view.TanHalfV:F3}   tan(fov/2) {tanGame:F3}   tan/aspect {(aspect != 0f ? tanGame / MathF.Abs(aspect) : 0f):F3}");
@@ -201,7 +201,7 @@ public sealed unsafe class DynamicCameraDebugOverlay
             var tanGame = MathF.Tan(Math.Clamp(view.GameFov, 0.05f, 2.8f) * 0.5f);
             sb.AppendLine("--- measured view ---");
             sb.AppendLine($"pos=({view.Position.X:F2},{view.Position.Y:F2},{view.Position.Z:F2}) fwd=({view.Forward.X:F3},{view.Forward.Y:F3},{view.Forward.Z:F3})");
-            sb.AppendLine($"yawReal={yawReal:F4} chiReal={chiReal:F4} | DirH={view.DirH:F4} DirV={view.DirV:F4} (-DirV={-view.DirV:F4})");
+            sb.AppendLine($"yawReal={yawReal:F4} chiReal={chiReal:F4} | DirH={view.DirH:F4} DirV={view.DirV:F4} (-DirV={-view.DirV:F4}) tiltWas={dynamicCam.DebugTiltOffset:F4}");
             sb.AppendLine($"tanHalfH={view.TanHalfH:F4} tanHalfV={view.TanHalfV:F4} | gameFov={view.GameFov:F4} tan(fov/2)={tanGame:F4}");
             sb.AppendLine($"viewMatrixAxes={(view.AxesAreRows ? "rows" : "cols")} axisScore={view.AxisScore:F3}");
 

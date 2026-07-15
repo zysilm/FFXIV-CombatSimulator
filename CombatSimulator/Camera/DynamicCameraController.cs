@@ -67,10 +67,12 @@ public sealed unsafe class DynamicCameraController : IDisposable
         new[] { "j_asi_d_l", "j_asi_d_r" },
     };
 
-    /// <summary>Bounds on the death-shot camera angle χ (positive = raised slightly,
-    /// looking down; negative = flat on the ground, looking up at the killer).</summary>
-    private const float DeathAngleMin = -0.35f;
-    private const float DeathAngleMax = 0.45f;
+    /// <summary>Bounds on the death-shot camera angle χ (positive = raised, looking down;
+    /// negative = flat/below, looking up at the killer). Wide: χ=+0.8 → DirV=−0.8 (steep
+    /// downward, well within the game's −1.48 floor); χ=−0.7 → DirV=+0.7 (near the game's
+    /// +0.79 look-up ceiling). Both ends usable.</summary>
+    private const float DeathAngleMin = -0.70f;
+    private const float DeathAngleMax = 0.80f;
 
     // Internal solver bounds for the death shot. These were sliders once; nothing a player
     // wants is expressed through them that the remaining sliders do not cover, and a mis-set
@@ -272,11 +274,20 @@ public sealed unsafe class DynamicCameraController : IDisposable
         gameCamera->InputDeltaV = 0f;
         gameCamera->InputDeltaVAdjusted = 0f;
 
+        // (TiltOffset turned out NOT to be the DirV→pitch discrepancy — measured at only
+        // −0.08 while the discrepancy was ~0.43. The gap is the game aiming at the character's
+        // upper body: at close range that look-at offset adds a large downward pitch. Read it
+        // for diagnostics but leave it alone.)
+        DebugTiltOffset = gameCamera->TiltOffset;
+
         gameCamera->MinDistance = enforcePinDistance;
         gameCamera->MaxDistance = enforcePinDistance;
         gameCamera->Distance = enforcePinDistance;
         gameCamera->InterpDistance = enforcePinDistance;
     }
+
+    /// <summary>The game's vertical tilt offset seen just before we zeroed it (diagnostics).</summary>
+    public float DebugTiltOffset { get; private set; }
     /// <summary>Runtime wheel-driven coverage / zoom-out (death shot), for the overlay.</summary>
     public float DeathCoverage => deathCoveragePref;
     public float DeathZoomOut => deathZoomOut;
@@ -932,22 +943,32 @@ public sealed unsafe class DynamicCameraController : IDisposable
         var slew = 0.8f * dt;
         dirVOwned = ClampToGamePitch(gameCam, dirVOwned + Math.Clamp(dirVDesired - dirVOwned, -slew, slew));
 
-        // Learn the tilt offset slowly: tilt = actual pitch − commanded pitch = chiReal −
-        // (−dirVOwned). The fit runs at commanded + tilt, i.e. the real pitch, but decoupled
-        // from this frame's measurement so the solve→geometry→tilt→measurement loop cannot ring.
+        // The fit composes at the actual measured pitch, tracked through a slow filter so the
+        // composition matches what the lens really sees. This IS a feedback loop (measured
+        // pitch → fit → geometry → game aim → measured pitch); hands-off it converges, held
+        // stable by decoupling the camera height from it (below). But a PLAYER PITCH INPUT
+        // kicks it past its margin and it ratchets the camera to the sky and never returns —
+        // that was the whole "adjusting pitch triggers looking-at-sky, holding does not"
+        // report. So freeze the tracking whenever the player is touching the camera: their
+        // input can no longer feed the loop, and dirVOwned/height are open-loop and unaffected.
+        // Vertical input is cleared anyway (slider-only angle), so nothing is lost.
         var measuredTilt = chiReal - (-dirVOwned);
         if (!hasTiltBias)
         {
             tiltBias = measuredTilt;
             hasTiltBias = true;
         }
-        else
+        else if (rotateHold <= 0f)
         {
-            tiltBias += (measuredTilt - tiltBias) * (1f - MathF.Exp(-0.5f * dt));
+            tiltBias += (measuredTilt - tiltBias) * (1f - MathF.Exp(-1.0f * dt));
         }
+        // Bound it to a physically sane tilt so no path (a leaked input, a bad frame) can walk
+        // it out to a sky-pointing fit.
+        tiltBias = Math.Clamp(tiltBias, -0.6f, 0.6f);
         var chiForFit = (-dirVOwned) + tiltBias;
+        var chiCommanded = -dirVOwned; // open-loop; drives the camera height
 
-        var solved = SolveDeathFraming(playerAddress, yawReal, chiForFit, in view, dt,
+        var solved = SolveDeathFraming(playerAddress, yawReal, chiForFit, chiCommanded, in view, dt,
             out var solvedCam, out var distance, out var fov);
 
         LastSolveOk = solved;
@@ -1027,13 +1048,29 @@ public sealed unsafe class DynamicCameraController : IDisposable
             };
         }
 
-        // The floor, enforced on the value we actually submit rather than on the solve. Nothing
-        // downstream can put the camera underground: not a bad solve, not a spring overshoot,
-        // not the translate blending through a hillside. Uses the combined body+camera floor.
+        // Terrain safety, applied to the value we actually submit — never to the solve, so it
+        // cannot feed back into the fit (that self-loop is exactly what we removed above). One
+        // fresh probe under the final camera spot; smoothed on its own state so a stray raycast
+        // does not jump the camera. This is a hard floor only: it lifts the camera off terrain
+        // it would otherwise clip, and never lowers it.
         if (hasGroundSample)
         {
-            var floorY = hasCamGroundSample ? MathF.Max(smoothedGroundY, smoothedCamGroundY) : smoothedGroundY;
-            curCam.Y = MathF.Max(curCam.Y, floorY + 0.15f);
+            var camGround = SampleGroundHeight(curCam.X, curCam.Z, curCam.Y + 1f);
+            if (camGround.HasValue)
+            {
+                if (!hasCamGroundSample)
+                {
+                    smoothedCamGroundY = camGround.Value;
+                    hasCamGroundSample = true;
+                }
+                else
+                {
+                    var ck = 1f - MathF.Exp(-5f * dt);
+                    smoothedCamGroundY += (camGround.Value - smoothedCamGroundY) * ck;
+                }
+            }
+            var safeFloor = hasCamGroundSample ? MathF.Max(smoothedGroundY, smoothedCamGroundY) : smoothedGroundY;
+            curCam.Y = MathF.Max(curCam.Y, safeFloor + 0.15f);
         }
 
         curDistance = MathF.Max(0.3f, curDistance);
@@ -1116,7 +1153,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// rendered at the unbiased angle and the fit was simply wrong. Backing away shrinks
     /// horizontal spread anyway, so the rung was never needed — the standoff subsumes it.
     /// </summary>
-    private bool SolveDeathFraming(nint playerAddress, float yawReal, float chi, in GameCameraView view, float dt,
+    private bool SolveDeathFraming(nint playerAddress, float yawReal, float chi, float chiForHeight, in GameCameraView view, float dt,
         out Vector3 cam, out float distance, out float fov)
     {
         cam = default;
@@ -1171,24 +1208,14 @@ public sealed unsafe class DynamicCameraController : IDisposable
             smoothedGroundY += (ground - smoothedGroundY) * gk;
         }
 
-        if (hasCurState)
-        {
-            var camGround = SampleGroundHeight(curCam.X, curCam.Z, curCam.Y);
-            if (camGround.HasValue)
-            {
-                if (!hasCamGroundSample)
-                {
-                    smoothedCamGroundY = camGround.Value;
-                    hasCamGroundSample = true;
-                }
-                else
-                {
-                    var ck = 1f - MathF.Exp(-5f * dt);
-                    smoothedCamGroundY += (camGround.Value - smoothedCamGroundY) * ck;
-                }
-            }
-        }
-        var floorY = hasCamGroundSample ? MathF.Max(smoothedGroundY, smoothedCamGroundY) : smoothedGroundY;
+        // The floor for the HEIGHT DERIVATION is the corpse-ground only. It deliberately does
+        // NOT probe the ground under the camera: the camera position is what we are solving,
+        // so a camera-ground probe feeds curCam → ground → height → fit → curCam — a self-loop
+        // that runs away exactly in the angle ranges that push the camera far and low over
+        // uneven terrain (the "steep angle drifts to sky, even holding still" case). Corpse
+        // position does not depend on curCam, so this floor cannot feed back. Camera-vs-terrain
+        // safety is handled by a clamp at submit time, which does not re-enter the fit.
+        var floorY = smoothedGroundY;
 
         // Camera height is DERIVED, not dialled: from where the body should sit on screen.
         // The chest's angle above the view axis must be atan(band·tanHalfV); subtract the
@@ -1219,7 +1246,13 @@ public sealed unsafe class DynamicCameraController : IDisposable
         {
             xRefSmoothed += (xRawRef - xRefSmoothed) * (1f - MathF.Exp(-3f * dt));
         }
-        var drop = MathF.Tan(MathF.Atan(band * MathF.Abs(lensBase.TanHalfV)) - chi);
+        // Height uses the COMMANDED pitch, not the fitted/measured one. The game derives its
+        // actual aim (and hence the rendered pitch) from where the camera sits, so letting the
+        // measured pitch set the height closes a high-gain loop that rang (steep angles) or
+        // ran away (froze looking at the sky). The commanded pitch is open-loop and constant
+        // once the slider settles, so the height — the loop's strongest lever — stops feeding
+        // back. The fit still PROJECTS at the measured pitch, so composition stays honest.
+        var drop = MathF.Tan(MathF.Atan(band * MathF.Abs(lensBase.TanHalfV)) - chiForHeight);
         var desiredCamY = corpseMain.Y - xRefSmoothed * drop;
         var cameraHeight = Math.Clamp(desiredCamY, floorY + 0.15f, floorY + 3.5f);
         DebugGroundY = floorY;

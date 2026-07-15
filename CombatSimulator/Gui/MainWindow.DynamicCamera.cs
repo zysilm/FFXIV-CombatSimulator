@@ -253,7 +253,7 @@ public partial class MainWindow
                    "you say where the body should be, it finds the height. A terrain probe keeps it out of the floor.");
 
         var angle = config.DynCamDeathAngle;
-        if (ImGui.SliderFloat("Camera angle##dyncam", ref angle, -0.35f, 0.45f, "%.2f rad"))
+        if (ImGui.SliderFloat("Camera angle##dyncam", ref angle, -0.70f, 0.80f, "%.2f rad"))
         {
             config.DynCamDeathAngle = angle;
             config.Save();
@@ -399,7 +399,7 @@ public partial class MainWindow
         ImGui.SameLine();
         var angle = config.DynCamDeathAngle;
         ImGui.SetNextItemWidth(70);
-        if (ImGui.DragFloat("##dcAngle", ref angle, 0.01f, -0.35f, 0.45f, "%.2f"))
+        if (ImGui.DragFloat("##dcAngle", ref angle, 0.01f, -0.70f, 0.80f, "%.2f"))
         {
             config.DynCamDeathAngle = angle;
             config.Save();
