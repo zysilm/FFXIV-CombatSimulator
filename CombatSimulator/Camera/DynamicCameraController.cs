@@ -743,9 +743,10 @@ public sealed unsafe class DynamicCameraController : IDisposable
             {
                 1 => 1f,   // character forced left  → pivot shifts +right
                 2 => -1f,  // character forced right → pivot shifts -right
-                // While the player is orbiting, the enemy sweeps across the frame; re-deciding
-                // the side mid-orbit would swing the character past them. Hold what we have.
-                _ when rotateHold > 0f && shoulderSide != 0f => shoulderSide,
+                // Auto follows the CURRENT view even while the player is orbiting. Freezing
+                // here used to leave both subjects crammed onto one side after the camera
+                // crossed the fight. AutoShoulderSide supplies the hysteresis; the shoulder
+                // and pivot springs below supply the visible transition.
                 _ => AutoShoulderSide(focus, anchor, right),
             };
             shoulderSide = side;
@@ -821,21 +822,28 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
     private float AutoShoulderSide(SimulatedNpc? focus, Vector3 anchor, Vector3 right)
     {
+        // Use the committed target side for hysteresis, not the smoothed offset. During a
+        // flip the offset necessarily crosses zero; treating that transient value as the
+        // decision state can re-decide halfway through the translation.
+        var currentSide = shoulderSide != 0f
+            ? shoulderSide
+            : smoothedShoulder >= 0f ? 1f : -1f;
+
         if (focus == null || focus.BattleChara == null)
-            return smoothedShoulder >= 0f ? 1f : -1f; // hold the last side rather than snapping to centre
+            return currentSide; // hold the last side rather than snapping to centre
 
         var toEnemy = EnemyPosition(focus) - anchor;
         toEnemy.Y = 0f;
         if (toEnemy.LengthSquared() < 0.01f)
-            return smoothedShoulder >= 0f ? 1f : -1f;
+            return currentSide;
 
         var lateral = Vector3.Dot(right, Vector3.Normalize(toEnemy));
 
         // Hysteresis: only commit to the other side once the enemy is clearly over there,
         // otherwise an enemy circling through screen centre makes the frame twitch.
         const float flipThreshold = 0.25f;
-        if (smoothedShoulder > 0.01f && lateral > -flipThreshold) return 1f;
-        if (smoothedShoulder < -0.01f && lateral < flipThreshold) return -1f;
+        if (currentSide > 0f && lateral > -flipThreshold) return 1f;
+        if (currentSide < 0f && lateral < flipThreshold) return -1f;
         return lateral >= 0f ? 1f : -1f;
     }
 
