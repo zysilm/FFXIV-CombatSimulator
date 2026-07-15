@@ -72,6 +72,14 @@ public unsafe class DeathCamController : IDisposable
     public CameraModeCoordinator? Coordinator { get; set; }
     public Func<CameraOwner>? GetCurrentOwner { get; set; }
 
+    /// <summary>Runs immediately BEFORE the game's camera update, on the main game camera.
+    /// This is the only spot where a value written to the camera is guaranteed to be what
+    /// the update consumes: framework-time writes proved too early (the game re-applies
+    /// controller/keyboard pitch and wheel input during the update itself, after them).
+    /// The dynamic camera uses this to make its death-shot angle and zoom pins stick.</summary>
+    public unsafe delegate void PreCameraUpdateDelegate(FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCamera);
+    public PreCameraUpdateDelegate? PreCameraUpdate { get; set; }
+
     private bool OutrankedByCoordinator()
         => (GetCurrentOwner?.Invoke() ?? CameraOwner.None) > CameraOwner.DeathCam;
 
@@ -202,6 +210,17 @@ public unsafe class DeathCamController : IDisposable
             isGameCamera = camMgr != null && (nint)thisPtr == (nint)camMgr->Camera;
         }
         catch { }
+
+        // Last word before the game consumes camera state: values forced here are what the
+        // update actually integrates (framework-time writes get input re-applied on top).
+        if (isGameCamera && PreCameraUpdate != null)
+        {
+            try
+            {
+                PreCameraUpdate((FFXIVClientStructs.FFXIV.Client.Game.Camera*)thisPtr);
+            }
+            catch { }
+        }
 
         // Let the game compute the camera position normally
         cameraUpdateHook!.Original(thisPtr);

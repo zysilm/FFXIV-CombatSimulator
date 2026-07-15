@@ -264,9 +264,9 @@ public partial class MainWindow
                    "Positive — propped up on the elbows, looking down. Shows the ground and reads more as a body on the floor.\n\n" +
                    "Tipping further down needs more height and distance to still fit the killer; the shot works that out for you, " +
                    "so expect it to pull back as you raise this.\n\n" +
-                   "During the death shot, vertical camera drag is taken over and trims this directly (within the slider's " +
-                   "range) — the game no longer free-looks vertically, which is what used to make the shot fight your hand " +
-                   "and shake. Horizontal orbit stays fully yours.");
+                   "This slider is the ONLY vertical-angle control during the death shot — vertical camera drag is disabled " +
+                   "there (every attempt at live vertical adjustment fought the game's pitch pipeline and shook the shot). " +
+                   "Horizontal orbit stays fully yours, and the slider works live.");
 
         var maximize = config.DynCamDeathMaximizeBody;
         if (ImGui.Checkbox("Maximize body in frame##dyncam", ref maximize))

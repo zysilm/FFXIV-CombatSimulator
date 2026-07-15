@@ -286,6 +286,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             config, cameraModeCoordinator, combatEngine, npcSelector, playerTargetController,
             boneTransformService, ragdollController, sigScanner, log);
         dynamicCameraController.GetCurrentOwner = () => cameraModeCoordinator.CurrentOwner;
+        // The death shot forces its locked pitch/zoom the instant before the game's camera
+        // update, using DeathCamController's update hook as the host (it already owns that
+        // hook). This is what makes controller/keyboard pitch and wheel input actually stop
+        // moving the death camera — framework-time writes were re-overridden by the update.
+        deathCamController.PreCameraUpdate = dynamicCameraController.OnPreCameraUpdate;
 
         mapEnemyController = new MapEnemyController(
             objectTable,

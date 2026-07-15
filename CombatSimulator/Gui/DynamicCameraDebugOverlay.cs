@@ -3,6 +3,7 @@ using System.Numerics;
 using CombatSimulator.Camera;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Plugin.Services;
+using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager;
 
 namespace CombatSimulator.Gui;
 
@@ -134,7 +135,7 @@ public sealed unsafe class DynamicCameraDebugOverlay
             var tanGame = MathF.Tan(Math.Clamp(view.GameFov, 0.05f, 2.8f) * 0.5f);
             var aspect = MathF.Abs(view.TanHalfV) > 1e-4f ? view.TanHalfH / view.TanHalfV : 0f;
             ImGui.TextUnformatted($"tanHalfV {view.TanHalfV:F3}   tan(fov/2) {tanGame:F3}   tan/aspect {(aspect != 0f ? tanGame / MathF.Abs(aspect) : 0f):F3}");
-            ImGui.TextUnformatted($"tanHalfH {view.TanHalfH:F3}   aspect {aspect:F2}   pitch-sign belief {dynamicCam.PitchWriteSign:+0;-0}");
+            ImGui.TextUnformatted($"tanHalfH {view.TanHalfH:F3}   aspect {aspect:F2}");
         }
 
         if (dynamicCam.CurrentPhase is DynamicCameraController.Phase.DeathTranslate
@@ -148,6 +149,21 @@ public sealed unsafe class DynamicCameraDebugOverlay
                 : new Vector4(0.6f, 0.9f, 0.6f, 1f);
             ImGui.TextColored(color, $"ground {dynamicCam.DebugGroundY:F2}   cam {camY:F2}   above {aboveGround:+0.00;-0.00}");
             ImGui.TextUnformatted($"standoff {dynamicCam.DebugStandoff:F2} y   coverage {dynamicCam.DeathCoverage:F2}   zoomOut {dynamicCam.DeathZoomOut:F2}x");
+
+            // Zoom-pin verdict: with the pin engaged, min == max == dist must hold HERE —
+            // this reads AFTER the game's camera update, so if the game unclamps or moves
+            // the distance despite the pin, these numbers disagree and name the culprit.
+            var pin = ReadDistancePin();
+            if (pin.HasValue)
+            {
+                var (min, max, dist) = pin.Value;
+                var pinHolds = MathF.Abs(min - max) < 0.01f && MathF.Abs(dist - min) < 0.05f;
+                var pinColor = !dynamicCam.DebugZoomPinned
+                    ? new Vector4(0.6f, 0.6f, 0.6f, 1f)
+                    : pinHolds ? new Vector4(0.6f, 0.9f, 0.6f, 1f) : new Vector4(1f, 0.3f, 0.3f, 1f);
+                ImGui.TextColored(pinColor,
+                    $"pin {(dynamicCam.DebugZoomPinned ? "on" : "off")}   min {min:F2}   max {max:F2}   dist {dist:F2}   wheelPending {dynamicCam.DebugPendingWheel:F1}");
+            }
         }
 
         ImGui.Separator();
@@ -173,7 +189,10 @@ public sealed unsafe class DynamicCameraDebugOverlay
         sb.AppendLine($"phase {dynamicCam.CurrentPhase} | {dynamicCam.StatusText}");
         sb.AppendLine($"solve ok={dynamicCam.LastSolveOk} distance={dynamicCam.SolvedDistance:F3} chi={dynamicCam.SolvedChi:F4} fov={dynamicCam.SolvedFov:F4} yaw={dynamicCam.SolvedYaw:F4}");
         sb.AppendLine($"anchors={dynamicCam.RequiredPoints.Count} killer={dynamicCam.CurrentKillerFit} ladder={dynamicCam.LadderLevel}");
-        sb.AppendLine($"ground={dynamicCam.DebugGroundY:F3} standoff={dynamicCam.DebugStandoff:F3} pitchSignBelief={dynamicCam.PitchWriteSign:+0;-0} coverage={dynamicCam.DeathCoverage:F2} zoomOut={dynamicCam.DeathZoomOut:F2}");
+        sb.AppendLine($"ground={dynamicCam.DebugGroundY:F3} standoff={dynamicCam.DebugStandoff:F3} coverage={dynamicCam.DeathCoverage:F2} zoomOut={dynamicCam.DeathZoomOut:F2}");
+        var pinDiag = ReadDistancePin();
+        if (pinDiag.HasValue)
+            sb.AppendLine($"zoomPin={(dynamicCam.DebugZoomPinned ? "on" : "off")} min={pinDiag.Value.min:F3} max={pinDiag.Value.max:F3} dist={pinDiag.Value.dist:F3} wheelPending={dynamicCam.DebugPendingWheel:F2}");
         sb.AppendLine($"screen={screen.X:F0}x{screen.Y:F0}");
 
         if (haveView)
@@ -218,5 +237,24 @@ public sealed unsafe class DynamicCameraDebugOverlay
         sb.AppendLine($"bodyBand={config.DynCamDeathBodyBand:F2} angle={config.DynCamDeathAngle:F3} maximize={config.DynCamDeathMaximizeBody} closeUp={config.DynCamDeathCloseUpDistance:F2} body={config.DynCamDeathBodyVisibility:F2}");
         sb.AppendLine($"share={config.DynCamSubjectScreenShare:F2} shoulder={config.DynCamShoulderScreenFrac:F2} duration={config.DynCamDeathTranslateDuration:F1}");
         return sb.ToString();
+    }
+
+    /// <summary>The game camera's live distance band + distance, read straight off the
+    /// struct after the frame's camera update — the ground truth for whether the death
+    /// shot's zoom pin is actually holding.</summary>
+    private static (float min, float max, float dist)? ReadDistancePin()
+    {
+        try
+        {
+            var camMgr = GameCameraManager.Instance();
+            if (camMgr == null || camMgr->Camera == null)
+                return null;
+            var cam = camMgr->Camera;
+            return (cam->MinDistance, cam->MaxDistance, cam->Distance);
+        }
+        catch
+        {
+            return null;
+        }
     }
 }
