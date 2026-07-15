@@ -168,6 +168,15 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private int ladderLevel;
     private float ladderDwell;
 
+    // Stable killer envelope for the death shot. The actor root follows real locomotion but
+    // does not normally bob with an idle animation; the skull does. Feeding the live skull
+    // straight into an edge-constrained fit made the camera breathe whenever that animation
+    // touched the top margin. Measure height from the skull, grow immediately when a taller
+    // valid pose appears, and never shrink until the shot resets.
+    private nint killerEnvelopeAddress;
+    private float killerEnvelopeHeight;
+    private bool hasKillerEnvelope;
+
     // Player-intent tracking. We write some axes, so "what the player did" is the
     // difference between what the game reports and what we last wrote.
     private float lastWrittenDistance;
@@ -367,6 +376,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
         killerAddress = killer;
         killerEntityId = killerId;
+        ResetKillerEnvelope();
         killerFit = KillerFit.FullBody;
         ladderLevel = 0;
         ladderDwell = 0f;
@@ -438,6 +448,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         wroteDistance = false;
         killerAddress = nint.Zero;
         killerEntityId = 0;
+        ResetKillerEnvelope();
         killerFit = KillerFit.FullBody;
         ladderLevel = 0;
         // Combat zoom and pitch survive resets by design: persist what was learned, then reseed
@@ -1513,8 +1524,9 @@ public sealed unsafe class DynamicCameraController : IDisposable
         }
     }
 
-    /// <summary>Head and foot of the enemy that killed the player. Head comes from the skull
-    /// bone where we can read it, so tall or non-humanoid killers frame correctly.</summary>
+    /// <summary>Stable full-height envelope of the enemy that killed the player. The root
+    /// follows genuine movement; animated skull bob may expand the envelope but never shrink
+    /// it, so a looping idle cannot make the framing distance breathe.</summary>
     private bool TryGetKillerExtent(out Vector3 feet, out Vector3 head)
     {
         feet = default;
@@ -1537,14 +1549,45 @@ public sealed unsafe class DynamicCameraController : IDisposable
         if (!float.IsFinite(feet.X) || !float.IsFinite(feet.Y) || !float.IsFinite(feet.Z))
             return false;
 
-        var skull = boneService.GetBoneWorldPos(address, "j_kao");
-        head = skull ?? feet + new Vector3(0f, 2.0f, 0f);
-        head.Y += 0.15f; // clear the top of the head, not its bone origin
+        if (killerEnvelopeAddress != address)
+        {
+            killerEnvelopeAddress = address;
+            killerEnvelopeHeight = 0f;
+            hasKillerEnvelope = false;
+        }
 
-        if (head.Y < feet.Y + 0.3f)
-            head = feet + new Vector3(0f, 2.0f, 0f);
+        var skull = boneService.GetBoneWorldPos(address, "j_kao");
+        float? observedHeight = null;
+        if (skull.HasValue)
+        {
+            var h = skull.Value.Y - feet.Y + 0.15f;
+            if (float.IsFinite(h) && h is >= 0.3f and <= 8f)
+                observedHeight = h;
+        }
+
+        if (!hasKillerEnvelope)
+        {
+            killerEnvelopeHeight = observedHeight ?? 2.15f;
+            hasKillerEnvelope = true;
+        }
+        else if (observedHeight.HasValue && observedHeight.Value > killerEnvelopeHeight + 0.02f)
+        {
+            killerEnvelopeHeight = observedHeight.Value;
+        }
+
+        // Root-centred top of a stable vertical envelope. We intentionally do not copy the
+        // animated skull's X/Z sway either: the existing fit models the killer as a vertical
+        // extent, and its job here is containment, not facial tracking.
+        head = feet + new Vector3(0f, killerEnvelopeHeight, 0f);
 
         return true;
+    }
+
+    private void ResetKillerEnvelope()
+    {
+        killerEnvelopeAddress = nint.Zero;
+        killerEnvelopeHeight = 0f;
+        hasKillerEnvelope = false;
     }
 
     /// <summary>
