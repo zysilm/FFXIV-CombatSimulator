@@ -15,7 +15,7 @@ namespace CombatSimulator.Targeting;
 /// over the game's targeting keybinds (confirm / cancel / cycle) so the player
 /// drives our own locked-target state instead of the native target system.
 ///
-/// Design (see综合提升 discussion):
+/// Design:
 ///  - Confirm (OK): when no target is locked, acquire one — prefer an enemy that
 ///    is currently attacking the player, otherwise the nearest enemy.
 ///  - Cancel (CANCEL): release the lock (back to no target).

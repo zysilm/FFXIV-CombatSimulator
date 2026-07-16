@@ -1639,7 +1639,7 @@ public class CombatEngine : IDisposable
         if (config.EnableCustomTargeting)
         {
             // Custom targeting: only auto-attack the locked target. No lock => no
-            // swings (matches "主角有目标时才发动攻击").
+            // swings; the player attacks only while a target is explicitly locked.
             var lockedId = GetLockedTargetId?.Invoke() ?? 0u;
             if (lockedId == 0u)
                 return;

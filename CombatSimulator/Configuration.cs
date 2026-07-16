@@ -414,7 +414,7 @@ public partial class Configuration : IPluginConfiguration
     // Maximum number of active targets
     public int MaxTargets { get; set; } = 10;
 
-    // Custom in-sim targeting (综合提升): during an active simulation the plugin
+    // Custom in-simulation targeting: during an active simulation the plugin
     // takes over the game's target keybinds (confirm acquires, cancel releases,
     // next/prev cycle) and the player only attacks the locked target.
     public bool EnableCustomTargeting { get; set; } = true;
@@ -706,11 +706,11 @@ public partial class Configuration : IPluginConfiguration
     public List<uint> RecentNpcIds { get; set; } = new();
     public List<RecentNpcEntry> RecentNpcEntries { get; set; } = new();
 
-    // ── Action Mode (动作模式) ──────────────────────────────────────────────
+    // -- Action Mode --------------------------------------------------------
     // A toggleable real-time action layer that replaces the tab-target / GCD
     // interaction. Player attacks/guard come from hotbar actions remapped by
     // actionId (the game resolves keyboard/gamepad for us); enemy attacks
-    // telegraph (起手快照) then resolve by hitbox at the active frame. When OFF,
+    // telegraph from a wind-up snapshot, then resolve by hitbox at the active frame. When OFF,
     // every seam falls back to the original simulation behavior.
     public bool ActionMode { get; set; } = true;
 
@@ -829,14 +829,14 @@ public partial class Configuration : IPluginConfiguration
     // is how FFXIV itself measures melee range. 0 = old centre-to-centre, 1 = exact surface, >1 = lenient.
     public float MeleeTargetHitboxReach { get; set; } = 1.0f;
 
-    // Hit feedback ("game feel" / 打击感) on a confirmed player attack: brief target hitstop + a
+    // Impact feedback on a confirmed player attack: brief target hitstop + a
     // camera punch + an optional hit spark. All gated below.
     public bool EnableHitFeedback { get; set; } = true;
     // Delay (seconds) between the attack input and the impact feedback firing. The swing has ~0.5s of
     // windup before the weapon visually CONNECTS, so the hitstop/camera/spark must wait or they fire
     // at swing start and feel disconnected. ~0.45 lines up with the contact frame; tune to taste.
     public float HitFeedbackDelay { get; set; } = 0.45f;
-    // Hitstop: freeze the struck target's animation for this many ms on impact ("刀刀到肉"). The single
+    // Hitstop: freeze the struck target's animation for this many ms on impact. The single
     // biggest contributor to impact feel. Keep SHORT (40-90 ms) or it reads as lag. 0 = off. Only the
     // target is frozen (never the player), and the freeze is skipped/auto-released if it dies.
     public float HitstopMs { get; set; } = 81.5f;

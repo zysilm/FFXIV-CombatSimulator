@@ -10,7 +10,7 @@ using Dalamud.Plugin.Services;
 namespace CombatSimulator.Gui;
 
 /// <summary>
-/// Draws the combat-link arcs and the locked-target marker (综合提升):
+/// Draws the combat-link arcs and the locked-target marker:
 ///  - Blue arc: player → currently locked target.
 ///  - Red arcs: every enemy currently attacking the player → player.
 /// Arcs anchor above the head (offset so they don't cover the model), are drawn as

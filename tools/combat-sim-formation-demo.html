@@ -134,11 +134,11 @@
   <div class="stage">
     <canvas id="cv"></canvas>
     <div class="stage-overlay">
-      移动 PC: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><br>
-      点击<b>敌人</b>设为 PC 集火目标（同伴会优先打它）<br>
-      <span style="color:var(--return)">虚线圈 = command range</span>：圈外同伴丢弃目标，归队
+      Move PC: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><br>
+      Click an <b>enemy</b> to set the PC focus target (companions prioritize it)<br>
+      <span style="color:var(--return)">Dashed circle = command range</span>: companions outside it drop their target and regroup
     </div>
-    <div class="winner" id="winner"><h3 id="winnerTxt"></h3><p>按 RESET 再来一局</p></div>
+    <div class="winner" id="winner"><h3 id="winnerTxt"></h3><p>Press RESET to run another round</p></div>
   </div>
 
   <aside class="panel">
@@ -152,15 +152,15 @@
     <div class="sect">
       <h2>Force Composition</h2>
       <div class="ctrl">
-        <label>友方同伴数 (+PC) <span class="val" id="vParty">3</span></label>
+        <label>Friendly companions (+PC) <span class="val" id="vParty">3</span></label>
         <input type="range" id="sParty" min="0" max="8" value="3" step="1">
       </div>
       <div class="ctrl">
-        <label>敌方人数 <span class="val" id="vEnemy">4</span></label>
+        <label>Enemy count <span class="val" id="vEnemy">4</span></label>
         <input type="range" id="sEnemy" class="en" min="1" max="10" value="4" step="1">
       </div>
       <div class="ctrl">
-        <label class="toggle on" id="tRanged"><span class="box"></span>同伴含远程职业</label>
+        <label class="toggle on" id="tRanged"><span class="box"></span>Include ranged companions</label>
       </div>
     </div>
 
@@ -188,13 +188,13 @@
       <h2>State Legend</h2>
       <div class="legend">
         <div class="row"><span class="dot" style="background:var(--pc)"></span>PC</div>
-        <div class="row"><span class="dot" style="background:var(--return)"></span>归队中</div>
-        <div class="row"><span class="dot" style="background:var(--party)"></span>战斗就绪</div>
-        <div class="row"><span class="dot" style="background:#9ad0ff"></span>移动至目标</div>
-        <div class="row"><span class="dot" style="background:var(--enemy)"></span>敌·交战</div>
-        <div class="row"><span class="dot" style="background:var(--amber)"></span>敌·追击/归位</div>
-        <div class="row"><span class="dot" style="background:var(--dead)"></span>阵亡</div>
-        <div class="row"><span class="dot" style="background:#6df0c8;outline:1px dashed #6df0c8;outline-offset:1px"></span>集火目标</div>
+        <div class="row"><span class="dot" style="background:var(--return)"></span>Regrouping</div>
+        <div class="row"><span class="dot" style="background:var(--party)"></span>Combat ready</div>
+        <div class="row"><span class="dot" style="background:#9ad0ff"></span>Moving to target</div>
+        <div class="row"><span class="dot" style="background:var(--enemy)"></span>Enemy engaged</div>
+        <div class="row"><span class="dot" style="background:var(--amber)"></span>Enemy pursuing/returning</div>
+        <div class="row"><span class="dot" style="background:var(--dead)"></span>Defeated</div>
+        <div class="row"><span class="dot" style="background:#6df0c8;outline:1px dashed #6df0c8;outline-offset:1px"></span>Focus target</div>
       </div>
     </div>
 
@@ -1128,7 +1128,7 @@ function selectEnemyTarget(enemy, pressureMap){
 // Companion scores each enemy (ScoreCompanionTarget) then applies hysteresis.
 function scoreCompanionTarget(c, enemy, assignCount, enemyTargetOf, pressureMap=null){
   let s=0;
-  if(enemy.id===focusId)      s += SC.SelectedTargetBonus;          // PC集火
+  if(enemy.id===focusId)      s += SC.SelectedTargetBonus;          // PC focus target
   else if(enemy.id===lastFocusId) s += SC.LastPlayerTargetBonus;
   // bonus only if the enemy is attacking the PLAYER specifically (AttackingPlayerBonus)
   const et = enemyTargetOf.get(enemy.id);
@@ -1138,7 +1138,7 @@ function scoreCompanionTarget(c, enemy, assignCount, enemyTargetOf, pressureMap=
       ? SC.PreviousTargetBonus * REACHABILITY.currentStickySuppression
       : SC.PreviousTargetBonus;
   const hpPct = enemy.hp/enemy.maxHp;
-  s += (1-hpPct)*SC.LowHpFinishBonus;                              // 补刀
+  s += (1-hpPct)*SC.LowHpFinishBonus;                              // low-HP finisher bias
   const focus = (enemy.id===focusId||enemy.id===lastFocusId);
   const assigned = assignCount.get(enemy.id)||0;
   const free = focus ? SC.MaxFocusAssistants : 0;
@@ -1157,7 +1157,7 @@ function scoreCompanionTarget(c, enemy, assignCount, enemyTargetOf, pressureMap=
   }
   s += targetGraphScore(c, enemy);
   s += reachabilityScore(c, enemy);
-  s -= distP(enemy, pc.x, pc.y)*SC.DistancePenaltyPerYalm;          // 离PC越远越扣
+  s -= distP(enemy, pc.x, pc.y)*SC.DistancePenaltyPerYalm;          // penalize distance from PC
   return s;
 }
 
@@ -1620,7 +1620,7 @@ cv.addEventListener('click', e=>{
   if(hit){
     lastFocusId = focusId;
     focusId = (focusId===hit.id)?0:hit.id;
-    log(focusId? 'PC focus → Enemy #'+hit.id+' (companions will集火)' : 'Focus cleared.');
+    log(focusId? 'PC focus → Enemy #'+hit.id+' (companions will focus it)' : 'Focus cleared.');
   }
 });
 

@@ -8,7 +8,7 @@ using Dalamud.Plugin.Services;
 namespace CombatSimulator.ActionCombat;
 
 /// <summary>
-/// Centralizes the "game feel" (打击感) of a confirmed player hit: a brief target hitstop, a
+/// Centralizes the impact feedback of a confirmed player hit: a brief target hitstop, a
 /// decaying camera punch, and an optional hit spark. Pure feedback — it never changes combat
 /// outcomes. The camera offset is exposed for the camera hook to layer on top of the final view.
 /// </summary>

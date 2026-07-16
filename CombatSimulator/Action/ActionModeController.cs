@@ -160,7 +160,7 @@ public sealed class ActionModeController
         basicAttackKeyWasDown = isDown;
     }
 
-    // The player's weapon basic attack (普攻): no hotbar action needed. Ranged for Bard/Archer +
+    // The player's weapon basic attack: no hotbar action needed. Ranged for Bard/Archer +
     // Astrologian (longer/wider cone, smallest-angle pick); melee for everyone else (narrow nearest).
     // Plays the weapon auto-attack (action 7) with the configured potency/cadence.
     private void BasicAttack()
@@ -264,7 +264,7 @@ public sealed class ActionModeController
             ? combatEngine.ApplyPlayerActionMode(actionId, primary.State.EntityId, animationDuration: duration)
             : 0;
         if (struck == 0)
-            animationController.PlayPlayerActionAnimationOnly(actionId); // reliable whiff (打空) feedback
+            animationController.PlayPlayerActionAnimationOnly(actionId); // reliable miss feedback
         else
             hitFeedback.TriggerHit(primary);
     }

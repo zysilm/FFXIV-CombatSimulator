@@ -67,7 +67,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly HookSafetyChecker hookSafetyChecker;
     private readonly UpdateLogPopupController updateLogPopupController;
 
-    // Action Mode (动作模式): real-time combat layer wired through narrow seams.
+    // Action Mode: real-time combat layer wired through narrow seams.
     private readonly CombatSimulator.ActionCombat.ActionComboSink actionComboSink;
     private readonly CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter;
     private readonly CombatSimulator.ActionCombat.TelegraphSystem telegraphSystem;
@@ -271,7 +271,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // AI only queries during framework ticks.
             addr => devExperimental.ControlsNpc(addr) || fightingModeController?.ControlsEnemy(addr) == true);
 
-        // Custom in-sim target lock system (综合提升). Takes over the game's target
+        // Custom in-simulation target lock system. Takes over the game's target
         // keybinds during simulation; the engine reads the locked target for
         // auto-attack and UseActionHook routes manual actions to it.
         playerTargetController = new PlayerTargetController(

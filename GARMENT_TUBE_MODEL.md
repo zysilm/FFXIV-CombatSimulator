@@ -1,6 +1,15 @@
 # Garment Tube Model — 环-链衣物物理模型设计
 
-状态:设计稿(未实现)。目标分支:在 Advanced clothing settle 之下新增实验路径。
+状态:**实验功能已实现，本文同时保留早期设计记录**。当前实现位于
+`Animation/DismembermentController.cs`、`Animation/RagdollController.cs`、
+`Gui/MainWindow.ArmorDetachment.cs` 和 `Gui/RagdollDebugOverlay.cs`。
+
+截至 2026-07-16 尚未实现或仍属限制的部分:
+
+- tube 只在 ragdoll host 可用；local simulation fallback 仍使用 chain rig。
+- 袖子没有环化，仍通过父骨传播；XPBD/shape-matching 粒子方案仅是远期设想。
+- 不同 garment rig 之间的堆叠/碰撞未实现，目前有意禁用以保证稳定性。
+- 文中建议的“最多两个 tube rig”性能护栏未实现；性能预算也只是估算，未有基准测试。
 
 ## 1. 目标与非目标
 
@@ -13,7 +22,7 @@
 **非目标**
 - 不做通用布料模拟(粒子/XPBD)。渲染输出通道只有骨骼(脊柱 3–4 根、手臂 4 根、裙摆
   j_sk_*),模型保真度以骨骼表达力为上限。XPBD 方案留作后续演进(见 §12)。
-- v1 不覆盖裤子(slot 3)和本地 sim fallback,两者保留现有链式模型。
+- 当前 host 路径已覆盖上衣(slot 1)和裤子(slot 3)；本地 sim fallback 仍保留链式模型。
 
 ## 2. 为什么链式模型到顶了
 
@@ -111,8 +120,7 @@ GarmentRing {
 base transform:沿用 `ResolveGarmentRigRootPosition/Rotation`(腰部锚定 + bind 旋转),
 质心来源改为 R0 环质心。
 
-Phase 2(可选):hem 环的每个刚体直接映射最近的 j_sk_*_a 裙摆骨,下摆呈现不均匀
-垂坠;替代 `DriveSkirtHang`。
+hem 环到 `j_sk_*` 裙摆骨的映射已实现，并可切换为独立 skirt-chain 物理；袖子环化仍未实现。
 
 ## 7. 碰撞与材质
 
@@ -153,7 +161,7 @@ tube(host) → chain(host) → chain(local) → 单刚体 → 纯视觉。
   + 6(对角)+ 6(手臂)+ 22(阻尼)≈ 64。
 - 宿主 ragdoll sim 现有 ~25 刚体、4 迭代 solver;tube 约使 sim 规模翻倍,预估
   单件 < 0.3ms/帧(桌面 CPU),两件(上衣+裤子 v2)< 0.6ms。可接受。
-- 护栏:同时存活的 tube rig 超过 2 个时,后续衣物退回链式模型(常量上限)。
+- 原设计建议同时最多两个 tube rig；当前代码尚未实现这个数量护栏。
 
 ## 11. 风险与缓解
 
@@ -176,8 +184,8 @@ tube(host) → chain(host) → chain(local) → 单刚体 → 纯视觉。
   默认值 = 出厂行为);hem 环→裙摆骨映射(每个 j_sk_*_a 顶段 pin 到最近的 hem 环刚体,
   位置随刚体 per-segment,朝向取自稳定的环坐标系)。**关键教训**:tube 环刚体只有
   DistanceLimit(约束位置不约束朝向),会自由自旋,所以任何"骨骼跟随刚体"的驱动都
-  **只能用刚体位置 + 环坐标系朝向**,绝不能用单个刚体的 orientation。待做:堆叠观感、
-  袖子环化。
+  **只能用刚体位置 + 环坐标系朝向**,绝不能用单个刚体的 orientation。未实现:不同衣物
+  的堆叠碰撞、袖子环化。
 - **Phase 3 ✅**:slot-3 裤子——胯环(j_kosi,6 段)+ 每腿 2 环(j_asi_a/j_asi_b,5 段),
   腿环用最近刚体距离边连到胯环(Y 形裆部连接,`AddTubeJunctionEdges`)。环构建抽成
   `AddTubeRing` 由躯干/裤子共用。Tube 开关现同时覆盖 Body + Legs。裤子无裙摆骨,跳过
@@ -187,5 +195,5 @@ tube(host) → chain(host) → chain(local) → 单刚体 → 纯视觉。
 
 ## 13. 开关
 
-- 复用 `KoStripAdvancedClothPhysics` 为总开关;新增内部常量或 dev-only 开关
-  `GarmentTubeModel`(默认 off)控制 tube vs chain,便于 A/B 对比与回退。
+- 复用 `KoStripAdvancedClothPhysics` 为总开关；`KoStripGarmentTubeModel` 已作为 GUI 开关实现，
+  默认关闭，用于 tube/chain A/B 对比与回退。

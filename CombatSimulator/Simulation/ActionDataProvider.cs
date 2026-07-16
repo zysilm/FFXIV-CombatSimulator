@@ -102,11 +102,11 @@ public partial class ActionDataProvider
 
     /// <summary>
     /// Classify an action's damage as physical or magical from the AttackType row
-    /// id. Row 5 = Magic (verified against live client data: 斬#1/突#2/打#3 physical,
-    /// 魔法#5 magic, リミットブレイク#8, and unset = uint.MaxValue for weaponskills
+    /// id. Row 5 is magic; rows 1, 2, and 3 are physical, row 8 is limit break,
+    /// and unset is uint.MaxValue for weaponskills
     /// that inherit their weapon's type). Row-id based, not name based, because the
-    /// AttackType name is localized (a Chinese/Japanese client returns 魔法, not
-    /// "Magic"). Everything that isn't row 5 is treated as physical, which is
+    /// AttackType names are localized, so classification must not compare their
+    /// display text. Everything that isn't row 5 is treated as physical, which is
     /// correct for weaponskills and harmless for the rest.
     /// </summary>
     public static SimDamageType ClassifyDamageType(uint attackTypeRowId)
