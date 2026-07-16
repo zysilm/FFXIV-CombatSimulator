@@ -875,8 +875,8 @@
                           "Mass":  0.5,
                           "SwingLimit":  0.35,
                           "JointType":  0,
-                          "TwistMinAngle":  -0.25,
-                          "TwistMaxAngle":  0.25,
+                          "TwistMinAngle":  -0.15,
+                          "TwistMaxAngle":  0.15,
                           "Description":  "Left Clavicle",
                           "SoftBody":  false,
                           "SoftSpringFreq":  6.0,
@@ -902,8 +902,8 @@
                           "Mass":  0.5,
                           "SwingLimit":  0.35,
                           "JointType":  0,
-                          "TwistMinAngle":  -0.25,
-                          "TwistMaxAngle":  0.25,
+                          "TwistMinAngle":  -0.15,
+                          "TwistMaxAngle":  0.15,
                           "Description":  "Right Clavicle",
                           "SoftBody":  false,
                           "SoftSpringFreq":  6.0,
@@ -1160,8 +1160,8 @@
                           "BoxHalfExtentZ":  0.035,
                           "SwingMinLimit":  0.75,
                           "HingeRestAngle":  0,
-                          "HingeRestSpringFreq":  1.2,
-                          "HingeRestMaxForce":  10
+                          "HingeRestSpringFreq":  3.5,
+                          "HingeRestMaxForce":  50
                       },
                       {
                           "Name":  "j_asi_b_r",
@@ -1187,8 +1187,8 @@
                           "BoxHalfExtentZ":  0.035,
                           "SwingMinLimit":  0.75,
                           "HingeRestAngle":  0,
-                          "HingeRestSpringFreq":  1.2,
-                          "HingeRestMaxForce":  10
+                          "HingeRestSpringFreq":  3.5,
+                          "HingeRestMaxForce":  50
                       },
                       {
                           "Name":  "j_asi_c_l",

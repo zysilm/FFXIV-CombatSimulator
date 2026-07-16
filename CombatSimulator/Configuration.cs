@@ -187,6 +187,7 @@ public partial class Configuration : IPluginConfiguration
     public bool NpcCollisionMeshDefaultMigrated { get; set; } = false;
     public bool NpcCollisionModeMigrated20260705 { get; set; } = false;
     public bool RagdollShinBoxHalfYMigrated20260716 { get; set; } = false;
+    public bool RagdollDefaultProfileTuningMigrated20260716 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -885,6 +886,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateRagdollProfileMetadata();
         MigrateAnatomicalHinges();
         MigrateRagdollShinBoxHalfY();
+        MigrateDefaultProfileTuning();
         MigrateActionGuardDefaultButton();
         MigrateActionGuardVfxDefault();
         MigrateActionBasicAttackDefaultButton();
@@ -1492,6 +1494,55 @@ public partial class Configuration : IPluginConfiguration
             changed = true;
         }
         return changed;
+    }
+
+    /// <summary>
+    /// Promote the current field-tuned Default profile into installations that still carry
+    /// the previous built-in values. Match each old value exactly so a user's own Default
+    /// profile remains untouched wherever it has already diverged.
+    /// </summary>
+    private void MigrateDefaultProfileTuning()
+    {
+        if (RagdollDefaultProfileTuningMigrated20260716)
+            return;
+
+        var profile = RagdollBoneProfiles.FirstOrDefault(p =>
+            p?.Name.Equals("Default", StringComparison.OrdinalIgnoreCase) == true);
+        if (profile?.Bones != null)
+        {
+            foreach (var bone in profile.Bones)
+            {
+                if (bone.Name is "j_sako_l" or "j_sako_r")
+                {
+                    if (MathF.Abs(bone.TwistMinAngle - (-0.25f)) < 0.0001f)
+                    {
+                        bone.TwistMinAngle = -0.15f;
+                    }
+                    if (MathF.Abs(bone.TwistMaxAngle - 0.25f) < 0.0001f)
+                    {
+                        bone.TwistMaxAngle = 0.15f;
+                    }
+                }
+                else if (bone.Name is "j_asi_b_l" or "j_asi_b_r")
+                {
+                    if (bone.HingeRestSpringFreq is { } frequency &&
+                        MathF.Abs(frequency - 1.2f) < 0.0001f)
+                    {
+                        bone.HingeRestSpringFreq = 3.5f;
+                    }
+                    if (bone.HingeRestMaxForce is { } force &&
+                        MathF.Abs(force - 10f) < 0.0001f)
+                    {
+                        bone.HingeRestMaxForce = 50f;
+                    }
+                }
+            }
+        }
+
+        RagdollDefaultProfileTuningMigrated20260716 = true;
+        // Record the one-shot even on a fresh install; its profile is seeded immediately
+        // afterwards from the already-updated embedded resource.
+        Save();
     }
 
     private static bool MigrateAnatomicalHingeList(List<RagdollBoneConfig> bones)
