@@ -1,5 +1,17 @@
 [
   {
+    "version": "2.7.1.0",
+    "date": "2026-07-16",
+    "title": "Combat Simulator 2.7.1.0",
+    "changes": [
+      "Added the experimental Dynamic Camera feature.",
+      "Improved ragdoll physics and stability.",
+      "Improved Armor Detachment.",
+      "Fixed several logout, cleanup, and render-related crashes.",
+      "Improved overall plugin stability."
+    ]
+  },
+  {
     "version": "2.7.0.1",
     "date": "2026-07-09",
     "title": "Combat Simulator 2.7.0.1",
