@@ -1,5 +1,14 @@
 [
   {
+    "version": "2.7.1.1",
+    "date": "2026-07-16",
+    "title": "Combat Simulator 2.7.1.1",
+    "changes": [
+      "Improved performance: NPC collision now defaults to the lighter convex hull shape.",
+      "Added stuttering warnings to the NPC collision shape and Extend Terrain Detection options."
+    ]
+  },
+  {
     "version": "2.7.1.0",
     "date": "2026-07-16",
     "title": "Combat Simulator 2.7.1.0",

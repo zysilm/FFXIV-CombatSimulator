@@ -4269,6 +4269,9 @@ public partial class MainWindow : IDisposable
                            "Lets a victory-sequence grab drop the body onto an enemy without falling through " +
                            "the floor. Costs extra raycasts at activation — may cause a brief hitch. Default off.");
 
+                if (config.ExtendTerrainDetection)
+                    ImGui.TextColored(new Vector4(1f, 0.75f, 0.2f, 1f), "Warning: may cause severe stuttering.");
+
                 var gravity = config.RagdollGravity;
                 if (ImGui.SliderFloat("Gravity##ragdoll", ref gravity, 0.1f, 30.0f, "%.1f"))
                 {
@@ -4700,6 +4703,15 @@ public partial class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Bone capsule uses the existing per-bone capsule proxies. Convex hull uses a single activation-pose hull built from bone positions. Mesh (skinned) snapshots the rendered model mesh with the current Havok pose and tracks the root transform. Animated mesh is experimental: mount-only, low-frequency real skinned mesh rebuilds with soft contacts. Takes effect on next ragdoll activation.");
+
+                if (config.RagdollNpcCollisionMode != RagdollNpcCollisionMode.ConvexHull)
+                {
+                    ImGui.TextColored(new Vector4(1f, 0.75f, 0.2f, 1f), "Warning: may cause severe stuttering.");
+                    HelpMarker("Convex hull is the default because it is cheap. The mesh shapes are far more accurate but " +
+                               "build real collision geometry from the model — on large creatures, or several ragdolls at " +
+                               "once, that can stutter badly. Change it only if you want the fidelity and your machine can " +
+                               "take it.");
+                }
 
                 ImGui.Unindent();
             }

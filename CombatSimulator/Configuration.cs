@@ -188,6 +188,7 @@ public partial class Configuration : IPluginConfiguration
     public bool NpcCollisionModeMigrated20260705 { get; set; } = false;
     public bool RagdollShinBoxHalfYMigrated20260716 { get; set; } = false;
     public bool RagdollDefaultProfileTuningMigrated20260716 { get; set; } = false;
+    public bool NpcCollisionConvexHullDefaultMigrated20260716 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -630,10 +631,11 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollNpcCollisionAutoSize { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcCollisionConvexHull { get; set; } = false;
-    // Mesh (skinned): a snapshot of the rendered model taken with the pose it is actually in, rather
-    // than a stack of capsules standing in for it. A corpse falling against a creature meets the shape
-    // the player can see instead of an approximation of it.
-    public RagdollNpcCollisionMode RagdollNpcCollisionMode { get; set; } = RagdollNpcCollisionMode.Mesh;
+    // Convex hull: one hull built from the activation-pose bone positions. It is an approximation
+    // of the creature's shape, but a cheap one — the mesh (skinned) snapshot it replaces as the
+    // default is far more faithful and far more expensive, enough to stutter badly on larger
+    // creatures and on machines that were coping until then. Fidelity is still one dropdown away.
+    public RagdollNpcCollisionMode RagdollNpcCollisionMode { get; set; } = RagdollNpcCollisionMode.ConvexHull;
     public bool RagdollNpcSettleCollision { get; set; } = true;
 
     // Auto-engage: NPC enemy targets attack the player automatically on
@@ -900,6 +902,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateAnatomicalHingeSignFix(); // must run AFTER the off-migration, whose verdict it lifts
         MigrateNpcCollisionMode();
         MigrateNpcCollisionMeshDefault(); // after the mode migration above, whose old default it lifts
+        MigrateNpcCollisionConvexHullDefault(); // last of the three: it overrides both verdicts above
         MigrateGuidedCollapse();
         MigrateDynamicCameraPivotBone();
         RenameLegacyBoneProfiles();
@@ -909,6 +912,24 @@ public partial class Configuration : IPluginConfiguration
     public void Save()
     {
         pluginInterface?.SavePluginConfig(this);
+    }
+
+    /// <summary>
+    /// Force every existing config onto the convex-hull NPC collision shape. The mesh (skinned)
+    /// shape that used to be the default is accurate but expensive enough to stutter badly, and
+    /// a corrected default alone would never reach anyone who already has the old value saved —
+    /// which is everyone who has run the plugin before. One-shot: the dropdown is theirs again
+    /// afterwards, including switching straight back to mesh if they want the fidelity.
+    /// </summary>
+    private void MigrateNpcCollisionConvexHullDefault()
+    {
+        if (NpcCollisionConvexHullDefaultMigrated20260716)
+            return;
+
+        RagdollNpcCollisionMode = RagdollNpcCollisionMode.ConvexHull;
+        RagdollNpcCollisionConvexHull = true;
+        NpcCollisionConvexHullDefaultMigrated20260716 = true;
+        Save();
     }
 
     /// <summary>
