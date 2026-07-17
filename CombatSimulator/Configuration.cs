@@ -546,7 +546,7 @@ public partial class Configuration : IPluginConfiguration
     // hand-picked per-bone Mass values. Fixes wrong inertia (thigh too heavy, trunk not
     // pelvis-heavy). Cloth/weapon/breast bones keep their tiny existing masses.
     // Default OFF after field testing: only useful in specific setups.
-    public bool RagdollAnthropometricMass { get; set; } = false;
+    public bool RagdollAnthropometricMass { get; set; } = true;
     public float RagdollBodyMass { get; set; } = 70f; // Total body mass (kg) anthropometric fractions scale against.
     // Tier B — Anatomy-fixed knee/elbow hinge. A knee folds the shin backward and an elbow folds the
     // forearm forward, relative to the character: facts about the body, not about the pose it died in.
@@ -569,6 +569,13 @@ public partial class Configuration : IPluginConfiguration
     // Default OFF after field testing: only useful in specific setups. The twist
     // governors, hemisphere locks, and profile-table limits stay active regardless.
     public bool RagdollAnatomicalRom { get; set; } = false;
+    // Passive hinge rest bias — a soft spring on the knee/elbow hinge pulling it toward
+    // straight (the HingeRest* per-bone params). Without it the hinge only velocity-damps,
+    // so a limb resting on the ground (a supine corpse) never returns to straight and the
+    // knee stays visibly bent; the spring gives it a real "return to straight" that a ball
+    // joint's cone would, but without the ball's free sideways swing. Takes effect on next
+    // ragdoll activation.
+    public bool RagdollAnatomicalHingeRestBias { get; set; } = true;
 
     // Dismemberment POC: while the player ragdoll is active, collapse each selected limb's bone
     // subtree to ~0 scale so it vanishes from the body. Multi-select: stores the root bone name of
@@ -631,11 +638,10 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollNpcCollisionAutoSize { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcCollisionConvexHull { get; set; } = false;
-    // Convex hull: one hull built from the activation-pose bone positions. It is an approximation
-    // of the creature's shape, but a cheap one — the mesh (skinned) snapshot it replaces as the
-    // default is far more faithful and far more expensive, enough to stutter badly on larger
-    // creatures and on machines that were coping until then. Fidelity is still one dropdown away.
-    public RagdollNpcCollisionMode RagdollNpcCollisionMode { get; set; } = RagdollNpcCollisionMode.ConvexHull;
+    // Bone capsule: the per-bone capsule proxies that already exist for the ragdoll — no hull or
+    // mesh built at activation, so nothing to stutter on. The convex-hull and mesh shapes are more
+    // faithful but pay for it in build cost; both are one dropdown away when wanted.
+    public RagdollNpcCollisionMode RagdollNpcCollisionMode { get; set; } = RagdollNpcCollisionMode.BoneCapsule;
     public bool RagdollNpcSettleCollision { get; set; } = true;
 
     // Auto-engage: NPC enemy targets attack the player automatically on
@@ -915,19 +921,21 @@ public partial class Configuration : IPluginConfiguration
     }
 
     /// <summary>
-    /// Force every existing config onto the convex-hull NPC collision shape. The mesh (skinned)
-    /// shape that used to be the default is accurate but expensive enough to stutter badly, and
-    /// a corrected default alone would never reach anyone who already has the old value saved —
-    /// which is everyone who has run the plugin before. One-shot: the dropdown is theirs again
-    /// afterwards, including switching straight back to mesh if they want the fidelity.
+    /// Force every existing config onto the cheap bone-capsule NPC collision shape. Both the mesh
+    /// and convex-hull shapes build geometry at activation and can stutter; a corrected default
+    /// alone would never reach anyone who already has the old value saved — which is everyone who
+    /// has run the plugin before. One-shot: the dropdown is theirs again afterwards, including
+    /// switching back to hull or mesh for the fidelity. (This flag previously forced convex hull;
+    /// it now forces bone capsule, so a config that already ran it stays put — re-run it by
+    /// picking the shape by hand.)
     /// </summary>
     private void MigrateNpcCollisionConvexHullDefault()
     {
         if (NpcCollisionConvexHullDefaultMigrated20260716)
             return;
 
-        RagdollNpcCollisionMode = RagdollNpcCollisionMode.ConvexHull;
-        RagdollNpcCollisionConvexHull = true;
+        RagdollNpcCollisionMode = RagdollNpcCollisionMode.BoneCapsule;
+        RagdollNpcCollisionConvexHull = false;
         NpcCollisionConvexHullDefaultMigrated20260716 = true;
         Save();
     }

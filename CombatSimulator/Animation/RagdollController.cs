@@ -1803,8 +1803,14 @@ public unsafe partial class RagdollController : IDisposable
 
         bone.SwingMinLimit ??= DefaultSwingMinLimit((AnatomicalRole)bone.AnatomicalRole, bone.Name);
         bone.HingeRestAngle ??= DefaultHingeRestAngle((AnatomicalRole)bone.AnatomicalRole, bone.Name);
-        bone.HingeRestSpringFreq ??= DefaultHingeRestSpringFreq((AnatomicalRole)bone.AnatomicalRole, bone.Name);
-        bone.HingeRestMaxForce ??= DefaultHingeRestMaxForce((AnatomicalRole)bone.AnatomicalRole, bone.Name);
+        // 0 counts as "unset" for the rest spring, not "disabled": the built-in profiles store 0
+        // for every bone, so treating it as null lets knee/elbow inherit the firm default (the
+        // master toggle, not a per-bone 0, is what turns the feature off). Non-hinge bones keep 0
+        // because their default is 0.
+        if ((bone.HingeRestSpringFreq ?? 0f) <= 0f)
+            bone.HingeRestSpringFreq = DefaultHingeRestSpringFreq((AnatomicalRole)bone.AnatomicalRole, bone.Name);
+        if ((bone.HingeRestMaxForce ?? 0f) <= 0f)
+            bone.HingeRestMaxForce = DefaultHingeRestMaxForce((AnatomicalRole)bone.AnatomicalRole, bone.Name);
 
         var hasBoxMetadata = bone.BoxHalfExtentX > 0 || bone.BoxHalfExtentY > 0 || bone.BoxHalfExtentZ > 0;
         if (bone.ColliderShape == 0 && !hasBoxMetadata &&
@@ -1891,21 +1897,25 @@ public unsafe partial class RagdollController : IDisposable
         return 0f;
     }
 
+    // Knee/elbow passive-rest defaults are the slider maxes: the spring competes against joint
+    // friction and ground contact, and field testing wanted it as firm as the UI allows before
+    // it made a visible difference. It only does anything while RagdollAnatomicalHingeRestBias
+    // is on, so a firm default here is inert until the feature is enabled.
     private static float DefaultHingeRestSpringFreq(AnatomicalRole role, string name)
     {
         if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
-            return 3.5f;
+            return 30.0f;
         if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
-            return 3.5f;
+            return 30.0f;
         return 0f;
     }
 
     private static float DefaultHingeRestMaxForce(AnatomicalRole role, string name)
     {
         if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
-            return 50.0f;
+            return 500.0f;
         if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
-            return 30.0f;
+            return 500.0f;
         return 0f;
     }
 
@@ -3003,7 +3013,7 @@ public unsafe partial class RagdollController : IDisposable
             log.Info($"[Ragdoll Constraint] '{boneDef.Name}' passive hinge rest: angle={boneDef.HingeRestAngle:F2} freq={boneDef.HingeRestSpringFreq:F2} force={boneDef.HingeRestMaxForce:F2}");
     }
 
-    private static bool AnatomicalHingeRestBiasEnabled() => false;
+    private bool AnatomicalHingeRestBiasEnabled() => config.RagdollAnatomicalHingeRestBias;
 
     /// <summary>
     /// Tier C (swing) — directional anatomical limits for ball joints (hips, arm-side

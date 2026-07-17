@@ -2660,11 +2660,11 @@ public partial class MainWindow : IDisposable
                         { bone.HingeRestAngle = restAngle; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
 
                         var restFreq = bone.HingeRestSpringFreq ?? 0f;
-                        if (ImGui.SliderFloat($"Hinge Rest Freq (Hz){id}", ref restFreq, 0.0f, 10.0f, "%.1f"))
+                        if (ImGui.SliderFloat($"Hinge Rest Freq (Hz){id}", ref restFreq, 0.0f, 30.0f, "%.1f"))
                         { bone.HingeRestSpringFreq = restFreq; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
 
                         var restForce = bone.HingeRestMaxForce ?? 0f;
-                        if (ImGui.SliderFloat($"Hinge Rest Max Force{id}", ref restForce, 0.0f, 50.0f, "%.1f"))
+                        if (ImGui.SliderFloat($"Hinge Rest Max Force{id}", ref restForce, 0.0f, 500.0f, "%.0f"))
                         { bone.HingeRestMaxForce = restForce; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
                     }
 
@@ -4435,6 +4435,17 @@ public partial class MainWindow : IDisposable
                 }
                 HelpMarker("Tier C: drive joint axial-twist ranges (all joints) and knee/elbow flexion/hyperextension bounds from a clinical/ISB anatomical ROM table instead of the hand-set symmetric values. Blocks knee/elbow bending backward past straight (hyperextension) and gives each joint a correct asymmetric axial range. Ball-joint asymmetric SWING (hip/shoulder reach cone) is deferred. Takes effect on next ragdoll activation.");
 
+                var hingeRestBias = config.RagdollAnatomicalHingeRestBias;
+                if (ImGui.Checkbox("Hinge Rest Bias (knee/elbow)##ragdoll", ref hingeRestBias))
+                {
+                    config.RagdollAnatomicalHingeRestBias = hingeRestBias;
+                    config.Save();
+                }
+                HelpMarker("A soft spring on the knee/elbow hinge that pulls it toward straight (the HingeRest* per-bone params). " +
+                           "Without it the hinge only damps velocity, so a limb resting on the ground — a supine corpse — never " +
+                           "returns to straight and the knee stays bent. This gives the return-to-straight a ball joint's cone would, " +
+                           "but without the ball's free sideways swing. May fight some death poses. Takes effect on next ragdoll activation.");
+
                 var anthropometricMass = config.RagdollAnthropometricMass;
                 if (ImGui.Checkbox("Anthropometric Mass##ragdoll", ref anthropometricMass))
                 {
@@ -4703,15 +4714,6 @@ public partial class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Bone capsule uses the existing per-bone capsule proxies. Convex hull uses a single activation-pose hull built from bone positions. Mesh (skinned) snapshots the rendered model mesh with the current Havok pose and tracks the root transform. Animated mesh is experimental: mount-only, low-frequency real skinned mesh rebuilds with soft contacts. Takes effect on next ragdoll activation.");
-
-                if (config.RagdollNpcCollisionMode != RagdollNpcCollisionMode.ConvexHull)
-                {
-                    ImGui.TextColored(new Vector4(1f, 0.75f, 0.2f, 1f), "Warning: may cause severe stuttering.");
-                    HelpMarker("Convex hull is the default because it is cheap. The mesh shapes are far more accurate but " +
-                               "build real collision geometry from the model — on large creatures, or several ragdolls at " +
-                               "once, that can stutter badly. Change it only if you want the fidelity and your machine can " +
-                               "take it.");
-                }
 
                 ImGui.Unindent();
             }
