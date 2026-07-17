@@ -37,3 +37,49 @@ jobs:
         run: dotnet build ${{ env.SOLUTION_DIR }}/${{ env.PLUGIN_NAME }}.csproj -c Release
         env:
           DALAMUD_HOME: /home/runner/dalamud
+
+  # The private experimental module is never in a release (release.yaml enforces that), so
+  # this is the only thing keeping it compiling against the public code. Build-only: it
+  # produces no artifact and publishes nothing. Skips itself when the token is unavailable
+  # (e.g. a pull request from a fork), rather than failing on a secret it cannot have.
+  experimental:
+    name: Build with experimental module
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Checkout experimental module
+        id: submodule
+        env:
+          DEV_EXPERIMENTAL_REPO_TOKEN: ${{ secrets.DEV_EXPERIMENTAL_REPO_TOKEN }}
+        run: |
+          if [ -z "$DEV_EXPERIMENTAL_REPO_TOKEN" ]; then
+            echo "No DEV_EXPERIMENTAL_REPO_TOKEN available — skipping experimental build."
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config --global url."https://x-access-token:${DEV_EXPERIMENTAL_REPO_TOKEN}@github.com/zysilm/".insteadOf "https://github.com/zysilm/"
+          git submodule sync -- ${{ env.SOLUTION_DIR }}/Dev/Experimental
+          git submodule update --init --depth 1 -- ${{ env.SOLUTION_DIR }}/Dev/Experimental
+          test -e ${{ env.SOLUTION_DIR }}/Dev/Experimental/DevExperimentalModule.cs
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+
+      - name: Setup .NET
+        if: steps.submodule.outputs.skipped != 'true'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Setup Dalamud
+        if: steps.submodule.outputs.skipped != 'true'
+        run: |
+          mkdir -p $HOME/dalamud
+          wget -q https://goatcorp.github.io/dalamud-distrib/latest.zip -O /tmp/dalamud.zip
+          unzip -o /tmp/dalamud.zip -d $HOME/dalamud
+
+      - name: Build
+        if: steps.submodule.outputs.skipped != 'true'
+        run: dotnet build ${{ env.SOLUTION_DIR }}/${{ env.PLUGIN_NAME }}.csproj -c Release
+        env:
+          DALAMUD_HOME: /home/runner/dalamud

@@ -20,17 +20,12 @@ jobs:
       - name: Verify version and update log
         run: python3 .github/scripts/verify-update-log.py ${{ env.SOLUTION_DIR }} ${{ env.PLUGIN_NAME }}
 
-      - name: Checkout experimental module
-        env:
-          DEV_EXPERIMENTAL_REPO_TOKEN: ${{ secrets.DEV_EXPERIMENTAL_REPO_TOKEN }}
-        run: |
-          if [ -z "$DEV_EXPERIMENTAL_REPO_TOKEN" ]; then
-            echo "::error::Missing DEV_EXPERIMENTAL_REPO_TOKEN secret with read access to zysilm/ffxiv-combatsimulator-dev"
-            exit 1
-          fi
-          git config --global url."https://x-access-token:${DEV_EXPERIMENTAL_REPO_TOKEN}@github.com/zysilm/".insteadOf "https://github.com/zysilm/"
-          git submodule sync -- ${{ env.SOLUTION_DIR }}/Dev/Experimental
-          git submodule update --init --depth 1 -- ${{ env.SOLUTION_DIR }}/Dev/Experimental
+      # The private experimental module must never reach a public release. This workflow
+      # deliberately does NOT check the submodule out: with the sources absent, the csproj
+      # leaves DEV_EXPERIMENTAL undefined and the plugin compiles against the no-op stub.
+      # The submodule IS built in CI (see build.yaml) — just never in what ships.
+      - name: Verify release source has no experimental module
+        run: test ! -e ${{ env.SOLUTION_DIR }}/Dev/Experimental/DevExperimentalModule.cs
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -64,6 +59,24 @@ jobs:
           # Remove nested zip artifact if present
           rm -f release/${{ env.PLUGIN_NAME }}.zip
           cd release && zip -r ../${{ env.PLUGIN_NAME }}.zip .
+
+      # Belt and braces: assert against the DLL that actually ships, not just the source tree.
+      # A source-only check is what was in place before and it never covered the artifact —
+      # the release workflow was pulling the private module in on purpose. Type names live in
+      # the metadata as ASCII, so a plain grep finds them.
+      - name: Verify release artifact has no experimental code
+        run: |
+          dll="release/${{ env.PLUGIN_NAME }}.dll"
+          test -f "$dll" || { echo "::error::Missing $dll"; exit 1; }
+          status=0
+          for sym in MonsterModeController DevExperimentalModule VictorySequenceController GrabConformSolver BoneHoldTestModeController; do
+            if grep -qa "$sym" "$dll"; then
+              echo "::error::Release artifact contains experimental symbol '$sym' — the private dev module must never ship."
+              status=1
+            fi
+          done
+          [ $status -eq 0 ] && echo "Release artifact is clean of experimental code."
+          exit $status
 
       - name: Generate pluginmaster.json
         run: |

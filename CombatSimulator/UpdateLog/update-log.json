@@ -1,5 +1,13 @@
 [
   {
+    "version": "2.7.1.2",
+    "date": "2026-07-17",
+    "title": "Combat Simulator 2.7.1.2",
+    "changes": [
+      "For safety, experimental features are no longer included in release builds. These options were normally not something regular users could enable, so this change can be safely ignored."
+    ]
+  },
+  {
     "version": "2.7.1.1",
     "date": "2026-07-16",
     "title": "Combat Simulator 2.7.1.1",
