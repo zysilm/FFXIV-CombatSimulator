@@ -245,6 +245,11 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// choice is stable and so it can be frozen while the player is orbiting.</summary>
     private float shoulderSide;
 
+    /// <summary>Distance added on top of the user's zoom this frame so an oversized enemy
+    /// fits the lens (BulkRelief). Remembered so zoom adoption can subtract it back out —
+    /// otherwise a scroll during a big fight would bake the relief into the learned zoom.</summary>
+    private float lastBulkExtra;
+
     // Ground height under the shot, from BGCollision raycasts, smoothed so a ledge or a
     // stair edge under the camera path does not step the frame. Two probes: under the
     // corpse, and under the CAMERA's own spot — both smoothed and combined by max. The
@@ -463,6 +468,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         deathZoomOut = 1f;
         smoothedShoulder = 0f;
         shoulderSide = 0f;
+        lastBulkExtra = 0f;
         hasGroundSample = false;
         hasCamGroundSample = false;
         haveMeasuredOrbitDir = false;
@@ -654,8 +660,11 @@ public sealed unsafe class DynamicCameraController : IDisposable
             // Adopt their zoom as a bias on the framing distance, so we never drag them
             // back to ours — the screen-share adaptation just rides on top of it. Measured
             // against the UNBIASED distance, otherwise each scroll multiplies the last.
+            // BulkRelief's extra is subtracted from the observation first: it is OUR
+            // temporary addition for an oversized enemy, and learning it as the player's
+            // preference would leave the camera parked far out after the fight ends.
             var basis = MathF.Max(0.5f, combatBaseDistance);
-            combatZoomBias = Math.Clamp(observedDistance / basis, 0.4f, 3.0f);
+            combatZoomBias = Math.Clamp((observedDistance - lastBulkExtra) / basis, 0.4f, 3.0f);
             combatZoomDirty = true;
         }
         prevObservedDistance = observedDistance;
@@ -731,18 +740,20 @@ public sealed unsafe class DynamicCameraController : IDisposable
         }
 
         // Put the character on the side AWAY from whatever has their attention, so the enemy
-        // gets the open half of the frame. Offsetting the orbit centre along +right slides the
-        // character left on screen, and vice versa. The offset is a SCREEN fraction: the world
-        // offset scales with distance, so the composition holds steady across the whole zoom
-        // range instead of shoving the character off-frame at close range.
+        // gets the open half of the frame. Field-verified handedness (the cross-product right
+        // vector points screen-LEFT in this engine): shifting the orbit centre along +right
+        // slides the character RIGHT on screen, and vice versa — the auto path never noticed
+        // because it uses `right` twice and the flips cancel. The offset is a SCREEN fraction:
+        // the world offset scales with distance, so the composition holds steady across the
+        // whole zoom range instead of shoving the character off-frame at close range.
         var focus = FindFocusEnemy(playerAddress);
         var targetShoulder = 0f;
         if (config.DynCamShoulderScreenFrac > 0.001f)
         {
             var side = config.DynCamShoulderSide switch
             {
-                1 => 1f,   // character forced left  → pivot shifts +right
-                2 => -1f,  // character forced right → pivot shifts -right
+                1 => -1f,  // character forced left  → pivot shifts -right
+                2 => 1f,   // character forced right → pivot shifts +right
                 // Auto follows the CURRENT view even while the player is orbiting. Freezing
                 // here used to leave both subjects crammed onto one side after the camera
                 // crossed the fight. AutoShoulderSide supplies the hysteresis; the shoulder
@@ -768,7 +779,12 @@ public sealed unsafe class DynamicCameraController : IDisposable
         desired *= CrowdingRelief(view.Position, fwd, right, up, lens);
         combatBaseDistance = Math.Clamp(desired, 1.0f, 30f);
 
+        // Big-subject relief rides on top of the biased distance, not inside it: applied
+        // before the zoom bias, a close-zoom bias (0.4) would scale the relief away and
+        // return exactly the problem it solves — a giant filling the whole close-range frame.
         desired = Math.Clamp(desired * combatZoomBias, 1.0f, 30f);
+        lastBulkExtra = BulkRelief(view.Position, fwd, lens);
+        desired = Math.Clamp(desired + lastBulkExtra, 1.0f, 30f);
         SolvedDistance = desired;
 
         if (!hasCurState)
@@ -779,8 +795,30 @@ public sealed unsafe class DynamicCameraController : IDisposable
         }
         else
         {
+            // Anisotropic pivot tracking. The exponential smoothing has a time constant of
+            // 1/PivotSmoothing seconds; at run speed (~6 y/s) the default 6.0 leaves the pivot
+            // trailing the character by ~1 yalm. Trailing SIDEWAYS is the cinematic drift we
+            // want. Trailing in DEPTH is a bug: running toward the camera parks the character
+            // a yalm inside the framing distance, and at the closest zoom (1.6y) that fills
+            // the frame with torso. So split the error against the horizontal view axis —
+            // depth chases near-instantly (reads as a faint size breath, not as motion), while
+            // the lateral and vertical parts (including run bob) keep the configured drift.
             var pk = 1f - MathF.Exp(-MathF.Max(0.1f, config.DynCamPivotSmoothing) * dt);
-            curPivot = Vector3.Lerp(curPivot, pivot, pk);
+            var fwdFlat = new Vector3(fwd.X, 0f, fwd.Z);
+            if (fwdFlat.LengthSquared() > 1e-4f)
+            {
+                fwdFlat = Vector3.Normalize(fwdFlat);
+                var err = pivot - curPivot;
+                var depth = fwdFlat * Vector3.Dot(err, fwdFlat);
+                var drift = err - depth;
+                var dkDepth = 1f - MathF.Exp(-MathF.Max(25f, config.DynCamPivotSmoothing) * dt);
+                curPivot += drift * pk + depth * dkDepth;
+            }
+            else
+            {
+                // Looking straight up/down: no meaningful depth axis, plain smoothing.
+                curPivot = Vector3.Lerp(curPivot, pivot, pk);
+            }
 
             var dk = 1f - MathF.Exp(-MathF.Max(0.1f, config.DynCamDistanceSmoothing) * dt);
             curDistance += (desired - curDistance) * dk;
@@ -824,10 +862,12 @@ public sealed unsafe class DynamicCameraController : IDisposable
     {
         // Use the committed target side for hysteresis, not the smoothed offset. During a
         // flip the offset necessarily crosses zero; treating that transient value as the
-        // decision state can re-decide halfway through the translation.
+        // decision state can re-decide halfway through the translation. With no history at
+        // all (fresh session, zero offset) default to -1: the character sits LEFT, the GoW
+        // home composition, until an enemy gives us a reason to move them.
         var currentSide = shoulderSide != 0f
             ? shoulderSide
-            : smoothedShoulder >= 0f ? 1f : -1f;
+            : smoothedShoulder > 0f ? 1f : -1f;
 
         if (focus == null || focus.BattleChara == null)
             return currentSide; // hold the last side rather than snapping to centre
@@ -875,6 +915,46 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
         var over = MathF.Min(maxAbsX - comfortable, 0.75f) / 0.75f;
         return 1f + config.DynCamCrowdingRelief * over;
+    }
+
+    /// <summary>
+    /// Big-subject relief. CrowdingRelief answers MANY enemies spreading across the frame;
+    /// this answers ONE enemy that is simply too big for the lens at close range — its centre
+    /// point sits comfortably in frame while its body overflows every edge, so a centre test
+    /// never fires. Each engaged large enemy is approximated as a sphere of its hitbox radius
+    /// and the camera asks for enough distance that the sphere subtends at most a fraction of
+    /// the tighter half-frame. Returned as EXTRA distance (yalms) on top of the user's zoom.
+    /// Continuous in every input (no temporal jumps to pump the spring — the radius gate is
+    /// constant per enemy), capped so a titan cannot yank the camera to the sky, and gated so
+    /// normal-sized enemies leave the close GoW framing exactly alone. The existing distance
+    /// spring provides the easing both directions.
+    /// </summary>
+    private float BulkRelief(Vector3 cam, in Vector3 fwd, in DynamicCameraSolver.Lens lens)
+    {
+        const float bulkThreshold = 2f;  // hitbox radius below which framing is untouched
+        const float fillFraction = 0.8f; // subject may fill at most this much of the half-frame
+        const float maxExtra = 6f;       // beyond this, accept partial framing
+
+        var span = fillFraction * MathF.Min(MathF.Abs(lens.TanHalfV), MathF.Abs(lens.TanHalfH));
+        if (span < 0.05f)
+            return 0f; // degenerate lens: refuse to divide our way into a huge answer
+
+        var extra = 0f;
+        foreach (var npc in npcSelector.SelectedNpcs)
+        {
+            if (npc.BattleChara == null || !npc.IsAlive || !npc.IsEngaged)
+                continue;
+            var r = MathF.Min(npc.HitboxRadius, 8f);
+            if (r < bulkThreshold)
+                continue;
+            var to = EnemyPosition(npc) - cam;
+            if (Vector3.Dot(to, fwd) <= 0.1f)
+                continue; // behind or beside the camera: not part of the picture
+            var required = r / span - to.Length();
+            if (required > extra)
+                extra = required;
+        }
+        return MathF.Min(extra, maxExtra);
     }
 
     private SimulatedNpc? FindFocusEnemy(nint playerAddress)
