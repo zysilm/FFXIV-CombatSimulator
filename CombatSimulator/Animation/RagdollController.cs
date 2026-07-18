@@ -6797,18 +6797,10 @@ public unsafe partial class RagdollController : IDisposable
             var body = simulation!.Bodies.GetBodyReference(rb.BodyHandle);
             if (!body.Awake) continue;
             var lin = body.Velocity.Linear;
-            var ang = body.Velocity.Angular;
-            // A NaN/Inf velocity slips past a magnitude clamp — `NaN > max` is false — and then
-            // Math.Sign(NaN) in the twist guards throws and kills the whole ragdoll. Catch it here
-            // instead: zero the diverged velocity so the body just stalls for a step rather than
-            // poisoning the sim. This is the containment net for any solver blow-up, whatever caused it.
-            if (!IsFinite(lin))
-                body.Velocity.Linear = lin = Vector3.Zero;
-            if (!IsFinite(ang))
-                body.Velocity.Angular = ang = Vector3.Zero;
             var linSpeed = lin.Length();
             if (linSpeed > maxLinear)
                 body.Velocity.Linear = lin * (maxLinear / linSpeed);
+            var ang = body.Velocity.Angular;
             var angSpeed = ang.Length();
             if (angSpeed > maxAngular)
                 body.Velocity.Angular = ang * (maxAngular / angSpeed);
