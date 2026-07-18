@@ -10,6 +10,7 @@ using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 
 namespace CombatSimulator.Ai;
@@ -136,6 +137,107 @@ public unsafe class NpcAiController : IDisposable
         pendingAutoEngageDelay = Math.Clamp(config.NpcAutoEngageDelay, 0f, 20f);
     }
 
+    // ------------------------------------------------------------------
+    // Gaze (head/eye tracking)
+    //
+    // The game's look-at pipeline has two halves. The CONSUMER — the per-character update
+    // that turns CharacterLookAtController's param banks into head/eye bone rotation — runs
+    // for every rendered Character, clones included (pose tools drive GPose actors through
+    // exactly this). The FILLER — the attention logic that converts a TargetId into bank
+    // writes — only runs for server-driven actors, and for the local player only follows a
+    // real HARD target. So: clones stare at nobody despite a valid TargetId, and the player
+    // never glances at the soft combat target. We are the missing filler for both.
+    // ------------------------------------------------------------------
+
+    private const int GazeBankCount = 3; // torso / head / eyes
+    private const float PlayerGazeMaxDistance = 12f;
+    private const float PlayerGazeMaxDistanceSq = PlayerGazeMaxDistance * PlayerGazeMaxDistance;
+    // Only track enemies in front-ish of the character (~±100°): the consumer clamps the head
+    // to its anatomical range anyway, but feeding it a target square behind reads as a stuck
+    // sideways glare instead of a natural return to neutral.
+    private const float PlayerGazeConeCos = -0.17f; // cos(100°)
+
+    private bool playerGazeWritten;
+
+    private static void DriveGaze(Character* character, GameObjectId targetId)
+    {
+        ref var controller = ref character->LookAt.Controller;
+        var banks = controller.Params;
+        for (int i = 0; i < GazeBankCount && i < banks.Length; i++)
+        {
+            ref var p = ref banks[i].TargetParam;
+            p.Type = CharacterLookAtTargetParam.TargetInfoType.GameObjectId;
+            p.TargetId = targetId;
+        }
+    }
+
+    private static void ClearGaze(Character* character)
+    {
+        ref var controller = ref character->LookAt.Controller;
+        var banks = controller.Params;
+        for (int i = 0; i < GazeBankCount && i < banks.Length; i++)
+        {
+            ref var p = ref banks[i].TargetParam;
+            if (p.Type == CharacterLookAtTargetParam.TargetInfoType.GameObjectId)
+                p.Type = CharacterLookAtTargetParam.TargetInfoType.None;
+        }
+    }
+
+    private void TickPlayerGaze(GameObject* playerGameObj, Vector3 playerPos, IReadOnlyList<SimulatedNpc> npcs)
+    {
+        if (!config.EnablePlayerGazeTarget || playerGameObj == null)
+        {
+            RestorePlayerGaze(playerGameObj);
+            return;
+        }
+
+        // A real hard target means the vanilla attention already owns the head — never fight it.
+        var targetSystem = TargetSystem.Instance();
+        if (targetSystem != null && targetSystem->Target != null)
+        {
+            RestorePlayerGaze(playerGameObj);
+            return;
+        }
+
+        // Nearest engaged, living enemy inside range and the forward cone.
+        var facing = new Vector3(MathF.Sin(playerGameObj->Rotation), 0f, MathF.Cos(playerGameObj->Rotation));
+        SimulatedNpc? best = null;
+        var bestDistSq = PlayerGazeMaxDistanceSq;
+        foreach (var npc in npcs)
+        {
+            if (npc.BattleChara == null || !npc.IsSpawned || !npc.IsEngaged || !npc.State.IsAlive)
+                continue;
+            var obj = (GameObject*)npc.BattleChara;
+            var to = new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z) - playerPos;
+            var flat = new Vector3(to.X, 0f, to.Z);
+            var distSq = flat.LengthSquared();
+            if (distSq > bestDistSq || distSq < 0.01f)
+                continue;
+            if (Vector3.Dot(facing, Vector3.Normalize(flat)) < PlayerGazeConeCos)
+                continue;
+            best = npc;
+            bestDistSq = distSq;
+        }
+
+        if (best == null)
+        {
+            RestorePlayerGaze(playerGameObj);
+            return;
+        }
+
+        DriveGaze((Character*)playerGameObj, ((GameObject*)best.BattleChara)->GetGameObjectId());
+        playerGazeWritten = true;
+    }
+
+    private void RestorePlayerGaze(GameObject* playerGameObj)
+    {
+        if (!playerGazeWritten)
+            return;
+        if (playerGameObj != null)
+            ClearGaze((Character*)playerGameObj);
+        playerGazeWritten = false;
+    }
+
     private void OnSimulationResetOrStop()
     {
         StopAllApproachMoveAnims();
@@ -143,6 +245,11 @@ public unsafe class NpcAiController : IDisposable
         approachLockedGoals.Clear();
         partyApproachDebugNextLogAt.Clear();
         lastApproachDebugRoute.Clear();
+
+        // Give the player's head back to the vanilla attention system.
+        var lp = Core.Services.ObjectTable.LocalPlayer;
+        if (lp != null)
+            RestorePlayerGaze((GameObject*)lp.Address);
 
         // OnSimulationReset fires from both StopSimulation and ResetState.
         // StopSimulation flips IsActive false before invoking — skip auto-engage
@@ -218,19 +325,33 @@ public unsafe class NpcAiController : IDisposable
                 bool shouldTarget = npc.AiState != NpcAiState.Dead
                                  && npc.AiState != NpcAiState.Resetting;
                 if (shouldTarget)
+                {
                     character->TargetId = playerGameObjectId;
+                    // TargetId alone only produces the stare on server-driven actors — the
+                    // game's attention filler that converts it into look-at bank writes never
+                    // runs for client-spawned clones. Write the banks ourselves.
+                    DriveGaze(character, playerGameObjectId);
+                }
                 else if (character->TargetId.ObjectId == playerEntityId)
+                {
                     character->TargetId = default;
+                    ClearGaze(character);
+                }
             }
             else if (config.EnableNpcTargetPlayer && npc.BattleChara != null)
             {
                 var character = (Character*)npc.BattleChara;
                 if (character->TargetId.ObjectId == playerEntityId)
+                {
                     character->TargetId = default;
+                    ClearGaze(character);
+                }
             }
 
             TickNpc(npc, deltaTime, targetPos, targetEntityId);
         }
+
+        TickPlayerGaze(playerGameObj, playerPos, npcs);
 
         // In solo play this is controlled by EnableTargetApproach. In party
         // mode, enemy movement is always needed because real NPCs have no
