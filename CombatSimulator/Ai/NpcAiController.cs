@@ -214,6 +214,14 @@ public unsafe class NpcAiController : IDisposable
             p.Type = CharacterLookAtTargetParam.TargetInfoType.GameObjectId;
             p.TargetId = targetId;
         }
+
+        // The piece GazeDbg proved was missing: the consumer reads how many params are live
+        // from ParamCount. A staring map enemy runs at 3; a client-spawned clone sits at -1 —
+        // CreateBattleCharacter skips whatever init sets it — so bank writes reached nobody.
+        // Activate exactly the banks we fill. Vtable-guarded so a genuinely unconstructed
+        // controller is left alone rather than told it has live params.
+        if (controller.ParamCount < GazeBankCount && controller.VirtualTable != null)
+            controller.ParamCount = GazeBankCount;
     }
 
     private static void ClearGaze(Character* character)
@@ -374,11 +382,10 @@ public unsafe class NpcAiController : IDisposable
                     character->TargetId = playerGameObjectId;
                     // TargetId alone only produces the stare on server-driven actors — the
                     // game's attention filler that converts it into look-at bank writes never
-                    // runs for client-spawned clones. Write the banks ourselves. Gated with
-                    // the player-gaze switch so ALL experimental gaze writes share one off
-                    // button, giving GazeDbg an untouched baseline to dump.
-                    if (config.EnablePlayerGazeTarget)
-                        DriveGaze(character, playerGameObjectId);
+                    // runs for client-spawned clones. Write and activate the banks ourselves.
+                    // EnableNpcTargetPlayer already owns this behavior; the separate player-gaze
+                    // switch must not disable an enemy's gaze at the player.
+                    DriveGaze(character, playerGameObjectId);
                 }
                 else if (character->TargetId.ObjectId == playerEntityId)
                 {
