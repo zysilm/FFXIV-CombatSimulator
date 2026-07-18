@@ -158,6 +158,51 @@ public unsafe class NpcAiController : IDisposable
     private const float PlayerGazeConeCos = -0.17f; // cos(100°)
 
     private bool playerGazeWritten;
+    private float gazeDumpTimer;
+
+    // Telemetry: dump the look-at controller state of everything in the fight so a staring
+    // map enemy can be diffed against a non-staring clone — bank contents, ParamCount, the
+    // works. This is how the real activation protocol gets discovered instead of guessed.
+    private void DumpGazeState(GameObject* playerGameObj, IReadOnlyList<SimulatedNpc> npcs, float dt)
+    {
+        if (!config.RagdollVerboseLog)
+            return;
+        gazeDumpTimer -= dt;
+        if (gazeDumpTimer > 0f)
+            return;
+        gazeDumpTimer = 2f;
+
+        static string Describe(Character* c)
+        {
+            ref var ctrl = ref c->LookAt.Controller;
+            var banks = ctrl.Params;
+            var s = $"paramCount={ctrl.ParamCount}";
+            for (int i = 0; i < banks.Length && i < 4; i++)
+            {
+                ref var p = ref banks[i].TargetParam;
+                // Unk10 (Vector3 union) and Unk20 are internal in ClientStructs — read raw.
+                var raw = (byte*)System.Runtime.CompilerServices.Unsafe.AsPointer(ref p);
+                var px = *(float*)(raw + 0x10);
+                var py = *(float*)(raw + 0x14);
+                var pz = *(float*)(raw + 0x18);
+                var u20 = *(int*)(raw + 0x20);
+                s += $" | b{i}: t={(int)p.Type} id=0x{p.TargetId.ObjectId:X} pos=({px:F1},{py:F1},{pz:F1}) u20={u20}";
+            }
+            return s;
+        }
+
+        if (playerGameObj != null)
+            log.Info($"[GazeDbg] PLAYER {Describe((Character*)playerGameObj)}");
+        var dumped = 0;
+        foreach (var npc in npcs)
+        {
+            if (npc.BattleChara == null || !npc.IsSpawned || dumped >= 4)
+                continue;
+            var obj = (GameObject*)npc.BattleChara;
+            log.Info($"[GazeDbg] '{npc.Name}' kind={(byte)obj->ObjectKind}/{obj->SubKind} engaged={npc.IsEngaged} {Describe((Character*)npc.BattleChara)}");
+            dumped++;
+        }
+    }
 
     private static void DriveGaze(Character* character, GameObjectId targetId)
     {
@@ -329,8 +374,11 @@ public unsafe class NpcAiController : IDisposable
                     character->TargetId = playerGameObjectId;
                     // TargetId alone only produces the stare on server-driven actors — the
                     // game's attention filler that converts it into look-at bank writes never
-                    // runs for client-spawned clones. Write the banks ourselves.
-                    DriveGaze(character, playerGameObjectId);
+                    // runs for client-spawned clones. Write the banks ourselves. Gated with
+                    // the player-gaze switch so ALL experimental gaze writes share one off
+                    // button, giving GazeDbg an untouched baseline to dump.
+                    if (config.EnablePlayerGazeTarget)
+                        DriveGaze(character, playerGameObjectId);
                 }
                 else if (character->TargetId.ObjectId == playerEntityId)
                 {
@@ -352,6 +400,7 @@ public unsafe class NpcAiController : IDisposable
         }
 
         TickPlayerGaze(playerGameObj, playerPos, npcs);
+        DumpGazeState(playerGameObj, npcs, deltaTime);
 
         // In solo play this is controlled by EnableTargetApproach. In party
         // mode, enemy movement is always needed because real NPCs have no
