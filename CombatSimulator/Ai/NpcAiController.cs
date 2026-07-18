@@ -158,7 +158,15 @@ public unsafe class NpcAiController : IDisposable
     private const float PlayerGazeConeCos = -0.17f; // cos(100°)
 
     private bool playerGazeWritten;
+    private ulong playerGazeTargetId;
+    private nint playerGazeSoftTargetAddress;
     private float gazeDumpTimer;
+
+    /// <summary>
+    /// Action Mode's logical soft-target resolver. Wired to the same resolver as the
+    /// reticle so the player's gaze and the displayed/attacked enemy cannot disagree.
+    /// </summary>
+    public Func<SimulatedNpc?>? ResolvePlayerGazeTarget { private get; set; }
 
     // Telemetry: dump the look-at controller state of everything in the fight so a staring
     // map enemy can be diffed against a non-staring clone — bank contents, ParamCount, the
@@ -192,7 +200,13 @@ public unsafe class NpcAiController : IDisposable
         }
 
         if (playerGameObj != null)
-            log.Info($"[GazeDbg] PLAYER {Describe((Character*)playerGameObj)}");
+        {
+            var targetSystem = TargetSystem.Instance();
+            var hardAddress = targetSystem == null ? nint.Zero : (nint)targetSystem->Target;
+            var softAddress = targetSystem == null ? nint.Zero : (nint)targetSystem->SoftTarget;
+            log.Info($"[GazeDbg] PLAYER hard=0x{hardAddress:X} soft=0x{softAddress:X} " +
+                     $"ownedSoft=0x{playerGazeSoftTargetAddress:X} {Describe((Character*)playerGameObj)}");
+        }
         var dumped = 0;
         foreach (var npc in npcs)
         {
@@ -224,16 +238,66 @@ public unsafe class NpcAiController : IDisposable
             controller.ParamCount = GazeBankCount;
     }
 
-    private static void ClearGaze(Character* character)
+    private static void ClearGaze(Character* character, ulong expectedTargetId = 0)
     {
         ref var controller = ref character->LookAt.Controller;
         var banks = controller.Params;
         for (int i = 0; i < GazeBankCount && i < banks.Length; i++)
         {
             ref var p = ref banks[i].TargetParam;
-            if (p.Type == CharacterLookAtTargetParam.TargetInfoType.GameObjectId)
+            if (p.Type == CharacterLookAtTargetParam.TargetInfoType.GameObjectId &&
+                (expectedTargetId == 0 || p.TargetId.ObjectId == expectedTargetId))
                 p.Type = CharacterLookAtTargetParam.TargetInfoType.None;
         }
+    }
+
+    /// <summary>
+    /// The direct bank writes are sufficient for non-local actors, but the local-player
+    /// consumer has additional state owned by TargetSystem. Bridge Action Mode's logical
+    /// soft target into the native soft-target slot so the vanilla player attention path
+    /// performs that activation. Soft targets are client-side; the UseAction hook still
+    /// prevents a simulated entity id from reaching the real ActionManager.
+    /// </summary>
+    private void SyncPlayerSoftTarget(GameObject* target)
+    {
+        if (!config.ActionMode || target == null)
+        {
+            ReleasePlayerSoftTarget(worldAlive: true);
+            return;
+        }
+
+        var targetSystem = TargetSystem.Instance();
+        if (targetSystem == null)
+            return;
+
+        var current = targetSystem->SoftTarget;
+        var currentAddress = (nint)current;
+
+        // A native soft target that we did not install belongs to the player/game. Leave it
+        // untouched and let the vanilla attention system follow it.
+        if (current != null && currentAddress != playerGazeSoftTargetAddress)
+            return;
+
+        if (current == target)
+            return;
+
+        if (targetSystem->SetSoftTarget(target))
+            playerGazeSoftTargetAddress = (nint)target;
+    }
+
+    private void ReleasePlayerSoftTarget(bool worldAlive)
+    {
+        if (playerGazeSoftTargetAddress == nint.Zero)
+            return;
+
+        if (worldAlive)
+        {
+            var targetSystem = TargetSystem.Instance();
+            if (targetSystem != null && (nint)targetSystem->SoftTarget == playerGazeSoftTargetAddress)
+                targetSystem->SetSoftTarget(null);
+        }
+
+        playerGazeSoftTargetAddress = nint.Zero;
     }
 
     private void TickPlayerGaze(GameObject* playerGameObj, Vector3 playerPos, IReadOnlyList<SimulatedNpc> npcs)
@@ -252,43 +316,65 @@ public unsafe class NpcAiController : IDisposable
             return;
         }
 
-        // Nearest engaged, living enemy inside range and the forward cone.
-        var facing = new Vector3(MathF.Sin(playerGameObj->Rotation), 0f, MathF.Cos(playerGameObj->Rotation));
-        SimulatedNpc? best = null;
-        var bestDistSq = PlayerGazeMaxDistanceSq;
-        foreach (var npc in npcs)
-        {
-            if (npc.BattleChara == null || !npc.IsSpawned || !npc.IsEngaged || !npc.State.IsAlive)
-                continue;
-            var obj = (GameObject*)npc.BattleChara;
-            var to = new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z) - playerPos;
-            var flat = new Vector3(to.X, 0f, to.Z);
-            var distSq = flat.LengthSquared();
-            if (distSq > bestDistSq || distSq < 0.01f)
-                continue;
-            if (Vector3.Dot(facing, Vector3.Normalize(flat)) < PlayerGazeConeCos)
-                continue;
-            best = npc;
-            bestDistSq = distSq;
-        }
-
-        if (best == null)
+        // Respect a real native soft target. We only own the slot while it still points at
+        // the exact actor we installed; anything else is a vanilla/user selection.
+        if (targetSystem != null && targetSystem->SoftTarget != null &&
+            (nint)targetSystem->SoftTarget != playerGazeSoftTargetAddress)
         {
             RestorePlayerGaze(playerGameObj);
             return;
         }
 
-        DriveGaze((Character*)playerGameObj, ((GameObject*)best.BattleChara)->GetGameObjectId());
+        SimulatedNpc? best;
+        if (config.ActionMode && ResolvePlayerGazeTarget != null)
+        {
+            best = ResolvePlayerGazeTarget();
+        }
+        else
+        {
+            // Outside Action Mode, follow the nearest engaged, living enemy inside range
+            // and the forward cone.
+            var facing = new Vector3(MathF.Sin(playerGameObj->Rotation), 0f, MathF.Cos(playerGameObj->Rotation));
+            best = null;
+            var bestDistSq = PlayerGazeMaxDistanceSq;
+            foreach (var npc in npcs)
+            {
+                if (npc.BattleChara == null || !npc.IsSpawned || !npc.IsEngaged || !npc.State.IsAlive)
+                    continue;
+                var obj = (GameObject*)npc.BattleChara;
+                var to = new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z) - playerPos;
+                var flat = new Vector3(to.X, 0f, to.Z);
+                var distSq = flat.LengthSquared();
+                if (distSq > bestDistSq || distSq < 0.01f)
+                    continue;
+                if (Vector3.Dot(facing, Vector3.Normalize(flat)) < PlayerGazeConeCos)
+                    continue;
+                best = npc;
+                bestDistSq = distSq;
+            }
+        }
+
+        if (best?.BattleChara == null || !best.IsSpawned || !best.State.IsAlive)
+        {
+            RestorePlayerGaze(playerGameObj);
+            return;
+        }
+
+        var targetObject = (GameObject*)best.BattleChara;
+        var targetId = targetObject->GetGameObjectId();
+        SyncPlayerSoftTarget(targetObject);
+        DriveGaze((Character*)playerGameObj, targetId);
         playerGazeWritten = true;
+        playerGazeTargetId = targetId.ObjectId;
     }
 
     private void RestorePlayerGaze(GameObject* playerGameObj)
     {
-        if (!playerGazeWritten)
-            return;
-        if (playerGameObj != null)
-            ClearGaze((Character*)playerGameObj);
+        ReleasePlayerSoftTarget(worldAlive: playerGameObj != null);
+        if (playerGazeWritten && playerGameObj != null)
+            ClearGaze((Character*)playerGameObj, playerGazeTargetId);
         playerGazeWritten = false;
+        playerGazeTargetId = 0;
     }
 
     private void OnSimulationResetOrStop()
