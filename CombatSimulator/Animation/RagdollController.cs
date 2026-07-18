@@ -1897,25 +1897,27 @@ public unsafe partial class RagdollController : IDisposable
         return 0f;
     }
 
-    // Knee/elbow passive-rest defaults are the slider maxes: the spring competes against joint
-    // friction and ground contact, and field testing wanted it as firm as the UI allows before
-    // it made a visible difference. It only does anything while RagdollAnatomicalHingeRestBias
-    // is on, so a firm default here is inert until the feature is enabled.
+    // Knee/elbow passive-rest defaults sit well below the slider maxima on purpose. The spring
+    // competes against joint friction and ground contact, so it wants to be firm — but the maxima
+    // (30 Hz / 500 N) are a divergence hazard: a spring that stiff fighting the grab servo over a
+    // knee blew the solver up to NaN in testing. 10 Hz / 200 N is far stronger than the old
+    // 3.5 / 50 (enough to straighten a supine knee) with headroom before instability. Only active
+    // while RagdollAnatomicalHingeRestBias is on.
     private static float DefaultHingeRestSpringFreq(AnatomicalRole role, string name)
     {
         if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
-            return 30.0f;
+            return 10.0f;
         if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
-            return 30.0f;
+            return 10.0f;
         return 0f;
     }
 
     private static float DefaultHingeRestMaxForce(AnatomicalRole role, string name)
     {
         if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
-            return 500.0f;
+            return 200.0f;
         if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
-            return 500.0f;
+            return 200.0f;
         return 0f;
     }
 
@@ -3384,7 +3386,10 @@ public unsafe partial class RagdollController : IDisposable
                 var w = body.Velocity.Angular;
                 var rate = Vector3.Dot(w, axis);
                 var relative = rate - parentRate;
-                if (MathF.Abs(relative) <= TwistGuardMaxRate)
+                // Never hand Math.Sign a NaN — it throws rather than returning 0. A non-finite
+                // rate means a diverged velocity or orientation; ClampVelocities zeroes those, but
+                // guard here too so a stray NaN can never take the ragdoll down at this line.
+                if (!float.IsFinite(relative) || MathF.Abs(relative) <= TwistGuardMaxRate)
                     continue;
                 var clamped = parentRate + MathF.Sign(relative) * TwistGuardMaxRate;
                 body.Velocity.Angular = w + axis * (clamped - rate);
@@ -6792,10 +6797,18 @@ public unsafe partial class RagdollController : IDisposable
             var body = simulation!.Bodies.GetBodyReference(rb.BodyHandle);
             if (!body.Awake) continue;
             var lin = body.Velocity.Linear;
+            var ang = body.Velocity.Angular;
+            // A NaN/Inf velocity slips past a magnitude clamp — `NaN > max` is false — and then
+            // Math.Sign(NaN) in the twist guards throws and kills the whole ragdoll. Catch it here
+            // instead: zero the diverged velocity so the body just stalls for a step rather than
+            // poisoning the sim. This is the containment net for any solver blow-up, whatever caused it.
+            if (!IsFinite(lin))
+                body.Velocity.Linear = lin = Vector3.Zero;
+            if (!IsFinite(ang))
+                body.Velocity.Angular = ang = Vector3.Zero;
             var linSpeed = lin.Length();
             if (linSpeed > maxLinear)
                 body.Velocity.Linear = lin * (maxLinear / linSpeed);
-            var ang = body.Velocity.Angular;
             var angSpeed = ang.Length();
             if (angSpeed > maxAngular)
                 body.Velocity.Angular = ang * (maxAngular / angSpeed);
