@@ -100,6 +100,25 @@ public unsafe partial class RagdollController : IDisposable
     // contact-supported kneel or bent-elbow pose as a permanent "resting" posture.
     private float biomechanicalSettleRemaining;
 
+    // In-place rest latch. BEPU sleeps per ISLAND: all ~50 jointed bodies must sit under the
+    // velocity threshold for 32 consecutive steps together, so one hunting joint (a twist
+    // ceiling being guard-corrected, a spring-vs-contact standoff) keeps the whole corpse in
+    // perpetual micro-churn — the slow head nod. The latch measures what actually matters:
+    // NET MOTION. Every body's position is accumulated into a bounding box over a sliding
+    // window; if after the window no box has grown past a few centimetres, the rig is
+    // oscillating in place and going nowhere — zero all velocities and hold the rest pose.
+    // A genuinely moving corpse (sliding, being dragged) has net displacement and never
+    // latches; a limit cycle has amplitude but no displacement and always does.
+    private bool inPlaceRestLatched;
+    private float inPlaceWindowElapsed;
+    private Vector3[]? inPlaceMin, inPlaceMax;
+    private int inPlaceTrackedCount;
+    // Set when an NPC collider genuinely moved (beyond the kinematic deadband) near the
+    // corpse this frame; consumed by the NEXT frame's resting decision (one frame of latency
+    // is fine — stepping resumes before the contact needs solving).
+    private bool npcColliderMovedNearCorpse;
+    private Vector3 corpseWakeCenter;
+
     // The character's facing at activation (deaths start standing, so the root yaw is trustworthy).
     // The anatomical anchor for anything that must NOT depend on the pose the body happened to die in —
     // the directional ball ROM already used it; the hinges now do too.
@@ -2176,6 +2195,9 @@ public unsafe partial class RagdollController : IDisposable
         lastFrameTimestamp = 0;
         physicsAccumulator = 0f;
         prevAllAsleep = false;
+        inPlaceRestLatched = false;
+        inPlaceTrackedCount = 0;
+        npcColliderMovedNearCorpse = false;
         biomechanicalSettleRemaining = 0f;
         hasPrevPhysicsState = false;
         // Save original position so we can restore if FollowPosition is toggled off
@@ -3443,6 +3465,89 @@ public unsafe partial class RagdollController : IDisposable
     {
         biomechanicalSettleRemaining = MathF.Max(biomechanicalSettleRemaining, duration);
         prevAllAsleep = false;
+    }
+
+    private const float InPlaceWindowSeconds = 1.5f;
+    private const float InPlaceMaxDrift = 0.03f; // max bounding-box diagonal to count as "in place"
+
+    /// <summary>
+    /// Advance the in-place rest latch (see the field comment). NaN-safe by construction: a
+    /// NaN position poisons its box, the diagonal comparison comes back false, and the latch
+    /// simply never engages — the Pass-1 pose guard owns actual divergence handling.
+    /// </summary>
+    private void UpdateInPlaceRestLatch(float dt, bool activityBlocksRest)
+    {
+        if (simulation == null || ragdollBones.Count == 0)
+        {
+            inPlaceRestLatched = false;
+            inPlaceTrackedCount = 0;
+            return;
+        }
+
+        if (activityBlocksRest)
+        {
+            // Something real is happening (grab, collapse, an NPC moving in close…): drop the
+            // latch and restart the measurement from scratch once things calm down.
+            inPlaceRestLatched = false;
+            inPlaceTrackedCount = 0;
+            return;
+        }
+
+        if (inPlaceRestLatched)
+            return; // frozen — nothing to measure until an activity clears the latch
+
+        var count = ragdollBones.Count;
+        if (inPlaceMin == null || inPlaceMin.Length < count || inPlaceMax == null)
+        {
+            inPlaceMin = new Vector3[count];
+            inPlaceMax = new Vector3[count];
+            inPlaceTrackedCount = 0;
+        }
+
+        if (inPlaceTrackedCount != count)
+        {
+            // (Re)seed the window with the current pose.
+            for (int i = 0; i < count; i++)
+            {
+                var p = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle).Pose.Position;
+                inPlaceMin[i] = p;
+                inPlaceMax[i] = p;
+            }
+            inPlaceTrackedCount = count;
+            inPlaceWindowElapsed = 0f;
+            return;
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            var p = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle).Pose.Position;
+            inPlaceMin[i] = Vector3.Min(inPlaceMin[i], p);
+            inPlaceMax[i] = Vector3.Max(inPlaceMax[i], p);
+        }
+
+        inPlaceWindowElapsed += dt;
+        if (inPlaceWindowElapsed < InPlaceWindowSeconds)
+            return;
+
+        var maxDiagSq = 0f;
+        for (int i = 0; i < count; i++)
+            maxDiagSq = MathF.Max(maxDiagSq, Vector3.DistanceSquared(inPlaceMin[i], inPlaceMax[i]));
+
+        if (maxDiagSq <= InPlaceMaxDrift * InPlaceMaxDrift)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                var body = simulation.Bodies.GetBodyReference(ragdollBones[i].BodyHandle);
+                body.Velocity.Linear = Vector3.Zero;
+                body.Velocity.Angular = Vector3.Zero;
+            }
+            inPlaceRestLatched = true;
+            if (config.RagdollVerboseLog)
+                log.Info($"RagdollController: settled in place (drift {MathF.Sqrt(maxDiagSq) * 100f:F1}cm over {InPlaceWindowSeconds:F1}s) — holding rest pose.");
+        }
+
+        // Window complete either way; the next call reseeds a fresh one.
+        inPlaceTrackedCount = 0;
     }
 
     private void WakeRagdollBodiesForBiomechanicalSettle()
@@ -6390,8 +6495,21 @@ public unsafe partial class RagdollController : IDisposable
     {
         if (simulation == null) return;
         var body = simulation.Bodies.GetBodyReference(handle);
-        MoveKinematicBody(body, targetPosition, targetOrientation,
-            ref state.PreviousPosition, ref state.PreviousOrientation, ref state.HasPreviousPose, dt);
+        if (MoveKinematicBody(body, targetPosition, targetOrientation,
+                ref state.PreviousPosition, ref state.PreviousOrientation, ref state.HasPreviousPose, dt))
+            NoteNpcColliderMoved(targetPosition);
+    }
+
+    // A collider that genuinely moved only matters to the corpse's rest if it moved NEAR the
+    // corpse — a monster breathing five yalms away must not hold fifty bodies awake. Within
+    // range, real collider motion both blocks the resting fast-path and clears the in-place
+    // latch, so the next contact is actually stepped and resolved.
+    private const float NpcColliderWakeRadiusSq = 2.5f * 2.5f;
+
+    private void NoteNpcColliderMoved(Vector3 colliderPos)
+    {
+        if (Vector3.DistanceSquared(colliderPos, corpseWakeCenter) < NpcColliderWakeRadiusSq)
+            npcColliderMovedNearCorpse = true;
     }
 
     private void TryUpdateAnimatedMeshCollision(ref NpcCollisionState state, SkeletonAccess ns, float nowElapsed)
@@ -6456,8 +6574,9 @@ public unsafe partial class RagdollController : IDisposable
     {
         if (simulation == null) return;
         var body = simulation.Bodies.GetBodyReference(bone.Handle);
-        MoveKinematicBody(body, targetPosition, targetOrientation,
-            ref bone.PreviousPosition, ref bone.PreviousOrientation, ref bone.HasPreviousPose, dt);
+        if (MoveKinematicBody(body, targetPosition, targetOrientation,
+                ref bone.PreviousPosition, ref bone.PreviousOrientation, ref bone.HasPreviousPose, dt))
+            NoteNpcColliderMoved(targetPosition);
     }
 
     /// <summary>
@@ -6475,10 +6594,32 @@ public unsafe partial class RagdollController : IDisposable
     /// </summary>
     private const float KinematicTeleportSpeed = 60f; // m/s
 
-    private static void MoveKinematicBody(BodyReference body, Vector3 targetPosition, Quaternion targetOrientation,
+    // Movement deadband for kinematic drives. Below these, a collider is "not moving": pose
+    // snaps but velocity stays zero and the body is not woken — an idle NPC's breathing sway
+    // stops pumping energy into everything it touches, which is what let the corpse island
+    // finish its sleep countdown. The previous pose is deliberately NOT advanced inside the
+    // band, so a slow creep accumulates against the anchor and eventually registers as real
+    // motion instead of hiding under the band one frame at a time.
+    private const float KinematicDeadbandPosSq = 1e-6f;              // (1 mm)²
+    private const float KinematicDeadbandOrientationDot = 0.9999875f; // ≈0.6° of rotation
+
+    /// <summary>Returns true when the body actually moved (beyond the deadband) this call.</summary>
+    private static bool MoveKinematicBody(BodyReference body, Vector3 targetPosition, Quaternion targetOrientation,
         ref Vector3 previousPosition, ref Quaternion previousOrientation, ref bool hasPreviousPose, float dt)
     {
         targetOrientation = Quaternion.Normalize(targetOrientation);
+
+        if (hasPreviousPose && dt > 1e-5f &&
+            Vector3.DistanceSquared(targetPosition, previousPosition) < KinematicDeadbandPosSq &&
+            MathF.Abs(Quaternion.Dot(targetOrientation, previousOrientation)) > KinematicDeadbandOrientationDot)
+        {
+            body.Pose.Position = targetPosition;
+            body.Pose.Orientation = targetOrientation;
+            body.Velocity.Linear = Vector3.Zero;
+            body.Velocity.Angular = Vector3.Zero;
+            // Awake untouched, anchor pose untouched (see the deadband comment above).
+            return false;
+        }
 
         var teleported = hasPreviousPose && dt > 1e-5f &&
                          Vector3.Distance(targetPosition, previousPosition) > KinematicTeleportSpeed * dt;
@@ -6499,6 +6640,7 @@ public unsafe partial class RagdollController : IDisposable
         previousPosition = targetPosition;
         previousOrientation = targetOrientation;
         hasPreviousPose = true;
+        return true;
     }
 
     // === Heavy body: limb inertia ===
@@ -6957,7 +7099,23 @@ public unsafe partial class RagdollController : IDisposable
         // does settle, there is nothing to clamp. A grab or a moved skeleton forces a step.
         var settleCollisionActive = config.RagdollNpcCollision && config.RagdollNpcSettleCollision;
         var externalBodyAwake = AnyExternalBodyAwake();
-        var resting = !settleCollisionActive && prevAllAsleep && !externalBodyAwake && !grabConstraintActive && !collapseSpikeActive && !directedCollapseActive && !wholeBodyCollapseActive && !entryConditioningActive && !kneePowerLossActive && !skeletonMoved && !biomechanicalSettleActive;
+
+        // Rough corpse centre for the collider proximity gate. Any body serves — the wake
+        // radius dwarfs the rig's own extent.
+        if (ragdollBones.Count > 0)
+            corpseWakeCenter = simulation.Bodies.GetBodyReference(ragdollBones[0].BodyHandle).Pose.Position;
+
+        var activityBlocksRest = externalBodyAwake || npcColliderMovedNearCorpse || grabConstraintActive ||
+            collapseSpikeActive || directedCollapseActive || wholeBodyCollapseActive ||
+            entryConditioningActive || kneePowerLossActive || skeletonMoved || biomechanicalSettleActive;
+        UpdateInPlaceRestLatch(dt, activityBlocksRest);
+
+        // Resting comes from either door: BEPU's own island sleep (only reachable with settle
+        // collision off — the old path, unchanged), or the in-place latch, which is reachable
+        // regardless of collision settings because the collider updates below keep running
+        // while latched — an NPC genuinely moving in close re-arms the flag and breaks rest.
+        var resting = ((prevAllAsleep && !settleCollisionActive) || inPlaceRestLatched) && !activityBlocksRest;
+        npcColliderMovedNearCorpse = false; // re-armed by this frame's collider updates for the next decision
 
         // Death-collapse spike: restrength the per-joint "muscle" servos before stepping so the
         // updated torque ceilings take effect this tick. Advances the fade and retires itself.
@@ -6971,8 +7129,12 @@ public unsafe partial class RagdollController : IDisposable
         // Must call UpdateBounds() after repositioning — BEPU2 doesn't auto-update
         // broad phase AABBs for statics, so without it collisions are never detected.
         // The grabbing NPC's collision is parked far away so the player body can pass through.
+        // Deliberately NOT gated on `resting` any more: while the in-place latch holds the
+        // corpse, colliders must keep tracking their NPCs so that one walking in close still
+        // registers (deadband-filtered) and breaks the rest — otherwise a stale collider
+        // would let the monster stroll through a frozen corpse. Idle NPCs inside the
+        // kinematic deadband cost only pose writes here.
         var npcCollisionParkPos = new Vector3(0, -9999, 0);
-        if (!resting)
         for (int i = 0; i < npcCollisionStates.Count; i++)
         {
             var npcState = npcCollisionStates[i];
