@@ -544,7 +544,7 @@ public partial class MainWindow : IDisposable
                 config.AnonymousMode = anonymousMode;
                 config.Save();
             }
-            HelpMarker("Hide character names, death name aliases, and defeated text in HP overlays.");
+            HelpMarker("Hide character names and death labels in HP overlays.");
         }
     }
 
@@ -3211,6 +3211,23 @@ public partial class MainWindow : IDisposable
                     }
                 }
 
+                var showDead = config.ShowDeadLabel;
+                if (ImGui.Checkbox("Show Dead Label", ref showDead))
+                {
+                    config.ShowDeadLabel = showDead;
+                    config.Save();
+                }
+                HelpMarker("Show the [DEAD] prefix on the HP bar when the player is defeated.");
+                if (showDead)
+                {
+                    var deadText = config.DeadLabelText;
+                    if (ImGui.InputText("Dead Label Text", ref deadText, 32))
+                    {
+                        config.DeadLabelText = deadText;
+                        config.Save();
+                    }
+                }
+
                 var showDeathNameAlias = config.ShowDeathNameAlias;
                 if (ImGui.Checkbox("Show Death Name Alias", ref showDeathNameAlias))
                 {
@@ -3227,23 +3244,6 @@ public partial class MainWindow : IDisposable
                         config.Save();
                     }
                     HelpMarker("Virtual name shown only while defeated. Leave empty to keep the normal display name.");
-                }
-
-                var showDefeated = config.ShowDefeatedText;
-                if (ImGui.Checkbox("Show Defeated HP Text", ref showDefeated))
-                {
-                    config.ShowDefeatedText = showDefeated;
-                    config.Save();
-                }
-                HelpMarker("Replace the HP numbers with a 'DEFEATED' label inside the bar when dead. Off = keep showing 0 / Max.");
-                if (showDefeated)
-                {
-                    var defeatedText = config.DefeatedText;
-                    if (ImGui.InputText("Defeated Text", ref defeatedText, 32))
-                    {
-                        config.DefeatedText = defeatedText;
-                        config.Save();
-                    }
                 }
 
                 ImGui.TreePop();

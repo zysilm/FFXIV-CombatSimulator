@@ -680,10 +680,10 @@ public partial class Configuration : IPluginConfiguration
     // Player HP bar label customization
     public bool ShowSimLabel { get; set; } = true;
     public string SimLabelText { get; set; } = "Sim";
+    public bool ShowDeadLabel { get; set; } = true;
+    public string DeadLabelText { get; set; } = "DEAD";
     public bool ShowDeathNameAlias { get; set; } = false;
     public string DeathNameAlias { get; set; } = "";
-    public bool ShowDefeatedText { get; set; } = true;
-    public string DefeatedText { get; set; } = "DEFEATED";
 
     // Death Cam (Experimental)
     public bool EnableDeathCam { get; set; } = false;
@@ -921,8 +921,8 @@ public partial class Configuration : IPluginConfiguration
         if (PrivateConfigFields == null)
             return;
 
-        var changed = PrivateConfigFields.Remove("ShowDeadLabel");
-        changed |= PrivateConfigFields.Remove("DeadLabelText");
+        var changed = PrivateConfigFields.Remove("ShowDefeatedText");
+        changed |= PrivateConfigFields.Remove("DefeatedText");
         if (changed)
             Save();
     }

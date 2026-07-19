@@ -315,9 +315,7 @@ public class HpBarOverlay : IDisposable
         }
 
         // HP text
-        var hpText = (isDead && config.ShowDefeatedText && !config.AnonymousMode)
-            ? config.DefeatedText
-            : $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
+        var hpText = $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
         var hpSize = ImGui.CalcTextSize(hpText);
         drawList.AddText(
             barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
@@ -408,9 +406,7 @@ public class HpBarOverlay : IDisposable
                 nameText);
         }
 
-        var hpText = isDead && config.ShowDefeatedText && !config.AnonymousMode
-            ? config.DefeatedText
-            : $"{state.CurrentHp:N0} / {state.MaxHp:N0}";
+        var hpText = $"{state.CurrentHp:N0} / {state.MaxHp:N0}";
         var hpSize = ImGui.CalcTextSize(hpText);
         drawList.AddText(
             barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
@@ -473,9 +469,7 @@ public class HpBarOverlay : IDisposable
                         : new Vector4(0.8f, 0.1f, 0.1f, 1);
 
             ImGui.PushStyleColor(ImGuiCol.PlotHistogram, fillColor);
-            var hpText = (isDead && config.ShowDefeatedText && !config.AnonymousMode)
-                ? config.DefeatedText
-                : $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
+            var hpText = $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
             ImGui.ProgressBar(hpPercent, new Vector2(-1, 0), hpText);
             ImGui.PopStyleColor();
 
@@ -518,16 +512,20 @@ public class HpBarOverlay : IDisposable
 
     private string BuildPlayerNameLabel(bool isDead, string displayName)
     {
+        var resolvedName = displayName;
         if (isDead)
         {
-            return config.ShowDeathNameAlias && !string.IsNullOrWhiteSpace(config.DeathNameAlias)
-                ? config.DeathNameAlias.Trim()
-                : displayName;
+            if (config.ShowDeathNameAlias && !string.IsNullOrWhiteSpace(config.DeathNameAlias))
+                resolvedName = config.DeathNameAlias.Trim();
+
+            return config.ShowDeadLabel && !string.IsNullOrEmpty(config.DeadLabelText)
+                ? $"[{config.DeadLabelText}] {resolvedName}"
+                : resolvedName;
         }
 
         return config.ShowSimLabel && !string.IsNullOrEmpty(config.SimLabelText)
-            ? $"[{config.SimLabelText}] {displayName}"
-            : displayName;
+            ? $"[{config.SimLabelText}] {resolvedName}"
+            : resolvedName;
     }
 
     private void DrawResetPopup()
