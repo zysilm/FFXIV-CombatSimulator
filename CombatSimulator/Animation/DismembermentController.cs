@@ -1544,8 +1544,8 @@ public unsafe class DismembermentController : IDisposable
     private bool UseGarmentTube(Clone c)
         => config.KoStripGarmentTubeModel && (c.GearKeepModelSlot is 1 or 3) && UseAdvancedGarmentPhysics(c);
 
-    /// <summary>Build the sim-agnostic body/joint specs for an equipment rig. Body/legs use articulated
-    /// garment rigs; each isolated glove/boot uses one rigid body. Shared by the host and local sims.</summary>
+    /// <summary>Build the sim-agnostic body/joint specs for an equipment rig. Body, legs, and each isolated
+    /// glove/boot all use articulated bone chains. Shared by the host and local simulations.</summary>
     private bool TryBuildGarmentRigSpecs(SkeletonAccess skel, Clone c, GearShapeSpec spec,
         Vector3 skelPos, Quaternion skelRot,
         out GarmentRig rig,
@@ -1568,8 +1568,10 @@ public unsafe class DismembermentController : IDisposable
         var mass = MathF.Max(0.05f, spec.Mass);
         if (IsPairedGearPiece(c))
         {
-            return TryAddPairedGearRigBody(skel, c, spec, rig, bodySpecs,
-                skelPos, skelRot, mass, baseLinear, baseAngular);
+            ResolvePairedGearReleaseVelocity(c, baseLinear, baseAngular,
+                out var releaseLinear, out var releaseAngular);
+            return TryBuildPairedGearRigSpecs(skel, c, spec, rig, bodySpecs, joints, indexByName,
+                skelPos, skelRot, mass, releaseLinear, releaseAngular);
         }
 
         if (c.GearKeepModelSlot == 3)
@@ -1669,100 +1671,105 @@ public unsafe class DismembermentController : IDisposable
         return bodySpecs.Count >= 3 && joints.Count > 0;
     }
 
-    /// <summary>Build one rigid, dynamic body for one side of a paired Hands/Feet model. It intentionally
-    /// participates in the same external/local equipment-rig path as body and legs, but drives the top of
-    /// the visible arm/leg so every descendant keeps its captured bind-pose relationship.</summary>
-    private bool TryAddPairedGearRigBody(
+    /// <summary>Copy the relevant side of the existing body/legs garment chains. A glove is the arm chain
+    /// plus a hand body; a shoe/boot is the leg chain plus a foot body. This is deliberately not a one-body
+    /// proxy: these models are skinned to several bones and must be driven at every weighted segment.</summary>
+    private bool TryBuildPairedGearRigSpecs(
         SkeletonAccess skel,
         Clone c,
         GearShapeSpec spec,
         GarmentRig rig,
         List<RagdollController.ExternalRigBodySpec> bodySpecs,
+        List<RagdollController.ExternalRigJointSpec> joints,
+        Dictionary<string, int> indexByName,
         Vector3 skelPos,
         Quaternion skelRot,
         float mass,
         Vector3 baseLinear,
         Vector3 baseAngular)
     {
-        var driveRootName = ResolvePairedGearDriveRoot(c);
-        if (driveRootName == null ||
-            !TryGetBoneWorldPosition(skel, skelPos, skelRot, driveRootName, out var driveRootWorldPos) ||
-            !TryGetBoneWorldRotation(skel, skelRot, driveRootName, out var driveRootWorldRot))
-        {
-            return false;
-        }
-
-        var driveRootIndex = boneService.ResolveBoneIndex(skel, driveRootName);
-        if (driveRootIndex < 0 || driveRootIndex >= skel.BoneCount)
+        var side = ResolvePairedGearSide(c);
+        if (side == null)
             return false;
 
-        var bodyRot = Quaternion.Normalize(ResolveGearInitialRotation(c, skelRot));
-        var anchorWorld = skelPos + Vector3.Transform(c.LimbRootModelPos, skelRot);
-        var bodyPos = anchorWorld + Vector3.Transform(spec.OffsetWorld, bodyRot);
-        var bodyRotInv = Quaternion.Inverse(bodyRot);
-
-        var parts = new RagdollController.ExternalShapePart[spec.Parts.Length];
-        for (var i = 0; i < spec.Parts.Length; i++)
+        if (c.GearKeepModelSlot == 2)
         {
-            var part = spec.Parts[i];
-            parts[i] = new RagdollController.ExternalShapePart(
-                part.Half * spec.Scale,
-                part.Center * spec.Scale,
-                part.Rotation);
+            var forearm = $"j_ude_b_{side}";
+            var hand = $"j_te_{side}";
+
+            // The forearm body is copied from the sleeve end of the body garment rig. The hand body adds
+            // collision for the glove itself; descendants/fingers inherit its driven transform.
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, forearm, hand,
+                skelPos, skelRot, new Vector3(0.030f, 0.065f, 0.026f) * spec.Scale,
+                mass * 0.45f, baseLinear, baseAngular);
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, hand, null,
+                skelPos, skelRot, new Vector3(
+                    MathF.Max(0.035f, spec.Half.X * 0.58f),
+                    MathF.Max(0.025f, spec.Half.Y * 0.42f),
+                    MathF.Max(0.045f, spec.Half.Z * 0.82f)),
+                mass * 0.55f, baseLinear, baseAngular);
+
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints,
+                forearm, hand, hand, 1.55f);
+        }
+        else if (c.GearKeepModelSlot == 4)
+        {
+            var shin = $"j_asi_b_{side}";
+            var foot = $"j_asi_d_{side}";
+            var toe = $"j_asi_e_{side}";
+
+            // The shin body is copied from the lower end of the pants rig. The foot segment supplies the
+            // shoe/sole volume. We intentionally do not add an invisible thigh collider to a shoe clone.
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, shin, foot,
+                skelPos, skelRot, new Vector3(0.035f, 0.11f, 0.030f) * spec.Scale,
+                mass * 0.45f, baseLinear, baseAngular);
+            AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, foot, toe,
+                skelPos, skelRot, new Vector3(
+                    MathF.Max(0.045f, spec.Half.X * 0.72f),
+                    MathF.Max(0.070f, spec.Half.Z * 0.82f),
+                    MathF.Max(0.025f, spec.Half.Y * 0.72f)),
+                mass * 0.55f, baseLinear, baseAngular);
+
+            AddGarmentRigJoint(skel, skelPos, skelRot, indexByName, joints,
+                shin, foot, foot, 1.45f);
         }
 
-        var releaseLinear = baseLinear;
-        var releaseAngular = baseAngular;
-        var impulse = MathF.Max(0f, DismemberActivationImpulse);
+        return bodySpecs.Count >= 2 && joints.Count > 0;
+    }
+
+    private void ResolvePairedGearReleaseVelocity(Clone c, Vector3 baseLinear, Vector3 baseAngular,
+        out Vector3 releaseLinear, out Vector3 releaseAngular)
+    {
+        releaseLinear = baseLinear;
+        releaseAngular = baseAngular;
         var direction = c.OutwardWorldDir.LengthSquared() > 1e-6f
             ? Vector3.Normalize(c.OutwardWorldDir)
             : Vector3.UnitX;
+        var impulse = MathF.Max(0f, DismemberActivationImpulse);
         if (impulse > 0f)
             releaseLinear += direction * impulse;
 
-        // A boot starts only centimetres above the floor. Give rigid paired pieces a small upward release
-        // and a deterministic tumble so they visibly detach instead of landing sole-down in their exact
-        // worn pose and appearing kinematic. This is velocity only; the body remains fully dynamic.
         releaseLinear += Vector3.UnitY * 0.55f;
         var sideSign = c.LimbRootBone.EndsWith("_r", StringComparison.Ordinal) ? -1f : 1f;
         var tumbleAxis = Vector3.Cross(direction, Vector3.UnitY) + Vector3.UnitY * (0.25f * sideSign);
         tumbleAxis = tumbleAxis.LengthSquared() > 1e-6f ? Vector3.Normalize(tumbleAxis) : Vector3.UnitZ;
         releaseAngular += tumbleAxis * 4f;
-
-        bodySpecs.Add(new RagdollController.ExternalRigBodySpec(
-            driveRootName,
-            parts,
-            MathF.Max(0.05f, mass),
-            bodyPos,
-            bodyRot,
-            releaseLinear,
-            releaseAngular));
-
-        rig.Bodies.Add(new GarmentRigBody
-        {
-            BoneIndex = driveRootIndex,
-            BoneName = driveRootName,
-            ExternalIndex = 0,
-            BodyToBoneRotation = Quaternion.Normalize(bodyRotInv * driveRootWorldRot),
-            BodyToBoneOffsetLocal = Vector3.Transform(driveRootWorldPos - bodyPos, bodyRotInv),
-            HalfExtents = spec.Half,
-        });
-        rig.BoneIndices.Add(driveRootIndex);
-        rig.MaxHalfExtent = MathF.Max(spec.Half.X, MathF.Max(spec.Half.Y, spec.Half.Z));
-        return true;
     }
+
+    private static string? ResolvePairedGearSide(Clone c)
+        => c.LimbRootBone.EndsWith("_r", StringComparison.Ordinal) ? "r" :
+           c.LimbRootBone.EndsWith("_l", StringComparison.Ordinal) ? "l" : null;
 
     private static string? ResolvePairedGearDriveRoot(Clone c)
     {
-        var side = c.LimbRootBone.EndsWith("_r", StringComparison.Ordinal) ? "r" :
-                   c.LimbRootBone.EndsWith("_l", StringComparison.Ordinal) ? "l" : null;
+        var side = ResolvePairedGearSide(c);
         if (side == null)
             return null;
 
         return c.GearKeepModelSlot switch
         {
-            2 => $"j_ude_a_{side}",
-            4 => $"j_asi_a_{side}",
+            2 => $"j_ude_b_{side}",
+            4 => $"j_asi_b_{side}",
             _ => null,
         };
     }
