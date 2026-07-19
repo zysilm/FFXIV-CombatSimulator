@@ -8,22 +8,23 @@ using HkaPose = FFXIVClientStructs.Havok.Animation.Rig.hkaPose;
 
 namespace CombatSimulator.Animation;
 
-// BEPU rigid-body hair rig — an alternative to the legacy pendulum HairPhysicsSimulator.
+// BEPU rigid-body hair rig — the ONLY hair simulation (the legacy pendulum HairPhysicsSimulator
+// is retired).
 //
 // Rationale: the garment "tube" rig (BallSocket + relaxing SwingLimit + damping AngularMotor +
 // fading pose-guide servo) already produces convincing hanging/settling cloth. Hair is the same
 // problem with simpler topology (open chains, no ring seams), so we reuse the exact same rig
-// primitives (TryCreate*/AddExternalRigJoint/Relax*/ApplyExternalRigPoseGuidance) instead of the
-// kinematic pendulum, which never had real collision or inertia.
+// primitives (TryCreate*/AddExternalRigJoint/Relax*/ApplyExternalRigPoseGuidance).
 //
 // The rig is built from the hair partial-skeleton bone tree, so it is name-/style-agnostic: any
 // hairstyle (including mod hair) whose bones live in a hair partial gets a rig automatically.
 //
 // Anchoring: each hair partial's root frame (j_kao) is represented by a KINEMATIC body that tracks
 // the head ragdoll body every substep (position + head-derived velocity). The dynamic strand bodies
-// hang from it through joints, so the hair inherits the head's whip. Strand bodies collide with the
-// corpse capsules and the ground (collideWithRagdoll) but not with each other (one shared
-// self-collide group), matching how the garment tube avoids intra-rig jitter.
+// hang from it through joints, so the hair inherits the head's whip. Strands always contact the
+// ground; corpse/NPC contact is the opt-in RagdollHairCollision (strands spawn overlapping the
+// head capsules, so it ships off). Strands never collide with each other (one shared self-collide
+// group), matching how the garment tube avoids intra-rig jitter.
 public unsafe partial class RagdollController
 {
     private sealed class HairRigSegment
@@ -74,7 +75,7 @@ public unsafe partial class RagdollController
         }
         if (hairKaoRagdollBodyIndex < 0)
         {
-            log.Info("HairRig: no j_kao ragdoll body — hair rig unavailable, falling back to pendulum.");
+            log.Info("HairRig: no j_kao ragdoll body — hair rig unavailable this activation.");
             return;
         }
 
@@ -102,7 +103,7 @@ public unsafe partial class RagdollController
         }
         else
         {
-            log.Info("HairRig: no hair partials with simulatable bones — falling back to pendulum.");
+            log.Info("HairRig: no hair partials with simulatable bones — hair stays rigid this activation.");
         }
     }
 
@@ -243,11 +244,15 @@ public unsafe partial class RagdollController
             externalDynamicBodyHandles.Add(bodyHandle.Value);
             externalRigDynamicBodyHandles.Add(bodyHandle.Value);
             externalRigSelfCollideGroupByBody[bodyHandle.Value] = selfCollideGroup;
-            // Strands do NOT collide with the corpse (they spawn overlapping the head/body capsules,
-            // so contact resolution would explode and fling the ragdoll). They keep ground contact
-            // (dynamic-vs-static is always allowed) and are driven by the head anchor through joints.
-            // The filter also skips their contact with kinematic bodies (the anchor / NPC proxies).
-            externalRigNoRagdollContactBodyHandles.Add(bodyHandle.Value);
+            // By default strands do NOT collide with the corpse (they spawn overlapping the
+            // head/body capsules, so contact resolution can fling the ragdoll). They keep
+            // ground contact (dynamic-vs-static is always allowed) and are driven by the head
+            // anchor through joints. The no-contact flag also skips kinematic pairs (the
+            // anchor / NPC proxies). RagdollHairCollision opts INTO corpse + NPC contact —
+            // experimental; the anchor stays contactless regardless, so the scalp can't punt
+            // its own strands.
+            if (!config.RagdollHairCollision)
+                externalRigNoRagdollContactBodyHandles.Add(bodyHandle.Value);
 
             rigBodyIndexByBone[b] = rig.Bodies.Count - 1;
             newChain.Segments.Add(new HairRigSegment

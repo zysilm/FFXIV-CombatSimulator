@@ -83,6 +83,7 @@ public partial class MainWindow : IDisposable
     private string hitVfxFilter = "";
 
     private static readonly string[] BehaviorNames = { "Training Dummy", "Basic Melee", "Basic Ranged", "Boss" };
+    private static readonly string[] SoftTissueScopeNames = { "Standard (mod bones)", "All bones" };
     private static readonly string[] ActionGuardKeyLabels = { "Shift", "Ctrl", "Alt", "None" };
     private static readonly int[] ActionGuardKeyValues = { 16, 17, 18, 0 };
     private static readonly string[] ActionGamepadButtonLabels = { "R1", "L1", "R2", "L2", "Circle / East", "Cross / South", "Square / West", "Triangle / North", "None" };
@@ -352,7 +353,6 @@ public partial class MainWindow : IDisposable
                 DrawRagdollSection();
                 DrawGuidedCollapseSection();
                 DrawNpcCollisionSection();
-                DrawNpcSettleCollisionSection();
                 ImGui.Separator();
                 if (ImGui.Button("Reset All to Defaults##ragdollpage"))
                     config.ResetRagdollPageDefaults();
@@ -4219,7 +4219,7 @@ public partial class MainWindow : IDisposable
 
     private void DrawRagdollSection()
     {
-        if (ImGui.CollapsingHeader("Ragdoll"))
+        if (ImGui.CollapsingHeader("Ragdoll Trigger"))
         {
             var enabled = config.EnableRagdoll;
             if (ImGui.Checkbox("Enable Ragdoll##ragdoll", ref enabled))
@@ -4260,6 +4260,17 @@ public partial class MainWindow : IDisposable
                 }
                 HelpMarker("Seconds after death before ragdoll physics take over.");
 
+                ImGui.Unindent();
+            }
+        }
+
+        // The rest of the ragdoll settings live in sibling headers — one giant "Ragdoll"
+        // header had accreted five unrelated groups and become unscannable.
+        if (config.EnableRagdoll && ImGui.CollapsingHeader("Ground Detection"))
+        {
+            {
+                ImGui.Indent();
+
                 var extendTerrain = config.ExtendTerrainDetection;
                 if (ImGui.Checkbox("Extend Terrain Detection##ragdoll", ref extendTerrain))
                 {
@@ -4272,6 +4283,15 @@ public partial class MainWindow : IDisposable
 
                 if (config.ExtendTerrainDetection)
                     ImGui.TextColored(new Vector4(1f, 0.75f, 0.2f, 1f), "Warning: may cause severe stuttering.");
+
+                ImGui.Unindent();
+            }
+        }
+
+        if (config.EnableRagdoll && ImGui.CollapsingHeader("Basic Parameters"))
+        {
+            {
+                ImGui.Indent();
 
                 var gravity = config.RagdollGravity;
                 if (ImGui.SliderFloat("Gravity##ragdoll", ref gravity, 0.1f, 30.0f, "%.1f"))
@@ -4353,6 +4373,15 @@ public partial class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Positional stiffness of the calf->foot joint specifically. The foot takes the hardest ground-impact impulses, so it rubber-bands first; give it a firmer spring than the body default. 60 = firm, 0 = use the body Joint Stiffness above. Takes effect on next ragdoll activation.");
+
+                ImGui.Unindent();
+            }
+        }
+
+        if (config.EnableRagdoll && ImGui.CollapsingHeader("Advanced Filters"))
+        {
+            {
+                ImGui.Indent();
 
                 var impactWeight = config.RagdollImpactWeight;
                 if (ImGui.Checkbox("Impact weight##ragdoll", ref impactWeight))
@@ -4482,8 +4511,14 @@ public partial class MainWindow : IDisposable
                 }
                 HelpMarker("Surface friction for all ragdoll contacts. 0 = ice (limbs slide freely), 1 = grippy (default). Lower values make the body slide more realistically. Takes effect on next ragdoll activation.");
 
-                ImGui.Separator();
-                ImGui.Text("Weapon Drop");
+                ImGui.Unindent();
+            }
+        }
+
+        if (config.EnableRagdoll && ImGui.CollapsingHeader("Weapon Drop"))
+        {
+            {
+                ImGui.Indent();
                 HelpMarker("On death the weapon detaches from the hand and falls with its own physics. Always active while ragdoll is enabled; tune the parameters below.");
 
                 {
@@ -4555,8 +4590,14 @@ public partial class MainWindow : IDisposable
                     HelpMarker("Higher = more stable contact resolution, more CPU. Changing physics params clears all currently-dropped weapons.");
                 }
 
-                ImGui.Separator();
-                ImGui.Text("Hair Physics");
+                ImGui.Unindent();
+            }
+        }
+
+        if (config.EnableRagdoll && ImGui.CollapsingHeader("Hair Physics"))
+        {
+            {
+                ImGui.Indent();
 
                 var hairPhysics = config.RagdollHairPhysics;
                 if (ImGui.Checkbox("Enable Hair Physics##ragdoll", ref hairPhysics))
@@ -4564,38 +4605,25 @@ public partial class MainWindow : IDisposable
                     config.RagdollHairPhysics = hairPhysics;
                     config.Save();
                 }
-                HelpMarker("Simulate hair draping under gravity during ragdoll. Takes effect on next ragdoll activation.");
+                HelpMarker("Simulate hair as real jointed rigid-body strands (like the garment cloth rig), " +
+                           "with head-driven inertia/whip and ground contact. Works for any hairstyle. " +
+                           "Takes effect on next ragdoll activation.");
 
                 if (config.RagdollHairPhysics)
                 {
-                    var hairGravity = config.RagdollHairGravityStrength;
-                    if (ImGui.SliderFloat("Hair Gravity##ragdoll", ref hairGravity, 0.0f, 1.0f, "%.2f"))
-                    {
-                        config.RagdollHairGravityStrength = hairGravity;
-                        config.Save();
-                    }
-
-                    var hairDamping = config.RagdollHairDamping;
-                    if (ImGui.SliderFloat("Hair Damping##ragdoll", ref hairDamping, 0.80f, 0.99f, "%.3f"))
-                    {
-                        config.RagdollHairDamping = hairDamping;
-                        config.Save();
-                    }
-
-                    var hairRigMode = config.RagdollHairRigMode;
-                    if (ImGui.Checkbox("Rigid-body hair rig (experimental)##ragdoll", ref hairRigMode))
-                    {
-                        config.RagdollHairRigMode = hairRigMode;
-                        config.Save();
-                    }
-                    HelpMarker("Simulate hair as real jointed rigid-body strands (like the garment cloth rig): " +
-                               "true collision with the corpse + ground, and head-driven inertia/whip. Works for any " +
-                               "hairstyle. When off, the lightweight pendulum sliders above are used instead. " +
-                               "Takes effect on next ragdoll activation.");
-
-                    if (config.RagdollHairRigMode)
                     {
                         ImGui.Indent();
+
+                        var hairCollision = config.RagdollHairCollision;
+                        if (ImGui.Checkbox("Hair collision (experimental)##hairrig", ref hairCollision))
+                        {
+                            config.RagdollHairCollision = hairCollision;
+                            config.Save();
+                        }
+                        HelpMarker("Strands also collide with the corpse and NPC volumes instead of only the " +
+                                   "ground. Experimental: hair roots spawn overlapping the head, so contact " +
+                                   "resolution can jolt the strands or the body. Costs extra contact pairs. " +
+                                   "Takes effect on next ragdoll activation.");
 
                         var swing = config.RagdollHairRigSwingLimit;
                         if (ImGui.SliderFloat("Strand swing ROM (rad)##hairrig", ref swing, 0.1f, 1.5f, "%.2f"))
@@ -4652,8 +4680,86 @@ public partial class MainWindow : IDisposable
                     }
                 }
 
-                ImGui.Separator();
-                ImGui.Text("Death Ragdoll");
+                ImGui.Unindent();
+            }
+        }
+
+        if (config.EnableRagdoll && ImGui.CollapsingHeader("Soft Tissue"))
+        {
+            {
+                ImGui.Indent();
+
+                var modSoftBones = config.RagdollSoftTissueModBones;
+                if (ImGui.Checkbox("Mod skeleton jiggle bones##softtissue", ref modSoftBones))
+                {
+                    config.RagdollSoftTissueModBones = modSoftBones;
+                    config.Save();
+                }
+                HelpMarker("Auto-detect extra soft-tissue bones from body-mod skeletons (Rue/YAS/IVCS " +
+                           "lineage) by name prefix and simulate them as jiggle bodies during ragdoll. " +
+                           "Does nothing on vanilla skeletons. The breast bones (j_mune) are configured in " +
+                           "the Advanced bone table instead. Takes effect on next ragdoll activation.");
+
+                if (config.RagdollSoftTissueModBones)
+                {
+                    ImGui.Indent();
+
+                    var scope = config.RagdollSoftTissueScope;
+                    ImGui.SetNextItemWidth(220);
+                    if (ImGui.Combo("Bone coverage##softtissue", ref scope, SoftTissueScopeNames, SoftTissueScopeNames.Length))
+                    {
+                        config.RagdollSoftTissueScope = Math.Clamp(scope, 0, SoftTissueScopeNames.Length - 1);
+                        config.Save();
+                    }
+                    HelpMarker("Standard: every extra bone from body-mod skeletons (recommended). " +
+                               "All bones: every skeleton bone that is not already a ragdoll body, " +
+                               "vanilla bones included (experimental). Squash & stretch follows this " +
+                               "selection. Discovered bones are listed in the plugin log on ragdoll " +
+                               "activation.");
+
+                    ImGui.Unindent();
+                }
+
+                var softCollision = config.RagdollSoftTissueCollision;
+                if (ImGui.Checkbox("Soft tissue collision (experimental)##softtissue", ref softCollision))
+                {
+                    config.RagdollSoftTissueCollision = softCollision;
+                    config.Save();
+                }
+                HelpMarker("Soft bones also collide with the GROUND, so flesh pressed against the floor " +
+                           "reacts instead of sinking in. Body contact stays off regardless — flesh " +
+                           "capsules live inside the torso, so body contact would fight the springs " +
+                           "permanently. Costs extra contact pairs. Takes effect on next ragdoll " +
+                           "activation.");
+
+                var squash = config.RagdollSquashStretch;
+                if (ImGui.Checkbox("Squash & stretch (experimental)##softtissue", ref squash))
+                {
+                    config.RagdollSquashStretch = squash;
+                    config.Save();
+                }
+                HelpMarker("Soft bones visibly compress on hard impacts and flatten against the ground once " +
+                           "the corpse settles, with a springy rebound. Experimental: writes per-bone scale " +
+                           "into the skeleton pose.");
+
+                if (config.RagdollSquashStretch)
+                {
+                    var squashIntensity = config.RagdollSquashIntensity;
+                    if (ImGui.SliderFloat("Squash intensity##softtissue", ref squashIntensity, 0.0f, 1.0f, "%.2f"))
+                    {
+                        config.RagdollSquashIntensity = squashIntensity;
+                        config.Save();
+                    }
+                }
+
+                ImGui.Unindent();
+            }
+        }
+
+        if (config.EnableRagdoll && ImGui.CollapsingHeader("Combat NPC Ragdoll"))
+        {
+            {
+                ImGui.Indent();
 
                 var npcRagdoll = config.EnableNpcDeathRagdoll;
                 if (ImGui.Checkbox("Ragdoll enemies on death##npcragdoll", ref npcRagdoll))
@@ -4718,15 +4824,9 @@ public partial class MainWindow : IDisposable
 
                 ImGui.Unindent();
             }
-        }
-    }
 
-    private void DrawNpcSettleCollisionSection()
-    {
-        if (ImGui.CollapsingHeader("NPC Collision (Settle)"))
-        {
             var settleCol = config.RagdollNpcSettleCollision;
-            if (ImGui.Checkbox("Enable Settle Collision##settle", ref settleCol))
+            if (ImGui.Checkbox("Settle Collision##settle", ref settleCol))
             {
                 config.RagdollNpcSettleCollision = settleCol;
                 config.Save();

@@ -33,12 +33,13 @@ public class RagdollBoneConfig
     public float BoxHalfExtentY { get; set; }
     public float BoxHalfExtentZ { get; set; }
     public string? Description { get; set; }      // human-readable label for UI
-    // Soft body spring settings (for breast/jiggle bones)
+    // Soft body spring settings (for breast/jiggle bones). Split: stiff translation (the socket
+    // only carries flesh weight, ~mm of sag), soft rotation (the jiggle swings about the pivot).
     public bool SoftBody { get; set; }             // use soft springs + AngularServo instead of rigid + AngularMotor
-    public float SoftSpringFreq { get; set; } = 6f;    // BallSocket spring frequency (Hz), lower = bouncier
-    public float SoftSpringDamp { get; set; } = 0.4f;  // BallSocket damping ratio, lower = more oscillation
-    public float SoftServoFreq { get; set; } = 4f;     // AngularServo spring frequency (Hz), controls return speed
-    public float SoftServoDamp { get; set; } = 0.35f;  // AngularServo damping ratio, controls bounce on return
+    public float SoftSpringFreq { get; set; } = 10f;   // BallSocket spring frequency (Hz); static sag = g/(2πf)²
+    public float SoftSpringDamp { get; set; } = 1f;    // BallSocket damping ratio, critical = no translational ring
+    public float SoftServoFreq { get; set; } = 3f;     // AngularServo spring frequency (Hz), the jiggle rate
+    public float SoftServoDamp { get; set; } = 0.2f;   // AngularServo damping ratio, lower = more swings before settling
 }
 
 [Serializable]
@@ -189,6 +190,7 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollShinBoxHalfYMigrated20260716 { get; set; } = false;
     public bool RagdollDefaultProfileTuningMigrated20260716 { get; set; } = false;
     public bool NpcCollisionConvexHullDefaultMigrated20260716 { get; set; } = false;
+    public bool RagdollSoftBodyTuningMigrated20260719 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -602,23 +604,43 @@ public partial class Configuration : IPluginConfiguration
     public float WeaponDropBounce { get; set; } = 1.5f; // Bepu MaximumRecoveryVelocity — higher = bouncier
     public float WeaponDropFriction { get; set; } = 0.6f;
     public int WeaponDropSolverIterations { get; set; } = 4;
-    // Hair physics
-    public bool RagdollHairPhysics { get; set; } = false;
-    public float RagdollHairGravityStrength { get; set; } = 0.5f;
-    public float RagdollHairDamping { get; set; } = 0.92f;
-    public float RagdollHairStiffness { get; set; } = 0.1f;
-    // Hair physics — BEPU rig mode: real jointed rigid-body strands (reuses the garment tube rig:
-    // BallSocket + relaxing SwingLimit + damping AngularMotor + fading pose-guide servo), anchored to
-    // the head ragdoll body and colliding with the corpse + ground. When false, the legacy pendulum
-    // simulator (fields above) is used instead. Works for any hairstyle — the rig is built from the
+    // Hair physics — the BEPU strand rig (real jointed rigid-body strands, reusing the garment
+    // tube primitives: BallSocket + relaxing SwingLimit + damping AngularMotor + fading
+    // pose-guide servo), anchored to the head ragdoll body. The only implementation — the
+    // legacy pendulum simulator is retired. Works for any hairstyle: the rig is built from the
     // hair partial-skeleton bone tree, so it is name-/style-agnostic (mod hairstyles included).
-    public bool RagdollHairRigMode { get; set; } = false;
+    public bool RagdollHairPhysics { get; set; } = false;
+    // Strand-vs-corpse contact. Off by default: strands spawn overlapping the head/body
+    // capsules and contact resolution on overlapping spawns can fling the ragdoll. Ground
+    // contact is always on regardless.
+    public bool RagdollHairCollision { get; set; } = false;
     public float RagdollHairRigSegmentMass { get; set; } = 0.02f;        // per-segment mass (very light)
     public float RagdollHairRigThickness { get; set; } = 0.008f;         // strand box half-thickness (m)
     public float RagdollHairRigSwingLimit { get; set; } = 0.6f;          // per-joint swing ROM (radians)
     public float RagdollHairRigInitialSwingFactor { get; set; } = 0.28f; // spawn ROM fraction (holds style, relaxes to full)
     public float RagdollHairRigPoseGuideForce { get; set; } = 4f;        // servo force holding the style at spawn, fades out
     public float RagdollHairRigSettleSeconds { get; set; } = 1.0f;       // time to relax ROM to full + fade the pose guide
+    // Soft tissue — mod-skeleton jiggle bones. Bones whose names match one of the
+    // comma-separated prefixes (Rue/YAS/IVCS-lineage skeletons) are auto-registered as
+    // SoftBody jiggle bodies at ragdoll activation. Vanilla skeletons have no matching
+    // bones, so this is inert without a body mod installed.
+    public bool RagdollSoftTissueModBones { get; set; } = true;
+    // Internal prefix source (not exposed in the UI — the coverage dropdown picks the bones).
+    public string RagdollSoftTissueBonePrefixes { get; set; } = "iv_, ya_";
+    // Bone coverage: 0 = Standard (every mod-skeleton bone, prefix-matched), 1 = All bones
+    // (EVERY skeleton bone not already a rig body, vanilla included — experimental).
+    // Squash & stretch follows this scope automatically (it applies to every SoftBody body).
+    public int RagdollSoftTissueScope { get; set; } = 0;
+    // Soft-tissue-vs-ground contact. Off by default (extra contact pairs cost solver time,
+    // and ground pushback fights the anchor springs). Soft-vs-body stays off regardless:
+    // flesh capsules live inside the torso volume, so body contact is permanent
+    // interpenetration by construction.
+    public bool RagdollSoftTissueCollision { get; set; } = false;
+    // Soft tissue — squash & stretch (EXPERIMENTAL). Writes per-bone scale into the
+    // skeleton pose so soft bones visibly compress on impact and flatten against the
+    // ground at rest. Off by default until the scale write path is field-verified.
+    public bool RagdollSquashStretch { get; set; } = false;
+    public float RagdollSquashIntensity { get; set; } = 0.5f; // 0..1, scales max compression
     // Ragdoll debug overlay — renders capsules and joint limits in 3D
     public bool RagdollDebugOverlay { get; set; } = false;
     // Ragdoll bone configs (Advanced) — per-bone physics parameters
@@ -896,6 +918,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateAnatomicalHinges();
         MigrateRagdollShinBoxHalfY();
         MigrateDefaultProfileTuning();
+        MigrateSoftBodyTuning();
         MigrateActionGuardDefaultButton();
         MigrateActionGuardVfxDefault();
         MigrateActionBasicAttackDefaultButton();
@@ -983,6 +1006,12 @@ public partial class Configuration : IPluginConfiguration
         nameof(RagdollVerboseLog),
         nameof(RagdollFollowPosition),
         nameof(RagdollLiftUndergroundBonesOnStart),
+
+        // One-shot migration records, not options. Resetting them would re-run the
+        // migrations on next load (harmless thanks to their value guards, but wrong).
+        nameof(RagdollShinBoxHalfYMigrated20260716),
+        nameof(RagdollDefaultProfileTuningMigrated20260716),
+        nameof(RagdollSoftBodyTuningMigrated20260719),
     };
 
     private static bool IsRagdollPageOption(string name)
@@ -1584,6 +1613,53 @@ public partial class Configuration : IPluginConfiguration
         // Record the one-shot even on a fresh install; its profile is seeded immediately
         // afterwards from the already-updated embedded resource.
         Save();
+    }
+
+    /// <summary>
+    /// Promote the fixed soft-tissue tuning into every saved j_mune config and enable the
+    /// bones. The shipped values (1 Hz BallSocket) let the breast sag a quarter meter under
+    /// gravity, so nobody can have liked them: any bone still carrying ALL the old values
+    /// verbatim is considered untouched and gets the new tuning + Enabled; a bone the user
+    /// tuned in any of these fields is left entirely alone (including Enabled).
+    /// </summary>
+    private void MigrateSoftBodyTuning()
+    {
+        if (RagdollSoftBodyTuningMigrated20260719)
+            return;
+
+        SetSoftBodyTuning(RagdollBoneConfigs);
+        foreach (var profile in RagdollBoneProfiles)
+            if (profile?.Bones != null)
+                SetSoftBodyTuning(profile.Bones);
+
+        RagdollSoftBodyTuningMigrated20260719 = true;
+        // Record the one-shot even on a fresh install; profiles are seeded afterwards from
+        // the already-updated embedded resource.
+        Save();
+    }
+
+    private static void SetSoftBodyTuning(List<RagdollBoneConfig> bones)
+    {
+        foreach (var bone in bones)
+        {
+            if (bone.Name is not ("j_mune_l" or "j_mune_r") || !bone.SoftBody)
+                continue;
+            var untouched =
+                MathF.Abs(bone.SoftSpringFreq - 1f) < 0.0001f &&
+                MathF.Abs(bone.SoftSpringDamp - 0.05f) < 0.0001f &&
+                MathF.Abs(bone.SoftServoFreq - 4f) < 0.0001f &&
+                MathF.Abs(bone.SoftServoDamp - 0.35f) < 0.0001f &&
+                MathF.Abs(bone.CapsuleHalfLength - 0.02f) < 0.0001f;
+            if (!untouched)
+                continue;
+
+            bone.SoftSpringFreq = 10f;
+            bone.SoftSpringDamp = 1f;
+            bone.SoftServoFreq = 3f;
+            bone.SoftServoDamp = 0.2f;
+            bone.CapsuleHalfLength = 0.045f;
+            bone.Enabled = true;
+        }
     }
 
     private static bool MigrateAnatomicalHingeList(List<RagdollBoneConfig> bones)

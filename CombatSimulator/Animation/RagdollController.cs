@@ -144,6 +144,9 @@ public unsafe partial class RagdollController : IDisposable
     private readonly Dictionary<int, int> externalRigSelfCollideGroupByBody = new();
     private int nextExternalRigSelfCollideGroup = 1;
     private readonly HashSet<int> softKinematicBodyHandles = new();
+    // Soft-tissue (SoftBody) rig bodies — excluded from ALL contact generation (see
+    // RagdollNarrowPhaseCallbacks.SoftBodyBodies).
+    private readonly HashSet<int> softBodyBodyHandles = new();
 
     // Bone defs actually used for the active ragdoll, keyed by name. For humanoid
     // skeletons these are the tuned human defs; for non-humanoid skeletons they are
@@ -220,8 +223,6 @@ public unsafe partial class RagdollController : IDisposable
     private int nHaraIndex = -1;
     // Head bone index (j_kao) — used for hair physics and partial skeleton propagation
     private int kaoBodyBoneIndex = -1;
-    // Hair physics simulator
-    private HairPhysicsSimulator? hairPhysics;
 
     // NPC bone collision — per-bone static capsules for active targets
     private readonly List<NpcCollisionState> npcCollisionStates = new();
@@ -1433,6 +1434,118 @@ public unsafe partial class RagdollController : IDisposable
         return (defs.ToArray(), nameToIndex);
     }
 
+    // Cap on discovered soft-tissue bodies. Standard (mod bones) needs ~59 on a full IVCS
+    // skeleton; All bones adds every remaining vanilla bone (~60 more on a human body
+    // skeleton), so 128 leaves headroom without letting an exotic rig double past it.
+    private const int MaxModSoftTissueBones = 128;
+
+    /// <summary>
+    /// Discover extra bones and append them as SoftBody jiggle defs. Coverage Standard takes
+    /// every mod-skeleton bone (iv_/ya_ prefixes — Rue/YAS/IVCS lineage); coverage All takes
+    /// EVERY skeleton bone that is not already a rig body, vanilla included. Body meshes are
+    /// weighted to these bones, so driving them restores the secondary motion the game's own
+    /// phyb simulation provides in life (our pose overwrite suppresses it during ragdoll).
+    /// Anchoring: each discovered bone attaches to its nearest ancestor that is (or has just
+    /// become) a rig def, so open chains hang link by link while isolated bones anchor
+    /// straight to the torso bone that carries them.
+    /// </summary>
+    private RagdollBoneDef[] AppendModSoftTissueDefs(
+        SkeletonAccess skel,
+        RagdollBoneDef[] defs,
+        Dictionary<string, int> nameToIndex,
+        Dictionary<string, RagdollBoneDef> defByName)
+    {
+        // Coverage: Standard = mod-skeleton bones only (prefix match); All = every bone.
+        var allBones = config.RagdollSoftTissueScope == 1;
+
+        var prefixes = new List<string>();
+        foreach (var part in config.RagdollSoftTissueBonePrefixes.Split(','))
+        {
+            var trimmed = part.Trim();
+            if (trimmed.Length > 0) prefixes.Add(trimmed);
+        }
+        if (!allBones && prefixes.Count == 0) return defs;
+
+        var pose = skel.Pose;
+        var havok = skel.HavokSkeleton;
+        int n = Math.Min(skel.BoneCount, havok->Bones.Length);
+        int pc = skel.ParentCount;
+
+        var known = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var d in defs) known.Add(d.Name);
+
+        List<RagdollBoneDef>? added = null;
+        // Havok skeletons are topologically ordered (parent before child), so chains resolve
+        // in one forward pass: by the time a child is visited its discovered parent is known.
+        for (int i = 0; i < n && i < pc; i++)
+        {
+            var name = havok->Bones[i].Name.String;
+            if (name == null || known.Contains(name)) continue;
+
+            if (!allBones)
+            {
+                var matched = false;
+                foreach (var prefix in prefixes)
+                    if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) { matched = true; break; }
+                if (!matched) continue;
+            }
+
+            // Nearest ancestor that is a rig def (original or discovered) — the joint anchor.
+            // A match with no rig ancestor is skipped: it would orphan into a free body.
+            string? anchorName = null;
+            int p = havok->ParentIndices[i];
+            while (p >= 0 && p < n)
+            {
+                var pName = havok->Bones[p].Name.String;
+                if (pName != null && known.Contains(pName)) { anchorName = pName; break; }
+                p = p < pc ? havok->ParentIndices[p] : -1;
+            }
+            if (anchorName == null || !nameToIndex.TryGetValue(anchorName, out var anchorIdx))
+                continue;
+
+            ref var mt = ref pose->ModelPose.Data[i];
+            ref var pmt = ref pose->ModelPose.Data[anchorIdx];
+            var segLen = Vector3.Distance(
+                new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z),
+                new Vector3(pmt.Translation.X, pmt.Translation.Y, pmt.Translation.Z));
+
+            var def = new RagdollBoneDef
+            {
+                Name = name,
+                ParentName = anchorName,
+                CapsuleRadius = Math.Clamp(segLen * 0.5f, 0.02f, 0.06f),
+                CapsuleHalfLength = Math.Clamp(segLen * 0.5f, 0.02f, 0.05f),
+                Mass = 0.1f,
+                SwingLimit = 0.35f,
+                Joint = JointType.Ball,
+                AnatomicalRole = AnatomicalRole.SoftBody,
+                ColliderShape = RagdollColliderShape.Capsule,
+                SoftBody = true,
+                SoftSpringFreq = 10f,
+                SoftSpringDamp = 1f,
+                SoftServoFreq = 3f,
+                SoftServoDamp = 0.2f,
+            };
+
+            (added ??= new List<RagdollBoneDef>()).Add(def);
+            known.Add(name);
+            nameToIndex[name] = i;
+            defByName[name] = def;
+            if (added.Count >= MaxModSoftTissueBones) break;
+        }
+
+        if (added == null) return defs;
+
+        log.Info($"SoftTissue: discovered {added.Count} soft bone(s) " +
+                 $"({(allBones ? "all bones" : "mod bones")}): " +
+                 string.Join(", ", added.ConvertAll(d => d.Name)));
+
+        var merged = new RagdollBoneDef[defs.Length + added.Count];
+        defs.CopyTo(merged, 0);
+        added.CopyTo(merged, defs.Length);
+        return merged;
+    }
+
     // Joint type determines which BEPU constraints are used:
     // Ball = BallSocket + SwingLimit + TwistLimit + AngularMotor (full 3-DOF rotation)
     // Hinge = Hinge + SwingLimit (bending range) + AngularMotor (1-DOF rotation)
@@ -1653,9 +1766,14 @@ public unsafe partial class RagdollController : IDisposable
         new RagdollBoneConfig { Name = "j_buki_sebo_l",  SkeletonParent = "j_sebo_c", Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Back Scabbard" },
         new RagdollBoneConfig { Name = "j_buki_sebo_r",  SkeletonParent = "j_sebo_c", Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Back Scabbard" },
 
-        // === BREAST === (child of j_sebo_b, disabled by default — cosmetic)
-        new RagdollBoneConfig { Name = "j_mune_l",  SkeletonParent = "j_sebo_b", Enabled = false, CapsuleRadius = 0.06f,  CapsuleHalfLength = 0.02f, Mass = 0.1f,  SwingLimit = 0.25f,               JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Left Breast",  SoftBody = true, SoftSpringFreq = 1f, SoftSpringDamp = 0.05f, SoftServoFreq = 4f, SoftServoDamp = 0.35f },
-        new RagdollBoneConfig { Name = "j_mune_r",  SkeletonParent = "j_sebo_b", Enabled = false, CapsuleRadius = 0.06f,  CapsuleHalfLength = 0.02f, Mass = 0.1f,  SwingLimit = 0.25f,               JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Right Breast",  SoftBody = true, SoftSpringFreq = 1f, SoftSpringDamp = 0.05f, SoftServoFreq = 4f, SoftServoDamp = 0.35f },
+        // === BREAST === (child of j_sebo_b — soft tissue)
+        // Soft split: the BallSocket is stiff (10 Hz critical — static gravity sag g/ω² ≈ 2.5mm,
+        // just a flesh-weight offset) and the jiggle lives in the ROTATIONAL dof (3 Hz underdamped
+        // servo swinging the mass about the bone-origin pivot), matching how the game's own phyb
+        // bones move. The old 1 Hz/0.05 socket sagged a quarter meter and rang for seconds.
+        // HalfLength pushes the capsule's mass away from the pivot so gravity/inertia have a lever.
+        new RagdollBoneConfig { Name = "j_mune_l",  SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.06f,  CapsuleHalfLength = 0.045f, Mass = 0.1f,  SwingLimit = 0.25f,               JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Left Breast",  SoftBody = true, SoftSpringFreq = 10f, SoftSpringDamp = 1f, SoftServoFreq = 3f, SoftServoDamp = 0.2f },
+        new RagdollBoneConfig { Name = "j_mune_r",  SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.06f,  CapsuleHalfLength = 0.045f, Mass = 0.1f,  SwingLimit = 0.25f,               JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Right Breast",  SoftBody = true, SoftSpringFreq = 10f, SoftSpringDamp = 1f, SoftServoFreq = 3f, SoftServoDamp = 0.2f },
 
         // === CLAVICLE === (child of j_sebo_c, inserts between chest and arms)
         new RagdollBoneConfig { Name = "j_sako_l",  SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.04f, Mass = 0.5f,  SwingLimit = 0.35f,               JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Left Clavicle" },
@@ -2235,6 +2353,11 @@ public unsafe partial class RagdollController : IDisposable
             }
         }
 
+        // Undo any soft-tissue scale writes while the skeleton is still reachable — the
+        // frozen pose never refreshes scale on its own, and a revived character must not
+        // keep squashed flesh.
+        RestoreSquashScalesOnDeactivate();
+
         // If follow moved the local player's client-side render transform, snap the DrawObject
         // back to the frozen death position so there is no one-frame pop before the game
         // re-syncs it from the (never-moved) logical position on revive. NPC phantoms are left
@@ -2287,8 +2410,6 @@ public unsafe partial class RagdollController : IDisposable
         terrainPatchCenters.Clear();
         nHaraIndex = -1;
         kaoBodyBoneIndex = -1;
-        hairPhysics?.Reset();
-        hairPhysics = null;
         RemoveHairRig();
 
         DestroySimulation();
@@ -3648,6 +3769,11 @@ public unsafe partial class RagdollController : IDisposable
         // direct parent is missing from the skeleton (see parent resolution below).
         var defByName = new Dictionary<string, RagdollBoneDef>();
         ragdollBones.Clear();
+        softBodyBodyHandles.Clear();
+        softBodyLeashes.Clear();
+        // Squash state must not survive into a new rig: stale TouchedScale/BaseScale entries
+        // from the previous corpse would map onto different bone indices.
+        squashStates = null;
 
         foreach (var def in BoneDefs)
         {
@@ -3679,6 +3805,11 @@ public unsafe partial class RagdollController : IDisposable
             foreach (var def in BoneDefs)
                 defByName[def.Name] = def;
         }
+
+        // Mod-skeleton soft tissue (Rue/YAS/IVCS): humanoid rigs only — the generic path
+        // renames bones (gen_N) and auto-sizes everything itself.
+        if (!genericSkeleton && config.RagdollSoftTissueModBones)
+            BoneDefs = AppendModSoftTissueDefs(skel, BoneDefs, nameToIndex, defByName);
 
         BoneDefs = BuildActivePhysicsDefsForDismemberment(skel, BoneDefs, nameToIndex);
 
@@ -3739,6 +3870,8 @@ public unsafe partial class RagdollController : IDisposable
                 ExternalRigConnectedPairs = externalRigConnectedPairs,
                 ExternalRigSelfCollideGroupByBody = externalRigSelfCollideGroupByBody,
                 SoftKinematicBodies = softKinematicBodyHandles,
+                SoftBodyBodies = softBodyBodyHandles,
+                SoftBodyStaticCollision = config.RagdollSoftTissueCollision,
                 Friction = config.RagdollFriction,
                 Config = config,
             },
@@ -4063,6 +4196,9 @@ public unsafe partial class RagdollController : IDisposable
 
             var bodyHandle = simulation.Bodies.Add(bodyDesc);
 
+            if (def.SoftBody)
+                softBodyBodyHandles.Add(bodyHandle.Value);
+
             // Seed the body with the velocity the death animation was carrying at handoff, so an
             // in-motion animation flows continuously into physics instead of freezing at rest.
             if (handoffSeedVel.TryGetValue(def.Name, out var seed))
@@ -4244,7 +4380,11 @@ public unsafe partial class RagdollController : IDisposable
                 parentSegDir = Vector3.UnitY;
 
             // --- Positional + angular constraint ---
-            if (boneDef.Joint == JointType.Hinge)
+            // SoftBody bones are never hinges even when their config says so (j_mune shipped
+            // with JointType=1): the hinge path would ignore their soft spring settings and
+            // strap knee-style swing/twist limits onto them. They take the ball path below,
+            // where the SoftBody BallSocket + AngularServo split actually applies.
+            if (boneDef.Joint == JointType.Hinge && !boneDef.SoftBody)
             {
                 // Knee/elbow: BallSocket (position-only) + SwingLimits — same pattern as shoulder.
                 // A strict Hinge (5-DOF) constrains 2 angular axes with SpringSettings(30,1),
@@ -4605,13 +4745,39 @@ public unsafe partial class RagdollController : IDisposable
             // rigid bodies use AngularMotor (velocity damping only).
             if (boneDef.SoftBody)
             {
+                // Target the ASSEMBLY-TIME relative orientation (same convention as the Ankle
+                // Weld above), not Identity: the child capsule is aligned along parent→bone
+                // while the parent capsule follows its own segment, so an Identity target
+                // would wrench the soft bone toward the parent's orientation the instant the
+                // ragdoll fires — a visible twist snap on activation.
                 simulation.Solver.Add(rb.BodyHandle, parentHandle,
                     new AngularServo
                     {
-                        TargetRelativeRotationLocalA = Quaternion.Identity,
-                        ServoSettings = new ServoSettings(float.MaxValue, 0f, float.MaxValue),
+                        TargetRelativeRotationLocalA = Quaternion.Normalize(
+                            Quaternion.Inverse(childBodyRef.Pose.Orientation) * parentBodyRef.Pose.Orientation),
+                        // Finite force cap (was float.MaxValue): the spring settings define the
+                        // stiffness; the cap only saturates when the servo FIGHTS another
+                        // constraint (SwingLimit at the cone edge), where unlimited torque on a
+                        // centimeter-scale body is exactly what flings it.
+                        ServoSettings = new ServoSettings(float.MaxValue, 0f, 100f),
                         SpringSettings = new SpringSettings(boneDef.SoftServoFreq, boneDef.SoftServoDamp),
                     });
+
+                // Leash: remember the assembly offset so a diverging soft body can be snapped
+                // back to its anchor instead of dragging its skinned flesh off-screen.
+                softBodyLeashes.Add(new SoftBodyLeash
+                {
+                    Child = rb.BodyHandle,
+                    Parent = parentHandle,
+                    Name = rb.Name,
+                    MaxDistance = Vector3.Distance(childBodyRef.Pose.Position, parentBodyRef.Pose.Position) + 0.35f,
+                    RelPos = Vector3.Transform(
+                        childBodyRef.Pose.Position - parentBodyRef.Pose.Position,
+                        Quaternion.Inverse(parentBodyRef.Pose.Orientation)),
+                    RelRot = Quaternion.Normalize(
+                        Quaternion.Inverse(parentBodyRef.Pose.Orientation) * childBodyRef.Pose.Orientation),
+                });
+                softLeashLogBudget = 6;
             }
             else
             {
@@ -4713,20 +4879,11 @@ public unsafe partial class RagdollController : IDisposable
             totalNpcStatics += (s.IsFallback || s.IsConvexHull || s.IsMesh) ? 1 : s.BoneStatics.Count;
         log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, {npcCollisionStates.Count} NPCs ({totalNpcStatics} collision volumes), ground={groundY:F3}");
 
-        // Initialize hair physics — prefer the BEPU rig (real jointed strands + collision) when
-        // enabled; fall back to the legacy pendulum simulator otherwise, or if the rig cannot build
-        // (e.g. no head ragdoll body / no simulatable hair partial).
+        // Initialize hair physics — the BEPU rig is the only implementation (the legacy
+        // pendulum simulator is retired). If the rig cannot build (no head ragdoll body /
+        // no simulatable hair partial), hair simply stays rigid this activation.
         if (config.RagdollHairPhysics && kaoBodyBoneIndex >= 0)
-        {
-            if (config.RagdollHairRigMode)
-                BuildHairRig(skel);
-
-            if (!hairRigActive)
-            {
-                hairPhysics = new HairPhysicsSimulator(config, log);
-                hairPhysics.Initialize(skel.CharBase, kaoBodyBoneIndex);
-            }
-        }
+            BuildHairRig(skel);
 
         return ragdollBones.Count > 0;
     }
@@ -7406,6 +7563,10 @@ public unsafe partial class RagdollController : IDisposable
             physicsAccumulator = 0f;
         }
 
+        // Snap any soft-tissue body that diverged/NaN'd this frame back onto its anchor
+        // BEFORE the write-back reads body poses — flung flesh must never reach the mesh.
+        ContainSoftTissueBodies();
+
         if (biomechanicalSettleRemaining > 0f)
             biomechanicalSettleRemaining = MathF.Max(0f, biomechanicalSettleRemaining - dt);
 
@@ -7451,9 +7612,12 @@ public unsafe partial class RagdollController : IDisposable
             var bodyRef = simulation.Bodies.GetBodyReference(rb.BodyHandle);
             if (bodyRef.Awake) anyAwake = true;
 
-            // Guard against NaN from physics explosion — deactivate instead of crashing
-            if (float.IsNaN(bodyRef.Pose.Position.X) || float.IsNaN(bodyRef.Pose.Position.Y) ||
-                float.IsNaN(bodyRef.Pose.Position.Z) || float.IsNaN(bodyRef.Pose.Orientation.W))
+            // Guard against NaN from physics explosion — deactivate instead of crashing.
+            // Sum-check covers ALL pose components: a NaN in Orientation.X/Y/Z with a finite W
+            // used to slip through for one frame and reach the mesh as garbage vertices.
+            if (float.IsNaN(bodyRef.Pose.Position.X + bodyRef.Pose.Position.Y + bodyRef.Pose.Position.Z +
+                            bodyRef.Pose.Orientation.X + bodyRef.Pose.Orientation.Y +
+                            bodyRef.Pose.Orientation.Z + bodyRef.Pose.Orientation.W))
             {
                 log.Warning($"RagdollController: NaN detected in body '{rb.Name}', deactivating");
                 Deactivate();
@@ -7587,6 +7751,11 @@ public unsafe partial class RagdollController : IDisposable
             boneService.PropagateToPartialSkeletons(skel, kaoBodyBoneIndex, "j_kao", result);
         }
 
+        // Soft-tissue squash & stretch: annotate per-bone scale after every positional write
+        // of the frame (position/rotation writes leave the scale channel untouched, so order
+        // within the frame only matters for reading an unmodified base scale on first touch).
+        UpdateSquashAndStretch(skel, dt);
+
         // Dismemberment POC: collapse each selected limb's whole bone subtree to ~0 scale so it
         // vanishes from the body (the "hide" half of hide-and-substitute). Done last so it overrides
         // the physics/propagation writes for those bones.
@@ -7606,15 +7775,6 @@ public unsafe partial class RagdollController : IDisposable
                 ReadbackHairRig(skel);
                 TickHairRigSettle(substeps * FixedTimestep);
             }
-        }
-        else if (hairPhysics != null && kaoBodyBoneIndex >= 0 && !resting)
-        {
-            // Advance hair by exactly the time the body physics advanced this frame,
-            // so hair stays in step with the ragdoll across framerates (zero if no substep ran).
-            hairPhysics.StepAndApply(
-                skel.CharBase, kaoBodyBoneIndex,
-                skelWorldPos, skelWorldRot, skelWorldRotInv,
-                substeps * FixedTimestep);
         }
 
         // (Dev) Keep the character visible when the ragdoll is flung far from the frozen death
@@ -10754,6 +10914,7 @@ public unsafe partial class RagdollController : IDisposable
         externalRigSelfCollideGroupByBody.Clear();
         nextExternalRigSelfCollideGroup = 1;
         softKinematicBodyHandles.Clear();
+        softBodyBodyHandles.Clear();
         npcCollisionStates.Clear();
         npcFallbackShapeReady = false;
         attackStrikeTimer = 0f;
@@ -10792,11 +10953,34 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     public HashSet<int>? SoftKinematicBodies;
     public HashSet<int>? RestrictedStatics;
     public HashSet<int>? AllowedDynamicBodiesForRestrictedStatics;
+    // Soft-tissue rig bodies (breast / mod jiggle bones): no body contacts ever; static
+    // (ground) contacts only when SoftBodyStaticCollision is on.
+    public HashSet<int>? SoftBodyBodies;
+    public bool SoftBodyStaticCollision;
 
     public void Initialize(BepuSimulation simulation) { }
 
     public bool AllowContactGeneration(int workerIndex, CollidableReference a, CollidableReference b, ref float speculativeMargin)
     {
+        // Soft-tissue bodies: no contacts with other BODIES ever — their capsules sit inside
+        // the torso volume by design, so body contact is permanent interpenetration fighting
+        // the jiggle springs; the joints' SwingLimit is the excursion backstop instead.
+        // Ground (static) contact is an opt-in: flesh pressing against the floor reacts,
+        // at the cost of extra contact pairs. Must run before the static branch below.
+        if (SoftBodyBodies != null)
+        {
+            var aSoft = a.Mobility != CollidableMobility.Static && SoftBodyBodies.Contains(a.BodyHandle.Value);
+            var bSoft = b.Mobility != CollidableMobility.Static && SoftBodyBodies.Contains(b.BodyHandle.Value);
+            if (aSoft || bSoft)
+            {
+                if (!SoftBodyStaticCollision)
+                    return false;
+                if (a.Mobility != CollidableMobility.Static && b.Mobility != CollidableMobility.Static)
+                    return false;
+                // soft-vs-static: fall through to the static branch.
+            }
+        }
+
         // Always allow body-static collisions (ragdoll vs ground)
         if (a.Mobility == CollidableMobility.Static || b.Mobility == CollidableMobility.Static)
         {
