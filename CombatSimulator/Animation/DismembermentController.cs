@@ -248,10 +248,10 @@ public unsafe class DismembermentController : IDisposable
         // foot slots additionally isolate one skeleton side. The result is driven as its own body.
         // -1 = limb mode.
         public int GearKeepModelSlot = -1;
-        // Paired model slots (Hands/Feet) use one clone per side. When set, every main-skeleton bone
-        // outside this subtree is collapsed so the other glove/boot in the same RenderModel disappears.
-        public string? GearVisibleRootBone;
-        public int GearVisibleRootIndex = -1;
+        // Paired model slots (Hands/Feet) use one clone per side. Only this opposite arm/leg subtree is
+        // hidden; preserving the visible side's full bind pose avoids stretching blended gear vertices.
+        public string? GearHiddenOppositeRootBone;
+        public int GearHiddenOppositeRootIndex = -1;
         public List<(int Slot, nint Ptr)>? GearHiddenModels; // nulled model pointers, restored on despawn
         public HashSet<int>? GearHiddenSlots;                // slots already cached (avoid dup caching)
         public Vector3 GearExtraOffset;                      // body-frame offset bone->piece centroid
@@ -405,6 +405,7 @@ public unsafe class DismembermentController : IDisposable
         public int ExternalIndex;      // index into the ragdoll ExternalRig body list (ragdoll rig)
         public BodyHandle? LocalBody;   // local-sim body handle (local rig)
         public Quaternion BodyToBoneRotation;
+        public Vector3 BodyToBoneOffsetLocal;
         public float SegmentHalfLength;
         public Vector3 HalfExtents;
     }
@@ -470,7 +471,7 @@ public unsafe class DismembermentController : IDisposable
         public int SourceSkeletonSignature;
         public int GearKeepModelSlot = -1;
         public bool GearHideSkin;
-        public string? GearVisibleRootBone;
+        public string? GearHiddenOppositeRootBone;
     }
 
     private readonly List<Clone> clones = new();
@@ -635,18 +636,18 @@ public unsafe class DismembermentController : IDisposable
     /// <summary>Drop a single equipment piece as a falling rigid body. Spawns a clone
     /// of <paramref name="sourceAddress"/> that hides every model except CharacterBase model slot
     /// <paramref name="keepModelSlot"/>, freezes it, and tumbles it from <paramref name="attachBone"/>.
-    /// For paired Hands/Feet models, <paramref name="visibleRootBone"/> isolates one side so two calls
+    /// For paired Hands/Feet models, <paramref name="hiddenOppositeRootBone"/> hides the other side so two calls
     /// can create independent left/right clones. The caller unequips the real slot afterward.</summary>
     public void SpawnGearDrop(nint sourceAddress, string attachBone, int keepModelSlot, string? glamourBase64,
-        bool hideSkin = false, string? visibleRootBone = null)
+        bool hideSkin = false, string? hiddenOppositeRootBone = null)
     {
         if (sourceAddress == nint.Zero || string.IsNullOrEmpty(attachBone) || keepModelSlot < 0) return;
         // Ordinary gear dedupes by slot. Paired gear also includes the isolated subtree, allowing one
         // left and one right clone while still rejecting duplicate requests for either side.
         if (clones.Exists(c => c.SourceAddress == sourceAddress && c.GearKeepModelSlot == keepModelSlot &&
-                                string.Equals(c.GearVisibleRootBone, visibleRootBone, StringComparison.Ordinal))) return;
+                                string.Equals(c.GearHiddenOppositeRootBone, hiddenOppositeRootBone, StringComparison.Ordinal))) return;
         if (pending.Exists(p => p.SourceAddress == sourceAddress && p.GearKeepModelSlot == keepModelSlot &&
-                                 string.Equals(p.GearVisibleRootBone, visibleRootBone, StringComparison.Ordinal))) return;
+                                 string.Equals(p.GearHiddenOppositeRootBone, hiddenOppositeRootBone, StringComparison.Ordinal))) return;
 
         // Only drop if the source actually RENDERS a model in that slot. This is the rendered model, so
         // it covers Glamourer-only glamours too (a glam hat leaves the real equipment id 0 but still
@@ -668,7 +669,7 @@ public unsafe class DismembermentController : IDisposable
             GlamourBase64 = glamourBase64,
             GearKeepModelSlot = keepModelSlot,
             GearHideSkin = hideSkin,
-            GearVisibleRootBone = visibleRootBone,
+            GearHiddenOppositeRootBone = hiddenOppositeRootBone,
         };
         CaptureSourceIdentity(p);
         TryRefreshHandoff(p, 1f / 60f);
@@ -963,7 +964,7 @@ public unsafe class DismembermentController : IDisposable
             ExpectedSkeletonSignature = p.SourceSkeletonSignature,
             GearKeepModelSlot = p.GearKeepModelSlot,
             GearHideSkin = p.GearHideSkin,
-            GearVisibleRootBone = p.GearVisibleRootBone,
+            GearHiddenOppositeRootBone = p.GearHiddenOppositeRootBone,
         });
         log.Info($"Dismember: clone idx={index} bone={p.LimbRootBone} at ({severancePos.X:F1},{severancePos.Y:F1},{severancePos.Z:F1})");
     }
@@ -1543,8 +1544,8 @@ public unsafe class DismembermentController : IDisposable
     private bool UseGarmentTube(Clone c)
         => config.KoStripGarmentTubeModel && (c.GearKeepModelSlot is 1 or 3) && UseAdvancedGarmentPhysics(c);
 
-    /// <summary>Build the sim-agnostic body/joint specs for a garment rig (slots 1/3). Returns false if
-    /// too few bones resolved to make a rig. Shared by the ragdoll-sim and local-sim rig builders.</summary>
+    /// <summary>Build the sim-agnostic body/joint specs for an equipment rig. Body/legs use articulated
+    /// garment rigs; each isolated glove/boot uses one rigid body. Shared by the host and local sims.</summary>
     private bool TryBuildGarmentRigSpecs(SkeletonAccess skel, Clone c, GearShapeSpec spec,
         Vector3 skelPos, Quaternion skelRot,
         out GarmentRig rig,
@@ -1565,6 +1566,12 @@ public unsafe class DismembermentController : IDisposable
         // and folded the rig into a knot. A settling garment should just slide/drape, not be flung.
 
         var mass = MathF.Max(0.05f, spec.Mass);
+        if (IsPairedGearPiece(c))
+        {
+            return TryAddPairedGearRigBody(skel, c, spec, rig, bodySpecs,
+                skelPos, skelRot, mass, baseLinear, baseAngular);
+        }
+
         if (c.GearKeepModelSlot == 3)
         {
             var hipHalf = new Vector3(
@@ -1660,6 +1667,96 @@ public unsafe class DismembermentController : IDisposable
         }
 
         return bodySpecs.Count >= 3 && joints.Count > 0;
+    }
+
+    /// <summary>Build one rigid, dynamic body for one side of a paired Hands/Feet model. It intentionally
+    /// participates in the same external/local equipment-rig path as body and legs, but drives the top of
+    /// the visible arm/leg so every descendant keeps its captured bind-pose relationship.</summary>
+    private bool TryAddPairedGearRigBody(
+        SkeletonAccess skel,
+        Clone c,
+        GearShapeSpec spec,
+        GarmentRig rig,
+        List<RagdollController.ExternalRigBodySpec> bodySpecs,
+        Vector3 skelPos,
+        Quaternion skelRot,
+        float mass,
+        Vector3 baseLinear,
+        Vector3 baseAngular)
+    {
+        var driveRootName = ResolvePairedGearDriveRoot(c);
+        if (driveRootName == null ||
+            !TryGetBoneWorldPosition(skel, skelPos, skelRot, driveRootName, out var driveRootWorldPos) ||
+            !TryGetBoneWorldRotation(skel, skelRot, driveRootName, out var driveRootWorldRot))
+        {
+            return false;
+        }
+
+        var driveRootIndex = boneService.ResolveBoneIndex(skel, driveRootName);
+        if (driveRootIndex < 0 || driveRootIndex >= skel.BoneCount)
+            return false;
+
+        var bodyRot = Quaternion.Normalize(ResolveGearInitialRotation(c, skelRot));
+        var anchorWorld = skelPos + Vector3.Transform(c.LimbRootModelPos, skelRot);
+        var bodyPos = anchorWorld + Vector3.Transform(spec.OffsetWorld, bodyRot);
+        var bodyRotInv = Quaternion.Inverse(bodyRot);
+
+        var parts = new RagdollController.ExternalShapePart[spec.Parts.Length];
+        for (var i = 0; i < spec.Parts.Length; i++)
+        {
+            var part = spec.Parts[i];
+            parts[i] = new RagdollController.ExternalShapePart(
+                part.Half * spec.Scale,
+                part.Center * spec.Scale,
+                part.Rotation);
+        }
+
+        var releaseLinear = baseLinear;
+        var impulse = MathF.Max(0f, DismemberActivationImpulse);
+        if (impulse > 0f)
+        {
+            var direction = c.OutwardWorldDir.LengthSquared() > 1e-6f
+                ? Vector3.Normalize(c.OutwardWorldDir)
+                : Vector3.UnitX;
+            releaseLinear += direction * impulse;
+        }
+
+        bodySpecs.Add(new RagdollController.ExternalRigBodySpec(
+            driveRootName,
+            parts,
+            MathF.Max(0.05f, mass),
+            bodyPos,
+            bodyRot,
+            releaseLinear,
+            baseAngular));
+
+        rig.Bodies.Add(new GarmentRigBody
+        {
+            BoneIndex = driveRootIndex,
+            BoneName = driveRootName,
+            ExternalIndex = 0,
+            BodyToBoneRotation = Quaternion.Normalize(bodyRotInv * driveRootWorldRot),
+            BodyToBoneOffsetLocal = Vector3.Transform(driveRootWorldPos - bodyPos, bodyRotInv),
+            HalfExtents = spec.Half,
+        });
+        rig.BoneIndices.Add(driveRootIndex);
+        rig.MaxHalfExtent = MathF.Max(spec.Half.X, MathF.Max(spec.Half.Y, spec.Half.Z));
+        return true;
+    }
+
+    private static string? ResolvePairedGearDriveRoot(Clone c)
+    {
+        var side = c.LimbRootBone.EndsWith("_r", StringComparison.Ordinal) ? "r" :
+                   c.LimbRootBone.EndsWith("_l", StringComparison.Ordinal) ? "l" : null;
+        if (side == null)
+            return null;
+
+        return c.GearKeepModelSlot switch
+        {
+            2 => $"j_ude_a_{side}",
+            4 => $"j_asi_a_{side}",
+            _ => null,
+        };
     }
 
     /// <summary>Build the ring-tube spec for the slot-1 upper garment: 3 rings of boxes wrapping the corpse
@@ -2697,6 +2794,7 @@ public unsafe class DismembermentController : IDisposable
             BoneName = boneName,
             ExternalIndex = bodyIndex,
             BodyToBoneRotation = Quaternion.Normalize(Quaternion.Inverse(bodyRot) * boneWorldRot),
+            BodyToBoneOffsetLocal = new Vector3(0f, -segmentHalf, 0f),
             SegmentHalfLength = segmentHalf,
             HalfExtents = half,
         });
@@ -3412,15 +3510,15 @@ public unsafe class DismembermentController : IDisposable
             return true;
         }
 
-        if (!string.IsNullOrEmpty(c.GearVisibleRootBone) && c.GearVisibleRootIndex < 0)
+        if (!string.IsNullOrEmpty(c.GearHiddenOppositeRootBone) && c.GearHiddenOppositeRootIndex < 0)
         {
-            c.GearVisibleRootIndex = boneService.ResolveBoneIndex(skel, c.GearVisibleRootBone);
-            if (c.GearVisibleRootIndex < 0)
+            c.GearHiddenOppositeRootIndex = boneService.ResolveBoneIndex(skel, c.GearHiddenOppositeRootBone);
+            if (c.GearHiddenOppositeRootIndex < 0)
             {
                 HideEntireBody(c);
                 if (++c.ResolveFramesWaited >= MaxResolveFrames)
                 {
-                    log.Warning($"GearDrop: clone idx={c.ObjectIndex} visible root '{c.GearVisibleRootBone}' never resolved; dropping");
+                    log.Warning($"GearDrop: clone idx={c.ObjectIndex} opposite root '{c.GearHiddenOppositeRootBone}' never resolved; dropping");
                     return false;
                 }
                 return true;
@@ -3518,12 +3616,12 @@ public unsafe class DismembermentController : IDisposable
                 new Vector3(spawnPos.X, spawnPos.Y + 5f, spawnPos.Z), new Vector3(0, -1, 0), out var groundHit, 80f)
                 ? groundHit.Point.Y : spawnPos.Y - 1.5f;
 
-            if (UseAdvancedGarmentPhysics(c) && TryCreateRagdollGarmentRig(skel, c, shapeSpec))
+            if (UseEquipmentRig(c) && TryCreateRagdollGarmentRig(skel, c, shapeSpec))
             {
                 c.Body = null;
                 c.GearRagdollBody = null;
             }
-            else if (UseAdvancedGarmentPhysics(c) && TryCreateLocalGarmentRig(skel, c, shapeSpec, spawnPos))
+            else if (UseEquipmentRig(c) && TryCreateLocalGarmentRig(skel, c, shapeSpec, spawnPos))
             {
                 c.Body = null;
                 c.GearRagdollBody = null;
@@ -3799,12 +3897,8 @@ public unsafe class DismembermentController : IDisposable
                 return false;
 
             boneWorldPos = bodyPos;
-            if (rb.SegmentHalfLength > 0f)
-            {
-                bodyRot = Quaternion.Normalize(bodyRot);
-                var yAxis = Vector3.Transform(Vector3.UnitY, bodyRot);
-                boneWorldPos -= yAxis * rb.SegmentHalfLength;
-            }
+            bodyRot = Quaternion.Normalize(bodyRot);
+            boneWorldPos += Vector3.Transform(rb.BodyToBoneOffsetLocal, bodyRot);
             return true;
         }
 
@@ -3865,12 +3959,7 @@ public unsafe class DismembermentController : IDisposable
 
             bodyRot = Quaternion.Normalize(bodyRot);
             var boneWorldRot = Quaternion.Normalize(bodyRot * rb.BodyToBoneRotation);
-            var boneWorldPos = bodyPos;
-            if (rb.SegmentHalfLength > 0f)
-            {
-                var yAxis = Vector3.Transform(Vector3.UnitY, bodyRot);
-                boneWorldPos -= yAxis * rb.SegmentHalfLength;
-            }
+            var boneWorldPos = bodyPos + Vector3.Transform(rb.BodyToBoneOffsetLocal, bodyRot);
 
             var modelPos = Vector3.Transform(boneWorldPos - skelPos, skelRotInv);
             var modelRot = Quaternion.Normalize(skelRotInv * boneWorldRot);
@@ -4028,14 +4117,38 @@ public unsafe class DismembermentController : IDisposable
         => c.GearKeepModelSlot >= 0 && config.IsKoStripCollapseEnabled(c.GearKeepModelSlot);
 
     private static bool IsPairedGearPiece(Clone c)
-        => !string.IsNullOrEmpty(c.GearVisibleRootBone) && c.GearKeepModelSlot is 2 or 4;
+        => !string.IsNullOrEmpty(c.GearHiddenOppositeRootBone) && c.GearKeepModelSlot is 2 or 4;
 
     private void IsolatePairedGearPiece(SkeletonAccess skel, Clone c)
     {
-        if (!IsPairedGearPiece(c) || c.GearVisibleRootIndex < 0)
+        if (!IsPairedGearPiece(c) || c.GearHiddenOppositeRootIndex < 0)
             return;
 
-        HideAllButLimb(skel, c.GearVisibleRootIndex, Array.Empty<int>());
+        HideBoneSubtree(skel, c.GearHiddenOppositeRootIndex);
+    }
+
+    private static void HideBoneSubtree(SkeletonAccess skel, int rootIndex)
+    {
+        var count = Math.Min(skel.BoneCount, skel.ParentCount);
+        if (rootIndex < 0 || rootIndex >= count)
+            return;
+
+        // Hands/feet share one RenderModel, but their two sides do not share limb bones. Move and shrink
+        // only the unwanted side. Collapsing every other bone (the old limb-isolation path) corrupts
+        // vertices blended to the visible side's parents and visibly stretches gloves and boots.
+        for (var i = 0; i < count; i++)
+        {
+            if (!IsDescendantOrSelf(skel, i, rootIndex))
+                continue;
+
+            ref var m = ref skel.Pose->ModelPose.Data[i];
+            m.Translation.X = 0f;
+            m.Translation.Y = -1000f;
+            m.Translation.Z = 0f;
+            m.Scale.X = 0.0001f;
+            m.Scale.Y = 0.0001f;
+            m.Scale.Z = 0.0001f;
+        }
     }
 
     private static bool IsGarmentHandoffGear(Clone c)
@@ -4045,6 +4158,11 @@ public unsafe class DismembermentController : IDisposable
         => config.KoStripPhysicsDropClothing &&
            config.KoStripAdvancedClothPhysics &&
            IsGarmentHandoffGear(c);
+
+    // Gloves/boots are rigid, but they use the same host-ragdoll/local-rig lifecycle and bone drive as
+    // body/legs. Each side is a one-body rig, which guarantees a real dynamic collider without deflating.
+    private bool UseEquipmentRig(Clone c)
+        => UseAdvancedGarmentPhysics(c) || IsPairedGearPiece(c);
 
     // Advanced garments (slot 1/3 with cloth physics on) never do the visual "deflate" squash: an
     // articulated rig settles them, and even the single-body fallback (rig couldn't build) should just

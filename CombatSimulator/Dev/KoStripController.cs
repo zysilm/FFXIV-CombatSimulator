@@ -64,13 +64,13 @@ public unsafe class KoStripController : IDisposable
         public readonly string Bone;
         public readonly int KeepSlot;
         public readonly bool Clothing;
-        public readonly string? VisibleRootBone;
-        public GearDropSpec(string bone, int keepSlot, bool clothing, string? visibleRootBone = null)
+        public readonly string? HiddenOppositeRootBone;
+        public GearDropSpec(string bone, int keepSlot, bool clothing, string? hiddenOppositeRootBone = null)
         {
             Bone = bone;
             KeepSlot = keepSlot;
             Clothing = clothing;
-            VisibleRootBone = visibleRootBone;
+            HiddenOppositeRootBone = hiddenOppositeRootBone;
         }
     }
 
@@ -91,9 +91,9 @@ public unsafe class KoStripController : IDisposable
     private static readonly byte[] OnHitOrder = { 3, 9, 10, 11, 12, 14, 4, 5, 7, 8 };
 
     // Slots whose model can be isolated on a clone and physically dropped instead of just vanishing.
-    // Hands and Feet are paired equipment models, so each produces TWO clones. VisibleRootBone tells
-    // DismembermentController to collapse the opposite side of that clone's skeleton, leaving only one
-    // glove/boot visible. Clothing=true selects the clothing toggle and hides any baked-in skin material.
+    // Hands and Feet are paired equipment models, so each produces TWO clones. HiddenOppositeRootBone
+    // identifies only the other arm/leg subtree to hide; the visible side keeps its complete bind pose.
+    // Clothing=true selects the clothing toggle and hides any baked-in skin material.
     private static readonly Dictionary<byte, GearDropSpec[]> Droppable = new()
     {
         [3]  = new[] { new GearDropSpec("j_kao", 0, false) }, // Head / hat
@@ -105,14 +105,14 @@ public unsafe class KoStripController : IDisposable
         [4]  = new[] { new GearDropSpec("j_kosi", 1, true) }, // Body / top
         [5]  = new[]
         {
-            new GearDropSpec("j_te_l", 2, true, "j_ude_b_l"), // Left glove / gauntlet
-            new GearDropSpec("j_te_r", 2, true, "j_ude_b_r"), // Right glove / gauntlet
+            new GearDropSpec("j_te_l", 2, true, "j_ude_a_r"), // Left glove / gauntlet; hide right arm
+            new GearDropSpec("j_te_r", 2, true, "j_ude_a_l"), // Right glove / gauntlet; hide left arm
         },
         [7]  = new[] { new GearDropSpec("j_asi_b_l", 3, true) }, // Legs / pants
         [8]  = new[]
         {
-            new GearDropSpec("j_asi_d_l", 4, true, "j_asi_b_l"), // Left shoe / boot
-            new GearDropSpec("j_asi_d_r", 4, true, "j_asi_b_r"), // Right shoe / boot
+            new GearDropSpec("j_asi_d_l", 4, true, "j_asi_a_r"), // Left shoe / boot; hide right leg
+            new GearDropSpec("j_asi_d_r", 4, true, "j_asi_a_l"), // Right shoe / boot; hide left leg
         },
     };
 
@@ -270,7 +270,7 @@ public unsafe class KoStripController : IDisposable
             if (!(drop.Clothing ? config.KoStripPhysicsDropClothing : config.KoStripPhysicsDrop))
                 continue;
             dismemberment.SpawnGearDrop(characterAddress, drop.Bone, drop.KeepSlot, glamourBase64,
-                hideSkin: drop.Clothing, visibleRootBone: drop.VisibleRootBone);
+                hideSkin: drop.Clothing, hiddenOppositeRootBone: drop.HiddenOppositeRootBone);
             nDrop++;
         }
 
