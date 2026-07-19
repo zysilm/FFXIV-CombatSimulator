@@ -783,6 +783,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         var height = MeasurePlayerHeight(playerAddress);
         var desired = DynamicCameraSolver.DistanceForScreenShare(height, config.DynCamSubjectScreenShare, lens.TanHalfV);
         MeasureEnemyFraming(view.Position, fwd, right, up, lens, gameCam->Distance,
+            config.DynCamEnemyVolumeFitting,
             out var crowdingScale, out var minimumEnemyFitDistance);
         desired *= crowdingScale;
         combatBaseDistance = Math.Clamp(desired, 1.0f, 30f);
@@ -924,7 +925,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// </summary>
     private void MeasureEnemyFraming(Vector3 cam,
         in Vector3 fwd, in Vector3 right, in Vector3 up, in DynamicCameraSolver.Lens lens,
-        float currentDistance, out float crowdingScale, out float minimumFitDistance)
+        float currentDistance, bool fitEnemyVolumes,
+        out float crowdingScale, out float minimumFitDistance)
     {
         crowdingScale = 1f;
         minimumFitDistance = 0f;
@@ -977,12 +979,16 @@ public sealed unsafe class DynamicCameraController : IDisposable
             var depth = Vector3.Dot(to, fwd);
             if (depth <= 0.1f)
                 continue; // do not try to fit the half of the fight behind the player
-            hasVisibleEnemy = true;
-
             // Preserve the existing crowd-spread preference without a second NPC traversal.
             var ndcX = Vector3.Dot(to, right) / (depth * lens.TanHalfH);
             if (float.IsFinite(ndcX))
                 maxAbsX = MathF.Max(maxAbsX, MathF.Abs(ndcX));
+
+            // Crowd spread is a separate combat option. When volume fitting is switched off,
+            // retain that centre-point calculation but do not read or solve enemy dimensions.
+            if (!fitEnemyVolumes)
+                continue;
+            hasVisibleEnemy = true;
 
             var radius = obj->HitboxRadius;
             if (!float.IsFinite(radius) || radius < 0.05f)

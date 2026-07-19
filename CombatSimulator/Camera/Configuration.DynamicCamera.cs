@@ -17,6 +17,10 @@ public partial class Configuration
 
     public bool DynCamCombatFraming { get; set; } = true;
 
+    /// <summary>Combat-only adaptive pullback that keeps the full physical volume of engaged
+    /// enemies inside the view. Disabled returns smoothly to the ordinary combat distance.</summary>
+    public bool DynCamEnemyVolumeFitting { get; set; } = true;
+
     /// <summary>Bone the combat pivot orbits at range. Zooming in blends the aim up toward
     /// the head on its own, so this only sets where the shot sits when pulled back.</summary>
     public string DynCamPivotBoneName { get; set; } = "j_sebo_c";
@@ -129,6 +133,7 @@ public partial class Configuration
         var d = new Configuration();
 
         DynCamCombatFraming = d.DynCamCombatFraming;
+        DynCamEnemyVolumeFitting = d.DynCamEnemyVolumeFitting;
         DynCamPivotBoneName = d.DynCamPivotBoneName;
         DynCamSubjectScreenShare = d.DynCamSubjectScreenShare;
         DynCamShoulderScreenFrac = d.DynCamShoulderScreenFrac;

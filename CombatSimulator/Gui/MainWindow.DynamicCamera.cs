@@ -113,6 +113,15 @@ public partial class MainWindow
                    "so the body stays the same size whatever is going on.\n\n" +
                    "Scroll-wheel zoom still works and is remembered — this is the baseline it scales.");
 
+        var fitEnemyVolume = config.DynCamEnemyVolumeFitting;
+        if (ImGui.Checkbox("Fit enemy volume##dyncam", ref fitEnemyVolume))
+        {
+            config.DynCamEnemyVolumeFitting = fitEnemyVolume;
+            config.Save();
+        }
+        HelpMarker("Combat only. Pulls the camera back far enough to keep the complete volume of visible engaged enemies in frame.\n\n" +
+                   "Turning it off smoothly returns to the normal combat-framing distance; it never affects the death camera.");
+
         var shoulder = config.DynCamShoulderScreenFrac;
         if (ImGui.SliderFloat("Shoulder offset##dyncam", ref shoulder, 0f, 0.4f, "%.2f"))
         {
