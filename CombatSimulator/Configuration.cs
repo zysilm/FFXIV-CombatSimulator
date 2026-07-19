@@ -395,12 +395,6 @@ public partial class Configuration : IPluginConfiguration
 
     // Target Formation
     public bool EnableNpcTargetPlayer { get; set; } = true;
-    // Head/eye tracking. The game's own "attention" filler turns a character's TargetId into
-    // look-at bank writes only for server-driven actors — client-spawned clones never get it,
-    // and the player only tracks a HARD target. Both are driven directly instead (see
-    // NpcAiController.DriveGaze): enemies stare at the player, and the player's head follows
-    // the nearest engaged enemy while no real hard target exists.
-    public bool EnablePlayerGazeTarget { get; set; } = true;
     public bool EnableTargetApproach { get; set; } = true;
     public bool UseSoloTargetFormationWhenNoCompanions { get; set; } = false;
     public float TargetApproachDistance { get; set; } = 1.5f;

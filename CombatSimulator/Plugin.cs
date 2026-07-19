@@ -270,7 +270,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // Deferred: fightingModeController is constructed later in this ctor; the
             // AI only queries during framework ticks.
             addr => devExperimental.ControlsNpc(addr) || fightingModeController?.ControlsEnemy(addr) == true);
-        npcAiController.ResolvePlayerGazeTarget = playerHitboxResolver.ResolveBasicAttackPrimary;
 
         // Custom in-simulation target lock system. Takes over the game's target
         // keybinds during simulation; the engine reads the locked target for
