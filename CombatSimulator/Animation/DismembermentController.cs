@@ -1712,14 +1712,22 @@ public unsafe class DismembermentController : IDisposable
         }
 
         var releaseLinear = baseLinear;
+        var releaseAngular = baseAngular;
         var impulse = MathF.Max(0f, DismemberActivationImpulse);
+        var direction = c.OutwardWorldDir.LengthSquared() > 1e-6f
+            ? Vector3.Normalize(c.OutwardWorldDir)
+            : Vector3.UnitX;
         if (impulse > 0f)
-        {
-            var direction = c.OutwardWorldDir.LengthSquared() > 1e-6f
-                ? Vector3.Normalize(c.OutwardWorldDir)
-                : Vector3.UnitX;
             releaseLinear += direction * impulse;
-        }
+
+        // A boot starts only centimetres above the floor. Give rigid paired pieces a small upward release
+        // and a deterministic tumble so they visibly detach instead of landing sole-down in their exact
+        // worn pose and appearing kinematic. This is velocity only; the body remains fully dynamic.
+        releaseLinear += Vector3.UnitY * 0.55f;
+        var sideSign = c.LimbRootBone.EndsWith("_r", StringComparison.Ordinal) ? -1f : 1f;
+        var tumbleAxis = Vector3.Cross(direction, Vector3.UnitY) + Vector3.UnitY * (0.25f * sideSign);
+        tumbleAxis = tumbleAxis.LengthSquared() > 1e-6f ? Vector3.Normalize(tumbleAxis) : Vector3.UnitZ;
+        releaseAngular += tumbleAxis * 4f;
 
         bodySpecs.Add(new RagdollController.ExternalRigBodySpec(
             driveRootName,
@@ -1728,7 +1736,7 @@ public unsafe class DismembermentController : IDisposable
             bodyPos,
             bodyRot,
             releaseLinear,
-            baseAngular));
+            releaseAngular));
 
         rig.Bodies.Add(new GarmentRigBody
         {
@@ -3578,9 +3586,9 @@ public unsafe class DismembermentController : IDisposable
             }
             CaptureGearPartialPoseSnapshots(c, skel.CharBase);
 
-            // Hat/clothing/pants: cache the rest pose by bone index so the settle / deflate drives can
-            // read captured offsets without searching the snapshot list each frame.
-            if (c.GearKeepModelSlot is 0 or 1 or 3)
+            // Equipment with bone-driven rendering: cache the rest pose by index so the settle/rig
+            // drives can read captured anchors without searching the snapshot list each frame.
+            if (c.GearKeepModelSlot is 0 or 1 or 2 or 3 or 4)
             {
                 c.GearCapById = new Dictionary<int, (Vector3, Quaternion)>(c.GearPoseSnapshot.Count);
                 foreach (var s in c.GearPoseSnapshot)
@@ -3873,6 +3881,21 @@ public unsafe class DismembermentController : IDisposable
     private Vector3 ResolveGarmentRigRootPosition(SkeletonAccess skel, Clone c, GarmentRig rig,
         Vector3 fallback, Quaternion rootRot)
     {
+        if (IsPairedGearPiece(c))
+        {
+            var driveRootName = ResolvePairedGearDriveRoot(c);
+            if (driveRootName != null &&
+                TryGetGarmentRigBoneWorldPosition(c, rig, driveRootName, out var driveRootWorld) &&
+                TryCapturedModelPos(skel, c, driveRootName, out var driveRootModel))
+            {
+                // Keep the clone root in the same frame in which the bind pose was captured. Using the
+                // collider centre directly (the previous implementation) changes that frame by an entire
+                // arm/leg length; the driven bone may be correct while the skinned glove/boot renders far
+                // away from it. This is the same anchor-backsolve used by the body garment at j_kosi.
+                return driveRootWorld - Vector3.Transform(driveRootModel, rootRot);
+            }
+        }
+
         if (c.GearKeepModelSlot != 1 ||
             !TryGetGarmentRigBoneWorldPosition(c, rig, "j_kosi", out var waistWorld))
         {
@@ -4133,18 +4156,24 @@ public unsafe class DismembermentController : IDisposable
         if (rootIndex < 0 || rootIndex >= count)
             return;
 
-        // Hands/feet share one RenderModel, but their two sides do not share limb bones. Move and shrink
+        // Hands/feet share one RenderModel, but their two sides do not share limb bones. Collapse and shrink
         // only the unwanted side. Collapsing every other bone (the old limb-isolation path) corrupts
         // vertices blended to the visible side's parents and visibly stretches gloves and boots.
+        ref var hiddenRoot = ref skel.Pose->ModelPose.Data[rootIndex];
+        var collapseX = hiddenRoot.Translation.X;
+        var collapseY = hiddenRoot.Translation.Y;
+        var collapseZ = hiddenRoot.Translation.Z;
         for (var i = 0; i < count; i++)
         {
             if (!IsDescendantOrSelf(skel, i, rootIndex))
                 continue;
 
             ref var m = ref skel.Pose->ModelPose.Data[i];
-            m.Translation.X = 0f;
-            m.Translation.Y = -1000f;
-            m.Translation.Z = 0f;
+            // Collapse at the unwanted limb's own root. Sending it to -1000 stretches any blended
+            // vertices across kilometres in model space and can poison the rendered bounds.
+            m.Translation.X = collapseX;
+            m.Translation.Y = collapseY;
+            m.Translation.Z = collapseZ;
             m.Scale.X = 0.0001f;
             m.Scale.Y = 0.0001f;
             m.Scale.Z = 0.0001f;
