@@ -544,7 +544,7 @@ public partial class MainWindow : IDisposable
                 config.AnonymousMode = anonymousMode;
                 config.Save();
             }
-            HelpMarker("Hide character names and defeated/dead labels in HP overlays.");
+            HelpMarker("Hide character names, death name aliases, and defeated text in HP overlays.");
         }
     }
 
@@ -3211,21 +3211,22 @@ public partial class MainWindow : IDisposable
                     }
                 }
 
-                var showDead = config.ShowDeadLabel;
-                if (ImGui.Checkbox("Show Dead Label", ref showDead))
+                var showDeathNameAlias = config.ShowDeathNameAlias;
+                if (ImGui.Checkbox("Show Death Name Alias", ref showDeathNameAlias))
                 {
-                    config.ShowDeadLabel = showDead;
+                    config.ShowDeathNameAlias = showDeathNameAlias;
                     config.Save();
                 }
-                HelpMarker("Show the [DEAD] prefix on the HP bar when the player is defeated.");
-                if (showDead)
+                HelpMarker("Replace the player's displayed name on the simulated HP bars while defeated. The normal name returns on revive.");
+                if (showDeathNameAlias)
                 {
-                    var deadText = config.DeadLabelText;
-                    if (ImGui.InputText("Dead Label Text", ref deadText, 32))
+                    var deathNameAlias = config.DeathNameAlias;
+                    if (ImGui.InputText("Death Name Alias", ref deathNameAlias, 64))
                     {
-                        config.DeadLabelText = deadText;
+                        config.DeathNameAlias = deathNameAlias;
                         config.Save();
                     }
+                    HelpMarker("Virtual name shown only while defeated. Leave empty to keep the normal display name.");
                 }
 
                 var showDefeated = config.ShowDefeatedText;

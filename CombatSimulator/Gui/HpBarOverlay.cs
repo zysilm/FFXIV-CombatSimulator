@@ -518,18 +518,16 @@ public class HpBarOverlay : IDisposable
 
     private string BuildPlayerNameLabel(bool isDead, string displayName)
     {
-        string? prefix = null;
         if (isDead)
         {
-            if (config.ShowDeadLabel && !string.IsNullOrEmpty(config.DeadLabelText))
-                prefix = $"[{config.DeadLabelText}]";
+            return config.ShowDeathNameAlias && !string.IsNullOrWhiteSpace(config.DeathNameAlias)
+                ? config.DeathNameAlias.Trim()
+                : displayName;
         }
-        else
-        {
-            if (config.ShowSimLabel && !string.IsNullOrEmpty(config.SimLabelText))
-                prefix = $"[{config.SimLabelText}]";
-        }
-        return prefix is null ? displayName : $"{prefix} {displayName}";
+
+        return config.ShowSimLabel && !string.IsNullOrEmpty(config.SimLabelText)
+            ? $"[{config.SimLabelText}] {displayName}"
+            : displayName;
     }
 
     private void DrawResetPopup()

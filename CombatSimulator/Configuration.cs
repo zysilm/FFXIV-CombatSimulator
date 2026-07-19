@@ -680,8 +680,8 @@ public partial class Configuration : IPluginConfiguration
     // Player HP bar label customization
     public bool ShowSimLabel { get; set; } = true;
     public string SimLabelText { get; set; } = "Sim";
-    public bool ShowDeadLabel { get; set; } = true;
-    public string DeadLabelText { get; set; } = "DEAD";
+    public bool ShowDeathNameAlias { get; set; } = false;
+    public string DeathNameAlias { get; set; } = "";
     public bool ShowDefeatedText { get; set; } = true;
     public string DefeatedText { get; set; } = "DEFEATED";
 
@@ -889,6 +889,7 @@ public partial class Configuration : IPluginConfiguration
     public void Initialize(IDalamudPluginInterface pi)
     {
         pluginInterface = pi;
+        RemoveRetiredPlayerHpBarOptions();
         MigrateSplitVfxToggles();
         MigrateSkirtParentChains();
         MigrateRagdollProfileMetadata();
@@ -913,6 +914,17 @@ public partial class Configuration : IPluginConfiguration
         MigrateDynamicCameraPivotBone();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
+    }
+
+    private void RemoveRetiredPlayerHpBarOptions()
+    {
+        if (PrivateConfigFields == null)
+            return;
+
+        var changed = PrivateConfigFields.Remove("ShowDeadLabel");
+        changed |= PrivateConfigFields.Remove("DeadLabelText");
+        if (changed)
+            Save();
     }
 
     public void Save()
