@@ -132,9 +132,9 @@ public partial class MainWindow
             config.Save();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Drop supported clothing slots (Body / Legs) as falling shells. Work in progress: the\n" +
-                             "equipment model bakes in body skin, so the dropped shell still carries\n" +
-                             "a layer of skin.");
+            ImGui.SetTooltip("Drop supported clothing slots (Body / Hands / Legs / Feet). Hands and Feet split\n" +
+                             "into independent left/right pieces. Body and Legs remain work in progress: their\n" +
+                             "equipment models can bake in body skin, which is filtered by material path.");
 
         var advancedCloth = config.KoStripAdvancedClothPhysics;
         ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing);
@@ -387,8 +387,8 @@ public partial class MainWindow
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Per-slot: checked = the dropped piece deflates/flattens like cloth.\n" +
                              "Unchecked = it keeps its full rigid shape (better for armor / rigid gear).\n" +
-                             "Only affects physically-dropped pieces. Default: clothing collapses,\n" +
-                             "accessories stay rigid.");
+                             "Only affects physically-dropped pieces. Default: Head/Body/Legs collapse;\n" +
+                             "Hands/Feet and accessories stay rigid.");
 
         var anyPhysicsDrop = config.KoStripPhysicsDrop || config.KoStripPhysicsDropClothing;
         ImGui.BeginDisabled(!anyPhysicsDrop);
@@ -419,7 +419,7 @@ public partial class MainWindow
             config.Save();
         }
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Restore defaults: clothing collapses, accessories stay rigid.");
+            ImGui.SetTooltip("Restore defaults: Head/Body/Legs collapse; Hands/Feet and accessories stay rigid.");
 
         ImGui.EndDisabled();
 

@@ -243,10 +243,15 @@ public unsafe class DismembermentController : IDisposable
         public int ExpectedSkeletonParentCount;
         public int ExpectedSkeletonSignature;
 
-        // Gear-drop mode (hats / accessories): when >= 0 this clone is NOT a severed limb but a single
-        // dropped equipment piece. Every model on the clone is hidden EXCEPT this CharacterBase model
-        // slot, so only the hat/accessory renders; it is then driven as one rigid body. -1 = limb mode.
+        // Gear-drop mode: when >= 0 this clone is NOT a severed limb but a single dropped equipment
+        // piece. Every model on the clone is hidden EXCEPT this CharacterBase model slot; paired hand/
+        // foot slots additionally isolate one skeleton side. The result is driven as its own body.
+        // -1 = limb mode.
         public int GearKeepModelSlot = -1;
+        // Paired model slots (Hands/Feet) use one clone per side. When set, every main-skeleton bone
+        // outside this subtree is collapsed so the other glove/boot in the same RenderModel disappears.
+        public string? GearVisibleRootBone;
+        public int GearVisibleRootIndex = -1;
         public List<(int Slot, nint Ptr)>? GearHiddenModels; // nulled model pointers, restored on despawn
         public HashSet<int>? GearHiddenSlots;                // slots already cached (avoid dup caching)
         public Vector3 GearExtraOffset;                      // body-frame offset bone->piece centroid
@@ -465,6 +470,7 @@ public unsafe class DismembermentController : IDisposable
         public int SourceSkeletonSignature;
         public int GearKeepModelSlot = -1;
         public bool GearHideSkin;
+        public string? GearVisibleRootBone;
     }
 
     private readonly List<Clone> clones = new();
@@ -626,18 +632,21 @@ public unsafe class DismembermentController : IDisposable
         TrySpawn(p);
     }
 
-    /// <summary>Drop a single equipment piece (hat / accessory) as a falling rigid body. Spawns a clone
+    /// <summary>Drop a single equipment piece as a falling rigid body. Spawns a clone
     /// of <paramref name="sourceAddress"/> that hides every model except CharacterBase model slot
-    /// <paramref name="keepModelSlot"/> (Head=0, Ear=5, Neck=6, Wrist=7, RFinger=8, LFinger=9), freezes
-    /// it, and tumbles it from <paramref name="attachBone"/>. The caller is expected to unequip the same
-    /// slot on the real body afterward (KO strip), so the piece looks like it fell off. Player-only.</summary>
+    /// <paramref name="keepModelSlot"/>, freezes it, and tumbles it from <paramref name="attachBone"/>.
+    /// For paired Hands/Feet models, <paramref name="visibleRootBone"/> isolates one side so two calls
+    /// can create independent left/right clones. The caller unequips the real slot afterward.</summary>
     public void SpawnGearDrop(nint sourceAddress, string attachBone, int keepModelSlot, string? glamourBase64,
-        bool hideSkin = false)
+        bool hideSkin = false, string? visibleRootBone = null)
     {
         if (sourceAddress == nint.Zero || string.IsNullOrEmpty(attachBone) || keepModelSlot < 0) return;
-        // Dedupe by kept model slot, not bone: hats and earrings share the j_kao attach bone.
-        if (clones.Exists(c => c.SourceAddress == sourceAddress && c.GearKeepModelSlot == keepModelSlot)) return;
-        if (pending.Exists(p => p.SourceAddress == sourceAddress && p.GearKeepModelSlot == keepModelSlot)) return;
+        // Ordinary gear dedupes by slot. Paired gear also includes the isolated subtree, allowing one
+        // left and one right clone while still rejecting duplicate requests for either side.
+        if (clones.Exists(c => c.SourceAddress == sourceAddress && c.GearKeepModelSlot == keepModelSlot &&
+                                string.Equals(c.GearVisibleRootBone, visibleRootBone, StringComparison.Ordinal))) return;
+        if (pending.Exists(p => p.SourceAddress == sourceAddress && p.GearKeepModelSlot == keepModelSlot &&
+                                 string.Equals(p.GearVisibleRootBone, visibleRootBone, StringComparison.Ordinal))) return;
 
         // Only drop if the source actually RENDERS a model in that slot. This is the rendered model, so
         // it covers Glamourer-only glamours too (a glam hat leaves the real equipment id 0 but still
@@ -659,6 +668,7 @@ public unsafe class DismembermentController : IDisposable
             GlamourBase64 = glamourBase64,
             GearKeepModelSlot = keepModelSlot,
             GearHideSkin = hideSkin,
+            GearVisibleRootBone = visibleRootBone,
         };
         CaptureSourceIdentity(p);
         TryRefreshHandoff(p, 1f / 60f);
@@ -953,6 +963,7 @@ public unsafe class DismembermentController : IDisposable
             ExpectedSkeletonSignature = p.SourceSkeletonSignature,
             GearKeepModelSlot = p.GearKeepModelSlot,
             GearHideSkin = p.GearHideSkin,
+            GearVisibleRootBone = p.GearVisibleRootBone,
         });
         log.Info($"Dismember: clone idx={index} bone={p.LimbRootBone} at ({severancePos.X:F1},{severancePos.Y:F1},{severancePos.Z:F1})");
     }
@@ -3401,6 +3412,21 @@ public unsafe class DismembermentController : IDisposable
             return true;
         }
 
+        if (!string.IsNullOrEmpty(c.GearVisibleRootBone) && c.GearVisibleRootIndex < 0)
+        {
+            c.GearVisibleRootIndex = boneService.ResolveBoneIndex(skel, c.GearVisibleRootBone);
+            if (c.GearVisibleRootIndex < 0)
+            {
+                HideEntireBody(c);
+                if (++c.ResolveFramesWaited >= MaxResolveFrames)
+                {
+                    log.Warning($"GearDrop: clone idx={c.ObjectIndex} visible root '{c.GearVisibleRootBone}' never resolved; dropping");
+                    return false;
+                }
+                return true;
+            }
+        }
+
         // Hide face / hair / body / other gear so ONLY the dropped piece renders. Re-asserted each frame
         // (models load a few frames after EnableDraw, and a glamour redraw can repopulate them).
         HideNonKeptModels(c);
@@ -3431,6 +3457,7 @@ public unsafe class DismembermentController : IDisposable
                 ApplyLastGarmentVisualBindPose(c);
                 c.SettleFrames = 0;
             }
+            IsolatePairedGearPiece(skel, c);
             c.SettleFrames -= substepsThisFrame;
             if (c.SettleFrames > 0) return true;
 
@@ -3543,6 +3570,7 @@ public unsafe class DismembermentController : IDisposable
             }
         }
         RestoreGearPartialPoseSnapshots(c, skel.CharBase);
+        IsolatePairedGearPiece(skel, c);
 
         if (c.GearGarmentRig != null)
             return UpdateGarmentRigClone(skel, c, drawObj);
@@ -3940,6 +3968,14 @@ public unsafe class DismembermentController : IDisposable
 
     private Vector3 ResolveGearAnchorModelPos(SkeletonAccess skel, Clone c)
     {
+        // A paired hand/foot clone already has a side-specific attach bone. Preserve that anchor instead
+        // of averaging left and right, which would pull both independent pieces back to the body centre.
+        if (IsPairedGearPiece(c))
+        {
+            ref var side = ref skel.Pose->ModelPose.Data[c.LimbIndex];
+            return new Vector3(side.Translation.X, side.Translation.Y, side.Translation.Z);
+        }
+
         // Some equipment slots are paired meshes. Anchoring them to the waist makes the rigid body feel
         // torso-bound; use a virtual center from the bones that actually carry the visible slot.
         if (c.GearKeepModelSlot == 2 &&
@@ -3990,6 +4026,17 @@ public unsafe class DismembermentController : IDisposable
 
     private bool IsDeflatableGear(Clone c)
         => c.GearKeepModelSlot >= 0 && config.IsKoStripCollapseEnabled(c.GearKeepModelSlot);
+
+    private static bool IsPairedGearPiece(Clone c)
+        => !string.IsNullOrEmpty(c.GearVisibleRootBone) && c.GearKeepModelSlot is 2 or 4;
+
+    private void IsolatePairedGearPiece(SkeletonAccess skel, Clone c)
+    {
+        if (!IsPairedGearPiece(c) || c.GearVisibleRootIndex < 0)
+            return;
+
+        HideAllButLimb(skel, c.GearVisibleRootIndex, Array.Empty<int>());
+    }
 
     private static bool IsGarmentHandoffGear(Clone c)
         => c.GearKeepModelSlot is 1 or 3;
@@ -5839,13 +5886,17 @@ public unsafe class DismembermentController : IDisposable
     private GearShapeSpec BuildGearShapeSpec(Clone c)
     {
         var scale = c.SourceScale.X > 0f ? c.SourceScale.X : 1f;
-        var (parts, off) = BuildGearShapeParts(c.GearKeepModelSlot);
-        if (c.GearKeepModelSlot != 1 &&
+        var pairedPiece = IsPairedGearPiece(c);
+        var (parts, off) = BuildGearShapeParts(c.GearKeepModelSlot, pairedPiece);
+        // The model bounds cover both gloves/boots, so they cannot size a single-side proxy. Paired
+        // pieces use their authored single-piece shape; all ordinary rigid slots retain bounds fitting.
+        if (c.GearKeepModelSlot != 1 && !pairedPiece &&
             TryBuildGearShapeSpecFromModelBounds(c, parts, off, scale, out var modelSpec))
             return modelSpec;
 
         var half = ComputeGearShapeHalf(parts) * scale;
-        return new GearShapeSpec(parts, scale, half, off * scale, c.GearHideSkin ? 0.8f : GearPieceMass);
+        var mass = c.GearHideSkin && !pairedPiece ? 0.8f : GearPieceMass;
+        return new GearShapeSpec(parts, scale, half, off * scale, mass);
     }
 
     private bool TryBuildGearShapeSpecFromModelBounds(Clone c, GearShapePart[] templateParts,
@@ -6206,8 +6257,24 @@ public unsafe class DismembermentController : IDisposable
         return compound;
     }
 
-    private static (GearShapePart[] Parts, Vector3 Offset) BuildGearShapeParts(int slot)
+    private static (GearShapePart[] Parts, Vector3 Offset) BuildGearShapeParts(int slot, bool pairedPiece = false)
     {
+        if (pairedPiece && slot == 2)
+        {
+            return (new[]
+            {
+                new GearShapePart(new Vector3(0.075f, 0.075f, 0.055f), Vector3.Zero),
+            }, Vector3.Zero);
+        }
+
+        if (pairedPiece && slot == 4)
+        {
+            return (new[]
+            {
+                new GearShapePart(new Vector3(0.075f, 0.035f, 0.125f), Vector3.Zero),
+            }, new Vector3(0f, 0.035f, 0f));
+        }
+
         return slot switch
         {
             0 => (new[]

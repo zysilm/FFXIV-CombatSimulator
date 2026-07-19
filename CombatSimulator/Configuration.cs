@@ -191,6 +191,7 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollDefaultProfileTuningMigrated20260716 { get; set; } = false;
     public bool NpcCollisionConvexHullDefaultMigrated20260716 { get; set; } = false;
     public bool RagdollSoftBodyTuningMigrated20260719 { get; set; } = false;
+    public bool KoStripHandsFeetRigidDefaultMigrated20260719 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -343,9 +344,9 @@ public partial class Configuration : IPluginConfiguration
     // 5 Ears,6 Neck,7 Wrists,8 RFinger,9 LFinger).
     public bool KoStripCollapseHead { get; set; } = true;
     public bool KoStripCollapseBody { get; set; } = true;
-    public bool KoStripCollapseHands { get; set; } = true;
+    public bool KoStripCollapseHands { get; set; } = false;
     public bool KoStripCollapseLegs { get; set; } = true;
-    public bool KoStripCollapseFeet { get; set; } = true;
+    public bool KoStripCollapseFeet { get; set; } = false;
     public bool KoStripCollapseEars { get; set; } = false;
     public bool KoStripCollapseNeck { get; set; } = false;
     public bool KoStripCollapseWrists { get; set; } = false;
@@ -369,14 +370,14 @@ public partial class Configuration : IPluginConfiguration
         _ => true,
     };
 
-    /// <summary>Restore the default collapse mask: clothing collapses, accessories stay rigid.</summary>
+    /// <summary>Restore the default collapse mask: head/body/legs collapse; gloves, shoes and accessories stay rigid.</summary>
     public void ResetKoStripCollapseDefaults()
     {
         KoStripCollapseHead = true;
         KoStripCollapseBody = true;
-        KoStripCollapseHands = true;
+        KoStripCollapseHands = false;
         KoStripCollapseLegs = true;
-        KoStripCollapseFeet = true;
+        KoStripCollapseFeet = false;
         KoStripCollapseEars = false;
         KoStripCollapseNeck = false;
         KoStripCollapseWrists = false;
@@ -913,6 +914,7 @@ public partial class Configuration : IPluginConfiguration
         pluginInterface = pi;
         RemoveRetiredPlayerHpBarOptions();
         MigrateSplitVfxToggles();
+        MigrateKoStripHandsFeetRigidDefaults();
         MigrateSkirtParentChains();
         MigrateRagdollProfileMetadata();
         MigrateAnatomicalHinges();
@@ -953,6 +955,20 @@ public partial class Configuration : IPluginConfiguration
     public void Save()
     {
         pluginInterface?.SavePluginConfig(this);
+    }
+
+    // Hands and Feet did not physically drop before paired-piece support existed, so their old
+    // collapse toggles had no visible effect. Move every existing config to the new rigid default once;
+    // after this migration the user remains free to opt either slot back into collapse.
+    private void MigrateKoStripHandsFeetRigidDefaults()
+    {
+        if (KoStripHandsFeetRigidDefaultMigrated20260719)
+            return;
+
+        KoStripCollapseHands = false;
+        KoStripCollapseFeet = false;
+        KoStripHandsFeetRigidDefaultMigrated20260719 = true;
+        Save();
     }
 
     /// <summary>

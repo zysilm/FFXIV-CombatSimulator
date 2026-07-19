@@ -64,9 +64,13 @@ public unsafe class KoStripController : IDisposable
         public readonly string Bone;
         public readonly int KeepSlot;
         public readonly bool Clothing;
-        public GearDropSpec(string bone, int keepSlot, bool clothing)
+        public readonly string? VisibleRootBone;
+        public GearDropSpec(string bone, int keepSlot, bool clothing, string? visibleRootBone = null)
         {
-            Bone = bone; KeepSlot = keepSlot; Clothing = clothing;
+            Bone = bone;
+            KeepSlot = keepSlot;
+            Clothing = clothing;
+            VisibleRootBone = visibleRootBone;
         }
     }
 
@@ -86,21 +90,30 @@ public unsafe class KoStripController : IDisposable
 
     private static readonly byte[] OnHitOrder = { 3, 9, 10, 11, 12, 14, 4, 5, 7, 8 };
 
-    // Slots whose model is a separate, non-skin-fused piece, so it can physically drop instead of just
-    // vanishing. Maps ApiSlot -> (attach bone the piece tumbles from, CharacterBase model-slot index to
-    // keep visible). Head/hat is the clean case; accessories are approximate (single rigid drop).
-    // Per droppable slot: attach bone, CharacterBase model-slot index to keep, and whether it belongs to
-    // the CLOTHING toggle (true) or the HAT/ACCESSORY toggle (false).
-    private static readonly Dictionary<byte, GearDropSpec> Droppable = new()
+    // Slots whose model can be isolated on a clone and physically dropped instead of just vanishing.
+    // Hands and Feet are paired equipment models, so each produces TWO clones. VisibleRootBone tells
+    // DismembermentController to collapse the opposite side of that clone's skeleton, leaving only one
+    // glove/boot visible. Clothing=true selects the clothing toggle and hides any baked-in skin material.
+    private static readonly Dictionary<byte, GearDropSpec[]> Droppable = new()
     {
-        [3]  = new("j_kao",  0, false), // Head / hat
-        [9]  = new("j_kao",  5, false), // Ears
-        [10] = new("j_kubi", 6, false), // Neck
-        [11] = new("j_te_l", 7, false), // Wrists
-        [12] = new("j_te_r", 8, false), // R.Finger
-        [14] = new("j_te_l", 9, false), // L.Finger
-        [4]  = new("j_kosi", 1, true),  // Body / top — clothing (WIP shell drop incl. torso skin)
-        [7]  = new("j_asi_b_l", 3, true), // Legs / pants
+        [3]  = new[] { new GearDropSpec("j_kao", 0, false) }, // Head / hat
+        [9]  = new[] { new GearDropSpec("j_kao", 5, false) }, // Ears
+        [10] = new[] { new GearDropSpec("j_kubi", 6, false) }, // Neck
+        [11] = new[] { new GearDropSpec("j_te_l", 7, false) }, // Wrists
+        [12] = new[] { new GearDropSpec("j_te_r", 8, false) }, // R.Finger
+        [14] = new[] { new GearDropSpec("j_te_l", 9, false) }, // L.Finger
+        [4]  = new[] { new GearDropSpec("j_kosi", 1, true) }, // Body / top
+        [5]  = new[]
+        {
+            new GearDropSpec("j_te_l", 2, true, "j_ude_b_l"), // Left glove / gauntlet
+            new GearDropSpec("j_te_r", 2, true, "j_ude_b_r"), // Right glove / gauntlet
+        },
+        [7]  = new[] { new GearDropSpec("j_asi_b_l", 3, true) }, // Legs / pants
+        [8]  = new[]
+        {
+            new GearDropSpec("j_asi_d_l", 4, true, "j_asi_b_l"), // Left shoe / boot
+            new GearDropSpec("j_asi_d_r", 4, true, "j_asi_b_r"), // Right shoe / boot
+        },
     };
 
     /// <summary>
@@ -257,7 +270,7 @@ public unsafe class KoStripController : IDisposable
             if (!(drop.Clothing ? config.KoStripPhysicsDropClothing : config.KoStripPhysicsDrop))
                 continue;
             dismemberment.SpawnGearDrop(characterAddress, drop.Bone, drop.KeepSlot, glamourBase64,
-                hideSkin: drop.Clothing);
+                hideSkin: drop.Clothing, visibleRootBone: drop.VisibleRootBone);
             nDrop++;
         }
 
@@ -283,7 +296,10 @@ public unsafe class KoStripController : IDisposable
 
     private IEnumerable<GearDropSpec> EnumerateGearDrops(byte apiSlot)
     {
-        if (Droppable.TryGetValue(apiSlot, out var drop))
+        if (!Droppable.TryGetValue(apiSlot, out var drops))
+            yield break;
+
+        foreach (var drop in drops)
             yield return drop;
     }
 
