@@ -245,10 +245,11 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// choice is stable and so it can be frozen while the player is orbiting.</summary>
     private float shoulderSide;
 
-    /// <summary>Distance added on top of the user's zoom this frame so an oversized enemy
-    /// fits the lens (BulkRelief). Remembered so zoom adoption can subtract it back out —
-    /// otherwise a scroll during a big fight would bake the relief into the learned zoom.</summary>
-    private float lastBulkExtra;
+    /// <summary>Currently applied COMBAT-only distance added on top of the user's zoom so the
+    /// visible engaged enemies fit the lens. It owns a separate transition: entering/leaving
+    /// enemy fitting eases this value instead of changing the camera target in one frame.
+    /// Zoom adoption subtracts it so temporary framing never becomes the learned preference.</summary>
+    private float lastEnemyFitExtra;
 
     // Ground height under the shot, from BGCollision raycasts, smoothed so a ledge or a
     // stair edge under the camera path does not step the frame. Two probes: under the
@@ -468,7 +469,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         deathZoomOut = 1f;
         smoothedShoulder = 0f;
         shoulderSide = 0f;
-        lastBulkExtra = 0f;
+        lastEnemyFitExtra = 0f;
         hasGroundSample = false;
         hasCamGroundSample = false;
         haveMeasuredOrbitDir = false;
@@ -595,6 +596,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
             case Phase.Combat:
                 if (!config.DynCamCombatFraming)
                 {
+                    TransitionEnemyFitExtra(0f, dt);
                     coordinator.Release(CameraOwner.DynamicCam);
                     StatusText = "combat framing off";
                     return;
@@ -604,6 +606,10 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
             case Phase.DeathTranslate:
             case Phase.DeathHold:
+                // Enemy-volume fitting belongs exclusively to the combat personality. Let its
+                // internal contribution return to the inactive state while the independent death
+                // camera performs its own measured translate; TickDeath never reads this value.
+                TransitionEnemyFitExtra(0f, dt);
                 if (!config.DynCamDeathFraming)
                 {
                     coordinator.Release(CameraOwner.DynamicDeath);
@@ -660,11 +666,11 @@ public sealed unsafe class DynamicCameraController : IDisposable
             // Adopt their zoom as a bias on the framing distance, so we never drag them
             // back to ours — the screen-share adaptation just rides on top of it. Measured
             // against the UNBIASED distance, otherwise each scroll multiplies the last.
-            // BulkRelief's extra is subtracted from the observation first: it is OUR
-            // temporary addition for an oversized enemy, and learning it as the player's
-            // preference would leave the camera parked far out after the fight ends.
+            // Adaptive enemy fitting is subtracted from the observation first: it is OUR
+            // temporary addition, and learning it as the player's preference would leave
+            // the camera parked far out after the fight ends.
             var basis = MathF.Max(0.5f, combatBaseDistance);
-            combatZoomBias = Math.Clamp((observedDistance - lastBulkExtra) / basis, 0.4f, 3.0f);
+            combatZoomBias = Math.Clamp((observedDistance - lastEnemyFitExtra) / basis, 0.4f, 3.0f);
             combatZoomDirty = true;
         }
         prevObservedDistance = observedDistance;
@@ -776,15 +782,19 @@ public sealed unsafe class DynamicCameraController : IDisposable
         // Hold the body at a constant on-screen size.
         var height = MeasurePlayerHeight(playerAddress);
         var desired = DynamicCameraSolver.DistanceForScreenShare(height, config.DynCamSubjectScreenShare, lens.TanHalfV);
-        desired *= CrowdingRelief(view.Position, fwd, right, up, lens);
+        MeasureEnemyFraming(view.Position, fwd, right, up, lens, gameCam->Distance,
+            out var crowdingScale, out var minimumEnemyFitDistance);
+        desired *= crowdingScale;
         combatBaseDistance = Math.Clamp(desired, 1.0f, 30f);
 
-        // Big-subject relief rides on top of the biased distance, not inside it: applied
-        // before the zoom bias, a close-zoom bias (0.4) would scale the relief away and
-        // return exactly the problem it solves — a giant filling the whole close-range frame.
-        desired = Math.Clamp(desired * combatZoomBias, 1.0f, 30f);
-        lastBulkExtra = BulkRelief(view.Position, fwd, lens);
-        desired = Math.Clamp(desired + lastBulkExtra, 1.0f, 30f);
+        // Enemy fitting is a COMBAT-only dynamic minimum distance, not part of the user's zoom
+        // preference. Give this feature its own enter/leave transition. The general distance
+        // spring then follows the already-smoothed target; losing engagement cannot create a cut.
+        var biasedDistance = Math.Clamp(desired * combatZoomBias, 1.0f, 30f);
+        var targetEnemyFitExtra = Math.Clamp(minimumEnemyFitDistance - biasedDistance,
+            0f, 30f - biasedDistance);
+        TransitionEnemyFitExtra(targetEnemyFitExtra, dt);
+        desired = Math.Clamp(biasedDistance + lastEnemyFitExtra, 1.0f, 30f);
         SolvedDistance = desired;
 
         if (!hasCurState)
@@ -858,6 +868,20 @@ public sealed unsafe class DynamicCameraController : IDisposable
         });
     }
 
+    /// <summary>Translate the combat-only enemy-fit contribution toward its active target or the
+    /// inactive zero state. Activation is deliberate but responsive; release is slower so an enemy
+    /// dying, disengaging, or leaving the frustum cannot flash the camera back inward.</summary>
+    private void TransitionEnemyFitExtra(float target, float dt)
+    {
+        target = Math.Clamp(float.IsFinite(target) ? target : 0f, 0f, 30f);
+        dt = Math.Clamp(float.IsFinite(dt) ? dt : 0f, 0f, 0.1f);
+        var rate = target > lastEnemyFitExtra ? 4.0f : 2.2f;
+        var t = 1f - MathF.Exp(-rate * dt);
+        lastEnemyFitExtra += (target - lastEnemyFitExtra) * t;
+        if (target <= 0f && lastEnemyFitExtra < 0.001f)
+            lastEnemyFitExtra = 0f;
+    }
+
     private float AutoShoulderSide(SimulatedNpc? focus, Vector3 anchor, Vector3 right)
     {
         // Use the committed target side for hysteresis, not the smoothed offset. During a
@@ -888,73 +912,115 @@ public sealed unsafe class DynamicCameraController : IDisposable
     }
 
     /// <summary>
-    /// Pull back when the engaged enemies span more of an arc than the frame can hold. This
-    /// is the one place we deliberately depart from the game we're imitating: its tight
-    /// framing is exactly what players complain about once a crowd shows up.
+    /// Measures crowd spread and the closest camera distance at which every visible engaged
+    /// enemy fits. Each enemy is an upright cylinder using the game's already-available
+    /// Height and HitboxRadius — no bones, raycasts, allocations, or screen-space sampling.
+    ///
+    /// Cylinder containment is solved directly against the four side planes of a slightly
+    /// inset view frustum. Moving the camera backwards increases every plane distance
+    /// linearly, so four dot products give the exact required pullback for that cylinder.
+    /// All enemies share one traversal with crowding relief; cost is O(engaged enemies) with
+    /// a very small constant and remains independent of model/bone complexity.
     /// </summary>
-    private float CrowdingRelief(Vector3 cam,
-        in Vector3 fwd, in Vector3 right, in Vector3 up, in DynamicCameraSolver.Lens lens)
+    private void MeasureEnemyFraming(Vector3 cam,
+        in Vector3 fwd, in Vector3 right, in Vector3 up, in DynamicCameraSolver.Lens lens,
+        float currentDistance, out float crowdingScale, out float minimumFitDistance)
     {
-        if (config.DynCamCrowdingRelief <= 0.001f)
-            return 1f;
+        crowdingScale = 1f;
+        minimumFitDistance = 0f;
+
+        // Hard phase boundary: even if this helper is reused later, enemy-volume fitting must
+        // never participate in DeathTranslate/DeathHold. The death solver owns that composition.
+        if (phase != Phase.Combat)
+            return;
+
+        // Leave a little breathing room so animation and distance smoothing do not graze the
+        // exact screen edge. Invalid/tiny projection values disable fitting safely.
+        const float safeFraction = 0.90f;
+        var spanH = safeFraction * MathF.Abs(lens.TanHalfH);
+        var spanV = safeFraction * MathF.Abs(lens.TanHalfV);
+        if (spanH < 0.05f || spanV < 0.05f)
+            return;
+
+        var planeLeft = spanH * fwd + right;
+        var planeRight = spanH * fwd - right;
+        var planeBottom = spanV * fwd + up;
+        var planeTop = spanV * fwd - up;
+
+        static float HorizontalLength(in Vector3 n) => MathF.Sqrt(n.X * n.X + n.Z * n.Z);
+        var leftHorizontal = HorizontalLength(planeLeft);
+        var rightHorizontal = HorizontalLength(planeRight);
+        var bottomHorizontal = HorizontalLength(planeBottom);
+        var topHorizontal = HorizontalLength(planeTop);
+        var forwardHorizontal = HorizontalLength(fwd);
+
+        static float PlanePullback(in Vector3 to, float height, float radius,
+            in Vector3 plane, float planeHorizontal, float retreatGain)
+        {
+            // Minimum support of an upright cylinder along the inward plane normal.
+            var verticalMin = MathF.Min(0f, plane.Y * height);
+            var cylinderMin = verticalMin - radius * planeHorizontal;
+            return -(Vector3.Dot(plane, to) + cylinderMin) / retreatGain;
+        }
 
         var maxAbsX = 0f;
+        var requiredPullback = float.NegativeInfinity;
+        var hasVisibleEnemy = false;
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             if (npc.BattleChara == null || !npc.IsAlive || !npc.IsEngaged)
                 continue;
-            var ndc = DynamicCameraSolver.Project(EnemyPosition(npc), cam, fwd, right, up, lens);
-            if (ndc.Z <= 0.1f)
-                continue;
-            maxAbsX = MathF.Max(maxAbsX, MathF.Abs(ndc.X));
+
+            var obj = (GameObject*)npc.BattleChara;
+            var root = new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z);
+            var to = root - cam;
+            var depth = Vector3.Dot(to, fwd);
+            if (depth <= 0.1f)
+                continue; // do not try to fit the half of the fight behind the player
+            hasVisibleEnemy = true;
+
+            // Preserve the existing crowd-spread preference without a second NPC traversal.
+            var ndcX = Vector3.Dot(to, right) / (depth * lens.TanHalfH);
+            if (float.IsFinite(ndcX))
+                maxAbsX = MathF.Max(maxAbsX, MathF.Abs(ndcX));
+
+            var radius = obj->HitboxRadius;
+            if (!float.IsFinite(radius) || radius < 0.05f)
+                radius = 0.5f;
+            radius = Math.Clamp(radius, 0.1f, 12f);
+
+            var objectHeight = obj->Height;
+            if (!float.IsFinite(objectHeight) || objectHeight < 0.2f)
+                objectHeight = MathF.Max(1.8f, radius * 2f);
+            objectHeight = Math.Clamp(objectHeight, 0.2f, 30f);
+
+            requiredPullback = MathF.Max(requiredPullback,
+                PlanePullback(to, objectHeight, radius, planeLeft, leftHorizontal, spanH));
+            requiredPullback = MathF.Max(requiredPullback,
+                PlanePullback(to, objectHeight, radius, planeRight, rightHorizontal, spanH));
+            requiredPullback = MathF.Max(requiredPullback,
+                PlanePullback(to, objectHeight, radius, planeBottom, bottomHorizontal, spanV));
+            requiredPullback = MathF.Max(requiredPullback,
+                PlanePullback(to, objectHeight, radius, planeTop, topHorizontal, spanV));
+
+            // Keep the complete cylinder in front of a small near-plane allowance too.
+            var forwardVerticalMin = MathF.Min(0f, fwd.Y * objectHeight);
+            var nearestDepth = depth + forwardVerticalMin - radius * forwardHorizontal;
+            requiredPullback = MathF.Max(requiredPullback, 0.15f - nearestDepth);
         }
 
         const float comfortable = 0.75f;
-        if (maxAbsX <= comfortable)
-            return 1f;
-
-        var over = MathF.Min(maxAbsX - comfortable, 0.75f) / 0.75f;
-        return 1f + config.DynCamCrowdingRelief * over;
-    }
-
-    /// <summary>
-    /// Big-subject relief. CrowdingRelief answers MANY enemies spreading across the frame;
-    /// this answers ONE enemy that is simply too big for the lens at close range — its centre
-    /// point sits comfortably in frame while its body overflows every edge, so a centre test
-    /// never fires. Each engaged large enemy is approximated as a sphere of its hitbox radius
-    /// and the camera asks for enough distance that the sphere subtends at most a fraction of
-    /// the tighter half-frame. Returned as EXTRA distance (yalms) on top of the user's zoom.
-    /// Continuous in every input (no temporal jumps to pump the spring — the radius gate is
-    /// constant per enemy), capped so a titan cannot yank the camera to the sky, and gated so
-    /// normal-sized enemies leave the close GoW framing exactly alone. The existing distance
-    /// spring provides the easing both directions.
-    /// </summary>
-    private float BulkRelief(Vector3 cam, in Vector3 fwd, in DynamicCameraSolver.Lens lens)
-    {
-        const float bulkThreshold = 2f;  // hitbox radius below which framing is untouched
-        const float fillFraction = 0.8f; // subject may fill at most this much of the half-frame
-        const float maxExtra = 6f;       // beyond this, accept partial framing
-
-        var span = fillFraction * MathF.Min(MathF.Abs(lens.TanHalfV), MathF.Abs(lens.TanHalfH));
-        if (span < 0.05f)
-            return 0f; // degenerate lens: refuse to divide our way into a huge answer
-
-        var extra = 0f;
-        foreach (var npc in npcSelector.SelectedNpcs)
+        if (config.DynCamCrowdingRelief > 0.001f && maxAbsX > comfortable)
         {
-            if (npc.BattleChara == null || !npc.IsAlive || !npc.IsEngaged)
-                continue;
-            var r = MathF.Min(npc.HitboxRadius, 8f);
-            if (r < bulkThreshold)
-                continue;
-            var to = EnemyPosition(npc) - cam;
-            if (Vector3.Dot(to, fwd) <= 0.1f)
-                continue; // behind or beside the camera: not part of the picture
-            var required = r / span - to.Length();
-            if (required > extra)
-                extra = required;
+            var over = MathF.Min(maxAbsX - comfortable, 0.75f) / 0.75f;
+            crowdingScale = 1f + config.DynCamCrowdingRelief * over;
         }
-        return MathF.Min(extra, maxExtra);
+
+        if (hasVisibleEnemy)
+        {
+            var observedDistance = float.IsFinite(currentDistance) ? MathF.Max(0.5f, currentDistance) : 0.5f;
+            minimumFitDistance = MathF.Max(0f, observedDistance + requiredPullback);
+        }
     }
 
     private SimulatedNpc? FindFocusEnemy(nint playerAddress)
