@@ -693,7 +693,15 @@ public class CombatEngine : IDisposable
         }
 
         if (suppressCasterActionEffect)
+        {
+            // The caster's swing already played as a windup pose, so skip a second animation — but a
+            // SKILL (not a plain auto-attack) still needs its VFX at the strike, or it looks like an
+            // animation-only hit. Autos (action 7) carry no skill VFX, so we skip them to avoid a
+            // generic spark on every swing.
             TriggerManualNpcHitFeedback(hits);
+            if (visualAction.ActionId != 7)
+                animationController.PlayActionVfx(BuildActionEffectRequest(npc.State, visualAction, hits));
+        }
         else
             TriggerActionEffect(npc.State, visualAction, hits);
 
@@ -1038,83 +1046,7 @@ public class CombatEngine : IDisposable
 
         try
         {
-            // Get source position
-            var sourcePos = GetEntityPosition(source);
-
-            bool isRanged = actionData.DamageType == SimDamageType.Magical ||
-                            actionData.Range > 5.0f;
-
-            // Per-NPC ranged override: an NPC marked IsRanged in the spawned list
-            // always plays the ranged attack motion regardless of action data.
-            if (!source.IsPlayer)
-            {
-                foreach (var sourceNpc in npcSelector.SelectedNpcs)
-                {
-                    if (sourceNpc.SimulatedEntityId != source.EntityId)
-                        continue;
-
-                    NpcAttackStyle weaponStyle;
-                    unsafe
-                    {
-                        weaponStyle = sourceNpc.BattleChara != null
-                            ? NpcWeaponClassifier.DetectFromCharacter((Character*)sourceNpc.BattleChara, log, sourceNpc.Name)
-                            : NpcAttackStyle.Auto;
-                    }
-
-                    if (weaponStyle == NpcAttackStyle.Ranged)
-                    {
-                        isRanged = true;
-                        actionData.Range = Math.Max(actionData.Range, 20f);
-                        break;
-                    }
-
-                    if (sourceNpc.IsRanged)
-                    {
-                        isRanged = true;
-                        actionData.Range = Math.Max(actionData.Range, 20f);
-                        break;
-                    }
-                }
-            }
-
-            // Map simulated entity IDs to real game object IDs for native calls.
-            // ActionEffectHandler.Receive needs IDs the game engine can resolve.
-            var gameSourceId = GetGameEntityId(source);
-
-            var request = new ActionEffectRequest
-            {
-                SourceEntityId = gameSourceId,
-                SourcePosition = sourcePos,
-                ActionId = actionData.ActionId,
-                AnimationLock = actionData.AnimationLock,
-                SourceRotation = GetEntityRotation(source),
-                IsSourcePlayer = source.IsPlayer,
-                IsRanged = isRanged,
-                AttackStyle = actionData.DamageType == SimDamageType.Magical
-                    ? NpcAttackStyle.Magic
-                    : isRanged
-                        ? NpcAttackStyle.Ranged
-                        : NpcAttackStyle.Melee,
-                AnimationStartTimelineId = actionData.AnimationStartTimelineId,
-                AnimationEndTimelineId = actionData.AnimationEndTimelineId,
-                CastVfxPath = actionData.CastVfxPath,
-                StartVfxPath = actionData.StartVfxPath,
-                CasterVfxPaths = actionData.CasterVfxPaths,
-                TargetVfxPaths = actionData.TargetVfxPaths,
-            };
-
-            foreach (var hit in hits)
-            {
-                request.Targets.Add(new TargetEffect
-                {
-                    TargetId = GetGameEntityId(hit.Target),
-                    Damage = hit.DamageResult.Damage,
-                    IsCritical = hit.DamageResult.IsCritical,
-                    IsDirectHit = hit.DamageResult.IsDirectHit,
-                    DamageType = hit.DamageResult.DamageType,
-                });
-            }
-
+            var request = BuildActionEffectRequest(source, actionData, hits);
             animationController.PlayActionEffect(request);
 
             // ActionEffectHandler.Receive's internal target lookup typically fails for
@@ -1128,6 +1060,95 @@ public class CombatEngine : IDisposable
         {
             log.Error(ex, "Failed to trigger action effect animation.");
         }
+    }
+
+    /// <summary>
+    /// Build the ActionEffect request (source, VFX paths, per-target effects) for an attack. Shared
+    /// by the full-effect path (<see cref="TriggerActionEffect(SimulatedEntityState, ActionData, IReadOnlyList{AppliedActionDamage})"/>)
+    /// and the VFX-only path used when a melee skill's swing already played as a windup pose.
+    /// </summary>
+    private ActionEffectRequest BuildActionEffectRequest(
+        SimulatedEntityState source,
+        ActionData actionData,
+        IReadOnlyList<AppliedActionDamage> hits)
+    {
+        var sourcePos = GetEntityPosition(source);
+
+        bool isRanged = actionData.DamageType == SimDamageType.Magical ||
+                        actionData.Range > 5.0f;
+
+        // Per-NPC ranged override: an NPC marked IsRanged in the spawned list
+        // always plays the ranged attack motion regardless of action data.
+        if (!source.IsPlayer)
+        {
+            foreach (var sourceNpc in npcSelector.SelectedNpcs)
+            {
+                if (sourceNpc.SimulatedEntityId != source.EntityId)
+                    continue;
+
+                NpcAttackStyle weaponStyle;
+                unsafe
+                {
+                    weaponStyle = sourceNpc.BattleChara != null
+                        ? NpcWeaponClassifier.DetectFromCharacter((Character*)sourceNpc.BattleChara, log, sourceNpc.Name)
+                        : NpcAttackStyle.Auto;
+                }
+
+                if (weaponStyle == NpcAttackStyle.Ranged)
+                {
+                    isRanged = true;
+                    actionData.Range = Math.Max(actionData.Range, 20f);
+                    break;
+                }
+
+                if (sourceNpc.IsRanged)
+                {
+                    isRanged = true;
+                    actionData.Range = Math.Max(actionData.Range, 20f);
+                    break;
+                }
+            }
+        }
+
+        // Map simulated entity IDs to real game object IDs for native calls.
+        // ActionEffectHandler.Receive needs IDs the game engine can resolve.
+        var gameSourceId = GetGameEntityId(source);
+
+        var request = new ActionEffectRequest
+        {
+            SourceEntityId = gameSourceId,
+            SourcePosition = sourcePos,
+            ActionId = actionData.ActionId,
+            AnimationLock = actionData.AnimationLock,
+            SourceRotation = GetEntityRotation(source),
+            IsSourcePlayer = source.IsPlayer,
+            IsRanged = isRanged,
+            AttackStyle = actionData.DamageType == SimDamageType.Magical
+                ? NpcAttackStyle.Magic
+                : isRanged
+                    ? NpcAttackStyle.Ranged
+                    : NpcAttackStyle.Melee,
+            AnimationStartTimelineId = actionData.AnimationStartTimelineId,
+            AnimationEndTimelineId = actionData.AnimationEndTimelineId,
+            CastVfxPath = actionData.CastVfxPath,
+            StartVfxPath = actionData.StartVfxPath,
+            CasterVfxPaths = actionData.CasterVfxPaths,
+            TargetVfxPaths = actionData.TargetVfxPaths,
+        };
+
+        foreach (var hit in hits)
+        {
+            request.Targets.Add(new TargetEffect
+            {
+                TargetId = GetGameEntityId(hit.Target),
+                Damage = hit.DamageResult.Damage,
+                IsCritical = hit.DamageResult.IsCritical,
+                IsDirectHit = hit.DamageResult.IsDirectHit,
+                DamageType = hit.DamageResult.DamageType,
+            });
+        }
+
+        return request;
     }
 
     private void TriggerManualNpcHitFeedback(IReadOnlyList<AppliedActionDamage> hits)

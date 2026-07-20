@@ -707,6 +707,28 @@ public unsafe class AnimationController : IDisposable
     /// This triggers the game's full combat visual pipeline: caster animation, target hit
     /// reaction, VFX particles, damage flytext, and sound effects in one call.
     /// </summary>
+    /// <summary>
+    /// Spawn only an action's VFX (caster + target), with no animation or flytext. Used at the
+    /// strike of a melee skill whose swing already played as a windup pose — so the skill still
+    /// shows its VFX without triggering a second caster animation. Honours the
+    /// EnableCharacterVfx/EnableTargetVfx config internally.
+    /// </summary>
+    public void PlayActionVfx(ActionEffectRequest request)
+    {
+        if (request.Targets.Count == 0)
+            return;
+
+        try
+        {
+            if (config.EnableCharacterVfx || config.EnableTargetVfx)
+                SpawnActionVfx(request);
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Failed to play action VFX.");
+        }
+    }
+
     public void PlayActionEffect(ActionEffectRequest request)
     {
         if (request.Targets.Count == 0)

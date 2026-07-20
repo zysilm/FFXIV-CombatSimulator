@@ -709,19 +709,26 @@ public unsafe class NpcSpawner : IDisposable
 
     private Vector3 CalculateSpawnPosition()
     {
-        var player = objectTable[0];
+        // Use LocalPlayer (not objectTable[0], which can be null/stale during a reset teardown and
+        // would drop the spawn at world origin). Matches MainWindow.CalculateSpawnPosition.
+        var player = objectTable.LocalPlayer;
         if (player != null)
         {
             var playerPos = player.Position;
             var distance = MathF.Max(0f, config.SpawnDistance);
 
-            // Spawn exactly in front of the player using the character's real in-game facing (yaw),
-            // with no randomness. Forward convention matches PartyEngagePlanner: yaw R -> (sin R, 0, cos R).
+            // In front of the player using the character's real in-game facing (yaw). Forward
+            // convention matches PartyEngagePlanner: yaw R -> (sin R, 0, cos R). A small lateral/depth
+            // spread keeps a batch regenerated at once (reset) from stacking on a single point.
             if (config.SpawnInFront)
             {
+                const float spread = 2.0f;
                 var yaw = player.Rotation;
                 var fwd = new Vector3(MathF.Sin(yaw), 0, MathF.Cos(yaw));
-                return playerPos + fwd * distance;
+                var right = new Vector3(fwd.Z, 0, -fwd.X);
+                var lateral = (Random.Shared.NextSingle() - 0.5f) * 2f * spread;
+                var depth = (Random.Shared.NextSingle() - 0.5f) * spread;
+                return playerPos + fwd * (distance + depth) + right * lateral;
             }
 
             var angle = Random.Shared.NextSingle() * MathF.Tau;

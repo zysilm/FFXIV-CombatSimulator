@@ -40,11 +40,13 @@ public static unsafe class NpcWeaponClassifier
         new(601, 3, 8),
     };
 
-    private static readonly Dictionary<WeaponModelKey, NpcAttackStyle> itemCategoryCache = new();
-    // weapon model -> the ClassJob that equips it (Item.ClassJobUse). 0 = no/ambiguous job.
-    // Built in the same Item-sheet pass as itemCategoryCache. Lets a humanoid enemy wielding a
-    // real player weapon be resolved to a job, whose real action kit it can then cast.
-    private static readonly Dictionary<WeaponModelKey, uint> itemJobCache = new();
+    // Keyed by weapon MODEL SET id (the model's primary/set number, e.g. 2201 = katana), NOT the
+    // full (Id,Type,Variant) triple. A set belongs to exactly one weapon category/job, so any NPC
+    // weapon that reuses a player weapon set resolves — even if its exact variant has no Item row.
+    // (Truly bespoke NPC-only sets still don't resolve; that's the data-layer floor.)
+    private static readonly Dictionary<ushort, NpcAttackStyle> itemCategoryCache = new();
+    // weapon set id -> the ClassJob that equips it (Item.ClassJobUse). 0 = no/ambiguous job.
+    private static readonly Dictionary<ushort, uint> itemJobCache = new();
     private static IDataManager? dataManager;
     private static IPluginLog? pluginLog;
     private static bool cacheBuilt;
@@ -108,14 +110,12 @@ public static unsafe class NpcWeaponClassifier
     private static uint DetectJobFromWeapon(ushort id, ushort type, ushort variant)
     {
         EnsureItemCategoryCache();
-        return itemJobCache.TryGetValue(new WeaponModelKey(id, type, variant), out var job) ? job : 0u;
+        return itemJobCache.TryGetValue(id, out var job) ? job : 0u;
     }
 
     private static NpcAttackStyle DetectFromWeapon(ushort id, ushort type, ushort variant)
     {
-        var key = new WeaponModelKey(id, type, variant);
-
-        if (TryDetectFromItemCategory(key, out var itemStyle))
+        if (TryDetectFromItemCategory(id, out var itemStyle))
             return itemStyle;
 
         if (PhysicalRangedWeaponModels.Contains(new WeaponModelKey(id, type, variant)))
@@ -124,10 +124,10 @@ public static unsafe class NpcWeaponClassifier
         return NpcAttackStyle.Auto;
     }
 
-    private static bool TryDetectFromItemCategory(WeaponModelKey key, out NpcAttackStyle style)
+    private static bool TryDetectFromItemCategory(ushort setId, out NpcAttackStyle style)
     {
         EnsureItemCategoryCache();
-        if (!itemCategoryCache.TryGetValue(key, out style))
+        if (!itemCategoryCache.TryGetValue(setId, out style))
             return false;
 
         return style != NpcAttackStyle.Auto;
@@ -178,37 +178,37 @@ public static unsafe class NpcWeaponClassifier
 
     private static void AddModel(ulong packedModel, NpcAttackStyle style)
     {
-        var key = UnpackModel(packedModel);
-        if (key.Id == 0)
+        var setId = UnpackModel(packedModel).Id;
+        if (setId == 0)
             return;
 
-        if (itemCategoryCache.TryGetValue(key, out var existing))
+        if (itemCategoryCache.TryGetValue(setId, out var existing))
         {
             if (existing == style)
                 return;
 
-            itemCategoryCache[key] = NpcAttackStyle.Auto;
+            itemCategoryCache[setId] = NpcAttackStyle.Auto;
             return;
         }
 
-        itemCategoryCache[key] = style;
+        itemCategoryCache[setId] = style;
     }
 
     private static void AddModelJob(ulong packedModel, uint job)
     {
-        var key = UnpackModel(packedModel);
-        if (key.Id == 0)
+        var setId = UnpackModel(packedModel).Id;
+        if (setId == 0)
             return;
 
-        if (itemJobCache.TryGetValue(key, out var existing))
+        if (itemJobCache.TryGetValue(setId, out var existing))
         {
-            // Same model shared by two different jobs → ambiguous, mark unknown (0) and keep it there.
+            // Same weapon set shared by two different jobs → ambiguous, mark unknown (0) and keep it there.
             if (existing != job)
-                itemJobCache[key] = 0u;
+                itemJobCache[setId] = 0u;
             return;
         }
 
-        itemJobCache[key] = job;
+        itemJobCache[setId] = job;
     }
 
     private static WeaponModelKey UnpackModel(ulong packedModel)

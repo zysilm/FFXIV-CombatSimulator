@@ -102,11 +102,20 @@ public class JobActionKitProvider
             candidates.Add((data, lvl));
         }
 
-        var kit = candidates
+        var deduped = candidates
             .GroupBy(c => c.Data.ActionId)
             .Select(g => g.First())
             .OrderByDescending(c => c.Data.Potency)
             .ThenByDescending(c => c.Level)
+            .ToList();
+
+        // Prefer standard 2.5s-recast GCDs — the spammable core rotation — so the enemy keeps
+        // pressing attacks instead of leading with a long-cooldown burst weaponskill (Gnashing Fang
+        // 30s, Air Anchor 40s…). Longer-recast actions only fill remaining slots if a job has fewer
+        // than N GCDs (low level / small kit), so we never return empty.
+        const float gcdRecast = 2.55f;
+        var kit = deduped.Where(c => c.Data.RecastTime <= gcdRecast)
+            .Concat(deduped.Where(c => c.Data.RecastTime > gcdRecast))
             .Take(maxSkills)
             .Select((c, rank) => ToSkill(c.Data, rank))
             .ToList();
