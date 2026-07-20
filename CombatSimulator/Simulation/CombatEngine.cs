@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation;
-using CombatSimulator.Camera;
 using CombatSimulator.Companions;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
@@ -62,7 +61,6 @@ public class CombatEngine : IDisposable
     private readonly IClientState clientState;
     private readonly IPluginLog log;
     private readonly RagdollController ragdollController;
-    private readonly DeathCamController? deathCamController;
     /// <summary>Optional cinematic victory sequence (dev-only); set after construction. Null = none.</summary>
     public IVictorySequence? VictorySequence { private get; set; }
     private bool playerDeathTriggered;
@@ -134,12 +132,6 @@ public class CombatEngine : IDisposable
     /// </summary>
     public Action? BeforePlayerDeath { get; set; }
 
-    /// <summary>
-    /// When set and returns true, the Death Cam is not activated on player death — the Fighting
-    /// Camera handles the death transition itself so the two don't fight over the camera.
-    /// </summary>
-    public Func<bool>? SuppressDeathCam { get; set; }
-
     // Configuration (set from plugin config)
     public float DamageMultiplier { get; set; } = 1.0f;
     public bool EnableCriticalHits { get; set; } = true;
@@ -175,8 +167,7 @@ public class CombatEngine : IDisposable
         Configuration config,
         NpcSelector npcSelector,
         IClientState clientState,
-        IPluginLog log,
-        DeathCamController? deathCamController = null)
+        IPluginLog log)
     {
         this.actionDataProvider = actionDataProvider;
         this.damageCalculator = damageCalculator;
@@ -188,7 +179,6 @@ public class CombatEngine : IDisposable
         this.npcSelector = npcSelector;
         this.clientState = clientState;
         this.log = log;
-        this.deathCamController = deathCamController;
     }
 
     public void StartSimulation()
@@ -265,7 +255,6 @@ public class CombatEngine : IDisposable
         animationController.RemoveAllActiveVfx();
         movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
-        deathCamController?.Deactivate();
         RevertGlamourer();
         playerInitiatedCombat = false;
         LastPlayerDefeatedBy = string.Empty;
@@ -283,7 +272,6 @@ public class CombatEngine : IDisposable
         State.Reset();
         CombatLog.Clear();
         VictorySequence?.Stop();
-        deathCamController?.Deactivate();
 
         // Re-initialize player state
         InitializePlayerState();
@@ -359,7 +347,6 @@ public class CombatEngine : IDisposable
         animationController.RestorePlayerCombatVisualState();
         movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
-        deathCamController?.Deactivate();
         RevertGlamourer();
         ApplyResetGlamourer();
 
@@ -1315,8 +1302,6 @@ public class CombatEngine : IDisposable
                 animationController.PlayPlayerDeath(forceCombatDeath: true);
                 TriggerEnemyVictoryIfPartyDefeated();
                 ApplyGlamourer();
-                if (!(SuppressDeathCam?.Invoke() ?? false))
-                    deathCamController?.Activate();
 
                 // Activate ragdoll physics on player death + fire weapon-drop hook
                 {

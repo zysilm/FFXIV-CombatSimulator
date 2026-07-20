@@ -48,7 +48,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     private bool laneInitialized;
     private Vector3 smoothedCameraCenter;
     private float smoothedCameraDistance;
-    private bool suppressDeathCameraThisDeath;
     private bool engaged;
     private bool postDeathEngaged;
     private bool activeCameraWasSuppressing;
@@ -84,7 +83,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     public bool IsEngaged => engaged;
     public bool IsLaneActive => (engaged || postDeathEngaged) && laneInitialized;
     public Vector3 LaneAxis => laneAxis;
-    public bool ShouldSuppressDeathCamera => engaged || postDeathEngaged || suppressDeathCameraThisDeath;
     public SimulatedNpc? CurrentTarget => target;
 
     /// <summary>Weapon-contact attack path (FightingCombatController.OnAttackInput). Set by the
@@ -100,7 +98,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     public Func<Vector3?>? GetMonsterFollowCenter { get; set; }
 
     /// <summary>Ragdoll rigid-body world position by bone name (null while no ragdoll).
-    /// The death cameras track the corpse through THIS — the skeleton pose read at
+    /// Post-defeat camera modes track the corpse through THIS — the skeleton pose read at
     /// framework time still shows the animation pose at the death spot, so a corpse
     /// kicked around by the monster would otherwise leave the camera behind.</summary>
     public Func<string, Vector3?>? GetRagdollBonePosition { get; set; }
@@ -179,8 +177,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
 
         if (!combatEngine.IsActive && !postDeathEngaged)
         {
-            if (combatEngine.State.PlayerState.IsAlive)
-                suppressDeathCameraThisDeath = false;
             Disengage();
             return;
         }
@@ -385,7 +381,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
 
     public void HandlePlayerDeath()
     {
-        suppressDeathCameraThisDeath = engaged;
         FightingAi?.End();
         if (!engaged)
             return;
@@ -416,7 +411,6 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
         // Camera handoff snapshots must not leak into the next session.
         activeCameraWasSuppressing = false;
         hasLastSuppressedCamera = false;
-        suppressDeathCameraThisDeath = false;
         translateElapsed = 0f;
         koDirHInitialized = false;
         vaultActive = false;

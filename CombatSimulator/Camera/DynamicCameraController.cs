@@ -232,8 +232,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private int distanceLimitSaveDelay;
     private float pendingWheel;
 
-    // Pre-camera-update enforcement (via DeathCamController's update hook, wired by the
-    // plugin). Framework-time writes proved insufficient on BOTH locked axes: the game
+    // Pre-camera-update enforcement (via the shared game-camera update hook). Framework-time
+    // writes proved insufficient on BOTH locked axes: the game
     // re-applies controller/keyboard pitch and wheel zoom DURING its camera update, i.e.
     // after everything we wrote at framework time — the residual "micro-shake when nudging
     // pitch" was our value and the input's value alternating frame by frame. Forcing the
@@ -287,8 +287,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
             pendingWheel += wheel;
     }
 
-    /// <summary>Runs immediately before the game's camera update (hosted by
-    /// DeathCamController's hook, wired in the plugin). Forces the death shot's locked
+    /// <summary>Runs immediately before the game's camera update. Forces the death shot's locked
     /// axes so the update integrates OUR values — the last word, after every other
     /// framework-time writer and before the game's own input application.</summary>
     public unsafe void OnPreCameraUpdate(FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCamera)
@@ -326,11 +325,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// <summary>Camera write authority, from the coordinator. Only used for the status readout —
     /// arbitration itself is the coordinator's job.</summary>
     public Func<CameraOwner>? GetCurrentOwner { get; set; }
-
-    /// <summary>The dynamic death shot replaces the old Death Cam outright; running both
-    /// would mean two interpolators fighting over the same frame.</summary>
-    public bool ShouldSuppressDeathCamera =>
-        config.EnableDynamicCamera && config.DynCamDeathFraming && !config.EnableActiveCamera;
 
     public DynamicCameraController(
         Configuration config,
@@ -558,9 +552,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
         if (!alive)
         {
-            // Death framing switched off: hand the corpse back to whoever else wants it (the
-            // classic Death Cam, which we are no longer suppressing) instead of pointing the
-            // combat framing at a body.
+            // Death framing switched off: release every Dynamic Camera request and leave the
+            // game's current camera untouched instead of pointing combat framing at a body.
             if (!config.DynCamDeathFraming)
             {
                 coordinator.Release(CameraOwner.DynamicCam);
@@ -569,7 +562,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
                 RestoreMinDistance();
                 phase = Phase.Off;
                 hasCurState = false;
-                StatusText = "death framing off — Death Cam has it";
+                StatusText = "death framing off";
                 return;
             }
 
@@ -707,7 +700,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         // player last held (unless we have never recorded one, in which case we adopt the
         // current pitch as the starting memory). After that the player owns the axis, and we
         // just remember where they leave it — this is what survives the death shot's forced
-        // angle so reviving does not dump them at the death camera's tilt.
+        // angle so reviving does not dump them at the death-framing tilt.
         if (combatPitchRestorePending)
         {
             combatPitchRestorePending = false;

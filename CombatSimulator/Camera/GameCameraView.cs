@@ -10,7 +10,7 @@ namespace CombatSimulator.Camera;
 ///
 /// This exists because reconstructing the view from the orbit angles (DirH/DirV/FoV)
 /// requires knowing the game's conventions for them, and guessing those is how the first
-/// two versions of the dynamic camera went wrong (a flipped pitch put the death camera
+/// two versions of the dynamic camera went wrong (a flipped pitch put the death framing
 /// underground; the debug overlay's predicted projections landed nowhere near the game's
 /// own). Reading the matrices removes every guess: the lens comes straight off the
 /// projection matrix (tanHalf = 1/M11, 1/M22 for a standard perspective matrix), and the

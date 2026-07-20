@@ -11,10 +11,8 @@ namespace CombatSimulator.Camera;
 public enum CameraOwner
 {
     None = 0,
-    /// <summary>Death cam (independent CameraBase.Update hook); registered for arbitration only.</summary>
-    DeathCam = 10,
-    /// <summary>Dynamic Camera combat framing (over-the-shoulder). Outranks the death cam;
-    /// yields to every mode that owns player movement, including monster follow.</summary>
+    /// <summary>Dynamic Camera combat framing (over-the-shoulder). Yields to every mode
+    /// that owns player movement, including monster follow.</summary>
     DynamicCam = 15,
     /// <summary>Monster mode creature follow (orbit center only, user keeps rotation/zoom).</summary>
     MonsterFollow = 20,
@@ -87,7 +85,6 @@ public sealed unsafe class CameraModeCoordinator
         CameraOwner.DynamicDeath,
         CameraOwner.MonsterFollow,
         CameraOwner.DynamicCam,
-        CameraOwner.DeathCam,
     };
 
     private readonly System.Collections.Generic.Dictionary<CameraOwner, Slot> slots = new();

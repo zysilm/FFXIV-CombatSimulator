@@ -134,22 +134,6 @@ public class GuidedCollapseKneePowerLossSettings
 }
 
 [Serializable]
-public class DeathCamPreset
-{
-    public string Name { get; set; } = "";
-    public string BoneName { get; set; } = "n_hara";
-    public float DirH { get; set; } = 0;
-    public float DirV { get; set; } = 0;
-    public float Distance { get; set; } = 5.0f;
-    public float FoV { get; set; } = 0.78f;
-    public float HeightOffset { get; set; } = 0f;
-    public float SideOffset { get; set; } = 0f;
-    public float Tilt { get; set; } = 0f;
-    public bool DisableCollision { get; set; } = true;
-    public float TransitionDuration { get; set; } = 1.5f;
-}
-
-[Serializable]
 public class RecentNpcEntry
 {
     public uint BNpcBaseId { get; set; }
@@ -392,9 +376,6 @@ public partial class Configuration : IPluginConfiguration
     public bool ShowDefeatRevivePopup { get; set; } = true;
     public string FastCombatRecipeName { get; set; } = "";
     public int FastCombatLevel { get; set; } = 90;
-
-    // Death Cam toolbar
-    public bool ShowDeathCamToolbar { get; set; } = false;
 
     // Target Formation
     public bool EnableNpcTargetPlayer { get; set; } = true;
@@ -708,23 +689,6 @@ public partial class Configuration : IPluginConfiguration
     public bool ShowDeathNameAlias { get; set; } = false;
     public string DeathNameAlias { get; set; } = "";
 
-    // Death Cam (Experimental)
-    public bool EnableDeathCam { get; set; } = false;
-    public string DeathCamBoneName { get; set; } = "n_hara";
-    public float DeathCamTransitionDuration { get; set; } = 1.5f;
-    public float DeathCamAnchorDirH { get; set; } = 0;
-    public float DeathCamAnchorDirV { get; set; } = 0;
-    public float DeathCamAnchorDistance { get; set; } = 5.0f;
-    public float DeathCamFoV { get; set; } = 0.78f;
-    public float DeathCamHeightOffset { get; set; } = 0f;
-    public float DeathCamSideOffset { get; set; } = 0f;
-    public float DeathCamTilt { get; set; } = 0f;
-    public bool DeathCamDisableCollision { get; set; } = true;
-    public bool DeathCamAnchorSet { get; set; } = false;
-
-    // Death Cam Presets
-    public List<DeathCamPreset> DeathCamPresets { get; set; } = new();
-
     // Spawn Enemy defaults
     public int SpawnDirection { get; set; } = 0;       // 0=Front, 1=Behind, 2=Left, 3=Right
     public float SpawnDistance { get; set; } = 5.0f;    // yalms from player
@@ -872,7 +836,7 @@ public partial class Configuration : IPluginConfiguration
     // target is frozen (never the player), and the freeze is skipped/auto-released if it dies.
     public float HitstopMs { get; set; } = 81.5f;
     // Camera punch: a brief decaying screen shake on impact (yalms of camera offset). Small = weighty,
-    // large = nauseating. Layered on top of Active/Fight cam; suppressed during the death cam. 0 = off.
+    // large = nauseating. Layered on top of the final camera pose. 0 = off.
     public float HitCameraShake { get; set; } = 0.1f;
     public float HitCameraShakeDuration { get; set; } = 0.2f; // seconds the shake decays over
     // Spawn a spark VFX on the struck target (reuses HitVfxPath). Off by default: ActorVfxCreate on

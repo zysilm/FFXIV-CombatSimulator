@@ -52,7 +52,6 @@ public partial class MainWindow : IDisposable
     private readonly AnimationController animationController;
     private readonly RagdollController ragdollController;
     private readonly DismembermentController dismembermentController;
-    private readonly DeathCamController deathCamController;
     private readonly ActiveCameraController activeCameraController;
     private readonly DynamicCameraController dynamicCameraController;
     private readonly HookSafetyChecker hookSafetyChecker;
@@ -100,12 +99,6 @@ public partial class MainWindow : IDisposable
         GamepadButtons.None,
     };
     private static readonly Regex AvfxPathRegex = new(@"\u0000([a-zA-Z0-9\/_]*?)\.avfx", RegexOptions.Compiled);
-
-    // Death cam preset state
-    private string newPresetName = "";
-    private int selectedPresetIndex = -1;
-    private bool overwritePopupOpen = false;
-    private string overwriteTargetName = "";
 
     // Ragdoll bone profile state (Advanced page — per-bone configs)
     private string newBoneProfileName = "";
@@ -171,7 +164,6 @@ public partial class MainWindow : IDisposable
         AnimationController animationController,
         RagdollController ragdollController,
         DismembermentController dismembermentController,
-        DeathCamController deathCamController,
         ActiveCameraController activeCameraController,
         DynamicCameraController dynamicCameraController,
         HookSafetyChecker hookSafetyChecker,
@@ -193,7 +185,6 @@ public partial class MainWindow : IDisposable
         this.animationController = animationController;
         this.ragdollController = ragdollController;
         this.dismembermentController = dismembermentController;
-        this.deathCamController = deathCamController;
         this.activeCameraController = activeCameraController;
         this.dynamicCameraController = dynamicCameraController;
         this.hookSafetyChecker = hookSafetyChecker;
@@ -221,7 +212,6 @@ public partial class MainWindow : IDisposable
         "Party",
         "Effects",
         "Camera",
-        "Dynamic Cam",
         "Ragdoll",
         "Ragdoll (Adv)",
         "Virtual Enemies",
@@ -344,12 +334,9 @@ public partial class MainWindow : IDisposable
                 break;
             case 4: // Camera
                 DrawActiveCamSection();
-                DrawDeathCamSection();
-                break;
-            case 5: // Dynamic Cam
                 DrawDynamicCamSection();
                 break;
-            case 6: // Ragdoll
+            case 5: // Ragdoll
                 DrawRagdollSection();
                 DrawGuidedCollapseSection();
                 DrawNpcCollisionSection();
@@ -362,16 +349,16 @@ public partial class MainWindow : IDisposable
                                      "and leaves the per-bone table and your saved profiles alone: the Advanced page has its own reset for " +
                                      "the table, and the profiles are your work.");
                 break;
-            case 7: // Ragdoll (Advanced)
+            case 6: // Ragdoll (Advanced)
                 DrawRagdollAdvancedSection();
                 break;
-            case 8: // Virtual Enemies
+            case 7: // Virtual Enemies
                 DrawVirtualEnemiesTab();
                 break;
-            case 9: // Settings
+            case 8: // Settings
                 DrawGuiSettingsSection();
                 break;
-            case 10: // Diagnose
+            case 9: // Diagnose
                 DrawDiagnoseSection();
                 break;
             default:
@@ -1495,7 +1482,7 @@ public partial class MainWindow : IDisposable
                 config.ActionMode = false;
             config.Save();
         }
-        HelpMarker("1v1 side-view combat mode. The first player attack against an enemy locks the pair into a fighting-game lane and camera: 2D movement (forward/back + jump), weapon-contact hit detection, timed guard against telegraphs, a dedicated fighting AI, and KO/death cameras.");
+        HelpMarker("1v1 side-view combat mode. The first player attack against an enemy locks the pair into a fighting-game lane and camera: 2D movement (forward/back + jump), weapon-contact hit detection, timed guard against telegraphs, a dedicated fighting AI, and a KO camera.");
 
         if (!config.FightingMode)
             return;
@@ -2316,7 +2303,7 @@ public partial class MainWindow : IDisposable
                 SliderFloatSaved("Hitstop (ms)", () => config.HitstopMs, v => config.HitstopMs = v, 0f, 150f,
                     "Freeze the struck target's animation this long on impact -- the biggest single source of weight/impact feel. Keep short (40-90 ms) or it reads as lag. 0 = off. Only the target is frozen, never the player.");
                 SliderFloatSaved("Camera punch", () => config.HitCameraShake, v => config.HitCameraShake = v, 0f, 0.3f,
-                    "Brief screen-shake magnitude on impact (camera offset in yalms). Small = weighty, large = nauseating. Layered over Active/Fight cam; suppressed during the death cam. 0 = off.");
+                    "Brief screen-shake magnitude on impact (camera offset in yalms). Small = weighty, large = nauseating. Layered over the final camera pose. 0 = off.");
                 SliderFloatSaved("Punch duration", () => config.HitCameraShakeDuration, v => config.HitCameraShakeDuration = v, 0.05f, 0.5f,
                     "Seconds the camera punch decays over.");
                 var spark = config.EnableHitSparkVfx;
@@ -3142,13 +3129,13 @@ public partial class MainWindow : IDisposable
             }
             HelpMarker("Show a small window on simulated player defeat with a Revive button. Revive restores only the player and keeps the fight running.");
 
-            var showDcToolbar = config.ShowDeathCamToolbar;
-            if (ImGui.Checkbox("Show Death Cam Toolbar", ref showDcToolbar))
+            var showDynToolbar = config.ShowDynamicCamToolbar;
+            if (ImGui.Checkbox("Show Dynamic Cam Toolbar", ref showDynToolbar))
             {
-                config.ShowDeathCamToolbar = showDcToolbar;
+                config.ShowDynamicCamToolbar = showDynToolbar;
                 config.Save();
             }
-            HelpMarker("Show a floating toolbar to quickly switch between death cam presets.");
+            HelpMarker("Show a floating toolbar to tune dynamic camera framing while playing.");
 
             var showAcToolbar = config.ShowActiveCamToolbar;
             if (ImGui.Checkbox("Show Active Cam Toolbar", ref showAcToolbar))
@@ -3157,14 +3144,6 @@ public partial class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Show a floating toolbar to quickly adjust active camera bone, zoom, and offsets.");
-
-            var showDynToolbar = config.ShowDynamicCamToolbar;
-            if (ImGui.Checkbox("Show Dynamic Cam Toolbar", ref showDynToolbar))
-            {
-                config.ShowDynamicCamToolbar = showDynToolbar;
-                config.Save();
-            }
-            HelpMarker("Show a floating toolbar to tune dynamic camera framing (body size, shoulder offset, death shot) while playing.");
 
             if (ImGui.TreeNode("Player HP Bar Labels & Offsets"))
             {
@@ -3249,340 +3228,6 @@ public partial class MainWindow : IDisposable
                 ImGui.TreePop();
             }
         }
-    }
-
-    private void DrawDeathCamSection()
-    {
-        if (ImGui.CollapsingHeader("Death Cam (Experimental)"))
-        {
-            var enabled = config.EnableDeathCam;
-            if (ImGui.Checkbox("Enable Death Cam", ref enabled))
-            {
-                config.EnableDeathCam = enabled;
-                config.Save();
-            }
-            HelpMarker("On player death, smoothly transition the camera orbit center to a bone. Rotation and zoom remain under normal camera control.");
-
-            if (!enabled)
-                return;
-
-            // --- Presets ---
-            ImGui.Separator();
-            ImGui.Text("Presets");
-
-            var presetNames = new string[config.DeathCamPresets.Count];
-            for (int i = 0; i < config.DeathCamPresets.Count; i++)
-                presetNames[i] = config.DeathCamPresets[i].Name;
-
-            var hasSelection = selectedPresetIndex >= 0 && selectedPresetIndex < config.DeathCamPresets.Count;
-
-            if (ImGui.BeginListBox("##PresetSelect", new Vector2(250, ImGui.GetTextLineHeightWithSpacing() * 8 + ImGui.GetStyle().FramePadding.Y * 2)))
-            {
-                for (int i = 0; i < presetNames.Length; i++)
-                {
-                    bool isSelected = selectedPresetIndex == i;
-                    if (ImGui.Selectable(presetNames[i], isSelected))
-                        selectedPresetIndex = i;
-                    if (isSelected)
-                        ImGui.SetItemDefaultFocus();
-                }
-                ImGui.EndListBox();
-            }
-
-            ImGui.SameLine();
-            if (ImGui.Button("Load") && hasSelection)
-            {
-                LoadPreset(config.DeathCamPresets[selectedPresetIndex]);
-            }
-
-            ImGui.SameLine();
-            if (ImGui.Button("Overwrite") && hasSelection)
-            {
-                overwriteTargetName = config.DeathCamPresets[selectedPresetIndex].Name;
-                overwritePopupOpen = true;
-                ImGui.OpenPopup("Confirm Overwrite##PresetOverwrite");
-            }
-
-            ImGui.SameLine();
-            var io = ImGui.GetIO();
-            bool ctrlShiftHeld = io.KeyCtrl && io.KeyShift;
-            if (!ctrlShiftHeld)
-            {
-                ImGui.BeginDisabled();
-                ImGui.Button("Delete");
-                ImGui.EndDisabled();
-                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                    ImGui.SetTooltip("Hold Ctrl+Shift to enable delete.");
-            }
-            else if (ImGui.Button("Delete") && hasSelection)
-            {
-                config.DeathCamPresets.RemoveAt(selectedPresetIndex);
-                selectedPresetIndex = Math.Min(selectedPresetIndex, config.DeathCamPresets.Count - 1);
-                config.Save();
-            }
-
-            ImGui.SetNextItemWidth(250);
-            ImGui.InputText("##PresetName", ref newPresetName, 64);
-            ImGui.SameLine();
-            if (ImGui.Button("Save Preset") && newPresetName.Length > 0)
-            {
-                var existingIdx = config.DeathCamPresets.FindIndex(p =>
-                    p.Name.Equals(newPresetName, StringComparison.OrdinalIgnoreCase));
-                if (existingIdx >= 0)
-                {
-                    overwriteTargetName = newPresetName;
-                    overwritePopupOpen = true;
-                    ImGui.OpenPopup("Confirm Overwrite##PresetOverwrite");
-                }
-                else
-                {
-                    SavePreset(newPresetName);
-                    newPresetName = "";
-                }
-            }
-
-            // Overwrite confirmation popup
-            if (ImGui.BeginPopupModal("Confirm Overwrite##PresetOverwrite", ref overwritePopupOpen,
-                    ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoMove))
-            {
-                ImGui.Text($"Overwrite preset \"{overwriteTargetName}\"?");
-                ImGui.Spacing();
-
-                if (ImGui.Button("Yes", new Vector2(80, 0)))
-                {
-                    SavePreset(overwriteTargetName);
-                    newPresetName = "";
-                    overwritePopupOpen = false;
-                    ImGui.CloseCurrentPopup();
-                }
-                ImGui.SameLine();
-                if (ImGui.Button("No", new Vector2(80, 0)))
-                {
-                    overwritePopupOpen = false;
-                    ImGui.CloseCurrentPopup();
-                }
-                ImGui.EndPopup();
-            }
-
-            // --- Settings ---
-            ImGui.Separator();
-
-            // Bone selector
-            var boneNames = new string[DeathCamController.CenterBones.Length];
-            int currentBoneIdx = 0;
-            for (int i = 0; i < DeathCamController.CenterBones.Length; i++)
-            {
-                boneNames[i] = DeathCamController.CenterBones[i].Label;
-                if (DeathCamController.CenterBones[i].BoneName == config.DeathCamBoneName)
-                    currentBoneIdx = i;
-            }
-
-            if (ImGui.Combo("Center Bone", ref currentBoneIdx, boneNames, boneNames.Length))
-            {
-                config.DeathCamBoneName = DeathCamController.CenterBones[currentBoneIdx].BoneName;
-                config.Save();
-            }
-            HelpMarker("The bone the camera orbits around. Waist is recommended for stable tracking.");
-
-            // Disable Camera Collision
-            var disableCollision = config.DeathCamDisableCollision;
-            if (ImGui.Checkbox("Disable Camera Collision", ref disableCollision))
-            {
-                config.DeathCamDisableCollision = disableCollision;
-                config.Save();
-            }
-            HelpMarker("Camera ignores wall/object collision during death cam.");
-
-            // Transition duration
-            var duration = config.DeathCamTransitionDuration;
-            if (ImGui.SliderFloat("Transition Duration", ref duration, 0.5f, 5.0f, "%.1f sec"))
-            {
-                config.DeathCamTransitionDuration = duration;
-                config.Save();
-            }
-            HelpMarker("How long the camera takes to interpolate to the selected bone on death.");
-
-            // --- Actions ---
-            ImGui.Separator();
-
-            if (ImGui.Button("Set Preset Orbit"))
-            {
-                if (deathCamController.SetAnchor())
-                    chatGui.Print("[CombatSim] Death cam preset orbit set.");
-                else
-                    chatGui.PrintError("[CombatSim] Failed to set preset orbit. Make sure you have a character loaded.");
-            }
-            HelpMarker("Capture the current camera angle and distance as an optional preset starting orbit.");
-
-            ImGui.SameLine();
-            var preview = deathCamController.IsPreviewActive;
-            var previewLabel = preview ? "Preview: ON" : "Preview: OFF";
-            if (preview)
-                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.6f, 0.2f, 1f));
-            if (ImGui.Button(previewLabel))
-            {
-                deathCamController.SetPreview(!preview);
-            }
-            if (preview)
-                ImGui.PopStyleColor();
-            HelpMarker("Toggle live preview. The camera tracks the selected bone while you keep normal rotation and zoom control.");
-
-            ImGui.SameLine();
-            if (config.DeathCamAnchorSet && ImGui.SmallButton("Clear Preset Orbit"))
-            {
-                config.DeathCamAnchorSet = false;
-                config.Save();
-            }
-
-            // Anchor status
-            if (config.DeathCamAnchorSet)
-            {
-                ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.4f, 1.0f), "Preset orbit is set.");
-            }
-            else
-            {
-                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "No preset orbit set. Death cam still tracks the selected bone.");
-            }
-
-            // Show current state
-            if (deathCamController.State != DeathCamState.Inactive)
-            {
-                ImGui.TextColored(new Vector4(0.5f, 0.8f, 1.0f, 1.0f), $"State: {deathCamController.State}");
-            }
-        }
-
-        // Draw camera control window when preview is active
-        if (deathCamController.IsPreviewActive)
-            DrawCameraControlWindow();
-    }
-
-    private void SavePreset(string name)
-    {
-        // Update existing preset with same name, or add new
-        var existing = config.DeathCamPresets.FindIndex(p => p.Name == name);
-        var preset = new DeathCamPreset
-        {
-            Name = name,
-            BoneName = config.DeathCamBoneName,
-            DirH = config.DeathCamAnchorDirH,
-            DirV = config.DeathCamAnchorDirV,
-            Distance = config.DeathCamAnchorDistance,
-            FoV = config.DeathCamFoV,
-            HeightOffset = config.DeathCamHeightOffset,
-            SideOffset = config.DeathCamSideOffset,
-            Tilt = config.DeathCamTilt,
-            DisableCollision = config.DeathCamDisableCollision,
-            TransitionDuration = config.DeathCamTransitionDuration,
-        };
-        if (existing >= 0)
-            config.DeathCamPresets[existing] = preset;
-        else
-            config.DeathCamPresets.Add(preset);
-        config.DeathCamAnchorSet = true;
-        config.Save();
-        chatGui.Print($"[CombatSim] Preset '{name}' saved.");
-    }
-
-    private void LoadPreset(DeathCamPreset preset)
-    {
-        config.DeathCamBoneName = preset.BoneName;
-        config.DeathCamAnchorDirH = preset.DirH;
-        config.DeathCamAnchorDirV = preset.DirV;
-        config.DeathCamAnchorDistance = preset.Distance;
-        config.DeathCamFoV = preset.FoV;
-        config.DeathCamHeightOffset = preset.HeightOffset;
-        config.DeathCamSideOffset = preset.SideOffset;
-        config.DeathCamTilt = preset.Tilt;
-        config.DeathCamDisableCollision = preset.DisableCollision;
-        config.DeathCamTransitionDuration = preset.TransitionDuration;
-        config.DeathCamAnchorSet = true;
-        config.Save();
-        if (deathCamController.IsPreviewActive || deathCamController.State != DeathCamState.Inactive)
-            deathCamController.ApplyAnchorToCamera();
-        chatGui.Print($"[CombatSim] Preset '{preset.Name}' loaded.");
-    }
-
-    private void DrawCameraControlWindow()
-    {
-        ImGui.SetNextWindowSize(new Vector2(320, 0), ImGuiCond.FirstUseEver);
-        if (!ImGui.Begin("Death Cam Controls##CamCtrl", ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoFocusOnAppearing))
-        {
-            ImGui.End();
-            return;
-        }
-
-        bool changed = false;
-
-        // --- Preset Orbit ---
-        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Preset Orbit");
-        ImGui.Separator();
-
-        if (ImGui.Button("Capture Current Orbit"))
-        {
-            if (!deathCamController.SetAnchor())
-                chatGui.PrintError("[CombatSim] Failed to capture death cam orbit.");
-        }
-        ImGui.SameLine();
-        if (!config.DeathCamAnchorSet)
-            ImGui.BeginDisabled();
-        if (ImGui.Button("Apply Preset Orbit"))
-            deathCamController.ApplyAnchorToCamera();
-        if (!config.DeathCamAnchorSet)
-            ImGui.EndDisabled();
-
-        ImGui.Spacing();
-
-        // --- Lens ---
-        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Lens");
-        ImGui.Separator();
-
-        var fov = config.DeathCamFoV;
-        if (ImGui.DragFloat("Field of View", ref fov, 0.005f, 0.1f, 2.0f, "%.2f rad"))
-        { config.DeathCamFoV = fov; changed = true; }
-
-        var tilt = config.DeathCamTilt;
-        if (ImGui.DragFloat("Tilt (Roll)", ref tilt, 0.005f, -MathF.PI, MathF.PI, "%.2f rad"))
-        { config.DeathCamTilt = tilt; changed = true; }
-
-        ImGui.Spacing();
-
-        // --- Offset ---
-        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Offset");
-        ImGui.Separator();
-
-        var heightOffset = config.DeathCamHeightOffset;
-        if (ImGui.DragFloat("Height", ref heightOffset, 0.02f, -5.0f, 10.0f, "%.2f"))
-        { config.DeathCamHeightOffset = heightOffset; changed = true; }
-
-        var sideOffset = config.DeathCamSideOffset;
-        if (ImGui.DragFloat("Side", ref sideOffset, 0.02f, -5.0f, 5.0f, "%.2f"))
-        { config.DeathCamSideOffset = sideOffset; changed = true; }
-
-        ImGui.Spacing();
-
-        // --- Quick Actions ---
-        if (ImGui.Button("Reset All to Default"))
-        {
-            config.DeathCamAnchorDirH = 0;
-            config.DeathCamAnchorDirV = 0;
-            config.DeathCamAnchorDistance = 5.0f;
-            config.DeathCamFoV = 0.78f;
-            config.DeathCamTilt = 0f;
-            config.DeathCamHeightOffset = 0f;
-            config.DeathCamSideOffset = 0f;
-            changed = true;
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("Close Preview"))
-        {
-            deathCamController.SetPreview(false);
-        }
-
-        if (changed)
-            config.Save();
-
-        ImGui.End();
     }
 
     private void DrawActiveCamSection()
@@ -4988,69 +4633,6 @@ public partial class MainWindow : IDisposable
             combatEngine.StartSimulation();
             chatGui.Print("[CombatSim] Combat simulation rebooted.");
         }
-
-        ImGui.End();
-    }
-
-    public void DrawDeathCamToolbar()
-    {
-        using var toolbarStyle = PushCompactToolbarStyle();
-        var presets = config.DeathCamPresets;
-        if (presets.Count == 0)
-        {
-            ImGui.SetNextWindowSize(new Vector2(200, 0), ImGuiCond.FirstUseEver);
-            if (ImGui.Begin("Death Cam Presets", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
-            {
-                RestoreToolbarFontScale();
-                ImGui.TextDisabled("No presets saved.");
-            }
-            ImGui.End();
-            return;
-        }
-
-        if (selectedPresetIndex < 0 || selectedPresetIndex >= presets.Count)
-            selectedPresetIndex = 0;
-
-        ImGui.SetNextWindowSize(new Vector2(280, 0), ImGuiCond.FirstUseEver);
-        if (!ImGui.Begin("Death Cam Presets", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
-        {
-            ImGui.End();
-            return;
-        }
-        RestoreToolbarFontScale();
-
-        var arrowSize = new Vector2(28, 0);
-
-        var atStart = selectedPresetIndex <= 0;
-        if (atStart) ImGui.BeginDisabled();
-        if (ImGui.Button("<", arrowSize))
-        {
-            selectedPresetIndex--;
-            LoadPreset(presets[selectedPresetIndex]);
-        }
-        if (atStart) ImGui.EndDisabled();
-
-        ImGui.SameLine();
-
-        var presetName = presets[selectedPresetIndex].Name;
-        var avail = ImGui.GetContentRegionAvail().X - arrowSize.X - ImGui.GetStyle().ItemSpacing.X;
-        var textSize = ImGui.CalcTextSize(presetName).X;
-        var pad = (avail - textSize) * 0.5f;
-        if (pad > 0) ImGui.SetCursorPosX(ImGui.GetCursorPosX() + pad);
-        ImGui.AlignTextToFramePadding();
-        ImGui.Text(presetName);
-
-        ImGui.SameLine();
-        if (pad > 0) ImGui.SetCursorPosX(ImGui.GetContentRegionMax().X - arrowSize.X);
-
-        var atEnd = selectedPresetIndex >= presets.Count - 1;
-        if (atEnd) ImGui.BeginDisabled();
-        if (ImGui.Button(">", arrowSize))
-        {
-            selectedPresetIndex++;
-            LoadPreset(presets[selectedPresetIndex]);
-        }
-        if (atEnd) ImGui.EndDisabled();
 
         ImGui.End();
     }

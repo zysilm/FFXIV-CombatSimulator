@@ -59,7 +59,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly MovementBlockHook movementBlockHook;
     private readonly UseActionHook useActionHook;
     private readonly CameraModeCoordinator cameraModeCoordinator;
-    private readonly DeathCamController deathCamController;
+    private readonly GameCameraUpdateHook gameCameraUpdateHook;
     private readonly ActiveCameraController activeCameraController;
     private readonly DynamicCameraController dynamicCameraController;
     private readonly FightingModeController fightingModeController;
@@ -195,18 +195,16 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         };
         armorDetachmentController = new Dev.KoStripController(config, glamourerIpc, dismembermentController, log);
         cameraModeCoordinator = new CameraModeCoordinator(config, log);
-        deathCamController = new DeathCamController(gameInterop, clientState, sigScanner, config, log);
+        gameCameraUpdateHook = new GameCameraUpdateHook(gameInterop, log);
         activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
         // Single camera write authority: modes submit requests, the coordinator applies
-        // the winner each frame; the two hook hosts consume its resolution.
-        deathCamController.Coordinator = cameraModeCoordinator;
-        deathCamController.GetCurrentOwner = () => cameraModeCoordinator.CurrentOwner;
+        // the winner each frame; the orbit hook consumes its resolution.
         activeCameraController.CoordinatorOrbitCenter = () => cameraModeCoordinator.CurrentOrbitCenter;
         activeCameraController.GetCurrentOwner = () => cameraModeCoordinator.CurrentOwner;
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             glamourerIpc, movementBlockHook, ragdollController,
-            config, npcSelector, clientState, log, deathCamController);
+            config, npcSelector, clientState, log);
         // Action Mode wiring. Seams: ActionComboSink (player input), CombatModeRouter
         // (enemy attack executor), TelegraphSystem (windup→hitbox). All gate on
         // config.ActionMode; off ⇒ behavior-equivalent simulation paths.
@@ -222,9 +220,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         var playerHitboxResolver = new CombatSimulator.ActionCombat.PlayerHitboxResolver(combatEngine, npcSelector, config);
         hitFeedbackController = new CombatSimulator.ActionCombat.HitFeedbackController(
             config, npcSelector.GetSelectedNpc, animationController, log);
-        deathCamController.HitShakeProvider = () => hitFeedbackController.CurrentShakeOffset;
-        // A corpse landing hard shakes the view like any other impact. The death cam is watching the
-        // body at exactly that moment, so this is where it pays.
+        gameCameraUpdateHook.HitShakeProvider = () => hitFeedbackController.CurrentShakeOffset;
+        // A corpse landing hard shakes the view like any other impact.
         ragdollController.HardLanding += hitFeedbackController.ShakeForHardLanding;
         actionModeController = new CombatSimulator.ActionCombat.ActionModeController(
             config, actionComboSink, playerHitboxResolver, playerGuardController,
@@ -286,11 +283,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             config, cameraModeCoordinator, combatEngine, npcSelector, playerTargetController,
             boneTransformService, ragdollController, sigScanner, log);
         dynamicCameraController.GetCurrentOwner = () => cameraModeCoordinator.CurrentOwner;
-        // The death shot forces its locked pitch/zoom the instant before the game's camera
-        // update, using DeathCamController's update hook as the host (it already owns that
-        // hook). This is what makes controller/keyboard pitch and wheel input actually stop
-        // moving the death camera — framework-time writes were re-overridden by the update.
-        deathCamController.PreCameraUpdate = dynamicCameraController.OnPreCameraUpdate;
+        // The death shot forces its locked pitch/zoom inside the game's camera update.
+        // Framework-time writes are otherwise overwritten by controller, keyboard and wheel input.
+        gameCameraUpdateHook.PreCameraUpdate = dynamicCameraController.OnPreCameraUpdate;
 
         mapEnemyController = new MapEnemyController(
             objectTable,
@@ -306,7 +301,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             config, combatEngine, npcSelector, mapEnemyController, movementBlockHook,
             cameraModeCoordinator, boneTransformService,
             addr => devExperimental.ControlsNpc(addr), log);
-        // Death cameras must track the corpse through the ragdoll bodies — the skeleton
+        // Post-defeat camera modes must track the corpse through the ragdoll bodies — the skeleton
         // pose read at framework time stays at the death spot even after kicks.
         fightingModeController.GetRagdollBonePosition = bone => ragdollController.GetBodyWorldPosition(bone);
         devExperimental.SetFightingModeLane(fightingModeController);
@@ -330,9 +325,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 combatEngine.LastPlayerKillerAddress, combatEngine.LastPlayerKillerEntityId);
             devExperimental.BeforePlayerDeath();
         };
-        combatEngine.SuppressDeathCam = () =>
-            fightingModeController.ShouldSuppressDeathCamera ||
-            dynamicCameraController.ShouldSuppressDeathCamera;
         companionManager.IsSourceEnemy = entityId => npcSelector.GetSelectedNpc(entityId) != null;
 
         companionManager.OnCompanionSpawnComplete = companion =>
@@ -452,7 +444,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         activeCameraController.SetActive(config.EnableActiveCamera);
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, deathCamController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, clientState, dataManager, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, clientState, dataManager, chatGui, log);
         armorDetachmentController.AllowOnHitDetach = () => mainWindow.DevExperimentalUnlocked;
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
@@ -533,8 +525,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         dismembermentController.Dispose();
         boneTransformService.Dispose();
         dynamicCameraController.Dispose();
+        gameCameraUpdateHook.Dispose();
         cameraModeCoordinator.Reset();
-        deathCamController.Dispose();
         activeCameraController.Dispose();
         animationController.Dispose();
         npcSelector.Dispose();
@@ -637,14 +629,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         if (config.ShowFastCombatToolbar)
             mainWindow.DrawFastCombatToolbar();
 
-        if (config.ShowDeathCamToolbar)
-            mainWindow.DrawDeathCamToolbar();
+        if (config.ShowDynamicCamToolbar)
+            mainWindow.DrawDynamicCamToolbar();
 
         if (config.ShowActiveCamToolbar)
             mainWindow.DrawActiveCamToolbar();
-
-        if (config.ShowDynamicCamToolbar)
-            mainWindow.DrawDynamicCamToolbar();
 
         if (config.ShowArmorDetachmentControls)
             mainWindow.DrawArmorDetachmentControls(armorDetachmentController);
@@ -757,7 +746,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // the orbit hook host reflects whether any mode supplies an orbit center.
             fightingModeController.Tick(deltaTime);
             dynamicCameraController.Tick(deltaTime);
-            deathCamController.Tick(deltaTime);
+            gameCameraUpdateHook.Tick();
             cameraModeCoordinator.Apply(deltaTime);
             activeCameraController.SetModeActive(cameraModeCoordinator.WantsOrbitHook);
             activeCameraController.Tick(deltaTime);

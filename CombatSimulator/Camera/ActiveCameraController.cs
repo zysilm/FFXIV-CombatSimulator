@@ -12,12 +12,20 @@ namespace CombatSimulator.Camera;
 /// <summary>
 /// Active Camera: hooks getCameraPosition (vtable 15) to replace the camera's
 /// orbit center with a bone world position. The user retains full camera rotation
-/// and zoom control. Completely independent of DeathCamController.
+/// and zoom control.
 /// </summary>
 public unsafe class ActiveCameraController : IDisposable
 {
-    // Same bone list as DeathCamController for consistency
-    public static readonly (string Label, string BoneName)[] CenterBones = DeathCamController.CenterBones;
+    public static readonly (string Label, string BoneName)[] CenterBones =
+    {
+        ("Waist (n_hara)", "n_hara"),
+        ("Hips (j_kosi)", "j_kosi"),
+        ("Lower Spine (j_sebo_a)", "j_sebo_a"),
+        ("Mid Spine (j_sebo_b)", "j_sebo_b"),
+        ("Upper Spine (j_sebo_c)", "j_sebo_c"),
+        ("Neck (j_kubi)", "j_kubi"),
+        ("Head (j_kao)", "j_kao"),
+    };
 
     private readonly IClientState clientState;
     private readonly IGameInteropProvider gameInterop;
@@ -31,7 +39,7 @@ public unsafe class ActiveCameraController : IDisposable
     // Hypostasis-known signature for Camera::SetCameraLookAt — getCameraPosition lives at vtable[setLookAtIdx + 1]
     private const string SetCameraLookAtSig = "40 53 48 83 EC 30 44 8B 89 ?? ?? ?? ?? 48 8B DA";
 
-    // Camera collision patch (same mechanism as DeathCamController, independent instance)
+    // Camera collision patch (same mechanism used by the other camera modes)
     private nint collisionPatchAddress;
     private byte[]? collisionOriginalBytes;
     private static readonly byte[] CollisionPatchBytes = { 0x30, 0xC0, 0x90, 0x90, 0x90 };

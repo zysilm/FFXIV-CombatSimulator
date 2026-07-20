@@ -1,9 +1,8 @@
 namespace CombatSimulator;
 
 /// <summary>
-/// Dynamic Camera settings. Kept in their own partial (and their own GUI page) so the
-/// three camera features — Active Cam, Death Cam, Dynamic Cam — stay independently
-/// tunable instead of collapsing into one wall of sliders.
+/// Dynamic Camera settings. Kept in their own partial so its combat and death framing
+/// options remain separate from the always-on Active Camera controls.
 /// </summary>
 public partial class Configuration
 {

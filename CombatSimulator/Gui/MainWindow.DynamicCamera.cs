@@ -6,9 +6,7 @@ using Dalamud.Bindings.ImGui;
 namespace CombatSimulator.Gui;
 
 /// <summary>
-/// The Dynamic Camera page. It gets its own sidebar tab rather than a third collapsing
-/// header under Camera: it has more knobs than Active Cam and Death Cam combined, and
-/// burying them under the two features it partly replaces makes all three harder to tune.
+/// Dynamic Camera controls, shown in the Camera page after Active Camera.
 /// </summary>
 public partial class MainWindow
 {
@@ -26,6 +24,9 @@ public partial class MainWindow
 
     public void DrawDynamicCamSection()
     {
+        if (!ImGui.CollapsingHeader("Dynamic Camera", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
         ImGui.TextWrapped(
             "A directed camera for the simulation: the character is framed off to one side during " +
             "the fight, and when they go down the shot pulls back to hold both the body and whoever " +
@@ -120,7 +121,7 @@ public partial class MainWindow
             config.Save();
         }
         HelpMarker("Combat only. Pulls the camera back far enough to keep the complete volume of visible engaged enemies in frame.\n\n" +
-                   "Turning it off smoothly returns to the normal combat-framing distance; it never affects the death camera.");
+                   "Turning it off smoothly returns to the normal combat-framing distance; it never affects death framing.");
 
         var shoulder = config.DynCamShoulderScreenFrac;
         if (ImGui.SliderFloat("Shoulder offset##dyncam", ref shoulder, 0f, 0.4f, "%.2f"))
@@ -222,13 +223,7 @@ public partial class MainWindow
         }
         HelpMarker("When you go down, the camera drops to the ground beside your body — like a photographer lying next to it — " +
                    "and backs away only as far as it must to also hold the enemy that killed you, head to toe.\n\n" +
-                   "This replaces the old Death Cam while it is on — running both would mean two camera moves fighting each other.");
-
-        if (config.DynCamDeathFraming && config.EnableDeathCam)
-        {
-            ImGui.TextColored(new Vector4(0.65f, 0.65f, 0.65f, 1f),
-                "Death Cam (Camera page) is suppressed while this is on.");
-        }
+                   "Horizontal orbit remains under your control throughout the shot.");
 
         if (!config.DynCamDeathFraming)
         {
