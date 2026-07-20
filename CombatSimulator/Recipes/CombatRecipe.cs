@@ -27,7 +27,6 @@ public sealed class CombatRecipeEnemyGroup
     public string Description { get; set; } = string.Empty;
     public int Count { get; set; }
     public float HpMultiplier { get; set; } = 1.0f;
-    public NpcBehaviorType Behavior { get; set; } = NpcBehaviorType.BasicMelee;
 }
 
 public sealed class CombatRecipeMapEnemyGroup
@@ -39,7 +38,6 @@ public sealed class CombatRecipeMapEnemyGroup
     public float SenseRange { get; set; } = 10.0f;
     public int Level { get; set; } = 90;
     public float HpMultiplier { get; set; } = 1.0f;
-    public NpcBehaviorType Behavior { get; set; } = NpcBehaviorType.BasicMelee;
 }
 
 public enum CompanionRecipeType

@@ -81,7 +81,6 @@ public partial class MainWindow : IDisposable
     private string enemyWarningVfxFilter = "";
     private string hitVfxFilter = "";
 
-    private static readonly string[] BehaviorNames = { "Training Dummy", "Basic Melee", "Basic Ranged", "Boss" };
     private static readonly string[] SoftTissueScopeNames = { "Standard (mod bones)", "All bones" };
     private static readonly string[] ActionGuardKeyLabels = { "Shift", "Ctrl", "Alt", "None" };
     private static readonly int[] ActionGuardKeyValues = { 16, 17, 18, 0 };
@@ -799,7 +798,6 @@ public partial class MainWindow : IDisposable
                     ENpcBaseId = entry.Type is NpcCatalogType.ENpc or NpcCatalogType.Human ? entry.Id : 0,
                     Level = Math.Clamp(config.FastCombatLevel, 1, 300),
                     HpMultiplier = Math.Max(0.0001f, group.HpMultiplier),
-                    BehaviorType = group.Behavior,
                 });
                 queuedEnemies++;
             }
@@ -825,7 +823,6 @@ public partial class MainWindow : IDisposable
                 SenseRange = Math.Max(0.1f, group.SenseRange),
                 Level = Math.Clamp(config.FastCombatLevel, 1, 300),
                 HpMultiplier = Math.Max(0.0001f, group.HpMultiplier),
-                BehaviorType = group.Behavior,
             };
         }
 
@@ -1109,12 +1106,14 @@ public partial class MainWindow : IDisposable
             config.Save();
         }
 
-        var behaviorType = config.DefaultNpcBehaviorType;
-        if (ImGui.Combo("Behavior", ref behaviorType, BehaviorNames, BehaviorNames.Length))
+        var maxSkills = config.EnemyMaxRealSkills;
+        if (ImGui.SliderInt("Humanoid skills", ref maxSkills, 0, 8))
         {
-            config.DefaultNpcBehaviorType = behaviorType;
+            config.EnemyMaxRealSkills = Math.Clamp(maxSkills, 0, 8);
             config.Save();
         }
+        HelpMarker("Humanoid enemies cast their real job's strongest N damage skills (by weapon → job). " +
+                   "Monsters and NPC-only weapons auto-attack only. 0 = everyone auto-attacks.");
 
         ImGui.Separator();
 
@@ -1219,15 +1218,6 @@ public partial class MainWindow : IDisposable
             ? "Enemies spawn in front of your character (real in-game facing)."
             : "Spawn direction is randomized around your character.");
 
-        // Behavior
-        var behaviorIdx = config.DefaultNpcBehaviorType;
-        ImGui.SetNextItemWidth(-1);
-        if (ImGui.Combo("Behavior##spawn", ref behaviorIdx, BehaviorNames, BehaviorNames.Length))
-        {
-            config.DefaultNpcBehaviorType = behaviorIdx;
-            config.Save();
-        }
-
         // Level + HP multiplier (inline)
         var defaultLevel = config.DefaultNpcLevel;
         ImGui.SetNextItemWidth(120);
@@ -1274,7 +1264,6 @@ public partial class MainWindow : IDisposable
                 Level = config.DefaultNpcLevel,
                 HpMultiplier = config.DefaultNpcHpMultiplier,
                 Position = pos,
-                BehaviorType = (NpcBehaviorType)config.DefaultNpcBehaviorType,
             });
 
             // Track in recent list (avoid duplicates, keep last 20)

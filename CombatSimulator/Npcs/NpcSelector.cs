@@ -46,7 +46,7 @@ public unsafe class NpcSelector : IDisposable
     /// Returns null with a reason string if it fails.
     /// </summary>
     public (SimulatedNpc? Npc, string? Error) SelectCurrentTarget(
-        int level, float hpMultiplier, NpcBehaviorType behaviorType)
+        int level, float hpMultiplier)
     {
         if (selectedNpcs.Count >= MaxTargets)
             return (null, "Maximum target limit reached.");
@@ -85,7 +85,8 @@ public unsafe class NpcSelector : IDisposable
             BattleChara = battleChara,
             GameObjectRef = target,
             SpawnPosition = target.Position,
-            Behavior = actionProfileProvider.CreateForSelectedTarget(target.Name.TextValue, behaviorType, weaponStyle),
+            Behavior = actionProfileProvider.Create(
+                target.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, level),
             IsSpawned = true,
             IsClientControlled = false,
             IsRanged = weaponStyle == NpcAttackStyle.Ranged,
@@ -154,7 +155,6 @@ public unsafe class NpcSelector : IDisposable
         IGameObject obj,
         int level,
         float hpMultiplier,
-        NpcBehaviorType behaviorType,
         int mapEnemyLimit,
         bool ignoreGlobalMaxTargets = false)
     {
@@ -175,7 +175,7 @@ public unsafe class NpcSelector : IDisposable
         if (!ignoreGlobalMaxTargets && selectedNpcs.Count >= MaxTargets)
             return (null, "Maximum target limit reached.");
 
-        var npc = CreateMapEnemy(obj, level, hpMultiplier, behaviorType);
+        var npc = CreateMapEnemy(obj, level, hpMultiplier);
         selectedNpcs.Add(npc);
         log.Info($"Registered map enemy '{npc.Name}' (EntityId=0x{obj.EntityId:X}) as combat target. HP={npc.State.MaxHp}");
         return (npc, null);
@@ -298,8 +298,7 @@ public unsafe class NpcSelector : IDisposable
     private SimulatedNpc CreateMapEnemy(
         IGameObject obj,
         int level,
-        float hpMultiplier,
-        NpcBehaviorType behaviorType)
+        float hpMultiplier)
     {
         var battleChara = (BattleChara*)obj.Address;
         var character = (Character*)battleChara;
@@ -320,7 +319,8 @@ public unsafe class NpcSelector : IDisposable
             BattleChara = battleChara,
             GameObjectRef = obj,
             SpawnPosition = obj.Position,
-            Behavior = actionProfileProvider.CreateForSelectedTarget(obj.Name.TextValue, behaviorType, weaponStyle),
+            Behavior = actionProfileProvider.Create(
+                obj.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, level),
             IsSpawned = true,
             IsClientControlled = false,
             IsRanged = weaponStyle == NpcAttackStyle.Ranged,

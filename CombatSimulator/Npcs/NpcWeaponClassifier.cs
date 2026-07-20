@@ -41,6 +41,10 @@ public static unsafe class NpcWeaponClassifier
     };
 
     private static readonly Dictionary<WeaponModelKey, NpcAttackStyle> itemCategoryCache = new();
+    // weapon model -> the ClassJob that equips it (Item.ClassJobUse). 0 = no/ambiguous job.
+    // Built in the same Item-sheet pass as itemCategoryCache. Lets a humanoid enemy wielding a
+    // real player weapon be resolved to a job, whose real action kit it can then cast.
+    private static readonly Dictionary<WeaponModelKey, uint> itemJobCache = new();
     private static IDataManager? dataManager;
     private static IPluginLog? pluginLog;
     private static bool cacheBuilt;
@@ -50,6 +54,7 @@ public static unsafe class NpcWeaponClassifier
         NpcWeaponClassifier.dataManager = dataManager;
         pluginLog = log;
         itemCategoryCache.Clear();
+        itemJobCache.Clear();
         cacheBuilt = false;
     }
 
@@ -75,6 +80,35 @@ public static unsafe class NpcWeaponClassifier
 
         var weapon = *(WeaponModelId*)&packedWeapon;
         return DetectFromWeapon(weapon.Id, weapon.Type, weapon.Variant);
+    }
+
+    /// <summary>
+    /// Resolve the ClassJob that equips this character's main-hand weapon, via the weapon model →
+    /// Item.ClassJobUse map. Returns 0 when the weapon is not a real equippable item (monster /
+    /// NPC-only weapon) or the job is ambiguous — the caller then treats the enemy as monster/auto.
+    /// </summary>
+    public static uint DetectJobFromCharacter(Character* character)
+    {
+        if (character == null)
+            return 0;
+
+        var weapon = character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).ModelId;
+        return DetectJobFromWeapon(weapon.Id, weapon.Type, weapon.Variant);
+    }
+
+    public static uint DetectJobFromPackedWeapon(ulong packedWeapon)
+    {
+        if (packedWeapon == 0)
+            return 0;
+
+        var weapon = *(WeaponModelId*)&packedWeapon;
+        return DetectJobFromWeapon(weapon.Id, weapon.Type, weapon.Variant);
+    }
+
+    private static uint DetectJobFromWeapon(ushort id, ushort type, ushort variant)
+    {
+        EnsureItemCategoryCache();
+        return itemJobCache.TryGetValue(new WeaponModelKey(id, type, variant), out var job) ? job : 0u;
     }
 
     private static NpcAttackStyle DetectFromWeapon(ushort id, ushort type, ushort variant)
@@ -117,6 +151,14 @@ public static unsafe class NpcWeaponClassifier
 
             foreach (var item in sheet)
             {
+                // Job map: any item that declares an equipping job and carries a weapon model.
+                var job = item.ClassJobUse.RowId;
+                if (job != 0)
+                {
+                    AddModelJob(item.ModelMain, job);
+                    AddModelJob(item.ModelSub, job);
+                }
+
                 var style = ClassifyItemCategory(item.ItemUICategory.RowId);
                 if (style == NpcAttackStyle.Auto)
                     continue;
@@ -125,7 +167,8 @@ public static unsafe class NpcWeaponClassifier
                 AddModel(item.ModelSub, style);
             }
 
-            pluginLog?.Info($"NPC weapon item-category cache built: {itemCategoryCache.Count} model mappings.");
+            pluginLog?.Info(
+                $"NPC weapon caches built: {itemCategoryCache.Count} style mappings, {itemJobCache.Count} job mappings.");
         }
         catch (Exception ex)
         {
@@ -149,6 +192,23 @@ public static unsafe class NpcWeaponClassifier
         }
 
         itemCategoryCache[key] = style;
+    }
+
+    private static void AddModelJob(ulong packedModel, uint job)
+    {
+        var key = UnpackModel(packedModel);
+        if (key.Id == 0)
+            return;
+
+        if (itemJobCache.TryGetValue(key, out var existing))
+        {
+            // Same model shared by two different jobs → ambiguous, mark unknown (0) and keep it there.
+            if (existing != job)
+                itemJobCache[key] = 0u;
+            return;
+        }
+
+        itemJobCache[key] = job;
     }
 
     private static WeaponModelKey UnpackModel(ulong packedModel)

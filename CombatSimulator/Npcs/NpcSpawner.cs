@@ -262,18 +262,11 @@ public unsafe class NpcSpawner : IDisposable
                 }
             }
 
-            var behavior = actionProfileProvider.CreateForSpawn(request, npcName);
             var weaponStyle = NpcWeaponClassifier.DetectFromPackedWeapon(mainHandWeapon);
-            if (weaponStyle == NpcAttackStyle.Ranged)
-            {
-                behavior = actionProfileProvider.CreateForSelectedTarget(npcName, request.BehaviorType, weaponStyle);
-                log.Info($"NPC weapon classify '{npcName}' from ENpcBase: packedMainHand=0x{mainHandWeapon:X} -> {weaponStyle}");
-            }
-            else if (weaponStyle == NpcAttackStyle.Magic)
-            {
-                behavior = actionProfileProvider.CreateForSelectedTarget(npcName, request.BehaviorType, weaponStyle);
-                log.Info($"NPC weapon classify '{npcName}' from ENpcBase: packedMainHand=0x{mainHandWeapon:X} -> {weaponStyle}");
-            }
+            var jobId = NpcWeaponClassifier.DetectJobFromPackedWeapon(mainHandWeapon);
+            var behavior = actionProfileProvider.Create(npcName, jobId, weaponStyle, npcLevel, request.BNpcBaseId);
+            if (weaponStyle is NpcAttackStyle.Ranged or NpcAttackStyle.Magic || jobId != 0)
+                log.Info($"NPC weapon classify '{npcName}' from ENpcBase: packedMainHand=0x{mainHandWeapon:X} -> style={weaponStyle}, job={jobId}");
 
             var npc = new SimulatedNpc
             {
@@ -511,7 +504,6 @@ public unsafe class NpcSpawner : IDisposable
             HpMultiplier = src.HpMultiplier,
             Position = src.Position,
             Rotation = src.Rotation,
-            BehaviorType = src.BehaviorType,
             IsRanged = src.IsRanged,
         };
     }

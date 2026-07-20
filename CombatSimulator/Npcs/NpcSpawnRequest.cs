@@ -11,6 +11,5 @@ public class NpcSpawnRequest
     public float HpMultiplier { get; set; } = 1.0f;
     public Vector3? Position { get; set; }
     public float? Rotation { get; set; }
-    public NpcBehaviorType BehaviorType { get; set; } = NpcBehaviorType.BasicMelee;
     public bool IsRanged { get; set; } // Carries the per-NPC ranged-attack flag through respawn
 }

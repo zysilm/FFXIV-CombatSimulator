@@ -242,15 +242,21 @@ public sealed class TelegraphSystem
             animationController.PlayNpcWindupPose(t.Source, t.Request.ActionId);
     }
 
-    // Only AUTO-ATTACKS get the windup swing + single-swing suppression (the frequent, parry-
-    // readable melee hits). SKILLS are never suppressed so their projectile/cast VFX (fireball
-    // etc.) always plays via the full ActionEffect. Physical-ranged autos (bow/gun) are also left
-    // un-suppressed to keep their arrow VFX.
+    // Physical melee swings (auto-attacks AND melee weaponskills) play their real animation at the
+    // START of the windup and get single-swing suppression at the strike — so the swing reads as a
+    // wind-up instead of firing after the circle closes. Ranged/magic keep the full ActionEffect at
+    // the strike so their projectile/cast VFX and damage fire together (a windup pose would launch
+    // the projectile early with no damage). A humanoid enemy plays the real weaponskill because it
+    // shares the player skeleton and wields a real weapon; monsters never reach here (auto-only).
     private bool TryPlayWindupAnimation(SimulatedNpc source, in NpcAttackRequest req)
-        => config.ActionEnemyWindupSwing &&
-           req.IsAutoAttack &&
-           req.Style != NpcAttackStyle.Ranged &&
-           animationController.PlayNpcWindupPose(source, req.ActionId);
+    {
+        if (!config.ActionEnemyWindupSwing)
+            return false;
+
+        var isPhysicalSwing = req.Style == NpcAttackStyle.Melee ||
+                              (req.IsAutoAttack && req.Style != NpcAttackStyle.Ranged);
+        return isPhysicalSwing && animationController.PlayNpcWindupPose(source, req.ActionId);
+    }
 
     private void Finish(ActiveTelegraph t, TelegraphOutcome outcome)
     {
@@ -268,6 +274,19 @@ public sealed class TelegraphSystem
     {
         foreach (var t in active)
             if (!t.Resolved && t.Source.SimulatedEntityId == npcSimId)
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// True while the enemy has ANY live telegraph (windup, late-guard grace, or post-strike
+    /// recovery). The AI must not commit a new attack while busy — doing so on the old, too-short
+    /// animation lock is what let a second swing overlap the first (the "double attack").
+    /// </summary>
+    public bool IsBusy(uint npcSimId)
+    {
+        foreach (var t in active)
+            if (t.Source.SimulatedEntityId == npcSimId)
                 return true;
         return false;
     }

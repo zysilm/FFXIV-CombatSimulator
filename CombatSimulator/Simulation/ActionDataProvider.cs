@@ -17,6 +17,19 @@ public enum SimDamageType
 }
 
 /// <summary>
+/// What an action is FOR, derived from the game's targeting/role columns. Enemies only ever
+/// cast <see cref="Damage"/> actions; <see cref="Support"/> (buffs/heals/utility, incl. role
+/// actions) and <see cref="Raise"/> are excluded from the enemy kit. Splitting Support further
+/// into buff vs heal is deferred (needs StatusGainSelf/cure data we don't yet consume).
+/// </summary>
+public enum ActionIntent
+{
+    Damage,
+    Support,
+    Raise,
+}
+
+/// <summary>
 /// Geometry of an action's effect area, derived from the game's CastType column.
 /// Single is the safe default for anything we don't recognise.
 /// </summary>
@@ -52,6 +65,7 @@ public class ActionData
     public float AnimationLock { get; set; } = 0.6f;
     public float AnimationDuration { get; set; }
     public bool IsPlayerAction { get; set; } = true;
+    public ActionIntent Intent { get; set; } = ActionIntent.Damage;
     public ushort AnimationStartTimelineId { get; set; }
     public ushort AnimationEndTimelineId { get; set; }
 
@@ -112,6 +126,23 @@ public partial class ActionDataProvider
     public static SimDamageType ClassifyDamageType(uint attackTypeRowId)
         => attackTypeRowId == 5 ? SimDamageType.Magical : SimDamageType.Physical;
 
+    /// <summary>
+    /// Classify an action's purpose from the game's targeting/role columns. Used both to tag
+    /// <see cref="ActionData.Intent"/> and to filter an enemy's real job kit down to castable
+    /// damage actions. Note AttackType is <c>-1</c> (uint.MaxValue) for physical weaponskills
+    /// (they inherit the weapon's type), so the test is "has an attack type" = RowId != 0.
+    /// Role actions (Second Wind, Leg Sweep, Feint, …) are physical-typed but functionally
+    /// utility, so <paramref name="isRoleAction"/> demotes them out of Damage.
+    /// </summary>
+    public static ActionIntent ClassifyIntent(bool isRoleAction, uint attackTypeRowId, bool canTargetHostile, sbyte deadTargetBehaviour)
+    {
+        if (deadTargetBehaviour == 1)
+            return ActionIntent.Raise; // "can only target dead" ⇒ resurrection
+        if (attackTypeRowId != 0 && canTargetHostile && !isRoleAction)
+            return ActionIntent.Damage;
+        return ActionIntent.Support; // buffs, heals, role utility, self-targeted, etc.
+    }
+
     public ActionData? GetActionData(uint actionId)
     {
         if (cachedBasicPotency != config.LightAttackPotency)
@@ -153,6 +184,10 @@ public partial class ActionDataProvider
 
         // Damage type from the AttackType row id (physical vs magical)
         data.DamageType = ClassifyDamageType(action.AttackType.RowId);
+
+        // Purpose (damage vs support vs raise) from targeting/role columns.
+        data.Intent = ClassifyIntent(
+            action.IsRoleAction, action.AttackType.RowId, action.CanTargetHostile, action.DeadTargetBehaviour);
 
         // Resolve VFX paths (same approach as VFXEditor)
         ResolveVfxPaths(action, data);

@@ -29,6 +29,7 @@ public unsafe class NpcAiController : IDisposable
     private readonly IPluginLog log;
     private readonly CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter;
     private readonly Func<nint, bool> isExternallyControlled;
+    private readonly Func<uint, bool> isTelegraphBusy;
     private readonly Dictionary<nint, ApproachPathState> approachPaths = new();
     private readonly Dictionary<uint, float> partyApproachDebugNextLogAt = new();
     private readonly Dictionary<uint, string> lastApproachDebugRoute = new();
@@ -112,7 +113,8 @@ public unsafe class NpcAiController : IDisposable
         TerrainHeightService terrainHeightService,
         IPluginLog log,
         CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter,
-        Func<nint, bool>? isExternallyControlled = null)
+        Func<nint, bool>? isExternallyControlled = null,
+        Func<uint, bool>? isTelegraphBusy = null)
     {
         this.combatEngine = combatEngine;
         this.animationController = animationController;
@@ -125,6 +127,7 @@ public unsafe class NpcAiController : IDisposable
         this.log = log;
         this.combatModeRouter = combatModeRouter;
         this.isExternallyControlled = isExternallyControlled ?? (_ => false);
+        this.isTelegraphBusy = isTelegraphBusy ?? (_ => false);
 
         combatEngine.OnSimulationStarted += ScheduleAutoEngage;
         combatEngine.OnSimulationReset += OnSimulationResetOrStop;
@@ -531,12 +534,24 @@ public unsafe class NpcAiController : IDisposable
             return;
         }
 
+        // Already mid-attack (telegraph windup / late-guard grace / recovery) — do not commit a new
+        // attack, or the next swing overlaps the current one. No-op outside telegraphed modes.
+        if (isTelegraphBusy(npc.SimulatedEntityId))
+        {
+            if (npc.BattleChara != null)
+                ActorVisualStateController.ApplyActionLocked((Character*)npc.BattleChara, npc.VisualState);
+            return;
+        }
+
         if (npc.BattleChara != null)
             ActorVisualStateController.ApplyCombatIdle((Character*)npc.BattleChara, npc.VisualState);
 
-        // Try skills
+        // Try skills — collect everything ready (off cooldown, in range, hp-gated) and fire one at
+        // RANDOM, so a humanoid enemy varies its real rotation instead of always leading with the
+        // same top skill. Cooldowns still gate reuse. (Allocates only when a skill is actually ready.)
         float hpPercent = (float)npc.State.CurrentHp / npc.State.MaxHp;
-        foreach (var skill in npc.Behavior.Skills.OrderByDescending(s => s.Priority))
+        List<NpcSkill>? readySkills = null;
+        foreach (var skill in npc.Behavior.Skills)
         {
             if (skill.CooldownRemaining > 0)
                 continue;
@@ -545,6 +560,12 @@ public unsafe class NpcAiController : IDisposable
                 continue;
             if (hpPercent > skill.HpThreshold)
                 continue;
+
+            (readySkills ??= new List<NpcSkill>()).Add(skill);
+        }
+        if (readySkills != null)
+        {
+            var skill = readySkills[Random.Shared.Next(readySkills.Count)];
 
             // Action Mode skips the engine cast bar — the telegraph executor owns the
             // windup uniformly (cast time feeds the telegraph duration).

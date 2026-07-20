@@ -105,7 +105,6 @@ public sealed unsafe class MapEnemyController
                 SenseRange = Math.Max(0.1f, config.MapEnemySenseRange),
                 Level = Math.Clamp(config.DefaultNpcLevel, 1, 300),
                 HpMultiplier = Math.Max(0.0001f, config.DefaultNpcHpMultiplier),
-                BehaviorType = NpcBehaviorType.BasicMelee,
             }
             : CurrentSettings();
         if (settings is not { Enabled: true })
@@ -137,7 +136,6 @@ public sealed unsafe class MapEnemyController
             SenseRange = Math.Max(0.1f, config.MapEnemySenseRange),
             Level = Math.Clamp(config.DefaultNpcLevel, 1, 300),
             HpMultiplier = Math.Max(0.0001f, config.DefaultNpcHpMultiplier),
-            BehaviorType = (NpcBehaviorType)config.DefaultNpcBehaviorType,
         };
     }
 
@@ -187,7 +185,6 @@ public sealed unsafe class MapEnemyController
             obj,
             Math.Clamp(settings.Level, 1, 300),
             Math.Max(0.0001f, settings.HpMultiplier),
-            settings.BehaviorType,
             Math.Max(0, settings.MaxCount),
             ignoreGlobalMaxTargets: true);
 

@@ -211,8 +211,9 @@ public partial class Configuration : IPluginConfiguration
     public float DefaultNpcHpMultiplier { get; set; } = 1.0f;
     public float DefaultNpcHeightOffset { get; set; } = 0f; // Y offset added to spawn position
 
-    // Default behavior for auto-selected NPCs (0=Dummy, 1=BasicMelee, 2=BasicRanged, 3=Boss)
-    public int DefaultNpcBehaviorType { get; set; } = 1;
+    // Humanoid enemies (weapon resolves to a job) cast their real job kit: the strongest N damage
+    // actions at the sim enemy level. Monsters / NPC-only weapons resolve to no job → auto-attack only.
+    public int EnemyMaxRealSkills { get; set; } = 4;
 
     // Glamourer: apply a preset on player death
     public bool ApplyGlamourerOnDeath { get; set; } = false;

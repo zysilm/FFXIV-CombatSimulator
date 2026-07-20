@@ -157,7 +157,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // Simulation
         actionDataProvider = new ActionDataProvider(dataManager, log, config);
         NpcWeaponClassifier.Initialize(dataManager, log);
-        npcActionProfileProvider = new NpcActionProfileProvider(actionDataProvider, log);
+        var jobActionKitProvider = new JobActionKitProvider(actionDataProvider, dataManager, log);
+        npcActionProfileProvider = new NpcActionProfileProvider(jobActionKitProvider, config, log);
         damageCalculator = new DamageCalculator(new CombatStatProvider(dataManager, log));
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         vnavmeshIpc = new VNavmeshIpc(pluginInterface, log);
@@ -266,7 +267,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             combatModeRouter,
             // Deferred: fightingModeController is constructed later in this ctor; the
             // AI only queries during framework ticks.
-            addr => devExperimental.ControlsNpc(addr) || fightingModeController?.ControlsEnemy(addr) == true);
+            addr => devExperimental.ControlsNpc(addr) || fightingModeController?.ControlsEnemy(addr) == true,
+            // Don't commit a new attack while this enemy already has a live telegraph (fixes the
+            // double-swing where the old 0.6s animation lock expired mid-animation).
+            telegraphSystem.IsBusy);
 
         // Custom in-simulation target lock system. Takes over the game's target
         // keybinds during simulation; the engine reads the locked target for

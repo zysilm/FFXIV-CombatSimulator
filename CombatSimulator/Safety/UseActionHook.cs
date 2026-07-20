@@ -285,8 +285,7 @@ public unsafe class UseActionHook : IDisposable
             // Use NpcSelector to register the target (it reads from targetManager.Target)
             var (npc, error) = npcSelector.SelectCurrentTarget(
                 config.DefaultNpcLevel,
-                config.DefaultNpcHpMultiplier,
-                (NpcBehaviorType)config.DefaultNpcBehaviorType);
+                config.DefaultNpcHpMultiplier);
 
             if (npc != null)
             {
