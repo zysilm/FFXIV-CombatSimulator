@@ -143,7 +143,7 @@ public unsafe class AnimationController : IDisposable
     // Default hit VFX path candidates (tried in order until one sticks)
     public static readonly string[] HitVfxCandidates =
     {
-        "vfx/common/eff/dk05th_stdn0t.avfx",
+        "vfx/common/eff/dk02ht_totu0y.avfx",
         "vfx/common/eff/cmhit_fire1t.avfx",
     };
 

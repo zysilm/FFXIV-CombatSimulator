@@ -671,7 +671,7 @@ public partial class Configuration : IPluginConfiguration
     public bool EnableTargetVfx { get; set; } = true;
 
     // Hit VFX on player when taking damage (empty = disabled)
-    public string HitVfxPath { get; set; } = "vfx/common/eff/dk05th_stdn0t.avfx";
+    public string HitVfxPath { get; set; } = "vfx/common/eff/dk02ht_totu0y.avfx";
     public bool EnableHitVfx { get; set; } = true;
 
     // HP Bar bone tracking
