@@ -1,4 +1,4 @@
-<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+<Project Sdk="Dalamud.NET.Sdk/15.0.0" TreatAsLocalProperty="DefineConstants">
   <PropertyGroup>
     <Version>2.7.1.2</Version>
     <Authors>zysilm</Authors>
@@ -11,9 +11,15 @@
        its sources compile in and DEV_EXPERIMENTAL is defined; otherwise the SDK glob finds none of
        those files and the plugin builds against the no-op DevExperimentalStub. The public CI builds
        without the submodule (verify-only, no deploy); the release build includes it. -->
-  <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)\Dev\Experimental\DevExperimentalModule.cs')">
+  <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)\Dev\Experimental\DevExperimentalModule.cs') and !$([System.String]::Copy('$(DefineConstants)').Contains('PUBLIC_BUILD'))">
     <DefineConstants>$(DefineConstants);DEV_EXPERIMENTAL</DefineConstants>
   </PropertyGroup>
+  <!-- A local public verification may run while the private submodule is physically present.
+       Remove its sources explicitly so that build cannot produce a hybrid DLL with the Dev UI
+       compiled in but Plugin.cs selecting DevExperimentalStub. -->
+  <ItemGroup Condition="$([System.String]::Copy('$(DefineConstants)').Contains('PUBLIC_BUILD'))">
+    <Compile Remove="Dev\Experimental\**\*.cs" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" />
   </ItemGroup>

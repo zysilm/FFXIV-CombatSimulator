@@ -19,6 +19,11 @@ public interface IDevExperimental : IDisposable
     /// <summary>True while a dev controller is driving this NPC (suppresses its AI).</summary>
     bool ControlsNpc(nint address);
 
+    /// <summary>Bind dev-only UI controllers without requiring MainWindow to downcast this module.</summary>
+    void BindUi(MainWindow mainWindow);
+
+    /// <summary>World-level dev update that also runs while combat simulation is inactive.</summary>
+    void TickWorld(float deltaTime);
     void Tick(float deltaTime);
     void BeforePlayerDeath();
     void OnPlayerDeath(nint playerAddress);
@@ -32,6 +37,8 @@ public interface IDevExperimental : IDisposable
     /// camera-follow preference is on; null otherwise. Fighting Mode's KO camera frames
     /// the midpoint of this and the player's corpse.</summary>
     System.Numerics.Vector3? ControlledMonsterCenter { get; }
+    /// <summary>Clear world-bound actors on territory change or logout.</summary>
+    void ResetWorldState();
     void ResetTransientState();
     void DrawToolbars(MainWindow mainWindow);
     void RestoreOcclusion();

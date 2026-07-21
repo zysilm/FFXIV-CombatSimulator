@@ -69,7 +69,7 @@ jobs:
           dll="release/${{ env.PLUGIN_NAME }}.dll"
           test -f "$dll" || { echo "::error::Missing $dll"; exit 1; }
           status=0
-          for sym in MonsterModeController DevExperimentalModule VictorySequenceController GrabConformSolver BoneHoldTestModeController; do
+          for sym in MonsterModeController DevExperimentalModule VictorySequenceController GrabConformSolver BoneHoldTestModeController SpectatorController; do
             if grep -qa "$sym" "$dll"; then
               echo "::error::Release artifact contains experimental symbol '$sym' — the private dev module must never ship."
               status=1

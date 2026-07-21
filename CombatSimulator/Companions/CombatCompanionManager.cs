@@ -765,7 +765,12 @@ public unsafe class CombatCompanionManager : IDisposable
                 return;
             }
 
-            var hint = FindFreeObjectHint();
+            var hint = Core.ClientActorSlotAllocator.FindFreeAscending(clientObjMgr, 100);
+            if (hint == uint.MaxValue)
+            {
+                OnSpawnError?.Invoke("CreateBattleCharacter failed - no available slot.");
+                return;
+            }
             var createResult = clientObjMgr->CreateBattleCharacter(hint);
             if (createResult == 0xFFFFFFFF)
             {
@@ -774,14 +779,22 @@ public unsafe class CombatCompanionManager : IDisposable
             }
 
             var index = (int)createResult;
-            allocatedIndices.Add(index);
+            if (index < 0 || index >= Core.ClientActorSlotAllocator.SharedSlotLimit)
+            {
+                if (index >= 0 && index < Core.ClientActorSlotAllocator.TotalSlotCount)
+                    clientObjMgr->DeleteObjectByIndex((ushort)index, 0);
+                OnSpawnError?.Invoke("CreateBattleCharacter returned an actor slot reserved by another system.");
+                return;
+            }
+
             var obj = clientObjMgr->GetObjectByIndex((ushort)index);
             if (obj == null)
             {
-                allocatedIndices.Remove(index);
+                clientObjMgr->DeleteObjectByIndex((ushort)index, 0);
                 OnSpawnError?.Invoke($"Object null at index {index} after creation.");
                 return;
             }
+            allocatedIndices.Add(index);
 
             var chara = (BattleChara*)obj;
             var character = (Character*)chara;
@@ -2246,14 +2259,6 @@ public unsafe class CombatCompanionManager : IDisposable
         combatEngine.UnregisterNpcEntity(companion.SimulatedEntityId);
         allocatedIndices.Remove(companion.ObjectIndex);
         companions.Remove(companion);
-    }
-
-    private uint FindFreeObjectHint()
-    {
-        uint hint = 100;
-        while (hint < 200 && allocatedIndices.Contains((int)hint))
-            hint++;
-        return hint;
     }
 
     private Vector3 CalculateSpawnPosition(int index)

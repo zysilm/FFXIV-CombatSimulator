@@ -107,7 +107,9 @@ public partial class MainWindow : IDisposable
 
     // Optional experimental dev hooks — implemented only when the private module is compiled in;
     // elided to no-ops otherwise (so the public build shows no dev section / entry / PC dismember).
-    partial void InitDevExperimental();
+    partial void InitDevExperimental(CombatSimulator.Dev.IDevExperimental devExperimental);
+    partial void DrawDevSidebarEntryAfterBaseTab(int baseTabIndex, ref int selectedTab);
+    partial void DrawDevInjectedTabContent(int selectedTab, ref bool handled);
     partial void DrawDevSidebarEntry(ref int selectedTab);
     partial void DrawDevTabContent(int selectedTab);
     partial void DrawDevSection();
@@ -168,6 +170,7 @@ public partial class MainWindow : IDisposable
         HookSafetyChecker hookSafetyChecker,
         UseActionHook useActionHook,
         PlayerTargetController playerTargetController,
+        CombatSimulator.Dev.IDevExperimental devExperimental,
         IClientState clientState,
         IDataManager dataManager,
         IChatGui chatGui,
@@ -194,7 +197,7 @@ public partial class MainWindow : IDisposable
         this.chatGui = chatGui;
         this.log = log;
         this.recipeBook = new CombatRecipeBook(log);
-        InitDevExperimental();
+        InitDevExperimental(devExperimental);
     }
 
     private int selectedTab = 0;
@@ -291,6 +294,7 @@ public partial class MainWindow : IDisposable
         {
             if (ImGui.Selectable(TabNames[i], selectedTab == i))
                 selectedTab = i;
+            DrawDevSidebarEntryAfterBaseTab(i, ref selectedTab);
         }
         DrawDevSidebarEntry(ref selectedTab);
         ImGui.EndChild();
@@ -361,7 +365,10 @@ public partial class MainWindow : IDisposable
                 DrawDiagnoseSection();
                 break;
             default:
-                DrawDevTabContent(selectedTab);
+                var handled = false;
+                DrawDevInjectedTabContent(selectedTab, ref handled);
+                if (!handled)
+                    DrawDevTabContent(selectedTab);
                 break;
         }
         ImGui.EndChild();

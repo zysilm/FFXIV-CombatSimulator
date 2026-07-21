@@ -155,12 +155,14 @@ public unsafe class NpcSpawner : IDisposable
                 return;
             }
 
-            // Step 1: Create BattleCharacter with explicit index hint.
-            // Default (0xFFFFFFFF) rescans from 0 and may reuse occupied slots.
-            // Pass an incrementing hint so each spawn gets a unique pool slot.
-            uint hint = 0;
-            while (allocatedIndices.Contains((int)hint) && hint < 200)
-                hint++;
+            // Step 1: inspect the real shared client-actor pool. Dev actors and companions use
+            // the same native table, so a module-local HashSet is not sufficient here.
+            var hint = Core.ClientActorSlotAllocator.FindFreeAscending(clientObjMgr);
+            if (hint == uint.MaxValue)
+            {
+                OnSpawnError?.Invoke("CreateBattleCharacter failed - no available slot.");
+                return;
+            }
             log.Info($"Calling CreateBattleCharacter(hint={hint})...");
             var createResult = clientObjMgr->CreateBattleCharacter(hint);
             log.Info($"CreateBattleCharacter returned: {createResult} (0x{createResult:X})");
@@ -173,14 +175,24 @@ public unsafe class NpcSpawner : IDisposable
             }
 
             var index = (int)createResult;
-            allocatedIndices.Add(index);
+            if (index < 0 || index >= Core.ClientActorSlotAllocator.SharedSlotLimit)
+            {
+                if (index >= 0 && index < Core.ClientActorSlotAllocator.TotalSlotCount)
+                    clientObjMgr->DeleteObjectByIndex((ushort)index, 0);
+                log.Error($"CreateBattleCharacter returned unsafe index {index}.");
+                OnSpawnError?.Invoke("CreateBattleCharacter returned an actor slot reserved by another system.");
+                return;
+            }
+
             var obj = clientObjMgr->GetObjectByIndex((ushort)index);
             if (obj == null)
             {
+                clientObjMgr->DeleteObjectByIndex((ushort)index, 0);
                 log.Error($"GetObjectByIndex returned null for index {index}.");
                 OnSpawnError?.Invoke($"Object null at index {index} after creation.");
                 return;
             }
+            allocatedIndices.Add(index);
 
             var chara = (BattleChara*)obj;
             var character = (Character*)chara;

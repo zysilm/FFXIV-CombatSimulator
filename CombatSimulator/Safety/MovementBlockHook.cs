@@ -33,6 +33,7 @@ public unsafe class MovementBlockHook : IDisposable
     /// (we control their position via SetApproachPosition/Rotation instead).
     /// </summary>
     private readonly HashSet<nint> approachBlockedAddresses = new();
+    private readonly Dictionary<nint, HashSet<object>> approachBlockOwners = new();
 
     /// <summary>
     /// When true, the next SetPosition/SetRotation call is from our approach
@@ -42,9 +43,35 @@ public unsafe class MovementBlockHook : IDisposable
 
     public void AddApproachNpc(nint address) => approachBlockedAddresses.Add(address);
     public void RemoveApproachNpc(nint address) => approachBlockedAddresses.Remove(address);
-    public void ClearApproachNpcs() => approachBlockedAddresses.Clear();
+    public void AddApproachNpc(nint address, object owner)
+    {
+        if (!approachBlockOwners.TryGetValue(address, out var owners))
+        {
+            owners = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            approachBlockOwners[address] = owners;
+        }
+        owners.Add(owner);
+    }
+    public void RemoveApproachNpc(nint address, object owner)
+    {
+        if (!approachBlockOwners.TryGetValue(address, out var owners))
+            return;
+        owners.Remove(owner);
+        if (owners.Count == 0)
+            approachBlockOwners.Remove(address);
+    }
+    public void ClearApproachNpcs()
+    {
+        approachBlockedAddresses.Clear();
+        // Owner-scoped registrations have independent lifetimes (for example spectators
+        // survive a combat stop). Their owners remove them explicitly on actor destruction.
+    }
     public void ClearApproachNpcsExcept(Func<nint, bool> keep)
-        => approachBlockedAddresses.RemoveWhere(address => !keep(address));
+    {
+        approachBlockedAddresses.RemoveWhere(address => !keep(address));
+        // Owner-scoped registrations are removed by their owner. This method exists for the
+        // legacy AI set and must not erase independent controllers that share the hook.
+    }
 
     /// <summary>
     /// Move an approach-controlled NPC by calling the real SetPosition,
@@ -54,8 +81,14 @@ public unsafe class MovementBlockHook : IDisposable
     {
         if (setPositionHook == null) return;
         allowApproachUpdate = true;
-        setPositionHook.Original(obj, x, y, z);
-        allowApproachUpdate = false;
+        try
+        {
+            setPositionHook.Original(obj, x, y, z);
+        }
+        finally
+        {
+            allowApproachUpdate = false;
+        }
     }
 
     /// <summary>
@@ -66,8 +99,14 @@ public unsafe class MovementBlockHook : IDisposable
     {
         if (setRotationHook == null) return;
         allowApproachUpdate = true;
-        setRotationHook.Original(obj, value);
-        allowApproachUpdate = false;
+        try
+        {
+            setRotationHook.Original(obj, value);
+        }
+        finally
+        {
+            allowApproachUpdate = false;
+        }
     }
 
     public MovementBlockHook(IGameInteropProvider gameInterop, IClientState clientState, IPluginLog log)
@@ -111,7 +150,7 @@ public unsafe class MovementBlockHook : IDisposable
         if (IsBlocking && IsLocalPlayer(thisPtr))
             return; // Skip — player position stays frozen
 
-        if (!allowApproachUpdate && approachBlockedAddresses.Contains((nint)thisPtr))
+        if (!allowApproachUpdate && IsApproachBlocked((nint)thisPtr))
             return; // Skip — server update blocked; we move this NPC via SetApproachPosition
 
         setPositionHook!.Original(thisPtr, x, y, z);
@@ -122,7 +161,7 @@ public unsafe class MovementBlockHook : IDisposable
         if (IsBlocking && IsLocalPlayer(thisPtr))
             return; // Skip — player rotation stays frozen
 
-        if (!allowApproachUpdate && approachBlockedAddresses.Contains((nint)thisPtr))
+        if (!allowApproachUpdate && IsApproachBlocked((nint)thisPtr))
             return; // Skip — server update blocked; we rotate this NPC via SetApproachRotation
 
         setRotationHook!.Original(thisPtr, value);
@@ -134,10 +173,14 @@ public unsafe class MovementBlockHook : IDisposable
         return player != null && (nint)obj == player.Address;
     }
 
+    private bool IsApproachBlocked(nint address)
+        => approachBlockedAddresses.Contains(address) || approachBlockOwners.ContainsKey(address);
+
     public void Dispose()
     {
         IsBlocking = false;
         approachBlockedAddresses.Clear();
+        approachBlockOwners.Clear();
         setPositionHook?.Dispose();
         setRotationHook?.Dispose();
     }

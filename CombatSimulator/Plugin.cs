@@ -448,7 +448,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         activeCameraController.SetActive(config.EnableActiveCamera);
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, clientState, dataManager, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, devExperimental, clientState, dataManager, chatGui, log);
         armorDetachmentController.AllowOnHitDetach = () => mainWindow.DevExperimentalUnlocked;
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
@@ -776,6 +776,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // Hit feedback (camera punch decay + hitstop restore). Runs every frame.
             hitFeedbackController.Tick(deltaTime);
 
+            // World-level dev features that are intentionally independent of combat state
+            // (currently the spectator crowd) continue to process outside simulations.
+            devExperimental.TickWorld(deltaTime);
+
             if (!combatEngine.IsActive)
                 return;
 
@@ -1077,7 +1081,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         weaponDropController.RemoveAll();
         dismembermentController.RemoveAll();
         armorDetachmentController.Reset();
-        devExperimental.ResetTransientState();
+        devExperimental.ResetWorldState();
         dynamicCameraController.Reset();
 
         if (combatEngine.IsActive)
@@ -1102,7 +1106,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             weaponDropController.RemoveAll();
             dismembermentController.RemoveAll();
             armorDetachmentController.Reset();
-            devExperimental.ResetTransientState();
+            devExperimental.ResetWorldState();
             dynamicCameraController.Reset();
             npcSpawner.DespawnAll();
             companionManager.DespawnAll();
