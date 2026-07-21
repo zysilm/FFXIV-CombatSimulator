@@ -71,7 +71,6 @@ public unsafe class NpcAiController : IDisposable
     // enemy settles instead of re-chasing every small slot/target jitter).
     private const float PartyHoldReleaseBuffer = 1.5f;
     // Below this fraction of the desired ranged hold, a ranged-intent enemy drifts back out.
-    private const float RangedBackoffFraction = 0.6f;
     private const float PartyApproachMovementEpsilon = 0.02f;
     private const float PartyApproachDebugInterval = 0.5f;
     // Low-pass time constant (seconds) for the steered enemy approach heading.
@@ -1021,10 +1020,12 @@ public unsafe class NpcAiController : IDisposable
         var outerEdge = rangeStateAvailable && rangeState.WasHoldingRange
             ? partyAttackRange + PartyHoldReleaseBuffer
             : partyAttackRange;
-        // Ranged-intent enemies that drifted too close (e.g. after a melee excursion) back off toward
-        // the planner's backline goal instead of holding. Gentle: only fires when well inside.
-        var tooCloseForRanged = npc.IsRangedIntent && distToTarget < partyAttackRange * RangedBackoffFraction;
-        var shouldHoldRange = distToTarget <= outerEdge && !tooCloseForRanged;
+        // Ranged enemies hold exactly like melee ones — same rule, bigger radius: once inside their
+        // attack range they stop and fight from where they stand, and only give chase again when the
+        // target leaves that range. They deliberately do NOT kite: an enemy that backed away every
+        // time you closed in was untouchable, and being able to strike from range it never has to
+        // pay for is already advantage enough.
+        var shouldHoldRange = distToTarget <= outerEdge;
         if (shouldHoldRange)
         {
             if (rangeStateAvailable)

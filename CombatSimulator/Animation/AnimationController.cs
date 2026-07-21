@@ -125,9 +125,12 @@ public unsafe class AnimationController : IDisposable
     private delegate void* PlaySpecificSoundDelegate(long a1, int idx);
     private Hook<PlaySpecificSoundDelegate>? playSpecificSoundHook;
     private readonly List<TrackedActorVfx> trackedActorVfx = new();
-    private const float CastVfxTtl = 1.5f;
-    private const float StartVfxTtl = 1.5f;
-    private const float CasterTimelineVfxTtl = 3.0f;
+    // Manually-spawned VFX are orphans — nothing in the game's action lifecycle reaps them, so they
+    // are tracked and removed on a timer or they linger until a client restart. The budget is split
+    // by action type: spells run a cast bar and a long effect, so they need far longer on screen
+    // than a physical weaponskill.
+    private const float PhysicalVfxTtl = 2.5f;
+    private const float SpellVfxTtl = 6.0f;
     private const float UntrackedVfxTtl = 0.0f;
     private const int MaxTrackedActorVfx = 256;
 
@@ -464,6 +467,10 @@ public unsafe class AnimationController : IDisposable
         }
     }
 
+    /// <summary>How long a manually-spawned VFX lives, by action type (see the TTL constants).</summary>
+    private static float VfxTtlFor(SimDamageType damageType)
+        => damageType == SimDamageType.Magical ? SpellVfxTtl : PhysicalVfxTtl;
+
     public float ResolveActionAnimationDuration(uint actionId)
     {
         actionId = actionId == 0 ? 7u : actionId;
@@ -730,15 +737,18 @@ public unsafe class AnimationController : IDisposable
             if (casterAddr == 0)
                 return false;
 
+            // Lit at the START of the cast, so it must outlive the whole cast bar.
+            var ttl = VfxTtlFor(data.DamageType);
+
             var spawned = false;
             if (!string.IsNullOrEmpty(data.CastVfxPath))
             {
-                SpawnAndTrack(data.CastVfxPath, casterAddr, casterAddr, casterEntityId, CastVfxTtl);
+                SpawnAndTrack(data.CastVfxPath, casterAddr, casterAddr, casterEntityId, ttl);
                 spawned = true;
             }
             if (!string.IsNullOrEmpty(data.StartVfxPath))
             {
-                SpawnAndTrack(data.StartVfxPath, casterAddr, casterAddr, casterEntityId, StartVfxTtl);
+                SpawnAndTrack(data.StartVfxPath, casterAddr, casterAddr, casterEntityId, ttl);
                 spawned = true;
             }
             return spawned;
@@ -827,14 +837,16 @@ public unsafe class AnimationController : IDisposable
 
             if (config.EnableCharacterVfx)
             {
+                var ttl = request.AttackStyle == NpcAttackStyle.Magic ? SpellVfxTtl : PhysicalVfxTtl;
+
                 if (!request.SuppressCastVfx && !string.IsNullOrEmpty(request.CastVfxPath))
-                    SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, casterEntityId, CastVfxTtl);
+                    SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, casterEntityId, ttl);
 
                 if (!request.SuppressCastVfx && !string.IsNullOrEmpty(request.StartVfxPath))
-                    SpawnAndTrack(request.StartVfxPath, casterAddr, orientAddr, casterEntityId, StartVfxTtl);
+                    SpawnAndTrack(request.StartVfxPath, casterAddr, orientAddr, casterEntityId, ttl);
 
                 foreach (var path in request.CasterVfxPaths)
-                    SpawnAndTrack(path, casterAddr, orientAddr, casterEntityId, CasterTimelineVfxTtl);
+                    SpawnAndTrack(path, casterAddr, orientAddr, casterEntityId, ttl);
             }
 
             // Spawn target VFX (hit/impact effects from ActionTimelineHit TMB)

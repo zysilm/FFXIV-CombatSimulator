@@ -25,6 +25,9 @@ public class SimulatedEntityState
     public int DirectHit { get; set; }
     public int Defense { get; set; }
     public int MagicDefense { get; set; }
+    /// <summary>Scales every point of damage this entity RECEIVES. Ranged and caster enemies fight
+    /// from a distance the player cannot answer, so they are correspondingly fragile.</summary>
+    public float DamageTakenMultiplier { get; set; } = 1.0f;
     public int Tenacity { get; set; }
     public int SkillSpeed { get; set; }
     public int SpellSpeed { get; set; }

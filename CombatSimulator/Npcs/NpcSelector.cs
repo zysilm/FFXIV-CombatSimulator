@@ -76,6 +76,8 @@ public unsafe class NpcSelector : IDisposable
         // Calculate HP
         int maxHp = CalculateNpcHp(level, hpMultiplier);
         var weaponStyle = NpcWeaponClassifier.DetectFromCharacter(character, log, target.Name.TextValue);
+        var behavior = actionProfileProvider.Create(
+            target.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, level);
 
         var npc = new SimulatedNpc
         {
@@ -85,8 +87,7 @@ public unsafe class NpcSelector : IDisposable
             BattleChara = battleChara,
             GameObjectRef = target,
             SpawnPosition = target.Position,
-            Behavior = actionProfileProvider.Create(
-                target.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, level),
+            Behavior = behavior,
             IsSpawned = true,
             IsClientControlled = false,
             IsRanged = weaponStyle == NpcAttackStyle.Ranged,
@@ -106,6 +107,7 @@ public unsafe class NpcSelector : IDisposable
                 MainStat = 100 + level * 10,
                 Defense = 100 + level * 5,
                 MagicDefense = 100 + level * 5,
+                DamageTakenMultiplier = behavior.DamageTakenMultiplier,
             },
         };
 
@@ -310,6 +312,8 @@ public unsafe class NpcSelector : IDisposable
 
         int maxHp = CalculateNpcHp(level, hpMultiplier);
         var weaponStyle = NpcWeaponClassifier.DetectFromCharacter(character, log, obj.Name.TextValue);
+        var behavior = actionProfileProvider.Create(
+            obj.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, level);
 
         var npc = new SimulatedNpc
         {
@@ -319,8 +323,7 @@ public unsafe class NpcSelector : IDisposable
             BattleChara = battleChara,
             GameObjectRef = obj,
             SpawnPosition = obj.Position,
-            Behavior = actionProfileProvider.Create(
-                obj.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, level),
+            Behavior = behavior,
             IsSpawned = true,
             IsClientControlled = false,
             IsRanged = weaponStyle == NpcAttackStyle.Ranged,
@@ -340,6 +343,7 @@ public unsafe class NpcSelector : IDisposable
                 MainStat = 100 + level * 10,
                 Defense = 100 + level * 5,
                 MagicDefense = 100 + level * 5,
+                DamageTakenMultiplier = behavior.DamageTakenMultiplier,
             },
         };
 

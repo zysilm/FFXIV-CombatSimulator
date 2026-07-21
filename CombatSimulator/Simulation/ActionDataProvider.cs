@@ -89,6 +89,32 @@ public partial class ActionDataProvider
     [GeneratedRegex(@"\u0000([a-zA-Z0-9\/_]*?)\.avfx", RegexOptions.Compiled)]
     private static partial Regex AvfxPathRegex();
 
+    // Impact effects end their file name with a {t}{index} marker (mgc_ston1t0h, wsw_ws_s10t4m),
+    // caster effects with {c}{index} (mgc_ff015_c0v, wsp_true1c0m); the index count tracks the
+    // number of hits. Anchored at the tail so an incidental "t<digit>" earlier in the name
+    // (cmws_shoot1c) doesn't trip it.
+    [GeneratedRegex(@"t\d[a-z0-9]{0,3}$", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex TargetSideVfxRegex();
+
+    /// <summary>
+    /// Whether an .avfx extracted from an action timeline belongs on the TARGET rather than the
+    /// caster. Generic common/camera effects (cast charges, weapon release, screen shake) are
+    /// always caster-side and are excluded before the name marker is consulted.
+    /// </summary>
+    private static bool IsTargetSideVfx(string path)
+    {
+        if (path.StartsWith("vfx/common/", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("vfx/camera/", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var slash = path.LastIndexOf('/');
+        var file = slash >= 0 ? path[(slash + 1)..] : path;
+        if (file.EndsWith(".avfx", StringComparison.OrdinalIgnoreCase))
+            file = file[..^5];
+
+        return TargetSideVfxRegex().IsMatch(file);
+    }
+
     public ActionDataProvider(IDataManager dataManager, IPluginLog log, Configuration config)
     {
         this.dataManager = dataManager;
@@ -272,15 +298,28 @@ public partial class ActionDataProvider
             if (!string.IsNullOrEmpty(startLoc))
                 data.StartVfxPath = $"vfx/common/eff/{startLoc}.avfx";
 
-            // Caster VFX from AnimationEnd TMB (main skill effects)
+            // The AnimationEnd timeline carries BOTH halves of a skill: the caster-side effect AND
+            // the impact effect that belongs ON THE TARGET, distinguished by a {c|t}{index} marker
+            // in the file name (mgc_ff015_c0v vs mgc_ff015_t0v). Treating the whole list as
+            // caster-side detonated a spell on its own caster: harmless-looking for melee, which
+            // stands next to its target, but several spells (Fire III/IV, Blizzard III, Stone,
+            // Aero) have target-side entries ONLY, so nothing correct rendered at all.
             var endKey = action.AnimationEnd.ValueNullable?.Key.ExtractText();
             if (!string.IsNullOrEmpty(endKey) && !endKey.Contains("[SKL_ID]"))
-                data.CasterVfxPaths = ExtractVfxFromTmb($"chara/action/{endKey}.tmb");
+            {
+                foreach (var path in ExtractVfxFromTmb($"chara/action/{endKey}.tmb"))
+                {
+                    if (IsTargetSideVfx(path))
+                        data.TargetVfxPaths.Add(path);
+                    else
+                        data.CasterVfxPaths.Add(path);
+                }
+            }
 
             // Target VFX from ActionTimelineHit TMB (hit/impact effects)
             var hitKey = action.ActionTimelineHit.ValueNullable?.Key.ExtractText();
             if (!string.IsNullOrEmpty(hitKey) && !hitKey.Contains("[SKL_ID]") && !hitKey.Contains("normal_hit"))
-                data.TargetVfxPaths = ExtractVfxFromTmb($"chara/action/{hitKey}.tmb");
+                data.TargetVfxPaths.AddRange(ExtractVfxFromTmb($"chara/action/{hitKey}.tmb"));
 
             log.Info($"[VFX] Action {data.ActionId} '{data.Name}': " +
                      $"cast='{data.CastVfxPath}', start='{data.StartVfxPath}', " +

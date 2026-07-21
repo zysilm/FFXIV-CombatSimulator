@@ -146,7 +146,11 @@ public class JobActionKitProvider
             ActionId = data.ActionId,
             Name = data.Name,
             Potency = data.Potency,
-            CastTime = data.CastTime,
+            // Enemies cast instantly. A real cast time becomes telegraph lead-in, and nothing plays
+            // during lead-in — no circle, no animation, no VFX — so a 3.5s spell was 3 silent
+            // seconds followed by damage appearing out of nowhere. Dropping it collapses the skill
+            // into one readable burst where wind-up, circle, animation, VFX and damage line up.
+            CastTime = 0f,
             Cooldown = MathF.Max(2.5f, data.RecastTime),
             Range = data.Range > 0f ? data.Range : 3f,
             Radius = data.Radius,

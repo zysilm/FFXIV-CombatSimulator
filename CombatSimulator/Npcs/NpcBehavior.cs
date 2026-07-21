@@ -30,6 +30,14 @@ public class NpcBehavior
     public NpcAttackStyle AutoAttackStyle { get; set; } = NpcAttackStyle.Melee;
     public List<NpcSkill> Skills { get; set; } = new();
 
+    /// <summary>
+    /// How much damage this enemy TAKES. Ranged and caster enemies attack from a distance the
+    /// player often cannot answer, so they trade that reach for fragility — everything that
+    /// connects with them hits twice as hard.
+    /// </summary>
+    public float DamageTakenMultiplier =>
+        AutoAttackStyle is NpcAttackStyle.Ranged or NpcAttackStyle.Magic ? 2.0f : 1.0f;
+
     public static NpcBehavior Create(NpcBehaviorType type)
     {
         return type switch

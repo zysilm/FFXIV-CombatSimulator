@@ -43,10 +43,15 @@ public class DamageCalculator
         damage = ApplyLevelCorrection(damage, source.Level, target.Level);
         damage = ApplyStatusDamageModifiers(damage, source, target);
         damage = (int)MathF.Floor(damage * MathF.Max(0f, damageMultiplier));
+        damage = ApplyDamageTakenMultiplier(damage, target);
 
         result.Damage = Math.Max(1, damage);
         return result;
     }
+
+    /// <summary>Scale by how fragile the TARGET is (see SimulatedEntityState.DamageTakenMultiplier).</summary>
+    private static int ApplyDamageTakenMultiplier(int damage, SimulatedEntityState target)
+        => (int)MathF.Floor(damage * MathF.Max(0f, target.DamageTakenMultiplier));
 
     public DamageResult CalculateNpcAutoAttack(SimulatedEntityState npc, SimulatedEntityState target, int potency = 110)
     {
@@ -55,6 +60,7 @@ public class DamageCalculator
 
         var corrected = ApplyLevelCorrection(mitigated, npc.Level, target.Level);
         corrected = ApplyLevelAdvantage(corrected, npc.Level, target.Level);
+        corrected = ApplyDamageTakenMultiplier(corrected, target);
 
         raw.Damage = Math.Max(1, corrected);
         raw.DamageType = SimDamageType.Physical;

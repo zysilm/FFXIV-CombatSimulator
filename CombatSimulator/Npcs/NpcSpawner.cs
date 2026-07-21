@@ -339,6 +339,7 @@ public unsafe class NpcSpawner : IDisposable
                     MainStat = 100 + npcLevel * 10,
                     Defense = 100 + npcLevel * 5,
                     MagicDefense = 100 + npcLevel * 5,
+                    DamageTakenMultiplier = behavior.DamageTakenMultiplier,
                 },
             };
 
