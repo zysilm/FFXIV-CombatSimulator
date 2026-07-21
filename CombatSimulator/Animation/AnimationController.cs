@@ -34,6 +34,10 @@ public class ActionEffectRequest
     public List<string> CasterVfxPaths { get; set; } = new();
     public List<string> TargetVfxPaths { get; set; } = new();
 
+    /// <summary>Cast/channel VFX already spawned when the cast began — don't spawn them again
+    /// at the strike (see AnimationController.PlayNpcCastVfx).</summary>
+    public bool SuppressCastVfx { get; set; }
+
     public List<TargetEffect> Targets { get; set; } = new();
 }
 
@@ -708,6 +712,45 @@ public unsafe class AnimationController : IDisposable
     /// reaction, VFX particles, damage flytext, and sound effects in one call.
     /// </summary>
     /// <summary>
+    /// Spawn an action's CAST-time VFX (the channelling circle / cast glow) on an NPC caster, at the
+    /// moment the cast BEGINS. Ranged/magic attacks get no windup swing, so nothing marked the cast
+    /// visually until the strike — where the cast VFX appeared and vanished in the same instant.
+    /// Returns true if anything was spawned, so the strike can skip re-spawning it.
+    /// </summary>
+    public bool PlayNpcCastVfx(SimulatedNpc npc, ActionData data)
+    {
+        if (!config.EnableCharacterVfx)
+            return false;
+        if (string.IsNullOrEmpty(data.CastVfxPath) && string.IsNullOrEmpty(data.StartVfxPath))
+            return false;
+
+        try
+        {
+            var (casterAddr, casterEntityId) = ResolveActorAddress(npc.SimulatedEntityId, false);
+            if (casterAddr == 0)
+                return false;
+
+            var spawned = false;
+            if (!string.IsNullOrEmpty(data.CastVfxPath))
+            {
+                SpawnAndTrack(data.CastVfxPath, casterAddr, casterAddr, casterEntityId, CastVfxTtl);
+                spawned = true;
+            }
+            if (!string.IsNullOrEmpty(data.StartVfxPath))
+            {
+                SpawnAndTrack(data.StartVfxPath, casterAddr, casterAddr, casterEntityId, StartVfxTtl);
+                spawned = true;
+            }
+            return spawned;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"Failed to spawn cast VFX for '{npc.Name}'.");
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Spawn only an action's VFX (caster + target), with no animation or flytext. Used at the
     /// strike of a melee skill whose swing already played as a windup pose — so the skill still
     /// shows its VFX without triggering a second caster animation. Honours the
@@ -784,10 +827,10 @@ public unsafe class AnimationController : IDisposable
 
             if (config.EnableCharacterVfx)
             {
-                if (!string.IsNullOrEmpty(request.CastVfxPath))
+                if (!request.SuppressCastVfx && !string.IsNullOrEmpty(request.CastVfxPath))
                     SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, casterEntityId, CastVfxTtl);
 
-                if (!string.IsNullOrEmpty(request.StartVfxPath))
+                if (!request.SuppressCastVfx && !string.IsNullOrEmpty(request.StartVfxPath))
                     SpawnAndTrack(request.StartVfxPath, casterAddr, orientAddr, casterEntityId, StartVfxTtl);
 
                 foreach (var path in request.CasterVfxPaths)

@@ -601,7 +601,8 @@ public class CombatEngine : IDisposable
         int potency = 0,
         NpcAttackStyle attackStyle = NpcAttackStyle.Auto,
         float radius = 0,
-        bool suppressCasterActionEffect = false)
+        bool suppressCasterActionEffect = false,
+        bool suppressCastVfx = false)
     {
         var result = new SimulatedActionResult
         {
@@ -700,10 +701,10 @@ public class CombatEngine : IDisposable
             // generic spark on every swing.
             TriggerManualNpcHitFeedback(hits);
             if (visualAction.ActionId != 7)
-                animationController.PlayActionVfx(BuildActionEffectRequest(npc.State, visualAction, hits));
+                animationController.PlayActionVfx(BuildActionEffectRequest(npc.State, visualAction, hits, suppressCastVfx));
         }
         else
-            TriggerActionEffect(npc.State, visualAction, hits);
+            TriggerActionEffect(npc.State, visualAction, hits, suppressCastVfx);
 
         result.Success = true;
         result.Damage = totalDamage;
@@ -1039,14 +1040,15 @@ public class CombatEngine : IDisposable
     private void TriggerActionEffect(
         SimulatedEntityState source,
         ActionData actionData,
-        IReadOnlyList<AppliedActionDamage> hits)
+        IReadOnlyList<AppliedActionDamage> hits,
+        bool suppressCastVfx = false)
     {
         if (hits.Count == 0)
             return;
 
         try
         {
-            var request = BuildActionEffectRequest(source, actionData, hits);
+            var request = BuildActionEffectRequest(source, actionData, hits, suppressCastVfx);
             animationController.PlayActionEffect(request);
 
             // ActionEffectHandler.Receive's internal target lookup typically fails for
@@ -1070,7 +1072,8 @@ public class CombatEngine : IDisposable
     private ActionEffectRequest BuildActionEffectRequest(
         SimulatedEntityState source,
         ActionData actionData,
-        IReadOnlyList<AppliedActionDamage> hits)
+        IReadOnlyList<AppliedActionDamage> hits,
+        bool suppressCastVfx = false)
     {
         var sourcePos = GetEntityPosition(source);
 
@@ -1134,6 +1137,7 @@ public class CombatEngine : IDisposable
             StartVfxPath = actionData.StartVfxPath,
             CasterVfxPaths = actionData.CasterVfxPaths,
             TargetVfxPaths = actionData.TargetVfxPaths,
+            SuppressCastVfx = suppressCastVfx,
         };
 
         foreach (var hit in hits)

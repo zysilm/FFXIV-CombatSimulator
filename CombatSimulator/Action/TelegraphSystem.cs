@@ -39,6 +39,8 @@ public sealed class ActiveTelegraph
     public bool TargetIsPlayer;
     public TelegraphOutcome Outcome;
     public bool WindupAnimationPlayed;
+    /// <summary>Cast/channel VFX already spawned when this telegraph began — the strike skips it.</summary>
+    public bool CastVfxPlayed;
     // After the circle closes (perfect moment), a short window where a late guard still counts.
     public bool InGrace;
     public float GraceRemaining;
@@ -97,6 +99,17 @@ public sealed class TelegraphSystem
         if (normalizedLeadIn <= 0f)
             windupAnimationPlayed = TryPlayWindupAnimation(source, req);
 
+        // Ranged/magic skills get no windup swing, so nothing marks the cast visually until the
+        // strike — where the cast VFX spawned and vanished in the same instant. Light the channel
+        // up front so the caster visibly casts for the whole windup; the strike then skips it.
+        var castVfxPlayed = false;
+        if (!req.IsAutoAttack && req.Style is NpcAttackStyle.Ranged or NpcAttackStyle.Magic)
+        {
+            var castData = combatEngine.GetActionData(req.ActionId);
+            if (castData != null)
+                castVfxPlayed = animationController.PlayNpcCastVfx(source, castData);
+        }
+
         // The enemy's real swing fires at the strike (when the circle closes), so it stays
         // synced with the telegraph and keeps its impact sound/reaction.
         active.Add(new ActiveTelegraph
@@ -112,6 +125,7 @@ public sealed class TelegraphSystem
             TargetIsPlayer = target.IsPlayer,
             Outcome = TelegraphOutcome.Pending,
             WindupAnimationPlayed = windupAnimationPlayed,
+            CastVfxPlayed = castVfxPlayed,
         });
     }
 
@@ -221,7 +235,8 @@ public sealed class TelegraphSystem
         combatEngine.ProcessNpcAction(
             t.Source, t.Request.ActionId, t.Request.TargetId,
             t.Request.Potency, t.Request.Style, t.Request.Radius,
-            suppressCasterActionEffect: t.WindupAnimationPlayed);
+            suppressCasterActionEffect: t.WindupAnimationPlayed,
+            suppressCastVfx: t.CastVfxPlayed);
         Finish(t, TelegraphOutcome.Hit);
     }
 

@@ -397,7 +397,15 @@ public sealed unsafe class PartyEngagePlanner
     {
         var key = $"player:{actor.Id}";
         livePathKeys.Add(key);
+        // Every other plan builder keeps a stand-off from its target (BuildPathPointPlan's
+        // holdDistance); the pursuit goal alone was the player's raw position, so it had no notion
+        // of personal space and walked actors onto the player. Melee never notices — it stops on
+        // TickPartyApproach's hold band long before reaching the goal — but a ranged actor, which
+        // deliberately skips that hold band when it is too close so it can back off, was "backing
+        // off" straight into the player. Apply the same stand-off the other builders use, so the
+        // goal a ranged actor backs off to is a real spot instead of the player's feet.
         var delayedGoal = GetDelayedPlayerGoal(key, playerPosition);
+        delayedGoal = PushOutToStandoff(delayedGoal, playerPosition, actor.Position, StandoffFor(actor));
         var clamped = ClampToCommandAnchor(actor, delayedGoal, commandRange, commandRandomness, out var leashed);
         if (leashed)
         {
@@ -1025,6 +1033,39 @@ public sealed unsafe class PartyEngagePlanner
         var jitter = StableUnit(actorId, 0xBEEFu);
         var factor = 0.35f + 0.35f * jitter * (1.0f + Math.Clamp(commandRandomness, 0, 0.8f));
         return MathF.Max(1.5f, commandRange * Math.Clamp(factor, 0.25f, 0.85f));
+    }
+
+    /// <summary>
+    /// The stand-off a plan goal keeps from its target — the same rule BuildPathPointPlan uses for
+    /// its holdDistance, so pursuit goals line up with every other plan kind.
+    /// </summary>
+    private static float StandoffFor(PartyNode actor)
+        => MathF.Max(0.25f, actor.PreferredEngageRange * 0.5f);
+
+    /// <summary>
+    /// Raise a goal to at least <paramref name="standoff"/> from the target, keeping its direction.
+    /// A MINIMUM only — a goal already further out is returned untouched, so this never turns into
+    /// "walk out to X". Falls back to the actor's own bearing when the goal sits on the target.
+    /// </summary>
+    private static Vector3 PushOutToStandoff(Vector3 goal, Vector3 targetPos, Vector3 actorPos, float standoff)
+    {
+        var away = goal - targetPos;
+        away.Y = 0;
+        var dist = away.Length();
+        if (dist >= standoff)
+            return goal;
+
+        if (dist < 0.01f)
+        {
+            away = actorPos - targetPos;
+            away.Y = 0;
+            dist = away.Length();
+            if (dist < 0.01f)
+                return goal; // actor and target fully coincident — nothing meaningful to push along
+        }
+
+        var dir = away / dist;
+        return new Vector3(targetPos.X + dir.X * standoff, goal.Y, targetPos.Z + dir.Z * standoff);
     }
 
     private static float GetPreferredEngageRange(NpcAttackStyle style, float meleeRange, float rangedRange)
