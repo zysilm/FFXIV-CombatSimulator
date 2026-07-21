@@ -54,6 +54,14 @@ public unsafe class NpcAiController : IDisposable
     // makes them lead with skills while they have MP, then fall back to auto-attacks to recover.
     private const int EnemyMpRegenPerSecond = 134;    // 2× the player's ~67/s natural regen
     private const int EnemyAutoAttackMpRestore = 600; // 2× the player's 300 basic-attack restore
+    // Skill prices are authored against the player's 10000 pool (see SkillMpCost). Enemies pay a
+    // FRACTION of their own pool instead, remapped across the authored cost band so the relative
+    // order survives: cheapest skill ≈ 15% of the pool (about 6 casts), priciest ≈ 40% (2 casts).
+    private const float EnemySkillMpCostMinFraction = 0.15f;
+    private const float EnemySkillMpCostMaxFraction = 0.40f;
+    // The authored band skills are priced within (VirtualActionModel Min/MaxActionCost).
+    private const float ActionCostFloor = 1500f;
+    private const float ActionCostCeiling = 8500f;
     // Dynamic positioning: dwell damps intent flicker (front/back thrash).
     private const float IntentMinDwell = 0.6f;
     // Anti-orbit: within this distance of its assigned slot the enemy heads straight in, ignoring
@@ -577,7 +585,7 @@ public unsafe class NpcAiController : IDisposable
                 continue;
             // Only consider skills the enemy can currently afford — otherwise it auto-attacks to
             // recover MP. Enemies prioritise skills whenever they have the MP for one.
-            if (npc.State.CurrentMp < SkillMpCost(skill.ActionId))
+            if (npc.State.CurrentMp < SkillMpCost(npc, skill.ActionId))
                 continue;
 
             (readySkills ??= new List<NpcSkill>()).Add(skill);
@@ -585,7 +593,7 @@ public unsafe class NpcAiController : IDisposable
         if (readySkills != null)
         {
             var skill = readySkills[Random.Shared.Next(readySkills.Count)];
-            var mpCost = SkillMpCost(skill.ActionId);
+            var mpCost = SkillMpCost(npc, skill.ActionId);
 
             // Action Mode skips the engine cast bar — the telegraph executor owns the
             // windup uniformly (cast time feeds the telegraph duration).
@@ -641,9 +649,28 @@ public unsafe class NpcAiController : IDisposable
         }
     }
 
-    // Virtual MP price of an enemy skill (same action-game pricing the player pays). 0 if unknown.
-    private int SkillMpCost(uint actionId)
-        => combatEngine.GetActionData(actionId)?.MpCost ?? 0;
+    /// <summary>
+    /// What an enemy pays for a skill, as a fraction of its OWN pool.
+    ///
+    /// Action prices are authored for the player's 10000 pool and scale with commit time, so every
+    /// cast-time spell prices 5096–8500 while a cast-less weaponskill prices 1988. Charging those
+    /// directly against an enemy's half-size pool made EVERY caster spell permanently unaffordable —
+    /// staff enemies silently never cast anything, while melee enemies behaved normally. Remapping
+    /// the authored band onto a fraction of the enemy's pool keeps skills affordable, keeps the
+    /// relative ordering (a big nuke still costs more than a filler), and keeps the intended rhythm:
+    /// cast a few, run dry, auto-attack to earn MP back.
+    /// </summary>
+    private int SkillMpCost(SimulatedNpc npc, uint actionId)
+    {
+        var raw = combatEngine.GetActionData(actionId)?.MpCost ?? 0;
+        if (raw <= 0)
+            return 0;
+
+        var t = Math.Clamp((raw - ActionCostFloor) / (ActionCostCeiling - ActionCostFloor), 0f, 1f);
+        var fraction = EnemySkillMpCostMinFraction +
+                       t * (EnemySkillMpCostMaxFraction - EnemySkillMpCostMinFraction);
+        return Math.Max(1, (int)MathF.Round(MathF.Max(1f, npc.State.MaxMp) * fraction));
+    }
 
     private void TickChasing(
         SimulatedNpc npc, float deltaTime,
@@ -795,14 +822,20 @@ public unsafe class NpcAiController : IDisposable
         var targetDist = MathF.Max(0.5f, npc.DesiredEngageRange > 0f ? npc.DesiredEngageRange : config.TargetApproachDistance);
 
         // Hold a locked world spot — the enemy stands its ground and does NOT glide
-        // with the player. Only re-approach once the player has wandered away from
-        // that spot by more than the unlock buffer.
+        // with the player. Re-approach when the player has wandered away from that spot by
+        // more than the unlock buffer, OR when the spot sits far INSIDE the desired hold
+        // distance — an archer/caster that locked a near spot before combat computed its real
+        // engage range (DesiredEngageRange starts at 0) would otherwise stay glued at point-
+        // blank forever, firing from 0y.
         if (approachLockedGoals.TryGetValue(npc.Address, out var lockedGoal))
         {
             var ldx = lockedGoal.X - playerPos.X;
             var ldz = lockedGoal.Z - playerPos.Z;
+            var lockedDistSq = ldx * ldx + ldz * ldz;
             var unlock = targetDist + ApproachUnlockBuffer;
-            if (ldx * ldx + ldz * ldz <= unlock * unlock)
+            var tooClose = targetDist - ApproachUnlockBuffer;
+            if (lockedDistSq <= unlock * unlock &&
+                (tooClose <= 0f || lockedDistSq >= tooClose * tooClose))
                 return lockedGoal;
             approachLockedGoals.Remove(npc.Address);
         }

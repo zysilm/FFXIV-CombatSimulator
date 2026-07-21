@@ -290,6 +290,7 @@ public unsafe class NpcSpawner : IDisposable
             // Read weapon data for deferred loading after EnableDraw and for
             // classifying humanoid NPCs as melee/ranged/caster.
             ulong mainHandWeapon = 0, offHandWeapon = 0;
+            var enpcIsHumanoid = false;
             if (request.ENpcBaseId > 0)
             {
                 var eSheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ENpcBase>();
@@ -298,11 +299,15 @@ public unsafe class NpcSpawner : IDisposable
                 {
                     mainHandWeapon = eRow.Value.ModelMainHand;
                     offHandWeapon = eRow.Value.ModelOffHand;
+                    enpcIsHumanoid = eRow.Value.ModelChara.RowId == 0; // monster-model ENpcs skip the clone path
                 }
             }
 
             var weaponStyle = NpcWeaponClassifier.DetectFromPackedWeapon(mainHandWeapon);
             var jobId = NpcWeaponClassifier.DetectJobFromPackedWeapon(mainHandWeapon);
+            // A bare-handed humanoid ENpc fights with its fists — pugilist/monk kit.
+            if (jobId == 0 && mainHandWeapon == 0 && enpcIsHumanoid)
+                jobId = NpcWeaponClassifier.MonkJobId;
             var behavior = actionProfileProvider.Create(npcName, jobId, weaponStyle, npcLevel, request.BNpcBaseId);
             if (weaponStyle is NpcAttackStyle.Ranged or NpcAttackStyle.Magic || jobId != 0)
                 log.Info($"NPC weapon classify '{npcName}' from ENpcBase: packedMainHand=0x{mainHandWeapon:X} -> style={weaponStyle}, job={jobId}");

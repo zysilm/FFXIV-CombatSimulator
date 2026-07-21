@@ -16,6 +16,7 @@ namespace CombatSimulator.Npcs;
 public class NpcActionProfileProvider
 {
     private const int PhysicalRangedAutoPotency = 82;
+    private const int MagicAutoPotency = 100;
     private const uint TrainingDummyBNpcBaseId = 541;
 
     private readonly JobActionKitProvider jobKits;
@@ -82,6 +83,12 @@ public class NpcActionProfileProvider
             case NpcAttackStyle.Magic:
                 behavior.AutoAttackStyle = NpcAttackStyle.Magic;
                 behavior.AutoAttackActionId = 7; // caster melee auto-attack
+                // AutoAttackRange is the ENGAGE/chase range, not the swing range: leaving it at the
+                // 3y melee default made a caster standing at its ~9.5y spell position read as
+                // "out of range" and drop into Chasing, which walks it straight onto the player.
+                // The swing itself is still held to melee by MagicAutoAttackMeleeRange in the AI.
+                behavior.AutoAttackRange = 25f;
+                behavior.AutoAttackPotency = Math.Min(behavior.AutoAttackPotency, MagicAutoPotency);
                 behavior.MoveSpeed = 5f;
                 break;
             // Melee / Auto → NpcBehavior defaults

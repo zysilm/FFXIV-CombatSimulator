@@ -47,6 +47,12 @@ public static unsafe class NpcWeaponClassifier
     private static readonly Dictionary<ushort, NpcAttackStyle> itemCategoryCache = new();
     // weapon set id -> the ClassJob that equips it (Item.ClassJobUse). 0 = no/ambiguous job.
     private static readonly Dictionary<ushort, uint> itemJobCache = new();
+    // ClassJob row id -> its base-class row id (ClassJob.ClassJobParent), for resolving weapon sets
+    // shared between a base class and its job (GLA swords vs PLD swords use the same model sets).
+    private static readonly Dictionary<uint, uint> jobParents = new();
+
+    /// <summary>Pugilist-line job used for bare-handed humanoids — no weapon means fists.</summary>
+    public const uint MonkJobId = 20;
     private static IDataManager? dataManager;
     private static IPluginLog? pluginLog;
     private static bool cacheBuilt;
@@ -57,6 +63,8 @@ public static unsafe class NpcWeaponClassifier
         pluginLog = log;
         itemCategoryCache.Clear();
         itemJobCache.Clear();
+        jobParents.Clear();
+        jobClaims.Clear();
         cacheBuilt = false;
     }
 
@@ -95,6 +103,12 @@ public static unsafe class NpcWeaponClassifier
             return 0;
 
         var weapon = character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).ModelId;
+
+        // A bare-handed humanoid fights with its fists — give it the pugilist/monk kit.
+        // Humanoid = player-model character (ModelCharaId 0); monsters keep no-job/auto-only.
+        if (weapon.Id == 0)
+            return character->ModelContainer.ModelCharaId == 0 ? MonkJobId : 0u;
+
         return DetectJobFromWeapon(weapon.Id, weapon.Type, weapon.Variant);
     }
 
@@ -149,6 +163,21 @@ public static unsafe class NpcWeaponClassifier
             if (sheet == null)
                 return;
 
+            // Base-class links first, so weapon-set conflicts between a class and its job
+            // (GLA/PLD, THM/BLM, CNJ/WHM, ARC/BRD, …) resolve to the job instead of poisoning
+            // the set as ambiguous — shared sets between class and job are the NORM, and the
+            // old "any conflict → 0" rule wiped out entire weapon families (swords most of all).
+            var jobSheet = dataManager.GetExcelSheet<ClassJob>();
+            if (jobSheet != null)
+            {
+                foreach (var job in jobSheet)
+                {
+                    var parent = job.ClassJobParent.RowId;
+                    if (parent != 0 && parent != job.RowId)
+                        jobParents[job.RowId] = parent;
+                }
+            }
+
             foreach (var item in sheet)
             {
                 // Job map: any item that declares an equipping job and carries a weapon model.
@@ -167,8 +196,19 @@ public static unsafe class NpcWeaponClassifier
                 AddModel(item.ModelSub, style);
             }
 
+            // Resolve every set's claimants in one order-independent pass.
+            var poisoned = 0;
+            foreach (var (setId, claims) in jobClaims)
+            {
+                var resolved = ResolveClaims(claims);
+                itemJobCache[setId] = resolved;
+                if (resolved == 0) poisoned++;
+            }
+            jobClaims.Clear();
+
             pluginLog?.Info(
-                $"NPC weapon caches built: {itemCategoryCache.Count} style mappings, {itemJobCache.Count} job mappings.");
+                $"NPC weapon caches built: {itemCategoryCache.Count} style mappings, " +
+                $"{itemJobCache.Count} job mappings ({poisoned} ambiguous).");
         }
         catch (Exception ex)
         {
@@ -194,21 +234,75 @@ public static unsafe class NpcWeaponClassifier
         itemCategoryCache[setId] = style;
     }
 
+    // Build-time only: every job that claims each weapon set. Resolved in one pass afterwards so
+    // the outcome never depends on Item-sheet order.
+    private static readonly Dictionary<ushort, HashSet<uint>> jobClaims = new();
+
     private static void AddModelJob(ulong packedModel, uint job)
     {
         var setId = UnpackModel(packedModel).Id;
         if (setId == 0)
             return;
 
-        if (itemJobCache.TryGetValue(setId, out var existing))
+        if (!jobClaims.TryGetValue(setId, out var claims))
+            jobClaims[setId] = claims = new HashSet<uint>();
+        claims.Add(job);
+    }
+
+    // Weapon sets shared across a class line are the NORM, not an anomaly:
+    //  - class + its job (GLA/PLD swords, THM/BLM staves, …) → resolve to the JOB (fullest kit);
+    //  - sibling jobs of one base (ACN/SMN/SCH grimoires)   → resolve to the common BASE class
+    //    (its kit is the shared subset — stable and sensible for a book-wielding NPC);
+    //  - genuinely unrelated lines on one set → ambiguous (0), auto-attack only.
+    private static uint ResolveClaims(HashSet<uint> jobs)
+    {
+        if (jobs.Count == 1)
         {
-            // Same weapon set shared by two different jobs → ambiguous, mark unknown (0) and keep it there.
-            if (existing != job)
-                itemJobCache[setId] = 0u;
-            return;
+            foreach (var only in jobs) return only;
         }
 
-        itemJobCache[setId] = job;
+        // Exactly one member all of whose co-claimants are its ancestors → that specialized job.
+        uint specialized = 0;
+        var specializedCount = 0;
+        foreach (var j in jobs)
+        {
+            var allAncestors = true;
+            foreach (var other in jobs)
+            {
+                if (other == j) continue;
+                if (!IsAncestor(other, j)) { allAncestors = false; break; }
+            }
+            if (allAncestors) { specialized = j; specializedCount++; }
+        }
+        if (specializedCount == 1)
+            return specialized;
+
+        // Siblings (and possibly their base) — accept the common root class if there is one.
+        uint commonRoot = 0;
+        foreach (var j in jobs)
+        {
+            var root = RootOf(j);
+            if (commonRoot == 0) commonRoot = root;
+            else if (commonRoot != root) return 0u;
+        }
+        return commonRoot;
+    }
+
+    private static bool IsAncestor(uint ancestor, uint job)
+    {
+        while (jobParents.TryGetValue(job, out var parent))
+        {
+            if (parent == ancestor) return true;
+            job = parent;
+        }
+        return false;
+    }
+
+    private static uint RootOf(uint job)
+    {
+        while (jobParents.TryGetValue(job, out var parent))
+            job = parent;
+        return job;
     }
 
     private static WeaponModelKey UnpackModel(ulong packedModel)
