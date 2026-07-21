@@ -64,6 +64,13 @@ public unsafe class SimulatedNpc
     // Casting
     public NpcSkill? CurrentCastSkill { get; set; }
 
+    // Post-spawn placement enforcement: frames left during which the clone is pinned to
+    // SpawnPosition. Something inside the game keeps relocating a freshly cloned humanoid onto the
+    // player despite the spawn placement writes (masked historically by the approach system walking
+    // it away); rather than chase the writer, hold the clone at its intended spot for the first
+    // ~half second after draw, then hand control to the AI.
+    public int SpawnPlacementFrames { get; set; }
+
     // Lifecycle
     public bool IsAlive => State.CurrentHp > 0;
     public bool IsSpawned { get; set; }

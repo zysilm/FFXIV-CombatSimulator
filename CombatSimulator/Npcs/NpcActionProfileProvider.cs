@@ -46,7 +46,11 @@ public class NpcActionProfileProvider
         // Humanoid with a resolved job → its real damage kit; everything else auto-attacks only.
         if (jobId != 0)
         {
-            var kit = jobKits.BuildKit(jobId, level, Math.Max(1, config.EnemyMaxRealSkills));
+            // Melee-weapon humanoids get a pure melee kit: one ranged GCD in the list flips the
+            // engage-range logic to ranged intent and the enemy camps at spell range instead of
+            // closing in like its weapon implies.
+            var meleeOnly = weaponStyle is not (NpcAttackStyle.Ranged or NpcAttackStyle.Magic);
+            var kit = jobKits.BuildKit(jobId, level, Math.Max(1, config.EnemyMaxRealSkills), meleeOnly);
             if (kit.Count > 0)
             {
                 behavior.Skills = new List<NpcSkill>(kit);

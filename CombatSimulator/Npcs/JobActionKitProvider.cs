@@ -30,7 +30,7 @@ public class JobActionKitProvider
     private readonly ActionDataProvider actionDataProvider;
     private readonly IDataManager dataManager;
     private readonly IPluginLog log;
-    private readonly Dictionary<(uint Job, int Level, int Max), List<NpcSkill>> cache = new();
+    private readonly Dictionary<(uint Job, int Level, int Max, bool MeleeOnly), List<NpcSkill>> cache = new();
 
     public JobActionKitProvider(ActionDataProvider actionDataProvider, IDataManager dataManager, IPluginLog log)
     {
@@ -42,22 +42,26 @@ public class JobActionKitProvider
     /// <summary>
     /// The strongest <paramref name="maxSkills"/> damage actions for <paramref name="jobId"/> usable
     /// at <paramref name="levelCap"/>, ranked by estimated potency. Empty if the job/data is unavailable.
+    /// <paramref name="meleeOnly"/> (set for melee-weapon humanoids) drops ranged/magic GCDs — a
+    /// single long-range skill in the kit (SAM's Ogi Namikiri, DRG's Piercing Talon, RPR's Harpe)
+    /// otherwise flips the whole enemy to ranged intent and it camps 8–9.5y out instead of engaging
+    /// in melee like its weapon implies.
     /// </summary>
-    public IReadOnlyList<NpcSkill> BuildKit(uint jobId, int levelCap, int maxSkills)
+    public IReadOnlyList<NpcSkill> BuildKit(uint jobId, int levelCap, int maxSkills, bool meleeOnly = false)
     {
         if (jobId == 0 || maxSkills <= 0)
             return Array.Empty<NpcSkill>();
 
-        var key = (jobId, levelCap, maxSkills);
+        var key = (jobId, levelCap, maxSkills, meleeOnly);
         if (cache.TryGetValue(key, out var cached))
             return cached;
 
-        var kit = BuildKitUncached(jobId, levelCap, maxSkills);
+        var kit = BuildKitUncached(jobId, levelCap, maxSkills, meleeOnly);
         cache[key] = kit;
         return kit;
     }
 
-    private List<NpcSkill> BuildKitUncached(uint jobId, int levelCap, int maxSkills)
+    private List<NpcSkill> BuildKitUncached(uint jobId, int levelCap, int maxSkills, bool meleeOnly)
     {
         var empty = new List<NpcSkill>();
 
@@ -97,6 +101,9 @@ public class JobActionKitProvider
 
             var data = actionDataProvider.GetActionData(action.RowId);
             if (data == null || data.Intent != ActionIntent.Damage || data.Potency <= 0)
+                continue;
+            // Melee-weapon humanoids keep a pure melee kit (see BuildKit doc).
+            if (meleeOnly && (data.DamageType == SimDamageType.Magical || data.Range > 5f))
                 continue;
 
             candidates.Add((data, lvl));

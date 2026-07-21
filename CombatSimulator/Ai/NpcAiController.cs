@@ -49,6 +49,11 @@ public unsafe class NpcAiController : IDisposable
     private const float PartyAttackRangeHysteresis = 0.4f;
     // Caster/magic enemies auto-attack at melee reach (their spells are ranged, the basic swing is not).
     private const float MagicAutoAttackMeleeRange = 3.5f;
+    // Enemy MP economy: enemies have half the player's max MP (set at spawn) but recover at double
+    // rate, and only from natural regen + auto-attacks — never from guarding (they don't guard). This
+    // makes them lead with skills while they have MP, then fall back to auto-attacks to recover.
+    private const int EnemyMpRegenPerSecond = 134;    // 2× the player's ~67/s natural regen
+    private const int EnemyAutoAttackMpRestore = 600; // 2× the player's 300 basic-attack restore
     // Dynamic positioning: dwell damps intent flicker (front/back thrash).
     private const float IntentMinDwell = 0.6f;
     // Anti-orbit: within this distance of its assigned slot the enemy heads straight in, ignoring
@@ -252,6 +257,10 @@ public unsafe class NpcAiController : IDisposable
                     continue;
                 if (isExternallyControlled(npc.Address))
                     continue;
+                // Freshly spawned clones are being pinned to their spawn placement by NpcSpawner;
+                // don't fight it — approach takes over once the enforcement window ends.
+                if (npc.SpawnPlacementFrames > 0)
+                    continue;
                 if (npc.AiState != NpcAiState.Dead)
                     approachNpcs.Add(npc);
             }
@@ -312,6 +321,7 @@ public unsafe class NpcAiController : IDisposable
             approachPaths.Clear();
             approachLockedGoals.Clear();
         }
+
     }
 
     /// <summary>
@@ -379,6 +389,11 @@ public unsafe class NpcAiController : IDisposable
 
         if (npc.State.AnimationLock > 0)
             npc.State.AnimationLock = Math.Max(0, npc.State.AnimationLock - deltaTime);
+
+        // Natural MP regen (double the player's rate).
+        if (npc.State.CurrentMp < npc.State.MaxMp)
+            npc.State.CurrentMp = Math.Min(npc.State.MaxMp,
+                npc.State.CurrentMp + (int)(EnemyMpRegenPerSecond * deltaTime));
 
         DiscardInvalidNpcActionState(npc);
 
@@ -560,12 +575,17 @@ public unsafe class NpcAiController : IDisposable
                 continue;
             if (hpPercent > skill.HpThreshold)
                 continue;
+            // Only consider skills the enemy can currently afford — otherwise it auto-attacks to
+            // recover MP. Enemies prioritise skills whenever they have the MP for one.
+            if (npc.State.CurrentMp < SkillMpCost(skill.ActionId))
+                continue;
 
             (readySkills ??= new List<NpcSkill>()).Add(skill);
         }
         if (readySkills != null)
         {
             var skill = readySkills[Random.Shared.Next(readySkills.Count)];
+            var mpCost = SkillMpCost(skill.ActionId);
 
             // Action Mode skips the engine cast bar — the telegraph executor owns the
             // windup uniformly (cast time feeds the telegraph duration).
@@ -577,6 +597,7 @@ public unsafe class NpcAiController : IDisposable
                 npc.State.CastTimeElapsed = 0;
                 npc.State.CastTargetId = targetEntityId;
                 npc.CurrentCastSkill = skill;
+                npc.State.CurrentMp = Math.Max(0, npc.State.CurrentMp - mpCost);
 
                 combatEngine.AddLogEntry(
                     $"{npc.Name} begins casting {skill.Name}...",
@@ -588,6 +609,7 @@ public unsafe class NpcAiController : IDisposable
                     skill.ActionId, targetEntityId, skill.Potency, skill.AttackStyle, skill.Radius, skill.CastTime));
                 if (ok)
                 {
+                    npc.State.CurrentMp = Math.Max(0, npc.State.CurrentMp - mpCost);
                     skill.CooldownRemaining = skill.Cooldown / ActionPace();
                     npc.State.AnimationLock = MathF.Max(npc.State.AnimationLock, 0.6f);
                 }
@@ -610,9 +632,18 @@ public unsafe class NpcAiController : IDisposable
                 npc.Behavior.AutoAttackActionId, targetEntityId, npc.Behavior.AutoAttackPotency,
                 npc.Behavior.AutoAttackStyle, 0f, 0f, IsAutoAttack: true));
             if (ok)
+            {
+                // Auto-attacks recover MP (double the player's basic-attack restore) so a depleted
+                // enemy earns its way back into skill range.
+                npc.State.CurrentMp = Math.Min(npc.State.MaxMp, npc.State.CurrentMp + EnemyAutoAttackMpRestore);
                 npc.State.AnimationLock = MathF.Max(npc.State.AnimationLock, 0.6f);
+            }
         }
     }
+
+    // Virtual MP price of an enemy skill (same action-game pricing the player pays). 0 if unknown.
+    private int SkillMpCost(uint actionId)
+        => combatEngine.GetActionData(actionId)?.MpCost ?? 0;
 
     private void TickChasing(
         SimulatedNpc npc, float deltaTime,
@@ -1267,6 +1298,13 @@ public unsafe class NpcAiController : IDisposable
             npc.IntentDwellTimer = MathF.Max(0f, npc.IntentDwellTimer - deltaTime);
 
         var meleeHold = MathF.Max(0.5f, config.PartyMeleeAttackRange);
+        // Solo play: the user-tuned Target Approach Distance is the authoritative standing
+        // distance. PartyMeleeAttackRange is a party-formation value (1.5y, body-to-body) — letting
+        // it override the solo hold made every engaged melee enemy walk right onto the player the
+        // moment it entered combat (DesiredEngageRange trumps TargetApproachDistance in
+        // ComputeApproachGoal). Respect the solo setting outside party mode.
+        if (!config.EnableCombatCompanions)
+            meleeHold = MathF.Max(meleeHold, config.TargetApproachDistance);
         var rangedHold = MathF.Max(1.0f, config.PartyRangedAttackRange);
         var hpPercent = npc.State.MaxHp > 0 ? (float)npc.State.CurrentHp / npc.State.MaxHp : 1f;
 

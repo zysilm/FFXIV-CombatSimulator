@@ -101,8 +101,8 @@ public unsafe class NpcSelector : IDisposable
                 Level = level,
                 MaxHp = maxHp,
                 CurrentHp = maxHp,
-                MaxMp = 10000,
-                CurrentMp = 10000,
+                MaxMp = 5000, // half the player's 10000 — enemy MP economy (NpcAiController)
+                CurrentMp = 5000,
                 MainStat = 100 + level * 10,
                 Defense = 100 + level * 5,
                 MagicDefense = 100 + level * 5,
@@ -335,8 +335,8 @@ public unsafe class NpcSelector : IDisposable
                 Level = level,
                 MaxHp = maxHp,
                 CurrentHp = maxHp,
-                MaxMp = 10000,
-                CurrentMp = 10000,
+                MaxMp = 5000, // half the player's 10000 — enemy MP economy (NpcAiController)
+                CurrentMp = 5000,
                 MainStat = 100 + level * 10,
                 Defense = 100 + level * 5,
                 MagicDefense = 100 + level * 5,

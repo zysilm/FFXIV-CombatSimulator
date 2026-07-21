@@ -24,7 +24,11 @@ public unsafe class NpcSpawner : IDisposable
     private readonly IClientState clientState;
     private readonly Configuration config;
     private readonly NpcActionProfileProvider actionProfileProvider;
+    private readonly Safety.MovementBlockHook movementBlockHook;
     private readonly IPluginLog log;
+
+    // Pin freshly spawned clones to their intended placement for this many frames (~0.5s at 60fps).
+    private const int SpawnPlacementEnforceFrames = 30;
 
     private readonly List<SimulatedNpc> spawnedNpcs = new();
     private readonly List<PendingSpawn> pendingSpawns = new();
@@ -72,6 +76,7 @@ public unsafe class NpcSpawner : IDisposable
         IClientState clientState,
         Configuration config,
         NpcActionProfileProvider actionProfileProvider,
+        Safety.MovementBlockHook movementBlockHook,
         IPluginLog log)
     {
         this.objectTable = objectTable;
@@ -79,6 +84,7 @@ public unsafe class NpcSpawner : IDisposable
         this.clientState = clientState;
         this.config = config;
         this.actionProfileProvider = actionProfileProvider;
+        this.movementBlockHook = movementBlockHook;
         this.log = log;
     }
 
@@ -107,6 +113,29 @@ public unsafe class NpcSpawner : IDisposable
         }
 
         TickPendingSpawns();
+        EnforceSpawnPlacements();
+    }
+
+    /// <summary>
+    /// For the first ~half second after a clone's draw completes, force it back to its intended
+    /// spawn placement every frame via the real SetPosition (syncs the draw object). Something in
+    /// the game keeps relocating freshly cloned humanoids onto the player regardless of where the
+    /// spawn wrote them; instead of chasing that writer, guarantee the OUTCOME — the enemy stands
+    /// where "spawn in front" put it — then hand control to the AI. The AI's approach skips
+    /// enforced NPCs so the two never fight over the position.
+    /// </summary>
+    private void EnforceSpawnPlacements()
+    {
+        foreach (var npc in spawnedNpcs)
+        {
+            if (npc.SpawnPlacementFrames <= 0 || npc.BattleChara == null || !npc.IsSpawned)
+                continue;
+
+            npc.SpawnPlacementFrames--;
+            var obj = (GameObject*)npc.BattleChara;
+            movementBlockHook.SetApproachPosition(
+                obj, npc.SpawnPosition.X, npc.SpawnPosition.Y, npc.SpawnPosition.Z);
+        }
     }
 
     private void ProcessSpawnRequest(NpcSpawnRequest request)
@@ -219,6 +248,16 @@ public unsafe class NpcSpawner : IDisposable
             obj->ObjectKind = ObjectKind.BattleNpc;
             obj->SubKind = (byte)BattleNpcSubKind.Combatant;
 
+            // Position/Rotation are base GameObject fields too — CopyFromCharacter(player)
+            // copies them exactly like ObjectKind, so a humanoid clone is born ON the player,
+            // silently discarding the Step-2 placement. (This was masked for years by the
+            // approach system walking the enemy away; whenever approach idled — e.g. a pending
+            // vnavmesh path — the enemy visibly stayed inside the player, which is why "spawn
+            // in front" seemed to fail intermittently on reset.) Re-assert the spawn placement
+            // after every copy, same as ObjectKind.
+            obj->Position = spawnPos;
+            obj->Rotation = spawnRot;
+
             // Step 6b: Force Mode to Normal so the walk/run animation state machine
             // is active. CreateBattleCharacter leaves Mode at 0 (None) which makes
             // the game skip all animation dispatch for that character.
@@ -290,8 +329,8 @@ public unsafe class NpcSpawner : IDisposable
                     Level = npcLevel,
                     MaxHp = maxHp,
                     CurrentHp = maxHp,
-                    MaxMp = 10000,
-                    CurrentMp = 10000,
+                    MaxMp = 5000, // half the player's 10000 — enemy MP economy (NpcAiController)
+                    CurrentMp = 5000,
                     MainStat = 100 + npcLevel * 10,
                     Defense = 100 + npcLevel * 5,
                     MagicDefense = 100 + npcLevel * 5,
@@ -354,6 +393,7 @@ public unsafe class NpcSpawner : IDisposable
                     obj->TargetableStatus = ObjectTargetableFlags.IsTargetable;
 
                     npc.IsSpawned = true;
+                    npc.SpawnPlacementFrames = SpawnPlacementEnforceFrames;
                     spawnedNpcs.Add(npc);
                     pendingSpawns.RemoveAt(i);
 
@@ -371,6 +411,7 @@ public unsafe class NpcSpawner : IDisposable
                     obj->TargetableStatus = ObjectTargetableFlags.IsTargetable;
 
                     npc.IsSpawned = true;
+                    npc.SpawnPlacementFrames = SpawnPlacementEnforceFrames;
                     spawnedNpcs.Add(npc);
                     pendingSpawns.RemoveAt(i);
 
@@ -709,26 +750,22 @@ public unsafe class NpcSpawner : IDisposable
 
     private Vector3 CalculateSpawnPosition()
     {
-        // Use LocalPlayer (not objectTable[0], which can be null/stale during a reset teardown and
-        // would drop the spawn at world origin). Matches MainWindow.CalculateSpawnPosition.
+        // LocalPlayer, not objectTable[0]: the latter can be null during a reset teardown and drop
+        // the spawn at world origin (the likely cause of "front failing on reset"). Otherwise this
+        // is the original behaviour.
         var player = objectTable.LocalPlayer;
         if (player != null)
         {
             var playerPos = player.Position;
             var distance = MathF.Max(0f, config.SpawnDistance);
 
-            // In front of the player using the character's real in-game facing (yaw). Forward
-            // convention matches PartyEngagePlanner: yaw R -> (sin R, 0, cos R). A small lateral/depth
-            // spread keeps a batch regenerated at once (reset) from stacking on a single point.
+            // Spawn exactly in front of the player using the character's real in-game facing (yaw),
+            // with no randomness — enemies spawn AND regenerate directly in front, overlap and all.
             if (config.SpawnInFront)
             {
-                const float spread = 2.0f;
                 var yaw = player.Rotation;
                 var fwd = new Vector3(MathF.Sin(yaw), 0, MathF.Cos(yaw));
-                var right = new Vector3(fwd.Z, 0, -fwd.X);
-                var lateral = (Random.Shared.NextSingle() - 0.5f) * 2f * spread;
-                var depth = (Random.Shared.NextSingle() - 0.5f) * spread;
-                return playerPos + fwd * (distance + depth) + right * lateral;
+                return playerPos + fwd * distance;
             }
 
             var angle = Random.Shared.NextSingle() * MathF.Tau;
