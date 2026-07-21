@@ -94,6 +94,11 @@ public class CombatEngine : IDisposable
     public Func<uint, bool>? IsTargetSuperArmored { get; set; }
     public Action<int>? OnPlayerDamageDealt { get; set; }
     public Action<uint, int>? OnPlayerDamageDealtToTarget { get; set; }
+    /// <summary>Dev seam: suppress every non-player route that would put an idle enemy into combat.</summary>
+    public Func<bool>? ShouldSuppressEnemyInitiation { private get; set; }
+    public bool IsEnemyInitiationSuppressed => ShouldSuppressEnemyInitiation?.Invoke() == true;
+    /// <summary>Fired only after a player attack has successfully dealt damage to an enemy.</summary>
+    public Action? OnPlayerAttackLanded { get; set; }
     // Fired when an NPC's attack lands on the (still-alive) player; argument is the
     // attacker's simulated entity id. Drives auto-counter target acquisition.
     public Action<uint>? OnPlayerHitByNpc { get; set; }
@@ -534,6 +539,8 @@ public class CombatEngine : IDisposable
             OnPlayerDamageDealtToTarget?.Invoke(hit.Target.EntityId, hit.DamageResult.Damage);
         }
         OnPlayerDamageDealt?.Invoke(totalDamage);
+        if (totalDamage > 0)
+            OnPlayerAttackLanded?.Invoke();
 
         // Build result
         result.Success = true;
@@ -566,19 +573,7 @@ public class CombatEngine : IDisposable
             $"You use {actionData.Name} → {target.Name}: {dmgResult.Damage:N0}{critText}{dhText} damage{comboText}",
             CombatLogType.DamageDealt);
 
-        // Engage the NPC if it was idle
-        foreach (var npc in npcSelector.SelectedNpcs)
-        {
-            if (npc.SimulatedEntityId == (uint)targetId &&
-                npc.AiState == Ai.NpcAiState.Idle)
-            {
-                npc.AiState = Ai.NpcAiState.Engaging;
-                npc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
-                Ai.NpcAiController.StaggerTimers(npc);
-                AddLogEntry($"{npc.Name} engages!", CombatLogType.Info);
-                break;
-            }
-        }
+        EngageIdleTarget(target.EntityId);
 
         // Check death
         foreach (var hit in hits)
@@ -782,16 +777,9 @@ public class CombatEngine : IDisposable
         targetNpc.State.CurrentHp = Math.Max(0, targetNpc.State.CurrentHp - dmgResult.Damage);
         State.TotalDamageDealt += dmgResult.Damage;
 
-        // Companion aggro: a companion attacking an idle enemy makes it fight back,
-        // mirroring how the player's attack engages a target. Without this, enemies
-        // stay idle until the player personally attacks them.
-        if (targetNpc.AiState == Ai.NpcAiState.Idle)
-        {
-            targetNpc.AiState = Ai.NpcAiState.Engaging;
-            targetNpc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
-            Ai.NpcAiController.StaggerTimers(targetNpc);
-            AddLogEntry($"{targetNpc.Name} engages!", CombatLogType.Info);
-        }
+        // Companion aggro normally makes the target fight back. The dev player-hit gate
+        // suppresses this path so only a confirmed local-player hit can release the pack.
+        EngageIdleTarget(targetNpc.SimulatedEntityId);
 
         var visualAction = resolvedActionData != null ? CloneActionData(resolvedActionData) : new ActionData
         {
@@ -829,17 +817,7 @@ public class CombatEngine : IDisposable
             totalDamage += extraDamage.Damage;
             State.TotalDamageDealt += extraDamage.Damage;
 
-            foreach (var npc in npcSelector.SelectedNpcs)
-            {
-                if (npc.SimulatedEntityId != extraTarget.EntityId || npc.AiState != Ai.NpcAiState.Idle)
-                    continue;
-
-                npc.AiState = Ai.NpcAiState.Engaging;
-                npc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
-                Ai.NpcAiController.StaggerTimers(npc);
-                AddLogEntry($"{npc.Name} engages!", CombatLogType.Info);
-                break;
-            }
+            EngageIdleTarget(extraTarget.EntityId);
         }
 
         TriggerActionEffect(companion.State, visualAction, hits);
@@ -1668,13 +1646,7 @@ public class CombatEngine : IDisposable
 
             // Locking onto an enemy and swinging commits to the fight — engage it
             // if it was still idle (mirrors ProcessPlayerAction).
-            if (target.AiState == Ai.NpcAiState.Idle)
-            {
-                target.AiState = Ai.NpcAiState.Engaging;
-                target.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
-                Ai.NpcAiController.StaggerTimers(target);
-                AddLogEntry($"{target.Name} engages!", CombatLogType.Info);
-            }
+            EngageIdleTarget(target.State.EntityId);
 
             ps.AutoAttackTimer -= deltaTime;
             if (ps.AutoAttackTimer <= 0)
@@ -1714,6 +1686,9 @@ public class CombatEngine : IDisposable
         State.TotalDamageDealt += dmg.Damage;
         OnPlayerDamageDealt?.Invoke(dmg.Damage);
         OnPlayerDamageDealtToTarget?.Invoke(npc.State.EntityId, dmg.Damage);
+        if (dmg.Damage > 0)
+            OnPlayerAttackLanded?.Invoke();
+        EngageIdleTarget(npc.State.EntityId);
 
         // Trigger auto-attack animation + VFX
         var autoAttackData = new ActionData
@@ -1829,11 +1804,15 @@ public class CombatEngine : IDisposable
             total += dmg.Damage;
             State.TotalDamageDealt += dmg.Damage;
             OnPlayerDamageDealtToTarget?.Invoke(target.EntityId, dmg.Damage);
-            EngageIdleTarget(target.EntityId);
         }
 
         if (hits.Count == 0)
             return 0;
+
+        if (total > 0)
+            OnPlayerAttackLanded?.Invoke();
+        foreach (var hit in hits)
+            EngageIdleTarget(hit.Target.EntityId);
 
         if (State.CombatStartTime == 0)
             State.CombatStartTime = State.SimulationTime;
@@ -1883,15 +1862,34 @@ public class CombatEngine : IDisposable
     /// <summary>Engage a still-idle selected enemy (mirrors the sim-mode first-hit engage).</summary>
     private void EngageIdleTarget(uint entityId)
     {
+        if (IsEnemyInitiationSuppressed)
+            return;
+
         foreach (var npc in npcSelector.SelectedNpcs)
         {
-            if (npc.SimulatedEntityId != entityId || npc.AiState != Ai.NpcAiState.Idle)
+            if (npc.SimulatedEntityId != entityId ||
+                npc.AiState != Ai.NpcAiState.Idle ||
+                !npc.State.IsAlive)
                 continue;
             npc.AiState = Ai.NpcAiState.Engaging;
             npc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
             Ai.NpcAiController.StaggerTimers(npc);
             AddLogEntry($"{npc.Name} engages!", CombatLogType.Info);
             break;
+        }
+    }
+
+    /// <summary>Engage every currently registered living enemy. Dev pack aggro also calls this
+    /// from its world tick so enemies that finish spawning after the first hit join the fight.</summary>
+    public void EngageAllIdleEnemies()
+    {
+        if (IsEnemyInitiationSuppressed)
+            return;
+
+        foreach (var npc in npcSelector.SelectedNpcs)
+        {
+            if (npc.IsSpawned && npc.State.IsAlive)
+                EngageIdleTarget(npc.SimulatedEntityId);
         }
     }
 

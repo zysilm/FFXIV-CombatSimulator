@@ -19,6 +19,12 @@ public interface IDevExperimental : IDisposable
     /// <summary>True while a dev controller is driving this NPC (suppresses its AI).</summary>
     bool ControlsNpc(nint address);
 
+    /// <summary>True while the dev enemy-pack gate is waiting for a real player hit.</summary>
+    bool SuppressEnemyInitiation { get; }
+
+    /// <summary>Release the dev enemy-pack gate after confirmed player damage lands.</summary>
+    void OnPlayerAttackLanded();
+
     /// <summary>Bind dev-only UI controllers without requiring MainWindow to downcast this module.</summary>
     void BindUi(MainWindow mainWindow);
 

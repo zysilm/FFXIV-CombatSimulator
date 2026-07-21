@@ -39,6 +39,7 @@ public unsafe class NpcAiController : IDisposable
     // the player. The lock only releases when the player wanders far enough away
     // that the enemy must walk in again.
     private readonly Dictionary<nint, Vector3> approachLockedGoals = new();
+    private readonly HashSet<nint> passiveEnemyAddresses = new();
     private const float VNavmeshRepathDistance = 1.5f;
     private const float VNavmeshRepathInterval = 1.0f;
     private const float VNavmeshPathTolerance = 0.5f;
@@ -147,7 +148,11 @@ public unsafe class NpcAiController : IDisposable
 
     private void ScheduleAutoEngage()
     {
-        if (!config.EnableNpcAutoEngage) { pendingAutoEngageDelay = -1f; return; }
+        if (!config.EnableNpcAutoEngage || combatEngine.IsEnemyInitiationSuppressed)
+        {
+            pendingAutoEngageDelay = -1f;
+            return;
+        }
         pendingAutoEngageDelay = Math.Clamp(config.NpcAutoEngageDelay, 0f, 20f);
     }
 
@@ -171,6 +176,13 @@ public unsafe class NpcAiController : IDisposable
         var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null)
             return;
+
+        if (combatEngine.IsEnemyInitiationSuppressed)
+        {
+            TickPassiveEnemyPack(npcs);
+            return;
+        }
+        passiveEnemyAddresses.Clear();
 
         // Auto-engage countdown — when it expires, force every selected NPC
         // from Idle into Engaging so attacks start without player aggro.
@@ -340,6 +352,46 @@ public unsafe class NpcAiController : IDisposable
         StopAllApproachMoveAnims();
         approachPaths.Clear();
         approachLockedGoals.Clear();
+        passiveEnemyAddresses.Clear();
+    }
+
+    private void TickPassiveEnemyPack(IReadOnlyList<SimulatedNpc> npcs)
+    {
+        pendingAutoEngageDelay = -1f;
+        movementBlockHook.ClearApproachNpcsExcept(isExternallyControlled);
+        StopAllApproachMoveAnims();
+        approachPaths.Clear();
+        approachLockedGoals.Clear();
+
+        var liveAddresses = new HashSet<nint>();
+        foreach (var npc in npcs)
+        {
+            if (!npc.IsSpawned || isExternallyControlled(npc.Address))
+                continue;
+
+            npc.IsAttackingPlayer = false;
+            ClearNpcActionState(npc);
+            npc.EngageDelayTimer = 0f;
+
+            if (!npc.State.IsAlive)
+            {
+                npc.AiState = NpcAiState.Dead;
+                if (npc.BattleChara != null)
+                    ActorVisualStateController.ApplyDead((Character*)npc.BattleChara, npc.VisualState);
+                continue;
+            }
+
+            npc.AiState = NpcAiState.Idle;
+            liveAddresses.Add(npc.Address);
+            if (npc.BattleChara != null)
+            {
+                ((Character*)npc.BattleChara)->TargetId = default;
+                if (passiveEnemyAddresses.Add(npc.Address))
+                    animationController.ClearBattleStance(npc);
+            }
+        }
+
+        passiveEnemyAddresses.RemoveWhere(address => !liveAddresses.Contains(address));
     }
 
     private void ClearPartyApproachState(SimulatedNpc npc)

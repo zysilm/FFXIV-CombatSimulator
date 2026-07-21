@@ -196,14 +196,21 @@ public sealed unsafe class MapEnemyController
         }
 
         combatEngine.RegisterNpcEntity(npc);
-        npc.AiState = NpcAiState.Engaging;
-        npc.EngageDelayTimer = NpcAiController.PlayerTriggeredEngageDelay;
-        NpcAiController.StaggerTimers(npc);
+        if (!combatEngine.IsEnemyInitiationSuppressed)
+        {
+            npc.AiState = NpcAiState.Engaging;
+            npc.EngageDelayTimer = NpcAiController.PlayerTriggeredEngageDelay;
+            NpcAiController.StaggerTimers(npc);
+        }
 
         if (initialTargetId != 0)
             forceEnemyTarget(npc.SimulatedEntityId, initialTargetId);
 
-        combatEngine.AddLogEntry($"{npc.Name} joins the fight!", CombatLogType.Info);
+        combatEngine.AddLogEntry(
+            combatEngine.IsEnemyInitiationSuppressed
+                ? $"{npc.Name} joins the enemy pack."
+                : $"{npc.Name} joins the fight!",
+            CombatLogType.Info);
         return npc;
     }
 
