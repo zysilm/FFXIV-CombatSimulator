@@ -126,11 +126,14 @@ public unsafe class AnimationController : IDisposable
     private Hook<PlaySpecificSoundDelegate>? playSpecificSoundHook;
     private readonly List<TrackedActorVfx> trackedActorVfx = new();
     // Manually-spawned VFX are orphans — nothing in the game's action lifecycle reaps them, so they
-    // are tracked and removed on a timer or they linger until a client restart. The budget is split
-    // by action type: spells run a cast bar and a long effect, so they need far longer on screen
-    // than a physical weaponskill.
+    // are tracked and removed on a timer or they linger until a client restart. The budget starts
+    // from a per-type FLOOR (a spell's effect lingers far longer than a weaponskill's) and is then
+    // raised to cover the action's real animation length, so a long skill is never cut off
+    // mid-play. Enemies cast instantly now, so animation length is the whole on-screen span.
     private const float PhysicalVfxTtl = 2.5f;
     private const float SpellVfxTtl = 6.0f;
+    private const float VfxTtlGrace = 1.0f;   // headroom past the animation so the tail isn't clipped
+    private const float MaxVfxTtl = 15.0f;    // hard ceiling: a bad duration read must never mean "never removed"
     private const float UntrackedVfxTtl = 0.0f;
     private const int MaxTrackedActorVfx = 256;
 
@@ -467,9 +470,20 @@ public unsafe class AnimationController : IDisposable
         }
     }
 
-    /// <summary>How long a manually-spawned VFX lives, by action type (see the TTL constants).</summary>
-    private static float VfxTtlFor(SimDamageType damageType)
+    /// <summary>The per-action-type TTL floor (see the TTL constants).</summary>
+    private static float VfxTtlFloorFor(SimDamageType damageType)
         => damageType == SimDamageType.Magical ? SpellVfxTtl : PhysicalVfxTtl;
+
+    /// <summary>
+    /// How long a manually-spawned VFX for this action lives: its type floor, raised to cover the
+    /// action's real animation length (read from its TMB) plus grace, and capped so a bad duration
+    /// read can never leave an effect on screen indefinitely.
+    /// </summary>
+    private float ResolveVfxTtl(uint actionId, float typeFloor)
+    {
+        var animation = ResolveActionAnimationDuration(actionId);
+        return MathF.Min(MathF.Max(typeFloor, animation + VfxTtlGrace), MaxVfxTtl);
+    }
 
     public float ResolveActionAnimationDuration(uint actionId)
     {
@@ -737,8 +751,8 @@ public unsafe class AnimationController : IDisposable
             if (casterAddr == 0)
                 return false;
 
-            // Lit at the START of the cast, so it must outlive the whole cast bar.
-            var ttl = VfxTtlFor(data.DamageType);
+            // Lit when the telegraph begins, so it has to outlive the wind-up and the swing after it.
+            var ttl = ResolveVfxTtl(data.ActionId, VfxTtlFloorFor(data.DamageType));
 
             var spawned = false;
             if (!string.IsNullOrEmpty(data.CastVfxPath))
@@ -837,7 +851,9 @@ public unsafe class AnimationController : IDisposable
 
             if (config.EnableCharacterVfx)
             {
-                var ttl = request.AttackStyle == NpcAttackStyle.Magic ? SpellVfxTtl : PhysicalVfxTtl;
+                var ttl = ResolveVfxTtl(
+                    request.ActionId,
+                    request.AttackStyle == NpcAttackStyle.Magic ? SpellVfxTtl : PhysicalVfxTtl);
 
                 if (!request.SuppressCastVfx && !string.IsNullOrEmpty(request.CastVfxPath))
                     SpawnAndTrack(request.CastVfxPath, casterAddr, orientAddr, casterEntityId, ttl);
