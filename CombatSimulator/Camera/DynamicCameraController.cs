@@ -757,7 +757,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
                 // here used to leave both subjects crammed onto one side after the camera
                 // crossed the fight. AutoShoulderSide supplies the hysteresis; the shoulder
                 // and pivot springs below supply the visible transition.
-                _ => AutoShoulderSide(focus, anchor, right),
+                _ => AutoShoulderSide(focus, playerAddress, anchor, right),
             };
             shoulderSide = side;
 
@@ -876,7 +876,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
             lastEnemyFitExtra = 0f;
     }
 
-    private float AutoShoulderSide(SimulatedNpc? focus, Vector3 anchor, Vector3 right)
+    private float AutoShoulderSide(SimulatedNpc? focus, nint playerAddress, Vector3 anchor, Vector3 right)
     {
         // Use the committed target side for hysteresis, not the smoothed offset. During a
         // flip the offset necessarily crosses zero; treating that transient value as the
@@ -887,22 +887,24 @@ public sealed unsafe class DynamicCameraController : IDisposable
             ? shoulderSide
             : smoothedShoulder > 0f ? 1f : -1f;
 
-        if (focus == null || focus.BattleChara == null)
-            return currentSide; // hold the last side rather than snapping to centre
-
-        var toEnemy = EnemyPosition(focus) - anchor;
-        toEnemy.Y = 0f;
-        if (toEnemy.LengthSquared() < 0.01f)
+        // Prefer the actual focus enemy. Before the first attack (notably with the optional
+        // enemy-pack gate) nobody is engaged yet, so fall back to the player's facing direction:
+        // orbiting from one side of the character to the other must still mirror the composition.
+        var openDirection = focus is { BattleChara: not null }
+            ? EnemyPosition(focus) - anchor
+            : ReadObjectForward(playerAddress);
+        openDirection.Y = 0f;
+        if (openDirection.LengthSquared() < 0.01f)
             return currentSide;
 
-        var lateral = Vector3.Dot(right, Vector3.Normalize(toEnemy));
+        var lateral = Vector3.Dot(right, Vector3.Normalize(openDirection));
 
         // Hysteresis: only commit to the other side once the enemy is clearly over there,
         // otherwise an enemy circling through screen centre makes the frame twitch.
-        const float flipThreshold = 0.25f;
-        if (currentSide > 0f && lateral > -flipThreshold) return 1f;
-        if (currentSide < 0f && lateral < flipThreshold) return -1f;
-        return lateral >= 0f ? 1f : -1f;
+        const float flipThreshold = 0.15f;
+        if (lateral > flipThreshold) return 1f;
+        if (lateral < -flipThreshold) return -1f;
+        return currentSide;
     }
 
     /// <summary>
@@ -1033,20 +1035,27 @@ public sealed unsafe class DynamicCameraController : IDisposable
         }
 
         var playerPos = ReadObjectPosition(playerAddress);
-        SimulatedNpc? best = null;
-        var bestDist = float.MaxValue;
+        SimulatedNpc? bestEngaged = null;
+        SimulatedNpc? bestAlive = null;
+        var bestEngagedDist = float.MaxValue;
+        var bestAliveDist = float.MaxValue;
         foreach (var npc in npcSelector.SelectedNpcs)
         {
-            if (npc.BattleChara == null || !npc.IsAlive || !npc.IsEngaged)
+            if (npc.BattleChara == null || !npc.IsAlive)
                 continue;
             var d = Vector3.DistanceSquared(EnemyPosition(npc), playerPos);
-            if (d < bestDist)
+            if (d < bestAliveDist)
             {
-                bestDist = d;
-                best = npc;
+                bestAliveDist = d;
+                bestAlive = npc;
+            }
+            if (npc.IsEngaged && d < bestEngagedDist)
+            {
+                bestEngagedDist = d;
+                bestEngaged = npc;
             }
         }
-        return best;
+        return bestEngaged ?? bestAlive;
     }
 
     // ------------------------------------------------------------------
@@ -1805,6 +1814,16 @@ public sealed unsafe class DynamicCameraController : IDisposable
         if (obj == null)
             return Vector3.Zero;
         return new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z);
+    }
+
+    private static Vector3 ReadObjectForward(nint address)
+    {
+        if (address == nint.Zero)
+            return Vector3.UnitZ;
+        var obj = (GameObject*)address;
+        if (obj == null)
+            return Vector3.UnitZ;
+        return new Vector3(MathF.Sin(obj->Rotation), 0f, MathF.Cos(obj->Rotation));
     }
 
     private static Vector3 EnemyPosition(SimulatedNpc npc)

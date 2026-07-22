@@ -27,6 +27,10 @@ public partial class MainWindow
         if (!ImGui.CollapsingHeader("Dynamic Camera", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
+        // Everything owned by the top-level section sits one level in. Its group headers are
+        // therefore visibly second-level, while each group indents its controls once more.
+        ImGui.Indent();
+
         ImGui.TextWrapped(
             "A directed camera for the simulation: the character is framed off to one side during " +
             "the fight, and when they go down the shot pulls back to hold both the body and whoever " +
@@ -45,7 +49,10 @@ public partial class MainWindow
         DrawDynamicCamStatus();
 
         if (!config.EnableDynamicCamera)
+        {
+            ImGui.Unindent();
             return;
+        }
 
         ImGui.Separator();
         DrawDynamicCamCombatGroup();
@@ -60,6 +67,7 @@ public partial class MainWindow
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Restore every option on this page to its shipped default. Leaves Enable Dynamic Camera itself " +
                              "alone — resetting it would switch the feature off and take the page with it.");
+        ImGui.Unindent();
     }
 
     private void DrawDynamicCamStatus()
