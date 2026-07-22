@@ -13,6 +13,7 @@ using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
+using CombatSimulator.Spectators;
 using CombatSimulator.Targeting;
 using CombatSimulator.UpdateLog;
 using Dalamud.Game.ClientState.Objects.Enums;
@@ -63,6 +64,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly ActiveCameraController activeCameraController;
     private readonly DynamicCameraController dynamicCameraController;
     private readonly FightingModeController fightingModeController;
+    private readonly SpectatorController spectatorController;
     private readonly Dev.IDevExperimental devExperimental;
     private readonly HookSafetyChecker hookSafetyChecker;
     private readonly UpdateLogPopupController updateLogPopupController;
@@ -252,6 +254,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 #else
         devExperimental = new Dev.DevExperimentalStub();
 #endif
+        spectatorController = new SpectatorController(
+            npcSelector, movementBlockHook, animationController.EmotePlayer,
+            vnavmeshIpc, clientState, config, log);
         combatEngine.VictorySequence = devExperimental.VictorySequence;
         combatEngine.ShouldSuppressEnemyInitiation = () => devExperimental.SuppressEnemyInitiation;
         combatEngine.OnPlayerAttackLanded = devExperimental.OnPlayerAttackLanded;
@@ -450,7 +455,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         activeCameraController.SetActive(config.EnableActiveCamera);
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, devExperimental, clientState, dataManager, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
         armorDetachmentController.AllowOnHitDetach = () => mainWindow.DevExperimentalUnlocked;
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
@@ -507,6 +512,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             DeactivateAllNpcRagdolls();
             npcSpawner.SpawnModeActive = false;
             companionManager.DespawnAll();
+            spectatorController.DespawnAll();
             npcSpawner.DespawnAll();
             combatEngine.StopSimulation();
             npcSelector.DeselectAll();
@@ -515,6 +521,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // Resource disposal (BEPU sims, hooks, event handlers) — always safe; any game-memory
         // access inside is itself guarded.
         companionManager.Dispose();
+        spectatorController.Dispose();
         npcSpawner.Dispose();
         useActionHook.Dispose();
         playerTargetController.Dispose();
@@ -778,8 +785,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // Hit feedback (camera punch decay + hitstop restore). Runs every frame.
             hitFeedbackController.Tick(deltaTime);
 
-            // World-level dev features that are intentionally independent of combat state
-            // (currently the spectator crowd) continue to process outside simulations.
+            // Standalone spectator crowds and world-level dev features continue to process
+            // outside combat simulations.
+            spectatorController.Tick(deltaTime);
             devExperimental.TickWorld(deltaTime);
 
             if (!combatEngine.IsActive)
@@ -1083,6 +1091,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         weaponDropController.RemoveAll();
         dismembermentController.RemoveAll();
         armorDetachmentController.Reset();
+        spectatorController.DespawnAll();
         devExperimental.ResetWorldState();
         dynamicCameraController.Reset();
 
@@ -1108,6 +1117,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             weaponDropController.RemoveAll();
             dismembermentController.RemoveAll();
             armorDetachmentController.Reset();
+            spectatorController.DespawnAll();
             devExperimental.ResetWorldState();
             dynamicCameraController.Reset();
             npcSpawner.DespawnAll();

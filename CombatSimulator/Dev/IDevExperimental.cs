@@ -25,9 +25,6 @@ public interface IDevExperimental : IDisposable
     /// <summary>Release the dev enemy-pack gate after confirmed player damage lands.</summary>
     void OnPlayerAttackLanded();
 
-    /// <summary>Bind dev-only UI controllers without requiring MainWindow to downcast this module.</summary>
-    void BindUi(MainWindow mainWindow);
-
     /// <summary>World-level dev update that also runs while combat simulation is inactive.</summary>
     void TickWorld(float deltaTime);
     void Tick(float deltaTime);

@@ -16,7 +16,6 @@ public sealed class DevExperimentalStub : IDevExperimental
     public bool ControlsNpc(nint address) => false;
     public bool SuppressEnemyInitiation => false;
     public void OnPlayerAttackLanded() { }
-    public void BindUi(MainWindow mainWindow) { }
     public void TickWorld(float deltaTime) { }
     public void Tick(float deltaTime) { }
     public void BeforePlayerDeath() { }

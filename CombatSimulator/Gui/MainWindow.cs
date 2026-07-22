@@ -11,6 +11,7 @@ using CombatSimulator.Npcs;
 using CombatSimulator.Recipes;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
+using CombatSimulator.Spectators;
 using CombatSimulator.Targeting;
 using Dalamud.Game.ClientState.GamePad;
 using Dalamud.Interface;
@@ -108,8 +109,6 @@ public partial class MainWindow : IDisposable
     // Optional experimental dev hooks — implemented only when the private module is compiled in;
     // elided to no-ops otherwise (so the public build shows no dev section / entry / PC dismember).
     partial void InitDevExperimental(CombatSimulator.Dev.IDevExperimental devExperimental);
-    partial void DrawDevSidebarEntryAfterBaseTab(int baseTabIndex, ref int selectedTab);
-    partial void DrawDevInjectedTabContent(int selectedTab, ref bool handled);
     partial void DrawDevSidebarEntry(ref int selectedTab);
     partial void DrawDevTabContent(int selectedTab);
     partial void DrawDevSection();
@@ -170,6 +169,7 @@ public partial class MainWindow : IDisposable
         HookSafetyChecker hookSafetyChecker,
         UseActionHook useActionHook,
         PlayerTargetController playerTargetController,
+        SpectatorController spectatorController,
         CombatSimulator.Dev.IDevExperimental devExperimental,
         IClientState clientState,
         IDataManager dataManager,
@@ -192,6 +192,7 @@ public partial class MainWindow : IDisposable
         this.hookSafetyChecker = hookSafetyChecker;
         this.useActionHook = useActionHook;
         this.playerTargetController = playerTargetController;
+        this.spectatorController = spectatorController;
         this.clientState = clientState;
         this.dataManager = dataManager;
         this.chatGui = chatGui;
@@ -217,6 +218,7 @@ public partial class MainWindow : IDisposable
         "Ragdoll",
         "Ragdoll (Adv)",
         "Virtual Enemies",
+        "Spectators (Experimental)",
         "Settings",
         "Diagnose",
     };
@@ -294,7 +296,6 @@ public partial class MainWindow : IDisposable
         {
             if (ImGui.Selectable(TabNames[i], selectedTab == i))
                 selectedTab = i;
-            DrawDevSidebarEntryAfterBaseTab(i, ref selectedTab);
         }
         DrawDevSidebarEntry(ref selectedTab);
         ImGui.EndChild();
@@ -358,17 +359,17 @@ public partial class MainWindow : IDisposable
             case 7: // Virtual Enemies
                 DrawVirtualEnemiesTab();
                 break;
-            case 8: // Settings
+            case 8: // Spectators (Experimental)
+                DrawSpectatorsTab();
+                break;
+            case 9: // Settings
                 DrawGuiSettingsSection();
                 break;
-            case 9: // Diagnose
+            case 10: // Diagnose
                 DrawDiagnoseSection();
                 break;
             default:
-                var handled = false;
-                DrawDevInjectedTabContent(selectedTab, ref handled);
-                if (!handled)
-                    DrawDevTabContent(selectedTab);
+                DrawDevTabContent(selectedTab);
                 break;
         }
         ImGui.EndChild();
