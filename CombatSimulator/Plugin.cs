@@ -254,9 +254,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 #else
         devExperimental = new Dev.DevExperimentalStub();
 #endif
-        spectatorController = new SpectatorController(
-            npcSelector, movementBlockHook, animationController.EmotePlayer,
-            vnavmeshIpc, clientState, config, log);
         combatEngine.VictorySequence = devExperimental.VictorySequence;
         combatEngine.ShouldSuppressEnemyInitiation = () => devExperimental.SuppressEnemyInitiation;
         combatEngine.OnPlayerAttackLanded = devExperimental.OnPlayerAttackLanded;
@@ -268,6 +265,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.HasLivingCompanions = () => companionManager.HasLivingCompanions;
         combatEngine.OnPlayerDamageDealt = companionManager.RegisterPlayerDamage;
         combatEngine.OnPlayerDamageDealtToTarget = companionManager.RegisterPlayerDamage;
+        spectatorController = new SpectatorController(
+            npcSelector, movementBlockHook, animationController.EmotePlayer,
+            vnavmeshIpc, clientState, config,
+            () => combatEngine.State.PlayerState.IsAlive || companionManager.HasLivingCompanions,
+            log);
         npcAiController = new NpcAiController(
             combatEngine, animationController, movementBlockHook, vnavmeshIpc,
             clientState, config, partyEngagePlanner, terrainHeightService, log,

@@ -36,6 +36,8 @@ public sealed unsafe partial class SpectatorController
     public int ActiveChatterCount
         => spectators.Count(actor => actor.ChatterUntil > chatterClock);
 
+    public SpectatorChatterPhase CurrentChatterPhase => ResolveChatterPhase();
+
     public string LastChatterSpeaker { get; private set; } = string.Empty;
     public string LastChatterText { get; private set; } = string.Empty;
     public string LastChatterError { get; private set; } = string.Empty;
@@ -57,30 +59,119 @@ public sealed unsafe partial class SpectatorController
         }
     }
 
-    public static List<string> CreateDefaultChatterLines()
+    public static List<string> CreateDefaultBattleChatterLines()
         => new()
         {
             "What a hit!",
             "Keep going!",
             "Look out!",
-            "You can do it!",
-            "That was incredible!",
-            "Don't give up!",
-            "What a battle!",
-            "Finish strong!",
-            "Now that's a fight!",
-            "Well done!",
+            "Don't let up!",
             "Stay focused!",
-            "This is getting exciting!",
+            "Watch your flank!",
+            "Keep the pressure on!",
+            "Now that's a fight!",
+            "They're trading blows!",
+            "No backing down now!",
+            "This could go either way!",
+            "Let's see who breaks first!",
+        };
+
+    public static List<string> CreateDefaultDecisiveChatterLines()
+        => new()
+        {
+            "It's over!",
+            "What a finish!",
+            "And that's the fight!",
+            "What a decisive blow!",
+            "That's a clean finish!",
+            "They never saw that coming!",
+            "No coming back from that!",
+            "That settled it!",
+            "What a way to end it!",
+            "The crowd has its answer!",
+            "Someone finally broke!",
+            "What a battle!",
         };
 
     private void InitializeChatter()
     {
+        var configChanged = false;
+        if (config.SpectatorBattleChatterLines == null)
+        {
+            config.SpectatorBattleChatterLines = CreateDefaultBattleChatterLines();
+            configChanged = true;
+        }
+        if (config.SpectatorDecisiveChatterLines == null)
+        {
+            config.SpectatorDecisiveChatterLines = CreateDefaultDecisiveChatterLines();
+            configChanged = true;
+        }
+        if (config.SpectatorEmoteIds == null)
+        {
+            config.SpectatorEmoteIds = CreateDefaultEmoteIds();
+            configChanged = true;
+        }
+
+        // Do not inspect, normalize, deduplicate, or otherwise reinterpret the user's old pool.
+        // The list is copied as-is so an existing config becomes the decisive-state pool exactly.
+        if (config.SpectatorChatterLines != null)
+        {
+            config.SpectatorDecisiveChatterLines = new List<string>(config.SpectatorChatterLines);
+            config.SpectatorChatterLines = null;
+            configChanged = true;
+        }
+
+        if (!config.SpectatorCollectionReplaceRepairApplied)
+        {
+            var battleDefaults = CreateDefaultBattleChatterLines();
+            var decisiveDefaults = CreateDefaultDecisiveChatterLines();
+            var injectedDefaultsDetected =
+                ContainsAppendedDefaultSet(config.SpectatorBattleChatterLines, battleDefaults) ||
+                ContainsAppendedDefaultSet(config.SpectatorDecisiveChatterLines, decisiveDefaults);
+            if (injectedDefaultsDetected)
+            {
+                RemoveOneDefaultSet(config.SpectatorBattleChatterLines, battleDefaults);
+                RemoveOneDefaultSet(config.SpectatorDecisiveChatterLines, decisiveDefaults);
+                log.Info("Repaired spectator dialogue pools affected by collection default appending.");
+            }
+
+            // The UI never permits duplicate emote IDs, so duplicates here can only come from
+            // the same collection-population bug. Preserve the first occurrence and its order.
+            var distinctEmoteIds = config.SpectatorEmoteIds.Distinct().ToList();
+            if (distinctEmoteIds.Count != config.SpectatorEmoteIds.Count)
+                config.SpectatorEmoteIds = distinctEmoteIds;
+
+            config.SpectatorCollectionReplaceRepairApplied = true;
+            configChanged = true;
+        }
+        if (configChanged)
+            config.Save();
+
         // XivVoices consumes ChatMessage during Dalamud's first pass. Suppress our synthetic
         // entry in the second pass so every chat consumer sees it before the game is prevented
         // from printing it.
         Services.ChatGui.CheckMessageHandled += OnLocalBridgeCheckMessageHandled;
         chatterBridgeSubscribed = true;
+    }
+
+    private static bool ContainsAppendedDefaultSet(
+        IReadOnlyCollection<string> lines,
+        IReadOnlyCollection<string> defaults)
+        => lines.Count > defaults.Count &&
+           defaults.All(defaultLine => lines.Any(line =>
+               string.Equals(line, defaultLine, StringComparison.Ordinal)));
+
+    private static void RemoveOneDefaultSet(
+        List<string> lines,
+        IEnumerable<string> defaults)
+    {
+        foreach (var defaultLine in defaults)
+        {
+            var index = lines.FindIndex(line =>
+                string.Equals(line, defaultLine, StringComparison.Ordinal));
+            if (index >= 0)
+                lines.RemoveAt(index);
+        }
     }
 
     private void DisposeChatter()
@@ -123,10 +214,17 @@ public sealed unsafe partial class SpectatorController
         if (ActiveChatterCount >= maxConcurrent)
             return;
 
-        var lines = GetUsableChatterLines();
+        var lines = GetUsableChatterLines(allowBattlePreview: false, out var phase);
+        if (phase == SpectatorChatterPhase.Waiting)
+        {
+            LastChatterError = string.Empty;
+            return;
+        }
         if (lines.Count == 0)
         {
-            LastChatterError = "Add at least one dialogue line before enabling crowd chatter.";
+            LastChatterError = phase == SpectatorChatterPhase.Battle
+                ? "Add at least one battle dialogue line before enabling crowd chatter."
+                : "Add at least one decisive dialogue line before enabling crowd chatter.";
             return;
         }
 
@@ -173,7 +271,7 @@ public sealed unsafe partial class SpectatorController
         if (!clientState.IsLoggedIn || Services.ObjectTable.LocalPlayer == null)
             return FailChatter("The local player is unavailable.");
 
-        var lines = GetUsableChatterLines();
+        var lines = GetUsableChatterLines(allowBattlePreview: true, out _);
         if (lines.Count == 0)
             return FailChatter("Add at least one dialogue line first.");
 
@@ -197,13 +295,50 @@ public sealed unsafe partial class SpectatorController
         return new SpectatorChatterResult(false, string.Empty, string.Empty, error);
     }
 
-    private List<string> GetUsableChatterLines()
-        => (config.SpectatorChatterLines ?? new List<string>())
+    private List<string> GetUsableChatterLines(
+        bool allowBattlePreview,
+        out SpectatorChatterPhase phase)
+    {
+        phase = ResolveChatterPhase();
+        var source = phase switch
+        {
+            SpectatorChatterPhase.Battle => config.SpectatorBattleChatterLines,
+            SpectatorChatterPhase.Decisive => config.SpectatorDecisiveChatterLines,
+            _ when allowBattlePreview => config.SpectatorBattleChatterLines,
+            _ => null,
+        };
+
+        return (source ?? new List<string>())
             .Select(NormalizeChatterLine)
             .Where(line => line.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(MaxChatterLines)
             .ToList();
+    }
+
+    private SpectatorChatterPhase ResolveChatterPhase()
+    {
+        var hasEnemyParticipant = false;
+        var hasLivingEnemy = false;
+        foreach (var npc in npcSelector.SelectedNpcs)
+        {
+            if (!npc.IsSpawned || npc.BattleChara == null || npc.Address == nint.Zero)
+                continue;
+
+            hasEnemyParticipant = true;
+            if (npc.IsAlive)
+                hasLivingEnemy = true;
+        }
+
+        // A crowd can exist without a combat roster. In that case automatic chatter waits
+        // instead of falsely treating an empty enemy roster as a decisive victory.
+        if (!hasEnemyParticipant)
+            return SpectatorChatterPhase.Waiting;
+
+        return hasLivingFriendlySide() && hasLivingEnemy
+            ? SpectatorChatterPhase.Battle
+            : SpectatorChatterPhase.Decisive;
+    }
 
     private static string NormalizeChatterLine(string? line)
     {
@@ -430,4 +565,11 @@ public sealed unsafe partial class SpectatorController
         string Speaker,
         string Sentence,
         DateTime ExpiresAt);
+}
+
+public enum SpectatorChatterPhase
+{
+    Waiting,
+    Battle,
+    Decisive,
 }

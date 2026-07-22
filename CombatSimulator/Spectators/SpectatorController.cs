@@ -26,6 +26,9 @@ public sealed unsafe partial class SpectatorController : IDisposable
 {
     public const int MaxSpectators = 200;
 
+    public static List<uint> CreateDefaultEmoteIds()
+        => new() { 110, 7 };
+
     // ENpcBase uses 1 for the normal adult humanoid skeleton. Young, elder, and other
     // special body types do not consistently provide the shared player emote timelines.
     private const byte EmoteCompatibleBodyType = 1;
@@ -44,6 +47,7 @@ public sealed unsafe partial class SpectatorController : IDisposable
     private readonly EmoteTimelinePlayer emotePlayer;
     private readonly VNavmeshIpc vnavmesh;
     private readonly IClientState clientState;
+    private readonly Func<bool> hasLivingFriendlySide;
     private readonly IPluginLog log;
 
     private readonly ConcurrentQueue<SpectatorSpawnRequest> spawnQueue = new();
@@ -53,6 +57,7 @@ public sealed unsafe partial class SpectatorController : IDisposable
 
     private IReadOnlyList<SpectatorEmote> rerollPool = Array.Empty<SpectatorEmote>();
     private HashSet<uint>? emoteCompatibleAppearanceIds;
+    private HashSet<uint>? randomCrowdEligibleAppearanceIds;
     private uint nextEntityId = 0xF3000001;
     private bool disposed;
 
@@ -73,6 +78,7 @@ public sealed unsafe partial class SpectatorController : IDisposable
         VNavmeshIpc vnavmesh,
         IClientState clientState,
         Configuration config,
+        Func<bool> hasLivingFriendlySide,
         IPluginLog log)
     {
         this.npcSelector = npcSelector;
@@ -81,6 +87,7 @@ public sealed unsafe partial class SpectatorController : IDisposable
         this.vnavmesh = vnavmesh;
         this.clientState = clientState;
         this.config = config;
+        this.hasLivingFriendlySide = hasLivingFriendlySide;
         this.log = log;
         InitializeChatter();
     }
@@ -172,7 +179,7 @@ public sealed unsafe partial class SpectatorController : IDisposable
                 appearance.ENpcBaseId != 0 &&
                 !string.IsNullOrWhiteSpace(appearance.DisplayName) &&
                 !unavailableNames.Contains(NormalizeAppearanceName(appearance.DisplayName)) &&
-                IsEmoteCompatibleAppearance(appearance.ENpcBaseId))
+                IsRandomCrowdAppearanceEligible(appearance.ENpcBaseId))
             .GroupBy(
                 appearance => NormalizeAppearanceName(appearance.DisplayName),
                 StringComparer.OrdinalIgnoreCase)
@@ -185,7 +192,7 @@ public sealed unsafe partial class SpectatorController : IDisposable
             })
             .ToList();
         if (distinct.Count == 0)
-            return FailBatch("No unused, non-excluded, emote-compatible adult character names are available for random spectators.");
+            return FailBatch("No unused, non-excluded, fully clothed, emote-compatible adult character names are available for random spectators.");
 
         return QueueAppearances(
             distinct,
@@ -841,25 +848,43 @@ public sealed unsafe partial class SpectatorController : IDisposable
 
     public bool IsEmoteCompatibleAppearance(uint eNpcBaseId)
     {
-        if (emoteCompatibleAppearanceIds == null)
-        {
-            emoteCompatibleAppearanceIds = new HashSet<uint>();
-            var sheet = Services.DataManager.GetExcelSheet<ENpcBase>();
-            if (sheet != null)
-            {
-                foreach (var appearance in sheet)
-                {
-                    if (appearance.ModelChara.RowId == 0 &&
-                        appearance.Race.RowId > 0 &&
-                        appearance.BodyType == EmoteCompatibleBodyType)
-                    {
-                        emoteCompatibleAppearanceIds.Add(appearance.RowId);
-                    }
-                }
-            }
-        }
+        EnsureAppearanceCompatibilityCaches();
+        return emoteCompatibleAppearanceIds!.Contains(eNpcBaseId);
+    }
 
-        return emoteCompatibleAppearanceIds.Contains(eNpcBaseId);
+    private bool IsRandomCrowdAppearanceEligible(uint eNpcBaseId)
+    {
+        EnsureAppearanceCompatibilityCaches();
+        return randomCrowdEligibleAppearanceIds!.Contains(eNpcBaseId);
+    }
+
+    private void EnsureAppearanceCompatibilityCaches()
+    {
+        if (emoteCompatibleAppearanceIds != null && randomCrowdEligibleAppearanceIds != null)
+            return;
+
+        emoteCompatibleAppearanceIds = new HashSet<uint>();
+        randomCrowdEligibleAppearanceIds = new HashSet<uint>();
+        var sheet = Services.DataManager.GetExcelSheet<ENpcBase>();
+        if (sheet == null)
+            return;
+
+        foreach (var appearance in sheet)
+        {
+            if (appearance.ModelChara.RowId != 0 ||
+                appearance.Race.RowId == 0 ||
+                appearance.BodyType != EmoteCompatibleBodyType)
+            {
+                continue;
+            }
+
+            emoteCompatibleAppearanceIds.Add(appearance.RowId);
+
+            // Random crowds should never choose a bare-top or bare-legs appearance. This
+            // restriction deliberately does not participate in QueueSingle/Spawn Selected.
+            if ((ulong)appearance.ModelBody != 0 && (ulong)appearance.ModelLegs != 0)
+                randomCrowdEligibleAppearanceIds.Add(appearance.RowId);
+        }
     }
 
     private bool TryGetEmoteCompatibleAppearance(uint eNpcBaseId, out ENpcBase appearance)

@@ -18,15 +18,17 @@ public partial class MainWindow
     private string spectatorEmoteSearch = string.Empty;
     private List<SpectatorEmoteChoice>? spectatorEmoteCache;
     private uint selectedSpectatorEmoteId;
-    private string spectatorNewChatterLine = string.Empty;
+    private string spectatorNewBattleChatterLine = string.Empty;
+    private string spectatorNewDecisiveChatterLine = string.Empty;
 
     private void DrawSpectatorsTab()
     {
         npcCatalog ??= new NpcCatalog(dataManager, log);
-        config.SpectatorEmoteIds ??= new List<uint>();
+        config.SpectatorEmoteIds ??= SpectatorController.CreateDefaultEmoteIds();
         config.SpectatorExcludedNames ??= new List<string>();
         config.SpectatorExcludedENpcIds ??= new List<uint>();
-        config.SpectatorChatterLines ??= SpectatorController.CreateDefaultChatterLines();
+        config.SpectatorBattleChatterLines ??= SpectatorController.CreateDefaultBattleChatterLines();
+        config.SpectatorDecisiveChatterLines ??= SpectatorController.CreateDefaultDecisiveChatterLines();
         MigrateSpectatorExclusionsToNames();
         ResolveSavedSpectatorSelection();
 
@@ -60,7 +62,7 @@ public partial class MainWindow
 
         var chatterState = config.SpectatorChatterEnabled ? "on" : "off";
         if (ImGui.CollapsingHeader(
-                $"Crowd Chatter ({chatterState}, {config.SpectatorChatterLines.Count} lines)###spectatorChatter"))
+                $"Crowd Chatter ({chatterState}, {config.SpectatorBattleChatterLines.Count + config.SpectatorDecisiveChatterLines.Count} lines)###spectatorChatter"))
         {
             ImGui.Indent();
             DrawSpectatorChatter();
@@ -392,12 +394,25 @@ public partial class MainWindow
                     ImGui.PopID();
                 }
 
-                if (ImGui.SmallButton("Clear Emotes"))
-                {
-                    config.SpectatorEmoteIds.Clear();
-                    config.Save();
-                }
             }
+
+            var defaultEmoteIds = SpectatorController.CreateDefaultEmoteIds();
+            var alreadyDefaults = config.SpectatorEmoteIds.SequenceEqual(defaultEmoteIds);
+            ImGui.BeginDisabled(alreadyDefaults);
+            if (ImGui.SmallButton("Restore Defaults##spectatorEmoteRestoreDefaults"))
+            {
+                config.SpectatorEmoteIds = defaultEmoteIds;
+                config.Save();
+            }
+            ImGui.EndDisabled();
+            ImGui.SameLine();
+            ImGui.BeginDisabled(config.SpectatorEmoteIds.Count == 0);
+            if (ImGui.SmallButton("Clear##spectatorEmoteClear"))
+            {
+                config.SpectatorEmoteIds.Clear();
+                config.Save();
+            }
+            ImGui.EndDisabled();
             ImGui.Unindent();
         }
     }
@@ -486,7 +501,19 @@ public partial class MainWindow
             ? "XivVoices: enable Chat Messages + Say; disable Remote TTS for offline audio."
             : "Local speech bubble only; no chat command is sent.");
 
-        var canTest = spectatorController.LiveCount > 0 && config.SpectatorChatterLines.Count > 0;
+        var chatterPhase = spectatorController.CurrentChatterPhase;
+        var activePoolName = chatterPhase switch
+        {
+            SpectatorChatterPhase.Battle => "Battle",
+            SpectatorChatterPhase.Decisive => "Decisive",
+            _ => "Waiting for an enemy roster (Test Once previews Battle)",
+        };
+        ImGui.TextDisabled($"Active dialogue: {activePoolName}");
+
+        var previewLineCount = chatterPhase == SpectatorChatterPhase.Decisive
+            ? config.SpectatorDecisiveChatterLines.Count
+            : config.SpectatorBattleChatterLines.Count;
+        var canTest = spectatorController.LiveCount > 0 && previewLineCount > 0;
         ImGui.BeginDisabled(!canTest);
         if (ImGui.SmallButton("Test Once##spectatorChatterTest"))
         {
@@ -511,32 +538,68 @@ public partial class MainWindow
         }
 
         if (!ImGui.CollapsingHeader(
-                $"Dialogue Pool ({config.SpectatorChatterLines.Count})###spectatorChatterPool"))
+                $"Dialogue Pools (Battle {config.SpectatorBattleChatterLines.Count}, Decisive {config.SpectatorDecisiveChatterLines.Count})###spectatorChatterPools"))
         {
             return;
         }
 
         ImGui.Indent();
-        var normalizedNewLine = spectatorNewChatterLine.Trim();
+        if (ImGui.SmallButton("Restore All Defaults##spectatorChatterRestoreDefaults"))
+        {
+            config.SpectatorBattleChatterLines = SpectatorController.CreateDefaultBattleChatterLines();
+            config.SpectatorDecisiveChatterLines = SpectatorController.CreateDefaultDecisiveChatterLines();
+            config.Save();
+        }
+        ImGui.TextDisabled("Restores both pools. Custom lines in both pools will be replaced.");
+
+        DrawSpectatorChatterPool(
+            "Battle Lines",
+            "battle",
+            "Used while the player/party side and enemy side each have a survivor.",
+            config.SpectatorBattleChatterLines,
+            ref spectatorNewBattleChatterLine);
+        DrawSpectatorChatterPool(
+            "Decisive Lines",
+            "decisive",
+            "Used after either the player/party side or enemy side is wiped out.",
+            config.SpectatorDecisiveChatterLines,
+            ref spectatorNewDecisiveChatterLine);
+        ImGui.Unindent();
+    }
+
+    private void DrawSpectatorChatterPool(
+        string title,
+        string id,
+        string usage,
+        List<string> lines,
+        ref string newLine)
+    {
+        if (!ImGui.CollapsingHeader($"{title} ({lines.Count})###{id}SpectatorChatterPool"))
+            return;
+
+        ImGui.Indent();
+        ImGui.TextDisabled(usage);
+
+        var normalizedNewLine = newLine.Trim();
         var canAddLine = normalizedNewLine.Length > 0 &&
-                         config.SpectatorChatterLines.Count < SpectatorController.MaxChatterLines &&
-                         !config.SpectatorChatterLines.Any(line =>
-                             line.Equals(normalizedNewLine, StringComparison.OrdinalIgnoreCase));
+                         lines.Count < SpectatorController.MaxChatterLines &&
+                         !lines.Any(line =>
+                             string.Equals(line, normalizedNewLine, StringComparison.OrdinalIgnoreCase));
         ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - 48f));
         var addWithEnter = ImGui.InputTextWithHint(
-            "##spectatorNewChatterLine",
+            $"##{id}SpectatorNewChatterLine",
             "Add a new phrase...",
-            ref spectatorNewChatterLine,
+            ref newLine,
             SpectatorController.MaxChatterLineLength + 1,
             ImGuiInputTextFlags.EnterReturnsTrue);
         ImGui.SameLine();
         ImGui.BeginDisabled(!canAddLine);
-        var addWithButton = ImGui.SmallButton("Add##spectatorChatterAdd");
+        var addWithButton = ImGui.SmallButton($"Add##{id}SpectatorChatterAdd");
         ImGui.EndDisabled();
         if ((addWithEnter || addWithButton) && canAddLine)
         {
-            config.SpectatorChatterLines.Add(normalizedNewLine);
-            spectatorNewChatterLine = string.Empty;
+            lines.Add(normalizedNewLine);
+            newLine = string.Empty;
             config.Save();
         }
 
@@ -546,40 +609,34 @@ public partial class MainWindow
                          ImGuiTableFlags.ScrollY |
                          ImGuiTableFlags.SizingStretchProp;
         if (ImGui.BeginTable(
-                "##spectatorChatterLineList",
+                $"##{id}SpectatorChatterLineList",
                 2,
                 tableFlags,
                 new Vector2(-1f, ImGui.GetTextLineHeightWithSpacing() * 8f)))
         {
             ImGui.TableSetupColumn("##remove", ImGuiTableColumnFlags.WidthFixed, 30f);
             ImGui.TableSetupColumn("Phrase", ImGuiTableColumnFlags.WidthStretch);
-            for (var i = 0; i < config.SpectatorChatterLines.Count; i++)
+            for (var i = 0; i < lines.Count; i++)
             {
                 ImGui.TableNextRow();
                 ImGui.TableSetColumnIndex(0);
-                if (ImGui.SmallButton($"X##spectatorChatterRemove{i}"))
+                if (ImGui.SmallButton($"X##{id}SpectatorChatterRemove{i}"))
                     removeIndex = i;
                 ImGui.TableSetColumnIndex(1);
-                ImGui.TextWrapped(config.SpectatorChatterLines[i]);
+                ImGui.TextWrapped(lines[i] ?? string.Empty);
             }
             ImGui.EndTable();
         }
         if (removeIndex >= 0)
         {
-            config.SpectatorChatterLines.RemoveAt(removeIndex);
+            lines.RemoveAt(removeIndex);
             config.Save();
         }
 
-        if (ImGui.SmallButton("Reset Lines##spectatorChatterReset"))
+        ImGui.BeginDisabled(lines.Count == 0);
+        if (ImGui.SmallButton($"Clear##{id}SpectatorChatterClear"))
         {
-            config.SpectatorChatterLines = SpectatorController.CreateDefaultChatterLines();
-            config.Save();
-        }
-        ImGui.SameLine();
-        ImGui.BeginDisabled(config.SpectatorChatterLines.Count == 0);
-        if (ImGui.SmallButton("Clear##spectatorChatterClear"))
-        {
-            config.SpectatorChatterLines.Clear();
+            lines.Clear();
             config.Save();
         }
         ImGui.EndDisabled();
