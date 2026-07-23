@@ -839,7 +839,13 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // Note: KO strip is intentionally player-only — NPC draw objects vary too much
         // (non-humanoid, partial gear) to strip reliably, so it's not applied here.
 
-        if (address == nint.Zero || !config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
+        if (address == nint.Zero)
+            return;
+
+        // Ahead of the ragdoll gates below: dev death reactions are independent of them.
+        devExperimental.OnNpcDeath(address);
+
+        if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
             return;
 
         if (HasLiveNpcRagdoll(address) || pendingNpcRagdollAddresses.Contains(address))

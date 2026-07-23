@@ -6,3 +6,4 @@ obj/
 packages/
 temp/
 FFXIVClientStructs/
+*.pmp

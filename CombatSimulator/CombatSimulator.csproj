@@ -20,6 +20,11 @@
   <ItemGroup Condition="$([System.String]::Copy('$(DefineConstants)').Contains('PUBLIC_BUILD'))">
     <Compile Remove="Dev\Experimental\**\*.cs" />
   </ItemGroup>
+  <!-- Private experimental data assets, embedded only when the dev submodule is present and this is
+       not a public build. The public DLL never contains them. -->
+  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\Dev\Experimental\DevExperimentalModule.cs') and !$([System.String]::Copy('$(DefineConstants)').Contains('PUBLIC_BUILD'))">
+    <EmbeddedResource Include="Dev\Experimental\Assets\*.dat" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" />
   </ItemGroup>

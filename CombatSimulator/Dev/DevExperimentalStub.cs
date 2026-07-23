@@ -20,6 +20,7 @@ public sealed class DevExperimentalStub : IDevExperimental
     public void Tick(float deltaTime) { }
     public void BeforePlayerDeath() { }
     public void OnPlayerDeath(nint playerAddress) { }
+    public void OnNpcDeath(nint npcAddress) { }
     public void SetFightingModeLane(IFightingModeLaneConstraint? lane) { }
     public void SetCameraCoordinator(CameraModeCoordinator coordinator) { }
     public System.Numerics.Vector3? ControlledMonsterCenter => null;

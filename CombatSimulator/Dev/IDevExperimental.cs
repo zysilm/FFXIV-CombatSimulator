@@ -30,6 +30,10 @@ public interface IDevExperimental : IDisposable
     void Tick(float deltaTime);
     void BeforePlayerDeath();
     void OnPlayerDeath(nint playerAddress);
+
+    /// <summary>An NPC has just died. Raised before the ragdoll gates, so it still fires when
+    /// death ragdolls are switched off.</summary>
+    void OnNpcDeath(nint npcAddress);
     void SetFightingModeLane(IFightingModeLaneConstraint? lane);
 
     /// <summary>Camera arbitration seam: dev camera modes (monster follow) submit

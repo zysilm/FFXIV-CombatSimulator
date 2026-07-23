@@ -9,6 +9,8 @@ using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using Lumina.Excel.Sheets;
+// Alias only the VfxObject type so we don't pull in Graphics.Scene.Object (clashes with System.Object).
+using VfxObject = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.VfxObject;
 
 // ActorVfxCreate spawns a .avfx on an actor (same function VFXEditor / Brio use)
 // Signature from VFXEditor: scans the function body directly
@@ -119,6 +121,18 @@ public unsafe class AnimationController : IDisposable
     private delegate void ActorVfxDtorDelegate(nint vfx);
     private Hook<ActorVfxDtorDelegate>? actorVfxDtorHook;
 
+    // Static (world-positioned) VFX: an instance not bound to any actor, so its world matrix is NOT
+    // recomputed from an actor skeleton each frame and writes to Position/Rotation/Scale stick.
+    // Create / run / transform go through the typed FFXIVClientStructs VfxObject API
+    // (VfxObject.Create + VfxObject.Update + DrawObject.UpdateTransforms), which is auto-resolved and
+    // needs no manual signature. Only the remove function is scanned manually (FCS exposes no destroy).
+    private delegate void StaticVfxRemoveDelegate(nint vfx);
+    private StaticVfxRemoveDelegate? staticVfxRemove;
+    private nint staticVfxRemoveAddr;
+
+    /// <summary>Whether manual (actor-attached) VFX spawning is available.</summary>
+    public bool StaticVfxAvailable => actorVfxCreate != null;
+
     // Game's per-effect SFX dispatch — the same function SoundFilter hooks to mute sounds.
     // a1 points at the sound info; the loaded .scd data pointer lives at *(byte**)(a1+8);
     // idx selects the sub-sound. Returning Original keeps audio untouched (log-only for now).
@@ -180,6 +194,7 @@ public unsafe class AnimationController : IDisposable
         ResolveActorVfxCreate(sigScanner);
         ResolveActorVfxRemove(sigScanner);
         ResolveActorVfxDtor(gameInterop, sigScanner);
+        ResolveStaticVfx(sigScanner);
         ResolvePlaySpecificSoundHook(gameInterop, sigScanner);
 
         log.Info("AnimationController: Initialized with ActionEffectHandler + emote timeline system.");
@@ -218,6 +233,24 @@ public unsafe class AnimationController : IDisposable
         }
     }
 
+    private void ResolveStaticVfx(ISigScanner sigScanner)
+    {
+        // Only the static remove is scanned; create/run/transform use the typed VfxObject API. Current
+        // VFXEditor signature (Interop/Constants.cs). If it fails to resolve, cleanup falls back to the
+        // actor VFX remove (which resolves to the same VfxObject teardown).
+        try
+        {
+            staticVfxRemoveAddr = sigScanner.ScanText(
+                "40 53 48 83 EC 20 48 8B D9 48 8B 89 ?? ?? ?? ?? 48 85 C9 74 28 33 D2 E8 ?? ?? ?? ?? 48 8B 8B ?? ?? ?? ?? 48 85 C9");
+            staticVfxRemove = Marshal.GetDelegateForFunctionPointer<StaticVfxRemoveDelegate>(staticVfxRemoveAddr);
+            log.Info($"AnimationController: StaticVfxRemove resolved at 0x{staticVfxRemoveAddr:X}");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "AnimationController: Could not resolve StaticVfxRemove; will fall back to actor remove.");
+        }
+    }
+
     private void ResolveActorVfxDtor(IGameInteropProvider gameInterop, ISigScanner sigScanner)
     {
         try
@@ -246,6 +279,10 @@ public unsafe class AnimationController : IDisposable
                     break;
                 }
             }
+
+            // Manually-driven instances are held by their creator rather than tracked here; dropping
+            // the pointer now is what stops that holder from writing to freed memory.
+            manualVfx.Remove(vfx);
         }
         catch (Exception ex)
         {
@@ -1045,6 +1082,88 @@ public unsafe class AnimationController : IDisposable
         catch (Exception ex)
         {
             log.Warning(ex, $"[VFX] actorVfxRemove failed for '{tracked.Path}' owner=0x{tracked.OwnerEntityId:X}");
+        }
+    }
+
+    // Pointers handed out by CreateManualVfx. Their lifetime belongs to the caller, but the game can
+    // still destroy one underneath it (zone change), and both writing to and freeing a destroyed
+    // instance are uncatchable AVs. Membership here is therefore what makes a held pointer safe to touch
+    // at all: the dtor hook drops it the instant the instance dies.
+    private readonly HashSet<nint> manualVfx = new();
+
+    /// <summary>
+    /// Spawn a VFX attached to <paramref name="actor"/>, then drive its transform each frame via
+    /// <see cref="UpdateManualVfx"/>. Actor-attached (not static) on purpose: a static VFX carries no
+    /// collection context, so with Penumbra installed the resource load fails outright — even for
+    /// vanilla paths. Binding to an actor gives Penumbra a collection to resolve against.
+    /// Returns the instance pointer (0 on failure); the caller owns it and must call
+    /// <see cref="RemoveManualVfx"/> when done — nothing reaps these on its behalf.
+    /// </summary>
+    public nint CreateManualVfx(string path, nint actor)
+    {
+        if (actorVfxCreate == null || string.IsNullOrWhiteSpace(path) || actor == nint.Zero)
+            return nint.Zero;
+
+        try
+        {
+            var ptr = actorVfxCreate(path, actor, actor, -1, (char)0, 0, (char)0);
+            if (ptr == nint.Zero)
+            {
+                log.Warning($"[VFX] actorVfxCreate returned null for '{path}'");
+                return nint.Zero;
+            }
+
+            manualVfx.Add(ptr);
+            log.Info($"[VFX] actor VFX spawned for '{path}' at 0x{ptr:X} (actor 0x{actor:X})");
+            return ptr;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"[VFX] CreateManualVfx crashed for '{path}' — skipping");
+            return nint.Zero;
+        }
+    }
+
+    /// <summary>Whether a pointer from <see cref="CreateManualVfx"/> still refers to a live instance.</summary>
+    public bool IsManualVfxAlive(nint ptr) => ptr != nint.Zero && manualVfx.Contains(ptr);
+
+    /// <summary>
+    /// Write the transform of a VFX created by <see cref="CreateManualVfx"/>. Call once per frame while
+    /// it is alive. Silently ignores an instance the game has already destroyed.
+    /// </summary>
+    public void UpdateManualVfx(nint ptr, Vector3 position, Quaternion rotation, Vector3 scale)
+    {
+        if (!manualVfx.Contains(ptr))
+            return;
+
+        var vfx = (VfxObject*)ptr;
+        vfx->Position = position;
+        vfx->Rotation = rotation;
+        vfx->Scale = scale;
+        // Commit the transform — the same step VFXEditor performs after moving a static VFX.
+        vfx->UpdateTransforms(true);
+    }
+
+    /// <summary>Destroy a VFX created by <see cref="CreateManualVfx"/>. Safe to call more than once.</summary>
+    public void RemoveManualVfx(nint ptr)
+    {
+        // Not in the set means the game already destroyed it, and the native remove would be an AV.
+        if (!manualVfx.Remove(ptr))
+            return;
+
+        // Same guard as the tracked path: world teardown frees these with their owner, and calling
+        // the native remove on a stale pointer afterwards is likewise an uncatchable AV.
+        if (Core.Services.ObjectTable.LocalPlayer == null)
+            return;
+
+        try
+        {
+            // VFXEditor's ActorVfx.Remove passes 1 as the second arg.
+            actorVfxRemove?.Invoke(ptr, (char)1);
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "[VFX] RemoveManualVfx failed");
         }
     }
 
