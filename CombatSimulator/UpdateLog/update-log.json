@@ -1,5 +1,17 @@
 [
   {
+    "version": "2.7.2.0",
+    "date": "2026-07-23",
+    "title": "Combat Simulator 2.7.2.0",
+    "changes": [
+      "Human enemies now cast real job-based skills from their weapon.",
+      "Added the experimental Spectators crowd with reactive chatter.",
+      "Added independent glove and boot armor detachment.",
+      "Replaced Death Cam with the Dynamic Camera.",
+      "Improved ragdoll joint stability and fixed several crashes."
+    ]
+  },
+  {
     "version": "2.7.1.2",
     "date": "2026-07-17",
     "title": "Combat Simulator 2.7.1.2",
