@@ -48,5 +48,19 @@ Requires .NET 10.0 SDK and Dalamud.
 
 ## Credits
 
-- Camera system inspired by [Cammy](https://github.com/UnknownX7/Cammy) by UnknownX7
 - Ragdoll physics powered by [BEPUphysics2](https://github.com/bepu/bepuphysics2) by Ross Nordby
+- Game data structures from [FFXIVClientStructs](https://github.com/aers/FFXIVClientStructs)
+
+## License
+
+Licensed under the [Mozilla Public License 2.0](LICENSE).
+
+If you redistribute this plugin in binary form, section 3.2 of the MPL requires you to
+tell recipients how to obtain the source code. The canonical source is
+<https://github.com/zysilm/FFXIV-CombatSimulator> — keep that link with any
+redistribution, and keep your changes to MPL-covered files available under the same
+license.
+
+Source files covered by the MPL carry the licence notice at the top of the file.
+`CombatSimulator/Dev/Experimental` is a separate module distributed under its own
+terms and is not covered by this licence.

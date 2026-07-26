@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -93,7 +97,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private readonly RagdollController playerRagdoll;
     private readonly IPluginLog log;
 
-    // --- camera collision patch (same Cammy-derived approach the other camera modes use) ---
+    // --- camera collision patch (same mechanism the other camera modes use) ---
     private readonly nint collisionPatchAddress;
     private readonly byte[]? collisionOriginalBytes;
     private static readonly byte[] CollisionPatchBytes = { 0x30, 0xC0, 0x90, 0x90, 0x90 };
