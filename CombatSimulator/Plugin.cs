@@ -158,6 +158,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             config.Save();
             log.Info("Mounted-death dismemberment default corrected to off (one-time migration).");
         }
+
+        config.SeedMonsterGrabProfiles();
 #endif
 
         // Simulation

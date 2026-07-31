@@ -6885,7 +6885,7 @@ public unsafe partial class RagdollController : IDisposable
         if (!config.RagdollHeavyBody || simulation == null || ragdollBones.Count == 0) return;
 
         // Being held is not falling.
-        if (grabConstraintActive || standingActive) return;
+        if (grabSlots.Count > 0 || standingActive) return;
 
         var extra = MathF.Max(0f, config.RagdollGravity) * (FallGravityMultiplier - 1f) * dt;
         if (extra <= 0f) return;
@@ -7266,7 +7266,7 @@ public unsafe partial class RagdollController : IDisposable
         if (ragdollBones.Count > 0)
             corpseWakeCenter = simulation.Bodies.GetBodyReference(ragdollBones[0].BodyHandle).Pose.Position;
 
-        var activityBlocksRest = externalBodyAwake || npcColliderMovedNearCorpse || grabConstraintActive ||
+        var activityBlocksRest = externalBodyAwake || npcColliderMovedNearCorpse || grabSlots.Count > 0 ||
             collapseSpikeActive || directedCollapseActive || wholeBodyCollapseActive ||
             entryConditioningActive || kneePowerLossActive || skeletonMoved || biomechanicalSettleActive;
         UpdateInPlaceRestLatch(dt, activityBlocksRest);
@@ -7828,31 +7828,40 @@ public unsafe partial class RagdollController : IDisposable
 #endif
     }
 
-    // --- Grab constraint API (for cinematic victory sequence) ---
-    private ConstraintHandle grabConstraintHandle;
-    private bool grabConstraintActive;
-    private BodyHandle grabBodyHandle;
-    // Servo/spring tuning captured at CreateGrabConstraint and reused by every
-    // UpdateGrabTarget — otherwise the per-frame update would overwrite the caller's
-    // configured force/speed/stiffness with hardcoded defaults after a single frame.
-    private ServoSettings grabServoSettings;
-    private SpringSettings grabSpringSettings;
-    // Address of the grabbing NPC whose collision is parked during grab (0 = none)
-    private nint suspendedNpcAddress;
+    // --- Grab constraint API (for cinematic victory sequence, bone-hold test mode, and
+    // Monster Mode's grab-as-attack) ---
+    //
+    // Multiple grabs can be live at once (e.g. a body held by both the neck and the pelvis for
+    // a carry pose), so each grab gets its own slot keyed by an opaque id handed back from
+    // CreateGrabConstraint. A caller that only ever holds one at a time just keeps that one id.
+    private sealed class GrabSlot
+    {
+        public ConstraintHandle ConstraintHandle;
+        public BodyHandle BodyHandle;
+        // Servo/spring tuning captured at CreateGrabConstraint and reused by every
+        // UpdateGrabTarget — otherwise the per-frame update would overwrite the caller's
+        // configured force/speed/stiffness with hardcoded defaults after a single frame.
+        public ServoSettings ServoSettings;
+        public SpringSettings SpringSettings;
+        public bool IsRigid;          // captured at Create; the mode cannot change mid-grab
+        public bool ServoActive;      // a spring grab has a constraint; a rigid one does not need one
+        public bool BodyIsKinematic;  // the caught body was made kinematic and owes a restore
+        public BodyInertia RestInertia;
+        // Where the caught BONE sits on the body that carries it. Zero when the bone has a body of
+        // its own; non-zero when it is an ear, a tail, a finger — see TryResolveGrabAttachment.
+        public Vector3 LocalOffset;
+        public Vector3 TargetPosition;   // the grabber's grip, live
+        public Vector3 CapturePosition;  // where the caught bone lay at the moment it was caught
+        public Vector3 AppliedTarget;    // where it was put last substep, for the follow velocity
+        public float ReelElapsed;
+        public bool HasApplied;
+    }
 
-    // --- Rigid grab: catch, reel, hold ---
-    private bool grabIsRigid;          // captured at Create; the mode cannot change mid-grab
-    private bool grabServoActive;      // a spring grab has a constraint; a rigid one does not need one
-    private bool grabBodyIsKinematic;  // the caught body was made kinematic and owes a restore
-    private BodyInertia grabBodyRestInertia;
-    // Where the caught BONE sits on the body that carries it. Zero when the bone has a body of its own;
-    // non-zero when it is an ear, a tail, a finger — see TryResolveGrabAttachment.
-    private Vector3 grabLocalOffset;
-    private Vector3 grabTargetPosition;   // the grabber's grip, live
-    private Vector3 grabCapturePosition;  // where the caught bone lay at the moment it was caught
-    private Vector3 grabAppliedTarget;    // where it was put last substep, for the follow velocity
-    private float grabReelElapsed;
-    private bool grabHasApplied;
+    private readonly Dictionary<int, GrabSlot> grabSlots = new();
+    private int nextGrabSlotId = 1;
+    // Address of the grabbing NPC whose collision is parked during grab (0 = none). Shared across
+    // every slot — every pair a single grab session holds belongs to the same grabber.
+    private nint suspendedNpcAddress;
 
     /// <summary>What the rig actually weighs, summed at InitializePhysics.</summary>
     private float ragdollTotalMass;
@@ -7987,18 +7996,17 @@ public unsafe partial class RagdollController : IDisposable
     /// target position. The target is updated each frame via UpdateGrabTarget().
     /// Also ensures all ragdoll bodies stay awake (SleepThreshold = -1).
     /// </summary>
-    public bool CreateGrabConstraint(string boneName, Vector3 initialTarget, nint grabbingNpcAddress = 0, float maxForce = 1000f, float maxSpeed = 50f, float springFreq = 120f)
+    public int? CreateGrabConstraint(string boneName, Vector3 initialTarget, nint grabbingNpcAddress = 0, float maxForce = 1000f, float maxSpeed = 50f, float springFreq = 120f)
     {
-        if (simulation == null || !isActive) return false;
+        if (simulation == null || !isActive) return null;
 
         if (!TryResolveGrabAttachment(boneName, out var targetBody, out var localOffset))
         {
             log.Warning($"RagdollController: nothing on the rig carries bone '{boneName}'");
-            return false;
+            return null;
         }
 
-        grabBodyHandle = targetBody;
-        grabLocalOffset = localOffset;
+        var slot = new GrabSlot { BodyHandle = targetBody, LocalOffset = localOffset };
 
         // Wake every body AND keep it awake for the duration of the grab. SleepThreshold=-1
         // alone only prevents *future* sleep — a corpse that has already settled has all its
@@ -8015,40 +8023,40 @@ public unsafe partial class RagdollController : IDisposable
         // The rig is no longer resting; force a full physics step next frame.
         BeginBiomechanicalSettle();
 
-        grabIsRigid = GrabRigid;
+        slot.IsRigid = GrabRigid;
 
         // Remember the tuning so UpdateGrabTarget reuses it instead of resetting to defaults.
         var servoForce = ResolveGrabServoForce(maxForce);
-        grabServoSettings = new ServoSettings(maxSpeed, 1f, servoForce);
-        grabSpringSettings = new SpringSettings(springFreq, 1);
+        slot.ServoSettings = new ServoSettings(maxSpeed, 1f, servoForce);
+        slot.SpringSettings = new SpringSettings(springFreq, 1);
 
         // A rigid grab gets no servo. The bone is held by being kinematic; a spring pulling at the grip
         // as well would just be a second, disagreeing opinion about where it belongs.
-        grabServoActive = false;
-        grabBodyIsKinematic = false;
+        slot.ServoActive = false;
+        slot.BodyIsKinematic = false;
 
-        var caught = simulation.Bodies.GetBodyReference(grabBodyHandle);
+        var caught = simulation.Bodies.GetBodyReference(slot.BodyHandle);
 
-        if (grabIsRigid)
+        if (slot.IsRigid)
         {
             // Infinite mass, for the duration. The solver can no longer move the caught bone — so it
             // cannot fight the grip — but it can still move everything hanging off it.
-            grabBodyRestInertia = caught.LocalInertia;
+            slot.RestInertia = caught.LocalInertia;
             caught.BecomeKinematic();
-            grabBodyIsKinematic = true;
+            slot.BodyIsKinematic = true;
         }
         else
         {
-            grabConstraintHandle = simulation.Solver.Add(grabBodyHandle,
+            slot.ConstraintHandle = simulation.Solver.Add(slot.BodyHandle,
                 new OneBodyLinearServo
                 {
                     // The grip point, not the body's centre — so an ear is pulled by the ear.
-                    LocalOffset = grabLocalOffset,
+                    LocalOffset = slot.LocalOffset,
                     Target = initialTarget,
-                    ServoSettings = grabServoSettings,
-                    SpringSettings = grabSpringSettings,
+                    ServoSettings = slot.ServoSettings,
+                    SpringSettings = slot.SpringSettings,
                 });
-            grabServoActive = true;
+            slot.ServoActive = true;
         }
 
         // Either way the whole body is now hanging off one joint, and the heavier it is the harder that
@@ -8058,24 +8066,26 @@ public unsafe partial class RagdollController : IDisposable
         // joints.
         SetCarryJointStiffness(true);
 
-        grabConstraintActive = true;
         suspendedNpcAddress = grabbingNpcAddress;
-        grabTargetPosition = initialTarget;
+        slot.TargetPosition = initialTarget;
 
         // Caught where it lies. Nothing moves on this frame — the bone is simply held from now on, and
         // the reel walks it to the grip from here. The capture is the GRIP POINT, which is the bone the
         // caller asked for, not the centre of whatever body happens to be carrying it.
-        grabCapturePosition = GrabGripPoint(caught);
-        grabAppliedTarget = grabCapturePosition;
-        grabHasApplied = false;
-        grabReelElapsed = 0f;
+        slot.CapturePosition = GrabGripPoint(caught, slot.LocalOffset);
+        slot.AppliedTarget = slot.CapturePosition;
+        slot.HasApplied = false;
+        slot.ReelElapsed = 0f;
 
-        log.Info($"RagdollController: Grab created on '{boneName}' — caught at ({grabCapturePosition.X:F2},{grabCapturePosition.Y:F2},{grabCapturePosition.Z:F2}), " +
-                 $"reeling to ({initialTarget.X:F2},{initialTarget.Y:F2},{initialTarget.Z:F2}), rigid={grabIsRigid}, " +
+        var slotId = nextGrabSlotId++;
+        grabSlots[slotId] = slot;
+
+        log.Info($"RagdollController: Grab #{slotId} created on '{boneName}' — caught at ({slot.CapturePosition.X:F2},{slot.CapturePosition.Y:F2},{slot.CapturePosition.Z:F2}), " +
+                 $"reeling to ({initialTarget.X:F2},{initialTarget.Y:F2},{initialTarget.Z:F2}), rigid={slot.IsRigid}, " +
                  $"rig weighs {ragdollTotalMass:F1}kg" +
-                 (grabIsRigid ? "" : $" so the servo gets {servoForce:F0}N (asked for {maxForce:F0}N)") +
+                 (slot.IsRigid ? "" : $" so the servo gets {servoForce:F0}N (asked for {maxForce:F0}N)") +
                  $", suspend NPC 0x{grabbingNpcAddress:X}");
-        return true;
+        return slotId;
     }
 
     /// <summary>
@@ -8101,42 +8111,48 @@ public unsafe partial class RagdollController : IDisposable
     /// </summary>
     /// <summary>Where the grip actually is in the world: the caught bone, which for an ear or a tail is
     /// an offset away from the centre of the body carrying it.</summary>
-    private Vector3 GrabGripPoint(BodyReference body)
-        => body.Pose.Position + Vector3.Transform(grabLocalOffset, body.Pose.Orientation);
+    private static Vector3 GrabGripPoint(BodyReference body, Vector3 localOffset)
+        => body.Pose.Position + Vector3.Transform(localOffset, body.Pose.Orientation);
 
     private void DriveGrabKinematicBone(float dt)
     {
-        if (!grabIsRigid || !grabConstraintActive || !grabBodyIsKinematic || simulation == null) return;
+        if (grabSlots.Count == 0 || simulation == null) return;
 
         // The standing support owns the whole rig when it is up; leave the body to it.
         if (standingActive) return;
 
-        // Reel: caught where it lay, walked to the grip. Smoothstep so it neither snaps away at the
-        // start nor arrives with a jolt.
-        grabReelElapsed = MathF.Min(grabReelElapsed + dt, GrabReelSeconds);
-        var t = GrabReelSeconds <= 1e-4f ? 1f : grabReelElapsed / GrabReelSeconds;
-        t = t * t * (3f - 2f * t);
-        var target = Vector3.Lerp(grabCapturePosition, grabTargetPosition, t);
-
-        var previous = grabHasApplied ? grabAppliedTarget : target;
         var maxLinear = activeRagdollIsGeneric ? GenericMaxLinearVelocity : HumanMaxLinearVelocity;
 
-        var body = simulation.Bodies.GetBodyReference(grabBodyHandle);
-        // Place the body so that the GRIP POINT lands on the target. For a bone with a body of its own
-        // the offset is zero and this is just the target; for an ear it puts the ear in the hand and
-        // lets the head hang off it.
-        body.Pose.Position = target - Vector3.Transform(grabLocalOffset, body.Pose.Orientation);
-        // The velocity the reel path is travelling at. A kinematic body's velocity is what the joints
-        // read to know how hard they are being pulled; leave it at zero and they would see a bone that
-        // teleports between steps rather than one that is towing them.
-        body.Velocity.Linear = dt > 1e-5f
-            ? ClampVectorLength((target - previous) / dt, maxLinear)
-            : Vector3.Zero;
-        body.Velocity.Angular = Vector3.Zero; // held: the grip does not let it spin of its own accord
-        body.Awake = true;
+        foreach (var slot in grabSlots.Values)
+        {
+            if (!slot.IsRigid || !slot.BodyIsKinematic) continue;
 
-        grabAppliedTarget = target;
-        grabHasApplied = true;
+            // Reel: caught where it lay, walked to the grip. Smoothstep so it neither snaps away at the
+            // start nor arrives with a jolt.
+            slot.ReelElapsed = MathF.Min(slot.ReelElapsed + dt, GrabReelSeconds);
+            var t = GrabReelSeconds <= 1e-4f ? 1f : slot.ReelElapsed / GrabReelSeconds;
+            t = t * t * (3f - 2f * t);
+            var target = Vector3.Lerp(slot.CapturePosition, slot.TargetPosition, t);
+
+            var previous = slot.HasApplied ? slot.AppliedTarget : target;
+
+            var body = simulation.Bodies.GetBodyReference(slot.BodyHandle);
+            // Place the body so that the GRIP POINT lands on the target. For a bone with a body of its
+            // own the offset is zero and this is just the target; for an ear it puts the ear in the
+            // hand and lets the head hang off it.
+            body.Pose.Position = target - Vector3.Transform(slot.LocalOffset, body.Pose.Orientation);
+            // The velocity the reel path is travelling at. A kinematic body's velocity is what the
+            // joints read to know how hard they are being pulled; leave it at zero and they would see
+            // a bone that teleports between steps rather than one that is towing them.
+            body.Velocity.Linear = dt > 1e-5f
+                ? ClampVectorLength((target - previous) / dt, maxLinear)
+                : Vector3.Zero;
+            body.Velocity.Angular = Vector3.Zero; // held: the grip does not let it spin of its own accord
+            body.Awake = true;
+
+            slot.AppliedTarget = target;
+            slot.HasApplied = true;
+        }
     }
 
     /// <summary>
@@ -8273,23 +8289,24 @@ public unsafe partial class RagdollController : IDisposable
     /// every frame, so a caller driving the grab from sliders needs this to make them take effect
     /// without tearing the constraint down and rebuilding it.
     /// </summary>
-    public void SetGrabTuning(float maxForce, float maxSpeed, float springFreq)
+    public void SetGrabTuning(int slotId, float maxForce, float maxSpeed, float springFreq)
     {
-        grabServoSettings = new ServoSettings(maxSpeed, 1f, ResolveGrabServoForce(maxForce));
-        grabSpringSettings = new SpringSettings(springFreq, 1);
+        if (!grabSlots.TryGetValue(slotId, out var slot)) return;
+        slot.ServoSettings = new ServoSettings(maxSpeed, 1f, ResolveGrabServoForce(maxForce));
+        slot.SpringSettings = new SpringSettings(springFreq, 1);
     }
 
     /// <summary>
     /// Update the grab constraint's target position (call each frame with NPC hand world pos).
     /// </summary>
-    public void UpdateGrabTarget(Vector3 worldTarget)
+    public void UpdateGrabTarget(int slotId, Vector3 worldTarget)
     {
-        if (!grabConstraintActive || simulation == null) return;
+        if (simulation == null || !grabSlots.TryGetValue(slotId, out var slot)) return;
 
-        grabTargetPosition = worldTarget;
+        slot.TargetPosition = worldTarget;
 
-        // A rigid grab has no servo to retarget; the reel reads grabTargetPosition directly.
-        if (!grabServoActive) return;
+        // A rigid grab has no servo to retarget; the reel reads slot.TargetPosition directly.
+        if (!slot.ServoActive) return;
 
         try
         {
@@ -8297,48 +8314,56 @@ public unsafe partial class RagdollController : IDisposable
             {
                 // Re-applied every frame, so this has to carry the grip offset too — writing zero here
                 // would quietly undo the whole thing one frame after the grab landed.
-                LocalOffset = grabLocalOffset,
+                LocalOffset = slot.LocalOffset,
                 Target = worldTarget,
-                ServoSettings = grabServoSettings,
-                SpringSettings = grabSpringSettings,
+                ServoSettings = slot.ServoSettings,
+                SpringSettings = slot.SpringSettings,
             };
-            simulation.Solver.ApplyDescription(grabConstraintHandle, desc);
+            simulation.Solver.ApplyDescription(slot.ConstraintHandle, desc);
         }
         catch (Exception ex)
         {
             log.Warning(ex, "RagdollController: Failed to update grab target");
-            RemoveGrabConstraint();
+            RemoveGrabConstraint(slotId);
         }
     }
 
     /// <summary>
-    /// Remove the grab constraint and restore normal sleep thresholds.
+    /// Remove one grab constraint. Only once the LAST live slot is gone are the shared bits
+    /// (carry joint stiffness, sleep thresholds, the suspended grabber) restored — releasing one
+    /// hand of a two-handed carry must not loosen the joints the other hand is still relying on.
     /// </summary>
-    public void RemoveGrabConstraint()
+    public void RemoveGrabConstraint(int slotId)
     {
-        if (!grabConstraintActive || simulation == null) return;
+        if (simulation == null || !grabSlots.TryGetValue(slotId, out var slot)) return;
+        grabSlots.Remove(slotId);
 
-        if (grabServoActive)
+        if (slot.ServoActive)
         {
             try
             {
-                simulation.Solver.Remove(grabConstraintHandle);
+                simulation.Solver.Remove(slot.ConstraintHandle);
             }
             catch { }
         }
 
         // Hand the caught bone back to physics: its own mass, and whatever velocity the reel was
         // carrying it at, so letting go of a body mid-swing lets it go rather than stopping it dead.
-        if (grabBodyIsKinematic)
+        if (slot.BodyIsKinematic)
         {
             try
             {
-                var caught = simulation.Bodies.GetBodyReference(grabBodyHandle);
-                caught.SetLocalInertia(grabBodyRestInertia);
+                var caught = simulation.Bodies.GetBodyReference(slot.BodyHandle);
+                caught.SetLocalInertia(slot.RestInertia);
                 caught.Awake = true;
             }
             catch { }
-            grabBodyIsKinematic = false;
+        }
+
+        if (grabSlots.Count > 0)
+        {
+            log.Info($"RagdollController: Grab #{slotId} released ({grabSlots.Count} still held)");
+            return;
         }
 
         SetCarryJointStiffness(false);
@@ -8355,12 +8380,6 @@ public unsafe partial class RagdollController : IDisposable
             catch { }
         }
 
-        grabConstraintActive = false;
-        grabServoActive = false;
-        grabIsRigid = false;
-        grabLocalOffset = Vector3.Zero;
-        grabHasApplied = false;
-        grabReelElapsed = 0f;
         suspendedNpcAddress = nint.Zero;
         BeginBiomechanicalSettle();
 
@@ -10892,12 +10911,7 @@ public unsafe partial class RagdollController : IDisposable
         impactCooldownRemaining = 0f;
         previousDescentSpeed = 0f;
         torsoBodyIndices.Clear();
-        grabConstraintActive = false;
-        grabServoActive = false;
-        grabIsRigid = false;
-        grabBodyIsKinematic = false;
-        grabHasApplied = false;
-        grabReelElapsed = 0f;
+        grabSlots.Clear();
         jointsStiffenedForCarry = false;
         positionalJoints.Clear();
         suspendedNpcAddress = nint.Zero;
