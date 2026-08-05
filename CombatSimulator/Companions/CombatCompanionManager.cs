@@ -150,6 +150,8 @@ public unsafe class CombatCompanionManager : IDisposable
     public Action<nint>? OnCompanionDeathRagdoll { get; set; }
     public Action<string>? OnSpawnError { get; set; }
     public Func<uint, bool>? IsSourceEnemy { get; set; }
+    /// <summary>Optional world-space surface height for walking over active corpses.</summary>
+    public Func<Vector3, float?>? CorpseSupportHeightProvider { private get; set; }
 
     public CombatCompanionManager(
         IObjectTable objectTable,
@@ -2026,10 +2028,16 @@ public unsafe class CombatCompanionManager : IDisposable
             state.HasStableRootTerrainClearance = true;
         }
 
-        var desiredY = terrainY + state.StableRootTerrainClearance;
+        var supportY = CorpseSupportHeightProvider?.Invoke(rootPosition);
+        const float maxCorpseStepHeight = 0.65f;
+        var walkableY = supportY.HasValue && supportY.Value <= terrainY + maxCorpseStepHeight
+            ? MathF.Max(terrainY, supportY.Value)
+            : terrainY;
+        var desiredY = walkableY + state.StableRootTerrainClearance;
         var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
-        var maxStep = MathF.Max(0.03f, 6.0f * deltaTime);
-        var deltaY = Math.Clamp(desiredY - fromY, -maxStep, maxStep);
+        var maxRise = MathF.Max(0.03f, 3.5f * deltaTime);
+        var maxFall = MathF.Max(0.02f, 1.5f * deltaTime);
+        var deltaY = Math.Clamp(desiredY - fromY, -maxFall, maxRise);
         var y = fromY + deltaY;
 
         state.LastMoveRootY = y;

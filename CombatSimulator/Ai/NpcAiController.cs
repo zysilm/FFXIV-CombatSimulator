@@ -92,6 +92,12 @@ public unsafe class NpcAiController : IDisposable
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
     private float pendingAutoEngageDelay = -1f;
 
+    /// <summary>
+    /// Optional world-space corpse surface query. The plugin aggregates all active ragdolls;
+    /// null means the next root position is not over a walkable corpse.
+    /// </summary>
+    public Func<Vector3, float?>? CorpseSupportHeightProvider { private get; set; }
+
     private class ApproachPathState
     {
         public List<Vector3> Waypoints { get; set; } = new();
@@ -1017,8 +1023,8 @@ public unsafe class NpcAiController : IDisposable
 
         if (Vector3.Distance(npcPos, moveTarget) <= 0.3f)
         {
-            if (hasVnavmeshTarget && terrainCache != null &&
-                approachPaths.TryGetValue(npc.Address, out var arrivedPathState))
+            if ((hasVnavmeshTarget || (config.NpcCollisionActive && config.RagdollNpcCorpseTraversal)) && terrainCache != null &&
+                TryGetOrCreateApproachPathState(npc, out var arrivedPathState))
                 CorrectStableRootHeight(gameObj, npcPos, terrainCache, arrivedPathState, deltaTime, preserveInitialClearance: true);
 
             StopApproachMoveAnim(npc);
@@ -1034,8 +1040,8 @@ public unsafe class NpcAiController : IDisposable
             ? moveTarget
             : npcPos + Vector3.Normalize(moveTarget - npcPos) * moveDist;
 
-        if (hasVnavmeshTarget && terrainCache != null &&
-            approachPaths.TryGetValue(npc.Address, out var pathState))
+        if ((hasVnavmeshTarget || (config.NpcCollisionActive && config.RagdollNpcCorpseTraversal)) && terrainCache != null &&
+            TryGetOrCreateApproachPathState(npc, out var pathState))
         {
             newPos = CorrectMovingRootHeight(newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: true);
         }
@@ -1777,10 +1783,18 @@ public unsafe class NpcAiController : IDisposable
             state.HasStableRootTerrainClearance = true;
         }
 
-        var desiredY = terrainY + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;
+        var supportY = CorpseSupportHeightProvider?.Invoke(rootPosition);
+        const float maxCorpseStepHeight = 0.65f;
+        var walkableY = supportY.HasValue && supportY.Value <= terrainY + maxCorpseStepHeight
+            ? MathF.Max(terrainY, supportY.Value)
+            : terrainY;
+        var desiredY = walkableY + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;
         var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
-        var maxStep = MathF.Max(0.03f, 6.0f * deltaTime);
-        var deltaY = Math.Clamp(desiredY - fromY, -maxStep, maxStep);
+        // Step up promptly enough to clear the corpse before the horizontal proxy reaches its side,
+        // but descend more slowly so the feet press the body instead of hammering it downward.
+        var maxRise = MathF.Max(0.03f, 3.5f * deltaTime);
+        var maxFall = MathF.Max(0.02f, 1.5f * deltaTime);
+        var deltaY = Math.Clamp(desiredY - fromY, -maxFall, maxRise);
         var y = fromY + deltaY;
 
         state.LastMoveRootY = y;

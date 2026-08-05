@@ -672,6 +672,11 @@ public partial class Configuration : IPluginConfiguration
     public bool DevCompanionAppearanceVariant { get; set; } = false;
     public bool DevPartyApproachDebugLog { get; set; } = false;
     public bool RagdollNpcCollision { get; set; } = true;
+    // Let client-controlled enemies and companions treat settled ragdoll bodies as a low,
+    // walkable surface. The movement layer raises their root onto the corpse while the physics
+    // layer uses a soft, low-friction NPC contact so the body compresses/reacts without being
+    // launched sideways. Experimental and opt-in: real map actors remain server-positioned.
+    public bool RagdollNpcCorpseTraversal { get; set; } = false;
     public bool RagdollNpcCollisionAutoSize { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcCollisionConvexHull { get; set; } = false;

@@ -148,6 +148,10 @@ public unsafe partial class RagdollController : IDisposable
     private readonly Dictionary<int, int> externalRigSelfCollideGroupByBody = new();
     private int nextExternalRigSelfCollideGroup = 1;
     private readonly HashSet<int> softKinematicBodyHandles = new();
+    // Kinematic proxies driven by living NPC/player skeletons. When corpse traversal is enabled,
+    // the narrow phase gives only these contacts the soft, low-friction material that prevents a
+    // walking character from punting the corpse sideways.
+    private readonly HashSet<int> npcCollisionKinematicBodyHandles = new();
     // Soft-tissue (SoftBody) rig bodies — excluded from ALL contact generation (see
     // RagdollNarrowPhaseCallbacks.SoftBodyBodies).
     private readonly HashSet<int> softBodyBodyHandles = new();
@@ -3950,6 +3954,7 @@ public unsafe partial class RagdollController : IDisposable
                 ExternalRigConnectedPairs = externalRigConnectedPairs,
                 ExternalRigSelfCollideGroupByBody = externalRigSelfCollideGroupByBody,
                 SoftKinematicBodies = softKinematicBodyHandles,
+                NpcCollisionKinematicBodies = npcCollisionKinematicBodyHandles,
                 SoftBodyBodies = softBodyBodyHandles,
                 SoftBodyStaticCollision = config.RagdollSoftTissueCollision,
                 Friction = config.RagdollFriction,
@@ -5198,6 +5203,7 @@ public unsafe partial class RagdollController : IDisposable
                 default(BodyVelocity),
                 new CollidableDescription(shapeIndex, 0.04f),
                 new BodyActivityDescription(0.01f)));
+            npcCollisionKinematicBodyHandles.Add(bodyHandle.Value);
             boneStatics.Add(new NpcBoneStatic
             {
                 Handle = bodyHandle,
@@ -5403,6 +5409,7 @@ public unsafe partial class RagdollController : IDisposable
                     default(BodyVelocity),
                     new CollidableDescription(shapeIndex, 0.04f),
                     new BodyActivityDescription(0.01f)));
+                npcCollisionKinematicBodyHandles.Add(bodyHandle.Value);
 
                 npcCollisionStates.Add(new NpcCollisionState
                 {
@@ -5493,6 +5500,7 @@ public unsafe partial class RagdollController : IDisposable
                 new CollidableDescription(shapeIndex, 0.04f),
                 new BodyActivityDescription(0.01f)));
             softKinematicBodyHandles.Add(bodyHandle.Value);
+            npcCollisionKinematicBodyHandles.Add(bodyHandle.Value);
 
             npcCollisionStates.Add(new NpcCollisionState
             {
@@ -6650,6 +6658,7 @@ public unsafe partial class RagdollController : IDisposable
                 default(BodyVelocity),
                 new CollidableDescription(shapeIndex, 0.04f),
                 new BodyActivityDescription(0.01f)));
+            npcCollisionKinematicBodyHandles.Add(bodyHandle.Value);
 
             npcCollisionStates.Add(new NpcCollisionState
             {
@@ -6686,6 +6695,7 @@ public unsafe partial class RagdollController : IDisposable
             default(BodyVelocity),
             new CollidableDescription(npcFallbackShapeIndex, 0.04f),
             new BodyActivityDescription(0.01f)));
+        npcCollisionKinematicBodyHandles.Add(handle.Value);
         npcCollisionStates.Add(new NpcCollisionState
         {
             NpcAddress = address,
@@ -6734,7 +6744,10 @@ public unsafe partial class RagdollController : IDisposable
         var body = simulation.Bodies.GetBodyReference(handle);
         if (MoveKinematicBody(body, targetPosition, targetOrientation,
                 ref state.PreviousPosition, ref state.PreviousOrientation, ref state.HasPreviousPose, dt))
+        {
+            SoftenNpcTraversalKinematicVelocity(body);
             NoteNpcColliderMoved(targetPosition);
+        }
     }
 
     // A collider that genuinely moved only matters to the corpse's rest if it moved NEAR the
@@ -6813,7 +6826,40 @@ public unsafe partial class RagdollController : IDisposable
         var body = simulation.Bodies.GetBodyReference(bone.Handle);
         if (MoveKinematicBody(body, targetPosition, targetOrientation,
                 ref bone.PreviousPosition, ref bone.PreviousOrientation, ref bone.HasPreviousPose, dt))
+        {
+            SoftenNpcTraversalKinematicVelocity(body);
             NoteNpcColliderMoved(targetPosition);
+        }
+    }
+
+    /// <summary>
+    /// Kinematics have infinite mass, so their full locomotion velocity would be imposed on a
+    /// corpse even with a soft contact spring. The visual proxy still follows the living actor's
+    /// exact pose; only the velocity presented to the contact solver is capped. Explicit monster
+    /// attacks remain forceful because BeginAttackStrike applies their measured limb velocity via
+    /// the separate strike impulse path after this update.
+    /// </summary>
+    private void SoftenNpcTraversalKinematicVelocity(BodyReference body)
+    {
+        if (!config.RagdollNpcCorpseTraversal)
+            return;
+
+        const float maxHorizontalSpeed = 0.85f;
+        const float maxDownwardSpeed = 0.75f;
+        const float maxUpwardSpeed = 2.5f;
+        const float maxAngularSpeed = 3f;
+
+        var linear = body.Velocity.Linear;
+        var horizontal = new Vector2(linear.X, linear.Z);
+        var horizontalLength = horizontal.Length();
+        if (horizontalLength > maxHorizontalSpeed && horizontalLength > 1e-5f)
+            horizontal *= maxHorizontalSpeed / horizontalLength;
+
+        body.Velocity.Linear = new Vector3(
+            horizontal.X,
+            Math.Clamp(linear.Y, -maxDownwardSpeed, maxUpwardSpeed),
+            horizontal.Y);
+        body.Velocity.Angular = ClampVectorLength(body.Velocity.Angular, maxAngularSpeed);
     }
 
     /// <summary>
@@ -10894,6 +10940,73 @@ public unsafe partial class RagdollController : IDisposable
     }
 
     /// <summary>
+    /// Finds the capsule surface under a circular foot probe. This is intentionally an
+    /// approximation of the structural ragdoll bodies rather than a general physics raycast:
+    /// cloth, soft tissue and tiny decorative bodies cannot become accidental stairs, and the
+    /// caller can impose a low maximum climb height relative to terrain.
+    /// </summary>
+    public bool TryGetWalkableSurfaceHeight(Vector3 point, float probeRadius, out float surfaceY)
+    {
+        surfaceY = float.MinValue;
+        if (simulation == null || !isActive || !physicsStarted)
+            return false;
+
+        probeRadius = Math.Clamp(probeRadius, 0f, 0.5f);
+        var bestSurfaceY = float.MinValue;
+        var found = false;
+        foreach (var rb in ragdollBones)
+        {
+            if (rb.Mass < 0.45f ||
+                rb.Name.StartsWith("j_sk_", StringComparison.Ordinal) ||
+                rb.Name.StartsWith("j_mune", StringComparison.Ordinal) ||
+                rb.Name.StartsWith("j_buki", StringComparison.Ordinal))
+                continue;
+
+            var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            var center = body.Pose.Position;
+            var axis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
+            var axisXz = new Vector2(axis.X, axis.Z);
+            var relativeXz = new Vector2(center.X - point.X, center.Z - point.Z);
+            var halfLength = MathF.Max(0f, rb.CapsuleHalfLength);
+            var radius = MathF.Max(0.005f, rb.CapsuleRadius);
+
+            var projected = 0f;
+            var axisXzLengthSq = axisXz.LengthSquared();
+            if (axisXzLengthSq > 1e-6f)
+                projected = -Vector2.Dot(relativeXz, axisXz) / axisXzLengthSq;
+            projected = Math.Clamp(projected, -halfLength, halfLength);
+
+            void ConsiderCandidate(float alongAxis)
+            {
+                var sampleXz = relativeXz + axisXz * alongAxis;
+                // Minkowski-expand horizontally by the foot radius, but retain the body's real
+                // vertical radius. This starts the climb just before the actor's center reaches
+                // the corpse without inventing an oversized vertical step.
+                var effectiveHorizontal = MathF.Max(0f, sampleXz.Length() - probeRadius);
+                if (effectiveHorizontal > radius)
+                    return;
+
+                var rise = MathF.Sqrt(MathF.Max(0f, radius * radius - effectiveHorizontal * effectiveHorizontal));
+                var candidateY = center.Y + alongAxis * axis.Y + rise;
+                if (!found || candidateY > bestSurfaceY)
+                {
+                    bestSurfaceY = candidateY;
+                    found = true;
+                }
+            }
+
+            ConsiderCandidate(projected);
+            ConsiderCandidate(-halfLength);
+            ConsiderCandidate(halfLength);
+            ConsiderCandidate(Math.Clamp(projected - halfLength * 0.35f, -halfLength, halfLength));
+            ConsiderCandidate(Math.Clamp(projected + halfLength * 0.35f, -halfLength, halfLength));
+        }
+
+        surfaceY = bestSurfaceY;
+        return found;
+    }
+
+    /// <summary>
     /// Register a live character as a moving collider in the ragdoll simulation AFTER activation
     /// (the per-bone collision built at init only captures party/NPC actors that existed then).
     /// Used by Monster mode so the creature physically pushes the ragdoll when it walks into it,
@@ -11011,6 +11124,7 @@ public unsafe partial class RagdollController : IDisposable
         externalRigSelfCollideGroupByBody.Clear();
         nextExternalRigSelfCollideGroup = 1;
         softKinematicBodyHandles.Clear();
+        npcCollisionKinematicBodyHandles.Clear();
         softBodyBodyHandles.Clear();
         npcCollisionStates.Clear();
         npcFallbackShapeReady = false;
@@ -11048,6 +11162,7 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     public HashSet<(int, int)>? ExternalRigConnectedPairs;
     public Dictionary<int, int>? ExternalRigSelfCollideGroupByBody;
     public HashSet<int>? SoftKinematicBodies;
+    public HashSet<int>? NpcCollisionKinematicBodies;
     public HashSet<int>? RestrictedStatics;
     public HashSet<int>? AllowedDynamicBodiesForRestrictedStatics;
     // Soft-tissue rig bodies (breast / mod jiggle bones): no body contacts ever; static
@@ -11224,6 +11339,17 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
             pairMaterial.FrictionCoefficient = Math.Clamp(Friction, 0.45f, 0.9f);
             pairMaterial.SpringSettings = new SpringSettings(6, 4);
         }
+        else if (Config?.RagdollNpcCorpseTraversal == true && IsNpcCollisionKinematicContact(pair))
+        {
+            // A walking NPC is an infinite-mass kinematic body. The default crisp material turns
+            // even a small overlap into a hard horizontal recovery impulse and launches the corpse.
+            // Traversal lifts the actor root onto the corpse, so this contact only needs to carry
+            // and softly deform the body: low friction avoids dragging, while slow overdamped
+            // recovery preserves a visible step/weight response without energetic bounce.
+            pairMaterial.MaximumRecoveryVelocity = 0.12f;
+            pairMaterial.FrictionCoefficient = MathF.Min(Friction, 0.28f);
+            pairMaterial.SpringSettings = new SpringSettings(8, 3);
+        }
         else if (pair.A.Mobility == CollidableMobility.Dynamic && pair.B.Mobility == CollidableMobility.Dynamic)
         {
             pairMaterial.MaximumRecoveryVelocity = 0.2f;
@@ -11271,6 +11397,11 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         => SoftKinematicBodies != null &&
            ((pair.A.Mobility == CollidableMobility.Kinematic && SoftKinematicBodies.Contains(pair.A.BodyHandle.Value)) ||
             (pair.B.Mobility == CollidableMobility.Kinematic && SoftKinematicBodies.Contains(pair.B.BodyHandle.Value)));
+
+    private bool IsNpcCollisionKinematicContact(CollidablePair pair)
+        => NpcCollisionKinematicBodies != null &&
+           ((pair.A.Mobility == CollidableMobility.Kinematic && NpcCollisionKinematicBodies.Contains(pair.A.BodyHandle.Value)) ||
+            (pair.B.Mobility == CollidableMobility.Kinematic && NpcCollisionKinematicBodies.Contains(pair.B.BodyHandle.Value)));
 
     private bool UseAdvancedGearContactFriction()
         => Config?.KoStripPhysicsDropClothing == true &&

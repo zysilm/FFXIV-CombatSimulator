@@ -292,6 +292,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // Don't commit a new attack while this enemy already has a live telegraph (fixes the
             // double-swing where the old 0.6s animation lock expired mid-animation).
             telegraphSystem.IsBusy);
+        npcAiController.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
+        companionManager.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
 
         // Custom in-simulation target lock system. Takes over the game's target
         // keybinds during simulation; the engine reads the locked target for
@@ -1081,6 +1083,36 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         }
 
         return list;
+    }
+
+    /// <summary>
+    /// Return the highest low corpse surface under an NPC's next foot position. High/flying body
+    /// parts are deliberately rejected: this is a small step-over aid, not arbitrary climbing.
+    /// </summary>
+    private float? ResolveCorpseTraversalHeight(Vector3 position)
+    {
+        if (!config.NpcCollisionActive || !config.RagdollNpcCorpseTraversal)
+            return null;
+
+        const float footProbeRadius = 0.24f;
+        const float maxClimbHeight = 0.65f;
+        float? best = null;
+
+        void Consider(RagdollController controller)
+        {
+            if (!controller.TryGetWalkableSurfaceHeight(position, footProbeRadius, out var surfaceY))
+                return;
+            if (surfaceY <= position.Y - 0.08f || surfaceY > position.Y + maxClimbHeight)
+                return;
+            if (!best.HasValue || surfaceY > best.Value)
+                best = surfaceY;
+        }
+
+        Consider(ragdollController);
+        foreach (var controller in npcRagdolls.Values)
+            Consider(controller);
+
+        return best;
     }
 
     private void AddMountCollisionAddresses(List<nint> list)
