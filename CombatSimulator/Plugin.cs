@@ -32,6 +32,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 {
     private const string CommandName = "/combatsim";
     private const int NpcRagdollActivationsPerFrame = 1;
+    // Extra activation delay handed to each NPC ragdoll in a burst, and the ceiling on it, so the
+    // last body of a big wave still hits the floor while the fight reads as over. See
+    // ActivateNpcDeathRagdoll.
+    private const float NpcRagdollActivationStagger = 0.2f;
+    private const float NpcRagdollMaxStagger = 1.2f;
+    private float npcRagdollStaggerBudget;
 
     private readonly IDalamudPluginInterface pluginInterface;
     private readonly ICommandManager commandManager;
@@ -813,7 +819,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
             mapEnemyController.Tick(deltaTime);
             combatEngine.Tick(deltaTime);
-            ProcessPendingNpcRagdolls();
+            ProcessPendingNpcRagdolls(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
             // Re-apply after NPC AI so the final frame pose is still constrained to the 2D lane.
             // Lane only — the full Tick already ran this frame; running it again would advance
@@ -861,8 +867,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         pendingNpcRagdollAddresses.Add(address);
     }
 
-    private void ProcessPendingNpcRagdolls()
+    private void ProcessPendingNpcRagdolls(float deltaTime)
     {
+        // The stagger budget bleeds off in real time whether or not anything is queued, so a burst
+        // fans out and a quiet stretch returns it to zero.
+        npcRagdollStaggerBudget = Math.Max(0f, npcRagdollStaggerBudget - deltaTime);
+
         if (pendingNpcRagdolls.Count == 0)
             return;
 
@@ -914,7 +924,15 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             log.Info($"NPC death ragdoll: selected {bones.Count} visual parts for 0x{address:X}");
         }
 
-        controller.Activate(address, config.NpcRagdollActivationDelay);
+        // Fan the settle windows apart. Construction is already spread one-per-frame
+        // (NpcRagdollActivationsPerFrame), but that is the cheap half — what costs is the second or
+        // two each rig spends awake before it reaches the resting fast path, and a wave that wipes
+        // together lands all of those on top of each other. Each activation pushes the next one
+        // further out; the budget decays in ProcessPendingNpcRagdolls, so it only bites during a
+        // burst and is back to zero by the next fight.
+        controller.Activate(address, config.NpcRagdollActivationDelay + npcRagdollStaggerBudget);
+        npcRagdollStaggerBudget = MathF.Min(
+            npcRagdollStaggerBudget + NpcRagdollActivationStagger, NpcRagdollMaxStagger);
         npcRagdolls[address] = controller;
     }
 
@@ -1028,7 +1046,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         var controller = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
         controller.SetDismemberedBones(Array.Empty<string>());
-        controller.Activate(address, config.RagdollActivationDelay);
+        // Shares the enemy stagger budget — a wipe drops companions alongside enemies, and they are
+        // the same kind of load. See ActivateNpcDeathRagdoll.
+        controller.Activate(address, config.RagdollActivationDelay + npcRagdollStaggerBudget);
+        npcRagdollStaggerBudget = MathF.Min(
+            npcRagdollStaggerBudget + NpcRagdollActivationStagger, NpcRagdollMaxStagger);
         npcRagdolls[address] = controller;
     }
 
@@ -1046,7 +1068,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         if (player != null && player.Address != nint.Zero)
         {
             list.Add(player.Address);
-            if (config.RagdollNpcCollision)
+            if (config.NpcCollisionActive)
             {
                 AddMountCollisionAddresses(list);
             }

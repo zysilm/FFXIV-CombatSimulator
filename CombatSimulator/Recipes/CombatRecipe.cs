@@ -11,6 +11,15 @@ public sealed class CombatRecipe
 {
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
+    /// <summary>
+    /// Forces ragdoll NPC collision on or off for as long as this recipe is running. Leave unset
+    /// (the usual case) and the user's own setting stands.
+    ///
+    /// It exists for the recipes that field a lot of bodies at once: NPC collision repositions and
+    /// re-bounds a collider per tracked NPC per corpse per frame, so its cost goes up with the
+    /// product, and a wipe is exactly when it is highest and least noticed.
+    /// </summary>
+    public bool? NpcCollision { get; set; }
     public List<CombatRecipeCompanionGroup> Companions { get; set; } = new();
     public List<CombatRecipeEnemyGroup> Enemies { get; set; } = new();
     public List<CombatRecipeMapEnemyGroup> MapEnemies { get; set; } = new();

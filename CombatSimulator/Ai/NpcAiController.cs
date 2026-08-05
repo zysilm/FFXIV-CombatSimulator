@@ -175,11 +175,33 @@ public unsafe class NpcAiController : IDisposable
         ScheduleAutoEngage();
     }
 
+    /// <summary>
+    /// Shared skill-start budget for every hostile NPC (see config.NpcSkillRateLimit). This
+    /// controller only ever ticks enemies — companions are driven by CombatCompanionManager — so
+    /// gating here throttles the hostile side alone, which is the intent.
+    /// </summary>
+    private float skillTokens;
+    /// <summary>How many starts may go back-to-back after a lull, so a fight still opens with a
+    /// volley instead of a metronome.</summary>
+    private const float SkillTokenBurst = 3f;
+
+    /// <summary>Take a skill-start slot if one is free. Only the COMMIT points call this: a cast
+    /// that already paid on the way in must not pay again when it lands.</summary>
+    private bool TryTakeSkillToken()
+    {
+        if (config.NpcSkillRateLimit <= 0f) return true; // uncapped
+        if (skillTokens < 1f) return false;
+        skillTokens -= 1f;
+        return true;
+    }
+
     public void Tick(float deltaTime, IReadOnlyList<SimulatedNpc> npcs)
     {
         var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null)
             return;
+
+        skillTokens = MathF.Min(SkillTokenBurst, skillTokens + MathF.Max(0f, config.NpcSkillRateLimit) * deltaTime);
 
         if (combatEngine.IsEnemyInitiationSuppressed)
         {
@@ -645,7 +667,10 @@ public unsafe class NpcAiController : IDisposable
 
             (readySkills ??= new List<NpcSkill>()).Add(skill);
         }
-        if (readySkills != null)
+        // A ready skill still needs a slot from the shared budget. Falling through instead of
+        // returning is deliberate: the enemy auto-attacks rather than standing still, and the
+        // skill's cooldown is left unspent so it goes as soon as the budget allows.
+        if (readySkills != null && TryTakeSkillToken())
         {
             var skill = readySkills[Random.Shared.Next(readySkills.Count)];
             var mpCost = SkillMpCost(npc, skill.ActionId);

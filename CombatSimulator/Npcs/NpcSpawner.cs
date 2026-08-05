@@ -148,7 +148,10 @@ public unsafe class NpcSpawner : IDisposable
         {
             var npcName = GetNpcName(request);
             var npcLevel = request.Level;
-            var spawnPos = request.Position ?? CalculateSpawnPosition();
+            // Slot = how many are already placed, so a queue drained in one Tick fans out rather
+            // than stacking (this method adds to pendingSpawns before the next request is handled).
+            var spawnPos = request.Position
+                           ?? CalculateSpawnPosition(spawnedNpcs.Count + pendingSpawns.Count);
             var spawnRot = request.Rotation ?? CalculateSpawnRotation(spawnPos);
 
             var clientObjMgr = ClientObjectManager.Instance();
@@ -539,7 +542,9 @@ public unsafe class NpcSpawner : IDisposable
                 continue;
 
             var cloned = CloneRequest(orig);
-            cloned.Position = CalculateSpawnPosition();
+            // Positions are resolved BEFORE DespawnAll, so the live/pending counts are still the old
+            // group's and useless as a slot. The index within this batch is the slot.
+            cloned.Position = CalculateSpawnPosition(toRespawn.Count);
             cloned.Rotation = null;
             // Capture the live ranged-toggle state so a user-set "Ranged"
             // flag survives the reset's despawn → respawn cycle.
@@ -770,7 +775,24 @@ public unsafe class NpcSpawner : IDisposable
         return "Simulated Enemy";
     }
 
-    private Vector3 CalculateSpawnPosition()
+    // "In front" fan geometry — see CalculateSpawnPosition.
+    private const float SpawnFanSeparation = 2.0f;    // metres of arc between neighbours
+    private const float SpawnFanMaxHalfArc = 1.05f;   // rad (~60 deg) — past this it stops reading as "in front"
+    private const float SpawnFanRankSpacing = 2.5f;   // metres between ranks once an arc is full
+    private const int SpawnFanMaxRanks = 8;
+
+    /// <summary>
+    /// Where the next virtual enemy goes. <paramref name="slot"/> is its index within the group
+    /// being placed, so a batch fans out instead of stacking.
+    ///
+    /// "In front" used to return one single point, so every enemy of a group landed inside the last
+    /// one. It now fans them across an arc centred on the player's facing: same distance, stepped
+    /// sideways far enough not to interpenetrate, alternating left/right of centre so the formation
+    /// stays centred on the forward axis no matter how many arrive. Once an arc is full a new rank
+    /// opens further out rather than widening past the point where "in front" stops being true.
+    /// Slot 0 is exactly the old position, so a single enemy is placed exactly as before.
+    /// </summary>
+    private Vector3 CalculateSpawnPosition(int slot)
     {
         // LocalPlayer, not objectTable[0]: the latter can be null during a reset teardown and drop
         // the spawn at world origin (the likely cause of "front failing on reset"). Otherwise this
@@ -781,13 +803,32 @@ public unsafe class NpcSpawner : IDisposable
             var playerPos = player.Position;
             var distance = MathF.Max(0f, config.SpawnDistance);
 
-            // Spawn exactly in front of the player using the character's real in-game facing (yaw),
-            // with no randomness — enemies spawn AND regenerate directly in front, overlap and all.
+            // Spawn in front of the player using the character's real in-game facing (yaw), with no
+            // randomness — enemies spawn AND regenerate to the same formation.
             if (config.SpawnInFront)
             {
-                var yaw = player.Rotation;
+                var remaining = Math.Max(0, slot);
+                var radius = MathF.Max(0.5f, distance);
+                // Angular step that puts SpawnFanSeparation of arc between neighbours at this
+                // radius, capped so a close spawn distance can't fan enemies around behind.
+                var step = MathF.Min(SpawnFanSeparation / radius, SpawnFanMaxHalfArc);
+
+                for (var rank = 0; rank < SpawnFanMaxRanks; rank++)
+                {
+                    radius = MathF.Max(0.5f, distance + rank * SpawnFanRankSpacing);
+                    step = MathF.Min(SpawnFanSeparation / radius, SpawnFanMaxHalfArc);
+                    var capacity = 2 * (int)MathF.Floor(SpawnFanMaxHalfArc / step) + 1;
+                    if (remaining < capacity) break;
+                    remaining -= capacity;
+                }
+
+                // 0, +1, -1, +2, -2 ... in units of step, so the group grows outward from centre.
+                var magnitude = (remaining + 1) / 2;
+                var side = (remaining % 2 == 1) ? 1f : -1f;
+
+                var yaw = player.Rotation + magnitude * side * step;
                 var fwd = new Vector3(MathF.Sin(yaw), 0, MathF.Cos(yaw));
-                return playerPos + fwd * distance;
+                return playerPos + fwd * radius;
             }
 
             var angle = Random.Shared.NextSingle() * MathF.Tau;

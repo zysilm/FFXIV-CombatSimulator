@@ -86,7 +86,8 @@ public partial class MainWindow : IDisposable
     private string enemyWarningVfxFilter = "";
     private string hitVfxFilter = "";
 
-    private static readonly string[] SoftTissueScopeNames = { "Standard (mod bones)", "All bones" };
+    private static readonly string[] SoftTissueScopeNames =
+        { "Standard (mod bones)", "All bones", "All bones except digits" };
     private static readonly string[] ActionGuardKeyLabels = { "Shift", "Ctrl", "Alt", "None" };
     private static readonly int[] ActionGuardKeyValues = { 16, 17, 18, 0 };
     private static readonly string[] ActionGamepadButtonLabels = { "R1", "L1", "R2", "L2", "Circle / East", "Cross / South", "Square / West", "Triangle / North", "None" };
@@ -766,6 +767,10 @@ public partial class MainWindow : IDisposable
             return;
         }
 
+        // Recipe-scoped NPC collision. Null leaves the user's own setting in force; the
+        // StopFastCombat above has already cleared any previous recipe's override.
+        config.RecipeNpcCollisionOverride = recipe.NpcCollision;
+
         config.EnableCombatCompanions = true;
         config.SensePartyMembers = recipe.Companions.Exists(c => c.Type == CompanionRecipeType.VisiblePlayers);
         config.EnableMapPlayerEnemySensing = recipe.MapEnemies.Exists(g => g.Enabled && g.IncludePlayers);
@@ -895,6 +900,7 @@ public partial class MainWindow : IDisposable
         companionManager.DespawnAll();
         npcSpawner.SpawnModeActive = false;
         mapEnemyController.ClearRecipeSettings();
+        config.RecipeNpcCollisionOverride = null;
 
         if (print)
             chatGui.Print("[CombatSim] Fast combat stopped.");
@@ -1257,7 +1263,6 @@ public partial class MainWindow : IDisposable
         if (ImGui.Button("Spawn", new Vector2(80, 0)))
         {
             var entry = selectedCatalogEntry!;
-            var pos = CalculateSpawnPosition(config.SpawnDistance);
 
             // Virtual enemies are always available now: activate spawn mode and start
             // the simulation on demand so the user can just search and spawn.
@@ -1275,7 +1280,10 @@ public partial class MainWindow : IDisposable
                 ENpcBaseId = entry.Type is NpcCatalogType.ENpc or NpcCatalogType.Human ? entry.Id : 0,
                 Level = config.DefaultNpcLevel,
                 HpMultiplier = config.DefaultNpcHpMultiplier,
-                Position = pos,
+                // No Position: the spawner places it. This used to pass a point computed here by a
+                // second copy of the placement logic, which meant the spawner's own version was
+                // never reached from this button — so the fan that keeps a group from stacking
+                // silently did nothing. One owner for where an enemy goes.
             });
 
             // Track in recent list (avoid duplicates, keep last 20)
@@ -1363,27 +1371,6 @@ public partial class MainWindow : IDisposable
                 }
             }
         }
-    }
-
-    private Vector3 CalculateSpawnPosition(float distance)
-    {
-        var player = Core.Services.ObjectTable.LocalPlayer;
-        if (player == null) return Vector3.Zero;
-
-        var playerPos = player.Position;
-
-        if (config.SpawnInFront)
-        {
-            // Exactly in front of the player using the character's real in-game facing (yaw).
-            // No randomness. Forward convention matches PartyEngagePlanner: yaw R -> (sin R, 0, cos R).
-            var yaw = player.Rotation;
-            var fwd = new Vector3(MathF.Sin(yaw), 0, MathF.Cos(yaw));
-            return playerPos + fwd * distance;
-        }
-
-        var angle = Random.Shared.NextSingle() * MathF.Tau;
-        var dir = new Vector3(-MathF.Sin(angle), 0, -MathF.Cos(angle));
-        return playerPos + dir * distance;
     }
 
     private void DrawSimulationSection()
@@ -2264,6 +2251,36 @@ public partial class MainWindow : IDisposable
                 ImGui.SameLine();
                 ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "! Check Diagnose");
             }
+
+            ImGui.Separator();
+            ImGui.TextDisabled("Enemy action density");
+
+            var skillRate = config.NpcSkillRateLimit;
+            ImGui.SetNextItemWidth(160);
+            if (ImGui.SliderFloat("Enemy skills/sec##npcdensity", ref skillRate, 0f, 20f, skillRate <= 0f ? "uncapped" : "%.1f"))
+            {
+                config.NpcSkillRateLimit = skillRate;
+                config.Save();
+            }
+            HelpMarker("Cap on how many skill casts ALL hostile NPCs may start per second between them. Each enemy " +
+                       "paces itself off its own cooldowns, but every cast costs VFX on the caster and each target, " +
+                       "an animation restart and flytext — all on one screen — so the visible density climbs with " +
+                       "the enemy count and nothing was holding the total down.\n\n" +
+                       "An enemy that can't get a slot doesn't idle: its cooldown is unspent so it goes the moment " +
+                       "one frees, and it auto-attacks in the meantime. Player and companions are never throttled. " +
+                       "0 = uncapped.");
+
+            var vfxCull = config.NpcSkillVfxMaxDistance;
+            ImGui.SetNextItemWidth(160);
+            if (ImGui.SliderFloat("Enemy VFX range##npcdensity", ref vfxCull, 0f, 100f, vfxCull <= 0f ? "unlimited" : "%.0f y"))
+            {
+                config.NpcSkillVfxMaxDistance = vfxCull;
+                config.Save();
+            }
+            HelpMarker("Skip action VFX for hostile casters further than this from the camera. Their damage, flytext " +
+                       "and animation still play — only the effect is dropped, at a distance where it is a few pixels " +
+                       "of glare anyway. Measured from the camera rather than from you, so a death cam sitting far " +
+                       "from your body still shows what is actually on screen. 0 = never skip.");
 
             if (!config.EnableTargetVfx)
                 ImGui.BeginDisabled();
@@ -3960,15 +3977,28 @@ public partial class MainWindow : IDisposable
                     config.RagdollSolverIterations = solverIter;
                     config.Save();
                 }
-                HelpMarker("BEPU2 constraint solver iterations per timestep. Higher = more stable/accurate joints but costs performance. Default 8. Takes effect on next ragdoll activation.");
+                HelpMarker("BEPU2 constraint solver velocity iterations per SUBSTEP (not per frame) — total solver " +
+                           "work is Iterations x Substeps. Iterations converge the constraints against each other at " +
+                           "the current sub-step; they do not make the sub-step finer, so they help a tangled load " +
+                           "path (a body carried by one bone) more than they help a stiff spring. Default 8. " +
+                           "Raised to a floor of 8 with party ragdolls on, and to 16 on non-humanoid rigs. " +
+                           "Takes effect on next ragdoll activation.");
 
                 var solverSubsteps = config.RagdollSolverSubsteps;
-                if (ImGui.SliderInt("Solver Substeps##ragdoll", ref solverSubsteps, 1, 8))
+                if (ImGui.SliderInt("Solver Substeps##ragdoll", ref solverSubsteps, 1, 64))
                 {
                     config.RagdollSolverSubsteps = solverSubsteps;
                     config.Save();
                 }
-                HelpMarker("Velocity-solve substeps per fixed timestep. 1 = legacy. Raising this re-solves constraints at a finer sub-step — BEPU's recommended way to keep a stiff joint-limit wall (see below) stable instead of jittering. Costs ~linearly. Takes effect on next ragdoll activation.");
+                HelpMarker("Velocity-solve substeps per fixed timestep. 1 = legacy. Raising this re-integrates poses " +
+                           "and re-solves constraints at a finer sub-step, which is what a stiff spring needs to be " +
+                           "represented at all: effective solve rate is 60 x Substeps, and a spring wants roughly 10x " +
+                           "that of its own frequency. At 8 the 90 Hz limit wall (see below) is only ~5x oversampled. " +
+                           "BEPU's recommended lever for stiff limits, and the one that reduces energy pumping from " +
+                           "stale constraint directions during fast limb whip.\n\n" +
+                           "Costs ~linearly, and MULTIPLIES with Iterations. Before paying for more, try trading: " +
+                           "4 iterations x 16 substeps is the same total work as the default 8 x 8 but solves twice " +
+                           "as finely. Takes effect on next ragdoll activation.");
 
                 var limitFreq = config.RagdollLimitSpringFrequency;
                 if (ImGui.SliderFloat("Limit Wall Stiffness (Hz)##ragdoll", ref limitFreq, 30f, 180f, "%.0f"))
@@ -4207,7 +4237,7 @@ public partial class MainWindow : IDisposable
                     }
 
                     var wdMass = config.WeaponDropMass;
-                    if (ImGui.SliderFloat("Mass (kg)##weapondrop", ref wdMass, 0.1f, 10.0f, "%.2f"))
+                    if (ImGui.SliderFloat("Mass (kg)##weapondrop", ref wdMass, 0.1f, 50.0f, "%.2f"))
                     {
                         config.WeaponDropMass = wdMass;
                         config.Save();
@@ -4359,7 +4389,8 @@ public partial class MainWindow : IDisposable
                     }
                     HelpMarker("Standard: every extra bone from body-mod skeletons (recommended). " +
                                "All bones: every skeleton bone that is not already a ragdoll body, " +
-                               "vanilla bones included (experimental). Squash & stretch follows this " +
+                               "vanilla bones included (experimental). All bones except digits: the " +
+                               "same, minus fingers and toes. Squash & stretch follows this " +
                                "selection. Discovered bones are listed in the plugin log on ragdoll " +
                                "activation.");
 
@@ -4436,6 +4467,34 @@ public partial class MainWindow : IDisposable
                 }
                 HelpMarker("Apply ragdoll physics to party companion clones when they die.");
 
+                ImGui.Separator();
+                ImGui.TextDisabled("Solver budget (enemy + companion corpses)");
+
+                var npcIter = config.NpcRagdollSolverIterations;
+                if (ImGui.SliderInt("NPC Solver Iterations##npcragdoll", ref npcIter, 1, 32))
+                {
+                    config.NpcRagdollSolverIterations = npcIter;
+                    config.Save();
+                }
+                HelpMarker("Velocity iterations per substep for enemy/companion corpses, kept separate from the " +
+                           "player's own (Advanced > Solver Iterations). Total work is Iterations x Substeps: 2 x 8 " +
+                           "here against the player's 4 x 16 is a quarter of the cost per corpse.\n\n" +
+                           "A ragdoll is only expensive for the second or two before it settles — after that it is " +
+                           "skipped entirely — so what spikes a wipe is many corpses being active at once, and this " +
+                           "is the figure that gets multiplied by the wave. Non-humanoid rigs ignore this and floor " +
+                           "at 16; their topology needs it to stay stable. Takes effect on next ragdoll activation.");
+
+                var npcSubsteps = config.NpcRagdollSolverSubsteps;
+                if (ImGui.SliderInt("NPC Solver Substeps##npcragdoll", ref npcSubsteps, 1, 64))
+                {
+                    config.NpcRagdollSolverSubsteps = npcSubsteps;
+                    config.Save();
+                }
+                HelpMarker("Substeps for enemy/companion corpses. 8 = a 480 Hz effective solve rate, which still " +
+                           "resolves the 90 Hz joint-limit wall at ~5x — enough that limits hold, just less exactly " +
+                           "than on the player's rig. Raise it if enemy corpses visibly punch through their joint " +
+                           "limits or refuse to settle. Takes effect on next ragdoll activation.");
+
                 ImGui.Unindent();
             }
         }
@@ -4470,14 +4529,6 @@ public partial class MainWindow : IDisposable
 
                 ImGui.Unindent();
             }
-
-            var settleCol = config.RagdollNpcSettleCollision;
-            if (ImGui.Checkbox("Settle Collision##settle", ref settleCol))
-            {
-                config.RagdollNpcSettleCollision = settleCol;
-                config.Save();
-            }
-            HelpMarker("Prevent ragdoll bodies from sleeping so they always react to NPC bones. Takes effect on next ragdoll activation.");
         }
     }
 

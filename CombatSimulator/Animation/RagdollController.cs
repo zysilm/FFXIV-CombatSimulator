@@ -178,6 +178,14 @@ public unsafe partial class RagdollController : IDisposable
     private const float GenericSwingLimit = 0.6f;        // ball cone half-angle (rad)
     private const float GenericTwistLimit = 0.35f;       // ball axial twist (rad)
     private const int GenericSolverIterations = 16;      // generic rigs need more iterations to converge
+    private const int PartyMinSolverIterations = 8;      // floor while party ragdolls add bodies/statics
+
+    /// <summary>
+    /// True when this controller drives the LOCAL PLAYER's corpse rather than an NPC's. Set at
+    /// Activate, read at InitializePhysics: it decides soft-tissue coverage and the solver budget,
+    /// both of which are spent on a body the camera is very likely not framing.
+    /// </summary>
+    private bool targetIsLocalPlayer;
     private const float GenericMaxLinearVelocity = 12f;  // m/s — clamp per frame to stop energy blow-up
     private const float GenericMaxAngularVelocity = 16f; // rad/s — clamp per frame (tiny bodies spin up fastest)
 
@@ -1459,8 +1467,11 @@ public unsafe partial class RagdollController : IDisposable
         Dictionary<string, int> nameToIndex,
         Dictionary<string, RagdollBoneDef> defByName)
     {
-        // Coverage: Standard = mod-skeleton bones only (prefix match); All = every bone.
-        var allBones = config.RagdollSoftTissueScope == 1;
+        // Coverage: Standard = mod-skeleton bones only (prefix match); All = every bone;
+        // All-except-digits = every bone but the fingers and toes.
+        var scope = config.RagdollSoftTissueScope;
+        var allBones = scope == 1 || scope == 2;
+        var excludeDigits = scope == 2;
 
         var prefixes = new List<string>();
         foreach (var part in config.RagdollSoftTissueBonePrefixes.Split(','))
@@ -1492,6 +1503,10 @@ public unsafe partial class RagdollController : IDisposable
                 foreach (var prefix in prefixes)
                     if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) { matched = true; break; }
                 if (!matched) continue;
+            }
+            else if (excludeDigits && IsDigitBone(name))
+            {
+                continue;
             }
 
             // Nearest ancestor that is a rig def (original or discovered) — the joint anchor.
@@ -1540,14 +1555,41 @@ public unsafe partial class RagdollController : IDisposable
 
         if (added == null) return defs;
 
-        log.Info($"SoftTissue: discovered {added.Count} soft bone(s) " +
-                 $"({(allBones ? "all bones" : "mod bones")}): " +
+        var scopeLabel = excludeDigits ? "all bones except digits" : allBones ? "all bones" : "mod bones";
+        log.Info($"SoftTissue: discovered {added.Count} soft bone(s) ({scopeLabel}): " +
                  string.Join(", ", added.ConvertAll(d => d.Name)));
 
         var merged = new RagdollBoneDef[defs.Length + added.Count];
         defs.CopyTo(merged, 0);
         added.CopyTo(merged, defs.Length);
         return merged;
+    }
+
+    // Finger name roots (thumb/index/middle/ring/pinky) as their own '_'-delimited segment —
+    // e.g. "j_oya_a_l", or on a mod skeleton's individual toes "iv_asi_hito_a_l". Matched as a
+    // whole segment (not a substring) so this never catches something like "j_kosi" (pelvis).
+    private static readonly HashSet<string> DigitNameTokens =
+        new(StringComparer.Ordinal) { "oya", "hito", "naka", "kusu", "ko" };
+
+    /// <summary>
+    /// True for a finger bone (any skeleton) or a toe bone — the vanilla combined toe cluster
+    /// (j_asi_e_l/r) and a mod skeleton's individual toe joints (iv_asi_oya_a_l, and so on),
+    /// which mirror the finger names with "asi_" inserted. Used by the "All bones except digits"
+    /// soft-tissue coverage to keep the (larger, cheaper-per-bone) capsules everywhere except the
+    /// digits, where a wobbling fingertip or toe reads as wrong rather than fleshy.
+    /// </summary>
+    private static bool IsDigitBone(string name)
+    {
+        var parts = name.Split('_');
+
+        foreach (var part in parts)
+            if (DigitNameTokens.Contains(part)) return true;
+
+        for (int i = 0; i < parts.Length - 1; i++)
+            if (parts[i] == "asi" && (parts[i + 1] == "e" || DigitNameTokens.Contains(parts[i + 1])))
+                return true;
+
+        return false;
     }
 
     // Joint type determines which BEPU constraints are used:
@@ -2326,6 +2368,10 @@ public unsafe partial class RagdollController : IDisposable
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)characterAddress;
         savedCharacterPosition = go->Position;
         targetEntityId = go->EntityId;
+        // The local player is always object-table index 0 (same convention the render pass uses).
+        // Captured once here rather than re-read per frame, because it decides how the rig is BUILT
+        // — soft tissue coverage and solver budget — and those are settled at InitializePhysics.
+        targetIsLocalPlayer = go->ObjectIndex == 0;
 
         ArmConfiguredGuidedCollapse();
 
@@ -3812,7 +3858,15 @@ public unsafe partial class RagdollController : IDisposable
 
         // Mod-skeleton soft tissue (Rue/YAS/IVCS): humanoid rigs only — the generic path
         // renames bones (gen_N) and auto-sizes everything itself.
-        if (!genericSkeleton && config.RagdollSoftTissueModBones)
+        //
+        // And the LOCAL PLAYER only. Soft tissue is by far the most expensive thing a rig can carry:
+        // under All-bones coverage it quadruples the body count (~40 -> ~168) and adds several
+        // hundred constraints, all of which are solved every substep until the corpse settles. That
+        // was being paid per humanoid NPC corpse too, so a wave that died together multiplied it by
+        // the wave — which is exactly the activation spike, and it cleared up as they settled onto
+        // the resting fast path. The camera is on your own body; a mook's flesh jiggle is not worth
+        // one frame of everyone else's.
+        if (!genericSkeleton && targetIsLocalPlayer && config.RagdollSoftTissueModBones)
             BoneDefs = AppendModSoftTissueDefs(skel, BoneDefs, nameToIndex, defByName);
 
         BoneDefs = BuildActivePhysicsDefsForDismemberment(skel, BoneDefs, nameToIndex);
@@ -3847,16 +3901,38 @@ public unsafe partial class RagdollController : IDisposable
             ? new HashSet<(int, int)>()
             : null;
 
-        // Party combat ragdolls deal with many more colliding bodies/statics, so
-        // force a higher solver iteration count for stability while party combat
-        // ragdolls are enabled.
+        // Solver budget. An NPC corpse gets its own, much cheaper allocation: the expensive part of
+        // a ragdoll is the couple of seconds before it settles, and when a wave dies together those
+        // windows all overlap. Nobody is looking closely at the fourth body on the floor, so it does
+        // not need the player's solve rate.
+        var solverIterations = targetIsLocalPlayer
+            ? config.RagdollSolverIterations
+            : config.NpcRagdollSolverIterations;
+
+        // Party combat ragdolls deal with many more colliding bodies/statics, so hold a FLOOR under
+        // the player's iteration count while party combat ragdolls are enabled.
+        //
+        // A floor, not an override: this used to assign 8 outright, which also dragged a deliberately
+        // raised setting back DOWN to 8 — the opposite of the stability it was added for, and it made
+        // the Advanced slider look broken (silently ignored) for anyone running with companions on.
+        //
+        // Player only. The floor is a blunt "the scene is busy" heuristic, and applying it to NPC
+        // corpses would quietly overrule the cheap budget they were just given — in precisely the
+        // busy scene that budget exists for.
         var partyRagdollActive = config.EnableCombatCompanions &&
             (config.PartyCompanionDeathRagdoll || config.EnableNpcDeathRagdoll);
-        var solverIterations = partyRagdollActive ? 8 : config.RagdollSolverIterations;
+        if (targetIsLocalPlayer && partyRagdollActive)
+            solverIterations = Math.Max(solverIterations, PartyMinSolverIterations);
         // Generic rigs build a stiffer, less-conditioned constraint network — give the
         // solver more iterations so it converges instead of pumping energy each frame.
+        // This one is a stability requirement of the rig's own topology, not a scene heuristic,
+        // so it holds for NPC corpses too.
         if (genericSkeleton)
             solverIterations = Math.Max(solverIterations, GenericSolverIterations);
+
+        var solverSubsteps = Math.Max(1, targetIsLocalPlayer
+            ? config.RagdollSolverSubsteps
+            : config.NpcRagdollSolverSubsteps);
 
         bufferPool = new BufferPool();
         // FallbackBatchThreshold raised from the default 64: the pelvis alone carries the
@@ -3882,7 +3958,7 @@ public unsafe partial class RagdollController : IDisposable
             new RagdollPoseIntegratorCallbacks(
                 new Vector3(0, -config.RagdollGravity, 0),
                 config.RagdollDamping),
-            new SolveDescription(solverIterations, Math.Max(1, config.RagdollSolverSubsteps))
+            new SolveDescription(solverIterations, solverSubsteps)
             {
                 FallbackBatchThreshold = 128,
             });
@@ -4828,7 +4904,7 @@ public unsafe partial class RagdollController : IDisposable
         // Create NPC collision volumes — dynamically discover bones from each NPC's skeleton.
         // Works for any model (humanoid, monster, dragon) — no hardcoded bone names.
         npcCollisionStates.Clear();
-        if (config.RagdollNpcCollision && npcSelector != null)
+        if (config.NpcCollisionActive && npcSelector != null)
         {
             var scale = config.RagdollNpcCollisionScale;
             var capsuleRadius = config.RagdollNpcCollisionAutoSize ? NpcDefaultBoneRadius : NpcDefaultBoneRadius * scale;
@@ -7251,14 +7327,12 @@ public unsafe partial class RagdollController : IDisposable
         if (biomechanicalSettleActive)
             WakeRagdollBodiesForBiomechanicalSettle();
 
-        // Resting fast-path: once the rig is fully asleep there is nothing left to react
-        // to (bodies only sleep when settle-collision is off, and an asleep body has ~0
-        // velocity so there is no energy left to pump), so skip the physics step, the
-        // per-frame NPC-collision static rebuild, and hair — we just re-assert the held
-        // pose below. Applies to generic (monster) rigs too: if their auto-built network
-        // never settles, prevAllAsleep simply stays false and this never triggers; if it
-        // does settle, there is nothing to clamp. A grab or a moved skeleton forces a step.
-        var settleCollisionActive = config.RagdollNpcCollision && config.RagdollNpcSettleCollision;
+        // Resting fast-path: once the rig is fully asleep there is nothing left to react to (an
+        // asleep body has ~0 velocity, so there is no energy left to pump), so skip the physics
+        // step, the per-frame NPC-collision static rebuild, and hair — we just re-assert the held
+        // pose below. Applies to generic (monster) rigs too: if their auto-built network never
+        // settles, prevAllAsleep simply stays false and this never triggers; if it does settle,
+        // there is nothing to clamp. A grab or a moved skeleton forces a step.
         var externalBodyAwake = AnyExternalBodyAwake();
 
         // Rough corpse centre for the collider proximity gate. Any body serves — the wake
@@ -7271,11 +7345,16 @@ public unsafe partial class RagdollController : IDisposable
             entryConditioningActive || kneePowerLossActive || skeletonMoved || biomechanicalSettleActive;
         UpdateInPlaceRestLatch(dt, activityBlocksRest);
 
-        // Resting comes from either door: BEPU's own island sleep (only reachable with settle
-        // collision off — the old path, unchanged), or the in-place latch, which is reachable
-        // regardless of collision settings because the collider updates below keep running
-        // while latched — an NPC genuinely moving in close re-arms the flag and breaks rest.
-        var resting = ((prevAllAsleep && !settleCollisionActive) || inPlaceRestLatched) && !activityBlocksRest;
+        // Resting comes from either door: BEPU's own island sleep, or the in-place latch. Either
+        // way the collider updates below keep running while resting, so an NPC genuinely moving in
+        // close re-arms the flag and breaks it.
+        //
+        // A "Settle Collision" option used to close the island-sleep door, on the theory that a
+        // sleeping corpse would stop reacting to NPC bones. It was removed: it never touched a sleep
+        // threshold, so all it did was withhold one of the two doors — and the island door is nearly
+        // shut anyway on a rig this size (see the in-place latch comment: ~50 jointed bodies must go
+        // quiet together for 32 straight steps). The latch was doing the work either way.
+        var resting = (prevAllAsleep || inPlaceRestLatched) && !activityBlocksRest;
         npcColliderMovedNearCorpse = false; // re-armed by this frame's collider updates for the next decision
 
         // Death-collapse spike: restrength the per-joint "muscle" servos before stepping so the

@@ -29,6 +29,9 @@ public class ActionEffectRequest
     public float AnimationLock { get; set; } = 0.6f;
     public float SourceRotation { get; set; }
     public bool IsSourcePlayer { get; set; }
+    /// <summary>Caster is a hostile NPC — not the player, not a companion. Only these are subject
+    /// to the VFX distance cull (config.NpcSkillVfxMaxDistance); our own side always shows.</summary>
+    public bool IsHostileSource { get; set; }
     public bool IsRanged { get; set; }
     public NpcAttackStyle AttackStyle { get; set; } = NpcAttackStyle.Auto;
     public ushort AnimationStartTimelineId { get; set; }
@@ -869,9 +872,25 @@ public unsafe class AnimationController : IDisposable
     /// All actor addresses are resolved via managed ObjectTable at the moment of use
     /// to prevent stale pointer crashes.
     /// </summary>
+    /// <summary>
+    /// True when a hostile caster is far enough from the CAMERA that its skill VFX is a few pixels
+    /// of glare and nothing more. Distance is measured from the camera rather than the player
+    /// because the camera is what frames the shot — during a death cam it can sit a long way from
+    /// the body, and culling against the player would then hide the effects actually on screen.
+    /// </summary>
+    private bool IsBeyondVfxCull(ActionEffectRequest request)
+    {
+        if (!request.IsHostileSource) return false;
+        var limit = config.NpcSkillVfxMaxDistance;
+        if (limit <= 0f) return false;
+        if (!Camera.GameCameraView.TryRead(out var view)) return false;
+        return Vector3.DistanceSquared(view.Position, request.SourcePosition) > limit * limit;
+    }
+
     private void SpawnActionVfx(ActionEffectRequest request)
     {
         if (actorVfxCreate == null) return;
+        if (IsBeyondVfxCull(request)) return;
 
         try
         {

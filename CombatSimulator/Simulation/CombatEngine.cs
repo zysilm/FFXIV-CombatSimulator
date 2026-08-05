@@ -1107,6 +1107,8 @@ public class CombatEngine : IDisposable
             AnimationLock = actionData.AnimationLock,
             SourceRotation = GetEntityRotation(source),
             IsSourcePlayer = source.IsPlayer,
+            // Hostile = neither the player nor one of ours. Gates the VFX distance cull only.
+            IsHostileSource = !source.IsPlayer && !source.IsCompanion,
             IsRanged = isRanged,
             AttackStyle = actionData.DamageType == SimDamageType.Magical
                 ? NpcAttackStyle.Magic

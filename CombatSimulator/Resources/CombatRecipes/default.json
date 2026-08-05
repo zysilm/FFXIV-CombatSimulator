@@ -42,6 +42,7 @@
   {
     "name": "Imperial Assault",
     "description": "10 randomized self companions, up to 10 visible players, 14 imperial patrol enemies, and Livia sas Junius.",
+    "npcCollision": false,
     "companions": [
       { "type": "SelfRandomized", "count": 10 },
       { "type": "VisiblePlayers", "count": 10 }
@@ -67,6 +68,7 @@
   {
     "name": "Combat of Baron",
     "description": "10 randomized self companions against 7 Memoriate of Darkness and 3 Blackguard.",
+    "npcCollision": false,
     "companions": [
       { "type": "SelfRandomized", "count": 10 }
     ],

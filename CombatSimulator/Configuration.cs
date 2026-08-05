@@ -438,13 +438,37 @@ public partial class Configuration : IPluginConfiguration
     public int MaxNpcRagdolls { get; set; } = 5;
     public float RagdollGravity { get; set; } = 9.8f;
     public float RagdollDamping { get; set; } = 0.97f;
-    public int RagdollSolverIterations { get; set; } = 8;
-    // Velocity-solve substeps per fixed timestep. 1 = legacy behavior. Raising this
-    // re-solves the constraints at a finer sub-step, which is BEPU's recommended lever
-    // for making a STIFF limit wall (see RagdollLimitSpringFrequency) well-conditioned
-    // instead of pumping energy. Costs ~linearly in performance. 8 = the validated default
-    // that keeps stiff joints/limits from rubber-banding. Takes effect on next ragdoll activation.
-    public int RagdollSolverSubsteps { get; set; } = 8;
+    // Velocity iterations per SUBSTEP, not per frame (BEPU2's SolveDescription takes it that way),
+    // so total solver work is this times RagdollSolverSubsteps. Iterations converge the constraints
+    // against one another; they do not refine the sub-step, so they buy convergence on a tangled
+    // load path rather than fidelity on a stiff spring.
+    // 4, not 8: paired with 16 substeps below this is the same total work as the old 8 x 8 while
+    // solving twice as finely, which is the trade Small Steps in Physics Simulation (Macklin 2019)
+    // argues for and which field-tested better here. Floors still apply (party 8, non-humanoid 16).
+    public int RagdollSolverIterations { get; set; } = 4;
+    // Velocity-solve substeps per fixed timestep. 1 = legacy behavior. Raising this re-integrates
+    // poses and re-solves constraints at a finer sub-step, which is BEPU's recommended lever for
+    // making a STIFF limit wall (see RagdollLimitSpringFrequency) well-conditioned instead of
+    // pumping energy — effective solve rate is 60 x this, and a spring wants roughly 10x its own
+    // frequency to be represented properly (at 8, the 90 Hz limit wall gets only ~5x).
+    // Costs ~linearly AND multiplies with the iteration count above, so trading iterations for
+    // substeps at equal total work (4 x 16 vs 8 x 8) is worth trying before paying for more.
+    // 16 with 4 iterations above = the same 64 solver passes the old 8 x 8 default cost, at a 960 Hz
+    // effective solve rate instead of 480. That takes the 90 Hz limit wall from ~5x oversampled to
+    // ~11x, which is what it wanted all along. Takes effect on next ragdoll activation.
+    public int RagdollSolverSubsteps { get; set; } = 16;
+    // The same two knobs for an NPC/companion corpse, which gets a much smaller budget: 2 x 8 = 16
+    // solver passes against the player's 64.
+    //
+    // A ragdoll is only expensive for the couple of seconds before it settles — after that it hits
+    // the resting fast path and is skipped entirely — so the cost that matters is (corpses dying at
+    // once) x (one active rig). Cutting the per-rig figure fourfold is what keeps a wave that wipes
+    // together from spiking. Nobody is inspecting the fourth body on the floor; the joint limits
+    // still hold at this rate, they just converge less exactly.
+    // Non-humanoid rigs still floor at 16 iterations (a stability need of their topology, see
+    // RagdollController.GenericSolverIterations). Takes effect on next ragdoll activation.
+    public int NpcRagdollSolverIterations { get; set; } = 2;
+    public int NpcRagdollSolverSubsteps { get; set; } = 8;
     // Spring frequency (Hz) of the joint LIMIT walls (swing cones + twist ranges), not
     // the positional joints. Higher = firmer wall so joints don't blow past their range
     // under momentum (e.g. shoulders/waist over-rotating); too high relative to the
@@ -585,7 +609,10 @@ public partial class Configuration : IPluginConfiguration
     public float WeaponDropGravity { get; set; } = 9.8f;
     public float WeaponDropDamping { get; set; } = 0.99f;
     public float WeaponDropAngularDamping { get; set; } = 0.85f; // much stronger than linear: kills spin fast so capsule stops rolling
-    public float WeaponDropMass { get; set; } = 1.5f;
+    // Heavy on purpose. A real sword is a couple of kilos, but this box also has to not be skated
+    // around by the corpse's own collider or bounced by a contact it lands on — mass is the cheapest
+    // way to buy that, and nothing about the drop depends on it being physically honest.
+    public float WeaponDropMass { get; set; } = 15f;
     public float WeaponDropRadius { get; set; } = 0.025f;
     public float WeaponDropHalfLength { get; set; } = 0.4f;
     public float WeaponDropBounce { get; set; } = 1.5f; // Bepu MaximumRecoveryVelocity — higher = bouncier
@@ -615,7 +642,8 @@ public partial class Configuration : IPluginConfiguration
     // Internal prefix source (not exposed in the UI — the coverage dropdown picks the bones).
     public string RagdollSoftTissueBonePrefixes { get; set; } = "iv_, ya_";
     // Bone coverage: 0 = Standard (every mod-skeleton bone, prefix-matched), 1 = All bones
-    // (EVERY skeleton bone not already a rig body, vanilla included — experimental).
+    // (EVERY skeleton bone not already a rig body, vanilla included — experimental), 2 = All
+    // bones except digits (same as 1, minus fingers and toes — see RagdollController.IsDigitBone).
     // Squash & stretch follows this scope automatically (it applies to every SoftBody body).
     public int RagdollSoftTissueScope { get; set; } = 0;
     // Soft-tissue-vs-ground contact. Off by default (extra contact pairs cost solver time,
@@ -651,7 +679,23 @@ public partial class Configuration : IPluginConfiguration
     // mesh built at activation, so nothing to stutter on. The convex-hull and mesh shapes are more
     // faithful but pay for it in build cost; both are one dropdown away when wanted.
     public RagdollNpcCollisionMode RagdollNpcCollisionMode { get; set; } = RagdollNpcCollisionMode.BoneCapsule;
-    public bool RagdollNpcSettleCollision { get; set; } = true;
+
+    /// <summary>
+    /// Combat-recipe override for <see cref="RagdollNpcCollision"/>, live only while that recipe is
+    /// running. Null = the user's own setting stands.
+    ///
+    /// An override rather than a write to the setting itself, because the large recipes turn NPC
+    /// collision off for their own sake (see Imperial Assault / Combat of Baron) and must not
+    /// silently redefine what the user chose globally — nor leave it redefined after the fight.
+    /// </summary>
+    [JsonIgnore]
+    public bool? RecipeNpcCollisionOverride { get; set; }
+
+    /// <summary>Whether NPC collision is actually in force right now. Read this in the simulation;
+    /// the settings UI stays bound to <see cref="RagdollNpcCollision"/> so it keeps showing what the
+    /// user picked rather than what a recipe is doing to it.</summary>
+    [JsonIgnore]
+    public bool NpcCollisionActive => RecipeNpcCollisionOverride ?? RagdollNpcCollision;
 
     // Auto-engage: NPC enemy targets attack the player automatically on
     // simulation start / reset / reboot without the player attacking first.
@@ -674,6 +718,19 @@ public partial class Configuration : IPluginConfiguration
     public bool EnableSkillVfx { get; set; } = false;
     public bool EnableCharacterVfx { get; set; } = true;
     public bool EnableTargetVfx { get; set; } = true;
+
+    // Hostile-NPC action pacing. Every enemy paces itself off its own skill cooldowns, but the
+    // COST of a cast — VFX on the caster and on each target, an action-timeline restart, flytext —
+    // all lands on one screen, so visible density rises with the enemy count while nothing was
+    // holding the total down. This caps skill STARTS per second across every hostile NPC at once.
+    // An enemy that can't get a slot doesn't idle: its cooldown is unspent, so it goes the moment
+    // one frees, and it auto-attacks meanwhile. 0 = uncapped (the old behaviour).
+    // Player and companions are never throttled — our own side is what the player is watching.
+    public float NpcSkillRateLimit { get; set; } = 5f;
+    // Skip action VFX for hostile casters further than this from the CAMERA (yalms). Their damage,
+    // flytext and animation still play; they just stop contributing to the light show at a distance
+    // where the effect is a few pixels anyway. 0 = never skip.
+    public float NpcSkillVfxMaxDistance { get; set; } = 30f;
 
     // Hit VFX on player when taking damage (empty = disabled)
     public string HitVfxPath { get; set; } = "vfx/common/eff/dk02ht_totu0y.avfx";
