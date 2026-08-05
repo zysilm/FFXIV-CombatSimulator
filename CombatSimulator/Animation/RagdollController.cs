@@ -2273,7 +2273,12 @@ public unsafe partial class RagdollController : IDisposable
         public BodyHandle NpcBody;
         public float NpcAlongAxis;
         public BodyHandle CorpseBody;
-        public float LastRootY;
+        // This is a unilateral support plane, not a live copy of the dynamic corpse surface.
+        // Once a foot has climbed onto a body, letting this value follow that body's instantaneous
+        // Y feeds the corpse's contact response straight back into the kinematic NPC and creates a
+        // two-state oscillator (NPC up -> corpse down -> NPC down -> corpse rebounds). Keep the
+        // load-bearing root fixed until the foot walks off or hands over to a higher support.
+        public float SupportRootY;
     }
 
     private readonly Dictionary<nint, NpcTraversalAnchor> npcTraversalAnchors = new();
@@ -11163,11 +11168,10 @@ public unsafe partial class RagdollController : IDisposable
         var rootDelta = proposedRootPosition - currentRoot;
         maxClimb = MathF.Max(0f, maxClimb);
 
-        bool TryEvaluate(
+        bool TryEvaluateAcquisition(
             (BodyHandle Handle, Vector3 Center, Quaternion Orientation, float Radius, float HalfLength, float Bottom, float Top) capsule,
             float along,
-            bool maintain,
-            BodyHandle? corpseBody,
+            bool horizontalHandoff,
             out float candidateRootY,
             out NpcTraversalSurfaceHit hit)
         {
@@ -11176,27 +11180,27 @@ public unsafe partial class RagdollController : IDisposable
             var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
             var sphereCenter = capsule.Center + axis * along + rootDelta;
             if (!TryGetSphereSupportHit(
-                    sphereCenter, capsule.Radius, maintain, corpseBody, out hit) ||
-                hit.RequiredCenterY - capsule.Radius <= terrainY + 0.001f)
+                    sphereCenter, capsule.Radius, horizontalHandoff, null, out hit))
                 return false;
 
             var verticalCorrection = hit.RequiredCenterY - sphereCenter.Y;
-            var allowedGap = maintain
-                ? MathF.Max(0.012f, MathF.Max(bodyHeight * 0.06f, capsule.Radius * 1.5f))
-                : MathF.Max(0.002f, capsule.Radius * 0.5f);
-            if (verticalCorrection < -allowedGap)
-                return false;
-
             var penetration = Math.Clamp(capsule.Radius * 0.12f, 0.0001f, 0.01f);
             candidateRootY = proposedRootPosition.Y + verticalCorrection - penetration;
-            if (candidateRootY > terrainY + maxClimb)
-                return false;
+
+            if (!horizontalHandoff)
+            {
+                if (hit.RequiredCenterY - capsule.Radius <= terrainY + 0.001f)
+                    return false;
+                var allowedGap = MathF.Max(0.002f, capsule.Radius * 0.5f);
+                if (verticalCorrection < -allowedGap || candidateRootY > terrainY + maxClimb)
+                    return false;
+            }
 
             candidateRootY = MathF.Max(terrainY, candidateRootY);
-            return candidateRootY > terrainY + 0.001f;
+            return horizontalHandoff || candidateRootY > terrainY + 0.001f;
         }
 
-        float? previousAnchorRootY = null;
+        float? previousSupportRootY = null;
         if (npcTraversalAnchors.TryGetValue(npcAddress, out var anchor))
         {
             foreach (var capsule in capsules)
@@ -11204,17 +11208,22 @@ public unsafe partial class RagdollController : IDisposable
                 if (capsule.Handle != anchor.NpcBody)
                     continue;
 
-                if (TryEvaluate(capsule, anchor.NpcAlongAxis, true, anchor.CorpseBody,
-                        out var anchoredRootY, out _))
+                // Maintenance is horizontal-only. The corpse is dynamic and is expected to move
+                // down when loaded; using that vertical response as the next NPC root target is a
+                // positive feedback loop. The exact NPC sample/corpse pair remains support while
+                // their XZ volumes overlap with an upward-facing contact region.
+                var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
+                var sphereCenter = capsule.Center + axis * anchor.NpcAlongAxis + rootDelta;
+                if (TryGetSphereSupportHit(
+                        sphereCenter, capsule.Radius, true, anchor.CorpseBody, out _))
                 {
-                    anchor.LastRootY = anchoredRootY;
-                    rootY = anchoredRootY;
+                    rootY = MathF.Max(terrainY, anchor.SupportRootY);
                     return true;
                 }
                 break;
             }
 
-            previousAnchorRootY = anchor.LastRootY;
+            previousSupportRootY = anchor.SupportRootY;
             npcTraversalAnchors.Remove(npcAddress);
         }
 
@@ -11237,10 +11246,11 @@ public unsafe partial class RagdollController : IDisposable
                     2 => capsule.HalfLength,
                     _ => 0f,
                 };
-                if (!TryEvaluate(capsule, along, false, null, out var candidateRootY, out var hit))
+                if (!TryEvaluateAcquisition(
+                        capsule, along, previousSupportRootY.HasValue, out var candidateRootY, out var hit))
                     continue;
-                var preferCandidate = !found || (previousAnchorRootY.HasValue
-                    ? MathF.Abs(candidateRootY - previousAnchorRootY.Value) < MathF.Abs(bestRootY - previousAnchorRootY.Value)
+                var preferCandidate = !found || (previousSupportRootY.HasValue
+                    ? MathF.Abs(candidateRootY - previousSupportRootY.Value) < MathF.Abs(bestRootY - previousSupportRootY.Value)
                     : candidateRootY > bestRootY);
                 if (preferCandidate)
                 {
@@ -11253,15 +11263,20 @@ public unsafe partial class RagdollController : IDisposable
             }
         }
 
-        if (!found || bestRootY <= terrainY + 0.001f)
+        if (!found || (!previousSupportRootY.HasValue && bestRootY <= terrainY + 0.001f))
             return false;
+
+        // A handoff may climb to a higher corpse volume, but it never follows a compressed body
+        // downward. Downward motion begins only after all real horizontal support has been left.
+        if (previousSupportRootY.HasValue)
+            bestRootY = MathF.Max(previousSupportRootY.Value, bestRootY);
 
         npcTraversalAnchors[npcAddress] = new NpcTraversalAnchor
         {
             NpcBody = bestNpcBody,
             NpcAlongAxis = bestAlongAxis,
             CorpseBody = bestCorpseBody,
-            LastRootY = bestRootY,
+            SupportRootY = bestRootY,
         };
         rootY = bestRootY;
         return true;
