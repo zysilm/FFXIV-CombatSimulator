@@ -11058,6 +11058,220 @@ public unsafe partial class RagdollController : IDisposable
     }
 
     /// <summary>
+    /// Resolve the root height required for the registered NPC's real lowest BEPU capsules to
+    /// contact the visible ragdoll volumes. Unlike the general foot probe, this does not invent a
+    /// navigation footprint: every query originates from an NPC capsule the simulation is actually
+    /// using, and every target is one of the corpse shapes drawn by the collision debug overlay.
+    /// </summary>
+    public bool TryGetNpcTraversalRootHeight(
+        nint npcAddress,
+        Vector3 proposedRootPosition,
+        float terrainY,
+        float maxClimb,
+        out float rootY)
+    {
+        rootY = terrainY;
+        if (simulation == null || !isActive || !physicsStarted || npcAddress == nint.Zero)
+            return false;
+
+        NpcCollisionState? matchedState = null;
+        foreach (var state in npcCollisionStates)
+        {
+            if (state.NpcAddress == npcAddress && !state.Parked)
+            {
+                matchedState = state;
+                break;
+            }
+        }
+        if (!matchedState.HasValue)
+            return false;
+
+        var npcState = matchedState.Value;
+        var capsules = new List<(Vector3 Center, Quaternion Orientation, float Radius, float HalfLength, float Bottom, float Top)>();
+        try
+        {
+            if (npcState.IsFallback)
+            {
+                var body = simulation.Bodies.GetBodyReference(npcState.FallbackHandle);
+                var scale = MathF.Max(0.0001f, npcState.AppliedCollisionScale);
+                var radius = npcState.FallbackBaseRadius * scale;
+                var halfLength = npcState.FallbackBaseLength * scale * 0.5f;
+                var extentY = halfLength + radius;
+                capsules.Add((body.Pose.Position, body.Pose.Orientation, radius, halfLength,
+                    body.Pose.Position.Y - extentY, body.Pose.Position.Y + extentY));
+            }
+            else if (!npcState.IsMesh && !npcState.IsConvexHull)
+            {
+                foreach (var bone in npcState.BoneStatics)
+                {
+                    var body = simulation.Bodies.GetBodyReference(bone.Handle);
+                    var scale = MathF.Max(0.0001f, bone.AppliedCollisionScale);
+                    var radius = bone.BaseRadius * scale;
+                    var halfLength = bone.BaseHalfLength * scale;
+                    var axis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
+                    var extentY = MathF.Abs(axis.Y) * halfLength + radius;
+                    capsules.Add((body.Pose.Position, body.Pose.Orientation, radius, halfLength,
+                        body.Pose.Position.Y - extentY, body.Pose.Position.Y + extentY));
+                }
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (capsules.Count == 0)
+            return false;
+
+        var minBottom = float.MaxValue;
+        var maxTop = float.MinValue;
+        foreach (var capsule in capsules)
+        {
+            minBottom = MathF.Min(minBottom, capsule.Bottom);
+            maxTop = MathF.Max(maxTop, capsule.Top);
+        }
+        var bodyHeight = MathF.Max(0.0001f, maxTop - minBottom);
+        // Only the lowest visible collision layer may support traversal. This naturally selects
+        // feet/legs on humanoids and the broad set of leg capsules on spiders without using names.
+        var lowerBandTop = minBottom + MathF.Max(0.0002f, bodyHeight * 0.18f);
+
+        var gameObject = (GameObject*)npcAddress;
+        var currentRoot = new Vector3(gameObject->Position.X, gameObject->Position.Y, gameObject->Position.Z);
+        var rootDelta = proposedRootPosition - currentRoot;
+        maxClimb = MathF.Max(0f, maxClimb);
+        var found = false;
+        var bestRootY = float.MinValue;
+
+        foreach (var capsule in capsules)
+        {
+            if (capsule.Bottom > lowerBandTop)
+                continue;
+
+            var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
+            for (var sampleIndex = 0; sampleIndex < 3; sampleIndex++)
+            {
+                var along = sampleIndex switch
+                {
+                    0 => -capsule.HalfLength,
+                    2 => capsule.HalfLength,
+                    _ => 0f,
+                };
+                var sphereCenter = capsule.Center + axis * along + rootDelta;
+                if (!TryGetSphereSupportCenterHeight(sphereCenter, capsule.Radius, out var requiredCenterY) ||
+                    requiredCenterY - capsule.Radius <= terrainY + 0.001f)
+                    continue;
+
+                var verticalCorrection = requiredCenterY - sphereCenter.Y;
+                // A collider already far above the surface is not support. Small negative gaps are
+                // allowed so an actor descending along a curved body does not flicker off contact.
+                var allowedGap = MathF.Max(0.002f, capsule.Radius * 0.5f);
+                if (verticalCorrection < -allowedGap)
+                    continue;
+
+                var penetration = Math.Clamp(capsule.Radius * 0.12f, 0.0001f, 0.01f);
+                var candidateRootY = proposedRootPosition.Y + verticalCorrection - penetration;
+                if (candidateRootY > terrainY + maxClimb)
+                    continue;
+
+                candidateRootY = MathF.Max(terrainY, candidateRootY);
+                if (!found || candidateRootY > bestRootY)
+                {
+                    bestRootY = candidateRootY;
+                    found = true;
+                }
+            }
+        }
+
+        if (!found || bestRootY <= terrainY + 0.001f)
+            return false;
+
+        rootY = bestRootY;
+        return true;
+    }
+
+    /// <summary>
+    /// Vertical support for the center of a real NPC collider sphere against the exact corpse
+    /// shapes. Capsule radii are combined as a true sphere/capsule pair. Boxes intentionally use
+    /// their unexpanded visible top face; this is conservative at rounded edge contacts and avoids
+    /// recreating the oversized invisible foot disk that caused hovering.
+    /// </summary>
+    private bool TryGetSphereSupportCenterHeight(Vector3 sphereCenter, float sphereRadius, out float centerY)
+    {
+        centerY = float.MinValue;
+        if (simulation == null || sphereRadius <= 0f)
+            return false;
+
+        var found = false;
+        var bestCenterY = float.MinValue;
+        foreach (var rb in ragdollBones)
+        {
+            if (rb.Mass < 0.45f ||
+                rb.Name.StartsWith("j_sk_", StringComparison.Ordinal) ||
+                rb.Name.StartsWith("j_mune", StringComparison.Ordinal) ||
+                rb.Name.StartsWith("j_buki", StringComparison.Ordinal))
+                continue;
+
+            var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            if (rb.ColliderShape == RagdollColliderShape.Box)
+            {
+                if (TryGetOrientedBoxSurfaceHeight(
+                        body.Pose, rb.BoxHalfExtents, sphereCenter, 0f, out var boxSurfaceY))
+                {
+                    // Retain a slight physical overlap later in the root correction; this is the
+                    // geometrically visible top plus the contacting NPC sphere's own radius.
+                    var candidate = boxSurfaceY + sphereRadius;
+                    if (!found || candidate > bestCenterY)
+                    {
+                        bestCenterY = candidate;
+                        found = true;
+                    }
+                }
+                continue;
+            }
+
+            var axis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
+            var axisXz = new Vector2(axis.X, axis.Z);
+            var relativeXz = new Vector2(body.Pose.Position.X - sphereCenter.X, body.Pose.Position.Z - sphereCenter.Z);
+            var halfLength = MathF.Max(0f, rb.CapsuleHalfLength);
+            var combinedRadius = MathF.Max(0.0001f, rb.CapsuleRadius + sphereRadius);
+            var projected = 0f;
+            var axisXzLengthSq = axisXz.LengthSquared();
+            if (axisXzLengthSq > 1e-6f)
+                projected = -Vector2.Dot(relativeXz, axisXz) / axisXzLengthSq;
+            projected = Math.Clamp(projected, -halfLength, halfLength);
+
+            void Consider(float alongAxis)
+            {
+                var sampleXz = relativeXz + axisXz * alongAxis;
+                var horizontalSq = sampleXz.LengthSquared();
+                if (horizontalSq > combinedRadius * combinedRadius)
+                    return;
+
+                var rise = MathF.Sqrt(MathF.Max(0f, combinedRadius * combinedRadius - horizontalSq));
+                // Side contacts are collision, not support. Requiring a meaningful upward normal
+                // keeps wide spiders from treating a corpse hugged between their legs as a floor.
+                if (rise / combinedRadius < 0.45f)
+                    return;
+                var candidate = body.Pose.Position.Y + alongAxis * axis.Y + rise;
+                if (!found || candidate > bestCenterY)
+                {
+                    bestCenterY = candidate;
+                    found = true;
+                }
+            }
+
+            Consider(projected);
+            Consider(-halfLength);
+            Consider(halfLength);
+            Consider(Math.Clamp(projected - halfLength * 0.35f, -halfLength, halfLength));
+            Consider(Math.Clamp(projected + halfLength * 0.35f, -halfLength, halfLength));
+        }
+
+        centerY = bestCenterY;
+        return found;
+    }
+
+    /// <summary>
     /// Finds the capsule surface under a circular foot probe. This is intentionally an
     /// approximation of the structural ragdoll bodies rather than a general physics raycast:
     /// cloth, soft tissue and tiny decorative bodies cannot become accidental stairs, and the
