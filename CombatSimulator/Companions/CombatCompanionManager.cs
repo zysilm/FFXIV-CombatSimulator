@@ -151,7 +151,7 @@ public unsafe class CombatCompanionManager : IDisposable
     public Action<string>? OnSpawnError { get; set; }
     public Func<uint, bool>? IsSourceEnemy { get; set; }
     /// <summary>Optional world-space surface height for walking over active corpses.</summary>
-    public Func<Vector3, float?>? CorpseSupportHeightProvider { private get; set; }
+    public Func<nint, Vector3, float?>? CorpseSupportHeightProvider { private get; set; }
 
     public CombatCompanionManager(
         IObjectTable objectTable,
@@ -1601,7 +1601,7 @@ public unsafe class CombatCompanionManager : IDisposable
         RotateToward(companion, moveTarget, deltaTime);
         if (terrainCache != null && TryGetCorpseTraversalPathState(companion.Address, out var terrainState))
         {
-            next = CorrectMovingRootHeight(next, terrainCache, terrainState, deltaTime);
+            next = CorrectMovingRootHeight(companion.Address, next, terrainCache, terrainState, deltaTime);
         }
         else if (vnavmeshIpc.CanPathfind)
         {
@@ -2014,6 +2014,7 @@ public unsafe class CombatCompanionManager : IDisposable
     }
 
     private Vector3 CorrectMovingRootHeight(
+        nint actorAddress,
         Vector3 rootPosition,
         TerrainHeightCache terrainCache,
         PathState state,
@@ -2028,8 +2029,8 @@ public unsafe class CombatCompanionManager : IDisposable
             state.HasStableRootTerrainClearance = true;
         }
 
-        var supportY = CorpseSupportHeightProvider?.Invoke(rootPosition);
-        const float maxCorpseStepHeight = 0.65f;
+        var supportY = CorpseSupportHeightProvider?.Invoke(actorAddress, rootPosition);
+        var maxCorpseStepHeight = 0.65f * GetVisualScale(actorAddress);
         var walkableY = supportY.HasValue && supportY.Value <= terrainY + maxCorpseStepHeight
             ? MathF.Max(terrainY, supportY.Value)
             : terrainY;
@@ -2068,11 +2069,25 @@ public unsafe class CombatCompanionManager : IDisposable
         PathState state,
         float deltaTime)
     {
-        var corrected = CorrectMovingRootHeight(rootPosition, terrainCache, state, deltaTime);
+        var corrected = CorrectMovingRootHeight((nint)gameObj, rootPosition, terrainCache, state, deltaTime);
         if (MathF.Abs(corrected.Y - rootPosition.Y) < 0.001f)
             return;
 
         movementBlockHook.SetApproachPosition(gameObj, corrected.X, corrected.Y, corrected.Z);
+    }
+
+    private static float GetVisualScale(nint actorAddress)
+    {
+        if (actorAddress == nint.Zero)
+            return 1f;
+
+        var gameObject = (GameObject*)actorAddress;
+        if (gameObject->DrawObject == null)
+            return 1f;
+
+        var scale = gameObject->DrawObject->Scale;
+        var max = MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
+        return float.IsFinite(max) && max > 0f ? max : 1f;
     }
 
     private void StopMove(CombatCompanion companion)

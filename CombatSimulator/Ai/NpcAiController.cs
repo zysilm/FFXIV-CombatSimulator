@@ -96,7 +96,7 @@ public unsafe class NpcAiController : IDisposable
     /// Optional world-space corpse surface query. The plugin aggregates all active ragdolls;
     /// null means the next root position is not over a walkable corpse.
     /// </summary>
-    public Func<Vector3, float?>? CorpseSupportHeightProvider { private get; set; }
+    public Func<nint, Vector3, float?>? CorpseSupportHeightProvider { private get; set; }
 
     private class ApproachPathState
     {
@@ -1043,7 +1043,7 @@ public unsafe class NpcAiController : IDisposable
         if ((hasVnavmeshTarget || (config.NpcCollisionActive && config.RagdollNpcCorpseTraversal)) && terrainCache != null &&
             TryGetOrCreateApproachPathState(npc, out var pathState))
         {
-            newPos = CorrectMovingRootHeight(newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: true);
+            newPos = CorrectMovingRootHeight(npc.Address, newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: true);
         }
 
         StartApproachMoveAnim(npc, deltaTime);
@@ -1211,7 +1211,7 @@ public unsafe class NpcAiController : IDisposable
         if (terrainCache != null &&
             TryGetOrCreateApproachPathState(npc, out var pathState))
         {
-            newPos = CorrectMovingRootHeight(newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: false);
+            newPos = CorrectMovingRootHeight(npc.Address, newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: false);
         }
         else if (vnavmeshIpc.CanPathfind)
         {
@@ -1766,6 +1766,7 @@ public unsafe class NpcAiController : IDisposable
     }
 
     private Vector3 CorrectMovingRootHeight(
+        nint actorAddress,
         Vector3 rootPosition,
         TerrainHeightCache terrainCache,
         ApproachPathState state,
@@ -1783,8 +1784,8 @@ public unsafe class NpcAiController : IDisposable
             state.HasStableRootTerrainClearance = true;
         }
 
-        var supportY = CorpseSupportHeightProvider?.Invoke(rootPosition);
-        const float maxCorpseStepHeight = 0.65f;
+        var supportY = CorpseSupportHeightProvider?.Invoke(actorAddress, rootPosition);
+        var maxCorpseStepHeight = 0.65f * GetVisualScale(actorAddress);
         var walkableY = supportY.HasValue && supportY.Value <= terrainY + maxCorpseStepHeight
             ? MathF.Max(terrainY, supportY.Value)
             : terrainY;
@@ -1812,11 +1813,25 @@ public unsafe class NpcAiController : IDisposable
         float deltaTime,
         bool preserveInitialClearance)
     {
-        var corrected = CorrectMovingRootHeight(rootPosition, terrainCache, state, deltaTime, preserveInitialClearance);
+        var corrected = CorrectMovingRootHeight((nint)gameObj, rootPosition, terrainCache, state, deltaTime, preserveInitialClearance);
         if (MathF.Abs(corrected.Y - rootPosition.Y) < 0.001f)
             return;
 
         movementBlockHook.SetApproachPosition(gameObj, corrected.X, corrected.Y, corrected.Z);
+    }
+
+    private static float GetVisualScale(nint actorAddress)
+    {
+        if (actorAddress == nint.Zero)
+            return 1f;
+
+        var gameObject = (GameObject*)actorAddress;
+        if (gameObject->DrawObject == null)
+            return 1f;
+
+        var scale = gameObject->DrawObject->Scale;
+        var max = MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
+        return float.IsFinite(max) && max > 0f ? max : 1f;
     }
 
     private void StartApproachMoveAnim(SimulatedNpc npc, float deltaTime)

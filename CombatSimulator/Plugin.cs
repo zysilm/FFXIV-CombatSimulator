@@ -24,6 +24,7 @@ using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.Command;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using GameObject = FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject;
 using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager;
 
 namespace CombatSimulator;
@@ -1089,12 +1090,23 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     /// Return the highest low corpse surface under an NPC's next foot position. High/flying body
     /// parts are deliberately rejected: this is a small step-over aid, not arbitrary climbing.
     /// </summary>
-    private float? ResolveCorpseTraversalHeight(Vector3 position)
+    private float? ResolveCorpseTraversalHeight(nint actorAddress, Vector3 position)
     {
         if (!config.NpcCollisionActive || !config.RagdollNpcCorpseTraversal)
             return null;
 
-        const float footProbeRadius = 0.24f;
+        var footProbeRadius = 0.24f;
+        if (actorAddress != nint.Zero)
+        {
+            var gameObject = (GameObject*)actorAddress;
+            if (gameObject->DrawObject != null)
+            {
+                var scale = gameObject->DrawObject->Scale;
+                var maxScale = MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
+                if (float.IsFinite(maxScale) && maxScale > 0f)
+                    footProbeRadius *= maxScale;
+            }
+        }
         float? best = null;
 
         void Consider(RagdollController controller)

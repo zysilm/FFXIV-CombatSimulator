@@ -71,6 +71,7 @@ public unsafe partial class RagdollController : IDisposable
     private float handoffSampleDt;
     private Vector3 handoffSkelPos;
     private Quaternion handoffSkelRot;
+    private Vector3 handoffSkelScale = Vector3.One;
     private Vector3[]? handoffPrevPos;
     private Quaternion[]? handoffPrevRot;
     private int handoffPrevCount;
@@ -133,6 +134,7 @@ public unsafe partial class RagdollController : IDisposable
     private Vector3 skelWorldPos;
     private Quaternion skelWorldRot;
     private Quaternion skelWorldRotInv;
+    private Vector3 skelWorldScale = Vector3.One;
 
     // Bone-to-body mapping
     private readonly List<RagdollBone> ragdollBones = new();
@@ -242,8 +244,6 @@ public unsafe partial class RagdollController : IDisposable
 
     // NPC bone collision — per-bone static capsules for active targets
     private readonly List<NpcCollisionState> npcCollisionStates = new();
-    private TypedIndex npcFallbackShapeIndex;   // single-capsule fallback shape
-    private bool npcFallbackShapeReady;         // whether npcFallbackShapeIndex has been created this sim
     // Monster strike: during the attack window the monster's collider bones impart their swing
     // velocity as an impulse to nearby ragdoll bodies (a fast swing = a heavy hit, at the limb's
     // real contact point).
@@ -1329,7 +1329,7 @@ public unsafe partial class RagdollController : IDisposable
         for (int i = 0; i < n; i++)
         {
             ref var mt = ref pose->ModelPose.Data[i];
-            wpos[i] = ModelToWorld(new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z));
+            wpos[i] = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
         }
 
         int ParentOf(int i) => (i >= 0 && i < pc) ? skel.HavokSkeleton->ParentIndices[i] : -1;
@@ -2201,13 +2201,16 @@ public unsafe partial class RagdollController : IDisposable
     private struct NpcBoneStatic
     {
         public BodyHandle Handle;
+        public TypedIndex ShapeIndex;
         public int BoneIndex;           // this bone's skeleton index
         public int ParentBoneIndex;     // parent bone for segment direction
-        public float HalfLength;        // half the capsule body segment length
+        public float BaseHalfLength;    // unscaled half-length of the capsule body segment
+        public float BaseRadius;        // unscaled capsule radius
         public float CenterFactor;      // parent->child fraction where the capsule is centered
         public Vector3 PreviousPosition;
         public Quaternion PreviousOrientation;
         public bool HasPreviousPose;
+        public float AppliedCollisionScale;
     }
 
     // Default capsule radius for dynamically discovered bones
@@ -2255,10 +2258,14 @@ public unsafe partial class RagdollController : IDisposable
         public Vector3 PreviousPosition;
         public Quaternion PreviousOrientation;
         public bool HasPreviousPose;
+        public float AppliedCollisionScale;
         // True while this character's statics have been parked far away because it left the
         // update radius. Prevents leaving them frozen on the corpse ("ghost" capsules) and
         // avoids re-parking every frame; cleared when it re-enters range.
         public bool Parked;
+        public TypedIndex FallbackShapeIndex;
+        public float FallbackBaseRadius;
+        public float FallbackBaseLength;
     }
 
     private sealed class AnimatedMeshCollisionModel
@@ -2577,9 +2584,9 @@ public unsafe partial class RagdollController : IDisposable
 
     // --- Coordinate conversion using Skeleton.Transform ---
     // ModelPose is in skeleton-local space (NOT character-position-offset space).
-    // The proper conversion uses the skeleton's full transform (position + rotation).
-    //   WorldPos  = skelPos + Rotate(modelPos, skelRot)
-    //   ModelPos  = Rotate(worldPos - skelPos, skelRotInv)
+    // The proper conversion uses the skeleton's full transform (position + rotation + scale).
+    //   WorldPos  = skelPos + Rotate(modelPos * skelScale, skelRot)
+    //   ModelPos  = Rotate(worldPos - skelPos, skelRotInv) / skelScale
     //   WorldRot  = skelRot * modelRot
     //   ModelRot  = skelRotInv * worldRot
 
@@ -2600,6 +2607,7 @@ public unsafe partial class RagdollController : IDisposable
         handoffSkelRot = new Quaternion(
             skeleton->Transform.Rotation.X, skeleton->Transform.Rotation.Y,
             skeleton->Transform.Rotation.Z, skeleton->Transform.Rotation.W);
+        handoffSkelScale = GetCharacterScale(targetCharacterAddress, skel);
 
         var pose = skel.Pose;
         var n = skel.BoneCount;
@@ -2726,10 +2734,10 @@ public unsafe partial class RagdollController : IDisposable
     }
 
     private Vector3 ModelToWorld(Vector3 modelPos)
-        => skelWorldPos + Vector3.Transform(modelPos, skelWorldRot);
+        => skelWorldPos + Vector3.Transform(modelPos * skelWorldScale, skelWorldRot);
 
     private Vector3 WorldToModel(Vector3 worldPos)
-        => Vector3.Transform(worldPos - skelWorldPos, skelWorldRotInv);
+        => DivideComponents(Vector3.Transform(worldPos - skelWorldPos, skelWorldRotInv), skelWorldScale);
 
     private Quaternion ModelRotToWorld(Quaternion modelRot)
         => Quaternion.Normalize(skelWorldRot * modelRot);
@@ -2738,8 +2746,11 @@ public unsafe partial class RagdollController : IDisposable
         => Quaternion.Normalize(skelWorldRotInv * worldRot);
 
     // Static overloads for NPC skeletons (each NPC has its own transform)
-    private static Vector3 NpcModelToWorld(Vector3 modelPos, Vector3 skelPos, Quaternion skelRot)
-        => skelPos + Vector3.Transform(modelPos, skelRot);
+    private static Vector3 NpcModelToWorld(Vector3 modelPos, Vector3 skelPos, Quaternion skelRot, Vector3 skelScale)
+        => skelPos + Vector3.Transform(modelPos * skelScale, skelRot);
+
+    private static Vector3 DivideComponents(Vector3 value, Vector3 divisor)
+        => new(value.X / divisor.X, value.Y / divisor.Y, value.Z / divisor.Z);
 
     private static Quaternion NpcModelRotToWorld(Quaternion modelRot, Quaternion skelRot)
         => Quaternion.Normalize(skelRot * modelRot);
@@ -2862,13 +2873,17 @@ public unsafe partial class RagdollController : IDisposable
         return new Vector3(x, y, z);
     }
 
-    private static float ComputeVerticalExtent(RagdollBoneDef def, Quaternion bodyWorldRot, float bodyHalfLength)
+    private static float ComputeVerticalExtent(
+        RagdollBoneDef def,
+        Quaternion bodyWorldRot,
+        float bodyHalfLength,
+        float shapeScale)
     {
         var yAxis = Vector3.Transform(Vector3.UnitY, bodyWorldRot);
         if (def.ColliderShape != RagdollColliderShape.Box)
-            return MathF.Abs(yAxis.Y) * bodyHalfLength + def.CapsuleRadius;
+            return MathF.Abs(yAxis.Y) * bodyHalfLength + def.CapsuleRadius * shapeScale;
 
-        var extents = ResolveBoxHalfExtents(def, bodyHalfLength);
+        var extents = ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)) * shapeScale;
         var xAxis = Vector3.Transform(Vector3.UnitX, bodyWorldRot);
         var zAxis = Vector3.Transform(Vector3.UnitZ, bodyWorldRot);
         return MathF.Abs(xAxis.Y) * extents.X +
@@ -3814,9 +3829,11 @@ public unsafe partial class RagdollController : IDisposable
             skeleton->Transform.Rotation.Z,
             skeleton->Transform.Rotation.W);
         skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
+        skelWorldScale = GetCharacterScale(targetCharacterAddress, skel);
 
         log.Info($"RagdollController: Skeleton transform pos=({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3}) " +
-                 $"rot=({skelWorldRot.X:F3},{skelWorldRot.Y:F3},{skelWorldRot.Z:F3},{skelWorldRot.W:F3})");
+                 $"rot=({skelWorldRot.X:F3},{skelWorldRot.Y:F3},{skelWorldRot.Z:F3},{skelWorldRot.W:F3}) " +
+                 $"scale=({skelWorldScale.X:F3},{skelWorldScale.Y:F3},{skelWorldScale.Z:F3})");
 
         // Resolve bone indices
         var nameToIndex = new Dictionary<string, int>();
@@ -4038,7 +4055,7 @@ public unsafe partial class RagdollController : IDisposable
 
             if (canSeedHandoff && idx < handoffPrevCount)
             {
-                var prevWorldPos = handoffSkelPos + Vector3.Transform(handoffPrevPos![idx], handoffSkelRot);
+                var prevWorldPos = handoffSkelPos + Vector3.Transform(handoffPrevPos![idx] * handoffSkelScale, handoffSkelRot);
                 var prevWorldRot = Quaternion.Normalize(handoffSkelRot * handoffPrevRot![idx]);
                 var lin = (worldPos - prevWorldPos) / handoffSampleDt;
                 var ang = AngularVelocityFromQuats(prevWorldRot, worldRot, handoffSampleDt);
@@ -4084,7 +4101,8 @@ public unsafe partial class RagdollController : IDisposable
 
             Vector3 capsuleCenter;
             float segmentHalfLength;
-            float effectiveHalfLength = ResolveBodyHalfLength(def);
+            var ragdollShapeScale = CollisionScale(skelWorldScale);
+            float effectiveHalfLength = ResolveBodyHalfLength(def) * ragdollShapeScale;
             Quaternion capsuleWorldRot;
             var preserveAnatomicalLength = def.Joint == JointType.Hinge &&
                                            HasPassiveHingeRest(def.AnatomicalRole, def.Name);
@@ -4231,7 +4249,7 @@ public unsafe partial class RagdollController : IDisposable
             // Underground capsules cause explosive ground-collision forces in the first
             // frames. Lift just enough so the capsule bottom (center - extent - radius)
             // is at the ground plane.
-            var bodyBottomExtent = ComputeVerticalExtent(def, capsuleWorldRot, effectiveHalfLength);
+            var bodyBottomExtent = ComputeVerticalExtent(def, capsuleWorldRot, effectiveHalfLength, ragdollShapeScale);
             var minCenterY = groundY + bodyBottomExtent + 0.005f; // 5mm clearance
             if (capsuleCenter.Y < minCenterY)
             {
@@ -4252,7 +4270,7 @@ public unsafe partial class RagdollController : IDisposable
             var shapeBoxHalfExtents = Vector3.Zero;
             if (def.ColliderShape == RagdollColliderShape.Box)
             {
-                var extents = ResolveBoxHalfExtents(def, effectiveHalfLength);
+                var extents = ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)) * ragdollShapeScale;
                 var box = new Box(extents.X * 2f, extents.Y * 2f, extents.Z * 2f);
                 shapeIndex = simulation.Shapes.Add(box);
                 bodyInertia = box.ComputeInertia(effectiveMass);
@@ -4264,10 +4282,11 @@ public unsafe partial class RagdollController : IDisposable
             else
             {
                 var capsuleLength = effectiveHalfLength * 2;
-                var capsule = new Capsule(def.CapsuleRadius, capsuleLength);
+                var capsuleRadius = def.CapsuleRadius * ragdollShapeScale;
+                var capsule = new Capsule(capsuleRadius, capsuleLength);
                 shapeIndex = simulation.Shapes.Add(capsule);
                 bodyInertia = capsule.ComputeInertia(effectiveMass);
-                shapeRadius = def.CapsuleRadius;
+                shapeRadius = capsuleRadius;
                 shapeHalfLength = effectiveHalfLength;
             }
 
@@ -4919,12 +4938,6 @@ public unsafe partial class RagdollController : IDisposable
             var scale = config.RagdollNpcCollisionScale;
             var capsuleRadius = config.RagdollNpcCollisionAutoSize ? NpcDefaultBoneRadius : NpcDefaultBoneRadius * scale;
 
-            // Fallback single-capsule shape for NPCs whose skeleton can't be read
-            var fbRadius = config.RagdollNpcCollisionAutoSize ? 0.35f : 0.3f * scale;
-            var fbLength = config.RagdollNpcCollisionAutoSize ? 1.2f : MathF.Max(0.2f, 1.6f - fbRadius * 2f);
-            npcFallbackShapeIndex = simulation.Shapes.Add(new Capsule(fbRadius, fbLength));
-            npcFallbackShapeReady = true;
-
             log.Info($"RagdollController: NPC bone collision — {npcSelector.SelectedNpcs.Count} NPCs, autoSize={config.RagdollNpcCollisionAutoSize}, scale={scale:F2}");
 
             // Dedupe across both sources so a character (e.g. a companion that also
@@ -5132,6 +5145,8 @@ public unsafe partial class RagdollController : IDisposable
             npcSkeleton->Transform.Rotation.Y,
             npcSkeleton->Transform.Rotation.Z,
             npcSkeleton->Transform.Rotation.W);
+        var npcVisualScale = GetCharacterScale(address, ns);
+        var npcShapeScale = CollisionScale(npcVisualScale);
 
         // Convex hull mode: one hull shape per character built from the bone point cloud.
         // Eliminates inter-capsule gaps on any skeleton type; the shape is a snapshot of
@@ -5157,7 +5172,7 @@ public unsafe partial class RagdollController : IDisposable
         var boneStatics = new List<NpcBoneStatic>();
         var autoSize = config.RagdollNpcCollisionAutoSize;
         var profileRadii = autoSize ? BuildHumanoidCollisionRadiusMap(ns) : null;
-        var autoContext = autoSize ? BuildNpcAutoCollisionContext(ns, npcSkelPos, npcSkelRot) : default;
+        var autoContext = autoSize ? BuildNpcAutoCollisionContext(ns) : default;
 
         // Pass 1: collect every qualifying parent→child segment with its length so we can
         // keep only the longest NpcMaxCollisionSegments (the big body-blocking segments)
@@ -5169,27 +5184,29 @@ public unsafe partial class RagdollController : IDisposable
             var parentIdx = ns.HavokSkeleton->ParentIndices[i];
             if (parentIdx < 0 || parentIdx >= ns.BoneCount) continue;
 
-            // Read parent and child bone world positions
+            // ModelPose translations are unscaled. Apply the live draw-object scale both to
+            // their world positions and to the capsule dimensions built from the segment.
             ref var parentMt = ref ns.Pose->ModelPose.Data[parentIdx];
             var parentModelPos = new Vector3(parentMt.Translation.X, parentMt.Translation.Y, parentMt.Translation.Z);
-            var parentWorldPos = NpcModelToWorld(parentModelPos, npcSkelPos, npcSkelRot);
+            var parentWorldPos = NpcModelToWorld(parentModelPos, npcSkelPos, npcSkelRot, npcVisualScale);
 
             ref var childMt = ref ns.Pose->ModelPose.Data[i];
             var childModelPos = new Vector3(childMt.Translation.X, childMt.Translation.Y, childMt.Translation.Z);
-            var childWorldPos = NpcModelToWorld(childModelPos, npcSkelPos, npcSkelRot);
+            var childWorldPos = NpcModelToWorld(childModelPos, npcSkelPos, npcSkelRot, npcVisualScale);
 
             var segment = childWorldPos - parentWorldPos;
             var segLen = segment.Length();
-            if (segLen < NpcMinSegmentLength) continue; // skip tiny segments (face, fingers)
+            var modelSegLen = Vector3.Distance(parentModelPos, childModelPos);
+            if (modelSegLen < NpcMinSegmentLength) continue; // skip tiny segments (face, fingers)
 
-            var radius = autoSize
-                ? EstimateNpcCollisionRadius(i, parentIdx, segLen, profileRadii, autoContext)
+            var baseRadius = autoSize
+                ? EstimateNpcCollisionRadius(i, parentIdx, modelSegLen, profileRadii, autoContext)
                 : capsuleRadius;
-            var halfLen = autoSize ? MathF.Max(0.01f, (segLen * 0.5f) - radius) : segLen * 0.45f * scale;
-            var centerFactor = autoSize ? 0.5f : halfLen / segLen;
+            var baseHalfLen = autoSize ? MathF.Max(0.01f, (modelSegLen * 0.5f) - baseRadius) : modelSegLen * 0.45f * scale;
+            var centerFactor = autoSize ? 0.5f : baseHalfLen / modelSegLen;
             var segDir = segment / segLen;
-            candidates.Add((segLen, i, parentIdx, halfLen,
-                radius, centerFactor, parentWorldPos + (segLen * centerFactor) * segDir, RotationFromYToDirection(segment)));
+            candidates.Add((modelSegLen, i, parentIdx, baseHalfLen,
+                baseRadius, centerFactor, parentWorldPos + (segLen * centerFactor) * segDir, RotationFromYToDirection(segment)));
         }
 
         // Keep only the longest segments when a high-bone-count rig exceeds the cap.
@@ -5202,7 +5219,7 @@ public unsafe partial class RagdollController : IDisposable
         // Pass 2: create the kinematic capsule for each kept segment.
         foreach (var c in candidates)
         {
-            var shapeIndex = simulation!.Shapes.Add(new Capsule(c.Radius, c.HalfLen * 2f));
+            var shapeIndex = simulation!.Shapes.Add(new Capsule(c.Radius * npcShapeScale, c.HalfLen * npcShapeScale * 2f));
             var bodyHandle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
                 new RigidPose(c.Center, c.Rot),
                 default(BodyVelocity),
@@ -5212,13 +5229,16 @@ public unsafe partial class RagdollController : IDisposable
             boneStatics.Add(new NpcBoneStatic
             {
                 Handle = bodyHandle,
+                ShapeIndex = shapeIndex,
                 BoneIndex = c.BoneIdx,
                 ParentBoneIndex = c.ParentIdx,
-                HalfLength = c.HalfLen,
+                BaseHalfLength = c.HalfLen,
+                BaseRadius = c.Radius,
                 CenterFactor = c.CenterFactor,
                 PreviousPosition = c.Center,
                 PreviousOrientation = c.Rot,
                 HasPreviousPose = true,
+                AppliedCollisionScale = npcShapeScale,
             });
         }
 
@@ -5270,7 +5290,7 @@ public unsafe partial class RagdollController : IDisposable
         public float[] NearestBoneDistances;
     }
 
-    private NpcAutoCollisionContext BuildNpcAutoCollisionContext(SkeletonAccess skel, Vector3 skelPos, Quaternion skelRot)
+    private NpcAutoCollisionContext BuildNpcAutoCollisionContext(SkeletonAccess skel)
     {
         var boneCount = Math.Min(skel.BoneCount, skel.ParentCount);
         var positions = new Vector3[boneCount];
@@ -5280,10 +5300,10 @@ public unsafe partial class RagdollController : IDisposable
         for (int i = 0; i < boneCount; i++)
         {
             ref var mt = ref skel.Pose->ModelPose.Data[i];
-            var world = NpcModelToWorld(new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z), skelPos, skelRot);
-            positions[i] = world;
-            min = Vector3.Min(min, world);
-            max = Vector3.Max(max, world);
+            var model = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+            positions[i] = model;
+            min = Vector3.Min(min, model);
+            max = Vector3.Max(max, model);
         }
 
         var nearest = new float[boneCount];
@@ -5406,7 +5426,7 @@ public unsafe partial class RagdollController : IDisposable
                 return false;
             }
 
-            if (TryCreateMeshShape(triangles, GetSkeletonScale(ns), out var shapeIndex))
+            if (TryCreateMeshShape(triangles, GetCharacterScale(address, ns), out var shapeIndex))
             {
                 var rootRot = Quaternion.Normalize(npcSkelRot);
                 var bodyHandle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
@@ -5429,7 +5449,7 @@ public unsafe partial class RagdollController : IDisposable
                     HasPreviousPose = true,
                 });
 
-                var meshScale = GetSkeletonScale(ns);
+                var meshScale = GetCharacterScale(address, ns);
                 log.Info($"RagdollController: {label} mesh collision - {triangles.Count} triangles from {loadedModels} models/{processedMeshes} meshes, rootScale=({meshScale.X:F3},{meshScale.Y:F3},{meshScale.Z:F3})");
                 return true;
             }
@@ -5492,7 +5512,7 @@ public unsafe partial class RagdollController : IDisposable
                 return false;
             }
 
-            if (!TryCreateMeshShape(triangles, GetSkeletonScale(ns), out var shapeIndex))
+            if (!TryCreateMeshShape(triangles, GetCharacterScale(address, ns), out var shapeIndex))
             {
                 log.Warning($"RagdollController: {label} animated mesh collision failed to create BEPU mesh shape; using static mesh/bone fallback");
                 return false;
@@ -5525,7 +5545,7 @@ public unsafe partial class RagdollController : IDisposable
                 HasPreviousPose = true,
             });
 
-            var animMeshScale = GetSkeletonScale(ns);
+            var animMeshScale = GetCharacterScale(address, ns);
             log.Info($"RagdollController: {label} animated mesh collision - {triangles.Count} triangles from {models.Count} models/{processedMeshes} meshes, kind={GetObjectKindName(address)}, rootScale=({animMeshScale.X:F3},{animMeshScale.Y:F3},{animMeshScale.Z:F3}), update={AnimatedMeshUpdateInterval:F2}s");
             return true;
         }
@@ -5674,6 +5694,44 @@ public unsafe partial class RagdollController : IDisposable
 
         return scale;
     }
+
+    /// <summary>
+    /// Read the scale that is actually applied to the rendered character. Experimental NPC
+    /// scaling writes DrawObject.Scale directly, while ordinary actors normally expose the same
+    /// value through Skeleton.Transform.Scale. Prefer the draw object so collision follows live
+    /// developer-scale changes, and retain the skeleton value as a safe fallback.
+    /// </summary>
+    private static Vector3 GetCharacterScale(nint address, SkeletonAccess ns)
+    {
+        if (TryGetDrawObjectScale(address, out var drawScale))
+            return drawScale;
+
+        return GetSkeletonScale(ns);
+    }
+
+    private static bool TryGetDrawObjectScale(nint address, out Vector3 scale)
+    {
+        scale = Vector3.One;
+        if (address != nint.Zero)
+        {
+            var gameObject = (GameObject*)address;
+            if (gameObject->DrawObject != null)
+            {
+                var s = gameObject->DrawObject->Scale;
+                scale = new Vector3(s.X, s.Y, s.Z);
+                if (IsFinite(scale) && scale.X > 0f && scale.Y > 0f && scale.Z > 0f)
+                    return true;
+            }
+        }
+
+        scale = Vector3.One;
+        return false;
+    }
+
+    // Capsules cannot represent non-uniform scale. Use the largest component so their volume
+    // encloses the visual bone instead of leaving a thin axis that can pass through a corpse.
+    private static float CollisionScale(Vector3 scale)
+        => MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
 
     private bool TryCreateMeshShape(List<Triangle> triangles, Vector3 scale, out TypedIndex shapeIndex)
     {
@@ -6647,10 +6705,11 @@ public unsafe partial class RagdollController : IDisposable
         bufferPool.Take<System.Numerics.Vector3>(boneCount, out var points);
         try
         {
+            var visualScale = GetCharacterScale(address, ns);
             for (int i = 0; i < boneCount; i++)
             {
                 ref var mt = ref ns.Pose->ModelPose.Data[i];
-                points[i] = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z);
+                points[i] = new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z) * visualScale;
             }
 
             var hull = new BepuPhysics.Collidables.ConvexHull(points, bufferPool, out var hullCenter);
@@ -6694,11 +6753,16 @@ public unsafe partial class RagdollController : IDisposable
     private void CreateFallbackCharacterCollision(string label, nint address)
     {
         var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)address;
-        var npcPos = new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z);
+        var visualScale = TryGetDrawObjectScale(address, out var drawScale) ? drawScale : Vector3.One;
+        var collisionScale = CollisionScale(visualScale);
+        var baseRadius = config.RagdollNpcCollisionAutoSize ? 0.35f : 0.3f * config.RagdollNpcCollisionScale;
+        var baseLength = config.RagdollNpcCollisionAutoSize ? 1.2f : MathF.Max(0.2f, 1.6f - baseRadius * 2f);
+        var shapeIndex = simulation!.Shapes.Add(new Capsule(baseRadius * collisionScale, baseLength * collisionScale));
+        var npcPos = new Vector3(go->Position.X, go->Position.Y + 0.8f * visualScale.Y, go->Position.Z);
         var handle = simulation!.Bodies.Add(BodyDescription.CreateKinematic(
             new RigidPose(npcPos, Quaternion.Identity),
             default(BodyVelocity),
-            new CollidableDescription(npcFallbackShapeIndex, 0.04f),
+            new CollidableDescription(shapeIndex, 0.04f),
             new BodyActivityDescription(0.01f)));
         npcCollisionKinematicBodyHandles.Add(handle.Value);
         npcCollisionStates.Add(new NpcCollisionState
@@ -6707,6 +6771,10 @@ public unsafe partial class RagdollController : IDisposable
             BoneStatics = new List<NpcBoneStatic>(),
             FallbackHandle = handle,
             IsFallback = true,
+            FallbackShapeIndex = shapeIndex,
+            FallbackBaseRadius = baseRadius,
+            FallbackBaseLength = baseLength,
+            AppliedCollisionScale = collisionScale,
             PreviousPosition = npcPos,
             PreviousOrientation = Quaternion.Identity,
             HasPreviousPose = true,
@@ -6785,7 +6853,7 @@ public unsafe partial class RagdollController : IDisposable
 
             var triangles = new List<Triangle>(Math.Min(MeshCollisionMaxTriangles, Math.Max(1024, state.AnimatedMeshTriangleCount)));
             var processedMeshes = AppendAnimatedMeshTriangles(state.AnimatedMeshModels, skinDeltas, triangles);
-            if (triangles.Count < 4 || !TryCreateMeshShape(triangles, GetSkeletonScale(ns), out var newShapeIndex))
+            if (triangles.Count < 4 || !TryCreateMeshShape(triangles, GetCharacterScale(state.NpcAddress, ns), out var newShapeIndex))
             {
                 state.AnimatedMeshNextUpdateElapsed = nowElapsed + AnimatedMeshSlowUpdateBackoff;
                 if (config.RagdollVerboseLog)
@@ -6835,6 +6903,45 @@ public unsafe partial class RagdollController : IDisposable
             SoftenNpcTraversalKinematicVelocity(body);
             NoteNpcColliderMoved(targetPosition);
         }
+    }
+
+    private void RescaleNpcBoneCollision(ref NpcCollisionState state, float collisionScale)
+    {
+        if (simulation == null || bufferPool == null)
+            return;
+
+        for (var i = 0; i < state.BoneStatics.Count; i++)
+        {
+            var bone = state.BoneStatics[i];
+            if (MathF.Abs(bone.AppliedCollisionScale - collisionScale) <= 0.0001f)
+                continue;
+
+            var newShape = simulation.Shapes.Add(new Capsule(
+                MathF.Max(0.0001f, bone.BaseRadius * collisionScale),
+                MathF.Max(0.0001f, bone.BaseHalfLength * collisionScale * 2f)));
+            var oldShape = bone.ShapeIndex;
+            simulation.Bodies.SetShape(bone.Handle, newShape);
+            bone.ShapeIndex = newShape;
+            bone.AppliedCollisionScale = collisionScale;
+            state.BoneStatics[i] = bone;
+            try { simulation.Shapes.RemoveAndDispose(oldShape, bufferPool); } catch { }
+        }
+    }
+
+    private void RescaleNpcFallbackCollision(ref NpcCollisionState state, float collisionScale)
+    {
+        if (simulation == null || bufferPool == null ||
+            MathF.Abs(state.AppliedCollisionScale - collisionScale) <= 0.0001f)
+            return;
+
+        var newShape = simulation.Shapes.Add(new Capsule(
+            MathF.Max(0.0001f, state.FallbackBaseRadius * collisionScale),
+            MathF.Max(0.0001f, state.FallbackBaseLength * collisionScale)));
+        var oldShape = state.FallbackShapeIndex;
+        simulation.Bodies.SetShape(state.FallbackHandle, newShape);
+        state.FallbackShapeIndex = newShape;
+        state.AppliedCollisionScale = collisionScale;
+        try { simulation.Shapes.RemoveAndDispose(oldShape, bufferPool); } catch { }
     }
 
     /// <summary>
@@ -7537,8 +7644,12 @@ public unsafe partial class RagdollController : IDisposable
                 {
                     // Simple single-capsule position update
                     var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npcState.NpcAddress;
+                    var visualScale = TryGetDrawObjectScale(npcState.NpcAddress, out var drawScale)
+                        ? drawScale
+                        : Vector3.One;
+                    RescaleNpcFallbackCollision(ref npcState, CollisionScale(visualScale));
                     MoveNpcKinematic(ref npcState, npcState.FallbackHandle,
-                        new Vector3(go->Position.X, go->Position.Y + 0.8f, go->Position.Z),
+                        new Vector3(go->Position.X, go->Position.Y + 0.8f * visualScale.Y, go->Position.Z),
                         Quaternion.Identity, dt);
                     npcCollisionStates[i] = npcState;
                     continue;
@@ -7561,6 +7672,8 @@ public unsafe partial class RagdollController : IDisposable
                     npcSkeleton->Transform.Rotation.Y,
                     npcSkeleton->Transform.Rotation.Z,
                     npcSkeleton->Transform.Rotation.W);
+                var npcVisualScale = GetCharacterScale(npcState.NpcAddress, ns);
+                RescaleNpcBoneCollision(ref npcState, CollisionScale(npcVisualScale));
 
                 var doStrike = attackStrikeTimer > 0f && npcState.NpcAddress == strikeColliderAddress;
 
@@ -7574,12 +7687,12 @@ public unsafe partial class RagdollController : IDisposable
                     ref var parentMt = ref ns.Pose->ModelPose.Data[bs.ParentBoneIndex];
                     var parentWorldPos = NpcModelToWorld(
                         new Vector3(parentMt.Translation.X, parentMt.Translation.Y, parentMt.Translation.Z),
-                        npcSkelPos, npcSkelRot);
+                        npcSkelPos, npcSkelRot, npcVisualScale);
 
                     ref var childMt = ref ns.Pose->ModelPose.Data[bs.BoneIndex];
                     var childWorldPos = NpcModelToWorld(
                         new Vector3(childMt.Translation.X, childMt.Translation.Y, childMt.Translation.Z),
-                        npcSkelPos, npcSkelRot);
+                        npcSkelPos, npcSkelRot, npcVisualScale);
 
                     var segment = childWorldPos - parentWorldPos;
                     var segLen = segment.Length();
@@ -11123,14 +11236,6 @@ public unsafe partial class RagdollController : IDisposable
         // Need a readable skeleton so we take the bone-capsule (or hull) path, not the fallback.
         if (boneService.TryGetSkeleton(address) == null) return false;
 
-        // The fallback shape is only created at init when NPC collision was enabled — ensure it
-        // exists in case BuildCharacterCollision falls back.
-        if (!npcFallbackShapeReady)
-        {
-            npcFallbackShapeIndex = simulation.Shapes.Add(new Capsule(0.35f, 1.2f));
-            npcFallbackShapeReady = true;
-        }
-
         var scale = config.RagdollNpcCollisionScale;
         var capsuleRadius = config.RagdollNpcCollisionAutoSize ? NpcDefaultBoneRadius : NpcDefaultBoneRadius * scale;
         var before = npcCollisionStates.Count;
@@ -11225,7 +11330,6 @@ public unsafe partial class RagdollController : IDisposable
         npcCollisionKinematicBodyHandles.Clear();
         softBodyBodyHandles.Clear();
         npcCollisionStates.Clear();
-        npcFallbackShapeReady = false;
         attackStrikeTimer = 0f;
         strikePower = 0f;
         strikeColliderAddress = nint.Zero;
