@@ -1104,7 +1104,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 var scale = gameObject->DrawObject->Scale;
                 var maxScale = MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
                 if (float.IsFinite(maxScale) && maxScale > 0f)
-                    footProbeRadius *= maxScale;
+                    footProbeRadius *= MathF.Max(1f, maxScale);
             }
         }
         float? best = null;

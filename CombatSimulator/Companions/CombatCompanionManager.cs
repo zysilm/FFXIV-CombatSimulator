@@ -2030,7 +2030,7 @@ public unsafe class CombatCompanionManager : IDisposable
         }
 
         var supportY = CorpseSupportHeightProvider?.Invoke(actorAddress, rootPosition);
-        var maxCorpseStepHeight = 0.65f * GetVisualScale(actorAddress);
+        var maxCorpseStepHeight = 0.65f * MathF.Max(1f, GetVisualScale(actorAddress));
         var walkableY = supportY.HasValue && supportY.Value <= terrainY + maxCorpseStepHeight
             ? MathF.Max(terrainY, supportY.Value)
             : terrainY;

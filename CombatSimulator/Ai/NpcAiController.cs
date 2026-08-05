@@ -1785,7 +1785,9 @@ public unsafe class NpcAiController : IDisposable
         }
 
         var supportY = CorpseSupportHeightProvider?.Invoke(actorAddress, rootPosition);
-        var maxCorpseStepHeight = 0.65f * GetVisualScale(actorAddress);
+        // Tiny visual scale must not reduce traversal to millimetres; crawling over a corpse is
+        // an opt-in movement policy, not a literal standing leg-length test.
+        var maxCorpseStepHeight = 0.65f * MathF.Max(1f, GetVisualScale(actorAddress));
         var walkableY = supportY.HasValue && supportY.Value <= terrainY + maxCorpseStepHeight
             ? MathF.Max(terrainY, supportY.Value)
             : terrainY;
