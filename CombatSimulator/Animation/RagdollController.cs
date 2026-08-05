@@ -11068,6 +11068,7 @@ public unsafe partial class RagdollController : IDisposable
         Vector3 proposedRootPosition,
         float terrainY,
         float maxClimb,
+        bool maintainContact,
         out float rootY)
     {
         rootY = terrainY;
@@ -11133,7 +11134,8 @@ public unsafe partial class RagdollController : IDisposable
         var bodyHeight = MathF.Max(0.0001f, maxTop - minBottom);
         // Only the lowest visible collision layer may support traversal. This naturally selects
         // feet/legs on humanoids and the broad set of leg capsules on spiders without using names.
-        var lowerBandTop = minBottom + MathF.Max(0.0002f, bodyHeight * 0.18f);
+        var lowerBandFraction = maintainContact ? 0.26f : 0.18f;
+        var lowerBandTop = minBottom + MathF.Max(0.0002f, bodyHeight * lowerBandFraction);
 
         var gameObject = (GameObject*)npcAddress;
         var currentRoot = new Vector3(gameObject->Position.X, gameObject->Position.Y, gameObject->Position.Z);
@@ -11157,14 +11159,17 @@ public unsafe partial class RagdollController : IDisposable
                     _ => 0f,
                 };
                 var sphereCenter = capsule.Center + axis * along + rootDelta;
-                if (!TryGetSphereSupportCenterHeight(sphereCenter, capsule.Radius, out var requiredCenterY) ||
+                if (!TryGetSphereSupportCenterHeight(
+                        sphereCenter, capsule.Radius, maintainContact, out var requiredCenterY) ||
                     requiredCenterY - capsule.Radius <= terrainY + 0.001f)
                     continue;
 
                 var verticalCorrection = requiredCenterY - sphereCenter.Y;
                 // A collider already far above the surface is not support. Small negative gaps are
                 // allowed so an actor descending along a curved body does not flicker off contact.
-                var allowedGap = MathF.Max(0.002f, capsule.Radius * 0.5f);
+                var allowedGap = maintainContact
+                    ? MathF.Max(0.012f, MathF.Max(bodyHeight * 0.06f, capsule.Radius * 1.5f))
+                    : MathF.Max(0.002f, capsule.Radius * 0.5f);
                 if (verticalCorrection < -allowedGap)
                     continue;
 
@@ -11195,7 +11200,11 @@ public unsafe partial class RagdollController : IDisposable
     /// their unexpanded visible top face; this is conservative at rounded edge contacts and avoids
     /// recreating the oversized invisible foot disk that caused hovering.
     /// </summary>
-    private bool TryGetSphereSupportCenterHeight(Vector3 sphereCenter, float sphereRadius, out float centerY)
+    private bool TryGetSphereSupportCenterHeight(
+        Vector3 sphereCenter,
+        float sphereRadius,
+        bool maintainContact,
+        out float centerY)
     {
         centerY = float.MinValue;
         if (simulation == null || sphereRadius <= 0f)
@@ -11250,7 +11259,8 @@ public unsafe partial class RagdollController : IDisposable
                 var rise = MathF.Sqrt(MathF.Max(0f, combinedRadius * combinedRadius - horizontalSq));
                 // Side contacts are collision, not support. Requiring a meaningful upward normal
                 // keeps wide spiders from treating a corpse hugged between their legs as a floor.
-                if (rise / combinedRadius < 0.45f)
+                var minimumUpwardNormal = maintainContact ? 0.28f : 0.45f;
+                if (rise / combinedRadius < minimumUpwardNormal)
                     return;
                 var candidate = body.Pose.Position.Y + alongAxis * axis.Y + rise;
                 if (!found || candidate > bestCenterY)
