@@ -2227,6 +2227,8 @@ public unsafe partial class RagdollController : IDisposable
     private const int NpcMaxCollisionSegments = 24;
     private const int MeshCollisionMaxTriangles = 8000;
     private const int MeshCollisionPreferredLod = 0; // LOD0: matches the on-screen silhouette exactly (Low LOD shrank/coarsened the collision hull).
+    private const int CorpseTraversalMeshMaxTriangles = 24000;
+    private const int CorpseTraversalMeshPreferredLod = 1;
     private const float AnimatedMeshUpdateInterval = 0.15f;
     private const float AnimatedMeshSlowUpdateBackoff = 0.5f;
     private const float AnimatedMeshSlowUpdateMs = 5f;
@@ -2273,6 +2275,9 @@ public unsafe partial class RagdollController : IDisposable
         public BodyHandle NpcBody;
         public float NpcAlongAxis;
         public BodyHandle CorpseBody;
+        public bool UsesMeshSurface;
+        public Vector2 MeshProbeXZ;
+        public Vector2 LastRootXZ;
         // This is a unilateral support plane, not a live copy of the dynamic corpse surface.
         // Once a foot has climbed onto a body, letting this value follow that body's instantaneous
         // Y feeds the corpse's contact response straight back into the kinematic NPC and creates a
@@ -2287,11 +2292,13 @@ public unsafe partial class RagdollController : IDisposable
     {
         public readonly float RequiredCenterY;
         public readonly BodyHandle CorpseBody;
+        public readonly bool UsesMeshSurface;
 
-        public NpcTraversalSurfaceHit(float requiredCenterY, BodyHandle corpseBody)
+        public NpcTraversalSurfaceHit(float requiredCenterY, BodyHandle corpseBody, bool usesMeshSurface = false)
         {
             RequiredCenterY = requiredCenterY;
             CorpseBody = corpseBody;
+            UsesMeshSurface = usesMeshSurface;
         }
     }
 
@@ -2302,6 +2309,25 @@ public unsafe partial class RagdollController : IDisposable
         public int LodIndex;
         public int[] MeshIndices = Array.Empty<int>();
         public Dictionary<int, int[]> BoneMapsByMeshIndex = new();
+    }
+
+    // Traversal-only visual surface. This never becomes a BEPU shape: the parsed model data is
+    // cached once, then the current ragdoll pose is skinned into query triangles once per render
+    // frame. It affects only root support queries; ordinary NPC collision, strikes and grabs keep
+    // using the existing physics bodies.
+    private bool corpseTraversalMeshBuildAttempted;
+    private List<AnimatedMeshCollisionModel>? corpseTraversalMeshModels;
+    private readonly List<Triangle> corpseTraversalMeshLocalTriangles = new();
+    private readonly List<Triangle> corpseTraversalMeshWorldTriangles = new();
+    private int corpseTraversalMeshPoseFrame = -1;
+
+    private void ClearCorpseTraversalMeshCache()
+    {
+        corpseTraversalMeshBuildAttempted = false;
+        corpseTraversalMeshModels = null;
+        corpseTraversalMeshLocalTriangles.Clear();
+        corpseTraversalMeshWorldTriangles.Clear();
+        corpseTraversalMeshPoseFrame = -1;
     }
 
     public RagdollController(BoneTransformService boneService, Npcs.NpcSelector npcSelector,
@@ -4961,6 +4987,7 @@ public unsafe partial class RagdollController : IDisposable
         // Works for any model (humanoid, monster, dragon) — no hardcoded bone names.
         npcCollisionStates.Clear();
         npcTraversalAnchors.Clear();
+        ClearCorpseTraversalMeshCache();
         if (config.NpcCollisionActive && npcSelector != null)
         {
             var scale = config.RagdollNpcCollisionScale;
@@ -5616,10 +5643,15 @@ public unsafe partial class RagdollController : IDisposable
         }
     }
 
-    private bool TryCreateAnimatedMeshCollisionModel(string modelPath, MeshCollisionMdlData mdl, SkeletonAccess ns, out AnimatedMeshCollisionModel model)
+    private bool TryCreateAnimatedMeshCollisionModel(
+        string modelPath,
+        MeshCollisionMdlData mdl,
+        SkeletonAccess ns,
+        out AnimatedMeshCollisionModel model,
+        int preferredLod = MeshCollisionPreferredLod)
     {
         model = new AnimatedMeshCollisionModel();
-        if (!TrySelectMdlLod(mdl, out var lodIndex, out var lod))
+        if (!TrySelectMdlLod(mdl, out var lodIndex, out var lod, preferredLod))
         {
             log.Warning($"RagdollController: animated mesh collision '{modelPath}' has no usable LOD");
             return false;
@@ -5687,24 +5719,220 @@ public unsafe partial class RagdollController : IDisposable
             meshIndices.Add(meshIndex);
     }
 
-    private int AppendAnimatedMeshTriangles(List<AnimatedMeshCollisionModel> models, Matrix4x4[] skinDeltas, List<Triangle> triangles)
+    private int AppendAnimatedMeshTriangles(
+        List<AnimatedMeshCollisionModel> models,
+        Matrix4x4[] skinDeltas,
+        List<Triangle> triangles,
+        int maxTriangles = MeshCollisionMaxTriangles)
     {
         var processedMeshes = 0;
         foreach (var model in models)
         {
             foreach (var meshIndex in model.MeshIndices)
             {
-                if (triangles.Count >= MeshCollisionMaxTriangles)
+                if (triangles.Count >= maxTriangles)
                     return processedMeshes;
                 if (!model.BoneMapsByMeshIndex.TryGetValue(meshIndex, out var localToHavok))
                     localToHavok = Array.Empty<int>();
-                if (AppendSkinnedMdlMeshTriangles(model.ModelPath, model.Mdl, model.LodIndex, meshIndex, localToHavok, skinDeltas, triangles))
+                if (AppendSkinnedMdlMeshTriangles(
+                        model.ModelPath, model.Mdl, model.LodIndex, meshIndex,
+                        localToHavok, skinDeltas, triangles, maxTriangles))
                     processedMeshes++;
             }
         }
 
         return processedMeshes;
     }
+
+    private bool TryPrepareCorpseTraversalMeshSurface()
+    {
+        if (!config.RagdollNpcCorpseTraversal || targetCharacterAddress == nint.Zero || !physicsStarted)
+            return false;
+
+        var skeletonAccess = boneService.TryGetSkeleton(targetCharacterAddress);
+        if (skeletonAccess == null || skeletonAccess.Value.CharBase == null ||
+            skeletonAccess.Value.CharBase->Skeleton == null)
+            return corpseTraversalMeshWorldTriangles.Count >= 4;
+
+        var ns = skeletonAccess.Value;
+        if (!corpseTraversalMeshBuildAttempted)
+        {
+            corpseTraversalMeshBuildAttempted = true;
+            var models = new List<AnimatedMeshCollisionModel>();
+            var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var slotCount = Math.Clamp(ns.CharBase->SlotCount, 0, 32);
+            for (var slot = 0; slot < slotCount; slot++)
+            {
+                var renderModel = ns.CharBase->Models == null ? null : ns.CharBase->Models[slot];
+                if (renderModel == null || renderModel->ModelResourceHandle == null)
+                    continue;
+
+                var resourceHandle = (ResourceHandle*)renderModel->ModelResourceHandle;
+                var modelPath = resourceHandle->FileName.ToString();
+                if (string.IsNullOrWhiteSpace(modelPath) ||
+                    !modelPath.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase) ||
+                    !seenPaths.Add(modelPath))
+                    continue;
+
+                if (TryLoadMeshCollisionMdlData("corpse traversal surface", slot, modelPath, out var mdl) &&
+                    TryCreateAnimatedMeshCollisionModel(
+                        modelPath, mdl, ns, out var model, CorpseTraversalMeshPreferredLod))
+                    models.Add(model);
+            }
+
+            if (models.Count == 0)
+            {
+                log.Warning("RagdollController: corpse traversal visual mesh unavailable; using physical ragdoll volumes");
+                return false;
+            }
+
+            corpseTraversalMeshModels = models;
+            log.Info($"RagdollController: corpse traversal visual mesh cached from {models.Count} models");
+        }
+
+        if (corpseTraversalMeshModels == null || corpseTraversalMeshModels.Count == 0)
+            return false;
+        if (corpseTraversalMeshPoseFrame == frameCount && corpseTraversalMeshWorldTriangles.Count >= 4)
+            return true;
+
+        // A transient unreadable pose should not switch an established mesh-supported actor back
+        // to oversized bone proxies for one frame. Retain the previous skinned surface instead.
+        corpseTraversalMeshPoseFrame = frameCount;
+        if (!TryBuildSkinDeltas(ns, out var skinDeltas))
+            return corpseTraversalMeshWorldTriangles.Count >= 4;
+
+        corpseTraversalMeshLocalTriangles.Clear();
+        AppendAnimatedMeshTriangles(
+            corpseTraversalMeshModels, skinDeltas, corpseTraversalMeshLocalTriangles,
+            CorpseTraversalMeshMaxTriangles);
+        if (corpseTraversalMeshLocalTriangles.Count < 4)
+            return corpseTraversalMeshWorldTriangles.Count >= 4;
+
+        var skeleton = ns.CharBase->Skeleton;
+        var rootPosition = new Vector3(
+            skeleton->Transform.Position.X,
+            skeleton->Transform.Position.Y,
+            skeleton->Transform.Position.Z);
+        var rootRotation = Quaternion.Normalize(new Quaternion(
+            skeleton->Transform.Rotation.X,
+            skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z,
+            skeleton->Transform.Rotation.W));
+        var rootScale = GetCharacterScale(targetCharacterAddress, ns);
+
+        Vector3 ToWorld(Vector3 local)
+            => rootPosition + Vector3.Transform(local * rootScale, rootRotation);
+
+        corpseTraversalMeshWorldTriangles.Clear();
+        if (corpseTraversalMeshWorldTriangles.Capacity < corpseTraversalMeshLocalTriangles.Count)
+            corpseTraversalMeshWorldTriangles.Capacity = corpseTraversalMeshLocalTriangles.Count;
+        foreach (var triangle in corpseTraversalMeshLocalTriangles)
+        {
+            var a = ToWorld(triangle.A);
+            var b = ToWorld(triangle.B);
+            var c = ToWorld(triangle.C);
+            if (IsFinite(a) && IsFinite(b) && IsFinite(c))
+                corpseTraversalMeshWorldTriangles.Add(new Triangle(a, b, c));
+        }
+
+        return corpseTraversalMeshWorldTriangles.Count >= 4;
+    }
+
+    private bool TryGetCorpseTraversalMeshSupportHit(
+        Vector3 sphereCenter,
+        float sphereRadius,
+        bool maintainContact,
+        out NpcTraversalSurfaceHit hit)
+    {
+        hit = default;
+        if (sphereRadius <= 0f || corpseTraversalMeshWorldTriangles.Count < 4)
+            return false;
+
+        var point = new Vector2(sphereCenter.X, sphereCenter.Z);
+        var radiusSq = sphereRadius * sphereRadius;
+        var minimumUpwardNormal = maintainContact ? 0.12f : 0.30f;
+        var bestCenterY = float.MinValue;
+        var found = false;
+
+        foreach (var triangle in corpseTraversalMeshWorldTriangles)
+        {
+            var a = triangle.A;
+            var b = triangle.B;
+            var c = triangle.C;
+            var normal = Vector3.Cross(b - a, c - a);
+            var normalLength = normal.Length();
+            if (normalLength < 1e-6f || normal.Y / normalLength < minimumUpwardNormal)
+                continue;
+
+            var minX = MathF.Min(a.X, MathF.Min(b.X, c.X));
+            var maxX = MathF.Max(a.X, MathF.Max(b.X, c.X));
+            var minZ = MathF.Min(a.Z, MathF.Min(b.Z, c.Z));
+            var maxZ = MathF.Max(a.Z, MathF.Max(b.Z, c.Z));
+            if (point.X < minX - sphereRadius || point.X > maxX + sphereRadius ||
+                point.Y < minZ - sphereRadius || point.Y > maxZ + sphereRadius)
+                continue;
+
+            var a2 = new Vector2(a.X, a.Z);
+            var b2 = new Vector2(b.X, b.Z);
+            var c2 = new Vector2(c.X, c.Z);
+            var denominator = Cross2(b2 - a2, c2 - a2);
+            var closestDistanceSq = float.MaxValue;
+            var closestY = float.MinValue;
+
+            if (MathF.Abs(denominator) > 1e-8f)
+            {
+                var weightB = Cross2(point - a2, c2 - a2) / denominator;
+                var weightC = Cross2(b2 - a2, point - a2) / denominator;
+                var weightA = 1f - weightB - weightC;
+                if (weightA >= -0.0001f && weightB >= -0.0001f && weightC >= -0.0001f)
+                {
+                    closestDistanceSq = 0f;
+                    closestY = a.Y * weightA + b.Y * weightB + c.Y * weightC;
+                }
+            }
+
+            void ConsiderEdge(Vector2 edgeA, Vector2 edgeB, float yA, float yB)
+            {
+                var edge = edgeB - edgeA;
+                var lengthSq = edge.LengthSquared();
+                var t = lengthSq > 1e-8f
+                    ? Math.Clamp(Vector2.Dot(point - edgeA, edge) / lengthSq, 0f, 1f)
+                    : 0f;
+                var edgePoint = edgeA + edge * t;
+                var distanceSq = Vector2.DistanceSquared(point, edgePoint);
+                if (distanceSq < closestDistanceSq)
+                {
+                    closestDistanceSq = distanceSq;
+                    closestY = yA + (yB - yA) * t;
+                }
+            }
+
+            if (closestDistanceSq > 0f)
+            {
+                ConsiderEdge(a2, b2, a.Y, b.Y);
+                ConsiderEdge(b2, c2, b.Y, c.Y);
+                ConsiderEdge(c2, a2, c.Y, a.Y);
+            }
+
+            if (closestDistanceSq > radiusSq || closestY == float.MinValue)
+                continue;
+
+            var sphereRise = MathF.Sqrt(MathF.Max(0f, radiusSq - closestDistanceSq));
+            var candidateCenterY = closestY + sphereRise;
+            if (!found || candidateCenterY > bestCenterY)
+            {
+                bestCenterY = candidateCenterY;
+                found = true;
+            }
+        }
+
+        if (found)
+            hit = new NpcTraversalSurfaceHit(bestCenterY, default, usesMeshSurface: true);
+        return found;
+    }
+
+    private static float Cross2(Vector2 a, Vector2 b)
+        => a.X * b.Y - a.Y * b.X;
 
     // Read the skeleton root's world scale. Skinned vertices live in the skeleton's local
     // model space (unscaled); the visible model applies the root Transform's scale on top,
@@ -5982,7 +6210,8 @@ public unsafe partial class RagdollController : IDisposable
         int meshIndex,
         int[] localToHavok,
         Matrix4x4[] skinDeltas,
-        List<Triangle> triangles)
+        List<Triangle> triangles,
+        int maxTriangles = MeshCollisionMaxTriangles)
     {
         if (meshIndex < 0 || meshIndex >= mdl.Meshes.Length || meshIndex >= mdl.VertexDeclarations.Length)
             return false;
@@ -6009,7 +6238,7 @@ public unsafe partial class RagdollController : IDisposable
         }
 
         var indexData = mdl.Data.AsSpan(indexStart, checked((int)indexByteLength));
-        for (int i = 0; i + 2 < mesh.IndexCount && triangles.Count < MeshCollisionMaxTriangles; i += 3)
+        for (int i = 0; i + 2 < mesh.IndexCount && triangles.Count < maxTriangles; i += 3)
         {
             var ia = ReadUInt16(indexData, i * 2);
             var ib = ReadUInt16(indexData, (i + 1) * 2);
@@ -6547,7 +6776,11 @@ public unsafe partial class RagdollController : IDisposable
         return TrySkip(data, ref offset, 3);
     }
 
-    private static bool TrySelectMdlLod(MeshCollisionMdlData mdl, out int lodIndex, out MdlStructs.LodStruct lod)
+    private static bool TrySelectMdlLod(
+        MeshCollisionMdlData mdl,
+        out int lodIndex,
+        out MdlStructs.LodStruct lod,
+        int preferredLod = MeshCollisionPreferredLod)
     {
         lodIndex = -1;
         lod = default;
@@ -6555,7 +6788,7 @@ public unsafe partial class RagdollController : IDisposable
             return false;
 
         var lodCount = Math.Min(mdl.Lods.Length, Math.Max(1, (int)mdl.FileHeader.LodCount));
-        var preferred = Math.Min(MeshCollisionPreferredLod, lodCount - 1);
+        var preferred = Math.Clamp(preferredLod, 0, lodCount - 1);
         for (int i = preferred; i >= 0; i--)
         {
             if (mdl.Lods[i].MeshCount == 0)
@@ -11151,6 +11384,11 @@ public unsafe partial class RagdollController : IDisposable
         if (capsules.Count == 0)
             return false;
 
+        // The visual mesh is authoritative for traversal whenever it can be prepared. Bone/box
+        // volumes remain a compatibility fallback only; mixing both in the same frame would bring
+        // back the oversized invisible surfaces this path exists to remove.
+        var meshSurfaceAvailable = TryPrepareCorpseTraversalMeshSurface();
+
         var minBottom = float.MaxValue;
         var maxTop = float.MinValue;
         foreach (var capsule in capsules)
@@ -11179,8 +11417,12 @@ public unsafe partial class RagdollController : IDisposable
             hit = default;
             var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
             var sphereCenter = capsule.Center + axis * along + rootDelta;
-            if (!TryGetSphereSupportHit(
-                    sphereCenter, capsule.Radius, horizontalHandoff, null, out hit))
+            var hasSurface = meshSurfaceAvailable
+                ? TryGetCorpseTraversalMeshSupportHit(
+                    sphereCenter, capsule.Radius, horizontalHandoff, out hit)
+                : TryGetSphereSupportHit(
+                    sphereCenter, capsule.Radius, horizontalHandoff, null, out hit);
+            if (!hasSurface)
                 return false;
 
             var verticalCorrection = hit.RequiredCenterY - sphereCenter.Y;
@@ -11203,8 +11445,18 @@ public unsafe partial class RagdollController : IDisposable
         float? previousSupportRootY = null;
         if (npcTraversalAnchors.TryGetValue(npcAddress, out var anchor))
         {
+            // Upgrade/downgrade only at a support boundary. A mesh cache becoming available must
+            // not leave an old bone-volume anchor active above an invisible oversized collider.
+            if (anchor.UsesMeshSurface != meshSurfaceAvailable)
+            {
+                previousSupportRootY = anchor.SupportRootY;
+                npcTraversalAnchors.Remove(npcAddress);
+            }
+
             foreach (var capsule in capsules)
             {
+                if (previousSupportRootY.HasValue)
+                    break;
                 if (capsule.Handle != anchor.NpcBody)
                     continue;
 
@@ -11214,8 +11466,45 @@ public unsafe partial class RagdollController : IDisposable
                 // their XZ volumes overlap with an upward-facing contact region.
                 var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
                 var sphereCenter = capsule.Center + axis * anchor.NpcAlongAxis + rootDelta;
-                if (TryGetSphereSupportHit(
-                        sphereCenter, capsule.Radius, true, anchor.CorpseBody, out _))
+                var hasAnchoredSurface = false;
+                if (anchor.UsesMeshSurface)
+                {
+                    // Follow the mesh shape only as the controlled root moves horizontally. Both
+                    // samples come from the SAME freshly skinned pose, so global corpse compression
+                    // and rebound cancel out; only the surface-height difference between the old
+                    // and new footprint is applied to the unilateral support plane.
+                    var currentRootXZ = new Vector2(proposedRootPosition.X, proposedRootPosition.Z);
+                    var rootMoveXZ = currentRootXZ - anchor.LastRootXZ;
+                    var nextProbeXZ = anchor.MeshProbeXZ + rootMoveXZ;
+                    var nextProbe = new Vector3(nextProbeXZ.X, sphereCenter.Y, nextProbeXZ.Y);
+                    if (TryGetCorpseTraversalMeshSupportHit(
+                            nextProbe, capsule.Radius, true, out var nextMeshHit))
+                    {
+                        hasAnchoredSurface = true;
+                        if (rootMoveXZ.LengthSquared() > 1e-8f)
+                        {
+                            var oldProbe = new Vector3(anchor.MeshProbeXZ.X, sphereCenter.Y, anchor.MeshProbeXZ.Y);
+                            if (TryGetCorpseTraversalMeshSupportHit(
+                                    oldProbe, capsule.Radius, true, out var oldMeshHit))
+                            {
+                                var spatialHeightDelta = nextMeshHit.RequiredCenterY - oldMeshHit.RequiredCenterY;
+                                var maxSpatialDelta = MathF.Max(0.002f, rootMoveXZ.Length() * 2.5f);
+                                anchor.SupportRootY += Math.Clamp(
+                                    spatialHeightDelta, -maxSpatialDelta, maxSpatialDelta);
+                                anchor.SupportRootY = Math.Clamp(
+                                    anchor.SupportRootY, terrainY, terrainY + maxClimb);
+                            }
+                        }
+                        anchor.MeshProbeXZ = nextProbeXZ;
+                        anchor.LastRootXZ = currentRootXZ;
+                    }
+                }
+                else
+                {
+                    hasAnchoredSurface = TryGetSphereSupportHit(
+                        sphereCenter, capsule.Radius, true, anchor.CorpseBody, out _);
+                }
+                if (hasAnchoredSurface)
                 {
                     rootY = MathF.Max(terrainY, anchor.SupportRootY);
                     return true;
@@ -11223,8 +11512,11 @@ public unsafe partial class RagdollController : IDisposable
                 break;
             }
 
-            previousSupportRootY = anchor.SupportRootY;
-            npcTraversalAnchors.Remove(npcAddress);
+            if (!previousSupportRootY.HasValue)
+            {
+                previousSupportRootY = anchor.SupportRootY;
+                npcTraversalAnchors.Remove(npcAddress);
+            }
         }
 
         var found = false;
@@ -11232,6 +11524,7 @@ public unsafe partial class RagdollController : IDisposable
         BodyHandle bestNpcBody = default;
         BodyHandle bestCorpseBody = default;
         var bestAlongAxis = 0f;
+        var bestMeshProbeXZ = Vector2.Zero;
 
         foreach (var capsule in capsules)
         {
@@ -11258,6 +11551,9 @@ public unsafe partial class RagdollController : IDisposable
                     bestNpcBody = capsule.Handle;
                     bestAlongAxis = along;
                     bestCorpseBody = hit.CorpseBody;
+                    var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
+                    var probeCenter = capsule.Center + axis * along + rootDelta;
+                    bestMeshProbeXZ = new Vector2(probeCenter.X, probeCenter.Z);
                     found = true;
                 }
             }
@@ -11276,6 +11572,9 @@ public unsafe partial class RagdollController : IDisposable
             NpcBody = bestNpcBody,
             NpcAlongAxis = bestAlongAxis,
             CorpseBody = bestCorpseBody,
+            UsesMeshSurface = meshSurfaceAvailable,
+            MeshProbeXZ = bestMeshProbeXZ,
+            LastRootXZ = new Vector2(proposedRootPosition.X, proposedRootPosition.Z),
             SupportRootY = bestRootY,
         };
         rootY = bestRootY;
@@ -11651,6 +11950,7 @@ public unsafe partial class RagdollController : IDisposable
         softBodyBodyHandles.Clear();
         npcCollisionStates.Clear();
         npcTraversalAnchors.Clear();
+        ClearCorpseTraversalMeshCache();
         attackStrikeTimer = 0f;
         strikePower = 0f;
         strikeColliderAddress = nint.Zero;

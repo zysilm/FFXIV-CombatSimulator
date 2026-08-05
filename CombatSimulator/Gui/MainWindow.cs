@@ -4522,7 +4522,7 @@ public partial class MainWindow : IDisposable
                     config.RagdollNpcCorpseTraversal = corpseTraversal;
                     config.Save();
                 }
-                HelpMarker("Client-controlled enemies and companions can climb onto low corpse surfaces instead of pushing straight through them. Contacts become softer and less able to fling the corpse, while still producing a small weight/step reaction. Real map actors remain server-positioned. Experimental; off by default.");
+                HelpMarker("Client-controlled enemies and companions can climb onto low corpse surfaces instead of pushing straight through them. Support height is sampled from the corpse's live skinned visual mesh; existing bone collision remains responsible only for the small weight/step reaction. Falls back to physical ragdoll volumes when mesh data is unavailable. Real map actors remain server-positioned. Experimental; off by default.");
 
                 var collisionMode = (int)config.RagdollNpcCollisionMode;
                 if (collisionMode < 0 || collisionMode >= NpcCollisionModeLabels.Length)
