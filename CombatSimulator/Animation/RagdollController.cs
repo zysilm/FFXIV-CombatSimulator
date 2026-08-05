@@ -2268,6 +2268,28 @@ public unsafe partial class RagdollController : IDisposable
         public float FallbackBaseLength;
     }
 
+    private sealed class NpcTraversalAnchor
+    {
+        public BodyHandle NpcBody;
+        public float NpcAlongAxis;
+        public BodyHandle CorpseBody;
+        public float LastRootY;
+    }
+
+    private readonly Dictionary<nint, NpcTraversalAnchor> npcTraversalAnchors = new();
+
+    private readonly struct NpcTraversalSurfaceHit
+    {
+        public readonly float RequiredCenterY;
+        public readonly BodyHandle CorpseBody;
+
+        public NpcTraversalSurfaceHit(float requiredCenterY, BodyHandle corpseBody)
+        {
+            RequiredCenterY = requiredCenterY;
+            CorpseBody = corpseBody;
+        }
+    }
+
     private sealed class AnimatedMeshCollisionModel
     {
         public string ModelPath = string.Empty;
@@ -4933,6 +4955,7 @@ public unsafe partial class RagdollController : IDisposable
         // Create NPC collision volumes — dynamically discover bones from each NPC's skeleton.
         // Works for any model (humanoid, monster, dragon) — no hardcoded bone names.
         npcCollisionStates.Clear();
+        npcTraversalAnchors.Clear();
         if (config.NpcCollisionActive && npcSelector != null)
         {
             var scale = config.RagdollNpcCollisionScale;
@@ -11068,7 +11091,6 @@ public unsafe partial class RagdollController : IDisposable
         Vector3 proposedRootPosition,
         float terrainY,
         float maxClimb,
-        bool maintainContact,
         out float rootY)
     {
         rootY = terrainY;
@@ -11088,7 +11110,7 @@ public unsafe partial class RagdollController : IDisposable
             return false;
 
         var npcState = matchedState.Value;
-        var capsules = new List<(Vector3 Center, Quaternion Orientation, float Radius, float HalfLength, float Bottom, float Top)>();
+        var capsules = new List<(BodyHandle Handle, Vector3 Center, Quaternion Orientation, float Radius, float HalfLength, float Bottom, float Top)>();
         try
         {
             if (npcState.IsFallback)
@@ -11098,7 +11120,7 @@ public unsafe partial class RagdollController : IDisposable
                 var radius = npcState.FallbackBaseRadius * scale;
                 var halfLength = npcState.FallbackBaseLength * scale * 0.5f;
                 var extentY = halfLength + radius;
-                capsules.Add((body.Pose.Position, body.Pose.Orientation, radius, halfLength,
+                capsules.Add((npcState.FallbackHandle, body.Pose.Position, body.Pose.Orientation, radius, halfLength,
                     body.Pose.Position.Y - extentY, body.Pose.Position.Y + extentY));
             }
             else if (!npcState.IsMesh && !npcState.IsConvexHull)
@@ -11111,7 +11133,7 @@ public unsafe partial class RagdollController : IDisposable
                     var halfLength = bone.BaseHalfLength * scale;
                     var axis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
                     var extentY = MathF.Abs(axis.Y) * halfLength + radius;
-                    capsules.Add((body.Pose.Position, body.Pose.Orientation, radius, halfLength,
+                    capsules.Add((bone.Handle, body.Pose.Position, body.Pose.Orientation, radius, halfLength,
                         body.Pose.Position.Y - extentY, body.Pose.Position.Y + extentY));
                 }
             }
@@ -11132,24 +11154,81 @@ public unsafe partial class RagdollController : IDisposable
             maxTop = MathF.Max(maxTop, capsule.Top);
         }
         var bodyHeight = MathF.Max(0.0001f, maxTop - minBottom);
-        // Only the lowest visible collision layer may support traversal. This naturally selects
-        // feet/legs on humanoids and the broad set of leg capsules on spiders without using names.
-        var lowerBandFraction = maintainContact ? 0.26f : 0.18f;
-        var lowerBandTop = minBottom + MathF.Max(0.0002f, bodyHeight * lowerBandFraction);
+        // Only the lowest visible collision layer can acquire support. Once acquired, the exact
+        // capsule/body pair is retained below instead of competing with every foot every frame.
+        var lowerBandTop = minBottom + MathF.Max(0.0002f, bodyHeight * 0.18f);
 
         var gameObject = (GameObject*)npcAddress;
         var currentRoot = new Vector3(gameObject->Position.X, gameObject->Position.Y, gameObject->Position.Z);
         var rootDelta = proposedRootPosition - currentRoot;
         maxClimb = MathF.Max(0f, maxClimb);
+
+        bool TryEvaluate(
+            (BodyHandle Handle, Vector3 Center, Quaternion Orientation, float Radius, float HalfLength, float Bottom, float Top) capsule,
+            float along,
+            bool maintain,
+            BodyHandle? corpseBody,
+            out float candidateRootY,
+            out NpcTraversalSurfaceHit hit)
+        {
+            candidateRootY = terrainY;
+            hit = default;
+            var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
+            var sphereCenter = capsule.Center + axis * along + rootDelta;
+            if (!TryGetSphereSupportHit(
+                    sphereCenter, capsule.Radius, maintain, corpseBody, out hit) ||
+                hit.RequiredCenterY - capsule.Radius <= terrainY + 0.001f)
+                return false;
+
+            var verticalCorrection = hit.RequiredCenterY - sphereCenter.Y;
+            var allowedGap = maintain
+                ? MathF.Max(0.012f, MathF.Max(bodyHeight * 0.06f, capsule.Radius * 1.5f))
+                : MathF.Max(0.002f, capsule.Radius * 0.5f);
+            if (verticalCorrection < -allowedGap)
+                return false;
+
+            var penetration = Math.Clamp(capsule.Radius * 0.12f, 0.0001f, 0.01f);
+            candidateRootY = proposedRootPosition.Y + verticalCorrection - penetration;
+            if (candidateRootY > terrainY + maxClimb)
+                return false;
+
+            candidateRootY = MathF.Max(terrainY, candidateRootY);
+            return candidateRootY > terrainY + 0.001f;
+        }
+
+        float? previousAnchorRootY = null;
+        if (npcTraversalAnchors.TryGetValue(npcAddress, out var anchor))
+        {
+            foreach (var capsule in capsules)
+            {
+                if (capsule.Handle != anchor.NpcBody)
+                    continue;
+
+                if (TryEvaluate(capsule, anchor.NpcAlongAxis, true, anchor.CorpseBody,
+                        out var anchoredRootY, out _))
+                {
+                    anchor.LastRootY = anchoredRootY;
+                    rootY = anchoredRootY;
+                    return true;
+                }
+                break;
+            }
+
+            previousAnchorRootY = anchor.LastRootY;
+            npcTraversalAnchors.Remove(npcAddress);
+        }
+
         var found = false;
         var bestRootY = float.MinValue;
+        BodyHandle bestNpcBody = default;
+        BodyHandle bestCorpseBody = default;
+        var bestAlongAxis = 0f;
 
         foreach (var capsule in capsules)
         {
             if (capsule.Bottom > lowerBandTop)
                 continue;
 
-            var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
             for (var sampleIndex = 0; sampleIndex < 3; sampleIndex++)
             {
                 var along = sampleIndex switch
@@ -11158,30 +11237,17 @@ public unsafe partial class RagdollController : IDisposable
                     2 => capsule.HalfLength,
                     _ => 0f,
                 };
-                var sphereCenter = capsule.Center + axis * along + rootDelta;
-                if (!TryGetSphereSupportCenterHeight(
-                        sphereCenter, capsule.Radius, maintainContact, out var requiredCenterY) ||
-                    requiredCenterY - capsule.Radius <= terrainY + 0.001f)
+                if (!TryEvaluate(capsule, along, false, null, out var candidateRootY, out var hit))
                     continue;
-
-                var verticalCorrection = requiredCenterY - sphereCenter.Y;
-                // A collider already far above the surface is not support. Small negative gaps are
-                // allowed so an actor descending along a curved body does not flicker off contact.
-                var allowedGap = maintainContact
-                    ? MathF.Max(0.012f, MathF.Max(bodyHeight * 0.06f, capsule.Radius * 1.5f))
-                    : MathF.Max(0.002f, capsule.Radius * 0.5f);
-                if (verticalCorrection < -allowedGap)
-                    continue;
-
-                var penetration = Math.Clamp(capsule.Radius * 0.12f, 0.0001f, 0.01f);
-                var candidateRootY = proposedRootPosition.Y + verticalCorrection - penetration;
-                if (candidateRootY > terrainY + maxClimb)
-                    continue;
-
-                candidateRootY = MathF.Max(terrainY, candidateRootY);
-                if (!found || candidateRootY > bestRootY)
+                var preferCandidate = !found || (previousAnchorRootY.HasValue
+                    ? MathF.Abs(candidateRootY - previousAnchorRootY.Value) < MathF.Abs(bestRootY - previousAnchorRootY.Value)
+                    : candidateRootY > bestRootY);
+                if (preferCandidate)
                 {
                     bestRootY = candidateRootY;
+                    bestNpcBody = capsule.Handle;
+                    bestAlongAxis = along;
+                    bestCorpseBody = hit.CorpseBody;
                     found = true;
                 }
             }
@@ -11190,6 +11256,13 @@ public unsafe partial class RagdollController : IDisposable
         if (!found || bestRootY <= terrainY + 0.001f)
             return false;
 
+        npcTraversalAnchors[npcAddress] = new NpcTraversalAnchor
+        {
+            NpcBody = bestNpcBody,
+            NpcAlongAxis = bestAlongAxis,
+            CorpseBody = bestCorpseBody,
+            LastRootY = bestRootY,
+        };
         rootY = bestRootY;
         return true;
     }
@@ -11200,20 +11273,24 @@ public unsafe partial class RagdollController : IDisposable
     /// their unexpanded visible top face; this is conservative at rounded edge contacts and avoids
     /// recreating the oversized invisible foot disk that caused hovering.
     /// </summary>
-    private bool TryGetSphereSupportCenterHeight(
+    private bool TryGetSphereSupportHit(
         Vector3 sphereCenter,
         float sphereRadius,
         bool maintainContact,
-        out float centerY)
+        BodyHandle? preferredCorpseBody,
+        out NpcTraversalSurfaceHit hit)
     {
-        centerY = float.MinValue;
+        hit = default;
         if (simulation == null || sphereRadius <= 0f)
             return false;
 
         var found = false;
         var bestCenterY = float.MinValue;
+        BodyHandle bestCorpseBody = default;
         foreach (var rb in ragdollBones)
         {
+            if (preferredCorpseBody.HasValue && rb.BodyHandle.Value != preferredCorpseBody.Value.Value)
+                continue;
             if (rb.Mass < 0.45f ||
                 rb.Name.StartsWith("j_sk_", StringComparison.Ordinal) ||
                 rb.Name.StartsWith("j_mune", StringComparison.Ordinal) ||
@@ -11232,6 +11309,7 @@ public unsafe partial class RagdollController : IDisposable
                     if (!found || candidate > bestCenterY)
                     {
                         bestCenterY = candidate;
+                        bestCorpseBody = rb.BodyHandle;
                         found = true;
                     }
                 }
@@ -11266,6 +11344,7 @@ public unsafe partial class RagdollController : IDisposable
                 if (!found || candidate > bestCenterY)
                 {
                     bestCenterY = candidate;
+                    bestCorpseBody = rb.BodyHandle;
                     found = true;
                 }
             }
@@ -11277,7 +11356,8 @@ public unsafe partial class RagdollController : IDisposable
             Consider(Math.Clamp(projected + halfLength * 0.35f, -halfLength, halfLength));
         }
 
-        centerY = bestCenterY;
+        if (found)
+            hit = new NpcTraversalSurfaceHit(bestCenterY, bestCorpseBody);
         return found;
     }
 
@@ -11474,6 +11554,7 @@ public unsafe partial class RagdollController : IDisposable
     public void RemoveLiveCollider(nint address)
     {
         if (simulation == null) return;
+        npcTraversalAnchors.Remove(address);
         if (strikeColliderAddress == address) strikeColliderAddress = nint.Zero;
         for (int i = npcCollisionStates.Count - 1; i >= 0; i--)
         {
@@ -11554,6 +11635,7 @@ public unsafe partial class RagdollController : IDisposable
         npcCollisionKinematicBodyHandles.Clear();
         softBodyBodyHandles.Clear();
         npcCollisionStates.Clear();
+        npcTraversalAnchors.Clear();
         attackStrikeTimer = 0f;
         strikePower = 0f;
         strikeColliderAddress = nint.Zero;
