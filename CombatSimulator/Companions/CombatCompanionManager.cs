@@ -1599,7 +1599,7 @@ public unsafe class CombatCompanionManager : IDisposable
             : current + dir * moveDist;
 
         RotateToward(companion, moveTarget, deltaTime);
-        if (terrainCache != null && pathStates.TryGetValue(companion.Address, out var terrainState))
+        if (terrainCache != null && TryGetCorpseTraversalPathState(companion.Address, out var terrainState))
         {
             next = CorrectMovingRootHeight(next, terrainCache, terrainState, deltaTime);
         }
@@ -1704,7 +1704,7 @@ public unsafe class CombatCompanionManager : IDisposable
         var distance = Vector3.Distance(current, target);
         if (distance <= FollowStopDistance)
         {
-            if (terrainCache != null && pathStates.TryGetValue(companion.Address, out var stableState))
+            if (terrainCache != null && TryGetCorpseTraversalPathState(companion.Address, out var stableState))
                 CorrectStableRootHeight(obj, current, terrainCache, stableState, deltaTime);
             StopMove(companion);
             EnterCompanionState(companion, CompanionAiState.Idle);
@@ -1768,7 +1768,7 @@ public unsafe class CombatCompanionManager : IDisposable
         var distance = Vector3.Distance(current, target);
         if (distance <= FollowStopDistance)
         {
-            if (terrainCache != null && pathStates.TryGetValue(companion.Address, out var stableState))
+            if (terrainCache != null && TryGetCorpseTraversalPathState(companion.Address, out var stableState))
                 CorrectStableRootHeight(obj, current, terrainCache, stableState, deltaTime);
             StopMove(companion);
             EnterCompanionState(companion, CompanionAiState.CombatReady);
@@ -2035,14 +2035,30 @@ public unsafe class CombatCompanionManager : IDisposable
             : terrainY;
         var desiredY = walkableY + state.StableRootTerrainClearance;
         var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
-        var maxRise = MathF.Max(0.03f, 3.5f * deltaTime);
         var maxFall = MathF.Max(0.02f, 1.5f * deltaTime);
-        var deltaY = Math.Clamp(desiredY - fromY, -maxFall, maxRise);
+        var deltaY = desiredY > fromY
+            ? desiredY - fromY
+            : Math.Clamp(desiredY - fromY, -maxFall, 0f);
         var y = fromY + deltaY;
 
         state.LastMoveRootY = y;
         state.HasLastMoveRootY = true;
         return rootPosition with { Y = y };
+    }
+
+    private bool TryGetCorpseTraversalPathState(nint address, out PathState state)
+    {
+        if (pathStates.TryGetValue(address, out state!))
+            return true;
+
+        // vnavmesh normally creates this state. Corpse support needs the same vertical history
+        // even without vnavmesh, otherwise companions never consult the bone-volume surface.
+        if (!config.NpcCollisionActive || !config.RagdollNpcCorpseTraversal)
+            return false;
+
+        state = new PathState();
+        pathStates[address] = state;
+        return true;
     }
 
     private void CorrectStableRootHeight(

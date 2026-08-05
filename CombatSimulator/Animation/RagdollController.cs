@@ -1740,11 +1740,12 @@ public unsafe partial class RagdollController : IDisposable
         // the capsule center (at segment midpoint) back to the bone origin position.
         // 0 for leaf bones and degenerate (zero-length) segments.
         public float SegmentHalfLength;
-        // The collision volume this body was actually given (a box bone stores the largest capsule
-        // that fits inside it). Exposed through TryGetBoneCapsule so callers can conform to the
-        // body's real surface.
+        // The collision volume this body was actually given. Capsule fields remain available to
+        // legacy callers; box metadata lets corpse traversal query the real oriented box surface.
         public float CapsuleRadius;
         public float CapsuleHalfLength;
+        public RagdollColliderShape ColliderShape;
+        public Vector3 BoxHalfExtents;
         // The mass this body was actually built with, so the joint above it can size its friction
         // against the weight it is holding rather than against a constant.
         public float Mass;
@@ -4248,6 +4249,7 @@ public unsafe partial class RagdollController : IDisposable
             // Kept alongside the body so callers can ask for the volume the physics is actually
             // using (see TryGetBoneCapsule) rather than re-deriving it from the defs.
             float shapeRadius, shapeHalfLength;
+            var shapeBoxHalfExtents = Vector3.Zero;
             if (def.ColliderShape == RagdollColliderShape.Box)
             {
                 var extents = ResolveBoxHalfExtents(def, effectiveHalfLength);
@@ -4257,6 +4259,7 @@ public unsafe partial class RagdollController : IDisposable
                 // Largest capsule that fits inside the box — a conservative stand-in for the box.
                 shapeRadius = MathF.Min(extents.X, extents.Z);
                 shapeHalfLength = extents.Y;
+                shapeBoxHalfExtents = extents;
             }
             else
             {
@@ -4330,6 +4333,8 @@ public unsafe partial class RagdollController : IDisposable
                 SegmentHalfLength = segmentHalfLength,
                 CapsuleRadius = shapeRadius,
                 CapsuleHalfLength = shapeHalfLength,
+                ColliderShape = def.ColliderShape,
+                BoxHalfExtents = shapeBoxHalfExtents,
                 Mass = effectiveMass,
             });
 
@@ -10964,6 +10969,19 @@ public unsafe partial class RagdollController : IDisposable
 
             var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
             var center = body.Pose.Position;
+
+            if (rb.ColliderShape == RagdollColliderShape.Box)
+            {
+                if (TryGetOrientedBoxSurfaceHeight(
+                        body.Pose, rb.BoxHalfExtents, point, probeRadius, out var boxSurfaceY) &&
+                    (!found || boxSurfaceY > bestSurfaceY))
+                {
+                    bestSurfaceY = boxSurfaceY;
+                    found = true;
+                }
+                continue;
+            }
+
             var axis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
             var axisXz = new Vector2(axis.X, axis.Z);
             var relativeXz = new Vector2(center.X - point.X, center.Z - point.Z);
@@ -11004,6 +11022,86 @@ public unsafe partial class RagdollController : IDisposable
 
         surfaceY = bestSurfaceY;
         return found;
+    }
+
+    /// <summary>
+    /// Vertical foot probes against the actual oriented box used by BEPU. Sampling the center and
+    /// rim of the foot disk gives early support without replacing a rotated box by an oversized
+    /// world AABB (which would make actors float above its corners).
+    /// </summary>
+    private static bool TryGetOrientedBoxSurfaceHeight(
+        RigidPose pose,
+        Vector3 halfExtents,
+        Vector3 point,
+        float probeRadius,
+        out float surfaceY)
+    {
+        surfaceY = float.MinValue;
+        if (halfExtents.X <= 0f || halfExtents.Y <= 0f || halfExtents.Z <= 0f)
+            return false;
+
+        var orientation = Quaternion.Normalize(pose.Orientation);
+        var inverse = Quaternion.Inverse(orientation);
+        var axisX = Vector3.Transform(Vector3.UnitX, orientation);
+        var axisY = Vector3.Transform(Vector3.UnitY, orientation);
+        var axisZ = Vector3.Transform(Vector3.UnitZ, orientation);
+        var verticalExtent =
+            MathF.Abs(axisX.Y) * halfExtents.X +
+            MathF.Abs(axisY.Y) * halfExtents.Y +
+            MathF.Abs(axisZ.Y) * halfExtents.Z;
+        var rayOriginY = pose.Position.Y + verticalExtent + 0.02f;
+        var localDirection = Vector3.Transform(-Vector3.UnitY, inverse);
+        var diagonal = probeRadius * 0.70710678f;
+        Span<Vector2> offsets = stackalloc Vector2[9]
+        {
+            Vector2.Zero,
+            new(probeRadius, 0f), new(-probeRadius, 0f),
+            new(0f, probeRadius), new(0f, -probeRadius),
+            new(diagonal, diagonal), new(-diagonal, diagonal),
+            new(diagonal, -diagonal), new(-diagonal, -diagonal),
+        };
+
+        var found = false;
+        foreach (var offset in offsets)
+        {
+            var worldOrigin = new Vector3(point.X + offset.X, rayOriginY, point.Z + offset.Y);
+            var localOrigin = Vector3.Transform(worldOrigin - pose.Position, inverse);
+            var tMin = 0f;
+            var tMax = float.MaxValue;
+            if (!IntersectRayBoxSlab(localOrigin.X, localDirection.X, halfExtents.X, ref tMin, ref tMax) ||
+                !IntersectRayBoxSlab(localOrigin.Y, localDirection.Y, halfExtents.Y, ref tMin, ref tMax) ||
+                !IntersectRayBoxSlab(localOrigin.Z, localDirection.Z, halfExtents.Z, ref tMin, ref tMax))
+                continue;
+
+            var candidateY = rayOriginY - tMin;
+            if (!found || candidateY > surfaceY)
+            {
+                surfaceY = candidateY;
+                found = true;
+            }
+        }
+
+        return found;
+    }
+
+    private static bool IntersectRayBoxSlab(
+        float origin,
+        float direction,
+        float extent,
+        ref float tMin,
+        ref float tMax)
+    {
+        if (MathF.Abs(direction) < 1e-6f)
+            return MathF.Abs(origin) <= extent;
+
+        var t1 = (-extent - origin) / direction;
+        var t2 = (extent - origin) / direction;
+        if (t1 > t2)
+            (t1, t2) = (t2, t1);
+
+        tMin = MathF.Max(tMin, t1);
+        tMax = MathF.Min(tMax, t2);
+        return tMin <= tMax && tMax >= 0f;
     }
 
     /// <summary>

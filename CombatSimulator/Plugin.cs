@@ -1095,14 +1095,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             return null;
 
         const float footProbeRadius = 0.24f;
-        const float maxClimbHeight = 0.65f;
         float? best = null;
 
         void Consider(RagdollController controller)
         {
             if (!controller.TryGetWalkableSurfaceHeight(position, footProbeRadius, out var surfaceY))
-                return;
-            if (surfaceY <= position.Y - 0.08f || surfaceY > position.Y + maxClimbHeight)
                 return;
             if (!best.HasValue || surfaceY > best.Value)
                 best = surfaceY;

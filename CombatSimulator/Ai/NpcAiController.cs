@@ -1790,11 +1790,13 @@ public unsafe class NpcAiController : IDisposable
             : terrainY;
         var desiredY = walkableY + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;
         var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
-        // Step up promptly enough to clear the corpse before the horizontal proxy reaches its side,
-        // but descend more slowly so the feet press the body instead of hammering it downward.
-        var maxRise = MathF.Max(0.03f, 3.5f * deltaTime);
+        // The corpse surface is a hard upward floor. Easing upward let a fast actor move inside the
+        // body for several frames before its root caught up. Leaving the corpse stays deliberately
+        // slow so the feet press and release it naturally instead of snapping down.
         var maxFall = MathF.Max(0.02f, 1.5f * deltaTime);
-        var deltaY = Math.Clamp(desiredY - fromY, -maxFall, maxRise);
+        var deltaY = desiredY > fromY
+            ? desiredY - fromY
+            : Math.Clamp(desiredY - fromY, -maxFall, 0f);
         var y = fromY + deltaY;
 
         state.LastMoveRootY = y;
