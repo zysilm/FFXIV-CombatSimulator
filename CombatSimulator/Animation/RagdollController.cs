@@ -549,12 +549,13 @@ public unsafe partial class RagdollController : IDisposable
 
             result.Add(new DebugCapsule
             {
-                Position = bodyRef.Pose.Position,
+                Position = bodyRef.Pose.Position -
+                           Vector3.Transform(rb.ShapeCenterOffset, bodyRef.Pose.Orientation),
                 Orientation = bodyRef.Pose.Orientation,
-                Radius = boneDef.CapsuleRadius,
-                HalfLength = ResolveBodyHalfLength(boneDef),
-                ColliderShape = boneDef.ColliderShape,
-                BoxHalfExtents = ResolveBoxHalfExtents(boneDef, ResolveBodyHalfLength(boneDef)),
+                Radius = rb.CapsuleRadius,
+                HalfLength = rb.CapsuleHalfLength,
+                ColliderShape = rb.ColliderShape,
+                BoxHalfExtents = rb.BoxHalfExtents,
                 Name = rb.Name,
                 Joint = boneDef.Joint,
                 SwingLimit = boneDef.SwingLimit,
@@ -1612,7 +1613,7 @@ public unsafe partial class RagdollController : IDisposable
     //   which naturally limits hinge bending when the axes are chosen correctly.
     public enum JointType { Ball, Hinge }
     public enum AnatomicalRole { Auto, Generic, Pelvis, Spine, Head, Shoulder, Elbow, Hand, Hip, Knee, Ankle, Foot, Cloth, SoftBody, Weapon }
-    public enum RagdollColliderShape { Capsule, Box }
+    public enum RagdollColliderShape { Capsule, Box, ProfileHull }
 
     public void SetDismemberedBones(IEnumerable<string> bones)
     {
@@ -1752,6 +1753,10 @@ public unsafe partial class RagdollController : IDisposable
         public float CapsuleHalfLength;
         public RagdollColliderShape ColliderShape;
         public Vector3 BoxHalfExtents;
+        // BEPU recenters convex hull vertices around their center of mass. This offset maps the
+        // body's COM pose back to the anatomical/profile local origin used by mesh write-back and
+        // all lightweight surface queries. Zero for legacy capsule/box shapes.
+        public Vector3 ShapeCenterOffset;
         // The mass this body was actually built with, so the joint above it can size its friction
         // against the weight it is holding rather than against a constant.
         public float Mass;
@@ -1789,11 +1794,14 @@ public unsafe partial class RagdollController : IDisposable
         => characterSurfaceRuntime?.GetDebugBones(usage) ?? Array.Empty<CharacterSurfaceDebugBone>();
 
     private CharacterSurfaceIdentity ReadCharacterSurfaceIdentity()
+        => ReadCharacterSurfaceIdentity(targetCharacterAddress);
+
+    private static CharacterSurfaceIdentity ReadCharacterSurfaceIdentity(nint characterAddress)
     {
-        if (targetCharacterAddress == nint.Zero)
+        if (characterAddress == nint.Zero)
             return default;
 
-        var character = (Character*)targetCharacterAddress;
+        var character = (Character*)characterAddress;
         var customize = (byte*)&character->DrawData.CustomizeData;
         return new CharacterSurfaceIdentity(
             customize[0x00], // race
@@ -1808,7 +1816,8 @@ public unsafe partial class RagdollController : IDisposable
     private void BuildCharacterSurfaceRuntime(bool genericSkeleton)
     {
         characterSurfaceRuntime = null;
-        if (genericSkeleton || simulation == null || ragdollBones.Count == 0)
+        if (!config.RagdollCharacterSurfaceProfiles || genericSkeleton ||
+            simulation == null || ragdollBones.Count == 0)
             return;
 
         var identity = ReadCharacterSurfaceIdentity();
@@ -1852,7 +1861,112 @@ public unsafe partial class RagdollController : IDisposable
         foreach (var rb in ragdollBones)
         {
             var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
-            characterSurfaceRuntime.UpdateBonePose(rb.Name, body.Pose.Position, body.Pose.Orientation);
+            var profileOrigin = body.Pose.Position -
+                                Vector3.Transform(rb.ShapeCenterOffset, body.Pose.Orientation);
+            characterSurfaceRuntime.UpdateBonePose(rb.Name, profileOrigin, body.Pose.Orientation);
+        }
+    }
+
+    private bool TryCreateCharacterSurfaceHull(
+        CharacterSurfaceProfile profile,
+        RagdollBoneDef def,
+        float effectiveHalfLength,
+        float shapeScale,
+        float mass,
+        out TypedIndex shapeIndex,
+        out BodyInertia inertia,
+        out Vector3 centerOffset)
+    {
+        shapeIndex = default;
+        inertia = default;
+        centerOffset = Vector3.Zero;
+        if (simulation == null || bufferPool == null)
+            return false;
+
+        var radiusX = def.CapsuleRadius * shapeScale;
+        var radiusZ = radiusX;
+        var halfLength = effectiveHalfLength;
+        if (def.ColliderShape == RagdollColliderShape.Box)
+        {
+            var extents = ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)) * shapeScale;
+            radiusX = extents.X;
+            radiusZ = extents.Z;
+            halfLength = extents.Y;
+        }
+
+        var seed = new CharacterSurfaceBoneSeed(
+            def.Name, def.AnatomicalRole.ToString(), halfLength, radiusX, radiusZ);
+        var surface = new CharacterSurfaceRuntimeBone(profile, seed);
+        var localVertices = surface.LocalVertices;
+        if (localVertices.Length < 4)
+            return false;
+
+        bufferPool.Take<Vector3>(localVertices.Length, out var points);
+        try
+        {
+            var usageScale = MathF.Max(0.01f, profile.UsageScale(CharacterSurfaceUsage.Physics));
+            for (var i = 0; i < localVertices.Length; i++)
+            {
+                var point = localVertices[i];
+                point.X *= usageScale;
+                point.Z *= usageScale;
+                points[i] = point;
+            }
+
+            var hull = new ConvexHull(points, bufferPool, out centerOffset);
+            shapeIndex = simulation.Shapes.Add(hull);
+            inertia = hull.ComputeInertia(mass);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"RagdollController: profile hull failed for '{def.Name}'; using legacy shape");
+            centerOffset = Vector3.Zero;
+            return false;
+        }
+        finally
+        {
+            bufferPool.Return(ref points);
+        }
+    }
+
+    private bool TryCreateCharacterSurfaceHullShape(
+        CharacterSurfaceProfile profile,
+        CharacterSurfaceBoneSeed seed,
+        out TypedIndex shapeIndex,
+        out Vector3 centerOffset)
+    {
+        shapeIndex = default;
+        centerOffset = Vector3.Zero;
+        if (simulation == null || bufferPool == null)
+            return false;
+
+        var surface = new CharacterSurfaceRuntimeBone(profile, seed);
+        var localVertices = surface.LocalVertices;
+        bufferPool.Take<Vector3>(localVertices.Length, out var points);
+        try
+        {
+            var usageScale = MathF.Max(0.01f, profile.UsageScale(CharacterSurfaceUsage.Physics));
+            for (var i = 0; i < localVertices.Length; i++)
+            {
+                var point = localVertices[i];
+                point.X *= usageScale;
+                point.Z *= usageScale;
+                points[i] = point;
+            }
+            var hull = new ConvexHull(points, bufferPool, out centerOffset);
+            shapeIndex = simulation.Shapes.Add(hull);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"RagdollController: NPC profile hull failed for '{seed.Name}'; using capsule");
+            centerOffset = Vector3.Zero;
+            return false;
+        }
+        finally
+        {
+            bufferPool.Return(ref points);
         }
     }
 
@@ -2312,6 +2426,10 @@ public unsafe partial class RagdollController : IDisposable
         public float BaseHalfLength;    // unscaled half-length of the capsule body segment
         public float BaseRadius;        // unscaled capsule radius
         public float CenterFactor;      // parent->child fraction where the capsule is centered
+        public string BoneName;
+        public string SurfaceRole;
+        public CharacterSurfaceProfile? SurfaceProfile;
+        public Vector3 ShapeCenterOffset;
         public Vector3 PreviousPosition;
         public Quaternion PreviousOrientation;
         public bool HasPreviousPose;
@@ -4221,6 +4339,17 @@ public unsafe partial class RagdollController : IDisposable
         // Store real terrain level before any offset
         realGroundY = groundY;
 
+        // Resolve once for the whole build. Unsupported/non-humanoid actors retain the legacy
+        // capsule/box path. A profile changes only structural body volumes; weapons, cloth, and
+        // soft-tissue simulation keep their purpose-built shapes.
+        CharacterSurfaceProfile? activeSurfaceProfile = null;
+        if (config.RagdollCharacterSurfaceProfiles && !genericSkeleton)
+        {
+            var surfaceIdentity = ReadCharacterSurfaceIdentity();
+            if (surfaceIdentity.IsHumanoid)
+                activeSurfaceProfile = characterSurfaceProfileBook.Resolve(surfaceIdentity);
+        }
+
         // --- Pass 2: Create physics bodies ---
         // Capsule center is offset from bone origin (joint) along the segment direction.
         // Capsule half-length is usually clamped to the current pose segment distance.
@@ -4402,7 +4531,27 @@ public unsafe partial class RagdollController : IDisposable
             // using (see TryGetBoneCapsule) rather than re-deriving it from the defs.
             float shapeRadius, shapeHalfLength;
             var shapeBoxHalfExtents = Vector3.Zero;
-            if (def.ColliderShape == RagdollColliderShape.Box)
+            var shapeCenterOffset = Vector3.Zero;
+            var useProfileHull = activeSurfaceProfile != null &&
+                                 def.AnatomicalRole != AnatomicalRole.Weapon &&
+                                 def.AnatomicalRole != AnatomicalRole.Cloth &&
+                                 !def.SoftBody;
+            var runtimeColliderShape = def.ColliderShape;
+            if (useProfileHull && TryCreateCharacterSurfaceHull(
+                    activeSurfaceProfile!, def, effectiveHalfLength, ragdollShapeScale, effectiveMass,
+                    out shapeIndex, out bodyInertia, out shapeCenterOffset))
+            {
+                shapeRadius = def.ColliderShape == RagdollColliderShape.Box
+                    ? MathF.Min(ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)).X,
+                                ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)).Z) * ragdollShapeScale
+                    : def.CapsuleRadius * ragdollShapeScale;
+                shapeHalfLength = effectiveHalfLength;
+                if (def.ColliderShape == RagdollColliderShape.Box)
+                    shapeBoxHalfExtents = ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)) * ragdollShapeScale;
+                runtimeColliderShape = RagdollColliderShape.ProfileHull;
+                capsuleCenter += Vector3.Transform(shapeCenterOffset, capsuleWorldRot);
+            }
+            else if (def.ColliderShape == RagdollColliderShape.Box)
             {
                 var extents = ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)) * ragdollShapeScale;
                 var box = new Box(extents.X * 2f, extents.Y * 2f, extents.Z * 2f);
@@ -4486,8 +4635,9 @@ public unsafe partial class RagdollController : IDisposable
                 SegmentHalfLength = segmentHalfLength,
                 CapsuleRadius = shapeRadius,
                 CapsuleHalfLength = shapeHalfLength,
-                ColliderShape = def.ColliderShape,
+                ColliderShape = runtimeColliderShape,
                 BoxHalfExtents = shapeBoxHalfExtents,
+                ShapeCenterOffset = shapeCenterOffset,
                 Mass = effectiveMass,
             });
 
@@ -5286,17 +5436,24 @@ public unsafe partial class RagdollController : IDisposable
             npcSkeleton->Transform.Rotation.W);
         var npcVisualScale = GetCharacterScale(address, ns);
         var npcShapeScale = CollisionScale(npcVisualScale);
+        CharacterSurfaceProfile? npcSurfaceProfile = null;
+        if (config.RagdollCharacterSurfaceProfiles)
+        {
+            var identity = ReadCharacterSurfaceIdentity(address);
+            if (identity.IsHumanoid)
+                npcSurfaceProfile = characterSurfaceProfileBook.Resolve(identity);
+        }
 
         // Convex hull mode: one hull shape per character built from the bone point cloud.
         // Eliminates inter-capsule gaps on any skeleton type; the shape is a snapshot of
         // the activation pose and tracks only root translation/rotation each frame.
-        if (config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.ConvexHull)
+        if (npcSurfaceProfile == null && config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.ConvexHull)
         {
             BuildConvexHullCollision(address, ns, npcSkelPos, npcSkelRot, label);
             return;
         }
 
-        if (config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.AnimatedMesh)
+        if (npcSurfaceProfile == null && config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.AnimatedMesh)
         {
             if (IsMountObject(address) && BuildAnimatedMeshCollision(address, ns, npcSkelPos, npcSkelRot, label))
                 return;
@@ -5304,7 +5461,7 @@ public unsafe partial class RagdollController : IDisposable
                 return;
         }
 
-        if (config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.Mesh &&
+        if (npcSurfaceProfile == null && config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.Mesh &&
             BuildMeshCollision(address, ns, npcSkelPos, npcSkelRot, label))
             return;
 
@@ -5316,7 +5473,8 @@ public unsafe partial class RagdollController : IDisposable
         // Pass 1: collect every qualifying parent→child segment with its length so we can
         // keep only the longest NpcMaxCollisionSegments (the big body-blocking segments)
         // rather than building a static for every twig.
-        var candidates = new List<(float SegLen, int BoneIdx, int ParentIdx, float HalfLen, float Radius, float CenterFactor, Vector3 Center, Quaternion Rot)>();
+        var candidates = new List<(float SegLen, int BoneIdx, int ParentIdx, string Name, string Role,
+            float HalfLen, float Radius, float CenterFactor, Vector3 Center, Quaternion Rot)>();
         var boneCount = Math.Min(ns.BoneCount, ns.ParentCount);
         for (int i = 1; i < boneCount; i++) // skip root (index 0, no parent)
         {
@@ -5344,7 +5502,9 @@ public unsafe partial class RagdollController : IDisposable
             var baseHalfLen = autoSize ? MathF.Max(0.01f, (modelSegLen * 0.5f) - baseRadius) : modelSegLen * 0.45f * scale;
             var centerFactor = autoSize ? 0.5f : baseHalfLen / modelSegLen;
             var segDir = segment / segLen;
-            candidates.Add((modelSegLen, i, parentIdx, baseHalfLen,
+            var boneName = ns.HavokSkeleton->Bones[i].Name.String ?? $"bone_{i}";
+            var role = InferAnatomicalRole(boneName, null, false).ToString();
+            candidates.Add((modelSegLen, i, parentIdx, boneName, role, baseHalfLen,
                 baseRadius, centerFactor, parentWorldPos + (segLen * centerFactor) * segDir, RotationFromYToDirection(segment)));
         }
 
@@ -5358,9 +5518,25 @@ public unsafe partial class RagdollController : IDisposable
         // Pass 2: create the kinematic capsule for each kept segment.
         foreach (var c in candidates)
         {
-            var shapeIndex = simulation!.Shapes.Add(new Capsule(c.Radius * npcShapeScale, c.HalfLen * npcShapeScale * 2f));
-            var bodyHandle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
-                new RigidPose(c.Center, c.Rot),
+            var shapeCenterOffset = Vector3.Zero;
+            TypedIndex shapeIndex;
+            if (npcSurfaceProfile != null &&
+                TryCreateCharacterSurfaceHullShape(
+                    npcSurfaceProfile,
+                    new CharacterSurfaceBoneSeed(c.Name, c.Role,
+                        c.HalfLen * npcShapeScale, c.Radius * npcShapeScale, c.Radius * npcShapeScale),
+                    out var profileShape, out shapeCenterOffset))
+            {
+                shapeIndex = profileShape;
+            }
+            else
+            {
+                shapeIndex = simulation!.Shapes.Add(new Capsule(
+                    c.Radius * npcShapeScale, c.HalfLen * npcShapeScale * 2f));
+            }
+            var bodyCenter = c.Center + Vector3.Transform(shapeCenterOffset, c.Rot);
+            var bodyHandle = simulation!.Bodies.Add(BodyDescription.CreateKinematic(
+                new RigidPose(bodyCenter, c.Rot),
                 default(BodyVelocity),
                 new CollidableDescription(shapeIndex, 0.04f),
                 new BodyActivityDescription(0.01f)));
@@ -5374,7 +5550,11 @@ public unsafe partial class RagdollController : IDisposable
                 BaseHalfLength = c.HalfLen,
                 BaseRadius = c.Radius,
                 CenterFactor = c.CenterFactor,
-                PreviousPosition = c.Center,
+                BoneName = c.Name,
+                SurfaceRole = c.Role,
+                SurfaceProfile = npcSurfaceProfile,
+                ShapeCenterOffset = shapeCenterOffset,
+                PreviousPosition = bodyCenter,
                 PreviousOrientation = c.Rot,
                 HasPreviousPose = true,
                 AppliedCollisionScale = npcShapeScale,
@@ -7055,13 +7235,37 @@ public unsafe partial class RagdollController : IDisposable
             if (MathF.Abs(bone.AppliedCollisionScale - collisionScale) <= 0.0001f)
                 continue;
 
-            var newShape = simulation.Shapes.Add(new Capsule(
-                MathF.Max(0.0001f, bone.BaseRadius * collisionScale),
-                MathF.Max(0.0001f, bone.BaseHalfLength * collisionScale * 2f)));
+            TypedIndex newShape;
+            var newCenterOffset = Vector3.Zero;
+            if (bone.SurfaceProfile != null &&
+                TryCreateCharacterSurfaceHullShape(
+                    bone.SurfaceProfile,
+                    new CharacterSurfaceBoneSeed(
+                        bone.BoneName, bone.SurfaceRole,
+                        bone.BaseHalfLength * collisionScale,
+                        bone.BaseRadius * collisionScale,
+                        bone.BaseRadius * collisionScale),
+                    out var profileShape, out newCenterOffset))
+            {
+                newShape = profileShape;
+            }
+            else
+            {
+                newShape = simulation.Shapes.Add(new Capsule(
+                    MathF.Max(0.0001f, bone.BaseRadius * collisionScale),
+                    MathF.Max(0.0001f, bone.BaseHalfLength * collisionScale * 2f)));
+            }
             var oldShape = bone.ShapeIndex;
+            var body = simulation.Bodies.GetBodyReference(bone.Handle);
+            var logicalCenter = body.Pose.Position -
+                                Vector3.Transform(bone.ShapeCenterOffset, body.Pose.Orientation);
             simulation.Bodies.SetShape(bone.Handle, newShape);
+            body.Pose.Position = logicalCenter +
+                                 Vector3.Transform(newCenterOffset, body.Pose.Orientation);
             bone.ShapeIndex = newShape;
+            bone.ShapeCenterOffset = newCenterOffset;
             bone.AppliedCollisionScale = collisionScale;
+            bone.PreviousPosition = body.Pose.Position;
             state.BoneStatics[i] = bone;
             try { simulation.Shapes.RemoveAndDispose(oldShape, bufferPool); } catch { }
         }
@@ -7494,14 +7698,15 @@ public unsafe partial class RagdollController : IDisposable
             if (rb.BoneIndex < 0) continue;
             var b = simulation!.Bodies.GetBodyReference(rb.BodyHandle);
             prevWorldRotations![i] = Quaternion.Normalize(b.Pose.Orientation * rb.CapsuleToBoneOffset);
+            var profileOrigin = b.Pose.Position - Vector3.Transform(rb.ShapeCenterOffset, b.Pose.Orientation);
             if (rb.SegmentHalfLength > 0)
             {
                 var y = Vector3.Transform(Vector3.UnitY, b.Pose.Orientation);
-                prevWorldPositions![i] = b.Pose.Position - rb.SegmentHalfLength * y;
+                prevWorldPositions![i] = profileOrigin - rb.SegmentHalfLength * y;
             }
             else
             {
-                prevWorldPositions![i] = b.Pose.Position;
+                prevWorldPositions![i] = profileOrigin;
             }
         }
     }
@@ -7852,7 +8057,9 @@ public unsafe partial class RagdollController : IDisposable
 
                     var bodyRef = simulation.Bodies.GetBodyReference(bs.Handle);
                     var oldPos = bodyRef.Pose.Position;
-                    MoveNpcBoneKinematic(ref bs, capsuleCenter, capsuleRot, dt);
+                    var shapeCenter = capsuleCenter +
+                                      Vector3.Transform(bs.ShapeCenterOffset, capsuleRot);
+                    MoveNpcBoneKinematic(ref bs, shapeCenter, capsuleRot, dt);
                     npcState.BoneStatics[b] = bs;
 
                     // Monster strike: this collider bone moved from oldPos→capsuleCenter this frame.
@@ -8016,14 +8223,16 @@ public unsafe partial class RagdollController : IDisposable
 
             // Convert capsule center (at segment midpoint) back to bone origin position.
             // The bone is at the parent-end of the capsule: center - halfLength * capsuleY.
+            var profileOrigin = bodyRef.Pose.Position -
+                                Vector3.Transform(rb.ShapeCenterOffset, bodyRef.Pose.Orientation);
             if (rb.SegmentHalfLength > 0)
             {
                 var capsuleYAxis = Vector3.Transform(Vector3.UnitY, bodyRef.Pose.Orientation);
-                worldPositions[i] = bodyRef.Pose.Position - rb.SegmentHalfLength * capsuleYAxis;
+                worldPositions[i] = profileOrigin - rb.SegmentHalfLength * capsuleYAxis;
             }
             else
             {
-                worldPositions[i] = bodyRef.Pose.Position;
+                worldPositions[i] = profileOrigin;
             }
 
             boneValid[i] = true;
@@ -8553,8 +8762,10 @@ public unsafe partial class RagdollController : IDisposable
         {
             if (rb.Name != boneName) continue;
             var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            var profileOrigin = body.Pose.Position -
+                                Vector3.Transform(rb.ShapeCenterOffset, body.Pose.Orientation);
             capsule = new BoneCapsule(
-                body.Pose.Position, body.Pose.Orientation, rb.CapsuleRadius, rb.CapsuleHalfLength);
+                profileOrigin, body.Pose.Orientation, rb.CapsuleRadius, rb.CapsuleHalfLength);
             return true;
         }
         return false;
@@ -10603,7 +10814,9 @@ public unsafe partial class RagdollController : IDisposable
 
         var body = simulation.Bodies.GetBodyReference(bone.Value.BodyHandle);
         var yAxis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
-        position = body.Pose.Position - yAxis * bone.Value.SegmentHalfLength;
+        var profileOrigin = body.Pose.Position -
+                            Vector3.Transform(bone.Value.ShapeCenterOffset, body.Pose.Orientation);
+        position = profileOrigin - yAxis * bone.Value.SegmentHalfLength;
         return true;
     }
 
@@ -11245,13 +11458,15 @@ public unsafe partial class RagdollController : IDisposable
                 foreach (var bone in npcState.BoneStatics)
                 {
                     var body = simulation.Bodies.GetBodyReference(bone.Handle);
+                    var logicalCenter = body.Pose.Position -
+                                        Vector3.Transform(bone.ShapeCenterOffset, body.Pose.Orientation);
                     var scale = MathF.Max(0.0001f, bone.AppliedCollisionScale);
                     var radius = bone.BaseRadius * scale;
                     var halfLength = bone.BaseHalfLength * scale;
                     var axis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
                     var extentY = MathF.Abs(axis.Y) * halfLength + radius;
-                    capsules.Add((bone.Handle, body.Pose.Position, body.Pose.Orientation, radius, halfLength,
-                        body.Pose.Position.Y - extentY, body.Pose.Position.Y + extentY));
+                    capsules.Add((bone.Handle, logicalCenter, body.Pose.Orientation, radius, halfLength,
+                        logicalCenter.Y - extentY, logicalCenter.Y + extentY));
                 }
             }
         }
@@ -11411,6 +11626,35 @@ public unsafe partial class RagdollController : IDisposable
         if (simulation == null || sphereRadius <= 0f)
             return false;
 
+        // Profile mode is authoritative for this frame: do not combine it with the legacy
+        // capsule/box estimator, because selecting the higher result from two representations is
+        // exactly how invisible oversized support and hovering return.
+        if (characterSurfaceRuntime != null)
+        {
+            var profileFound = false;
+            var profileCenterY = float.MinValue;
+            BodyHandle profileBody = default;
+            foreach (var rb in ragdollBones)
+            {
+                if (preferredCorpseBody.HasValue && rb.BodyHandle.Value != preferredCorpseBody.Value.Value)
+                    continue;
+                if (!IsTraversalSurfaceBone(rb))
+                    continue;
+                if (!characterSurfaceRuntime.TryGetVerticalSupport(
+                        sphereCenter, sphereRadius, rb.Name, out var candidate, out _))
+                    continue;
+                if (candidate <= profileCenterY)
+                    continue;
+                profileFound = true;
+                profileCenterY = candidate;
+                profileBody = rb.BodyHandle;
+            }
+
+            if (profileFound)
+                hit = new NpcTraversalSurfaceHit(profileCenterY, profileBody);
+            return profileFound;
+        }
+
         var found = false;
         var bestCenterY = float.MinValue;
         BodyHandle bestCorpseBody = default;
@@ -11488,6 +11732,12 @@ public unsafe partial class RagdollController : IDisposable
         return found;
     }
 
+    private static bool IsTraversalSurfaceBone(RagdollBone rb)
+        => rb.Mass >= 0.45f &&
+           !rb.Name.StartsWith("j_sk_", StringComparison.Ordinal) &&
+           !rb.Name.StartsWith("j_mune", StringComparison.Ordinal) &&
+           !rb.Name.StartsWith("j_buki", StringComparison.Ordinal);
+
     /// <summary>
     /// Finds the capsule surface under a circular foot probe. This is intentionally an
     /// approximation of the structural ragdoll bodies rather than a general physics raycast:
@@ -11501,6 +11751,28 @@ public unsafe partial class RagdollController : IDisposable
             return false;
 
         probeRadius = Math.Clamp(probeRadius, 0f, 0.5f);
+        if (characterSurfaceRuntime != null)
+        {
+            var profileFound = false;
+            var profileSurfaceY = float.MinValue;
+            var queryRadius = MathF.Max(0.001f, probeRadius);
+            foreach (var rb in ragdollBones)
+            {
+                if (!IsTraversalSurfaceBone(rb))
+                    continue;
+                if (!characterSurfaceRuntime.TryGetVerticalSupport(
+                        point, queryRadius, rb.Name, out var requiredCenterY, out _))
+                    continue;
+                var candidate = requiredCenterY - queryRadius;
+                if (candidate <= profileSurfaceY)
+                    continue;
+                profileSurfaceY = candidate;
+                profileFound = true;
+            }
+            surfaceY = profileSurfaceY;
+            return profileFound;
+        }
+
         var bestSurfaceY = float.MinValue;
         var found = false;
         foreach (var rb in ragdollBones)
