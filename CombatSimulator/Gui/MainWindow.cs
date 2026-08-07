@@ -2457,6 +2457,22 @@ public partial class MainWindow : IDisposable
         DrawRagdollBoneProfilesSection();
         ImGui.Spacing();
 
+        var surfaceProfiles = config.RagdollCharacterSurfaceProfiles;
+        if (ImGui.Checkbox("Race-Aware Body Surfaces (Experimental)##ragdollSurfaceProfiles", ref surfaceProfiles))
+        {
+            config.RagdollCharacterSurfaceProfiles = surfaceProfiles;
+            config.Save();
+            if (ragdollController.IsActive)
+            {
+                var addr = ragdollController.TargetCharacterAddress;
+                ragdollController.Deactivate();
+                if (addr != nint.Zero) ragdollController.Activate(addr);
+            }
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled("Race/body profiles for contact, stepping, grabbing and ground collision; default off.");
+        ImGui.Spacing();
+
         var debugOverlay = config.RagdollDebugOverlay;
         if (ImGui.Checkbox("Show Debug Overlay##ragdollAdv", ref debugOverlay))
         {

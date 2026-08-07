@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation;
+using CombatSimulator.Animation.SurfaceProfiles;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Plugin.Services;
 
@@ -46,6 +47,7 @@ public class RagdollDebugOverlay
 
         var drawList = ImGui.GetForegroundDrawList();
         var editingBone = mainWindow.EditingBoneName;
+        DrawCharacterSurfaces(drawList, editingBone);
 
         foreach (var cap in capsules)
         {
@@ -69,6 +71,19 @@ public class RagdollDebugOverlay
             var yAxis = Vector3.Transform(Vector3.UnitY, cap.Orientation);
             var xAxis = Vector3.Transform(Vector3.UnitX, cap.Orientation);
             var zAxis = Vector3.Transform(Vector3.UnitZ, cap.Orientation);
+
+            if (cap.ColliderShape == RagdollController.RagdollColliderShape.ProfileHull)
+            {
+                DrawCircle3D(drawList, cap.Position, xAxis, zAxis,
+                    MathF.Max(0.005f, cap.Radius * 0.35f), jointColor, thickness + 0.5f);
+                if (gameGui.WorldToScreen(cap.Position, out var profileLabelPos))
+                {
+                    var label = isEditing ? $">> {cap.Name} <<" : cap.Name;
+                    var textSize = ImGui.CalcTextSize(label);
+                    drawList.AddText(profileLabelPos - textSize * 0.5f, colorLabel, label);
+                }
+                continue;
+            }
 
             if (cap.ColliderShape == RagdollController.RagdollColliderShape.Box)
             {
@@ -137,6 +152,29 @@ public class RagdollDebugOverlay
         }
 
         DrawLimitStress(drawList);
+    }
+
+    private void DrawCharacterSurfaces(ImDrawListPtr drawList, string? editingBone)
+    {
+        var normalColor = ImGui.GetColorU32(new Vector4(0.15f, 0.9f, 1f, 0.82f));
+        var selectedColor = ImGui.GetColorU32(new Vector4(1f, 0.95f, 0.15f, 1f));
+        foreach (var surface in ragdollController.GetCharacterSurfaceDebugBones(CharacterSurfaceUsage.Physics))
+        {
+            var vertices = surface.Vertices.Span;
+            var indices = surface.Indices.Span;
+            var selected = editingBone != null && surface.Name == editingBone;
+            var color = selected ? selectedColor : normalColor;
+            var thickness = selected ? 2.8f : 1.25f;
+            for (var i = 0; i + 2 < indices.Length; i += 3)
+            {
+                var a = vertices[indices[i]];
+                var b = vertices[indices[i + 1]];
+                var c = vertices[indices[i + 2]];
+                DrawEdge(drawList, a, b, color, thickness);
+                DrawEdge(drawList, b, c, color, thickness);
+                DrawEdge(drawList, c, a, color, thickness);
+            }
+        }
     }
 
     private readonly List<DismembermentController.DebugGarmentBox> tubeBuffer = new();
