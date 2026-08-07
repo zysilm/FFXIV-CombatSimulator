@@ -9,6 +9,7 @@ using System.Linq;
 using System.Numerics;
 using System.Text;
 using CombatSimulator.Animation.CollapseProfiles;
+using CombatSimulator.Animation.SurfaceProfiles;
 using CombatSimulator.Core;
 using BepuPhysics;
 using BepuPhysics.Collidables;
@@ -41,6 +42,7 @@ public unsafe partial class RagdollController : IDisposable
     private readonly Func<IReadOnlyList<nint>>? extraCollisionProvider;
     private readonly Configuration config;
     private readonly IPluginLog log;
+    private readonly CharacterSurfaceProfileBook characterSurfaceProfileBook;
 
     // Physics simulation
     private BufferPool? bufferPool;
@@ -163,6 +165,10 @@ public unsafe partial class RagdollController : IDisposable
     // generated from the real skeleton topology (see BuildGenericSkeletonDefs).
     // StepAndApply reads capsule extents from here instead of re-deriving the human set.
     private readonly Dictionary<string, RagdollBoneDef> activeDefByName = new();
+    // Lightweight race/body-aware surface cache shared by traversal, grabbing, debug drawing,
+    // and (in the next stage) the actual per-bone convex collision shapes. It follows the
+    // already-existing rigid bodies, so updating it is allocation-free and never touches MDL data.
+    private CharacterSurfaceRuntime? characterSurfaceRuntime;
 
     // True while the active ragdoll was built by the generic (non-humanoid) path.
     // Generic rigs get extra stabilization (more solver iterations + velocity clamp)
@@ -1751,6 +1757,105 @@ public unsafe partial class RagdollController : IDisposable
         public float Mass;
     }
 
+    /// <summary>The resolved race/body profile used by this corpse, if it has a supported humanoid identity.</summary>
+    public string? ActiveCharacterSurfaceProfileName => characterSurfaceRuntime?.Profile.Name;
+
+    /// <summary>Returns the lightweight profile surface nearest to a point on one named ragdoll bone.</summary>
+    public bool TryGetCharacterSurface(
+        string boneName,
+        Vector3 worldPoint,
+        CharacterSurfaceUsage usage,
+        out CharacterSurfaceHit hit)
+    {
+        hit = default;
+        return characterSurfaceRuntime != null &&
+               characterSurfaceRuntime.TryGetNearestSurface(boneName, worldPoint, usage, out hit);
+    }
+
+    /// <summary>Returns the lightweight profile surface nearest to a point on the whole ragdoll.</summary>
+    public bool TryGetCharacterSurface(
+        Vector3 worldPoint,
+        CharacterSurfaceUsage usage,
+        float maxDistance,
+        out CharacterSurfaceHit hit)
+    {
+        hit = default;
+        return characterSurfaceRuntime != null &&
+               characterSurfaceRuntime.TryGetNearestSurface(worldPoint, usage, maxDistance, out hit);
+    }
+
+    /// <summary>World-space profile triangles for developer visualization.</summary>
+    public IEnumerable<CharacterSurfaceDebugBone> GetCharacterSurfaceDebugBones(CharacterSurfaceUsage usage)
+        => characterSurfaceRuntime?.GetDebugBones(usage) ?? Array.Empty<CharacterSurfaceDebugBone>();
+
+    private CharacterSurfaceIdentity ReadCharacterSurfaceIdentity()
+    {
+        if (targetCharacterAddress == nint.Zero)
+            return default;
+
+        var character = (Character*)targetCharacterAddress;
+        var customize = (byte*)&character->DrawData.CustomizeData;
+        return new CharacterSurfaceIdentity(
+            customize[0x00], // race
+            customize[0x01], // gender
+            customize[0x04], // tribe
+            customize[0x02], // body type
+            customize[0x03], // height
+            customize[0x15], // bust / muscle tone
+            character->ModelContainer.ModelCharaId);
+    }
+
+    private void BuildCharacterSurfaceRuntime(bool genericSkeleton)
+    {
+        characterSurfaceRuntime = null;
+        if (genericSkeleton || simulation == null || ragdollBones.Count == 0)
+            return;
+
+        var identity = ReadCharacterSurfaceIdentity();
+        if (!identity.IsHumanoid)
+            return;
+
+        var profile = characterSurfaceProfileBook.Resolve(identity);
+        if (profile == null)
+            return;
+
+        var seeds = new CharacterSurfaceBoneSeed[ragdollBones.Count];
+        for (var i = 0; i < ragdollBones.Count; i++)
+        {
+            var rb = ragdollBones[i];
+            var radiusX = rb.ColliderShape == RagdollColliderShape.Box
+                ? rb.BoxHalfExtents.X
+                : rb.CapsuleRadius;
+            var radiusZ = rb.ColliderShape == RagdollColliderShape.Box
+                ? rb.BoxHalfExtents.Z
+                : rb.CapsuleRadius;
+            var halfLength = rb.ColliderShape == RagdollColliderShape.Box
+                ? rb.BoxHalfExtents.Y
+                : rb.CapsuleHalfLength;
+            var role = activeDefByName.TryGetValue(rb.Name, out var def)
+                ? def.AnatomicalRole.ToString()
+                : AnatomicalRole.Generic.ToString();
+            seeds[i] = new CharacterSurfaceBoneSeed(rb.Name, role, halfLength, radiusX, radiusZ);
+        }
+
+        characterSurfaceRuntime = new CharacterSurfaceRuntime(profile, identity, seeds);
+        UpdateCharacterSurfaceRuntime();
+        log.Info($"RagdollController: character surface profile '{profile.Name}' ({profile.Id}) " +
+                 $"cached for {ragdollBones.Count} bones.");
+    }
+
+    private void UpdateCharacterSurfaceRuntime()
+    {
+        if (characterSurfaceRuntime == null || simulation == null)
+            return;
+
+        foreach (var rb in ragdollBones)
+        {
+            var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            characterSurfaceRuntime.UpdateBonePose(rb.Name, body.Pose.Position, body.Pose.Orientation);
+        }
+    }
+
     /// <summary>A ragdoll bone's collision volume in world space. The capsule axis is local Y.</summary>
     public readonly record struct BoneCapsule(
         Vector3 Center,
@@ -2315,6 +2420,7 @@ public unsafe partial class RagdollController : IDisposable
         this.config = config;
         this.log = log;
         collapseProfileBook = new CollapseProfileBook(log);
+        characterSurfaceProfileBook = new CharacterSurfaceProfileBook(log);
 
         boneService.OnRenderFrame += OnRenderFrame;
         Core.Services.Framework.Update += ApplyDeferredFollowTransform;
@@ -2330,6 +2436,7 @@ public unsafe partial class RagdollController : IDisposable
         this.config = config;
         this.log = log;
         collapseProfileBook = new CollapseProfileBook(log);
+        characterSurfaceProfileBook = new CharacterSurfaceProfileBook(log);
 
         boneService.OnRenderFrame += OnRenderFrame;
         Core.Services.Framework.Update += ApplyDeferredFollowTransform;
@@ -4399,6 +4506,10 @@ public unsafe partial class RagdollController : IDisposable
         // What the rig actually weighs, kept so that anything asked to pick it up can size itself
         // against it instead of against a number somebody guessed once.
         ragdollTotalMass = resolvedTotalMass;
+
+        // Build one compact, race/body-aware surface cache after the rigid bodies exist. It uses
+        // their real scaled dimensions and follows those same poses for every consumer.
+        BuildCharacterSurfaceRuntime(genericSkeleton);
 
         // The bodies that actually arrive when this rig lands. Empty on a rig with no recognisable torso
         // (a non-humanoid), and IsTorsoBody then falls back to treating every body as one.
@@ -7841,6 +7952,7 @@ public unsafe partial class RagdollController : IDisposable
         // Snap any soft-tissue body that diverged/NaN'd this frame back onto its anchor
         // BEFORE the write-back reads body poses — flung flesh must never reach the mesh.
         ContainSoftTissueBodies();
+        UpdateCharacterSurfaceRuntime();
 
         if (biomechanicalSettleRemaining > 0f)
             biomechanicalSettleRemaining = MathF.Max(0f, biomechanicalSettleRemaining - dt);
@@ -11638,6 +11750,7 @@ public unsafe partial class RagdollController : IDisposable
         recoilRelaxers.Clear();
         biomechanicalSettleRemaining = 0f;
         ragdollBones.Clear();
+        characterSurfaceRuntime = null;
         externalBodies.Clear();
         externalRigs.Clear();
         externalDynamicBodyHandles.Clear();
