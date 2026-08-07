@@ -256,6 +256,9 @@ public unsafe partial class RagdollController : IDisposable
     private float attackStrikeTimer;
     private float strikePower;
     private nint strikeColliderAddress;
+    // Bone-driven swarm attacks may have several animated collider sources in one strike window.
+    // The single address above remains the optional weapon source; this set drives body bones.
+    private readonly HashSet<nint> strikeColliderAddresses = new();
     // Weapon strike: a humanoid's weapon is a separate draw object (not in the bone capsules), so
     // track its blade endpoints to give a sword swing its own velocity-driven hit.
     private Vector3 prevBladeA, prevBladeB;
@@ -7317,6 +7320,12 @@ public unsafe partial class RagdollController : IDisposable
         body.Velocity.Angular = ClampVectorLength(body.Velocity.Angular, maxAngularSpeed);
     }
 
+    private static void SoftenAttackContactVelocity(BodyReference body)
+    {
+        body.Velocity.Linear = ClampVectorLength(body.Velocity.Linear, 0.55f);
+        body.Velocity.Angular = ClampVectorLength(body.Velocity.Angular, 2f);
+    }
+
     /// <summary>
     /// Speed past which a kinematic's move is a teleport, not motion.
     ///
@@ -8019,7 +8028,9 @@ public unsafe partial class RagdollController : IDisposable
                 var npcVisualScale = GetCharacterScale(npcState.NpcAddress, ns);
                 RescaleNpcBoneCollision(ref npcState, CollisionScale(npcVisualScale));
 
-                var doStrike = attackStrikeTimer > 0f && npcState.NpcAddress == strikeColliderAddress;
+                var doStrike = attackStrikeTimer > 0f &&
+                               (npcState.NpcAddress == strikeColliderAddress ||
+                                strikeColliderAddresses.Contains(npcState.NpcAddress));
 
                 for (int b = 0; b < npcState.BoneStatics.Count; b++)
                 {
@@ -8056,7 +8067,8 @@ public unsafe partial class RagdollController : IDisposable
                     }
 
                     var bodyRef = simulation.Bodies.GetBodyReference(bs.Handle);
-                    var oldPos = bodyRef.Pose.Position;
+                    var oldPos = bodyRef.Pose.Position -
+                                 Vector3.Transform(bs.ShapeCenterOffset, bodyRef.Pose.Orientation);
                     var shapeCenter = capsuleCenter +
                                       Vector3.Transform(bs.ShapeCenterOffset, capsuleRot);
                     MoveNpcBoneKinematic(ref bs, shapeCenter, capsuleRot, dt);
@@ -8067,6 +8079,9 @@ public unsafe partial class RagdollController : IDisposable
                     // so a fast-swinging limb forcefully flings the body at the real contact point.
                     if (doStrike && dt > 0f)
                     {
+                        // Keep infinite-mass animated contact gentle. The separately measured
+                        // strike impulse below is the user-controlled part of the reaction.
+                        SoftenAttackContactVelocity(bodyRef);
                         var swingVel = (capsuleCenter - oldPos) / dt;
                         if (swingVel.LengthSquared() > StrikeMinSpeed * StrikeMinSpeed)
                             ApplyStrikeImpulse(capsuleCenter, swingVel, StrikeContactRadius);
@@ -11955,6 +11970,7 @@ public unsafe partial class RagdollController : IDisposable
         if (simulation == null) return;
         npcTraversalAnchors.Remove(address);
         if (strikeColliderAddress == address) strikeColliderAddress = nint.Zero;
+        strikeColliderAddresses.Remove(address);
         for (int i = npcCollisionStates.Count - 1; i >= 0; i--)
         {
             if (npcCollisionStates[i].NpcAddress != address) continue;
@@ -11972,11 +11988,48 @@ public unsafe partial class RagdollController : IDisposable
     public void BeginAttackStrike(float duration, float power)
     {
         if (standingActive) return;
+        strikeColliderAddresses.Clear();
+        if (strikeColliderAddress != nint.Zero)
+            strikeColliderAddresses.Add(strikeColliderAddress);
         strikePower = power;
         attackStrikeTimer = MathF.Max(attackStrikeTimer, duration);
         struckThisWindow.Clear(); // a fresh swing may hit each body again
         WakeRagdollBodiesForBiomechanicalSettle();
         BeginBiomechanicalSettle();
+    }
+
+    /// <summary>Open one shared, deliberately non-stacking strike window for several attackers.
+    /// Every registered attacker's animated collider bones can make contact, but a corpse body is
+    /// impulsed at most once across the group so a swarm cannot multiply a light hit into a launch.</summary>
+    public void BeginAttackStrike(IReadOnlyCollection<nint> attackerAddresses, float duration, float power)
+    {
+        if (standingActive || attackerAddresses.Count == 0) return;
+
+        strikeColliderAddresses.Clear();
+        strikeColliderAddress = nint.Zero;
+        foreach (var address in attackerAddresses)
+        {
+            if (address == nint.Zero) continue;
+            strikeColliderAddresses.Add(address);
+            if (strikeColliderAddress == nint.Zero)
+                strikeColliderAddress = address; // optional weapon source; bone sources use the set
+        }
+        if (strikeColliderAddresses.Count == 0) return;
+
+        strikePower = MathF.Max(0f, power);
+        attackStrikeTimer = MathF.Max(attackStrikeTimer, duration);
+        struckThisWindow.Clear();
+        WakeRagdollBodiesForBiomechanicalSettle();
+        BeginBiomechanicalSettle();
+    }
+
+    public void CancelAttackStrike()
+    {
+        attackStrikeTimer = 0f;
+        strikePower = 0f;
+        strikeColliderAddresses.Clear();
+        struckThisWindow.Clear();
+        weaponPrevValid = false;
     }
 
     private static readonly System.Random ShakeRng = new();
@@ -12039,6 +12092,7 @@ public unsafe partial class RagdollController : IDisposable
         attackStrikeTimer = 0f;
         strikePower = 0f;
         strikeColliderAddress = nint.Zero;
+        strikeColliderAddresses.Clear();
         weaponPrevValid = false;
         simulation?.Dispose();
         simulation = null;
