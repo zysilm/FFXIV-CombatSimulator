@@ -1,0 +1,176 @@
+{
+  "Version": 1,
+  "Profiles": [
+    {
+      "Id": "hyur-male", "Name": "Hyur Male", "Race": 1, "Gender": 0,
+      "RoleScales": {
+        "Pelvis": { "Width": 1.00, "Depth": 0.96, "TaperStart": 0.92, "TaperMiddle": 1.05, "TaperEnd": 0.96 },
+        "Spine": { "Width": 1.02, "Depth": 0.96, "TaperStart": 0.88, "TaperMiddle": 1.08, "TaperEnd": 1.00 },
+        "Head": { "Width": 0.96, "Depth": 0.96 },
+        "Shoulder": { "Width": 1.05, "Depth": 0.94 },
+        "Hip": { "Width": 1.03, "Depth": 1.00 }
+      }
+    },
+    {
+      "Id": "hyur-female", "Name": "Hyur Female", "Race": 1, "Gender": 1,
+      "RoleScales": {
+        "Pelvis": { "Width": 1.05, "Depth": 0.94, "TaperStart": 0.92, "TaperMiddle": 1.08, "TaperEnd": 0.96 },
+        "Spine": { "Width": 0.94, "Depth": 0.91, "TaperStart": 0.86, "TaperMiddle": 1.03, "TaperEnd": 0.96 },
+        "Head": { "Width": 0.93, "Depth": 0.93 },
+        "Shoulder": { "Width": 0.91, "Depth": 0.90 },
+        "Hip": { "Width": 1.02, "Depth": 0.98 }
+      }
+    },
+    {
+      "Id": "elezen-male", "Name": "Elezen Male", "Race": 2, "Gender": 0,
+      "DefaultScale": { "Width": 0.91, "Depth": 0.91, "Length": 1.03 },
+      "RoleScales": {
+        "Pelvis": { "Width": 0.94, "Depth": 0.90 },
+        "Spine": { "Width": 0.93, "Depth": 0.89, "TaperStart": 0.86, "TaperMiddle": 1.05, "TaperEnd": 0.98 },
+        "Head": { "Width": 0.88, "Depth": 0.91 },
+        "Shoulder": { "Width": 0.96, "Depth": 0.88 }
+      }
+    },
+    {
+      "Id": "elezen-female", "Name": "Elezen Female", "Race": 2, "Gender": 1,
+      "DefaultScale": { "Width": 0.86, "Depth": 0.87, "Length": 1.03 },
+      "RoleScales": {
+        "Pelvis": { "Width": 0.96, "Depth": 0.89 },
+        "Spine": { "Width": 0.88, "Depth": 0.85, "TaperStart": 0.84, "TaperMiddle": 1.02, "TaperEnd": 0.94 },
+        "Head": { "Width": 0.86, "Depth": 0.89 },
+        "Shoulder": { "Width": 0.86, "Depth": 0.84 }
+      }
+    },
+    {
+      "Id": "lalafell-male", "Name": "Lalafell Male", "Race": 3, "Gender": 0,
+      "DefaultScale": { "Width": 0.82, "Depth": 0.84, "Length": 0.96 },
+      "RoleScales": {
+        "Pelvis": { "Width": 0.91, "Depth": 0.90, "TaperStart": 0.97, "TaperMiddle": 1.05, "TaperEnd": 0.98 },
+        "Spine": { "Width": 0.92, "Depth": 0.90, "TaperStart": 0.94, "TaperMiddle": 1.05, "TaperEnd": 0.98 },
+        "Head": { "Width": 1.12, "Depth": 1.10 },
+        "Shoulder": { "Width": 0.88, "Depth": 0.88 },
+        "Hand": { "Width": 0.88, "Depth": 0.90 },
+        "Foot": { "Width": 0.91, "Depth": 0.94 }
+      }
+    },
+    {
+      "Id": "lalafell-female", "Name": "Lalafell Female", "Race": 3, "Gender": 1,
+      "DefaultScale": { "Width": 0.80, "Depth": 0.82, "Length": 0.96 },
+      "RoleScales": {
+        "Pelvis": { "Width": 0.91, "Depth": 0.88 },
+        "Spine": { "Width": 0.90, "Depth": 0.88, "TaperStart": 0.94, "TaperMiddle": 1.04, "TaperEnd": 0.98 },
+        "Head": { "Width": 1.10, "Depth": 1.09 },
+        "Shoulder": { "Width": 0.84, "Depth": 0.85 },
+        "Hand": { "Width": 0.86, "Depth": 0.88 },
+        "Foot": { "Width": 0.89, "Depth": 0.92 }
+      }
+    },
+    {
+      "Id": "miqote-male", "Name": "Miqo'te Male", "Race": 4, "Gender": 0,
+      "DefaultScale": { "Width": 0.94, "Depth": 0.94 },
+      "RoleScales": {
+        "Pelvis": { "Width": 0.98, "Depth": 0.96 },
+        "Spine": { "Width": 0.97, "Depth": 0.93, "TaperStart": 0.88, "TaperMiddle": 1.07, "TaperEnd": 0.98 },
+        "Head": { "Width": 0.93, "Depth": 0.94 },
+        "Shoulder": { "Width": 0.98, "Depth": 0.92 }
+      }
+    },
+    {
+      "Id": "miqote-female", "Name": "Miqo'te Female", "Race": 4, "Gender": 1,
+      "DefaultScale": { "Width": 0.89, "Depth": 0.90 },
+      "RoleScales": {
+        "Pelvis": { "Width": 1.00, "Depth": 0.94 },
+        "Spine": { "Width": 0.91, "Depth": 0.88, "TaperStart": 0.86, "TaperMiddle": 1.04, "TaperEnd": 0.95 },
+        "Head": { "Width": 0.91, "Depth": 0.92 },
+        "Shoulder": { "Width": 0.88, "Depth": 0.87 }
+      }
+    },
+    {
+      "Id": "roegadyn-male", "Name": "Roegadyn Male", "Race": 5, "Gender": 0,
+      "DefaultScale": { "Width": 1.14, "Depth": 1.13, "Length": 1.01 },
+      "RoleScales": {
+        "Pelvis": { "Width": 1.17, "Depth": 1.15 },
+        "Spine": { "Width": 1.20, "Depth": 1.16, "TaperStart": 0.90, "TaperMiddle": 1.10, "TaperEnd": 1.02 },
+        "Head": { "Width": 1.07, "Depth": 1.08 },
+        "Shoulder": { "Width": 1.23, "Depth": 1.14 },
+        "Hip": { "Width": 1.17, "Depth": 1.14 }
+      }
+    },
+    {
+      "Id": "roegadyn-female", "Name": "Roegadyn Female", "Race": 5, "Gender": 1,
+      "DefaultScale": { "Width": 1.05, "Depth": 1.04, "Length": 1.01 },
+      "RoleScales": {
+        "Pelvis": { "Width": 1.14, "Depth": 1.08 },
+        "Spine": { "Width": 1.08, "Depth": 1.03, "TaperStart": 0.87, "TaperMiddle": 1.08, "TaperEnd": 0.98 },
+        "Head": { "Width": 1.00, "Depth": 1.02 },
+        "Shoulder": { "Width": 1.07, "Depth": 1.01 },
+        "Hip": { "Width": 1.11, "Depth": 1.07 }
+      }
+    },
+    {
+      "Id": "aura-male", "Name": "Au Ra Male", "Race": 6, "Gender": 0,
+      "DefaultScale": { "Width": 1.01, "Depth": 1.00, "Length": 1.02 },
+      "RoleScales": {
+        "Pelvis": { "Width": 1.00, "Depth": 0.98 },
+        "Spine": { "Width": 1.06, "Depth": 1.00, "TaperStart": 0.86, "TaperMiddle": 1.10, "TaperEnd": 0.99 },
+        "Head": { "Width": 0.94, "Depth": 0.96 },
+        "Shoulder": { "Width": 1.11, "Depth": 0.98 }
+      }
+    },
+    {
+      "Id": "aura-female", "Name": "Au Ra Female", "Race": 6, "Gender": 1,
+      "DefaultScale": { "Width": 0.84, "Depth": 0.86, "Length": 1.00 },
+      "RoleScales": {
+        "Pelvis": { "Width": 0.98, "Depth": 0.92 },
+        "Spine": { "Width": 0.87, "Depth": 0.84, "TaperStart": 0.83, "TaperMiddle": 1.04, "TaperEnd": 0.93 },
+        "Head": { "Width": 0.87, "Depth": 0.89 },
+        "Shoulder": { "Width": 0.84, "Depth": 0.83 },
+        "Hip": { "Width": 0.94, "Depth": 0.90 }
+      }
+    },
+    {
+      "Id": "hrothgar-male", "Name": "Hrothgar Male", "Race": 7, "Gender": 0,
+      "DefaultScale": { "Width": 1.15, "Depth": 1.16, "Length": 1.00 },
+      "RoleScales": {
+        "Pelvis": { "Width": 1.16, "Depth": 1.16 },
+        "Spine": { "Width": 1.22, "Depth": 1.20, "TaperStart": 0.94, "TaperMiddle": 1.10, "TaperEnd": 1.04 },
+        "Head": { "Width": 1.14, "Depth": 1.18 },
+        "Shoulder": { "Width": 1.25, "Depth": 1.17 },
+        "Hip": { "Width": 1.17, "Depth": 1.17 },
+        "Hand": { "Width": 1.13, "Depth": 1.14 },
+        "Foot": { "Width": 1.14, "Depth": 1.18 }
+      }
+    },
+    {
+      "Id": "hrothgar-female", "Name": "Hrothgar Female", "Race": 7, "Gender": 1,
+      "DefaultScale": { "Width": 1.07, "Depth": 1.08 },
+      "RoleScales": {
+        "Pelvis": { "Width": 1.12, "Depth": 1.10 },
+        "Spine": { "Width": 1.12, "Depth": 1.09, "TaperStart": 0.90, "TaperMiddle": 1.09, "TaperEnd": 1.00 },
+        "Head": { "Width": 1.08, "Depth": 1.12 },
+        "Shoulder": { "Width": 1.13, "Depth": 1.07 },
+        "Hip": { "Width": 1.10, "Depth": 1.08 }
+      }
+    },
+    {
+      "Id": "viera-male", "Name": "Viera Male", "Race": 8, "Gender": 0,
+      "DefaultScale": { "Width": 0.91, "Depth": 0.92, "Length": 1.03 },
+      "RoleScales": {
+        "Pelvis": { "Width": 0.96, "Depth": 0.92 },
+        "Spine": { "Width": 0.94, "Depth": 0.90, "TaperStart": 0.85, "TaperMiddle": 1.06, "TaperEnd": 0.96 },
+        "Head": { "Width": 0.90, "Depth": 0.92 },
+        "Shoulder": { "Width": 0.96, "Depth": 0.89 }
+      }
+    },
+    {
+      "Id": "viera-female", "Name": "Viera Female", "Race": 8, "Gender": 1,
+      "DefaultScale": { "Width": 0.89, "Depth": 0.90, "Length": 1.03 },
+      "RoleScales": {
+        "Pelvis": { "Width": 1.00, "Depth": 0.94 },
+        "Spine": { "Width": 0.91, "Depth": 0.87, "TaperStart": 0.84, "TaperMiddle": 1.05, "TaperEnd": 0.95 },
+        "Head": { "Width": 0.89, "Depth": 0.91 },
+        "Shoulder": { "Width": 0.89, "Depth": 0.86 }
+      }
+    }
+  ]
+}

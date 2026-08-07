@@ -31,6 +31,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Npcs\NpcNames.json" />
     <EmbeddedResource Include="Resources\BuiltInBoneProfiles.json" />
+    <EmbeddedResource Include="Resources\CharacterSurfaceProfiles.json" />
     <EmbeddedResource Include="Resources\CollapseProfiles\*.json" />
     <EmbeddedResource Include="Resources\CombatRecipes\*.json" />
     <EmbeddedResource Include="Resources\Actions.json" />
