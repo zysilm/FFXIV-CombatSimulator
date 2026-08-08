@@ -250,6 +250,11 @@ public unsafe partial class RagdollController : IDisposable
 
     // NPC bone collision — per-bone static capsules for active targets
     private readonly List<NpcCollisionState> npcCollisionStates = new();
+    // Swarm followers keep their allocated bone proxies so detail can be restored without removing
+    // bodies from a live BEPU simulation, but only a small representative subset is active. This
+    // bounds the number of constraints that can converge on one corpse body when a large pack crowds
+    // around it (and avoids BEPU 2.5 beta's SequentialFallbackBatch removal bug).
+    private readonly HashSet<nint> lightweightNpcCollisionAddresses = new();
     // Monster strike: during the attack window the monster's collider bones impart their swing
     // velocity as an impulse to nearby ragdoll bodies (a fast swing = a heavy hit, at the limb's
     // real contact point).
@@ -2451,6 +2456,7 @@ public unsafe partial class RagdollController : IDisposable
     // limbs, head) and drop the rest. Bounds the per-frame static-update cost so a wave
     // of high-bone-count enemies can't add tens of thousands of UpdateBounds calls.
     private const int NpcMaxCollisionSegments = 24;
+    private const int NpcLightweightCollisionSegments = 3;
     private const int MeshCollisionMaxTriangles = 8000;
     private const int MeshCollisionPreferredLod = 0; // LOD0: matches the on-screen silhouette exactly (Low LOD shrank/coarsened the collision hull).
     private const float AnimatedMeshUpdateInterval = 0.15f;
@@ -2485,6 +2491,12 @@ public unsafe partial class RagdollController : IDisposable
         public Quaternion PreviousOrientation;
         public bool HasPreviousPose;
         public float AppliedCollisionScale;
+        public bool Lightweight;
+        public bool LightweightExtrasParked;
+        // The follow set occupies the first NpcLightweightCollisionSegments entries. A distinct
+        // hand/claw/head proxy may temporarily replace the last follow proxy during a real strike.
+        public int LightweightAttackProxyIndex;
+        public bool LightweightAttackMode;
         // True while this character's statics have been parked far away because it left the
         // update radius. Prevents leaving them frozen on the corpse ("ghost" capsules) and
         // avoids re-parking every frame; cleared when it re-enters range.
@@ -4238,7 +4250,10 @@ public unsafe partial class RagdollController : IDisposable
                 config.RagdollDamping),
             new SolveDescription(solverIterations, solverSubsteps)
             {
-                FallbackBatchThreshold = 128,
+                // Lightweight swarm collision normally keeps the actual count below the old 128
+                // threshold. Leave additional headroom for the ragdoll's own joints and unusual
+                // poses so the known beta fallback-removal path remains a last resort.
+                FallbackBatchThreshold = 256,
             });
 
         // Safety net: flat box well below the character prevents infinite falling
@@ -5270,9 +5285,20 @@ public unsafe partial class RagdollController : IDisposable
         }
 
         var totalNpcStatics = 0;
+        var activeNpcStatics = 0;
         foreach (var s in npcCollisionStates)
+        {
             totalNpcStatics += (s.IsFallback || s.IsConvexHull || s.IsMesh) ? 1 : s.BoneStatics.Count;
-        log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, {npcCollisionStates.Count} NPCs ({totalNpcStatics} collision volumes), ground={groundY:F3}");
+            activeNpcStatics += (s.IsFallback || s.IsConvexHull || s.IsMesh)
+                ? 1
+                : s.Lightweight
+                    ? Math.Min(NpcLightweightCollisionSegments, s.BoneStatics.Count)
+                    : s.BoneStatics.Count;
+        }
+        var collisionVolumeSummary = activeNpcStatics == totalNpcStatics
+            ? $"{totalNpcStatics} collision volumes"
+            : $"{activeNpcStatics} active / {totalNpcStatics} allocated collision volumes";
+        log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, {npcCollisionStates.Count} NPCs ({collisionVolumeSummary}), ground={groundY:F3}");
 
         // Initialize hair physics — the BEPU rig is the only implementation (the legacy
         // pendulum simulator is retired). If the rig cannot build (no head ragdoll body /
@@ -5511,16 +5537,81 @@ public unsafe partial class RagdollController : IDisposable
                 baseRadius, centerFactor, parentWorldPos + (segLen * centerFactor) * segDir, RotationFromYToDirection(segment)));
         }
 
-        // Keep only the longest segments when a high-bone-count rig exceeds the cap.
-        if (candidates.Count > NpcMaxCollisionSegments)
+        // Put three stable locomotion proxies first: the longest body axis, the lowest support
+        // segment, and the best torso/second-longest segment. Keeping a hand, claw, mouth or head in
+        // the always-on follow set made a dense swarm lead with that endpoint and shove the corpse
+        // sideways. The best attack endpoint is retained immediately after the follow prefix and is
+        // swapped in only during the short physical-strike window.
+        var lightweightAttackProxyIndex = -1;
+        if (candidates.Count > 0)
         {
-            candidates.Sort((a, b) => b.SegLen.CompareTo(a.SegLen));
-            candidates.RemoveRange(NpcMaxCollisionSegments, candidates.Count - NpcMaxCollisionSegments);
+            var selectedIndices = new List<int>();
+            var longestIndex = 0;
+            var attackIndex = 0;
+            var supportIndex = 0;
+            var torsoIndex = 0;
+            for (var i = 1; i < candidates.Count; i++)
+            {
+                if (candidates[i].SegLen > candidates[longestIndex].SegLen)
+                    longestIndex = i;
+                var attackScore = LightweightCollisionRoleScore(candidates[i].Name);
+                var bestAttackScore = LightweightCollisionRoleScore(candidates[attackIndex].Name);
+                if (attackScore > bestAttackScore ||
+                    (attackScore == bestAttackScore && candidates[i].SegLen > candidates[attackIndex].SegLen))
+                    attackIndex = i;
+                if (candidates[i].Center.Y < candidates[supportIndex].Center.Y)
+                    supportIndex = i;
+                var torsoScore = LightweightFollowRoleScore(candidates[i].Name);
+                var bestTorsoScore = LightweightFollowRoleScore(candidates[torsoIndex].Name);
+                if (torsoScore > bestTorsoScore ||
+                    (torsoScore == bestTorsoScore && candidates[i].SegLen > candidates[torsoIndex].SegLen))
+                    torsoIndex = i;
+            }
+
+            selectedIndices.Add(longestIndex);
+            if (!selectedIndices.Contains(supportIndex))
+                selectedIndices.Add(supportIndex);
+            if (!selectedIndices.Contains(torsoIndex))
+                selectedIndices.Add(torsoIndex);
+            foreach (var indexed in candidates.Select((candidate, index) => (candidate, index))
+                         .OrderByDescending(x => x.candidate.SegLen))
+            {
+                if (selectedIndices.Count >= NpcLightweightCollisionSegments)
+                    break;
+                if (!selectedIndices.Contains(indexed.index))
+                    selectedIndices.Add(indexed.index);
+            }
+
+            var selectedSet = selectedIndices.ToHashSet();
+            var ordered = new List<(float SegLen, int BoneIdx, int ParentIdx, string Name, string Role,
+                float HalfLen, float Radius, float CenterFactor, Vector3 Center, Quaternion Rot)>();
+            foreach (var index in selectedIndices)
+                ordered.Add(candidates[index]);
+            if (!selectedSet.Contains(attackIndex))
+            {
+                lightweightAttackProxyIndex = ordered.Count;
+                ordered.Add(candidates[attackIndex]);
+                selectedSet.Add(attackIndex);
+            }
+            else
+            {
+                lightweightAttackProxyIndex = selectedIndices.IndexOf(attackIndex);
+            }
+            ordered.AddRange(candidates.Select((candidate, index) => (candidate, index))
+                .Where(x => !selectedSet.Contains(x.index))
+                .OrderByDescending(x => x.candidate.SegLen)
+                .Select(x => x.candidate));
+            candidates.Clear();
+            candidates.AddRange(ordered.Take(NpcMaxCollisionSegments));
         }
 
-        // Pass 2: create the kinematic capsule for each kept segment.
-        foreach (var c in candidates)
+        // Pass 2: create the kinematic capsule for each kept segment. When lightweight mode was
+        // requested before construction, create inactive proxies parked from the outset so there is
+        // never even a one-frame full-detail contact burst in an already running simulation.
+        var lightweight = lightweightNpcCollisionAddresses.Contains(address);
+        for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
         {
+            var c = candidates[candidateIndex];
             var shapeCenterOffset = Vector3.Zero;
             TypedIndex shapeIndex;
             if (npcSurfaceProfile != null &&
@@ -5537,9 +5628,13 @@ public unsafe partial class RagdollController : IDisposable
                 shapeIndex = simulation!.Shapes.Add(new Capsule(
                     c.Radius * npcShapeScale, c.HalfLen * npcShapeScale * 2f));
             }
-            var bodyCenter = c.Center + Vector3.Transform(shapeCenterOffset, c.Rot);
+            var inactiveLightweightProxy = lightweight && candidateIndex >= NpcLightweightCollisionSegments;
+            var bodyCenter = inactiveLightweightProxy
+                ? new Vector3(0, -9999, 0)
+                : c.Center + Vector3.Transform(shapeCenterOffset, c.Rot);
+            var bodyRotation = inactiveLightweightProxy ? Quaternion.Identity : c.Rot;
             var bodyHandle = simulation!.Bodies.Add(BodyDescription.CreateKinematic(
-                new RigidPose(bodyCenter, c.Rot),
+                new RigidPose(bodyCenter, bodyRotation),
                 default(BodyVelocity),
                 new CollidableDescription(shapeIndex, 0.04f),
                 new BodyActivityDescription(0.01f)));
@@ -5558,7 +5653,7 @@ public unsafe partial class RagdollController : IDisposable
                 SurfaceProfile = npcSurfaceProfile,
                 ShapeCenterOffset = shapeCenterOffset,
                 PreviousPosition = bodyCenter,
-                PreviousOrientation = c.Rot,
+                PreviousOrientation = bodyRotation,
                 HasPreviousPose = true,
                 AppliedCollisionScale = npcShapeScale,
             });
@@ -5571,13 +5666,78 @@ public unsafe partial class RagdollController : IDisposable
                 NpcAddress = address,
                 BoneStatics = boneStatics,
                 IsFallback = false,
+                Lightweight = lightweight,
+                LightweightExtrasParked = lightweight,
+                LightweightAttackProxyIndex = lightweightAttackProxyIndex,
             });
-            log.Info($"RagdollController: {label} bone collision — {boneStatics.Count} segments from {boneCount} bones");
+            var activeSegments = lightweight
+                ? Math.Min(NpcLightweightCollisionSegments, boneStatics.Count)
+                : boneStatics.Count;
+            var detail = activeSegments == boneStatics.Count ? string.Empty : $", {activeSegments} active";
+            log.Info($"RagdollController: {label} bone collision — {boneStatics.Count} segments{detail} from {boneCount} bones");
         }
         else
         {
             CreateFallbackCharacterCollision(label, address);
         }
+    }
+
+    /// <summary>A soft navigation reference sampled from one structural corpse collider. The ID is
+    /// stable for the lifetime of the current physics simulation; no constraint owns this point.</summary>
+    public readonly struct CorpseTraversalSlot
+    {
+        public readonly int Id;
+        public readonly Vector3 Position;
+        public readonly float Clearance;
+
+        public CorpseTraversalSlot(int id, Vector3 position, float clearance)
+        {
+            Id = id;
+            Position = position;
+            Clearance = clearance;
+        }
+    }
+
+    private static int LightweightCollisionRoleScore(string boneName)
+    {
+        var name = boneName.ToLowerInvariant();
+        if (name.Contains("j_te_") || name.Contains("hand") || name.Contains("claw") || name.Contains("talon"))
+            return 6;
+        if (name.Contains("j_kao") || name.Contains("head") || name.Contains("mouth") || name.Contains("jaw"))
+            return 5;
+        if (name.Contains("j_asi_e") || name.Contains("foot") || name.Contains("hoof"))
+            return 4;
+        if (name.Contains("j_kosi") || name.Contains("n_hara") || name.Contains("j_sebo") || name.Contains("body"))
+            return 3;
+        return 0;
+    }
+
+    private static int LightweightFollowRoleScore(string boneName)
+    {
+        var name = boneName.ToLowerInvariant();
+        if (name.Contains("j_kosi") || name.Contains("n_hara") || name.Contains("pelvis") || name.Contains("body"))
+            return 6;
+        if (name.Contains("j_sebo") || name.Contains("spine") || name.Contains("chest") || name.Contains("torso"))
+            return 5;
+        if (name.Contains("j_asi_a") || name.Contains("j_asi_b") || name.Contains("thigh") || name.Contains("leg"))
+            return 3;
+        return 0;
+    }
+
+    private static bool IsNpcBoneProxyActive(in NpcCollisionState state, int boneIndex, bool attackMode)
+    {
+        if (!state.Lightweight)
+            return true;
+        if (boneIndex < 0 || boneIndex >= state.BoneStatics.Count)
+            return false;
+
+        var followCount = Math.Min(NpcLightweightCollisionSegments, state.BoneStatics.Count);
+        if (!attackMode || state.LightweightAttackProxyIndex < followCount ||
+            state.LightweightAttackProxyIndex >= state.BoneStatics.Count)
+            return boneIndex < followCount;
+
+        // Preserve the two structural/support proxies and replace only the third follow proxy.
+        return boneIndex < Math.Max(1, followCount - 1) || boneIndex == state.LightweightAttackProxyIndex;
     }
 
     private Dictionary<int, float> BuildHumanoidCollisionRadiusMap(SkeletonAccess skel)
@@ -8031,9 +8191,37 @@ public unsafe partial class RagdollController : IDisposable
                 var doStrike = attackStrikeTimer > 0f &&
                                (npcState.NpcAddress == strikeColliderAddress ||
                                 strikeColliderAddresses.Contains(npcState.NpcAddress));
+                var lightweightAttackMode = npcState.Lightweight && doStrike &&
+                                            npcState.LightweightAttackProxyIndex >= 0;
+                if (npcState.LightweightAttackMode != lightweightAttackMode)
+                {
+                    npcState.LightweightAttackMode = lightweightAttackMode;
+                    npcState.LightweightExtrasParked = false;
+                }
+                if (npcState.Lightweight && !npcState.LightweightExtrasParked)
+                {
+                    // Keep the bodies allocated: removing collidables while NarrowPhase is flushing
+                    // is the exact BEPU beta path that raised SequentialFallbackBatch's NRE. Parking
+                    // the inactive proxies is deterministic and lets full detail be restored safely.
+                    for (var b = 0; b < npcState.BoneStatics.Count; b++)
+                    {
+                        if (IsNpcBoneProxyActive(npcState, b, lightweightAttackMode))
+                            continue;
+                        var parked = npcState.BoneStatics[b];
+                        MoveNpcBoneKinematic(ref parked, npcCollisionParkPos, Quaternion.Identity, dt);
+                        npcState.BoneStatics[b] = parked;
+                    }
+                    npcState.LightweightExtrasParked = true;
+                }
+                else if (!npcState.Lightweight)
+                {
+                    npcState.LightweightExtrasParked = false;
+                }
 
                 for (int b = 0; b < npcState.BoneStatics.Count; b++)
                 {
+                    if (!IsNpcBoneProxyActive(npcState, b, lightweightAttackMode))
+                        continue;
                     var bs = npcState.BoneStatics[b];
                     if (bs.BoneIndex < 0 || bs.BoneIndex >= ns.BoneCount) continue;
                     if (bs.ParentBoneIndex < 0 || bs.ParentBoneIndex >= ns.BoneCount) continue;
@@ -8071,18 +8259,21 @@ public unsafe partial class RagdollController : IDisposable
                                  Vector3.Transform(bs.ShapeCenterOffset, bodyRef.Pose.Orientation);
                     var shapeCenter = capsuleCenter +
                                       Vector3.Transform(bs.ShapeCenterOffset, capsuleRot);
+                    var strikeTravel = capsuleCenter - oldPos;
+                    var strikeMotionValid = strikeTravel.LengthSquared() <=
+                                            MathF.Pow(MathF.Max(2f, CollisionScale(npcVisualScale) * 2f), 2f);
                     MoveNpcBoneKinematic(ref bs, shapeCenter, capsuleRot, dt);
                     npcState.BoneStatics[b] = bs;
 
                     // Monster strike: this collider bone moved from oldPos→capsuleCenter this frame.
                     // During the attack window, impart that swing velocity to nearby ragdoll bodies,
                     // so a fast-swinging limb forcefully flings the body at the real contact point.
-                    if (doStrike && dt > 0f)
+                    if (doStrike && dt > 0f && strikeMotionValid)
                     {
                         // Keep infinite-mass animated contact gentle. The separately measured
                         // strike impulse below is the user-controlled part of the reaction.
                         SoftenAttackContactVelocity(bodyRef);
-                        var swingVel = (capsuleCenter - oldPos) / dt;
+                        var swingVel = strikeTravel / dt;
                         if (swingVel.LengthSquared() > StrikeMinSpeed * StrikeMinSpeed)
                             ApplyStrikeImpulse(capsuleCenter, swingVel, StrikeContactRadius);
                     }
@@ -11425,6 +11616,14 @@ public unsafe partial class RagdollController : IDisposable
         return best;
     }
 
+    /// <summary>Forget the retained corpse-support pair for one live NPC. Call when an external
+    /// movement controller stops ground traversal or releases ownership of that actor.</summary>
+    public void ClearNpcTraversalSupport(nint npcAddress)
+    {
+        if (npcAddress != nint.Zero)
+            npcTraversalAnchors.Remove(npcAddress);
+    }
+
     /// <summary>
     /// Resolve the root height required for the registered NPC's real lowest BEPU capsules to
     /// contact the visible ragdoll volumes. Unlike the general foot probe, this does not invent a
@@ -11470,8 +11669,11 @@ public unsafe partial class RagdollController : IDisposable
             }
             else if (!npcState.IsMesh && !npcState.IsConvexHull)
             {
-                foreach (var bone in npcState.BoneStatics)
+                for (var boneIndex = 0; boneIndex < npcState.BoneStatics.Count; boneIndex++)
                 {
+                    if (!IsNpcBoneProxyActive(npcState, boneIndex, npcState.LightweightAttackMode))
+                        continue;
+                    var bone = npcState.BoneStatics[boneIndex];
                     var body = simulation.Bodies.GetBodyReference(bone.Handle);
                     var logicalCenter = body.Pose.Position -
                                         Vector3.Transform(bone.ShapeCenterOffset, body.Pose.Orientation);
@@ -11507,12 +11709,13 @@ public unsafe partial class RagdollController : IDisposable
 
         var gameObject = (GameObject*)npcAddress;
         var currentRoot = new Vector3(gameObject->Position.X, gameObject->Position.Y, gameObject->Position.Z);
-        var rootDelta = proposedRootPosition - currentRoot;
+        var proposedRootDelta = proposedRootPosition - currentRoot;
         maxClimb = MathF.Max(0f, maxClimb);
 
         bool TryEvaluateAcquisition(
             (BodyHandle Handle, Vector3 Center, Quaternion Orientation, float Radius, float HalfLength, float Bottom, float Top) capsule,
             float along,
+            Vector3 sampledRootPosition,
             bool horizontalHandoff,
             out float candidateRootY,
             out NpcTraversalSurfaceHit hit)
@@ -11520,14 +11723,14 @@ public unsafe partial class RagdollController : IDisposable
             candidateRootY = terrainY;
             hit = default;
             var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
-            var sphereCenter = capsule.Center + axis * along + rootDelta;
+            var sphereCenter = capsule.Center + axis * along + (sampledRootPosition - currentRoot);
             if (!TryGetSphereSupportHit(
                     sphereCenter, capsule.Radius, horizontalHandoff, null, out hit))
                 return false;
 
             var verticalCorrection = hit.RequiredCenterY - sphereCenter.Y;
             var penetration = Math.Clamp(capsule.Radius * 0.12f, 0.0001f, 0.01f);
-            candidateRootY = proposedRootPosition.Y + verticalCorrection - penetration;
+            candidateRootY = sampledRootPosition.Y + verticalCorrection - penetration;
 
             if (!horizontalHandoff)
             {
@@ -11555,7 +11758,7 @@ public unsafe partial class RagdollController : IDisposable
                 // positive feedback loop. The exact NPC sample/corpse pair remains support while
                 // their XZ volumes overlap with an upward-facing contact region.
                 var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
-                var sphereCenter = capsule.Center + axis * anchor.NpcAlongAxis + rootDelta;
+                var sphereCenter = capsule.Center + axis * anchor.NpcAlongAxis + proposedRootDelta;
                 if (TryGetSphereSupportHit(
                         sphereCenter, capsule.Radius, true, anchor.CorpseBody, out _))
                 {
@@ -11569,17 +11772,197 @@ public unsafe partial class RagdollController : IDisposable
             npcTraversalAnchors.Remove(npcAddress);
         }
 
+        bool TryFindSupportAt(
+            Vector3 sampledRootPosition,
+            bool horizontalHandoff,
+            float? referenceRootY,
+            out float candidateRootY,
+            out BodyHandle npcBody,
+            out float npcAlongAxis,
+            out BodyHandle corpseBody)
+        {
+            var found = false;
+            candidateRootY = float.MinValue;
+            npcBody = default;
+            npcAlongAxis = 0f;
+            corpseBody = default;
+            foreach (var capsule in capsules)
+            {
+                if (capsule.Bottom > lowerBandTop)
+                    continue;
+
+                for (var sampleIndex = 0; sampleIndex < 3; sampleIndex++)
+                {
+                    var along = sampleIndex switch
+                    {
+                        0 => -capsule.HalfLength,
+                        2 => capsule.HalfLength,
+                        _ => 0f,
+                    };
+                    if (!TryEvaluateAcquisition(
+                            capsule, along, sampledRootPosition, horizontalHandoff,
+                            out var nextRootY, out var hit))
+                        continue;
+                    var preferCandidate = !found || (referenceRootY.HasValue
+                        ? MathF.Abs(nextRootY - referenceRootY.Value) <
+                          MathF.Abs(candidateRootY - referenceRootY.Value)
+                        : nextRootY > candidateRootY);
+                    if (!preferCandidate)
+                        continue;
+
+                    found = true;
+                    candidateRootY = nextRootY;
+                    npcBody = capsule.Handle;
+                    npcAlongAxis = along;
+                    corpseBody = hit.CorpseBody;
+                }
+            }
+            return found;
+        }
+
+        // Stable support is decided only at the requested destination. A crossed surface from an
+        // earlier point in the frame must not become an anchor at the actor's final XZ position.
+        if (TryFindSupportAt(
+                proposedRootPosition, previousSupportRootY.HasValue, previousSupportRootY,
+                out var bestRootY, out var bestNpcBody, out var bestAlongAxis,
+                out var bestCorpseBody))
+        {
+            if (previousSupportRootY.HasValue)
+                bestRootY = MathF.Max(previousSupportRootY.Value, bestRootY);
+            npcTraversalAnchors[npcAddress] = new NpcTraversalAnchor
+            {
+                NpcBody = bestNpcBody,
+                NpcAlongAxis = bestAlongAxis,
+                CorpseBody = bestCorpseBody,
+                SupportRootY = bestRootY,
+            };
+            rootY = bestRootY;
+            return true;
+        }
+
+        // A lost anchor is allowed to fall. New acquisition gets one continuous sweep so a narrow
+        // support cannot be skipped between frames. A swept-only hit is a transient step-up, not a
+        // retained body pair; it only tells the movement controller to clear the crossed surface.
+        if (previousSupportRootY.HasValue)
+            return false;
+
+        var horizontalDelta = new Vector2(
+            proposedRootPosition.X - currentRoot.X,
+            proposedRootPosition.Z - currentRoot.Z);
+        var sweepDistance = horizontalDelta.Length();
+        if (sweepDistance <= 0.000001f)
+            return false;
+
+        var sweepRadius = float.MaxValue;
+        foreach (var capsule in capsules)
+        {
+            if (capsule.Bottom <= lowerBandTop)
+                sweepRadius = MathF.Min(sweepRadius, capsule.Radius);
+        }
+        if (sweepRadius == float.MaxValue)
+            return false;
+
+        var sweepStep = MathF.Max(0.001f, sweepRadius * 0.5f);
+        var sweepSamples = Math.Min(128, Math.Max(1,
+            (int)MathF.Ceiling(sweepDistance / sweepStep)));
+        for (var sweepIndex = 1; sweepIndex < sweepSamples; sweepIndex++)
+        {
+            var sampledRootPosition = Vector3.Lerp(
+                currentRoot, proposedRootPosition, sweepIndex / (float)sweepSamples);
+            if (!TryFindSupportAt(
+                    sampledRootPosition, false, null,
+                    out bestRootY, out _, out _, out _))
+                continue;
+            rootY = bestRootY;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Pure look-ahead version of corpse support acquisition. It samples the registered
+    /// NPC's real lowest proxies at a future root position but never creates, replaces, or removes a
+    /// retained support anchor. Swarm steering uses this to begin raising the root before its
+    /// kinematic proxies deliver a side-on normal impulse to the corpse.</summary>
+    public bool TryPreviewNpcTraversalRootHeight(
+        nint npcAddress,
+        Vector3 previewRootPosition,
+        float terrainY,
+        float maxClimb,
+        out float rootY)
+    {
+        rootY = terrainY;
+        if (simulation == null || !isActive || !physicsStarted || npcAddress == nint.Zero)
+            return false;
+
+        NpcCollisionState? matchedState = null;
+        foreach (var state in npcCollisionStates)
+        {
+            if (state.NpcAddress == npcAddress && !state.Parked)
+            {
+                matchedState = state;
+                break;
+            }
+        }
+        if (!matchedState.HasValue)
+            return false;
+
+        var npcState = matchedState.Value;
+        var capsules = new List<(Vector3 Center, Quaternion Orientation, float Radius, float HalfLength, float Bottom, float Top)>();
+        try
+        {
+            if (npcState.IsFallback)
+            {
+                var body = simulation.Bodies.GetBodyReference(npcState.FallbackHandle);
+                var scale = MathF.Max(0.0001f, npcState.AppliedCollisionScale);
+                var radius = npcState.FallbackBaseRadius * scale;
+                var halfLength = npcState.FallbackBaseLength * scale * 0.5f;
+                var extentY = halfLength + radius;
+                capsules.Add((body.Pose.Position, body.Pose.Orientation, radius, halfLength,
+                    body.Pose.Position.Y - extentY, body.Pose.Position.Y + extentY));
+            }
+            else if (!npcState.IsMesh && !npcState.IsConvexHull)
+            {
+                for (var boneIndex = 0; boneIndex < npcState.BoneStatics.Count; boneIndex++)
+                {
+                    if (!IsNpcBoneProxyActive(npcState, boneIndex, false))
+                        continue;
+                    var bone = npcState.BoneStatics[boneIndex];
+                    var body = simulation.Bodies.GetBodyReference(bone.Handle);
+                    var logicalCenter = body.Pose.Position -
+                                        Vector3.Transform(bone.ShapeCenterOffset, body.Pose.Orientation);
+                    var scale = MathF.Max(0.0001f, bone.AppliedCollisionScale);
+                    var radius = bone.BaseRadius * scale;
+                    var halfLength = bone.BaseHalfLength * scale;
+                    var axis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
+                    var extentY = MathF.Abs(axis.Y) * halfLength + radius;
+                    capsules.Add((logicalCenter, body.Pose.Orientation, radius, halfLength,
+                        logicalCenter.Y - extentY, logicalCenter.Y + extentY));
+                }
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (capsules.Count == 0)
+            return false;
+
+        var minBottom = capsules.Min(c => c.Bottom);
+        var maxTop = capsules.Max(c => c.Top);
+        var lowerBandTop = minBottom + MathF.Max(0.0002f, (maxTop - minBottom) * 0.18f);
+        var gameObject = (GameObject*)npcAddress;
+        var currentRoot = new Vector3(gameObject->Position.X, gameObject->Position.Y, gameObject->Position.Z);
+        var rootDelta = previewRootPosition - currentRoot;
         var found = false;
         var bestRootY = float.MinValue;
-        BodyHandle bestNpcBody = default;
-        BodyHandle bestCorpseBody = default;
-        var bestAlongAxis = 0f;
 
         foreach (var capsule in capsules)
         {
             if (capsule.Bottom > lowerBandTop)
                 continue;
-
+            var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
             for (var sampleIndex = 0; sampleIndex < 3; sampleIndex++)
             {
                 var along = sampleIndex switch
@@ -11588,38 +11971,26 @@ public unsafe partial class RagdollController : IDisposable
                     2 => capsule.HalfLength,
                     _ => 0f,
                 };
-                if (!TryEvaluateAcquisition(
-                        capsule, along, previousSupportRootY.HasValue, out var candidateRootY, out var hit))
+                var sphereCenter = capsule.Center + axis * along + rootDelta;
+                if (!TryGetSphereSupportHit(sphereCenter, capsule.Radius, false, null, out var hit))
                     continue;
-                var preferCandidate = !found || (previousSupportRootY.HasValue
-                    ? MathF.Abs(candidateRootY - previousSupportRootY.Value) < MathF.Abs(bestRootY - previousSupportRootY.Value)
-                    : candidateRootY > bestRootY);
-                if (preferCandidate)
-                {
-                    bestRootY = candidateRootY;
-                    bestNpcBody = capsule.Handle;
-                    bestAlongAxis = along;
-                    bestCorpseBody = hit.CorpseBody;
-                    found = true;
-                }
+                var verticalCorrection = hit.RequiredCenterY - sphereCenter.Y;
+                var penetration = Math.Clamp(capsule.Radius * 0.12f, 0.0001f, 0.01f);
+                var candidate = previewRootPosition.Y + verticalCorrection - penetration;
+                var allowedGap = MathF.Max(0.002f, capsule.Radius * 0.5f);
+                if (hit.RequiredCenterY - capsule.Radius <= terrainY + 0.001f ||
+                    verticalCorrection < -allowedGap || candidate > terrainY + MathF.Max(0f, maxClimb))
+                    continue;
+                candidate = MathF.Max(terrainY, candidate);
+                if (candidate <= terrainY + 0.001f || (found && candidate <= bestRootY))
+                    continue;
+                found = true;
+                bestRootY = candidate;
             }
         }
 
-        if (!found || (!previousSupportRootY.HasValue && bestRootY <= terrainY + 0.001f))
+        if (!found)
             return false;
-
-        // A handoff may climb to a higher corpse volume, but it never follows a compressed body
-        // downward. Downward motion begins only after all real horizontal support has been left.
-        if (previousSupportRootY.HasValue)
-            bestRootY = MathF.Max(previousSupportRootY.Value, bestRootY);
-
-        npcTraversalAnchors[npcAddress] = new NpcTraversalAnchor
-        {
-            NpcBody = bestNpcBody,
-            NpcAlongAxis = bestAlongAxis,
-            CorpseBody = bestCorpseBody,
-            SupportRootY = bestRootY,
-        };
         rootY = bestRootY;
         return true;
     }
@@ -11752,6 +12123,89 @@ public unsafe partial class RagdollController : IDisposable
            !rb.Name.StartsWith("j_sk_", StringComparison.Ordinal) &&
            !rb.Name.StartsWith("j_mune", StringComparison.Ordinal) &&
            !rb.Name.StartsWith("j_buki", StringComparison.Ordinal);
+
+    // Navigation landmarks are deliberately semantic rather than a second copy of the collider
+    // list.  A nearest-collider search tends to collapse onto the large skirt/torso volumes and
+    // gives the swarm no recognizable pose to follow.  These bones describe stable, readable
+    // parts of a humanoid pose.  Mod-specific soft bones may be used as X/Z landmarks, but they
+    // are never promoted to traversal surfaces by IsTraversalSurfaceBone.
+    private static readonly string[] CorpseTraversalLandmarkBones =
+    {
+        // Chest and abdomen.
+        "j_mune_l", "j_mune_r", "iv_c_mune_l", "iv_c_mune_r",
+        "n_hara", "iv_fukubu_phys_r", "ya_fukubu_phys",
+        // Pelvis, buttocks and groin.
+        "j_kosi", "iv_shiri_l", "iv_shiri_r", "iv_inshin_l", "iv_inshin_r",
+        "iv_kougan_l", "iv_kougan_r", "iv_omanko",
+        // Armpit/shoulder landmarks.
+        "j_sako_l", "j_sako_r", "n_hkata_l", "n_hkata_r",
+        // Extremities remain useful anchors when a limb is spread away from the torso.
+        "j_te_l", "j_te_r", "j_asi_e_l", "j_asi_e_r",
+        // Head/neck complete the silhouette.
+        "j_kubi", "j_kao",
+    };
+
+    /// <summary>Build pose-following navigation slots from semantic body landmarks. Landmark X/Z
+    /// tracks the named bone, while actual root height is resolved separately by the traversal
+    /// query. Soft/body-mod landmarks therefore never become colliders, and clothing cannot win
+    /// merely because it is the nearest large mesh.</summary>
+    public int CollectCorpseTraversalSlots(List<CorpseTraversalSlot> destination)
+    {
+        destination.Clear();
+        if (simulation == null || !isActive || !physicsStarted)
+            return 0;
+
+        void TryAddLandmarkSlot(RagdollBone bone, Vector3 seed, int landmarkIndex, float clearance)
+        {
+            // The landmark chooses horizontal intent only. TickSwarm asks
+            // TryGetNpcTraversalRootHeight for real structural support every frame. If no support
+            // lies under a spread hand/foot, that follower remains terrain-supported while still
+            // following the limb's X/Z motion.
+            var position = seed;
+            foreach (var existing in destination)
+            {
+                var minimum = MathF.Max(clearance, existing.Clearance) * 0.62f;
+                var delta = new Vector2(position.X - existing.Position.X, position.Z - existing.Position.Z);
+                if (delta.LengthSquared() < minimum * minimum)
+                    return;
+            }
+
+            destination.Add(new CorpseTraversalSlot(
+                unchecked(bone.BodyHandle.Value * 64 + landmarkIndex), position, clearance));
+        }
+
+        for (var landmarkIndex = 0; landmarkIndex < CorpseTraversalLandmarkBones.Length; landmarkIndex++)
+        {
+            var boneName = CorpseTraversalLandmarkBones[landmarkIndex];
+            RagdollBone? matched = null;
+            foreach (var candidate in ragdollBones)
+            {
+                if (candidate.Name.Equals(boneName, StringComparison.Ordinal))
+                {
+                    matched = candidate;
+                    break;
+                }
+            }
+            if (!matched.HasValue)
+                continue;
+
+            var bone = matched.Value;
+            var body = simulation.Bodies.GetBodyReference(bone.BodyHandle);
+            var profileOrigin = body.Pose.Position -
+                                Vector3.Transform(bone.ShapeCenterOffset, body.Pose.Orientation);
+            var segmentAxis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
+            // Runtime bodies sit at segment midpoints. Recover the actual skeleton joint so a
+            // landmark follows the named bone rather than the middle of its collider.
+            var boneOrigin = profileOrigin - segmentAxis * bone.SegmentHalfLength;
+            var clearance = bone.ColliderShape == RagdollColliderShape.Box
+                ? MathF.Max(bone.BoxHalfExtents.X, bone.BoxHalfExtents.Z)
+                : bone.CapsuleRadius;
+            clearance = Math.Clamp(clearance, 0.06f, 0.18f);
+            TryAddLandmarkSlot(bone, boneOrigin, landmarkIndex, clearance);
+        }
+
+        return destination.Count;
+    }
 
     /// <summary>
     /// Finds the capsule surface under a circular foot probe. This is intentionally an
@@ -11963,12 +12417,35 @@ public unsafe partial class RagdollController : IDisposable
         return true;
     }
 
+    /// <summary>Use only a representative prefix of an actor's already allocated bone proxies.
+    /// Intended for large swarms where full-detail collision would create hundreds of simultaneous
+    /// contacts. Changing the mode never adds or removes a BEPU body from the running simulation.</summary>
+    public void SetLiveColliderLightweight(nint address, bool lightweight)
+    {
+        if (address == nint.Zero) return;
+        if (lightweight)
+            lightweightNpcCollisionAddresses.Add(address);
+        else
+            lightweightNpcCollisionAddresses.Remove(address);
+
+        for (var i = 0; i < npcCollisionStates.Count; i++)
+        {
+            if (npcCollisionStates[i].NpcAddress != address) continue;
+            var state = npcCollisionStates[i];
+            state.Lightweight = lightweight;
+            // The render-frame update parks or restores the correct range on its next safe pass.
+            state.LightweightExtrasParked = false;
+            npcCollisionStates[i] = state;
+        }
+    }
+
     /// <summary>Remove a live collider registered via <see cref="AddLiveCollider"/> (parks its
     /// statics far away and drops the per-frame tracking entry so a despawned actor isn't read).</summary>
     public void RemoveLiveCollider(nint address)
     {
+        lightweightNpcCollisionAddresses.Remove(address);
+        ClearNpcTraversalSupport(address);
         if (simulation == null) return;
-        npcTraversalAnchors.Remove(address);
         if (strikeColliderAddress == address) strikeColliderAddress = nint.Zero;
         strikeColliderAddresses.Remove(address);
         for (int i = npcCollisionStates.Count - 1; i >= 0; i--)
