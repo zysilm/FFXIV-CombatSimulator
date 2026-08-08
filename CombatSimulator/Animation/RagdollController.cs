@@ -156,6 +156,10 @@ public unsafe partial class RagdollController : IDisposable
     // the narrow phase gives only these contacts the soft, low-friction material that prevents a
     // walking character from punting the corpse sideways.
     private readonly HashSet<int> npcCollisionKinematicBodyHandles = new();
+    // Auto-traversing swarm actors are root-driven from corpse support queries. Their proxy poses
+    // remain live as geometric probes, but contacts with this ragdoll are disabled to break the
+    // unstable kinematic-NPC -> dynamic-corpse -> root-correction feedback loop.
+    private readonly HashSet<int> npcTraversalGhostKinematicBodyHandles = new();
     // Soft-tissue (SoftBody) rig bodies — excluded from ALL contact generation (see
     // RagdollNarrowPhaseCallbacks.SoftBodyBodies).
     private readonly HashSet<int> softBodyBodyHandles = new();
@@ -2511,15 +2515,52 @@ public unsafe partial class RagdollController : IDisposable
         public BodyHandle NpcBody;
         public float NpcAlongAxis;
         public BodyHandle CorpseBody;
-        // This is a unilateral support plane, not a live copy of the dynamic corpse surface.
-        // Once a foot has climbed onto a body, letting this value follow that body's instantaneous
-        // Y feeds the corpse's contact response straight back into the kinematic NPC and creates a
-        // two-state oscillator (NPC up -> corpse down -> NPC down -> corpse rebounds). Keep the
-        // load-bearing root fixed until the foot walks off or hands over to a higher support.
+        // The support sample is retained in the corpse body's local frame.  This lets the NPC follow
+        // the same physical patch when the body translates or rotates instead of alternating between
+        // a stale world-space height and a newly acquired surface on consecutive update/render frames.
+        public Vector3 CorpseLocalSupportCenter;
+        public float RootToSupportCenterY;
         public float SupportRootY;
+        public long LastConfirmedTimestamp;
     }
 
     private readonly Dictionary<nint, NpcTraversalAnchor> npcTraversalAnchors = new();
+    private const float NpcTraversalAnchorGraceSeconds = 0.12f;
+    private const float NpcTraversalAnchorMaxCorrectionDown = 0.025f;
+    private const float NpcTraversalAnchorMaxCorrectionUp = 0.04f;
+
+    private readonly struct NpcTraversalCapsule
+    {
+        public readonly BodyHandle Handle;
+        public readonly Vector3 Center;
+        public readonly Quaternion Orientation;
+        public readonly float Radius;
+        public readonly float HalfLength;
+        public readonly float Bottom;
+        public readonly float Top;
+
+        public NpcTraversalCapsule(
+            BodyHandle handle,
+            Vector3 center,
+            Quaternion orientation,
+            float radius,
+            float halfLength,
+            float bottom,
+            float top)
+        {
+            Handle = handle;
+            Center = center;
+            Orientation = orientation;
+            Radius = radius;
+            HalfLength = halfLength;
+            Bottom = bottom;
+            Top = top;
+        }
+    }
+
+    // Traversal queries are sequential on the framework thread. Reusing one small buffer avoids a
+    // List allocation for every follower and every preview sample (hundreds per frame in a swarm).
+    private readonly List<NpcTraversalCapsule> npcTraversalCapsuleBuffer = new(16);
 
     private readonly struct NpcTraversalSurfaceHit
     {
@@ -4241,6 +4282,7 @@ public unsafe partial class RagdollController : IDisposable
                 ExternalRigSelfCollideGroupByBody = externalRigSelfCollideGroupByBody,
                 SoftKinematicBodies = softKinematicBodyHandles,
                 NpcCollisionKinematicBodies = npcCollisionKinematicBodyHandles,
+                NpcTraversalGhostKinematicBodies = npcTraversalGhostKinematicBodyHandles,
                 SoftBodyBodies = softBodyBodyHandles,
                 SoftBodyStaticCollision = config.RagdollSoftTissueCollision,
                 Friction = config.RagdollFriction,
@@ -11713,6 +11755,118 @@ public unsafe partial class RagdollController : IDisposable
             npcTraversalAnchors.Remove(npcAddress);
     }
 
+    private bool TryCollectNpcTraversalCapsules(
+        in NpcCollisionState npcState,
+        bool lightweightAttackMode,
+        List<NpcTraversalCapsule> destination)
+    {
+        destination.Clear();
+        if (simulation == null)
+            return false;
+
+        try
+        {
+            if (npcState.IsFallback)
+            {
+                var body = simulation.Bodies.GetBodyReference(npcState.FallbackHandle);
+                var scale = MathF.Max(0.0001f, npcState.AppliedCollisionScale);
+                var radius = npcState.FallbackBaseRadius * scale;
+                var halfLength = npcState.FallbackBaseLength * scale * 0.5f;
+                var extentY = halfLength + radius;
+                destination.Add(new NpcTraversalCapsule(
+                    npcState.FallbackHandle,
+                    body.Pose.Position,
+                    body.Pose.Orientation,
+                    radius,
+                    halfLength,
+                    body.Pose.Position.Y - extentY,
+                    body.Pose.Position.Y + extentY));
+            }
+            else if (!npcState.IsMesh && !npcState.IsConvexHull)
+            {
+                for (var boneIndex = 0; boneIndex < npcState.BoneStatics.Count; boneIndex++)
+                {
+                    if (!IsNpcBoneProxyActive(npcState, boneIndex, lightweightAttackMode))
+                        continue;
+                    var bone = npcState.BoneStatics[boneIndex];
+                    var body = simulation.Bodies.GetBodyReference(bone.Handle);
+                    var logicalCenter = body.Pose.Position -
+                                        Vector3.Transform(bone.ShapeCenterOffset, body.Pose.Orientation);
+                    var scale = MathF.Max(0.0001f, bone.AppliedCollisionScale);
+                    var radius = bone.BaseRadius * scale;
+                    var halfLength = bone.BaseHalfLength * scale;
+                    var axis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
+                    var extentY = MathF.Abs(axis.Y) * halfLength + radius;
+                    destination.Add(new NpcTraversalCapsule(
+                        bone.Handle,
+                        logicalCenter,
+                        body.Pose.Orientation,
+                        radius,
+                        halfLength,
+                        logicalCenter.Y - extentY,
+                        logicalCenter.Y + extentY));
+                }
+            }
+        }
+        catch
+        {
+            destination.Clear();
+        }
+
+        return destination.Count > 0;
+    }
+
+    private bool TryResolveTrackedNpcSupport(
+        NpcTraversalAnchor anchor,
+        float terrainY,
+        out float rootY,
+        out Vector3 supportCenter)
+    {
+        rootY = terrainY;
+        supportCenter = default;
+        if (simulation == null)
+            return false;
+
+        try
+        {
+            var body = simulation.Bodies.GetBodyReference(anchor.CorpseBody);
+            supportCenter = body.Pose.Position +
+                            Vector3.Transform(anchor.CorpseLocalSupportCenter, body.Pose.Orientation);
+            rootY = MathF.Max(terrainY, supportCenter.Y + anchor.RootToSupportCenterY);
+            return float.IsFinite(rootY);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private bool TryUpdateNpcTraversalAnchor(
+        NpcTraversalAnchor anchor,
+        Vector3 supportCenter,
+        float supportRootY,
+        long confirmedTimestamp)
+    {
+        if (simulation == null)
+            return false;
+
+        try
+        {
+            var body = simulation.Bodies.GetBodyReference(anchor.CorpseBody);
+            var inverse = Quaternion.Inverse(body.Pose.Orientation);
+            anchor.CorpseLocalSupportCenter = Vector3.Transform(
+                supportCenter - body.Pose.Position, inverse);
+            anchor.RootToSupportCenterY = supportRootY - supportCenter.Y;
+            anchor.SupportRootY = supportRootY;
+            anchor.LastConfirmedTimestamp = confirmedTimestamp;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Resolve the root height required for the registered NPC's real lowest BEPU capsules to
     /// contact the visible ragdoll volumes. Unlike the general foot probe, this does not invent a
@@ -11743,45 +11897,8 @@ public unsafe partial class RagdollController : IDisposable
             return false;
 
         var npcState = matchedState.Value;
-        var capsules = new List<(BodyHandle Handle, Vector3 Center, Quaternion Orientation, float Radius, float HalfLength, float Bottom, float Top)>();
-        try
-        {
-            if (npcState.IsFallback)
-            {
-                var body = simulation.Bodies.GetBodyReference(npcState.FallbackHandle);
-                var scale = MathF.Max(0.0001f, npcState.AppliedCollisionScale);
-                var radius = npcState.FallbackBaseRadius * scale;
-                var halfLength = npcState.FallbackBaseLength * scale * 0.5f;
-                var extentY = halfLength + radius;
-                capsules.Add((npcState.FallbackHandle, body.Pose.Position, body.Pose.Orientation, radius, halfLength,
-                    body.Pose.Position.Y - extentY, body.Pose.Position.Y + extentY));
-            }
-            else if (!npcState.IsMesh && !npcState.IsConvexHull)
-            {
-                for (var boneIndex = 0; boneIndex < npcState.BoneStatics.Count; boneIndex++)
-                {
-                    if (!IsNpcBoneProxyActive(npcState, boneIndex, npcState.LightweightAttackMode))
-                        continue;
-                    var bone = npcState.BoneStatics[boneIndex];
-                    var body = simulation.Bodies.GetBodyReference(bone.Handle);
-                    var logicalCenter = body.Pose.Position -
-                                        Vector3.Transform(bone.ShapeCenterOffset, body.Pose.Orientation);
-                    var scale = MathF.Max(0.0001f, bone.AppliedCollisionScale);
-                    var radius = bone.BaseRadius * scale;
-                    var halfLength = bone.BaseHalfLength * scale;
-                    var axis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
-                    var extentY = MathF.Abs(axis.Y) * halfLength + radius;
-                    capsules.Add((bone.Handle, logicalCenter, body.Pose.Orientation, radius, halfLength,
-                        logicalCenter.Y - extentY, logicalCenter.Y + extentY));
-                }
-            }
-        }
-        catch
-        {
-            return false;
-        }
-
-        if (capsules.Count == 0)
+        var capsules = npcTraversalCapsuleBuffer;
+        if (!TryCollectNpcTraversalCapsules(npcState, npcState.LightweightAttackMode, capsules))
             return false;
 
         var minBottom = float.MaxValue;
@@ -11802,15 +11919,17 @@ public unsafe partial class RagdollController : IDisposable
         maxClimb = MathF.Max(0f, maxClimb);
 
         bool TryEvaluateAcquisition(
-            (BodyHandle Handle, Vector3 Center, Quaternion Orientation, float Radius, float HalfLength, float Bottom, float Top) capsule,
+            NpcTraversalCapsule capsule,
             float along,
             Vector3 sampledRootPosition,
             bool horizontalHandoff,
             out float candidateRootY,
-            out NpcTraversalSurfaceHit hit)
+            out NpcTraversalSurfaceHit hit,
+            out Vector3 supportCenter)
         {
             candidateRootY = terrainY;
             hit = default;
+            supportCenter = default;
             var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
             var sphereCenter = capsule.Center + axis * along + (sampledRootPosition - currentRoot);
             if (!TryGetSphereSupportHit(
@@ -11831,9 +11950,11 @@ public unsafe partial class RagdollController : IDisposable
             }
 
             candidateRootY = MathF.Max(terrainY, candidateRootY);
+            supportCenter = new Vector3(sphereCenter.X, hit.RequiredCenterY, sphereCenter.Z);
             return horizontalHandoff || candidateRootY > terrainY + 0.001f;
         }
 
+        var queryTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
         float? previousSupportRootY = null;
         if (npcTraversalAnchors.TryGetValue(npcAddress, out var anchor))
         {
@@ -11849,10 +11970,53 @@ public unsafe partial class RagdollController : IDisposable
                 var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
                 var sphereCenter = capsule.Center + axis * anchor.NpcAlongAxis + proposedRootDelta;
                 if (TryGetSphereSupportHit(
-                        sphereCenter, capsule.Radius, true, anchor.CorpseBody, out _))
+                        sphereCenter, capsule.Radius, true, anchor.CorpseBody, out var retainedHit))
                 {
-                    rootY = MathF.Max(terrainY, anchor.SupportRootY);
+                    var penetration = Math.Clamp(capsule.Radius * 0.12f, 0.0001f, 0.01f);
+                    var rawRootY = MathF.Max(terrainY,
+                        proposedRootPosition.Y + retainedHit.RequiredCenterY - sphereCenter.Y - penetration);
+                    var retainedSupportCenter = new Vector3(
+                        sphereCenter.X, retainedHit.RequiredCenterY, sphereCenter.Z);
+
+                    // Follow the same local patch of the moving corpse, then admit only a small
+                    // correction toward the freshly measured surface. This removes the one-frame
+                    // render/update phase jump without recreating the old corpse-down/NPC-down
+                    // positive feedback loop.
+                    var trackedRootY = anchor.SupportRootY;
+                    if (TryResolveTrackedNpcSupport(anchor, terrainY, out var resolvedRootY, out _))
+                        trackedRootY = resolvedRootY;
+                    var correction = Math.Clamp(
+                        rawRootY - trackedRootY,
+                        -NpcTraversalAnchorMaxCorrectionDown,
+                        NpcTraversalAnchorMaxCorrectionUp);
+                    rootY = MathF.Max(terrainY, trackedRootY + correction);
+                    if (!TryUpdateNpcTraversalAnchor(
+                            anchor, retainedSupportCenter, rootY, queryTimestamp))
+                        npcTraversalAnchors.Remove(npcAddress);
                     return true;
+                }
+
+                // A moving/rotating ragdoll can make the geometric query miss for one update even
+                // though the foot is still over the same patch. Keep the local-frame support for a
+                // short grace period, but only while the foot remains close in X/Z; genuine walk-off
+                // still releases promptly.
+                var graceElapsed = anchor.LastConfirmedTimestamp > 0
+                    ? (queryTimestamp - anchor.LastConfirmedTimestamp) /
+                      (double)System.Diagnostics.Stopwatch.Frequency
+                    : double.MaxValue;
+                if (graceElapsed <= NpcTraversalAnchorGraceSeconds &&
+                    TryResolveTrackedNpcSupport(
+                        anchor, terrainY, out var graceRootY, out var trackedSupportCenter))
+                {
+                    var horizontalGap = Vector2.Distance(
+                        new Vector2(sphereCenter.X, sphereCenter.Z),
+                        new Vector2(trackedSupportCenter.X, trackedSupportCenter.Z));
+                    var graceRadius = MathF.Max(0.08f, capsule.Radius * 2.5f);
+                    if (horizontalGap <= graceRadius)
+                    {
+                        rootY = graceRootY;
+                        return true;
+                    }
                 }
                 break;
             }
@@ -11868,13 +12032,15 @@ public unsafe partial class RagdollController : IDisposable
             out float candidateRootY,
             out BodyHandle npcBody,
             out float npcAlongAxis,
-            out BodyHandle corpseBody)
+            out BodyHandle corpseBody,
+            out Vector3 supportCenter)
         {
             var found = false;
             candidateRootY = float.MinValue;
             npcBody = default;
             npcAlongAxis = 0f;
             corpseBody = default;
+            supportCenter = default;
             foreach (var capsule in capsules)
             {
                 if (capsule.Bottom > lowerBandTop)
@@ -11890,7 +12056,7 @@ public unsafe partial class RagdollController : IDisposable
                     };
                     if (!TryEvaluateAcquisition(
                             capsule, along, sampledRootPosition, horizontalHandoff,
-                            out var nextRootY, out var hit))
+                            out var nextRootY, out var hit, out var nextSupportCenter))
                         continue;
                     var preferCandidate = !found || (referenceRootY.HasValue
                         ? MathF.Abs(nextRootY - referenceRootY.Value) <
@@ -11904,6 +12070,7 @@ public unsafe partial class RagdollController : IDisposable
                     npcBody = capsule.Handle;
                     npcAlongAxis = along;
                     corpseBody = hit.CorpseBody;
+                    supportCenter = nextSupportCenter;
                 }
             }
             return found;
@@ -11914,17 +12081,21 @@ public unsafe partial class RagdollController : IDisposable
         if (TryFindSupportAt(
                 proposedRootPosition, previousSupportRootY.HasValue, previousSupportRootY,
                 out var bestRootY, out var bestNpcBody, out var bestAlongAxis,
-                out var bestCorpseBody))
+                out var bestCorpseBody, out var bestSupportCenter))
         {
             if (previousSupportRootY.HasValue)
                 bestRootY = MathF.Max(previousSupportRootY.Value, bestRootY);
-            npcTraversalAnchors[npcAddress] = new NpcTraversalAnchor
+            var newAnchor = new NpcTraversalAnchor
             {
                 NpcBody = bestNpcBody,
                 NpcAlongAxis = bestAlongAxis,
                 CorpseBody = bestCorpseBody,
                 SupportRootY = bestRootY,
+                LastConfirmedTimestamp = queryTimestamp,
             };
+            if (TryUpdateNpcTraversalAnchor(
+                    newAnchor, bestSupportCenter, bestRootY, queryTimestamp))
+                npcTraversalAnchors[npcAddress] = newAnchor;
             rootY = bestRootY;
             return true;
         }
@@ -11960,7 +12131,7 @@ public unsafe partial class RagdollController : IDisposable
                 currentRoot, proposedRootPosition, sweepIndex / (float)sweepSamples);
             if (!TryFindSupportAt(
                     sampledRootPosition, false, null,
-                    out bestRootY, out _, out _, out _))
+                    out bestRootY, out _, out _, out _, out _))
                 continue;
             rootY = bestRootY;
             return true;
@@ -11978,7 +12149,9 @@ public unsafe partial class RagdollController : IDisposable
         Vector3 previewRootPosition,
         float terrainY,
         float maxClimb,
-        out float rootY)
+        out float rootY,
+        Vector3? pathStartRootPosition = null,
+        int pathSampleCount = 1)
     {
         rootY = terrainY;
         if (simulation == null || !isActive || !physicsStarted || npcAddress == nint.Zero)
@@ -11997,84 +12170,60 @@ public unsafe partial class RagdollController : IDisposable
             return false;
 
         var npcState = matchedState.Value;
-        var capsules = new List<(Vector3 Center, Quaternion Orientation, float Radius, float HalfLength, float Bottom, float Top)>();
-        try
-        {
-            if (npcState.IsFallback)
-            {
-                var body = simulation.Bodies.GetBodyReference(npcState.FallbackHandle);
-                var scale = MathF.Max(0.0001f, npcState.AppliedCollisionScale);
-                var radius = npcState.FallbackBaseRadius * scale;
-                var halfLength = npcState.FallbackBaseLength * scale * 0.5f;
-                var extentY = halfLength + radius;
-                capsules.Add((body.Pose.Position, body.Pose.Orientation, radius, halfLength,
-                    body.Pose.Position.Y - extentY, body.Pose.Position.Y + extentY));
-            }
-            else if (!npcState.IsMesh && !npcState.IsConvexHull)
-            {
-                for (var boneIndex = 0; boneIndex < npcState.BoneStatics.Count; boneIndex++)
-                {
-                    if (!IsNpcBoneProxyActive(npcState, boneIndex, false))
-                        continue;
-                    var bone = npcState.BoneStatics[boneIndex];
-                    var body = simulation.Bodies.GetBodyReference(bone.Handle);
-                    var logicalCenter = body.Pose.Position -
-                                        Vector3.Transform(bone.ShapeCenterOffset, body.Pose.Orientation);
-                    var scale = MathF.Max(0.0001f, bone.AppliedCollisionScale);
-                    var radius = bone.BaseRadius * scale;
-                    var halfLength = bone.BaseHalfLength * scale;
-                    var axis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
-                    var extentY = MathF.Abs(axis.Y) * halfLength + radius;
-                    capsules.Add((logicalCenter, body.Pose.Orientation, radius, halfLength,
-                        logicalCenter.Y - extentY, logicalCenter.Y + extentY));
-                }
-            }
-        }
-        catch
-        {
-            return false;
-        }
-
-        if (capsules.Count == 0)
+        var capsules = npcTraversalCapsuleBuffer;
+        if (!TryCollectNpcTraversalCapsules(npcState, false, capsules))
             return false;
 
-        var minBottom = capsules.Min(c => c.Bottom);
-        var maxTop = capsules.Max(c => c.Top);
+        var minBottom = float.MaxValue;
+        var maxTop = float.MinValue;
+        foreach (var capsule in capsules)
+        {
+            minBottom = MathF.Min(minBottom, capsule.Bottom);
+            maxTop = MathF.Max(maxTop, capsule.Top);
+        }
         var lowerBandTop = minBottom + MathF.Max(0.0002f, (maxTop - minBottom) * 0.18f);
         var gameObject = (GameObject*)npcAddress;
         var currentRoot = new Vector3(gameObject->Position.X, gameObject->Position.Y, gameObject->Position.Z);
-        var rootDelta = previewRootPosition - currentRoot;
         var found = false;
         var bestRootY = float.MinValue;
+        pathSampleCount = Math.Clamp(pathSampleCount, 1, 8);
+        var pathStart = pathStartRootPosition ?? previewRootPosition;
 
-        foreach (var capsule in capsules)
+        for (var pathSample = 1; pathSample <= pathSampleCount; pathSample++)
         {
-            if (capsule.Bottom > lowerBandTop)
-                continue;
-            var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
-            for (var sampleIndex = 0; sampleIndex < 3; sampleIndex++)
+            var sampledRootPosition = pathSampleCount == 1
+                ? previewRootPosition
+                : Vector3.Lerp(pathStart, previewRootPosition, pathSample / (float)pathSampleCount);
+            var rootDelta = sampledRootPosition - currentRoot;
+            foreach (var capsule in capsules)
             {
-                var along = sampleIndex switch
+                if (capsule.Bottom > lowerBandTop)
+                    continue;
+                var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
+                for (var sampleIndex = 0; sampleIndex < 3; sampleIndex++)
                 {
-                    0 => -capsule.HalfLength,
-                    2 => capsule.HalfLength,
-                    _ => 0f,
-                };
-                var sphereCenter = capsule.Center + axis * along + rootDelta;
-                if (!TryGetSphereSupportHit(sphereCenter, capsule.Radius, false, null, out var hit))
-                    continue;
-                var verticalCorrection = hit.RequiredCenterY - sphereCenter.Y;
-                var penetration = Math.Clamp(capsule.Radius * 0.12f, 0.0001f, 0.01f);
-                var candidate = previewRootPosition.Y + verticalCorrection - penetration;
-                var allowedGap = MathF.Max(0.002f, capsule.Radius * 0.5f);
-                if (hit.RequiredCenterY - capsule.Radius <= terrainY + 0.001f ||
-                    verticalCorrection < -allowedGap || candidate > terrainY + MathF.Max(0f, maxClimb))
-                    continue;
-                candidate = MathF.Max(terrainY, candidate);
-                if (candidate <= terrainY + 0.001f || (found && candidate <= bestRootY))
-                    continue;
-                found = true;
-                bestRootY = candidate;
+                    var along = sampleIndex switch
+                    {
+                        0 => -capsule.HalfLength,
+                        2 => capsule.HalfLength,
+                        _ => 0f,
+                    };
+                    var sphereCenter = capsule.Center + axis * along + rootDelta;
+                    if (!TryGetSphereSupportHit(sphereCenter, capsule.Radius, false, null, out var hit))
+                        continue;
+                    var verticalCorrection = hit.RequiredCenterY - sphereCenter.Y;
+                    var penetration = Math.Clamp(capsule.Radius * 0.12f, 0.0001f, 0.01f);
+                    var candidate = sampledRootPosition.Y + verticalCorrection - penetration;
+                    var allowedGap = MathF.Max(0.002f, capsule.Radius * 0.5f);
+                    if (hit.RequiredCenterY - capsule.Radius <= terrainY + 0.001f ||
+                        verticalCorrection < -allowedGap || candidate > terrainY + MathF.Max(0f, maxClimb))
+                        continue;
+                    candidate = MathF.Max(terrainY, candidate);
+                    if (candidate <= terrainY + 0.001f || (found && candidate <= bestRootY))
+                        continue;
+                    found = true;
+                    bestRootY = candidate;
+                }
             }
         }
 
@@ -12690,11 +12839,74 @@ public unsafe partial class RagdollController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Keep a live NPC's proxy bodies available to traversal queries while excluding their
+    /// dynamic-ragdoll contacts. This is the one-way coupling used by auto-navigation: the corpse
+    /// determines the follower root, but a root correction cannot feed an infinite-mass kinematic
+    /// impulse back into that same corpse. No bodies are added/removed from the running simulation.
+    /// </summary>
+    public void SetLiveColliderTraversalGhost(nint address, bool ghost)
+    {
+        if (address == nint.Zero)
+            return;
+
+        foreach (var state in npcCollisionStates)
+        {
+            if (state.NpcAddress != address)
+                continue;
+
+            void SetHandle(BodyHandle handle)
+            {
+                if (ghost)
+                    npcTraversalGhostKinematicBodyHandles.Add(handle.Value);
+                else
+                    npcTraversalGhostKinematicBodyHandles.Remove(handle.Value);
+            }
+
+            if (state.IsMesh)
+                SetHandle(state.MeshHandle);
+            else if (state.IsConvexHull)
+                SetHandle(state.ConvexHullHandle);
+            else if (state.IsFallback)
+                SetHandle(state.FallbackHandle);
+            else
+                foreach (var bone in state.BoneStatics)
+                    SetHandle(bone.Handle);
+        }
+    }
+
+    /// <summary>
+    /// Apply one bounded, one-way load pulse when an auto-traversing follower first acquires
+    /// support. Unlike kinematic contact this cannot feed a root correction back into the corpse;
+    /// it only gives the contacted body a small downward velocity change once per footfall.
+    /// </summary>
+    public void ApplyNpcTraversalStomp(nint address, float impulse)
+    {
+        if (simulation == null || address == nint.Zero || impulse <= 0f ||
+            !npcTraversalAnchors.TryGetValue(address, out var anchor))
+            return;
+
+        try
+        {
+            var body = simulation.Bodies.GetBodyReference(anchor.CorpseBody);
+            var inverseMass = body.LocalInertia.InverseMass;
+            if (inverseMass <= 0f)
+                return;
+            var downwardDelta = MathF.Min(0.14f, MathF.Max(0f, impulse) * inverseMass);
+            body.Velocity.Linear.Y -= downwardDelta;
+            body.Awake = true;
+            prevAllAsleep = false;
+            inPlaceRestLatched = false;
+        }
+        catch { }
+    }
+
     /// <summary>Remove a live collider registered via <see cref="AddLiveCollider"/> (parks its
     /// statics far away and drops the per-frame tracking entry so a despawned actor isn't read).</summary>
     public void RemoveLiveCollider(nint address)
     {
         lightweightNpcCollisionAddresses.Remove(address);
+        SetLiveColliderTraversalGhost(address, false);
         ClearNpcTraversalSupport(address);
         if (simulation == null) return;
         if (strikeColliderAddress == address) strikeColliderAddress = nint.Zero;
@@ -12814,6 +13026,7 @@ public unsafe partial class RagdollController : IDisposable
         nextExternalRigSelfCollideGroup = 1;
         softKinematicBodyHandles.Clear();
         npcCollisionKinematicBodyHandles.Clear();
+        npcTraversalGhostKinematicBodyHandles.Clear();
         softBodyBodyHandles.Clear();
         npcCollisionStates.Clear();
         npcTraversalAnchors.Clear();
@@ -12853,6 +13066,7 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     public Dictionary<int, int>? ExternalRigSelfCollideGroupByBody;
     public HashSet<int>? SoftKinematicBodies;
     public HashSet<int>? NpcCollisionKinematicBodies;
+    public HashSet<int>? NpcTraversalGhostKinematicBodies;
     public HashSet<int>? RestrictedStatics;
     public HashSet<int>? AllowedDynamicBodiesForRestrictedStatics;
     // Soft-tissue rig bodies (breast / mod jiggle bones): no body contacts ever; static
@@ -12904,6 +13118,10 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         if ((a.Mobility == CollidableMobility.Dynamic && b.Mobility == CollidableMobility.Kinematic) ||
             (b.Mobility == CollidableMobility.Dynamic && a.Mobility == CollidableMobility.Kinematic))
         {
+            var kinematic = a.Mobility == CollidableMobility.Kinematic ? a : b;
+            if (NpcTraversalGhostKinematicBodies?.Contains(kinematic.BodyHandle.Value) == true)
+                return false;
+
             // Hair strands (and their kinematic follow-anchor) are flagged no-ragdoll-contact: they are
             // driven purely by joints, so they must not collide with any kinematic body — neither their
             // own anchor (which sits on the scalp) nor NPC collision proxies. Without this the anchor
