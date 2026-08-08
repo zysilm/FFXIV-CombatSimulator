@@ -2637,6 +2637,7 @@ public unsafe partial class RagdollController : IDisposable
         isActive = true;
         lastFrameTimestamp = 0;
         physicsAccumulator = 0f;
+        traversalMassMultiplier = 1f;
         prevAllAsleep = false;
         inPlaceRestLatched = false;
         inPlaceTrackedCount = 0;
@@ -5689,12 +5690,27 @@ public unsafe partial class RagdollController : IDisposable
         public readonly int Id;
         public readonly Vector3 Position;
         public readonly float Clearance;
+        public readonly float SelectionWeight;
+        public readonly float WanderRadius;
+        public readonly bool IsFace;
+        public readonly string Label;
 
-        public CorpseTraversalSlot(int id, Vector3 position, float clearance)
+        public CorpseTraversalSlot(
+            int id,
+            Vector3 position,
+            float clearance,
+            float selectionWeight,
+            float wanderRadius,
+            bool isFace,
+            string label)
         {
             Id = id;
             Position = position;
             Clearance = clearance;
+            SelectionWeight = selectionWeight;
+            WanderRadius = wanderRadius;
+            IsFace = isFace;
+            Label = label;
         }
     }
 
@@ -8663,6 +8679,70 @@ public unsafe partial class RagdollController : IDisposable
 
     /// <summary>What the rig actually weighs, summed at InitializePhysics.</summary>
     private float ragdollTotalMass;
+    private float traversalMassMultiplier = 1f;
+
+    /// <summary>
+    /// Temporarily scale dynamic ragdoll mass/inertia for kinematic traversal contacts. This is not
+    /// a gravity or animation-speed trick: inverse mass and the complete inverse inertia tensor are
+    /// scaled together, so footsteps impart less linear and angular acceleration. Rigid-grab restore
+    /// inertias are updated too, preventing a grabbed bone from reappearing with a stale mass.
+    /// </summary>
+    public void SetTraversalMassMultiplier(float multiplier)
+    {
+        multiplier = float.IsFinite(multiplier) ? Math.Clamp(multiplier, 1f, 12f) : 1f;
+        if (MathF.Abs(multiplier - traversalMassMultiplier) < 0.001f)
+            return;
+
+        if (simulation == null || !isActive || !physicsStarted)
+        {
+            traversalMassMultiplier = 1f;
+            return;
+        }
+
+        var inverseScale = traversalMassMultiplier / multiplier;
+        foreach (var bone in ragdollBones)
+        {
+            try
+            {
+                var body = simulation.Bodies.GetBodyReference(bone.BodyHandle);
+                var inertia = body.LocalInertia;
+                // A rigidly grabbed body is temporarily kinematic. Its dynamic inertia is held in
+                // GrabSlot.RestInertia and scaled below instead of turning it dynamic here.
+                if (inertia.InverseMass <= 0f)
+                    continue;
+                ScaleInverseInertia(ref inertia, inverseScale);
+                body.SetLocalInertia(inertia);
+                body.Awake = true;
+            }
+            catch { }
+        }
+
+        foreach (var slot in grabSlots.Values)
+        {
+            if (!slot.BodyIsKinematic || slot.RestInertia.InverseMass <= 0f)
+                continue;
+            var inertia = slot.RestInertia;
+            ScaleInverseInertia(ref inertia, inverseScale);
+            slot.RestInertia = inertia;
+        }
+
+        traversalMassMultiplier = multiplier;
+        prevAllAsleep = false;
+        inPlaceRestLatched = false;
+        BeginBiomechanicalSettle(0.25f);
+        log.Info($"RagdollController: traversal mass {multiplier:F1}x for 0x{targetCharacterAddress:X}.");
+    }
+
+    private static void ScaleInverseInertia(ref BodyInertia inertia, float scale)
+    {
+        inertia.InverseMass *= scale;
+        inertia.InverseInertiaTensor.XX *= scale;
+        inertia.InverseInertiaTensor.YX *= scale;
+        inertia.InverseInertiaTensor.YY *= scale;
+        inertia.InverseInertiaTensor.ZX *= scale;
+        inertia.InverseInertiaTensor.ZY *= scale;
+        inertia.InverseInertiaTensor.ZZ *= scale;
+    }
 
     /// <summary>
     /// Headroom over the rig's own weight that a spring grab is given.
@@ -11364,6 +11444,12 @@ public unsafe partial class RagdollController : IDisposable
     /// always wins in the end, which is exactly what a dead limb does.
     /// </summary>
     private const float JointFrictionFraction = 0.35f;
+    // The head and neck form a short two-link chain and receive continuous small impulses while
+    // swarm colliders walk on the corpse.  The general limp-joint budget is intentionally too weak
+    // to dissipate that input, producing the known persistent head nod.  A local finite budget keeps
+    // common whole-body rotation intact (the motor damps relative velocity only) without stiffening
+    // the rest of the ragdoll or tightening anatomical ROM.
+    private const float HeadNeckJointFrictionFraction = 0.9f;
 
     /// <summary>
     /// How much torque a bone's joint may spend resisting rotation, taken from the weight it carries. A
@@ -11374,7 +11460,10 @@ public unsafe partial class RagdollController : IDisposable
     {
         var lever = MathF.Max(0.04f, bone.CapsuleHalfLength);
         var gravityTorque = MathF.Max(0.01f, bone.Mass) * MathF.Max(0.1f, config.RagdollGravity) * lever;
-        return MathF.Max(0.05f, gravityTorque * JointFrictionFraction);
+        var fraction = bone.Name is "j_kubi" or "j_kao"
+            ? HeadNeckJointFrictionFraction
+            : JointFrictionFraction;
+        return MathF.Max(0.05f, gravityTorque * fraction);
     }
     private const float RecoilRelaxDuration = 0.45f;
     private const float RecoilSwingAngle = 1.7f; // ~97° — wide arc during the recoil window
@@ -12129,21 +12218,55 @@ public unsafe partial class RagdollController : IDisposable
     // gives the swarm no recognizable pose to follow.  These bones describe stable, readable
     // parts of a humanoid pose.  Mod-specific soft bones may be used as X/Z landmarks, but they
     // are never promoted to traversal surfaces by IsTraversalSurfaceBone.
-    private static readonly string[] CorpseTraversalLandmarkBones =
+    private static readonly (string Bone, string Label, float Weight, float WanderRadius)[] CorpseTraversalLandmarks =
     {
-        // Chest and abdomen.
-        "j_mune_l", "j_mune_r", "iv_c_mune_l", "iv_c_mune_r",
-        "n_hara", "iv_fukubu_phys_r", "ya_fukubu_phys",
-        // Pelvis, buttocks and groin.
-        "j_kosi", "iv_shiri_l", "iv_shiri_r", "iv_inshin_l", "iv_inshin_r",
-        "iv_kougan_l", "iv_kougan_r", "iv_omanko",
-        // Armpit/shoulder landmarks.
-        "j_sako_l", "j_sako_r", "n_hkata_l", "n_hkata_r",
-        // Extremities remain useful anchors when a limb is spread away from the torso.
-        "j_te_l", "j_te_r", "j_asi_e_l", "j_asi_e_r",
-        // Head/neck complete the silhouette.
-        "j_kubi", "j_kao",
+        // Chest and abdomen dominate automatic stomp selection.
+        ("j_mune_l", "chest L", 13f, 0.10f), ("j_mune_r", "chest R", 13f, 0.10f),
+        ("iv_c_mune_l", "chest L", 13f, 0.09f), ("iv_c_mune_r", "chest R", 13f, 0.09f),
+        ("n_hara", "abdomen", 16f, 0.13f),
+        ("iv_fukubu_phys_r", "abdomen", 15f, 0.10f), ("ya_fukubu_phys", "abdomen", 15f, 0.10f),
+        // Pelvis, buttocks and groin are the other high-priority load-bearing landmarks.
+        ("j_kosi", "pelvis", 15f, 0.12f),
+        ("iv_shiri_l", "buttock L", 13f, 0.10f), ("iv_shiri_r", "buttock R", 13f, 0.10f),
+        ("iv_inshin_l", "groin L", 12f, 0.07f), ("iv_inshin_r", "groin R", 12f, 0.07f),
+        ("iv_kougan_l", "groin L", 11f, 0.06f), ("iv_kougan_r", "groin R", 11f, 0.06f),
+        ("iv_omanko", "groin", 12f, 0.06f),
+        // Armpit/shoulder landmarks have medium priority.
+        ("j_sako_l", "armpit L", 7f, 0.075f), ("j_sako_r", "armpit R", 7f, 0.075f),
+        ("n_hkata_l", "armpit L", 6f, 0.07f), ("n_hkata_r", "armpit R", 6f, 0.07f),
+        // Extremities are valid but intentionally much less likely than the torso.
+        ("j_te_l", "hand L", 1.6f, 0.055f), ("j_te_r", "hand R", 1.6f, 0.055f),
+        ("j_asi_e_l", "foot L", 1.8f, 0.06f), ("j_asi_e_r", "foot R", 1.8f, 0.06f),
     };
+
+    private static int FaceLandmarkCategory(string boneName)
+    {
+        var name = boneName.ToLowerInvariant();
+        if (name.Contains("ear") || name.Contains("mimi"))
+            return -1;
+
+        if (name.Contains("lash") || name.Contains("matuge") || name.Contains("mabuta") ||
+            name.Contains("eyelid"))
+        {
+            if (name.EndsWith("_l", StringComparison.Ordinal) || name.Contains("left")) return 0;
+            if (name.EndsWith("_r", StringComparison.Ordinal) || name.Contains("right")) return 1;
+        }
+        if (name.Contains("nose") || name.Contains("hana")) return 2;
+        if (name.Contains("mouth") || name.Contains("lip") || name.Contains("kuchi") ||
+            name.Contains("kuti")) return 3;
+        return -1;
+    }
+
+    private static int FaceLandmarkSpecificity(string boneName)
+    {
+        var name = boneName.ToLowerInvariant();
+        if (name.Contains("lash") || name.Contains("matuge")) return 4;
+        if (name.Contains("mabuta") || name.Contains("eyelid")) return 3;
+        if (name.Contains("nose") || name.Contains("hana")) return 3;
+        if (name.Contains("mouth") || name.Contains("kuchi") || name.Contains("kuti")) return 3;
+        if (name.Contains("lip")) return 2;
+        return 1;
+    }
 
     /// <summary>Build pose-following navigation slots from semantic body landmarks. Landmark X/Z
     /// tracks the named bone, while actual root height is resolved separately by the traversal
@@ -12155,13 +12278,19 @@ public unsafe partial class RagdollController : IDisposable
         if (simulation == null || !isActive || !physicsStarted)
             return 0;
 
-        void TryAddLandmarkSlot(RagdollBone bone, Vector3 seed, int landmarkIndex, float clearance)
+        void TryAddLandmarkSlot(
+            int id,
+            Vector3 position,
+            float clearance,
+            float weight,
+            float wanderRadius,
+            bool isFace,
+            string label)
         {
             // The landmark chooses horizontal intent only. TickSwarm asks
             // TryGetNpcTraversalRootHeight for real structural support every frame. If no support
             // lies under a spread hand/foot, that follower remains terrain-supported while still
             // following the limb's X/Z motion.
-            var position = seed;
             foreach (var existing in destination)
             {
                 var minimum = MathF.Max(clearance, existing.Clearance) * 0.62f;
@@ -12171,16 +12300,16 @@ public unsafe partial class RagdollController : IDisposable
             }
 
             destination.Add(new CorpseTraversalSlot(
-                unchecked(bone.BodyHandle.Value * 64 + landmarkIndex), position, clearance));
+                id, position, clearance, weight, wanderRadius, isFace, label));
         }
 
-        for (var landmarkIndex = 0; landmarkIndex < CorpseTraversalLandmarkBones.Length; landmarkIndex++)
+        for (var landmarkIndex = 0; landmarkIndex < CorpseTraversalLandmarks.Length; landmarkIndex++)
         {
-            var boneName = CorpseTraversalLandmarkBones[landmarkIndex];
+            var landmark = CorpseTraversalLandmarks[landmarkIndex];
             RagdollBone? matched = null;
             foreach (var candidate in ragdollBones)
             {
-                if (candidate.Name.Equals(boneName, StringComparison.Ordinal))
+                if (candidate.Name.Equals(landmark.Bone, StringComparison.Ordinal))
                 {
                     matched = candidate;
                     break;
@@ -12201,7 +12330,129 @@ public unsafe partial class RagdollController : IDisposable
                 ? MathF.Max(bone.BoxHalfExtents.X, bone.BoxHalfExtents.Z)
                 : bone.CapsuleRadius;
             clearance = Math.Clamp(clearance, 0.06f, 0.18f);
-            TryAddLandmarkSlot(bone, boneOrigin, landmarkIndex, clearance);
+
+            // A broad load-bearing landmark is a surface region, not a single parking meter.
+            // Giving it one exclusive reservation made the apparent climb capacity equal to the
+            // number of surviving bone names; body mods then collapsed several names onto the same
+            // point and left most of a large swarm waiting on terrain.  Generate stable lateral
+            // lanes from the collider's real, scaled frame.  The normal de-duplication below still
+            // removes lanes that overlap another body region, so this increases usable surface
+            // capacity without allowing every follower to converge on one bone.
+            var slotBaseId = unchecked(bone.BodyHandle.Value * 256 + landmarkIndex * 4);
+            TryAddLandmarkSlot(
+                slotBaseId, boneOrigin, clearance,
+                landmark.Weight, landmark.WanderRadius, false, landmark.Label);
+
+            if (landmark.Weight >= 10f)
+            {
+                var localX = Vector3.Transform(Vector3.UnitX, body.Pose.Orientation);
+                var localZ = Vector3.Transform(Vector3.UnitZ, body.Pose.Orientation);
+                localX.Y = 0f;
+                localZ.Y = 0f;
+                var lateral = localX.LengthSquared() >= localZ.LengthSquared() ? localX : localZ;
+                if (lateral.LengthSquared() > 0.0001f)
+                {
+                    lateral = Vector3.Normalize(lateral);
+                    var spread = Math.Clamp(
+                        MathF.Max(clearance * 0.9f, landmark.WanderRadius * 0.8f), 0.075f, 0.18f);
+                    var laneWander = MathF.Min(landmark.WanderRadius * 0.35f, spread * 0.3f);
+                    TryAddLandmarkSlot(
+                        slotBaseId + 1, boneOrigin + lateral * spread, clearance,
+                        landmark.Weight * 0.92f, laneWander, false, landmark.Label + " L");
+                    TryAddLandmarkSlot(
+                        slotBaseId + 2, boneOrigin - lateral * spread, clearance,
+                        landmark.Weight * 0.92f, laneWander, false, landmark.Label + " R");
+                }
+            }
+        }
+
+        // Face bones live on partial skeletons rather than the body's ragdoll body list. Select at
+        // most one representative for each eyelash side, the nose and the mouth. Occupancy is
+        // capped by MonsterModeController; keeping four precise candidates lets two creatures
+        // choose visibly distinct points without ever targeting ears or the unstable neck joint.
+        var preciseFaceCount = 0;
+        if (targetCharacterAddress != nint.Zero)
+        {
+            var target = (GameObject*)targetCharacterAddress;
+            var charBase = (CharacterBase*)target->DrawObject;
+            var skeleton = charBase != null ? charBase->Skeleton : null;
+            if (skeleton != null)
+            {
+                var skeletonPosition = new Vector3(
+                    skeleton->Transform.Position.X,
+                    skeleton->Transform.Position.Y,
+                    skeleton->Transform.Position.Z);
+                var skeletonRotation = new Quaternion(
+                    skeleton->Transform.Rotation.X,
+                    skeleton->Transform.Rotation.Y,
+                    skeleton->Transform.Rotation.Z,
+                    skeleton->Transform.Rotation.W);
+                var best = new (string Name, Vector3 Position, int Id, int Score)?[4];
+                for (var partialIndex = 1; partialIndex < skeleton->PartialSkeletonCount; partialIndex++)
+                {
+                    var partial = &skeleton->PartialSkeletons[partialIndex];
+                    var pose = partial->GetHavokPose(0);
+                    if (pose == null || pose->Skeleton == null || pose->ModelInSync == 0)
+                        continue;
+
+                    var boneCount = Math.Min(pose->ModelPose.Length, pose->Skeleton->Bones.Length);
+                    for (var boneIndex = 0; boneIndex < boneCount; boneIndex++)
+                    {
+                        var name = pose->Skeleton->Bones[boneIndex].Name.String;
+                        if (string.IsNullOrEmpty(name))
+                            continue;
+                        var category = FaceLandmarkCategory(name);
+                        if (category < 0)
+                            continue;
+                        var score = FaceLandmarkSpecificity(name);
+                        if (best[category].HasValue && best[category]!.Value.Score >= score)
+                            continue;
+
+                        ref var model = ref pose->ModelPose.Data[boneIndex];
+                        var modelPosition = new Vector3(
+                            model.Translation.X, model.Translation.Y, model.Translation.Z);
+                        var worldPosition = skeletonPosition + Vector3.Transform(modelPosition, skeletonRotation);
+                        var id = unchecked(int.MinValue | (partialIndex << 16) | boneIndex);
+                        best[category] = (name, worldPosition, id, score);
+                    }
+                }
+
+                for (var category = 0; category < best.Length; category++)
+                {
+                    if (!best[category].HasValue)
+                        continue;
+                    var face = best[category]!.Value;
+                    var label = category switch
+                    {
+                        0 => "eyelash L",
+                        1 => "eyelash R",
+                        2 => "nose",
+                        _ => "mouth",
+                    };
+                    var before = destination.Count;
+                    TryAddLandmarkSlot(face.Id, face.Position, 0.05f, 3f, 0.025f, true, label);
+                    if (destination.Count > before)
+                        preciseFaceCount++;
+                }
+            }
+        }
+
+        if (preciseFaceCount == 0)
+        {
+            foreach (var bone in ragdollBones)
+            {
+                if (!bone.Name.Equals("j_kao", StringComparison.Ordinal))
+                    continue;
+                var body = simulation.Bodies.GetBodyReference(bone.BodyHandle);
+                var profileOrigin = body.Pose.Position -
+                                    Vector3.Transform(bone.ShapeCenterOffset, body.Pose.Orientation);
+                var segmentAxis = Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
+                var faceOrigin = profileOrigin - segmentAxis * bone.SegmentHalfLength;
+                TryAddLandmarkSlot(
+                    unchecked(bone.BodyHandle.Value * 64 + 63), faceOrigin, 0.055f,
+                    2.5f, 0.02f, true, "face");
+                break;
+            }
         }
 
         return destination.Count;

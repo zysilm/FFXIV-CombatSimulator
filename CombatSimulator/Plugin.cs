@@ -263,7 +263,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         devExperimental = new Dev.Experimental.DevExperimentalModule(
             keyState, gamepadState, framework, ragdollController, animationController, boneTransformService,
             movementBlockHook, activeCameraController, vnavmeshIpc, dismembermentController, glamourerIpc,
-            armorDetachmentController, combatEngine, clientState, targetManager, npcSelector, FindNpcByAddress, config, log);
+            armorDetachmentController, combatEngine, clientState, targetManager, npcSelector, FindNpcByAddress,
+            GetActiveCorpseRagdolls, config, log);
 #else
         devExperimental = new Dev.DevExperimentalStub();
 #endif
@@ -1122,6 +1123,17 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             Consider(controller);
 
         return best;
+    }
+
+    private IReadOnlyList<RagdollController> GetActiveCorpseRagdolls()
+    {
+        var result = new List<RagdollController>(npcRagdolls.Count + 1);
+        if (ragdollController.IsActive)
+            result.Add(ragdollController);
+        foreach (var controller in npcRagdolls.Values)
+            if (controller.IsActive)
+                result.Add(controller);
+        return result;
     }
 
     private void AddMountCollisionAddresses(List<nint> list)
