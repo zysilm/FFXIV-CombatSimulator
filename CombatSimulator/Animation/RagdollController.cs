@@ -1525,8 +1525,9 @@ public unsafe partial class RagdollController : IDisposable
 
     /// <summary>
     /// Discover extra bones and append them as SoftBody jiggle defs. Coverage Standard takes
-    /// every mod-skeleton bone (iv_/ya_ prefixes — Rue/YAS/IVCS lineage); coverage All takes
-    /// EVERY skeleton bone that is not already a rig body, vanilla included. Body meshes are
+    /// mod-skeleton bones (iv_/ya_ prefixes — Rue/YAS/IVCS lineage) except fingers and toes;
+    /// coverage All takes EVERY skeleton bone that is not already a rig body, vanilla included.
+    /// Body meshes are
     /// weighted to these bones, so driving them restores the secondary motion the game's own
     /// phyb simulation provides in life (our pose overwrite suppresses it during ragdoll).
     /// Anchoring: each discovered bone attaches to its nearest ancestor that is (or has just
@@ -1539,11 +1540,13 @@ public unsafe partial class RagdollController : IDisposable
         Dictionary<string, int> nameToIndex,
         Dictionary<string, RagdollBoneDef> defByName)
     {
-        // Coverage: Standard = mod-skeleton bones only (prefix match); All = every bone;
-        // All-except-digits = every bone but the fingers and toes.
+        // Coverage: Standard = mod-skeleton bones only (prefix match), excluding digits;
+        // All = every bone; All-except-digits = every bone but the fingers and toes.
+        // Digits should normally inherit the hand/foot pose rather than use the generic,
+        // deliberately loose soft-tissue constraints.
         var scope = config.RagdollSoftTissueScope;
         var allBones = scope == 1 || scope == 2;
-        var excludeDigits = scope == 2;
+        var excludeDigits = scope != 1;
 
         var prefixes = new List<string>();
         foreach (var part in config.RagdollSoftTissueBonePrefixes.Split(','))
@@ -1576,7 +1579,7 @@ public unsafe partial class RagdollController : IDisposable
                     if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) { matched = true; break; }
                 if (!matched) continue;
             }
-            else if (excludeDigits && IsDigitBone(name))
+            if (excludeDigits && IsDigitBone(name))
             {
                 continue;
             }
@@ -1627,7 +1630,9 @@ public unsafe partial class RagdollController : IDisposable
 
         if (added == null) return defs;
 
-        var scopeLabel = excludeDigits ? "all bones except digits" : allBones ? "all bones" : "mod bones";
+        var scopeLabel = allBones
+            ? excludeDigits ? "all bones except digits" : "all bones"
+            : "mod bones except digits";
         log.Info($"SoftTissue: discovered {added.Count} soft bone(s) ({scopeLabel}): " +
                  string.Join(", ", added.ConvertAll(d => d.Name)));
 
@@ -1646,9 +1651,9 @@ public unsafe partial class RagdollController : IDisposable
     /// <summary>
     /// True for a finger bone (any skeleton) or a toe bone — the vanilla combined toe cluster
     /// (j_asi_e_l/r) and a mod skeleton's individual toe joints (iv_asi_oya_a_l, and so on),
-    /// which mirror the finger names with "asi_" inserted. Used by the "All bones except digits"
-    /// soft-tissue coverage to keep the (larger, cheaper-per-bone) capsules everywhere except the
-    /// digits, where a wobbling fingertip or toe reads as wrong rather than fleshy.
+    /// which mirror the finger names with "asi_" inserted. Used by Standard and "All bones except
+    /// digits" coverage to keep the (larger, cheaper-per-bone) capsules away from digits, where a
+    /// wobbling fingertip or toe reads as wrong rather than fleshy.
     /// </summary>
     private static bool IsDigitBone(string name)
     {
@@ -2047,9 +2052,9 @@ public unsafe partial class RagdollController : IDisposable
     //   As the joint flexes, the angle decreases (allowed). Hyperextension would
     //   increase the angle beyond 90° (blocked by MaximumSwingAngle).
     /// <summary>
-    /// Complete bone catalog: all structural skeleton bones with skeleton parents,
-    /// default enabled state, and physics parameters. Current v1.6.1 tested 18 bones
-    /// are enabled by default. Additional bones default to disabled.
+    /// Complete core bone catalog with skeleton parents, default enabled state, and physics
+    /// parameters. The core body plus each finger's proximal joint are enabled by default;
+    /// additional skeleton-specific bones are discovered by the Advanced UI and default disabled.
     ///
     /// Skeleton hierarchy (from Ktisis/xivmodding):
     ///   j_kosi (pelvis, root)
@@ -2117,6 +2122,18 @@ public unsafe partial class RagdollController : IDisposable
         new RagdollBoneConfig { Name = "j_ude_b_r", SkeletonParent = "j_ude_a_r",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.2f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -1.25f, TwistMaxAngle = 1.25f, Description = "Right Forearm" },
         new RagdollBoneConfig { Name = "j_te_l",    SkeletonParent = "j_ude_b_l",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Left Hand" },
         new RagdollBoneConfig { Name = "j_te_r",    SkeletonParent = "j_ude_b_r",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Right Hand" },
+
+        // === FINGERS === (proximal joint only; distal/helper digits inherit through propagation)
+        new RagdollBoneConfig { Name = "j_oya_a_l",  SkeletonParent = "j_te_l", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Left Thumb A" },
+        new RagdollBoneConfig { Name = "j_oya_a_r",  SkeletonParent = "j_te_r", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Right Thumb A" },
+        new RagdollBoneConfig { Name = "j_hito_a_l", SkeletonParent = "j_te_l", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Left Index A" },
+        new RagdollBoneConfig { Name = "j_hito_a_r", SkeletonParent = "j_te_r", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Right Index A" },
+        new RagdollBoneConfig { Name = "j_naka_a_l", SkeletonParent = "j_te_l", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Left Middle A" },
+        new RagdollBoneConfig { Name = "j_naka_a_r", SkeletonParent = "j_te_r", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Right Middle A" },
+        new RagdollBoneConfig { Name = "j_kusu_a_l", SkeletonParent = "j_te_l", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Left Ring A" },
+        new RagdollBoneConfig { Name = "j_kusu_a_r", SkeletonParent = "j_te_r", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Right Ring A" },
+        new RagdollBoneConfig { Name = "j_ko_a_l",   SkeletonParent = "j_te_l", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Left Little A" },
+        new RagdollBoneConfig { Name = "j_ko_a_r",   SkeletonParent = "j_te_r", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Right Little A" },
 
         // === LEG CHAIN === (j_asi_a/b/c/d enabled, j_asi_e disabled by default)
         new RagdollBoneConfig { Name = "j_asi_a_l", SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.045f, CapsuleHalfLength = 0.12f, Mass = 10.0f, SwingLimit = 1.3f,                JointType = 0, TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f,  Description = "Left Thigh" },

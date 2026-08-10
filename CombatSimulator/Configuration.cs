@@ -180,6 +180,7 @@ public partial class Configuration : IPluginConfiguration
     public bool NpcCollisionConvexHullDefaultMigrated20260716 { get; set; } = false;
     public bool RagdollSoftBodyTuningMigrated20260719 { get; set; } = false;
     public bool KoStripHandsFeetRigidDefaultMigrated20260719 { get; set; } = false;
+    public bool RagdollFingerPhysicsMigrated20260810 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -504,7 +505,7 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollCarryAnimationVelocity { get; set; } = true;
     // Scales the carried handoff velocity (1 = exact animation speed). Lower if a fast death
     // animation throws the corpse too hard at handoff.
-    public float RagdollHandoffVelocityScale { get; set; } = 1.0f;
+    public float RagdollHandoffVelocityScale { get; set; } = 2.0f;
     // Relaxation collapse also drives a whole-body center-of-mass topple (the body loses
     // balance over its support base and falls like an inverted pendulum), fused with the
     // muscle-failure brake, instead of only a one-shot directional shove. Off = legacy single
@@ -641,9 +642,10 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollSoftTissueModBones { get; set; } = true;
     // Internal prefix source (not exposed in the UI — the coverage dropdown picks the bones).
     public string RagdollSoftTissueBonePrefixes { get; set; } = "iv_, ya_";
-    // Bone coverage: 0 = Standard (every mod-skeleton bone, prefix-matched), 1 = All bones
-    // (EVERY skeleton bone not already a rig body, vanilla included — experimental), 2 = All
-    // bones except digits (same as 1, minus fingers and toes — see RagdollController.IsDigitBone).
+    // Bone coverage: 0 = Standard (prefix-matched mod-skeleton bones except fingers and toes),
+    // 1 = All bones (EVERY skeleton bone not already a rig body, vanilla included — experimental),
+    // 2 = All bones except digits (same as 1, minus fingers and toes — see
+    // RagdollController.IsDigitBone).
     // Squash & stretch follows this scope automatically (it applies to every SoftBody body).
     public int RagdollSoftTissueScope { get; set; } = 0;
     // Soft-tissue-vs-ground contact. Off by default (extra contact pairs cost solver time,
@@ -956,6 +958,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateRagdollShinBoxHalfY();
         MigrateDefaultProfileTuning();
         MigrateSoftBodyTuning();
+        MigrateFingerPhysicsDefaults();
         MigrateActionGuardDefaultButton();
         MigrateActionGuardVfxDefault();
         MigrateActionBasicAttackDefaultButton();
@@ -1821,6 +1824,56 @@ public partial class Configuration : IPluginConfiguration
         if (changed) Save();
     }
 
+    // The proximal joint of each finger is an explicit, small rigid body. Distal and mod-helper
+    // digit bones remain non-physical descendants, so they inherit this joint's pose without
+    // multiplying constraints or acquiring the loose generic soft-tissue tuning.
+    private static readonly HashSet<string> ProximalFingerPhysicsBones = new(StringComparer.Ordinal)
+    {
+        "j_oya_a_l", "j_oya_a_r",
+        "j_hito_a_l", "j_hito_a_r",
+        "j_naka_a_l", "j_naka_a_r",
+        "j_kusu_a_l", "j_kusu_a_r",
+        "j_ko_a_l", "j_ko_a_r",
+    };
+
+    private static bool ApplyFingerPhysicsDefaults(IEnumerable<RagdollBoneConfig> bones)
+    {
+        var changed = false;
+        foreach (var bone in bones)
+        {
+            if (bone == null || !ProximalFingerPhysicsBones.Contains(bone.Name))
+                continue;
+
+            if (!bone.Enabled)
+            {
+                bone.Enabled = true;
+                changed = true;
+            }
+
+            if (MathF.Abs(bone.CapsuleRadius - 0.01f) > 0.0001f)
+            {
+                bone.CapsuleRadius = 0.01f;
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    private void MigrateFingerPhysicsDefaults()
+    {
+        if (RagdollFingerPhysicsMigrated20260810)
+            return;
+
+        ApplyFingerPhysicsDefaults(RagdollBoneConfigs);
+        foreach (var profile in RagdollBoneProfiles)
+            if (profile?.Bones != null)
+                ApplyFingerPhysicsDefaults(profile.Bones);
+
+        RagdollFingerPhysicsMigrated20260810 = true;
+        Save();
+    }
+
     private void SeedBuiltInBoneProfiles()
     {
         List<RagdollBoneProfile>? builtIns;
@@ -1842,6 +1895,9 @@ public partial class Configuration : IPluginConfiguration
         bool changed = false;
         foreach (var seed in builtIns)
         {
+            // Keep embedded/seeded profiles aligned with the C# reset defaults even when an older
+            // resource or an existing installation predates proximal-finger physics.
+            ApplyFingerPhysicsDefaults(seed.Bones);
             if (RagdollBoneProfiles.Any(p =>
                     p.Name.Equals(seed.Name, StringComparison.OrdinalIgnoreCase)))
                 continue;

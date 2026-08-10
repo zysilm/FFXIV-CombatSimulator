@@ -4116,7 +4116,7 @@ public partial class MainWindow : IDisposable
                 using (ImRaii.Disabled(!config.RagdollCarryAnimationVelocity))
                 {
                     var velScale = config.RagdollHandoffVelocityScale;
-                    if (ImGui.SliderFloat("Handoff velocity scale##ragdoll", ref velScale, 0f, 2f, "%.2f"))
+                    if (ImGui.SliderFloat("Handoff velocity scale##ragdoll", ref velScale, 0f, 5f, "%.2f"))
                     {
                         config.RagdollHandoffVelocityScale = velScale;
                         config.Save();
@@ -4403,7 +4403,8 @@ public partial class MainWindow : IDisposable
                         config.RagdollSoftTissueScope = Math.Clamp(scope, 0, SoftTissueScopeNames.Length - 1);
                         config.Save();
                     }
-                    HelpMarker("Standard: every extra bone from body-mod skeletons (recommended). " +
+                    HelpMarker("Standard: extra bones from body-mod skeletons, excluding fingers " +
+                               "and toes (recommended). " +
                                "All bones: every skeleton bone that is not already a ragdoll body, " +
                                "vanilla bones included (experimental). All bones except digits: the " +
                                "same, minus fingers and toes. Squash & stretch follows this " +
