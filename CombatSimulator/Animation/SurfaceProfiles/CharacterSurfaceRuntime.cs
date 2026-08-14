@@ -13,7 +13,8 @@ public readonly record struct CharacterSurfaceBoneSeed(
     string Role,
     float HalfLength,
     float RadiusX,
-    float RadiusZ);
+    float RadiusZ,
+    bool IsBox = false);
 
 public readonly record struct CharacterSurfaceDebugBone(
     string Name,
@@ -148,8 +149,13 @@ public sealed class CharacterSurfaceRuntimeBone
         Name = seed.Name;
         Role = seed.Role;
 
-        var rings = BuildRings(profile, seed);
-        BuildMesh(rings, out localVertices, out indices);
+        if (seed.IsBox)
+            BuildBox(seed.HalfLength, seed.RadiusX, seed.RadiusZ, out localVertices, out indices);
+        else
+        {
+            var rings = BuildRings(profile, seed);
+            BuildMesh(rings, out localVertices, out indices);
+        }
         worldPhysics = new Vector3[localVertices.Length];
         worldTraversal = new Vector3[localVertices.Length];
         worldGrab = new Vector3[localVertices.Length];
@@ -378,6 +384,32 @@ public sealed class CharacterSurfaceRuntimeBone
             indices[cursor++] = topBase + side;
             indices[cursor++] = topBase + next;
         }
+    }
+
+    private static void BuildBox(
+        float halfLength,
+        float radiusX,
+        float radiusZ,
+        out Vector3[] vertices,
+        out int[] indices)
+    {
+        var x = MathF.Max(0.003f, radiusX);
+        var y = MathF.Max(0.005f, halfLength);
+        var z = MathF.Max(0.003f, radiusZ);
+        vertices =
+        [
+            new(-x, -y, -z), new(x, -y, -z), new(x, -y, z), new(-x, -y, z),
+            new(-x,  y, -z), new(x,  y, -z), new(x,  y, z), new(-x,  y, z),
+        ];
+        indices =
+        [
+            0, 2, 1, 0, 3, 2,
+            4, 5, 6, 4, 6, 7,
+            0, 1, 5, 0, 5, 4,
+            1, 2, 6, 1, 6, 5,
+            2, 3, 7, 2, 7, 6,
+            3, 0, 4, 3, 4, 7,
+        ];
     }
 
     private static bool RayTriangle(

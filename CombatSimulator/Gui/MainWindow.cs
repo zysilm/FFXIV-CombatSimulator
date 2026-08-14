@@ -2458,7 +2458,7 @@ public partial class MainWindow : IDisposable
         ImGui.Spacing();
 
         var surfaceProfiles = config.RagdollCharacterSurfaceProfiles;
-        if (ImGui.Checkbox("Race-Aware Body Surfaces (Experimental)##ragdollSurfaceProfiles", ref surfaceProfiles))
+        if (ImGui.Checkbox("Mesh-Derived Body Thickness (Experimental)##ragdollSurfaceProfiles", ref surfaceProfiles))
         {
             config.RagdollCharacterSurfaceProfiles = surfaceProfiles;
             config.Save();
@@ -2470,7 +2470,7 @@ public partial class MainWindow : IDisposable
             }
         }
         ImGui.SameLine();
-        ImGui.TextDisabled("Race/body profiles for contact, stepping, grabbing and ground collision; default off.");
+        ImGui.TextDisabled("Measures torso/long-limb thickness only; skeleton, joints and motion stay unchanged. Default on.");
         ImGui.Spacing();
 
         var debugOverlay = config.RagdollDebugOverlay;

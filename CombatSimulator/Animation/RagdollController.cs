@@ -42,7 +42,6 @@ public unsafe partial class RagdollController : IDisposable
     private readonly Func<IReadOnlyList<nint>>? extraCollisionProvider;
     private readonly Configuration config;
     private readonly IPluginLog log;
-    private readonly CharacterSurfaceProfileBook characterSurfaceProfileBook;
 
     // Physics simulation
     private BufferPool? bufferPool;
@@ -198,8 +197,8 @@ public unsafe partial class RagdollController : IDisposable
     // generated from the real skeleton topology (see BuildGenericSkeletonDefs).
     // StepAndApply reads capsule extents from here instead of re-deriving the human set.
     private readonly Dictionary<string, RagdollBoneDef> activeDefByName = new();
-    // Lightweight race/body-aware surface cache shared by traversal, grabbing, debug drawing,
-    // and (in the next stage) the actual per-bone convex collision shapes. It follows the
+    // Lightweight final-collision surface cache shared by traversal, grabbing, debug drawing,
+    // and the actual accepted per-bone collision shapes. It follows the
     // already-existing rigid bodies, so updating it is allocation-free and never touches MDL data.
     private CharacterSurfaceRuntime? characterSurfaceRuntime;
 
@@ -1932,9 +1931,34 @@ public unsafe partial class RagdollController : IDisposable
         if (!identity.IsHumanoid)
             return;
 
-        var profile = characterSurfaceProfileBook.Resolve(identity);
-        if (profile == null)
-            return;
+        // The runtime surface is a lightweight query copy of the collision proxy that was
+        // actually accepted. Do not re-apply the old JSON race profile here: doing so would make
+        // traversal/grab/debug disagree with physics even after the mesh measurement was valid.
+        var profile = new CharacterSurfaceProfile
+        {
+            Id = "mesh-collision-runtime",
+            Name = "Mesh-Derived Collision Proxy",
+            Gender = byte.MaxValue,
+            MinHeightScale = 1f,
+            MaxHeightScale = 1f,
+            Margins = new CharacterSurfaceMargins
+            {
+                Physics = 1f,
+                Traversal = 1f,
+                Grab = 1f,
+                Ground = 1f,
+            },
+            DefaultScale = new CharacterSurfaceRoleScales
+            {
+                Width = 1f,
+                Depth = 1f,
+                Length = 1f,
+                EndOverlap = 0f,
+                TaperStart = 1f,
+                TaperMiddle = 1f,
+                TaperEnd = 1f,
+            },
+        };
 
         var seeds = new CharacterSurfaceBoneSeed[ragdollBones.Count];
         for (var i = 0; i < ragdollBones.Count; i++)
@@ -1952,13 +1976,14 @@ public unsafe partial class RagdollController : IDisposable
             var role = activeDefByName.TryGetValue(rb.Name, out var def)
                 ? def.AnatomicalRole.ToString()
                 : AnatomicalRole.Generic.ToString();
-            seeds[i] = new CharacterSurfaceBoneSeed(rb.Name, role, halfLength, radiusX, radiusZ);
+            seeds[i] = new CharacterSurfaceBoneSeed(
+                rb.Name, role, halfLength, radiusX, radiusZ,
+                rb.ColliderShape == RagdollColliderShape.Box);
         }
 
         characterSurfaceRuntime = new CharacterSurfaceRuntime(profile, identity, seeds);
         UpdateCharacterSurfaceRuntime();
-        log.Info($"RagdollController: character surface profile '{profile.Name}' ({profile.Id}) " +
-                 $"cached for {ragdollBones.Count} bones.");
+        log.Info($"RagdollController: final collision-proxy surface cached for {ragdollBones.Count} bones.");
     }
 
     private void UpdateCharacterSurfaceRuntime()
@@ -1972,109 +1997,6 @@ public unsafe partial class RagdollController : IDisposable
             var profileOrigin = body.Pose.Position -
                                 Vector3.Transform(rb.ShapeCenterOffset, body.Pose.Orientation);
             characterSurfaceRuntime.UpdateBonePose(rb.Name, profileOrigin, body.Pose.Orientation);
-        }
-    }
-
-    private bool TryCreateCharacterSurfaceHull(
-        CharacterSurfaceProfile profile,
-        RagdollBoneDef def,
-        float effectiveHalfLength,
-        float shapeScale,
-        float mass,
-        out TypedIndex shapeIndex,
-        out BodyInertia inertia,
-        out Vector3 centerOffset)
-    {
-        shapeIndex = default;
-        inertia = default;
-        centerOffset = Vector3.Zero;
-        if (simulation == null || bufferPool == null)
-            return false;
-
-        var radiusX = def.CapsuleRadius * shapeScale;
-        var radiusZ = radiusX;
-        var halfLength = effectiveHalfLength;
-        if (def.ColliderShape == RagdollColliderShape.Box)
-        {
-            var extents = ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)) * shapeScale;
-            radiusX = extents.X;
-            radiusZ = extents.Z;
-            halfLength = extents.Y;
-        }
-
-        var seed = new CharacterSurfaceBoneSeed(
-            def.Name, def.AnatomicalRole.ToString(), halfLength, radiusX, radiusZ);
-        var surface = new CharacterSurfaceRuntimeBone(profile, seed);
-        var localVertices = surface.LocalVertices;
-        if (localVertices.Length < 4)
-            return false;
-
-        bufferPool.Take<Vector3>(localVertices.Length, out var points);
-        try
-        {
-            var usageScale = MathF.Max(0.01f, profile.UsageScale(CharacterSurfaceUsage.Physics));
-            for (var i = 0; i < localVertices.Length; i++)
-            {
-                var point = localVertices[i];
-                point.X *= usageScale;
-                point.Z *= usageScale;
-                points[i] = point;
-            }
-
-            var hull = new ConvexHull(points, bufferPool, out centerOffset);
-            shapeIndex = simulation.Shapes.Add(hull);
-            inertia = hull.ComputeInertia(mass);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            log.Warning(ex, $"RagdollController: profile hull failed for '{def.Name}'; using legacy shape");
-            centerOffset = Vector3.Zero;
-            return false;
-        }
-        finally
-        {
-            bufferPool.Return(ref points);
-        }
-    }
-
-    private bool TryCreateCharacterSurfaceHullShape(
-        CharacterSurfaceProfile profile,
-        CharacterSurfaceBoneSeed seed,
-        out TypedIndex shapeIndex,
-        out Vector3 centerOffset)
-    {
-        shapeIndex = default;
-        centerOffset = Vector3.Zero;
-        if (simulation == null || bufferPool == null)
-            return false;
-
-        var surface = new CharacterSurfaceRuntimeBone(profile, seed);
-        var localVertices = surface.LocalVertices;
-        bufferPool.Take<Vector3>(localVertices.Length, out var points);
-        try
-        {
-            var usageScale = MathF.Max(0.01f, profile.UsageScale(CharacterSurfaceUsage.Physics));
-            for (var i = 0; i < localVertices.Length; i++)
-            {
-                var point = localVertices[i];
-                point.X *= usageScale;
-                point.Z *= usageScale;
-                points[i] = point;
-            }
-            var hull = new ConvexHull(points, bufferPool, out centerOffset);
-            shapeIndex = simulation.Shapes.Add(hull);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            log.Warning(ex, $"RagdollController: NPC profile hull failed for '{seed.Name}'; using capsule");
-            centerOffset = Vector3.Zero;
-            return false;
-        }
-        finally
-        {
-            bufferPool.Return(ref points);
         }
     }
 
@@ -2547,8 +2469,6 @@ public unsafe partial class RagdollController : IDisposable
         public float BaseRadius;        // unscaled capsule radius
         public float CenterFactor;      // parent->child fraction where the capsule is centered
         public string BoneName;
-        public string SurfaceRole;
-        public CharacterSurfaceProfile? SurfaceProfile;
         public Vector3 ShapeCenterOffset;
         public Vector3 PreviousPosition;
         public Quaternion PreviousOrientation;
@@ -2709,7 +2629,6 @@ public unsafe partial class RagdollController : IDisposable
         this.config = config;
         this.log = log;
         collapseProfileBook = new CollapseProfileBook(log);
-        characterSurfaceProfileBook = new CharacterSurfaceProfileBook(log);
 
         boneService.OnRenderFrame += OnRenderFrame;
         Core.Services.Framework.Update += ApplyDeferredFollowTransform;
@@ -2725,7 +2644,6 @@ public unsafe partial class RagdollController : IDisposable
         this.config = config;
         this.log = log;
         collapseProfileBook = new CollapseProfileBook(log);
-        characterSurfaceProfileBook = new CharacterSurfaceProfileBook(log);
 
         boneService.OnRenderFrame += OnRenderFrame;
         Core.Services.Framework.Update += ApplyDeferredFollowTransform;
@@ -3297,7 +3215,7 @@ public unsafe partial class RagdollController : IDisposable
         return new Vector3(x, y, z);
     }
 
-    private static float ComputeVerticalExtent(
+    private static float ComputeConfiguredVerticalExtent(
         RagdollBoneDef def,
         Quaternion bodyWorldRot,
         float bodyHalfLength,
@@ -4516,16 +4434,13 @@ public unsafe partial class RagdollController : IDisposable
         // Store real terrain level before any offset
         realGroundY = groundY;
 
-        // Resolve once for the whole build. Unsupported/non-humanoid actors retain the legacy
-        // capsule/box path. A profile changes only structural body volumes; weapons, cloth, and
-        // soft-tissue simulation keep their purpose-built shapes.
-        CharacterSurfaceProfile? activeSurfaceProfile = null;
-        if (config.RagdollCharacterSurfaceProfiles && !genericSkeleton)
-        {
-            var surfaceIdentity = ReadCharacterSurfaceIdentity();
-            if (surfaceIdentity.IsHumanoid)
-                activeSurfaceProfile = characterSurfaceProfileBook.Resolve(surfaceIdentity);
-        }
+        // Measure only transverse thickness before body creation. The returned value cannot carry
+        // topology, center, axis or length, so the normal segment builder below remains the sole
+        // authority for skeleton geometry and joint placement.
+        var structuralMeshFits = config.RagdollCharacterSurfaceProfiles && !genericSkeleton &&
+                                 ReadCharacterSurfaceIdentity().IsHumanoid
+            ? BuildStructuralMeshThicknessFits(skel, defByName, nameToIndex)
+            : new Dictionary<string, StructuralMeshThicknessFit>(StringComparer.Ordinal);
 
         // --- Pass 2: Create physics bodies ---
         // Capsule center is offset from bone origin (joint) along the segment direction.
@@ -4703,11 +4618,55 @@ public unsafe partial class RagdollController : IDisposable
             var capsuleToBoneOffset = Quaternion.Normalize(
                 Quaternion.Inverse(capsuleWorldRot) * boneWorldRot);
 
+            // Select only the collision cross-section here, after the original segment builder and
+            // knee/ankle neutralisation have completed. Mesh data is not allowed to change any of
+            // the values above this point.
+            StructuralMeshThicknessFit meshThickness = default;
+            var useStructuralMeshThickness = !def.HasMeshFit &&
+                                             structuralMeshFits.TryGetValue(def.Name, out meshThickness);
+            var runtimeColliderShape = def.ColliderShape;
+            float shapeRadius;
+            float shapeHalfLength;
+            var shapeBoxHalfExtents = Vector3.Zero;
+            if (useStructuralMeshThickness && meshThickness.UseBox)
+            {
+                runtimeColliderShape = RagdollColliderShape.Box;
+                shapeBoxHalfExtents = new Vector3(
+                    meshThickness.RadiusX * ragdollShapeScale,
+                    effectiveHalfLength,
+                    meshThickness.RadiusZ * ragdollShapeScale);
+                shapeRadius = MathF.Min(shapeBoxHalfExtents.X, shapeBoxHalfExtents.Z);
+                shapeHalfLength = effectiveHalfLength;
+            }
+            else if (useStructuralMeshThickness)
+            {
+                runtimeColliderShape = RagdollColliderShape.Capsule;
+                shapeRadius = meshThickness.RadiusX * ragdollShapeScale;
+                shapeHalfLength = effectiveHalfLength;
+            }
+            else if (def.ColliderShape == RagdollColliderShape.Box)
+            {
+                runtimeColliderShape = RagdollColliderShape.Box;
+                shapeBoxHalfExtents = ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)) * ragdollShapeScale;
+                shapeRadius = MathF.Min(shapeBoxHalfExtents.X, shapeBoxHalfExtents.Z);
+                shapeHalfLength = shapeBoxHalfExtents.Y;
+            }
+            else
+            {
+                runtimeColliderShape = RagdollColliderShape.Capsule;
+                shapeRadius = def.CapsuleRadius * ragdollShapeScale;
+                shapeHalfLength = effectiveHalfLength;
+            }
+
             // Clamp body center above ground so bodies don't start underground.
             // Underground capsules cause explosive ground-collision forces in the first
             // frames. Lift just enough so the capsule bottom (center - extent - radius)
             // is at the ground plane.
-            var bodyBottomExtent = ComputeVerticalExtent(def, capsuleWorldRot, effectiveHalfLength, ragdollShapeScale);
+            // Preserve the configured/profile-based initial lift exactly. Letting a mesh-derived
+            // thickness alter this per-body clamp would indirectly move body centers by different
+            // amounts and preload the unchanged joints, defeating the isolation of this feature.
+            var bodyBottomExtent = ComputeConfiguredVerticalExtent(
+                def, capsuleWorldRot, effectiveHalfLength, ragdollShapeScale);
             var minCenterY = groundY + bodyBottomExtent + 0.005f; // 5mm clearance
             // Contact-disabled Soft Tissue bodies are inertial drivers, not ground colliders.
             // Lifting those bodies independently deforms the skinned region at activation and made
@@ -4727,48 +4686,41 @@ public unsafe partial class RagdollController : IDisposable
             BodyInertia bodyInertia;
             // Kept alongside the body so callers can ask for the volume the physics is actually
             // using (see TryGetBoneCapsule) rather than re-deriving it from the defs.
-            float shapeRadius, shapeHalfLength;
-            var shapeBoxHalfExtents = Vector3.Zero;
             var shapeCenterOffset = fittedShapeCenterOffset;
-            var useProfileHull = activeSurfaceProfile != null &&
-                                 def.AnatomicalRole != AnatomicalRole.Weapon &&
-                                 def.AnatomicalRole != AnatomicalRole.Cloth &&
-                                 !def.SoftBody;
-            var runtimeColliderShape = def.ColliderShape;
-            if (useProfileHull && TryCreateCharacterSurfaceHull(
-                    activeSurfaceProfile!, def, effectiveHalfLength, ragdollShapeScale, effectiveMass,
-                    out shapeIndex, out bodyInertia, out shapeCenterOffset))
+            if (runtimeColliderShape == RagdollColliderShape.Box)
             {
-                shapeRadius = def.ColliderShape == RagdollColliderShape.Box
-                    ? MathF.Min(ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)).X,
-                                ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)).Z) * ragdollShapeScale
-                    : def.CapsuleRadius * ragdollShapeScale;
-                shapeHalfLength = effectiveHalfLength;
-                if (def.ColliderShape == RagdollColliderShape.Box)
-                    shapeBoxHalfExtents = ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)) * ragdollShapeScale;
-                runtimeColliderShape = RagdollColliderShape.ProfileHull;
-                capsuleCenter += Vector3.Transform(shapeCenterOffset, capsuleWorldRot);
-            }
-            else if (def.ColliderShape == RagdollColliderShape.Box)
-            {
-                var extents = ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)) * ragdollShapeScale;
-                var box = new Box(extents.X * 2f, extents.Y * 2f, extents.Z * 2f);
+                var box = new Box(
+                    shapeBoxHalfExtents.X * 2f,
+                    shapeBoxHalfExtents.Y * 2f,
+                    shapeBoxHalfExtents.Z * 2f);
                 shapeIndex = simulation.Shapes.Add(box);
                 bodyInertia = box.ComputeInertia(effectiveMass);
-                // Largest capsule that fits inside the box — a conservative stand-in for the box.
-                shapeRadius = MathF.Min(extents.X, extents.Z);
-                shapeHalfLength = extents.Y;
-                shapeBoxHalfExtents = extents;
             }
             else
             {
-                var capsuleLength = effectiveHalfLength * 2;
-                var capsuleRadius = def.CapsuleRadius * ragdollShapeScale;
-                var capsule = new Capsule(capsuleRadius, capsuleLength);
+                var capsule = new Capsule(shapeRadius, shapeHalfLength * 2f);
                 shapeIndex = simulation.Shapes.Add(capsule);
                 bodyInertia = capsule.ComputeInertia(effectiveMass);
-                shapeRadius = capsuleRadius;
-                shapeHalfLength = effectiveHalfLength;
+            }
+
+            if (useStructuralMeshThickness)
+            {
+                // Keep the established mass distribution and angular response. The experimental
+                // feature changes contact thickness only, not the ragdoll motion model.
+                if (def.ColliderShape == RagdollColliderShape.Box)
+                {
+                    var legacyExtents = ResolveBoxHalfExtents(def, ResolveBodyHalfLength(def)) * ragdollShapeScale;
+                    bodyInertia = new Box(
+                        legacyExtents.X * 2f,
+                        legacyExtents.Y * 2f,
+                        legacyExtents.Z * 2f).ComputeInertia(effectiveMass);
+                }
+                else
+                {
+                    bodyInertia = new Capsule(
+                        def.CapsuleRadius * ragdollShapeScale,
+                        effectiveHalfLength * 2f).ComputeInertia(effectiveMass);
+                }
             }
 
             bodyInertia = ApplyLimbInertia(bodyInertia);
@@ -4846,7 +4798,8 @@ public unsafe partial class RagdollController : IDisposable
                 log.Info($"[Ragdoll Init] '{def.Name}' idx={boneIdx} " +
                          $"bonePos=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3}) " +
                          $"capsuleCenter=({capsuleCenter.X:F3},{capsuleCenter.Y:F3},{capsuleCenter.Z:F3}) " +
-                         $"shape={def.ColliderShape} segHalf={segmentHalfLength:F3} bodyHalfY={effectiveHalfLength:F3} " +
+                         $"shape={runtimeColliderShape} meshThickness={useStructuralMeshThickness} " +
+                         $"radius={shapeRadius:F3} segHalf={segmentHalfLength:F3} bodyHalfY={shapeHalfLength:F3} " +
                          $"capsuleY=({logCapsuleY.X:F3},{logCapsuleY.Y:F3},{logCapsuleY.Z:F3})");
             }
         }
@@ -4855,7 +4808,7 @@ public unsafe partial class RagdollController : IDisposable
         // against it instead of against a number somebody guessed once.
         ragdollTotalMass = resolvedTotalMass;
 
-        // Build one compact, race/body-aware surface cache after the rigid bodies exist. It uses
+        // Build one compact final-collision surface cache after the rigid bodies exist. It uses
         // their real scaled dimensions and follows those same poses for every consumer.
         BuildCharacterSurfaceRuntime(genericSkeleton);
 
@@ -5646,24 +5599,17 @@ public unsafe partial class RagdollController : IDisposable
             npcSkeleton->Transform.Rotation.W);
         var npcVisualScale = GetCharacterScale(address, ns);
         var npcShapeScale = CollisionScale(npcVisualScale);
-        CharacterSurfaceProfile? npcSurfaceProfile = null;
-        if (config.RagdollCharacterSurfaceProfiles)
-        {
-            var identity = ReadCharacterSurfaceIdentity(address);
-            if (identity.IsHumanoid)
-                npcSurfaceProfile = characterSurfaceProfileBook.Resolve(identity);
-        }
 
         // Convex hull mode: one hull shape per character built from the bone point cloud.
         // Eliminates inter-capsule gaps on any skeleton type; the shape is a snapshot of
         // the activation pose and tracks only root translation/rotation each frame.
-        if (npcSurfaceProfile == null && config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.ConvexHull)
+        if (config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.ConvexHull)
         {
             BuildConvexHullCollision(address, ns, npcSkelPos, npcSkelRot, label);
             return;
         }
 
-        if (npcSurfaceProfile == null && config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.AnimatedMesh)
+        if (config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.AnimatedMesh)
         {
             if (IsMountObject(address) && BuildAnimatedMeshCollision(address, ns, npcSkelPos, npcSkelRot, label))
                 return;
@@ -5671,7 +5617,7 @@ public unsafe partial class RagdollController : IDisposable
                 return;
         }
 
-        if (npcSurfaceProfile == null && config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.Mesh &&
+        if (config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.Mesh &&
             BuildMeshCollision(address, ns, npcSkelPos, npcSkelRot, label))
             return;
 
@@ -5794,21 +5740,8 @@ public unsafe partial class RagdollController : IDisposable
         {
             var c = candidates[candidateIndex];
             var shapeCenterOffset = Vector3.Zero;
-            TypedIndex shapeIndex;
-            if (npcSurfaceProfile != null &&
-                TryCreateCharacterSurfaceHullShape(
-                    npcSurfaceProfile,
-                    new CharacterSurfaceBoneSeed(c.Name, c.Role,
-                        c.HalfLen * npcShapeScale, c.Radius * npcShapeScale, c.Radius * npcShapeScale),
-                    out var profileShape, out shapeCenterOffset))
-            {
-                shapeIndex = profileShape;
-            }
-            else
-            {
-                shapeIndex = simulation!.Shapes.Add(new Capsule(
-                    c.Radius * npcShapeScale, c.HalfLen * npcShapeScale * 2f));
-            }
+            var shapeIndex = simulation!.Shapes.Add(new Capsule(
+                c.Radius * npcShapeScale, c.HalfLen * npcShapeScale * 2f));
             var inactiveLightweightProxy = lightweight && candidateIndex >= NpcLightweightCollisionSegments;
             var bodyCenter = inactiveLightweightProxy
                 ? new Vector3(0, -9999, 0)
@@ -5830,8 +5763,6 @@ public unsafe partial class RagdollController : IDisposable
                 BaseRadius = c.Radius,
                 CenterFactor = c.CenterFactor,
                 BoneName = c.Name,
-                SurfaceRole = c.Role,
-                SurfaceProfile = npcSurfaceProfile,
                 ShapeCenterOffset = shapeCenterOffset,
                 PreviousPosition = bodyCenter,
                 PreviousOrientation = bodyRotation,
@@ -7604,26 +7535,10 @@ public unsafe partial class RagdollController : IDisposable
             if (MathF.Abs(bone.AppliedCollisionScale - collisionScale) <= 0.0001f)
                 continue;
 
-            TypedIndex newShape;
             var newCenterOffset = Vector3.Zero;
-            if (bone.SurfaceProfile != null &&
-                TryCreateCharacterSurfaceHullShape(
-                    bone.SurfaceProfile,
-                    new CharacterSurfaceBoneSeed(
-                        bone.BoneName, bone.SurfaceRole,
-                        bone.BaseHalfLength * collisionScale,
-                        bone.BaseRadius * collisionScale,
-                        bone.BaseRadius * collisionScale),
-                    out var profileShape, out newCenterOffset))
-            {
-                newShape = profileShape;
-            }
-            else
-            {
-                newShape = simulation.Shapes.Add(new Capsule(
-                    MathF.Max(0.0001f, bone.BaseRadius * collisionScale),
-                    MathF.Max(0.0001f, bone.BaseHalfLength * collisionScale * 2f)));
-            }
+            var newShape = simulation.Shapes.Add(new Capsule(
+                MathF.Max(0.0001f, bone.BaseRadius * collisionScale),
+                MathF.Max(0.0001f, bone.BaseHalfLength * collisionScale * 2f)));
             var oldShape = bone.ShapeIndex;
             var body = simulation.Bodies.GetBodyReference(bone.Handle);
             var logicalCenter = body.Pose.Position -

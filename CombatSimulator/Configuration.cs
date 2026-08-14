@@ -679,10 +679,10 @@ public partial class Configuration : IPluginConfiguration
     // layer uses a soft, low-friction NPC contact so the body compresses/reacts without being
     // launched sideways. Experimental and opt-in: real map actors remain server-positioned.
     public bool RagdollNpcCorpseTraversal { get; set; } = false;
-    /// <summary>Experimental race/body-aware surface profiles for corpse physics, traversal,
-    /// grabbing, ground contact, and debug drawing. Weapon hit detection intentionally stays on
-    /// its dedicated hitboxes. Off by default until the profile estimates have broader validation.</summary>
-    public bool RagdollCharacterSurfaceProfiles { get; set; } = false;
+    /// <summary>Experimental body-mesh thickness measurement for reliable corpse torso and long-
+    /// limb segments. Skeleton topology, segment geometry, joints and inertia remain controlled by
+    /// the normal ragdoll profile. Enabled by default; invalid measurements fall back per segment.</summary>
+    public bool RagdollCharacterSurfaceProfiles { get; set; } = true;
     public bool RagdollNpcCollisionAutoSize { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
     public bool RagdollNpcCollisionConvexHull { get; set; } = false;
