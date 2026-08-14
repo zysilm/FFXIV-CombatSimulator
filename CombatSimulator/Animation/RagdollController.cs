@@ -1556,13 +1556,42 @@ public unsafe partial class RagdollController : IDisposable
         }
         if (!allBones && prefixes.Count == 0) return defs;
 
-        var pose = skel.Pose;
         var havok = skel.HavokSkeleton;
         int n = Math.Min(skel.BoneCount, havok->Bones.Length);
         int pc = skel.ParentCount;
 
         var known = new HashSet<string>(StringComparer.Ordinal);
         foreach (var d in defs) known.Add(d.Name);
+
+        // Fit the dynamically discovered bodies to the vertices that the rendered body mesh
+        // actually skins to them.  The old estimator measured all the way to the nearest active
+        // ragdoll ancestor; helper chains often skip several skeleton nodes, so that distance had
+        // almost no relationship to the flesh region and routinely produced the maximum capsule.
+        var fitCandidates = new HashSet<int>();
+        for (int i = 0; i < n && i < pc; i++)
+        {
+            var candidateName = havok->Bones[i].Name.String;
+            if (candidateName == null || known.Contains(candidateName))
+                continue;
+
+            if (!allBones)
+            {
+                var matched = false;
+                foreach (var prefix in prefixes)
+                    if (candidateName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        matched = true;
+                        break;
+                    }
+                if (!matched)
+                    continue;
+            }
+
+            if (!excludeDigits || !IsDigitBone(candidateName))
+                fitCandidates.Add(i);
+        }
+
+        var meshFits = BuildSoftTissueMeshFits(skel, fitCandidates);
 
         List<RagdollBoneDef>? added = null;
         // Havok skeletons are topologically ordered (parent before child), so chains resolve
@@ -1594,21 +1623,23 @@ public unsafe partial class RagdollController : IDisposable
                 if (pName != null && known.Contains(pName)) { anchorName = pName; break; }
                 p = p < pc ? havok->ParentIndices[p] : -1;
             }
-            if (anchorName == null || !nameToIndex.TryGetValue(anchorName, out var anchorIdx))
+            if (anchorName == null || !nameToIndex.ContainsKey(anchorName))
                 continue;
 
-            ref var mt = ref pose->ModelPose.Data[i];
-            ref var pmt = ref pose->ModelPose.Data[anchorIdx];
-            var segLen = Vector3.Distance(
-                new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z),
-                new Vector3(pmt.Translation.X, pmt.Translation.Y, pmt.Translation.Z));
+            // A missing mesh cluster is deliberately a tiny inertial proxy.  It is safer to
+            // under-represent a helper bone than to fabricate a large torso-sized collider from
+            // hierarchy distance.  With a usable cluster, dimensions and center come entirely
+            // from the weighted model vertices.
+            var hasMeshFit = meshFits.TryGetValue(i, out var meshFit);
+            var radius = hasMeshFit ? meshFit.Radius : SoftTissueFallbackRadius;
+            var halfLength = hasMeshFit ? meshFit.HalfLength : SoftTissueFallbackHalfLength;
 
             var def = new RagdollBoneDef
             {
                 Name = name,
                 ParentName = anchorName,
-                CapsuleRadius = Math.Clamp(segLen * 0.5f, 0.02f, 0.06f),
-                CapsuleHalfLength = Math.Clamp(segLen * 0.5f, 0.02f, 0.05f),
+                CapsuleRadius = radius,
+                CapsuleHalfLength = halfLength,
                 Mass = 0.1f,
                 SwingLimit = 0.35f,
                 Joint = JointType.Ball,
@@ -1619,6 +1650,9 @@ public unsafe partial class RagdollController : IDisposable
                 SoftSpringDamp = 1f,
                 SoftServoFreq = 3f,
                 SoftServoDamp = 0.2f,
+                HasMeshFit = hasMeshFit,
+                MeshFitCenterModelOffset = hasMeshFit ? meshFit.CenterModelOffset : Vector3.Zero,
+                MeshFitAxisModel = hasMeshFit ? meshFit.AxisModel : Vector3.UnitY,
             };
 
             (added ??= new List<RagdollBoneDef>()).Add(def);
@@ -1633,7 +1667,9 @@ public unsafe partial class RagdollController : IDisposable
         var scopeLabel = allBones
             ? excludeDigits ? "all bones except digits" : "all bones"
             : "mod bones except digits";
-        log.Info($"SoftTissue: discovered {added.Count} soft bone(s) ({scopeLabel}): " +
+        var fittedCount = added.Count(d => d.HasMeshFit);
+        log.Info($"SoftTissue: discovered {added.Count} soft bone(s) ({scopeLabel}, " +
+                 $"mesh-fitted={fittedCount}, conservative-fallback={added.Count - fittedCount}): " +
                  string.Join(", ", added.ConvertAll(d => d.Name)));
 
         var merged = new RagdollBoneDef[defs.Length + added.Count];
@@ -1797,6 +1833,12 @@ public unsafe partial class RagdollController : IDisposable
         public float SoftSpringDamp;   // BallSocket damping ratio
         public float SoftServoFreq;    // AngularServo frequency (Hz)
         public float SoftServoDamp;    // AngularServo damping ratio
+        // Dynamic Soft Tissue bodies can be fitted to the model's actual weighted vertices.
+        // These values are in unscaled skeleton model space and are intentionally runtime-only;
+        // hand-authored Ragdoll Advanced profiles continue to use their explicit shapes.
+        public bool HasMeshFit;
+        public Vector3 MeshFitCenterModelOffset;
+        public Vector3 MeshFitAxisModel;
     }
 
     // Runtime bone with physics body
@@ -4502,10 +4544,28 @@ public unsafe partial class RagdollController : IDisposable
             var ragdollShapeScale = CollisionScale(skelWorldScale);
             float effectiveHalfLength = ResolveBodyHalfLength(def) * ragdollShapeScale;
             Quaternion capsuleWorldRot;
+            var fittedShapeCenterOffset = Vector3.Zero;
             var preserveAnatomicalLength = def.Joint == JointType.Hinge &&
                                            HasPassiveHingeRest(def.AnatomicalRole, def.Name);
 
-            if (boneToFirstChild.TryGetValue(def.Name, out var childName) &&
+            if (def.HasMeshFit)
+            {
+                // The fit lives in unscaled model space. Apply the actor's real (possibly
+                // non-uniform) scale before rotating it into world space. The body is centered on
+                // the fitted vertex cluster rather than halfway toward an unrelated rig child.
+                var scaledAxis = def.MeshFitAxisModel * skelWorldScale;
+                var worldAxis = Vector3.Transform(
+                    NormalizeOrFallback(scaledAxis, Vector3.UnitY), skelWorldRot);
+                var scaledOffset = def.MeshFitCenterModelOffset * skelWorldScale;
+                var worldOffset = Vector3.Transform(scaledOffset, skelWorldRot);
+
+                capsuleWorldRot = CreateCapsuleRotation(worldAxis, boneWorldRot);
+                capsuleCenter = boneWorldPos + worldOffset;
+                segmentHalfLength = 0f;
+                fittedShapeCenterOffset = Vector3.Transform(
+                    worldOffset, Quaternion.Inverse(capsuleWorldRot));
+            }
+            else if (boneToFirstChild.TryGetValue(def.Name, out var childName) &&
                 boneWorldPositions.TryGetValue(childName, out var childWorldPos))
             {
                 var segment = childWorldPos - boneWorldPos;
@@ -4649,7 +4709,10 @@ public unsafe partial class RagdollController : IDisposable
             // is at the ground plane.
             var bodyBottomExtent = ComputeVerticalExtent(def, capsuleWorldRot, effectiveHalfLength, ragdollShapeScale);
             var minCenterY = groundY + bodyBottomExtent + 0.005f; // 5mm clearance
-            if (capsuleCenter.Y < minCenterY)
+            // Contact-disabled Soft Tissue bodies are inertial drivers, not ground colliders.
+            // Lifting those bodies independently deforms the skinned region at activation and made
+            // an oversized proxy visible even though NarrowPhase correctly rejected its contacts.
+            if ((!def.SoftBody || config.RagdollSoftTissueCollision) && capsuleCenter.Y < minCenterY)
             {
                 log.Info($"[Ragdoll Init] '{def.Name}' lifted above ground: Y {capsuleCenter.Y:F3} -> {minCenterY:F3} (ground={groundY:F3})");
                 capsuleCenter.Y = minCenterY;
@@ -4666,7 +4729,7 @@ public unsafe partial class RagdollController : IDisposable
             // using (see TryGetBoneCapsule) rather than re-deriving it from the defs.
             float shapeRadius, shapeHalfLength;
             var shapeBoxHalfExtents = Vector3.Zero;
-            var shapeCenterOffset = Vector3.Zero;
+            var shapeCenterOffset = fittedShapeCenterOffset;
             var useProfileHull = activeSurfaceProfile != null &&
                                  def.AnatomicalRole != AnatomicalRole.Weapon &&
                                  def.AnatomicalRole != AnatomicalRole.Cloth &&
