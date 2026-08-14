@@ -76,6 +76,16 @@ public sealed unsafe class PartyEngagePlanner
         pathStates.Clear();
     }
 
+    /// <summary>Discard cached goals and sticky slots after an actor's physical reach changes.</summary>
+    public void InvalidateRangeDependentPlans()
+    {
+        plans.Clear();
+        pathStates.Clear();
+        assignedSlots.Clear();
+        slotReservations.Clear();
+        reservedSlotIds.Clear();
+    }
+
     public void ClearSlotReservation(uint actorId)
     {
         assignedSlots.Remove(actorId);
@@ -463,7 +473,7 @@ public sealed unsafe class PartyEngagePlanner
         PartyEngagePlanKind kind)
     {
         var pathLength = PathLength(path);
-        var holdDistance = MathF.Max(0.25f, actor.PreferredEngageRange * 0.5f);
+        var holdDistance = MathF.Max(0.001f, actor.PreferredEngageRange * 0.5f);
         var distance = fromStart
             ? MathF.Max(0, pathLength - holdDistance)
             : MathF.Min(pathLength, holdDistance);
@@ -598,7 +608,7 @@ public sealed unsafe class PartyEngagePlanner
         var axis = BattleAxis(nodes);
         var actorForward = actor.Side == PartyNodeSide.Friendly ? axis : -axis;
         var right = new Vector3(actorForward.Z, 0, -actorForward.X);
-        var range = MathF.Max(0.5f, actor.PreferredEngageRange);
+        var range = MathF.Max(0.001f, actor.PreferredEngageRange);
 
         if (actor.IsRanged)
         {
@@ -1044,7 +1054,7 @@ public sealed unsafe class PartyEngagePlanner
     /// its holdDistance, so pursuit goals line up with every other plan kind.
     /// </summary>
     private static float StandoffFor(PartyNode actor)
-        => MathF.Max(0.25f, actor.PreferredEngageRange * 0.5f);
+        => MathF.Max(0.001f, actor.PreferredEngageRange * 0.5f);
 
     /// <summary>
     /// Raise a goal to at least <paramref name="standoff"/> from the target, keeping its direction.

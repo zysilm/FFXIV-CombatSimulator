@@ -43,6 +43,7 @@ public unsafe class NpcAiController : IDisposable
     // the player. The lock only releases when the player wanders far enough away
     // that the enemy must walk in again.
     private readonly Dictionary<nint, Vector3> approachLockedGoals = new();
+    private float lastNpcMeleeRangeScale = float.NaN;
     private readonly HashSet<nint> passiveEnemyAddresses = new();
     private const float VNavmeshRepathDistance = 1.5f;
     private const float VNavmeshRepathInterval = 1.0f;
@@ -206,6 +207,8 @@ public unsafe class NpcAiController : IDisposable
         var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null)
             return;
+
+        RefreshScaleDependentApproachState();
 
         skillTokens = MathF.Min(SkillTokenBurst, skillTokens + MathF.Max(0f, config.NpcSkillRateLimit) * deltaTime);
 
@@ -661,7 +664,7 @@ public unsafe class NpcAiController : IDisposable
         {
             if (skill.CooldownRemaining > 0)
                 continue;
-            var skillRange = GetEffectiveNpcSkillRange(npc, simulatedTarget, skill.Range);
+            var skillRange = GetEffectiveNpcSkillRange(npc, simulatedTarget, skill);
             if ((npc.IsClientControlled || UsesPartyConfiguredRange(npc, simulatedTarget)) && distToTarget > skillRange)
                 continue;
             if (hpPercent > skill.HpThreshold)
@@ -718,7 +721,8 @@ public unsafe class NpcAiController : IDisposable
             // FFXIV: caster/magic auto-attacks are MELEE (only physical ranged — bow/gun — auto at
             // range). Their spells stay ranged via the skill loop above; the basic swing only lands
             // up close. Hold the swing (don't reset the timer) until the target is in melee.
-            if (npc.Behavior.AutoAttackStyle == NpcAttackStyle.Magic && distToTarget > MagicAutoAttackMeleeRange)
+            if (npc.Behavior.AutoAttackStyle == NpcAttackStyle.Magic &&
+                distToTarget > ScaleNpcMeleeRange(MagicAutoAttackMeleeRange))
                 return;
 
             npc.AutoAttackTimer = npc.Behavior.AutoAttackDelay / ActionPace();
@@ -772,7 +776,7 @@ public unsafe class NpcAiController : IDisposable
         SetNpcPosition(npc, newPos);
 
         float newDist = Vector3.Distance(newPos, playerPos);
-        if (newDist <= npc.Behavior.AutoAttackRange)
+        if (newDist <= GetNpcAutoAttackEngageRange(npc))
             npc.AiState = NpcAiState.Combat;
 
         float distFromSpawn = Vector3.Distance(newPos, npc.SpawnPosition);
@@ -905,7 +909,11 @@ public unsafe class NpcAiController : IDisposable
     {
         // Solo path: keep distance at the enemy's intended engage range (caster stands at spell
         // range, melee comes in) instead of one fixed ring for everyone.
-        var targetDist = MathF.Max(0.5f, npc.DesiredEngageRange > 0f ? npc.DesiredEngageRange : config.TargetApproachDistance);
+        var targetDist = MathF.Max(
+            0.001f,
+            npc.DesiredEngageRange > 0f
+                ? npc.DesiredEngageRange
+                : ScaleNpcMeleeRange(config.TargetApproachDistance));
 
         // Hold a locked world spot — the enemy stands its ground and does NOT glide
         // with the player. Re-approach when the player has wandered away from that spot by
@@ -1094,7 +1102,7 @@ public unsafe class NpcAiController : IDisposable
             if (terrainCache != null && approachPaths.TryGetValue(npc.Address, out var holdPathState))
                 CorrectStableRootHeight(gameObj, npcPos, terrainCache, holdPathState, deltaTime, preserveInitialClearance: false);
 
-            LogPartyApproachDebug(npc, "no-plan", npcPos, npcTargetPos, null, npcPos, false, distToTarget: FlatDistance(npcPos, npcTargetPos), attackRange: GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer);
+            LogPartyApproachDebug(npc, "no-plan", npcPos, npcTargetPos, null, npcPos, false, distToTarget: FlatDistance(npcPos, npcTargetPos), attackRange: DynamicHoldRange(npc) + ScalePartyRangePadding(npc, PartyMeleeAttackRangeBuffer));
             StopApproachMoveAnim(npc);
             return;
         }
@@ -1102,7 +1110,7 @@ public unsafe class NpcAiController : IDisposable
         var targetPos = partyPlan.Goal;
         var facePos = partyPlan.HasFaceTarget ? partyPlan.FaceTarget : npcPos;
         var distToTarget = FlatDistance(npcPos, npcTargetPos);
-        var partyAttackRange = DynamicHoldRange(npc) + PartyMeleeAttackRangeBuffer;
+        var partyAttackRange = DynamicHoldRange(npc) + ScalePartyRangePadding(npc, PartyMeleeAttackRangeBuffer);
         var rangeStateAvailable = TryGetOrCreateApproachPathState(npc, out var rangeState);
         var outerEdge = rangeStateAvailable && rangeState.WasHoldingRange
             ? partyAttackRange + PartyHoldReleaseBuffer
@@ -1395,13 +1403,80 @@ public unsafe class NpcAiController : IDisposable
     private float GetEffectiveNpcAttackRange(SimulatedNpc npc, SimulatedEntityState target)
     {
         if (UsesPartyConfiguredRange(npc, target))
-            return DynamicHoldRange(npc) + PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis;
+            return DynamicHoldRange(npc) +
+                   ScalePartyRangePadding(npc, PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis);
 
         // For real NPCs: use a generous range since we can't move them.
-        return npc.IsClientControlled
-            ? npc.Behavior.AutoAttackRange + 1.0f
-            : npc.Behavior.AutoAttackRange + 30.0f;
+        if (!npc.IsClientControlled)
+            return npc.Behavior.AutoAttackRange + 30.0f;
+
+        return npc.Behavior.AutoAttackStyle == NpcAttackStyle.Melee
+            ? ScaleNpcMeleeRange(npc.Behavior.AutoAttackRange + 1.0f)
+            : npc.Behavior.AutoAttackRange + 1.0f;
     }
+
+    /// <summary>
+    /// The dev NPC scale is written directly to DrawObject, so the game object's authored combat
+    /// radius does not follow it. Keep every AI-authored melee distance in the same coordinate scale
+    /// as the visible model. The public build has no scale override and therefore remains exactly 1x.
+    /// </summary>
+    private float NpcMeleeRangeScale()
+    {
+#if DEV_EXPERIMENTAL
+        return Math.Clamp(config.DevNpcScale, 0.01f, 3.0f);
+#else
+        return 1.0f;
+#endif
+    }
+
+    private void RefreshScaleDependentApproachState()
+    {
+        var scale = NpcMeleeRangeScale();
+        if (float.IsNaN(lastNpcMeleeRangeScale))
+        {
+            lastNpcMeleeRangeScale = scale;
+            return;
+        }
+
+        if (MathF.Abs(scale - lastNpcMeleeRangeScale) < 0.0001f)
+            return;
+
+        lastNpcMeleeRangeScale = scale;
+
+        // Locked goals and cached paths were authored in the old reach circle. Keeping them would
+        // make a down-scaled NPC stand at its former distance indefinitely even though its attack
+        // check has correctly become shorter. Preserve terrain/animation state, but force every
+        // range-derived horizontal route and party slot to be planned again.
+        approachLockedGoals.Clear();
+        foreach (var state in approachPaths.Values)
+        {
+            state.Waypoints.Clear();
+            state.WaypointIndex = 0;
+            state.PendingPath = null;
+            state.RequestedTarget = default;
+            state.HasSmoothedMoveDir = false;
+            state.WasHoldingRange = false;
+        }
+        partyEngagePlanner.InvalidateRangeDependentPlans();
+    }
+
+    private float ScaleNpcMeleeRange(float range)
+        => MathF.Max(0.001f, MathF.Max(0f, range) * NpcMeleeRangeScale());
+
+    private float GetNpcAutoAttackEngageRange(SimulatedNpc npc)
+        => npc.Behavior.AutoAttackStyle == NpcAttackStyle.Melee
+            ? ScaleNpcMeleeRange(npc.Behavior.AutoAttackRange)
+            : npc.Behavior.AutoAttackRange;
+
+    private bool HasMeleePositioningIntent(SimulatedNpc npc)
+        => npc.DesiredEngageRange > 0f
+            ? !npc.IsRangedIntent
+            : npc.Behavior.AutoAttackStyle != NpcAttackStyle.Ranged;
+
+    private float ScalePartyRangePadding(SimulatedNpc npc, float padding)
+        => HasMeleePositioningIntent(npc)
+            ? padding * NpcMeleeRangeScale()
+            : padding;
 
     // The enemy's current desired engage distance (driven by the action it intends to use next),
     // falling back to the fixed weapon-style range until it has been computed this combat.
@@ -1418,14 +1493,16 @@ public unsafe class NpcAiController : IDisposable
         if (npc.IntentDwellTimer > 0f)
             npc.IntentDwellTimer = MathF.Max(0f, npc.IntentDwellTimer - deltaTime);
 
-        var meleeHold = MathF.Max(0.5f, config.PartyMeleeAttackRange);
+        var meleeHold = ScaleNpcMeleeRange(MathF.Max(0.5f, config.PartyMeleeAttackRange));
         // Solo play: the user-tuned Target Approach Distance is the authoritative standing
         // distance. PartyMeleeAttackRange is a party-formation value (1.5y, body-to-body) — letting
         // it override the solo hold made every engaged melee enemy walk right onto the player the
         // moment it entered combat (DesiredEngageRange trumps TargetApproachDistance in
         // ComputeApproachGoal). Respect the solo setting outside party mode.
         if (!config.EnableCombatCompanions)
-            meleeHold = MathF.Max(meleeHold, config.TargetApproachDistance);
+            meleeHold = MathF.Max(
+                meleeHold,
+                ScaleNpcMeleeRange(MathF.Max(0.5f, config.TargetApproachDistance)));
         var rangedHold = MathF.Max(1.0f, config.PartyRangedAttackRange);
         var hpPercent = npc.State.MaxHp > 0 ? (float)npc.State.CurrentHp / npc.State.MaxHp : 1f;
 
@@ -1459,15 +1536,25 @@ public unsafe class NpcAiController : IDisposable
         npc.DesiredEngageRange = npc.IsRangedIntent ? rangedTarget : meleeHold;
     }
 
-    private float GetEffectiveNpcSkillRange(SimulatedNpc npc, SimulatedEntityState target, float skillRange)
+    private float GetEffectiveNpcSkillRange(SimulatedNpc npc, SimulatedEntityState target, NpcSkill skill)
     {
+        var style = skill.AttackStyle == NpcAttackStyle.Auto
+            ? npc.Behavior.AutoAttackStyle
+            : skill.AttackStyle;
+        var skillRange = style == NpcAttackStyle.Melee
+            ? ScaleNpcMeleeRange(skill.Range)
+            : skill.Range;
+
         if (UsesPartyConfiguredRange(npc, target))
         {
             // Casters stand in melee (their auto is a melee swing) but their SPELLS keep full
             // range — don't clamp spell range down to the melee auto range.
-            if (npc.Behavior.AutoAttackStyle == NpcAttackStyle.Magic)
+            if (style is NpcAttackStyle.Magic or NpcAttackStyle.Ranged)
                 return skillRange;
-            return MathF.Min(skillRange, GetPartyAttackRange(npc.Behavior.AutoAttackStyle) + PartyMeleeAttackRangeBuffer);
+            return MathF.Min(
+                skillRange,
+                GetPartyAttackRange(NpcAttackStyle.Melee) +
+                PartyMeleeAttackRangeBuffer * NpcMeleeRangeScale());
         }
 
         return skillRange;
@@ -1483,7 +1570,7 @@ public unsafe class NpcAiController : IDisposable
     private float GetPartyAttackRange(NpcAttackStyle style)
         => style is NpcAttackStyle.Ranged
             ? MathF.Max(1.0f, config.PartyRangedAttackRange)
-            : MathF.Max(0.5f, config.PartyMeleeAttackRange);
+            : ScaleNpcMeleeRange(MathF.Max(0.5f, config.PartyMeleeAttackRange));
 
     private bool TryUpdateVNavmeshPath(
         SimulatedNpc npc,
