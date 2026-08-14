@@ -15,6 +15,12 @@ public readonly record struct CharacterSurfaceBoneSeed(
     float RadiusX,
     float RadiusZ);
 
+public readonly record struct CharacterSurfaceMeshSeed(
+    string Name,
+    string Role,
+    Vector3[] Vertices,
+    int[] Indices);
+
 public readonly record struct CharacterSurfaceDebugBone(
     string Name,
     ReadOnlyMemory<Vector3> Vertices,
@@ -30,6 +36,21 @@ public sealed class CharacterSurfaceRuntime
         CharacterSurfaceProfile profile,
         CharacterSurfaceIdentity identity,
         IReadOnlyList<CharacterSurfaceBoneSeed> seeds)
+    {
+        Profile = profile;
+        Identity = identity;
+        foreach (var seed in seeds)
+        {
+            var bone = new CharacterSurfaceRuntimeBone(profile, seed);
+            bones.Add(bone);
+            byName[seed.Name] = bone;
+        }
+    }
+
+    public CharacterSurfaceRuntime(
+        CharacterSurfaceProfile profile,
+        CharacterSurfaceIdentity identity,
+        IReadOnlyList<CharacterSurfaceMeshSeed> seeds)
     {
         Profile = profile;
         Identity = identity;
@@ -150,6 +171,19 @@ public sealed class CharacterSurfaceRuntimeBone
 
         var rings = BuildRings(profile, seed);
         BuildMesh(rings, out localVertices, out indices);
+        worldPhysics = new Vector3[localVertices.Length];
+        worldTraversal = new Vector3[localVertices.Length];
+        worldGrab = new Vector3[localVertices.Length];
+        worldGround = new Vector3[localVertices.Length];
+    }
+
+    public CharacterSurfaceRuntimeBone(CharacterSurfaceProfile profile, CharacterSurfaceMeshSeed seed)
+    {
+        this.profile = profile;
+        Name = seed.Name;
+        Role = seed.Role;
+        localVertices = (Vector3[])seed.Vertices.Clone();
+        indices = (int[])seed.Indices.Clone();
         worldPhysics = new Vector3[localVertices.Length];
         worldTraversal = new Vector3[localVertices.Length];
         worldGrab = new Vector3[localVertices.Length];
