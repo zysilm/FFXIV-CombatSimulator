@@ -2458,7 +2458,7 @@ public partial class MainWindow : IDisposable
         ImGui.Spacing();
 
         var surfaceProfiles = config.RagdollCharacterSurfaceProfiles;
-        if (ImGui.Checkbox("Mesh-Derived Body Volumes (Experimental)##ragdollSurfaceProfiles", ref surfaceProfiles))
+        if (ImGui.Checkbox("Race-Aware Body Surfaces (Experimental)##ragdollSurfaceProfiles", ref surfaceProfiles))
         {
             config.RagdollCharacterSurfaceProfiles = surfaceProfiles;
             config.Save();
@@ -2470,7 +2470,7 @@ public partial class MainWindow : IDisposable
             }
         }
         ImGui.SameLine();
-        ImGui.TextDisabled("Fits corpse collision, stepping and grabbing to the skinned body/face mesh; per-bone fallback, default off.");
+        ImGui.TextDisabled("Race/body profiles for contact, stepping, grabbing and ground collision; default off.");
         ImGui.Spacing();
 
         var debugOverlay = config.RagdollDebugOverlay;
