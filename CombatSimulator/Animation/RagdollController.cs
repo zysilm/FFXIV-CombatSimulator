@@ -3403,6 +3403,120 @@ public unsafe partial class RagdollController : IDisposable
         return result;
     }
 
+    /// <summary>
+    /// One-time diagnostic (always logs, once per activation): tests whether j_asi_b ("shin") is
+    /// really a full knee-to-ankle bone in FFXIV's own bind pose, or a short proximal segment with
+    /// most of the visual shin length carried by j_asi_c; whether j_asi_c rotates independently of
+    /// j_asi_b in the live (death) pose; and — the deciding question — whether that independent
+    /// rotation is just axial roll (harmless to a single straight capsule) or a genuine kink (c's
+    /// live position departs from the straight line between b and d, i.e. the leg visibly bends
+    /// AT c, someplace our single b-to-d capsule can never represent).
+    /// </summary>
+    private void LogLegBoneStructureDiagnostics(
+        SkeletonAccess skel,
+        Dictionary<string, Vector3> boneWorldPositions,
+        Dictionary<string, Quaternion> boneWorldRotations)
+    {
+        if (!TryBuildReferenceModelTransforms(skel, out var referenceModel))
+            return;
+
+        var pose = skel.Pose;
+        if (pose == null)
+            return;
+
+        foreach (var side in new[] { "l", "r" })
+        {
+            var aIdx = boneService.ResolveBoneIndex(skel, $"j_asi_a_{side}");
+            var bIdx = boneService.ResolveBoneIndex(skel, $"j_asi_b_{side}");
+            var cIdx = boneService.ResolveBoneIndex(skel, $"j_asi_c_{side}");
+            var dIdx = boneService.ResolveBoneIndex(skel, $"j_asi_d_{side}");
+            if (aIdx < 0 || bIdx < 0 || cIdx < 0 || dIdx < 0 ||
+                aIdx >= referenceModel.Length || bIdx >= referenceModel.Length ||
+                cIdx >= referenceModel.Length || dIdx >= referenceModel.Length ||
+                cIdx >= skel.BoneCount)
+            {
+                log.Info($"[Ragdoll LegDiag] side={side}: one or more of j_asi_a/b/c/d did not resolve.");
+                continue;
+            }
+
+            // --- BIND pose: segment lengths ---
+            var aBindPos = referenceModel[aIdx].Translation;
+            var bBindPos = referenceModel[bIdx].Translation;
+            var cBindPos = referenceModel[cIdx].Translation;
+            var dBindPos = referenceModel[dIdx].Translation;
+            var abLen = Vector3.Distance(aBindPos, bBindPos);
+            var bcLen = Vector3.Distance(bBindPos, cBindPos);
+            var cdLen = Vector3.Distance(cBindPos, dBindPos);
+            var bdLen = Vector3.Distance(bBindPos, dBindPos);
+
+            log.Info($"[Ragdoll LegDiag] side={side} BIND lengths: thigh(a->b)={abLen:F3}m " +
+                     $"b->c={bcLen:F3}m c->d={cdLen:F3}m (b->c is {(bcLen / MathF.Max(0.0001f, bcLen + cdLen)) * 100f:F0}% of the b..d span) " +
+                     $"b->d(direct)={bdLen:F3}m");
+
+            // --- Live (death-pose) rotation drift of c relative to b ---
+            if (!Matrix4x4.Decompose(referenceModel[bIdx], out _, out var bBindRot, out _) ||
+                !Matrix4x4.Decompose(referenceModel[cIdx], out _, out var cBindRot, out _))
+            {
+                log.Info($"[Ragdoll LegDiag] side={side}: could not decompose bind rotation for b/c.");
+                continue;
+            }
+            var bindRelative = Quaternion.Normalize(Quaternion.Inverse(bBindRot) * cBindRot);
+
+            if (!boneWorldPositions.TryGetValue($"j_asi_a_{side}", out var aLivePos) ||
+                !boneWorldPositions.TryGetValue($"j_asi_b_{side}", out var bLivePos) ||
+                !boneWorldPositions.TryGetValue($"j_asi_d_{side}", out var dLivePos) ||
+                !boneWorldRotations.TryGetValue($"j_asi_b_{side}", out var bLiveWorldRot))
+            {
+                log.Info($"[Ragdoll LegDiag] side={side}: a/b/d not in live pose maps (unexpected).");
+                continue;
+            }
+            ref var cMt = ref pose->ModelPose.Data[cIdx];
+            var cLiveModelPos = new Vector3(cMt.Translation.X, cMt.Translation.Y, cMt.Translation.Z);
+            var cLivePos = ModelToWorld(cLiveModelPos);
+            var cLiveModelRot = new Quaternion(cMt.Rotation.X, cMt.Rotation.Y, cMt.Rotation.Z, cMt.Rotation.W);
+            var cLiveWorldRot = ModelRotToWorld(cLiveModelRot);
+
+            var liveRelative = Quaternion.Normalize(Quaternion.Inverse(bLiveWorldRot) * cLiveWorldRot);
+            var drift = Quaternion.Normalize(Quaternion.Inverse(bindRelative) * liveRelative);
+            var driftAngle = 2f * MathF.Acos(Math.Clamp(MathF.Abs(drift.W), -1f, 1f)) * (180f / MathF.PI);
+
+            // --- The deciding measurement: does c's LIVE position sit on the straight line from
+            // b to d (a roll-only difference — our single capsule is still fine), or does it
+            // bulge off that line (a real kink — the leg visibly bends at c) ---
+            var vecAB = Vector3.Normalize(bLivePos - aLivePos);
+            var vecBC = cLivePos - bLivePos;
+            var vecBD = dLivePos - bLivePos;
+            var vecCD = dLivePos - cLivePos;
+            var bcLenLive = vecBC.Length();
+            var cdLenLive = vecCD.Length();
+            var bendAtB = bcLenLive > 1e-5f
+                ? MathF.Acos(Math.Clamp(Vector3.Dot(vecAB, vecBC / bcLenLive), -1f, 1f)) * (180f / MathF.PI)
+                : float.NaN;
+            var bendAtC = bcLenLive > 1e-5f && cdLenLive > 1e-5f
+                ? MathF.Acos(Math.Clamp(Vector3.Dot(vecBC / bcLenLive, vecCD / cdLenLive), -1f, 1f)) * (180f / MathF.PI)
+                : float.NaN;
+
+            // Perpendicular distance from c to the line through b and d.
+            float kinkOffset;
+            if (vecBD.LengthSquared() > 1e-8f)
+            {
+                var bdDir = Vector3.Normalize(vecBD);
+                var along = Vector3.Dot(vecBC, bdDir);
+                var closest = bLivePos + bdDir * along;
+                kinkOffset = Vector3.Distance(cLivePos, closest);
+            }
+            else
+            {
+                kinkOffset = float.NaN;
+            }
+
+            log.Info($"[Ragdoll LegDiag] side={side} LIVE: rotation drift of c vs rigidly-following b " +
+                     $"= {driftAngle:F1}°; bend AT b (thigh vs b->c) = {bendAtB:F1}°; " +
+                     $"bend AT c (b->c vs c->d) = {bendAtC:F1}°; c's offset from the straight b-d line = {kinkOffset * 100f:F1}cm " +
+                     $"(b->c={bcLenLive:F3}m, c->d={cdLenLive:F3}m live)");
+        }
+    }
+
     private Vector3 ComputeProfileHingeAxis(AnatomicalRole role, Vector3 parentSegmentDir, Vector3 childSegmentDir, Quaternion childBodyRot)
     {
         var childN = NormalizeOrFallback(childSegmentDir, Vector3.UnitY);
@@ -4255,6 +4369,11 @@ public unsafe partial class RagdollController : IDisposable
             ? BuildBindPoseHingeFrames(skel, boneService)
             : new Dictionary<string, BindPoseHingeFrame>(StringComparer.Ordinal);
 
+        // Deliberately NOT gated on RagdollVerboseLog: that flag also turns on per-step/per-joint
+        // logging elsewhere, which floods the log file. This fires once per activation regardless.
+        if (!genericSkeleton)
+            LogLegBoneStructureDiagnostics(skel, boneWorldPositions, boneWorldRotations);
+
         // --- Pass 2: Create physics bodies ---
         // Capsule center is offset from bone origin (joint) along the segment direction.
         // Capsule half-length is usually clamped to the current pose segment distance.
@@ -5099,6 +5218,41 @@ public unsafe partial class RagdollController : IDisposable
                             AddKneecapFacingLimits(rb.Name, rb.BodyHandle, parentHandle,
                                 childBodyRef, parentBodyRef, segDirWorld, anchorWorld,
                                 anatForwardWorld, anatLateralWorld, limitSpring);
+
+                        // Ankle dorsiflexion wall. The symmetric cone above treats "sole tips up
+                        // toward the shin" and "toes point down away from the shin" as equally
+                        // legal, but real dorsiflexion (~20°) is far more restricted than
+                        // plantarflexion (~45°) — this is what let the foot fold up flush against
+                        // the shin. Always on (not the RagdollAnatomicalRom Advanced Filter): at
+                        // neutral standing the foot axis is ~90° from the shin's own down axis;
+                        // dorsiflexing swings the foot axis TOWARD "up" (away from "down", angle
+                        // increases past 90°), plantarflexing swings it TOWARD "down" (angle
+                        // decreases, unaffected by this wall). One-sided by construction.
+                        if (boneDef.AnatomicalRole == AnatomicalRole.Foot)
+                        {
+                            var dorsiflexionMax = TryGetAnatomicalRom(rb.Name, out var footRom)
+                                ? footRom.FlexionMax
+                                : DegreesToRadians(20f);
+                            var shinDownLocalParent = Vector3.Normalize(Vector3.Transform(
+                                parentSegDir, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
+                            var dorsiflexionLimit = new SwingLimit
+                            {
+                                AxisLocalA = axisChildLocal,
+                                AxisLocalB = shinDownLocalParent,
+                                MaximumSwingAngle = MathF.PI / 2f + dorsiflexionMax,
+                                SpringSettings = limitSpring,
+                            };
+                            simulation.Solver.Add(rb.BodyHandle, parentHandle, dorsiflexionLimit);
+                            swingStressMonitors.Add(new SwingStressMonitor
+                            {
+                                Bone = rb.Name,
+                                Child = rb.BodyHandle,
+                                Parent = parentHandle,
+                                AxisLocalChild = axisChildLocal,
+                                AxisLocalParent = shinDownLocalParent,
+                                LimitAngle = dorsiflexionLimit.MaximumSwingAngle,
+                            });
+                        }
                     }
 
                     // C2: when ROM is on, take the axial range from the anatomical table (correct
