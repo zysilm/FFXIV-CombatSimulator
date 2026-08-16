@@ -16,12 +16,12 @@ public enum CameraOwner
 {
     None = 0,
     /// <summary>Dynamic Camera combat framing (over-the-shoulder). Yields to every mode
-    /// that owns player movement, including monster follow.</summary>
+    /// that owns player movement, including Enemy Control follow.</summary>
     DynamicCam = 15,
-    /// <summary>Monster mode creature follow (orbit center only, user keeps rotation/zoom).</summary>
-    MonsterFollow = 20,
-    /// <summary>Dynamic Camera DEATH shot. Deliberately above MonsterFollow: the marquee use
-    /// of monster mode after a death is the monster handling the corpse, and testing showed
+    /// <summary>Enemy Control creature follow (orbit center only, user keeps rotation/zoom).</summary>
+    EnemyControlFollow = 20,
+    /// <summary>Dynamic Camera DEATH shot. Deliberately above EnemyControlFollow: the marquee use
+    /// of Enemy Control after a death is the creature handling the corpse, and testing showed
     /// the follow centre stealing the camera away from the body the moment a grab started —
     /// the death shot is the one framing that scene and must keep the camera through it.</summary>
     DynamicDeath = 25,
@@ -60,10 +60,10 @@ public struct CameraRequest
 /// Single per-frame authority over the game camera. Mode controllers submit requests
 /// instead of writing camera fields directly; Apply picks the highest-priority live
 /// request and performs the writes. This replaces the previous scheme where
-/// FightingModeController, ActiveCameraController, and MonsterMode each wrote (or
+/// FightingModeController, ActiveCameraController, and Enemy Control each wrote (or
 /// toggled each other's active flags) independently and fought over the same fields.
 ///
-/// Submissions live for two Apply passes: MonsterMode ticks on its own
+/// Submissions live for two Apply passes: Enemy Control ticks on its own
 /// Framework.Update handler whose order relative to the plugin's is
 /// subscription-dependent, so a one-frame TTL could flicker.
 /// </summary>
@@ -87,7 +87,7 @@ public sealed unsafe class CameraModeCoordinator
         CameraOwner.FightingKO,
         CameraOwner.Fighting2D,
         CameraOwner.DynamicDeath,
-        CameraOwner.MonsterFollow,
+        CameraOwner.EnemyControlFollow,
         CameraOwner.DynamicCam,
     };
 

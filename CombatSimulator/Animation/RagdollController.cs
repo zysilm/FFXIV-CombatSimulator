@@ -55,9 +55,7 @@ public unsafe partial class RagdollController : IDisposable
     // and write ragdoll bones onto the newcomer).
     private uint targetEntityId;
     private Vector3 savedCharacterPosition; // original position before follow moved it
-#if DEV_EXPERIMENTAL
     private bool followWasActive;           // tracks toggle-off to restore position
-#endif
     private float elapsed;
     private float activationDelay;
     private bool physicsStarted;
@@ -8099,12 +8097,8 @@ public unsafe partial class RagdollController : IDisposable
                 // repositions (dismount / death transition). followWasActive means we wrote a
                 // follow position on the previous frame, so this frame's skeleton move is ours.
                 // Ground is still re-raycast below in both cases so the floor tracks the corpse.
-#if DEV_EXPERIMENTAL
                 if (!(config.RagdollFollowPosition && followWasActive && isLocalPlayerTarget))
                     skeletonMoved = true;
-#else
-                skeletonMoved = true;
-#endif
                 if (config.RagdollVerboseLog)
                     log.Info($"[Ragdoll F{frameCount}] Skeleton moved {skelDist:F3}m: ({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3})→({newSkelPos.X:F3},{newSkelPos.Y:F3},{newSkelPos.Z:F3})");
                 if (BGCollisionModule.RaycastMaterialFilter(
@@ -8732,10 +8726,6 @@ public unsafe partial class RagdollController : IDisposable
         // GameObject.Position via SetApproachPosition, which also drags their nameplate / HP-bar
         // anchor along with the flying corpse.
         //
-        // Dev-only. The toggle lives in the private Dev/Experimental UI, but this code used to ship
-        // in public builds while only the checkbox was hidden — so a stale or hand-edited config
-        // could reach it. Compile it out entirely unless the dev module is present.
-#if DEV_EXPERIMENTAL
         if (config.RagdollFollowPosition && ragdollBones.Count > 0 && targetCharacterAddress != nint.Zero)
         {
             try
@@ -8758,11 +8748,10 @@ public unsafe partial class RagdollController : IDisposable
             pendingFollowIsLocalPlayer = isLocalPlayerTarget;
             followWasActive = false;
         }
-#endif
     }
 
     // --- Grab constraint API (for cinematic victory sequence, bone-hold test mode, and
-    // Monster Mode's grab-as-attack) ---
+    // Enemy Control's grab-as-attack) ---
     //
     // Multiple grabs can be live at once (e.g. a body held by both the neck and the pelvis for
     // a carry pose), so each grab gets its own slot keyed by an opaque id handed back from
@@ -13057,7 +13046,7 @@ public unsafe partial class RagdollController : IDisposable
     /// <summary>
     /// Register a live character as a moving collider in the ragdoll simulation AFTER activation
     /// (the per-bone collision built at init only captures party/NPC actors that existed then).
-    /// Used by Monster mode so the creature physically pushes the ragdoll when it walks into it,
+    /// Used by Enemy Control so the creature physically pushes the ragdoll when it walks into it,
     /// not just on an explicit attack. Returns false if the sim isn't ready yet — callers should
     /// retry until it succeeds. Pair with <see cref="RemoveLiveCollider"/> before the actor despawns.
     /// </summary>

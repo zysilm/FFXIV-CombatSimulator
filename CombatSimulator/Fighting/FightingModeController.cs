@@ -97,9 +97,9 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
     /// while wired, NpcAiController skips the fighter (see ControlsEnemy).</summary>
     public FightingAiController? FightingAi { get; set; }
 
-    /// <summary>Dev-controlled monster's follow center (null when inactive / follow off).
-    /// When present post-death, the KO camera frames the corpse↔monster midpoint.</summary>
-    public Func<Vector3?>? GetMonsterFollowCenter { get; set; }
+    /// <summary>Enemy Control's controlled creature follow center (null when inactive / follow off).
+    /// When present post-death, the KO camera frames the corpse↔creature midpoint.</summary>
+    public Func<Vector3?>? GetEnemyControlFollowCenter { get; set; }
 
     /// <summary>Ragdoll rigid-body world position by bone name (null while no ragdoll).
     /// Post-defeat camera modes track the corpse through THIS — the skeleton pose read at
@@ -496,7 +496,7 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
             p = targetP;
         }
 
-        // Enemy: when MonsterMode owns it, it moves itself (lane-projected through the
+        // Enemy: when Enemy Control owns it, it moves itself (lane-projected through the
         // IFightingModeLaneConstraint seam) — hands off. Otherwise the fighting AI's
         // desired coordinate (or its own, projected). Never recenter the pair: moving
         // one actor must not translate the other.
@@ -544,12 +544,12 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
 
         if (playerDefeated)
         {
-            // Fighting-game KO framing takes over whenever the dev-controlled monster is
-            // being followed: frame the corpse↔monster midpoint and zoom with separation.
-            var monsterCenter = GetMonsterFollowCenter?.Invoke();
-            if (monsterCenter.HasValue)
+            // Fighting-game KO framing takes over whenever the controlled creature is
+            // being followed: frame the corpse↔creature midpoint and zoom with separation.
+            var enemyControlCenter = GetEnemyControlFollowCenter?.Invoke();
+            if (enemyControlCenter.HasValue)
             {
-                UpdateKoCamera(playerObj, monsterCenter.Value, dt);
+                UpdateKoCamera(playerObj, enemyControlCenter.Value, dt);
                 return;
             }
 

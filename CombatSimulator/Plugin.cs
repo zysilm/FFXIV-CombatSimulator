@@ -77,6 +77,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly FightingModeController fightingModeController;
     private readonly SpectatorController spectatorController;
     private readonly Dev.IDevExperimental devExperimental;
+    private readonly EnemyControlController enemyControlController;
     private readonly HookSafetyChecker hookSafetyChecker;
     private readonly UpdateLogPopupController updateLogPopupController;
 
@@ -166,8 +167,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             log.Info("Mounted-death dismemberment default corrected to off (one-time migration).");
         }
 
-        config.SeedMonsterGrabProfiles();
 #endif
+        config.SeedEnemyControlGrabProfiles();
 
         // Simulation
         actionDataProvider = new ActionDataProvider(dataManager, log, config);
@@ -256,15 +257,22 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // Super-armor enemies during their telegraph windup (no flinch from player hits).
         combatEngine.IsTargetSuperArmored = telegraphSystem.IsWindingUp;
 
-        // All experimental ("easter-egg") dev features live in one module now (Victory/Hold/
-        // Monster + dev-only per-frame tweaks). The engine drives the cinematic victory through the
+        // Enemy Control (post-defeat creature possession) is a normal production controller now —
+        // owned and driven directly here, not through the dev-experimental seam.
+        enemyControlController = new EnemyControlController(
+            keyState, gamepadState, framework, ragdollController, animationController, boneTransformService,
+            movementBlockHook, activeCameraController, vnavmeshIpc, npcSelector, GetActiveCorpseRagdolls,
+            config, log);
+
+        // The remaining experimental ("easter-egg") dev features live in one module (Victory/Hold +
+        // dev-only per-frame tweaks). The engine drives the cinematic victory through the
         // IVictorySequence seam.
 #if DEV_EXPERIMENTAL
         devExperimental = new Dev.Experimental.DevExperimentalModule(
-            keyState, gamepadState, framework, ragdollController, animationController, boneTransformService,
-            movementBlockHook, activeCameraController, vnavmeshIpc, dismembermentController, glamourerIpc,
-            armorDetachmentController, combatEngine, clientState, targetManager, npcSelector, FindNpcByAddress,
-            GetActiveCorpseRagdolls, config, log);
+            ragdollController, animationController, boneTransformService,
+            movementBlockHook, vnavmeshIpc, dismembermentController, glamourerIpc,
+            armorDetachmentController, combatEngine, clientState, targetManager, npcSelector,
+            config, log);
 #else
         devExperimental = new Dev.DevExperimentalStub();
 #endif
@@ -290,7 +298,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             combatModeRouter,
             // Deferred: fightingModeController is constructed later in this ctor; the
             // AI only queries during framework ticks.
-            addr => devExperimental.ControlsNpc(addr) || fightingModeController?.ControlsEnemy(addr) == true,
+            addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr) ||
+                    fightingModeController?.ControlsEnemy(addr) == true,
             // Don't commit a new attack while this enemy already has a live telegraph (fixes the
             // double-swing where the old 0.6s animation lock expired mid-animation).
             telegraphSystem.IsBusy);
@@ -329,12 +338,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         fightingModeController = new FightingModeController(
             config, combatEngine, npcSelector, mapEnemyController, movementBlockHook,
             cameraModeCoordinator, boneTransformService,
-            addr => devExperimental.ControlsNpc(addr), log);
+            addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr), log);
         // Post-defeat camera modes must track the corpse through the ragdoll bodies — the skeleton
         // pose read at framework time stays at the death spot even after kicks.
         fightingModeController.GetRagdollBonePosition = bone => ragdollController.GetBodyWorldPosition(bone);
-        devExperimental.SetFightingModeLane(fightingModeController);
-        devExperimental.SetCameraCoordinator(cameraModeCoordinator);
+        enemyControlController.FightingLane = fightingModeController;
+        enemyControlController.SetCameraCoordinator(cameraModeCoordinator);
         var weaponHitboxService = new WeaponHitboxService(config, boneTransformService, log);
         fightingCombatController = new FightingCombatController(
             config, playerGuardController, fightingModeController, combatEngine,
@@ -344,7 +353,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             config, combatModeRouter, telegraphSystem, animationController, log);
         fightingModeController.FightingAi = fightingAiController;
         fightingCombatController.OnPlayerHitLanded = _ => fightingAiController.NotifyPlayerHitLanded();
-        fightingModeController.GetMonsterFollowCenter = () => devExperimental.ControlledMonsterCenter;
+        fightingModeController.GetEnemyControlFollowCenter = () => enemyControlController.FollowCenter;
         combatEngine.BeforePlayerDeath = () =>
         {
             fightingModeController.HandlePlayerDeath();
@@ -410,6 +419,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             dismembermentController.RemoveAll();
             armorDetachmentController.Reset();
             devExperimental.ResetTransientState();
+            enemyControlController.Despawn();
             fightingModeController.Reset();
             dynamicCameraController.Reset();
 
@@ -448,6 +458,17 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                     dismembermentController.SpawnFor(addr, bone, config.RagdollActivationDelay, glam);
             }
             devExperimental.OnPlayerDeath(addr);
+
+            if (config.EnemyControlControlKiller)
+            {
+                var killer = FindNpcByAddress(combatEngine.LastPlayerKillerAddress);
+                if (killer != null) enemyControlController.ControlKiller(killer);
+                else log.Info("EnemyControl: no valid killer to control.");
+            }
+            else if (config.EnemyControlSpawnOnDeath)
+            {
+                enemyControlController.Spawn();
+            }
         };
 
         // Hook safety checker — register native functions we CALL (not hook) that other plugins may hook.
@@ -550,6 +571,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcAiController.Dispose();
         combatEngine.Dispose();
         devExperimental.Dispose();
+        enemyControlController.Dispose();
         armorDetachmentController.Dispose();
         ragdollController.Dispose();
         weaponDropController.Dispose();
@@ -668,6 +690,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         if (config.ShowArmorDetachmentControls)
             mainWindow.DrawArmorDetachmentControls(armorDetachmentController);
+
+        if (config.ShowEnemyControlGui)
+            mainWindow.DrawEnemyControlWindow(enemyControlController);
 
         devExperimental.DrawToolbars(mainWindow);
 
@@ -1182,6 +1207,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         armorDetachmentController.Reset();
         spectatorController.DespawnAll();
         devExperimental.ResetWorldState();
+        enemyControlController.Despawn();
         dynamicCameraController.Reset();
 
         if (combatEngine.IsActive)
@@ -1208,6 +1234,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             armorDetachmentController.Reset();
             spectatorController.DespawnAll();
             devExperimental.ResetWorldState();
+            enemyControlController.Despawn();
             dynamicCameraController.Reset();
             npcSpawner.DespawnAll();
             companionManager.DespawnAll();

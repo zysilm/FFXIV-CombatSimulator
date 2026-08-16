@@ -2,9 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-using CombatSimulator.Camera;
 using CombatSimulator.Gui;
-using CombatSimulator.Fighting;
 using CombatSimulator.Simulation;
 
 namespace CombatSimulator.Dev;
@@ -25,9 +23,6 @@ public sealed class DevExperimentalStub : IDevExperimental
     public void BeforePlayerDeath() { }
     public void OnPlayerDeath(nint playerAddress) { }
     public void OnNpcDeath(nint npcAddress) { }
-    public void SetFightingModeLane(IFightingModeLaneConstraint? lane) { }
-    public void SetCameraCoordinator(CameraModeCoordinator coordinator) { }
-    public System.Numerics.Vector3? ControlledMonsterCenter => null;
     public void ResetWorldState() { }
     public void ResetTransientState() { }
     public void DrawToolbars(MainWindow mainWindow) { }

@@ -180,6 +180,7 @@ public partial class Configuration : IPluginConfiguration
     public bool KoStripHandsFeetRigidDefaultMigrated20260719 { get; set; } = false;
     public bool RagdollFingerPhysicsMigrated20260810 { get; set; } = false;
     public bool RagdollLegModelRebuildMigrated20260816 { get; set; } = false;
+    public bool RagdollFollowPositionDefaultMigrated20260816 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -644,7 +645,10 @@ public partial class Configuration : IPluginConfiguration
 
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollVerboseLog { get; set; } = false;
-    public bool RagdollFollowPosition { get; set; } = false; // Follow ragdoll root to keep the flung corpse from being culled/unloaded on long falls. Local player moves render-only (DrawObject.Position); NPC phantoms move full position.
+    // Now surfaced under Effects > Ragdoll Follow (own dropdown, default on). Follows the ragdoll
+    // root to keep a flung corpse from being culled/unloaded on long falls. Local player moves
+    // render-only (DrawObject.Position); NPC phantoms move full position.
+    public bool RagdollFollowPosition { get; set; } = true;
     public bool DevCompanionAppearanceVariant { get; set; } = false;
     public bool DevPartyApproachDebugLog { get; set; } = false;
     public bool RagdollNpcCollision { get; set; } = true;
@@ -949,6 +953,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateGuidedCollapse();
         MigrateDynamicCameraPivotBone();
         MigrateRagdollLegModelRebuild(); // before the profile housekeeping below: it clears RagdollBoneProfiles
+        MigrateRagdollFollowPositionDefault();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
     }
@@ -1030,8 +1035,9 @@ public partial class Configuration : IPluginConfiguration
         nameof(RagdollBoneConfigs),
         nameof(RagdollBoneProfiles),
 
-        // Dev-only switches. They live on the hidden panel, not this page.
+        // Dev-only switch. Lives on the hidden panel, not this page.
         nameof(RagdollVerboseLog),
+        // Lives under Effects now (its own dropdown), not this page.
         nameof(RagdollFollowPosition),
 
         // One-shot migration records, not options. Resetting them would re-run the
@@ -1743,6 +1749,22 @@ public partial class Configuration : IPluginConfiguration
         RagdollBoneProfiles.Clear();
 
         RagdollLegModelRebuildMigrated20260816 = true;
+        Save();
+    }
+
+    /// <summary>
+    /// 2.x.0.0: RagdollFollowPosition moves out from behind the hidden dev panel onto the public
+    /// Effects page and its default flips from false to true — but every existing config already has
+    /// the old value serialized explicitly, so the code default alone would only reach fresh installs.
+    /// </summary>
+    private void MigrateRagdollFollowPositionDefault()
+    {
+        if (RagdollFollowPositionDefaultMigrated20260816)
+            return;
+
+        RagdollFollowPosition = true;
+
+        RagdollFollowPositionDefaultMigrated20260816 = true;
         Save();
     }
 

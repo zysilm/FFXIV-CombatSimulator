@@ -339,6 +339,8 @@ public partial class MainWindow : IDisposable
             case 3: // Effects
                 DrawHitVfxSection();
                 DrawArmorDetachmentEntrySection();
+                DrawEnemyControlEntrySection();
+                DrawRagdollFollowEntrySection();
                 DrawGlamourerHeaderSection();
                 break;
             case 4: // Camera
@@ -2383,6 +2385,21 @@ public partial class MainWindow : IDisposable
         ("L Thigh", "j_asi_a_l"),     ("R Thigh", "j_asi_a_r"),
         ("L Shin", "j_asi_b_l"),      ("R Shin", "j_asi_b_r"),
     };
+
+    private void DrawRagdollFollowEntrySection()
+    {
+        if (!ImGui.CollapsingHeader("Ragdoll Follow"))
+            return;
+
+        var follow = config.RagdollFollowPosition;
+        if (ImGui.Checkbox("Follow flung corpses##ragdollfollow", ref follow))
+        {
+            config.RagdollFollowPosition = follow;
+            config.Save();
+        }
+        HelpMarker("Keeps a corpse's actual game-object position moving with its ragdoll body while it falls or slides, " +
+                   "so a corpse thrown far away doesn't get culled or unloaded. On by default.");
+    }
 
     private void DrawGlamourerHeaderSection()
     {
