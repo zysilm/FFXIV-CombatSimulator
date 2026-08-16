@@ -24,6 +24,10 @@ public class RagdollBoneConfig
     public float CapsuleHalfLength { get; set; }
     public float Mass { get; set; }
     public float SwingLimit { get; set; }
+    public float? SwingMinLimit { get; set; } // hinge-only lower bound; null means migrate/default
+    public float? HingeRestAngle { get; set; } // hinge-only passive rest target; null disables/defaults
+    public float? HingeRestSpringFreq { get; set; }
+    public float? HingeRestMaxForce { get; set; }
     public int JointType { get; set; } // 0=Ball, 1=Hinge
     public float TwistMinAngle { get; set; }
     public float TwistMaxAngle { get; set; }
@@ -543,6 +547,23 @@ public partial class Configuration : IPluginConfiguration
     // Explicit Advanced Filter for setups that need a fixed total body mass.
     public bool RagdollAnthropometricMass { get; set; } = true;
     public float RagdollBodyMass { get; set; } = 70f; // Total body mass (kg) anthropometric fractions scale against.
+    // Tier C — Asymmetric swing-twist range of motion. When on, joints draw their axial
+    // twist range (all joints) and the knee/elbow flexion/hyperextension bounds from a
+    // clinical/ISB anatomical ROM table instead of the hand-set per-bone twist values and
+    // the symmetric fold-stop. Blocks knee/elbow backward hyperextension (the most visible
+    // anatomical violation) and gives each joint a correct asymmetric axial range. The
+    // ball-joint (hip/shoulder) asymmetric SWING ellipse is deferred to Tier A. Takes
+    // effect on next ragdoll activation.
+    // Default OFF after field testing: only useful in specific setups. The twist
+    // governors, hemisphere locks, and profile-table limits stay active regardless.
+    public bool RagdollAnatomicalRom { get; set; } = false;
+    // Passive hinge rest bias — a soft spring on the knee/elbow hinge pulling it toward
+    // straight (the HingeRest* per-bone params). Without it the hinge only velocity-damps,
+    // so a limb resting on the ground (a supine corpse) never returns to straight and the
+    // knee stays visibly bent; the spring gives it a real "return to straight" that a ball
+    // joint's cone would, but without the ball's free sideways swing. Takes effect on next
+    // ragdoll activation.
+    public bool RagdollAnatomicalHingeRestBias { get; set; } = true;
 
     // Dismemberment POC: while the player ragdoll is active, collapse each selected limb's bone
     // subtree to ~0 scale so it vanishes from the body. Multi-select: stores the root bone name of

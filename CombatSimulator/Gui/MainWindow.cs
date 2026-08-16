@@ -2666,6 +2666,25 @@ public partial class MainWindow : IDisposable
                     if (ImGui.SliderFloat($"Swing Limit (rad){id}", ref swing, 0.0f, MathF.PI, "%.2f"))
                     { bone.SwingLimit = swing; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
 
+                    if ((RagdollController.JointType)bone.JointType == RagdollController.JointType.Hinge)
+                    {
+                        var swingMin = bone.SwingMinLimit ?? 0f;
+                        if (ImGui.SliderFloat($"Swing Min Limit (rad){id}", ref swingMin, 0.0f, MathF.PI, "%.2f"))
+                        { bone.SwingMinLimit = swingMin; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
+
+                        var restAngle = bone.HingeRestAngle ?? 0f;
+                        if (ImGui.SliderFloat($"Hinge Rest Angle (rad){id}", ref restAngle, 0.0f, MathF.PI, "%.2f"))
+                        { bone.HingeRestAngle = restAngle; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
+
+                        var restFreq = bone.HingeRestSpringFreq ?? 0f;
+                        if (ImGui.SliderFloat($"Hinge Rest Freq (Hz){id}", ref restFreq, 0.0f, 30.0f, "%.1f"))
+                        { bone.HingeRestSpringFreq = restFreq; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+
+                        var restForce = bone.HingeRestMaxForce ?? 0f;
+                        if (ImGui.SliderFloat($"Hinge Rest Max Force{id}", ref restForce, 0.0f, 500.0f, "%.0f"))
+                        { bone.HingeRestMaxForce = restForce; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
+                    }
+
                     var twistMin = bone.TwistMinAngle;
                     if (ImGui.SliderFloat($"Twist Min (rad){id}", ref twistMin, -MathF.PI, 0f, "%.2f"))
                     { bone.TwistMinAngle = twistMin; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.TwistMin; }
@@ -2712,6 +2731,10 @@ public partial class MainWindow : IDisposable
                             bone.CapsuleHalfLength = def.CapsuleHalfLength;
                             bone.Mass = def.Mass;
                             bone.SwingLimit = def.SwingLimit;
+                            bone.SwingMinLimit = def.SwingMinLimit;
+                            bone.HingeRestAngle = def.HingeRestAngle;
+                            bone.HingeRestSpringFreq = def.HingeRestSpringFreq;
+                            bone.HingeRestMaxForce = def.HingeRestMaxForce;
                             bone.JointType = def.JointType;
                             bone.TwistMinAngle = def.TwistMinAngle;
                             bone.TwistMaxAngle = def.TwistMaxAngle;
@@ -2857,6 +2880,10 @@ public partial class MainWindow : IDisposable
             CapsuleHalfLength = src.CapsuleHalfLength,
             Mass = src.Mass,
             SwingLimit = src.SwingLimit,
+            SwingMinLimit = src.SwingMinLimit,
+            HingeRestAngle = src.HingeRestAngle,
+            HingeRestSpringFreq = src.HingeRestSpringFreq,
+            HingeRestMaxForce = src.HingeRestMaxForce,
             JointType = src.JointType,
             TwistMinAngle = src.TwistMinAngle,
             TwistMaxAngle = src.TwistMaxAngle,
@@ -4112,6 +4139,22 @@ public partial class MainWindow : IDisposable
                     }
                     HelpMarker("Total body mass the anthropometric segment fractions scale against. 70 kg default. Takes effect on next ragdoll activation.");
                 }
+
+                var anatomicalHingeRestBias = config.RagdollAnatomicalHingeRestBias;
+                if (ImGui.Checkbox("Anatomical Hinge Rest Bias##ragdoll", ref anatomicalHingeRestBias))
+                {
+                    config.RagdollAnatomicalHingeRestBias = anatomicalHingeRestBias;
+                    config.Save();
+                }
+                HelpMarker("Passive spring on the knee/elbow hinge pulling it toward straight. Without it the hinge only velocity-damps, so a limb held bent by contact/weight (not just hanging free) never returns toward straight and can settle into a fixed bent pose. Takes effect on next ragdoll activation.");
+
+                var anatomicalRom = config.RagdollAnatomicalRom;
+                if (ImGui.Checkbox("Anatomical ROM (asymmetric limits)##ragdoll", ref anatomicalRom))
+                {
+                    config.RagdollAnatomicalRom = anatomicalRom;
+                    config.Save();
+                }
+                HelpMarker("Draw axial twist range (all joints) and knee/elbow flexion/hyperextension bounds from a clinical/ISB anatomical ROM table instead of the hand-set per-bone twist values and the symmetric fold-stop. Also adds directional swing limits for hips, arm-side shoulders and the spine chain. Off by default. Takes effect on next ragdoll activation.");
 
                 var selfCollision = config.RagdollSelfCollision;
                 if (ImGui.Checkbox("Self Collision##ragdoll", ref selfCollision))

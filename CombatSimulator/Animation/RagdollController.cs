@@ -1811,6 +1811,10 @@ public unsafe partial class RagdollController : IDisposable
         public float CapsuleHalfLength;
         public float Mass;
         public float SwingLimit;
+        public float SwingMinLimit;
+        public float HingeRestAngle;
+        public float HingeRestSpringFreq;
+        public float HingeRestMaxForce;
         public JointType Joint;
         public float TwistMinAngle;
         public float TwistMaxAngle;
@@ -2148,6 +2152,77 @@ public unsafe partial class RagdollController : IDisposable
         return def.Mass;
     }
 
+    // === Tier C — Anatomical range-of-motion (ROM) table ============================
+    // Solver-AGNOSTIC, clinical/ISB-derived per-DOF ranges of motion, stored in RADIANS.
+    // Keyed by the side-stripped bone name (so left/right share one entry, matching the mass
+    // table).
+    //
+    // Source: standard healthy-adult goniometric / clinical ROM (AAOS averages) expressed
+    // in the ISB Grood-Suntay joint coordinate system; rounded to typical means:
+    //   Knee     flexion 0-140 deg, hyperextension 5,        axial (tibial) +/-10
+    //   Elbow    flexion 0-145 deg, hyperextension 5,        axial (pron/sup) +/-80
+    //   Hip      flexion 120, extension 20, abduction 45, adduction 25, axial +/-40
+    //   Shoulder flexion 170, extension 50, abduction 170, adduction 40, axial +/-90
+    //   Ankle    dorsiflexion 20, plantarflexion 45,         inv/eversion +/-20
+    //   Neck     flexion/extension +/-45, lateral +/-40,     axial +/-70
+    //   Spine    (per segment) flex/ext +/-15, lateral +/-15, axial +/-10
+    //
+    // Wired: the AXIAL twist range of every joint and the knee/elbow FLEXION + HYPEREXTENSION
+    // bounds about the hinge axis. Only active while RagdollAnatomicalRom is on; off by
+    // default (the twist governors, hemisphere locks, and profile-table limits stay active
+    // regardless).
+    private readonly struct AnatomicalRom
+    {
+        public readonly float FlexionMax;    // forward bend / dorsiflexion (rad, >=0)  [swing]
+        public readonly float ExtensionMax;  // backward bend / plantarflex / hyperext (rad, >=0)
+        public readonly float AbductionMax;  // (rad) [swing]
+        public readonly float AdductionMax;  // (rad) [swing]
+        public readonly float AxialMin;      // axial twist lower bound (rad, signed)
+        public readonly float AxialMax;      // axial twist upper bound (rad, signed)
+
+        public AnatomicalRom(float flexionMax, float extensionMax, float abductionMax,
+                             float adductionMax, float axialMin, float axialMax)
+        {
+            FlexionMax = flexionMax;
+            ExtensionMax = extensionMax;
+            AbductionMax = abductionMax;
+            AdductionMax = adductionMax;
+            AxialMin = axialMin;
+            AxialMax = axialMax;
+        }
+    }
+
+    private static float D2R(float degrees) => DegreesToRadians(degrees);
+
+    // Keyed by side-stripped bone name (see SideStrippedBoneName). Bones absent from this
+    // table fall back to their hand-set boneDef twist values (and the fold-stop).
+    private static readonly Dictionary<string, AnatomicalRom> AnatomicalRomTable = new()
+    {
+        // Hinge joints
+        // Knee flexion: relaxed passive max is ~135-145° (thigh↔shin interior angle
+        // 35-45°). Connected pairs don't collide, so there is no soft-tissue backstop —
+        // use the conservative end or the shin folds visibly INTO the thigh.
+        { "j_asi_b", new AnatomicalRom(D2R(135f), D2R(5f),   0f,        0f,        D2R(-10f), D2R(10f)) }, // Knee (shin)
+        { "j_ude_b", new AnatomicalRom(D2R(145f), D2R(5f),   0f,        0f,        D2R(-80f), D2R(80f)) }, // Elbow (forearm)
+        // Ball joints (axial wired now; swing fields deferred to Tier A)
+        // Hip flexion: 120° is the CLINICAL value measured with a bent knee. With the knee
+        // extended the two-joint hamstrings cap passive flexion at ~80–90°; death poses mostly
+        // have near-straight legs, so 95° is the relaxed-body compromise (no cross-joint
+        // hamstring constraint is modelled). This is what stops the seated corpse folding
+        // its chest flat onto its legs.
+        { "j_asi_a", new AnatomicalRom(D2R(95f),  D2R(20f),  D2R(45f),  D2R(25f),  D2R(-40f), D2R(40f)) }, // Hip (thigh)
+        { "j_ude_a", new AnatomicalRom(D2R(170f), D2R(50f),  D2R(170f), D2R(40f),  D2R(-90f), D2R(90f)) }, // Shoulder (upper arm)
+        { "j_sako",  new AnatomicalRom(D2R(170f), D2R(50f),  D2R(170f), D2R(40f),  D2R(-90f), D2R(90f)) }, // Shoulder (clavicle)
+        { "j_asi_d", new AnatomicalRom(D2R(20f),  D2R(45f),  0f,        0f,        D2R(-20f), D2R(20f)) }, // Ankle (foot): dorsi/plantar + inv/ev
+        { "j_kubi",  new AnatomicalRom(D2R(45f),  D2R(45f),  D2R(40f),  D2R(40f),  D2R(-70f), D2R(70f)) }, // Neck
+        { "j_sebo_a",new AnatomicalRom(D2R(15f),  D2R(15f),  D2R(15f),  D2R(15f),  D2R(-10f), D2R(10f)) }, // Lower spine
+        { "j_sebo_b",new AnatomicalRom(D2R(15f),  D2R(15f),  D2R(15f),  D2R(15f),  D2R(-10f), D2R(10f)) }, // Mid spine
+        { "j_sebo_c",new AnatomicalRom(D2R(15f),  D2R(15f),  D2R(15f),  D2R(15f),  D2R(-10f), D2R(10f)) }, // Chest
+    };
+
+    private static bool TryGetAnatomicalRom(string boneName, out AnatomicalRom rom)
+        => AnatomicalRomTable.TryGetValue(SideStrippedBoneName(boneName), out rom);
+
     private static Dictionary<string, float> BuildMassBudget(
         RagdollBoneDef[] defs,
         IReadOnlyDictionary<string, int> presentBones,
@@ -2226,6 +2301,17 @@ public unsafe partial class RagdollController : IDisposable
         if (bone.AnatomicalRole == (int)AnatomicalRole.Auto)
             bone.AnatomicalRole = (int)InferAnatomicalRole(bone.Name, bone.Description, bone.SoftBody);
 
+        bone.SwingMinLimit ??= DefaultSwingMinLimit((AnatomicalRole)bone.AnatomicalRole, bone.Name);
+        bone.HingeRestAngle ??= DefaultHingeRestAngle((AnatomicalRole)bone.AnatomicalRole, bone.Name);
+        // 0 counts as "unset" for the rest spring, not "disabled": the built-in profiles store 0
+        // for every bone, so treating it as null lets knee/elbow inherit the firm default (the
+        // master toggle, not a per-bone 0, is what turns the feature off). Non-hinge bones keep 0
+        // because their default is 0.
+        if ((bone.HingeRestSpringFreq ?? 0f) <= 0f)
+            bone.HingeRestSpringFreq = DefaultHingeRestSpringFreq((AnatomicalRole)bone.AnatomicalRole, bone.Name);
+        if ((bone.HingeRestMaxForce ?? 0f) <= 0f)
+            bone.HingeRestMaxForce = DefaultHingeRestMaxForce((AnatomicalRole)bone.AnatomicalRole, bone.Name);
+
         var hasBoxMetadata = bone.BoxHalfExtentX > 0 || bone.BoxHalfExtentY > 0 || bone.BoxHalfExtentZ > 0;
         if (bone.ColliderShape == 0 && !hasBoxMetadata &&
             (IsHandBone(bone.Name) || IsFootBone(bone.Name) || IsShinBone(bone.Name) || IsForearmBone(bone.Name) || IsUpperArmBone(bone.Name)))
@@ -2286,6 +2372,52 @@ public unsafe partial class RagdollController : IDisposable
         var r = MathF.Max(0.01f, bone.CapsuleRadius);
         var h = MathF.Max(0.01f, bone.CapsuleHalfLength);
         return new Vector3(r, h, r);
+    }
+
+    private static float DefaultSwingMinLimit(AnatomicalRole role, string name)
+    {
+        if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
+            return 0.75f;
+        if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
+            return 0.45f;
+
+        return 0f;
+    }
+
+    private static float DefaultHingeRestAngle(AnatomicalRole role, string name)
+    {
+        return 0f;
+    }
+
+    // Knee/elbow passive-rest defaults sit well below the slider maxima on purpose. The spring
+    // competes against joint friction and ground contact, so it wants to be firm — but the maxima
+    // (30 Hz / 500 N) are a divergence hazard: a spring that stiff fighting the grab servo over a
+    // knee blew the solver up to NaN in testing. 10 Hz / 200 N is far stronger than the old
+    // 3.5 / 50 (enough to straighten a supine knee) with headroom before instability. Only active
+    // while RagdollAnatomicalHingeRestBias is on.
+    private static float DefaultHingeRestSpringFreq(AnatomicalRole role, string name)
+    {
+        if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
+            return 10.0f;
+        if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
+            return 10.0f;
+        return 0f;
+    }
+
+    private static float DefaultHingeRestMaxForce(AnatomicalRole role, string name)
+    {
+        if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
+            return 200.0f;
+        if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
+            return 200.0f;
+        return 0f;
+    }
+
+    private static bool HasPassiveHingeRest(AnatomicalRole role, string name)
+    {
+        return role == AnatomicalRole.Knee || role == AnatomicalRole.Elbow ||
+               name.StartsWith("j_asi_b_", StringComparison.Ordinal) ||
+               name.StartsWith("j_ude_b_", StringComparison.Ordinal);
     }
 
     private static RagdollBoneDef[] BuildDefaultBoneDefs()
@@ -2353,6 +2485,10 @@ public unsafe partial class RagdollController : IDisposable
                 CapsuleHalfLength = c.CapsuleHalfLength,
                 Mass = c.Mass,
                 SwingLimit = c.SwingLimit,
+                SwingMinLimit = c.SwingMinLimit ?? 0f,
+                HingeRestAngle = c.HingeRestAngle ?? 0f,
+                HingeRestSpringFreq = c.HingeRestSpringFreq ?? 0f,
+                HingeRestMaxForce = c.HingeRestMaxForce ?? 0f,
                 Joint = IsShinBone(c.Name) || IsForearmBone(c.Name) || IsToeBone(c.Name)
                     ? JointType.Hinge
                     : (JointType)c.JointType,
@@ -3189,6 +3325,92 @@ public unsafe partial class RagdollController : IDisposable
         return hingeAxis;
     }
 
+    // FFXIV's skeleton bone roll (the rotation around a bone's own segment axis) is an
+    // animation/skinning convention, not a physics one: nothing guarantees "local X = flex
+    // axis", and the convention differs per bone and per race. Deriving the knee/ankle hinge
+    // axis from the LIVE (death-instant) pose is numerically degenerate for a near-straight
+    // limb (Cross of two nearly-parallel vectors) — the repeated source of asymmetric L/R knee
+    // bugs in this codebase. bepuphysics2's own RagdollDemo sidesteps the whole problem: it
+    // never imports bone orientation from an external skeleton, it builds its own capsule
+    // frames purely from segment geometry (GetCapsuleForLineSegment), so "local X = hinge axis"
+    // is true by construction. We can't discard the source skeleton (FFXIV drives skinning),
+    // but we can take the same axis once from the REFERENCE (bind) pose — which is not
+    // perfectly straight, unlike a death pose — and cache it as a bone-local vector reapplied
+    // through the bone's live rotation every frame. Bind pose is fixed per skeleton
+    // (race/gender), so this is computed once at activation and is immune to death-pose noise
+    // and independent of character facing.
+    private readonly struct BindPoseHingeFrame
+    {
+        public readonly Vector3 AxisBoneLocal;
+        public readonly Vector3 FlexionBoneLocal;
+
+        public BindPoseHingeFrame(Vector3 axisBoneLocal, Vector3 flexionBoneLocal)
+        {
+            AxisBoneLocal = axisBoneLocal;
+            FlexionBoneLocal = flexionBoneLocal;
+        }
+    }
+
+    private readonly record struct BindPoseHingeTarget(string Bone, string Parent, string Child);
+
+    private static readonly BindPoseHingeTarget[] BindPoseHingeTargets =
+    {
+        new("j_asi_b_l", "j_asi_a_l", "j_asi_d_l"), // knee: thigh -> shin -> ankle
+        new("j_asi_b_r", "j_asi_a_r", "j_asi_d_r"),
+        new("j_asi_d_l", "j_asi_b_l", "j_asi_e_l"), // ankle: shin -> foot -> toe
+        new("j_asi_d_r", "j_asi_b_r", "j_asi_e_r"),
+    };
+
+    private static Dictionary<string, BindPoseHingeFrame> BuildBindPoseHingeFrames(
+        SkeletonAccess skel, BoneTransformService boneService)
+    {
+        var result = new Dictionary<string, BindPoseHingeFrame>(StringComparer.Ordinal);
+        if (!TryBuildReferenceModelTransforms(skel, out var referenceModel))
+            return result;
+
+        foreach (var target in BindPoseHingeTargets)
+        {
+            var parentIdx = boneService.ResolveBoneIndex(skel, target.Parent);
+            var boneIdx = boneService.ResolveBoneIndex(skel, target.Bone);
+            var childIdx = boneService.ResolveBoneIndex(skel, target.Child);
+            if (parentIdx < 0 || boneIdx < 0 || childIdx < 0 ||
+                parentIdx >= referenceModel.Length || boneIdx >= referenceModel.Length ||
+                childIdx >= referenceModel.Length)
+                continue;
+
+            var parentDirRaw = referenceModel[boneIdx].Translation - referenceModel[parentIdx].Translation;
+            var childDirRaw = referenceModel[childIdx].Translation - referenceModel[boneIdx].Translation;
+            if (parentDirRaw.LengthSquared() < 1e-8f || childDirRaw.LengthSquared() < 1e-8f)
+                continue;
+            var parentDir = Vector3.Normalize(parentDirRaw);
+            var childDir = Vector3.Normalize(childDirRaw);
+
+            // Fold direction: the component of the child segment perpendicular to the parent
+            // segment, IN THE BIND POSE. Even a near-straight bind pose carries a small natural
+            // bend (unlike a death pose, which can be exactly straight), so this is far less
+            // prone to the degeneracy that plagued the live-pose Cross(parent,child) attempt.
+            var flexionRaw = childDir - parentDir * Vector3.Dot(childDir, parentDir);
+            if (flexionRaw.LengthSquared() < 1e-8f)
+                continue; // bind pose is degenerate too (shouldn't happen for knee/ankle)
+            var flexion = Vector3.Normalize(flexionRaw);
+
+            var axisRaw = Vector3.Cross(parentDir, flexion);
+            if (axisRaw.LengthSquared() < 1e-8f)
+                continue;
+            var axis = Vector3.Normalize(axisRaw);
+
+            if (!Matrix4x4.Decompose(referenceModel[boneIdx], out _, out var boneBindRot, out _))
+                continue;
+            var inverseBoneBindRot = Quaternion.Inverse(boneBindRot);
+
+            result[target.Bone] = new BindPoseHingeFrame(
+                Vector3.Normalize(Vector3.Transform(axis, inverseBoneBindRot)),
+                Vector3.Normalize(Vector3.Transform(flexion, inverseBoneBindRot)));
+        }
+
+        return result;
+    }
+
     private Vector3 ComputeProfileHingeAxis(AnatomicalRole role, Vector3 parentSegmentDir, Vector3 childSegmentDir, Quaternion childBodyRot)
     {
         var childN = NormalizeOrFallback(childSegmentDir, Vector3.UnitY);
@@ -3295,6 +3517,371 @@ public unsafe partial class RagdollController : IDisposable
         return forward;
     }
 
+    private void AddAnatomicalHingeFoldStop(
+        BodyHandle childHandle,
+        BodyHandle parentHandle,
+        BodyReference childBodyRef,
+        BodyReference parentBodyRef,
+        RagdollBoneDef boneDef,
+        Vector3 hingeAxisWorld,
+        Vector3 parentSegDir,
+        Vector3 segDirWorld,
+        SpringSettings limitSpring,
+        float? foldCapOverride = null)
+    {
+        if (simulation == null)
+            return;
+        // foldCapOverride (Tier C) lets the anatomical ROM drive the max-fold cap; when it is
+        // supplied we honour it even if SwingMinLimit was 0/disabled for this bone.
+        if (foldCapOverride == null && (boneDef.SwingMinLimit <= 0 || boneDef.SwingMinLimit >= MathF.PI))
+            return;
+
+        // Measure the true anatomical bend angle (angle between child and parent segment dirs).
+        // This is pose-independent: 0° = straight, 90° = ORZ-bent, up to 180° = folded back.
+        var initBendAngle = MathF.Acos(Math.Clamp(
+            Vector3.Dot(Vector3.Normalize(segDirWorld), Vector3.Normalize(parentSegDir)), -1f, 1f));
+
+        // Set the fold stop limit to max(SwingMinLimit, initBend + buffer) so it never fires
+        // at the initial pose — even from ORZ (90°) — but still protects against hyper-flexion.
+        // Straight init: max(43°, 0°+15°) = 43°   — normal anatomical protection.
+        // ORZ init:      max(43°, 90°+15°) = 105°  — fires only at extreme over-bending.
+        const float foldBuffer = 0.26f; // ~15°
+        var foldFloor = foldCapOverride ?? boneDef.SwingMinLimit;
+        var foldStopMaxAngle = MathF.Max(foldFloor, initBendAngle + foldBuffer);
+        foldStopMaxAngle = MathF.Min(foldStopMaxAngle, MathF.PI - 0.05f);
+
+        // Both axes use segment directions so the constraint measures the actual anatomical
+        // bend angle, not a pose-derived reference that can flip between init poses.
+        var shinAxisLocalChild = Vector3.Normalize(Vector3.Transform(
+            segDirWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
+        var thighAxisLocalParent = Vector3.Normalize(Vector3.Transform(
+            parentSegDir, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
+
+        simulation.Solver.Add(childHandle, parentHandle,
+            new SwingLimit
+            {
+                AxisLocalA = shinAxisLocalChild,
+                AxisLocalB = thighAxisLocalParent,
+                MaximumSwingAngle = foldStopMaxAngle,
+                SpringSettings = limitSpring,
+            });
+
+        if (config.RagdollVerboseLog)
+            log.Info($"[Ragdoll Constraint] '{boneDef.Name}' fold stop: initBend={initBendAngle * 180f / MathF.PI:F1}° limit={foldStopMaxAngle * 180f / MathF.PI:F1}°");
+    }
+
+    /// <summary>
+    /// Tier C (C3) — directional flexion / hyperextension limit for a knee or elbow about the
+    /// hinge axis. Unlike the fold-stop (which measures the UNSIGNED angle between the
+    /// two segments and so cannot tell forward flexion from backward hyperextension), this is a
+    /// SIGNED limit about the hinge axis: flexion is allowed up to <c>rom.FlexionMax</c> while
+    /// bending backward past straight is blocked beyond <c>rom.ExtensionMax</c> (hyperextension).
+    /// </summary>
+    private void AddAnatomicalHingeFlexionLimit(
+        BodyHandle childHandle,
+        BodyHandle parentHandle,
+        BodyReference childBodyRef,
+        BodyReference parentBodyRef,
+        RagdollBoneDef boneDef,
+        Vector3 hingeAxisWorld,
+        Vector3 parentSegDir,
+        Vector3 segDirWorld,
+        AnatomicalRom rom,
+        SpringSettings limitSpring)
+    {
+        if (simulation == null)
+            return;
+
+        var hingeN = NormalizeOrFallback(hingeAxisWorld, Vector3.UnitX);
+
+        // Per-body bases: same twist axis (hinge), each referenced to its own segment so the
+        // measured relative twist == true flexion.
+        var basisAWorld = CreateTwistBasis(hingeN, segDirWorld);    // child  (shin / forearm)
+        var basisBWorld = CreateTwistBasis(hingeN, parentSegDir);   // parent (thigh / upper arm)
+
+        // Measure init signed flexion in the solver's convention: the angle of the child's
+        // in-plane axis relative to the parent's about the hinge axis. CreateTwistBasis maps the
+        // local X axis to ProjectOntoPlane(segment, hingeAxis), so we compare those directly.
+        var xA = ProjectOntoPlane(segDirWorld, hingeN);
+        var xB = ProjectOntoPlane(parentSegDir, hingeN);
+        float initFlexion = 0f;
+        if (xA.LengthSquared() > 1e-6f && xB.LengthSquared() > 1e-6f)
+        {
+            xA = Vector3.Normalize(xA);
+            xB = Vector3.Normalize(xB);
+            var s = Vector3.Dot(Vector3.Cross(xB, xA), hingeN);
+            var c = Math.Clamp(Vector3.Dot(xB, xA), -1f, 1f);
+            initFlexion = MathF.Atan2(s, c);
+        }
+
+        // Anatomical bounds: flexion positive, hyperextension a small negative floor.
+        var minAngle = -rom.ExtensionMax; // e.g. knee -5°
+        var maxAngle =  rom.FlexionMax;   // e.g. knee +140°
+
+        // Snap-proof widening: keep the init pose strictly inside the range, sign-agnostically.
+        const float margin = 0.09f; // ~5°
+        var initPad = MathF.Abs(initFlexion) + margin;
+        minAngle = MathF.Min(minAngle, -initPad);
+        maxAngle = MathF.Max(maxAngle,  initPad);
+        // Never exceed the solver's measurable twist range.
+        minAngle = MathF.Max(minAngle, -(MathF.PI - 0.05f));
+        maxAngle = MathF.Min(maxAngle,  MathF.PI - 0.05f);
+
+        var basisALocal = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * basisAWorld);
+        var basisBLocal = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * basisBWorld);
+
+        simulation.Solver.Add(childHandle, parentHandle,
+            new TwistLimit
+            {
+                LocalBasisA = basisALocal,
+                LocalBasisB = basisBLocal,
+                MinimumAngle = minAngle,
+                MaximumAngle = maxAngle,
+                SpringSettings = limitSpring,
+            });
+
+        // One-time validation log (per knee/elbow): resolved flexion min/max + init flexion.
+        log.Info($"[Ragdoll ROM] '{boneDef.Name}' flexion limit: initFlexion={initFlexion * 180f / MathF.PI:F1}° " +
+                 $"range=[{minAngle * 180f / MathF.PI:F1}°,{maxAngle * 180f / MathF.PI:F1}°] " +
+                 $"(hyperext block>{rom.ExtensionMax * 180f / MathF.PI:F0}°, flexMax={rom.FlexionMax * 180f / MathF.PI:F0}°)");
+    }
+
+    private void AddAnatomicalHingeRestBias(
+        BodyHandle childHandle,
+        BodyHandle parentHandle,
+        BodyReference childBodyRef,
+        BodyReference parentBodyRef,
+        RagdollBoneDef boneDef,
+        Vector3 hingeAxisWorld,
+        Vector3 parentSegDir,
+        Vector3 segDirWorld)
+    {
+        if (!AnatomicalHingeRestBiasEnabled())
+            return;
+
+        if (!HasPassiveHingeRest(boneDef.AnatomicalRole, boneDef.Name) ||
+            boneDef.HingeRestSpringFreq <= 0 ||
+            boneDef.HingeRestMaxForce <= 0 ||
+            simulation == null)
+            return;
+
+        var childBasis = CreateTwistBasis(hingeAxisWorld, segDirWorld);
+        var parentBasis = CreateTwistBasis(hingeAxisWorld, parentSegDir);
+
+        var initBendCos = Vector3.Dot(Vector3.Normalize(segDirWorld), Vector3.Normalize(parentSegDir));
+        var initBendDeg = MathF.Acos(Math.Clamp(initBendCos, -1f, 1f)) * (180f / MathF.PI);
+        if (config.RagdollVerboseLog)
+            log.Info($"[Ragdoll Constraint] '{boneDef.Name}' hinge rest init bend={initBendDeg:F1}° (0=straight, 90=ORZ)");
+
+        simulation.Solver.Add(childHandle, parentHandle,
+            new TwistServo
+            {
+                LocalBasisA = Quaternion.Normalize(Quaternion.Inverse(childBodyRef.Pose.Orientation) * childBasis),
+                LocalBasisB = Quaternion.Normalize(Quaternion.Inverse(parentBodyRef.Pose.Orientation) * parentBasis),
+                TargetAngle = boneDef.HingeRestAngle,
+                SpringSettings = new SpringSettings(boneDef.HingeRestSpringFreq, 0.8f),
+                ServoSettings = new ServoSettings(10.0f, 0f, boneDef.HingeRestMaxForce),
+            });
+
+        if (config.RagdollVerboseLog)
+            log.Info($"[Ragdoll Constraint] '{boneDef.Name}' passive hinge rest: angle={boneDef.HingeRestAngle:F2} freq={boneDef.HingeRestSpringFreq:F2} force={boneDef.HingeRestMaxForce:F2}");
+    }
+
+    private bool AnatomicalHingeRestBiasEnabled() => config.RagdollAnatomicalHingeRestBias;
+
+    /// <summary>
+    /// Tier C (swing) — directional anatomical limits for ball joints (hips, arm-side
+    /// shoulders). Expresses per-direction tilt caps a symmetric cone cannot: each
+    /// direction d with cap θ becomes one SwingLimit between the child segment axis and
+    /// −d with MaximumSwingAngle = 90° + θ ("stay at least 90°−θ away from d").
+    /// Near-unbounded directions (90°+θ ≈ 180°) are skipped — the widened bounding cone
+    /// owns those. Axes are anatomical (character facing at activation), baked into the
+    /// parent body's local frame; lateral-out is resolved from which side of the parent
+    /// the joint anchor sits on, so left/right need no handedness convention.
+    /// </summary>
+    private void AddDirectionalSwingLimits(
+        string boneName,
+        BodyHandle childHandle,
+        BodyHandle parentHandle,
+        BodyReference childBodyRef,
+        BodyReference parentBodyRef,
+        Vector3 segDirWorld,
+        Vector3 anchorWorld,
+        Vector3 anatForwardWorld,
+        Vector3 anatLateralWorld,
+        AnatomicalRom rom,
+        SpringSettings coneSpring,
+        SpringSettings capSpring)
+    {
+        if (simulation == null)
+            return;
+
+        float outSign = MathF.Sign(Vector3.Dot(anchorWorld - parentBodyRef.Pose.Position, anatLateralWorld));
+        if (outSign == 0f)
+            outSign = 1f;
+        var lateralOut = anatLateralWorld * outSign;
+
+        var axisChildLocal = Vector3.Normalize(Vector3.Transform(
+            segDirWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
+
+        // Symmetric ROM (the spine chain: 15/15/15/15, neck ~45): the intersection of the
+        // four directional caps IS a cone around the anatomical vertical — emit ONE
+        // constraint instead of four.
+        var maxCap = MathF.Max(MathF.Max(rom.FlexionMax, rom.ExtensionMax),
+                               MathF.Max(rom.AbductionMax, rom.AdductionMax));
+        var minCap = MathF.Min(MathF.Min(rom.FlexionMax, rom.ExtensionMax),
+                               MathF.Min(rom.AbductionMax, rom.AdductionMax));
+        if (maxCap - minCap < 0.12f)
+        {
+            // Anchor to whichever world vertical the segment points along (spine: up).
+            var neutralWorld = Vector3.Dot(segDirWorld, Vector3.UnitY) >= 0f ? Vector3.UnitY : -Vector3.UnitY;
+            var neutralLocalParent = Vector3.Normalize(Vector3.Transform(
+                neutralWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
+
+            simulation.Solver.Add(childHandle, parentHandle, new SwingLimit
+            {
+                AxisLocalA = axisChildLocal,
+                AxisLocalB = neutralLocalParent,
+                MaximumSwingAngle = maxCap,
+                SpringSettings = coneSpring,
+            });
+
+            swingStressMonitors.Add(new SwingStressMonitor
+            {
+                Bone = boneName,
+                Child = childHandle,
+                Parent = parentHandle,
+                AxisLocalChild = axisChildLocal,
+                AxisLocalParent = neutralLocalParent,
+                LimitAngle = maxCap,
+            });
+
+            if (config.RagdollVerboseLog)
+                log.Info($"[Ragdoll ROM] '{boneName}' symmetric anatomical cone: {maxCap * 180f / MathF.PI:F0}°");
+            return;
+        }
+
+        AddCap(anatForwardWorld, rom.FlexionMax, "flex");
+        AddCap(-anatForwardWorld, rom.ExtensionMax, "ext");
+        AddCap(lateralOut, rom.AbductionMax, "abd");
+        AddCap(-lateralOut, rom.AdductionMax, "add");
+
+        // Diagonal caps: four cardinal caps alone leave the 45°-azimuth corners
+        // inflated — round the box toward the real elliptical envelope.
+        var diag = 1f / MathF.Sqrt(2f);
+        AddCap((anatForwardWorld + lateralOut) * diag, (rom.FlexionMax + rom.AbductionMax) * 0.5f, "flex-abd");
+        AddCap((anatForwardWorld - lateralOut) * diag, (rom.FlexionMax + rom.AdductionMax) * 0.5f, "flex-add");
+        AddCap((-anatForwardWorld + lateralOut) * diag, (rom.ExtensionMax + rom.AbductionMax) * 0.5f, "ext-abd");
+        AddCap((-anatForwardWorld - lateralOut) * diag, (rom.ExtensionMax + rom.AdductionMax) * 0.5f, "ext-add");
+
+        void AddCap(Vector3 dir, float tilt, string label)
+        {
+            var max = MathF.PI / 2f + tilt;
+            if (max >= MathF.PI - 0.15f)
+                return; // effectively unbounded — the cone backstop covers it
+
+            var oppositeLocalParent = Vector3.Normalize(Vector3.Transform(
+                -dir, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
+
+            simulation!.Solver.Add(childHandle, parentHandle, new SwingLimit
+            {
+                AxisLocalA = axisChildLocal,
+                AxisLocalB = oppositeLocalParent,
+                MaximumSwingAngle = max,
+                SpringSettings = capSpring,
+            });
+
+            swingStressMonitors.Add(new SwingStressMonitor
+            {
+                Bone = boneName,
+                Child = childHandle,
+                Parent = parentHandle,
+                AxisLocalChild = axisChildLocal,
+                AxisLocalParent = oppositeLocalParent,
+                LimitAngle = max,
+            });
+
+            if (config.RagdollVerboseLog)
+                log.Info($"[Ragdoll ROM] '{boneName}' directional swing '{label}': tilt cap={tilt * 180f / MathF.PI:F0}° (swing max={max * 180f / MathF.PI:F0}°)");
+        }
+    }
+
+    // Relaxed passive hip axial rotation. Clinical standing values are ~35°/45°
+    // (int/ext); deep flexion winds the capsular ligaments and shrinks them further,
+    // which the kneecap-facing construction below approximates by making combined
+    // flexion+rotation spend the same budget as pure rotation.
+    private static readonly float HipInternalRotationCap = D2R(30f);
+    private static readonly float HipExternalRotationCap = D2R(45f);
+
+    /// <summary>
+    /// Tier C (swing) — hip axial-rotation caps that survive any flexion angle.
+    /// Constrain the KNEECAP-FACING axis (⊥ femur, anterior at rest) instead: internal
+    /// rotation sweeps it medially and external laterally, while pure flexion rotates
+    /// it inside the sagittal plane and never touches these caps.
+    /// </summary>
+    private void AddKneecapFacingLimits(
+        string boneName,
+        BodyHandle childHandle,
+        BodyHandle parentHandle,
+        BodyReference childBodyRef,
+        BodyReference parentBodyRef,
+        Vector3 segDirWorld,
+        Vector3 anchorWorld,
+        Vector3 anatForwardWorld,
+        Vector3 anatLateralWorld,
+        SpringSettings spring)
+    {
+        if (simulation == null)
+            return;
+
+        // Kneecap-forward at activation: anatomical forward made perpendicular to the
+        // femur axis. Anatomically anchored — a death pose that froze mid-rotation
+        // consumes its own budget (and gets gently un-rotated if past it).
+        var femurAxis = Vector3.Normalize(segDirWorld);
+        var kneecapFwd = anatForwardWorld - femurAxis * Vector3.Dot(anatForwardWorld, femurAxis);
+        if (kneecapFwd.LengthSquared() < 0.01f)
+            return; // femur ~aligned with anatomical forward (unusual death pose): skip
+        kneecapFwd = Vector3.Normalize(kneecapFwd);
+
+        float outSign = MathF.Sign(Vector3.Dot(anchorWorld - parentBodyRef.Pose.Position, anatLateralWorld));
+        if (outSign == 0f)
+            outSign = 1f;
+        var lateralOut = anatLateralWorld * outSign;
+
+        var kneecapLocalChild = Vector3.Normalize(Vector3.Transform(
+            kneecapFwd, Quaternion.Inverse(childBodyRef.Pose.Orientation)));
+
+        AddCap(-lateralOut, HipInternalRotationCap, "int-rot");
+        AddCap(lateralOut, HipExternalRotationCap, "ext-rot");
+
+        void AddCap(Vector3 dir, float tilt, string label)
+        {
+            var max = MathF.PI / 2f + tilt;
+            var oppositeLocalParent = Vector3.Normalize(Vector3.Transform(
+                -dir, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
+
+            simulation!.Solver.Add(childHandle, parentHandle, new SwingLimit
+            {
+                AxisLocalA = kneecapLocalChild,
+                AxisLocalB = oppositeLocalParent,
+                MaximumSwingAngle = max,
+                SpringSettings = spring,
+            });
+
+            swingStressMonitors.Add(new SwingStressMonitor
+            {
+                Bone = boneName,
+                Child = childHandle,
+                Parent = parentHandle,
+                AxisLocalChild = kneecapLocalChild,
+                AxisLocalParent = oppositeLocalParent,
+                LimitAngle = max,
+            });
+
+            if (config.RagdollVerboseLog)
+                log.Info($"[Ragdoll ROM] '{boneName}' kneecap-facing '{label}': cap={tilt * 180f / MathF.PI:F0}°");
+        }
+    }
 
     // === Tier C (swing) debug: joint-vs-limit stress for the overlay =====================
     public readonly record struct JointLimitStress(string BoneName, Vector3 WorldPosition, float Stress);
@@ -3668,6 +4255,13 @@ public unsafe partial class RagdollController : IDisposable
                                  ReadCharacterSurfaceIdentity().IsHumanoid
             ? BuildStructuralMeshThicknessFits(skel, defByName, nameToIndex)
             : new Dictionary<string, StructuralMeshThicknessFit>(StringComparer.Ordinal);
+
+        // Knee/ankle hinge frames from the bind pose (see BuildBindPoseHingeFrames). Always on
+        // for humanoids — unlike structural mesh geometry, this is not an Advanced Filter; it
+        // replaces a fragile axis computation, not an authored collision volume.
+        var bindPoseHingeFrames = !genericSkeleton
+            ? BuildBindPoseHingeFrames(skel, boneService)
+            : new Dictionary<string, BindPoseHingeFrame>(StringComparer.Ordinal);
 
         // --- Pass 2: Create physics bodies ---
         // Capsule center is offset from bone origin (joint) along the segment direction.
@@ -4091,6 +4685,10 @@ public unsafe partial class RagdollController : IDisposable
             ? ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)targetCharacterAddress)->Rotation
             : 0f;
         var anatForwardWorld = new Vector3(MathF.Sin(anatYaw), 0f, MathF.Cos(anatYaw));
+        // Tier C (swing) — anatomical reference axes for the directional ball limits, taken
+        // from the character's facing at activation and baked into the PARENT body's local
+        // frame so they tumble with the body, not from each limb's death pose.
+        var anatLateralWorld = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, anatForwardWorld));
         anatomicalForward = anatForwardWorld;
         swingStressMonitors.Clear();
 
@@ -4151,15 +4749,31 @@ public unsafe partial class RagdollController : IDisposable
             if ((boneDef.Joint == JointType.Hinge || IsToeBone(rb.Name)) && !boneDef.SoftBody)
             {
                 var toeHinge = IsToeBone(rb.Name);
-                var hingeAxisWorld = toeHinge
-                    ? NormalizeOrFallback(ProjectOntoPlane(
-                        Vector3.Transform(Vector3.UnitX, childBodyRef.Pose.Orientation), segDirWorld), Vector3.UnitX)
-                    : ComputeProfileHingeAxis(
+                Vector3 hingeAxisWorld;
+                Vector3 flexionDirectionWorld;
+                if (bindPoseHingeFrames.TryGetValue(rb.Name, out var kneeBindFrame))
+                {
+                    // Bind-pose-derived axis (see BuildBindPoseHingeFrames): pose-independent,
+                    // reapplied through the bone's LIVE skeleton rotation every activation.
+                    var boneWorldRot = boneWorldRotations[rb.Name];
+                    hingeAxisWorld = NormalizeOrFallback(
+                        Vector3.Transform(kneeBindFrame.AxisBoneLocal, boneWorldRot), Vector3.UnitX);
+                    flexionDirectionWorld = NormalizeOrFallback(
+                        Vector3.Transform(kneeBindFrame.FlexionBoneLocal, boneWorldRot), anatomicalForward);
+                }
+                else if (toeHinge)
+                {
+                    hingeAxisWorld = NormalizeOrFallback(ProjectOntoPlane(
+                        Vector3.Transform(Vector3.UnitX, childBodyRef.Pose.Orientation), segDirWorld), Vector3.UnitX);
+                    flexionDirectionWorld = NormalizeOrFallback(Vector3.Cross(hingeAxisWorld, parentSegDir), anatomicalForward);
+                }
+                else
+                {
+                    hingeAxisWorld = ComputeProfileHingeAxis(
                         boneDef.AnatomicalRole, parentSegDir, segDirWorld, childBodyRef.Pose.Orientation);
-                var flexionDirectionWorld = toeHinge
-                    ? NormalizeOrFallback(Vector3.Cross(hingeAxisWorld, parentSegDir), anatomicalForward)
-                    : ComputeHingeForward(
+                    flexionDirectionWorld = ComputeHingeForward(
                         boneDef.AnatomicalRole, hingeAxisWorld, parentSegDir, segDirWorld);
+                }
                 var hingeAxisLocalChild = NormalizeOrFallback(Vector3.Transform(
                     hingeAxisWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)), Vector3.UnitX);
                 var hingeAxisLocalParent = NormalizeOrFallback(Vector3.Transform(
@@ -4279,6 +4893,25 @@ public unsafe partial class RagdollController : IDisposable
                         });
                 }
 
+                // Tier C — asymmetric ROM for this hinge (knee/elbow; a no-op for the toe, whose
+                // SwingMinLimit/HasPassiveHingeRest both default to "off"). Resolved once here so
+                // it drives the fold-stop cap and the passive rest bias below, and (only with the
+                // RagdollAnatomicalRom Advanced Filter on) the directional flexion limit.
+                AnatomicalRom hingeRom = default;
+                bool hasHingeRom = config.RagdollAnatomicalRom &&
+                    (boneDef.AnatomicalRole == AnatomicalRole.Knee || boneDef.AnatomicalRole == AnatomicalRole.Elbow) &&
+                    TryGetAnatomicalRom(rb.Name, out hingeRom);
+
+                AddAnatomicalHingeFoldStop(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
+                    boneDef, hingeAxisWorld, parentSegDir, segDirWorld, passiveLimitSpring,
+                    hasHingeRom ? hingeRom.FlexionMax : (float?)null);
+                AddAnatomicalHingeRestBias(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
+                    boneDef, hingeAxisWorld, parentSegDir, segDirWorld);
+
+                if (hasHingeRom)
+                    AddAnatomicalHingeFlexionLimit(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
+                        boneDef, hingeAxisWorld, parentSegDir, segDirWorld, hingeRom, passiveLimitSpring);
+
                 if (config.RagdollVerboseLog)
                     log.Info($"[Ragdoll Joint] '{rb.Name}' passive signed joint axis=({hingeAxisWorld.X:F2},{hingeAxisWorld.Y:F2},{hingeAxisWorld.Z:F2})");
             }
@@ -4307,8 +4940,22 @@ public unsafe partial class RagdollController : IDisposable
                 if (isDistalFrame)
                 {
                     var longAxisWorld = NormalizeOrFallback(segDirWorld, Vector3.UnitY);
-                    var transverseWorld = ProjectOntoPlane(
-                        Vector3.Transform(Vector3.UnitX, childBodyRef.Pose.Orientation), longAxisWorld);
+                    Vector3 transverseWorld;
+                    if (bindPoseHingeFrames.TryGetValue(rb.Name, out var ankleBindFrame))
+                    {
+                        // Bind-pose-derived medial-lateral axis (see BuildBindPoseHingeFrames)
+                        // instead of the ankle capsule's local X, which otherwise carries
+                        // whatever roll FFXIV's animation skeleton happened to author for this
+                        // bone — not a physics convention.
+                        transverseWorld = ProjectOntoPlane(
+                            Vector3.Transform(ankleBindFrame.AxisBoneLocal, boneWorldRotations[rb.Name]),
+                            longAxisWorld);
+                    }
+                    else
+                    {
+                        transverseWorld = ProjectOntoPlane(
+                            Vector3.Transform(Vector3.UnitX, childBodyRef.Pose.Orientation), longAxisWorld);
+                    }
                     transverseWorld = NormalizeOrFallback(transverseWorld,
                         ComputeFallbackBallTwistReference(longAxisWorld));
                     var secondTransverseWorld = NormalizeOrFallback(
@@ -4372,6 +5019,19 @@ public unsafe partial class RagdollController : IDisposable
                 {
                     // Generic ball joints retain their configured cone. Shoulder/clavicle edges use
                     // the firm boundary because the whole arm can otherwise hold them far outside it.
+                    // Tier C (swing): hips, arm-side shoulders, and the spine chain get DIRECTIONAL
+                    // anatomical limits below — a symmetric cone cannot hold flexion 95° /
+                    // abduction 45° / adduction 25° at once (hip splay). Only while the
+                    // RagdollAnatomicalRom Advanced Filter is on (off by default).
+                    AnatomicalRom swingRom = default;
+                    var hasSwingRom = config.RagdollAnatomicalRom &&
+                        (boneDef.AnatomicalRole == AnatomicalRole.Hip ||
+                         boneDef.AnatomicalRole == AnatomicalRole.Spine ||
+                         (boneDef.AnatomicalRole == AnatomicalRole.Shoulder &&
+                          rb.Name.StartsWith("j_ude_a_", StringComparison.Ordinal))) &&
+                        TryGetAnatomicalRom(rb.Name, out swingRom);
+                    var hipKneecapCaps = hasSwingRom && boneDef.AnatomicalRole == AnatomicalRole.Hip;
+
                     if (boneDef.SwingLimit > 0)
                     {
                         var axisChildLocal = Vector3.Transform(segDirWorld,
@@ -4381,11 +5041,31 @@ public unsafe partial class RagdollController : IDisposable
                         var coneSpring = IsClavicleBone(rb.Name) || IsUpperArmBone(rb.Name)
                             ? limitSpring
                             : ballSwingSpring;
+
+                        var effectiveCone = boneDef.SwingLimit;
+                        var coneAxisParentLocal = axisParentLocal;
+                        if (hasSwingRom)
+                        {
+                            effectiveCone = MathF.Max(effectiveCone, MathF.Max(
+                                MathF.Max(swingRom.FlexionMax, swingRom.ExtensionMax),
+                                MathF.Max(swingRom.AbductionMax, swingRom.AdductionMax)));
+
+                            // The directional caps below own the real anatomical shape; this
+                            // bounding cone becomes a hard wall anchored on the anatomical
+                            // vertical (not a soft suggestion around the death pose).
+                            var anatConeAxis = Vector3.Dot(segDirWorld, Vector3.UnitY) >= 0f
+                                ? Vector3.UnitY
+                                : -Vector3.UnitY;
+                            coneAxisParentLocal = Vector3.Normalize(Vector3.Transform(
+                                anatConeAxis, Quaternion.Inverse(parentBodyRef.Pose.Orientation)));
+                            coneSpring = limitSpring;
+                        }
+
                         var swingLimit = new SwingLimit
                         {
                             AxisLocalA = axisChildLocal,
-                            AxisLocalB = axisParentLocal,
-                            MaximumSwingAngle = boneDef.SwingLimit,
+                            AxisLocalB = coneAxisParentLocal,
+                            MaximumSwingAngle = effectiveCone,
                             SpringSettings = coneSpring,
                         };
                         var swingHandle = simulation.Solver.Add(rb.BodyHandle, parentHandle, swingLimit);
@@ -4396,14 +5076,40 @@ public unsafe partial class RagdollController : IDisposable
                             Child = rb.BodyHandle,
                             Parent = parentHandle,
                             AxisLocalChild = axisChildLocal,
-                            AxisLocalParent = axisParentLocal,
-                            LimitAngle = boneDef.SwingLimit,
+                            AxisLocalParent = coneAxisParentLocal,
+                            LimitAngle = effectiveCone,
                         });
+
+                        // Anatomical boundary caps are WALLS (hard limitSpring): riding them on the
+                        // soft-edge spring let body weight shove the legs 40° past every limit.
+                        if (hasSwingRom)
+                            AddDirectionalSwingLimits(rb.Name, rb.BodyHandle, parentHandle,
+                                childBodyRef, parentBodyRef, segDirWorld, anchorWorld,
+                                anatForwardWorld, anatLateralWorld, swingRom,
+                                ballSwingSpring, limitSpring);
+
+                        // Hip axial rotation: capped via the kneecap-facing axis (below), which
+                        // stays valid at any flexion — see AddKneecapFacingLimits.
+                        if (hipKneecapCaps)
+                            AddKneecapFacingLimits(rb.Name, rb.BodyHandle, parentHandle,
+                                childBodyRef, parentBodyRef, segDirWorld, anchorWorld,
+                                anatForwardWorld, anatLateralWorld, limitSpring);
                     }
 
+                    // C2: when ROM is on, take the axial range from the anatomical table (correct
+                    // clinical asymmetry); otherwise use the hand-set boneDef twist values.
                     var ballTwistMin = boneDef.TwistMinAngle;
                     var ballTwistMax = boneDef.TwistMaxAngle;
+                    if (config.RagdollAnatomicalRom && TryGetAnatomicalRom(rb.Name, out var ballRom))
+                    {
+                        ballTwistMin = ballRom.AxialMin;
+                        ballTwistMax = ballRom.AxialMax;
+                    }
+                    // Hips with ROM: the kneecap-facing caps above replace this TwistLimit — its
+                    // measurement degenerates past ~90° of swing, exactly in the kicked-up poses
+                    // where a corpse thigh would otherwise spin freely.
                     if ((ballTwistMin != 0 || ballTwistMax != 0) &&
+                        !hipKneecapCaps &&
                         boneDef.SwingLimit <= ballJointMaxSwing)
                     {
                         var refDir = ComputeAnatomicalBallTwistReference(segDirWorld, parentSegDir);
