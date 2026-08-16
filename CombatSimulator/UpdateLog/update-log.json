@@ -1,5 +1,14 @@
 [
   {
+    "version": "2.8.0.0",
+    "date": "2026-08-16",
+    "title": "Combat Simulator 2.8.0.0",
+    "changes": [
+      "Added Enemy Control: after defeating an enemy, spawn or take control of a creature to interact with the corpse. Enable it under Effects > Enemy Control.",
+      "Major improvements to ragdoll physics, fixing rigid, unnatural leg and knee bending when a body collapses."
+    ]
+  },
+  {
     "version": "2.7.2.0",
     "date": "2026-07-23",
     "title": "Combat Simulator 2.7.2.0",
