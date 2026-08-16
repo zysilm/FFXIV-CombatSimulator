@@ -2010,8 +2010,8 @@ public unsafe partial class RagdollController : IDisposable
         new RagdollBoneConfig { Name = "j_sebo_a",  SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.10f,  CapsuleHalfLength = 0.05f, Mass = 10.0f, SwingLimit = 0.2f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Lower Spine" },
         new RagdollBoneConfig { Name = "j_sebo_b",  SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.09f,  CapsuleHalfLength = 0.05f, Mass = 5.0f,  SwingLimit = 0.15f,               JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Mid Spine" },
         new RagdollBoneConfig { Name = "j_sebo_c",  SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.09f,  CapsuleHalfLength = 0.05f, Mass = 6.0f,  SwingLimit = 0.15f,               JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Chest" },
-        new RagdollBoneConfig { Name = "j_kubi",    SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.03f, Mass = 2.0f,  SwingLimit = 0.25f,               JointType = 0, TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f,  Description = "Neck" },
-        new RagdollBoneConfig { Name = "j_kao",     SkeletonParent = "j_kubi",   Enabled = true,  CapsuleRadius = 0.08f,  CapsuleHalfLength = 0.04f, Mass = 3.5f,  SwingLimit = 0.25f,               JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Head" },
+        new RagdollBoneConfig { Name = "j_kubi",    SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.03f, Mass = 2.0f,  SwingLimit = 0.5f,                JointType = 0, TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f,  Description = "Neck" },
+        new RagdollBoneConfig { Name = "j_kao",     SkeletonParent = "j_kubi",   Enabled = true,  CapsuleRadius = 0.08f,  CapsuleHalfLength = 0.04f, Mass = 3.5f,  SwingLimit = 0.35f,               JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Head" },
 
         // === CLOTH/SKIRT BONES === (chained per radial slot: A→j_sebo_a, B→matching A, C→matching B; b=back, f=front, s=side)
         new RagdollBoneConfig { Name = "j_sk_b_a_l", SkeletonParent = "j_sebo_a",  Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back A L" },
@@ -5165,7 +5165,12 @@ public unsafe partial class RagdollController : IDisposable
                             Quaternion.Inverse(childBodyRef.Pose.Orientation));
                         var axisParentLocal = Vector3.Transform(segDirWorld,
                             Quaternion.Inverse(parentBodyRef.Pose.Orientation));
-                        var coneSpring = IsClavicleBone(rb.Name) || IsUpperArmBone(rb.Name)
+                        // Neck/head get the same hard wall as the shoulder girdle: their swing cone
+                        // is narrow (~14°) by design, and on the soft spring the head can overshoot
+                        // it under a fast torso motion and visibly lag/float before snapping back —
+                        // a hard wall stops it right at the limit instead.
+                        var coneSpring = IsClavicleBone(rb.Name) || IsUpperArmBone(rb.Name) ||
+                                          rb.Name is "j_kubi" or "j_kao"
                             ? limitSpring
                             : ballSwingSpring;
 
