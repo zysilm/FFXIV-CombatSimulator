@@ -21,6 +21,11 @@ public unsafe partial class RagdollController
         public readonly float HalfLength;
         public readonly Vector3 CenterBoneLocal;
         public readonly Vector3 AxisBoneLocal;
+        // Extra rotation around AxisBoneLocal, on top of the bone's own roll — measured from the
+        // mesh cross-section's own principal axis (see TryFitStructuralMeshThickness), not the
+        // bone's assembly-time roll. Zero for non-box (capsule) fits, where a circular
+        // cross-section has no orientation to correct.
+        public readonly float RollRadians;
         public readonly bool UseBox;
         public readonly int SampleCount;
 
@@ -30,6 +35,7 @@ public unsafe partial class RagdollController
             float halfLength,
             Vector3 centerBoneLocal,
             Vector3 axisBoneLocal,
+            float rollRadians,
             bool useBox,
             int sampleCount)
         {
@@ -38,8 +44,43 @@ public unsafe partial class RagdollController
             HalfLength = halfLength;
             CenterBoneLocal = centerBoneLocal;
             AxisBoneLocal = axisBoneLocal;
+            RollRadians = rollRadians;
             UseBox = useBox;
             SampleCount = sampleCount;
+        }
+    }
+
+    private readonly struct CrossSectionMeasurement
+    {
+        public readonly float CenterX;
+        public readonly float CenterZ;
+        public readonly float RadiusX;
+        public readonly float RadiusZ;
+        public readonly float LongitudinalLow;
+        public readonly float LongitudinalHigh;
+        // Weighted 2D covariance of the inlier cross-section samples around (CenterX, CenterZ),
+        // in the frame this measurement was taken in — used to find (Cxz far from 0) and correct
+        // (Cxz near 0 once aligned) the box's roll. Meaningless for capsule targets.
+        public readonly float Cxx;
+        public readonly float Czz;
+        public readonly float Cxz;
+        public readonly int InlierCount;
+
+        public CrossSectionMeasurement(
+            float centerX, float centerZ, float radiusX, float radiusZ,
+            float longitudinalLow, float longitudinalHigh,
+            float cxx, float czz, float cxz, int inlierCount)
+        {
+            CenterX = centerX;
+            CenterZ = centerZ;
+            RadiusX = radiusX;
+            RadiusZ = radiusZ;
+            LongitudinalLow = longitudinalLow;
+            LongitudinalHigh = longitudinalHigh;
+            Cxx = cxx;
+            Czz = czz;
+            Cxz = cxz;
+            InlierCount = inlierCount;
         }
     }
 
@@ -278,6 +319,114 @@ public unsafe partial class RagdollController
         return collected;
     }
 
+    /// <summary>
+    /// Measures a cross-section (center, radii, longitudinal extent, and the raw 2D covariance
+    /// of the inlier samples) in whatever frame <paramref name="sectionRotation"/> defines. Called
+    /// once per candidate roll — the plain bone-roll frame, then (for box targets) one or two
+    /// PCA-corrected candidates — so the actual measurement code only exists once.
+    /// </summary>
+    private static bool TryMeasureCrossSection(
+        List<(Vector3 Delta, float Weight)> deltas,
+        Quaternion sectionRotation,
+        StructuralMeshTarget target,
+        out CrossSectionMeasurement measurement,
+        out string? rejectionReason)
+    {
+        measurement = default;
+        rejectionReason = null;
+        var inverseSectionRotation = Quaternion.Inverse(sectionRotation);
+
+        // First discard isolated seam/corruption vertices using a broad radial envelope around the
+        // bone, then find the robust cross-section center. The collider may be off the skeleton axis;
+        // joint anchors remain at bone pivots, while contact and inertia follow this measured center.
+        var localList = new List<(Vector3 Local, float Weight)>(deltas.Count);
+        var rawRadial = new List<WeightedScalar>(deltas.Count);
+        foreach (var (delta, weight) in deltas)
+        {
+            var local = Vector3.Transform(delta, inverseSectionRotation);
+            localList.Add((local, weight));
+            rawRadial.Add(new WeightedScalar(
+                MathF.Sqrt(local.X * local.X + local.Z * local.Z), weight));
+        }
+        var envelope = WeightedPercentile(rawRadial, 0.97f);
+        if (!float.IsFinite(envelope) || envelope <= 0.005f)
+        {
+            rejectionReason = "invalid radial envelope";
+            return false;
+        }
+
+        var signedXValues = new List<WeightedScalar>(localList.Count);
+        var signedZValues = new List<WeightedScalar>(localList.Count);
+        var longitudinalValues = new List<WeightedScalar>(localList.Count);
+        foreach (var (local, weight) in localList)
+        {
+            var radial = MathF.Sqrt(local.X * local.X + local.Z * local.Z);
+            if (radial > envelope)
+                continue;
+            signedXValues.Add(new WeightedScalar(local.X, weight));
+            signedZValues.Add(new WeightedScalar(local.Z, weight));
+            longitudinalValues.Add(new WeightedScalar(local.Y, weight));
+        }
+        if (signedXValues.Count < target.MinimumSamples)
+        {
+            rejectionReason = $"only {signedXValues.Count} inlier samples";
+            return false;
+        }
+
+        var centerX = WeightedPercentile(signedXValues, 0.50f);
+        var centerZ = WeightedPercentile(signedZValues, 0.50f);
+
+        var xValues = new List<WeightedScalar>(signedXValues.Count);
+        var zValues = new List<WeightedScalar>(signedXValues.Count);
+        var radialValues = new List<WeightedScalar>(signedXValues.Count);
+        double sumWeight = 0, sumWxx = 0, sumWzz = 0, sumWxz = 0;
+        foreach (var (local, weight) in localList)
+        {
+            var radialFromBone = MathF.Sqrt(local.X * local.X + local.Z * local.Z);
+            if (radialFromBone > envelope)
+                continue;
+            var dx = local.X - centerX;
+            var dz = local.Z - centerZ;
+            xValues.Add(new WeightedScalar(MathF.Abs(dx), weight));
+            zValues.Add(new WeightedScalar(MathF.Abs(dz), weight));
+            radialValues.Add(new WeightedScalar(MathF.Sqrt(dx * dx + dz * dz), weight));
+            sumWeight += weight;
+            sumWxx += (double)weight * dx * dx;
+            sumWzz += (double)weight * dz * dz;
+            sumWxz += (double)weight * dx * dz;
+        }
+        if (xValues.Count < target.MinimumSamples)
+        {
+            rejectionReason = $"only {xValues.Count} meaningful central samples";
+            return false;
+        }
+
+        float radiusX;
+        float radiusZ;
+        if (target.UseBox)
+        {
+            radiusX = WeightedPercentile(xValues, 0.90f) * 0.98f;
+            radiusZ = WeightedPercentile(zValues, 0.90f) * 0.98f;
+        }
+        else
+        {
+            var radius = WeightedPercentile(radialValues, 0.90f) * 0.98f;
+            radiusX = radius;
+            radiusZ = radius;
+        }
+
+        var longitudinalLow = WeightedPercentile(longitudinalValues, 0.06f);
+        var longitudinalHigh = WeightedPercentile(longitudinalValues, 0.94f);
+
+        measurement = new CrossSectionMeasurement(
+            centerX, centerZ, radiusX, radiusZ, longitudinalLow, longitudinalHigh,
+            sumWeight > 1e-6 ? (float)(sumWxx / sumWeight) : 0f,
+            sumWeight > 1e-6 ? (float)(sumWzz / sumWeight) : 0f,
+            sumWeight > 1e-6 ? (float)(sumWxz / sumWeight) : 0f,
+            xValues.Count);
+        return true;
+    }
+
     private bool TryFitStructuralMeshThickness(
         StructuralMeshTarget target,
         float referenceHeight,
@@ -320,9 +469,11 @@ public unsafe partial class RagdollController
         if (!Matrix4x4.Decompose(referenceModel[boneIndex], out _, out var boneRotation, out _))
             boneRotation = Quaternion.Identity;
         var sectionRotation = CreateCapsuleRotation(axis, boneRotation);
-        var inverseSectionRotation = Quaternion.Inverse(sectionRotation);
 
-        var filtered = new List<(Vector3 Local, float Weight)>(samples.Count);
+        // Longitudinal filtering is rotation-independent (raw delta·axis), so it happens once up
+        // front; the cross-section itself gets measured below, possibly more than once as the
+        // roll candidate changes.
+        var deltas = new List<(Vector3 Delta, float Weight)>(samples.Count);
         var longitudinalMin = float.MaxValue;
         var longitudinalMax = float.MinValue;
         foreach (var sample in samples)
@@ -341,13 +492,12 @@ public unsafe partial class RagdollController
                 longitudinalMin = MathF.Min(longitudinalMin, t);
                 longitudinalMax = MathF.Max(longitudinalMax, t);
             }
-            var local = Vector3.Transform(delta, inverseSectionRotation);
-            filtered.Add((local, sample.Weight));
+            deltas.Add((delta, sample.Weight));
         }
 
-        if (filtered.Count < target.MinimumSamples)
+        if (deltas.Count < target.MinimumSamples)
         {
-            rejectionReason = $"only {filtered.Count} meaningful central samples";
+            rejectionReason = $"only {deltas.Count} meaningful central samples";
             return false;
         }
         if (!target.UseBox && longitudinalMax - longitudinalMin < 0.35f)
@@ -356,78 +506,50 @@ public unsafe partial class RagdollController
             return false;
         }
 
-        // First discard isolated seam/corruption vertices using a broad radial envelope around the
-        // bone, then find the robust cross-section center. The collider may be off the skeleton axis;
-        // joint anchors remain at bone pivots, while contact and inertia follow this measured center.
-        var rawRadial = new List<WeightedScalar>(filtered.Count);
-        foreach (var sample in filtered)
-            rawRadial.Add(new WeightedScalar(
-                MathF.Sqrt(sample.Local.X * sample.Local.X + sample.Local.Z * sample.Local.Z),
-                sample.Weight));
-        var envelope = WeightedPercentile(rawRadial, 0.97f);
-        if (!float.IsFinite(envelope) || envelope <= 0.005f)
-        {
-            rejectionReason = "invalid radial envelope";
+        if (!TryMeasureCrossSection(deltas, sectionRotation, target, out var section, out rejectionReason))
             return false;
-        }
 
-        var signedXValues = new List<WeightedScalar>(filtered.Count);
-        var signedZValues = new List<WeightedScalar>(filtered.Count);
-        var longitudinalValues = new List<WeightedScalar>(filtered.Count);
-        foreach (var sample in filtered)
-        {
-            var radial = MathF.Sqrt(sample.Local.X * sample.Local.X + sample.Local.Z * sample.Local.Z);
-            if (radial > envelope)
-                continue;
-            signedXValues.Add(new WeightedScalar(sample.Local.X, sample.Weight));
-            signedZValues.Add(new WeightedScalar(sample.Local.Z, sample.Weight));
-            longitudinalValues.Add(new WeightedScalar(sample.Local.Y, sample.Weight));
-        }
-        if (signedXValues.Count < target.MinimumSamples)
-        {
-            rejectionReason = $"only {signedXValues.Count} inlier samples";
-            return false;
-        }
-
-        var centerX = WeightedPercentile(signedXValues, 0.50f);
-        var centerZ = WeightedPercentile(signedZValues, 0.50f);
-        var xValues = new List<WeightedScalar>(signedXValues.Count);
-        var zValues = new List<WeightedScalar>(signedXValues.Count);
-        var radialValues = new List<WeightedScalar>(signedXValues.Count);
-        foreach (var sample in filtered)
-        {
-            var radialFromBone = MathF.Sqrt(
-                sample.Local.X * sample.Local.X + sample.Local.Z * sample.Local.Z);
-            if (radialFromBone > envelope)
-                continue;
-            var dx = sample.Local.X - centerX;
-            var dz = sample.Local.Z - centerZ;
-            xValues.Add(new WeightedScalar(MathF.Abs(dx), sample.Weight));
-            zValues.Add(new WeightedScalar(MathF.Abs(dz), sample.Weight));
-            radialValues.Add(new WeightedScalar(MathF.Sqrt(dx * dx + dz * dz), sample.Weight));
-        }
-
-        float radiusX;
-        float radiusZ;
+        // Torso boxes: the bone's own roll is an assembly artifact, not the body's true
+        // cross-section orientation — the spine sits toward the BACK of the belly, so a box
+        // aligned to the bone's roll can't be both centered AND correctly sized on an asymmetric
+        // front/back distribution without overshooting on the sparser side (the "vacuum" behind
+        // the lower back). Re-derive the roll from the sample cloud's own principal axis (2D PCA
+        // in the cross-section plane) instead of trusting the bone's roll.
+        var appliedRoll = 0f;
         if (target.UseBox)
         {
-            radiusX = WeightedPercentile(xValues, 0.90f) * 0.98f;
-            radiusZ = WeightedPercentile(zValues, 0.90f) * 0.98f;
-        }
-        else
-        {
-            var radius = WeightedPercentile(radialValues, 0.90f) * 0.98f;
-            radiusX = radius;
-            radiusZ = radius;
+            var denom = section.Cxx - section.Czz;
+            if (MathF.Abs(section.Cxz) > 1e-8f || MathF.Abs(denom) > 1e-8f)
+            {
+                var theta = 0.5f * MathF.Atan2(2f * section.Cxz, denom);
+                theta = Math.Clamp(theta, -MathF.PI / 4f, MathF.PI / 4f);
+
+                // Try both signs rather than trust the axis-angle handedness by hand: whichever
+                // candidate actually drives the cross-covariance closer to zero is the one that
+                // diagonalizes it, i.e. the one that actually aligns the box to the point cloud.
+                var bestCxz = MathF.Abs(section.Cxz);
+                foreach (var candidateTheta in new[] { theta, -theta })
+                {
+                    var candidateRotation = Quaternion.Normalize(
+                        sectionRotation * Quaternion.CreateFromAxisAngle(Vector3.UnitY, candidateTheta));
+                    if (!TryMeasureCrossSection(deltas, candidateRotation, target, out var candidateSection, out _))
+                        continue;
+                    if (MathF.Abs(candidateSection.Cxz) < bestCxz)
+                    {
+                        bestCxz = MathF.Abs(candidateSection.Cxz);
+                        appliedRoll = candidateTheta;
+                        sectionRotation = candidateRotation;
+                        section = candidateSection;
+                    }
+                }
+            }
         }
 
         if (!ValidateStructuralMeshDimensions(
-                target, referenceHeight, segmentLength, radiusX, radiusZ, out rejectionReason))
+                target, referenceHeight, segmentLength, section.RadiusX, section.RadiusZ, out rejectionReason))
             return false;
 
-        var longitudinalLow = WeightedPercentile(longitudinalValues, 0.06f);
-        var longitudinalHigh = WeightedPercentile(longitudinalValues, 0.94f);
-        var longitudinalSpan = longitudinalHigh - longitudinalLow;
+        var longitudinalSpan = section.LongitudinalHigh - section.LongitudinalLow;
         if (!float.IsFinite(longitudinalSpan) || longitudinalSpan < referenceHeight * 0.015f)
         {
             rejectionReason = $"invalid longitudinal mesh span ({longitudinalSpan:F4}m)";
@@ -435,10 +557,10 @@ public unsafe partial class RagdollController
         }
 
         var centerSection = new Vector3(
-            centerX,
-            (longitudinalLow + longitudinalHigh) * 0.5f,
-            centerZ);
-        var radiusForLength = MathF.Max(radiusX, radiusZ);
+            section.CenterX,
+            (section.LongitudinalLow + section.LongitudinalHigh) * 0.5f,
+            section.CenterZ);
+        var radiusForLength = MathF.Max(section.RadiusX, section.RadiusZ);
         var halfLength = target.UseBox
             ? longitudinalSpan * 0.5f
             : MathF.Max(referenceHeight * 0.008f, longitudinalSpan * 0.5f - radiusForLength);
@@ -454,14 +576,14 @@ public unsafe partial class RagdollController
         var axisBoneLocal = NormalizeOrFallback(Vector3.Transform(axis, inverseBoneRotation), Vector3.UnitY);
 
         fit = new StructuralMeshThicknessFit(
-            radiusX, radiusZ, halfLength, centerBoneLocal, axisBoneLocal,
-            target.UseBox, radialValues.Count);
+            section.RadiusX, section.RadiusZ, halfLength, centerBoneLocal, axisBoneLocal, appliedRoll,
+            target.UseBox, section.InlierCount);
         if (config.RagdollVerboseLog)
         {
             log.Info($"Ragdoll mesh geometry '{target.Bone}': accepted samples={fit.SampleCount}, " +
                      $"x={fit.RadiusX:F4}, z={fit.RadiusZ:F4}, half={fit.HalfLength:F4}, " +
                      $"center=({fit.CenterBoneLocal.X:F3},{fit.CenterBoneLocal.Y:F3},{fit.CenterBoneLocal.Z:F3}), segment={segmentLength:F4}, " +
-                     $"referenceHeight={referenceHeight:F3}.");
+                     $"roll={fit.RollRadians * 180f / MathF.PI:F1}deg, referenceHeight={referenceHeight:F3}.");
         }
         return true;
     }

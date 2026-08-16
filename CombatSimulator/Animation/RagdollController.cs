@@ -4429,6 +4429,14 @@ public unsafe partial class RagdollController : IDisposable
                 var worldOffset = Vector3.Transform(
                     structuralMeshFit.CenterBoneLocal * ragdollShapeScale, boneWorldRot);
                 capsuleWorldRot = CreateCapsuleRotation(worldAxis, boneWorldRot);
+                if (structuralMeshFit.RollRadians != 0f)
+                {
+                    // Reapply the fit-time PCA roll correction on top of the fresh bone-roll frame
+                    // (composed the same way it was measured: base rotation, then roll around its
+                    // own local long axis) — see TryFitStructuralMeshThickness.
+                    capsuleWorldRot = Quaternion.Normalize(capsuleWorldRot *
+                        Quaternion.CreateFromAxisAngle(Vector3.UnitY, structuralMeshFit.RollRadians));
+                }
                 capsuleCenter = boneWorldPos + worldOffset;
                 segmentHalfLength = 0f;
                 effectiveHalfLength = structuralMeshFit.HalfLength * ragdollShapeScale;
