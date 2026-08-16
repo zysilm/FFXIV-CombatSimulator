@@ -4740,7 +4740,10 @@ public unsafe partial class RagdollController : IDisposable
             }
         }
 
-        if (requiredRigLift > 0f)
+        // Off by default (RagdollGroundPenetrationLift): fights Ragdoll Follow, which disagrees
+        // with a post-lift root about where the corpse actually is and pops visibly. See
+        // Configuration.cs for the full rationale.
+        if (config.RagdollGroundPenetrationLift && requiredRigLift > 0f)
         {
             // Ordinary corrections are centimetres. Cap corrupt/remote terrain samples so one bad
             // ray cannot teleport the corpse; residual overlap is handled by damped contact recovery.
@@ -4755,6 +4758,10 @@ public unsafe partial class RagdollController : IDisposable
             foreach (var name in liftedNames)
                 boneWorldPositions[name] += offset;
             log.Info($"[Ragdoll Init] uniformly lifted rig by {lift:F3}m (requested {requiredRigLift:F3}m).");
+        }
+        else if (requiredRigLift > 0f)
+        {
+            log.Info($"[Ragdoll Init] ground-penetration lift skipped (RagdollGroundPenetrationLift off): would have lifted {requiredRigLift:F3}m.");
         }
 
         // What the rig actually weighs, kept so that anything asked to pick it up can size itself

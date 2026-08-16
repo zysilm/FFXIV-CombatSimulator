@@ -2497,6 +2497,16 @@ public partial class MainWindow : IDisposable
         ImGui.TextDisabled("Renders capsules and joints in 3D.");
         ImGui.Spacing();
 
+        var groundLift = config.RagdollGroundPenetrationLift;
+        if (ImGui.Checkbox("Ground-Penetration Lift##ragdollAdv", ref groundLift))
+        {
+            config.RagdollGroundPenetrationLift = groundLift;
+            config.Save();
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled("On activation, uniformly lifts the whole rig if any bone would start underground (usually a bent knee). Off by default — conflicts with Ragdoll Follow.");
+        ImGui.Spacing();
+
         if (surfaceProfiles)
         {
             ImGui.TextDisabled("Per-bone profiles are not read while mesh-derived geometry is enabled. Anatomical joint topology is invariant in both modes.");

@@ -505,7 +505,7 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollCarryAnimationVelocity { get; set; } = true;
     // Scales the carried handoff velocity (1 = exact animation speed). Lower if a fast death
     // animation throws the corpse too hard at handoff.
-    public float RagdollHandoffVelocityScale { get; set; } = 2.0f;
+    public float RagdollHandoffVelocityScale { get; set; } = 1.0f;
     // Relaxation collapse also drives a whole-body center-of-mass topple (the body loses
     // balance over its support base and falls like an inverted pendulum), fused with the
     // muscle-failure brake, instead of only a one-shot directional shove. Off = a simple one-shot
@@ -636,6 +636,11 @@ public partial class Configuration : IPluginConfiguration
     public float RagdollSquashIntensity { get; set; } = 0.5f; // 0..1, scales max compression
     // Ragdoll debug overlay — renders capsules and joint limits in 3D
     public bool RagdollDebugOverlay { get; set; } = false;
+    // Uniformly lifts the whole rig at activation if any bone's capsule/box would start
+    // underground. Off by default — it fights Ragdoll Follow (the two disagree about where the
+    // corpse root actually is right after a lift, causing a visible pop). Rare underground-start
+    // cases are left to damped contact recovery instead.
+    public bool RagdollGroundPenetrationLift { get; set; } = false;
     // Ragdoll bone configs (Advanced) — per-bone physics parameters
     // Empty = use built-in defaults from RagdollController.DefaultBoneDefs
     public List<RagdollBoneConfig> RagdollBoneConfigs { get; set; } = new();
