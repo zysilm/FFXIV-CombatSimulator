@@ -246,7 +246,7 @@ public partial class Configuration : IPluginConfiguration
     public bool KoStripBody { get; set; } = true;
     public bool KoStripHands { get; set; } = false;
     public bool KoStripLegs { get; set; } = true;
-    public bool KoStripFeet { get; set; } = true;
+    public bool KoStripFeet { get; set; } = false;
     public bool KoStripEars { get; set; } = false;
     public bool KoStripNeck { get; set; } = false;
     public bool KoStripWrists { get; set; } = false;
@@ -268,7 +268,7 @@ public partial class Configuration : IPluginConfiguration
     // Drive the upper garment (Body slot) with a ring-tube physics model instead of the
     // chain-of-boxes rig. The tube wraps the corpse capsules, so the shirt slides down off the body
     // instead of folding. Host ragdoll only; falls back to the chain rig when unavailable.
-    public bool KoStripGarmentTubeModel { get; set; } = true;
+    public bool KoStripGarmentTubeModel { get; set; } = false;
 
     // Draw the garment tube's ring bodies as a wireframe overlay (tuning aid). Not saved-critical.
     public bool KoStripGarmentTubeDebugDraw { get; set; } = false;
@@ -317,8 +317,9 @@ public partial class Configuration : IPluginConfiguration
     // rather than the fixed KoStripClothHoldSeconds timer.
     public bool KoStripClothHoldAuto { get; set; } = true;
 
-    // Auto-hold feel: 0 Quick, 1 Natural, 2 Clingy, 3 Slide-to-floor, 4 Visual-only. Default Slide-to-floor.
-    public int KoStripClothHoldPreset { get; set; } = 3;
+    // Auto-hold feel: 0 Quick, 1 Natural, 2 Clingy, 3 Slide-to-floor, 4 Visual-only. Default Natural.
+    public const int KoStripClothHoldPresetDefault = 1;
+    public int KoStripClothHoldPreset { get; set; } = KoStripClothHoldPresetDefault;
 
     // Visual-only preset tuning: how far (metres) and how fast (m/s) the garment slides down the body
     // before it freezes and stays visual. Only used by the Visual-only preset — Slide-to-floor keeps its

@@ -379,7 +379,7 @@ public partial class MainWindow
         if (ImGui.Button("Reset##armordetachclothholdreset"))
         {
             config.KoStripClothHoldAuto = true;
-            config.KoStripClothHoldPreset = 3;
+            config.KoStripClothHoldPreset = Configuration.KoStripClothHoldPresetDefault;
             config.KoStripClothHoldSeconds = Configuration.KoStripClothHoldSecondsDefault;
             config.Save();
         }
