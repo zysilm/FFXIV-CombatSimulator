@@ -24,10 +24,6 @@ public class RagdollBoneConfig
     public float CapsuleHalfLength { get; set; }
     public float Mass { get; set; }
     public float SwingLimit { get; set; }
-    public float? SwingMinLimit { get; set; } // hinge-only lower bound; null means migrate/default
-    public float? HingeRestAngle { get; set; } // hinge-only passive rest target; null disables/defaults
-    public float? HingeRestSpringFreq { get; set; }
-    public float? HingeRestMaxForce { get; set; }
     public int JointType { get; set; } // 0=Ball, 1=Hinge
     public float TwistMinAngle { get; set; }
     public float TwistMaxAngle { get; set; }
@@ -170,9 +166,7 @@ public partial class Configuration : IPluginConfiguration
     public bool EnemyDismembermentDefaultsMigrated20260630 { get; set; } = false;
     public bool FightingSpacingDefaultsMigrated20260703 { get; set; } = false;
     public bool ThinnerProfileTuningMigrated20260704 { get; set; } = false;
-    public bool KneeHingeStiffnessMigrated20260704 { get; set; } = false;
     public bool AnatomicalDefaultsOffMigrated20260704 { get; set; } = false;
-    public bool AnatomicalHingeSignFixMigrated { get; set; } = false;
     public bool NpcCollisionMeshDefaultMigrated { get; set; } = false;
     public bool NpcCollisionModeMigrated20260705 { get; set; } = false;
     public bool RagdollShinBoxHalfYMigrated20260716 { get; set; } = false;
@@ -489,9 +483,9 @@ public partial class Configuration : IPluginConfiguration
     // Spring frequency (Hz) of the POSITIONAL joints (the BallSocket/Weld that hold bones
     // together at the joint), as opposed to the limit walls above. Higher = bones separate
     // less under large impulses ("rubber-band" stretch); too high relative to the step needs
-    // more substeps to stay stable. 30 = long-standing default. Takes effect on next
-    // ragdoll activation.
-    public float RagdollJointSpringFrequency { get; set; } = 30f;
+    // more substeps to stay stable. The unified rig has a 45 Hz structural floor; unlike the
+    // former carry path, Grab never retunes this value. Takes effect on next activation.
+    public float RagdollJointSpringFrequency { get; set; } = 45f;
     // Positional joint stiffness for the FOOT specifically (calf->foot BallSocket). The foot
     // takes the hardest ground-impact impulses, so it rubber-bands first; give it a firmer
     // spring than the body default. 60 = firm; falls back to RagdollJointSpringFrequency when
@@ -508,7 +502,7 @@ public partial class Configuration : IPluginConfiguration
     public float RagdollHandoffVelocityScale { get; set; } = 2.0f;
     // Relaxation collapse also drives a whole-body center-of-mass topple (the body loses
     // balance over its support base and falls like an inverted pendulum), fused with the
-    // muscle-failure brake, instead of only a one-shot directional shove. Off = legacy single
+    // muscle-failure brake, instead of only a one-shot directional shove. Off = a simple one-shot
     // impulse.
     // Stage a hard landing instead of merely simulating it: a brief freeze, one heavy heave with a whip
     // on the limbs, and a camera shake. Physics alone cannot make a corpse read heavy — and restitution
@@ -537,21 +531,8 @@ public partial class Configuration : IPluginConfiguration
     // it was going rather than a fixed preset. 0 = ignore momentum (use Topple direction only),
     // ~0.5 = blend, 1 = fall purely along momentum when it is moving.
     public float RagdollToppleMomentumBias { get; set; } = 0.5f;
-    // Anatomical joint-frame builder for hinge axes and ball-joint twist references.
-    // Keep the switch so unusual skeletons can fall back to the legacy frame builder.
-    public bool RagdollExperimentalJointFrames { get; set; } = true;
-    // Knee/elbow planar hinge: constrain the bend to the sagittal plane with a soft
-    // AngularHinge (BallSocket = position, AngularHinge = plane, SwingLimit = range).
-    // Without it the knee/elbow is a swing CONE and can fold sideways — the biggest
-    // "ragdoll, not a body" tell. Soft spring + substeps avoid the freeze the old stiff
-    // full-Hinge hit. Frequency is the plane stiffness (Hz): too low = still bends
-    // sideways under load, too high relative to the 60 Hz step = jitter/freeze. Takes
-    // effect on next ragdoll activation.
-    public bool RagdollKneeElbowPlanarHinge { get; set; } = true;
-    // 18 Hz was calibrated before SolverSubsteps existed; with 8 substeps the solver
-    // holds far stiffer angular constraints without freezing, and a soft planar hinge
-    // is exactly what lets impacts wobble/tunnel the knee sideways and in twist.
-    public float RagdollKneeHingeFrequency { get; set; } = 50f;
+    // Knees use one signed flexion coordinate; elbows use flexion plus forearm pronation/
+    // supination. This topology is anatomical and is not controlled by profiles or filters.
     public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
     public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
 
@@ -559,37 +540,9 @@ public partial class Configuration : IPluginConfiguration
     // resolved as (Winter Table 3.1 body-mass fraction) x RagdollBodyMass instead of the
     // hand-picked per-bone Mass values. Fixes wrong inertia (thigh too heavy, trunk not
     // pelvis-heavy). Cloth/weapon/breast bones keep their tiny existing masses.
-    // Default OFF after field testing: only useful in specific setups.
+    // Explicit Advanced Filter for setups that need a fixed total body mass.
     public bool RagdollAnthropometricMass { get; set; } = true;
     public float RagdollBodyMass { get; set; } = 70f; // Total body mass (kg) anthropometric fractions scale against.
-    // Tier B — Anatomy-fixed knee/elbow hinge. A knee folds the shin backward and an elbow folds the
-    // forearm forward, relative to the character: facts about the body, not about the pose it died in.
-    // Both the hinge axis and the fold direction are taken from the character's facing, replacing
-    // Cross(thighDir, shinDir) — degenerate for a near-straight limb — and a fold sign that was read off
-    // whichever way the limb happened to be leaning (perpendicular on a straight leg, so it fell out of
-    // floating-point noise, one knee sideways and the other forward).
-    //
-    // This shipped OFF because it fixed the axis and then deliberately took its SIGN from the very axis
-    // it was replacing, which bent every knee forward. The idea was right; the sign was miswired. On by
-    // default now that it derives both.
-    public bool RagdollAnatomicalHingeAxis { get; set; } = true;
-    // Tier C — Asymmetric swing-twist range of motion. When on, joints draw their axial
-    // twist range (all joints) and the knee/elbow flexion/hyperextension bounds from a
-    // clinical/ISB anatomical ROM table instead of the hand-set per-bone twist values and
-    // the symmetric fold-stop. Blocks knee/elbow backward hyperextension (the most visible
-    // anatomical violation) and gives each joint a correct asymmetric axial range. The
-    // ball-joint (hip/shoulder) asymmetric SWING ellipse is deferred to Tier A. Takes
-    // effect on next ragdoll activation.
-    // Default OFF after field testing: only useful in specific setups. The twist
-    // governors, hemisphere locks, and profile-table limits stay active regardless.
-    public bool RagdollAnatomicalRom { get; set; } = false;
-    // Passive hinge rest bias — a soft spring on the knee/elbow hinge pulling it toward
-    // straight (the HingeRest* per-bone params). Without it the hinge only velocity-damps,
-    // so a limb resting on the ground (a supine corpse) never returns to straight and the
-    // knee stays visibly bent; the spring gives it a real "return to straight" that a ball
-    // joint's cone would, but without the ball's free sideways swing. Takes effect on next
-    // ragdoll activation.
-    public bool RagdollAnatomicalHingeRestBias { get; set; } = true;
 
     // Dismemberment POC: while the player ragdoll is active, collapse each selected limb's bone
     // subtree to ~0 scale so it vanishes from the body. Multi-select: stores the root bone name of
@@ -670,7 +623,6 @@ public partial class Configuration : IPluginConfiguration
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollVerboseLog { get; set; } = false;
     public bool RagdollFollowPosition { get; set; } = false; // Follow ragdoll root to keep the flung corpse from being culled/unloaded on long falls. Local player moves render-only (DrawObject.Position); NPC phantoms move full position.
-    public bool RagdollLiftUndergroundBonesOnStart { get; set; } = false;
     public bool DevCompanionAppearanceVariant { get; set; } = false;
     public bool DevPartyApproachDebugLog { get; set; } = false;
     public bool RagdollNpcCollision { get; set; } = true;
@@ -679,9 +631,10 @@ public partial class Configuration : IPluginConfiguration
     // layer uses a soft, low-friction NPC contact so the body compresses/reacts without being
     // launched sideways. Experimental and opt-in: real map actors remain server-positioned.
     public bool RagdollNpcCorpseTraversal { get; set; } = false;
-    /// <summary>Experimental body-mesh thickness measurement for reliable corpse torso and long-
-    /// limb segments. Skeleton topology, segment geometry, joints and inertia remain controlled by
-    /// the normal ragdoll profile. Enabled by default; invalid measurements fall back per segment.</summary>
+    /// <summary>Derive structural collision centers, axes, lengths and cross-sections from the
+    /// character's weighted body mesh, including hands, feet and j_asi_e toe endpoints. Profiles do
+    /// not author humanoid body geometry while enabled. Joint topology remains anatomical and
+    /// invariant; invalid measurements use deterministic built-in geometry per segment.</summary>
     public bool RagdollCharacterSurfaceProfiles { get; set; } = true;
     public bool RagdollNpcCollisionAutoSize { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
@@ -953,8 +906,8 @@ public partial class Configuration : IPluginConfiguration
         MigrateSplitVfxToggles();
         MigrateKoStripHandsFeetRigidDefaults();
         MigrateSkirtParentChains();
+        EnforceUnifiedRagdollTopology();
         MigrateRagdollProfileMetadata();
-        MigrateAnatomicalHinges();
         MigrateRagdollShinBoxHalfY();
         MigrateDefaultProfileTuning();
         MigrateSoftBodyTuning();
@@ -967,9 +920,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateEnemyDismembermentDefaults();
         MigrateFightingSpacingDefaults();
         MigrateThinnerProfileTuning();
-        MigrateKneeHingeStiffness();
         MigrateAnatomicalDefaultsOff();
-        MigrateAnatomicalHingeSignFix(); // must run AFTER the off-migration, whose verdict it lifts
         MigrateNpcCollisionMode();
         MigrateNpcCollisionMeshDefault(); // after the mode migration above, whose old default it lifts
         MigrateNpcCollisionConvexHullDefault(); // last of the three: it overrides both verdicts above
@@ -1059,7 +1010,6 @@ public partial class Configuration : IPluginConfiguration
         // Dev-only switches. They live on the hidden panel, not this page.
         nameof(RagdollVerboseLog),
         nameof(RagdollFollowPosition),
-        nameof(RagdollLiftUndergroundBonesOnStart),
 
         // One-shot migration records, not options. Resetting them would re-run the
         // migrations on next load (harmless thanks to their value guards, but wrong).
@@ -1330,20 +1280,6 @@ public partial class Configuration : IPluginConfiguration
         Save();
     }
 
-    // Knee hinge stack stiffened (see RagdollKneeHingeFrequency comment): 18 Hz predates
-    // the substep solver and lets impacts wobble/tunnel the knee.
-    private void MigrateKneeHingeStiffness()
-    {
-        if (KneeHingeStiffnessMigrated20260704)
-            return;
-
-        if (MathF.Abs(RagdollKneeHingeFrequency - 18f) < 0.001f)
-            RagdollKneeHingeFrequency = 50f;
-
-        KneeHingeStiffnessMigrated20260704 = true;
-        Save();
-    }
-
     // Field-tuned bone values promoted into the built-in Thinner Volumes profiles
     // (tighter hip cone/twist, tighter clavicle twist, slimmer upper arms, stronger
     // knee rest bias). The seeder only adds MISSING profiles, so saved copies in
@@ -1385,12 +1321,6 @@ public partial class Configuration : IPluginConfiguration
                         bone.BoxHalfExtentZ = 0.024f;
                         changed = true;
                         break;
-                    case "j_asi_b_l":
-                    case "j_asi_b_r":
-                        bone.HingeRestSpringFreq = 3.5f;
-                        bone.HingeRestMaxForce = 50f;
-                        changed = true;
-                        break;
                 }
             }
         }
@@ -1400,41 +1330,15 @@ public partial class Configuration : IPluginConfiguration
             Save();
     }
 
-    // Field testing verdict: the anatomical hinge axis, anatomical ROM, and
-    // anthropometric mass experiments are only useful in specific setups — flip
-    // configs still carrying the old ON defaults to OFF. (They stay available in
-    // the GUI for those specific cases.)
+    // Preserve the field-tested opt-in default for anthropometric mass on existing configs.
     private void MigrateAnatomicalDefaultsOff()
     {
         if (AnatomicalDefaultsOffMigrated20260704)
             return;
 
-        RagdollAnatomicalHingeAxis = false;
-        RagdollAnatomicalRom = false;
         RagdollAnthropometricMass = false;
 
         AnatomicalDefaultsOffMigrated20260704 = true;
-        Save();
-    }
-
-    /// <summary>
-    /// The anatomical hinge was turned off — here and in every config that had already run — because it
-    /// bent knees forward. That turned out not to be the idea's fault: it derived the hinge AXIS from
-    /// anatomy and then took the axis's SIGN from the very pose-derived axis it was replacing, and on a
-    /// straight leg that sign points the fold forward. Both are derived from anatomy now, so the verdict
-    /// no longer holds and the migration that recorded it has to be lifted — otherwise the fix reaches
-    /// nobody who ever ran the old build.
-    ///
-    /// Only the hinge is restored. The other two the old migration turned off are untouched: nothing has
-    /// changed about them.
-    /// </summary>
-    private void MigrateAnatomicalHingeSignFix()
-    {
-        if (AnatomicalHingeSignFixMigrated)
-            return;
-
-        RagdollAnatomicalHingeAxis = true;
-        AnatomicalHingeSignFixMigrated = true;
         Save();
     }
 
@@ -1546,6 +1450,39 @@ public partial class Configuration : IPluginConfiguration
         if (changed) Save();
     }
 
+    /// <summary>
+    /// j_asi_c is a skinning helper inside the lower leg, not a second anatomical segment.
+    /// Remove it from persisted authoring data and connect ankle/foot bodies directly to the
+    /// shin, matching the sole runtime topology.
+    /// </summary>
+    private void EnforceUnifiedRagdollTopology()
+    {
+        var changed = NormalizeUnifiedRagdollTopology(RagdollBoneConfigs);
+        foreach (var profile in RagdollBoneProfiles)
+            changed |= NormalizeUnifiedRagdollTopology(profile.Bones);
+        if (changed)
+            Save();
+    }
+
+    private static bool NormalizeUnifiedRagdollTopology(List<RagdollBoneConfig> bones)
+    {
+        var changed = bones.RemoveAll(b => b.Name is "j_asi_c_l" or "j_asi_c_r") > 0;
+        foreach (var bone in bones)
+        {
+            if (bone.Name == "j_asi_d_l" && bone.SkeletonParent == "j_asi_c_l")
+            {
+                bone.SkeletonParent = "j_asi_b_l";
+                changed = true;
+            }
+            else if (bone.Name == "j_asi_d_r" && bone.SkeletonParent == "j_asi_c_r")
+            {
+                bone.SkeletonParent = "j_asi_b_r";
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
     private static bool MigrateRagdollBoneMetadata(List<RagdollBoneConfig> bones)
     {
         bool changed = false;
@@ -1556,32 +1493,15 @@ public partial class Configuration : IPluginConfiguration
             var bx = bone.BoxHalfExtentX;
             var by = bone.BoxHalfExtentY;
             var bz = bone.BoxHalfExtentZ;
-            var swingMin = bone.SwingMinLimit;
-            var restAngle = bone.HingeRestAngle;
-            var restFreq = bone.HingeRestSpringFreq;
-            var restForce = bone.HingeRestMaxForce;
             RagdollController.FillProfileDefaults(bone);
             if (role != bone.AnatomicalRole ||
                 shape != bone.ColliderShape ||
                 bx != bone.BoxHalfExtentX ||
                 by != bone.BoxHalfExtentY ||
-                bz != bone.BoxHalfExtentZ ||
-                swingMin != bone.SwingMinLimit ||
-                restAngle != bone.HingeRestAngle ||
-                restFreq != bone.HingeRestSpringFreq ||
-                restForce != bone.HingeRestMaxForce)
+                bz != bone.BoxHalfExtentZ)
                 changed = true;
         }
         return changed;
-    }
-
-    private void MigrateAnatomicalHinges()
-    {
-        bool changed = false;
-        if (MigrateAnatomicalHingeList(RagdollBoneConfigs)) changed = true;
-        foreach (var profile in RagdollBoneProfiles)
-            if (MigrateAnatomicalHingeList(profile.Bones)) changed = true;
-        if (changed) Save();
     }
 
     /// <summary>
@@ -1647,19 +1567,6 @@ public partial class Configuration : IPluginConfiguration
                         bone.TwistMaxAngle = 0.15f;
                     }
                 }
-                else if (bone.Name is "j_asi_b_l" or "j_asi_b_r")
-                {
-                    if (bone.HingeRestSpringFreq is { } frequency &&
-                        MathF.Abs(frequency - 1.2f) < 0.0001f)
-                    {
-                        bone.HingeRestSpringFreq = 3.5f;
-                    }
-                    if (bone.HingeRestMaxForce is { } force &&
-                        MathF.Abs(force - 10f) < 0.0001f)
-                    {
-                        bone.HingeRestMaxForce = 50f;
-                    }
-                }
             }
         }
 
@@ -1714,93 +1621,6 @@ public partial class Configuration : IPluginConfiguration
             bone.CapsuleHalfLength = 0.045f;
             bone.Enabled = true;
         }
-    }
-
-    private static bool MigrateAnatomicalHingeList(List<RagdollBoneConfig> bones)
-    {
-        bool changed = false;
-        foreach (var bone in bones)
-        {
-            var role = (RagdollController.AnatomicalRole)bone.AnatomicalRole;
-            var isLowerLimb = bone.Name.StartsWith("j_asi_b_", StringComparison.Ordinal);
-            var isForearm = bone.Name.StartsWith("j_ude_b_", StringComparison.Ordinal);
-            var isUpperArm = bone.Name.StartsWith("j_ude_a_", StringComparison.Ordinal);
-            var isClavicle = bone.Name.StartsWith("j_sako_", StringComparison.Ordinal);
-            if ((role == RagdollController.AnatomicalRole.Knee || role == RagdollController.AnatomicalRole.Elbow ||
-                 isLowerLimb || isForearm) &&
-                bone.JointType != (int)RagdollController.JointType.Hinge)
-            {
-                bone.JointType = (int)RagdollController.JointType.Hinge;
-                changed = true;
-            }
-
-            var minSwingFloor = isLowerLimb || role == RagdollController.AnatomicalRole.Knee
-                ? 0.75f
-                : isForearm || role == RagdollController.AnatomicalRole.Elbow
-                    ? 0.45f
-                    : 0f;
-            if (minSwingFloor > 0 && (bone.SwingMinLimit == null || bone.SwingMinLimit < minSwingFloor))
-            {
-                bone.SwingMinLimit = minSwingFloor;
-                changed = true;
-            }
-
-            if (isLowerLimb || isForearm)
-            {
-                if (bone.ColliderShape != (int)RagdollController.RagdollColliderShape.Box)
-                {
-                    bone.ColliderShape = (int)RagdollController.RagdollColliderShape.Box;
-                    changed = true;
-                }
-
-                var minX = isLowerLimb ? 0.042f : 0.030f;
-                var minY = isLowerLimb ? 0.035f : 0.060f;
-                var minZ = isLowerLimb ? 0.030f : 0.022f;
-                if (bone.BoxHalfExtentX < minX) { bone.BoxHalfExtentX = minX; changed = true; }
-                if (bone.BoxHalfExtentY < minY) { bone.BoxHalfExtentY = minY; changed = true; }
-                if (bone.BoxHalfExtentZ < minZ) { bone.BoxHalfExtentZ = minZ; changed = true; }
-            }
-
-            if (isForearm || role == RagdollController.AnatomicalRole.Elbow)
-            {
-                if (bone.TwistMinAngle > -1.25f) { bone.TwistMinAngle = -1.25f; changed = true; }
-                if (bone.TwistMaxAngle < 1.25f) { bone.TwistMaxAngle = 1.25f; changed = true; }
-                if (bone.HingeRestAngle == null || MathF.Abs(bone.HingeRestAngle.Value - MathF.PI / 2) < 0.01f) { bone.HingeRestAngle = 0f; changed = true; }
-                if (bone.HingeRestSpringFreq == null || bone.HingeRestSpringFreq <= 0f || bone.HingeRestSpringFreq >= 2.0f) { bone.HingeRestSpringFreq = 1.5f; changed = true; }
-                if (bone.HingeRestMaxForce == null || bone.HingeRestMaxForce <= 0f || bone.HingeRestMaxForce >= 8.0f) { bone.HingeRestMaxForce = 6.0f; changed = true; }
-            }
-
-            if (isLowerLimb || role == RagdollController.AnatomicalRole.Knee)
-            {
-                if (bone.HingeRestAngle == null || MathF.Abs(bone.HingeRestAngle.Value - MathF.PI / 2) < 0.01f) { bone.HingeRestAngle = 0f; changed = true; }
-                if (bone.HingeRestSpringFreq == null || bone.HingeRestSpringFreq <= 0f) { bone.HingeRestSpringFreq = 1.2f; changed = true; }
-                if (bone.HingeRestMaxForce == null || bone.HingeRestMaxForce <= 0f) { bone.HingeRestMaxForce = 10.0f; changed = true; }
-            }
-
-            if (isClavicle)
-            {
-                if (bone.SwingLimit < 0.35f) { bone.SwingLimit = 0.35f; changed = true; }
-                if (bone.TwistMinAngle < -0.25f || bone.TwistMinAngle > -0.05f) { bone.TwistMinAngle = -0.25f; changed = true; }
-                if (bone.TwistMaxAngle > 0.25f || bone.TwistMaxAngle < 0.05f) { bone.TwistMaxAngle = 0.25f; changed = true; }
-            }
-
-            if (isUpperArm)
-            {
-                if (bone.SwingLimit > 1.35f) { bone.SwingLimit = 1.35f; changed = true; }
-                if (bone.TwistMinAngle < -0.65f || bone.TwistMinAngle > -0.20f) { bone.TwistMinAngle = -0.65f; changed = true; }
-                if (bone.TwistMaxAngle > 0.65f || bone.TwistMaxAngle < 0.20f) { bone.TwistMaxAngle = 0.65f; changed = true; }
-                if (bone.ColliderShape != (int)RagdollController.RagdollColliderShape.Box)
-                {
-                    bone.ColliderShape = (int)RagdollController.RagdollColliderShape.Box;
-                    changed = true;
-                }
-
-                if (bone.BoxHalfExtentX < 0.032f) { bone.BoxHalfExtentX = 0.032f; changed = true; }
-                if (bone.BoxHalfExtentY < 0.075f) { bone.BoxHalfExtentY = 0.075f; changed = true; }
-                if (bone.BoxHalfExtentZ < 0.024f) { bone.BoxHalfExtentZ = 0.024f; changed = true; }
-            }
-        }
-        return changed;
     }
 
     private static readonly Dictionary<string, string> LegacyBoneProfileNameMap = new()

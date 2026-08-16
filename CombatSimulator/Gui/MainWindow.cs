@@ -2451,10 +2451,7 @@ public partial class MainWindow : IDisposable
     private void DrawRagdollAdvancedSection()
     {
         ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Per-Bone Physics Parameters");
-        ImGui.TextWrapped("Toggle bones on/off for physics. Adjust rotation limits, capsule volume, and mass.");
-        ImGui.Spacing();
-
-        DrawRagdollBoneProfilesSection();
+        ImGui.TextWrapped("Mesh-aware geometry is authoritative by default. Disable it to author explicit per-bone volumes and optional bones.");
         ImGui.Spacing();
 
         var surfaceProfiles = config.RagdollCharacterSurfaceProfiles;
@@ -2470,7 +2467,7 @@ public partial class MainWindow : IDisposable
             }
         }
         ImGui.SameLine();
-        ImGui.TextDisabled("Measures torso/long-limb thickness only; skeleton, joints and motion stay unchanged. Default on.");
+        ImGui.TextDisabled("Fits collision center, axis, length and thickness from the weighted body mesh; includes hands, feet and j_asi_e toes. Profiles do not author humanoid geometry while enabled. Default on.");
         ImGui.Spacing();
 
         var debugOverlay = config.RagdollDebugOverlay;
@@ -2481,6 +2478,15 @@ public partial class MainWindow : IDisposable
         }
         ImGui.SameLine();
         ImGui.TextDisabled("Renders capsules and joints in 3D.");
+        ImGui.Spacing();
+
+        if (surfaceProfiles)
+        {
+            ImGui.TextDisabled("Per-bone profiles are not read while mesh-derived geometry is enabled. Anatomical joint topology is invariant in both modes.");
+            return;
+        }
+
+        DrawRagdollBoneProfilesSection();
         ImGui.Spacing();
 
         // Quick toggle for weapon holster/sheathe bones
@@ -2507,16 +2513,6 @@ public partial class MainWindow : IDisposable
             ImGui.SameLine();
             ImGui.TextDisabled("Toggle all j_buki holster/scabbard bones.");
         }
-
-        var liftUnderground = config.RagdollLiftUndergroundBonesOnStart;
-        if (ImGui.Checkbox("Lift Underground Bones on Start##ragdollAdv", ref liftUnderground))
-        {
-            config.RagdollLiftUndergroundBonesOnStart = liftUnderground;
-            config.Save();
-        }
-        ImGui.SameLine();
-        ImGui.TextDisabled("Lift initial ragdoll pose if bones start below ground.");
-        ImGui.Spacing();
 
         if (ragdollController.IsActive)
         {
@@ -2670,25 +2666,6 @@ public partial class MainWindow : IDisposable
                     if (ImGui.SliderFloat($"Swing Limit (rad){id}", ref swing, 0.0f, MathF.PI, "%.2f"))
                     { bone.SwingLimit = swing; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
 
-                    if ((RagdollController.JointType)bone.JointType == RagdollController.JointType.Hinge)
-                    {
-                        var swingMin = bone.SwingMinLimit ?? 0f;
-                        if (ImGui.SliderFloat($"Swing Min Limit (rad){id}", ref swingMin, 0.0f, MathF.PI, "%.2f"))
-                        { bone.SwingMinLimit = swingMin; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
-
-                        var restAngle = bone.HingeRestAngle ?? 0f;
-                        if (ImGui.SliderFloat($"Hinge Rest Angle (rad){id}", ref restAngle, 0.0f, MathF.PI, "%.2f"))
-                        { bone.HingeRestAngle = restAngle; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
-
-                        var restFreq = bone.HingeRestSpringFreq ?? 0f;
-                        if (ImGui.SliderFloat($"Hinge Rest Freq (Hz){id}", ref restFreq, 0.0f, 30.0f, "%.1f"))
-                        { bone.HingeRestSpringFreq = restFreq; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-
-                        var restForce = bone.HingeRestMaxForce ?? 0f;
-                        if (ImGui.SliderFloat($"Hinge Rest Max Force{id}", ref restForce, 0.0f, 500.0f, "%.0f"))
-                        { bone.HingeRestMaxForce = restForce; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-                    }
-
                     var twistMin = bone.TwistMinAngle;
                     if (ImGui.SliderFloat($"Twist Min (rad){id}", ref twistMin, -MathF.PI, 0f, "%.2f"))
                     { bone.TwistMinAngle = twistMin; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.TwistMin; }
@@ -2724,19 +2701,17 @@ public partial class MainWindow : IDisposable
                     }
 
                     // Reset this bone to its default
-                    if (i < RagdollController.AllBoneDefaults.Length)
+                    var defaultBone = Array.Find(
+                        RagdollController.AllBoneDefaults, candidate => candidate.Name == bone.Name);
+                    if (defaultBone != null)
                     {
                         if (ImGui.SmallButton($"Reset{id}"))
                         {
-                            var def = CloneBoneConfig(RagdollController.AllBoneDefaults[i]);
+                            var def = CloneBoneConfig(defaultBone);
                             bone.CapsuleRadius = def.CapsuleRadius;
                             bone.CapsuleHalfLength = def.CapsuleHalfLength;
                             bone.Mass = def.Mass;
                             bone.SwingLimit = def.SwingLimit;
-                            bone.SwingMinLimit = def.SwingMinLimit;
-                            bone.HingeRestAngle = def.HingeRestAngle;
-                            bone.HingeRestSpringFreq = def.HingeRestSpringFreq;
-                            bone.HingeRestMaxForce = def.HingeRestMaxForce;
                             bone.JointType = def.JointType;
                             bone.TwistMinAngle = def.TwistMinAngle;
                             bone.TwistMaxAngle = def.TwistMaxAngle;
@@ -2882,10 +2857,6 @@ public partial class MainWindow : IDisposable
             CapsuleHalfLength = src.CapsuleHalfLength,
             Mass = src.Mass,
             SwingLimit = src.SwingLimit,
-            SwingMinLimit = src.SwingMinLimit,
-            HingeRestAngle = src.HingeRestAngle,
-            HingeRestSpringFreq = src.HingeRestSpringFreq,
-            HingeRestMaxForce = src.HingeRestMaxForce,
             JointType = src.JointType,
             TwistMinAngle = src.TwistMinAngle,
             TwistMaxAngle = src.TwistMaxAngle,
@@ -3629,7 +3600,7 @@ public partial class MainWindow : IDisposable
             config.RagdollRelaxationTopple = topple;
             config.Save();
         }
-        HelpMarker("Drive a whole-body center-of-mass topple (the body loses balance over its feet and falls like an inverted pendulum) fused with the eccentric brake, instead of only a one-shot shove. Falls in 'Topple direction'. Off = legacy single impulse below. Takes effect on next death.");
+        HelpMarker("Drive a whole-body center-of-mass topple (the body loses balance over its feet and falls like an inverted pendulum) fused with the eccentric brake, instead of only a one-shot shove. Falls in 'Topple direction'. Off = the simple one-shot impulse below. Takes effect on next death.");
 
         var asym = Math.Clamp(config.RagdollCollapseAsymmetry, 0f, 1f);
         if (ImGui.SliderFloat("Asymmetry##guidedrelax", ref asym, 0f, 1f, "%.2f"))
@@ -3666,7 +3637,7 @@ public partial class MainWindow : IDisposable
                 s.Impulse = impulse;
                 config.Save();
             }
-            HelpMarker("Legacy one-shot velocity shove at death. Only used when Whole-body topple is OFF.");
+            HelpMarker("Simple one-shot velocity shove at death. Only used when Whole-body topple is OFF.");
         }
     }
 
@@ -4050,13 +4021,13 @@ public partial class MainWindow : IDisposable
                     HelpMarker("Damping ratio at the soft edge. 1 = critical (springy), 4 = overdamped default (sinks and stays), higher = syrupy.");
                 }
 
-                var jointFreq = config.RagdollJointSpringFrequency;
-                if (ImGui.SliderFloat("Joint Stiffness (Hz)##ragdoll", ref jointFreq, 15f, 120f, "%.0f"))
+                var jointFreq = MathF.Max(45f, config.RagdollJointSpringFrequency);
+                if (ImGui.SliderFloat("Joint Stiffness (Hz)##ragdoll", ref jointFreq, 45f, 120f, "%.0f"))
                 {
                     config.RagdollJointSpringFrequency = jointFreq;
                     config.Save();
                 }
-                HelpMarker("Spring frequency of the POSITIONAL joints that hold bones together (BallSocket/Weld), not the limit walls. Higher = bones separate less under big impulses (the 'rubber-band' stretch); too high for the substep count = jitter. 30 = long-standing default. Raise Solver Substeps to support higher values. Takes effect on next ragdoll activation.");
+                HelpMarker("Spring frequency of the POSITIONAL joints that hold bones together, not the limit walls. 45 Hz is the unified structural minimum used during falling, contact and Grab; Grab does not retune internal joints. Higher reduces visible anchor stretch but needs enough solver substeps. Takes effect on next activation.");
 
                 var footJointFreq = config.RagdollFootJointSpringFrequency;
                 if (ImGui.SliderFloat("Foot Joint Stiffness (Hz)##ragdoll", ref footJointFreq, 0f, 150f, "%.0f"))
@@ -4099,10 +4070,10 @@ public partial class MainWindow : IDisposable
                            "camera flattens vertical travel and an audience's sense of how fast things fall comes from " +
                            "films, not from a stopwatch. Only the descent is weighted, so the arc a blow throws the body " +
                            "into keeps its shape.\n\n" +
-                           "And its limbs get the rotational inertia a real limb has, instead of the little a thin " +
-                           "capsule implies (inertia goes as the square of the radius, and a shin is modelled at 35mm " +
-                           "where a real one is nearer 60). This is the lever that mass is not: mass cancels out of free " +
-                           "fall AND out of the joint forces, which is precisely why turning it up never did anything.\n\n" +
+                           "For fallback limb volumes it also corrects the rotational inertia underestimated by a thin " +
+                           "capsule. Mesh-derived bodies already compute inertia from their measured visible geometry, " +
+                           "so they are deliberately not corrected a second time. Mass alone is not this lever: it " +
+                           "cancels out of free fall and out of gravity-driven joint acceleration.\n\n" +
                            "Unlike Impact weight, this changes trajectories. Takes effect on the next ragdoll.");
 
                 var carryVel = config.RagdollCarryAnimationVelocity;
@@ -4123,51 +4094,6 @@ public partial class MainWindow : IDisposable
                     }
                     HelpMarker("Scales the carried handoff velocity. 1 = exact animation speed. Lower if a fast death animation throws the corpse too hard. Takes effect on next ragdoll activation.");
                 }
-
-                var experimentalJointFrames = config.RagdollExperimentalJointFrames;
-                if (ImGui.Checkbox("Experimental Joint Frames##ragdoll", ref experimentalJointFrames))
-                {
-                    config.RagdollExperimentalJointFrames = experimentalJointFrames;
-                    config.Save();
-                }
-                HelpMarker("Uses parent/child anatomical joint frames for hinge axes and ball-joint twist references. Disable this if an unusual skeleton's joints behave incorrectly. Takes effect on next ragdoll activation.");
-
-                var anatomicalHinge = config.RagdollAnatomicalHingeAxis;
-                if (ImGui.Checkbox("Anatomical Hinge Axis##ragdoll", ref anatomicalHinge))
-                {
-                    config.RagdollAnatomicalHingeAxis = anatomicalHinge;
-                    config.Save();
-                }
-                HelpMarker("Take the knee/elbow hinge from the body rather than from the pose it died in. A knee folds the shin " +
-                           "backward and an elbow folds the forearm forward — facts about the body, with nothing to do with whether " +
-                           "it was standing or kneeling when physics took over.\n\n" +
-                           "The fold direction used to be read off whichever way the limb happened to be leaning. On a straight leg " +
-                           "that vector is perpendicular, so the sign fell out of floating-point noise — separately for each leg, which " +
-                           "is why one knee would lock while the other bent the wrong way, and why the stiffness changed with the death " +
-                           "pose.\n\n" +
-                           "This shipped OFF because it fixed the axis and then took the axis's SIGN from the very thing it was " +
-                           "replacing, which bent every knee forward. Both are derived from anatomy now. Takes effect on next ragdoll " +
-                           "activation.");
-
-                var anatomicalRom = config.RagdollAnatomicalRom;
-                if (ImGui.Checkbox("Anatomical ROM (asymmetric)##ragdoll", ref anatomicalRom))
-                {
-                    config.RagdollAnatomicalRom = anatomicalRom;
-                    config.Save();
-                }
-                HelpMarker("Tier C: drive joint axial-twist ranges (all joints) and knee/elbow flexion/hyperextension bounds from a clinical/ISB anatomical ROM table instead of the hand-set symmetric values. Blocks knee/elbow bending backward past straight (hyperextension) and gives each joint a correct asymmetric axial range. Ball-joint asymmetric SWING (hip/shoulder reach cone) is deferred. Takes effect on next ragdoll activation.");
-
-                var hingeRestBias = config.RagdollAnatomicalHingeRestBias;
-                if (ImGui.Checkbox("Hinge Rest Bias (knee/elbow)##ragdoll", ref hingeRestBias))
-                {
-                    config.RagdollAnatomicalHingeRestBias = hingeRestBias;
-                    config.Save();
-                }
-                HelpMarker("A soft spring on the knee/elbow hinge that pulls it toward straight (the HingeRest* per-bone params). " +
-                           "Without it the hinge only damps velocity, so a limb resting on the ground — a supine corpse — never " +
-                           "returns to straight and the knee stays bent. This gives the return-to-straight a ball joint's cone would, " +
-                           "but without the ball's free sideways swing. May fight some death poses. Takes effect on next ragdoll activation.");
-
                 var anthropometricMass = config.RagdollAnthropometricMass;
                 if (ImGui.Checkbox("Anthropometric Mass##ragdoll", ref anthropometricMass))
                 {
@@ -4193,7 +4119,7 @@ public partial class MainWindow : IDisposable
                     config.RagdollSelfCollision = selfCollision;
                     config.Save();
                 }
-                HelpMarker("Body parts collide with each other (arms vs torso, legs vs legs). Prevents clipping but may cause slight stretching. Takes effect on next ragdoll activation.");
+                HelpMarker("Enables contact between every non-adjacent ragdoll body (arms vs torso, legs vs legs). Only bodies sharing a joint are excluded. Contacts use overdamped recovery so overlap resolves without becoming another spring. Takes effect on next activation.");
 
                 var friction = config.RagdollFriction;
                 if (ImGui.SliderFloat("Friction##ragdoll", ref friction, 0.0f, 2.0f, "%.2f"))

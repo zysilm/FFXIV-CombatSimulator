@@ -11,20 +11,33 @@ namespace CombatSimulator.Animation;
 
 public unsafe partial class RagdollController
 {
-    // Structural mesh fitting is deliberately much narrower than soft-tissue fitting. It may
-    // replace transverse flesh thickness, but it must never become a second skeleton builder.
-    // In particular, this result contains no center, axis, segment length, parent or joint data.
+    // Structural mesh fitting owns collision geometry, but never skeleton topology or joint
+    // anchors. The body may be offset from its bone: joints stay on the bone pivots while contact,
+    // center of mass and inertia follow the weighted character surface.
     private readonly struct StructuralMeshThicknessFit
     {
         public readonly float RadiusX;
         public readonly float RadiusZ;
+        public readonly float HalfLength;
+        public readonly Vector3 CenterBoneLocal;
+        public readonly Vector3 AxisBoneLocal;
         public readonly bool UseBox;
         public readonly int SampleCount;
 
-        public StructuralMeshThicknessFit(float radiusX, float radiusZ, bool useBox, int sampleCount)
+        public StructuralMeshThicknessFit(
+            float radiusX,
+            float radiusZ,
+            float halfLength,
+            Vector3 centerBoneLocal,
+            Vector3 axisBoneLocal,
+            bool useBox,
+            int sampleCount)
         {
             RadiusX = radiusX;
             RadiusZ = radiusZ;
+            HalfLength = halfLength;
+            CenterBoneLocal = centerBoneLocal;
+            AxisBoneLocal = axisBoneLocal;
             UseBox = useBox;
             SampleCount = sampleCount;
         }
@@ -34,7 +47,8 @@ public unsafe partial class RagdollController
         string Bone,
         string Child,
         bool UseBox,
-        int MinimumSamples);
+        int MinimumSamples,
+        string? AdditionalSampleBone = null);
 
     private static readonly StructuralMeshTarget[] StructuralMeshTargets =
     {
@@ -46,10 +60,16 @@ public unsafe partial class RagdollController
         new("j_ude_a_r", "j_ude_b_r", false, 18),
         new("j_ude_b_l", "j_te_l",    false, 18),
         new("j_ude_b_r", "j_te_r",    false, 18),
+        new("j_te_l",    "j_naka_a_l", true,  12),
+        new("j_te_r",    "j_naka_a_r", true,  12),
         new("j_asi_a_l", "j_asi_b_l", false, 24),
         new("j_asi_a_r", "j_asi_b_r", false, 24),
-        new("j_asi_b_l", "j_asi_c_l", false, 24),
-        new("j_asi_b_r", "j_asi_c_r", false, 24),
+        // j_asi_c is a skinning helper, not a second dynamic body. Its weighted vertices are
+        // folded into the knee-to-ankle shank fit.
+        new("j_asi_b_l", "j_asi_d_l", false, 24, "j_asi_c_l"),
+        new("j_asi_b_r", "j_asi_d_r", false, 24, "j_asi_c_r"),
+        new("j_asi_d_l", "j_asi_e_l", true,  14),
+        new("j_asi_d_r", "j_asi_e_r", true,  14),
     };
 
     private Dictionary<string, StructuralMeshThicknessFit> BuildStructuralMeshThicknessFits(
@@ -60,11 +80,12 @@ public unsafe partial class RagdollController
         var result = new Dictionary<string, StructuralMeshThicknessFit>(StringComparer.Ordinal);
         if (skel.CharBase == null || !TryBuildReferenceModelTransforms(skel, out var referenceModel))
         {
-            log.Warning("Ragdoll mesh thickness: reference skeleton unavailable; using configured volumes.");
+            log.Warning("Ragdoll mesh geometry: reference skeleton unavailable; using built-in volumes.");
             return result;
         }
 
         var targetsByIndex = new Dictionary<int, StructuralMeshTarget>();
+        var sampleOwnerByIndex = new Dictionary<int, int>();
         foreach (var target in StructuralMeshTargets)
         {
             if (!definitions.ContainsKey(target.Bone) ||
@@ -72,6 +93,13 @@ public unsafe partial class RagdollController
                 boneIndex < 0 || boneIndex >= referenceModel.Length)
                 continue;
             targetsByIndex[boneIndex] = target;
+            sampleOwnerByIndex[boneIndex] = boneIndex;
+            if (target.AdditionalSampleBone != null)
+            {
+                var additionalIndex = boneService.ResolveBoneIndex(skel, target.AdditionalSampleBone);
+                if (additionalIndex >= 0 && additionalIndex < referenceModel.Length)
+                    sampleOwnerByIndex[additionalIndex] = boneIndex;
+            }
         }
         if (targetsByIndex.Count == 0)
             return result;
@@ -108,7 +136,7 @@ public unsafe partial class RagdollController
             }
 
             foreach (var meshIndex in meshIndices)
-                if (CollectStructuralMeshSamples(mdl, lodIndex, meshIndex, skel, targetsByIndex, samples))
+                if (CollectStructuralMeshSamples(mdl, lodIndex, meshIndex, skel, sampleOwnerByIndex, samples))
                     sampledMeshes++;
         }
 
@@ -123,7 +151,7 @@ public unsafe partial class RagdollController
                     out rejectionReason))
             {
                 if (config.RagdollVerboseLog)
-                    log.Info($"Ragdoll mesh thickness '{target.Bone}': configured fallback ({rejectionReason ?? "no direct mesh samples"}).");
+                    log.Info($"Ragdoll mesh geometry '{target.Bone}': built-in fallback ({rejectionReason ?? "no direct mesh samples"}).");
                 continue;
             }
 
@@ -132,11 +160,13 @@ public unsafe partial class RagdollController
 
         ValidateStructuralMeshPair(result, "j_ude_a_l", "j_ude_a_r");
         ValidateStructuralMeshPair(result, "j_ude_b_l", "j_ude_b_r");
+        ValidateStructuralMeshPair(result, "j_te_l", "j_te_r");
         ValidateStructuralMeshPair(result, "j_asi_a_l", "j_asi_a_r");
         ValidateStructuralMeshPair(result, "j_asi_b_l", "j_asi_b_r");
+        ValidateStructuralMeshPair(result, "j_asi_d_l", "j_asi_d_r");
 
-        log.Info($"Ragdoll mesh thickness: accepted {result.Count}/{targetsByIndex.Count} structural segment(s) " +
-                 $"from {loadedBodyModels} body model(s), {sampledMeshes} mesh(es); topology and segment geometry unchanged.");
+        log.Info($"Ragdoll mesh geometry: accepted {result.Count}/{targetsByIndex.Count} structural segment(s) " +
+                 $"from {loadedBodyModels} body model(s), {sampledMeshes} mesh(es); anatomical joint topology unchanged.");
         return result;
     }
 
@@ -190,7 +220,7 @@ public unsafe partial class RagdollController
         int lodIndex,
         int meshIndex,
         SkeletonAccess skel,
-        IReadOnlyDictionary<int, StructuralMeshTarget> targets,
+        IReadOnlyDictionary<int, int> sampleOwnerByIndex,
         Dictionary<int, List<SoftTissueMeshSample>> samples)
     {
         if (meshIndex < 0 || meshIndex >= mdl.Meshes.Length ||
@@ -231,13 +261,13 @@ public unsafe partial class RagdollController
                 if (localIndex >= localToHavok.Length)
                     continue;
                 var havokIndex = localToHavok[localIndex];
-                if (!targets.ContainsKey(havokIndex))
+                if (!sampleOwnerByIndex.TryGetValue(havokIndex, out var ownerIndex))
                     continue;
 
-                if (!samples.TryGetValue(havokIndex, out var boneSamples))
+                if (!samples.TryGetValue(ownerIndex, out var boneSamples))
                 {
                     boneSamples = new List<SoftTissueMeshSample>();
-                    samples.Add(havokIndex, boneSamples);
+                    samples.Add(ownerIndex, boneSamples);
                 }
                 boneSamples.Add(new SoftTissueMeshSample(bindPosition, weight));
                 collected = true;
@@ -324,9 +354,9 @@ public unsafe partial class RagdollController
             return false;
         }
 
-        // First discard isolated seam/corruption vertices using a radial envelope, then measure a
-        // symmetric cross-section around the unchanged skeleton axis. There is intentionally no
-        // centroid calculation here: a measured center must never move a structural body.
+        // First discard isolated seam/corruption vertices using a broad radial envelope around the
+        // bone, then find the robust cross-section center. The collider may be off the skeleton axis;
+        // joint anchors remain at bone pivots, while contact and inertia follow this measured center.
         var rawRadial = new List<WeightedScalar>(filtered.Count);
         foreach (var sample in filtered)
             rawRadial.Add(new WeightedScalar(
@@ -339,22 +369,40 @@ public unsafe partial class RagdollController
             return false;
         }
 
-        var xValues = new List<WeightedScalar>(filtered.Count);
-        var zValues = new List<WeightedScalar>(filtered.Count);
-        var radialValues = new List<WeightedScalar>(filtered.Count);
+        var signedXValues = new List<WeightedScalar>(filtered.Count);
+        var signedZValues = new List<WeightedScalar>(filtered.Count);
+        var longitudinalValues = new List<WeightedScalar>(filtered.Count);
         foreach (var sample in filtered)
         {
             var radial = MathF.Sqrt(sample.Local.X * sample.Local.X + sample.Local.Z * sample.Local.Z);
             if (radial > envelope)
                 continue;
-            xValues.Add(new WeightedScalar(MathF.Abs(sample.Local.X), sample.Weight));
-            zValues.Add(new WeightedScalar(MathF.Abs(sample.Local.Z), sample.Weight));
-            radialValues.Add(new WeightedScalar(radial, sample.Weight));
+            signedXValues.Add(new WeightedScalar(sample.Local.X, sample.Weight));
+            signedZValues.Add(new WeightedScalar(sample.Local.Z, sample.Weight));
+            longitudinalValues.Add(new WeightedScalar(sample.Local.Y, sample.Weight));
         }
-        if (radialValues.Count < target.MinimumSamples)
+        if (signedXValues.Count < target.MinimumSamples)
         {
-            rejectionReason = $"only {radialValues.Count} inlier samples";
+            rejectionReason = $"only {signedXValues.Count} inlier samples";
             return false;
+        }
+
+        var centerX = WeightedPercentile(signedXValues, 0.50f);
+        var centerZ = WeightedPercentile(signedZValues, 0.50f);
+        var xValues = new List<WeightedScalar>(signedXValues.Count);
+        var zValues = new List<WeightedScalar>(signedXValues.Count);
+        var radialValues = new List<WeightedScalar>(signedXValues.Count);
+        foreach (var sample in filtered)
+        {
+            var radialFromBone = MathF.Sqrt(
+                sample.Local.X * sample.Local.X + sample.Local.Z * sample.Local.Z);
+            if (radialFromBone > envelope)
+                continue;
+            var dx = sample.Local.X - centerX;
+            var dz = sample.Local.Z - centerZ;
+            xValues.Add(new WeightedScalar(MathF.Abs(dx), sample.Weight));
+            zValues.Add(new WeightedScalar(MathF.Abs(dz), sample.Weight));
+            radialValues.Add(new WeightedScalar(MathF.Sqrt(dx * dx + dz * dz), sample.Weight));
         }
 
         float radiusX;
@@ -375,11 +423,42 @@ public unsafe partial class RagdollController
                 target, referenceHeight, segmentLength, radiusX, radiusZ, out rejectionReason))
             return false;
 
-        fit = new StructuralMeshThicknessFit(radiusX, radiusZ, target.UseBox, radialValues.Count);
+        var longitudinalLow = WeightedPercentile(longitudinalValues, 0.06f);
+        var longitudinalHigh = WeightedPercentile(longitudinalValues, 0.94f);
+        var longitudinalSpan = longitudinalHigh - longitudinalLow;
+        if (!float.IsFinite(longitudinalSpan) || longitudinalSpan < referenceHeight * 0.015f)
+        {
+            rejectionReason = $"invalid longitudinal mesh span ({longitudinalSpan:F4}m)";
+            return false;
+        }
+
+        var centerSection = new Vector3(
+            centerX,
+            (longitudinalLow + longitudinalHigh) * 0.5f,
+            centerZ);
+        var radiusForLength = MathF.Max(radiusX, radiusZ);
+        var halfLength = target.UseBox
+            ? longitudinalSpan * 0.5f
+            : MathF.Max(referenceHeight * 0.008f, longitudinalSpan * 0.5f - radiusForLength);
+        if (!float.IsFinite(halfLength) || halfLength > referenceHeight * 0.22f)
+        {
+            rejectionReason = $"invalid mesh half length ({halfLength:F4}m)";
+            return false;
+        }
+
+        var centerModelOffset = Vector3.Transform(centerSection, sectionRotation);
+        var inverseBoneRotation = Quaternion.Inverse(boneRotation);
+        var centerBoneLocal = Vector3.Transform(centerModelOffset, inverseBoneRotation);
+        var axisBoneLocal = NormalizeOrFallback(Vector3.Transform(axis, inverseBoneRotation), Vector3.UnitY);
+
+        fit = new StructuralMeshThicknessFit(
+            radiusX, radiusZ, halfLength, centerBoneLocal, axisBoneLocal,
+            target.UseBox, radialValues.Count);
         if (config.RagdollVerboseLog)
         {
-            log.Info($"Ragdoll mesh thickness '{target.Bone}': accepted samples={fit.SampleCount}, " +
-                     $"x={fit.RadiusX:F4}, z={fit.RadiusZ:F4}, segment={segmentLength:F4}, " +
+            log.Info($"Ragdoll mesh geometry '{target.Bone}': accepted samples={fit.SampleCount}, " +
+                     $"x={fit.RadiusX:F4}, z={fit.RadiusZ:F4}, half={fit.HalfLength:F4}, " +
+                     $"center=({fit.CenterBoneLocal.X:F3},{fit.CenterBoneLocal.Y:F3},{fit.CenterBoneLocal.Z:F3}), segment={segmentLength:F4}, " +
                      $"referenceHeight={referenceHeight:F3}.");
         }
         return true;
@@ -398,6 +477,45 @@ public unsafe partial class RagdollController
         {
             reason = "non-finite thickness";
             return false;
+        }
+
+        if (target.Bone.StartsWith("j_asi_d_", StringComparison.Ordinal))
+        {
+            // A foot is box-like but must not use the torso box envelope. X/Z are the two
+            // transverse dimensions around the unchanged ankle-to-toe axis; accept either local
+            // ordering because reference bone rolls differ between races and skeleton variants.
+            var smaller = MathF.Min(radiusX, radiusZ);
+            var larger = MathF.Max(radiusX, radiusZ);
+            var minimumSmall = referenceHeight * 0.006f;
+            var maximumSmall = referenceHeight * 0.030f;
+            var minimumLarge = referenceHeight * 0.012f;
+            var maximumLarge = referenceHeight * 0.060f;
+            if (smaller < minimumSmall || smaller > maximumSmall ||
+                larger < minimumLarge || larger > maximumLarge || larger / smaller > 4f)
+            {
+                reason = $"foot thickness outside stature envelope ({radiusX:F4}, {radiusZ:F4}; " +
+                         $"small={minimumSmall:F4}-{maximumSmall:F4}, large={minimumLarge:F4}-{maximumLarge:F4})";
+                return false;
+            }
+            return true;
+        }
+
+        if (target.Bone.StartsWith("j_te_", StringComparison.Ordinal))
+        {
+            var smaller = MathF.Min(radiusX, radiusZ);
+            var larger = MathF.Max(radiusX, radiusZ);
+            var minimumSmall = referenceHeight * 0.0035f;
+            var maximumSmall = referenceHeight * 0.020f;
+            var minimumLarge = referenceHeight * 0.009f;
+            var maximumLarge = referenceHeight * 0.045f;
+            if (smaller < minimumSmall || smaller > maximumSmall ||
+                larger < minimumLarge || larger > maximumLarge || larger / smaller > 5f)
+            {
+                reason = $"hand thickness outside stature envelope ({radiusX:F4}, {radiusZ:F4}; " +
+                         $"small={minimumSmall:F4}-{maximumSmall:F4}, large={minimumLarge:F4}-{maximumLarge:F4})";
+                return false;
+            }
+            return true;
         }
 
         if (target.UseBox)
@@ -476,6 +594,6 @@ public unsafe partial class RagdollController
 
         fits.Remove(left);
         fits.Remove(right);
-        log.Warning($"Ragdoll mesh thickness: rejected asymmetric pair '{left}'/'{right}' (ratio={ratio:F2}); configured volumes retained.");
+        log.Warning($"Ragdoll mesh geometry: rejected asymmetric pair '{left}'/'{right}' (ratio={ratio:F2}); built-in volumes retained.");
     }
 }
