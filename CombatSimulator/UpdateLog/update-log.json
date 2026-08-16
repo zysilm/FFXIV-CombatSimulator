@@ -1,5 +1,14 @@
 [
   {
+    "version": "2.8.0.1",
+    "date": "2026-08-16",
+    "title": "Combat Simulator 2.8.0.1",
+    "changes": [
+      "Minor improvements.",
+      "Allow stepping on settled ragdolls."
+    ]
+  },
+  {
     "version": "2.8.0.0",
     "date": "2026-08-16",
     "title": "Combat Simulator 2.8.0.0",

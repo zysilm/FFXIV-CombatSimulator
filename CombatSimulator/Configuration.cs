@@ -181,6 +181,7 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollFingerPhysicsMigrated20260810 { get; set; } = false;
     public bool RagdollLegModelRebuildMigrated20260816 { get; set; } = false;
     public bool RagdollFollowPositionDefaultMigrated20260816 { get; set; } = false;
+    public bool RagdollNpcCorpseTraversalDefaultMigrated20260816 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -660,8 +661,8 @@ public partial class Configuration : IPluginConfiguration
     // Let client-controlled enemies and companions treat settled ragdoll bodies as a low,
     // walkable surface. The movement layer raises their root onto the corpse while the physics
     // layer uses a soft, low-friction NPC contact so the body compresses/reacts without being
-    // launched sideways. Experimental and opt-in: real map actors remain server-positioned.
-    public bool RagdollNpcCorpseTraversal { get; set; } = false;
+    // launched sideways. Real map actors remain server-positioned.
+    public bool RagdollNpcCorpseTraversal { get; set; } = true;
     /// <summary>Derive structural collision centers, axes, lengths and cross-sections from the
     /// character's weighted body mesh, including hands, feet and j_asi_e toe endpoints. Profiles do
     /// not author humanoid body geometry while enabled. Joint topology remains anatomical and
@@ -959,6 +960,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateDynamicCameraPivotBone();
         MigrateRagdollLegModelRebuild(); // before the profile housekeeping below: it clears RagdollBoneProfiles
         MigrateRagdollFollowPositionDefault();
+        MigrateRagdollNpcCorpseTraversalDefault();
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
     }
@@ -1770,6 +1772,22 @@ public partial class Configuration : IPluginConfiguration
         RagdollFollowPosition = true;
 
         RagdollFollowPositionDefaultMigrated20260816 = true;
+        Save();
+    }
+
+    /// <summary>
+    /// RagdollNpcCorpseTraversal ("Allow NPCs to Step on Corpses") flips from false to true — but
+    /// every existing config already has the old value serialized explicitly, so the code default
+    /// alone would only reach fresh installs.
+    /// </summary>
+    private void MigrateRagdollNpcCorpseTraversalDefault()
+    {
+        if (RagdollNpcCorpseTraversalDefaultMigrated20260816)
+            return;
+
+        RagdollNpcCorpseTraversal = true;
+
+        RagdollNpcCorpseTraversalDefaultMigrated20260816 = true;
         Save();
     }
 
