@@ -1336,18 +1336,8 @@ public unsafe partial class RagdollController : IDisposable
         var configs = config.RagdollCharacterSurfaceProfiles || config.RagdollBoneConfigs.Count == 0
             ? AllBoneDefaults
             : config.RagdollBoneConfigs.ToArray();
-        return BuildBoneDefsFromConfigs(
-            configs,
-            config.RagdollCharacterSurfaceProfiles ? MeshThicknessRequiredBones : null);
+        return BuildBoneDefsFromConfigs(configs);
     }
-
-    // The toe-cluster endpoint gives the foot a real terminal segment and a collision body.
-    // Keep it tied to mesh-derived structural fitting so profile-only rigs retain their
-    // explicit enabled set when that experiment is off.
-    private static readonly HashSet<string> MeshThicknessRequiredBones = new(StringComparer.Ordinal)
-    {
-        "j_asi_e_l", "j_asi_e_r",
-    };
 
     // Structural bones every humanoid skeleton has. If all resolve, the hand-tuned
     // human profile fits and the existing passes run unchanged. If any is missing
@@ -2440,7 +2430,7 @@ public unsafe partial class RagdollController : IDisposable
 
         var enabledNames = new HashSet<string>();
         foreach (var c in configs)
-            if (!IsMergedLowerLegAuxiliary(c.Name) &&
+            if (!IsMergedLowerLegAuxiliary(c.Name) && !IsToeBone(c.Name) &&
                 (c.Enabled || forceEnabled?.Contains(c.Name) == true))
                 enabledNames.Add(c.Name);
 
@@ -2451,7 +2441,9 @@ public unsafe partial class RagdollController : IDisposable
         var result = new List<RagdollBoneDef>();
         foreach (var c in configs)
         {
-            if (IsMergedLowerLegAuxiliary(c.Name)) continue;
+            // j_asi_e is never a ragdoll body — not from a saved per-bone profile's Enabled
+            // flag, not from mesh-aware mode. Neither GUI path may bring it back.
+            if (IsMergedLowerLegAuxiliary(c.Name) || IsToeBone(c.Name)) continue;
             if (!c.Enabled && forceEnabled?.Contains(c.Name) != true) continue;
             FillProfileDefaults(c);
 
@@ -4702,13 +4694,26 @@ public unsafe partial class RagdollController : IDisposable
             if (rb.ParentBoneIndex < 0) continue;
             if (!boneIdxToBodyHandle.TryGetValue(rb.ParentBoneIndex, out var parentHandle)) continue;
 
-            // Joint neighbors share an anchor and are the only self-collision exclusion.
+            // When self-collision is enabled, exclude nearby pairs (1-2 hops). A moving limb
+            // (the swing arc of an active fall, not just a resting pose) can sweep a 2-hop
+            // neighbor — foot into thigh, toe into shin — and that contact fights the joint
+            // constraints connecting them, which a resting corpse never triggers.
             if (connectedPairs != null)
             {
                 // Exclude direct parent-child (they share a joint anchor)
                 var lo = Math.Min(rb.BodyHandle.Value, parentHandle.Value);
                 var hi = Math.Max(rb.BodyHandle.Value, parentHandle.Value);
                 connectedPairs.Add((lo, hi));
+
+                // Also exclude grandparent (2 hops) — nearby bodies in the chain would
+                // cause collision forces that stretch the spring constraints between them.
+                var parentRb = ragdollBones.Find(r => r.BoneIndex == rb.ParentBoneIndex);
+                if (parentRb.ParentBoneIndex >= 0 && boneIdxToBodyHandle.TryGetValue(parentRb.ParentBoneIndex, out var grandparentHandle))
+                {
+                    lo = Math.Min(rb.BodyHandle.Value, grandparentHandle.Value);
+                    hi = Math.Max(rb.BodyHandle.Value, grandparentHandle.Value);
+                    connectedPairs.Add((lo, hi));
+                }
             }
 
             // Find the bone definition for this bone
