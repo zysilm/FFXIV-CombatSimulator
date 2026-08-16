@@ -30,6 +30,12 @@ namespace CombatSimulator.Gui;
 // when the player turns it on there, same pattern as Armor Detachment.
 public partial class MainWindow
 {
+    // Short lists for the non-"any bone" grab pickers below: a handful of bones worth grabbing
+    // most of the time, without opening the full skeleton dropdown.
+    private static readonly string[] EnemyControlGrabPlayerBones =
+        { "j_kubi", "j_sebo_c", "j_kosi", "j_kao", "j_ude_b_r", "j_ude_b_l" };
+    private static readonly string[] EnemyControlGrabNpcBones = { "j_te_r", "j_te_l" };
+
     private void DrawEnemyControlEntrySection()
     {
         if (!ImGui.CollapsingHeader("Enemy Control"))
@@ -702,11 +708,11 @@ public partial class MainWindow
     {
         if (!config.EnemyControlGrabAnyBone)
         {
-            var idx = Array.IndexOf(HoldGrabPlayerBones, pair.PlayerBone);
+            var idx = Array.IndexOf(EnemyControlGrabPlayerBones, pair.PlayerBone);
             if (idx < 0) idx = 0;
             ImGui.SetNextItemWidth(80);
-            if (ImGui.Combo("##EnemyControlGrabPlayer", ref idx, HoldGrabPlayerBones, HoldGrabPlayerBones.Length))
-            { pair.PlayerBone = HoldGrabPlayerBones[idx]; config.Save(); }
+            if (ImGui.Combo("##EnemyControlGrabPlayer", ref idx, EnemyControlGrabPlayerBones, EnemyControlGrabPlayerBones.Length))
+            { pair.PlayerBone = EnemyControlGrabPlayerBones[idx]; config.Save(); }
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Grabbed bone");
         }
         else
@@ -772,11 +778,11 @@ public partial class MainWindow
     {
         if (!config.EnemyControlGrabAnyNpcBone)
         {
-            var idx = Array.IndexOf(HoldGrabNpcBones, pair.NpcBone);
+            var idx = Array.IndexOf(EnemyControlGrabNpcBones, pair.NpcBone);
             if (idx < 0) idx = 0;
             ImGui.SetNextItemWidth(60);
-            if (ImGui.Combo("##EnemyControlGrabNpc", ref idx, HoldGrabNpcBones, HoldGrabNpcBones.Length))
-            { pair.NpcBone = HoldGrabNpcBones[idx]; config.Save(); }
+            if (ImGui.Combo("##EnemyControlGrabNpc", ref idx, EnemyControlGrabNpcBones, EnemyControlGrabNpcBones.Length))
+            { pair.NpcBone = EnemyControlGrabNpcBones[idx]; config.Save(); }
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Grabbing bone. A creature with no such bone falls back to one it does have —\n" +
                                  "the other hand, then its head or jaw. Tick \"Any npc\" to choose from its own skeleton.");
