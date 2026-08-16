@@ -64,10 +64,12 @@ public unsafe partial class RagdollController
         new("j_te_r",    "j_naka_a_r", true,  12),
         new("j_asi_a_l", "j_asi_b_l", false, 24),
         new("j_asi_a_r", "j_asi_b_r", false, 24),
-        // j_asi_c is a skinning helper, not a second dynamic body. Its weighted vertices are
-        // folded into the knee-to-ankle shank fit.
-        new("j_asi_b_l", "j_asi_d_l", false, 24, "j_asi_c_l"),
-        new("j_asi_b_r", "j_asi_d_r", false, 24, "j_asi_c_r"),
+        // j_asi_c is a real second knee-region body now (see LogLegBoneStructureDiagnostics), not
+        // a skinning helper — fit it as its own segment instead of folding it into j_asi_b's.
+        new("j_asi_b_l", "j_asi_c_l", false, 18),
+        new("j_asi_b_r", "j_asi_c_r", false, 18),
+        new("j_asi_c_l", "j_asi_d_l", false, 24),
+        new("j_asi_c_r", "j_asi_d_r", false, 24),
         new("j_asi_d_l", "j_asi_e_l", true,  14),
         new("j_asi_d_r", "j_asi_e_r", true,  14),
     };
@@ -541,6 +543,24 @@ public unsafe partial class RagdollController
         }
 
         var radius = (radiusX + radiusZ) * 0.5f;
+
+        // j_asi_b is now a short (~6cm) proximal stub, not a long limb segment — its radius is
+        // wider than it is long, so scaling the envelope BY segmentLength (as the long-limb
+        // branch below does) produces a maximum smaller than the stature-based minimum and
+        // rejects every measurement. Use a pure stature ratio instead, the same way the foot/hand
+        // branches above do for their own short segments.
+        if (target.Bone.StartsWith("j_asi_b_", StringComparison.Ordinal))
+        {
+            var minimumKnee = referenceHeight * 0.018f;
+            var maximumKnee = referenceHeight * 0.038f;
+            if (radius < minimumKnee || radius > maximumKnee)
+            {
+                reason = $"upper-knee radius {radius:F4} outside stature envelope {minimumKnee:F4}-{maximumKnee:F4}";
+                return false;
+            }
+            return true;
+        }
+
         float minimumRatio;
         float maximumRatio;
         float minimumStatureRatio;
@@ -549,12 +569,6 @@ public unsafe partial class RagdollController
             minimumRatio = 0.10f;
             maximumRatio = 0.32f;
             minimumStatureRatio = 0.020f;
-        }
-        else if (target.Bone.StartsWith("j_asi_b_", StringComparison.Ordinal))
-        {
-            minimumRatio = 0.07f;
-            maximumRatio = 0.26f;
-            minimumStatureRatio = 0.015f;
         }
         else
         {

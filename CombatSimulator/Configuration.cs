@@ -179,6 +179,7 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollSoftBodyTuningMigrated20260719 { get; set; } = false;
     public bool KoStripHandsFeetRigidDefaultMigrated20260719 { get; set; } = false;
     public bool RagdollFingerPhysicsMigrated20260810 { get; set; } = false;
+    public bool RagdollLegModelRebuildMigrated20260816 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -947,6 +948,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateNpcCollisionConvexHullDefault(); // last of the three: it overrides both verdicts above
         MigrateGuidedCollapse();
         MigrateDynamicCameraPivotBone();
+        MigrateRagdollLegModelRebuild(); // before the profile housekeeping below: it clears RagdollBoneProfiles
         RenameLegacyBoneProfiles();
         SeedBuiltInBoneProfiles();
     }
@@ -1712,6 +1714,35 @@ public partial class Configuration : IPluginConfiguration
                 ApplyFingerPhysicsDefaults(profile.Bones);
 
         RagdollFingerPhysicsMigrated20260810 = true;
+        Save();
+    }
+
+    /// <summary>
+    /// 2.x.0.0: the leg model was rebuilt — j_asi_c (previously folded into j_asi_b as an inert
+    /// mesh-sampling helper) is a real second knee-region body now, j_asi_b was resized to its
+    /// real short proximal length, and several joint/collision defaults changed with it (mesh-aware
+    /// geometry back on, restored anatomical hinge rest bias, restored 2-hop self-collision
+    /// exclusion, ankle back on the ball-cone model). Existing installs have their own saved
+    /// values for all of this from before the rebuild, so a normal default-value bump would only
+    /// reach fresh installs — this forces every existing config back to the shipped defaults once.
+    ///
+    /// Goes further than the "Reset All to Defaults" button on the Ragdoll page: that button
+    /// deliberately leaves RagdollBoneConfigs/RagdollBoneProfiles alone (user data, not options —
+    /// see RagdollPageResetExclusions), but any profile saved before this rebuild is missing
+    /// j_asi_c entirely. Loading one after this migration would silently reintroduce the exact
+    /// defect this release fixes, so both are cleared; SeedBuiltInBoneProfiles (run right after
+    /// this, in Initialize) repopulates the built-in ones from the now-updated resource file.
+    /// </summary>
+    private void MigrateRagdollLegModelRebuild()
+    {
+        if (RagdollLegModelRebuildMigrated20260816)
+            return;
+
+        ResetRagdollPageDefaults();
+        RagdollBoneConfigs.Clear();
+        RagdollBoneProfiles.Clear();
+
+        RagdollLegModelRebuildMigrated20260816 = true;
         Save();
     }
 
