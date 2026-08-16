@@ -423,9 +423,20 @@ public partial class MainWindow
             config.Save();
         }
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Restore defaults: Head/Body/Legs collapse; Hands/Feet and accessories stay rigid.");
+            ImGui.SetTooltip("Restore defaults: Head/Body/Legs/Feet collapse; Hands and accessories stay rigid.");
 
         ImGui.EndDisabled();
+
+        ImGui.Separator();
+
+        if (ImGui.Button("Reset All to Defaults##armordetachresetall"))
+        {
+            config.ResetArmorDetachmentDefaults();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Restore every Armor Detachment option above to its default — slots, physics drop,\n" +
+                             "garment tube, cloth hold, and the per-slot collapse mask. Leaves \"Detach on KO\" alone,\n" +
+                             "same as the Ragdoll page's reset button leaving its own master switch alone.");
 
         ImGui.Separator();
 

@@ -235,16 +235,16 @@ public partial class Configuration : IPluginConfiguration
     public string PartyCompanionGlamourerDesignId { get; set; } = "";
 
     // Armor Detachment: compact floating control UI, opened from Professional Mode > Effects.
-    public bool ShowArmorDetachmentControls { get; set; } = false;
+    public bool ShowArmorDetachmentControls { get; set; } = true;
 
     // Armor Detachment: visually detach configured player gear slots on KO. Monster-hit detachment is
     // a dev-only extension and is additionally runtime-gated by the dev unlock state.
     public bool KoStripEnabled { get; set; } = false;
     public bool KoStripOnHitEnabled { get; set; } = false;
-    public bool KoStripSyncWithRagdoll { get; set; } = true;
-    public bool KoStripHead { get; set; } = false;
+    public bool KoStripSyncWithRagdoll { get; set; } = false;
+    public bool KoStripHead { get; set; } = true;
     public bool KoStripBody { get; set; } = true;
-    public bool KoStripHands { get; set; } = true;
+    public bool KoStripHands { get; set; } = false;
     public bool KoStripLegs { get; set; } = true;
     public bool KoStripFeet { get; set; } = true;
     public bool KoStripEars { get; set; } = false;
@@ -254,21 +254,21 @@ public partial class Configuration : IPluginConfiguration
     public bool KoStripLFinger { get; set; } = false;
 
     // Physically drop hats / accessories (separate models, not fused with skin) as falling rigid
-    // bodies instead of just hiding them. Head + accessory slots. Default off.
-    public bool KoStripPhysicsDrop { get; set; } = false;
+    // bodies instead of just hiding them. Head + accessory slots.
+    public bool KoStripPhysicsDrop { get; set; } = true;
 
     // Physically drop supported clothing (Body / Legs) as falling shells. Still includes the body skin
-    // baked into those equipment models, so it remains opt-in. Default off.
-    public bool KoStripPhysicsDropClothing { get; set; } = false;
+    // baked into those equipment models.
+    public bool KoStripPhysicsDropClothing { get; set; } = true;
 
     // Garment polish layered on top of clothing physics drop: short visual body follow, body/ground
-    // friction damping, and delayed cloth collapse. Default off.
-    public bool KoStripAdvancedClothPhysics { get; set; } = false;
+    // friction damping, and delayed cloth collapse.
+    public bool KoStripAdvancedClothPhysics { get; set; } = true;
 
-    // Experimental: drive the upper garment (Body slot) with a ring-tube physics model instead of the
+    // Drive the upper garment (Body slot) with a ring-tube physics model instead of the
     // chain-of-boxes rig. The tube wraps the corpse capsules, so the shirt slides down off the body
-    // instead of folding. Host ragdoll only; falls back to the chain rig when unavailable. Default off.
-    public bool KoStripGarmentTubeModel { get; set; } = false;
+    // instead of folding. Host ragdoll only; falls back to the chain rig when unavailable.
+    public bool KoStripGarmentTubeModel { get; set; } = true;
 
     // Draw the garment tube's ring bodies as a wireframe overlay (tuning aid). Not saved-critical.
     public bool KoStripGarmentTubeDebugDraw { get; set; } = false;
@@ -326,7 +326,7 @@ public partial class Configuration : IPluginConfiguration
     // in a standing KO; raise the speed if the slide looks too slow.
     public const float KoStripClothVisualOnlySlideDistanceDefault = 0.8f;
     public float KoStripClothVisualOnlySlideDistance { get; set; } = KoStripClothVisualOnlySlideDistanceDefault;
-    public const float KoStripClothVisualOnlySlideSpeedDefault = 0.07f;
+    public const float KoStripClothVisualOnlySlideSpeedDefault = 0.17f;
     public float KoStripClothVisualOnlySlideSpeed { get; set; } = KoStripClothVisualOnlySlideSpeedDefault;
 
     // Per-slot "collapse on drop" toggles for the physics-drop pieces. When a slot is enabled the
@@ -337,7 +337,7 @@ public partial class Configuration : IPluginConfiguration
     public bool KoStripCollapseBody { get; set; } = true;
     public bool KoStripCollapseHands { get; set; } = false;
     public bool KoStripCollapseLegs { get; set; } = true;
-    public bool KoStripCollapseFeet { get; set; } = false;
+    public bool KoStripCollapseFeet { get; set; } = true;
     public bool KoStripCollapseEars { get; set; } = false;
     public bool KoStripCollapseNeck { get; set; } = false;
     public bool KoStripCollapseWrists { get; set; } = false;
@@ -361,19 +361,59 @@ public partial class Configuration : IPluginConfiguration
         _ => true,
     };
 
-    /// <summary>Restore the default collapse mask: head/body/legs collapse; gloves, shoes and accessories stay rigid.</summary>
+    /// <summary>Restore the default collapse mask: head/body/legs/feet collapse; gloves and accessories stay rigid.</summary>
     public void ResetKoStripCollapseDefaults()
     {
         KoStripCollapseHead = true;
         KoStripCollapseBody = true;
         KoStripCollapseHands = false;
         KoStripCollapseLegs = true;
-        KoStripCollapseFeet = false;
+        KoStripCollapseFeet = true;
         KoStripCollapseEars = false;
         KoStripCollapseNeck = false;
         KoStripCollapseWrists = false;
         KoStripCollapseRFinger = false;
         KoStripCollapseLFinger = false;
+    }
+
+    /// <summary>
+    /// Named like Armor Detachment, but not its to reset.
+    /// </summary>
+    private static readonly HashSet<string> ArmorDetachmentResetExclusions = new(StringComparer.Ordinal)
+    {
+        // The master switch. Resetting it would turn the whole feature off and take the page with
+        // it, which reads as the button having broken something rather than having restored it —
+        // same reasoning as EnableRagdoll on the Ragdoll page (see RagdollPageResetExclusions).
+        nameof(KoStripEnabled),
+    };
+
+    private static bool IsArmorDetachmentOption(string name)
+    {
+        if (ArmorDetachmentResetExclusions.Contains(name)) return false;
+        return name.StartsWith("KoStrip", StringComparison.Ordinal)
+            || name == nameof(ShowArmorDetachmentControls);
+    }
+
+    /// <summary>
+    /// Restore every Armor Detachment option (slots, physics drop, garment tube, cloth hold, and the
+    /// per-slot collapse mask) to defaults, by reflection against a fresh Configuration — same
+    /// approach and reasoning as ResetRagdollPageDefaults.
+    /// </summary>
+    public void ResetArmorDetachmentDefaults()
+    {
+        var defaults = new Configuration();
+
+        foreach (var property in typeof(Configuration).GetProperties(
+                     System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+        {
+            if (!property.CanRead || !property.CanWrite) continue;
+            if (property.GetIndexParameters().Length > 0) continue;
+            if (!IsArmorDetachmentOption(property.Name)) continue;
+
+            property.SetValue(this, property.GetValue(defaults));
+        }
+
+        Save();
     }
 
     // Shortcuts bar
