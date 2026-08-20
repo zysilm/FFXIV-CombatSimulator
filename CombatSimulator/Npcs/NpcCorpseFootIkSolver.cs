@@ -42,11 +42,25 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
     /// foot already was, which is also what let the reach look like a pure knee-straighten with almost
     /// no hip involvement: holding the target's X/Z fixed leaves little for the hip to actually do.</summary>
     private const float FootholdSearchRadius = 0.18f;
-    private const int FootholdSearchSamples = 8;
+    // Samples span a forward-facing arc, not a full ring: a real step almost never lands behind or
+    // squarely beside the stance foot, and searching the back half was exactly what kept picking
+    // bones there. The animated (straight-down) point is still tried, but only as the last-resort
+    // fallback when nothing in the arc qualifies — a genuine vertical step is the rare case, not
+    // the default.
+    private const int FootholdSearchSamples = 7;
+    private const float FootholdArcHalfAngleRadians = 1.4f; // ~80 degrees either side of facing
 
     /// <summary>Guard against a degenerate solve swinging the hip into an unnatural pose (e.g. a target
-    /// almost behind the actor). Above this the leg is left animated rather than forced.</summary>
+    /// almost behind the actor). Above this the aim is softly capped rather than forced further, so a
+    /// momentarily-extreme target eases the leg to its limit instead of popping the correction on/off.</summary>
     private const float MaxHipSwingRadians = 1.22f; // ~70 degrees
+
+    /// <summary>Caps how fast the chosen foothold itself may travel, in metres/second. The search picks
+    /// a fresh highest point every frame, and near-tied candidates on an uneven corpse surface can flip
+    /// which one wins from one frame to the next; without this the leg would jump to match, which reads
+    /// as the reported "跳" (twitch/pop). The leg still reaches full extension quickly — this only
+    /// smooths which point it's reaching for.</summary>
+    private const float FootholdMaxSpeed = 3.0f;
 
     private const float BlendInSeconds = 0.18f;
     private const float BlendOutSeconds = 0.35f;
@@ -70,11 +84,13 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
     private sealed class LegBlend
     {
         public float Weight;
-        // Last foothold (world position) this leg was reaching for. Kept so a blend-out (foot walking
-        // off the corpse) still eases the leg back down even on the frame the search stops finding
-        // anything, instead of snapping straight the instant it does.
+        // Raw result of this frame's search — may jump between near-tied candidates frame to frame.
         public Vector3 LastTargetPos;
         public bool HasTarget;
+        // What the leg is actually reaching for: LastTargetPos rate-limited (see FootholdMaxSpeed) so
+        // a change in which candidate wins reads as the leg sliding to it, not popping to it.
+        public Vector3 SmoothedTargetPos;
+        public bool HasSmoothedTarget;
     }
 
     private sealed class ActorState
@@ -194,7 +210,10 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         var kneePos = BoneWorldPosition(skel, skelPos, skelRot, bones.Knee);
         var (anklePos, ankleRotOriginal) = BoneWorldTransform(skel, skelPos, skelRot, bones.Ankle);
 
-        var foothold = FindBestFoothold(address, anklePos, maxStepHeight);
+        var facingRadians = ((GameObject*)address)->Rotation;
+        var forward = new Vector3(MathF.Sin(facingRadians), 0f, MathF.Cos(facingRadians));
+
+        var foothold = FindBestFoothold(address, anklePos, maxStepHeight, forward);
         var wantsEngage = foothold.HasValue;
 
         if (wantsEngage && blend.Weight < 0.01f)
@@ -213,14 +232,35 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         var target = wantsEngage ? 1f : 0f;
         blend.Weight = MoveTowards(blend.Weight, target, deltaTime / MathF.Max(0.01f, blendSeconds));
 
-        if (blend.Weight <= 0.001f || !blend.HasTarget) return;
+        if (blend.Weight <= 0.001f || !blend.HasTarget)
+        {
+            blend.HasSmoothedTarget = false;
+            return;
+        }
         if (blend.Weight <= 0f) blend.HasTarget = false;
+
+        // Rate-limit which point the leg is actually reaching for, independent of the blend weight —
+        // this is what turns a frame-to-frame flip between near-tied ring candidates into a slide
+        // instead of a pop. A cold engage snaps straight to the first point; there's nothing to ease
+        // from yet.
+        if (!blend.HasSmoothedTarget)
+        {
+            blend.SmoothedTargetPos = blend.LastTargetPos;
+            blend.HasSmoothedTarget = true;
+        }
+        else
+        {
+            var toRaw = blend.LastTargetPos - blend.SmoothedTargetPos;
+            var dist = toRaw.Length();
+            var maxStep = FootholdMaxSpeed * deltaTime;
+            blend.SmoothedTargetPos = dist <= maxStep ? blend.LastTargetPos : blend.SmoothedTargetPos + toRaw / dist * maxStep;
+        }
 
         var thighLen = Vector3.Distance(hipPos, kneePos);
         var shinLen = Vector3.Distance(kneePos, anklePos);
         if (thighLen < 1e-4f || shinLen < 1e-4f) return;
 
-        var targetPos = blend.LastTargetPos;
+        var targetPos = blend.SmoothedTargetPos;
         var reachVec = targetPos - hipPos;
         var reachLenRaw = reachVec.Length();
         if (reachLenRaw < 1e-4f) return;
@@ -233,8 +273,7 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         var thighDir0 = (kneePos - hipPos) / thighLen;
         var shinDir0 = (anklePos - kneePos) / shinLen;
 
-        var aimSwing = RotationBetween(thighDir0, toTargetDir);
-        if (SwingAngle(aimSwing) > MaxHipSwingRadians) return;
+        var aimSwing = ClampSwingAngle(RotationBetween(thighDir0, toTargetDir), MaxHipSwingRadians);
         var blendedAim = Quaternion.Slerp(Quaternion.Identity, aimSwing, blend.Weight);
 
         var (_, hipRotNow) = BoneWorldTransform(skel, skelPos, skelRot, bones.Hip);
@@ -284,12 +323,13 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
     }
 
     /// <summary>
-    /// Look for the highest qualifying corpse surface within a step's reach of the animated ankle,
-    /// rather than only ever checking the exact point the walk cycle happened to place the foot at.
-    /// The centre point is included as a candidate so a foot already squarely on a flat corpse surface
-    /// doesn't get needlessly nudged sideways by a marginally higher ring sample.
+    /// Look for the highest qualifying corpse surface within a step's reach of the animated ankle, in
+    /// a forward-facing arc rather than the exact point the walk cycle happened to place the foot at
+    /// or a full ring around it — a real step lands ahead, essentially never behind. The centre
+    /// (straight-down) point is only tried as a last resort when nothing in the arc qualifies, since a
+    /// genuinely vertical step is the rare case, not the default.
     /// </summary>
-    private Vector3? FindBestFoothold(nint address, Vector3 anklePos, float maxStepHeight)
+    private Vector3? FindBestFoothold(nint address, Vector3 anklePos, float maxStepHeight, Vector3 forward)
     {
         Vector3? best = null;
         var bestY = float.MinValue;
@@ -307,12 +347,16 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
             best = new Vector3(probe.X, y.Value, probe.Z);
         }
 
-        Consider(Vector3.Zero);
         for (var i = 0; i < FootholdSearchSamples; i++)
         {
-            var angle = i * (MathF.Tau / FootholdSearchSamples);
-            Consider(new Vector3(MathF.Cos(angle), 0f, MathF.Sin(angle)) * FootholdSearchRadius);
+            var t = FootholdSearchSamples > 1 ? i / (float)(FootholdSearchSamples - 1) : 0.5f;
+            var angle = -FootholdArcHalfAngleRadians + t * (2f * FootholdArcHalfAngleRadians);
+            var dir = Vector3.Transform(forward, Quaternion.CreateFromAxisAngle(Vector3.UnitY, angle));
+            Consider(dir * FootholdSearchRadius);
         }
+
+        if (best == null)
+            Consider(Vector3.Zero);
 
         return best;
     }
@@ -338,6 +382,14 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
     }
 
     private static float SwingAngle(Quaternion q) => 2f * MathF.Acos(Math.Clamp(MathF.Abs(q.W), -1f, 1f));
+
+    private static Quaternion ClampSwingAngle(Quaternion rotation, float maxRadians)
+    {
+        rotation = Quaternion.Normalize(rotation);
+        var angle = SwingAngle(rotation);
+        if (angle <= maxRadians || angle < 1e-5f) return rotation;
+        return Quaternion.Slerp(Quaternion.Identity, rotation, maxRadians / angle);
+    }
 
     private static float GetVisualScale(nint actorAddress)
     {
