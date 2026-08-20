@@ -52,9 +52,6 @@ public unsafe class NpcAiController : IDisposable
     private const float VNavmeshFloorResnapInterval = 0.25f;
     private const float VNavmeshWaypointReachDistance = 0.45f;
     private const float VNavmeshLookaheadDistance = 1.25f;
-    // Half the approximate distance between planted feet, used only to decide whether root height
-    // should follow a corpse (both probes hit one) — see SampleBothFeetCorpseSupport.
-    private const float StanceHalfWidth = 0.16f;
     private const float PartyMeleeAttackRangeBuffer = 0.25f;
     private const float PartyAttackRangeHysteresis = 0.4f;
     // Caster/magic enemies auto-attack at melee reach (their spells are ranged, the basic swing is not).
@@ -96,12 +93,6 @@ public unsafe class NpcAiController : IDisposable
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
     private float pendingAutoEngageDelay = -1f;
-
-    /// <summary>
-    /// Optional world-space corpse surface query. The plugin aggregates all active ragdolls;
-    /// null means the next root position is not over a walkable corpse.
-    /// </summary>
-    public Func<nint, Vector3, float?>? CorpseSupportHeightProvider { private get; set; }
 
     private class ApproachPathState
     {
@@ -1880,24 +1871,15 @@ public unsafe class NpcAiController : IDisposable
             state.HasStableRootTerrainClearance = true;
         }
 
-        // Tiny visual scale must not reduce traversal to millimetres; crawling over a corpse is
-        // an opt-in movement policy, not a literal standing leg-length test.
-        var maxCorpseStepHeight = 0.65f * MathF.Max(1f, GetVisualScale(actorAddress));
-        // Root only rises for a corpse when BOTH feet would be over one — i.e. the actor is genuinely
-        // standing on top of it, the same way a table lifts a whole body. A single foot grazing a
-        // corpse's edge is handled by footIkSolver bending just that leg, so root stays on the real
-        // ground and the actor doesn't float on the planted side. Approximated with two probes either
-        // side of centre along the actor's facing, rather than real bone reads — this only decides
-        // root policy, not the visual foot placement, which the solver re-derives from real bones.
-        var supportY = SampleBothFeetCorpseSupport(actorAddress, rootPosition, terrainY, maxCorpseStepHeight);
-        var walkableY = supportY.HasValue
-            ? MathF.Max(terrainY, supportY.Value)
-            : terrainY;
-        var desiredY = walkableY + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;
+        // Root always tracks real terrain now. A corpse underfoot is handled entirely by
+        // footIkSolver bending the affected leg(s) — an earlier version of this tried to detect
+        // "both feet on the corpse" here with two probes either side of centre, but a corpse is
+        // almost always wider than the probe spacing, so it still lifted root for a single foot
+        // near the edge too — the exact float this was meant to fix. Both legs bending
+        // independently (well within reach, same step-height ceiling as the old root lift) covers
+        // the "standing fully on top" case without root ever needing to move for it.
+        var desiredY = terrainY + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;
         var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
-        // The corpse surface is a hard upward floor. Easing upward let a fast actor move inside the
-        // body for several frames before its root caught up. Leaving the corpse stays deliberately
-        // slow so the feet press and release it naturally instead of snapping down.
         var maxFall = MathF.Max(0.02f, 1.5f * deltaTime);
         var deltaY = desiredY > fromY
             ? desiredY - fromY
@@ -1924,38 +1906,6 @@ public unsafe class NpcAiController : IDisposable
         movementBlockHook.SetApproachPosition(gameObj, corrected.X, corrected.Y, corrected.Z);
     }
 
-    /// <summary>Approximate a stance footprint either side of centre (perpendicular to facing) and
-    /// only report a corpse height when both probes land on one — a single foot's worth of overlap
-    /// near centre is left for footIkSolver to handle on just that leg.</summary>
-    private float? SampleBothFeetCorpseSupport(nint actorAddress, Vector3 rootPosition, float terrainY, float maxCorpseStepHeight)
-    {
-        if (CorpseSupportHeightProvider == null || actorAddress == nint.Zero)
-            return null;
-
-        var rot = ((GameObject*)actorAddress)->Rotation;
-        var right = new Vector3(MathF.Cos(rot), 0f, -MathF.Sin(rot)) * StanceHalfWidth;
-
-        var a = CorpseSupportHeightProvider(actorAddress, rootPosition + right);
-        var b = CorpseSupportHeightProvider(actorAddress, rootPosition - right);
-        if (!a.HasValue || !b.HasValue) return null;
-        if (a.Value > terrainY + maxCorpseStepHeight || b.Value > terrainY + maxCorpseStepHeight) return null;
-
-        return MathF.Max(a.Value, b.Value);
-    }
-
-    private static float GetVisualScale(nint actorAddress)
-    {
-        if (actorAddress == nint.Zero)
-            return 1f;
-
-        var gameObject = (GameObject*)actorAddress;
-        if (gameObject->DrawObject == null)
-            return 1f;
-
-        var scale = gameObject->DrawObject->Scale;
-        var max = MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
-        return float.IsFinite(max) && max > 0f ? max : 1f;
-    }
 
     private void StartApproachMoveAnim(SimulatedNpc npc, float deltaTime)
     {

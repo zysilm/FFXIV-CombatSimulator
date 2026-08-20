@@ -305,8 +305,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // Don't commit a new attack while this enemy already has a live telegraph (fixes the
             // double-swing where the old 0.6s animation lock expired mid-animation).
             telegraphSystem.IsBusy);
-        npcAiController.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
         npcCorpseFootIkSolver.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
+        enemyControlController.FootIkSolver = npcCorpseFootIkSolver;
         companionManager.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
 
         // Custom in-simulation target lock system. Takes over the game's target

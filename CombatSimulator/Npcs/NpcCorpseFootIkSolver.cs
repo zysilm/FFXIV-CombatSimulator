@@ -108,6 +108,14 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         state.LastDeltaTime = deltaTime > 0f ? deltaTime : state.LastDeltaTime;
     }
 
+    /// <summary>True once this actor's leg bones have been resolved and this solver is actively
+    /// covering its foot placement — callers that also raise root height for a corpse (e.g.
+    /// EnemyControl's directly-driven creatures) should skip that while this is true, so the two
+    /// mechanisms don't both react to the same contact. False (including "not tracked yet") means
+    /// the caller's own root-height handling is the only thing covering this actor.</summary>
+    public bool IsSupported(nint actorAddress) =>
+        actors.TryGetValue(actorAddress, out var state) && state.Supported;
+
     private void OnRenderFrame()
     {
         if (actors.Count == 0 || CorpseSupportHeightProvider == null) return;
@@ -146,6 +154,10 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
             ResolveLeg(skel, "_l", state.Left);
             ResolveLeg(skel, "_r", state.Right);
             state.Supported = state.Left.Resolved && state.Right.Resolved;
+            log.Info($"NpcCorpseFootIk: leg bones for 0x{address:X} — " +
+                     $"L(hip={state.Left.Hip},knee={state.Left.Knee},ankle={state.Left.Ankle}) " +
+                     $"R(hip={state.Right.Hip},knee={state.Right.Knee},ankle={state.Right.Ankle}) " +
+                     $"supported={state.Supported}");
         }
 
         if (!state.Supported) return;
@@ -178,6 +190,12 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         var wantsEngage = supportY.HasValue &&
                            supportY.Value > anklePos.Y + EngageThreshold &&
                            supportY.Value <= anklePos.Y + maxStepHeight;
+
+        if (wantsEngage && blend.Weight < 0.01f)
+        {
+            log.Info($"NpcCorpseFootIk: 0x{address:X} leg engaging — ankleY={anklePos.Y:F3} " +
+                     $"supportY={supportY!.Value:F3} maxStepHeight={maxStepHeight:F3}");
+        }
 
         if (wantsEngage)
         {
