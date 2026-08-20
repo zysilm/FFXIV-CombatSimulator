@@ -184,7 +184,7 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
     {
         var hipPos = BoneWorldPosition(skel, skelPos, skelRot, bones.Hip);
         var kneePos = BoneWorldPosition(skel, skelPos, skelRot, bones.Knee);
-        var anklePos = BoneWorldPosition(skel, skelPos, skelRot, bones.Ankle);
+        var (anklePos, ankleRotOriginal) = BoneWorldTransform(skel, skelPos, skelRot, bones.Ankle);
 
         var supportY = CorpseSupportHeightProvider!(address, anklePos);
         var wantsEngage = supportY.HasValue &&
@@ -262,6 +262,18 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         var (_, kneeRotNow) = BoneWorldTransform(skel, skelPos, skelRot, bones.Knee);
         deltas.Clear();
         deltas[bones.Knee] = Quaternion.Normalize(Quaternion.Inverse(kneeRotNow) * blendedBend * kneeRotNow);
+        boneService.ApplyRotationDeltas(skel, deltas);
+
+        // The hip/knee swings above carry the foot's orientation along with them (a rigid rotation
+        // about each pivot), so without this the sole ends up tilted to whatever angle the bend left
+        // it at — heel or toe touching down instead of the flat sole. Restore the ankle's own world
+        // orientation back to what the base animation had it at (flat, weight-bearing), independent
+        // of how the leg above it had to twist to get here.
+        var (_, ankleRotNow) = BoneWorldTransform(skel, skelPos, skelRot, bones.Ankle);
+        var levelSwing = Quaternion.Normalize(ankleRotOriginal * Quaternion.Inverse(ankleRotNow));
+        var blendedLevel = Quaternion.Slerp(Quaternion.Identity, levelSwing, blend.Weight);
+        deltas.Clear();
+        deltas[bones.Ankle] = Quaternion.Normalize(Quaternion.Inverse(ankleRotNow) * blendedLevel * ankleRotNow);
         boneService.ApplyRotationDeltas(skel, deltas);
     }
 
