@@ -66,6 +66,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly CombatEngine combatEngine;
     private readonly CombatCompanionManager companionManager;
     private readonly NpcAiController npcAiController;
+    private readonly NpcCorpseFootIkSolver npcCorpseFootIkSolver;
     private readonly PlayerTargetController playerTargetController;
     private readonly MapEnemyController mapEnemyController;
     private readonly MovementBlockHook movementBlockHook;
@@ -292,10 +293,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             vnavmeshIpc, clientState, config,
             () => combatEngine.State.PlayerState.IsAlive || companionManager.HasLivingCompanions,
             log);
+        npcCorpseFootIkSolver = new NpcCorpseFootIkSolver(boneTransformService, log);
         npcAiController = new NpcAiController(
             combatEngine, animationController, movementBlockHook, vnavmeshIpc,
             clientState, config, partyEngagePlanner, terrainHeightService, log,
-            combatModeRouter,
+            combatModeRouter, npcCorpseFootIkSolver,
             // Deferred: fightingModeController is constructed later in this ctor; the
             // AI only queries during framework ticks.
             addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr) ||
@@ -304,6 +306,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // double-swing where the old 0.6s animation lock expired mid-animation).
             telegraphSystem.IsBusy);
         npcAiController.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
+        npcCorpseFootIkSolver.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
         companionManager.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
 
         // Custom in-simulation target lock system. Takes over the game's target
@@ -569,6 +572,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         hpBarOverlay.Dispose();
         mainWindow.Dispose();
         npcAiController.Dispose();
+        npcCorpseFootIkSolver.Dispose();
         combatEngine.Dispose();
         devExperimental.Dispose();
         enemyControlController.Dispose();
