@@ -40,15 +40,24 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
     /// ever querying the exact point the walk cycle happened to place the foot at. A real step lands
     /// somewhere deliberately chosen nearby — usually forward and up — not straight above where the
     /// foot already was, which is also what let the reach look like a pure knee-straighten with almost
-    /// no hip involvement: holding the target's X/Z fixed leaves little for the hip to actually do.</summary>
-    private const float FootholdSearchRadius = 0.18f;
+    /// no hip involvement: holding the target's X/Z fixed leaves little for the hip to actually do.
+    /// Sized closer to an actual stride than a token nudge.</summary>
+    private const float FootholdSearchRadius = 0.30f;
     // Samples span a forward-facing arc, not a full ring: a real step almost never lands behind or
     // squarely beside the stance foot, and searching the back half was exactly what kept picking
-    // bones there. The animated (straight-down) point is still tried, but only as the last-resort
-    // fallback when nothing in the arc qualifies — a genuine vertical step is the rare case, not
-    // the default.
+    // bones there. Narrower than a full front half-circle too — wide enough to still find a foothold
+    // ahead, tight enough that it can't swing a candidate across to the OTHER leg's side, which read
+    // as the leg crossing inward. The animated (straight-down) point is still tried, but only as the
+    // last-resort fallback when nothing in the arc qualifies — a genuine vertical step is the rare
+    // case, not the default.
     private const int FootholdSearchSamples = 7;
-    private const float FootholdArcHalfAngleRadians = 1.4f; // ~80 degrees either side of facing
+    private const float FootholdArcHalfAngleRadians = 0.85f; // ~50 degrees either side of facing
+
+    /// <summary>Trades height against how far the hip has to swing to reach it, in metres of "height
+    /// budget" per radian of swing. A pure highest-point pick happily grabbed an aggressively higher
+    /// spot that needed an unnaturally large swing to reach; this makes a modest, easy foothold outscore
+    /// a marginally taller one that would put the leg in an awkward, unstable-looking reach for it.</summary>
+    private const float FootholdSwingCostWeight = 0.12f;
 
     /// <summary>Guard against a degenerate solve swinging the hip into an unnatural pose (e.g. a target
     /// almost behind the actor). Above this the aim is softly capped rather than forced further, so a
@@ -210,10 +219,16 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         var kneePos = BoneWorldPosition(skel, skelPos, skelRot, bones.Knee);
         var (anklePos, ankleRotOriginal) = BoneWorldTransform(skel, skelPos, skelRot, bones.Ankle);
 
+        var thighLen = Vector3.Distance(hipPos, kneePos);
+        var shinLen = Vector3.Distance(kneePos, anklePos);
+        if (thighLen < 1e-4f || shinLen < 1e-4f) return;
+        var thighDir0 = (kneePos - hipPos) / thighLen;
+        var shinDir0 = (anklePos - kneePos) / shinLen;
+
         var facingRadians = ((GameObject*)address)->Rotation;
         var forward = new Vector3(MathF.Sin(facingRadians), 0f, MathF.Cos(facingRadians));
 
-        var foothold = FindBestFoothold(address, anklePos, maxStepHeight, forward);
+        var foothold = FindBestFoothold(address, anklePos, hipPos, thighDir0, maxStepHeight, forward);
         var wantsEngage = foothold.HasValue;
 
         if (wantsEngage && blend.Weight < 0.01f)
@@ -256,10 +271,6 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
             blend.SmoothedTargetPos = dist <= maxStep ? blend.LastTargetPos : blend.SmoothedTargetPos + toRaw / dist * maxStep;
         }
 
-        var thighLen = Vector3.Distance(hipPos, kneePos);
-        var shinLen = Vector3.Distance(kneePos, anklePos);
-        if (thighLen < 1e-4f || shinLen < 1e-4f) return;
-
         var targetPos = blend.SmoothedTargetPos;
         var reachVec = targetPos - hipPos;
         var reachLenRaw = reachVec.Length();
@@ -269,9 +280,6 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         var minReach = MathF.Abs(thighLen - shinLen) + 0.001f;
         var reachLen = Math.Clamp(reachLenRaw, minReach, maxReach);
         var toTargetDir = reachVec / reachLenRaw;
-
-        var thighDir0 = (kneePos - hipPos) / thighLen;
-        var shinDir0 = (anklePos - kneePos) / shinLen;
 
         var aimSwing = ClampSwingAngle(RotationBetween(thighDir0, toTargetDir), MaxHipSwingRadians);
         var blendedAim = Quaternion.Slerp(Quaternion.Identity, aimSwing, blend.Weight);
@@ -288,14 +296,23 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         var desiredInterior = MathF.Acos(cosKnee);
         var foldAngle = MathF.PI - desiredInterior;
 
-        var bendNormal = Vector3.Cross(thighDir0, shinDir0);
-        if (bendNormal.LengthSquared() < 1e-8f) bendNormal = Vector3.Cross(thighDir0, toTargetDir);
+        // The knee only ever hinges about roughly one lateral (left/right) axis — bending it about
+        // anything else is what read as folding inward. Deriving that axis from thigh × shin (the
+        // pose the animation happens to be in right now) is unreliable exactly when it matters most:
+        // a standing leg is nearly straight, so thigh and shin point almost the same way and their
+        // cross product is tiny and noisy. Ground it in world-up instead — a lateral axis that stays
+        // well-defined and stable regardless of how bent the leg currently is — the same fix the
+        // death-ragdoll's own hinge setup uses (RagdollController.ComputeAnatomicalHingeAxis) for the
+        // identical reason. The current thigh/shin bend, when it isn't itself degenerate, only picks
+        // which of the two directions along that axis is anatomically forward for this leg.
+        var bendNormal = Vector3.Cross(thighDir0, Vector3.UnitY);
+        if (bendNormal.LengthSquared() < 1e-6f) bendNormal = Vector3.Cross(thighDir0, forward);
         if (bendNormal.LengthSquared() < 1e-8f) bendNormal = AnyPerpendicular(thighDir0);
         bendNormal = Vector3.Normalize(bendNormal);
 
-        var currentInterior = MathF.Acos(Math.Clamp(Vector3.Dot(-thighDir0, shinDir0), -1f, 1f));
-        var check = Vector3.Transform(thighDir0, Quaternion.CreateFromAxisAngle(bendNormal, MathF.PI - currentInterior));
-        if (Vector3.Dot(check, shinDir0) < 0.9f) bendNormal = -bendNormal;
+        var currentBendRaw = Vector3.Cross(thighDir0, shinDir0);
+        if (currentBendRaw.LengthSquared() > 1e-6f && Vector3.Dot(bendNormal, currentBendRaw) < 0f)
+            bendNormal = -bendNormal;
 
         var aimedNormal = Vector3.Transform(bendNormal, blendedAim);
         var shinDirAfterAim = Vector3.Transform(shinDir0, blendedAim);
@@ -323,28 +340,39 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
     }
 
     /// <summary>
-    /// Look for the highest qualifying corpse surface within a step's reach of the animated ankle, in
-    /// a forward-facing arc rather than the exact point the walk cycle happened to place the foot at
-    /// or a full ring around it — a real step lands ahead, essentially never behind. The centre
+    /// Look for the best qualifying corpse surface within a step's reach of the animated ankle, in a
+    /// forward-facing arc rather than the exact point the walk cycle happened to place the foot at or
+    /// a full ring around it — a real step lands ahead, essentially never behind. "Best" balances how
+    /// high a candidate is against how far the hip has to swing to reach it (<see
+    /// cref="FootholdSwingCostWeight"/>), rather than always grabbing the single highest point — a
+    /// stable stance trades a bit of height for an easier, more natural reach. The centre
     /// (straight-down) point is only tried as a last resort when nothing in the arc qualifies, since a
     /// genuinely vertical step is the rare case, not the default.
     /// </summary>
-    private Vector3? FindBestFoothold(nint address, Vector3 anklePos, float maxStepHeight, Vector3 forward)
+    private Vector3? FindBestFoothold(
+        nint address, Vector3 anklePos, Vector3 hipPos, Vector3 thighDir0, float maxStepHeight, Vector3 forward)
     {
         Vector3? best = null;
-        var bestY = float.MinValue;
+        var bestScore = float.MinValue;
 
         void Consider(Vector3 probeXZOffset)
         {
             var probe = anklePos + probeXZOffset;
             var y = CorpseSupportHeightProvider!(address, probe);
             if (!y.HasValue) return;
-            if (y.Value <= anklePos.Y + EngageThreshold) return;
-            if (y.Value > anklePos.Y + maxStepHeight) return;
-            if (y.Value <= bestY) return;
+            var heightGain = y.Value - anklePos.Y;
+            if (heightGain <= EngageThreshold || heightGain > maxStepHeight) return;
 
-            bestY = y.Value;
-            best = new Vector3(probe.X, y.Value, probe.Z);
+            var candidate = new Vector3(probe.X, y.Value, probe.Z);
+            var toCandidate = candidate - hipPos;
+            if (toCandidate.LengthSquared() < 1e-6f) return;
+            var swingAngle = SwingAngle(RotationBetween(thighDir0, Vector3.Normalize(toCandidate)));
+
+            var score = heightGain - FootholdSwingCostWeight * swingAngle;
+            if (score <= bestScore) return;
+
+            bestScore = score;
+            best = candidate;
         }
 
         for (var i = 0; i < FootholdSearchSamples; i++)
