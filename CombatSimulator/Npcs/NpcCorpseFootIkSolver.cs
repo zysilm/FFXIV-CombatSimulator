@@ -36,6 +36,14 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
     /// over a corpse is an opt-in movement policy, not a literal standing leg-length test.</summary>
     private const float MaxStepHeightBase = 0.65f;
 
+    /// <summary>Radius around the animated ankle position to search for a foothold, rather than only
+    /// ever querying the exact point the walk cycle happened to place the foot at. A real step lands
+    /// somewhere deliberately chosen nearby — usually forward and up — not straight above where the
+    /// foot already was, which is also what let the reach look like a pure knee-straighten with almost
+    /// no hip involvement: holding the target's X/Z fixed leaves little for the hip to actually do.</summary>
+    private const float FootholdSearchRadius = 0.18f;
+    private const int FootholdSearchSamples = 8;
+
     /// <summary>Guard against a degenerate solve swinging the hip into an unnatural pose (e.g. a target
     /// almost behind the actor). Above this the leg is left animated rather than forced.</summary>
     private const float MaxHipSwingRadians = 1.22f; // ~70 degrees
@@ -62,10 +70,10 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
     private sealed class LegBlend
     {
         public float Weight;
-        // Last surface height this leg was reaching for. Kept so a blend-out (foot walking off the
-        // corpse) still eases the leg back down even on the frame the surface sample disappears
-        // entirely, instead of snapping straight the instant it does.
-        public float LastTargetY;
+        // Last foothold (world position) this leg was reaching for. Kept so a blend-out (foot walking
+        // off the corpse) still eases the leg back down even on the frame the search stops finding
+        // anything, instead of snapping straight the instant it does.
+        public Vector3 LastTargetPos;
         public bool HasTarget;
     }
 
@@ -186,20 +194,18 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         var kneePos = BoneWorldPosition(skel, skelPos, skelRot, bones.Knee);
         var (anklePos, ankleRotOriginal) = BoneWorldTransform(skel, skelPos, skelRot, bones.Ankle);
 
-        var supportY = CorpseSupportHeightProvider!(address, anklePos);
-        var wantsEngage = supportY.HasValue &&
-                           supportY.Value > anklePos.Y + EngageThreshold &&
-                           supportY.Value <= anklePos.Y + maxStepHeight;
+        var foothold = FindBestFoothold(address, anklePos, maxStepHeight);
+        var wantsEngage = foothold.HasValue;
 
         if (wantsEngage && blend.Weight < 0.01f)
         {
-            log.Info($"NpcCorpseFootIk: 0x{address:X} leg engaging — ankleY={anklePos.Y:F3} " +
-                     $"supportY={supportY!.Value:F3} maxStepHeight={maxStepHeight:F3}");
+            log.Info($"NpcCorpseFootIk: 0x{address:X} leg engaging — ankle={anklePos:F3} " +
+                     $"foothold={foothold!.Value:F3} maxStepHeight={maxStepHeight:F3}");
         }
 
         if (wantsEngage)
         {
-            blend.LastTargetY = supportY!.Value;
+            blend.LastTargetPos = foothold!.Value;
             blend.HasTarget = true;
         }
 
@@ -214,7 +220,7 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         var shinLen = Vector3.Distance(kneePos, anklePos);
         if (thighLen < 1e-4f || shinLen < 1e-4f) return;
 
-        var targetPos = anklePos with { Y = blend.LastTargetY };
+        var targetPos = blend.LastTargetPos;
         var reachVec = targetPos - hipPos;
         var reachLenRaw = reachVec.Length();
         if (reachLenRaw < 1e-4f) return;
@@ -275,6 +281,40 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         deltas.Clear();
         deltas[bones.Ankle] = Quaternion.Normalize(Quaternion.Inverse(ankleRotNow) * blendedLevel * ankleRotNow);
         boneService.ApplyRotationDeltas(skel, deltas);
+    }
+
+    /// <summary>
+    /// Look for the highest qualifying corpse surface within a step's reach of the animated ankle,
+    /// rather than only ever checking the exact point the walk cycle happened to place the foot at.
+    /// The centre point is included as a candidate so a foot already squarely on a flat corpse surface
+    /// doesn't get needlessly nudged sideways by a marginally higher ring sample.
+    /// </summary>
+    private Vector3? FindBestFoothold(nint address, Vector3 anklePos, float maxStepHeight)
+    {
+        Vector3? best = null;
+        var bestY = float.MinValue;
+
+        void Consider(Vector3 probeXZOffset)
+        {
+            var probe = anklePos + probeXZOffset;
+            var y = CorpseSupportHeightProvider!(address, probe);
+            if (!y.HasValue) return;
+            if (y.Value <= anklePos.Y + EngageThreshold) return;
+            if (y.Value > anklePos.Y + maxStepHeight) return;
+            if (y.Value <= bestY) return;
+
+            bestY = y.Value;
+            best = new Vector3(probe.X, y.Value, probe.Z);
+        }
+
+        Consider(Vector3.Zero);
+        for (var i = 0; i < FootholdSearchSamples; i++)
+        {
+            var angle = i * (MathF.Tau / FootholdSearchSamples);
+            Consider(new Vector3(MathF.Cos(angle), 0f, MathF.Sin(angle)) * FootholdSearchRadius);
+        }
+
+        return best;
     }
 
     private void ResolveLeg(SkeletonAccess skel, string suffix, LegBones bones)
