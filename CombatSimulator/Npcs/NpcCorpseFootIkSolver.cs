@@ -39,10 +39,11 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
     /// over a corpse is an opt-in movement policy, not a literal standing leg-length test.</summary>
     private const float MaxStepHeightBase = 0.65f;
 
-    /// <summary>Guard against a degenerate solve swinging the hip into an unnatural pose (e.g. a target
-    /// almost behind the actor). Above this the aim is softly capped rather than forced further, so a
-    /// momentarily-extreme target eases the leg to its limit instead of popping the correction on/off.</summary>
-    private const float MaxHipSwingRadians = 1.22f; // ~70 degrees
+    /// <summary>Guard against a degenerate solve swinging the hip or knee into an unnatural pose (e.g. a
+    /// target almost behind the actor). Above this the swing is softly capped rather than forced
+    /// further, so a momentarily-extreme target eases the leg to its limit instead of popping the
+    /// correction on/off.</summary>
+    private const float MaxJointSwingRadians = 1.22f; // ~70 degrees
 
     /// <summary>Caps how fast the target height itself may travel, in metres/second. The corpse query
     /// can wobble slightly frame to frame (settling physics, evolving mesh pose); this keeps that from
@@ -272,47 +273,50 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         var reachLen = Math.Clamp(reachLenRaw, minReach, maxReach);
         var toTargetDir = reachVec / reachLenRaw;
 
-        var aimSwing = ClampSwingAngle(RotationBetween(thighDir0, toTargetDir), MaxHipSwingRadians);
-        var blendedAim = Quaternion.Slerp(Quaternion.Identity, aimSwing, blend.Weight);
+        // Where the knee currently sits off the straight hip→ankle line, as a direction — this is the
+        // pole vector: it says which side of the hip→target line the knee is allowed to bulge toward,
+        // and it comes straight from whatever the base animation is doing right now (braced, crouched,
+        // a wide combat stance, anything), rather than assuming any one "neutral standing" shape.
+        var hipToAnkleDir0 = Vector3.Normalize(anklePos - hipPos);
+        var hipToKnee0 = kneePos - hipPos;
+        var poleVector = hipToKnee0 - hipToAnkleDir0 * Vector3.Dot(hipToKnee0, hipToAnkleDir0);
+        if (poleVector.LengthSquared() < 1e-6f) poleVector = AnyPerpendicular(hipToAnkleDir0);
+        poleVector = Vector3.Normalize(poleVector);
+
+        // Solve the knee position directly in the plane containing hip→target and the pole vector,
+        // rather than composing an "aim the chain, then bend by a delta" pair of rotations — the two
+        // don't commute the way that seems like it should for anything but a small bend, and silently
+        // land the ankle well off target with the knee bulging on the wrong side once the required
+        // bend gets large. Standard circle-circle intersection: knee is thighLen from hip and shinLen
+        // from target, in-plane, on the pole's side.
+        var planeNormal = Vector3.Cross(toTargetDir, poleVector);
+        if (planeNormal.LengthSquared() < 1e-8f) planeNormal = AnyPerpendicular(toTargetDir);
+        var inPlaneUp = Vector3.Normalize(Vector3.Cross(planeNormal, toTargetDir));
+        if (Vector3.Dot(inPlaneUp, poleVector) < 0f) inPlaneUp = -inPlaneUp;
+
+        var kneeAlong = (thighLen * thighLen - shinLen * shinLen + reachLen * reachLen) / (2f * reachLen);
+        var kneeUp = MathF.Sqrt(MathF.Max(0f, thighLen * thighLen - kneeAlong * kneeAlong));
+        var solvedKneePos = hipPos + toTargetDir * kneeAlong + inPlaneUp * kneeUp;
+
+        var newThighDir = Vector3.Normalize(solvedKneePos - hipPos);
+        var hipSwing = ClampSwingAngle(RotationBetween(thighDir0, newThighDir), MaxJointSwingRadians);
+        var blendedHip = Quaternion.Slerp(Quaternion.Identity, hipSwing, blend.Weight);
 
         var (_, hipRotNow) = BoneWorldTransform(skel, skelPos, skelRot, bones.Hip);
         deltas.Clear();
-        deltas[bones.Hip] = Quaternion.Normalize(Quaternion.Inverse(hipRotNow) * blendedAim * hipRotNow);
+        deltas[bones.Hip] = Quaternion.Normalize(Quaternion.Inverse(hipRotNow) * blendedHip * hipRotNow);
         boneService.ApplyRotationDeltas(skel, deltas);
 
-        // Desired knee interior angle for the (clamped) reach distance, via the law of cosines.
-        var cosKnee = Math.Clamp(
-            (thighLen * thighLen + shinLen * shinLen - reachLen * reachLen) / (2f * thighLen * shinLen),
-            -1f, 1f);
-        var desiredInterior = MathF.Acos(cosKnee);
-        var foldAngle = MathF.PI - desiredInterior;
-
-        // The knee only ever hinges about one lateral axis relative to however this leg currently
-        // stands — braced, crouched, a wide combat stance, anything. That axis is exactly where the
-        // knee already sits off the straight hip→ankle line right now (its "pole vector"), which is
-        // stance-agnostic by construction: it reads whatever the base animation is actually doing
-        // instead of assuming any one "neutral standing" shape. A world-up assumption (the previous
-        // approach) breaks down for a crouch or a wide stance where "up" isn't where the knee points;
-        // thigh×shin breaks down too, for a different reason — nearly degenerate for a straight leg.
-        var hipToAnkle0 = anklePos - hipPos;
-        var alongDir0 = hipToAnkle0.LengthSquared() > 1e-8f ? Vector3.Normalize(hipToAnkle0) : thighDir0;
-        var hipToKnee0 = kneePos - hipPos;
-        var poleVector = hipToKnee0 - alongDir0 * Vector3.Dot(hipToKnee0, alongDir0);
-        if (poleVector.LengthSquared() < 1e-6f) poleVector = AnyPerpendicular(alongDir0);
-        poleVector = Vector3.Normalize(poleVector);
-
-        var bendNormal = Vector3.Normalize(Vector3.Cross(alongDir0, poleVector));
-
-        var aimedNormal = Vector3.Transform(bendNormal, blendedAim);
-        var shinDirAfterAim = Vector3.Transform(Vector3.Normalize(anklePos - kneePos), blendedAim);
-        var newShinDir = Vector3.Transform(toTargetDir, Quaternion.CreateFromAxisAngle(aimedNormal, foldAngle));
-
-        var bendSwing = RotationBetween(shinDirAfterAim, newShinDir);
-        var blendedBend = Quaternion.Slerp(Quaternion.Identity, bendSwing, blend.Weight);
+        // The hip rotation just applied carries the (old) shin along with it rigidly; from there, swing
+        // the knee so the shin points at the target exactly the way the triangulation above intends.
+        var shinDirAfterHip = Vector3.Transform(Vector3.Normalize(anklePos - kneePos), blendedHip);
+        var newShinDir = Vector3.Normalize(targetPos - solvedKneePos);
+        var kneeSwing = ClampSwingAngle(RotationBetween(shinDirAfterHip, newShinDir), MaxJointSwingRadians);
+        var blendedKnee = Quaternion.Slerp(Quaternion.Identity, kneeSwing, blend.Weight);
 
         var (_, kneeRotNow) = BoneWorldTransform(skel, skelPos, skelRot, bones.Knee);
         deltas.Clear();
-        deltas[bones.Knee] = Quaternion.Normalize(Quaternion.Inverse(kneeRotNow) * blendedBend * kneeRotNow);
+        deltas[bones.Knee] = Quaternion.Normalize(Quaternion.Inverse(kneeRotNow) * blendedKnee * kneeRotNow);
         boneService.ApplyRotationDeltas(skel, deltas);
 
         // The hip/knee swings above carry the foot's orientation along with them (a rigid rotation
