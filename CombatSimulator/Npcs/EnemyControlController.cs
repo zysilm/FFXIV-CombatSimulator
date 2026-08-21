@@ -496,20 +496,31 @@ public unsafe class EnemyControlController : IDisposable
             var visualScale = GetVisualScale(obj);
             var maxClimb = 0.65f * MathF.Max(1f, visualScale);
             var desiredY = terrainY;
-            // A humanoid creature's leg(s) already bend onto the corpse via FootIkSolver — root
-            // must not also rise for the same contact, or the body floats on top of the bent leg
-            // exactly like before. Non-humanoid creatures (no resolvable leg bones) still rely on
-            // this capsule-based query entirely, unchanged.
+            // A humanoid creature's legs already bend onto the corpse via FootIkSolver — root only
+            // takes the shared part of that correction (see GetPelvisOffset) instead of separately
+            // deciding whether/how much to rise, so the two don't double-react to the same contact.
+            // Non-humanoid creatures (no resolvable leg bones) still rely on the capsule-based query
+            // entirely, unchanged.
             var legIkHandlesCorpse = FootIkSolver?.IsSupported(controlledAddress) == true;
             if (legIkHandlesCorpse != lastLoggedLegIkHandlesCorpse)
             {
                 log.Info($"EnemyControlMode: leg-IK corpse handling for 0x{controlledAddress:X} = {legIkHandlesCorpse}");
                 lastLoggedLegIkHandlesCorpse = legIkHandlesCorpse;
             }
-            var hasCorpseSupport = !legIkHandlesCorpse &&
-                config.NpcCollisionActive && config.RagdollNpcCorpseTraversal &&
-                playerRagdoll.TryGetNpcTraversalRootHeight(
-                    controlledAddress, new Vector3(posX, posY, posZ), terrainY, maxClimb, out desiredY);
+
+            bool hasCorpseSupport;
+            if (legIkHandlesCorpse)
+            {
+                var pelvisOffset = FootIkSolver!.GetPelvisOffset(controlledAddress);
+                desiredY = terrainY + pelvisOffset;
+                hasCorpseSupport = pelvisOffset > 0.0001f;
+            }
+            else
+            {
+                hasCorpseSupport = config.NpcCollisionActive && config.RagdollNpcCorpseTraversal &&
+                    playerRagdoll.TryGetNpcTraversalRootHeight(
+                        controlledAddress, new Vector3(posX, posY, posZ), terrainY, maxClimb, out desiredY);
+            }
 
             if (hasCorpseSupport)
             {

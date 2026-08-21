@@ -8,22 +8,25 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 namespace CombatSimulator.Npcs;
 
 /// <summary>
-/// Bends a single leg onto a corpse surface instead of raising the whole actor's root for it.
+/// Foot placement for an actor walking over a corpse, split between the pelvis (root) and each leg's
+/// own two-bone IK — the same three-phase shape most game foot-IK systems use (ground-detect per foot,
+/// pick a shared pelvis offset from whichever foot needs it least, solve each leg's remaining reach):
 ///
-/// The root-height correction (see NpcAiController.CorrectMovingRootHeight) used to sample a single
-/// point at the actor's centre and, the moment a corpse showed up there, lift the entire body to the
-/// corpse's surface height. That reads fine when both feet are genuinely standing on a pile, but a
-/// foot merely brushing a corpse's edge while the other stays on real ground lifted the whole actor —
-/// both feet floating above the true ground by the corpse's thickness.
-///
-/// This solver handles the single-foot case instead: each tracked actor gets an analytic two-bone IK
-/// pass per leg (hip → knee → ankle) run after the game's own animation, so only the foot that is
-/// actually over a corpse bends up to meet it; the planted foot is left exactly as animated. The
-/// root-height correction still owns the "both feet on the pile" case (see the paired stance-offset
-/// check there) — this class never touches root position, only leg bones.
+/// 1. Each foot's required height is read straight down from wherever the walk cycle already put that
+///    foot this frame — not searched for. The animation is already moving the feet forward; IK only
+///    has to correct the vertical alignment of a foot that's already there.
+/// 2. <see cref="GetPelvisOffset"/> exposes the smaller of the two feet's requirements (0 when only one
+///    foot needs anything, which is also the ordinary single-foot case) for the caller's own root
+///    height to add on top of terrain — so root and legs split one stance instead of the root ignoring
+///    the corpse entirely and every foot forced to close the full distance alone.
+/// 3. Each leg then only has to close whatever its own requirement still exceeds that shared offset by,
+///    via an analytic two-bone solve whose bend plane comes from the leg's own current pole vector
+///    (where the knee already sits relative to a straight hip→ankle line) rather than an assumed
+///    "standing" shape — so it holds up in a wide combat stance or a crouch, not just idle.
 ///
 /// Feature-detected per actor: a skeleton missing any of the six leg bones (non-humanoid monsters,
-/// demihumans, etc.) is left untouched and simply falls back to whatever the root correction does.
+/// demihumans, etc.) is left untouched, and <see cref="GetPelvisOffset"/> stays 0 — callers fall back
+/// to whatever their own root correction already does for those.
 /// </summary>
 public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
 {
@@ -36,40 +39,15 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
     /// over a corpse is an opt-in movement policy, not a literal standing leg-length test.</summary>
     private const float MaxStepHeightBase = 0.65f;
 
-    /// <summary>Radius around the animated ankle position to search for a foothold, rather than only
-    /// ever querying the exact point the walk cycle happened to place the foot at. A real step lands
-    /// somewhere deliberately chosen nearby — usually forward and up — not straight above where the
-    /// foot already was, which is also what let the reach look like a pure knee-straighten with almost
-    /// no hip involvement: holding the target's X/Z fixed leaves little for the hip to actually do.
-    /// Sized closer to an actual stride than a token nudge.</summary>
-    private const float FootholdSearchRadius = 0.30f;
-    // Samples span a forward-facing arc, not a full ring: a real step almost never lands behind or
-    // squarely beside the stance foot, and searching the back half was exactly what kept picking
-    // bones there. Narrower than a full front half-circle too — wide enough to still find a foothold
-    // ahead, tight enough that it can't swing a candidate across to the OTHER leg's side, which read
-    // as the leg crossing inward. The animated (straight-down) point is still tried, but only as the
-    // last-resort fallback when nothing in the arc qualifies — a genuine vertical step is the rare
-    // case, not the default.
-    private const int FootholdSearchSamples = 7;
-    private const float FootholdArcHalfAngleRadians = 0.85f; // ~50 degrees either side of facing
-
-    /// <summary>Trades height against how far the hip has to swing to reach it, in metres of "height
-    /// budget" per radian of swing. A pure highest-point pick happily grabbed an aggressively higher
-    /// spot that needed an unnaturally large swing to reach; this makes a modest, easy foothold outscore
-    /// a marginally taller one that would put the leg in an awkward, unstable-looking reach for it.</summary>
-    private const float FootholdSwingCostWeight = 0.12f;
-
     /// <summary>Guard against a degenerate solve swinging the hip into an unnatural pose (e.g. a target
     /// almost behind the actor). Above this the aim is softly capped rather than forced further, so a
     /// momentarily-extreme target eases the leg to its limit instead of popping the correction on/off.</summary>
     private const float MaxHipSwingRadians = 1.22f; // ~70 degrees
 
-    /// <summary>Caps how fast the chosen foothold itself may travel, in metres/second. The search picks
-    /// a fresh highest point every frame, and near-tied candidates on an uneven corpse surface can flip
-    /// which one wins from one frame to the next; without this the leg would jump to match, which reads
-    /// as the reported "跳" (twitch/pop). The leg still reaches full extension quickly — this only
-    /// smooths which point it's reaching for.</summary>
-    private const float FootholdMaxSpeed = 3.0f;
+    /// <summary>Caps how fast the target height itself may travel, in metres/second. The corpse query
+    /// can wobble slightly frame to frame (settling physics, evolving mesh pose); this keeps that from
+    /// reading as a twitch without meaningfully delaying a genuine step-up.</summary>
+    private const float TargetHeightMaxSpeed = 3.0f;
 
     private const float BlendInSeconds = 0.18f;
     private const float BlendOutSeconds = 0.35f;
@@ -93,12 +71,11 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
     private sealed class LegBlend
     {
         public float Weight;
-        // Raw result of this frame's search — may jump between near-tied candidates frame to frame.
-        public Vector3 LastTargetPos;
+        public float LastTargetY;
         public bool HasTarget;
-        // What the leg is actually reaching for: LastTargetPos rate-limited (see FootholdMaxSpeed) so
-        // a change in which candidate wins reads as the leg sliding to it, not popping to it.
-        public Vector3 SmoothedTargetPos;
+        // What the leg is actually reaching for: LastTargetY rate-limited (see TargetHeightMaxSpeed) so
+        // small frame-to-frame noise in the corpse query reads as a slide, not a twitch.
+        public float SmoothedTargetY;
         public bool HasSmoothedTarget;
     }
 
@@ -110,6 +87,7 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         public readonly LegBones Right = new();
         public readonly LegBlend BlendL = new();
         public readonly LegBlend BlendR = new();
+        public float PelvisOffsetY;
         public float LastDeltaTime = 1f / 60f;
         public int MissedTicks;
     }
@@ -143,11 +121,20 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
 
     /// <summary>True once this actor's leg bones have been resolved and this solver is actively
     /// covering its foot placement — callers that also raise root height for a corpse (e.g.
-    /// EnemyControl's directly-driven creatures) should skip that while this is true, so the two
-    /// mechanisms don't both react to the same contact. False (including "not tracked yet") means
-    /// the caller's own root-height handling is the only thing covering this actor.</summary>
+    /// EnemyControl's directly-driven creatures) should add <see cref="GetPelvisOffset"/> instead of
+    /// running their own independent corpse query while this is true. False (including "not tracked
+    /// yet") means the caller's own root-height handling is the only thing covering this actor.</summary>
     public bool IsSupported(nint actorAddress) =>
         actors.TryGetValue(actorAddress, out var state) && state.Supported;
+
+    /// <summary>Shared height both legs agree the body could rise by without either one overreaching —
+    /// the smaller of what each leg's own target currently needs (0 counts as "doesn't need anything"
+    /// for a leg that isn't engaging, so a single foot on a corpse naturally yields 0 here and that
+    /// leg's own IK does all the work, exactly as when a real stance leg stays planted while the other
+    /// swings up). Add this to terrain height instead of deciding independently whether to rise, so
+    /// root and legs split one stance instead of double-reacting to the same contact.</summary>
+    public float GetPelvisOffset(nint actorAddress) =>
+        actors.TryGetValue(actorAddress, out var state) ? state.PelvisOffsetY : 0f;
 
     private void OnRenderFrame()
     {
@@ -193,25 +180,28 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
                      $"supported={state.Supported}");
         }
 
-        if (!state.Supported) return;
+        if (!state.Supported)
+        {
+            state.PelvisOffsetY = 0f;
+            return;
+        }
 
         if (!TryGetSkeletonTransform(skel, out var skelPos, out var skelRot)) return;
 
         var maxStepHeight = MaxStepHeightBase * MathF.Max(1f, GetVisualScale(address));
 
-        SolveLeg(address, skel, skelPos, skelRot, state.Left, state.BlendL, maxStepHeight, state.LastDeltaTime);
-        SolveLeg(address, skel, skelPos, skelRot, state.Right, state.BlendR, maxStepHeight, state.LastDeltaTime);
+        var neededL = SolveLeg(address, skel, skelPos, skelRot, state.Left, state.BlendL, maxStepHeight, state.LastDeltaTime);
+        var neededR = SolveLeg(address, skel, skelPos, skelRot, state.Right, state.BlendR, maxStepHeight, state.LastDeltaTime);
+        state.PelvisOffsetY = MathF.Min(neededL, neededR);
     }
 
     /// <summary>
-    /// One leg's IK pass: engage weight moves toward 1 while the corpse surface under this foot's own
-    /// (animated) position is meaningfully above it, and back toward 0 otherwise. At weight &gt; 0 the
-    /// hip is aimed at the target and the knee bent to close the remaining distance, both scaled by
-    /// weight so the leg eases in and out instead of snapping. The last target height is kept so a
-    /// blend-out still eases down even on the frame the corpse surface stops being sampled at all
-    /// (foot walked past the edge) rather than vanishing the instant it does.
+    /// One leg's IK pass. Returns this leg's raw required height gain this frame (0 if it isn't
+    /// engaging) for <see cref="ProcessActor"/> to fold into the shared pelvis offset — independent of
+    /// this leg's own blend weight/timing below, which only governs how the correction itself eases in
+    /// and out once applied.
     /// </summary>
-    private void SolveLeg(
+    private float SolveLeg(
         nint address, SkeletonAccess skel, Vector3 skelPos, Quaternion skelRot,
         LegBones bones, LegBlend blend, float maxStepHeight, float deltaTime)
     {
@@ -221,25 +211,33 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
 
         var thighLen = Vector3.Distance(hipPos, kneePos);
         var shinLen = Vector3.Distance(kneePos, anklePos);
-        if (thighLen < 1e-4f || shinLen < 1e-4f) return;
+        if (thighLen < 1e-4f || shinLen < 1e-4f) return 0f;
         var thighDir0 = (kneePos - hipPos) / thighLen;
-        var shinDir0 = (anklePos - kneePos) / shinLen;
 
-        var facingRadians = ((GameObject*)address)->Rotation;
-        var forward = new Vector3(MathF.Sin(facingRadians), 0f, MathF.Cos(facingRadians));
-
-        var foothold = FindBestFoothold(address, anklePos, hipPos, thighDir0, maxStepHeight, forward);
-        var wantsEngage = foothold.HasValue;
+        // Straight down from wherever the walk cycle already put this foot — the animation is already
+        // moving it forward each frame; this only has to catch the vertical alignment up.
+        var groundY = CorpseSupportHeightProvider!(address, anklePos);
+        var neededGain = 0f;
+        var wantsEngage = false;
+        if (groundY.HasValue)
+        {
+            var gain = groundY.Value - anklePos.Y;
+            if (gain > EngageThreshold && gain <= maxStepHeight)
+            {
+                neededGain = gain;
+                wantsEngage = true;
+            }
+        }
 
         if (wantsEngage && blend.Weight < 0.01f)
         {
-            log.Info($"NpcCorpseFootIk: 0x{address:X} leg engaging — ankle={anklePos:F3} " +
-                     $"foothold={foothold!.Value:F3} maxStepHeight={maxStepHeight:F3}");
+            log.Info($"NpcCorpseFootIk: 0x{address:X} leg engaging — ankleY={anklePos.Y:F3} " +
+                     $"groundY={groundY!.Value:F3} maxStepHeight={maxStepHeight:F3}");
         }
 
         if (wantsEngage)
         {
-            blend.LastTargetPos = foothold!.Value;
+            blend.LastTargetY = groundY!.Value;
             blend.HasTarget = true;
         }
 
@@ -250,31 +248,24 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         if (blend.Weight <= 0.001f || !blend.HasTarget)
         {
             blend.HasSmoothedTarget = false;
-            return;
+            return neededGain;
         }
         if (blend.Weight <= 0f) blend.HasTarget = false;
 
-        // Rate-limit which point the leg is actually reaching for, independent of the blend weight —
-        // this is what turns a frame-to-frame flip between near-tied ring candidates into a slide
-        // instead of a pop. A cold engage snaps straight to the first point; there's nothing to ease
-        // from yet.
         if (!blend.HasSmoothedTarget)
         {
-            blend.SmoothedTargetPos = blend.LastTargetPos;
+            blend.SmoothedTargetY = blend.LastTargetY;
             blend.HasSmoothedTarget = true;
         }
         else
         {
-            var toRaw = blend.LastTargetPos - blend.SmoothedTargetPos;
-            var dist = toRaw.Length();
-            var maxStep = FootholdMaxSpeed * deltaTime;
-            blend.SmoothedTargetPos = dist <= maxStep ? blend.LastTargetPos : blend.SmoothedTargetPos + toRaw / dist * maxStep;
+            blend.SmoothedTargetY = MoveTowards(blend.SmoothedTargetY, blend.LastTargetY, TargetHeightMaxSpeed * deltaTime);
         }
 
-        var targetPos = blend.SmoothedTargetPos;
+        var targetPos = anklePos with { Y = blend.SmoothedTargetY };
         var reachVec = targetPos - hipPos;
         var reachLenRaw = reachVec.Length();
-        if (reachLenRaw < 1e-4f) return;
+        if (reachLenRaw < 1e-4f) return neededGain;
 
         var maxReach = thighLen + shinLen - 0.001f;
         var minReach = MathF.Abs(thighLen - shinLen) + 0.001f;
@@ -296,26 +287,24 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         var desiredInterior = MathF.Acos(cosKnee);
         var foldAngle = MathF.PI - desiredInterior;
 
-        // The knee only ever hinges about roughly one lateral (left/right) axis — bending it about
-        // anything else is what read as folding inward. Deriving that axis from thigh × shin (the
-        // pose the animation happens to be in right now) is unreliable exactly when it matters most:
-        // a standing leg is nearly straight, so thigh and shin point almost the same way and their
-        // cross product is tiny and noisy. Ground it in world-up instead — a lateral axis that stays
-        // well-defined and stable regardless of how bent the leg currently is — the same fix the
-        // death-ragdoll's own hinge setup uses (RagdollController.ComputeAnatomicalHingeAxis) for the
-        // identical reason. The current thigh/shin bend, when it isn't itself degenerate, only picks
-        // which of the two directions along that axis is anatomically forward for this leg.
-        var bendNormal = Vector3.Cross(thighDir0, Vector3.UnitY);
-        if (bendNormal.LengthSquared() < 1e-6f) bendNormal = Vector3.Cross(thighDir0, forward);
-        if (bendNormal.LengthSquared() < 1e-8f) bendNormal = AnyPerpendicular(thighDir0);
-        bendNormal = Vector3.Normalize(bendNormal);
+        // The knee only ever hinges about one lateral axis relative to however this leg currently
+        // stands — braced, crouched, a wide combat stance, anything. That axis is exactly where the
+        // knee already sits off the straight hip→ankle line right now (its "pole vector"), which is
+        // stance-agnostic by construction: it reads whatever the base animation is actually doing
+        // instead of assuming any one "neutral standing" shape. A world-up assumption (the previous
+        // approach) breaks down for a crouch or a wide stance where "up" isn't where the knee points;
+        // thigh×shin breaks down too, for a different reason — nearly degenerate for a straight leg.
+        var hipToAnkle0 = anklePos - hipPos;
+        var alongDir0 = hipToAnkle0.LengthSquared() > 1e-8f ? Vector3.Normalize(hipToAnkle0) : thighDir0;
+        var hipToKnee0 = kneePos - hipPos;
+        var poleVector = hipToKnee0 - alongDir0 * Vector3.Dot(hipToKnee0, alongDir0);
+        if (poleVector.LengthSquared() < 1e-6f) poleVector = AnyPerpendicular(alongDir0);
+        poleVector = Vector3.Normalize(poleVector);
 
-        var currentBendRaw = Vector3.Cross(thighDir0, shinDir0);
-        if (currentBendRaw.LengthSquared() > 1e-6f && Vector3.Dot(bendNormal, currentBendRaw) < 0f)
-            bendNormal = -bendNormal;
+        var bendNormal = Vector3.Normalize(Vector3.Cross(alongDir0, poleVector));
 
         var aimedNormal = Vector3.Transform(bendNormal, blendedAim);
-        var shinDirAfterAim = Vector3.Transform(shinDir0, blendedAim);
+        var shinDirAfterAim = Vector3.Transform(Vector3.Normalize(anklePos - kneePos), blendedAim);
         var newShinDir = Vector3.Transform(toTargetDir, Quaternion.CreateFromAxisAngle(aimedNormal, foldAngle));
 
         var bendSwing = RotationBetween(shinDirAfterAim, newShinDir);
@@ -337,56 +326,8 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         deltas.Clear();
         deltas[bones.Ankle] = Quaternion.Normalize(Quaternion.Inverse(ankleRotNow) * blendedLevel * ankleRotNow);
         boneService.ApplyRotationDeltas(skel, deltas);
-    }
 
-    /// <summary>
-    /// Look for the best qualifying corpse surface within a step's reach of the animated ankle, in a
-    /// forward-facing arc rather than the exact point the walk cycle happened to place the foot at or
-    /// a full ring around it — a real step lands ahead, essentially never behind. "Best" balances how
-    /// high a candidate is against how far the hip has to swing to reach it (<see
-    /// cref="FootholdSwingCostWeight"/>), rather than always grabbing the single highest point — a
-    /// stable stance trades a bit of height for an easier, more natural reach. The centre
-    /// (straight-down) point is only tried as a last resort when nothing in the arc qualifies, since a
-    /// genuinely vertical step is the rare case, not the default.
-    /// </summary>
-    private Vector3? FindBestFoothold(
-        nint address, Vector3 anklePos, Vector3 hipPos, Vector3 thighDir0, float maxStepHeight, Vector3 forward)
-    {
-        Vector3? best = null;
-        var bestScore = float.MinValue;
-
-        void Consider(Vector3 probeXZOffset)
-        {
-            var probe = anklePos + probeXZOffset;
-            var y = CorpseSupportHeightProvider!(address, probe);
-            if (!y.HasValue) return;
-            var heightGain = y.Value - anklePos.Y;
-            if (heightGain <= EngageThreshold || heightGain > maxStepHeight) return;
-
-            var candidate = new Vector3(probe.X, y.Value, probe.Z);
-            var toCandidate = candidate - hipPos;
-            if (toCandidate.LengthSquared() < 1e-6f) return;
-            var swingAngle = SwingAngle(RotationBetween(thighDir0, Vector3.Normalize(toCandidate)));
-
-            var score = heightGain - FootholdSwingCostWeight * swingAngle;
-            if (score <= bestScore) return;
-
-            bestScore = score;
-            best = candidate;
-        }
-
-        for (var i = 0; i < FootholdSearchSamples; i++)
-        {
-            var t = FootholdSearchSamples > 1 ? i / (float)(FootholdSearchSamples - 1) : 0.5f;
-            var angle = -FootholdArcHalfAngleRadians + t * (2f * FootholdArcHalfAngleRadians);
-            var dir = Vector3.Transform(forward, Quaternion.CreateFromAxisAngle(Vector3.UnitY, angle));
-            Consider(dir * FootholdSearchRadius);
-        }
-
-        if (best == null)
-            Consider(Vector3.Zero);
-
-        return best;
+        return neededGain;
     }
 
     private void ResolveLeg(SkeletonAccess skel, string suffix, LegBones bones)

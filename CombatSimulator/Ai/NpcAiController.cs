@@ -1871,14 +1871,17 @@ public unsafe class NpcAiController : IDisposable
             state.HasStableRootTerrainClearance = true;
         }
 
-        // Root always tracks real terrain now. A corpse underfoot is handled entirely by
-        // footIkSolver bending the affected leg(s) — an earlier version of this tried to detect
-        // "both feet on the corpse" here with two probes either side of centre, but a corpse is
-        // almost always wider than the probe spacing, so it still lifted root for a single foot
-        // near the edge too — the exact float this was meant to fix. Both legs bending
-        // independently (well within reach, same step-height ceiling as the old root lift) covers
-        // the "standing fully on top" case without root ever needing to move for it.
-        var desiredY = terrainY + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;
+        // Root takes only the SHARED part of a corpse contact — whatever height both of footIkSolver's
+        // legs agree on (0 when only one foot is on the corpse, which is also the ordinary case: that
+        // leg's own IK does all the work and root never moves for it). Each leg's own IK then only
+        // has to close whatever its own requirement still exceeds this shared amount by. An earlier
+        // version tried to detect "both feet on the corpse" here itself with two probes either side of
+        // centre, but a corpse is almost always wider than the probe spacing, so it still lifted root
+        // for a single foot near the edge too — the exact float this was meant to fix.
+        var pelvisOffset = config.NpcCollisionActive && config.RagdollNpcCorpseTraversal
+            ? footIkSolver.GetPelvisOffset(actorAddress)
+            : 0f;
+        var desiredY = terrainY + pelvisOffset + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;
         var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
         var maxFall = MathF.Max(0.02f, 1.5f * deltaTime);
         var deltaY = desiredY > fromY
