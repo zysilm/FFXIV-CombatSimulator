@@ -280,6 +280,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.VictorySequence = devExperimental.VictorySequence;
         combatEngine.ShouldSuppressEnemyInitiation = () => devExperimental.SuppressEnemyInitiation;
         combatEngine.OnPlayerAttackLanded = devExperimental.OnPlayerAttackLanded;
+        npcActionProfileProvider.BlockWeaponSkillList = () => devExperimental.BlockNpcWeaponSkills;
         companionManager = new CombatCompanionManager(
             objectTable, clientState, config, combatEngine, animationController,
             movementBlockHook, vnavmeshIpc, targetManager, partyEngagePlanner, terrainHeightService, log);

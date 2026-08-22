@@ -27,6 +27,11 @@ public class NpcActionProfileProvider
     private readonly Configuration config;
     private readonly IPluginLog log;
 
+    /// <summary>Dev-experimental seam: when true, every enemy falls back to auto-attack only,
+    /// regardless of what its weapon would otherwise resolve to. Null (the production default,
+    /// before the experimental module wires this) behaves the same as false.</summary>
+    public Func<bool>? BlockWeaponSkillList { private get; set; }
+
     public NpcActionProfileProvider(JobActionKitProvider jobKits, Configuration config, IPluginLog log)
     {
         this.jobKits = jobKits;
@@ -49,7 +54,7 @@ public class NpcActionProfileProvider
         var behavior = CreateBaseBehavior(weaponStyle);
 
         // Humanoid with a resolved job → its real damage kit; everything else auto-attacks only.
-        if (jobId != 0)
+        if (jobId != 0 && BlockWeaponSkillList?.Invoke() != true)
         {
             // Melee-weapon humanoids get a pure melee kit: one ranged GCD in the list flips the
             // engage-range logic to ranged intent and the enemy camps at spell range instead of

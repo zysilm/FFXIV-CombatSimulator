@@ -21,6 +21,10 @@ public interface IDevExperimental : IDisposable
     /// <summary>True while a dev controller is driving this NPC (suppresses its AI).</summary>
     bool ControlsNpc(nint address);
 
+    /// <summary>Dev-only, off by default: suppress the real per-weapon job skill list so every enemy
+    /// falls back to auto-attack only, regardless of what its weapon would otherwise resolve to.</summary>
+    bool BlockNpcWeaponSkills { get; }
+
     /// <summary>True while the dev enemy-pack gate is waiting for a real player hit.</summary>
     bool SuppressEnemyInitiation { get; }
 
