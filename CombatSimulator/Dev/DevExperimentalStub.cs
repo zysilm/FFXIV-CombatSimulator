@@ -16,7 +16,7 @@ public sealed class DevExperimentalStub : IDevExperimental
 {
     public IVictorySequence? VictorySequence => null;
     public bool ControlsNpc(nint address) => false;
-    public bool BlockNpcWeaponSkills => false;
+    public bool NpcAutoAttackOnly => false;
     public bool SuppressEnemyInitiation => false;
     public void OnPlayerAttackLanded() { }
     public void TickWorld(float deltaTime) { }
