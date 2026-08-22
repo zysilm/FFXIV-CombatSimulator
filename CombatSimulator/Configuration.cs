@@ -261,6 +261,13 @@ public partial class Configuration : IPluginConfiguration
     // baked into those equipment models.
     public bool KoStripPhysicsDropClothing { get; set; } = true;
 
+    // Auto-recycle: despawn a physics-dropped piece a fixed time after it settles, rather than letting
+    // it linger indefinitely until reset/zone-change. Off by default — a stale dropped piece surviving
+    // into a zone transition is the known crash exposure this exists to reduce, matching the upstream
+    // RagdollSystem feature this was ported from (https://github.com/zysilm/RagdollSystem).
+    public bool KoStripCloneAutoExpireEnabled { get; set; } = false;
+    public float KoStripCloneAutoExpireSeconds { get; set; } = 2f;
+
     // Garment polish layered on top of clothing physics drop: short visual body follow, body/ground
     // friction damping, and delayed cloth collapse.
     public bool KoStripAdvancedClothPhysics { get; set; } = true;

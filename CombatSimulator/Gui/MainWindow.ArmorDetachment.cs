@@ -140,6 +140,38 @@ public partial class MainWindow
                              "into independent left/right pieces. Body and Legs remain work in progress: their\n" +
                              "equipment models can bake in body skin, which is filtered by material path.");
 
+        ImGui.BeginDisabled(!config.KoStripPhysicsDrop && !config.KoStripPhysicsDropClothing);
+        var autoExpire = config.KoStripCloneAutoExpireEnabled;
+        if (ImGui.Checkbox("Auto-recycle dropped pieces##armordetachautoexpire", ref autoExpire))
+        {
+            config.KoStripCloneAutoExpireEnabled = autoExpire;
+            config.Save();
+        }
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Despawn a physics-dropped piece a fixed time after it settles, instead of\n" +
+                             "leaving it in the world until reset/zone-change. Reduces the chance of a\n" +
+                             "stale piece surviving into a zone transition. Default off.");
+
+        if (config.KoStripCloneAutoExpireEnabled)
+        {
+            ImGui.Indent();
+            ImGui.BeginDisabled(!config.KoStripPhysicsDrop && !config.KoStripPhysicsDropClothing);
+            var autoExpireSeconds = config.KoStripCloneAutoExpireSeconds;
+            if (ImGui.SliderFloat("Recycle after##armordetachautoexpireseconds", ref autoExpireSeconds, 2.0f, 30.0f, "%.1f s"))
+            {
+                config.KoStripCloneAutoExpireSeconds = autoExpireSeconds;
+                config.Save();
+            }
+            ImGui.EndDisabled();
+            if (config.KoStripCloneAutoExpireSeconds > 15.0f)
+            {
+                ImGui.TextColored(new Vector4(1f, 0.7f, 0.2f, 1f),
+                    "A long duration keeps more pieces around during a zone change.");
+            }
+            ImGui.Unindent();
+        }
+
         var advancedCloth = config.KoStripAdvancedClothPhysics;
         ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing);
         if (ImGui.Checkbox("Advanced clothing settle##armordetachclothadvanced", ref advancedCloth))

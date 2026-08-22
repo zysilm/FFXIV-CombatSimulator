@@ -274,6 +274,7 @@ public unsafe class DismembermentController : IDisposable
         public bool GearCollapsedPhysicsApplied;              // Bepu shape replaced to match final visual deflate
         public float GearGroundVisualOffset;                  // smoothed visual-only downward ground settle offset
         public int GearArmedFrames;                          // frames since the rigid body was armed
+        public float GearAutoExpireElapsed;                  // wall-clock seconds since armed (auto-recycle)
         public int GearRestFrames;                           // consecutive near-rest frames
         public int GearDeflateFrames;                        // bounded fake cloth-collapse progress
         public Vector3 GearHandoffPrevAnchorWorld;           // source-body anchor used for short garment drag
@@ -3549,6 +3550,17 @@ public unsafe class DismembermentController : IDisposable
         HideNonKeptModels(c);
         HideWeapons(c);
         if (c.GearHideSkin) HideSkinMaterials(c); // clothing: drop the baked-in body skin, keep the cloth
+
+        // Auto-recycle: a dropped piece left lying around indefinitely is exactly what can survive
+        // into a zone change and hit the same unsafe-write crash class the rest of this cleanup path
+        // already exists to avoid — despawning it proactively, well before that, is the whole point.
+        // Ported from RagdollSystem (https://github.com/zysilm/RagdollSystem), off by default here.
+        if (c.Armed && config.KoStripCloneAutoExpireEnabled)
+        {
+            c.GearAutoExpireElapsed += frameDt;
+            if (c.GearAutoExpireElapsed >= MathF.Max(1f, config.KoStripCloneAutoExpireSeconds))
+                return false;
+        }
 
         if (!c.Armed)
         {
