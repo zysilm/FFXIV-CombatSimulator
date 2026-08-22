@@ -149,9 +149,9 @@ public partial class MainWindow
         }
         ImGui.EndDisabled();
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Despawn a physics-dropped piece a fixed time after it settles, instead of\n" +
-                             "leaving it in the world until reset/zone-change. Reduces the chance of a\n" +
-                             "stale piece surviving into a zone transition. Default off.");
+            ImGui.SetTooltip("Fades out and despawns a physics-dropped piece a fixed time after it settles,\n" +
+                             "instead of leaving it in the world until reset/zone-change. Reduces the chance\n" +
+                             "of a stale piece surviving into a zone transition. Default off.");
 
         if (config.KoStripCloneAutoExpireEnabled)
         {

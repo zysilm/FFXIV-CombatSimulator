@@ -45,6 +45,7 @@ public unsafe class DismembermentController : IDisposable
     private const float LimbHalfLength = 0.14f;
     private const float LimbMass = 4f;
     private const float GearPieceMass = 0.4f; // dropped hat/accessory mass (light; body shell overrides)
+    private const float GearAutoExpireFadeFraction = 0.25f; // auto-recycle: fade over the final quarter of the lifetime
     private const int MaxPendingFrames = 120;
     // A clone is drawn (per the original timing) but its limb bone may not resolve immediately
     // on a cold model load. Keep it hidden until the bone appears; only after this many frames
@@ -3558,8 +3559,19 @@ public unsafe class DismembermentController : IDisposable
         if (c.Armed && config.KoStripCloneAutoExpireEnabled)
         {
             c.GearAutoExpireElapsed += frameDt;
-            if (c.GearAutoExpireElapsed >= MathF.Max(1f, config.KoStripCloneAutoExpireSeconds))
+            var duration = MathF.Max(1f, config.KoStripCloneAutoExpireSeconds);
+            if (c.GearAutoExpireElapsed >= duration)
                 return false;
+
+            // Fade out over the final quarter of the lifetime instead of popping out of existence.
+            // Character.Alpha is a plain field write, not a transform/scale touch, so it doesn't carry
+            // the per-frame write risk that ruled out an animated scale-to-zero for this same purpose.
+            var fadeStart = duration * (1f - GearAutoExpireFadeFraction);
+            if (c.GearAutoExpireElapsed >= fadeStart)
+            {
+                var fadeT = (c.GearAutoExpireElapsed - fadeStart) / (duration - fadeStart);
+                ((Character*)c.Chara)->Alpha = 1f - Math.Clamp(fadeT, 0f, 1f);
+            }
         }
 
         if (!c.Armed)
