@@ -143,6 +143,19 @@ public sealed class EncounterBook
                 throw new InvalidDataException($"{resource}: phase '{phase}' has an empty spawnEnemies cue.");
             if (cue.Type == EncounterCueType.SpawnEnemies)
             {
+                if (!string.IsNullOrWhiteSpace(cue.ApproachFromBehindActor))
+                {
+                    ValidateActor(encounter, cue.ApproachFromBehindActor, resource, phase);
+                    if (cue.ApproachSpawnMinDistance is < 5f or > 100f ||
+                        cue.ApproachSpawnMaxDistance is < 5f or > 100f ||
+                        cue.ApproachSpawnMaxDistance < cue.ApproachSpawnMinDistance)
+                        throw new InvalidDataException(
+                            $"{resource}: phase '{phase}' has invalid reinforcement approach distances.");
+                    if (cue.ApproachSpawnArcDegrees is < 0f or > 120f)
+                        throw new InvalidDataException(
+                            $"{resource}: phase '{phase}' has a reinforcement approach arc outside 0..120 degrees.");
+                }
+
                 var total = 0;
                 foreach (var group in cue.Enemies)
                 {

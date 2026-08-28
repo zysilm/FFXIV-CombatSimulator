@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using CombatSimulator.Companions;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
@@ -122,7 +123,9 @@ public sealed class CombatRecipeRunner
         return true;
     }
 
-    public int QueueEnemies(IReadOnlyList<CombatRecipeEnemyGroup> groups)
+    public int QueueEnemies(
+        IReadOnlyList<CombatRecipeEnemyGroup> groups,
+        Func<int, Vector3?>? positionProvider = null)
     {
         var queuedEnemies = 0;
         npcCatalog ??= new NpcCatalog(dataManager, log);
@@ -147,6 +150,7 @@ public sealed class CombatRecipeRunner
                     ENpcBaseId = entry.Type is NpcCatalogType.ENpc or NpcCatalogType.Human ? entry.Id : 0,
                     Level = Math.Clamp(config.FastCombatLevel, 1, 300),
                     HpMultiplier = Math.Max(0.0001f, group.HpMultiplier),
+                    Position = positionProvider?.Invoke(queuedEnemies),
                 });
                 queuedEnemies++;
             }

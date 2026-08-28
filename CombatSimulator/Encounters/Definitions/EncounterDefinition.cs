@@ -72,6 +72,10 @@ public sealed class EncounterCueDefinition
     public float OutgoingDamageMultiplier { get; set; } = 1f;
     public float PlayerDamageTakenMultiplier { get; set; } = 1f;
     public float HealPlayerRatio { get; set; }
+    public string ApproachFromBehindActor { get; set; } = string.Empty;
+    public float ApproachSpawnMinDistance { get; set; } = 18f;
+    public float ApproachSpawnMaxDistance { get; set; } = 28f;
+    public float ApproachSpawnArcDegrees { get; set; } = 45f;
     public List<CombatRecipeEnemyGroup> Enemies { get; set; } = new();
     public List<CombatRecipeCompanionGroup> Companions { get; set; } = new();
 }

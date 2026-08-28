@@ -15,6 +15,9 @@ Supported cues:
 - `cameraFocus`: temporary request through `CameraModeCoordinator`; it never writes the camera directly.
   The reserved actor `$player` focuses the local player; other values use declared actor aliases.
 - `spawnEnemies`: queues additional `CombatRecipeEnemyGroup` entries through `CombatRecipeRunner`.
+  Add `approachFromBehindActor` to place those reinforcements on a distant random navmesh point
+  behind an actor; optional `approachSpawnMinDistance`, `approachSpawnMaxDistance`, and
+  `approachSpawnArcDegrees` tune the entrance. Normal enemy AI then approaches over vnavmesh.
 - `spawnCompanions`: queues player-side `CombatRecipeCompanionGroup` reinforcements.
 - `enemyPressure`: multiplies the bound enemy's attack delay, movement speed, and damage-taken scale.
 - `partyPower`: multiplies player/companion outgoing damage, scales damage received by the local

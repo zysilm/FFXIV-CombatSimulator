@@ -20,7 +20,7 @@ public interface IEncounterRuntime
     bool CanStart(out string reason);
     bool StartRecipe(string recipeName);
     void StopRecipe(bool print);
-    int SpawnEnemies(IReadOnlyList<CombatRecipeEnemyGroup> enemies);
+    int SpawnEnemies(EncounterCueDefinition cue, EncounterActorBinding? approachAnchor);
     int SpawnCompanions(IReadOnlyList<CombatRecipeCompanionGroup> companions);
 
     bool HasActor(EncounterActorBinding binding);

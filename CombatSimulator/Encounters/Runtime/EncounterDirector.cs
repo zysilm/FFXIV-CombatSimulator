@@ -240,7 +240,10 @@ public sealed class EncounterDirector
                 }
                 break;
             case EncounterCueType.SpawnEnemies:
-                var count = runtime.SpawnEnemies(cue.Enemies);
+                EncounterActorBinding? approachAnchor = null;
+                if (!string.IsNullOrWhiteSpace(cue.ApproachFromBehindActor))
+                    TryGetActor(cue.ApproachFromBehindActor, out approachAnchor);
+                var count = runtime.SpawnEnemies(cue, approachAnchor);
                 runtime.AddCombatLog($"Reinforcements incoming: {count}.");
                 break;
             case EncounterCueType.SpawnCompanions:

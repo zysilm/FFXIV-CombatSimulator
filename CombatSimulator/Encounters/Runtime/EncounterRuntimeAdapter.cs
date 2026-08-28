@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Camera;
 using CombatSimulator.Encounters.Definitions;
+using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Recipes;
 using CombatSimulator.Safety;
@@ -19,31 +20,42 @@ namespace CombatSimulator.Encounters.Runtime;
 public sealed class EncounterRuntimeAdapter : IEncounterRuntime
 {
     private readonly CombatRecipeRunner recipeRunner;
+    private readonly Configuration config;
     private readonly NpcSelector npcSelector;
     private readonly CombatEngine combatEngine;
     private readonly CameraModeCoordinator cameraCoordinator;
     private readonly UseActionHook useActionHook;
     private readonly IClientState clientState;
     private readonly IChatGui chatGui;
+    private readonly VNavmeshIpc vnavmesh;
+    private readonly IPluginLog log;
     private float? originalDamageMultiplier;
     private float? originalPlayerDamageTakenMultiplier;
+    private bool? originalEnableTargetApproach;
+    private bool? originalUseVNavmeshTargetApproach;
 
     public EncounterRuntimeAdapter(
         CombatRecipeRunner recipeRunner,
+        Configuration config,
         NpcSelector npcSelector,
         CombatEngine combatEngine,
         CameraModeCoordinator cameraCoordinator,
         UseActionHook useActionHook,
         IClientState clientState,
-        IChatGui chatGui)
+        IChatGui chatGui,
+        VNavmeshIpc vnavmesh,
+        IPluginLog log)
     {
         this.recipeRunner = recipeRunner;
+        this.config = config;
         this.npcSelector = npcSelector;
         this.combatEngine = combatEngine;
         this.cameraCoordinator = cameraCoordinator;
         this.useActionHook = useActionHook;
         this.clientState = clientState;
         this.chatGui = chatGui;
+        this.vnavmesh = vnavmesh;
+        this.log = log;
     }
 
     public bool IsSimulationActive => combatEngine.IsActive;
@@ -92,7 +104,51 @@ public sealed class EncounterRuntimeAdapter : IEncounterRuntime
 
     public bool StartRecipe(string recipeName) => recipeRunner.TryStart(recipeName);
     public void StopRecipe(bool print) => recipeRunner.Stop(print);
-    public int SpawnEnemies(IReadOnlyList<CombatRecipeEnemyGroup> enemies) => recipeRunner.QueueEnemies(enemies);
+    public int SpawnEnemies(EncounterCueDefinition cue, EncounterActorBinding? approachAnchor)
+    {
+        if (approachAnchor == null)
+            return recipeRunner.QueueEnemies(cue.Enemies);
+
+        var anchor = ResolveActor(approachAnchor);
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (anchor?.GameObjectRef == null || player == null)
+        {
+            log.Warning("Encounter reinforcement anchor or player was unavailable; using normal placement.");
+            return recipeRunner.QueueEnemies(cue.Enemies);
+        }
+
+        vnavmesh.RefreshStatus(force: true);
+        if (!vnavmesh.CanPathfind)
+        {
+            PrintError("vnavmesh is not ready; reinforcements will use normal placement.");
+            return recipeRunner.QueueEnemies(cue.Enemies);
+        }
+
+        originalEnableTargetApproach ??= config.EnableTargetApproach;
+        originalUseVNavmeshTargetApproach ??= config.UseVNavmeshTargetApproach;
+        config.EnableTargetApproach = true;
+        config.UseVNavmeshTargetApproach = true;
+
+        var anchorPosition = anchor.GameObjectRef.Position;
+        var playerPosition = player.Position;
+        var away = new Vector3(
+            anchorPosition.X - playerPosition.X,
+            0f,
+            anchorPosition.Z - playerPosition.Z);
+        if (away.LengthSquared() < 0.01f)
+        {
+            var yaw = anchor.GameObjectRef.Rotation + MathF.PI;
+            away = new Vector3(MathF.Sin(yaw), 0f, MathF.Cos(yaw));
+        }
+        else
+        {
+            away = Vector3.Normalize(away);
+        }
+
+        return recipeRunner.QueueEnemies(
+            cue.Enemies,
+            _ => FindReinforcementSpawnPoint(anchorPosition, away, cue));
+    }
     public int SpawnCompanions(IReadOnlyList<CombatRecipeCompanionGroup> companions) =>
         recipeRunner.QueueCompanions(companions);
 
@@ -157,8 +213,14 @@ public sealed class EncounterRuntimeAdapter : IEncounterRuntime
             combatEngine.DamageMultiplier = originalDamageMultiplier.Value;
         if (originalPlayerDamageTakenMultiplier.HasValue)
             combatEngine.State.PlayerState.DamageTakenMultiplier = originalPlayerDamageTakenMultiplier.Value;
+        if (originalEnableTargetApproach.HasValue)
+            config.EnableTargetApproach = originalEnableTargetApproach.Value;
+        if (originalUseVNavmeshTargetApproach.HasValue)
+            config.UseVNavmeshTargetApproach = originalUseVNavmeshTargetApproach.Value;
         originalDamageMultiplier = null;
         originalPlayerDamageTakenMultiplier = null;
+        originalEnableTargetApproach = null;
+        originalUseVNavmeshTargetApproach = null;
     }
 
     public void SubmitCamera(EncounterActorBinding binding, EncounterCueDefinition cue)
@@ -182,6 +244,48 @@ public sealed class EncounterRuntimeAdapter : IEncounterRuntime
     public void AddCombatLog(string message) => combatEngine.AddLogEntry(message, CombatLogType.Info);
     public void Print(string message) => chatGui.Print($"[Encounter] {message}");
     public void PrintError(string message) => chatGui.PrintError($"[Encounter] {message}");
+
+    private Vector3? FindReinforcementSpawnPoint(
+        Vector3 anchor,
+        Vector3 away,
+        EncounterCueDefinition cue)
+    {
+        var minDistance = Math.Clamp(cue.ApproachSpawnMinDistance, 5f, 100f);
+        var maxDistance = Math.Clamp(cue.ApproachSpawnMaxDistance, minDistance, 100f);
+        var halfArc = Math.Clamp(cue.ApproachSpawnArcDegrees, 0f, 120f) * MathF.PI / 180f;
+        var baseYaw = MathF.Atan2(away.X, away.Z);
+
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            var distance = minDistance + Random.Shared.NextSingle() * (maxDistance - minDistance);
+            var yaw = baseYaw + (Random.Shared.NextSingle() * 2f - 1f) * halfArc;
+            var direction = new Vector3(MathF.Sin(yaw), 0f, MathF.Cos(yaw));
+            var candidate = anchor + direction * distance;
+            candidate.Y = anchor.Y + 8f;
+
+            try
+            {
+                var snapped = vnavmesh.PointOnFloor(candidate, false, 4f)
+                              ?? vnavmesh.NearestPointReachable(candidate, 4f, 12f);
+                if (snapped.HasValue && FlatDistance(anchor, snapped.Value) >= minDistance * 0.7f)
+                    return snapped.Value;
+            }
+            catch (Exception ex)
+            {
+                log.Verbose($"Encounter reinforcement navmesh placement failed: {ex.Message}");
+            }
+        }
+
+        log.Warning("No distant navmesh point was found behind the encounter anchor; using normal placement.");
+        return null;
+    }
+
+    private static float FlatDistance(Vector3 a, Vector3 b)
+    {
+        var dx = a.X - b.X;
+        var dz = a.Z - b.Z;
+        return MathF.Sqrt(dx * dx + dz * dz);
+    }
 
     private SimulatedNpc? ResolveActor(EncounterActorBinding binding)
     {

@@ -513,8 +513,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         var encounterBook = new EncounterBook(log);
         _ = encounterBook.Encounters; // Validate embedded encounter resources during plugin startup.
         var encounterRuntime = new EncounterRuntimeAdapter(
-            recipeRunner, npcSelector, combatEngine, cameraModeCoordinator,
-            useActionHook, clientState, chatGui);
+            recipeRunner, config, npcSelector, combatEngine, cameraModeCoordinator,
+            useActionHook, clientState, chatGui, vnavmeshIpc, log);
         encounterDirector = new EncounterDirector(encounterBook, encounterRuntime, log);
         combatEngine.ShouldSuppressAutomaticPlayerVictory = () => encounterDirector.IsActive;
         // Directed encounters own their opening beat. Do not let the unrelated dev sandbox option
