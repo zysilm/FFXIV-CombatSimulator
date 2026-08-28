@@ -221,7 +221,7 @@ public partial class MainWindow : IDisposable
     private static readonly string[] TabNames = new[]
     {
         "Combat",
-        "Encounters",
+        "Encounters (Experimental)",
         "Targets",
         "Party",
         "Effects",
@@ -336,7 +336,7 @@ public partial class MainWindow : IDisposable
                     DrawFightingModeSection();
                 DrawActionModeSection();
                 break;
-            case 1: // Encounters
+            case 1: // Encounters (Experimental)
                 DrawEncounterPanel();
                 break;
             case 2: // Targets

@@ -285,7 +285,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         devExperimental = new Dev.DevExperimentalStub();
 #endif
         combatEngine.VictorySequence = devExperimental.VictorySequence;
-        combatEngine.ShouldSuppressEnemyInitiation = () => devExperimental.SuppressEnemyInitiation;
         combatEngine.OnPlayerAttackLanded = devExperimental.OnPlayerAttackLanded;
         npcActionProfileProvider.ForceAutoAttackOnly = () => devExperimental.NpcAutoAttackOnly;
         npcSpawner.StripBodyLegs = () => devExperimental.VirtualEnemyStripBodyLegs;
@@ -517,6 +516,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             useActionHook, clientState, chatGui);
         encounterDirector = new EncounterDirector(encounterBook, encounterRuntime, log);
         combatEngine.ShouldSuppressAutomaticPlayerVictory = () => encounterDirector.IsActive;
+        // Directed encounters own their opening beat. Do not let the unrelated dev sandbox option
+        // "wait for the player's first landed hit" leave a scripted enemy idle when the player
+        // creates distance before attacking; ordinary simulations still preserve that option.
+        combatEngine.ShouldSuppressEnemyInitiation =
+            () => !encounterDirector.IsActive && devExperimental.SuppressEnemyInitiation;
         devExperimental.SetOcclusionVisibilityExclusion(
             address => address != nint.Zero && address == encounterDirector.CameraSubjectAddress);
         storyEncounterPrompt = new StoryEncounterPromptController(
