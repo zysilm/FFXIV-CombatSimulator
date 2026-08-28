@@ -511,8 +511,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController,
             dataManager, chatGui, useActionHook, log);
         var encounterBook = new EncounterBook(log);
+        _ = encounterBook.Encounters; // Validate embedded encounter resources during plugin startup.
         var encounterRuntime = new EncounterRuntimeAdapter(
-            recipeRunner, npcSelector, npcSpawner, combatEngine, cameraModeCoordinator,
+            recipeRunner, npcSelector, combatEngine, cameraModeCoordinator,
             useActionHook, clientState, chatGui);
         encounterDirector = new EncounterDirector(encounterBook, encounterRuntime, log);
         combatEngine.ShouldSuppressAutomaticPlayerVictory = () => encounterDirector.IsActive;

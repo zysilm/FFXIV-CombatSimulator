@@ -57,6 +57,7 @@ public sealed class CombatRecipeRunner
     }
 
     public IReadOnlyList<CombatRecipe> Recipes => recipeBook.Recipes;
+    public bool IsSpawnReady => npcSpawner.PendingCount == 0 && companionManager.PendingCount == 0;
 
     public bool TryStart(string recipeName)
     {
@@ -108,20 +109,7 @@ public sealed class CombatRecipeRunner
         var mapEnemySettings = BuildMapEnemySettings(recipe);
         mapEnemyController.SetRecipeSettings(mapEnemySettings);
 
-        var queuedCompanions = 0;
-        foreach (var group in recipe.Companions)
-        {
-            var count = Math.Max(0, group.Count);
-            queuedCompanions += group.Type switch
-            {
-                CompanionRecipeType.VisiblePlayers => companionManager.SpawnFromVisiblePlayers(count),
-                CompanionRecipeType.Self => companionManager.SpawnSelfCharacters(
-                    count, randomizeAppearance: false, ignoreConfiguredMax: true),
-                CompanionRecipeType.SelfRandomized => companionManager.SpawnSelfCharacters(
-                    count, randomizeAppearance: true, ignoreConfiguredMax: true),
-                _ => 0,
-            };
-        }
+        var queuedCompanions = QueueCompanions(recipe.Companions);
 
         var queuedEnemies = QueueEnemies(recipe.Enemies);
 
@@ -165,6 +153,37 @@ public sealed class CombatRecipeRunner
         }
 
         return queuedEnemies;
+    }
+
+    public int QueueCompanions(IReadOnlyList<CombatRecipeCompanionGroup> groups)
+    {
+        var requested = 0;
+        foreach (var group in groups)
+            requested += Math.Clamp(group.Count, 0, CombatCompanionManager.MaxCompanionCap);
+
+        config.EnableCombatCompanions = true;
+        config.CombatCompanionMaxCount = Math.Min(
+            CombatCompanionManager.MaxCompanionCap,
+            Math.Max(
+                config.CombatCompanionMaxCount,
+                companionManager.Companions.Count + companionManager.PendingCount + requested));
+
+        var queued = 0;
+        foreach (var group in groups)
+        {
+            var count = Math.Clamp(group.Count, 0, CombatCompanionManager.MaxCompanionCap);
+            queued += group.Type switch
+            {
+                CompanionRecipeType.VisiblePlayers => companionManager.SpawnFromVisiblePlayers(count),
+                CompanionRecipeType.Self => companionManager.SpawnSelfCharacters(
+                    count, randomizeAppearance: false, ignoreConfiguredMax: true),
+                CompanionRecipeType.SelfRandomized => companionManager.SpawnSelfCharacters(
+                    count, randomizeAppearance: true, ignoreConfiguredMax: true),
+                _ => 0,
+            };
+        }
+
+        return queued;
     }
 
     public void Reset(CombatRecipe? fallbackRecipe = null)

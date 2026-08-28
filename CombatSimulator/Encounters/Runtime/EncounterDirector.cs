@@ -21,6 +21,11 @@ public enum EncounterRunState
 /// <summary>Small deterministic phase machine; all game-specific work stays behind IEncounterRuntime.</summary>
 public sealed class EncounterDirector
 {
+    private static readonly EncounterActorBinding PlayerActor = new()
+    {
+        Name = "$player",
+        Required = false,
+    };
     private readonly EncounterBook book;
     private readonly IEncounterRuntime runtime;
     private readonly IPluginLog log;
@@ -76,6 +81,8 @@ public sealed class EncounterDirector
 
         if (IsActive)
             Stop(stopCombat: true, print: false);
+        else
+            runtime.ResetEncounterModifiers();
 
         ClearPresentation();
         encounter = definition;
@@ -162,6 +169,7 @@ public sealed class EncounterDirector
         phaseElapsed = 0f;
         sawEnemy = false;
         State = EncounterRunState.Inactive;
+        runtime.ResetEncounterModifiers();
         if (stopCombat)
             runtime.StopRecipe(print: false);
         if (print && !string.IsNullOrWhiteSpace(name))
@@ -235,9 +243,17 @@ public sealed class EncounterDirector
                 var count = runtime.SpawnEnemies(cue.Enemies);
                 runtime.AddCombatLog($"Reinforcements incoming: {count}.");
                 break;
+            case EncounterCueType.SpawnCompanions:
+                var allies = runtime.SpawnCompanions(cue.Companions);
+                runtime.AddCombatLog($"Allied reinforcements incoming: {allies}.");
+                break;
             case EncounterCueType.EnemyPressure:
                 if (TryGetActor(cue.Actor, out var pressureBinding))
                     runtime.ApplyEnemyPressure(pressureBinding, cue);
+                break;
+            case EncounterCueType.PartyPower:
+                runtime.ApplyPartyPower(cue);
+                runtime.AddCombatLog("The party's fighting spirit surges.");
                 break;
             case EncounterCueType.PlayerVictory:
                 runtime.PlayPlayerVictory();
@@ -260,6 +276,8 @@ public sealed class EncounterDirector
                     runtime.GetActorHpRatio(hpActor) is { } hp && hp <= condition.Ratio,
                 EncounterConditionType.ActorDead =>
                     TryGetActor(condition.Actor, out var deadActor) && runtime.IsActorDead(deadActor),
+                EncounterConditionType.PlayerHpAtOrBelow =>
+                    runtime.PlayerHpRatio is { } playerHp && playerHp <= condition.Ratio,
                 EncounterConditionType.PlayerDead => runtime.IsPlayerDead,
                 EncounterConditionType.AllEnemiesDead =>
                     sawEnemy && !HasPendingSpawnCue() && runtime.IsSpawnReady && runtime.LivingEnemyCount == 0,
@@ -287,6 +305,7 @@ public sealed class EncounterDirector
         {
             ClearPhasePresentation();
             State = EncounterRunState.Completed;
+            runtime.ResetEncounterModifiers();
             runtime.AddCombatLog($"Encounter complete: {encounter!.Name}");
             runtime.Print($"Completed '{encounter.Name}'.");
             phase = null;
@@ -296,6 +315,7 @@ public sealed class EncounterDirector
         {
             ClearPhasePresentation();
             State = EncounterRunState.Failed;
+            runtime.ResetEncounterModifiers();
             runtime.AddCombatLog($"Encounter failed: {encounter!.Name}");
             phase = null;
             return;
@@ -313,6 +333,11 @@ public sealed class EncounterDirector
 
     private bool TryGetActor(string alias, out EncounterActorBinding binding)
     {
+        if (string.Equals(alias, "$player", StringComparison.OrdinalIgnoreCase))
+        {
+            binding = PlayerActor;
+            return true;
+        }
         binding = null!;
         return encounter != null && encounter.Actors.TryGetValue(alias, out binding!);
     }

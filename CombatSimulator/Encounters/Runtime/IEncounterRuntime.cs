@@ -13,6 +13,7 @@ public interface IEncounterRuntime
     bool IsSimulationActive { get; }
     bool IsSpawnReady { get; }
     bool IsPlayerDead { get; }
+    float? PlayerHpRatio { get; }
     int EnemyCount { get; }
     int LivingEnemyCount { get; }
 
@@ -20,12 +21,15 @@ public interface IEncounterRuntime
     bool StartRecipe(string recipeName);
     void StopRecipe(bool print);
     int SpawnEnemies(IReadOnlyList<CombatRecipeEnemyGroup> enemies);
+    int SpawnCompanions(IReadOnlyList<CombatRecipeCompanionGroup> companions);
 
     bool HasActor(EncounterActorBinding binding);
     nint GetActorAddress(EncounterActorBinding binding);
     float? GetActorHpRatio(EncounterActorBinding binding);
     bool IsActorDead(EncounterActorBinding binding);
     void ApplyEnemyPressure(EncounterActorBinding binding, EncounterCueDefinition cue);
+    void ApplyPartyPower(EncounterCueDefinition cue);
+    void ResetEncounterModifiers();
     void PlayPlayerVictory();
     void SubmitCamera(EncounterActorBinding binding, EncounterCueDefinition cue);
     void ReleaseCamera();

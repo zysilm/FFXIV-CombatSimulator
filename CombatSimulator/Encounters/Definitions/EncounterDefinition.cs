@@ -48,7 +48,9 @@ public enum EncounterCueType
     Dialogue,
     CameraFocus,
     SpawnEnemies,
+    SpawnCompanions,
     EnemyPressure,
+    PartyPower,
     PlayerVictory,
     CombatLog,
 }
@@ -67,7 +69,11 @@ public sealed class EncounterCueDefinition
     public float AutoAttackDelayMultiplier { get; set; } = 1f;
     public float MoveSpeedMultiplier { get; set; } = 1f;
     public float DamageTakenMultiplier { get; set; } = 1f;
+    public float OutgoingDamageMultiplier { get; set; } = 1f;
+    public float PlayerDamageTakenMultiplier { get; set; } = 1f;
+    public float HealPlayerRatio { get; set; }
     public List<CombatRecipeEnemyGroup> Enemies { get; set; } = new();
+    public List<CombatRecipeCompanionGroup> Companions { get; set; } = new();
 }
 
 public sealed class EncounterTransitionDefinition
@@ -81,6 +87,7 @@ public enum EncounterConditionType
     Elapsed,
     ActorHpAtOrBelow,
     ActorDead,
+    PlayerHpAtOrBelow,
     PlayerDead,
     AllEnemiesDead,
 }

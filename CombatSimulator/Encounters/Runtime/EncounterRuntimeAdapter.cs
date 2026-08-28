@@ -20,17 +20,17 @@ public sealed class EncounterRuntimeAdapter : IEncounterRuntime
 {
     private readonly CombatRecipeRunner recipeRunner;
     private readonly NpcSelector npcSelector;
-    private readonly NpcSpawner npcSpawner;
     private readonly CombatEngine combatEngine;
     private readonly CameraModeCoordinator cameraCoordinator;
     private readonly UseActionHook useActionHook;
     private readonly IClientState clientState;
     private readonly IChatGui chatGui;
+    private float? originalDamageMultiplier;
+    private float? originalPlayerDamageTakenMultiplier;
 
     public EncounterRuntimeAdapter(
         CombatRecipeRunner recipeRunner,
         NpcSelector npcSelector,
-        NpcSpawner npcSpawner,
         CombatEngine combatEngine,
         CameraModeCoordinator cameraCoordinator,
         UseActionHook useActionHook,
@@ -39,7 +39,6 @@ public sealed class EncounterRuntimeAdapter : IEncounterRuntime
     {
         this.recipeRunner = recipeRunner;
         this.npcSelector = npcSelector;
-        this.npcSpawner = npcSpawner;
         this.combatEngine = combatEngine;
         this.cameraCoordinator = cameraCoordinator;
         this.useActionHook = useActionHook;
@@ -48,8 +47,14 @@ public sealed class EncounterRuntimeAdapter : IEncounterRuntime
     }
 
     public bool IsSimulationActive => combatEngine.IsActive;
-    public bool IsSpawnReady => npcSpawner.PendingCount == 0;
+    public bool IsSpawnReady => recipeRunner.IsSpawnReady;
     public bool IsPlayerDead => combatEngine.IsActive && !combatEngine.State.PlayerState.IsAlive;
+    public float? PlayerHpRatio => combatEngine.State.PlayerState.MaxHp > 0
+        ? Math.Clamp(
+            combatEngine.State.PlayerState.CurrentHp / (float)combatEngine.State.PlayerState.MaxHp,
+            0f,
+            1f)
+        : null;
     public int EnemyCount => npcSelector.SelectedNpcs.Count;
 
     public int LivingEnemyCount
@@ -88,9 +93,14 @@ public sealed class EncounterRuntimeAdapter : IEncounterRuntime
     public bool StartRecipe(string recipeName) => recipeRunner.TryStart(recipeName);
     public void StopRecipe(bool print) => recipeRunner.Stop(print);
     public int SpawnEnemies(IReadOnlyList<CombatRecipeEnemyGroup> enemies) => recipeRunner.QueueEnemies(enemies);
+    public int SpawnCompanions(IReadOnlyList<CombatRecipeCompanionGroup> companions) =>
+        recipeRunner.QueueCompanions(companions);
 
     public bool HasActor(EncounterActorBinding binding) => ResolveActor(binding) != null;
-    public nint GetActorAddress(EncounterActorBinding binding) => ResolveActor(binding)?.Address ?? nint.Zero;
+    public nint GetActorAddress(EncounterActorBinding binding) =>
+        string.Equals(binding.Name, "$player", StringComparison.OrdinalIgnoreCase)
+            ? Core.Services.ObjectTable.LocalPlayer?.Address ?? nint.Zero
+            : ResolveActor(binding)?.Address ?? nint.Zero;
 
     public float? GetActorHpRatio(EncounterActorBinding binding)
     {
@@ -120,10 +130,44 @@ public sealed class EncounterRuntimeAdapter : IEncounterRuntime
 
     public void PlayPlayerVictory() => combatEngine.TriggerPlayerVictory();
 
+    public void ApplyPartyPower(EncounterCueDefinition cue)
+    {
+        originalDamageMultiplier ??= combatEngine.DamageMultiplier;
+        originalPlayerDamageTakenMultiplier ??= combatEngine.State.PlayerState.DamageTakenMultiplier;
+
+        combatEngine.DamageMultiplier = Math.Clamp(
+            combatEngine.DamageMultiplier * Math.Max(0.05f, cue.OutgoingDamageMultiplier),
+            0.05f,
+            20f);
+        var player = combatEngine.State.PlayerState;
+        player.DamageTakenMultiplier = Math.Clamp(
+            player.DamageTakenMultiplier * Math.Max(0.05f, cue.PlayerDamageTakenMultiplier),
+            0.05f,
+            10f);
+        if (cue.HealPlayerRatio > 0f && player.MaxHp > 0)
+        {
+            var healing = (int)MathF.Round(player.MaxHp * Math.Clamp(cue.HealPlayerRatio, 0f, 1f));
+            player.CurrentHp = Math.Min(player.MaxHp, player.CurrentHp + healing);
+        }
+    }
+
+    public void ResetEncounterModifiers()
+    {
+        if (originalDamageMultiplier.HasValue)
+            combatEngine.DamageMultiplier = originalDamageMultiplier.Value;
+        if (originalPlayerDamageTakenMultiplier.HasValue)
+            combatEngine.State.PlayerState.DamageTakenMultiplier = originalPlayerDamageTakenMultiplier.Value;
+        originalDamageMultiplier = null;
+        originalPlayerDamageTakenMultiplier = null;
+    }
+
     public void SubmitCamera(EncounterActorBinding binding, EncounterCueDefinition cue)
     {
-        var actor = ResolveActor(binding);
-        var position = actor?.GameObjectRef?.Position;
+        Vector3? position = null;
+        if (string.Equals(binding.Name, "$player", StringComparison.OrdinalIgnoreCase))
+            position = Core.Services.ObjectTable.LocalPlayer?.Position;
+        else
+            position = ResolveActor(binding)?.GameObjectRef?.Position;
         if (!position.HasValue) return;
 
         cameraCoordinator.Submit(CameraOwner.Encounter, new CameraRequest

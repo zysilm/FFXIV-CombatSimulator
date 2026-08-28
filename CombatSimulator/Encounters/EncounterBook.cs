@@ -115,7 +115,8 @@ public sealed class EncounterBook
                 {
                     if (condition.Type is EncounterConditionType.ActorDead or EncounterConditionType.ActorHpAtOrBelow)
                         ValidateActor(encounter, condition.Actor, resourceName, phase.Id);
-                    if (condition.Type == EncounterConditionType.ActorHpAtOrBelow &&
+                    if ((condition.Type is EncounterConditionType.ActorHpAtOrBelow or
+                         EncounterConditionType.PlayerHpAtOrBelow) &&
                         (condition.Ratio < 0f || condition.Ratio > 1f))
                         throw new InvalidDataException(
                             $"{resourceName}: phase '{phase.Id}' has an HP ratio outside 0..1.");
@@ -134,7 +135,9 @@ public sealed class EncounterBook
         {
             if (cue.AtSeconds < 0f || cue.Duration < 0f)
                 throw new InvalidDataException($"{resource}: phase '{phase}' has a cue with negative timing.");
-            if (cue.Type is EncounterCueType.CameraFocus or EncounterCueType.EnemyPressure)
+            if (cue.Type == EncounterCueType.CameraFocus)
+                ValidateActor(encounter, cue.Actor, resource, phase, allowPlayer: true);
+            if (cue.Type == EncounterCueType.EnemyPressure)
                 ValidateActor(encounter, cue.Actor, resource, phase);
             if (cue.Type == EncounterCueType.SpawnEnemies && cue.Enemies.Count == 0)
                 throw new InvalidDataException($"{resource}: phase '{phase}' has an empty spawnEnemies cue.");
@@ -152,6 +155,29 @@ public sealed class EncounterBook
                     throw new InvalidDataException(
                         $"{resource}: phase '{phase}' requests more than 150 spawned enemies.");
             }
+            if (cue.Type == EncounterCueType.SpawnCompanions)
+            {
+                if (cue.Companions.Count == 0)
+                    throw new InvalidDataException(
+                        $"{resource}: phase '{phase}' has an empty spawnCompanions cue.");
+                var total = 0;
+                foreach (var group in cue.Companions)
+                {
+                    if (group.Count is < 0 or > 50)
+                        throw new InvalidDataException(
+                            $"{resource}: phase '{phase}' has a companion count outside 0..50.");
+                    total += group.Count;
+                }
+                if (total > 50)
+                    throw new InvalidDataException(
+                        $"{resource}: phase '{phase}' requests more than 50 companions.");
+            }
+            if (cue.Type == EncounterCueType.PartyPower &&
+                (cue.OutgoingDamageMultiplier is < 0.05f or > 10f ||
+                 cue.PlayerDamageTakenMultiplier is < 0.05f or > 10f ||
+                 cue.HealPlayerRatio is < 0f or > 1f))
+                throw new InvalidDataException(
+                    $"{resource}: phase '{phase}' has partyPower values outside their safe range.");
         }
     }
 
@@ -159,8 +185,11 @@ public sealed class EncounterBook
         EncounterDefinition encounter,
         string actor,
         string resource,
-        string phase)
+        string phase,
+        bool allowPlayer = false)
     {
+        if (allowPlayer && string.Equals(actor, "$player", StringComparison.OrdinalIgnoreCase))
+            return;
         if (string.IsNullOrWhiteSpace(actor) || !encounter.Actors.ContainsKey(actor))
             throw new InvalidDataException(
                 $"{resource}: phase '{phase}' references unknown actor alias '{actor}'.");

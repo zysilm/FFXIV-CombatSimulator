@@ -1,0 +1,270 @@
+{
+  "schemaVersion": 1,
+  "id": "wolves-grand-melee",
+  "name": "The Wolves' Grand Melee",
+  "description": "An arena exhibition that begins as a duel, then opens the gates for reinforcements on both sides.",
+  "storyEligible": false,
+  "setup": {
+    "recipe": "The Wolves' Grand Melee",
+    "readyTimeoutSeconds": 8.0
+  },
+  "actors": {
+    "champion": {
+      "name": "Fordola",
+      "occurrence": 1,
+      "required": true
+    }
+  },
+  "initialPhase": "opening-bell",
+  "phases": [
+    {
+      "id": "opening-bell",
+      "name": "Opening Bell",
+      "onEnter": [
+        {
+          "type": "title",
+          "text": "THE WOLVES' GRAND MELEE",
+          "duration": 1.4
+        },
+        {
+          "type": "cameraFocus",
+          "actor": "champion",
+          "duration": 2.2,
+          "distance": 5.2,
+          "heightOffset": 1.3,
+          "fovDegrees": 46.0
+        },
+        {
+          "type": "dialogue",
+          "atSeconds": 0.8,
+          "speaker": "Arena Announcer",
+          "text": "One challenger. One champion. Let the opening bout begin!",
+          "duration": 3.0
+        },
+        {
+          "type": "cameraFocus",
+          "atSeconds": 2.25,
+          "actor": "$player",
+          "duration": 1.8,
+          "distance": 4.6,
+          "heightOffset": 1.1,
+          "fovDegrees": 48.0
+        }
+      ],
+      "onExit": [],
+      "transitions": [
+        {
+          "when": [
+            { "type": "playerDead" }
+          ],
+          "to": "defeat"
+        },
+        {
+          "when": [
+            { "type": "actorHpAtOrBelow", "actor": "champion", "ratio": 0.95 }
+          ],
+          "to": "open-the-gates"
+        }
+      ]
+    },
+    {
+      "id": "open-the-gates",
+      "name": "Open the Gates",
+      "onEnter": [
+        {
+          "type": "title",
+          "text": "OPEN THE GATES",
+          "duration": 1.2
+        },
+        {
+          "type": "dialogue",
+          "speaker": "Arena Announcer",
+          "text": "First blood! Seconds, take the field!",
+          "duration": 3.0
+        },
+        {
+          "type": "spawnEnemies",
+          "enemies": [
+            {
+              "type": "Human",
+              "name": "imperial patrol",
+              "occurrence": 2,
+              "count": 3,
+              "hpMultiplier": 1.25
+            }
+          ]
+        },
+        {
+          "type": "spawnCompanions",
+          "companions": [
+            {
+              "type": "SelfRandomized",
+              "count": 2
+            }
+          ]
+        },
+        {
+          "type": "partyPower",
+          "outgoingDamageMultiplier": 1.15,
+          "playerDamageTakenMultiplier": 0.9,
+          "healPlayerRatio": 0.15
+        },
+        {
+          "type": "cameraFocus",
+          "actor": "$player",
+          "duration": 2.6,
+          "distance": 5.0,
+          "heightOffset": 1.15,
+          "fovDegrees": 50.0
+        }
+      ],
+      "onExit": [],
+      "transitions": [
+        {
+          "when": [
+            { "type": "playerDead" }
+          ],
+          "to": "defeat"
+        },
+        {
+          "when": [
+            { "type": "playerHpAtOrBelow", "ratio": 0.35 }
+          ],
+          "to": "second-wind"
+        },
+        {
+          "when": [
+            { "type": "allEnemiesDead" }
+          ],
+          "to": "victory"
+        }
+      ]
+    },
+    {
+      "id": "second-wind",
+      "name": "Second Wind",
+      "onEnter": [
+        {
+          "type": "title",
+          "text": "LIMIT BREAK — SECOND WIND",
+          "duration": 1.5
+        },
+        {
+          "type": "cameraFocus",
+          "actor": "$player",
+          "duration": 3.0,
+          "distance": 4.0,
+          "heightOffset": 1.25,
+          "fovDegrees": 42.0
+        },
+        {
+          "type": "dialogue",
+          "speaker": "Arena Announcer",
+          "text": "Still standing! The challenger burns brighter at the brink!",
+          "duration": 3.2
+        },
+        {
+          "type": "partyPower",
+          "outgoingDamageMultiplier": 1.45,
+          "playerDamageTakenMultiplier": 0.65,
+          "healPlayerRatio": 0.3
+        },
+        {
+          "type": "enemyPressure",
+          "actor": "champion",
+          "autoAttackDelayMultiplier": 0.75,
+          "moveSpeedMultiplier": 1.12,
+          "damageTakenMultiplier": 0.9
+        }
+      ],
+      "onExit": [],
+      "transitions": [
+        {
+          "when": [
+            { "type": "playerDead" }
+          ],
+          "to": "defeat"
+        },
+        {
+          "when": [
+            { "type": "allEnemiesDead" }
+          ],
+          "to": "victory"
+        }
+      ]
+    },
+    {
+      "id": "victory",
+      "name": "Victory",
+      "onEnter": [
+        {
+          "type": "playerVictory"
+        },
+        {
+          "type": "title",
+          "text": "GRAND MELEE CHAMPION",
+          "duration": 3.5
+        },
+        {
+          "type": "cameraFocus",
+          "actor": "$player",
+          "duration": 3.5,
+          "distance": 5.2,
+          "heightOffset": 1.2,
+          "fovDegrees": 46.0
+        },
+        {
+          "type": "dialogue",
+          "atSeconds": 1.0,
+          "speaker": "Arena Announcer",
+          "text": "The challenger stands alone at the final bell!",
+          "duration": 3.0
+        }
+      ],
+      "onExit": [],
+      "transitions": [
+        {
+          "when": [
+            { "type": "elapsed", "seconds": 4.0 }
+          ],
+          "to": "$complete"
+        }
+      ]
+    },
+    {
+      "id": "defeat",
+      "name": "Defeat",
+      "onEnter": [
+        {
+          "type": "title",
+          "text": "THE FINAL BELL",
+          "duration": 3.5
+        },
+        {
+          "type": "cameraFocus",
+          "actor": "champion",
+          "duration": 3.5,
+          "distance": 5.0,
+          "heightOffset": 1.1,
+          "fovDegrees": 44.0
+        },
+        {
+          "type": "dialogue",
+          "atSeconds": 0.8,
+          "speaker": "Arena Announcer",
+          "text": "A valiant stand — but the champion holds the field.",
+          "duration": 3.0
+        }
+      ],
+      "onExit": [],
+      "transitions": [
+        {
+          "when": [
+            { "type": "elapsed", "seconds": 4.0 }
+          ],
+          "to": "$failed"
+        }
+      ]
+    }
+  ]
+}

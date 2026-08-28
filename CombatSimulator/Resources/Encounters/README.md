@@ -13,8 +13,13 @@ Supported cues:
 - `title`: local cinematic title overlay.
 - `dialogue`: speaker/text overlay and chat transcript.
 - `cameraFocus`: temporary request through `CameraModeCoordinator`; it never writes the camera directly.
+  The reserved actor `$player` focuses the local player; other values use declared actor aliases.
 - `spawnEnemies`: queues additional `CombatRecipeEnemyGroup` entries through `CombatRecipeRunner`.
+- `spawnCompanions`: queues player-side `CombatRecipeCompanionGroup` reinforcements.
 - `enemyPressure`: multiplies the bound enemy's attack delay, movement speed, and damage-taken scale.
+- `partyPower`: multiplies player/companion outgoing damage, scales damage received by the local
+  player, and can restore a ratio of the player's maximum HP. Modifiers are encounter-scoped and
+  restored on stop, completion, failure, restart, territory change, and logout.
 - `playerVictory`: explicitly starts the player victory presentation; directed encounters suppress
   the engine's automatic victory until this cue runs.
 - `combatLog`: adds an informational line to the local combat log.
@@ -24,6 +29,7 @@ Supported conditions:
 - `elapsed`
 - `actorHpAtOrBelow`
 - `actorDead`
+- `playerHpAtOrBelow`
 - `playerDead`
 - `allEnemiesDead`
 
