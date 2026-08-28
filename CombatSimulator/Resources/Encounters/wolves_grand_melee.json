@@ -78,15 +78,6 @@
           ]
         },
         {
-          "type": "spawnCompanions",
-          "companions": [
-            {
-              "type": "SelfRandomized",
-              "count": 2
-            }
-          ]
-        },
-        {
           "type": "partyPower",
           "outgoingDamageMultiplier": 1.15,
           "playerDamageTakenMultiplier": 0.9,
