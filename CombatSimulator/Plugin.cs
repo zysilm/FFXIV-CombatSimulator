@@ -281,6 +281,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.ShouldSuppressEnemyInitiation = () => devExperimental.SuppressEnemyInitiation;
         combatEngine.OnPlayerAttackLanded = devExperimental.OnPlayerAttackLanded;
         npcActionProfileProvider.ForceAutoAttackOnly = () => devExperimental.NpcAutoAttackOnly;
+        npcSpawner.StripBodyLegs = () => devExperimental.VirtualEnemyStripBodyLegs;
+        npcSpawner.StripAccessories = () => devExperimental.VirtualEnemyStripAccessories;
         companionManager = new CombatCompanionManager(
             objectTable, clientState, config, combatEngine, animationController,
             movementBlockHook, vnavmeshIpc, targetManager, partyEngagePlanner, terrainHeightService, log);

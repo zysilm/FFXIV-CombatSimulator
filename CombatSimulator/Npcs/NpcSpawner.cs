@@ -55,6 +55,17 @@ public unsafe class NpcSpawner : IDisposable
     public Action<SimulatedNpc>? OnNpcSpawnComplete { get; set; }
     public Action<string>? OnSpawnError { get; set; }
 
+    /// <summary>Dev-experimental seam: when true, every spawned humanoid virtual enemy has body + legs
+    /// stripped (model id 0 — the same bare "smallclothes" result unequipping those slots in-game
+    /// produces) regardless of its real equipment. Null (the production default, before the
+    /// experimental module wires this) behaves the same as false.</summary>
+    public Func<bool>? StripBodyLegs { private get; set; }
+
+    /// <summary>Dev-experimental seam: when true, every spawned humanoid virtual enemy has everything
+    /// except body + legs stripped (head, hands, feet, ears, neck, wrists, rings). Null (the production
+    /// default) behaves the same as false. Independent of StripBodyLegs — both can be on at once.</summary>
+    public Func<bool>? StripAccessories { private get; set; }
+
     /// <summary>
     /// When true, spawn mode is active: all player actions are routed to spawned NPCs
     /// and the game's target system is bypassed for combat.
@@ -729,6 +740,28 @@ public unsafe class NpcSpawner : IDisposable
         character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Wrists).Value = (ulong)enpc.ModelWrists;
         character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.RFinger).Value = (ulong)enpc.ModelRightRing;
         character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.LFinger).Value = (ulong)enpc.ModelLeftRing;
+
+        if (StripBodyLegs?.Invoke() == true)
+        {
+            // Model id 0 on Body/Legs is exactly what unequipping those slots in-game produces — the
+            // built-in smallclothes top and bottom.
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Body).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Legs).Value = 0;
+        }
+
+        if (StripAccessories?.Invoke() == true)
+        {
+            // Everything except body + legs. Independent of StripBodyLegs — whichever of the two
+            // touches body/legs (real equipment or bare) is left alone here.
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Head).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Hands).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Feet).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Ears).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Neck).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Wrists).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.RFinger).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.LFinger).Value = 0;
+        }
 
         log.Info($"[SpawnDbg] Overwrote customize/equipment from ENpcBase: Race={customizePtr[0]}, Tribe={customizePtr[4]}, Gender={customizePtr[1]}, Face={customizePtr[5]}, Body=0x{(ulong)enpc.ModelBody:X}");
     }
