@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "id": "zenos-last-hunt",
+  "name": "The Last Hunt",
+  "description": "A two-phase duel against Zenos, with an imperial reinforcement turn and a directed finale.",
+  "storyEligible": true,
+  "setup": {
+    "recipe": "Zenos: The Last Hunt",
+    "readyTimeoutSeconds": 8.0
+  },
+  "actors": {
+    "boss": {
+      "name": "Zenos Yae Galvus",
+      "occurrence": 1,
+      "required": true
+    }
+  },
+  "initialPhase": "imperial-pride",
+  "phases": [
+    {
+      "id": "imperial-pride",
+      "name": "Imperial Pride",
+      "onEnter": [
+        {
+          "type": "title",
+          "text": "IMPERIAL PRIDE",
+          "duration": 1.2
+        },
+        {
+          "type": "cameraFocus",
+          "actor": "boss",
+          "duration": 3.2,
+          "distance": 5.5,
+          "heightOffset": 1.4,
+          "fovDegrees": 48.0
+        },
+        {
+          "type": "dialogue",
+          "atSeconds": 1.25,
+          "speaker": "Zenos",
+          "text": "Come. Let us see how long your resolve survives.",
+          "duration": 3.0
+        }
+      ],
+      "onExit": [],
+      "transitions": [
+        {
+          "when": [
+            { "type": "playerDead" }
+          ],
+          "to": "$failed"
+        },
+        {
+          "when": [
+            { "type": "actorHpAtOrBelow", "actor": "boss", "ratio": 0.55 }
+          ],
+          "to": "the-last-hunt"
+        }
+      ]
+    },
+    {
+      "id": "the-last-hunt",
+      "name": "The Last Hunt",
+      "onEnter": [
+        {
+          "type": "title",
+          "text": "THE LAST HUNT",
+          "duration": 0.9
+        },
+        {
+          "type": "cameraFocus",
+          "actor": "boss",
+          "duration": 2.4,
+          "distance": 4.2,
+          "heightOffset": 1.5,
+          "fovDegrees": 43.0
+        },
+        {
+          "type": "dialogue",
+          "atSeconds": 0.95,
+          "speaker": "Zenos",
+          "text": "Good. Now show me everything.",
+          "duration": 2.8
+        },
+        {
+          "type": "enemyPressure",
+          "actor": "boss",
+          "autoAttackDelayMultiplier": 0.7,
+          "moveSpeedMultiplier": 1.18,
+          "damageTakenMultiplier": 0.85
+        },
+        {
+          "type": "spawnEnemies",
+          "enemies": [
+            {
+              "type": "Human",
+              "name": "imperial patrol",
+              "occurrence": 2,
+              "count": 2,
+              "hpMultiplier": 0.75
+            }
+          ]
+        }
+      ],
+      "onExit": [],
+      "transitions": [
+        {
+          "when": [
+            { "type": "playerDead" }
+          ],
+          "to": "$failed"
+        },
+        {
+          "when": [
+            { "type": "allEnemiesDead" }
+          ],
+          "to": "victory"
+        }
+      ]
+    },
+    {
+      "id": "victory",
+      "name": "Victory",
+      "onEnter": [
+        {
+          "type": "playerVictory"
+        },
+        {
+          "type": "title",
+          "text": "VICTORY",
+          "duration": 3.5
+        },
+        {
+          "type": "cameraFocus",
+          "actor": "boss",
+          "duration": 3.5,
+          "distance": 5.0,
+          "heightOffset": 0.8,
+          "fovDegrees": 46.0
+        }
+      ],
+      "onExit": [],
+      "transitions": [
+        {
+          "when": [
+            { "type": "elapsed", "seconds": 4.0 }
+          ],
+          "to": "$complete"
+        }
+      ]
+    }
+  ]
+}

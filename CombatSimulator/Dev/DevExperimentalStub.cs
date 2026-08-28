@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+using System;
 using CombatSimulator.Gui;
 using CombatSimulator.Simulation;
 
@@ -29,6 +30,7 @@ public sealed class DevExperimentalStub : IDevExperimental
     public void ResetWorldState() { }
     public void ResetTransientState() { }
     public void DrawToolbars(MainWindow mainWindow) { }
+    public void SetOcclusionVisibilityExclusion(Func<nint, bool>? exclusion) { }
     public void RestoreOcclusion() { }
     public void Dispose() { }
 }

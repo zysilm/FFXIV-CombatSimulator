@@ -11,10 +11,13 @@ using CombatSimulator.Animation;
 using CombatSimulator.Camera;
 using CombatSimulator.Companions;
 using CombatSimulator.Core;
+using CombatSimulator.Encounters;
+using CombatSimulator.Encounters.Runtime;
 using CombatSimulator.Fighting;
 using CombatSimulator.Gui;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
+using CombatSimulator.Recipes;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using CombatSimulator.Spectators;
@@ -81,6 +84,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly EnemyControlController enemyControlController;
     private readonly HookSafetyChecker hookSafetyChecker;
     private readonly UpdateLogPopupController updateLogPopupController;
+    private readonly CombatRecipeRunner recipeRunner;
+    private readonly EncounterDirector encounterDirector;
+    private readonly StoryEncounterPromptController storyEncounterPrompt;
+    private readonly EncounterOverlay encounterOverlay;
 
     // Action Mode: real-time combat layer wired through narrow seams.
     private readonly CombatSimulator.ActionCombat.ActionComboSink actionComboSink;
@@ -499,10 +506,35 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         activeCameraController.SetActive(config.EnableActiveCamera);
 
+        // Directed encounters are an orchestration layer over the existing recipe/runtime seams.
+        // They do not own combat math, AI, spawning, animation, or camera writes.
+        recipeRunner = new CombatRecipeRunner(
+            config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController,
+            dataManager, chatGui, useActionHook, log);
+        var encounterBook = new EncounterBook(log);
+        var encounterRuntime = new EncounterRuntimeAdapter(
+            recipeRunner, npcSelector, npcSpawner, combatEngine, cameraModeCoordinator,
+            useActionHook, clientState, chatGui);
+        encounterDirector = new EncounterDirector(encounterBook, encounterRuntime, log);
+        combatEngine.ShouldSuppressAutomaticPlayerVictory = () => encounterDirector.IsActive;
+        devExperimental.SetOcclusionVisibilityExclusion(
+            address => address != nint.Zero && address == encounterDirector.CameraSubjectAddress);
+        storyEncounterPrompt = new StoryEncounterPromptController(
+            config, encounterBook, encounterDirector, encounterRuntime, clientState, condition);
+        encounterOverlay = new EncounterOverlay(encounterDirector, storyEncounterPrompt);
+
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
+        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, recipeRunner, encounterDirector, log);
         armorDetachmentController.AllowOnHitDetach = () => mainWindow.DevExperimentalUnlocked;
-        hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
+        hpBarOverlay = new HpBarOverlay(
+            npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config,
+            () =>
+            {
+                if (!string.IsNullOrWhiteSpace(encounterDirector.CurrentEncounterId))
+                    encounterDirector.Restart();
+                else
+                    combatEngine.ResetState();
+            });
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, dismembermentController, mainWindow, config, gameGui, clientState);
         combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
@@ -546,6 +578,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         pluginInterface.UiBuilder.OpenMainUi -= OnOpenMainUi;
         pluginInterface.UiBuilder.OpenConfigUi -= OnOpenConfig;
         commandManager.RemoveHandler(CommandName);
+        encounterDirector.ResetWorld();
+        storyEncounterPrompt.Reset();
 
         // Game-state cleanup touches live game objects (despawn, restore animations/visibility).
         // On game CLOSE, Dispose runs after the game has freed those objects, so doing it would
@@ -612,17 +646,25 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                     chatGui.PrintError("[CombatSim] Cannot start: UseAction hook is not healthy. Actions would reach the server.");
                     break;
                 }
+                if (!string.IsNullOrWhiteSpace(encounterDirector.CurrentEncounterId))
+                    encounterDirector.Stop(stopCombat: false, print: false);
                 combatEngine.StartSimulation();
                 chatGui.Print("[CombatSim] Combat simulation started.");
                 break;
 
             case "stop":
-                combatEngine.StopSimulation();
+                if (!string.IsNullOrWhiteSpace(encounterDirector.CurrentEncounterId))
+                    encounterDirector.Stop(stopCombat: true, print: false);
+                else
+                    combatEngine.StopSimulation();
                 chatGui.Print("[CombatSim] Combat simulation stopped.");
                 break;
 
             case "reset":
-                combatEngine.ResetState();
+                if (!string.IsNullOrWhiteSpace(encounterDirector.CurrentEncounterId))
+                    encounterDirector.Restart();
+                else
+                    combatEngine.ResetState();
                 chatGui.Print("[CombatSim] Combat state reset.");
                 break;
 
@@ -711,6 +753,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         mainWindow.DrawDefeatRevivePopup();
         updateLogPopupController.Draw();
+        encounterOverlay.Draw();
 
         if (combatEngine.IsActive)
         {
@@ -804,6 +847,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             animationController.Tick(deltaTime);
             armorDetachmentController.Tick(deltaTime);
 
+            // Story bridge and encounter phases run outside simulation too: prompts happen after a
+            // cutscene and Preparing waits for queued actors before the first cinematic cue.
+            storyEncounterPrompt.Tick(deltaTime);
+            encounterDirector.Tick(deltaTime);
+
             // Camera controllers run independently of combat. Submitters tick first,
             // then the coordinator resolves priority and writes the camera once, and
             // the orbit hook host reflects whether any mode supplies an orbit center.
@@ -849,7 +897,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             {
                 log.Error("UseAction hook is no longer healthy — emergency stopping simulation to prevent server packets.");
                 chatGui.PrintError("[CombatSim] SAFETY: UseAction hook failed. Simulation stopped to prevent server communication.");
-                combatEngine.StopSimulation();
+                EmergencyStopSimulation();
                 return;
             }
 
@@ -867,6 +915,20 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         catch (Exception ex)
         {
             log.Error(ex, "Error in framework update, stopping simulation.");
+            EmergencyStopSimulation();
+        }
+    }
+
+    private void EmergencyStopSimulation()
+    {
+        try
+        {
+            encounterDirector.Stop(stopCombat: false, print: false);
+            recipeRunner.Stop(print: false);
+        }
+        catch (Exception cleanupException)
+        {
+            log.Error(cleanupException, "Error during fail-closed simulation cleanup.");
             combatEngine.StopSimulation();
         }
     }
@@ -1200,6 +1262,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnTerritoryChanged(uint territoryId)
     {
+        encounterDirector.ResetWorld();
+        storyEncounterPrompt.Reset();
         // Despawn client-spawned NPCs first (they don't survive zone changes)
         npcSpawner.SpawnModeActive = false;
         if (npcSpawner.SpawnedNpcs.Count > 0)
@@ -1216,6 +1280,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         devExperimental.ResetWorldState();
         enemyControlController.Despawn();
         dynamicCameraController.Reset();
+        mapEnemyController.ClearRecipeSettings();
+        config.RecipeNpcCollisionOverride = null;
 
         if (combatEngine.IsActive)
         {
@@ -1234,6 +1300,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     {
         try
         {
+            encounterDirector.ResetWorld();
+            storyEncounterPrompt.Reset();
             npcSpawner.SpawnModeActive = false;
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
@@ -1243,6 +1311,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             devExperimental.ResetWorldState();
             enemyControlController.Despawn();
             dynamicCameraController.Reset();
+            mapEnemyController.ClearRecipeSettings();
+            config.RecipeNpcCollisionOverride = null;
             npcSpawner.DespawnAll();
             companionManager.DespawnAll();
             if (combatEngine.IsActive)

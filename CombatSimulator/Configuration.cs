@@ -432,6 +432,13 @@ public partial class Configuration : IPluginConfiguration
     public string FastCombatRecipeName { get; set; } = "";
     public int FastCombatLevel { get; set; } = 90;
 
+    // Directed encounters: data-driven phases/cues layered over the existing recipe runtime.
+    public string SelectedEncounterId { get; set; } = "";
+    // Explicit opt-in. The story bridge only offers a local prompt after a real cutscene ends; it
+    // never starts automatically and never reads or mutates quest progress.
+    public bool EnablePostCutsceneEncounterPrompt { get; set; } = false;
+    public string PostCutsceneEncounterId { get; set; } = "";
+
     // Target Formation
     public bool EnableNpcTargetPlayer { get; set; } = true;
     public bool EnableTargetApproach { get; set; } = true;

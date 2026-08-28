@@ -53,5 +53,7 @@ public interface IDevExperimental : IDisposable
     void ResetWorldState();
     void ResetTransientState();
     void DrawToolbars(MainWindow mainWindow);
+    /// <summary>Provide actors that an active camera mode intentionally frames and must not hide.</summary>
+    void SetOcclusionVisibilityExclusion(Func<nint, bool>? exclusion);
     void RestoreOcclusion();
 }

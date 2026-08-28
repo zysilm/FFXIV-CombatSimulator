@@ -85,6 +85,11 @@ public class CombatEngine : IDisposable
     public Func<uint, nint?>? ResolveExternalEntityAddress { get; set; }
     public Func<bool>? HasLivingCompanions { get; set; }
     /// <summary>
+    /// Lets a higher-level encounter own the moment of player victory while future waves or
+    /// presentation cues are still pending. Normal simulations leave this unset.
+    /// </summary>
+    public Func<bool>? ShouldSuppressAutomaticPlayerVictory { private get; set; }
+    /// <summary>
     /// Returns the simulated entity id of the player's currently locked target, or
     /// 0 when none. Wired to PlayerTargetController. When custom targeting is on,
     /// auto-attack only fires against this target.
@@ -1358,7 +1363,7 @@ public class CombatEngine : IDisposable
                 }
             }
 
-            if (allDead && !victoryTriggered)
+            if (allDead && !victoryTriggered && ShouldSuppressAutomaticPlayerVictory?.Invoke() != true)
             {
                 victoryTriggered = true;
                 animationController.PlayVictory(isPlayerVictory: true);
@@ -1402,6 +1407,16 @@ public class CombatEngine : IDisposable
 
         if (cinematicNpc == null)
             animationController.PlayVictory(isPlayerVictory: false, npcSelector.SelectedNpcs);
+    }
+
+    /// <summary>Explicit player-victory cue for a directed encounter.</summary>
+    public void TriggerPlayerVictory()
+    {
+        if (!State.IsActive || victoryTriggered)
+            return;
+
+        victoryTriggered = true;
+        animationController.PlayVictory(isPlayerVictory: true);
     }
 
     private void OnEntityDeath(SimulatedEntityState entity)

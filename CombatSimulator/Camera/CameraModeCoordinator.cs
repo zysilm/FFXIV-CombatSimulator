@@ -27,6 +27,8 @@ public enum CameraOwner
     DynamicDeath = 25,
     /// <summary>Fighting Mode side-view combat camera.</summary>
     Fighting2D = 30,
+    /// <summary>Short, data-driven encounter shots. User Active Cam and post-KO framing still win.</summary>
+    Encounter = 35,
     /// <summary>Fighting Mode post-defeat camera (translate / bone follow / KO framing).</summary>
     FightingKO = 40,
     /// <summary>User-enabled Active Camera. Always wins.</summary>
@@ -85,6 +87,7 @@ public sealed unsafe class CameraModeCoordinator
     {
         CameraOwner.UserActiveCam,
         CameraOwner.FightingKO,
+        CameraOwner.Encounter,
         CameraOwner.Fighting2D,
         CameraOwner.DynamicDeath,
         CameraOwner.EnemyControlFollow,

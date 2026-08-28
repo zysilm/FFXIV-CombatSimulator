@@ -17,6 +17,7 @@ Open Dalamud Settings in-game (`/xlsettings`) and follow these steps:
 ## Features
 
 - **Combat System** - Mixed battles with field enemies, spawned NPCs, target selection, full damage calculation, HP overlays, combat log, and melee/ranged/boss AI.
+- **Directed Encounters** - JSON-authored phases, dialogue, cinematic camera cues, reinforcements, and an opt-in post-cutscene bridge into local battles.
 - **Party Companions** - Clone visible players or configured companions into friendly combat actors with target planning, movement, and field skirmish recipes.
 - **Ragdoll & Camera** - High-precision BEPUphysics2 ragdolls with per-bone tuning, non-humanoid support, death cam, active camera, and smooth bone tracking.
 
@@ -27,6 +28,10 @@ All combat is client-side only - no data is sent to the server.
 1. Open the plugin window with `/combatsim`
 2. Choose a combat recipe such as **Field Combat**
 3. Use **Start** to begin the local simulation
+
+For a staged battle, choose **Directed Encounter** on the Combat page. The optional post-cutscene
+offer is disabled by default and must be enabled there; it only starts after explicit confirmation
+and never advances or changes quest state.
 
 ### Commands
 

@@ -300,7 +300,7 @@ public unsafe class ActiveCameraController : IDisposable
         // stack the active-cam min-distance/vertical-lock overrides on top of them — the
         // vertical lock in particular would overwrite the pitch they just solved for.
         var owner = GetCurrentOwner?.Invoke() ?? CameraOwner.None;
-        var modeOwnsAngles = owner is CameraOwner.Fighting2D or CameraOwner.FightingKO
+        var modeOwnsAngles = owner is CameraOwner.Fighting2D or CameraOwner.FightingKO or CameraOwner.Encounter
             or CameraOwner.DynamicCam or CameraOwner.DynamicDeath;
 
         // Collision patch

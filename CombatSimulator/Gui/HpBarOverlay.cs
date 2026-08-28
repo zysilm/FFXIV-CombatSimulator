@@ -26,6 +26,7 @@ public class HpBarOverlay : IDisposable
     private readonly IGameGui gameGui;
     private readonly IClientState clientState;
     private readonly Configuration config;
+    private readonly Action resetBattle;
 
     private const float BarWidth = 200f;
     private const float BarHeight = 16f;
@@ -57,7 +58,8 @@ public class HpBarOverlay : IDisposable
         BoneTransformService boneService,
         IGameGui gameGui,
         IClientState clientState,
-        Configuration config)
+        Configuration config,
+        Action resetBattle)
     {
         this.npcSelector = npcSelector;
         this.companionManager = companionManager;
@@ -66,6 +68,7 @@ public class HpBarOverlay : IDisposable
         this.gameGui = gameGui;
         this.clientState = clientState;
         this.config = config;
+        this.resetBattle = resetBattle;
     }
 
     public unsafe void Draw()
@@ -554,7 +557,7 @@ public class HpBarOverlay : IDisposable
 
             if (ImGui.Button("Reset Battle", new Vector2(buttonWidth, 0)))
             {
-                combatEngine.ResetState();
+                resetBattle();
                 showResetPopup = false;
             }
 

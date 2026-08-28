@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Zenos: The Last Hunt",
+    "description": "A directed duel used by The Last Hunt encounter.",
+    "companions": [],
+    "enemies": [
+      {
+        "type": "Human",
+        "id": 1018510,
+        "name": "Zenos Yae Galvus (No Helm)",
+        "occurrence": 1,
+        "count": 1,
+        "hpMultiplier": 8.0
+      }
+    ]
+  }
+]

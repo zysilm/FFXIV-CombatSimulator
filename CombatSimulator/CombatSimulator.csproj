@@ -34,6 +34,7 @@
     <EmbeddedResource Include="Resources\CharacterSurfaceProfiles.json" />
     <EmbeddedResource Include="Resources\CollapseProfiles\*.json" />
     <EmbeddedResource Include="Resources\CombatRecipes\*.json" />
+    <EmbeddedResource Include="Resources\Encounters\*.json" />
     <EmbeddedResource Include="Resources\Actions.json" />
     <EmbeddedResource Include="UpdateLog\update-log.json" />
     <EmbeddedResource Include="Resources\gaya_nosound.scd" />
