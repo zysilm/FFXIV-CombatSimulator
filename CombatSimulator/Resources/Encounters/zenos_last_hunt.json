@@ -27,14 +27,6 @@
           "duration": 1.2
         },
         {
-          "type": "cameraFocus",
-          "actor": "boss",
-          "duration": 3.2,
-          "distance": 5.5,
-          "heightOffset": 1.4,
-          "fovDegrees": 48.0
-        },
-        {
           "type": "dialogue",
           "atSeconds": 1.25,
           "speaker": "Zenos",
@@ -66,14 +58,6 @@
           "type": "title",
           "text": "THE LAST HUNT",
           "duration": 0.9
-        },
-        {
-          "type": "cameraFocus",
-          "actor": "boss",
-          "duration": 2.4,
-          "distance": 4.2,
-          "heightOffset": 1.5,
-          "fovDegrees": 43.0
         },
         {
           "type": "dialogue",
@@ -129,14 +113,6 @@
           "type": "title",
           "text": "VICTORY",
           "duration": 3.5
-        },
-        {
-          "type": "cameraFocus",
-          "actor": "boss",
-          "duration": 3.5,
-          "distance": 5.0,
-          "heightOffset": 0.8,
-          "fovDegrees": 46.0
         }
       ],
       "onExit": [],
