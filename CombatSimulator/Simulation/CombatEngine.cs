@@ -1316,7 +1316,8 @@ public class CombatEngine : IDisposable
             {
                 playerDeathTriggered = true;
                 movementBlockHook.IsBlocking = true;
-                animationController.RemoveAllActiveVfx();
+                // Let the killing blow finish naturally. Tracked action VFX already have bounded
+                // TTLs, while StopSimulation/Dispose still perform immediate fail-safe cleanup.
                 BeforePlayerDeath?.Invoke();
                 animationController.PlayPlayerDeath(forceCombatDeath: true);
                 TriggerEnemyVictoryIfPartyDefeated();
