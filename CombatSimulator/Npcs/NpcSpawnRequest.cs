@@ -8,6 +8,7 @@ namespace CombatSimulator.Npcs;
 
 public class NpcSpawnRequest
 {
+    public string DisplayName { get; set; } = string.Empty;
     public uint BNpcNameId { get; set; }
     public uint BNpcBaseId { get; set; }
     public uint ENpcBaseId { get; set; }     // Non-zero for humanoid NPC (ENpcBase)

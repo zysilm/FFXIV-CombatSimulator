@@ -595,6 +595,7 @@ public unsafe class NpcSpawner : IDisposable
     {
         return new NpcSpawnRequest
         {
+            DisplayName = src.DisplayName,
             BNpcNameId = src.BNpcNameId,
             BNpcBaseId = src.BNpcBaseId,
             ENpcBaseId = src.ENpcBaseId,
@@ -910,6 +911,11 @@ public unsafe class NpcSpawner : IDisposable
 
     private string GetNpcName(NpcSpawnRequest request)
     {
+        // The catalog identity describes the selected appearance. BNpcNameId is only the native
+        // setup identity and may intentionally be zero for curated or ambiguous appearances.
+        if (!string.IsNullOrWhiteSpace(request.DisplayName))
+            return request.DisplayName;
+
         // Try BNpcName first (for BNpc entries)
         if (request.BNpcNameId > 0)
         {

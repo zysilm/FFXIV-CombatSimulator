@@ -43,6 +43,13 @@ public class NpcCatalogEntry
     public string Name { get; set; } = string.Empty;
     public NpcCatalogType Type { get; set; }
     public NpcCatalogSource Source { get; set; }
+    public bool HasDuplicateName { get; set; }
+    /// <summary>
+    /// Supplemental names that can discover an otherwise unnamed base. They are deliberately not
+    /// presented as the actor's identity because BNpcLink is a many-to-many search index, not a
+    /// guaranteed SetupBNpc pair.
+    /// </summary>
+    public IReadOnlyList<string> SearchAliases { get; set; } = Array.Empty<string>();
 
     /// <summary>
     /// ModelChara-only Monsters can use the existing direct-model spawn path. ModelChara-only
@@ -126,51 +133,12 @@ public class NpcCatalog
                 eNpcRows[row.RowId] = (row, model.Type, model.ModelId);
         }
 
-        // A single BNpcBase can have several BNpcName identities. Keep each mapping searchable;
-        // ENpc/ModelChara entries use variant 0.
-        var addedSources = new HashSet<(NpcCatalogSource Source, uint Id, uint Variant)>();
+        var addedSources = new HashSet<(NpcCatalogSource Source, uint Id)>();
 
-        // BNpcBase has no direct name link in the game's Excel sheets. Use the same supplemental
-        // BNpcLink dataset as ActorMorpher instead of limiting the catalog to our old curated list.
-        var battleNpcNameLinks = LoadBattleNpcNameLinks();
-        foreach (var (id, model) in bNpcRows)
-        {
-            var addedNamedEntry = false;
-            if (battleNpcNameLinks.TryGetValue(id, out var nameIds))
-            {
-                foreach (var nameId in nameIds)
-                {
-                    if (!bNpcNames.TryGetValue(nameId, out var name) || string.IsNullOrWhiteSpace(name))
-                        continue;
-
-                    AddSourceEntry(
-                        id,
-                        nameId,
-                        model.ModelId,
-                        name,
-                        model.Type,
-                        NpcCatalogSource.BNpcBase,
-                        addedSources);
-                    addedNamedEntry = true;
-                }
-            }
-
-            // Preserve access even for the small number of bases not yet covered by supplemental
-            // data. The ID is explicit and the actor remains spawnable/searchable.
-            if (!addedNamedEntry)
-            {
-                AddSourceEntry(
-                    id,
-                    id,
-                    model.ModelId,
-                    $"Battle NPC {id}",
-                    model.Type,
-                    NpcCatalogSource.BNpcBase,
-                    addedSources);
-            }
-        }
-
-        // Preserve the embedded Anamnesis-derived mappings as the source for localized BNpc names.
+        // NpcNames describes the appearance represented by a base row. Keep it authoritative when
+        // present; unlike BNpcLink it does not cross-product one display name over many appearances.
+        var curatedBattleNames = new Dictionary<uint, (string Name, uint NameId)>();
+        var curatedEventNames = new Dictionary<uint, string>();
         var curatedNames = LoadEmbeddedNpcNames();
         if (curatedNames == null)
         {
@@ -184,32 +152,82 @@ public class NpcCatalog
                     continue;
 
                 if (key.StartsWith("B:", StringComparison.Ordinal) &&
-                    uint.TryParse(key.AsSpan(2), out var bNpcBaseId) &&
-                    bNpcRows.TryGetValue(bNpcBaseId, out var bModel))
+                    uint.TryParse(key.AsSpan(2), out var bNpcBaseId))
                 {
-                    AddSourceEntry(
-                        bNpcBaseId,
-                        bNpcNameId == 0 ? bNpcBaseId : bNpcNameId,
-                        bModel.ModelId,
-                        displayName,
-                        bModel.Type,
-                        NpcCatalogSource.BNpcBase,
-                        addedSources);
+                    curatedBattleNames[bNpcBaseId] = (displayName, bNpcNameId);
                 }
                 else if (key.StartsWith("E:", StringComparison.Ordinal) &&
-                         uint.TryParse(key.AsSpan(2), out var eNpcBaseId) &&
-                         eNpcRows.TryGetValue(eNpcBaseId, out var eModel))
+                         uint.TryParse(key.AsSpan(2), out var eNpcBaseId))
                 {
-                    AddSourceEntry(
-                        eNpcBaseId,
-                        0,
-                        eModel.ModelId,
-                        displayName,
-                        eModel.Type,
-                        NpcCatalogSource.ENpcBase,
-                        addedSources);
+                    curatedEventNames[eNpcBaseId] = displayName;
                 }
             }
+        }
+
+        // BNpcLink remains valuable for discovering new models, but it is deliberately many-to-many.
+        // ActorMorpher applies appearances directly; passing every pair to SetupBNpc instead creates
+        // unrelated actors with the same label. Build one canonical identity per BNpcBase.
+        var battleNpcNameLinks = LoadBattleNpcNameLinks();
+        var ambiguousBattleNpcBases = 0;
+        foreach (var (id, model) in bNpcRows)
+        {
+            var linkedNameIds = battleNpcNameLinks.TryGetValue(id, out var nameIds)
+                ? nameIds
+                : Array.Empty<uint>();
+            var linkedNames = new List<string>();
+            foreach (var linkedNameId in linkedNameIds)
+            {
+                if (bNpcNames.TryGetValue(linkedNameId, out var linkedName) &&
+                    !string.IsNullOrWhiteSpace(linkedName) &&
+                    !ContainsExact(linkedNames, linkedName))
+                {
+                    linkedNames.Add(linkedName);
+                }
+            }
+
+            string displayName;
+            uint bNpcNameId;
+            IReadOnlyList<string> searchAliases = Array.Empty<string>();
+            if (curatedBattleNames.TryGetValue(id, out var curated))
+            {
+                displayName = curated.Name;
+                bNpcNameId = curated.NameId;
+
+                // Literal curated labels have no native name row. Confirm the self-ID through
+                // BNpcLink before using it; numerical equality alone is not evidence of a pair.
+                if (bNpcNameId == 0 && Array.IndexOf(linkedNameIds, id) >= 0)
+                    bNpcNameId = id;
+            }
+            else if (Array.IndexOf(linkedNameIds, id) >= 0 &&
+                     bNpcNames.TryGetValue(id, out var selfName))
+            {
+                displayName = selfName;
+                bNpcNameId = id;
+            }
+            else if (linkedNameIds.Length == 1 &&
+                     bNpcNames.TryGetValue(linkedNameIds[0], out var uniqueName))
+            {
+                displayName = uniqueName;
+                bNpcNameId = linkedNameIds[0];
+            }
+            else
+            {
+                displayName = $"Battle NPC {id}";
+                bNpcNameId = 0;
+                searchAliases = linkedNames;
+                if (linkedNames.Count > 0)
+                    ambiguousBattleNpcBases++;
+            }
+
+            AddSourceEntry(
+                id,
+                bNpcNameId,
+                model.ModelId,
+                displayName,
+                model.Type,
+                NpcCatalogSource.BNpcBase,
+                addedSources,
+                searchAliases);
         }
 
         // ENpcBase and ENpcResident share RowIds, so every named Event NPC can be added directly.
@@ -217,12 +235,13 @@ public class NpcCatalog
         var residents = dataManager.GetExcelSheet<ENpcResident>();
         foreach (var (id, value) in eNpcRows)
         {
-            if (addedSources.Contains((NpcCatalogSource.ENpcBase, id, 0)))
-                continue;
-            var resident = residents.GetRowOrDefault(id);
-            if (resident == null)
-                continue;
-            var name = resident.Value.Singular.ExtractText();
+            var name = curatedEventNames.GetValueOrDefault(id, string.Empty);
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                var resident = residents.GetRowOrDefault(id);
+                if (resident != null)
+                    name = resident.Value.Singular.ExtractText();
+            }
             if (string.IsNullOrWhiteSpace(name))
                 continue;
 
@@ -256,6 +275,12 @@ public class NpcCatalog
             });
         }
 
+        var nameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in allEntries)
+            nameCounts[entry.Name] = nameCounts.GetValueOrDefault(entry.Name) + 1;
+        foreach (var entry in allEntries)
+            entry.HasDuplicateName = nameCounts[entry.Name] > 1;
+
         allEntries.Sort(static (a, b) =>
         {
             var category = a.Type.CompareTo(b.Type);
@@ -274,7 +299,7 @@ public class NpcCatalog
         log.Info(
             $"NPC catalog loaded from ModelChara classification: {humans} Human, " +
             $"{demiHumans} DemiHuman, {monsters} Monster ({modelOnly} ModelChara-only), " +
-            $"{allEntries.Count} total.");
+            $"{allEntries.Count} total; {ambiguousBattleNpcBases} ambiguous BNpc bases kept numeric.");
     }
 
     private int CountCategory(NpcCatalogType type)
@@ -292,9 +317,10 @@ public class NpcCatalog
         string name,
         NpcCatalogType type,
         NpcCatalogSource source,
-        HashSet<(NpcCatalogSource Source, uint Id, uint Variant)> addedSources)
+        HashSet<(NpcCatalogSource Source, uint Id)> addedSources,
+        IReadOnlyList<string>? searchAliases = null)
     {
-        if (!addedSources.Add((source, id, source == NpcCatalogSource.BNpcBase ? bNpcNameId : 0)))
+        if (!addedSources.Add((source, id)))
             return;
         allEntries!.Add(new NpcCatalogEntry
         {
@@ -304,6 +330,7 @@ public class NpcCatalog
             Name = name,
             Type = type,
             Source = source,
+            SearchAliases = searchAliases ?? Array.Empty<string>(),
         });
     }
 
@@ -422,6 +449,7 @@ public class NpcCatalog
             if (sourceFilter.HasValue && entry.Source != sourceFilter.Value) continue;
             if (!noFilter &&
                 !entry.Name.Contains(normalizedFilter, StringComparison.OrdinalIgnoreCase) &&
+                !ContainsAlias(entry.SearchAliases, normalizedFilter) &&
                 !entry.Id.ToString().Contains(normalizedFilter, StringComparison.OrdinalIgnoreCase) &&
                 !entry.ModelCharaId.ToString().Contains(normalizedFilter, StringComparison.OrdinalIgnoreCase))
                 continue;
@@ -430,6 +458,22 @@ public class NpcCatalog
 
         searchCache[cacheKey] = results;
         return results;
+    }
+
+    private static bool ContainsAlias(IReadOnlyList<string> aliases, string filter)
+    {
+        foreach (var alias in aliases)
+            if (alias.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
+    }
+
+    private static bool ContainsExact(IReadOnlyList<string> values, string candidate)
+    {
+        foreach (var value in values)
+            if (string.Equals(value, candidate, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
     }
 
     public NpcCatalogEntry? FindById(
@@ -492,32 +536,28 @@ public class NpcCatalog
         EnsureLoaded();
         popularEntries = new List<NpcCatalogEntry>();
 
-        var popular = new (uint Id, uint NameId, NpcCatalogSource Source, NpcCatalogType Type, string Name)[]
+        var popular = new (uint Id, NpcCatalogSource Source)[]
         {
-            (541, 541, NpcCatalogSource.BNpcBase, NpcCatalogType.Monster, "Striking Dummy"),
-            (3, 3, NpcCatalogSource.BNpcBase, NpcCatalogType.Monster, "Cactuar"),
-            (15, 15, NpcCatalogSource.BNpcBase, NpcCatalogType.Monster, "Hog"),
-            (21, 21, NpcCatalogSource.BNpcBase, NpcCatalogType.Monster, "Imp"),
-            (23, 23, NpcCatalogSource.BNpcBase, NpcCatalogType.Monster, "Flytrap"),
-            (30, 30, NpcCatalogSource.BNpcBase, NpcCatalogType.Monster, "Mudestone Golem"),
-            (34, 34, NpcCatalogSource.BNpcBase, NpcCatalogType.Monster, "Tortoise"),
-            (38, 38, NpcCatalogSource.BNpcBase, NpcCatalogType.Monster, "Bat"),
-            (45, 45, NpcCatalogSource.BNpcBase, NpcCatalogType.Monster, "Wisp"),
-            (48, 48, NpcCatalogSource.BNpcBase, NpcCatalogType.Monster, "Myconid"),
-            (1028802, 0, NpcCatalogSource.ENpcBase, NpcCatalogType.Human, "Zenos"),
-            (1018510, 0, NpcCatalogSource.ENpcBase, NpcCatalogType.Human, "Zenos yae Galvus (No Helm)"),
+            // Resolve these through the canonical catalog. Do not fabricate BaseId/NameId pairs.
+            (5459, NpcCatalogSource.BNpcBase), // Old World Striking Dummy
+            (3347, NpcCatalogSource.BNpcBase), // Sabotender Guardia
+            (15, NpcCatalogSource.BNpcBase),   // Hog
+            (21, NpcCatalogSource.BNpcBase),   // Imp
+            (23, NpcCatalogSource.BNpcBase),   // Flytrap
+            (30, NpcCatalogSource.BNpcBase),   // Mudestone Golem
+            (34, NpcCatalogSource.BNpcBase),   // Tortoise
+            (38, NpcCatalogSource.BNpcBase),   // Bat
+            (45, NpcCatalogSource.BNpcBase),   // Wisp
+            (48, NpcCatalogSource.BNpcBase),   // Myconid
+            (1028802, NpcCatalogSource.ENpcBase),
+            (1018510, NpcCatalogSource.ENpcBase),
         };
 
         foreach (var item in popular)
         {
-            popularEntries.Add(FindBySourceAndId(item.Source, item.Id, item.NameId) ?? new NpcCatalogEntry
-            {
-                Id = item.Id,
-                BNpcNameId = item.NameId,
-                Name = item.Name,
-                Type = item.Type,
-                Source = item.Source,
-            });
+            var entry = FindBySourceAndId(item.Source, item.Id);
+            if (entry != null)
+                popularEntries.Add(entry);
         }
         return popularEntries;
     }
