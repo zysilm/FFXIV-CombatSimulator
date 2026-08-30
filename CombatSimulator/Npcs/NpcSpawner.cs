@@ -335,27 +335,26 @@ public unsafe class NpcSpawner : IDisposable
             // Read weapon data for deferred loading after EnableDraw and for
             // classifying humanoid NPCs as melee/ranged/caster.
             ulong mainHandWeapon = 0, offHandWeapon = 0;
-            var enpcIsHumanoid = false;
+            var enpcIsHuman = false;
             if (request.ENpcBaseId > 0)
             {
                 var eSheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ENpcBase>();
                 var eRow = eSheet?.GetRowOrDefault(request.ENpcBaseId);
                 if (eRow != null)
                 {
-                    mainHandWeapon = eRow.Value.ModelMainHand;
-                    offHandWeapon = eRow.Value.ModelOffHand;
+                    ResolveENpcWeapons(eRow.Value, out mainHandWeapon, out offHandWeapon);
                     var model = dataManager.GetExcelSheet<ModelChara>()
                         .GetRowOrDefault(eRow.Value.ModelChara.RowId);
-                    enpcIsHumanoid = model is { } modelRow && modelRow.Type == 1;
+                    enpcIsHuman = model is { } modelRow && modelRow.Type == 1;
                 }
             }
 
             var weaponStyle = NpcWeaponClassifier.DetectFromPackedWeapon(mainHandWeapon);
-            var jobId = enpcIsHumanoid
+            var jobId = enpcIsHuman
                 ? NpcWeaponClassifier.DetectJobFromPackedWeapon(mainHandWeapon)
                 : 0u;
             // A bare-handed humanoid ENpc fights with its fists — pugilist/monk kit.
-            if (jobId == 0 && mainHandWeapon == 0 && enpcIsHumanoid)
+            if (jobId == 0 && mainHandWeapon == 0 && enpcIsHuman)
                 jobId = NpcWeaponClassifier.MonkJobId;
             var behavior = actionProfileProvider.Create(npcName, jobId, weaponStyle, npcLevel, request.BNpcBaseId);
             if (weaponStyle is NpcAttackStyle.Ranged or NpcAttackStyle.Magic || jobId != 0)
@@ -400,6 +399,7 @@ public unsafe class NpcSpawner : IDisposable
                 FramesWaited = 0,
                 MainHandWeapon = mainHandWeapon,
                 OffHandWeapon = offHandWeapon,
+                LoadWeapons = request.ENpcBaseId > 0,
             });
             requestByObjectIndex[index] = CloneRequest(request);
             log.Info($"NPC '{npcName}' created at index {index}, entityId={entityId:X}. Pending draw...");
@@ -609,7 +609,7 @@ public unsafe class NpcSpawner : IDisposable
 
     private void LoadPendingWeapons(BattleChara* chara, PendingSpawn pending)
     {
-        if (pending.MainHandWeapon == 0 && pending.OffHandWeapon == 0) return;
+        if (!pending.LoadWeapons) return;
 
         try
         {
@@ -624,7 +624,10 @@ public unsafe class NpcSpawner : IDisposable
             character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, mhId, 0, 0, 0, 0, false);
             character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, ohId, 0, 0, 0, 0, false);
 
-            log.Verbose($"Loaded weapons: MH={mhId.Id}/{mhId.Type}/{mhId.Variant}, OH={ohId.Id}/{ohId.Type}/{ohId.Variant}");
+            log.Info(
+                $"[SpawnDbg] Loaded ENpc weapons for '{pending.Npc.Name}': " +
+                $"MH={mhId.Id}/{mhId.Type}/{mhId.Variant}, " +
+                $"OH={ohId.Id}/{ohId.Type}/{ohId.Variant}");
         }
         catch (Exception ex)
         {
@@ -714,6 +717,13 @@ public unsafe class NpcSpawner : IDisposable
         // Apply the target model after CopyFromCharacter copied the local player's model.
         // This includes nonzero Human IDs (notably Young NPC bodies) and DemiHuman models.
         target->ModelContainer.ModelCharaId = checked((int)modelCharaId);
+
+        // ClassJob belongs to the cloned player, not the requested DemiHuman. Keeping it makes a
+        // staff-using model inherit the player's fist/sword/etc. action set. The clone has already
+        // initialized the runtime containers, so clear that identity before the target appearance
+        // and its real ENpc/NpcEquip weapons are applied.
+        if (model.Value.Type == 2)
+            target->CharacterData.ClassJob = 0;
 
         // Step B: Overwrite customize bytes + equipment from ENpcBase so the
         // cloned player actually looks like the requested NPC. Weapons are
@@ -855,6 +865,49 @@ public unsafe class NpcSpawner : IDisposable
     private static ulong PackArmor(ulong model, uint stain1, uint stain2)
         => model | ((ulong)stain1 << 24) | ((ulong)stain2 << 32);
 
+    private static ulong PackWeapon(ulong model, uint stain1, uint stain2)
+    {
+        // ENpcBase uses 0xFFFFFFFF as "defer to NpcEquip / no direct weapon". Passing it to
+        // LoadWeapon produces the invalid w65535/b65535 resource paths seen in Penumbra logs.
+        if (model is uint.MaxValue or ulong.MaxValue)
+            return 0;
+        return model | ((ulong)stain1 << 48) | ((ulong)stain2 << 56);
+    }
+
+    private static void ResolveENpcWeapons(
+        Lumina.Excel.Sheets.ENpcBase enpc,
+        out ulong mainHand,
+        out ulong offHand)
+    {
+        var npcEquip = enpc.NpcEquip.ValueNullable;
+        var useNpcEquip = enpc.NpcEquip.RowId != 0 &&
+                          npcEquip.HasValue &&
+                          enpc.ModelBody == 0 &&
+                          enpc.ModelLegs == 0;
+        if (useNpcEquip)
+        {
+            var equip = npcEquip!.Value;
+            mainHand = PackWeapon(
+                equip.ModelMainHand,
+                equip.DyeMainHand.RowId,
+                equip.Dye2MainHand.RowId);
+            offHand = PackWeapon(
+                equip.ModelOffHand,
+                equip.DyeOffHand.RowId,
+                equip.Dye2OffHand.RowId);
+            return;
+        }
+
+        mainHand = PackWeapon(
+            enpc.ModelMainHand,
+            enpc.DyeMainHand.RowId,
+            enpc.Dye2MainHand.RowId);
+        offHand = PackWeapon(
+            enpc.ModelOffHand,
+            enpc.DyeOffHand.RowId,
+            enpc.Dye2OffHand.RowId);
+    }
+
     private string GetNpcName(NpcSpawnRequest request)
     {
         // Try BNpcName first (for BNpc entries)
@@ -991,5 +1044,6 @@ public unsafe class NpcSpawner : IDisposable
         public int FramesWaited { get; set; }
         public ulong MainHandWeapon { get; set; }
         public ulong OffHandWeapon { get; set; }
+        public bool LoadWeapons { get; set; }
     }
 }
