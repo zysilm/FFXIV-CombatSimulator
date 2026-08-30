@@ -1,5 +1,15 @@
 [
   {
+    "version": "2.8.1.1",
+    "date": "2026-08-30",
+    "title": "Combat Simulator 2.8.1.1",
+    "changes": [
+      "Expanded Virtual Enemy search to include linked model variants that were previously omitted.",
+      "Improved DemiHuman and Monster combat with broader model-family attack timelines and correctly matched attack, impact, and projectile VFX.",
+      "Prevented unrelated generic effects from replacing model-specific or intentionally effect-free timeline visuals."
+    ]
+  },
+  {
     "version": "2.8.1.0",
     "date": "2026-08-30",
     "title": "Combat Simulator 2.8.1.0",
