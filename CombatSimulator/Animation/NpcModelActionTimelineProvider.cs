@@ -10,6 +10,8 @@ using Lumina.Excel.Sheets;
 
 namespace CombatSimulator.Animation;
 
+public readonly record struct NpcModelActionSelection(uint ActionId, ushort TimelineId);
+
 /// <summary>
 /// Resolves attack animations that belong to a DemiHuman/Monster model's own <c>mon_sp</c>
 /// family. The game does not expose a universal BNpc-to-skill-kit table, so this deliberately
@@ -28,7 +30,7 @@ public sealed class NpcModelActionTimelineProvider
     private sealed class FamilyEntry
     {
         public HashSet<ushort> AllTimelines { get; init; } = new();
-        public ushort[] AttackPool { get; init; } = Array.Empty<ushort>();
+        public NpcModelActionSelection[] AttackPool { get; init; } = Array.Empty<NpcModelActionSelection>();
         public string Prefix { get; init; } = string.Empty;
         public string Tier { get; init; } = "none";
     }
@@ -45,9 +47,19 @@ public sealed class NpcModelActionTimelineProvider
     /// attack candidate is selected without consulting localized action names.
     /// </summary>
     public ushort Select(uint modelCharaId, ushort preferredTimeline = 0)
+        => SelectAction(modelCharaId, preferredTimeline).TimelineId;
+
+    /// <summary>
+    /// Returns both the model-compatible timeline and the Action row that authored it. The Action
+    /// id is metadata for resolving VFX only; combat and audio remain on the simulator's action.
+    /// </summary>
+    public NpcModelActionSelection SelectAction(
+        uint modelCharaId,
+        ushort preferredTimeline = 0,
+        uint preferredActionId = 0)
     {
         if (modelCharaId == 0)
-            return 0;
+            return default;
 
         if (!cache.TryGetValue(modelCharaId, out var family))
         {
@@ -56,11 +68,11 @@ public sealed class NpcModelActionTimelineProvider
         }
 
         if (preferredTimeline != 0 && family.AllTimelines.Contains(preferredTimeline))
-            return preferredTimeline;
+            return new NpcModelActionSelection(preferredActionId, preferredTimeline);
 
         var pool = family.AttackPool;
         if (pool.Length == 0)
-            return 0;
+            return default;
         if (pool.Length == 1)
             return pool[0];
 
@@ -69,10 +81,10 @@ public sealed class NpcModelActionTimelineProvider
         for (var offset = 0; offset < pool.Length; offset++)
         {
             var selected = pool[(start + offset) % pool.Length];
-            if (selected == previous)
+            if (selected.TimelineId == previous)
                 continue;
 
-            lastSelection[modelCharaId] = selected;
+            lastSelection[modelCharaId] = selected.TimelineId;
             return selected;
         }
 
@@ -117,8 +129,8 @@ public sealed class NpcModelActionTimelineProvider
             // carry this flag, so progressively broader structural fallbacks follow.
             var pool = linked
                 .Where(action => action.CanTargetHostile)
-                .Select(action => (ushort)action.AnimationEnd.RowId)
-                .Distinct()
+                .GroupBy(action => (ushort)action.AnimationEnd.RowId)
+                .Select(group => new NpcModelActionSelection(group.First().RowId, group.Key))
                 .ToArray();
             var tier = "hostile-target";
 
@@ -133,8 +145,8 @@ public sealed class NpcModelActionTimelineProvider
                                      !action.CanTargetAlly &&
                                      !action.CanTargetOwnPet &&
                                      !action.CanTargetPartyPet)
-                    .Select(action => (ushort)action.AnimationEnd.RowId)
-                    .Distinct()
+                    .GroupBy(action => (ushort)action.AnimationEnd.RowId)
+                    .Select(group => new NpcModelActionSelection(group.First().RowId, group.Key))
                     .ToArray();
                 tier = "attack-shaped";
             }
@@ -142,15 +154,15 @@ public sealed class NpcModelActionTimelineProvider
             if (pool.Length == 0)
             {
                 pool = linked
-                    .Select(action => (ushort)action.AnimationEnd.RowId)
-                    .Distinct()
+                    .GroupBy(action => (ushort)action.AnimationEnd.RowId)
+                    .Select(group => new NpcModelActionSelection(group.First().RowId, group.Key))
                     .ToArray();
                 tier = "linked-family";
             }
 
             if (pool.Length == 0)
             {
-                pool = all.ToArray();
+                pool = all.Select(timeline => new NpcModelActionSelection(0, timeline)).ToArray();
                 tier = "family-fallback";
             }
 

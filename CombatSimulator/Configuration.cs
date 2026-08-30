@@ -185,6 +185,7 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollLegModelRebuildMigrated20260816 { get; set; } = false;
     public bool RagdollFollowPositionDefaultMigrated20260816 { get; set; } = false;
     public bool RagdollNpcCorpseTraversalDefaultMigrated20260816 { get; set; } = false;
+    public bool HitVfxDefaultMigrated20260830 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -780,7 +781,7 @@ public partial class Configuration : IPluginConfiguration
     public float NpcSkillVfxMaxDistance { get; set; } = 30f;
 
     // Hit VFX on player when taking damage (empty = disabled)
-    public string HitVfxPath { get; set; } = "vfx/common/eff/dk02ht_totu0y.avfx";
+    public string HitVfxPath { get; set; } = "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx";
     public bool EnableHitVfx { get; set; } = true;
 
     // HP Bar bone tracking
@@ -997,6 +998,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateFingerPhysicsDefaults();
         MigrateActionGuardDefaultButton();
         MigrateActionGuardVfxDefault();
+        MigrateHitVfxDefault();
         MigrateActionBasicAttackDefaultButton();
         MigrateActionMeleeRangeDefault();
         MigrateActionAttackShapeDefaults();
@@ -1281,6 +1283,20 @@ public partial class Configuration : IPluginConfiguration
             GuardSuccessVfxPath = "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx";
 
         ActionGuardVfxDefaultMigratedToHeavySwing = true;
+        Save();
+    }
+
+    private void MigrateHitVfxDefault()
+    {
+        if (HitVfxDefaultMigrated20260830)
+            return;
+
+        // This is the target-side impact authored for Heavy Swing (Action 31): bright, brief,
+        // physical, and free of an elemental theme. Preserve any genuinely custom path.
+        if (HitVfxPath == "vfx/common/eff/dk02ht_totu0y.avfx")
+            HitVfxPath = "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx";
+
+        HitVfxDefaultMigrated20260830 = true;
         Save();
     }
 

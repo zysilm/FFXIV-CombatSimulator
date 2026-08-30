@@ -175,6 +175,7 @@ public unsafe class AnimationController : IDisposable
     // Default hit VFX path candidates (tried in order until one sticks)
     public static readonly string[] HitVfxCandidates =
     {
+        "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx",
         "vfx/common/eff/dk02ht_totu0y.avfx",
         "vfx/common/eff/cmhit_fire1t.avfx",
     };
@@ -1798,7 +1799,16 @@ public unsafe class AnimationController : IDisposable
     /// use the full hit-feedback pipeline at resolve time without creating a duplicate attack.
     /// </summary>
     public bool PlayNpcWindupPose(SimulatedNpc npc, uint actionId)
+        => PlayNpcWindupPose(npc, actionId, out _);
+
+    /// <summary>
+    /// Plays the windup and returns the Action row behind a selected model-family timeline. The
+    /// caller may use that id to resolve visual resources, but must not substitute it into the
+    /// simulator's ActionEffect/audio path.
+    /// </summary>
+    public bool PlayNpcWindupPose(SimulatedNpc npc, uint actionId, out uint modelVfxActionId)
     {
+        modelVfxActionId = 0;
         var casterPtr = FindCharacter(npc.SimulatedEntityId, isPlayer: false);
         if (casterPtr == null) return false;
 
@@ -1811,11 +1821,15 @@ public unsafe class AnimationController : IDisposable
             if (action != null && action.Value.AnimationEnd.RowId <= ushort.MaxValue)
                 preferredTimeline = (ushort)action.Value.AnimationEnd.RowId;
 
-            var modelTimeline = npcModelActionTimelines.Select((uint)modelCharaId, preferredTimeline);
-            if (modelTimeline != 0)
+            var modelAction = npcModelActionTimelines.SelectAction(
+                (uint)modelCharaId,
+                preferredTimeline,
+                actionId);
+            if (modelAction.TimelineId != 0)
             {
                 var targetId = Core.Services.ObjectTable.LocalPlayer?.EntityId ?? 0;
-                emotePlayer.PlayOneShot(casterPtr, modelTimeline, targetId);
+                emotePlayer.PlayOneShot(casterPtr, modelAction.TimelineId, targetId);
+                modelVfxActionId = modelAction.ActionId;
                 return true;
             }
         }
