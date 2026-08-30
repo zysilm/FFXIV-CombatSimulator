@@ -12997,34 +12997,50 @@ public unsafe partial class RagdollController : IDisposable
             var toTarget = new Vector2(request.TargetRoot.X - root.X, request.TargetRoot.Z - root.Z);
             var distance = toTarget.Length();
             var direction = distance > 1e-5f ? toTarget / distance : Vector2.Zero;
-            var desiredSpeed = MathF.Min(request.MoveSpeed, distance * 4f);
+
+            // Look far enough ahead to begin stepping up before the carrier reaches the corpse's
+            // side wall. The old one-radius probe was especially bad for small creatures: their
+            // carrier hit the body before the probe overlapped its top surface, so the horizontal
+            // motor kept walking into/around the corpse without ever asking for vertical motion.
+            var probeLookAhead = MathF.Max(
+                proxy.Radius * 1.5f + 0.035f,
+                MathF.Min(0.55f, request.MoveSpeed * 0.16f));
+            var probeAdvance = MathF.Min(distance, probeLookAhead);
+            var probe = new Vector3(
+                root.X + direction.X * probeAdvance,
+                root.Y,
+                root.Z + direction.Y * probeAdvance);
+            var hasSurface = TryGetWalkableSurfaceHeight(
+                probe, MathF.Max(0.045f, proxy.Radius * 0.9f), out var surfaceY);
+            var climbHeight = surfaceY - root.Y;
+            var canClimb = hasSurface && surfaceY > request.FloorY + 0.025f &&
+                           surfaceY <= request.FloorY + request.MaxClimb && climbHeight > 0.018f;
+
+            // Do not let the horizontal motor outrun the vertical step. At normal run speed a
+            // creature could cross a prone torso in less time than the former 0.55m/s lift took to
+            // clear it. Retaining a little forward intent lets the dynamic carrier roll over the
+            // edge instead of jumping vertically in place.
+            var horizontalScale = canClimb
+                ? Math.Clamp(0.16f + (request.MaxClimb - climbHeight) * 0.35f, 0.16f, 0.42f)
+                : 1f;
+            var desiredSpeed = MathF.Min(request.MoveSpeed * horizontalScale, distance * 4f);
             var desiredVelocity = direction * desiredSpeed;
             var currentVelocity = new Vector2(bodyRef.Velocity.Linear.X, bodyRef.Velocity.Linear.Z);
             var velocityDelta = desiredVelocity - currentVelocity;
-            var maxHorizontalDelta = 8f * Math.Clamp(dt, 0f, 0.05f);
+            var horizontalAcceleration = canClimb ? 18f : 8f;
+            var maxHorizontalDelta = horizontalAcceleration * Math.Clamp(dt, 0f, 0.05f);
             if (velocityDelta.LengthSquared() > maxHorizontalDelta * maxHorizontalDelta)
                 velocityDelta = Vector2.Normalize(velocityDelta) * maxHorizontalDelta;
             bodyRef.Velocity.Linear.X += velocityDelta.X;
             bodyRef.Velocity.Linear.Z += velocityDelta.Y;
             bodyRef.Velocity.Angular *= MathF.Exp(-8f * Math.Clamp(dt, 0f, 0.05f));
 
-            // A horizontal motor alone wedges against the side of a capsule and pushes the corpse.
-            // Probe only one carrier-radius ahead; when that footprint actually overlaps a higher
-            // structural surface, apply bounded upward acceleration. Position remains fully dynamic
-            // and the solver decides whether the carrier clears or transfers force into the body.
-            var probeAdvance = MathF.Min(distance, proxy.Radius * 1.35f + 0.025f);
-            var probe = new Vector3(
-                root.X + direction.X * probeAdvance,
-                root.Y,
-                root.Z + direction.Y * probeAdvance);
-            var hasSurface = TryGetWalkableSurfaceHeight(
-                probe, proxy.Radius * 0.72f, out var surfaceY);
-            var climbHeight = surfaceY - root.Y;
-            if (hasSurface && surfaceY > request.FloorY + 0.025f &&
-                surfaceY <= request.FloorY + request.MaxClimb && climbHeight > 0.018f)
+            // Position remains fully dynamic and the solver still decides whether the carrier
+            // clears the edge or transfers force into the corpse. This is a motor, not a root warp.
+            if (canClimb)
             {
-                var desiredUp = Math.Clamp(0.55f + climbHeight * 2.2f, 0.55f, 1.8f);
-                var maxVerticalDelta = 8f * Math.Clamp(dt, 0f, 0.05f);
+                var desiredUp = Math.Clamp(1.0f + climbHeight * 5f, 1.0f, 3.8f);
+                var maxVerticalDelta = 20f * Math.Clamp(dt, 0f, 0.05f);
                 bodyRef.Velocity.Linear.Y += Math.Clamp(
                     desiredUp - bodyRef.Velocity.Linear.Y, -maxVerticalDelta, maxVerticalDelta);
             }
