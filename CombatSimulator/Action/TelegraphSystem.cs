@@ -43,6 +43,8 @@ public sealed class ActiveTelegraph
     public bool TargetIsPlayer;
     public TelegraphOutcome Outcome;
     public bool WindupAnimationPlayed;
+    /// <summary>Action row that authored the selected model-family windup; used only for VFX.</summary>
+    public uint ModelVfxActionId;
     /// <summary>Cast/channel VFX already spawned when this telegraph began — the strike skips it.</summary>
     public bool CastVfxPlayed;
     // After the circle closes (perfect moment), a short window where a late guard still counts.
@@ -100,8 +102,9 @@ public sealed class TelegraphSystem
 
         var normalizedLeadIn = MathF.Max(0f, leadIn);
         var windupAnimationPlayed = false;
+        var modelVfxActionId = 0u;
         if (normalizedLeadIn <= 0f)
-            windupAnimationPlayed = TryPlayWindupAnimation(source, req);
+            windupAnimationPlayed = TryPlayWindupAnimation(source, req, out modelVfxActionId);
 
         // Ranged/magic skills get no windup swing, so nothing marks the cast visually until the
         // strike — where the cast VFX spawned and vanished in the same instant. Light the channel
@@ -129,6 +132,7 @@ public sealed class TelegraphSystem
             TargetIsPlayer = target.IsPlayer,
             Outcome = TelegraphOutcome.Pending,
             WindupAnimationPlayed = windupAnimationPlayed,
+            ModelVfxActionId = modelVfxActionId,
             CastVfxPlayed = castVfxPlayed,
         });
     }
@@ -166,7 +170,8 @@ public sealed class TelegraphSystem
                 windupDt = MathF.Max(0f, t.LeadInElapsed - t.LeadInTotal);
                 t.LeadInElapsed = t.LeadInTotal;
                 if (!t.WindupAnimationPlayed)
-                    t.WindupAnimationPlayed = TryPlayWindupAnimation(t.Source, t.Request);
+                    t.WindupAnimationPlayed = TryPlayWindupAnimation(
+                        t.Source, t.Request, out t.ModelVfxActionId);
                 if (windupDt <= 0f)
                     continue;
             }
@@ -240,7 +245,8 @@ public sealed class TelegraphSystem
             t.Source, t.Request.ActionId, t.Request.TargetId,
             t.Request.Potency, t.Request.Style, t.Request.Radius,
             suppressCasterActionEffect: t.WindupAnimationPlayed,
-            suppressCastVfx: t.CastVfxPlayed);
+            suppressCastVfx: t.CastVfxPlayed,
+            modelVfxActionId: t.ModelVfxActionId);
         Finish(t, TelegraphOutcome.Hit);
     }
 
@@ -267,14 +273,19 @@ public sealed class TelegraphSystem
     // the strike so their projectile/cast VFX and damage fire together (a windup pose would launch
     // the projectile early with no damage). A humanoid enemy plays the real weaponskill because it
     // shares the player skeleton and wields a real weapon; monsters never reach here (auto-only).
-    private bool TryPlayWindupAnimation(SimulatedNpc source, in NpcAttackRequest req)
+    private bool TryPlayWindupAnimation(
+        SimulatedNpc source,
+        in NpcAttackRequest req,
+        out uint modelVfxActionId)
     {
+        modelVfxActionId = 0;
         if (!config.ActionEnemyWindupSwing)
             return false;
 
         var isPhysicalSwing = req.Style == NpcAttackStyle.Melee ||
                               (req.IsAutoAttack && req.Style != NpcAttackStyle.Ranged);
-        return isPhysicalSwing && animationController.PlayNpcWindupPose(source, req.ActionId);
+        return isPhysicalSwing &&
+               animationController.PlayNpcWindupPose(source, req.ActionId, out modelVfxActionId);
     }
 
     private void Finish(ActiveTelegraph t, TelegraphOutcome outcome)

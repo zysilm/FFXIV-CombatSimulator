@@ -32,6 +32,7 @@ public unsafe class NpcAiController : IDisposable
     private readonly TerrainHeightService terrainHeightService;
     private readonly IPluginLog log;
     private readonly CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter;
+    private readonly NpcCorpseFootIkSolver footIkSolver;
     private readonly Func<nint, bool> isExternallyControlled;
     private readonly Func<uint, bool> isTelegraphBusy;
     private readonly Dictionary<nint, ApproachPathState> approachPaths = new();
@@ -93,12 +94,6 @@ public unsafe class NpcAiController : IDisposable
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
     private float pendingAutoEngageDelay = -1f;
 
-    /// <summary>
-    /// Optional world-space corpse surface query. The plugin aggregates all active ragdolls;
-    /// null means the next root position is not over a walkable corpse.
-    /// </summary>
-    public Func<nint, Vector3, float?>? CorpseSupportHeightProvider { private get; set; }
-
     private class ApproachPathState
     {
         public List<Vector3> Waypoints { get; set; } = new();
@@ -137,6 +132,7 @@ public unsafe class NpcAiController : IDisposable
         TerrainHeightService terrainHeightService,
         IPluginLog log,
         CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter,
+        NpcCorpseFootIkSolver footIkSolver,
         Func<nint, bool>? isExternallyControlled = null,
         Func<uint, bool>? isTelegraphBusy = null)
     {
@@ -150,6 +146,7 @@ public unsafe class NpcAiController : IDisposable
         this.terrainHeightService = terrainHeightService;
         this.log = log;
         this.combatModeRouter = combatModeRouter;
+        this.footIkSolver = footIkSolver;
         this.isExternallyControlled = isExternallyControlled ?? (_ => false);
         this.isTelegraphBusy = isTelegraphBusy ?? (_ => false);
 
@@ -258,6 +255,9 @@ public unsafe class NpcAiController : IDisposable
                 continue;
             if (isExternallyControlled(npc.Address))
                 continue;
+
+            if (config.NpcCollisionActive && config.RagdollNpcCorpseTraversal)
+                footIkSolver.Track(npc.Address, deltaTime);
 
             // Keep active targets in battle stance (drawn weapon / combat idle)
             if (npc.BattleChara != null && npc.AiState != NpcAiState.Dead)
@@ -1871,18 +1871,18 @@ public unsafe class NpcAiController : IDisposable
             state.HasStableRootTerrainClearance = true;
         }
 
-        var supportY = CorpseSupportHeightProvider?.Invoke(actorAddress, rootPosition);
-        // Tiny visual scale must not reduce traversal to millimetres; crawling over a corpse is
-        // an opt-in movement policy, not a literal standing leg-length test.
-        var maxCorpseStepHeight = 0.65f * MathF.Max(1f, GetVisualScale(actorAddress));
-        var walkableY = supportY.HasValue && supportY.Value <= terrainY + maxCorpseStepHeight
-            ? MathF.Max(terrainY, supportY.Value)
-            : terrainY;
-        var desiredY = walkableY + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;
+        // Root takes only the SHARED part of a corpse contact — whatever height both of footIkSolver's
+        // legs agree on (0 when only one foot is on the corpse, which is also the ordinary case: that
+        // leg's own IK does all the work and root never moves for it). Each leg's own IK then only
+        // has to close whatever its own requirement still exceeds this shared amount by. An earlier
+        // version tried to detect "both feet on the corpse" here itself with two probes either side of
+        // centre, but a corpse is almost always wider than the probe spacing, so it still lifted root
+        // for a single foot near the edge too — the exact float this was meant to fix.
+        var pelvisOffset = config.NpcCollisionActive && config.RagdollNpcCorpseTraversal
+            ? footIkSolver.GetPelvisOffset(actorAddress)
+            : 0f;
+        var desiredY = terrainY + pelvisOffset + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;
         var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
-        // The corpse surface is a hard upward floor. Easing upward let a fast actor move inside the
-        // body for several frames before its root caught up. Leaving the corpse stays deliberately
-        // slow so the feet press and release it naturally instead of snapping down.
         var maxFall = MathF.Max(0.02f, 1.5f * deltaTime);
         var deltaY = desiredY > fromY
             ? desiredY - fromY
@@ -1909,19 +1909,6 @@ public unsafe class NpcAiController : IDisposable
         movementBlockHook.SetApproachPosition(gameObj, corrected.X, corrected.Y, corrected.Z);
     }
 
-    private static float GetVisualScale(nint actorAddress)
-    {
-        if (actorAddress == nint.Zero)
-            return 1f;
-
-        var gameObject = (GameObject*)actorAddress;
-        if (gameObject->DrawObject == null)
-            return 1f;
-
-        var scale = gameObject->DrawObject->Scale;
-        var max = MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
-        return float.IsFinite(max) && max > 0f ? max : 1f;
-    }
 
     private void StartApproachMoveAnim(SimulatedNpc npc, float deltaTime)
     {

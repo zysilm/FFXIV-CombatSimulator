@@ -142,6 +142,9 @@ public class RecentNpcEntry
 {
     public uint BNpcBaseId { get; set; }
     public uint BNpcNameId { get; set; }
+    public uint ModelCharaId { get; set; }
+    public Npcs.NpcCatalogType Type { get; set; } = Npcs.NpcCatalogType.BNpc;
+    public Npcs.NpcCatalogSource Source { get; set; } = Npcs.NpcCatalogSource.BNpcBase;
 }
 
 public enum RagdollNpcCollisionMode
@@ -182,6 +185,7 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollLegModelRebuildMigrated20260816 { get; set; } = false;
     public bool RagdollFollowPositionDefaultMigrated20260816 { get; set; } = false;
     public bool RagdollNpcCorpseTraversalDefaultMigrated20260816 { get; set; } = false;
+    public bool HitVfxDefaultMigrated20260830 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -260,6 +264,13 @@ public partial class Configuration : IPluginConfiguration
     // Physically drop supported clothing (Body / Legs) as falling shells. Still includes the body skin
     // baked into those equipment models.
     public bool KoStripPhysicsDropClothing { get; set; } = true;
+
+    // Auto-recycle: despawn a physics-dropped piece a fixed time after it settles, rather than letting
+    // it linger indefinitely until reset/zone-change. Off by default — a stale dropped piece surviving
+    // into a zone transition is the known crash exposure this exists to reduce, matching the upstream
+    // RagdollSystem feature this was ported from (https://github.com/zysilm/RagdollSystem).
+    public bool KoStripCloneAutoExpireEnabled { get; set; } = false;
+    public float KoStripCloneAutoExpireSeconds { get; set; } = 2f;
 
     // Garment polish layered on top of clothing physics drop: short visual body follow, body/ground
     // friction damping, and delayed cloth collapse.
@@ -770,7 +781,7 @@ public partial class Configuration : IPluginConfiguration
     public float NpcSkillVfxMaxDistance { get; set; } = 30f;
 
     // Hit VFX on player when taking damage (empty = disabled)
-    public string HitVfxPath { get; set; } = "vfx/common/eff/dk02ht_totu0y.avfx";
+    public string HitVfxPath { get; set; } = "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx";
     public bool EnableHitVfx { get; set; } = true;
 
     // HP Bar bone tracking
@@ -987,6 +998,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateFingerPhysicsDefaults();
         MigrateActionGuardDefaultButton();
         MigrateActionGuardVfxDefault();
+        MigrateHitVfxDefault();
         MigrateActionBasicAttackDefaultButton();
         MigrateActionMeleeRangeDefault();
         MigrateActionAttackShapeDefaults();
@@ -1271,6 +1283,20 @@ public partial class Configuration : IPluginConfiguration
             GuardSuccessVfxPath = "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx";
 
         ActionGuardVfxDefaultMigratedToHeavySwing = true;
+        Save();
+    }
+
+    private void MigrateHitVfxDefault()
+    {
+        if (HitVfxDefaultMigrated20260830)
+            return;
+
+        // This is the target-side impact authored for Heavy Swing (Action 31): bright, brief,
+        // physical, and free of an elemental theme. Preserve any genuinely custom path.
+        if (HitVfxPath == "vfx/common/eff/dk02ht_totu0y.avfx")
+            HitVfxPath = "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx";
+
+        HitVfxDefaultMigrated20260830 = true;
         Save();
     }
 

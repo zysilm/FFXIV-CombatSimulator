@@ -1,6 +1,6 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0" TreatAsLocalProperty="DefineConstants">
   <PropertyGroup>
-    <Version>2.8.0.2</Version>
+    <Version>2.8.1.0</Version>
     <Authors>zysilm</Authors>
     <Description>A combat sandbox that makes FFXIV feel more like an action RPG, with responsive fights and advanced ragdoll physics.</Description>
     <IsPackable>false</IsPackable>
@@ -27,6 +27,9 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" />
+    <!-- Complete BNpcBase <-> BNpcName links are not present in the game Excel sheets. ActorMorpher
+         uses this supplemental dataset so every known monster name remains discoverable. -->
+    <PackageReference Include="LuminaSupplemental.Excel" Version="4.3.7" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Npcs\NpcNames.json" />

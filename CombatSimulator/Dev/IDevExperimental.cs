@@ -21,6 +21,18 @@ public interface IDevExperimental : IDisposable
     /// <summary>True while a dev controller is driving this NPC (suppresses its AI).</summary>
     bool ControlsNpc(nint address);
 
+    /// <summary>Dev-only, off by default: strip every enemy's skill list entirely so it is limited
+    /// to auto-attack, regardless of what its weapon would otherwise resolve to.</summary>
+    bool NpcAutoAttackOnly { get; }
+
+    /// <summary>Dev-only, off by default: every spawned humanoid virtual enemy has body + legs
+    /// stripped (bare smallclothes) regardless of its real equipment.</summary>
+    bool VirtualEnemyStripBodyLegs { get; }
+
+    /// <summary>Dev-only, off by default: every spawned humanoid virtual enemy has everything except
+    /// body + legs stripped (head, hands, feet, ears, neck, wrists, rings).</summary>
+    bool VirtualEnemyStripAccessories { get; }
+
     /// <summary>True while the dev enemy-pack gate is waiting for a real player hit.</summary>
     bool SuppressEnemyInitiation { get; }
 

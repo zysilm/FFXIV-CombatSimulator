@@ -91,7 +91,10 @@ public partial class MainWindow
             ref spectatorSearchFilter,
             256);
 
-        var entries = npcCatalog!.Search(spectatorSearchFilter, NpcCatalogType.Human)
+        var entries = npcCatalog!.Search(
+                spectatorSearchFilter,
+                NpcCatalogType.Human,
+                NpcCatalogSource.ENpcBase)
             .Where(entry => spectatorController!.IsEmoteCompatibleAppearance(entry.Id))
             .ToList();
         var excludedNames = DistinctSpectatorExcludedNames()
@@ -188,7 +191,10 @@ public partial class MainWindow
         ImGui.BeginDisabled(!canSpawnRandom);
         if (ImGui.Button("Spawn Random Crowd"))
         {
-            var appearances = npcCatalog!.Search(string.Empty, NpcCatalogType.Human)
+            var appearances = npcCatalog!.Search(
+                    string.Empty,
+                    NpcCatalogType.Human,
+                    NpcCatalogSource.ENpcBase)
                 .Select(entry => new SpectatorController.SpectatorAppearance(entry.Id, entry.Name))
                 .ToList();
             var result = spectatorController.QueueRandomBatch(
@@ -291,7 +297,10 @@ public partial class MainWindow
 
         foreach (var excludedId in config.SpectatorExcludedENpcIds)
         {
-            var entry = npcCatalog!.FindById(NpcCatalogType.Human, excludedId);
+            var entry = npcCatalog!.FindById(
+                NpcCatalogType.Human,
+                excludedId,
+                NpcCatalogSource.ENpcBase);
             var name = NormalizeSpectatorName(entry?.Name);
             if (name.Length > 0 &&
                 !config.SpectatorExcludedNames.Contains(name, StringComparer.OrdinalIgnoreCase))
@@ -654,7 +663,8 @@ public partial class MainWindow
 
         var saved = npcCatalog!.FindById(
             NpcCatalogType.Human,
-            config.SpectatorHumanENpcId);
+            config.SpectatorHumanENpcId,
+            NpcCatalogSource.ENpcBase);
         if (saved != null && spectatorController!.IsEmoteCompatibleAppearance(saved.Id))
         {
             selectedSpectatorEntry = saved;

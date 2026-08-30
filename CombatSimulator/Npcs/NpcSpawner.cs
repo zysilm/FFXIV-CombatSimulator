@@ -55,6 +55,17 @@ public unsafe class NpcSpawner : IDisposable
     public Action<SimulatedNpc>? OnNpcSpawnComplete { get; set; }
     public Action<string>? OnSpawnError { get; set; }
 
+    /// <summary>Dev-experimental seam: when true, every spawned humanoid virtual enemy has body + legs
+    /// stripped (model id 0 — the same bare "smallclothes" result unequipping those slots in-game
+    /// produces) regardless of its real equipment. Null (the production default, before the
+    /// experimental module wires this) behaves the same as false.</summary>
+    public Func<bool>? StripBodyLegs { private get; set; }
+
+    /// <summary>Dev-experimental seam: when true, every spawned humanoid virtual enemy has everything
+    /// except body + legs stripped (head, hands, feet, ears, neck, wrists, rings). Null (the production
+    /// default) behaves the same as false. Independent of StripBodyLegs — both can be on at once.</summary>
+    public Func<bool>? StripAccessories { private get; set; }
+
     /// <summary>
     /// When true, spawn mode is active: all player actions are routed to spawned NPCs
     /// and the game's target system is bypassed for combat.
@@ -232,13 +243,13 @@ public unsafe class NpcSpawner : IDisposable
                 // Without this, Mode/ClassJob/TimelineContainer are uninitialized
                 // and the game refuses to run humanoid draw/animation logic, so
                 // the NPC has no facing update, no battle stance, and no walk anim.
-                if (!BootstrapHumanoidFromPlayer(character, request.ENpcBaseId))
+                if (!BootstrapFromENpc(character, request.ENpcBaseId))
                 {
-                    log.Error($"[SpawnDbg] Humanoid bootstrap failed for ENpcBase {request.ENpcBaseId}. Aborting spawn.");
+                    log.Error($"[SpawnDbg] ENpc bootstrap failed for ENpcBase {request.ENpcBaseId}. Aborting spawn.");
                     // Roll back the allocation so the slot is reusable
                     clientObjMgr->DeleteObjectByIndex((ushort)index, 0);
                     allocatedIndices.Remove(index);
-                    OnSpawnError?.Invoke("Humanoid spawn needs a valid local player as clone source.");
+                    OnSpawnError?.Invoke("ENpc appearance could not be initialized.");
                     return;
                 }
             }
@@ -248,11 +259,26 @@ public unsafe class NpcSpawner : IDisposable
                 character->CharacterSetup.SetupBNpc(request.BNpcBaseId, request.BNpcNameId);
                 log.Info($"[SpawnDbg] SetupBNpc({request.BNpcBaseId}, {request.BNpcNameId}) done. ModelCharaId={character->ModelContainer.ModelCharaId}");
             }
+            else if (request.ModelCharaId > 0)
+            {
+                var model = dataManager.GetExcelSheet<ModelChara>().GetRowOrDefault(request.ModelCharaId);
+                if (model == null || model.Value.Type != 3)
+                {
+                    log.Error($"[SpawnDbg] Direct ModelChara {request.ModelCharaId} is not a valid Monster row.");
+                    clientObjMgr->DeleteObjectByIndex((ushort)index, 0);
+                    allocatedIndices.Remove(index);
+                    OnSpawnError?.Invoke("Only ModelChara-only Monster entries can be spawned directly.");
+                    return;
+                }
+
+                character->ModelContainer.ModelCharaId = checked((int)request.ModelCharaId);
+                log.Info($"[SpawnDbg] Direct Monster ModelCharaId={request.ModelCharaId} set.");
+            }
 
             // Step 6: Self-copy to trigger the DrawData refresh pipeline.
             // Brio's "double copy" pattern — the first CopyFromCharacter populates
             // the target (for BNpc it's SetupBNpc that already did the work; for
-            // humanoids it's BootstrapHumanoidFromPlayer above). This self-copy is
+            // ENpcs it is BootstrapFromENpc above). This self-copy is
             // the trigger that tools like Glamourer/Penumbra expect to see.
             character->CharacterSetup.CopyFromCharacter(
                 character, CharacterSetupContainer.CopyFlags.None);
@@ -309,23 +335,26 @@ public unsafe class NpcSpawner : IDisposable
             // Read weapon data for deferred loading after EnableDraw and for
             // classifying humanoid NPCs as melee/ranged/caster.
             ulong mainHandWeapon = 0, offHandWeapon = 0;
-            var enpcIsHumanoid = false;
+            var enpcIsHuman = false;
             if (request.ENpcBaseId > 0)
             {
                 var eSheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ENpcBase>();
                 var eRow = eSheet?.GetRowOrDefault(request.ENpcBaseId);
                 if (eRow != null)
                 {
-                    mainHandWeapon = eRow.Value.ModelMainHand;
-                    offHandWeapon = eRow.Value.ModelOffHand;
-                    enpcIsHumanoid = eRow.Value.ModelChara.RowId == 0; // monster-model ENpcs skip the clone path
+                    ResolveENpcWeapons(eRow.Value, out mainHandWeapon, out offHandWeapon);
+                    var model = dataManager.GetExcelSheet<ModelChara>()
+                        .GetRowOrDefault(eRow.Value.ModelChara.RowId);
+                    enpcIsHuman = model is { } modelRow && modelRow.Type == 1;
                 }
             }
 
             var weaponStyle = NpcWeaponClassifier.DetectFromPackedWeapon(mainHandWeapon);
-            var jobId = NpcWeaponClassifier.DetectJobFromPackedWeapon(mainHandWeapon);
+            var jobId = enpcIsHuman
+                ? NpcWeaponClassifier.DetectJobFromPackedWeapon(mainHandWeapon)
+                : 0u;
             // A bare-handed humanoid ENpc fights with its fists — pugilist/monk kit.
-            if (jobId == 0 && mainHandWeapon == 0 && enpcIsHumanoid)
+            if (jobId == 0 && mainHandWeapon == 0 && enpcIsHuman)
                 jobId = NpcWeaponClassifier.MonkJobId;
             var behavior = actionProfileProvider.Create(npcName, jobId, weaponStyle, npcLevel, request.BNpcBaseId);
             if (weaponStyle is NpcAttackStyle.Ranged or NpcAttackStyle.Magic || jobId != 0)
@@ -370,6 +399,7 @@ public unsafe class NpcSpawner : IDisposable
                 FramesWaited = 0,
                 MainHandWeapon = mainHandWeapon,
                 OffHandWeapon = offHandWeapon,
+                LoadWeapons = request.ENpcBaseId > 0,
             });
             requestByObjectIndex[index] = CloneRequest(request);
             log.Info($"NPC '{npcName}' created at index {index}, entityId={entityId:X}. Pending draw...");
@@ -565,9 +595,11 @@ public unsafe class NpcSpawner : IDisposable
     {
         return new NpcSpawnRequest
         {
+            DisplayName = src.DisplayName,
             BNpcNameId = src.BNpcNameId,
             BNpcBaseId = src.BNpcBaseId,
             ENpcBaseId = src.ENpcBaseId,
+            ModelCharaId = src.ModelCharaId,
             Level = src.Level,
             HpMultiplier = src.HpMultiplier,
             Position = src.Position,
@@ -578,7 +610,7 @@ public unsafe class NpcSpawner : IDisposable
 
     private void LoadPendingWeapons(BattleChara* chara, PendingSpawn pending)
     {
-        if (pending.MainHandWeapon == 0 && pending.OffHandWeapon == 0) return;
+        if (!pending.LoadWeapons) return;
 
         try
         {
@@ -593,7 +625,10 @@ public unsafe class NpcSpawner : IDisposable
             character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.MainHand, mhId, 0, 0, 0, 0, false);
             character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, ohId, 0, 0, 0, 0, false);
 
-            log.Verbose($"Loaded weapons: MH={mhId.Id}/{mhId.Type}/{mhId.Variant}, OH={ohId.Id}/{ohId.Type}/{ohId.Variant}");
+            log.Info(
+                $"[SpawnDbg] Loaded ENpc weapons for '{pending.Npc.Name}': " +
+                $"MH={mhId.Id}/{mhId.Type}/{mhId.Variant}, " +
+                $"OH={ohId.Id}/{ohId.Type}/{ohId.Variant}");
         }
         catch (Exception ex)
         {
@@ -611,11 +646,10 @@ public unsafe class NpcSpawner : IDisposable
     /// Returns false if the local player isn't a valid clone source (e.g. we're
     /// between zones, in a cutscene, dead, or not logged in).
     /// </summary>
-    private bool BootstrapHumanoidFromPlayer(Character* target, uint eNpcBaseId)
+    private bool BootstrapFromENpc(Character* target, uint eNpcBaseId)
     {
-        // First verify the ENpcBase actually represents a humanoid.
-        // If ModelChara > 0 this ENpc uses a monster model and should not
-        // go through the clone path at all — fall back to ModelCharaId set.
+        // Resolve the ENpc's authoritative ModelChara type before choosing the initialized
+        // Human/DemiHuman clone path or the direct Monster model path.
         var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ENpcBase>();
         if (sheet == null)
         {
@@ -629,16 +663,24 @@ public unsafe class NpcSpawner : IDisposable
             return false;
         }
         var enpc = row.Value;
-        var modelCharaId = (int)enpc.ModelChara.RowId;
-        if (modelCharaId > 0)
+        var modelCharaId = enpc.ModelChara.RowId;
+        var model = dataManager.GetExcelSheet<ModelChara>().GetRowOrDefault(modelCharaId);
+        if (model == null || model.Value.Type is < 1 or > 3)
         {
-            // Monster-model ENpc — no clone needed. Treat like a BNpc model set.
-            target->ModelContainer.ModelCharaId = modelCharaId;
-            log.Info($"[SpawnDbg] ENpc {eNpcBaseId}: monster model, ModelCharaId={modelCharaId}");
+            log.Error($"[SpawnDbg] ENpc {eNpcBaseId} has unsupported ModelChara {modelCharaId}.");
+            return false;
+        }
+
+        if (model.Value.Type == 3)
+        {
+            target->ModelContainer.ModelCharaId = checked((int)modelCharaId);
+            log.Info($"[SpawnDbg] ENpc {eNpcBaseId}: Monster ModelCharaId={modelCharaId}");
             return true;
         }
 
-        // Humanoid ENpc path — need a valid local player as clone source.
+        // Human and DemiHuman draw objects both require a fully initialized Character/Timeline
+        // container. A freshly allocated BattleChara does not have one, so use the same safe
+        // player bootstrap for both before replacing its appearance.
         var localPlayer = CombatSimulator.Core.Services.ObjectTable.LocalPlayer;
         if (localPlayer == null || localPlayer.Address == nint.Zero)
         {
@@ -649,7 +691,7 @@ public unsafe class NpcSpawner : IDisposable
         var source = (Character*)localPlayer.Address;
 
         // Sanity: make sure the source is itself a humanoid (has Race > 0 and
-        // ModelCharaId == 0). If the player is currently in a monster form —
+        // ModelChara.Type == Human). If the player is currently in a monster form —
         // say, fantasia'd or on a special mount — this would blow up.
         var sourceRace = ((byte*)&source->DrawData.CustomizeData)[0];
         if (sourceRace == 0)
@@ -658,7 +700,9 @@ public unsafe class NpcSpawner : IDisposable
             return false;
         }
 
-        log.Info($"[SpawnDbg] Cloning humanoid from local player addr=0x{(nint)source:X}, sourceRace={sourceRace}");
+        log.Info(
+            $"[SpawnDbg] Cloning initialized Character state from local player " +
+            $"addr=0x{(nint)source:X}, sourceRace={sourceRace}, targetType={model.Value.Type}");
 
         // Step A: Full clone from player. Include ClassJob (animation timelines
         // are gated on having a valid ClassJob) and WeaponHiding (matches Brio).
@@ -671,20 +715,38 @@ public unsafe class NpcSpawner : IDisposable
         target->CharacterSetup.CopyFromCharacter(source, flags);
         log.Info($"[SpawnDbg] CopyFromCharacter(player, ClassJob|WeaponHiding) done.");
 
+        // Apply the target model after CopyFromCharacter copied the local player's model.
+        // This includes nonzero Human IDs (notably Young NPC bodies) and DemiHuman models.
+        target->ModelContainer.ModelCharaId = checked((int)modelCharaId);
+
+        // ClassJob belongs to the cloned player, not the requested DemiHuman. Keeping it makes a
+        // staff-using model inherit the player's fist/sword/etc. action set. The clone has already
+        // initialized the runtime containers, so clear that identity before the target appearance
+        // and its real ENpc/NpcEquip weapons are applied.
+        if (model.Value.Type == 2)
+            target->CharacterData.ClassJob = 0;
+
         // Step B: Overwrite customize bytes + equipment from ENpcBase so the
         // cloned player actually looks like the requested NPC. Weapons are
         // loaded later via LoadPendingWeapons after EnableDraw.
-        OverwriteCustomizeFromENpc(target, enpc);
+        OverwriteCustomizeFromENpc(target, enpc, allowEquipmentStrip: model.Value.Type == 1);
+
+        log.Info(
+            $"[SpawnDbg] ENpc {eNpcBaseId}: " +
+            $"{(model.Value.Type == 2 ? "DemiHuman" : "Human")} ModelCharaId={modelCharaId}");
 
         return true;
     }
 
     /// <summary>
     /// Overwrite the 26 customize bytes + 10 equipment slots from an ENpcBase row.
-    /// Called after BootstrapHumanoidFromPlayer so the base Character already has
+    /// Called after BootstrapFromENpc so the base Character already has
     /// a working humanoid pipeline from the clone.
     /// </summary>
-    private void OverwriteCustomizeFromENpc(Character* character, Lumina.Excel.Sheets.ENpcBase enpc)
+    private void OverwriteCustomizeFromENpc(
+        Character* character,
+        Lumina.Excel.Sheets.ENpcBase enpc,
+        bool allowEquipmentStrip)
     {
         var customizePtr = (byte*)&character->DrawData.CustomizeData;
         customizePtr[0x00] = (byte)enpc.Race.RowId;
@@ -719,22 +781,141 @@ public unsafe class NpcSpawner : IDisposable
         customizePtr[0x18] = enpc.FacePaint;
         customizePtr[0x19] = enpc.FacePaintColor;
 
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Head).Value = (ulong)enpc.ModelHead;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Body).Value = (ulong)enpc.ModelBody;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Hands).Value = (ulong)enpc.ModelHands;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Legs).Value = (ulong)enpc.ModelLegs;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Feet).Value = (ulong)enpc.ModelFeet;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Ears).Value = (ulong)enpc.ModelEars;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Neck).Value = (ulong)enpc.ModelNeck;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Wrists).Value = (ulong)enpc.ModelWrists;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.RFinger).Value = (ulong)enpc.ModelRightRing;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.LFinger).Value = (ulong)enpc.ModelLeftRing;
+        var npcEquip = enpc.NpcEquip.ValueNullable;
+        var useNpcEquip = enpc.NpcEquip.RowId != 0 &&
+                          npcEquip.HasValue &&
+                          enpc.ModelBody == 0 &&
+                          enpc.ModelLegs == 0;
+        if (useNpcEquip)
+        {
+            var equip = npcEquip!.Value;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Head).Value =
+                PackArmor(equip.ModelHead, equip.DyeHead.RowId, equip.Dye2Head.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Body).Value =
+                PackArmor(equip.ModelBody, equip.DyeBody.RowId, equip.Dye2Body.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Hands).Value =
+                PackArmor(equip.ModelHands, equip.DyeHands.RowId, equip.Dye2Hands.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Legs).Value =
+                PackArmor(equip.ModelLegs, equip.DyeLegs.RowId, equip.Dye2Legs.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Feet).Value =
+                PackArmor(equip.ModelFeet, equip.DyeFeet.RowId, equip.Dye2Feet.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Ears).Value =
+                PackArmor(equip.ModelEars, equip.DyeEars.RowId, equip.Dye2Ears.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Neck).Value =
+                PackArmor(equip.ModelNeck, equip.DyeNeck.RowId, equip.Dye2Neck.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Wrists).Value =
+                PackArmor(equip.ModelWrists, equip.DyeWrists.RowId, equip.Dye2Wrists.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.RFinger).Value =
+                PackArmor(equip.ModelRightRing, equip.DyeRightRing.RowId, equip.Dye2RightRing.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.LFinger).Value =
+                PackArmor(equip.ModelLeftRing, equip.DyeLeftRing.RowId, equip.Dye2LeftRing.RowId);
+        }
+        else
+        {
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Head).Value =
+                PackArmor(enpc.ModelHead, enpc.DyeHead.RowId, enpc.Dye2Head.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Body).Value =
+                PackArmor(enpc.ModelBody, enpc.DyeBody.RowId, enpc.Dye2Body.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Hands).Value =
+                PackArmor(enpc.ModelHands, enpc.DyeHands.RowId, enpc.Dye2Hands.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Legs).Value =
+                PackArmor(enpc.ModelLegs, enpc.DyeLegs.RowId, enpc.Dye2Legs.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Feet).Value =
+                PackArmor(enpc.ModelFeet, enpc.DyeFeet.RowId, enpc.Dye2Feet.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Ears).Value =
+                PackArmor(enpc.ModelEars, enpc.DyeEars.RowId, enpc.Dye2Ears.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Neck).Value =
+                PackArmor(enpc.ModelNeck, enpc.DyeNeck.RowId, enpc.Dye2Neck.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Wrists).Value =
+                PackArmor(enpc.ModelWrists, enpc.DyeWrists.RowId, enpc.Dye2Wrists.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.RFinger).Value =
+                PackArmor(enpc.ModelRightRing, enpc.DyeRightRing.RowId, enpc.Dye2RightRing.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.LFinger).Value =
+                PackArmor(enpc.ModelLeftRing, enpc.DyeLeftRing.RowId, enpc.Dye2LeftRing.RowId);
+        }
 
-        log.Info($"[SpawnDbg] Overwrote customize/equipment from ENpcBase: Race={customizePtr[0]}, Tribe={customizePtr[4]}, Gender={customizePtr[1]}, Face={customizePtr[5]}, Body=0x{(ulong)enpc.ModelBody:X}");
+        if (allowEquipmentStrip && StripBodyLegs?.Invoke() == true)
+        {
+            // Model id 0 on Body/Legs is exactly what unequipping those slots in-game produces — the
+            // built-in smallclothes top and bottom.
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Body).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Legs).Value = 0;
+        }
+
+        if (allowEquipmentStrip && StripAccessories?.Invoke() == true)
+        {
+            // Everything except body + legs. Independent of StripBodyLegs — whichever of the two
+            // touches body/legs (real equipment or bare) is left alone here.
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Head).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Hands).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Feet).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Ears).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Neck).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Wrists).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.RFinger).Value = 0;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.LFinger).Value = 0;
+        }
+
+        log.Info(
+            $"[SpawnDbg] Overwrote customize/equipment from ENpcBase: Race={customizePtr[0]}, " +
+            $"Tribe={customizePtr[4]}, Gender={customizePtr[1]}, Face={customizePtr[5]}, " +
+            $"equipmentSource={(useNpcEquip ? $"NpcEquip#{enpc.NpcEquip.RowId}" : "ENpcBase")}, " +
+            $"Body=0x{character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Body).Value:X}");
+    }
+
+    private static ulong PackArmor(ulong model, uint stain1, uint stain2)
+        => model | ((ulong)stain1 << 24) | ((ulong)stain2 << 32);
+
+    private static ulong PackWeapon(ulong model, uint stain1, uint stain2)
+    {
+        // ENpcBase uses 0xFFFFFFFF as "defer to NpcEquip / no direct weapon". Passing it to
+        // LoadWeapon produces the invalid w65535/b65535 resource paths seen in Penumbra logs.
+        if (model is uint.MaxValue or ulong.MaxValue)
+            return 0;
+        return model | ((ulong)stain1 << 48) | ((ulong)stain2 << 56);
+    }
+
+    private static void ResolveENpcWeapons(
+        Lumina.Excel.Sheets.ENpcBase enpc,
+        out ulong mainHand,
+        out ulong offHand)
+    {
+        var npcEquip = enpc.NpcEquip.ValueNullable;
+        var useNpcEquip = enpc.NpcEquip.RowId != 0 &&
+                          npcEquip.HasValue &&
+                          enpc.ModelBody == 0 &&
+                          enpc.ModelLegs == 0;
+        if (useNpcEquip)
+        {
+            var equip = npcEquip!.Value;
+            mainHand = PackWeapon(
+                equip.ModelMainHand,
+                equip.DyeMainHand.RowId,
+                equip.Dye2MainHand.RowId);
+            offHand = PackWeapon(
+                equip.ModelOffHand,
+                equip.DyeOffHand.RowId,
+                equip.Dye2OffHand.RowId);
+            return;
+        }
+
+        mainHand = PackWeapon(
+            enpc.ModelMainHand,
+            enpc.DyeMainHand.RowId,
+            enpc.Dye2MainHand.RowId);
+        offHand = PackWeapon(
+            enpc.ModelOffHand,
+            enpc.DyeOffHand.RowId,
+            enpc.Dye2OffHand.RowId);
     }
 
     private string GetNpcName(NpcSpawnRequest request)
     {
+        // The catalog identity describes the selected appearance. BNpcNameId is only the native
+        // setup identity and may intentionally be zero for curated or ambiguous appearances.
+        if (!string.IsNullOrWhiteSpace(request.DisplayName))
+            return request.DisplayName;
+
         // Try BNpcName first (for BNpc entries)
         if (request.BNpcNameId > 0)
         {
@@ -771,6 +952,8 @@ public unsafe class NpcSpawner : IDisposable
             return $"Enemy #{request.BNpcBaseId}";
         if (request.ENpcBaseId > 0)
             return $"NPC #{request.ENpcBaseId}";
+        if (request.ModelCharaId > 0)
+            return $"ModelChara {request.ModelCharaId}";
 
         return "Simulated Enemy";
     }
@@ -867,5 +1050,6 @@ public unsafe class NpcSpawner : IDisposable
         public int FramesWaited { get; set; }
         public ulong MainHandWeapon { get; set; }
         public ulong OffHandWeapon { get; set; }
+        public bool LoadWeapons { get; set; }
     }
 }

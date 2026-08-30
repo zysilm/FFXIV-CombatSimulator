@@ -601,7 +601,8 @@ public class CombatEngine : IDisposable
         NpcAttackStyle attackStyle = NpcAttackStyle.Auto,
         float radius = 0,
         bool suppressCasterActionEffect = false,
-        bool suppressCastVfx = false)
+        bool suppressCastVfx = false,
+        uint modelVfxActionId = 0)
     {
         var result = new SimulatedActionResult
         {
@@ -695,12 +696,17 @@ public class CombatEngine : IDisposable
         if (suppressCasterActionEffect)
         {
             // The caster's swing already played as a windup pose, so skip a second animation — but a
-            // SKILL (not a plain auto-attack) still needs its VFX at the strike, or it looks like an
-            // animation-only hit. Autos (action 7) carry no skill VFX, so we skip them to avoid a
-            // generic spark on every swing.
+            // Keep a VFX-only strike even for Action 7: an action with no authored target effect
+            // uses the configured contact spark instead of resolving as an invisible hit.
             TriggerManualNpcHitFeedback(hits);
-            if (visualAction.ActionId != 7)
-                animationController.PlayActionVfx(BuildActionEffectRequest(npc.State, visualAction, hits, suppressCastVfx));
+            var vfxAction = modelVfxActionId != 0
+                ? actionDataProvider.GetActionData(modelVfxActionId)
+                : null;
+            animationController.PlayActionVfx(BuildActionEffectRequest(
+                npc.State,
+                vfxAction != null ? CloneActionData(vfxAction) : visualAction,
+                hits,
+                suppressCastVfx));
         }
         else
             TriggerActionEffect(npc.State, visualAction, hits, suppressCastVfx);

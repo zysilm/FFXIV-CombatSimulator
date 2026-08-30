@@ -65,6 +65,7 @@ public unsafe class AnimationController : IDisposable
     private readonly IPluginLog log;
     private readonly IClientState clientState;
     private readonly EmoteTimelinePlayer emotePlayer;
+    private readonly NpcModelActionTimelineProvider npcModelActionTimelines;
     public EmoteTimelinePlayer EmotePlayer => emotePlayer;
     private readonly Configuration config;
     private readonly IDataManager dataManager;
@@ -174,6 +175,7 @@ public unsafe class AnimationController : IDisposable
     // Default hit VFX path candidates (tried in order until one sticks)
     public static readonly string[] HitVfxCandidates =
     {
+        "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx",
         "vfx/common/eff/dk02ht_totu0y.avfx",
         "vfx/common/eff/cmhit_fire1t.avfx",
     };
@@ -191,6 +193,7 @@ public unsafe class AnimationController : IDisposable
         this.config = config;
         this.dataManager = dataManager;
         this.emotePlayer = new EmoteTimelinePlayer(log);
+        this.npcModelActionTimelines = new NpcModelActionTimelineProvider(dataManager, log);
 
         ResolvePlayDeadTimelines(dataManager);
         ResolveBattleDeadTimeline(dataManager);
@@ -858,8 +861,15 @@ public unsafe class AnimationController : IDisposable
             if (request.IsSourcePlayer)
                 PlayPlayerActionTimeline(request);
 
-            if (!request.IsSourcePlayer && request.AttackStyle == NpcAttackStyle.Ranged)
-                PlayMonsterRangedAttackTimeline(request.SourceEntityId);
+            if (!request.IsSourcePlayer && request.IsHostileSource)
+            {
+                // DemiHumans and Monsters generally cannot play the cloned player's generic
+                // weapon swing. Prefer an authored animation from their own mon_sp model family;
+                // retain a real action's exact family timeline when one is already known.
+                var playedModelAction = PlayNpcModelActionTimeline(request);
+                if (!playedModelAction && request.AttackStyle == NpcAttackStyle.Ranged)
+                    PlayMonsterRangedAttackTimeline(request.SourceEntityId);
+            }
         }
         catch (Exception ex)
         {
@@ -1315,6 +1325,35 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
+    /// Play a DemiHuman/Monster attack from the actor's own model action family. Human models and
+    /// models without a discoverable family return false so the existing animation path remains
+    /// the fallback.
+    /// </summary>
+    private bool PlayNpcModelActionTimeline(ActionEffectRequest request)
+    {
+        var casterPtr = FindCharacter(request.SourceEntityId, isPlayer: false);
+        if (casterPtr == null)
+            return false;
+
+        var modelCharaId = casterPtr->ModelContainer.ModelCharaId;
+        if (modelCharaId <= 0)
+            return false;
+
+        var timeline = npcModelActionTimelines.Select(
+            (uint)modelCharaId,
+            request.AnimationEndTimelineId);
+        if (timeline == 0)
+            return false;
+
+        var targetObjId = request.Targets.Count > 0 ? request.Targets[0].TargetId : 0;
+        emotePlayer.PlayOneShot(casterPtr, timeline, targetObjId);
+        log.Verbose(
+            $"Playing model-family attack timeline {timeline} for ModelChara {modelCharaId}, " +
+            $"caster=0x{request.SourceEntityId:X}.");
+        return true;
+    }
+
+    /// <summary>
     /// Put an NPC into "battle ready" visual state: weapon drawn, combat stance.
     /// Sets InCombat, IsHostile, IsWeaponDrawn flags, and switches to combat animation set.
     /// </summary>
@@ -1694,6 +1733,18 @@ public unsafe class AnimationController : IDisposable
         var casterPtr = FindCharacter(npc.SimulatedEntityId, isPlayer: false);
         if (casterPtr == null) return;
 
+        var modelCharaId = casterPtr->ModelContainer.ModelCharaId;
+        if (modelCharaId > 0)
+        {
+            var modelTimeline = npcModelActionTimelines.Select((uint)modelCharaId);
+            if (modelTimeline != 0)
+            {
+                var targetId = Core.Services.ObjectTable.LocalPlayer?.EntityId ?? 0;
+                emotePlayer.PlayOneShot(casterPtr, modelTimeline, targetId);
+                return;
+            }
+        }
+
         var headerSize   = sizeof(ActionEffectHandler.Header);
         var effectsSize  = sizeof(ActionEffectHandler.TargetEffects);
         var idsSize      = sizeof(GameObjectId);
@@ -1748,9 +1799,40 @@ public unsafe class AnimationController : IDisposable
     /// use the full hit-feedback pipeline at resolve time without creating a duplicate attack.
     /// </summary>
     public bool PlayNpcWindupPose(SimulatedNpc npc, uint actionId)
+        => PlayNpcWindupPose(npc, actionId, out _);
+
+    /// <summary>
+    /// Plays the windup and returns the Action row behind a selected model-family timeline. The
+    /// caller may use that id to resolve visual resources, but must not substitute it into the
+    /// simulator's ActionEffect/audio path.
+    /// </summary>
+    public bool PlayNpcWindupPose(SimulatedNpc npc, uint actionId, out uint modelVfxActionId)
     {
+        modelVfxActionId = 0;
         var casterPtr = FindCharacter(npc.SimulatedEntityId, isPlayer: false);
         if (casterPtr == null) return false;
+
+        var modelCharaId = casterPtr->ModelContainer.ModelCharaId;
+        if (modelCharaId > 0)
+        {
+            ushort preferredTimeline = 0;
+            var action = dataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>()
+                ?.GetRowOrDefault(actionId == 0 ? 7u : actionId);
+            if (action != null && action.Value.AnimationEnd.RowId <= ushort.MaxValue)
+                preferredTimeline = (ushort)action.Value.AnimationEnd.RowId;
+
+            var modelAction = npcModelActionTimelines.SelectAction(
+                (uint)modelCharaId,
+                preferredTimeline,
+                actionId);
+            if (modelAction.TimelineId != 0)
+            {
+                var targetId = Core.Services.ObjectTable.LocalPlayer?.EntityId ?? 0;
+                emotePlayer.PlayOneShot(casterPtr, modelAction.TimelineId, targetId);
+                modelVfxActionId = modelAction.ActionId;
+                return true;
+            }
+        }
 
         var headerSize   = sizeof(ActionEffectHandler.Header);
         var effectsSize  = sizeof(ActionEffectHandler.TargetEffects);

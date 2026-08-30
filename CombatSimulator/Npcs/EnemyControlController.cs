@@ -88,6 +88,13 @@ public unsafe class EnemyControlController : IDisposable
     private bool lastMovementActive;
     private readonly ActorVisualState visualState = new();
     public IFightingModeLaneConstraint? FightingLane { get; set; }
+    // Same per-leg solver NpcAiController uses. When it has bones resolved for the controlled
+    // creature, it owns bending the affected leg(s) onto a corpse and root height below skips its
+    // own corpse query entirely — otherwise both would react to the same contact and the whole
+    // body would still lift on top of the leg bend. Null (or unresolved bones, e.g. a non-humanoid
+    // creature) falls back to the existing capsule-based root handling unchanged.
+    public NpcCorpseFootIkSolver? FootIkSolver { get; set; }
+    private bool lastLoggedLegIkHandlesCorpse;
 
     private const string GrabAttackLoopKey = "normal/aettouch_loop";
     private ushort grabAttackLoopTimeline;
@@ -434,6 +441,9 @@ public unsafe class EnemyControlController : IDisposable
         var character = (Character*)controlledAddress;
         movementBlock.AddApproachNpc(controlledAddress);
 
+        if (config.NpcCollisionActive && config.RagdollNpcCorpseTraversal)
+            FootIkSolver?.Track(controlledAddress, dt);
+
         // ── Horizontal input: keyboard WASD + gamepad left stick (camera-relative) ──
         // Screen axes: +fwd = forward (W reversed earlier), +strafe = right.
         var fwd = 0f; var strafe = 0f;
@@ -486,9 +496,31 @@ public unsafe class EnemyControlController : IDisposable
             var visualScale = GetVisualScale(obj);
             var maxClimb = 0.65f * MathF.Max(1f, visualScale);
             var desiredY = terrainY;
-            var hasCorpseSupport = config.NpcCollisionActive && config.RagdollNpcCorpseTraversal &&
-                playerRagdoll.TryGetNpcTraversalRootHeight(
-                    controlledAddress, new Vector3(posX, posY, posZ), terrainY, maxClimb, out desiredY);
+            // A humanoid creature's legs already bend onto the corpse via FootIkSolver — root only
+            // takes the shared part of that correction (see GetPelvisOffset) instead of separately
+            // deciding whether/how much to rise, so the two don't double-react to the same contact.
+            // Non-humanoid creatures (no resolvable leg bones) still rely on the capsule-based query
+            // entirely, unchanged.
+            var legIkHandlesCorpse = FootIkSolver?.IsSupported(controlledAddress) == true;
+            if (legIkHandlesCorpse != lastLoggedLegIkHandlesCorpse)
+            {
+                log.Info($"EnemyControlMode: leg-IK corpse handling for 0x{controlledAddress:X} = {legIkHandlesCorpse}");
+                lastLoggedLegIkHandlesCorpse = legIkHandlesCorpse;
+            }
+
+            bool hasCorpseSupport;
+            if (legIkHandlesCorpse)
+            {
+                var pelvisOffset = FootIkSolver!.GetPelvisOffset(controlledAddress);
+                desiredY = terrainY + pelvisOffset;
+                hasCorpseSupport = pelvisOffset > 0.0001f;
+            }
+            else
+            {
+                hasCorpseSupport = config.NpcCollisionActive && config.RagdollNpcCorpseTraversal &&
+                    playerRagdoll.TryGetNpcTraversalRootHeight(
+                        controlledAddress, new Vector3(posX, posY, posZ), terrainY, maxClimb, out desiredY);
+            }
 
             if (hasCorpseSupport)
             {

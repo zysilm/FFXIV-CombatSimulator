@@ -45,6 +45,7 @@ public unsafe class DismembermentController : IDisposable
     private const float LimbHalfLength = 0.14f;
     private const float LimbMass = 4f;
     private const float GearPieceMass = 0.4f; // dropped hat/accessory mass (light; body shell overrides)
+    private const float GearAutoExpireFadeFraction = 0.25f; // auto-recycle: fade over the final quarter of the lifetime
     private const int MaxPendingFrames = 120;
     // A clone is drawn (per the original timing) but its limb bone may not resolve immediately
     // on a cold model load. Keep it hidden until the bone appears; only after this many frames
@@ -274,6 +275,7 @@ public unsafe class DismembermentController : IDisposable
         public bool GearCollapsedPhysicsApplied;              // Bepu shape replaced to match final visual deflate
         public float GearGroundVisualOffset;                  // smoothed visual-only downward ground settle offset
         public int GearArmedFrames;                          // frames since the rigid body was armed
+        public float GearAutoExpireElapsed;                  // wall-clock seconds since armed (auto-recycle)
         public int GearRestFrames;                           // consecutive near-rest frames
         public int GearDeflateFrames;                        // bounded fake cloth-collapse progress
         public Vector3 GearHandoffPrevAnchorWorld;           // source-body anchor used for short garment drag
@@ -3550,6 +3552,28 @@ public unsafe class DismembermentController : IDisposable
         HideWeapons(c);
         if (c.GearHideSkin) HideSkinMaterials(c); // clothing: drop the baked-in body skin, keep the cloth
 
+        // Auto-recycle: a dropped piece left lying around indefinitely is exactly what can survive
+        // into a zone change and hit the same unsafe-write crash class the rest of this cleanup path
+        // already exists to avoid — despawning it proactively, well before that, is the whole point.
+        // Ported from RagdollSystem (https://github.com/zysilm/RagdollSystem), off by default here.
+        if (c.Armed && config.KoStripCloneAutoExpireEnabled)
+        {
+            c.GearAutoExpireElapsed += frameDt;
+            var duration = MathF.Max(1f, config.KoStripCloneAutoExpireSeconds);
+            if (c.GearAutoExpireElapsed >= duration)
+                return false;
+
+            // Fade out over the final quarter of the lifetime instead of popping out of existence.
+            // Character.Alpha is a plain field write, not a transform/scale touch, so it doesn't carry
+            // the per-frame write risk that ruled out an animated scale-to-zero for this same purpose.
+            var fadeStart = duration * (1f - GearAutoExpireFadeFraction);
+            if (c.GearAutoExpireElapsed >= fadeStart)
+            {
+                var fadeT = (c.GearAutoExpireElapsed - fadeStart) / (duration - fadeStart);
+                ((Character*)c.Chara)->Alpha = 1f - Math.Clamp(fadeT, 0f, 1f);
+            }
+        }
+
         if (!c.Armed)
         {
             // Keep the clone parked off-screen until the kept gear model is actually loaded, so a full
@@ -3864,7 +3888,7 @@ public unsafe class DismembermentController : IDisposable
 
         c.GearDeflateFrames = 0;
         c.GearGroundVisualOffset = 0f;
-        var rootRot = ResolveGarmentRigRootRotation(c);
+        var rootRot = ResolveGarmentRigRootRotation(skel, c, rig);
         var rootPos = ResolveGarmentRigRootPosition(skel, c, rig, avgPos, rootRot);
         SetCloneBaseTransform(c, rootPos, rootRot);
         if (drawObj != null)
@@ -3881,8 +3905,20 @@ public unsafe class DismembermentController : IDisposable
         return true;
     }
 
-    private static Quaternion ResolveGarmentRigRootRotation(Clone c)
+    private Quaternion ResolveGarmentRigRootRotation(SkeletonAccess skel, Clone c, GarmentRig rig)
     {
+        // A legs model contains vertices influenced by the skeleton/root frame as well as the five
+        // explicitly driven waist/thigh/knee bones. If its root stays at the handoff rotation while
+        // the waist rigid body tumbles, those two influence groups pull apart into long thin strips.
+        // Reconstruct the clone root from the live waist body and the captured waist model rotation.
+        // Upper garments retain their established handoff frame.
+        if (c.GearKeepModelSlot == 3 &&
+            TryGetGarmentRigBoneWorldTransform(c, rig, "j_kosi", out _, out var waistWorldRot) &&
+            TryCapturedModelRot(skel, c, "j_kosi", out var waistModelRot))
+        {
+            return Quaternion.Normalize(waistWorldRot * Quaternion.Inverse(waistModelRot));
+        }
+
         var rot = c.GearVisualBindHasLastPose
             ? c.GearVisualBindLastRootRot
             : c.Handoff?.SkeletonRot ?? c.SeveranceWorldRot;
@@ -3907,7 +3943,7 @@ public unsafe class DismembermentController : IDisposable
             }
         }
 
-        if (c.GearKeepModelSlot != 1 ||
+        if (c.GearKeepModelSlot is not (1 or 3) ||
             !TryGetGarmentRigBoneWorldPosition(c, rig, "j_kosi", out var waistWorld))
         {
             return fallback;
@@ -3921,7 +3957,18 @@ public unsafe class DismembermentController : IDisposable
 
     private bool TryGetGarmentRigBoneWorldPosition(Clone c, GarmentRig rig, string boneName, out Vector3 boneWorldPos)
     {
+        return TryGetGarmentRigBoneWorldTransform(c, rig, boneName, out boneWorldPos, out _);
+    }
+
+    private bool TryGetGarmentRigBoneWorldTransform(
+        Clone c,
+        GarmentRig rig,
+        string boneName,
+        out Vector3 boneWorldPos,
+        out Quaternion boneWorldRot)
+    {
         boneWorldPos = Vector3.Zero;
+        boneWorldRot = Quaternion.Identity;
         foreach (var rb in rig.Bodies)
         {
             if (!string.Equals(rb.BoneName, boneName, StringComparison.Ordinal))
@@ -3930,9 +3977,9 @@ public unsafe class DismembermentController : IDisposable
             if (!TryGetGarmentRigBodyPose(c, rb, out var bodyPos, out var bodyRot, out _, out _))
                 return false;
 
-            boneWorldPos = bodyPos;
             bodyRot = Quaternion.Normalize(bodyRot);
-            boneWorldPos += Vector3.Transform(rb.BodyToBoneOffsetLocal, bodyRot);
+            boneWorldPos = bodyPos + Vector3.Transform(rb.BodyToBoneOffsetLocal, bodyRot);
+            boneWorldRot = Quaternion.Normalize(bodyRot * rb.BodyToBoneRotation);
             return true;
         }
 
@@ -5610,6 +5657,16 @@ public unsafe class DismembermentController : IDisposable
         var idx = boneService.ResolveBoneIndex(skel, boneName);
         if (idx < 0 || !c.GearCapById.TryGetValue(idx, out var cap)) return false;
         pos = cap.T;
+        return true;
+    }
+
+    private bool TryCapturedModelRot(SkeletonAccess skel, Clone c, string boneName, out Quaternion rot)
+    {
+        rot = Quaternion.Identity;
+        if (c.GearCapById == null) return false;
+        var idx = boneService.ResolveBoneIndex(skel, boneName);
+        if (idx < 0 || !c.GearCapById.TryGetValue(idx, out var cap)) return false;
+        rot = Quaternion.Normalize(cap.R);
         return true;
     }
 

@@ -19,6 +19,7 @@ using CombatSimulator.Spectators;
 using CombatSimulator.Targeting;
 using Dalamud.Game.ClientState.GamePad;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
@@ -133,12 +134,12 @@ public partial class MainWindow : IDisposable
     // Virtual Enemies section state
     private NpcCatalog? npcCatalog;
     private string spawnSearchFilter = "";
-    private int spawnCategoryIndex = 0; // 0=Popular, 1=Recent, 2=Human, 3=Monsters, 4=All
-    private int selectedCatalogIndex = -1;
+    private int spawnCategoryIndex = 0; // 0=Popular, 1=Recent, 2=Human, 3=DemiHuman, 4=Monster, 5=All
     private NpcCatalogEntry? selectedCatalogEntry;
     private int selectedRecipeIndex = 0;
 
-    private static readonly string[] SpawnCategoryNames = { "Popular", "Recent", "Human", "Monsters", "All" };
+    private static readonly string[] SpawnCategoryNames =
+        { "Popular", "Recent", "Human", "DemiHuman", "Monster", "All" };
 
     private static void HelpMarker(string desc)
     {
@@ -806,15 +807,23 @@ public partial class MainWindow : IDisposable
                 chatGui.PrintError($"[CombatSim] Recipe enemy not found: {group.Name} ({group.Type}:{group.Id}).");
                 continue;
             }
+            if (!entry.IsSpawnable)
+            {
+                chatGui.PrintError(
+                    $"[CombatSim] Recipe enemy '{entry.Name}' has no complete spawn source data.");
+                continue;
+            }
 
             var count = Math.Max(0, group.Count);
             for (var i = 0; i < count; i++)
             {
                 npcSpawner.QueueSpawn(new NpcSpawnRequest
                 {
-                    BNpcBaseId = entry.Type == NpcCatalogType.BNpc ? entry.Id : 0,
+                    DisplayName = entry.Name,
+                    BNpcBaseId = entry.Source == NpcCatalogSource.BNpcBase ? entry.Id : 0,
                     BNpcNameId = entry.BNpcNameId,
-                    ENpcBaseId = entry.Type is NpcCatalogType.ENpc or NpcCatalogType.Human ? entry.Id : 0,
+                    ENpcBaseId = entry.Source == NpcCatalogSource.ENpcBase ? entry.Id : 0,
+                    ModelCharaId = entry.Source == NpcCatalogSource.ModelChara ? entry.ModelCharaId : 0,
                     Level = Math.Clamp(config.FastCombatLevel, 1, 300),
                     HpMultiplier = Math.Max(0.0001f, group.HpMultiplier),
                 });
@@ -1165,7 +1174,6 @@ public partial class MainWindow : IDisposable
             if (ImGui.SmallButton(SpawnCategoryNames[c]))
             {
                 spawnCategoryIndex = c;
-                selectedCatalogIndex = -1;
                 selectedCatalogEntry = null;
             }
             if (selected) ImGui.PopStyleColor();
@@ -1184,8 +1192,9 @@ public partial class MainWindow : IDisposable
             0 => npcCatalog.GetPopularEntries(),
             1 => npcCatalog.GetRecentEntries(config.RecentNpcEntries),
             2 => npcCatalog.Search(spawnSearchFilter, NpcCatalogType.Human),
-            3 => npcCatalog.Search(spawnSearchFilter, NpcCatalogType.BNpc),
-            4 => npcCatalog.Search(spawnSearchFilter),
+            3 => npcCatalog.Search(spawnSearchFilter, NpcCatalogType.DemiHuman),
+            4 => npcCatalog.Search(spawnSearchFilter, NpcCatalogType.Monster),
+            5 => npcCatalog.Search(spawnSearchFilter),
             _ => Array.Empty<NpcCatalogEntry>(),
         };
 
@@ -1199,18 +1208,41 @@ public partial class MainWindow : IDisposable
             }
             else
             {
-                for (int i = 0; i < entries.Count; i++)
+                ImGuiClip.ClippedDraw(entries, entry =>
                 {
-                    var entry = entries[i];
-                    bool isSelected = selectedCatalogEntry != null && selectedCatalogEntry.Id == entry.Id && selectedCatalogEntry.Type == entry.Type;
-                    if (ImGui.Selectable($"{entry.Name}##cat{entry.Type}{entry.Id}", isSelected))
+                    bool isSelected = selectedCatalogEntry != null &&
+                                      selectedCatalogEntry.Id == entry.Id &&
+                                      selectedCatalogEntry.Source == entry.Source &&
+                                      selectedCatalogEntry.BNpcNameId == entry.BNpcNameId;
+                    var visibleName = entry.HasDuplicateName
+                        ? $"{entry.Name}  [Base #{entry.Id}, Model #{entry.ModelCharaId}]"
+                        : entry.Name;
+                    if (ImGui.Selectable(
+                            $"{visibleName}##cat{entry.Source}{entry.Id}_{entry.BNpcNameId}",
+                            isSelected))
                     {
-                        selectedCatalogIndex = i;
                         selectedCatalogEntry = entry;
                     }
-                }
+                }, 1, ImGui.GetTextLineHeightWithSpacing());
             }
             ImGui.EndListBox();
+        }
+
+        if (selectedCatalogEntry != null)
+        {
+            ImGui.TextDisabled(
+                $"{selectedCatalogEntry.Type} | {selectedCatalogEntry.Source} #{selectedCatalogEntry.Id} | " +
+                $"ModelChara #{selectedCatalogEntry.ModelCharaId}");
+            if (selectedCatalogEntry.SearchAliases.Count > 0)
+            {
+                ImGui.TextColored(
+                    new Vector4(1f, 0.65f, 0.2f, 1f),
+                    "This base has ambiguous supplemental names; it is kept numeric to avoid a false identity.");
+            }
+            if (!selectedCatalogEntry.IsSpawnable)
+                ImGui.TextColored(
+                    new Vector4(1f, 0.65f, 0.2f, 1f),
+                    "This ModelChara-only DemiHuman lacks the required customize/equipment source data.");
         }
 
         // Spawn settings
@@ -1259,7 +1291,7 @@ public partial class MainWindow : IDisposable
 
         // Spawn button + counter
         ImGui.Spacing();
-        bool canSpawn = selectedCatalogEntry != null &&
+        bool canSpawn = selectedCatalogEntry is { IsSpawnable: true } &&
                         npcSpawner.TotalCount < npcSpawner.MaxNpcs;
         if (!canSpawn) ImGui.BeginDisabled();
         if (ImGui.Button("Spawn", new Vector2(80, 0)))
@@ -1277,9 +1309,11 @@ public partial class MainWindow : IDisposable
 
             npcSpawner.QueueSpawn(new NpcSpawnRequest
             {
-                BNpcBaseId = entry.Type == NpcCatalogType.BNpc ? entry.Id : 0,
+                DisplayName = entry.Name,
+                BNpcBaseId = entry.Source == NpcCatalogSource.BNpcBase ? entry.Id : 0,
                 BNpcNameId = entry.BNpcNameId,
-                ENpcBaseId = entry.Type is NpcCatalogType.ENpc or NpcCatalogType.Human ? entry.Id : 0,
+                ENpcBaseId = entry.Source == NpcCatalogSource.ENpcBase ? entry.Id : 0,
+                ModelCharaId = entry.Source == NpcCatalogSource.ModelChara ? entry.ModelCharaId : 0,
                 Level = config.DefaultNpcLevel,
                 HpMultiplier = config.DefaultNpcHpMultiplier,
                 // No Position: the spawner places it. This used to pass a point computed here by a
@@ -1289,11 +1323,14 @@ public partial class MainWindow : IDisposable
             });
 
             // Track in recent list (avoid duplicates, keep last 20)
-            config.RecentNpcEntries.RemoveAll(r => r.BNpcBaseId == entry.Id);
+            config.RecentNpcEntries.RemoveAll(r => r.BNpcBaseId == entry.Id && r.Source == entry.Source);
             config.RecentNpcEntries.Insert(0, new RecentNpcEntry
             {
                 BNpcBaseId = entry.Id,
                 BNpcNameId = entry.BNpcNameId,
+                ModelCharaId = entry.ModelCharaId,
+                Type = entry.Type,
+                Source = entry.Source,
             });
             if (config.RecentNpcEntries.Count > 20)
                 config.RecentNpcEntries.RemoveRange(20, config.RecentNpcEntries.Count - 20);
