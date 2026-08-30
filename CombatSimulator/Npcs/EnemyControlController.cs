@@ -654,6 +654,9 @@ public unsafe class EnemyControlController : IDisposable
         var enhancedStompTracking = corpseOccupationActive && config.EnemyControlSwarmEnhancedStompTracking;
         var corpseFace = Vector3.Zero;
         var hasCorpseFace = corpseOccupationActive && TryGetCorpseFacePoint(out corpseFace);
+        // A crowd should read as several feet loading the body, not N copies of the same full-force
+        // stomp. RagdollController uses this count to cap aggregate gait impulses for large swarms.
+        var concurrentStompers = Math.Max(1, swarmFollowers.Values.Count(f => f.CorpseSlotId >= 0));
         foreach (var (address, follower) in swarmFollowers)
         {
             var go = (GameObject*)address;
@@ -782,7 +785,10 @@ public unsafe class EnemyControlController : IDisposable
                         follower.FloorY,
                         visualScale,
                         resolvedMoveSpeed,
-                        maxClimb);
+                        maxClimb,
+                        config.EnemyControlSwarmStompResponse,
+                        concurrentStompers,
+                        moving);
                     follower.TraversalProxyActive = true;
                     if (swarmCorpseRagdoll.TryGetNpcTraversalProxyRoot(
                             address, out var proxyRoot, out var proxyOnCorpse))

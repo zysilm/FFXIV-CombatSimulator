@@ -294,6 +294,17 @@ public partial class MainWindow
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip("Temporarily multiplies the selected corpse's physical mass only while swarm feet are\n" +
                              "supported by it. This reduces corpse shoving without changing normal ragdoll motion.");
+
+        ImGui.SetNextItemWidth(150);
+        var stompResponse = config.EnemyControlSwarmStompResponse;
+        if (ImGui.SliderFloat("Swarm stomp response##EnemyControlswarm", ref stompResponse, 0f, 4f, "%.2fx"))
+        {
+            config.EnemyControlSwarmStompResponse = stompResponse;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Adds bounded alternating step pressure and sideways weight shift through each follower's\n" +
+                             "physical climbing carrier. 0 disables it; total load is capped for large swarms.");
         ImGui.EndDisabled();
 
         ImGui.SetNextItemWidth(150);

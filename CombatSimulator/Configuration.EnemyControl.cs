@@ -47,6 +47,10 @@ public partial class Configuration
     // Temporary physics mass applied only while at least one swarm follower is physically supported
     // by its selected corpse. Higher values make kinematic footsteps less able to shove the corpse.
     public float EnemyControlSwarmStompCorpseMassMultiplier { get; set; } = 3f;
+    // Strength of the bounded gait load sent through each finite-mass swarm traversal carrier.
+    // Unlike corpse weight, this adds local step pressure and shear instead of making the whole rig
+    // easier or harder to move. Aggregate load is capped by the controller for large swarms.
+    public float EnemyControlSwarmStompResponse { get; set; } = 1f;
     // When enabled, the attack input plays a real melee swing instead of toggling grab. The default
     // strike multiplier is intentionally tiny: physical limb contact should read, not launch.
     public bool EnemyControlAttackEnabled { get; set; } = false;

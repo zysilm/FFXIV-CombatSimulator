@@ -158,6 +158,9 @@ public unsafe partial class RagdollController : IDisposable
         public float VisualScale;
         public float MoveSpeed;
         public float MaxClimb;
+        public float StompResponse;
+        public int ConcurrentStompers;
+        public bool Locomoting;
     }
 
     private sealed class NpcTraversalProxy
@@ -169,6 +172,8 @@ public unsafe partial class RagdollController : IDisposable
         public Vector3 CachedRoot;
         public bool HasCachedRoot;
         public bool OnCorpseSupport;
+        public float Mass;
+        public float GaitPhase;
     }
     private bool npcTraversalProxyActivityThisFrame;
 
@@ -12868,7 +12873,10 @@ public unsafe partial class RagdollController : IDisposable
         float floorY,
         float visualScale,
         float moveSpeed,
-        float maxClimb)
+        float maxClimb,
+        float stompResponse,
+        int concurrentStompers,
+        bool locomoting)
     {
         if (address == nint.Zero)
             return;
@@ -12883,6 +12891,9 @@ public unsafe partial class RagdollController : IDisposable
                 VisualScale = Math.Clamp(visualScale, 0.2f, 4f),
                 MoveSpeed = Math.Clamp(moveSpeed, 0.1f, 12f),
                 MaxClimb = Math.Clamp(maxClimb, 0.1f, 3f),
+                StompResponse = Math.Clamp(stompResponse, 0f, 4f),
+                ConcurrentStompers = Math.Clamp(concurrentStompers, 1, 128),
+                Locomoting = locomoting,
             };
         }
     }
@@ -12977,6 +12988,9 @@ public unsafe partial class RagdollController : IDisposable
                     Active = true,
                     CachedRoot = request.InitialRoot,
                     HasCachedRoot = true,
+                    Mass = mass,
+                    // Keep a crowd from landing every step on the same physics tick.
+                    GaitPhase = ((uint)address.GetHashCode() & 0xffffu) / 65535f,
                 };
                 npcTraversalProxies[address] = proxy;
                 npcTraversalDynamicBodyHandles.Add(body.Value);
@@ -13045,12 +13059,71 @@ public unsafe partial class RagdollController : IDisposable
                     desiredUp - bodyRef.Velocity.Linear.Y, -maxVerticalDelta, maxVerticalDelta);
             }
 
-            proxy.OnCorpseSupport = hasSurface && surfaceY > request.FloorY + 0.025f &&
-                                    MathF.Abs(root.Y - surfaceY) <= MathF.Max(0.16f, proxy.Radius);
+            var supportedNow = hasSurface && surfaceY > request.FloorY + 0.025f &&
+                               MathF.Abs(root.Y - surfaceY) <= MathF.Max(0.16f, proxy.Radius);
+            proxy.OnCorpseSupport = supportedNow;
+
+            // The carrier is deliberately a smooth sphere, not twenty animated infinite-mass bone
+            // colliders. That makes a large swarm stable, but it also erased the gait: sliding a
+            // constant load across a body produces almost no visible local response. Reintroduce
+            // only the missing signal as bounded, alternating physical impulses through the carrier.
+            // The corpse still receives these through the contact solver at the real support point.
+            var stompedThisFrame = false;
+            if (supportedNow && request.StompResponse > 0.001f)
+            {
+                var stepRate = request.Locomoting
+                    ? Math.Clamp(1.55f + desiredSpeed * 0.34f, 1.55f, 3.4f)
+                    : 0.62f;
+                var previousStep = (int)MathF.Floor(proxy.GaitPhase);
+                proxy.GaitPhase += stepRate * Math.Clamp(dt, 0f, 0.05f);
+                var currentStep = (int)MathF.Floor(proxy.GaitPhase);
+                if (currentStep != previousStep)
+                {
+                    // At most eight full-strength feet contribute at once. Beyond that each carrier
+                    // receives a smaller share, preventing a 30-member swarm from scaling the total
+                    // impulse without bound while keeping contacts spatially distributed.
+                    var crowdShare = MathF.Min(1f, 8f / request.ConcurrentStompers);
+                    var response = request.StompResponse * crowdShare;
+                    var effectiveFootMass = Math.Clamp(MathF.Max(proxy.Mass, 6f), 6f, 24f);
+                    var speedLoad = request.Locomoting
+                        ? 0.28f + MathF.Min(0.14f, desiredSpeed * 0.035f)
+                        : 0.075f;
+                    var downwardImpulse = effectiveFootMass * speedLoad * response;
+                    var downVelocity = Math.Clamp(downwardImpulse / MathF.Max(0.5f, proxy.Mass), 0f, 2.2f);
+                    bodyRef.Velocity.Linear.Y -= downVelocity;
+
+                    // Alternate a small tangential weight shift. It creates local twist rather than
+                    // merely translating the whole corpse, and the position motor naturally brings
+                    // the carrier back over its reserved landmark after each step.
+                    Vector2 tangent;
+                    if (direction.LengthSquared() > 0.001f)
+                    {
+                        tangent = new Vector2(-direction.Y, direction.X);
+                    }
+                    else
+                    {
+                        var stableAngle = (((uint)address.GetHashCode() >> 16) & 0xffffu) /
+                                          65535f * MathF.Tau;
+                        tangent = new Vector2(MathF.Cos(stableAngle), MathF.Sin(stableAngle));
+                    }
+                    var side = (currentStep & 1) == 0 ? 1f : -1f;
+                    var lateralImpulse = downwardImpulse * (request.Locomoting ? 0.22f : 0.10f);
+                    var lateralVelocity = Math.Clamp(
+                        lateralImpulse / MathF.Max(0.5f, proxy.Mass), 0f, 0.48f);
+                    bodyRef.Velocity.Linear.X += tangent.X * lateralVelocity * side;
+                    bodyRef.Velocity.Linear.Z += tangent.Y * lateralVelocity * side;
+                    stompedThisFrame = true;
+                }
+
+                // Avoid precision loss after very long Enemy Control sessions without changing the
+                // alternating parity of the next footfall.
+                if (proxy.GaitPhase >= 4096f)
+                    proxy.GaitPhase -= 4096f;
+            }
             proxy.CachedRoot = root;
             proxy.HasCachedRoot = true;
             var activelyDriven = distance > MathF.Max(0.025f, proxy.Radius * 0.2f);
-            if (activelyDriven)
+            if (activelyDriven || stompedThisFrame)
             {
                 bodyRef.Awake = true;
                 prevAllAsleep = false;
@@ -13058,7 +13131,7 @@ public unsafe partial class RagdollController : IDisposable
             // An already-settling carrier still needs simulation ticks, but observing Awake must
             // not itself re-awaken it. Once BEPU puts the carrier to sleep at its target, the
             // ragdoll resting fast path can resume normally.
-            npcTraversalProxyActivityThisFrame |= activelyDriven || bodyRef.Awake;
+            npcTraversalProxyActivityThisFrame |= activelyDriven || stompedThisFrame || bodyRef.Awake;
         }
     }
 
