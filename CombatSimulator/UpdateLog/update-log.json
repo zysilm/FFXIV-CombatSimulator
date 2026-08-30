@@ -1,5 +1,15 @@
 [
   {
+    "version": "2.8.1.3",
+    "date": "2026-08-30",
+    "title": "Combat Simulator 2.8.1.3",
+    "changes": [
+      "Expanded Virtual Enemy variants with their correct equipment, weapons, and authored appearances.",
+      "Added NPC visual scaling with consistent absolute sizing for oversized and undersized enemies.",
+      "Added enemy attack-range scaling that also adjusts chase and formation stopping distances."
+    ]
+  },
+  {
     "version": "2.8.1.2",
     "date": "2026-08-30",
     "title": "Combat Simulator 2.8.1.2",
