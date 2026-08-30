@@ -21,6 +21,7 @@ public sealed class NpcModelActionTimelineProvider
 {
     private const uint ActionCategorySpell = 2;
     private const uint ActionCategoryWeaponskill = 3;
+    private const string SkeletonTemplatePrefix = "mon_sp/[SKL_ID]/mon_sp";
 
     private readonly IDataManager dataManager;
     private readonly IPluginLog log;
@@ -113,9 +114,58 @@ public sealed class NpcModelActionTimelineProvider
                 .ToHashSet();
             if (all.Count == 0)
             {
+                // Newer/non-player families may have the TMB/PAP files in SqPack without a
+                // literal ActionTimeline row such as mon_sp/d1048/mon_sp001. The game exposes
+                // generic rows named mon_sp/[SKL_ID]/mon_spNNN instead and substitutes the
+                // current actor's skeleton family when they play. Only admit a template when
+                // that exact family's TMB exists; otherwise PlayTimeline would address a
+                // nonexistent resource and leave the actor motionless.
+                var templatePool = new List<NpcModelActionSelection>();
+                foreach (var row in timelineSheet)
+                {
+                    if (row.RowId > ushort.MaxValue)
+                        continue;
+
+                    var key = row.Key.ExtractText();
+                    if (!key.StartsWith(SkeletonTemplatePrefix, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var suffix = key.AsSpan(SkeletonTemplatePrefix.Length);
+                    if (suffix.Length != 3 || !int.TryParse(suffix, out var specialIndex))
+                        continue;
+
+                    var familyTmbPath =
+                        $"chara/action/{prefix}mon_sp{specialIndex:D3}.tmb";
+                    if (!dataManager.FileExists(familyTmbPath))
+                        continue;
+
+                    templatePool.Add(new NpcModelActionSelection(0, (ushort)row.RowId));
+                }
+
+                if (templatePool.Count > 0)
+                {
+                    templatePool.Sort(static (left, right) =>
+                        left.TimelineId.CompareTo(right.TimelineId));
+                    var templateTimelines = templatePool
+                        .Select(static candidate => candidate.TimelineId)
+                        .ToHashSet();
+
+                    log.Info(
+                        $"NPC model action family: ModelChara={modelCharaId}, prefix={prefix}, " +
+                        $"literalTimelines=0, templateTimelines={templatePool.Count}, " +
+                        "tier=skeleton-template.");
+                    return new FamilyEntry
+                    {
+                        AllTimelines = templateTimelines,
+                        AttackPool = templatePool.ToArray(),
+                        Prefix = prefix,
+                        Tier = "skeleton-template",
+                    };
+                }
+
                 log.Info(
                     $"NPC model action family: ModelChara={modelCharaId}, prefix={prefix}, " +
-                    "timelines=0; using generic attack fallback.");
+                    "literalTimelines=0, templateTimelines=0; using generic attack fallback.");
                 return new FamilyEntry { Prefix = prefix };
             }
 
