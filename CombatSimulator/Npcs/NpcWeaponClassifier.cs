@@ -106,14 +106,29 @@ public static unsafe class NpcWeaponClassifier
         if (character == null)
             return 0;
 
+        if (!IsHumanModel((uint)character->ModelContainer.ModelCharaId))
+            return 0;
+
         var weapon = character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).ModelId;
 
-        // A bare-handed humanoid fights with its fists — give it the pugilist/monk kit.
-        // Humanoid = player-model character (ModelCharaId 0); monsters keep no-job/auto-only.
+        // A bare-handed Human fights with its fists — give it the pugilist/monk kit.
+        // DemiHuman and Monster models keep no-job/auto-only.
         if (weapon.Id == 0)
-            return character->ModelContainer.ModelCharaId == 0 ? MonkJobId : 0u;
+            return MonkJobId;
 
         return DetectJobFromWeapon(weapon.Id, weapon.Type, weapon.Variant);
+    }
+
+    private static bool IsHumanModel(uint modelCharaId)
+    {
+        // Player-shaped characters traditionally use row 0; preserve that invariant even if
+        // a game-data version does not expose the sentinel row through Lumina.
+        if (modelCharaId == 0)
+            return true;
+        if (dataManager == null)
+            return false;
+        var row = dataManager.GetExcelSheet<ModelChara>().GetRowOrDefault(modelCharaId);
+        return row is { } model && model.Type == 1;
     }
 
     public static uint DetectJobFromPackedWeapon(ulong packedWeapon)

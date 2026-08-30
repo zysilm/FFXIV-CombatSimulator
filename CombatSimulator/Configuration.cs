@@ -142,6 +142,9 @@ public class RecentNpcEntry
 {
     public uint BNpcBaseId { get; set; }
     public uint BNpcNameId { get; set; }
+    public uint ModelCharaId { get; set; }
+    public Npcs.NpcCatalogType Type { get; set; } = Npcs.NpcCatalogType.BNpc;
+    public Npcs.NpcCatalogSource Source { get; set; } = Npcs.NpcCatalogSource.BNpcBase;
 }
 
 public enum RagdollNpcCollisionMode

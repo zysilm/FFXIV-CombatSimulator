@@ -243,13 +243,13 @@ public unsafe class NpcSpawner : IDisposable
                 // Without this, Mode/ClassJob/TimelineContainer are uninitialized
                 // and the game refuses to run humanoid draw/animation logic, so
                 // the NPC has no facing update, no battle stance, and no walk anim.
-                if (!BootstrapHumanoidFromPlayer(character, request.ENpcBaseId))
+                if (!BootstrapFromENpc(character, request.ENpcBaseId))
                 {
-                    log.Error($"[SpawnDbg] Humanoid bootstrap failed for ENpcBase {request.ENpcBaseId}. Aborting spawn.");
+                    log.Error($"[SpawnDbg] ENpc bootstrap failed for ENpcBase {request.ENpcBaseId}. Aborting spawn.");
                     // Roll back the allocation so the slot is reusable
                     clientObjMgr->DeleteObjectByIndex((ushort)index, 0);
                     allocatedIndices.Remove(index);
-                    OnSpawnError?.Invoke("Humanoid spawn needs a valid local player as clone source.");
+                    OnSpawnError?.Invoke("ENpc appearance could not be initialized.");
                     return;
                 }
             }
@@ -259,11 +259,26 @@ public unsafe class NpcSpawner : IDisposable
                 character->CharacterSetup.SetupBNpc(request.BNpcBaseId, request.BNpcNameId);
                 log.Info($"[SpawnDbg] SetupBNpc({request.BNpcBaseId}, {request.BNpcNameId}) done. ModelCharaId={character->ModelContainer.ModelCharaId}");
             }
+            else if (request.ModelCharaId > 0)
+            {
+                var model = dataManager.GetExcelSheet<ModelChara>().GetRowOrDefault(request.ModelCharaId);
+                if (model == null || model.Value.Type != 3)
+                {
+                    log.Error($"[SpawnDbg] Direct ModelChara {request.ModelCharaId} is not a valid Monster row.");
+                    clientObjMgr->DeleteObjectByIndex((ushort)index, 0);
+                    allocatedIndices.Remove(index);
+                    OnSpawnError?.Invoke("Only ModelChara-only Monster entries can be spawned directly.");
+                    return;
+                }
+
+                character->ModelContainer.ModelCharaId = checked((int)request.ModelCharaId);
+                log.Info($"[SpawnDbg] Direct Monster ModelCharaId={request.ModelCharaId} set.");
+            }
 
             // Step 6: Self-copy to trigger the DrawData refresh pipeline.
             // Brio's "double copy" pattern — the first CopyFromCharacter populates
             // the target (for BNpc it's SetupBNpc that already did the work; for
-            // humanoids it's BootstrapHumanoidFromPlayer above). This self-copy is
+            // ENpcs it is BootstrapFromENpc above). This self-copy is
             // the trigger that tools like Glamourer/Penumbra expect to see.
             character->CharacterSetup.CopyFromCharacter(
                 character, CharacterSetupContainer.CopyFlags.None);
@@ -329,12 +344,16 @@ public unsafe class NpcSpawner : IDisposable
                 {
                     mainHandWeapon = eRow.Value.ModelMainHand;
                     offHandWeapon = eRow.Value.ModelOffHand;
-                    enpcIsHumanoid = eRow.Value.ModelChara.RowId == 0; // monster-model ENpcs skip the clone path
+                    var model = dataManager.GetExcelSheet<ModelChara>()
+                        .GetRowOrDefault(eRow.Value.ModelChara.RowId);
+                    enpcIsHumanoid = model is { } modelRow && modelRow.Type == 1;
                 }
             }
 
             var weaponStyle = NpcWeaponClassifier.DetectFromPackedWeapon(mainHandWeapon);
-            var jobId = NpcWeaponClassifier.DetectJobFromPackedWeapon(mainHandWeapon);
+            var jobId = enpcIsHumanoid
+                ? NpcWeaponClassifier.DetectJobFromPackedWeapon(mainHandWeapon)
+                : 0u;
             // A bare-handed humanoid ENpc fights with its fists — pugilist/monk kit.
             if (jobId == 0 && mainHandWeapon == 0 && enpcIsHumanoid)
                 jobId = NpcWeaponClassifier.MonkJobId;
@@ -579,6 +598,7 @@ public unsafe class NpcSpawner : IDisposable
             BNpcNameId = src.BNpcNameId,
             BNpcBaseId = src.BNpcBaseId,
             ENpcBaseId = src.ENpcBaseId,
+            ModelCharaId = src.ModelCharaId,
             Level = src.Level,
             HpMultiplier = src.HpMultiplier,
             Position = src.Position,
@@ -622,10 +642,10 @@ public unsafe class NpcSpawner : IDisposable
     /// Returns false if the local player isn't a valid clone source (e.g. we're
     /// between zones, in a cutscene, dead, or not logged in).
     /// </summary>
-    private bool BootstrapHumanoidFromPlayer(Character* target, uint eNpcBaseId)
+    private bool BootstrapFromENpc(Character* target, uint eNpcBaseId)
     {
-        // First verify the ENpcBase actually represents a humanoid.
-        // If ModelChara > 0 this ENpc uses a monster model and should not
+        // Resolve the ENpc's authoritative ModelChara type before choosing the Human clone path
+        // or the direct DemiHuman/Monster model path. Non-Human models do not
         // go through the clone path at all — fall back to ModelCharaId set.
         var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ENpcBase>();
         if (sheet == null)
@@ -640,12 +660,26 @@ public unsafe class NpcSpawner : IDisposable
             return false;
         }
         var enpc = row.Value;
-        var modelCharaId = (int)enpc.ModelChara.RowId;
-        if (modelCharaId > 0)
+        var modelCharaId = enpc.ModelChara.RowId;
+        var model = dataManager.GetExcelSheet<ModelChara>().GetRowOrDefault(modelCharaId);
+        if (model == null || model.Value.Type is < 1 or > 3)
         {
-            // Monster-model ENpc — no clone needed. Treat like a BNpc model set.
-            target->ModelContainer.ModelCharaId = modelCharaId;
-            log.Info($"[SpawnDbg] ENpc {eNpcBaseId}: monster model, ModelCharaId={modelCharaId}");
+            log.Error($"[SpawnDbg] ENpc {eNpcBaseId} has unsupported ModelChara {modelCharaId}.");
+            return false;
+        }
+
+        if (model.Value.Type == 3)
+        {
+            target->ModelContainer.ModelCharaId = checked((int)modelCharaId);
+            log.Info($"[SpawnDbg] ENpc {eNpcBaseId}: Monster ModelCharaId={modelCharaId}");
+            return true;
+        }
+
+        if (model.Value.Type == 2)
+        {
+            target->ModelContainer.ModelCharaId = checked((int)modelCharaId);
+            OverwriteCustomizeFromENpc(target, enpc);
+            log.Info($"[SpawnDbg] ENpc {eNpcBaseId}: DemiHuman ModelCharaId={modelCharaId}");
             return true;
         }
 
@@ -660,7 +694,7 @@ public unsafe class NpcSpawner : IDisposable
         var source = (Character*)localPlayer.Address;
 
         // Sanity: make sure the source is itself a humanoid (has Race > 0 and
-        // ModelCharaId == 0). If the player is currently in a monster form —
+        // ModelChara.Type == Human). If the player is currently in a monster form —
         // say, fantasia'd or on a special mount — this would blow up.
         var sourceRace = ((byte*)&source->DrawData.CustomizeData)[0];
         if (sourceRace == 0)
@@ -682,6 +716,10 @@ public unsafe class NpcSpawner : IDisposable
         target->CharacterSetup.CopyFromCharacter(source, flags);
         log.Info($"[SpawnDbg] CopyFromCharacter(player, ClassJob|WeaponHiding) done.");
 
+        // ModelChara.Type defines Human rows. Preserve nonzero Human IDs (notably Young NPC
+        // bodies) after CopyFromCharacter copied the local player's model.
+        target->ModelContainer.ModelCharaId = checked((int)modelCharaId);
+
         // Step B: Overwrite customize bytes + equipment from ENpcBase so the
         // cloned player actually looks like the requested NPC. Weapons are
         // loaded later via LoadPendingWeapons after EnableDraw.
@@ -692,7 +730,7 @@ public unsafe class NpcSpawner : IDisposable
 
     /// <summary>
     /// Overwrite the 26 customize bytes + 10 equipment slots from an ENpcBase row.
-    /// Called after BootstrapHumanoidFromPlayer so the base Character already has
+    /// Called after BootstrapFromENpc so the base Character already has
     /// a working humanoid pipeline from the clone.
     /// </summary>
     private void OverwriteCustomizeFromENpc(Character* character, Lumina.Excel.Sheets.ENpcBase enpc)
@@ -804,6 +842,8 @@ public unsafe class NpcSpawner : IDisposable
             return $"Enemy #{request.BNpcBaseId}";
         if (request.ENpcBaseId > 0)
             return $"NPC #{request.ENpcBaseId}";
+        if (request.ModelCharaId > 0)
+            return $"ModelChara {request.ModelCharaId}";
 
         return "Simulated Enemy";
     }
