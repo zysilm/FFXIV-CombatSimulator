@@ -441,7 +441,14 @@ public unsafe class EnemyControlController : IDisposable
         var character = (Character*)controlledAddress;
         movementBlock.AddApproachNpc(controlledAddress);
 
-        if (config.NpcCollisionActive && config.RagdollNpcCorpseTraversal)
+        // Grab and corpse traversal must never own vertical placement at the same time. The grab
+        // target follows a bone on this creature; if foot IK then raises the creature onto the body
+        // being pulled, the target rises too, the corpse follows, and the next IK sample raises the
+        // creature again (an unbounded staircase/spiral). Keep the grab physically colliding and
+        // horizontally movable, but terrain-ground its carrier until the constraint is released.
+        var allowCorpseTraversal = !grabAttackActive &&
+                                   config.NpcCollisionActive && config.RagdollNpcCorpseTraversal;
+        if (allowCorpseTraversal)
             FootIkSolver?.Track(controlledAddress, dt);
 
         // ── Horizontal input: keyboard WASD + gamepad left stick (camera-relative) ──
@@ -501,7 +508,8 @@ public unsafe class EnemyControlController : IDisposable
             // deciding whether/how much to rise, so the two don't double-react to the same contact.
             // Non-humanoid creatures (no resolvable leg bones) still rely on the capsule-based query
             // entirely, unchanged.
-            var legIkHandlesCorpse = FootIkSolver?.IsSupported(controlledAddress) == true;
+            var legIkHandlesCorpse = allowCorpseTraversal &&
+                                     FootIkSolver?.IsSupported(controlledAddress) == true;
             if (legIkHandlesCorpse != lastLoggedLegIkHandlesCorpse)
             {
                 log.Info($"EnemyControlMode: leg-IK corpse handling for 0x{controlledAddress:X} = {legIkHandlesCorpse}");
@@ -517,7 +525,7 @@ public unsafe class EnemyControlController : IDisposable
             }
             else
             {
-                hasCorpseSupport = config.NpcCollisionActive && config.RagdollNpcCorpseTraversal &&
+                hasCorpseSupport = allowCorpseTraversal &&
                     playerRagdoll.TryGetNpcTraversalRootHeight(
                         controlledAddress, new Vector3(posX, posY, posZ), terrainY, maxClimb, out desiredY);
             }
