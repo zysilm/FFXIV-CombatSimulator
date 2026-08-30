@@ -1,5 +1,13 @@
 [
   {
+    "version": "2.8.1.2",
+    "date": "2026-08-30",
+    "title": "Combat Simulator 2.8.1.2",
+    "changes": [
+      "Fixed mismatched Virtual Enemy search results, models, and attacks."
+    ]
+  },
+  {
     "version": "2.8.1.1",
     "date": "2026-08-30",
     "title": "Combat Simulator 2.8.1.1",
