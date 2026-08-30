@@ -602,7 +602,8 @@ public class CombatEngine : IDisposable
         float radius = 0,
         bool suppressCasterActionEffect = false,
         bool suppressCastVfx = false,
-        uint modelVfxActionId = 0)
+        uint modelVfxActionId = 0,
+        bool modelTimelineOwnsVfx = false)
     {
         var result = new SimulatedActionResult
         {
@@ -706,7 +707,8 @@ public class CombatEngine : IDisposable
                 npc.State,
                 vfxAction != null ? CloneActionData(vfxAction) : visualAction,
                 hits,
-                suppressCastVfx));
+                suppressCastVfx,
+                modelTimelineOwnsVfx));
         }
         else
             TriggerActionEffect(npc.State, visualAction, hits, suppressCastVfx);
@@ -1061,7 +1063,8 @@ public class CombatEngine : IDisposable
         SimulatedEntityState source,
         ActionData actionData,
         IReadOnlyList<AppliedActionDamage> hits,
-        bool suppressCastVfx = false)
+        bool suppressCastVfx = false,
+        bool suppressActionVfx = false)
     {
         var sourcePos = GetEntityPosition(source);
 
@@ -1128,6 +1131,7 @@ public class CombatEngine : IDisposable
             CasterVfxPaths = actionData.CasterVfxPaths,
             TargetVfxPaths = actionData.TargetVfxPaths,
             SuppressCastVfx = suppressCastVfx,
+            SuppressActionVfx = suppressActionVfx,
         };
 
         foreach (var hit in hits)

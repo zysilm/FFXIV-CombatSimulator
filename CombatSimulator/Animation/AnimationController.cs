@@ -47,6 +47,10 @@ public class ActionEffectRequest
     /// at the strike (see AnimationController.PlayNpcCastVfx).</summary>
     public bool SuppressCastVfx { get; set; }
 
+    /// <summary>The selected model-family timeline owns its complete native VFX track. Suppress
+    /// the simulator Action's unrelated caster/target VFX so it cannot overwrite that pairing.</summary>
+    public bool SuppressActionVfx { get; set; }
+
     public List<TargetEffect> Targets { get; set; } = new();
 }
 
@@ -66,6 +70,7 @@ public unsafe class AnimationController : IDisposable
     private readonly IClientState clientState;
     private readonly EmoteTimelinePlayer emotePlayer;
     private readonly NpcModelActionTimelineProvider npcModelActionTimelines;
+    private readonly NpcTimelineVfxTrackProvider npcTimelineVfxTracks;
     public EmoteTimelinePlayer EmotePlayer => emotePlayer;
     private readonly Configuration config;
     private readonly IDataManager dataManager;
@@ -147,6 +152,7 @@ public unsafe class AnimationController : IDisposable
     private delegate void* PlaySpecificSoundDelegate(long a1, int idx);
     private Hook<PlaySpecificSoundDelegate>? playSpecificSoundHook;
     private readonly List<TrackedActorVfx> trackedActorVfx = new();
+    private readonly List<PendingNpcTimelineVfx> pendingNpcTimelineVfx = new();
     // Manually-spawned VFX are orphans — nothing in the game's action lifecycle reaps them, so they
     // are tracked and removed on a timer or they linger until a client restart. The budget starts
     // from a per-type FLOOR (a spell's effect lingers far longer than a weaponskill's) and is then
@@ -165,6 +171,16 @@ public unsafe class AnimationController : IDisposable
         public float Remaining;
         public string Path = string.Empty;
         public uint OwnerEntityId;
+    }
+
+    private sealed class PendingNpcTimelineVfx
+    {
+        public string Path = string.Empty;
+        public uint SourceEntityId;
+        public uint TargetEntityId;
+        public float Remaining;
+        public float Lifetime;
+        public NpcTimelineVfxRole Role;
     }
 
     /// <summary>Resolved address of the native ActorVfxCreate function (0 if unresolved).</summary>
@@ -194,6 +210,7 @@ public unsafe class AnimationController : IDisposable
         this.dataManager = dataManager;
         this.emotePlayer = new EmoteTimelinePlayer(log);
         this.npcModelActionTimelines = new NpcModelActionTimelineProvider(dataManager, log);
+        this.npcTimelineVfxTracks = new NpcTimelineVfxTrackProvider(dataManager, log);
 
         ResolvePlayDeadTimelines(dataManager);
         ResolveBattleDeadTimeline(dataManager);
@@ -757,6 +774,7 @@ public unsafe class AnimationController : IDisposable
     {
         TickGuardVisualRestore(deltaTime);
         TickPendingTargetVfx(deltaTime);
+        TickPendingNpcTimelineVfx(deltaTime);
 
         for (var i = trackedActorVfx.Count - 1; i >= 0; i--)
         {
@@ -769,6 +787,7 @@ public unsafe class AnimationController : IDisposable
 
     public void RemoveAllActiveVfx()
     {
+        pendingNpcTimelineVfx.Clear();
         for (var i = trackedActorVfx.Count - 1; i >= 0; i--)
             RemoveTrackedActorVfxAt(i);
         trackedActorVfx.Clear();
@@ -829,7 +848,7 @@ public unsafe class AnimationController : IDisposable
     /// </summary>
     public void PlayActionVfx(ActionEffectRequest request)
     {
-        if (request.Targets.Count == 0)
+        if (request.Targets.Count == 0 || request.SuppressActionVfx)
             return;
 
         try
@@ -850,9 +869,19 @@ public unsafe class AnimationController : IDisposable
 
         try
         {
+            uint modelCharaId = 0;
+            var modelAction = default(NpcModelActionSelection);
+            var modelTimelineOwnsVfx = false;
+            if (!request.IsSourcePlayer && request.IsHostileSource)
+            {
+                modelAction = ResolveNpcModelAction(request, out modelCharaId);
+                modelTimelineOwnsVfx = ModelTimelineOwnsVfx(modelCharaId, modelAction);
+            }
+
             // Spawn skill VFX via ActorVfxCreate (off by default; other plugins that
             // hook this function may crash when accessing our modified NPC actors)
-            if (config.EnableCharacterVfx || config.EnableTargetVfx)
+            if (!request.SuppressActionVfx && !modelTimelineOwnsVfx &&
+                (config.EnableCharacterVfx || config.EnableTargetVfx))
                 SpawnActionVfx(request);
 
             // Use ActionEffectHandler.Receive() for flytext + damage numbers
@@ -866,7 +895,7 @@ public unsafe class AnimationController : IDisposable
                 // DemiHumans and Monsters generally cannot play the cloned player's generic
                 // weapon swing. Prefer an authored animation from their own mon_sp model family;
                 // retain a real action's exact family timeline when one is already known.
-                var playedModelAction = PlayNpcModelActionTimeline(request);
+                var playedModelAction = PlayNpcModelActionTimeline(request, modelCharaId, modelAction);
                 if (!playedModelAction && request.AttackStyle == NpcAttackStyle.Ranged)
                     PlayMonsterRangedAttackTimeline(request.SourceEntityId);
             }
@@ -1329,28 +1358,179 @@ public unsafe class AnimationController : IDisposable
     /// models without a discoverable family return false so the existing animation path remains
     /// the fallback.
     /// </summary>
-    private bool PlayNpcModelActionTimeline(ActionEffectRequest request)
+    private NpcModelActionSelection ResolveNpcModelAction(
+        ActionEffectRequest request,
+        out uint modelCharaId)
     {
+        modelCharaId = 0;
+        var casterPtr = FindCharacter(request.SourceEntityId, isPlayer: false);
+        if (casterPtr == null)
+            return default;
+
+        var resolvedModelCharaId = casterPtr->ModelContainer.ModelCharaId;
+        if (resolvedModelCharaId <= 0)
+            return default;
+
+        modelCharaId = (uint)resolvedModelCharaId;
+        return npcModelActionTimelines.SelectAction(
+            modelCharaId,
+            request.AnimationEndTimelineId);
+    }
+
+    private bool PlayNpcModelActionTimeline(
+        ActionEffectRequest request,
+        uint modelCharaId,
+        NpcModelActionSelection modelAction)
+    {
+        if (modelCharaId == 0 || modelAction.TimelineId == 0)
+            return false;
+
         var casterPtr = FindCharacter(request.SourceEntityId, isPlayer: false);
         if (casterPtr == null)
             return false;
 
-        var modelCharaId = casterPtr->ModelContainer.ModelCharaId;
-        if (modelCharaId <= 0)
-            return false;
-
-        var timeline = npcModelActionTimelines.Select(
-            (uint)modelCharaId,
-            request.AnimationEndTimelineId);
-        if (timeline == 0)
-            return false;
-
         var targetObjId = request.Targets.Count > 0 ? request.Targets[0].TargetId : 0;
-        emotePlayer.PlayOneShot(casterPtr, timeline, targetObjId);
+        emotePlayer.PlayOneShot(casterPtr, modelAction.TimelineId, targetObjId);
+        if (modelAction.ActionId == 0)
+            ScheduleNpcTimelineVfx(
+                modelCharaId,
+                modelAction.TimelineId,
+                request.SourceEntityId,
+                targetObjId <= uint.MaxValue ? (uint)targetObjId : 0);
         log.Verbose(
-            $"Playing model-family attack timeline {timeline} for ModelChara {modelCharaId}, " +
+            $"Playing model-family attack timeline {modelAction.TimelineId} for ModelChara {modelCharaId}, " +
             $"caster=0x{request.SourceEntityId:X}.");
         return true;
+    }
+
+    private bool ModelTimelineOwnsVfx(uint modelCharaId, NpcModelActionSelection modelAction)
+    {
+        if (modelCharaId == 0 || modelAction.TimelineId == 0 || modelAction.ActionId != 0)
+            return false;
+
+        var tmbPath = npcModelActionTimelines.ResolveTmbPath(modelCharaId, modelAction.TimelineId);
+        if (tmbPath == null)
+            return false;
+
+        // Parse now so classification is cached before playback. A valid motion-only TMB still
+        // owns an intentionally empty track and must not inherit an unrelated generic effect.
+        _ = npcTimelineVfxTracks.GetTrack(tmbPath);
+        return true;
+    }
+
+    /// <summary>
+    /// Schedule every native C012/C173 event from the selected model timeline. ActorVfxCreate gets
+    /// both actors exactly as the TMB intended; each AVFX's own binder then attaches it to the
+    /// caster, target, weapon, or caster-to-target flight path.
+    /// </summary>
+    private bool ScheduleNpcTimelineVfx(
+        uint modelCharaId,
+        ushort timelineId,
+        uint sourceEntityId,
+        uint targetEntityId)
+    {
+        var tmbPath = npcModelActionTimelines.ResolveTmbPath(modelCharaId, timelineId);
+        if (tmbPath == null)
+            return false;
+
+        var track = npcTimelineVfxTracks.GetTrack(tmbPath);
+        if (track.Count == 0)
+            return true;
+
+        // This track remains authoritative even when VFX are disabled, unavailable, or culled:
+        // those settings must not make the unrelated simulator Action VFX appear in its place.
+        if (actorVfxCreate == null || IsNpcTimelineVfxCulled(sourceEntityId))
+            return true;
+
+        foreach (var timelineEvent in track)
+        {
+            if (!ShouldPlayNpcTimelineVfx(timelineEvent.Role))
+                continue;
+
+            var pending = new PendingNpcTimelineVfx
+            {
+                Path = timelineEvent.Path,
+                SourceEntityId = sourceEntityId,
+                TargetEntityId = targetEntityId,
+                Remaining = timelineEvent.DelaySeconds,
+                Lifetime = timelineEvent.LifetimeSeconds,
+                Role = timelineEvent.Role,
+            };
+
+            if (pending.Remaining <= 0.001f)
+                SpawnPendingNpcTimelineVfx(pending);
+            else
+                pendingNpcTimelineVfx.Add(pending);
+        }
+
+        // A malformed or extremely dense resource must not create an unbounded delayed queue.
+        while (pendingNpcTimelineVfx.Count > 512)
+            pendingNpcTimelineVfx.RemoveAt(0);
+        return true;
+    }
+
+    private bool ShouldPlayNpcTimelineVfx(NpcTimelineVfxRole role)
+    {
+        if (role == NpcTimelineVfxRole.Unknown)
+            return config.EnableCharacterVfx;
+
+        var characterSide = (role & (NpcTimelineVfxRole.Attack | NpcTimelineVfxRole.Projectile)) != 0;
+        var targetSide = (role & NpcTimelineVfxRole.Impact) != 0;
+        return (characterSide && config.EnableCharacterVfx) ||
+               (targetSide && config.EnableTargetVfx);
+    }
+
+    private bool IsNpcTimelineVfxCulled(uint sourceEntityId)
+    {
+        var limit = config.NpcSkillVfxMaxDistance;
+        if (limit <= 0f || !Camera.GameCameraView.TryRead(out var view))
+            return false;
+
+        var source = FindCharacter(sourceEntityId, isPlayer: false);
+        if (source == null)
+            return true;
+        var position = ((GameObject*)source)->Position;
+        return Vector3.DistanceSquared(view.Position, position) > limit * limit;
+    }
+
+    private void TickPendingNpcTimelineVfx(float deltaTime)
+    {
+        for (var i = pendingNpcTimelineVfx.Count - 1; i >= 0; i--)
+        {
+            var pending = pendingNpcTimelineVfx[i];
+            pending.Remaining -= deltaTime;
+            if (pending.Remaining > 0f)
+                continue;
+
+            pendingNpcTimelineVfx.RemoveAt(i);
+            SpawnPendingNpcTimelineVfx(pending);
+        }
+    }
+
+    private void SpawnPendingNpcTimelineVfx(PendingNpcTimelineVfx pending)
+    {
+        var source = FindCharacter(pending.SourceEntityId, isPlayer: false);
+        if (source == null)
+            return;
+
+        Character* target = null;
+        if (pending.TargetEntityId != 0)
+            target = FindCharacter(pending.TargetEntityId, isPlayer: false);
+        if (target == null)
+        {
+            var needsTarget = (pending.Role &
+                (NpcTimelineVfxRole.Impact | NpcTimelineVfxRole.Projectile)) != 0;
+            if (needsTarget)
+                return;
+            target = source;
+        }
+
+        SpawnAndTrack(
+            pending.Path,
+            (nint)source,
+            (nint)target,
+            pending.SourceEntityId,
+            pending.Lifetime);
     }
 
     /// <summary>
@@ -1808,7 +1988,29 @@ public unsafe class AnimationController : IDisposable
     /// </summary>
     public bool PlayNpcWindupPose(SimulatedNpc npc, uint actionId, out uint modelVfxActionId)
     {
+        var targetEntityId = Core.Services.ObjectTable.LocalPlayer?.EntityId ?? 0;
+        return PlayNpcWindupPose(
+            npc,
+            actionId,
+            targetEntityId,
+            out modelVfxActionId,
+            out _);
+    }
+
+    /// <summary>
+    /// Plays a selected model-family windup toward the supplied target and reports whether that
+    /// timeline has taken ownership of VFX playback. The ownership flag lets the strike suppress
+    /// the unrelated simulator Action VFX without suppressing damage, flytext, or hit feedback.
+    /// </summary>
+    public bool PlayNpcWindupPose(
+        SimulatedNpc npc,
+        uint actionId,
+        uint targetEntityId,
+        out uint modelVfxActionId,
+        out bool modelTimelineOwnsVfx)
+    {
         modelVfxActionId = 0;
+        modelTimelineOwnsVfx = false;
         var casterPtr = FindCharacter(npc.SimulatedEntityId, isPlayer: false);
         if (casterPtr == null) return false;
 
@@ -1827,9 +2029,16 @@ public unsafe class AnimationController : IDisposable
                 actionId);
             if (modelAction.TimelineId != 0)
             {
-                var targetId = Core.Services.ObjectTable.LocalPlayer?.EntityId ?? 0;
-                emotePlayer.PlayOneShot(casterPtr, modelAction.TimelineId, targetId);
+                emotePlayer.PlayOneShot(casterPtr, modelAction.TimelineId, targetEntityId);
                 modelVfxActionId = modelAction.ActionId;
+                if (modelAction.ActionId == 0)
+                {
+                    modelTimelineOwnsVfx = ScheduleNpcTimelineVfx(
+                        (uint)modelCharaId,
+                        modelAction.TimelineId,
+                        npc.SimulatedEntityId,
+                        targetEntityId);
+                }
                 return true;
             }
         }

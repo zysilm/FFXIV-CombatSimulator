@@ -45,6 +45,8 @@ public sealed class ActiveTelegraph
     public bool WindupAnimationPlayed;
     /// <summary>Action row that authored the selected model-family windup; used only for VFX.</summary>
     public uint ModelVfxActionId;
+    /// <summary>The selected model-family timeline scheduled its own native VFX track.</summary>
+    public bool ModelTimelineOwnsVfx;
     /// <summary>Cast/channel VFX already spawned when this telegraph began — the strike skips it.</summary>
     public bool CastVfxPlayed;
     // After the circle closes (perfect moment), a short window where a late guard still counts.
@@ -103,8 +105,13 @@ public sealed class TelegraphSystem
         var normalizedLeadIn = MathF.Max(0f, leadIn);
         var windupAnimationPlayed = false;
         var modelVfxActionId = 0u;
+        var modelTimelineOwnsVfx = false;
         if (normalizedLeadIn <= 0f)
-            windupAnimationPlayed = TryPlayWindupAnimation(source, req, out modelVfxActionId);
+            windupAnimationPlayed = TryPlayWindupAnimation(
+                source,
+                req,
+                out modelVfxActionId,
+                out modelTimelineOwnsVfx);
 
         // Ranged/magic skills get no windup swing, so nothing marks the cast visually until the
         // strike — where the cast VFX spawned and vanished in the same instant. Light the channel
@@ -133,6 +140,7 @@ public sealed class TelegraphSystem
             Outcome = TelegraphOutcome.Pending,
             WindupAnimationPlayed = windupAnimationPlayed,
             ModelVfxActionId = modelVfxActionId,
+            ModelTimelineOwnsVfx = modelTimelineOwnsVfx,
             CastVfxPlayed = castVfxPlayed,
         });
     }
@@ -171,7 +179,10 @@ public sealed class TelegraphSystem
                 t.LeadInElapsed = t.LeadInTotal;
                 if (!t.WindupAnimationPlayed)
                     t.WindupAnimationPlayed = TryPlayWindupAnimation(
-                        t.Source, t.Request, out t.ModelVfxActionId);
+                        t.Source,
+                        t.Request,
+                        out t.ModelVfxActionId,
+                        out t.ModelTimelineOwnsVfx);
                 if (windupDt <= 0f)
                     continue;
             }
@@ -246,7 +257,8 @@ public sealed class TelegraphSystem
             t.Request.Potency, t.Request.Style, t.Request.Radius,
             suppressCasterActionEffect: t.WindupAnimationPlayed,
             suppressCastVfx: t.CastVfxPlayed,
-            modelVfxActionId: t.ModelVfxActionId);
+            modelVfxActionId: t.ModelVfxActionId,
+            modelTimelineOwnsVfx: t.ModelTimelineOwnsVfx);
         Finish(t, TelegraphOutcome.Hit);
     }
 
@@ -276,16 +288,23 @@ public sealed class TelegraphSystem
     private bool TryPlayWindupAnimation(
         SimulatedNpc source,
         in NpcAttackRequest req,
-        out uint modelVfxActionId)
+        out uint modelVfxActionId,
+        out bool modelTimelineOwnsVfx)
     {
         modelVfxActionId = 0;
+        modelTimelineOwnsVfx = false;
         if (!config.ActionEnemyWindupSwing)
             return false;
 
         var isPhysicalSwing = req.Style == NpcAttackStyle.Melee ||
                               (req.IsAutoAttack && req.Style != NpcAttackStyle.Ranged);
         return isPhysicalSwing &&
-               animationController.PlayNpcWindupPose(source, req.ActionId, out modelVfxActionId);
+               animationController.PlayNpcWindupPose(
+                   source,
+                   req.ActionId,
+                   req.TargetId <= uint.MaxValue ? (uint)req.TargetId : 0,
+                   out modelVfxActionId,
+                   out modelTimelineOwnsVfx);
     }
 
     private void Finish(ActiveTelegraph t, TelegraphOutcome outcome)

@@ -51,6 +51,47 @@ public sealed class NpcModelActionTimelineProvider
         => SelectAction(modelCharaId, preferredTimeline).TimelineId;
 
     /// <summary>
+    /// Resolves the concrete TMB behind a selected timeline. Generic <c>[SKL_ID]</c> rows are
+    /// expanded with the actor's DemiHuman/Monster skeleton family before the resource is opened.
+    /// </summary>
+    public string? ResolveTmbPath(uint modelCharaId, ushort timelineId)
+    {
+        if (modelCharaId == 0 || timelineId == 0)
+            return null;
+
+        try
+        {
+            var model = dataManager.GetExcelSheet<ModelChara>()?.GetRowOrDefault(modelCharaId);
+            var timeline = dataManager.GetExcelSheet<ActionTimeline>()?.GetRowOrDefault(timelineId);
+            if (model == null || timeline == null || model.Value.Type is not (2 or 3))
+                return null;
+
+            var key = timeline.Value.Key.ExtractText();
+            if (string.IsNullOrWhiteSpace(key))
+                return null;
+
+            if (key.StartsWith(SkeletonTemplatePrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                var familyLetter = model.Value.Type == 2 ? 'd' : 'm';
+                var suffix = key[SkeletonTemplatePrefix.Length..];
+                key = $"mon_sp/{familyLetter}{model.Value.Model:D4}/mon_sp{suffix}";
+            }
+            else if (key.Contains("[SKL_ID]", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            var path = $"chara/action/{key}.tmb";
+            return dataManager.FileExists(path) ? path : null;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"Failed to resolve model timeline TMB for ModelChara {modelCharaId}, timeline {timelineId}.");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Returns both the model-compatible timeline and the Action row that authored it. The Action
     /// id is metadata for resolving VFX only; combat and audio remain on the simulator's action.
     /// </summary>
