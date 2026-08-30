@@ -3888,7 +3888,7 @@ public unsafe class DismembermentController : IDisposable
 
         c.GearDeflateFrames = 0;
         c.GearGroundVisualOffset = 0f;
-        var rootRot = ResolveGarmentRigRootRotation(c);
+        var rootRot = ResolveGarmentRigRootRotation(skel, c, rig);
         var rootPos = ResolveGarmentRigRootPosition(skel, c, rig, avgPos, rootRot);
         SetCloneBaseTransform(c, rootPos, rootRot);
         if (drawObj != null)
@@ -3905,8 +3905,20 @@ public unsafe class DismembermentController : IDisposable
         return true;
     }
 
-    private static Quaternion ResolveGarmentRigRootRotation(Clone c)
+    private Quaternion ResolveGarmentRigRootRotation(SkeletonAccess skel, Clone c, GarmentRig rig)
     {
+        // A legs model contains vertices influenced by the skeleton/root frame as well as the five
+        // explicitly driven waist/thigh/knee bones. If its root stays at the handoff rotation while
+        // the waist rigid body tumbles, those two influence groups pull apart into long thin strips.
+        // Reconstruct the clone root from the live waist body and the captured waist model rotation.
+        // Upper garments retain their established handoff frame.
+        if (c.GearKeepModelSlot == 3 &&
+            TryGetGarmentRigBoneWorldTransform(c, rig, "j_kosi", out _, out var waistWorldRot) &&
+            TryCapturedModelRot(skel, c, "j_kosi", out var waistModelRot))
+        {
+            return Quaternion.Normalize(waistWorldRot * Quaternion.Inverse(waistModelRot));
+        }
+
         var rot = c.GearVisualBindHasLastPose
             ? c.GearVisualBindLastRootRot
             : c.Handoff?.SkeletonRot ?? c.SeveranceWorldRot;
@@ -3931,7 +3943,7 @@ public unsafe class DismembermentController : IDisposable
             }
         }
 
-        if (c.GearKeepModelSlot != 1 ||
+        if (c.GearKeepModelSlot is not (1 or 3) ||
             !TryGetGarmentRigBoneWorldPosition(c, rig, "j_kosi", out var waistWorld))
         {
             return fallback;
@@ -3945,7 +3957,18 @@ public unsafe class DismembermentController : IDisposable
 
     private bool TryGetGarmentRigBoneWorldPosition(Clone c, GarmentRig rig, string boneName, out Vector3 boneWorldPos)
     {
+        return TryGetGarmentRigBoneWorldTransform(c, rig, boneName, out boneWorldPos, out _);
+    }
+
+    private bool TryGetGarmentRigBoneWorldTransform(
+        Clone c,
+        GarmentRig rig,
+        string boneName,
+        out Vector3 boneWorldPos,
+        out Quaternion boneWorldRot)
+    {
         boneWorldPos = Vector3.Zero;
+        boneWorldRot = Quaternion.Identity;
         foreach (var rb in rig.Bodies)
         {
             if (!string.Equals(rb.BoneName, boneName, StringComparison.Ordinal))
@@ -3954,9 +3977,9 @@ public unsafe class DismembermentController : IDisposable
             if (!TryGetGarmentRigBodyPose(c, rb, out var bodyPos, out var bodyRot, out _, out _))
                 return false;
 
-            boneWorldPos = bodyPos;
             bodyRot = Quaternion.Normalize(bodyRot);
-            boneWorldPos += Vector3.Transform(rb.BodyToBoneOffsetLocal, bodyRot);
+            boneWorldPos = bodyPos + Vector3.Transform(rb.BodyToBoneOffsetLocal, bodyRot);
+            boneWorldRot = Quaternion.Normalize(bodyRot * rb.BodyToBoneRotation);
             return true;
         }
 
@@ -5634,6 +5657,16 @@ public unsafe class DismembermentController : IDisposable
         var idx = boneService.ResolveBoneIndex(skel, boneName);
         if (idx < 0 || !c.GearCapById.TryGetValue(idx, out var cap)) return false;
         pos = cap.T;
+        return true;
+    }
+
+    private bool TryCapturedModelRot(SkeletonAccess skel, Clone c, string boneName, out Quaternion rot)
+    {
+        rot = Quaternion.Identity;
+        if (c.GearCapById == null) return false;
+        var idx = boneService.ResolveBoneIndex(skel, boneName);
+        if (idx < 0 || !c.GearCapById.TryGetValue(idx, out var cap)) return false;
+        rot = Quaternion.Normalize(cap.R);
         return true;
     }
 
