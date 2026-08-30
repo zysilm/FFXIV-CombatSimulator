@@ -45,13 +45,6 @@ public class NpcCatalogEntry
     public NpcCatalogSource Source { get; set; }
     public bool HasDuplicateName { get; set; }
     /// <summary>
-    /// Supplemental names that can discover an otherwise unnamed base. They are deliberately not
-    /// presented as the actor's identity because BNpcLink is a many-to-many search index, not a
-    /// guaranteed SetupBNpc pair.
-    /// </summary>
-    public IReadOnlyList<string> SearchAliases { get; set; } = Array.Empty<string>();
-
-    /// <summary>
     /// ModelChara-only Monsters can use the existing direct-model spawn path. ModelChara-only
     /// DemiHumans lack the customize/equipment payload required to construct a complete actor.
     /// </summary>
@@ -133,10 +126,10 @@ public class NpcCatalog
                 eNpcRows[row.RowId] = (row, model.Type, model.ModelId);
         }
 
-        var addedSources = new HashSet<(NpcCatalogSource Source, uint Id)>();
+        var addedSources = new HashSet<(NpcCatalogSource Source, uint Id, uint NameId)>();
 
-        // NpcNames describes the appearance represented by a base row. Keep it authoritative when
-        // present; unlike BNpcLink it does not cross-product one display name over many appearances.
+        // NpcNames supplies useful curated labels for older appearances. BNpcLink supplies every
+        // observed native BNpcBase/BNpcName pairing, including one name with several appearances.
         var curatedBattleNames = new Dictionary<uint, (string Name, uint NameId)>();
         var curatedEventNames = new Dictionary<uint, string>();
         var curatedNames = LoadEmbeddedNpcNames();
@@ -164,70 +157,71 @@ public class NpcCatalog
             }
         }
 
-        // BNpcLink remains valuable for discovering new models, but it is deliberately many-to-many.
-        // ActorMorpher applies appearances directly; passing every pair to SetupBNpc instead creates
-        // unrelated actors with the same label. Build one canonical identity per BNpcBase.
+        // Keep every linked appearance visible. Some encounters deliberately reuse one BNpcName for
+        // several BNpcBase rows (for example, Mythic Idol transformations). Collapsing each base to
+        // one canonical label made those names searchable only as invisible aliases and hid the
+        // actual variants that ActorMorpher exposes.
         var battleNpcNameLinks = LoadBattleNpcNameLinks();
-        var ambiguousBattleNpcBases = 0;
+        var linkedBattleNpcVariants = 0;
         foreach (var (id, model) in bNpcRows)
         {
             var linkedNameIds = battleNpcNameLinks.TryGetValue(id, out var nameIds)
                 ? nameIds
                 : Array.Empty<uint>();
-            var linkedNames = new List<string>();
-            foreach (var linkedNameId in linkedNameIds)
-            {
-                if (bNpcNames.TryGetValue(linkedNameId, out var linkedName) &&
-                    !string.IsNullOrWhiteSpace(linkedName) &&
-                    !ContainsExact(linkedNames, linkedName))
-                {
-                    linkedNames.Add(linkedName);
-                }
-            }
+            var namesAddedForBase = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var addedAppearance = false;
 
-            string displayName;
-            uint bNpcNameId;
-            IReadOnlyList<string> searchAliases = Array.Empty<string>();
             if (curatedBattleNames.TryGetValue(id, out var curated))
             {
-                displayName = curated.Name;
-                bNpcNameId = curated.NameId;
+                var curatedNameId = curated.NameId;
 
                 // Literal curated labels have no native name row. Confirm the self-ID through
                 // BNpcLink before using it; numerical equality alone is not evidence of a pair.
-                if (bNpcNameId == 0 && Array.IndexOf(linkedNameIds, id) >= 0)
-                    bNpcNameId = id;
-            }
-            else if (Array.IndexOf(linkedNameIds, id) >= 0 &&
-                     bNpcNames.TryGetValue(id, out var selfName))
-            {
-                displayName = selfName;
-                bNpcNameId = id;
-            }
-            else if (linkedNameIds.Length == 1 &&
-                     bNpcNames.TryGetValue(linkedNameIds[0], out var uniqueName))
-            {
-                displayName = uniqueName;
-                bNpcNameId = linkedNameIds[0];
-            }
-            else
-            {
-                displayName = $"Battle NPC {id}";
-                bNpcNameId = 0;
-                searchAliases = linkedNames;
-                if (linkedNames.Count > 0)
-                    ambiguousBattleNpcBases++;
+                if (curatedNameId == 0 && Array.IndexOf(linkedNameIds, id) >= 0)
+                    curatedNameId = id;
+
+                AddSourceEntry(
+                    id,
+                    curatedNameId,
+                    model.ModelId,
+                    curated.Name,
+                    model.Type,
+                    NpcCatalogSource.BNpcBase,
+                    addedSources);
+                namesAddedForBase.Add(curated.Name);
+                addedAppearance = true;
             }
 
-            AddSourceEntry(
-                id,
-                bNpcNameId,
-                model.ModelId,
-                displayName,
-                model.Type,
-                NpcCatalogSource.BNpcBase,
-                addedSources,
-                searchAliases);
+            foreach (var linkedNameId in linkedNameIds)
+            {
+                if (!bNpcNames.TryGetValue(linkedNameId, out var linkedName) ||
+                    string.IsNullOrWhiteSpace(linkedName) ||
+                    !namesAddedForBase.Add(linkedName))
+                    continue;
+
+                AddSourceEntry(
+                    id,
+                    linkedNameId,
+                    model.ModelId,
+                    linkedName,
+                    model.Type,
+                    NpcCatalogSource.BNpcBase,
+                    addedSources);
+                linkedBattleNpcVariants++;
+                addedAppearance = true;
+            }
+
+            if (!addedAppearance)
+            {
+                AddSourceEntry(
+                    id,
+                    0,
+                    model.ModelId,
+                    $"Battle NPC {id}",
+                    model.Type,
+                    NpcCatalogSource.BNpcBase,
+                    addedSources);
+            }
         }
 
         // ENpcBase and ENpcResident share RowIds, so every named Event NPC can be added directly.
@@ -299,7 +293,7 @@ public class NpcCatalog
         log.Info(
             $"NPC catalog loaded from ModelChara classification: {humans} Human, " +
             $"{demiHumans} DemiHuman, {monsters} Monster ({modelOnly} ModelChara-only), " +
-            $"{allEntries.Count} total; {ambiguousBattleNpcBases} ambiguous BNpc bases kept numeric.");
+            $"{allEntries.Count} total; {linkedBattleNpcVariants} linked BNpc appearance/name variants.");
     }
 
     private int CountCategory(NpcCatalogType type)
@@ -317,10 +311,9 @@ public class NpcCatalog
         string name,
         NpcCatalogType type,
         NpcCatalogSource source,
-        HashSet<(NpcCatalogSource Source, uint Id)> addedSources,
-        IReadOnlyList<string>? searchAliases = null)
+        HashSet<(NpcCatalogSource Source, uint Id, uint NameId)> addedSources)
     {
-        if (!addedSources.Add((source, id)))
+        if (!addedSources.Add((source, id, bNpcNameId)))
             return;
         allEntries!.Add(new NpcCatalogEntry
         {
@@ -330,7 +323,6 @@ public class NpcCatalog
             Name = name,
             Type = type,
             Source = source,
-            SearchAliases = searchAliases ?? Array.Empty<string>(),
         });
     }
 
@@ -365,6 +357,7 @@ public class NpcCatalog
             {
                 var values = new uint[names.Count];
                 names.CopyTo(values);
+                Array.Sort(values);
                 flattened[baseId] = values;
             }
 
@@ -449,7 +442,6 @@ public class NpcCatalog
             if (sourceFilter.HasValue && entry.Source != sourceFilter.Value) continue;
             if (!noFilter &&
                 !entry.Name.Contains(normalizedFilter, StringComparison.OrdinalIgnoreCase) &&
-                !ContainsAlias(entry.SearchAliases, normalizedFilter) &&
                 !entry.Id.ToString().Contains(normalizedFilter, StringComparison.OrdinalIgnoreCase) &&
                 !entry.ModelCharaId.ToString().Contains(normalizedFilter, StringComparison.OrdinalIgnoreCase))
                 continue;
@@ -458,22 +450,6 @@ public class NpcCatalog
 
         searchCache[cacheKey] = results;
         return results;
-    }
-
-    private static bool ContainsAlias(IReadOnlyList<string> aliases, string filter)
-    {
-        foreach (var alias in aliases)
-            if (alias.Contains(filter, StringComparison.OrdinalIgnoreCase))
-                return true;
-        return false;
-    }
-
-    private static bool ContainsExact(IReadOnlyList<string> values, string candidate)
-    {
-        foreach (var value in values)
-            if (string.Equals(value, candidate, StringComparison.OrdinalIgnoreCase))
-                return true;
-        return false;
     }
 
     public NpcCatalogEntry? FindById(

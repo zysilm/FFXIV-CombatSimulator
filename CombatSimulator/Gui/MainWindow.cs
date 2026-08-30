@@ -1233,12 +1233,6 @@ public partial class MainWindow : IDisposable
             ImGui.TextDisabled(
                 $"{selectedCatalogEntry.Type} | {selectedCatalogEntry.Source} #{selectedCatalogEntry.Id} | " +
                 $"ModelChara #{selectedCatalogEntry.ModelCharaId}");
-            if (selectedCatalogEntry.SearchAliases.Count > 0)
-            {
-                ImGui.TextColored(
-                    new Vector4(1f, 0.65f, 0.2f, 1f),
-                    "This base has ambiguous supplemental names; it is kept numeric to avoid a false identity.");
-            }
             if (!selectedCatalogEntry.IsSpawnable)
                 ImGui.TextColored(
                     new Vector4(1f, 0.65f, 0.2f, 1f),
