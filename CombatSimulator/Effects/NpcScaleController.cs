@@ -12,9 +12,11 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 namespace CombatSimulator.Effects;
 
 /// <summary>
-/// Applies a relative visual scale to active target NPCs while preserving each actor's authored
-/// BNpc/model scale. Every captured transform is restored when the actor leaves the active set or
-/// the effect is disabled/reset.
+/// Applies the configured absolute visual scale to active target NPCs while preserving each actor's
+/// authored BNpc/model scale for restoration. This retains the original experimental control's
+/// useful absolute-scale behavior: 0.99 means a final DrawObject scale of 0.99, not 99% of an
+/// authored boss scale such as 3.5. Every captured transform is restored when the actor leaves the
+/// active set or the effect is disabled/reset.
 /// </summary>
 public sealed unsafe class NpcScaleController : IDisposable
 {
@@ -33,7 +35,7 @@ public sealed unsafe class NpcScaleController : IDisposable
     public void Tick()
     {
         var factor = Math.Clamp(config.NpcScale, 0.01f, 3.0f);
-        if (!config.EnableNpcScale || MathF.Abs(factor - 1.0f) < 0.0001f)
+        if (!config.EnableNpcScale)
         {
             RestoreAll();
             return;
@@ -57,7 +59,7 @@ public sealed unsafe class NpcScaleController : IDisposable
                 originalScales[npc.Address] = captured;
             }
 
-            gameObject->DrawObject->Scale = captured.Scale * factor;
+            gameObject->DrawObject->Scale = new Vector3(factor);
             gameObject->DrawObject->NotifyTransformChanged();
         }
 

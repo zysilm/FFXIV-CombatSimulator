@@ -1169,8 +1169,9 @@ public partial class MainWindow : IDisposable
             config.NpcAttackRangeScale = Math.Clamp(scale, 0.1f, 100f);
             config.Save();
         }
-        HelpMarker("Multiplies only enemy attack and skill distance checks; it does not move approach or formation stopping points. " +
-                   "Default is 1.00x. Very small NPC Scale values also shrink authored melee reach, so increase this until those enemies can attack reliably.");
+        HelpMarker("Multiplies enemy attack/skill reach and the matching chase/formation stopping distance. " +
+                   "Default is 1.00x. Increasing it lets enemies stop farther away and attack from that distance; " +
+                   "very small NPC Scale values may need a large multiplier to restore usable melee reach.");
 
         ImGui.SameLine();
         if (ImGui.SmallButton("Reset##npcAttackRangeScale"))

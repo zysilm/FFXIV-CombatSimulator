@@ -955,8 +955,10 @@ public partial class Configuration : IPluginConfiguration
     // Spawn a spark VFX on the struck target (reuses HitVfxPath). Off by default: ActorVfxCreate on
     // modified/spawned actors can be fragile, so opt in once you've confirmed it's stable in your setup.
     public bool EnableHitSparkVfx { get; set; } = true;
-    // Effects > NPC Scale. The factor is relative to each actor's authored model scale, so a 2.5x
-    // boss remains proportionally larger than a 1.0x enemy. Enabled by default for a subtle shrink.
+    // Effects > NPC Scale. This is the final uniform DrawObject scale, matching the original
+    // experimental control. It normalizes authored BNpc sizes instead of multiplying them (for
+    // example, 0.99 does not leave a 3.5-scale boss at 3.465). Disable the effect to restore the
+    // authored size; an enabled value of exactly 1.0 means an absolute final scale of 1.0.
     public bool EnableNpcScale { get; set; } = true;
     public float NpcScale { get; set; } = 0.99f;
     public int LightAttackPotency { get; set; } = 120;
