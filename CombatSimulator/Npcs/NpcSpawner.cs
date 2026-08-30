@@ -46,6 +46,9 @@ public unsafe class NpcSpawner : IDisposable
     private uint nextEntityId = 0xF0000001;
 
     private const int MaxPendingFrames = 120;
+    // CharacterBase::ModelScale. This member is not exposed by the current
+    // FFXIVClientStructs surface; ActorMorpher uses the same field.
+    private const int CharacterBaseModelScaleOffset = 0x2A4;
 
     public IReadOnlyList<SimulatedNpc> SpawnedNpcs => spawnedNpcs;
     public int PendingCount => pendingSpawns.Count + spawnQueue.Count;
@@ -234,6 +237,12 @@ public unsafe class NpcSpawner : IDisposable
             obj->RenderFlags = VisibilityFlags.None;
 
             // Step 5: Initialize model — either BNpc (monster) or ENpc (humanoid)
+            // SetupBNpc provides runtime identity, but the self-copy below can normalize DrawData.
+            // Keep the complete Excel appearance so it can be reasserted at the draw boundary.
+            BNpcAppearanceData? bNpcAppearance = request.BNpcBaseId > 0
+                ? ResolveBNpcAppearance(request.BNpcBaseId)
+                : null;
+
             if (request.ENpcBaseId > 0)
             {
                 // Humanoid path (Brio-style clone-from-player bootstrap).
@@ -283,6 +292,12 @@ public unsafe class NpcSpawner : IDisposable
             character->CharacterSetup.CopyFromCharacter(
                 character, CharacterSetupContainer.CopyFlags.None);
             log.Info("[SpawnDbg] Self-copy CopyFromCharacter(self, None) done.");
+
+            // ActorMorpher defines a BNpc appearance as ModelChara + BNpcCustomize + NpcEquip +
+            // Scale. Reapply customize/equipment after self-copy so DemiHuman variations sharing
+            // one skeleton reach EnableDraw with the selected row's complete appearance.
+            if (bNpcAppearance is { } resolvedAppearance)
+                ApplyBNpcAppearance(character, resolvedAppearance);
 
             // Step 6a: Re-assert ObjectKind. The humanoid bootstrap clones from the
             // local player (a Pc), and CopyFromCharacter copies base GameObject
@@ -334,7 +349,8 @@ public unsafe class NpcSpawner : IDisposable
 
             // Read weapon data for deferred loading after EnableDraw and for
             // classifying humanoid NPCs as melee/ranged/caster.
-            ulong mainHandWeapon = 0, offHandWeapon = 0;
+            ulong mainHandWeapon = bNpcAppearance?.MainHandWeapon ?? 0;
+            ulong offHandWeapon = bNpcAppearance?.OffHandWeapon ?? 0;
             var enpcIsHuman = false;
             if (request.ENpcBaseId > 0)
             {
@@ -350,11 +366,12 @@ public unsafe class NpcSpawner : IDisposable
             }
 
             var weaponStyle = NpcWeaponClassifier.DetectFromPackedWeapon(mainHandWeapon);
-            var jobId = enpcIsHuman
+            var weaponUsesHumanJob = enpcIsHuman || bNpcAppearance?.ModelType == 1;
+            var jobId = weaponUsesHumanJob
                 ? NpcWeaponClassifier.DetectJobFromPackedWeapon(mainHandWeapon)
                 : 0u;
             // A bare-handed humanoid ENpc fights with its fists — pugilist/monk kit.
-            if (jobId == 0 && mainHandWeapon == 0 && enpcIsHuman)
+            if (jobId == 0 && mainHandWeapon == 0 && weaponUsesHumanJob)
                 jobId = NpcWeaponClassifier.MonkJobId;
             var behavior = actionProfileProvider.Create(npcName, jobId, weaponStyle, npcLevel, request.BNpcBaseId);
             if (weaponStyle is NpcAttackStyle.Ranged or NpcAttackStyle.Magic || jobId != 0)
@@ -399,7 +416,8 @@ public unsafe class NpcSpawner : IDisposable
                 FramesWaited = 0,
                 MainHandWeapon = mainHandWeapon,
                 OffHandWeapon = offHandWeapon,
-                LoadWeapons = request.ENpcBaseId > 0,
+                LoadWeapons = request.ENpcBaseId > 0 || bNpcAppearance?.HasWeapons == true,
+                ModelScale = bNpcAppearance?.ModelScale,
             });
             requestByObjectIndex[index] = CloneRequest(request);
             log.Info($"NPC '{npcName}' created at index {index}, entityId={entityId:X}. Pending draw...");
@@ -442,6 +460,7 @@ public unsafe class NpcSpawner : IDisposable
 
                     // Load weapons AFTER EnableDraw (self-copy resets DrawData weapons)
                     LoadPendingWeapons(chara, pending);
+                    ApplyPendingModelScale(chara, pending);
 
                     // Now make targetable (was 0 during setup)
                     var obj = (GameObject*)chara;
@@ -461,6 +480,7 @@ public unsafe class NpcSpawner : IDisposable
                     log.Warning($"NPC '{npc.Name}' timed out after {pending.FramesWaited} frames. Force enabling.");
                     chara->EnableDraw();
                     LoadPendingWeapons(chara, pending);
+                    ApplyPendingModelScale(chara, pending);
 
                     var obj = (GameObject*)chara;
                     obj->TargetableStatus = ObjectTargetableFlags.IsTargetable;
@@ -626,7 +646,7 @@ public unsafe class NpcSpawner : IDisposable
             character->DrawData.LoadWeapon(DrawDataContainer.WeaponSlot.OffHand, ohId, 0, 0, 0, 0, false);
 
             log.Info(
-                $"[SpawnDbg] Loaded ENpc weapons for '{pending.Npc.Name}': " +
+                $"[SpawnDbg] Loaded appearance weapons for '{pending.Npc.Name}': " +
                 $"MH={mhId.Id}/{mhId.Type}/{mhId.Variant}, " +
                 $"OH={ohId.Id}/{ohId.Type}/{ohId.Variant}");
         }
@@ -634,6 +654,109 @@ public unsafe class NpcSpawner : IDisposable
         {
             log.Warning(ex, $"Failed to load weapons for '{pending.Npc.Name}'.");
         }
+    }
+
+    private BNpcAppearanceData? ResolveBNpcAppearance(uint bNpcBaseId)
+    {
+        var row = dataManager.GetExcelSheet<BNpcBase>().GetRowOrDefault(bNpcBaseId);
+        if (row is not { } bNpc)
+        {
+            log.Warning($"[SpawnDbg] BNpcBase {bNpcBaseId} was unavailable for appearance resolution.");
+            return null;
+        }
+
+        var model = dataManager.GetExcelSheet<ModelChara>().GetRowOrDefault(bNpc.ModelChara.RowId);
+        var modelType = model?.Type ?? (byte)0;
+        var customizeRow = bNpc.BNpcCustomize.ValueNullable;
+        var equipRow = bNpc.NpcEquip.ValueNullable;
+        byte[]? customize = null;
+        ulong[]? equipment = null;
+        ulong mainHand = 0;
+        ulong offHand = 0;
+
+        // Human and DemiHuman BNpcs use both linked sheets as part of their appearance identity.
+        // Monsters encode their variation in ModelChara and normally do not have these payloads.
+        if (modelType is 1 or 2 && customizeRow is { } sourceCustomize)
+        {
+            customize =
+            [
+                (byte)sourceCustomize.Race.RowId, (byte)sourceCustomize.Gender,
+                sourceCustomize.BodyType, sourceCustomize.Height,
+                (byte)sourceCustomize.Tribe.RowId, sourceCustomize.Face,
+                sourceCustomize.HairStyle, sourceCustomize.HairHighlight,
+                sourceCustomize.SkinColor, sourceCustomize.EyeHeterochromia,
+                sourceCustomize.HairColor, sourceCustomize.HairHighlightColor,
+                sourceCustomize.FacialFeature, sourceCustomize.FacialFeatureColor,
+                sourceCustomize.Eyebrows, sourceCustomize.EyeColor,
+                sourceCustomize.EyeShape, sourceCustomize.Nose, sourceCustomize.Jaw,
+                sourceCustomize.Mouth, sourceCustomize.LipColor, sourceCustomize.BustOrTone1,
+                sourceCustomize.ExtraFeature1, sourceCustomize.ExtraFeature2OrBust,
+                sourceCustomize.FacePaint, sourceCustomize.FacePaintColor,
+            ];
+        }
+
+        if (modelType is 1 or 2 && equipRow is { } sourceEquip)
+        {
+            equipment =
+            [
+                PackArmor(sourceEquip.ModelHead, sourceEquip.DyeHead.RowId, sourceEquip.Dye2Head.RowId),
+                PackArmor(sourceEquip.ModelBody, sourceEquip.DyeBody.RowId, sourceEquip.Dye2Body.RowId),
+                PackArmor(sourceEquip.ModelHands, sourceEquip.DyeHands.RowId, sourceEquip.Dye2Hands.RowId),
+                PackArmor(sourceEquip.ModelLegs, sourceEquip.DyeLegs.RowId, sourceEquip.Dye2Legs.RowId),
+                PackArmor(sourceEquip.ModelFeet, sourceEquip.DyeFeet.RowId, sourceEquip.Dye2Feet.RowId),
+                PackArmor(sourceEquip.ModelEars, sourceEquip.DyeEars.RowId, sourceEquip.Dye2Ears.RowId),
+                PackArmor(sourceEquip.ModelNeck, sourceEquip.DyeNeck.RowId, sourceEquip.Dye2Neck.RowId),
+                PackArmor(sourceEquip.ModelWrists, sourceEquip.DyeWrists.RowId, sourceEquip.Dye2Wrists.RowId),
+                PackArmor(sourceEquip.ModelRightRing, sourceEquip.DyeRightRing.RowId, sourceEquip.Dye2RightRing.RowId),
+                PackArmor(sourceEquip.ModelLeftRing, sourceEquip.DyeLeftRing.RowId, sourceEquip.Dye2LeftRing.RowId),
+            ];
+            mainHand = PackWeapon(
+                sourceEquip.ModelMainHand,
+                sourceEquip.DyeMainHand.RowId,
+                sourceEquip.Dye2MainHand.RowId);
+            offHand = PackWeapon(
+                sourceEquip.ModelOffHand,
+                sourceEquip.DyeOffHand.RowId,
+                sourceEquip.Dye2OffHand.RowId);
+        }
+
+        float? scale = float.IsFinite(bNpc.Scale) && bNpc.Scale > 0 ? bNpc.Scale : null;
+        log.Info(
+            $"[SpawnDbg] Resolved BNpcBase {bNpcBaseId}: ModelCharaId={bNpc.ModelChara.RowId}, " +
+            $"Type={modelType}, BNpcCustomize={bNpc.BNpcCustomize.RowId}, NpcEquip={bNpc.NpcEquip.RowId}, " +
+            $"Scale={scale?.ToString("R") ?? "none"}, Body=0x{equipment?[1] ?? 0:X}, " +
+            $"MH=0x{mainHand:X}, OH=0x{offHand:X}");
+
+        return new BNpcAppearanceData(modelType, customize, equipment, mainHand, offHand, scale);
+    }
+
+    private static void ApplyBNpcAppearance(Character* character, BNpcAppearanceData appearance)
+    {
+        if (appearance.Customize is { Length: 26 } customize)
+            customize.AsSpan().CopyTo(character->DrawData.CustomizeData.Data);
+
+        if (appearance.Equipment is { Length: 10 } equipment)
+        {
+            var target = character->DrawData.EquipmentModelIds;
+            for (var index = 0; index < target.Length && index < equipment.Length; index++)
+                target[index].Value = equipment[index];
+        }
+    }
+
+    private void ApplyPendingModelScale(BattleChara* chara, PendingSpawn pending)
+    {
+        if (pending.ModelScale is not { } scale)
+            return;
+
+        var characterBase = ((GameObject*)chara)->GetCharacterBase();
+        if (characterBase == null)
+        {
+            log.Warning($"[SpawnDbg] CharacterBase unavailable while applying scale for '{pending.Npc.Name}'.");
+            return;
+        }
+
+        *(float*)((byte*)characterBase + CharacterBaseModelScaleOffset) = scale;
+        log.Info($"[SpawnDbg] Applied BNpc model scale {scale:R} to '{pending.Npc.Name}'.");
     }
 
     /// <summary>
@@ -1051,5 +1174,17 @@ public unsafe class NpcSpawner : IDisposable
         public ulong MainHandWeapon { get; set; }
         public ulong OffHandWeapon { get; set; }
         public bool LoadWeapons { get; set; }
+        public float? ModelScale { get; set; }
+    }
+
+    private sealed record BNpcAppearanceData(
+        byte ModelType,
+        byte[]? Customize,
+        ulong[]? Equipment,
+        ulong MainHandWeapon,
+        ulong OffHandWeapon,
+        float? ModelScale)
+    {
+        public bool HasWeapons => MainHandWeapon != 0 || OffHandWeapon != 0;
     }
 }
