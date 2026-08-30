@@ -1,5 +1,15 @@
 [
   {
+    "version": "2.8.1.0",
+    "date": "2026-08-30",
+    "title": "Combat Simulator 2.8.1.0",
+    "changes": [
+      "Overhauled Virtual Enemies with a much broader Human, DemiHuman, and Monster catalog, improved search, and corrected name-to-model pairing. Special thanks to miqote69 and ActorMorpher for the valuable reference.",
+      "Improved creature combat with preserved DemiHuman weapon identities, model-specific attack animations, and richer hit VFX.",
+      "Improved physical presentation with per-leg ground contact and more stable Armor Detachment behavior, including better detached-trouser deformation and cleanup."
+    ]
+  },
+  {
     "version": "2.8.0.2",
     "date": "2026-08-16",
     "title": "Combat Simulator 2.8.0.2",
