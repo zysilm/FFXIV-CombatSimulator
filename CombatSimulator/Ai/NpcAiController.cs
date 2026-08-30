@@ -1416,17 +1416,15 @@ public unsafe class NpcAiController : IDisposable
     }
 
     /// <summary>
-    /// The dev NPC scale is written directly to DrawObject, so the game object's authored combat
+    /// The NPC Scale effect is written directly to DrawObject, so the game object's authored combat
     /// radius does not follow it. Keep every AI-authored melee distance in the same coordinate scale
-    /// as the visible model. The public build has no scale override and therefore remains exactly 1x.
+    /// as the visible model. Disabled scaling remains exactly 1x.
     /// </summary>
     private float NpcMeleeRangeScale()
     {
-#if DEV_EXPERIMENTAL
-        return Math.Clamp(config.DevNpcScale, 0.01f, 3.0f);
-#else
-        return 1.0f;
-#endif
+        return config.EnableNpcScale
+            ? Math.Clamp(config.NpcScale, 0.01f, 3.0f)
+            : 1.0f;
     }
 
     private void RefreshScaleDependentApproachState()

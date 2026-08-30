@@ -952,6 +952,10 @@ public partial class Configuration : IPluginConfiguration
     // Spawn a spark VFX on the struck target (reuses HitVfxPath). Off by default: ActorVfxCreate on
     // modified/spawned actors can be fragile, so opt in once you've confirmed it's stable in your setup.
     public bool EnableHitSparkVfx { get; set; } = true;
+    // Effects > NPC Scale. The factor is relative to each actor's authored model scale, so a 2.5x
+    // boss remains proportionally larger than a 1.0x enemy. Enabled by default for a subtle shrink.
+    public bool EnableNpcScale { get; set; } = true;
+    public float NpcScale { get; set; } = 0.99f;
     public int LightAttackPotency { get; set; } = 120;
     // Soft-target selection: ranged basic attack / ranged skills use a longer, wider selection cone
     // and pick the smallest-angle enemy (not the nearest).

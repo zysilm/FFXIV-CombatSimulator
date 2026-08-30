@@ -2368,6 +2368,8 @@ public partial class MainWindow : IDisposable
             }
         }
 
+        DrawNpcScaleSection();
+
         DrawPcDismemberSection();
 
         if (ImGui.CollapsingHeader("Enemy Dismemberment"))

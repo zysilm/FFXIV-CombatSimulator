@@ -6327,10 +6327,10 @@ public unsafe partial class RagdollController : IDisposable
     }
 
     /// <summary>
-    /// Read the scale that is actually applied to the rendered character. Experimental NPC
-    /// scaling writes DrawObject.Scale directly, while ordinary actors normally expose the same
+    /// Read the scale that is actually applied to the rendered character. The NPC Scale effect
+    /// writes DrawObject.Scale directly, while ordinary actors normally expose the same
     /// value through Skeleton.Transform.Scale. Prefer the draw object so collision follows live
-    /// developer-scale changes, and retain the skeleton value as a safe fallback.
+    /// live scale changes, and retain the skeleton value as a safe fallback.
     /// </summary>
     private static Vector3 GetCharacterScale(nint address, SkeletonAccess ns)
     {

@@ -78,6 +78,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly FightingModeController fightingModeController;
     private readonly SpectatorController spectatorController;
     private readonly Dev.IDevExperimental devExperimental;
+    private readonly Effects.NpcScaleController npcScaleController;
     private readonly EnemyControlController enemyControlController;
     private readonly HookSafetyChecker hookSafetyChecker;
     private readonly UpdateLogPopupController updateLogPopupController;
@@ -186,6 +187,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, npcActionProfileProvider, log);
         npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, npcActionProfileProvider, movementBlockHook, log);
+        npcScaleController = new Effects.NpcScaleController(config, npcSelector, objectTable);
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
         weaponDropController = new WeaponDropController(boneTransformService, config, log);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
@@ -424,6 +426,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             weaponDropController.RemoveAll();
             dismembermentController.RemoveAll();
             armorDetachmentController.Reset();
+            npcScaleController.Reset();
             devExperimental.ResetTransientState();
             enemyControlController.Despawn();
             fightingModeController.Reset();
@@ -567,6 +570,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         // access inside is itself guarded.
         companionManager.Dispose();
         spectatorController.Dispose();
+        npcScaleController.Dispose();
         npcSpawner.Dispose();
         useActionHook.Dispose();
         playerTargetController.Dispose();
@@ -839,6 +843,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // outside combat simulations.
             spectatorController.Tick(deltaTime);
             devExperimental.TickWorld(deltaTime);
+            npcScaleController.Tick();
 
             if (!combatEngine.IsActive)
                 return;
@@ -861,7 +866,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             // Lane only — the full Tick already ran this frame; running it again would advance
             // camera smoothing and translate timers at double speed.
             fightingModeController.ReapplyLane();
-            // All experimental dev ticking (Victory/Hold + NPC scale + occlusion hide) lives here now.
+            // Remaining experimental dev ticking (Victory/Hold + occlusion hide).
             devExperimental.Tick(deltaTime);
         }
         catch (Exception ex)
@@ -1212,6 +1217,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         weaponDropController.RemoveAll();
         dismembermentController.RemoveAll();
         armorDetachmentController.Reset();
+        npcScaleController.Reset();
         spectatorController.DespawnAll();
         devExperimental.ResetWorldState();
         enemyControlController.Despawn();
@@ -1239,6 +1245,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             weaponDropController.RemoveAll();
             dismembermentController.RemoveAll();
             armorDetachmentController.Reset();
+            npcScaleController.Reset();
             spectatorController.DespawnAll();
             devExperimental.ResetWorldState();
             enemyControlController.Despawn();
