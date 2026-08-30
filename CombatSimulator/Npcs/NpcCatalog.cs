@@ -59,6 +59,12 @@ public class NpcCatalogEntry
 /// </summary>
 public class NpcCatalog
 {
+    // Gubal-derived BNpcLink rows are a many-to-many search graph, not a list of guaranteed
+    // SetupBNpc identities. A base linked to dozens of names is normally a script extraction
+    // cross-product. Keep only the least-ambiguous cluster for each name, and never accept an
+    // absolute base-name degree above this limit.
+    private const int MaxSupplementalNameDegree = 16;
+
     private readonly IDataManager dataManager;
     private readonly IPluginLog log;
 
@@ -128,8 +134,9 @@ public class NpcCatalog
 
         var addedSources = new HashSet<(NpcCatalogSource Source, uint Id, uint NameId)>();
 
-        // NpcNames supplies useful curated labels for older appearances. BNpcLink supplies every
-        // observed native BNpcBase/BNpcName pairing, including one name with several appearances.
+        // NpcNames supplies authoritative curated labels for older appearances. BNpcLink is useful
+        // for discovery, but its Gubal-derived rows form a many-to-many graph and cannot all be
+        // treated as exact SetupBNpc identities.
         var curatedBattleNames = new Dictionary<uint, (string Name, uint NameId)>();
         var curatedEventNames = new Dictionary<uint, string>();
         var curatedNames = LoadEmbeddedNpcNames();
@@ -157,12 +164,19 @@ public class NpcCatalog
             }
         }
 
-        // Keep every linked appearance visible. Some encounters deliberately reuse one BNpcName for
-        // several BNpcBase rows (for example, Mythic Idol transformations). Collapsing each base to
-        // one canonical label made those names searchable only as invisible aliases and hid the
-        // actual variants that ActorMorpher exposes.
-        var battleNpcNameLinks = LoadBattleNpcNameLinks();
+        var battleNpcNameLinks = LoadBattleNpcNameLinks(
+            CsvLoader.BNpcLinkResourceName,
+            "BNpcLink");
+        var trustedBattleNpcNameLinks = LoadBattleNpcNameLinks(
+            CsvLoader.BNpcLinkNoGubalResourceName,
+            "BNpcLinkNoGubal");
+        var trustedBattleNpcPairs = new HashSet<(uint BaseId, uint NameId)>();
+        foreach (var (baseId, nameIds) in trustedBattleNpcNameLinks)
+            foreach (var nameId in nameIds)
+                trustedBattleNpcPairs.Add((baseId, nameId));
+        var minimumDegreeByName = BuildMinimumLinkDegreeByName(battleNpcNameLinks, bNpcRows);
         var linkedBattleNpcVariants = 0;
+        var rejectedAmbiguousLinks = 0;
         foreach (var (id, model) in bNpcRows)
         {
             var linkedNameIds = battleNpcNameLinks.TryGetValue(id, out var nameIds)
@@ -195,8 +209,19 @@ public class NpcCatalog
             foreach (var linkedNameId in linkedNameIds)
             {
                 if (!bNpcNames.TryGetValue(linkedNameId, out var linkedName) ||
-                    string.IsNullOrWhiteSpace(linkedName) ||
-                    !namesAddedForBase.Add(linkedName))
+                    string.IsNullOrWhiteSpace(linkedName))
+                    continue;
+
+                if (!IsHighConfidenceLink(
+                        linkedNameId,
+                        linkedNameIds.Length,
+                        minimumDegreeByName,
+                        trustedBattleNpcPairs.Contains((id, linkedNameId))))
+                {
+                    rejectedAmbiguousLinks++;
+                    continue;
+                }
+                if (!namesAddedForBase.Add(linkedName))
                     continue;
 
                 AddSourceEntry(
@@ -293,7 +318,47 @@ public class NpcCatalog
         log.Info(
             $"NPC catalog loaded from ModelChara classification: {humans} Human, " +
             $"{demiHumans} DemiHuman, {monsters} Monster ({modelOnly} ModelChara-only), " +
-            $"{allEntries.Count} total; {linkedBattleNpcVariants} linked BNpc appearance/name variants.");
+            $"{allEntries.Count} total; {linkedBattleNpcVariants} high-confidence linked BNpc " +
+            $"appearance/name variants, {rejectedAmbiguousLinks} ambiguous links rejected.");
+    }
+
+    private static Dictionary<uint, int> BuildMinimumLinkDegreeByName(
+        IReadOnlyDictionary<uint, uint[]> linksByBase,
+        IReadOnlyDictionary<uint, (NpcCatalogType Type, uint ModelId)> validBases)
+    {
+        var result = new Dictionary<uint, int>();
+        foreach (var (baseId, nameIds) in linksByBase)
+        {
+            if (!validBases.ContainsKey(baseId) || nameIds.Length == 0)
+                continue;
+
+            foreach (var nameId in nameIds)
+            {
+                if (!result.TryGetValue(nameId, out var minimum) || nameIds.Length < minimum)
+                    result[nameId] = nameIds.Length;
+            }
+        }
+        return result;
+    }
+
+    private static bool IsHighConfidenceLink(
+        uint nameId,
+        int baseNameDegree,
+        IReadOnlyDictionary<uint, int> minimumDegreeByName,
+        bool isTrustedPair)
+    {
+        if (isTrustedPair)
+            return true;
+
+        if (!minimumDegreeByName.TryGetValue(nameId, out var minimumDegree) ||
+            minimumDegree > MaxSupplementalNameDegree)
+            return false;
+
+        // Degree 1 is an exact relationship and should not be diluted by the same name appearing
+        // in broad cross-products elsewhere. For genuinely multi-form actors (for example Mythic
+        // Idol), retain the compact cluster around that name's least-ambiguous base.
+        var relativeLimit = Math.Max(2, minimumDegree * 2);
+        return baseNameDegree <= Math.Min(MaxSupplementalNameDegree, relativeLimit);
     }
 
     private int CountCategory(NpcCatalogType type)
@@ -326,19 +391,21 @@ public class NpcCatalog
         });
     }
 
-    private IReadOnlyDictionary<uint, uint[]> LoadBattleNpcNameLinks()
+    private IReadOnlyDictionary<uint, uint[]> LoadBattleNpcNameLinks(
+        string resourceName,
+        string sourceLabel)
     {
         try
         {
             var links = CsvLoader.LoadResource<BNpcLink>(
-                CsvLoader.BNpcLinkResourceName,
+                resourceName,
                 true,
                 out var failedLines,
                 out var exceptions);
 
             if (failedLines.Count > 0 || exceptions.Count > 0)
                 log.Warning(
-                    $"BNpcLink supplemental data loaded with {failedLines.Count} failed line(s) " +
+                    $"{sourceLabel} supplemental data loaded with {failedLines.Count} failed line(s) " +
                     $"and {exceptions.Count} exception(s).");
 
             var result = new Dictionary<uint, HashSet<uint>>();
@@ -361,12 +428,12 @@ public class NpcCatalog
                 flattened[baseId] = values;
             }
 
-            log.Info($"Loaded supplemental BNpcLink mappings for {flattened.Count} BNpcBase rows.");
+            log.Info($"Loaded supplemental {sourceLabel} mappings for {flattened.Count} BNpcBase rows.");
             return flattened;
         }
         catch (Exception ex)
         {
-            log.Error(ex, "Failed to load supplemental BNpcLink data; using numeric BNpc fallbacks.");
+            log.Error(ex, $"Failed to load supplemental {sourceLabel} data; continuing without it.");
             return new Dictionary<uint, uint[]>();
         }
     }
