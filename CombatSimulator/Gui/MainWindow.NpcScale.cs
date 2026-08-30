@@ -32,7 +32,7 @@ public partial class MainWindow
                 config.NpcScale = Math.Clamp(MathF.Round(scale * 100f) / 100f, 0.01f, 3.0f);
                 config.Save();
             }
-            HelpMarker("Relative multiplier applied to every active target NPC. 0.99 means 99% of its own normal size; values above 1 enlarge it. Below 0.40, the model keeps shrinking visually but melee navigation/reach stays at a 0.40 safety floor so enemies can still approach and attack reliably.");
+            HelpMarker("Relative multiplier applied to every active target NPC. 0.99 means 99% of its own normal size; values above 1 enlarge it.");
         }
 
         if (ImGui.Button("Reset Defaults##npcScale"))

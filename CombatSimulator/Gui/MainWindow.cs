@@ -332,6 +332,7 @@ public partial class MainWindow : IDisposable
                 DrawActionModeSection();
                 break;
             case 1: // Targets
+                DrawNpcAttackRangeSection();
                 DrawMapEnemiesSection();
                 break;
             case 2: // Party
@@ -1153,6 +1154,30 @@ public partial class MainWindow : IDisposable
             config.Save();
         }
         HelpMarker("When you have no locked target, being hit by an enemy auto-locks that attacker. Pressing cancel stops auto-counter (no auto-lock even when hit) until you press confirm to lock a target again. Requires custom targeting.");
+    }
+
+    private void DrawNpcAttackRangeSection()
+    {
+        if (!ImGui.CollapsingHeader("Enemy Attack Range", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        var scale = Math.Clamp(config.NpcAttackRangeScale, 0.1f, 100f);
+        ImGui.SetNextItemWidth(220f);
+        if (ImGui.SliderFloat("Attack range scale", ref scale, 0.1f, 100f, "%.2fx",
+                ImGuiSliderFlags.Logarithmic))
+        {
+            config.NpcAttackRangeScale = Math.Clamp(scale, 0.1f, 100f);
+            config.Save();
+        }
+        HelpMarker("Multiplies only enemy attack and skill distance checks; it does not move approach or formation stopping points. " +
+                   "Default is 1.00x. Very small NPC Scale values also shrink authored melee reach, so increase this until those enemies can attack reliably.");
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Reset##npcAttackRangeScale"))
+        {
+            config.NpcAttackRangeScale = 1f;
+            config.Save();
+        }
     }
 
     private void DrawVirtualEnemiesTab()

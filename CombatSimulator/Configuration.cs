@@ -442,6 +442,9 @@ public partial class Configuration : IPluginConfiguration
     public bool UseSoloTargetFormationWhenNoCompanions { get; set; } = false;
     public float TargetApproachDistance { get; set; } = 1.5f;
     public bool UseVNavmeshTargetApproach { get; set; } = true;
+    // Explicit gameplay range override. Visual NPC Scale still supplies the model-relative melee
+    // baseline; this multiplier lets users restore or enlarge reach for very small actors.
+    public float NpcAttackRangeScale { get; set; } = 1.0f;
 
     // Map enemies: real BattleNpc objects can join the mixed battle through
     // sensing or first attack.
