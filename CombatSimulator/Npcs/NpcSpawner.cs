@@ -644,9 +644,8 @@ public unsafe class NpcSpawner : IDisposable
     /// </summary>
     private bool BootstrapFromENpc(Character* target, uint eNpcBaseId)
     {
-        // Resolve the ENpc's authoritative ModelChara type before choosing the Human clone path
-        // or the direct DemiHuman/Monster model path. Non-Human models do not
-        // go through the clone path at all — fall back to ModelCharaId set.
+        // Resolve the ENpc's authoritative ModelChara type before choosing the initialized
+        // Human/DemiHuman clone path or the direct Monster model path.
         var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ENpcBase>();
         if (sheet == null)
         {
@@ -675,15 +674,9 @@ public unsafe class NpcSpawner : IDisposable
             return true;
         }
 
-        if (model.Value.Type == 2)
-        {
-            target->ModelContainer.ModelCharaId = checked((int)modelCharaId);
-            OverwriteCustomizeFromENpc(target, enpc);
-            log.Info($"[SpawnDbg] ENpc {eNpcBaseId}: DemiHuman ModelCharaId={modelCharaId}");
-            return true;
-        }
-
-        // Humanoid ENpc path — need a valid local player as clone source.
+        // Human and DemiHuman draw objects both require a fully initialized Character/Timeline
+        // container. A freshly allocated BattleChara does not have one, so use the same safe
+        // player bootstrap for both before replacing its appearance.
         var localPlayer = CombatSimulator.Core.Services.ObjectTable.LocalPlayer;
         if (localPlayer == null || localPlayer.Address == nint.Zero)
         {
@@ -703,7 +696,9 @@ public unsafe class NpcSpawner : IDisposable
             return false;
         }
 
-        log.Info($"[SpawnDbg] Cloning humanoid from local player addr=0x{(nint)source:X}, sourceRace={sourceRace}");
+        log.Info(
+            $"[SpawnDbg] Cloning initialized Character state from local player " +
+            $"addr=0x{(nint)source:X}, sourceRace={sourceRace}, targetType={model.Value.Type}");
 
         // Step A: Full clone from player. Include ClassJob (animation timelines
         // are gated on having a valid ClassJob) and WeaponHiding (matches Brio).
@@ -716,14 +711,18 @@ public unsafe class NpcSpawner : IDisposable
         target->CharacterSetup.CopyFromCharacter(source, flags);
         log.Info($"[SpawnDbg] CopyFromCharacter(player, ClassJob|WeaponHiding) done.");
 
-        // ModelChara.Type defines Human rows. Preserve nonzero Human IDs (notably Young NPC
-        // bodies) after CopyFromCharacter copied the local player's model.
+        // Apply the target model after CopyFromCharacter copied the local player's model.
+        // This includes nonzero Human IDs (notably Young NPC bodies) and DemiHuman models.
         target->ModelContainer.ModelCharaId = checked((int)modelCharaId);
 
         // Step B: Overwrite customize bytes + equipment from ENpcBase so the
         // cloned player actually looks like the requested NPC. Weapons are
         // loaded later via LoadPendingWeapons after EnableDraw.
-        OverwriteCustomizeFromENpc(target, enpc);
+        OverwriteCustomizeFromENpc(target, enpc, allowEquipmentStrip: model.Value.Type == 1);
+
+        log.Info(
+            $"[SpawnDbg] ENpc {eNpcBaseId}: " +
+            $"{(model.Value.Type == 2 ? "DemiHuman" : "Human")} ModelCharaId={modelCharaId}");
 
         return true;
     }
@@ -733,7 +732,10 @@ public unsafe class NpcSpawner : IDisposable
     /// Called after BootstrapFromENpc so the base Character already has
     /// a working humanoid pipeline from the clone.
     /// </summary>
-    private void OverwriteCustomizeFromENpc(Character* character, Lumina.Excel.Sheets.ENpcBase enpc)
+    private void OverwriteCustomizeFromENpc(
+        Character* character,
+        Lumina.Excel.Sheets.ENpcBase enpc,
+        bool allowEquipmentStrip)
     {
         var customizePtr = (byte*)&character->DrawData.CustomizeData;
         customizePtr[0x00] = (byte)enpc.Race.RowId;
@@ -768,18 +770,60 @@ public unsafe class NpcSpawner : IDisposable
         customizePtr[0x18] = enpc.FacePaint;
         customizePtr[0x19] = enpc.FacePaintColor;
 
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Head).Value = (ulong)enpc.ModelHead;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Body).Value = (ulong)enpc.ModelBody;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Hands).Value = (ulong)enpc.ModelHands;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Legs).Value = (ulong)enpc.ModelLegs;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Feet).Value = (ulong)enpc.ModelFeet;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Ears).Value = (ulong)enpc.ModelEars;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Neck).Value = (ulong)enpc.ModelNeck;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Wrists).Value = (ulong)enpc.ModelWrists;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.RFinger).Value = (ulong)enpc.ModelRightRing;
-        character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.LFinger).Value = (ulong)enpc.ModelLeftRing;
+        var npcEquip = enpc.NpcEquip.ValueNullable;
+        var useNpcEquip = enpc.NpcEquip.RowId != 0 &&
+                          npcEquip.HasValue &&
+                          enpc.ModelBody == 0 &&
+                          enpc.ModelLegs == 0;
+        if (useNpcEquip)
+        {
+            var equip = npcEquip!.Value;
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Head).Value =
+                PackArmor(equip.ModelHead, equip.DyeHead.RowId, equip.Dye2Head.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Body).Value =
+                PackArmor(equip.ModelBody, equip.DyeBody.RowId, equip.Dye2Body.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Hands).Value =
+                PackArmor(equip.ModelHands, equip.DyeHands.RowId, equip.Dye2Hands.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Legs).Value =
+                PackArmor(equip.ModelLegs, equip.DyeLegs.RowId, equip.Dye2Legs.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Feet).Value =
+                PackArmor(equip.ModelFeet, equip.DyeFeet.RowId, equip.Dye2Feet.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Ears).Value =
+                PackArmor(equip.ModelEars, equip.DyeEars.RowId, equip.Dye2Ears.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Neck).Value =
+                PackArmor(equip.ModelNeck, equip.DyeNeck.RowId, equip.Dye2Neck.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Wrists).Value =
+                PackArmor(equip.ModelWrists, equip.DyeWrists.RowId, equip.Dye2Wrists.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.RFinger).Value =
+                PackArmor(equip.ModelRightRing, equip.DyeRightRing.RowId, equip.Dye2RightRing.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.LFinger).Value =
+                PackArmor(equip.ModelLeftRing, equip.DyeLeftRing.RowId, equip.Dye2LeftRing.RowId);
+        }
+        else
+        {
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Head).Value =
+                PackArmor(enpc.ModelHead, enpc.DyeHead.RowId, enpc.Dye2Head.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Body).Value =
+                PackArmor(enpc.ModelBody, enpc.DyeBody.RowId, enpc.Dye2Body.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Hands).Value =
+                PackArmor(enpc.ModelHands, enpc.DyeHands.RowId, enpc.Dye2Hands.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Legs).Value =
+                PackArmor(enpc.ModelLegs, enpc.DyeLegs.RowId, enpc.Dye2Legs.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Feet).Value =
+                PackArmor(enpc.ModelFeet, enpc.DyeFeet.RowId, enpc.Dye2Feet.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Ears).Value =
+                PackArmor(enpc.ModelEars, enpc.DyeEars.RowId, enpc.Dye2Ears.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Neck).Value =
+                PackArmor(enpc.ModelNeck, enpc.DyeNeck.RowId, enpc.Dye2Neck.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Wrists).Value =
+                PackArmor(enpc.ModelWrists, enpc.DyeWrists.RowId, enpc.Dye2Wrists.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.RFinger).Value =
+                PackArmor(enpc.ModelRightRing, enpc.DyeRightRing.RowId, enpc.Dye2RightRing.RowId);
+            character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.LFinger).Value =
+                PackArmor(enpc.ModelLeftRing, enpc.DyeLeftRing.RowId, enpc.Dye2LeftRing.RowId);
+        }
 
-        if (StripBodyLegs?.Invoke() == true)
+        if (allowEquipmentStrip && StripBodyLegs?.Invoke() == true)
         {
             // Model id 0 on Body/Legs is exactly what unequipping those slots in-game produces — the
             // built-in smallclothes top and bottom.
@@ -787,7 +831,7 @@ public unsafe class NpcSpawner : IDisposable
             character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Legs).Value = 0;
         }
 
-        if (StripAccessories?.Invoke() == true)
+        if (allowEquipmentStrip && StripAccessories?.Invoke() == true)
         {
             // Everything except body + legs. Independent of StripBodyLegs — whichever of the two
             // touches body/legs (real equipment or bare) is left alone here.
@@ -801,8 +845,15 @@ public unsafe class NpcSpawner : IDisposable
             character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.LFinger).Value = 0;
         }
 
-        log.Info($"[SpawnDbg] Overwrote customize/equipment from ENpcBase: Race={customizePtr[0]}, Tribe={customizePtr[4]}, Gender={customizePtr[1]}, Face={customizePtr[5]}, Body=0x{(ulong)enpc.ModelBody:X}");
+        log.Info(
+            $"[SpawnDbg] Overwrote customize/equipment from ENpcBase: Race={customizePtr[0]}, " +
+            $"Tribe={customizePtr[4]}, Gender={customizePtr[1]}, Face={customizePtr[5]}, " +
+            $"equipmentSource={(useNpcEquip ? $"NpcEquip#{enpc.NpcEquip.RowId}" : "ENpcBase")}, " +
+            $"Body=0x{character->DrawData.Equipment(DrawDataContainer.EquipmentSlot.Body).Value:X}");
     }
+
+    private static ulong PackArmor(ulong model, uint stain1, uint stain2)
+        => model | ((ulong)stain1 << 24) | ((ulong)stain2 << 32);
 
     private string GetNpcName(NpcSpawnRequest request)
     {
