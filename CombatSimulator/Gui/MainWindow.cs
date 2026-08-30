@@ -19,6 +19,7 @@ using CombatSimulator.Spectators;
 using CombatSimulator.Targeting;
 using Dalamud.Game.ClientState.GamePad;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
@@ -134,7 +135,6 @@ public partial class MainWindow : IDisposable
     private NpcCatalog? npcCatalog;
     private string spawnSearchFilter = "";
     private int spawnCategoryIndex = 0; // 0=Popular, 1=Recent, 2=Human, 3=DemiHuman, 4=Monster, 5=All
-    private int selectedCatalogIndex = -1;
     private NpcCatalogEntry? selectedCatalogEntry;
     private int selectedRecipeIndex = 0;
 
@@ -1173,7 +1173,6 @@ public partial class MainWindow : IDisposable
             if (ImGui.SmallButton(SpawnCategoryNames[c]))
             {
                 spawnCategoryIndex = c;
-                selectedCatalogIndex = -1;
                 selectedCatalogEntry = null;
             }
             if (selected) ImGui.PopStyleColor();
@@ -1208,18 +1207,19 @@ public partial class MainWindow : IDisposable
             }
             else
             {
-                for (int i = 0; i < entries.Count; i++)
+                ImGuiClip.ClippedDraw(entries, entry =>
                 {
-                    var entry = entries[i];
                     bool isSelected = selectedCatalogEntry != null &&
                                       selectedCatalogEntry.Id == entry.Id &&
-                                      selectedCatalogEntry.Source == entry.Source;
-                    if (ImGui.Selectable($"{entry.Name}##cat{entry.Source}{entry.Id}", isSelected))
+                                      selectedCatalogEntry.Source == entry.Source &&
+                                      selectedCatalogEntry.BNpcNameId == entry.BNpcNameId;
+                    if (ImGui.Selectable(
+                            $"{entry.Name}##cat{entry.Source}{entry.Id}_{entry.BNpcNameId}",
+                            isSelected))
                     {
-                        selectedCatalogIndex = i;
                         selectedCatalogEntry = entry;
                     }
-                }
+                }, 1, ImGui.GetTextLineHeightWithSpacing());
             }
             ImGui.EndListBox();
         }

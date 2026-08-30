@@ -9,6 +9,8 @@ using System.Reflection;
 using System.Text.Json;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
+using LuminaSupplemental.Excel.Model;
+using LuminaSupplemental.Excel.Services;
 
 namespace CombatSimulator.Npcs;
 
@@ -62,6 +64,7 @@ public class NpcCatalog
 
     private List<NpcCatalogEntry>? allEntries;
     private List<NpcCatalogEntry>? popularEntries;
+    private readonly Dictionary<(string Filter, NpcCatalogType? Type, NpcCatalogSource? Source), IReadOnlyList<NpcCatalogEntry>> searchCache = new();
     private bool loaded;
 
     public bool IsLoaded => loaded;
@@ -123,7 +126,49 @@ public class NpcCatalog
                 eNpcRows[row.RowId] = (row, model.Type, model.ModelId);
         }
 
-        var addedSources = new HashSet<(NpcCatalogSource Source, uint Id)>();
+        // A single BNpcBase can have several BNpcName identities. Keep each mapping searchable;
+        // ENpc/ModelChara entries use variant 0.
+        var addedSources = new HashSet<(NpcCatalogSource Source, uint Id, uint Variant)>();
+
+        // BNpcBase has no direct name link in the game's Excel sheets. Use the same supplemental
+        // BNpcLink dataset as ActorMorpher instead of limiting the catalog to our old curated list.
+        var battleNpcNameLinks = LoadBattleNpcNameLinks();
+        foreach (var (id, model) in bNpcRows)
+        {
+            var addedNamedEntry = false;
+            if (battleNpcNameLinks.TryGetValue(id, out var nameIds))
+            {
+                foreach (var nameId in nameIds)
+                {
+                    if (!bNpcNames.TryGetValue(nameId, out var name) || string.IsNullOrWhiteSpace(name))
+                        continue;
+
+                    AddSourceEntry(
+                        id,
+                        nameId,
+                        model.ModelId,
+                        name,
+                        model.Type,
+                        NpcCatalogSource.BNpcBase,
+                        addedSources);
+                    addedNamedEntry = true;
+                }
+            }
+
+            // Preserve access even for the small number of bases not yet covered by supplemental
+            // data. The ID is explicit and the actor remains spawnable/searchable.
+            if (!addedNamedEntry)
+            {
+                AddSourceEntry(
+                    id,
+                    id,
+                    model.ModelId,
+                    $"Battle NPC {id}",
+                    model.Type,
+                    NpcCatalogSource.BNpcBase,
+                    addedSources);
+            }
+        }
 
         // Preserve the embedded Anamnesis-derived mappings as the source for localized BNpc names.
         var curatedNames = LoadEmbeddedNpcNames();
@@ -172,7 +217,7 @@ public class NpcCatalog
         var residents = dataManager.GetExcelSheet<ENpcResident>();
         foreach (var (id, value) in eNpcRows)
         {
-            if (addedSources.Contains((NpcCatalogSource.ENpcBase, id)))
+            if (addedSources.Contains((NpcCatalogSource.ENpcBase, id, 0)))
                 continue;
             var resident = residents.GetRowOrDefault(id);
             if (resident == null)
@@ -247,9 +292,9 @@ public class NpcCatalog
         string name,
         NpcCatalogType type,
         NpcCatalogSource source,
-        HashSet<(NpcCatalogSource Source, uint Id)> addedSources)
+        HashSet<(NpcCatalogSource Source, uint Id, uint Variant)> addedSources)
     {
-        if (!addedSources.Add((source, id)))
+        if (!addedSources.Add((source, id, source == NpcCatalogSource.BNpcBase ? bNpcNameId : 0)))
             return;
         allEntries!.Add(new NpcCatalogEntry
         {
@@ -260,6 +305,50 @@ public class NpcCatalog
             Type = type,
             Source = source,
         });
+    }
+
+    private IReadOnlyDictionary<uint, uint[]> LoadBattleNpcNameLinks()
+    {
+        try
+        {
+            var links = CsvLoader.LoadResource<BNpcLink>(
+                CsvLoader.BNpcLinkResourceName,
+                true,
+                out var failedLines,
+                out var exceptions);
+
+            if (failedLines.Count > 0 || exceptions.Count > 0)
+                log.Warning(
+                    $"BNpcLink supplemental data loaded with {failedLines.Count} failed line(s) " +
+                    $"and {exceptions.Count} exception(s).");
+
+            var result = new Dictionary<uint, HashSet<uint>>();
+            foreach (var link in links)
+            {
+                if (!result.TryGetValue(link.BNpcBaseId, out var names))
+                {
+                    names = new HashSet<uint>();
+                    result[link.BNpcBaseId] = names;
+                }
+                names.Add(link.BNpcNameId);
+            }
+
+            var flattened = new Dictionary<uint, uint[]>(result.Count);
+            foreach (var (baseId, names) in result)
+            {
+                var values = new uint[names.Count];
+                names.CopyTo(values);
+                flattened[baseId] = values;
+            }
+
+            log.Info($"Loaded supplemental BNpcLink mappings for {flattened.Count} BNpcBase rows.");
+            return flattened;
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Failed to load supplemental BNpcLink data; using numeric BNpc fallbacks.");
+            return new Dictionary<uint, uint[]>();
+        }
     }
 
     private static bool TryClassifyModel(byte modelType, out NpcCatalogType type)
@@ -321,19 +410,25 @@ public class NpcCatalog
         if (noFilter && typeFilter == null && sourceFilter == null)
             return allEntries;
 
+        var normalizedFilter = noFilter ? string.Empty : filter.Trim();
+        var cacheKey = (normalizedFilter, typeFilter, sourceFilter);
+        if (searchCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
         var results = new List<NpcCatalogEntry>();
         foreach (var entry in allEntries)
         {
             if (typeFilter.HasValue && !MatchesType(entry, typeFilter.Value)) continue;
             if (sourceFilter.HasValue && entry.Source != sourceFilter.Value) continue;
             if (!noFilter &&
-                !entry.Name.Contains(filter, StringComparison.OrdinalIgnoreCase) &&
-                !entry.Id.ToString().Contains(filter, StringComparison.OrdinalIgnoreCase) &&
-                !entry.ModelCharaId.ToString().Contains(filter, StringComparison.OrdinalIgnoreCase))
+                !entry.Name.Contains(normalizedFilter, StringComparison.OrdinalIgnoreCase) &&
+                !entry.Id.ToString().Contains(normalizedFilter, StringComparison.OrdinalIgnoreCase) &&
+                !entry.ModelCharaId.ToString().Contains(normalizedFilter, StringComparison.OrdinalIgnoreCase))
                 continue;
             results.Add(entry);
         }
 
+        searchCache[cacheKey] = results;
         return results;
     }
 
@@ -353,10 +448,16 @@ public class NpcCatalog
         return null;
     }
 
-    public NpcCatalogEntry? FindBySourceAndId(NpcCatalogSource source, uint id)
+    public NpcCatalogEntry? FindBySourceAndId(NpcCatalogSource source, uint id, uint bNpcNameId = 0)
     {
         EnsureLoaded();
         if (allEntries == null) return null;
+        if (source == NpcCatalogSource.BNpcBase && bNpcNameId != 0)
+        {
+            foreach (var entry in allEntries)
+                if (entry.Source == source && entry.Id == id && entry.BNpcNameId == bNpcNameId)
+                    return entry;
+        }
         foreach (var entry in allEntries)
             if (entry.Source == source && entry.Id == id) return entry;
         return null;
@@ -409,7 +510,7 @@ public class NpcCatalog
 
         foreach (var item in popular)
         {
-            popularEntries.Add(FindBySourceAndId(item.Source, item.Id) ?? new NpcCatalogEntry
+            popularEntries.Add(FindBySourceAndId(item.Source, item.Id, item.NameId) ?? new NpcCatalogEntry
             {
                 Id = item.Id,
                 BNpcNameId = item.NameId,
@@ -427,7 +528,7 @@ public class NpcCatalog
         var results = new List<NpcCatalogEntry>();
         foreach (var recent in recentEntries)
         {
-            var found = FindBySourceAndId(recent.Source, recent.BNpcBaseId);
+            var found = FindBySourceAndId(recent.Source, recent.BNpcBaseId, recent.BNpcNameId);
             // Older configurations only stored an ID. Their default values look like BNpcBase,
             // so fall back to ENpcBase when that ID is not actually present in the BNpc catalog.
             if (found == null &&

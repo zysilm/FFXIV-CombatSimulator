@@ -27,6 +27,9 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" />
+    <!-- Complete BNpcBase <-> BNpcName links are not present in the game Excel sheets. ActorMorpher
+         uses this supplemental dataset so every known monster name remains discoverable. -->
+    <PackageReference Include="LuminaSupplemental.Excel" Version="4.3.7" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Npcs\NpcNames.json" />
