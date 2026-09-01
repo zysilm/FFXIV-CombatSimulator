@@ -181,6 +181,9 @@ public sealed class ActionModeController
         swingCooldown = config.LightSwingInterval;
 
         var primary = hitbox.ResolveBasicAttackPrimary();
+        if (primary != null && combatEngine.TryReplacePlayerAttack(AutoAttackId, primary.State.EntityId))
+            return;
+
         var potency = PlayerHitboxResolver.IsRangedBasicAttackJob()
             ? Math.Max(1, (int)MathF.Round(config.LightAttackPotency * PhysicalRangedBasicPotencyRatio))
             : config.LightAttackPotency;
@@ -252,6 +255,19 @@ public sealed class ActionModeController
             return;
 
         var duration = MathF.Max(0.05f, animationController.ResolveActionAnimationDuration(actionId));
+
+        // Resolve the intended enemy before spending MP or starting an attack animation: the
+        // experimental module may consume this input as an emote/speech action instead.
+        var (range, angle, smallestAngle) = ResolveSelectionParams(actionId);
+        var primary = hitbox.ResolvePrimary(range, angle, smallestAngle);
+        if (primary != null && combatEngine.TryReplacePlayerAttack(actionId, primary.State.EntityId))
+        {
+            guardLockoutTimer = MathF.Max(guardLockoutTimer, duration * GuardCancelLockRatio);
+            attackLockoutTimer = MathF.Max(attackLockoutTimer, duration);
+            swingCooldown = config.LightSwingInterval;
+            return;
+        }
+
         if (!combatEngine.TrySpendPlayerActionMp(actionId, duration, out _, out _))
             return;
 
@@ -262,8 +278,6 @@ public sealed class ActionModeController
         comboTimer = config.LightComboWindow;
 
         // Soft-target by the action's real selection cone, then fan out its real shape/potency.
-        var (range, angle, smallestAngle) = ResolveSelectionParams(actionId);
-        var primary = hitbox.ResolvePrimary(range, angle, smallestAngle);
         var struck = primary != null
             ? combatEngine.ApplyPlayerActionMode(actionId, primary.State.EntityId, animationDuration: duration)
             : 0;

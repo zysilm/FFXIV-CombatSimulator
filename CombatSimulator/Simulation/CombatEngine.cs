@@ -82,6 +82,8 @@ public class CombatEngine : IDisposable
     public List<CombatLogEntry> CombatLog { get; } = new();
     public Action? OnSimulationStarted { get; set; }
     public Func<SimulatedNpc, SimulatedEntityState?>? ResolveNpcTarget { get; set; }
+    /// <summary>Optional party-target routing override for one enemy.</summary>
+    public Action<uint, uint>? ForceNpcTarget { private get; set; }
     public Func<uint, nint?>? ResolveExternalEntityAddress { get; set; }
     public Func<bool>? HasLivingCompanions { get; set; }
     /// <summary>
@@ -101,6 +103,8 @@ public class CombatEngine : IDisposable
     /// <summary>Dev seam: suppress every non-player route that would put an idle enemy into combat.</summary>
     public Func<bool>? ShouldSuppressEnemyInitiation { private get; set; }
     public bool IsEnemyInitiationSuppressed => ShouldSuppressEnemyInitiation?.Invoke() == true;
+    /// <summary>Dev seam: consume a player attack before resources, damage, animation, or feedback.</summary>
+    public Func<uint, ulong, bool>? PlayerAttackReplacement { private get; set; }
     /// <summary>Fired only after a player attack has successfully dealt damage to an enemy.</summary>
     public Action? OnPlayerAttackLanded { get; set; }
     // Fired when an NPC's attack lands on the (still-alive) player; argument is the
@@ -421,6 +425,42 @@ public class CombatEngine : IDisposable
         }
     }
 
+    public bool TryReplacePlayerAttack(uint actionId, ulong targetEntityId)
+    {
+        try
+        {
+            return PlayerAttackReplacement?.Invoke(actionId, targetEntityId) == true;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "Experimental player attack replacement failed; normal attack processing will continue.");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Experimental hard aggro: bypass all initiation gates, immediately enter combat, and route
+    /// every living enemy to the player. Called only after the dev module consumes an attack.
+    /// </summary>
+    public void ForceAllLivingEnemiesToAttackPlayer()
+    {
+        if (!State.IsActive || !State.PlayerState.IsAlive)
+            return;
+
+        var playerId = State.PlayerState.EntityId;
+        foreach (var npc in npcSelector.SelectedNpcs)
+        {
+            if (!npc.IsSpawned || !npc.State.IsAlive)
+                continue;
+
+            ForceNpcTarget?.Invoke(npc.SimulatedEntityId, playerId);
+            npc.AiState = Ai.NpcAiState.Combat;
+            npc.EngageDelayTimer = 0f;
+            npc.AutoAttackTimer = 0f;
+            AddLogEntry($"{npc.Name} is provoked!", CombatLogType.Info);
+        }
+    }
+
     public SimulatedActionResult ProcessPlayerAction(uint actionId, ulong targetId)
     {
         var result = new SimulatedActionResult
@@ -447,6 +487,13 @@ public class CombatEngine : IDisposable
         if (!target.IsAlive)
         {
             result.FailReason = "Target is already dead.";
+            return result;
+        }
+
+        if (TryReplacePlayerAttack(actionId, target.EntityId))
+        {
+            result.Success = true;
+            result.Damage = 0;
             return result;
         }
 
@@ -1698,6 +1745,9 @@ public class CombatEngine : IDisposable
 
     private void AutoAttackNpc(SimulatedEntityState ps, SimulatedNpc npc)
     {
+        if (TryReplacePlayerAttack(7, npc.State.EntityId))
+            return;
+
         var dmg = damageCalculator.CalculateNpcAutoAttack(ps, npc.State, 110);
         npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
         State.TotalDamageDealt += dmg.Damage;

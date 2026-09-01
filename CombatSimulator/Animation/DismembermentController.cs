@@ -47,6 +47,10 @@ public unsafe class DismembermentController : IDisposable
     private const float GearPieceMass = 0.4f; // dropped hat/accessory mass (light; body shell overrides)
     private const float GearAutoExpireFadeFraction = 0.25f; // auto-recycle: fade over the final quarter of the lifetime
     private const int MaxPendingFrames = 120;
+    private const int GlamourRetryFrames = 6;
+    private const int GlamourFinalGraceFrames = 30;
+    private const int GlamourDrawStableFrames = 3;
+    private const int GlamourFallbackStableFrames = 12;
     // A clone is drawn (per the original timing) but its limb bone may not resolve immediately
     // on a cold model load. Keep it hidden until the bone appears; only after this many frames
     // (~10s) do we conclude the wrong/placeholder model was built and drop the clone.
@@ -241,6 +245,10 @@ public unsafe class DismembermentController : IDisposable
         public string? GlamourBase64;
         public int GlamourFramesUntil = -1;
         public int GlamourAttemptsLeft;
+        public bool GlamourApplyAccepted;
+        public bool GlamourSyncFailed;
+        public nint GlamourObservedDrawObject;
+        public int GlamourStableDrawFrames;
         public HandoffSnapshot? Handoff;
         public int ResolveFramesWaited; // frames spent (hidden) waiting for the limb bone to load
         public Vector3 SourceScale = Vector3.One; // source's draw scale, applied so big enemies' pieces match
@@ -253,6 +261,7 @@ public unsafe class DismembermentController : IDisposable
         // foot slots additionally isolate one skeleton side. The result is driven as its own body.
         // -1 = limb mode.
         public int GearKeepModelSlot = -1;
+        public string? GearExpectedAppearanceSignature;
         // Paired model slots (Hands/Feet) use one clone per side. Only this opposite arm/leg subtree is
         // hidden; preserving the visible side's full bind pose avoids stretching blended gear vertices.
         public string? GearHiddenOppositeRootBone;
@@ -476,6 +485,7 @@ public unsafe class DismembermentController : IDisposable
         public int SourceSkeletonParentCount;
         public int SourceSkeletonSignature;
         public int GearKeepModelSlot = -1;
+        public string? GearExpectedAppearanceSignature;
         public bool GearHideSkin;
         public string? GearHiddenOppositeRootBone;
     }
@@ -674,6 +684,11 @@ public unsafe class DismembermentController : IDisposable
             Delay = 0f,
             GlamourBase64 = glamourBase64,
             GearKeepModelSlot = keepModelSlot,
+            // CharacterSetup.CopyFromCharacter copies the actor's game-side setup, not necessarily
+            // the model currently rendered by Glamourer. Remember the live rendered garment so the
+            // clone cannot arm against that bootstrap appearance while a race/customize redraw is
+            // still pending.
+            GearExpectedAppearanceSignature = GetModelAppearanceSignature(srcCb->Models[keepModelSlot]),
             GearHideSkin = hideSkin,
             GearHiddenOppositeRootBone = hiddenOppositeRootBone,
         };
@@ -969,6 +984,7 @@ public unsafe class DismembermentController : IDisposable
             ExpectedSkeletonParentCount = p.SourceSkeletonParentCount,
             ExpectedSkeletonSignature = p.SourceSkeletonSignature,
             GearKeepModelSlot = p.GearKeepModelSlot,
+            GearExpectedAppearanceSignature = p.GearExpectedAppearanceSignature,
             GearHideSkin = p.GearHideSkin,
             GearHiddenOppositeRootBone = p.GearHiddenOppositeRootBone,
         });
@@ -3340,6 +3356,16 @@ public unsafe class DismembermentController : IDisposable
     private bool UpdateClone(Clone c)
     {
         if (c.Chara == null) return false;
+        if (c.GlamourSyncFailed)
+            return false;
+        if (c.GlamourBase64 != null)
+        {
+            // A successful ApplyState call can merely enqueue a Penumbra redraw. Do not touch model
+            // pointers or freeze a pose until the replacement DrawObject contains the captured live
+            // appearance; doing so here used to lock a clone to the actor's real equipment.
+            HideEntireBody(c);
+            return true;
+        }
         var drawObj = ((GameObject*)c.Chara)->DrawObject;
         if (drawObj == null) return !c.Armed;
         ApplyCloneDrawScale(c, drawObj);
@@ -5988,6 +6014,34 @@ public unsafe class DismembermentController : IDisposable
         return cb->Models[c.GearKeepModelSlot];
     }
 
+    /// <summary>
+    /// Identify the actually rendered equipment model, including its material variant. The model
+    /// path alone is insufficient because multiple equipment variants can share the same .mdl and
+    /// differ only in their material paths.
+    /// </summary>
+    private static string? GetModelAppearanceSignature(RenderModel* model)
+    {
+        if (model == null || model->ModelResourceHandle == null)
+            return null;
+
+        var modelPath = model->ModelResourceHandle->FileName.ToString();
+        if (string.IsNullOrEmpty(modelPath))
+            return null;
+
+        var signature = new StringBuilder(modelPath.Length + model->MaterialCount * 48);
+        signature.Append(modelPath).Append('|').Append(model->MaterialCount);
+        for (var i = 0; i < model->MaterialCount; i++)
+        {
+            signature.Append('|').Append(i).Append(':');
+            var material = model->Materials != null ? model->Materials[i] : null;
+            var resource = material != null ? material->MaterialResourceHandle : null;
+            if (resource != null)
+                signature.Append(resource->FileName.ToString());
+        }
+
+        return signature.ToString();
+    }
+
     private void HideSkinMaterials(Clone c)
     {
         var model = GetKeptModel(c);
@@ -7382,22 +7436,77 @@ public unsafe class DismembermentController : IDisposable
 
     private void ApplyDeferredGlamour(Clone c)
     {
-        if (c.GlamourBase64 == null || c.GlamourAttemptsLeft <= 0) return;
-        if (c.GlamourFramesUntil > 0) { c.GlamourFramesUntil--; return; }
-        if (c.GlamourFramesUntil == 0)
+        if (c.GlamourBase64 == null || c.GlamourSyncFailed) return;
+
+        var obj = (GameObject*)c.Chara;
+        var drawObject = (nint)obj->DrawObject;
+        if (c.GlamourApplyAccepted && drawObject != nint.Zero)
         {
-            var objectIndex = (int)((GameObject*)c.Chara)->ObjectIndex;
+            if (drawObject != c.GlamourObservedDrawObject)
+            {
+                // Race/body/face changes rebuild the DrawObject asynchronously after ApplyState has
+                // already returned success. Start the stability window again on the replacement.
+                c.GlamourObservedDrawObject = drawObject;
+                c.GlamourStableDrawFrames = 0;
+            }
+            else
+            {
+                c.GlamourStableDrawFrames++;
+            }
+
+            if (IsDeferredGlamourReady(c))
+            {
+                c.GlamourBase64 = null;
+                c.SettleFrames = Math.Max(c.SettleFrames, 8);
+                log.Info($"Dismember: glamour synchronized idx={obj->ObjectIndex}");
+                return;
+            }
+        }
+
+        if (c.GlamourFramesUntil > 0) { c.GlamourFramesUntil--; return; }
+        if (c.GlamourFramesUntil <= 0 && c.GlamourAttemptsLeft > 0)
+        {
+            var objectIndex = (int)obj->ObjectIndex;
             var ok = glamourerIpc.ApplyStateBase64(c.GlamourBase64, objectIndex);
             c.GlamourAttemptsLeft--;
             if (ok)
             {
-                c.GlamourBase64 = null;
-                if (!c.Armed)
-                    c.SettleFrames = Math.Max(c.SettleFrames, 6);
-                log.Info($"Dismember: glamour applied idx={objectIndex}");
+                if (!c.GlamourApplyAccepted)
+                {
+                    c.GlamourApplyAccepted = true;
+                    c.GlamourObservedDrawObject = (nint)obj->DrawObject;
+                    c.GlamourStableDrawFrames = 0;
+                }
+                // Re-apply while waiting. Once the asynchronous redraw has installed its new
+                // DrawObject, a subsequent application updates that final object in-place.
+                c.GlamourFramesUntil = c.GlamourAttemptsLeft > 0
+                    ? GlamourRetryFrames
+                    : GlamourFinalGraceFrames;
             }
-            else c.GlamourFramesUntil = 5; // retry
+            else c.GlamourFramesUntil = GlamourRetryFrames;
         }
+
+        if (c.GlamourAttemptsLeft <= 0 && c.GlamourFramesUntil <= 0 && !IsDeferredGlamourReady(c))
+        {
+            c.GlamourSyncFailed = true;
+            log.Warning($"Dismember: glamour did not reach the rendered clone idx={obj->ObjectIndex}; dropping clone instead of showing base equipment");
+        }
+    }
+
+    private bool IsDeferredGlamourReady(Clone c)
+    {
+        if (!c.GlamourApplyAccepted || c.GlamourStableDrawFrames < GlamourDrawStableFrames)
+            return false;
+
+        if (c.GearKeepModelSlot >= 0 && !string.IsNullOrEmpty(c.GearExpectedAppearanceSignature))
+        {
+            var actual = GetModelAppearanceSignature(GetKeptModel(c));
+            return string.Equals(actual, c.GearExpectedAppearanceSignature, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Limb clones do not have a single equipment slot to verify. Give an asynchronous redraw a
+        // wider quiet window, then let the existing skeleton compatibility checks validate the result.
+        return c.GlamourStableDrawFrames >= GlamourFallbackStableFrames;
     }
 
     private static bool IsHeadLimb(string limbRootBone)

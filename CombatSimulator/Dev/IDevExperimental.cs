@@ -39,6 +39,10 @@ public interface IDevExperimental : IDisposable
     /// <summary>Release the dev enemy-pack gate after confirmed player damage lands.</summary>
     void OnPlayerAttackLanded();
 
+    /// <summary>Dev-only attack replacement seam. True means the experimental module consumed the
+    /// input and normal damage, animation, VFX, and hit feedback must not run.</summary>
+    bool TryReplacePlayerAttack(uint actionId, ulong targetEntityId);
+
     /// <summary>World-level dev update that also runs while combat simulation is inactive.</summary>
     void TickWorld(float deltaTime);
     void Tick(float deltaTime);

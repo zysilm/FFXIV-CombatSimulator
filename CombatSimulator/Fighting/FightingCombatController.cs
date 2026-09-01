@@ -112,6 +112,12 @@ public sealed unsafe class FightingCombatController
         if (swingPhase != SwingPhase.Idle)
             return false;
 
+        if (combatEngine.TryReplacePlayerAttack(actionId, target.SimulatedEntityId))
+        {
+            ResetSwing();
+            return true;
+        }
+
         var duration = MathF.Max(0.3f, animationController.ResolveActionAnimationDuration(actionId));
         if (!combatEngine.TrySpendPlayerActionMp(actionId, duration, out _, out var failReason))
         {

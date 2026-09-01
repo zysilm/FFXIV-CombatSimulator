@@ -282,6 +282,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.VictorySequence = devExperimental.VictorySequence;
         combatEngine.ShouldSuppressEnemyInitiation = () => devExperimental.SuppressEnemyInitiation;
         combatEngine.OnPlayerAttackLanded = devExperimental.OnPlayerAttackLanded;
+        combatEngine.PlayerAttackReplacement = devExperimental.TryReplacePlayerAttack;
         npcActionProfileProvider.ForceAutoAttackOnly = () => devExperimental.NpcAutoAttackOnly;
         npcSpawner.StripBodyLegs = () => devExperimental.VirtualEnemyStripBodyLegs;
         npcSpawner.StripAccessories = () => devExperimental.VirtualEnemyStripAccessories;
@@ -293,6 +294,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.HasLivingCompanions = () => companionManager.HasLivingCompanions;
         combatEngine.OnPlayerDamageDealt = companionManager.RegisterPlayerDamage;
         combatEngine.OnPlayerDamageDealtToTarget = companionManager.RegisterPlayerDamage;
+        combatEngine.ForceNpcTarget = companionManager.ForceEnemyTarget;
         spectatorController = new SpectatorController(
             npcSelector, movementBlockHook, animationController.EmotePlayer,
             vnavmeshIpc, clientState, config,

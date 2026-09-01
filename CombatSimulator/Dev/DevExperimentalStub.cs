@@ -21,6 +21,7 @@ public sealed class DevExperimentalStub : IDevExperimental
     public bool VirtualEnemyStripAccessories => false;
     public bool SuppressEnemyInitiation => false;
     public void OnPlayerAttackLanded() { }
+    public bool TryReplacePlayerAttack(uint actionId, ulong targetEntityId) => false;
     public void TickWorld(float deltaTime) { }
     public void Tick(float deltaTime) { }
     public void BeforePlayerDeath() { }
