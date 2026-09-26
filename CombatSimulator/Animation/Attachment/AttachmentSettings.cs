@@ -27,6 +27,11 @@ public sealed class AttachmentSettings
     public float BodyFriction { get; set; } = 0.45f;
     public float GroundFriction { get; set; } = 0.7f;
     public float Damping { get; set; } = 1.5f;
+    public float SwayDistance { get; set; } = 0.008f;
+    public float LateralDistance { get; set; } = 0.025f;
+    public float SkirtSwingDegrees { get; set; } = 65f;
+    public float SkirtStiffness { get; set; } = 24f;
+    public float SkirtDamping { get; set; } = 1.5f;
     public float Thickness { get; set; } = 0.012f;
     public float OpeningScale { get; set; } = 1.12f;
     public float Asymmetry { get; set; } = 0.15f;
@@ -59,6 +64,11 @@ public sealed class AttachmentSettings
         copy.BodyFriction = FiniteClamp(BodyFriction, 0f, 2f, 0.45f);
         copy.GroundFriction = FiniteClamp(GroundFriction, 0f, 2f, 0.7f);
         copy.Damping = FiniteClamp(Damping, 0f, 12f, 1.5f);
+        copy.SwayDistance = FiniteClamp(SwayDistance, 0f, 0.02f, 0.008f);
+        copy.LateralDistance = FiniteClamp(LateralDistance, 0f, 0.1f, 0.025f);
+        copy.SkirtSwingDegrees = FiniteClamp(SkirtSwingDegrees, 0, 110, 65);
+        copy.SkirtStiffness = FiniteClamp(SkirtStiffness, 4, 100, 24);
+        copy.SkirtDamping = FiniteClamp(SkirtDamping, 1, 4, 1.5f);
         copy.Thickness = FiniteClamp(Thickness, 0.003f, 0.04f, 0.012f);
         copy.OpeningScale = FiniteClamp(OpeningScale, 1f, 1.8f, 1.12f);
         copy.Asymmetry = FiniteClamp(Asymmetry, 0f, 0.6f, 0.15f);
@@ -76,6 +86,14 @@ public sealed class AttachmentSettings
     public void ApplyMaterial(GarmentMaterial material)
     {
         Material = material;
+        (SkirtStiffness, SkirtDamping) = material switch
+        {
+            GarmentMaterial.Silk => (8f, 1.2f),
+            GarmentMaterial.HeavyWeave => (40f, 2f),
+            GarmentMaterial.Leather => (60f, 2f),
+            GarmentMaterial.Armor => (100f, 3f),
+            _ => (24f, 1.5f),
+        };
         (BodyFriction, GroundFriction, Damping) = material switch
         {
             GarmentMaterial.Silk => (0.16f, 0.3f, 0.7f),

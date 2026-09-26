@@ -2,6 +2,10 @@
 
 ## Scope
 
+**Historical solver:** profile 5 now uses live-bone Visual only (enhanced). The XPBD solver and
+diagnostics below are retained for comparison and no longer drive this profile at runtime.
+See REAL_ATTACHMENT.md for current behavior and tests.
+
 **Status after repair (2026-09-26):** The sections below record the original diagnosis. The current
 executable links the repaired production source, uses `AttachmentFrame` and calls `FitToBody` before
 floor sampling, matching runtime initialization order. `LegacyFrame` deliberately preserves the old

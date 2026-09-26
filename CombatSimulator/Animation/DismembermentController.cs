@@ -861,7 +861,6 @@ public unsafe partial class DismembermentController : IDisposable
                 }
             }
 
-            CaptureRealAttachmentLayers();
             if (clones.Count == 0) return;
 
             // Draw-ready poll.

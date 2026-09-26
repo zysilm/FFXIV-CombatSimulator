@@ -18,7 +18,7 @@ public partial class MainWindow
         "Clingy",
         "Slide to floor",
         "Visual only",
-        "Real attachment",
+        "Visual only (enhanced)",
     };
 
     private void DrawArmorDetachmentEntrySection()
@@ -357,7 +357,7 @@ public partial class MainWindow
                                  "Clingy: waits longer and follows dragged bodies.\n" +
                                  "Slide to floor: default, keeps sliding down until it touches the ground, then drops.\n" +
                                  "Visual only: slowly slides to the floor and stays visual, never handing off to physics.\n" +
-                                 "Real attachment: gravity, contact and slack connections keep the garment attached while it slips.");
+                                 "Visual only (enhanced): follows live body bones with bounded gravity-directed sliding and gentle skirt motion.");
 
             if (preset == 5) DrawRealAttachmentSettings();
 

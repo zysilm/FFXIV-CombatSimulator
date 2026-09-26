@@ -6,45 +6,35 @@ using CombatSimulator.Animation.Attachment;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
-using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 
 namespace CombatSimulator.Animation;
 
 public unsafe partial class DismembermentController
 {
-    private readonly List<(long Owner, nint Source, AttachmentSimulation.ContactPoint Point)> attachmentLayers = new();
-
-    private void CaptureRealAttachmentLayers()
-    {
-        // Both garments consume the same previous-frame sample, independent of clone update order.
-        attachmentLayers.Clear();
-        foreach (var c in clones)
-            if (c.RealAttachment is { } state)
-                foreach (var p in state.Simulation.Particles)
-                    attachmentLayers.Add((c.CreatedSeq, c.SourceAddress,
-                        new AttachmentSimulation.ContactPoint(p.Position, p.Velocity, state.Settings.Thickness * state.Scale)));
-    }
     private sealed class AttachmentBone
     {
         public string Name = "";
-        public int Index, Toward = -1, Ring;
-        public Vector3 SourceCenter, FloorSample;
+        public int Index, Toward = -1;
+        public float Multiplier;
+        public bool Skirt;
+        public Vector3 SourceCenter, Offset;
         public Quaternion SourceFrame;
         public readonly AttachmentFrame Frame = new();
-        public float FloorAge = 1f;
     }
 
     private sealed class RealAttachmentState
     {
-        public AttachmentSimulation Simulation = null!;
+        public readonly AttachedGarmentMotion Motion = new();
         public AttachmentSettings Settings = null!;
         public readonly List<AttachmentBone> Bones = new();
-        public readonly Dictionary<string, Vector3> PreviousCapsuleCenters = new();
         public int[] DrivenAncestor = Array.Empty<int>();
         public int SkeletonSignature;
         public float Scale;
-        public Vector3[] RenderCenters = Array.Empty<Vector3>();
-        public Quaternion[] RenderDeltas = Array.Empty<Quaternion>();
+        public readonly List<SkirtPanelBinding> SkirtPanels = new();
+        public readonly List<RetainedSkirtPanel.Capsule> SkirtCapsules = new();
+        public float SkirtFloorAge = 1;
+        public Vector3 SkirtFloorSample, SkirtFloorPoint;
+        public bool SkirtHasFloor;
     }
 
     public readonly record struct AttachmentModel(string Key, string Label, int Slot);
@@ -94,25 +84,32 @@ public unsafe partial class DismembermentController
         foreach (var c in clones)
         {
             if (c.RealAttachment is not { } state) continue;
-            edges.AddRange(state.Simulation.DebugEdges());
-            foreach (var p in state.Simulation.Particles)
-                points.Add(new AttachmentDebugPoint(p.Position, p.Target, p.Range >= 0,
-                    p.ContactNormal.LengthSquared() > 0, p.Tension));
+            foreach (var bone in state.Bones)
+            {
+                var position = bone.SourceCenter + bone.Offset;
+                edges.Add((bone.SourceCenter, position));
+                points.Add(new AttachmentDebugPoint(position, bone.SourceCenter, true, false,
+                    Math.Clamp(bone.Offset.Length() / MathF.Max(.001f, state.Settings.SlipDistance * state.Scale), 0, 1)));
+            }
+            foreach (var panel in state.SkirtPanels)
+            {
+                edges.Add((panel.WorldPivot, panel.WorldTip));
+                points.Add(new AttachmentDebugPoint(panel.WorldTip, panel.WorldPivot, false,
+                    panel.Solver.InContact, panel.Solver.ResidualPenetration > .001f ? 1 : 0));
+            }
         }
     }
 
     public string GetAttachmentStatus()
     {
-        var cages = 0; var nodes = 0; var contacts = 0; var asleep = 0; var recoveries = 0;
+        var garments = 0; var bones = 0; var panels = 0; var unresolved = 0;
         foreach (var c in clones)
-        {
-            if (c.RealAttachment is not { } state) continue;
-            cages++; nodes += state.Simulation.Particles.Count;
-            contacts += state.Simulation.ContactCount;
-            if (state.Simulation.Sleeping) asleep++;
-            recoveries += state.Simulation.RecoveryCount;
-        }
-        return $"Attached: {cages} | Nodes: {nodes} | Contacts: {contacts} | Sleeping: {asleep} | Recoveries: {recoveries}";
+            if (c.RealAttachment is { } state)
+            {
+                garments++; bones += state.Bones.Count; panels += state.SkirtPanels.Count;
+                foreach (var panel in state.SkirtPanels) if (panel.Solver.ResidualPenetration > .001f) unresolved++;
+            }
+        return $"Attached: {garments} | Live bone followers: {bones} | Skirt panels: {panels} | Blocked panels: {unresolved}";
     }
 
     private AttachmentSettings ResolveAttachmentSettings(Clone c)
@@ -158,19 +155,58 @@ public unsafe partial class DismembermentController
             ResolveAttachmentFrame(source, bone.Index, bone.Toward, origin, rotation, bone.Frame,
                 out bone.SourceCenter, out bone.SourceFrame);
             if (!FiniteAttachmentVector(bone.SourceCenter) || !float.IsFinite(bone.SourceFrame.LengthSquared())) return false;
-            state.Simulation.SetTarget(bone.Ring, bone.SourceCenter, bone.SourceFrame);
         }
-        UpdateAttachmentCollisions(source, c, state, origin, rotation);
+        // The first node is the live waist/torso frame. Retain only body-relative sliding;
+        // every render pose is rebuilt from the source, so no world-space cage drift survives.
+        var bodyFrame = state.Bones[0].SourceFrame;
+        var upperBody = c.GearKeepModelSlot == 1;
+        if (upperBody) state.Motion.Advance(attachmentFrameDt, bodyFrame, state.Settings, upperBody: true);
+        else state.Motion.AdvanceTrousers(attachmentFrameDt, bodyFrame, state.Settings);
         foreach (var bone in state.Bones)
         {
-            var center = state.Simulation.Center(bone.Ring);
-            bone.FloorAge += attachmentFrameDt;
-            if (bone.FloorAge < 0.12f && Vector3.DistanceSquared(center, bone.FloorSample) < 0.0025f) continue;
-            bone.FloorAge = 0; bone.FloorSample = center;
-            var valid = SampleAttachmentFloor(center, out var floor, out var normal);
-            state.Simulation.SetFloor(bone.Ring, valid, floor, normal);
+            bone.Offset = state.Motion.Offset(bodyFrame, state.Scale, bone.Multiplier, bone.Skirt, state.Settings, upperBody);
+            if (state.Settings.AnchorOffsets.TryGetValue(bone.Name, out var authored))
+                bone.Offset += Vector3.Transform(authored.ToVector() * state.Scale, bone.SourceFrame);
+            if (upperBody)
+            {
+                var weight = AttachedGarmentMotion.UpperBodyWeight(bone.Name);
+                // Even legacy authored offsets cannot unpin the upper opening. Lower offsets
+                // remain bounded; the same rule applies to coats/dresses in the Body slot.
+                bone.Offset = ClampVectorLength(bone.Offset,
+                    MathF.Min(state.Settings.SlipDistance, .08f) * state.Scale) * weight;
+            }
+            else
+            {
+                var direction = Vector3.Zero;
+                var pathLength = 0f;
+                if (bone.Toward >= 0)
+                {
+                    ref var end = ref source.Pose->ModelPose.Data[bone.Toward];
+                    direction = origin + Vector3.Transform(new Vector3(end.Translation.X, end.Translation.Y, end.Translation.Z), rotation) - bone.SourceCenter;
+                }
+                pathLength = direction.Length();
+                if (bone.Name == "j_kosi")
+                {
+                    // Follow the mean of the two live thighs, preserving the authored waist
+                    // clearance. Never use pelvis-to-spine (which points toward the head).
+                    direction = Vector3.Zero; pathLength = float.MaxValue; var legs = 0;
+                    foreach (var side in new[] { "l", "r" })
+                    {
+                        var hip = FindBoneIndexByName(source, $"j_asi_a_{side}");
+                        var knee = FindBoneIndexByName(source, $"j_asi_b_{side}");
+                        if (hip < 0 || knee < 0) continue;
+                        ref var a = ref source.Pose->ModelPose.Data[hip]; ref var b = ref source.Pose->ModelPose.Data[knee];
+                        var segment = Vector3.Transform(new Vector3(b.Translation.X - a.Translation.X,
+                            b.Translation.Y - a.Translation.Y, b.Translation.Z - a.Translation.Z), rotation);
+                        direction += segment; pathLength = MathF.Min(pathLength, segment.Length()); legs++;
+                    }
+                    if (legs == 0) pathLength = 0;
+                    else pathLength = MathF.Min(pathLength, direction.Length() / legs);
+                }
+                bone.Offset = state.Settings.Template == GarmentTemplate.Skirt ? Vector3.Zero :
+                    state.Motion.TrouserOffset(bone.Name, direction, pathLength, state.Scale, bone.Multiplier, state.Settings);
+            }
         }
-        state.Simulation.Advance(attachmentFrameDt);
         DriveRealAttachment(source, target, c, state, origin, rotation);
         return true;
     }
@@ -180,10 +216,9 @@ public unsafe partial class DismembermentController
     {
         var settings = ResolveAttachmentSettings(c);
         var scale = Math.Clamp(c.SourceScale.X, 0.1f, 10f);
-        var state = new RealAttachmentState { Settings = settings, SkeletonSignature = signature, Scale = scale,
-            Simulation = new AttachmentSimulation(settings, scale) };
+        var state = new RealAttachmentState { Settings = settings, SkeletonSignature = signature, Scale = scale };
         var rings = new Dictionary<string, int>(StringComparer.Ordinal);
-        void Add(string name, string toward, float radius, float attachment, string? parent = null)
+        void Add(string name, string toward, float attachment, string? parent = null)
         {
             if (rings.ContainsKey(name) || state.Bones.Count >= 48) return;
             var index = FindBoneIndexByName(source, name);
@@ -191,68 +226,44 @@ public unsafe partial class DismembermentController
             var next = FindBoneIndexByName(source, toward);
             var binding = new AttachmentBone { Name = name, Index = index, Toward = next };
             ResolveAttachmentFrame(source, index, next, origin, rotation, binding.Frame, out var center, out var frame);
-            if (PlayerRagdollController?.TryGetBoneCapsule(name, out var cap) == true)
-                radius = MathF.Max(radius * scale, cap.Radius) / scale;
             if (settings.Anchors.TryGetValue(name, out var custom)) attachment = custom;
-            var r = state.Simulation.AddRing(name, center, frame,
-                radius * scale * settings.OpeningScale + settings.Thickness * scale, attachment);
-            rings.Add(name, r);
-            binding.Ring = r; binding.SourceCenter = center; binding.SourceFrame = frame;
+            var multiplier = attachment >= 0 ? attachment :
+                parent != null && rings.TryGetValue(parent, out var p) ? state.Bones[p].Multiplier :
+                c.GearKeepModelSlot == 1 ? .7f : .65f;
+            binding.Multiplier = multiplier;
+            binding.Skirt = name.StartsWith("j_sk_", StringComparison.Ordinal);
+            binding.SourceCenter = center; binding.SourceFrame = frame;
+            rings.Add(name, state.Bones.Count);
             state.Bones.Add(binding);
-            if (parent != null && rings.TryGetValue(parent, out var p)) state.Simulation.Connect(p, r);
         }
 
         if (c.GearKeepModelSlot == 1)
         {
-            Add("j_kosi", "j_sebo_a", 0.12f, -1);
-            Add("j_sebo_a", "j_sebo_b", 0.115f, -1, "j_kosi");
-            Add("j_sebo_b", "j_sebo_c", 0.13f, -1, "j_sebo_a");
-            Add("j_sebo_c", "j_kubi", 0.13f, -1, "j_sebo_b");
-            Add("j_kubi", "j_kao", 0.065f, 0.7f, "j_sebo_c");
+            Add("j_kosi", "j_sebo_a", -1);
+            Add("j_sebo_a", "j_sebo_b", -1, "j_kosi");
+            Add("j_sebo_b", "j_sebo_c", -1, "j_sebo_a");
+            Add("j_sebo_c", "j_kubi", -1, "j_sebo_b");
+            Add("j_kubi", "j_kao", 0.7f, "j_sebo_c");
             foreach (var side in new[] { "l", "r" })
             {
-                Add($"j_sako_{side}", $"j_ude_a_{side}", 0.065f, 1f, "j_sebo_c");
-                Add($"j_ude_a_{side}", $"j_ude_b_{side}", 0.055f, -1, $"j_sako_{side}");
-                Add($"j_ude_b_{side}", $"j_te_{side}", 0.043f, -1, $"j_ude_a_{side}");
-                Add($"j_te_{side}", $"j_oya_a_{side}", 0.038f, 0.45f, $"j_ude_b_{side}");
+                Add($"j_sako_{side}", $"j_ude_a_{side}", 1f, "j_sebo_c");
+                Add($"j_ude_a_{side}", $"j_ude_b_{side}", -1, $"j_sako_{side}");
+                Add($"j_ude_b_{side}", $"j_te_{side}", -1, $"j_ude_a_{side}");
+                Add($"j_te_{side}", $"j_oya_a_{side}", 0.45f, $"j_ude_b_{side}");
             }
         }
         else
         {
-            Add("j_kosi", "j_sebo_a", 0.13f, 0.65f);
+            Add("j_kosi", "j_sebo_a", 0.65f);
             if (settings.Template != GarmentTemplate.Skirt)
                 foreach (var side in new[] { "l", "r" })
                 {
-                    Add($"j_asi_a_{side}", $"j_asi_b_{side}", 0.085f, -1, "j_kosi");
-                    Add($"j_asi_b_{side}", $"j_asi_d_{side}", 0.062f, -1, $"j_asi_a_{side}");
-                    Add($"j_asi_d_{side}", $"j_asi_e_{side}", 0.048f, 0.5f, $"j_asi_b_{side}");
+                    Add($"j_asi_a_{side}", $"j_asi_b_{side}", -1, "j_kosi");
+                    Add($"j_asi_b_{side}", $"j_asi_d_{side}", -1, $"j_asi_a_{side}");
+                    Add($"j_asi_d_{side}", $"j_asi_e_{side}", 0.5f, $"j_asi_b_{side}");
                 }
         }
-        if (settings.Template is GarmentTemplate.Coat or GarmentTemplate.Dress or GarmentTemplate.Skirt)
-        {
-            // Authored skirt columns, including intermediate bones. Their actual parent topology
-            // supplies the cloth links; it does not assume a particular number of skirt columns.
-            var count = Math.Min(source.BoneCount, source.ParentCount);
-            for (var i = 0; i < count; i++)
-            {
-                var name = source.HavokSkeleton->Bones[i].Name.String;
-                if (name == null || !name.StartsWith("j_sk_", StringComparison.Ordinal)) continue;
-                var parentIndex = source.HavokSkeleton->ParentIndices[i];
-                var parent = parentIndex >= 0 ? source.HavokSkeleton->Bones[parentIndex].Name.String : null;
-                Add(name, parent ?? "j_kosi", 0.024f, -1, rings.ContainsKey(parent ?? "") ? parent : "j_kosi");
-            }
-        }
-        if (settings.Template == GarmentTemplate.Rigid)
-        {
-            // Dense cross braces retain the cage shape. Connections remain flexible at the body.
-            for (var i = 0; i < state.Bones.Count; i++)
-                for (var j = i + 2; j < state.Bones.Count; j++) state.Simulation.Connect(i, j);
-        }
         if (state.Bones.Count == 0) return null;
-        var anchored = state.Simulation.Rings.Exists(r => r.AnchorRange >= 0);
-        if (!anchored) return null;
-        state.RenderCenters = new Vector3[state.Bones.Count];
-        state.RenderDeltas = new Quaternion[state.Bones.Count];
         state.DrivenAncestor = new int[Math.Min(source.BoneCount, source.ParentCount)];
         var byIndex = new Dictionary<int, int>();
         for (var i = 0; i < state.Bones.Count; i++) byIndex[state.Bones[i].Index] = i;
@@ -267,8 +278,7 @@ public unsafe partial class DismembermentController
             }
             state.DrivenAncestor[i] = driven;
         }
-        UpdateAttachmentCollisions(source, c, state, origin, rotation);
-        state.Simulation.FitToBody();
+        BuildRetainedSkirtPanels(source, state);
         return state;
     }
 
@@ -289,82 +299,11 @@ public unsafe partial class DismembermentController
         frame = transport.Update(boneRotation, y);
     }
 
-    private static readonly (string Bone, string End, float Radius)[] AttachmentBodyCapsules =
-    {
-        ("j_kosi", "j_sebo_a", 0.105f), ("j_sebo_a", "j_sebo_b", 0.1f),
-        ("j_sebo_b", "j_sebo_c", 0.115f), ("j_sebo_c", "j_kubi", 0.1f),
-        ("j_kubi", "j_kao", 0.06f), ("j_kao", "j_kao", 0.095f),
-        ("j_sako_l", "j_ude_a_l", 0.06f), ("j_sako_r", "j_ude_a_r", 0.06f),
-        ("j_ude_a_l", "j_ude_b_l", 0.05f), ("j_ude_a_r", "j_ude_b_r", 0.05f),
-        ("j_ude_b_l", "j_te_l", 0.038f), ("j_ude_b_r", "j_te_r", 0.038f),
-        ("j_asi_a_l", "j_asi_b_l", 0.075f), ("j_asi_a_r", "j_asi_b_r", 0.075f),
-        ("j_asi_b_l", "j_asi_d_l", 0.055f), ("j_asi_b_r", "j_asi_d_r", 0.055f),
-        ("j_asi_d_l", "j_asi_e_l", 0.05f), ("j_asi_d_r", "j_asi_e_r", 0.05f),
-    };
-
-    private void UpdateAttachmentCollisions(SkeletonAccess source, Clone clone, RealAttachmentState state,
-        Vector3 origin, Quaternion rotation)
-    {
-        var simulation = state.Simulation;
-        simulation.Capsules.Clear();
-        foreach (var def in AttachmentBodyCapsules)
-        {
-            Vector3 a, b; float radius;
-            if (PlayerRagdollController?.TryGetBoneCapsule(def.Bone, out var capsule) == true)
-            {
-                var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation) * capsule.HalfLength;
-                a = capsule.Center - axis; b = capsule.Center + axis; radius = capsule.Radius;
-            }
-            else
-            {
-                var i = FindBoneIndexByName(source, def.Bone); var j = FindBoneIndexByName(source, def.End);
-                if (i < 0 || j < 0) continue;
-                ref var pa = ref source.Pose->ModelPose.Data[i]; ref var pb = ref source.Pose->ModelPose.Data[j];
-                a = origin + Vector3.Transform(new Vector3(pa.Translation.X, pa.Translation.Y, pa.Translation.Z), rotation);
-                b = origin + Vector3.Transform(new Vector3(pb.Translation.X, pb.Translation.Y, pb.Translation.Z), rotation);
-                radius = def.Radius * state.Scale;
-            }
-            var center = (a + b) * 0.5f;
-            var velocity = state.PreviousCapsuleCenters.TryGetValue(def.Bone, out var previous)
-                ? ClampVectorLength((center - previous) / MathF.Max(attachmentFrameDt, 0.001f), 15f) : Vector3.Zero;
-            state.PreviousCapsuleCenters[def.Bone] = center;
-            simulation.Capsules.Add(new AttachmentSimulation.Capsule(a, b, radius, velocity));
-        }
-        simulation.OtherGarments.Clear();
-        foreach (var sample in attachmentLayers)
-        {
-            if (sample.Owner == clone.CreatedSeq || sample.Source != clone.SourceAddress) continue;
-            simulation.OtherGarments.Add(sample.Point);
-        }
-    }
-
-    private static bool SampleAttachmentFloor(Vector3 position, out Vector3 floor, out Vector3 normal)
-    {
-        normal = Vector3.UnitY; floor = default;
-        // Short upward allowance avoids selecting a ceiling above the garment.
-        if (!BGCollisionModule.RaycastMaterialFilter(position + Vector3.UnitY * 0.35f,
-                -Vector3.UnitY, out var hit, 4f)) return false;
-        floor = hit.Point;
-        const float offset = 0.06f;
-        if (BGCollisionModule.RaycastMaterialFilter(position + new Vector3(offset, 0.35f, 0), -Vector3.UnitY, out var hx, 4f) &&
-            BGCollisionModule.RaycastMaterialFilter(position + new Vector3(0, 0.35f, offset), -Vector3.UnitY, out var hz, 4f) &&
-            MathF.Abs(hx.Point.Y - floor.Y) < 0.15f && MathF.Abs(hz.Point.Y - floor.Y) < 0.15f)
-            normal = AttachmentSimulation.SafeNormal(Vector3.Cross(hz.Point - floor, hx.Point - floor), Vector3.UnitY);
-        return true;
-    }
-
     private void DriveRealAttachment(SkeletonAccess source, SkeletonAccess target, Clone clone,
         RealAttachmentState state, Vector3 origin, Quaternion rotation)
     {
+        ((Character*)clone.Chara)->Timeline.OverallSpeed = 0f;
         var inverse = Quaternion.Inverse(rotation);
-        var centers = state.RenderCenters;
-        var deltas = state.RenderDeltas;
-        for (var i = 0; i < state.Bones.Count; i++)
-        {
-            var bone = state.Bones[i];
-            centers[i] = state.Simulation.DrivenCenter(bone.Ring);
-            deltas[i] = Quaternion.Normalize(state.Simulation.Rotation(bone.Ring) * Quaternion.Inverse(bone.SourceFrame));
-        }
         for (var i = 0; i < state.DrivenAncestor.Length; i++)
         {
             ref var src = ref source.Pose->ModelPose.Data[i];
@@ -373,13 +312,76 @@ public unsafe partial class DismembermentController
             var driven = state.DrivenAncestor[i];
             if (driven < 0) continue;
             var bone = state.Bones[driven];
-            var world = origin + Vector3.Transform(new Vector3(src.Translation.X, src.Translation.Y, src.Translation.Z), rotation);
-            var position = Vector3.Transform(centers[driven] + Vector3.Transform(world - bone.SourceCenter, deltas[driven]) - origin, inverse);
-            var q = Quaternion.Normalize(inverse * deltas[driven] * rotation *
-                new Quaternion(src.Rotation.X, src.Rotation.Y, src.Rotation.Z, src.Rotation.W));
-            dst.Translation.X = position.X; dst.Translation.Y = position.Y; dst.Translation.Z = position.Z;
-            dst.Rotation.X = q.X; dst.Rotation.Y = q.Y; dst.Rotation.Z = q.Z; dst.Rotation.W = q.W;
+            var offset = Vector3.Transform(bone.Offset, inverse);
+            // Preserve the live bone's rotation and scale exactly. Only a bounded translation
+            // is added, so the skirt keeps its authored shape and cannot flip from cage collapse.
+            dst.Translation.X += offset.X; dst.Translation.Y += offset.Y; dst.Translation.Z += offset.Z;
         }
+        DriveRetainedSkirt(source, target, state, origin, rotation);
+        // Equipment can carry its own partial skeleton. Mirror compatible partials too rather
+        // than leaving the clone's separate animation/cloth pose running under the live main pose.
+        var sourceSkeleton = source.CharBase->Skeleton;
+        var targetSkeleton = target.CharBase->Skeleton;
+        if (sourceSkeleton != null && targetSkeleton != null)
+            for (var part = 1; part < Math.Min(sourceSkeleton->PartialSkeletonCount, targetSkeleton->PartialSkeletonCount); part++)
+            {
+                var srcPose = sourceSkeleton->PartialSkeletons[part].GetHavokPose(0);
+                var dstPose = targetSkeleton->PartialSkeletons[part].GetHavokPose(0);
+                if (srcPose == null || dstPose == null || srcPose->Skeleton == null || dstPose->Skeleton == null ||
+                    srcPose->ModelInSync == 0 || dstPose->ModelInSync == 0 ||
+                    srcPose->ModelPose.Length != dstPose->ModelPose.Length ||
+                    srcPose->Skeleton->Bones.Length < srcPose->ModelPose.Length ||
+                    dstPose->Skeleton->Bones.Length < dstPose->ModelPose.Length) continue;
+                var count = srcPose->ModelPose.Length;
+                var compatible = true;
+                for (var i = 0; i < count; i++)
+                    if (srcPose->Skeleton->Bones[i].Name.String != dstPose->Skeleton->Bones[i].Name.String)
+                    { compatible = false; break; }
+                if (!compatible) continue;
+                for (var i = 0; i < count; i++)
+                {
+                    var name = srcPose->Skeleton->Bones[i].Name.String;
+                    var index = name == null ? -1 : FindBoneIndexByName(source, name);
+                    var driven = index >= 0 && index < state.DrivenAncestor.Length ? state.DrivenAncestor[index] : -1;
+                    // Partial-only bones inherit their already mapped parent; roots use the waist.
+                    var parent = i < srcPose->Skeleton->ParentIndices.Length ? srcPose->Skeleton->ParentIndices[i] : -1;
+                    var offset = Vector3.Transform(state.Bones[driven >= 0 ? driven : 0].Offset, inverse);
+                    if (driven < 0 && parent >= 0 && parent < i)
+                    {
+                        ref var parentSource = ref srcPose->ModelPose.Data[parent];
+                        ref var parentTarget = ref dstPose->ModelPose.Data[parent];
+                        offset = new Vector3(parentTarget.Translation.X - parentSource.Translation.X,
+                            parentTarget.Translation.Y - parentSource.Translation.Y,
+                            parentTarget.Translation.Z - parentSource.Translation.Z);
+                    }
+                    ref var dst = ref dstPose->ModelPose.Data[i];
+                    if (index >= 0 && index < state.DrivenAncestor.Length)
+                        dst = target.Pose->ModelPose.Data[index];
+                    else if (parent >= 0 && parent < i && srcPose->Skeleton->ReferencePose.Data != null && srcPose->Skeleton->ReferencePose.Length > i &&
+                        IsPartialSkirtBone(srcPose->Skeleton, i))
+                    {
+                        // A partial-only skirt chain has no main-panel binding. Reconstruct its
+                        // reference local pose on the copied parent, rather than importing native
+                        // cloth jitter. This is a stable fallback, not another simulated panel.
+                        ref var rest = ref srcPose->Skeleton->ReferencePose.Data[i];
+                        ref var parentPose = ref dstPose->ModelPose.Data[parent];
+                        var pr = new Quaternion(parentPose.Rotation.X, parentPose.Rotation.Y, parentPose.Rotation.Z, parentPose.Rotation.W);
+                        var ps = new Vector3(parentPose.Scale.X, parentPose.Scale.Y, parentPose.Scale.Z);
+                        var pt = new Vector3(parentPose.Translation.X, parentPose.Translation.Y, parentPose.Translation.Z);
+                        var position = pt + Vector3.Transform(new Vector3(rest.Translation.X, rest.Translation.Y, rest.Translation.Z) * ps, pr);
+                        var orientation = Quaternion.Normalize(pr * new Quaternion(rest.Rotation.X, rest.Rotation.Y, rest.Rotation.Z, rest.Rotation.W));
+                        dst = rest;
+                        dst.Translation.X = position.X; dst.Translation.Y = position.Y; dst.Translation.Z = position.Z;
+                        dst.Rotation.X = orientation.X; dst.Rotation.Y = orientation.Y; dst.Rotation.Z = orientation.Z; dst.Rotation.W = orientation.W;
+                        dst.Scale.X *= ps.X; dst.Scale.Y *= ps.Y; dst.Scale.Z *= ps.Z;
+                    }
+                    else
+                    {
+                        dst = srcPose->ModelPose.Data[i];
+                        dst.Translation.X += offset.X; dst.Translation.Y += offset.Y; dst.Translation.Z += offset.Z;
+                    }
+                }
+            }
         SetCloneBaseTransform(clone, origin, rotation);
     }
 
