@@ -306,7 +306,6 @@ public unsafe partial class DismembermentController : IDisposable
         public float GearBindSlip;                            // auto hold: accumulated garment slide-down (m), monotonic
         public bool GearRealAttachmentRequested;
         public RealAttachmentState? RealAttachment;
-        public float GearAttachmentPoseWait;
         public float GearBindGroundY = float.NegativeInfinity;// auto hold (slide-to-floor): ground under the anchor
         public Vector3 GearBindHalf;                          // auto hold (slide-to-floor): garment half-extents for the floor test
         public Vector3 GearBindAnchorWorld;                   // auto hold: current (slipped) anchor world pos, for the floor test
@@ -3408,7 +3407,7 @@ public unsafe partial class DismembermentController : IDisposable
         if (drawObj == null) return !c.Armed;
         ApplyCloneDrawScale(c, drawObj);
 
-        var skelN = boneService.TryGetSkeleton((nint)c.Chara);
+        var skelN = boneService.TryGetSkeleton((nint)c.Chara, synchronizePose: c.GearRealAttachmentRequested);
         if (skelN == null) return !c.Armed;
         var skel = skelN.Value;
 

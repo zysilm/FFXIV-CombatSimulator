@@ -46,9 +46,7 @@ public sealed class RetainedSkirtPanel
         float maxAngle, float thickness, float stiffness, float damping)
     {
         if (!float.IsFinite(dt) || dt < 0 || !float.IsFinite(gravity.LengthSquared())) return;
-        var startAngle = Angle;
         maxAngle = Math.Clamp(maxAngle, 0, MathF.PI * .65f);
-        startAngle = Math.Min(startAngle, maxAngle);
         thickness = MathF.Max(0, thickness);
         // Ignore sub-0.25mm collider noise relative to the waist; true carrying is handled by
         // the anchor transform. This does not freeze the body or accumulate a world-space lag.
@@ -87,16 +85,7 @@ public sealed class RetainedSkirtPanel
         if (InContact && contactAngle <= maxAngle && MathF.Abs(allowed - contactAngle) < .02f &&
             depthAtPrevious is > -.003f and <= .00025f) allowed = contactAngle;
         InContact = MathF.Abs(allowed - Angle) > 1e-7f;
-        if (InContact)
-        {
-            // Contact search can jump between distant feasible branches as the legs cross.
-            // Its solution is a target, not permission to teleport a visible skirt panel.
-            // Bound the complete frame displacement, including the spring integration above.
-            var maxChange = 2.5f * Math.Clamp(dt, 0, .1f);
-            Angle = Math.Clamp(allowed, MathF.Max(0, startAngle - maxChange), MathF.Min(maxAngle, startAngle + maxChange));
-            AngularVelocity = 0;
-            contactAngle = Angle;
-        }
+        if (InContact) { Angle = allowed; AngularVelocity = 0; contactAngle = allowed; }
         // Some postures have no collision-free angle within the allowed cone. Keep the best
         // bounded pose and expose the residual; never oscillate between incompatible projections.
         ResidualPenetration = MathF.Max(0, Depth(Angle, thickness));
@@ -105,15 +94,14 @@ public sealed class RetainedSkirtPanel
     private float FindClearAngle(float desired, float maxAngle, float thickness)
     {
         if (Depth(desired, thickness) <= 0) return desired;
-        // Prefer the current branch when competing penetrations are almost equivalent.
-        var best = desired; var bestDepth = Depth(desired, thickness);
+        var best = 0f; var bestDepth = Depth(0, thickness);
         var nearest = float.NaN;
         var steps = Math.Max(1, (int)MathF.Ceiling(maxAngle / (.025f)));
         for (var i = 0; i <= steps; i++)
         {
             var candidate = maxAngle * i / steps;
             var depth = Depth(candidate, thickness);
-            if (depth < bestDepth - .0005f) { bestDepth = depth; best = candidate; }
+            if (depth < bestDepth - .000001f) { bestDepth = depth; best = candidate; }
             if (depth > 0 || !float.IsNaN(nearest) && MathF.Abs(candidate - desired) >= MathF.Abs(nearest - desired)) continue;
             nearest = candidate;
         }
