@@ -1,5 +1,21 @@
 # Visual only (enhanced)
 
+## Current runtime: whole-garment slide
+
+The enhanced runtime now copies the live source pose without extra bone offsets or skirt
+reconstruction. A single root translation supplies the slide. The former skirt capsule/floor
+projection and per-bone deformation path have been removed from this profile following
+reports of rapid pose changes during collapse. Native animation/body posing still applies.
+
+Distance, speed, resistance and damping remain live controls. Travel retains the existing
+upper-body 8 cm cap and lower-body 45% thigh-length cap. Direction changes and reductions
+in the distance setting converge continuously. No body collision separation is performed;
+this trades procedural deformation for consistent shape and can still permit clipping.
+Legacy per-anchor/skirt settings remain readable in saved configurations but are not used
+or shown by the new runtime. Original Visual only is unchanged.
+
+The notes below describe the previous implementation for reference, not current behavior.
+
 Profile **5**, previously labelled Real attachment, follows the live source skeleton.
 Original Visual only and saved profile indices are unchanged. Equipment override keys persist.
 

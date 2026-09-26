@@ -12,6 +12,30 @@ static void Step(RetainedSkirtPanel panel, Vector3 gravity, RetainedSkirtPanel.C
 var leg = new[] { new RetainedSkirtPanel.Capsule(new Vector3(.03f, -.15f, 0), new Vector3(.03f, -.65f, 0), .075f) };
 var cases = new (string, Action)[]
 {
+    ("whole garment collapse and direction reversals remain continuous", () => {
+        foreach(var fps in new[] {30,60,144,300}) {
+            var motion=new WholeGarmentSlide();
+            for(var i=0;i<fps*5;i++) {
+                var before=motion.Offset;
+                var angle=i/(float)fps*MathF.PI;
+                var direction=new Vector3(MathF.Sin(angle),-MathF.Cos(angle),0);
+                if(i>fps*3) direction=(i%2==0?1:-1)*Vector3.UnitX;
+                motion.Advance(1f/fps,direction,MathF.Max(0,-direction.Y),.2f,.4f,.2f,2);
+                Check(Vector3.Distance(before,motion.Offset)<=.4f/fps+1e-6f,"collapse teleported garment");
+                Check(motion.Offset.Length()<=.20001f,"travel escaped retention limit");
+            }
+        }
+    }),
+    ("whole garment live distance reduction eases back without snapping", () => {
+        var motion=new WholeGarmentSlide();
+        for(var i=0;i<600;i++)motion.Advance(1f/60,-Vector3.UnitY,1,.2f,.4f,0,1);
+        Check(motion.Offset.Length()>.19f,"slider produced no slide");
+        var before=motion.Offset;
+        motion.Advance(1f/60,-Vector3.UnitY,1,0,.4f,0,1);
+        Check(Vector3.Distance(before,motion.Offset)<=.4f/60+1e-6f,"live setting teleported garment");
+        for(var i=0;i<600;i++)motion.Advance(1f/60,-Vector3.UnitY,1,0,.4f,0,1);
+        Check(motion.Offset.Length()<.0001f,"zero distance did not return to worn pose");
+    }),
     ("legacy rigid and invalid constructions map by slot", () => {
         Check(AttachmentSettings.TemplateForSlot((GarmentTemplate)5, 3) == GarmentTemplate.Trousers, "legacy legs stay rigid");
         Check(AttachmentSettings.TemplateForSlot((GarmentTemplate)5, 1) == GarmentTemplate.Top, "legacy body stays rigid");
