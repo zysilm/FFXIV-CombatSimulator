@@ -78,6 +78,19 @@ public unsafe partial class DismembermentController
         foreach (var c in clones) if (c.GearRealAttachmentRequested) c.RealAttachment = null;
     }
 
+    public void RefreshAttachmentLiveSettings()
+    {
+        foreach (var c in clones)
+        {
+            if (c.RealAttachment is not { } state) continue;
+            var saved = ResolveAttachmentSettings(c);
+            state.Settings.SkirtSwingDegrees = saved.SkirtSwingDegrees;
+            state.Settings.SkirtStiffness = saved.SkirtStiffness;
+            state.Settings.SkirtDamping = saved.SkirtDamping;
+            state.Settings.Thickness = saved.Thickness;
+        }
+    }
+
     public void CollectAttachmentDebug(List<(Vector3 A, Vector3 B)> edges, List<AttachmentDebugPoint> points)
     {
         edges.Clear(); points.Clear();
@@ -103,13 +116,19 @@ public unsafe partial class DismembermentController
     public string GetAttachmentStatus()
     {
         var garments = 0; var bones = 0; var panels = 0; var unresolved = 0;
+        var maximumAngle = 0f;
         foreach (var c in clones)
             if (c.RealAttachment is { } state)
             {
                 garments++; bones += state.Bones.Count; panels += state.SkirtPanels.Count;
-                foreach (var panel in state.SkirtPanels) if (panel.Solver.ResidualPenetration > .001f) unresolved++;
+                foreach (var panel in state.SkirtPanels)
+                {
+                    if (panel.Solver.ResidualPenetration > .001f) unresolved++;
+                    maximumAngle = MathF.Max(maximumAngle, panel.Solver.Angle * 180 / MathF.PI);
+                }
             }
-        return $"Attached: {garments} | Live bone followers: {bones} | Skirt panels: {panels} | Blocked panels: {unresolved}";
+        if (!config.KoStripAttachmentDebugDraw) return $"Attached: {garments}";
+        return $"Attached: {garments} | Live bone followers: {bones} | Skirt panels: {panels} | Blocked panels: {unresolved} | Actual max angle: {maximumAngle:F1} deg";
     }
 
     private AttachmentSettings ResolveAttachmentSettings(Clone c)

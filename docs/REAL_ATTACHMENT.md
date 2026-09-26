@@ -42,15 +42,22 @@ preparation/commit detachment lifecycle are unchanged.
 Enable Physics drop: clothing, Advanced clothing settle and Auto cloth hold; choose
 **Visual only (enhanced)**.
 
-- Slip distance, sliding speed/resistance and motion damping control bounded torso/trouser travel.
+- Slip distance accepts 0–3 m for both Body and Legs defaults and equipment overrides. Retained
+  upper-body and leg-length constraints still limit the actual deformation.
+- Sliding speed/resistance and motion damping control bounded torso/trouser travel.
 - Skirt maximum opening limits outward hinge rotation (default 65 degrees).
-- Skirt stiffness controls shape retention (default 24); skirt damping controls settling (1.5).
+- Skirt damping controls settling (1.5). Stiffness controls shape retention (default 24), under
+  the collapsed Advanced skirt settings with contact thickness.
 - Skirt contact thickness adds clearance to collision proxies (default 0.012 m).
 - Material presets set sliding resistance and skirt stiffness/damping. Rigid fixes the hinges.
 - Connection multipliers control torso or thigh/knee travel. Cuffs stay fixed for trousers; waist travel has a separate multiplier.
 
 **Apply settings / restart slide** rebuilds bindings and applies edited settings. Otherwise edits
-apply on the next detachment. Body following is automatic every frame. Old sideways/sway,
+apply on the next detachment, except skirt opening/damping/stiffness/thickness which update live.
+Detailed contact counts and actual maximum angle appear only with the debug offset overlay enabled.
+The experimental body-shape adaptation and its extra hip proxy/root expansion have been removed;
+old saved adaptation fields are ignored. Original capsule contacts remain.
+Body following is automatic every frame. Old sideways/sway,
 self/layer collision and opening-clearance settings remain serialized but are inactive here.
 
 ## Limits
@@ -66,7 +73,8 @@ requires in-game verification.
 
 ## Verification
 
-`dotnet run --project Tests/RetainedGarments -c Release` covers fourteen cases: gravity torque,
+`dotnet run --project Tests/RetainedGarments -c Release` covers sixteen cases: three-metre settings,
+removed-setting migration, live angle limits, gravity torque,
 fixed seams/lengths, leg and floor contact, conflicting contacts, contact noise, moving-leg release,
 multiple-leg obstruction, frame rates, repeated pose changes and retained trouser limits.
 `Tests/AttachedGarmentMotion` includes upper-body regression checks; its older shared-offset cases

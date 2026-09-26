@@ -58,7 +58,7 @@ public sealed class AttachmentSettings
         var copy = Copy();
         if (!Enum.IsDefined(copy.Template)) copy.Template = GarmentTemplate.Top;
         if (!Enum.IsDefined(copy.Material)) copy.Material = GarmentMaterial.Fabric;
-        copy.SlipDistance = FiniteClamp(SlipDistance, 0f, 1.5f, 0.35f);
+        copy.SlipDistance = FiniteClamp(SlipDistance, 0f, 3f, 0.35f);
         copy.SpeedLimit = FiniteClamp(SpeedLimit, 0.05f, 4f, 0.6f);
         copy.Firmness = FiniteClamp(Firmness, 0f, 1f, 0.75f);
         copy.BodyFriction = FiniteClamp(BodyFriction, 0f, 2f, 0.45f);

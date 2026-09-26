@@ -74,15 +74,20 @@ public partial class MainWindow
         { settings.ApplyMaterial((GarmentMaterial)material); changed = true; }
         HelpMarker("Material sets sliding resistance, skirt stiffness and damping. Rigid construction fixes skirt hinges.\n" +
             "Skirt bones are detected automatically, including on trouser equipment.");
-        changed |= AttachmentSlider("Slip distance", settings.SlipDistance, 0f, 1.5f, "%.2f m", v => settings.SlipDistance = v);
+        changed |= AttachmentSlider("Slip distance", settings.SlipDistance, 0f, 3f, "%.2f m", v => settings.SlipDistance = v);
         HelpMarker("Upper travel is capped at 0.08 m before weighting. Trouser waist travel is capped at 45% of thigh length, leg travel at 65% of each segment. Cuffs stay fixed. Skirt hinges use the separate controls below.");
         changed |= AttachmentSlider("Sliding speed limit", settings.SpeedLimit, 0.05f, 4f, "%.2f m/s", v => settings.SpeedLimit = v);
         changed |= AttachmentSlider("Sliding resistance", settings.BodyFriction, 0f, 2f, "%.2f", v => settings.BodyFriction = v);
         changed |= AttachmentSlider("Motion damping", settings.Damping, 0f, 12f, "%.2f", v => settings.Damping = v);
         changed |= AttachmentSlider("Skirt maximum opening", settings.SkirtSwingDegrees, 0f, 110f, "%.0f deg", v => settings.SkirtSwingDegrees = v);
-        changed |= AttachmentSlider("Skirt stiffness", settings.SkirtStiffness, 4f, 100f, "%.1f", v => settings.SkirtStiffness = v);
+        HelpMarker("Live upper limit, not a target angle. Increasing it only permits more movement when gravity/contact requires it. Rigid construction always uses zero.");
         changed |= AttachmentSlider("Skirt damping", settings.SkirtDamping, 1f, 4f, "%.2f", v => settings.SkirtDamping = v);
-        changed |= AttachmentSlider("Skirt contact thickness", settings.Thickness, .003f, .04f, "%.3f m", v => settings.Thickness = v);
+        if (ImGui.TreeNode("Advanced skirt settings"))
+        {
+            changed |= AttachmentSlider("Skirt stiffness", settings.SkirtStiffness, 4f, 100f, "%.1f", v => settings.SkirtStiffness = v);
+            changed |= AttachmentSlider("Skirt contact thickness", settings.Thickness, .003f, .04f, "%.3f m", v => settings.Thickness = v);
+            ImGui.TreePop();
+        }
         HelpMarker("Skirt chains pivot at a fixed waist with gravity, shape retention and damping. Leg capsules and a floor plane constrain opening angles.\n" +
             "Zero opening fixes the reference shape. Blocked panels report contacts that cannot be cleared within the angle limit. This is a bone proxy, not mesh cloth or self-collision.");
         if (ImGui.TreeNode("Retained connections"))
@@ -113,7 +118,7 @@ public partial class MainWindow
             }
             ImGui.TreePop();
         }
-        if (changed) config.Save();
+        if (changed) { config.Save(); dismembermentController.RefreshAttachmentLiveSettings(); }
         if (ImGui.Button("Undo edits##attachment") && attachmentUndo != null)
         {
             SaveAttachmentSettings(attachmentUndo.Copy());
@@ -126,6 +131,7 @@ public partial class MainWindow
             config.KoStripAttachmentOverrides.Remove(attachmentEditModel);
             attachmentEditModel = null;
             config.Save();
+            dismembermentController.RefreshAttachmentLiveSettings();
         }
         var debug = config.KoStripAttachmentDebugDraw;
         if (ImGui.Checkbox("Show attachment offsets", ref debug))
@@ -133,7 +139,7 @@ public partial class MainWindow
         ImGui.TextWrapped(dismembermentController.GetAttachmentStatus());
         if (ImGui.Button("Apply settings / restart slide")) dismembermentController.RebindRealAttachments();
         HelpMarker("Apply edited settings and restart the slide at the worn pose. Following the live body is automatic every frame.\n" +
-            "Otherwise settings apply on the next detachment. Profile changes also apply to new pieces.");
+            "Skirt opening/damping/stiffness/thickness update live. Other settings apply on the next detachment unless applied here. Profile changes apply to new pieces.");
         ImGui.TextWrapped("Body/Legs only. Live body following with bounded sliding and retained skirt hinges. Bone proxies cannot guarantee mesh clearance for every garment or pose.");
     }
 
@@ -143,6 +149,7 @@ public partial class MainWindow
         else if (attachmentEditSlot == 1) config.KoStripAttachmentBody = settings;
         else config.KoStripAttachmentLegs = settings;
         config.Save();
+        dismembermentController.RefreshAttachmentLiveSettings();
     }
 
     private static bool AttachmentSlider(string label, float value, float min, float max, string format, Action<float> set)

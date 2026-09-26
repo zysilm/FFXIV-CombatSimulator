@@ -12,6 +12,25 @@ static void Step(RetainedSkirtPanel panel, Vector3 gravity, RetainedSkirtPanel.C
 var leg = new[] { new RetainedSkirtPanel.Capsule(new Vector3(.03f, -.15f, 0), new Vector3(.03f, -.65f, 0), .075f) };
 var cases = new (string, Action)[]
 {
+    ("both clothing slots retain three metre slip settings", () => {
+        foreach (var template in new[] { GarmentTemplate.Top, GarmentTemplate.Trousers })
+        {
+            var s = new AttachmentSettings { Template = template, SlipDistance = 3 };
+            var saved = System.Text.Json.JsonSerializer.Deserialize<AttachmentSettings>(System.Text.Json.JsonSerializer.Serialize(s))!.Validated();
+            Check(saved.SlipDistance == 3, "three metre distance truncated");
+            s.SlipDistance = 4; Check(s.Validated().SlipDistance == 3, "distance range exceeded");
+        }
+        var legacy = System.Text.Json.JsonSerializer.Deserialize<AttachmentSettings>("{\"BodyFitEnabled\":true,\"HipHalfWidth\":0.4,\"SlipDistance\":2.5}")!;
+        Check(legacy.Validated().SlipDistance == 2.5f && !System.Text.Json.JsonSerializer.Serialize(legacy).Contains("BodyFit"), "removed settings broke migration");
+    }),
+    ("live skirt limit clamps existing contact without rebind", () => {
+        var p = Panel(); Step(p, -Vector3.UnitY * 9.81f, leg);
+        Check(p.Angle > .1f, "initial contact inactive");
+        p.Advance(1f / 60, -Vector3.UnitY * 9.81f, leg, 0, .006f, 24, 1.5f);
+        Check(p.Angle == 0 && p.ResidualPenetration > 0, "zero limit ignored");
+        Step(p, -Vector3.UnitY * 9.81f, leg);
+        Check(p.Angle > .1f && p.ResidualPenetration < .0003f, "restored limit ignored");
+    }),
     ("floor contact opens the skirt without moving the seam", () => {
         var p = Panel(); p.Ground = new Plane(Vector3.UnitY, .3f);
         Step(p, -Vector3.UnitY * 9.81f, Array.Empty<RetainedSkirtPanel.Capsule>());
