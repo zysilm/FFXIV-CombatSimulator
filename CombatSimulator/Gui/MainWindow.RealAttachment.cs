@@ -67,8 +67,8 @@ public partial class MainWindow
         { settings.ApplyMaterial((GarmentMaterial)material); changed = true; }
         HelpMarker("Material sets sliding resistance and motion damping.");
         changed |= AttachmentSlider("Slip distance", settings.SlipDistance, 0f, 3f, "%.2f m", v => settings.SlipDistance = v);
-        HelpMarker("Preserves the live body pose and slides the whole garment without extra deformation or collision correction.\n" +
-            "Travel is capped at 0.08 m for tops and 45% of thigh length for lower garments. Some clipping is possible.");
+        HelpMarker("Follows the live pose. Lower garments retain the waist as the thighs separate, with a smooth deformation toward the hem. No collision correction.\n" +
+            "Travel is capped at 0.08 m for tops and 65% of thigh length for lower garments. Some clipping is possible. Restart the slide to apply a changed retention limit.");
         changed |= AttachmentSlider("Sliding speed limit", settings.SpeedLimit, 0.05f, 4f, "%.2f m/s", v => settings.SpeedLimit = v);
         changed |= AttachmentSlider("Sliding resistance", settings.BodyFriction, 0f, 2f, "%.2f", v => settings.BodyFriction = v);
         changed |= AttachmentSlider("Motion damping", settings.Damping, 0f, 12f, "%.2f", v => settings.Damping = v);
@@ -94,7 +94,7 @@ public partial class MainWindow
         if (ImGui.Button("Apply settings / restart slide")) dismembermentController.RebindRealAttachments();
         HelpMarker("Apply edited settings and restart the slide at the worn pose. Following the live body is automatic every frame.\n" +
             "Slide distance/speed/resistance/damping update live. Profile changes apply to new pieces.\n" +
-            "Body/Legs only. Native posing is preserved; no additional deformation or collision separation is applied.");
+            "Body/Legs only. Lower garments use gentle waist retention during wide stances; no collision separation is applied.");
     }
 
     private void SaveAttachmentSettings(AttachmentSettings settings)

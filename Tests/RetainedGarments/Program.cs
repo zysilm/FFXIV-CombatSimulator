@@ -12,6 +12,27 @@ static void Step(RetainedSkirtPanel panel, Vector3 gravity, RetainedSkirtPanel.C
 var leg = new[] { new RetainedSkirtPanel.Capsule(new Vector3(.03f, -.15f, 0), new Vector3(.03f, -.65f, 0), .075f) };
 var cases = new (string, Action)[]
 {
+    ("wide stance retains waistband without cancelling the lower garment slide", () => {
+        var waist=new WaistRetentionMotion(); var slide=new Vector3(0,-.26f,0);
+        for(var i=0;i<600;i++)waist.Advance(1f/60,new Vector3(-.866f,-.5f,0),new Vector3(.866f,-.5f,0));
+        Check((slide+waist.Correction(slide,1)).Length()<.0001f,"waist floated away from pelvis");
+        var rootWeight=WaistRetentionMotion.BoneWeight("j_sk_a_l",1);
+        var tipWeight=WaistRetentionMotion.BoneWeight("j_sk_b_l",rootWeight);
+        Check((slide+waist.Correction(slide,tipWeight)).Length()>(slide+waist.Correction(slide,rootWeight)).Length(),"skirt pulled as one rigid shell");
+        for(var i=0;i<600;i++)waist.Advance(1f/60,-Vector3.UnitY,-Vector3.UnitY);
+        Check(waist.Correction(slide,1).Length()<.0001f,"closed stance lost its full slide");
+    }),
+    ("waist retention has no threshold snap during pose changes", () => {
+        foreach(var fps in new[]{30,60,144,300}) {
+            var waist=new WaistRetentionMotion(); var slide=new Vector3(0,-.3f,0);
+            for(var i=0;i<fps*4;i++) {
+                var before=waist.Correction(slide,1);
+                var angle=i<fps*2?i/(float)fps*MathF.PI*.5f:(i%2==0?0:MathF.PI*.5f);
+                waist.Advance(1f/fps,new Vector3(-MathF.Sin(angle),-MathF.Cos(angle),0),new Vector3(MathF.Sin(angle),-MathF.Cos(angle),0));
+                Check(Vector3.Distance(before,waist.Correction(slide,1))<=.6f/fps+1e-6f,"waist correction snapped");
+            }
+        }
+    }),
     ("whole garment collapse and direction reversals remain continuous", () => {
         foreach(var fps in new[] {30,60,144,300}) {
             var motion=new WholeGarmentSlide();

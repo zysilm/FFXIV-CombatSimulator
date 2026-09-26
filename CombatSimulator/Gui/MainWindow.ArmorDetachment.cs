@@ -357,7 +357,7 @@ public partial class MainWindow
                                  "Clingy: waits longer and follows dragged bodies.\n" +
                                  "Slide to floor: default, keeps sliding down until it touches the ground, then drops.\n" +
                                  "Visual only: slowly slides to the floor and stays visual, never handing off to physics.\n" +
-                                 "Visual only (enhanced): preserves the live body pose with bounded whole-garment sliding, without extra deformation or skirt collision correction.");
+                                 "Visual only (enhanced): bounded sliding with gentle lower-garment waist retention during wide stances, without skirt collision correction.");
 
             if (preset == 5) DrawRealAttachmentSettings();
 

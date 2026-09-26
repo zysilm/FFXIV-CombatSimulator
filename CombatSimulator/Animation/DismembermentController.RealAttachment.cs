@@ -14,6 +14,9 @@ public unsafe partial class DismembermentController
     private sealed class RealAttachmentState
     {
         public readonly WholeGarmentSlide Motion = new();
+        public readonly WaistRetentionMotion Waist = new();
+        public float[] WaistWeights = Array.Empty<float>();
+        public int LeftHip = -1, LeftKnee = -1, RightHip = -1, RightKnee = -1;
         public AttachmentSettings Settings = null!;
         public int SkeletonSignature;
         public float Scale, TravelLimit;
@@ -125,13 +128,29 @@ public unsafe partial class DismembermentController
                     if (hip < 0 || knee < 0) continue;
                     ref var a = ref source.Pose->ModelPose.Data[hip];
                     ref var b = ref source.Pose->ModelPose.Data[knee];
-                    limit = MathF.Min(limit, .45f * new Vector3(b.Translation.X-a.Translation.X,
+                    limit = MathF.Min(limit, .65f * new Vector3(b.Translation.X-a.Translation.X,
                         b.Translation.Y-a.Translation.Y, b.Translation.Z-a.Translation.Z).Length());
                 }
                 if (!float.IsFinite(limit) || limit == float.MaxValue) limit = .15f * scale;
             }
             c.RealAttachment = new RealAttachmentState { Settings = ResolveAttachmentSettings(c),
                 SkeletonSignature = signature, Scale = scale, TravelLimit = limit };
+            if (c.GearKeepModelSlot == 3)
+            {
+                var created = c.RealAttachment;
+                created.LeftHip = FindBoneIndexByName(source, "j_asi_a_l");
+                created.LeftKnee = FindBoneIndexByName(source, "j_asi_b_l");
+                created.RightHip = FindBoneIndexByName(source, "j_asi_a_r");
+                created.RightKnee = FindBoneIndexByName(source, "j_asi_b_r");
+                created.WaistWeights = new float[source.BoneCount];
+                for (var i = 0; i < created.WaistWeights.Length; i++)
+                {
+                    var parent = i < source.ParentCount ? source.HavokSkeleton->ParentIndices[i] : -1;
+                    created.WaistWeights[i] = WaistRetentionMotion.BoneWeight(
+                        source.HavokSkeleton->Bones[i].Name.String ?? "",
+                        parent >= 0 && parent < i ? created.WaistWeights[parent] : 1);
+                }
+            }
         }
         var state = c.RealAttachment;
         var direction = ResolveGarmentSlipDirection(source, origin, rotation, c.GearKeepModelSlot);
@@ -141,12 +160,24 @@ public unsafe partial class DismembermentController
             state.Settings.SpeedLimit * state.Scale, state.Settings.BodyFriction, state.Settings.Damping);
         state.Origin = origin;
         state.Offset = Vector3.Transform(state.Motion.Offset, rotation);
+        if (c.GearKeepModelSlot == 3)
+            state.Waist.Advance(attachmentFrameDt, AttachmentThigh(source, state.LeftHip, state.LeftKnee),
+                AttachmentThigh(source, state.RightHip, state.RightKnee));
 
-        // Copy the live skinned shape exactly. Only the clone root slides.
-        // No independent bone offsets, inferred frames or collision projections.
+        // Native posing remains authoritative. During wide stances, smoothly cancel part
+        // of the root slide at the waist, fading down the garment. No collision correction.
         ((Character*)c.Chara)->Timeline.OverallSpeed = 0f;
         target.Pose->AccessSyncedPoseModelSpace();
-        for (var i = 0; i < source.BoneCount; i++) target.Pose->ModelPose.Data[i] = source.Pose->ModelPose.Data[i];
+        for (var i = 0; i < source.BoneCount; i++)
+        {
+            ref var dst = ref target.Pose->ModelPose.Data[i];
+            dst = source.Pose->ModelPose.Data[i];
+            if (i < state.WaistWeights.Length)
+            {
+                var correction = state.Waist.Correction(state.Motion.Offset, state.WaistWeights[i]);
+                dst.Translation.X += correction.X; dst.Translation.Y += correction.Y; dst.Translation.Z += correction.Z;
+            }
+        }
         target.Pose->SyncLocalSpace();
         var srcSkeleton = source.CharBase->Skeleton;
         var dstSkeleton = target.CharBase->Skeleton;
@@ -162,10 +193,38 @@ public unsafe partial class DismembermentController
                 if (src->Skeleton->Bones[i].Name.String != dst->Skeleton->Bones[i].Name.String) { compatible = false; break; }
             if (!compatible) continue;
             src->SyncModelSpace(); dst->AccessSyncedPoseModelSpace();
-            for (var i = 0; i < src->ModelPose.Length; i++) dst->ModelPose.Data[i] = src->ModelPose.Data[i];
+            for (var i = 0; i < src->ModelPose.Length; i++)
+            {
+                ref var bone = ref dst->ModelPose.Data[i];
+                bone = src->ModelPose.Data[i];
+                if (c.GearKeepModelSlot != 3) continue;
+                var name = src->Skeleton->Bones[i].Name.String;
+                var mainIndex = name == null ? -1 : FindBoneIndexByName(source, name);
+                if (mainIndex >= 0 && mainIndex < state.WaistWeights.Length)
+                    bone = target.Pose->ModelPose.Data[mainIndex];
+                else
+                {
+                    var parent = i < src->Skeleton->ParentIndices.Length ? src->Skeleton->ParentIndices[i] : -1;
+                    var correction = state.Waist.Correction(state.Motion.Offset, 1);
+                    if (parent >= 0 && parent < i)
+                    {
+                        ref var a = ref src->ModelPose.Data[parent]; ref var b = ref dst->ModelPose.Data[parent];
+                        correction = new Vector3(b.Translation.X-a.Translation.X, b.Translation.Y-a.Translation.Y, b.Translation.Z-a.Translation.Z);
+                    }
+                    if (name?.StartsWith("j_sk_", StringComparison.Ordinal) == true) correction *= .65f;
+                    bone.Translation.X += correction.X; bone.Translation.Y += correction.Y; bone.Translation.Z += correction.Z;
+                }
+            }
             dst->SyncLocalSpace();
         }
         SetCloneBaseTransform(c, origin + state.Offset, rotation);
         return true;
+    }
+
+    private static Vector3 AttachmentThigh(SkeletonAccess skeleton, int hip, int knee)
+    {
+        if (hip < 0 || knee < 0 || hip >= skeleton.BoneCount || knee >= skeleton.BoneCount) return Vector3.Zero;
+        ref var a = ref skeleton.Pose->ModelPose.Data[hip]; ref var b = ref skeleton.Pose->ModelPose.Data[knee];
+        return new Vector3(b.Translation.X-a.Translation.X, b.Translation.Y-a.Translation.Y, b.Translation.Z-a.Translation.Z);
     }
 }

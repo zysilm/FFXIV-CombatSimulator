@@ -2,13 +2,20 @@
 
 ## Current runtime: whole-garment slide
 
-The enhanced runtime now copies the live source pose without extra bone offsets or skirt
-reconstruction. A single root translation supplies the slide. The former skirt capsule/floor
+Trial update: lower-body travel is restored to 65% of thigh length. As the thighs
+separate, a continuous waist-retention weight cancels root slide at the pelvis,
+fading through thigh/knee and skirt-chain bones. Closed stances retain the full slide.
+This adds limited deformation to lower garments only; there is still no skirt collision
+projection, independent cloth simulation, attachment joint or mesh-based waistband fit.
+The pre-trial 65% whole-slide baseline was retained in a named Git stash.
+
+The enhanced runtime copies the live source pose and applies the lower-body waist correction
+described above. A single root translation supplies the slide. The former skirt capsule/floor
 projection and per-bone deformation path have been removed from this profile following
 reports of rapid pose changes during collapse. Native animation/body posing still applies.
 
 Distance, speed, resistance and damping remain live controls. Travel retains the existing
-upper-body 8 cm cap and lower-body 45% thigh-length cap. Direction changes and reductions
+upper-body 8 cm cap; the lower-body cap is now 65% of thigh length. Direction changes and reductions
 in the distance setting converge continuously. No body collision separation is performed;
 this trades procedural deformation for consistent shape and can still permit clipping.
 Legacy per-anchor/skirt settings remain readable in saved configurations but are not used
