@@ -31,7 +31,7 @@ namespace CombatSimulator.Animation;
 /// a rigid body (reusing the weapon-drop pattern) so the visible limb tumbles to the ground. The body
 /// side hides the same limb separately (RagdollController.HideLimbSubtree), so it looks severed.
 /// </summary>
-public unsafe class DismembermentController : IDisposable
+public unsafe partial class DismembermentController : IDisposable
 {
     private readonly BoneTransformService boneService;
     private readonly GlamourerIpc glamourerIpc;
@@ -181,6 +181,7 @@ public unsafe class DismembermentController : IDisposable
     private readonly System.Diagnostics.Stopwatch frameClock = System.Diagnostics.Stopwatch.StartNew();
     private double physicsAccumulator;
     private float frameDt = 1f / 60f;
+    private float attachmentFrameDt = 1f / 60f;
     private int substepsThisFrame = 1;
     private const float FixedStep = 1f / 60f;
     private const float MinFrameDt = 1f / 240f;
@@ -261,6 +262,7 @@ public unsafe class DismembermentController : IDisposable
         // foot slots additionally isolate one skeleton side. The result is driven as its own body.
         // -1 = limb mode.
         public int GearKeepModelSlot = -1;
+        public GearDropOperation? GearOperation;
         public string? GearExpectedAppearanceSignature;
         // Paired model slots (Hands/Feet) use one clone per side. Only this opposite arm/leg subtree is
         // hidden; preserving the visible side's full bind pose avoids stretching blended gear vertices.
@@ -302,6 +304,8 @@ public unsafe class DismembermentController : IDisposable
         public int GearBindElapsedFrames;                     // auto hold: 60fps-equiv frames since bind start
         public int GearBindRestFrames;                        // auto hold: consecutive near-rest frames (anchor settled)
         public float GearBindSlip;                            // auto hold: accumulated garment slide-down (m), monotonic
+        public bool GearRealAttachmentRequested;
+        public RealAttachmentState? RealAttachment;
         public float GearBindGroundY = float.NegativeInfinity;// auto hold (slide-to-floor): ground under the anchor
         public Vector3 GearBindHalf;                          // auto hold (slide-to-floor): garment half-extents for the floor test
         public Vector3 GearBindAnchorWorld;                   // auto hold: current (slipped) anchor world pos, for the floor test
@@ -488,6 +492,7 @@ public unsafe class DismembermentController : IDisposable
         public string? GearExpectedAppearanceSignature;
         public bool GearHideSkin;
         public string? GearHiddenOppositeRootBone;
+        public bool GearRealAttachmentRequested;
     }
 
     private readonly List<Clone> clones = new();
@@ -654,27 +659,32 @@ public unsafe class DismembermentController : IDisposable
     /// <paramref name="keepModelSlot"/>, freezes it, and tumbles it from <paramref name="attachBone"/>.
     /// For paired Hands/Feet models, <paramref name="hiddenOppositeRootBone"/> hides the other side so two calls
     /// can create independent left/right clones. The caller unequips the real slot afterward.</summary>
-    public void SpawnGearDrop(nint sourceAddress, string attachBone, int keepModelSlot, string? glamourBase64,
+    public GearDropOperation? SpawnGearDrop(nint sourceAddress, string attachBone, int keepModelSlot, string? glamourBase64,
         bool hideSkin = false, string? hiddenOppositeRootBone = null)
     {
-        if (sourceAddress == nint.Zero || string.IsNullOrEmpty(attachBone) || keepModelSlot < 0) return;
-        // Ordinary gear dedupes by slot. Paired gear also includes the isolated subtree, allowing one
-        // left and one right clone while still rejecting duplicate requests for either side.
-        if (clones.Exists(c => c.SourceAddress == sourceAddress && c.GearKeepModelSlot == keepModelSlot &&
-                                string.Equals(c.GearHiddenOppositeRootBone, hiddenOppositeRootBone, StringComparison.Ordinal))) return;
-        if (pending.Exists(p => p.SourceAddress == sourceAddress && p.GearKeepModelSlot == keepModelSlot &&
-                                 string.Equals(p.GearHiddenOppositeRootBone, hiddenOppositeRootBone, StringComparison.Ordinal))) return;
+        if (sourceAddress == nint.Zero || string.IsNullOrEmpty(attachBone) || keepModelSlot < 0) return null;
 
         // Only drop if the source actually RENDERS a model in that slot. This is the rendered model, so
         // it covers Glamourer-only glamours too (a glam hat leaves the real equipment id 0 but still
         // draws a model). No model => nothing to drop.
         var srcDraw = ((GameObject*)sourceAddress)->DrawObject;
-        if (srcDraw == null) return;
+        if (srcDraw == null) return null;
         var srcCb = (CharacterBase*)srcDraw;
         if (srcCb->Models == null || keepModelSlot >= srcCb->SlotCount || srcCb->Models[keepModelSlot] == null)
         {
             log.Info($"GearDrop: source 0x{sourceAddress:X} renders no model in slot {keepModelSlot}; skipping");
-            return;
+            return null;
+        }
+
+        // A new explicit detachment replaces the previous piece. Persistent/visual-only clones
+        // must not permanently suppress subsequent requests after the player gets dressed again.
+        for (var i = clones.Count - 1; i >= 0; i--)
+        {
+            var old = clones[i];
+            if (old.SourceAddress != sourceAddress || old.GearKeepModelSlot != keepModelSlot ||
+                !string.Equals(old.GearHiddenOppositeRootBone, hiddenOppositeRootBone, StringComparison.Ordinal)) continue;
+            DespawnClone(old);
+            clones.RemoveAt(i);
         }
 
         var p = new Pending
@@ -684,6 +694,8 @@ public unsafe class DismembermentController : IDisposable
             Delay = 0f,
             GlamourBase64 = glamourBase64,
             GearKeepModelSlot = keepModelSlot,
+            GearRealAttachmentRequested = keepModelSlot is 1 or 3 && config.KoStripPhysicsDropClothing &&
+                config.KoStripAdvancedClothPhysics && config.KoStripClothHoldAuto && config.KoStripClothHoldPreset == 5,
             // CharacterSetup.CopyFromCharacter copies the actor's game-side setup, not necessarily
             // the model currently rendered by Glamourer. Remember the live rendered garment so the
             // clone cannot arm against that bootstrap appearance while a race/customize redraw is
@@ -694,7 +706,11 @@ public unsafe class DismembermentController : IDisposable
         };
         CaptureSourceIdentity(p);
         TryRefreshHandoff(p, 1f / 60f);
+        var sequence = nextCloneSeq;
         TrySpawn(p);
+        var created = clones.Find(c => c.CreatedSeq == sequence);
+        if (created == null) return null;
+        return created.GearOperation = new GearDropOperation();
     }
 
     // Snapshot the source's BNpc identity + ModelCharaId while it is still alive (at schedule
@@ -827,6 +843,7 @@ public unsafe class DismembermentController : IDisposable
             var elapsed = (float)frameClock.Elapsed.TotalSeconds;
             frameClock.Restart();
             frameDt = Math.Clamp(elapsed, MinFrameDt, MaxFrameDt);
+            attachmentFrameDt = Math.Clamp(elapsed, 0f, 0.1f);
 
             TickCloneSlotCooldowns();
 
@@ -844,6 +861,7 @@ public unsafe class DismembermentController : IDisposable
                 }
             }
 
+            CaptureRealAttachmentLayers();
             if (clones.Count == 0) return;
 
             // Draw-ready poll.
@@ -867,6 +885,12 @@ public unsafe class DismembermentController : IDisposable
             for (int i = clones.Count - 1; i >= 0; i--)
             {
                 var c = clones[i];
+                if (c.GearOperation?.IsCancelled == true)
+                {
+                    DespawnClone(c);
+                    clones.RemoveAt(i);
+                    continue;
+                }
                 if (!c.DrawEnabled) continue;
                 try
                 {
@@ -954,8 +978,9 @@ public unsafe class DismembermentController : IDisposable
         WriteCloneName((GameObject*)obj, index);
 
         SetupCloneAppearance(character, src, (GameObject*)obj, sourceIsHumanoid,
-            useMonsterAppearance, ids, sourceModelCharaId);
+            useMonsterAppearance, ids, sourceModelCharaId, p.GearKeepModelSlot >= 0);
         character->SetMode(CharacterModes.Normal, 0);
+        if (p.GearKeepModelSlot >= 0) character->Timeline.OverallSpeed = 1f;
 
         IGameObject? gameObjectRef = null;
         try { gameObjectRef = objectTable.CreateObjectReference((nint)obj); }
@@ -984,6 +1009,7 @@ public unsafe class DismembermentController : IDisposable
             ExpectedSkeletonParentCount = p.SourceSkeletonParentCount,
             ExpectedSkeletonSignature = p.SourceSkeletonSignature,
             GearKeepModelSlot = p.GearKeepModelSlot,
+            GearRealAttachmentRequested = p.GearRealAttachmentRequested,
             GearExpectedAppearanceSignature = p.GearExpectedAppearanceSignature,
             GearHideSkin = p.GearHideSkin,
             GearHiddenOppositeRootBone = p.GearHiddenOppositeRootBone,
@@ -1144,7 +1170,7 @@ public unsafe class DismembermentController : IDisposable
 
     private void SetupCloneAppearance(Character* target, Character* source, GameObject* obj,
         bool sourceIsHumanoid, bool useMonsterAppearance,
-        (uint BNpcBaseId, uint BNpcNameId) ids, int sourceModelCharaId)
+        (uint BNpcBaseId, uint BNpcNameId) ids, int sourceModelCharaId, bool useRenderedHuman = false)
     {
         if (useMonsterAppearance || !sourceIsHumanoid)
         {
@@ -1173,6 +1199,17 @@ public unsafe class DismembermentController : IDisposable
                 ? CharacterSetupContainer.CopyFlags.None
                 : CharacterSetupContainer.CopyFlags.ClassJob | CharacterSetupContainer.CopyFlags.WeaponHiding;
             target->CharacterSetup.CopyFromCharacter(source, flags);
+            if (useRenderedHuman && source->DrawObject != null &&
+                ((CharacterBase*)source->DrawObject)->GetModelType() == CharacterBase.ModelType.Human)
+            {
+                // Seed the second setup with the LIVE human, not the game's unglamoured race
+                // and equipment. Otherwise an asynchronous race redraw is required just to
+                // load the intended garment; IPC acceptance alone cannot guarantee that redraw.
+                var human = (Human*)source->DrawObject;
+                target->DrawData.CustomizeData = human->Customize;
+                human->EquipmentModels.CopyTo(target->DrawData.EquipmentModelIds);
+                target->ModelContainer.ModelCharaId = 0;
+            }
             target->CharacterSetup.CopyFromCharacter(target, CharacterSetupContainer.CopyFlags.None);
             obj->ObjectKind = ObjectKind.Pc;
             obj->SubKind = 0;
@@ -3356,6 +3393,7 @@ public unsafe class DismembermentController : IDisposable
     private bool UpdateClone(Clone c)
     {
         if (c.Chara == null) return false;
+        if (c.GearOperation?.IsCancelled == true) return false;
         if (c.GlamourSyncFailed)
             return false;
         if (c.GlamourBase64 != null)
@@ -3614,6 +3652,18 @@ public unsafe class DismembermentController : IDisposable
                 }
                 return true;
             }
+
+            if (c.GearOperation is { IsCommitted: false } operation)
+            {
+                operation.Ready();
+                HideEntireBody(c);
+                return true; // Original stays visible until KoStrip commits the whole slot.
+            }
+
+            // Real attachment owns persistent state and never enters the free-drop/expiry path.
+            // A missing or incompatible source retires the clone instead of releasing it to the floor.
+            if (c.GearRealAttachmentRequested)
+                return UpdateRealAttachment(skel, c);
 
             if (!TryApplyLiveGarmentBindPose(skel, c))
                 ApplyHandoffPose(skel, c);
@@ -6014,6 +6064,19 @@ public unsafe class DismembermentController : IDisposable
         return cb->Models[c.GearKeepModelSlot];
     }
 
+    public bool IsGearDropSourceUnchanged(GearDropOperation operation)
+    {
+        var clone = clones.Find(c => ReferenceEquals(c.GearOperation, operation));
+        var player = objectTable.LocalPlayer;
+        if (clone == null || player == null || player.Address != clone.SourceAddress) return false;
+        var draw = ((GameObject*)player.Address)->DrawObject;
+        if (draw == null) return false;
+        var cb = (CharacterBase*)draw;
+        if (cb->Models == null || clone.GearKeepModelSlot >= cb->SlotCount) return false;
+        var actual = GetModelAppearanceSignature(cb->Models[clone.GearKeepModelSlot]);
+        return actual != null && string.Equals(actual, clone.GearExpectedAppearanceSignature, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
     /// Identify the actually rendered equipment model, including its material variant. The model
     /// path alone is insufficient because multiple equipment variants can share the same .mdl and
@@ -7489,7 +7552,9 @@ public unsafe class DismembermentController : IDisposable
         if (c.GlamourAttemptsLeft <= 0 && c.GlamourFramesUntil <= 0 && !IsDeferredGlamourReady(c))
         {
             c.GlamourSyncFailed = true;
-            log.Warning($"Dismember: glamour did not reach the rendered clone idx={obj->ObjectIndex}; dropping clone instead of showing base equipment");
+            log.Warning($"Dismember: glamour did not reach the rendered clone idx={obj->ObjectIndex}; " +
+                $"slot={c.GearKeepModelSlot}, accepted={c.GlamourApplyAccepted}, stableFrames={c.GlamourStableDrawFrames}; " +
+                $"expected={c.GearExpectedAppearanceSignature}; actual={GetModelAppearanceSignature(GetKeptModel(c))}; retiring clone");
         }
     }
 
@@ -7668,6 +7733,7 @@ public unsafe class DismembermentController : IDisposable
 
     private void DespawnClone(Clone c)
     {
+        c.GearOperation?.Cancel();
         try
         {
             // Only touch the clone's draw-object memory while the session is alive. At logout

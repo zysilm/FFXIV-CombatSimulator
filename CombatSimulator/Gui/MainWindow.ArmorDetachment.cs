@@ -18,6 +18,7 @@ public partial class MainWindow
         "Clingy",
         "Slide to floor",
         "Visual only",
+        "Real attachment",
     };
 
     private void DrawArmorDetachmentEntrySection()
@@ -37,8 +38,11 @@ public partial class MainWindow
     public void DrawArmorDetachmentControls(KoStripController ctrl)
     {
         var showWindow = config.ShowArmorDetachmentControls;
+        ImGui.SetNextWindowSize(new Vector2(540f, 720f), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSizeConstraints(new Vector2(360f, 240f),
+            new Vector2(MathF.Max(540f, ImGui.GetIO().DisplaySize.X), MathF.Max(240f, ImGui.GetIO().DisplaySize.Y - 60f)));
         if (!ImGui.Begin("Armor Detachment", ref showWindow,
-                ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+                ImGuiWindowFlags.None))
         {
             if (config.ShowArmorDetachmentControls != showWindow)
             {
@@ -185,7 +189,8 @@ public partial class MainWindow
                              "dying body, stronger contact friction/damping, and delayed collapse until\n" +
                              "the garment is closer to rest. Default off.");
 
-        ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing || !config.KoStripAdvancedClothPhysics);
+        ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing || !config.KoStripAdvancedClothPhysics ||
+            config.KoStripClothHoldAuto && config.KoStripClothHoldPreset == 5);
         var tubeModel = config.KoStripGarmentTubeModel;
         if (ImGui.Checkbox("Tube model (Body / Legs, experimental)##armordetachtube", ref tubeModel))
         {
@@ -318,14 +323,12 @@ public partial class MainWindow
         }
         ImGui.EndDisabled();
 
-        if (config.KoStripGarmentTubeModel)
+        if (config.KoStripGarmentTubeModel && config.KoStripClothHoldPreset != 5)
             ImGui.TextDisabled("Tube model uses 'Tube handoff delay' above —\nthe cloth hold profile below is inactive.");
 
-        // The cloth hold profile / delay only governs the chain rig. When the tube model is on it takes
-        // over the handoff timing entirely (see ShouldReleaseGarmentBind), so grey these out to avoid the
-        // "adjusting this does nothing" confusion.
-        ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing || !config.KoStripAdvancedClothPhysics
-            || config.KoStripGarmentTubeModel);
+        // Keep the selector reachable while Tube is on: choosing Real attachment turns Tube off.
+        // Other profiles still use the existing handoff path and its Tube timing when enabled.
+        ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing || !config.KoStripAdvancedClothPhysics);
         var clothHoldAuto = config.KoStripClothHoldAuto;
         if (ImGui.Checkbox("Auto cloth hold##armordetachclothholdauto", ref clothHoldAuto))
         {
@@ -345,6 +348,7 @@ public partial class MainWindow
                     ArmorDetachmentClothHoldPresetLabels, ArmorDetachmentClothHoldPresetLabels.Length))
             {
                 config.KoStripClothHoldPreset = preset;
+                if (preset == 5) config.KoStripGarmentTubeModel = false;
                 config.Save();
             }
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
@@ -352,7 +356,10 @@ public partial class MainWindow
                                  "Natural: a short settling dwell.\n" +
                                  "Clingy: waits longer and follows dragged bodies.\n" +
                                  "Slide to floor: default, keeps sliding down until it touches the ground, then drops.\n" +
-                                 "Visual only: slowly slides to the floor and stays visual, never handing off to physics.");
+                                 "Visual only: slowly slides to the floor and stays visual, never handing off to physics.\n" +
+                                 "Real attachment: gravity, contact and slack connections keep the garment attached while it slips.");
+
+            if (preset == 5) DrawRealAttachmentSettings();
 
             // Visual-only slide tuning (preset index 4). Only this preset uses these; slide-to-floor is fixed.
             if (preset == 4)

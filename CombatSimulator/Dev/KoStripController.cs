@@ -36,6 +36,15 @@ public unsafe class KoStripController : IDisposable
     private readonly HashSet<nint> stripped = new();
     private readonly Dictionary<nint, HashSet<byte>> onHitStripped = new();
     private readonly Dictionary<nint, float> pendingKoStrip = new();
+    private sealed class PreparedStrip
+    {
+        public nint Address;
+        public uint ObjectIndex;
+        public StripSlot Slot;
+        public readonly List<GearDropOperation> Pieces = new();
+        public float Age;
+    }
+    private readonly List<PreparedStrip> preparedStrips = new();
 
     public Func<bool> AllowOnHitDetach { private get; set; } = () => false;
 
@@ -150,6 +159,7 @@ public unsafe class KoStripController : IDisposable
 
     public void Tick(float deltaTime)
     {
+        TickPreparedStrips(deltaTime);
         if (pendingKoStrip.Count == 0) return;
         if (!config.KoStripEnabled || IsOnHitDetachActive())
         {
@@ -203,6 +213,7 @@ public unsafe class KoStripController : IDisposable
                 ? glamourer.GetStateBase64((int)objectIndex)
                 : null;
             var result = StripOneSlot(characterAddress, character, objectIndex, slot, glamState);
+            if (!result.Accepted) return false;
             done.Add(apiSlot);
             log.Info($"KoStrip: on-hit stripped slot {apiSlot} on 0x{characterAddress:X} (idx={objectIndex}) - " +
                      $"{result.Glamourer} via Glamourer, {result.Direct} direct, {result.Drop} physics-dropped");
@@ -230,6 +241,7 @@ public unsafe class KoStripController : IDisposable
         var nGlam = 0;
         var nDirect = 0;
         var nDrop = 0;
+        var accepted = false;
         foreach (var slot in Slots)
         {
             if (!slot.Enabled(config)) continue;
@@ -237,15 +249,19 @@ public unsafe class KoStripController : IDisposable
             nGlam += result.Glamourer;
             nDirect += result.Direct;
             nDrop += result.Drop;
+            accepted |= result.Accepted;
         }
 
-        stripped.Add(characterAddress);
+        if (accepted) stripped.Add(characterAddress);
         log.Info($"KoStrip: stripped 0x{characterAddress:X} (idx={objectIndex}) — {nGlam} via Glamourer, {nDirect} direct, {nDrop} physics-dropped");
     }
 
     /// <summary>Forget tracked actors so a fresh fight re-strips. No appearance change.</summary>
     public void Reset()
     {
+        foreach (var preparation in preparedStrips)
+            foreach (var piece in preparation.Pieces) piece.Cancel();
+        preparedStrips.Clear();
         stripped.Clear();
         pendingKoStrip.Clear();
         onHitStripped.Clear();
@@ -256,26 +272,45 @@ public unsafe class KoStripController : IDisposable
         public readonly int Glamourer;
         public readonly int Direct;
         public readonly int Drop;
+        public readonly bool Accepted;
 
         public StripResult(int glamourer, int direct, int drop)
         {
             Glamourer = glamourer;
             Direct = direct;
             Drop = drop;
+            Accepted = true;
         }
     }
 
     private StripResult StripOneSlot(nint characterAddress, Character* character, uint objectIndex,
         StripSlot slot, string? glamourBase64)
     {
+        if (preparedStrips.Exists(p => p.Address == characterAddress && p.Slot.ApiSlot == slot.ApiSlot))
+            return new StripResult(0, 0, 0);
         var nDrop = 0;
+        var preparation = new PreparedStrip { Address = characterAddress, ObjectIndex = objectIndex, Slot = slot };
         foreach (var drop in EnumerateGearDrops(slot.ApiSlot))
         {
             if (!(drop.Clothing ? config.KoStripPhysicsDropClothing : config.KoStripPhysicsDrop))
                 continue;
-            dismemberment.SpawnGearDrop(characterAddress, drop.Bone, drop.KeepSlot, glamourBase64,
+            var operation = dismemberment.SpawnGearDrop(characterAddress, drop.Bone, drop.KeepSlot, glamourBase64,
                 hideSkin: drop.Clothing, hiddenOppositeRootBone: drop.HiddenOppositeRootBone);
+            if (operation == null)
+            {
+                foreach (var piece in preparation.Pieces) piece.Cancel();
+                log.Warning($"KoStrip: could not prepare slot {slot.ApiSlot}; original appearance retained");
+                return default;
+            }
+            preparation.Pieces.Add(operation);
             nDrop++;
+        }
+
+        if (nDrop > 0)
+        {
+            preparedStrips.Add(preparation);
+            log.Info($"KoStrip: preparing slot {slot.ApiSlot} ({nDrop} piece(s)); waiting for rendered appearance");
+            return new StripResult(0, 0, 0); // Count only committed removals, never mere spawn requests.
         }
 
         if (glamourer.SetItem((int)objectIndex, slot.ApiSlot, 0, persist: true))
@@ -283,6 +318,49 @@ public unsafe class KoStripController : IDisposable
 
         SetEquipmentDirect(character, slot.GameSlot, 0);
         return new StripResult(0, 1, nDrop);
+    }
+
+    private void TickPreparedStrips(float deltaTime)
+    {
+        for (var i = preparedStrips.Count - 1; i >= 0; i--)
+        {
+            var preparation = preparedStrips[i];
+            preparation.Age += MathF.Max(0, deltaTime);
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            var valid = player != null && player.Address == preparation.Address;
+            var failed = !valid || preparation.Age > 8f || preparation.Pieces.Exists(p => p.IsCancelled);
+            if (!failed && !preparation.Pieces.TrueForAll(p => p.IsReady)) continue;
+            // Do not remove a different outfit if the player changed/reverted appearance while
+            // the asynchronous clone was loading. The next request can capture the new outfit.
+            if (!failed) failed = !preparation.Pieces.TrueForAll(dismemberment.IsGearDropSourceUnchanged);
+            preparedStrips.RemoveAt(i);
+            if (failed)
+            {
+                foreach (var piece in preparation.Pieces) piece.Cancel();
+                stripped.Remove(preparation.Address);
+                if (onHitStripped.TryGetValue(preparation.Address, out var done)) done.Remove(preparation.Slot.ApiSlot);
+                log.Warning($"KoStrip: slot {preparation.Slot.ApiSlot} preparation failed/cancelled; original appearance retained; retry available");
+                continue;
+            }
+            var character = (Character*)preparation.Address;
+            if (((GameObject*)character)->ObjectIndex != preparation.ObjectIndex || ((GameObject*)character)->DrawObject == null)
+            {
+                foreach (var piece in preparation.Pieces) piece.Cancel();
+                continue;
+            }
+            try
+            {
+                if (!glamourer.SetItem((int)preparation.ObjectIndex, preparation.Slot.ApiSlot, 0, persist: true))
+                    SetEquipmentDirect(character, preparation.Slot.GameSlot, 0);
+                foreach (var piece in preparation.Pieces) piece.Commit();
+                log.Info($"KoStrip: committed slot {preparation.Slot.ApiSlot}; {preparation.Pieces.Count} physics-dropped");
+            }
+            catch (Exception ex)
+            {
+                foreach (var piece in preparation.Pieces) piece.Cancel();
+                log.Warning(ex, $"KoStrip: slot {preparation.Slot.ApiSlot} commit failed");
+            }
+        }
     }
 
     private static bool TryGetSlot(byte apiSlot, out StripSlot slot)

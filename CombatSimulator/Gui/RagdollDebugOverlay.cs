@@ -40,6 +40,7 @@ public class RagdollDebugOverlay
     public void Draw()
     {
         DrawGarmentTubes();
+        DrawRealAttachments();
         if (!config.RagdollDebugOverlay || !ragdollController.IsActive) return;
 
         var capsules = ragdollController.GetDebugCapsules();
@@ -178,6 +179,27 @@ public class RagdollDebugOverlay
     }
 
     private readonly List<DismembermentController.DebugGarmentBox> tubeBuffer = new();
+
+    private readonly List<(Vector3 A, Vector3 B)> attachmentEdges = new();
+    private readonly List<DismembermentController.AttachmentDebugPoint> attachmentPoints = new();
+
+    private void DrawRealAttachments()
+    {
+        if (!config.KoStripAttachmentDebugDraw) return;
+        dismemberment.CollectAttachmentDebug(attachmentEdges, attachmentPoints);
+        var draw = ImGui.GetForegroundDrawList();
+        var cloth = ImGui.GetColorU32(new Vector4(0.2f, 0.8f, 1f, 0.75f));
+        var connection = ImGui.GetColorU32(new Vector4(1f, 0.8f, 0.1f, 0.7f));
+        foreach (var edge in attachmentEdges) DrawEdge(draw, edge.A, edge.B, cloth, 1f);
+        foreach (var p in attachmentPoints)
+        {
+            if (p.Anchored) DrawEdge(draw, p.Position, p.Target, connection, 1f);
+            if (!gameGui.WorldToScreen(p.Position, out var screen)) continue;
+            var color = p.Tension > 0.1f ? new Vector4(1f, 0.2f, 0.2f, 0.9f)
+                : p.Contact ? new Vector4(0.3f, 1f, 0.3f, 0.9f) : new Vector4(0.3f, 0.7f, 1f, 0.9f);
+            draw.AddCircleFilled(screen, p.Anchored ? 3f : 2f, ImGui.GetColorU32(color));
+        }
+    }
 
     /// <summary>Wireframe of the garment tube's ring bodies — the tuning aid for the tube physics model.
     /// Independent of the ragdoll overlay so it can be watched on its own.</summary>
