@@ -79,6 +79,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly SpectatorController spectatorController;
     private readonly Dev.IDevExperimental devExperimental;
     private readonly Effects.NpcScaleController npcScaleController;
+    private readonly Effects.PlayerWeaponVisibilityController playerWeaponVisibilityController;
     private readonly EnemyControlController enemyControlController;
     private readonly HookSafetyChecker hookSafetyChecker;
     private readonly UpdateLogPopupController updateLogPopupController;
@@ -190,6 +191,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcScaleController = new Effects.NpcScaleController(config, npcSelector, objectTable);
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
         weaponDropController = new WeaponDropController(boneTransformService, config, log);
+        playerWeaponVisibilityController = new Effects.PlayerWeaponVisibilityController(config, objectTable, boneTransformService);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
         dismembermentController.PlayerRagdollController = ragdollController;
         // Clothes still on the corpse ride along when it is picked up; the dismemberment side owns the
@@ -573,6 +575,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         companionManager.Dispose();
         spectatorController.Dispose();
         npcScaleController.Dispose();
+        playerWeaponVisibilityController.Dispose();
         npcSpawner.Dispose();
         useActionHook.Dispose();
         playerTargetController.Dispose();

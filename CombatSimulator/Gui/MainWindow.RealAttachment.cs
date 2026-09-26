@@ -60,27 +60,21 @@ public partial class MainWindow
         settings.Anchors ??= new();
         settings.AnchorOffsets ??= new();
         var changed = false;
-        if (attachmentEditSlot == 1)
-            ImGui.TextWrapped("Upper clothing retains its neckline, shoulders and sleeves. Only the lower torso/hem loosens downward, capped at 0.08 m before regional weighting. Gravity changes speed, not direction.");
-        var templates = attachmentEditSlot == 1
-            ? new[] { GarmentTemplate.Top, GarmentTemplate.Coat, GarmentTemplate.Dress, GarmentTemplate.Rigid }
-            : new[] { GarmentTemplate.Trousers, GarmentTemplate.Skirt, GarmentTemplate.Rigid };
-        var names = Array.ConvertAll(templates, t => t.ToString());
-        var template = Math.Max(0, Array.IndexOf(templates, settings.Template));
-        if (ImGui.Combo("Garment construction", ref template, names, names.Length))
-        { settings.Template = templates[template]; changed = true; }
+        var compatibleTemplate = AttachmentSettings.TemplateForSlot(settings.Template, attachmentEditSlot);
+        if (settings.Template != compatibleTemplate) { settings.Template = compatibleTemplate; changed = true; }
         var material = Math.Clamp((int)settings.Material, 0, attachmentMaterials.Length - 1);
         if (ImGui.Combo("Material", ref material, attachmentMaterials, attachmentMaterials.Length))
         { settings.ApplyMaterial((GarmentMaterial)material); changed = true; }
-        HelpMarker("Material sets sliding resistance, skirt stiffness and damping. Rigid construction fixes skirt hinges.\n" +
+        HelpMarker("Material sets sliding resistance, skirt stiffness and damping.\n" +
             "Skirt bones are detected automatically, including on trouser equipment.");
         changed |= AttachmentSlider("Slip distance", settings.SlipDistance, 0f, 3f, "%.2f m", v => settings.SlipDistance = v);
-        HelpMarker("Upper travel is capped at 0.08 m before weighting. Trouser waist travel is capped at 45% of thigh length, leg travel at 65% of each segment. Cuffs stay fixed. Skirt hinges use the separate controls below.");
+        HelpMarker("Lower garments use the same bounded slide: waist travel is capped at 45% of thigh length, leg travel at 65% of each segment; cuffs stay fixed.\n" +
+            "Upper clothing retains its neckline, shoulders and sleeves; lower torso/hem travel is capped at 0.08 m before weighting. Distance and sliding controls update live.");
         changed |= AttachmentSlider("Sliding speed limit", settings.SpeedLimit, 0.05f, 4f, "%.2f m/s", v => settings.SpeedLimit = v);
         changed |= AttachmentSlider("Sliding resistance", settings.BodyFriction, 0f, 2f, "%.2f", v => settings.BodyFriction = v);
         changed |= AttachmentSlider("Motion damping", settings.Damping, 0f, 12f, "%.2f", v => settings.Damping = v);
         changed |= AttachmentSlider("Skirt maximum opening", settings.SkirtSwingDegrees, 0f, 110f, "%.0f deg", v => settings.SkirtSwingDegrees = v);
-        HelpMarker("Live upper limit, not a target angle. Increasing it only permits more movement when gravity/contact requires it. Rigid construction always uses zero.");
+        HelpMarker("Live upper limit, not a target angle. Increasing it only permits more movement when gravity/contact requires it.");
         changed |= AttachmentSlider("Skirt damping", settings.SkirtDamping, 1f, 4f, "%.2f", v => settings.SkirtDamping = v);
         if (ImGui.TreeNode("Advanced skirt settings"))
         {
@@ -88,11 +82,11 @@ public partial class MainWindow
             changed |= AttachmentSlider("Skirt contact thickness", settings.Thickness, .003f, .04f, "%.3f m", v => settings.Thickness = v);
             ImGui.TreePop();
         }
-        HelpMarker("Skirt chains pivot at a fixed waist with gravity, shape retention and damping. Leg capsules and a floor plane constrain opening angles.\n" +
+        HelpMarker("Skirt chains pivot at their current garment waist, including its slide, with gravity, shape retention and damping. Leg capsules and a floor plane constrain opening angles.\n" +
             "Zero opening fixes the reference shape. Blocked panels report contacts that cannot be cleared within the angle limit. This is a bone proxy, not mesh cloth or self-collision.");
         if (ImGui.TreeNode("Retained connections"))
         {
-            ImGui.TextWrapped("Multipliers control bounded torso or leg sliding. Trouser cuffs stay fixed. Waist and leg travel have anatomical limits; the Skirt template retains its waist.");
+            HelpMarker("Multipliers control bounded torso or leg sliding. Trouser cuffs stay fixed; waist and leg travel have anatomical limits.");
             var anchors = attachmentEditSlot == 1
                 ? new[] { ("j_kosi", "Lower hem", 0.7f), ("j_sebo_a", "Lower torso", 0.7f),
                     ("j_sebo_b", "Mid torso", 0.7f), ("j_sebo_c", "Upper torso", 0.7f) }
@@ -139,8 +133,8 @@ public partial class MainWindow
         ImGui.TextWrapped(dismembermentController.GetAttachmentStatus());
         if (ImGui.Button("Apply settings / restart slide")) dismembermentController.RebindRealAttachments();
         HelpMarker("Apply edited settings and restart the slide at the worn pose. Following the live body is automatic every frame.\n" +
-            "Skirt opening/damping/stiffness/thickness update live. Other settings apply on the next detachment unless applied here. Profile changes apply to new pieces.");
-        ImGui.TextWrapped("Body/Legs only. Live body following with bounded sliding and retained skirt hinges. Bone proxies cannot guarantee mesh clearance for every garment or pose.");
+            "Slide distance/speed/resistance/damping and skirt physics controls update live. Connection edits require this button or a new detachment. Profile changes apply to new pieces.\n" +
+            "Body/Legs only. Bone proxies cannot guarantee mesh clearance for every garment or pose.");
     }
 
     private void SaveAttachmentSettings(AttachmentSettings settings)

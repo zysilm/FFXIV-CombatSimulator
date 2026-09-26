@@ -14,9 +14,18 @@ Trousers slide the waist along the mean live thigh direction, capped at 45% of t
 thigh and reduced when the thighs oppose. Thigh/knee offsets follow their own current segments,
 weighted by 0.85/0.45 and capped at 65% of segment length. Cuffs stay fixed. Slip distance now
 controls travel without the former 8 cm progress cap or millimetre output caps. Gravity controls
-forward progress; inversion retains progress. Skirt construction retains its fixed waist.
+forward progress; inversion retains progress.
 Lower-slot authored offsets remain inactive. This is skeletal compression, not mesh folding or
 surface collision: large travel can still stretch the crotch or clip the body.
+
+All Legs-slot equipment now uses the same Trousers movement, including skirts. The separate
+whole-skirt translation has been removed. Skirt bones are still detected and simulated on top of
+the bounded waist/leg movement. There is no garment-construction dropdown.
+
+Legacy Skirt (4) and Rigid (5) remain readable in saved JSON; lower-slot templates all resolve to
+Trousers. Legacy upper Rigid resolves to Top. Equipment override keys and indices remain stable.
+Descriptions appear in help-marker tooltips, with only controls, equipment identity and status
+shown as regular text. Detailed diagnostics remain behind the debug checkbox.
 ## Retained skirt model
 
 Main-skeleton `j_sk_*` chains are detected automatically, including with the Trousers template.
@@ -42,18 +51,20 @@ preparation/commit detachment lifecycle are unchanged.
 Enable Physics drop: clothing, Advanced clothing settle and Auto cloth hold; choose
 **Visual only (enhanced)**.
 
-- Slip distance accepts 0–3 m for both Body and Legs defaults and equipment overrides. Retained
-  upper-body and leg-length constraints still limit the actual deformation.
+- Slip distance accepts 0–3 m for both Body and Legs defaults and equipment overrides. Upper-body
+  and lower-body travel have separate anatomical limits; increasing the slider cannot
+  bypass those limits.
 - Sliding speed/resistance and motion damping control bounded torso/trouser travel.
 - Skirt maximum opening limits outward hinge rotation (default 65 degrees).
 - Skirt damping controls settling (1.5). Stiffness controls shape retention (default 24), under
   the collapsed Advanced skirt settings with contact thickness.
 - Skirt contact thickness adds clearance to collision proxies (default 0.012 m).
-- Material presets set sliding resistance and skirt stiffness/damping. Rigid fixes the hinges.
+- Material presets set sliding resistance and skirt stiffness/damping.
 - Connection multipliers control torso or thigh/knee travel. Cuffs stay fixed for trousers; waist travel has a separate multiplier.
 
 **Apply settings / restart slide** rebuilds bindings and applies edited settings. Otherwise edits
-apply on the next detachment, except skirt opening/damping/stiffness/thickness which update live.
+apply on the next detachment, except slide distance/speed/resistance/damping and skirt
+opening/damping/stiffness/thickness which update live. Connection changes require Apply or a new detachment.
 Detailed contact counts and actual maximum angle appear only with the debug offset overlay enabled.
 The experimental body-shape adaptation and its extra hip proxy/root expansion have been removed;
 old saved adaptation fields are ignored. Original capsule contacts remain.
@@ -73,7 +84,7 @@ requires in-game verification.
 
 ## Verification
 
-`dotnet run --project Tests/RetainedGarments -c Release` covers sixteen cases: three-metre settings,
+`dotnet run --project Tests/RetainedGarments -c Release` covers seventeen cases: legacy Skirt/Rigid migration, three-metre settings,
 removed-setting migration, live angle limits, gravity torque,
 fixed seams/lengths, leg and floor contact, conflicting contacts, contact noise, moving-leg release,
 multiple-leg obstruction, frame rates, repeated pose changes and retained trouser limits.

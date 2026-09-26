@@ -650,6 +650,8 @@ public partial class Configuration : IPluginConfiguration
     public GuidedCollapseSettings GuidedCollapse { get; set; } = new();
     // Weapon drop physics — runs as part of ragdoll; weapon detaches and falls on death
     public float WeaponDropGravity { get; set; } = 9.8f;
+    public bool HidePlayerLeftWeapon { get; set; }
+    public bool HidePlayerRightWeapon { get; set; }
     public float WeaponDropDamping { get; set; } = 0.99f;
     public float WeaponDropAngularDamping { get; set; } = 0.85f; // much stronger than linear: kills spin fast so capsule stops rolling
     // Heavy on purpose. A real sword is a couple of kilos, but this box also has to not be skated

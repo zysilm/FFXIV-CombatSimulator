@@ -161,7 +161,7 @@ public unsafe partial class DismembermentController
             }
             else panel.Solver.Ground = null;
             panel.Solver.Advance(attachmentFrameDt, Vector3.Transform(-Vector3.UnitY * 9.81f, inverse), panel.Contacts,
-                state.Settings.Template == GarmentTemplate.Rigid ? 0 : state.Settings.SkirtSwingDegrees * MathF.PI / 180, state.Settings.Thickness * state.Scale / unit,
+                state.Settings.SkirtSwingDegrees * MathF.PI / 180, state.Settings.Thickness * state.Scale / unit,
                 state.Settings.SkirtStiffness, state.Settings.SkirtDamping);
             var swing = panel.Solver.Rotation;
             foreach (var bone in panel.Bones)

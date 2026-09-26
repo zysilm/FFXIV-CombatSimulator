@@ -5,6 +5,7 @@ using System.Numerics;
 
 namespace CombatSimulator.Animation.Attachment;
 
+// Keep legacy construction values readable in old JSON; lower garments all use Trousers.
 public enum GarmentTemplate { Top, Coat, Dress, Trousers, Skirt, Rigid }
 public enum GarmentMaterial { Fabric, Silk, HeavyWeave, Leather, Armor }
 
@@ -52,6 +53,11 @@ public sealed class AttachmentSettings
                 if (offset != null) copy.AnchorOffsets[key] = new AttachmentOffset { X = offset.X, Y = offset.Y, Z = offset.Z };
         return copy;
     }
+
+    public static GarmentTemplate TemplateForSlot(GarmentTemplate template, int slot)
+        => slot == 3
+            ? GarmentTemplate.Trousers
+            : template is GarmentTemplate.Coat or GarmentTemplate.Dress ? template : GarmentTemplate.Top;
 
     public AttachmentSettings Validated()
     {

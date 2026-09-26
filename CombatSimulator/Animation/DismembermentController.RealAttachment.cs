@@ -84,6 +84,10 @@ public unsafe partial class DismembermentController
         {
             if (c.RealAttachment is not { } state) continue;
             var saved = ResolveAttachmentSettings(c);
+            state.Settings.SlipDistance = saved.SlipDistance;
+            state.Settings.SpeedLimit = saved.SpeedLimit;
+            state.Settings.BodyFriction = saved.BodyFriction;
+            state.Settings.Damping = saved.Damping;
             state.Settings.SkirtSwingDegrees = saved.SkirtSwingDegrees;
             state.Settings.SkirtStiffness = saved.SkirtStiffness;
             state.Settings.SkirtDamping = saved.SkirtDamping;
@@ -138,11 +142,7 @@ public unsafe partial class DismembermentController
             config.KoStripAttachmentOverrides.TryGetValue(AttachmentKey(c.GearKeepModelSlot, signature), out var saved))
             defaults = saved;
         var result = (defaults ?? new AttachmentSettings()).Validated();
-        // Old/corrupt JSON must not remove all permanent connections.
-        if (c.GearKeepModelSlot == 3 && result.Template is GarmentTemplate.Top or GarmentTemplate.Coat or GarmentTemplate.Dress)
-            result.Template = GarmentTemplate.Trousers;
-        if (c.GearKeepModelSlot == 1 && result.Template is GarmentTemplate.Trousers or GarmentTemplate.Skirt)
-            result.Template = GarmentTemplate.Top;
+        result.Template = AttachmentSettings.TemplateForSlot(result.Template, c.GearKeepModelSlot);
         return result;
     }
 
@@ -222,8 +222,7 @@ public unsafe partial class DismembermentController
                     if (legs == 0) pathLength = 0;
                     else pathLength = MathF.Min(pathLength, direction.Length() / legs);
                 }
-                bone.Offset = state.Settings.Template == GarmentTemplate.Skirt ? Vector3.Zero :
-                    state.Motion.TrouserOffset(bone.Name, direction, pathLength, state.Scale, bone.Multiplier, state.Settings);
+                bone.Offset = state.Motion.TrouserOffset(bone.Name, direction, pathLength, state.Scale, bone.Multiplier, state.Settings);
             }
         }
         DriveRealAttachment(source, target, c, state, origin, rotation);
@@ -274,13 +273,12 @@ public unsafe partial class DismembermentController
         else
         {
             Add("j_kosi", "j_sebo_a", 0.65f);
-            if (settings.Template != GarmentTemplate.Skirt)
-                foreach (var side in new[] { "l", "r" })
-                {
-                    Add($"j_asi_a_{side}", $"j_asi_b_{side}", -1, "j_kosi");
-                    Add($"j_asi_b_{side}", $"j_asi_d_{side}", -1, $"j_asi_a_{side}");
-                    Add($"j_asi_d_{side}", $"j_asi_e_{side}", 0.5f, $"j_asi_b_{side}");
-                }
+            foreach (var side in new[] { "l", "r" })
+            {
+                Add($"j_asi_a_{side}", $"j_asi_b_{side}", -1, "j_kosi");
+                Add($"j_asi_b_{side}", $"j_asi_d_{side}", -1, $"j_asi_a_{side}");
+                Add($"j_asi_d_{side}", $"j_asi_e_{side}", 0.5f, $"j_asi_b_{side}");
+            }
         }
         if (state.Bones.Count == 0) return null;
         state.DrivenAncestor = new int[Math.Min(source.BoneCount, source.ParentCount)];
@@ -330,8 +328,7 @@ public unsafe partial class DismembermentController
             dst = src;
             var driven = state.DrivenAncestor[i];
             if (driven < 0) continue;
-            var bone = state.Bones[driven];
-            var offset = Vector3.Transform(bone.Offset, inverse);
+            var offset = Vector3.Transform(state.Bones[driven].Offset, inverse);
             // Preserve the live bone's rotation and scale exactly. Only a bounded translation
             // is added, so the skirt keeps its authored shape and cannot flip from cage collapse.
             dst.Translation.X += offset.X; dst.Translation.Y += offset.Y; dst.Translation.Z += offset.Z;

@@ -12,6 +12,13 @@ static void Step(RetainedSkirtPanel panel, Vector3 gravity, RetainedSkirtPanel.C
 var leg = new[] { new RetainedSkirtPanel.Capsule(new Vector3(.03f, -.15f, 0), new Vector3(.03f, -.65f, 0), .075f) };
 var cases = new (string, Action)[]
 {
+    ("legacy rigid and invalid constructions map by slot", () => {
+        Check(AttachmentSettings.TemplateForSlot((GarmentTemplate)5, 3) == GarmentTemplate.Trousers, "legacy legs stay rigid");
+        Check(AttachmentSettings.TemplateForSlot((GarmentTemplate)5, 1) == GarmentTemplate.Top, "legacy body stays rigid");
+        Check(AttachmentSettings.TemplateForSlot(GarmentTemplate.Skirt, 3) == GarmentTemplate.Trousers, "legacy skirt did not use general lower-body motion");
+        Check(AttachmentSettings.TemplateForSlot(GarmentTemplate.Dress, 1) == GarmentTemplate.Dress, "dress lost");
+        Check(AttachmentSettings.TemplateForSlot((GarmentTemplate)999, 3) == GarmentTemplate.Trousers, "bad legs configuration");
+    }),
     ("both clothing slots retain three metre slip settings", () => {
         foreach (var template in new[] { GarmentTemplate.Top, GarmentTemplate.Trousers })
         {

@@ -2434,6 +2434,25 @@ public partial class MainWindow : IDisposable
                 }
             }
         }
+        DrawPlayerWeaponVisibilitySection();
+    }
+
+    private void DrawPlayerWeaponVisibilitySection()
+    {
+        if (!ImGui.CollapsingHeader("Hide weapons")) return;
+        var left = config.HidePlayerLeftWeapon;
+        var right = config.HidePlayerRightWeapon;
+        if (ImGui.Checkbox("Left hand (off hand)##hide_player_weapon", ref left))
+        {
+            config.HidePlayerLeftWeapon = left;
+            config.Save();
+        }
+        if (ImGui.Checkbox("Right hand (main hand)##hide_player_weapon", ref right))
+        {
+            config.HidePlayerRightWeapon = right;
+            config.Save();
+        }
+        HelpMarker("Player only. Hides the selected weapon slot, including dropped weapons, without changing equipment or attacks. Off hand includes shields and job accessories; two-handed weapons belong to the main-hand slot.");
     }
 
     private static readonly (string Label, string Bone)[] DismemberParts =
