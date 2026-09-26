@@ -6,6 +6,7 @@ using CombatSimulator.Animation.Attachment;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
+using FFXIVClientStructs.Havok.Common.Base.Math.QsTransform;
 
 namespace CombatSimulator.Animation;
 
@@ -35,6 +36,10 @@ public unsafe partial class DismembermentController
         public float SkirtFloorAge = 1;
         public Vector3 SkirtFloorSample, SkirtFloorPoint;
         public bool SkirtHasFloor;
+        public nint LastSkeleton;
+        public Vector3 LastOrigin;
+        public Quaternion LastRotation;
+        public readonly List<(nint Rig, hkQsTransformf[] Bones)> LastPose = new();
     }
 
     public readonly record struct AttachmentModel(string Key, string Label, int Slot);
@@ -151,13 +156,13 @@ public unsafe partial class DismembermentController
         // This feature is player-only. Don't keep dereferencing an actor slot after logout/reuse.
         if (objectTable.LocalPlayer is not { } player || player.Address != c.SourceAddress) return false;
         var sourceN = boneService.TryGetSkeleton(c.SourceAddress);
-        if (sourceN == null) return false;
+        if (sourceN == null) return HoldLastAttachmentPose(target, c);
         var source = sourceN.Value;
         var signature = ComputeSkeletonSignature(source);
         if (source.BoneCount != target.BoneCount || source.ParentCount != target.ParentCount ||
             signature != ComputeSkeletonSignature(target) ||
-            !TryGetSkeletonWorldTransform(source, out var origin, out var rotation)) return false;
-        if (!FiniteAttachmentVector(origin) || !float.IsFinite(rotation.LengthSquared())) return false;
+            !TryGetSkeletonWorldTransform(source, out var origin, out var rotation)) return HoldLastAttachmentPose(target, c);
+        if (!FiniteAttachmentVector(origin) || !float.IsFinite(rotation.LengthSquared())) return HoldLastAttachmentPose(target, c);
 
         if (c.RealAttachment == null || c.RealAttachment.SkeletonSignature != signature)
         {
@@ -173,7 +178,7 @@ public unsafe partial class DismembermentController
         {
             ResolveAttachmentFrame(source, bone.Index, bone.Toward, origin, rotation, bone.Frame,
                 out bone.SourceCenter, out bone.SourceFrame);
-            if (!FiniteAttachmentVector(bone.SourceCenter) || !float.IsFinite(bone.SourceFrame.LengthSquared())) return false;
+            if (!FiniteAttachmentVector(bone.SourceCenter) || !float.IsFinite(bone.SourceFrame.LengthSquared())) return HoldLastAttachmentPose(target, c);
         }
         // The first node is the live waist/torso frame. Retain only body-relative sliding;
         // every render pose is rebuilt from the source, so no world-space cage drift survives.
@@ -226,6 +231,52 @@ public unsafe partial class DismembermentController
             }
         }
         DriveRealAttachment(source, target, c, state, origin, rotation);
+        c.GearAttachmentPoseWait = 0;
+        CaptureAttachmentPose(target, state, origin, rotation);
+        return true;
+    }
+
+    private static void CaptureAttachmentPose(SkeletonAccess target, RealAttachmentState state, Vector3 origin, Quaternion rotation)
+    {
+        var skeleton = target.CharBase->Skeleton;
+        if (skeleton == null) return;
+        if (state.LastSkeleton != (nint)skeleton || state.LastPose.Count != skeleton->PartialSkeletonCount)
+        {
+            state.LastPose.Clear();
+            for (var i = 0; i < skeleton->PartialSkeletonCount; i++) state.LastPose.Add(default);
+        }
+        state.LastSkeleton = (nint)skeleton; state.LastOrigin = origin; state.LastRotation = rotation;
+        for (var i = 0; i < state.LastPose.Count; i++)
+        {
+            var pose = skeleton->PartialSkeletons[i].GetHavokPose(0);
+            if (pose == null || pose->ModelInSync == 0 || pose->ModelPose.Length is <= 0 or > 2048) continue;
+            var cached = state.LastPose[i];
+            if (cached.Bones == null || cached.Bones.Length != pose->ModelPose.Length || cached.Rig != (nint)pose->Skeleton)
+                cached = ((nint)pose->Skeleton, new hkQsTransformf[pose->ModelPose.Length]);
+            new ReadOnlySpan<hkQsTransformf>(pose->ModelPose.Data, pose->ModelPose.Length).CopyTo(cached.Bones);
+            state.LastPose[i] = cached;
+        }
+    }
+
+    private bool HoldLastAttachmentPose(SkeletonAccess target, Clone c)
+    {
+        // A single animation/redraw frame with ModelInSync == 0 must not permanently delete
+        // clothing whose source slot has already been hidden. Hold only a validated recent pose.
+        c.GearAttachmentPoseWait += Math.Clamp(attachmentFrameDt, 0, .1f);
+        if (c.GearAttachmentPoseWait > .25f) return false;
+        var state = c.RealAttachment;
+        var skeleton = target.CharBase->Skeleton;
+        if (state == null || skeleton == null || state.LastSkeleton != (nint)skeleton || state.LastPose.Count != skeleton->PartialSkeletonCount)
+        { HideEntireBody(c); return true; }
+        for (var i = 0; i < state.LastPose.Count; i++)
+        {
+            var pose = skeleton->PartialSkeletons[i].GetHavokPose(0);
+            var cached = state.LastPose[i];
+            if (pose == null || cached.Bones == null || (nint)pose->Skeleton != cached.Rig || pose->ModelPose.Length != cached.Bones.Length) continue;
+            cached.Bones.AsSpan().CopyTo(new Span<hkQsTransformf>(pose->ModelPose.Data, pose->ModelPose.Length));
+            pose->ModelInSync = 1;
+        }
+        SetCloneBaseTransform(c, state.LastOrigin, state.LastRotation);
         return true;
     }
 

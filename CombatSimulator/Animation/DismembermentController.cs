@@ -306,6 +306,7 @@ public unsafe partial class DismembermentController : IDisposable
         public float GearBindSlip;                            // auto hold: accumulated garment slide-down (m), monotonic
         public bool GearRealAttachmentRequested;
         public RealAttachmentState? RealAttachment;
+        public float GearAttachmentPoseWait;
         public float GearBindGroundY = float.NegativeInfinity;// auto hold (slide-to-floor): ground under the anchor
         public Vector3 GearBindHalf;                          // auto hold (slide-to-floor): garment half-extents for the floor test
         public Vector3 GearBindAnchorWorld;                   // auto hold: current (slipped) anchor world pos, for the floor test

@@ -277,7 +277,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             ragdollController, animationController, boneTransformService,
             movementBlockHook, vnavmeshIpc, dismembermentController, glamourerIpc,
             armorDetachmentController, combatEngine, clientState, targetManager, npcSelector,
-            config, log);
+            config, log, weaponDropController);
 #else
         devExperimental = new Dev.DevExperimentalStub();
 #endif

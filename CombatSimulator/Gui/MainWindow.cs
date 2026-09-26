@@ -118,6 +118,7 @@ public partial class MainWindow : IDisposable
     partial void DrawDevSidebarEntry(ref int selectedTab);
     partial void DrawDevTabContent(int selectedTab);
     partial void DrawDevSection();
+    partial void DrawExperimentalEffects();
     partial void DrawPcDismemberSection();
     partial void GetDevExperimentalUnlocked(ref bool unlocked);
 
@@ -340,6 +341,7 @@ public partial class MainWindow : IDisposable
                 break;
             case 3: // Effects
                 DrawHitVfxSection();
+                DrawExperimentalEffects();
                 DrawArmorDetachmentEntrySection();
                 DrawEnemyControlEntrySection();
                 DrawRagdollFollowEntrySection();

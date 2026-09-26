@@ -36,6 +36,26 @@ public unsafe class WeaponDropController : IDisposable
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
     private readonly WeaponReleaseContacts releaseContacts = new();
+    private readonly HashSet<nint> externalOwners = new();
+
+    /// <summary>Exclusive visual/physics ownership for another local controller.</summary>
+    public IDisposable? AcquireExternalControl(nint address)
+    {
+        if (address == 0 || !externalOwners.Add(address)) return null;
+        RemoveFor(address);
+        return new ExternalControl(this, address);
+    }
+
+    private sealed class ExternalControl(WeaponDropController owner, nint address) : IDisposable
+    {
+        private bool disposed;
+        public void Dispose()
+        {
+            if (disposed) return;
+            disposed = true;
+            owner.externalOwners.Remove(address);
+        }
+    }
 
     // Snapshot of physics-relevant config used when sim was created.
     // If user changes any of these, we recreate the sim on next render frame
@@ -110,6 +130,7 @@ public unsafe class WeaponDropController : IDisposable
     public void SpawnFor(nint characterAddress, float delay = 0f)
     {
         if (characterAddress == nint.Zero) return;
+        if (externalOwners.Contains(characterAddress)) return;
         if (entries.ContainsKey(characterAddress)) return;
         if (pending.Exists(p => p.CharacterAddress == characterAddress)) return;
 

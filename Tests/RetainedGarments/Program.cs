@@ -12,6 +12,21 @@ static void Step(RetainedSkirtPanel panel, Vector3 gravity, RetainedSkirtPanel.C
 var leg = new[] { new RetainedSkirtPanel.Capsule(new Vector3(.03f, -.15f, 0), new Vector3(.03f, -.65f, 0), .075f) };
 var cases = new (string, Action)[]
 {
+    ("changing contacts cannot teleport the skirt at any display rate", () => {
+        foreach (var fps in new[] { 30, 60, 144, 300 })
+        {
+            var panel = Panel(); var previous = panel.Angle;
+            for (var i = 0; i < fps * 3; i++)
+            {
+                panel.Ground = new Plane(Vector3.UnitY, i % 2 == 0 ? .12f : .48f);
+                panel.Advance(1f / fps, -Vector3.UnitY * 9.81f, leg, 1.5f, .006f, 24, 1.5f);
+                Check(MathF.Abs(panel.Angle - previous) <= 2.5f / fps + .0001f, $"contact snapped at {fps} FPS");
+                previous = panel.Angle;
+            }
+            panel.Advance(0, -Vector3.UnitY * 9.81f, leg, 1.5f, .006f, 24, 1.5f);
+            Check(MathF.Abs(panel.Angle - previous) < .0001f, "zero-time collision changed the rendered angle");
+        }
+    }),
     ("legacy rigid and invalid constructions map by slot", () => {
         Check(AttachmentSettings.TemplateForSlot((GarmentTemplate)5, 3) == GarmentTemplate.Trousers, "legacy legs stay rigid");
         Check(AttachmentSettings.TemplateForSlot((GarmentTemplate)5, 1) == GarmentTemplate.Top, "legacy body stays rigid");
@@ -89,7 +104,7 @@ var cases = new (string, Action)[]
         var p = Panel(); Step(p, -Vector3.UnitY * 9.81f, Array.Empty<RetainedSkirtPanel.Capsule>());
         p.Advance(1f / 60, -Vector3.UnitY * 9.81f, leg, 1.5f, .006f, 24, 1.5f);
         var angle = p.Angle;
-        Check(angle > .1f && p.AngularVelocity == 0, "moving leg launched the panel");
+        Check(angle > 0 && angle <= 2.5f / 60 + 1e-6f && p.AngularVelocity == 0, "moving leg snapped or launched the panel");
         p.Advance(1f / 60, -Vector3.UnitY * 9.81f, Array.Empty<RetainedSkirtPanel.Capsule>(), 1.5f, .006f, 24, 1.5f);
         Check(MathF.Abs(p.Angle - angle) <= .026f, "release snapped skirt closed");
         Step(p, -Vector3.UnitY * 9.81f, Array.Empty<RetainedSkirtPanel.Capsule>());
