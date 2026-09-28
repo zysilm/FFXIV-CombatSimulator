@@ -32,6 +32,7 @@ namespace CombatSimulator.Animation;
 
 public unsafe partial class RagdollController : IDisposable
 {
+    partial void StepAdditionalPhysics(float dt, ref bool handled);
     private readonly BoneTransformService boneService;
     private readonly Npcs.NpcSelector? npcSelector;
     private readonly Safety.MovementBlockHook? movementBlockHook;
@@ -8488,7 +8489,9 @@ public unsafe partial class RagdollController : IDisposable
                 UpdateHairKinematicRoots(); // drive hair anchors from the head before integrating
                 DriveGrabConstraints(FixedTimestep); // advance finite-force targets before solve
                 ApplyFallGravity(FixedTimestep); // a descent that bites, on top of the integrator's honest g
-                simulation.Timestep(FixedTimestep);
+                var steppedExternally = false;
+                StepAdditionalPhysics(FixedTimestep, ref steppedExternally);
+                if (!steppedExternally) simulation.Timestep(FixedTimestep);
                 ClampVelocities(maxLinear, maxAngular);
                 ClampHairRigVelocities();
                 ApplyStandingAnchorCorrection();
@@ -13394,7 +13397,7 @@ public unsafe partial class RagdollController : IDisposable
 
 // --- BEPU Callbacks ---
 
-struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
+partial struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 {
     public float Friction;
     public Configuration? Config;
@@ -13418,7 +13421,10 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     public HashSet<int>? SoftBodyBodies;
     public bool SoftBodyStaticCollision;
 
-    public void Initialize(BepuSimulation simulation) { }
+    private BepuSimulation? ExtensionSimulation { get; set; }
+    public void Initialize(BepuSimulation simulation) { ExtensionSimulation = simulation; }
+    partial void ConfigureAdditionalContact<TManifold>(CollidablePair pair, ref TManifold manifold,
+        ref PairMaterialProperties material, ref bool handled) where TManifold : unmanaged, IContactManifold<TManifold>;
 
     public bool AllowContactGeneration(int workerIndex, CollidableReference a, CollidableReference b, ref float speculativeMargin)
     {
@@ -13562,6 +13568,10 @@ struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     public bool ConfigureContactManifold<TManifold>(int workerIndex, CollidablePair pair, ref TManifold manifold,
         out PairMaterialProperties pairMaterial) where TManifold : unmanaged, IContactManifold<TManifold>
     {
+        pairMaterial = default;
+        var handled = false;
+        ConfigureAdditionalContact(pair, ref manifold, ref pairMaterial, ref handled);
+        if (handled) return true;
         pairMaterial.FrictionCoefficient = Friction;
 
         // Garment tube contacts get their own configurable friction (separate from the legacy chain-rig

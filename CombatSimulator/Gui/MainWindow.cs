@@ -118,6 +118,7 @@ public partial class MainWindow : IDisposable
     partial void DrawDevSidebarEntry(ref int selectedTab);
     partial void DrawDevTabContent(int selectedTab);
     partial void DrawDevSection();
+    partial void DrawExperimentalEffects();
     partial void DrawPcDismemberSection();
     partial void GetDevExperimentalUnlocked(ref bool unlocked);
 
@@ -340,6 +341,7 @@ public partial class MainWindow : IDisposable
                 break;
             case 3: // Effects
                 DrawHitVfxSection();
+                DrawExperimentalEffects();
                 DrawArmorDetachmentEntrySection();
                 DrawEnemyControlEntrySection();
                 DrawRagdollFollowEntrySection();
@@ -2434,6 +2436,25 @@ public partial class MainWindow : IDisposable
                 }
             }
         }
+        DrawPlayerWeaponVisibilitySection();
+    }
+
+    private void DrawPlayerWeaponVisibilitySection()
+    {
+        if (!ImGui.CollapsingHeader("Hide weapons")) return;
+        var left = config.HidePlayerLeftWeapon;
+        var right = config.HidePlayerRightWeapon;
+        if (ImGui.Checkbox("Left hand (off hand)##hide_player_weapon", ref left))
+        {
+            config.HidePlayerLeftWeapon = left;
+            config.Save();
+        }
+        if (ImGui.Checkbox("Right hand (main hand)##hide_player_weapon", ref right))
+        {
+            config.HidePlayerRightWeapon = right;
+            config.Save();
+        }
+        HelpMarker("Player only. Hides the selected weapon slot, including dropped weapons, without changing equipment or attacks. Off hand includes shields and job accessories; two-handed weapons belong to the main-hand slot.");
     }
 
     private static readonly (string Label, string Bone)[] DismemberParts =
@@ -4267,6 +4288,16 @@ public partial class MainWindow : IDisposable
             {
                 ImGui.Indent();
                 HelpMarker("On death the weapon detaches from the hand and falls with its own physics. Always active while ragdoll is enabled; tune the parameters below.");
+                var weaponMesh = config.WeaponDropMeshCollision;
+                if (ImGui.Checkbox("Mesh-based weapon collision##weapondrop", ref weaponMesh))
+                {
+                    config.WeaponDropMeshCollision = weaponMesh;
+                    config.Save();
+                }
+                HelpMarker("Fits up to 24 collision parts to the weapon mesh at release, reducing empty space around irregular weapons. Applies to new weapon simulations. Default off.\n" +
+                    "Mesh loading and fitting may hitch at death; extra collision parts increase physics CPU cost. Unavailable or unsupported geometry falls back to simple collision. Model variants may include hidden geometry; body collider accuracy also affects gaps.");
+                if (weaponMesh)
+                    ImGui.TextColored(new Vector4(1f, 0.75f, 0.2f, 1f), "Warning: may cause severe stuttering.");
 
                 {
                     var wdGravity = config.WeaponDropGravity;

@@ -332,6 +332,16 @@ public partial class Configuration : IPluginConfiguration
     public const int KoStripClothHoldPresetDefault = 1;
     public int KoStripClothHoldPreset { get; set; } = KoStripClothHoldPresetDefault;
 
+    // Profile 5 has persistent attachment physics; profiles 0-4 retain their original numbering.
+    public Animation.Attachment.AttachmentSettings KoStripAttachmentBody { get; set; } = new();
+    public Animation.Attachment.AttachmentSettings KoStripAttachmentLegs { get; set; } = new()
+    {
+        Template = Animation.Attachment.GarmentTemplate.Trousers,
+        SlipDistance = 0.22f,
+    };
+    public Dictionary<string, Animation.Attachment.AttachmentSettings> KoStripAttachmentOverrides { get; set; } = new();
+    public bool KoStripAttachmentDebugDraw { get; set; }
+
     // Visual-only preset tuning: how far (metres) and how fast (m/s) the garment slides down the body
     // before it freezes and stays visual. Only used by the Visual-only preset — Slide-to-floor keeps its
     // own fixed 0.8m / 0.20 m/s behaviour. Raise the distance if the garment stops short of the ground
@@ -640,6 +650,9 @@ public partial class Configuration : IPluginConfiguration
     public GuidedCollapseSettings GuidedCollapse { get; set; } = new();
     // Weapon drop physics — runs as part of ragdoll; weapon detaches and falls on death
     public float WeaponDropGravity { get; set; } = 9.8f;
+    public bool WeaponDropMeshCollision { get; set; } = false;
+    public bool HidePlayerLeftWeapon { get; set; }
+    public bool HidePlayerRightWeapon { get; set; }
     public float WeaponDropDamping { get; set; } = 0.99f;
     public float WeaponDropAngularDamping { get; set; } = 0.85f; // much stronger than linear: kills spin fast so capsule stops rolling
     // Heavy on purpose. A real sword is a couple of kilos, but this box also has to not be skated

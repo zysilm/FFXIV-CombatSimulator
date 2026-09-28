@@ -62,17 +62,17 @@ public unsafe class BoneTransformService : IDisposable
     /// <summary>
     /// Get the body skeleton pose for a character. Returns null if unavailable.
     /// </summary>
-    public SkeletonAccess? TryGetSkeleton(nint characterAddress)
+    public SkeletonAccess? TryGetSkeleton(nint characterAddress, bool synchronizePose = false)
     {
         if (characterAddress == nint.Zero) return null;
         var gameObj = (GameObject*)characterAddress;
         if (gameObj->DrawObject == null) return null;
-        return TryGetSkeletonFromCharBase((CharacterBase*)gameObj->DrawObject);
+        return TryGetSkeletonFromCharBase((CharacterBase*)gameObj->DrawObject, synchronizePose);
     }
 
     /// <summary>Build skeleton access directly from a draw object's CharacterBase (e.g. a weapon's
     /// own draw object, which has its own skeleton). Null if the pose isn't readable.</summary>
-    public SkeletonAccess? TryGetSkeletonFromCharBase(CharacterBase* charBase)
+    public SkeletonAccess? TryGetSkeletonFromCharBase(CharacterBase* charBase, bool synchronizePose = false)
     {
         if (charBase == null) return null;
         var skeleton = charBase->Skeleton;
@@ -81,6 +81,7 @@ public unsafe class BoneTransformService : IDisposable
         var partial = &skeleton->PartialSkeletons[0];
         var pose = partial->GetHavokPose(0);
         if (pose == null || pose->Skeleton == null) return null;
+        if (pose->ModelInSync == 0 && synchronizePose) pose->SyncModelSpace();
         if (pose->ModelInSync == 0) return null;
 
         var havokSkel = pose->Skeleton;
