@@ -190,7 +190,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, npcActionProfileProvider, movementBlockHook, log);
         npcScaleController = new Effects.NpcScaleController(config, npcSelector, objectTable);
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
-        weaponDropController = new WeaponDropController(boneTransformService, config, log);
+        weaponDropController = new WeaponDropController(boneTransformService, config, log, ragdollController);
         playerWeaponVisibilityController = new Effects.PlayerWeaponVisibilityController(config, objectTable, boneTransformService);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
         dismembermentController.PlayerRagdollController = ragdollController;

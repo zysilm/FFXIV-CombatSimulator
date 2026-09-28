@@ -4288,6 +4288,16 @@ public partial class MainWindow : IDisposable
             {
                 ImGui.Indent();
                 HelpMarker("On death the weapon detaches from the hand and falls with its own physics. Always active while ragdoll is enabled; tune the parameters below.");
+                var weaponMesh = config.WeaponDropMeshCollision;
+                if (ImGui.Checkbox("Mesh-based weapon collision##weapondrop", ref weaponMesh))
+                {
+                    config.WeaponDropMeshCollision = weaponMesh;
+                    config.Save();
+                }
+                HelpMarker("Fits up to 24 collision parts to the weapon mesh at release, reducing empty space around irregular weapons. Applies to new weapon simulations. Default off.\n" +
+                    "Mesh loading and fitting may hitch at death; extra collision parts increase physics CPU cost. Unavailable or unsupported geometry falls back to simple collision. Model variants may include hidden geometry; body collider accuracy also affects gaps.");
+                if (weaponMesh)
+                    ImGui.TextColored(new Vector4(1f, 0.75f, 0.2f, 1f), "Warning: may cause severe stuttering.");
 
                 {
                     var wdGravity = config.WeaponDropGravity;

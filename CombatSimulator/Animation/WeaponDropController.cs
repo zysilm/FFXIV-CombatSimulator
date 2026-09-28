@@ -31,12 +31,14 @@ public unsafe class WeaponDropController : IDisposable
     private readonly BoneTransformService boneService;
     private readonly Configuration config;
     private readonly IPluginLog log;
+    private readonly RagdollController ragdoll;
 
     // Single shared simulation across all dropped weapons
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
     private readonly WeaponReleaseContacts releaseContacts = new();
     private readonly HashSet<nint> externalOwners = new();
+    private readonly HashSet<int> meshBodies = new();
 
     /// <summary>Exclusive visual/physics ownership for another local controller.</summary>
     public IDisposable? AcquireExternalControl(nint address)
@@ -78,6 +80,7 @@ public unsafe class WeaponDropController : IDisposable
         public BodyHandle? Main;
         public BodyHandle? Off;
         public Vector3 MainHalf, OffHalf;
+        public Vector3 MainCenter, OffCenter;
         public TypedIndex? MainShape;
         public TypedIndex? OffShape;
         public StaticHandle? GroundTile;
@@ -112,11 +115,12 @@ public unsafe class WeaponDropController : IDisposable
         public Vector3 TargetPosition;
     }
 
-    public WeaponDropController(BoneTransformService boneService, Configuration config, IPluginLog log)
+    public WeaponDropController(BoneTransformService boneService, Configuration config, IPluginLog log, RagdollController ragdoll)
     {
         this.boneService = boneService;
         this.config = config;
         this.log = log;
+        this.ragdoll = ragdoll;
         boneService.OnRenderFrame += OnRenderFrame;
     }
 
@@ -164,8 +168,8 @@ public unsafe class WeaponDropController : IDisposable
     private void DisposeEntry(Entry entry)
     {
         if (simulation == null) return;
-        if (entry.Main.HasValue) { releaseContacts.Remove(entry.Main.Value.Value); simulation.Bodies.Remove(entry.Main.Value); }
-        if (entry.Off.HasValue) { releaseContacts.Remove(entry.Off.Value.Value); simulation.Bodies.Remove(entry.Off.Value); }
+        if (entry.Main.HasValue) { meshBodies.Remove(entry.Main.Value.Value); releaseContacts.Remove(entry.Main.Value.Value); simulation.Bodies.Remove(entry.Main.Value); }
+        if (entry.Off.HasValue) { meshBodies.Remove(entry.Off.Value.Value); releaseContacts.Remove(entry.Off.Value.Value); simulation.Bodies.Remove(entry.Off.Value); }
         if (entry.GroundTile.HasValue) simulation.Statics.Remove(entry.GroundTile.Value);
         for (int i = 0; i < entry.BodyColliders.Count; i++)
         {
@@ -181,9 +185,9 @@ public unsafe class WeaponDropController : IDisposable
             simulation.Shapes.RemoveAndDispose(entry.GroundShape.Value, bufferPool);
         // Per-weapon box shapes are created per drop, so dispose them with the entry.
         if (entry.MainShape.HasValue && bufferPool != null)
-            simulation.Shapes.RemoveAndDispose(entry.MainShape.Value, bufferPool);
+            simulation.Shapes.RecursivelyRemoveAndDispose(entry.MainShape.Value, bufferPool);
         if (entry.OffShape.HasValue && bufferPool != null)
-            simulation.Shapes.RemoveAndDispose(entry.OffShape.Value, bufferPool);
+            simulation.Shapes.RecursivelyRemoveAndDispose(entry.OffShape.Value, bufferPool);
     }
 
     private void OnRenderFrame()
@@ -207,7 +211,13 @@ public unsafe class WeaponDropController : IDisposable
                     UpdateBodyColliders(entry);
                     UpdateReleaseContacts(entry);
                 }
-                simulation.Timestep(1f / 60f);
+                if (meshBodies.Count > 0)
+                {
+                    simulation.Solver.SubstepCount = 4;
+                    simulation.Timestep(1f / 120f);
+                    simulation.Timestep(1f / 120f);
+                }
+                else { simulation.Solver.SubstepCount = 1; simulation.Timestep(1f / 60f); }
             }
 
             // Tick pending spawns
@@ -231,12 +241,12 @@ public unsafe class WeaponDropController : IDisposable
                 if (entry.Main.HasValue)
                 {
                     var mainDraw = GetWeaponDrawObject(addr, DrawDataContainer.WeaponSlot.MainHand);
-                    if (mainDraw != null) DriveWeapon(mainDraw, entry.Main.Value);
+                    if (mainDraw != null) DriveWeapon(mainDraw, entry.Main.Value, entry.MainCenter);
                 }
                 if (entry.Off.HasValue)
                 {
                     var offDraw = GetWeaponDrawObject(addr, DrawDataContainer.WeaponSlot.OffHand);
-                    if (offDraw != null) DriveWeapon(offDraw, entry.Off.Value);
+                    if (offDraw != null) DriveWeapon(offDraw, entry.Off.Value, entry.OffCenter);
                 }
             }
         }
@@ -269,9 +279,9 @@ public unsafe class WeaponDropController : IDisposable
 
         var entry = new Entry { CharacterAddress = characterAddress };
         if (mainDraw != null)
-            entry.Main = TryCreateWeaponBody(mainDraw, out entry.MainShape, out entry.MainHalf);
+            entry.Main = TryCreateWeaponBody(mainDraw, out entry.MainShape, out entry.MainHalf, out entry.MainCenter);
         if (offDraw != null)
-            entry.Off = TryCreateWeaponBody(offDraw, out entry.OffShape, out entry.OffHalf);
+            entry.Off = TryCreateWeaponBody(offDraw, out entry.OffShape, out entry.OffHalf, out entry.OffCenter);
 
         if (!entry.Main.HasValue && !entry.Off.HasValue)
         {
@@ -548,10 +558,11 @@ public unsafe class WeaponDropController : IDisposable
                 WeaponReleaseContacts.Separated(pose, half, arm.PreviousPosition, arm.TargetPosition, arm.Reach));
         }
     }
-    private BodyHandle? TryCreateWeaponBody(DrawObject* weaponDraw, out TypedIndex? shapeIndex, out Vector3 half)
+    private BodyHandle? TryCreateWeaponBody(DrawObject* weaponDraw, out TypedIndex? shapeIndex, out Vector3 half, out Vector3 center)
     {
         shapeIndex = null;
         half = default;
+        center = default;
         // Read the actual rendered weapon when the delay expires. A character hand bone is
         // not the weapon root: attachment offsets and rotations differ by weapon/slot.
         var skeleton = ((CharacterBase*)weaponDraw)->Skeleton;
@@ -562,6 +573,17 @@ public unsafe class WeaponDropController : IDisposable
         if (!float.IsFinite(worldPos.LengthSquared()) || !float.IsFinite(worldRot.LengthSquared()) || worldRot.LengthSquared() < 1e-8f)
             return null;
         worldRot = Quaternion.Normalize(worldRot);
+        var mesh = ragdoll.TryBuildWeaponMesh(weaponDraw);
+        if (mesh != null)
+        {
+            var meshShape = mesh.CreateShape(simulation!, bufferPool!, config.WeaponDropMass, out var meshInertia);
+            shapeIndex = meshShape; half = mesh.Half; center = mesh.Center;
+            var meshBody = simulation!.Bodies.Add(BodyDescription.CreateDynamic(
+                new RigidPose(worldPos + Vector3.Transform(center, worldRot), worldRot), default(BodyVelocity), meshInertia,
+                new CollidableDescription(meshShape, .04f, ContinuousDetection.Continuous(.0005f, .0005f)), new BodyActivityDescription(.01f)));
+            meshBodies.Add(meshBody.Value);
+            return meshBody;
+        }
         // Per-weapon flat box: a capsule rolls forever, a box settles on a face. Length is taken from
         // the weapon's own skeleton span where available (so a long weapon gets a long box, a small
         // one stays small), falling back to the configured length; thin across so it lies flat.
@@ -622,14 +644,14 @@ public unsafe class WeaponDropController : IDisposable
     }
 
     /// <summary>Drive a weapon DrawObject's world transform from its rigid body.</summary>
-    private void DriveWeapon(DrawObject* weaponDraw, BodyHandle bodyHandle)
+    private void DriveWeapon(DrawObject* weaponDraw, BodyHandle bodyHandle, Vector3 center)
     {
         if (simulation == null) return;
 
         var cb = (CharacterBase*)weaponDraw;
         var bodyRef = simulation.Bodies.GetBodyReference(bodyHandle);
-        var pos = bodyRef.Pose.Position;
         var rot = bodyRef.Pose.Orientation;
+        var pos = bodyRef.Pose.Position - Vector3.Transform(center, rot);
 
         // The weapon mesh is skinned to its OWN skeleton; the attach normally
         // writes that skeleton's root world Transform from the owner hand bone.
@@ -682,7 +704,7 @@ public unsafe class WeaponDropController : IDisposable
         bufferPool = new BufferPool();
         simulation = BepuSimulation.Create(
             bufferPool,
-            new WeaponDropNarrowPhaseCallbacks { Friction = simFriction, MaxRecoveryVelocity = simBounce, ReleaseContacts = releaseContacts },
+            new WeaponDropNarrowPhaseCallbacks { Friction = simFriction, MaxRecoveryVelocity = simBounce, ReleaseContacts = releaseContacts, MeshBodies = meshBodies },
             new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -simGravity, 0), simDamping, simAngularDamping),
             new SolveDescription(simSolverIterations, 1));
 
@@ -708,6 +730,7 @@ public unsafe class WeaponDropController : IDisposable
 
     private void DestroySimulation()
     {
+        meshBodies.Clear();
         simulation?.Dispose();
         simulation = null;
         bufferPool?.Clear();
@@ -726,6 +749,7 @@ public unsafe class WeaponDropController : IDisposable
 
 struct WeaponDropNarrowPhaseCallbacks : INarrowPhaseCallbacks
 {
+    public HashSet<int>? MeshBodies;
     public float Friction;
     public float MaxRecoveryVelocity;
     public WeaponReleaseContacts? ReleaseContacts;
@@ -754,7 +778,10 @@ struct WeaponDropNarrowPhaseCallbacks : INarrowPhaseCallbacks
     {
         pairMaterial.FrictionCoefficient = Friction;
         pairMaterial.MaximumRecoveryVelocity = MaxRecoveryVelocity;
-        pairMaterial.SpringSettings = new SpringSettings(30, 1);
+        var mesh = MeshBodies != null &&
+            (pair.A.Mobility == CollidableMobility.Dynamic && MeshBodies.Contains(pair.A.BodyHandle.Value) ||
+             pair.B.Mobility == CollidableMobility.Dynamic && MeshBodies.Contains(pair.B.BodyHandle.Value));
+        pairMaterial.SpringSettings = mesh ? new SpringSettings(120, 4) : new SpringSettings(30, 1);
         return true;
     }
 

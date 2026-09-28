@@ -650,6 +650,7 @@ public partial class Configuration : IPluginConfiguration
     public GuidedCollapseSettings GuidedCollapse { get; set; } = new();
     // Weapon drop physics — runs as part of ragdoll; weapon detaches and falls on death
     public float WeaponDropGravity { get; set; } = 9.8f;
+    public bool WeaponDropMeshCollision { get; set; } = false;
     public bool HidePlayerLeftWeapon { get; set; }
     public bool HidePlayerRightWeapon { get; set; }
     public float WeaponDropDamping { get; set; } = 0.99f;
