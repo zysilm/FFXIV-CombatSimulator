@@ -303,12 +303,7 @@ public unsafe class ActiveCameraController : IDisposable
         var modeOwnsAngles = owner is CameraOwner.Fighting2D or CameraOwner.FightingKO
             or CameraOwner.DynamicCam or CameraOwner.DynamicDeath;
 
-        // Collision patch
-        bool wantCollision = IsActive && config.ActiveCameraDisableCollision;
-        if (wantCollision && !collisionPatchActive)
-            EnableCollisionPatch();
-        else if (!wantCollision && collisionPatchActive)
-            DisableCollisionPatch();
+        UpdateCollisionPolicy();
 
         // ShouldDrawGameObject hook: enable when prevent fade is wanted
         bool wantPreventFade = IsActive && config.ActiveCameraPreventFade;
@@ -445,15 +440,31 @@ public unsafe class ActiveCameraController : IDisposable
         }
     }
 
+    // Dynamic Cam always supplies its own terrain clearance. This controller is
+    // the sole owner of the shared native patch, including when a mode resets.
+    public void UpdateCollisionPolicy()
+    {
+        if (config.EnableDynamicCamera || (IsActive && config.ActiveCameraDisableCollision))
+            EnableCollisionPatch();
+        else
+            DisableCollisionPatch();
+    }
+
     private void EnableCollisionPatch()
     {
-        if (collisionPatchActive || collisionPatchAddress == nint.Zero) return;
-        WriteMemory(collisionPatchAddress, CollisionPatchBytes);
+        if (collisionPatchAddress == nint.Zero) return;
+        for (var i = 0; i < CollisionPatchBytes.Length; i++)
+        {
+            if (((byte*)collisionPatchAddress)[i] == CollisionPatchBytes[i]) continue;
+            WriteMemory(collisionPatchAddress, CollisionPatchBytes);
+            break;
+        }
         collisionPatchActive = true;
     }
 
-    private void DisableCollisionPatch()
+    private void DisableCollisionPatch(bool force = false)
     {
+        if (!force && config.EnableDynamicCamera) return;
         if (!collisionPatchActive || collisionOriginalBytes == null) return;
         WriteMemory(collisionPatchAddress, collisionOriginalBytes);
         collisionPatchActive = false;
@@ -471,6 +482,7 @@ public unsafe class ActiveCameraController : IDisposable
 
     public void Dispose()
     {
+        DisableCollisionPatch(force: true);
         userActive = false;
         modeActive = false;
         UpdateEffectiveActive();

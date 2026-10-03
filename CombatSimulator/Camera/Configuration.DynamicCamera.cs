@@ -102,7 +102,6 @@ public partial class Configuration
 
     public float DynCamDeathTranslateDuration { get; set; } = 2.0f;
 
-    public bool DynCamDeathDisableCollision { get; set; } = true;
 
     // The safe margin, lens band, give-up distance and zoom headroom used to be sliders here.
     // They are internal solver bounds now (constants on DynamicCameraController): in testing
@@ -158,7 +157,6 @@ public partial class Configuration
         DynCamDeathMaximizeBody = d.DynCamDeathMaximizeBody;
         DynCamDeathCloseUpDistance = d.DynCamDeathCloseUpDistance;
         DynCamDeathTranslateDuration = d.DynCamDeathTranslateDuration;
-        DynCamDeathDisableCollision = d.DynCamDeathDisableCollision;
 
         DynCamDebugOverlay = d.DynCamDebugOverlay;
 

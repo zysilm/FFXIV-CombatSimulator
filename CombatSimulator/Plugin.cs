@@ -335,7 +335,11 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         dynamicCameraController.GetCurrentOwner = () => cameraModeCoordinator.CurrentOwner;
         // The death shot forces its locked pitch/zoom inside the game's camera update.
         // Framework-time writes are otherwise overwritten by controller, keyboard and wheel input.
-        gameCameraUpdateHook.PreCameraUpdate = dynamicCameraController.OnPreCameraUpdate;
+        gameCameraUpdateHook.PreCameraUpdate = camera =>
+        {
+            activeCameraController.UpdateCollisionPolicy();
+            dynamicCameraController.OnPreCameraUpdate(camera);
+        };
 
         mapEnemyController = new MapEnemyController(
             objectTable,

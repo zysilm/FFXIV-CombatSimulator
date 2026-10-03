@@ -244,12 +244,13 @@ public partial class MainWindow
         }
 
         var body = config.DynCamDeathBodyVisibility;
-        if (ImGui.SliderFloat("Body coverage##dyncam", ref body, 0.25f, 1f, "%.2f"))
+        if (ImGui.SliderFloat("Body coverage##dyncam", ref body, 0.25f, 2f, "%.2f"))
         {
             config.DynCamDeathBodyVisibility = body;
             config.Save();
         }
         HelpMarker("How much of your body is guaranteed to stay in shot, counted from the head.\n\n" +
+                   "Above 1.00 adds space around the body's ground footprint, up to 2.00.\n" +
                    "1.00 — head to feet\n" +
                    "0.50 — head to waist\n" +
                    "0.25 — head and chest only\n\n" +
@@ -268,8 +269,8 @@ public partial class MainWindow
                    "The camera's height above the ground is worked out from this (together with the angle below) every frame — " +
                    "you say where the body should be, it finds the height. A terrain probe keeps it out of the floor.");
 
-        var angle = config.DynCamDeathAngle;
-        if (ImGui.SliderFloat("Camera angle##dyncam", ref angle, -0.42f, 0.80f, "%.2f rad"))
+        var angle = Math.Clamp(config.DynCamDeathAngle, -0.35f, 0.80f);
+        if (ImGui.SliderFloat("Camera angle##dyncam", ref angle, -0.35f, 0.80f, "%.2f rad"))
         {
             config.DynCamDeathAngle = angle;
             config.Save();
@@ -319,13 +320,6 @@ public partial class MainWindow
         }
         HelpMarker("How long the camera takes to travel from wherever it was into the death composition.");
 
-        var noCollide = config.DynCamDeathDisableCollision;
-        if (ImGui.Checkbox("Ignore terrain collision##dyncam", ref noCollide))
-        {
-            config.DynCamDeathDisableCollision = noCollide;
-            config.Save();
-        }
-        HelpMarker("The death shot sits low and can graze the ground; this stops the game shoving the camera in to avoid it.");
 
         ImGui.Unindent();
     }
@@ -370,7 +364,7 @@ public partial class MainWindow
         ImGui.SameLine();
         var body = config.DynCamDeathBodyVisibility;
         ImGui.SetNextItemWidth(100);
-        if (ImGui.SliderFloat("##dcBody", ref body, 0.25f, 1f, "%.2f"))
+        if (ImGui.SliderFloat("##dcBody", ref body, 0.25f, 2f, "%.2f"))
         {
             config.DynCamDeathBodyVisibility = body;
             config.Save();
