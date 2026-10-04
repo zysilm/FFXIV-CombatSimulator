@@ -27,6 +27,7 @@ internal sealed class SurfaceFilmRuntime
     private uint geometryPoseRevision;
     private readonly int[] capEdgeKinds = new int[Capacity * 3];
     private readonly Vector3[] positions = new Vector3[Capacity * 3], normals = new Vector3[Capacity * 3];
+    private readonly Vector2[] materialCoordinates = new Vector2[Capacity * 3];
     private readonly Vector3[] liftedPositions = new Vector3[Capacity * 3], freeNormals = new Vector3[Capacity * 3];
     private readonly double[] areaSums = new double[Capacity * 3], volumeSums = new double[Capacity * 3], heights = new double[Capacity * 3];
     private uint generation;
@@ -75,6 +76,12 @@ internal sealed class SurfaceFilmRuntime
         if (!triangleCells.TryGetValue(source.Triangle, out sourceCell)) { Clear(); return false; }
         generation = source.Generation;
         for (var i = 0; i < film.CellCount; i++)
+        {
+            materialCoordinates[vertexA[i]] = GetMaterialCoordinate(i, Vector3.UnitX);
+            materialCoordinates[vertexB[i]] = GetMaterialCoordinate(i, Vector3.UnitY);
+            materialCoordinates[vertexC[i]] = GetMaterialCoordinate(i, Vector3.UnitZ);
+        }
+        for (var i = 0; i < film.CellCount; i++)
             for (var edge = 0; edge < 3; edge++)
             {
                 if (!surface.TryGetAdjacentTriangle(anchors[i], edge, out var neighbour, out var width))
@@ -110,6 +117,12 @@ internal sealed class SurfaceFilmRuntime
 
     public FilmCellSample GetCell(int index) => film.GetCell(index);
     public FluidSurfaceAnchor GetAnchor(int index) => anchors[index];
+    public Vector2 GetMaterialCoordinate(int cell, Vector3 bary)
+    {
+        if (cell < 0 || cell >= film.CellCount) return Vector2.Zero;
+        return surface.TryGetMaterialCoordinate(new FluidSurfaceAnchor(generation, anchors[cell].Triangle, bary), out var uv)
+            ? uv : Vector2.Zero;
+    }
     // Read only the already verified film geometry. Cap rendering performs no new skin/native queries.
     public bool TryGetCapGeometry(int cell, out FilmCellGeometry geometry)
     {
@@ -210,7 +223,7 @@ internal sealed class SurfaceFilmRuntime
     {
         var h = (float)(heights[i] * correction);
         // Offset only resolves z fighting; optical thickness remains the liquid thickness.
-        return new FluidVertex(liftedPositions[i], freeNormals[i], Vector2.Zero,
+        return new FluidVertex(liftedPositions[i], freeNormals[i], materialCoordinates[i],
             h, Math.Clamp(h / 0.00001f, 0, 1));
     }
 

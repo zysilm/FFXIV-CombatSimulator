@@ -37,6 +37,8 @@ internal sealed partial class SalivaRuntime
     private int lastRuntimeSubsteps;
     private double lastRuntimeStepSeconds;
     private long microstepCount;
+    private long skinGenerationChanges;
+    private double retiredSkinFilm;
     private uint generation;
     private int terrainBudget, surfaceBudget;
     public bool Emitting { get; set; }
@@ -66,11 +68,15 @@ internal sealed partial class SalivaRuntime
         public int Film;
         public FluidSurfaceAnchor Anchor;
         public bool WalkBlocked;
+        public bool HasWorldSample;
+        public FluidSurfaceSample LastWorldSample;
     }
-    private struct Drop { public double Volume; public Vector3 Position, Velocity; }
+    private struct Drop { public double Volume, SkinCooldown; public Vector3 Position, Velocity; }
     private sealed class Thread
     {
-        public readonly ViscoelasticFilament Model = new(24);
+        // Eight material nodes keep the initial 5mm bridge away from tiny-segment
+        // stiffness; render sampling remains smooth and topology can still coarsen.
+        public readonly ViscoelasticFilament Model = new(8);
         public readonly Vector3[] Previous = new Vector3[24], RenderPositions = new Vector3[24];
         public readonly float[] RenderRadii = new float[24];
         public FluidSurfaceAnchor Anchor;
@@ -78,10 +84,11 @@ internal sealed partial class SalivaRuntime
         public Vector3 PreviousTerminalCenter;
         public bool Attached;
         public bool TipAttached;
-        public FluidSurfaceAnchor TipAnchor;
+        public FluidSurfaceAnchor TipAnchor = default;
         public bool PendingContact;
         public int ContactSegment;
         public double Deferred;
+        public double TimeDebt;
         public double RequestedSeconds, SimulatedSeconds;
         public long AcceptedProposals, PendingSteps, SolverNoProgress;
     }
@@ -112,14 +119,11 @@ internal sealed partial class SalivaRuntime
         // The anatomical selector already requires a supported, outward lower-lip triangle.
         // Manual marker confirmation is diagnostic, not a runtime emission prerequisite:
         // DLL reloads and shape replacements must not silently disable a valid source.
-        if (!surface.TryGetMouthAnchor(out var lip))
-        { DeferredSeconds = seconds; Status = "Paused: no current anatomical lip anchor; " + surface.LipStatus; return; }
-        if (!surface.TryEvaluate(lip, out var mouth))
-        { DeferredSeconds = seconds; Status = "Paused: lip surface evaluation unavailable/budget"; return; }
-        if (generation != 0 && generation != lip.Generation) RetireInventory();
-        generation = lip.Generation;
-        var sourceFilm = FindFilm(lip);
-        if (sourceFilm < 0) { DeferredSeconds = seconds; Status = "Paused: verified local lip patch unavailable/budget"; return; }
+        if (generation != 0 && generation != surface.Generation) ReleaseChangedSkinGeneration();
+        generation = surface.Generation;
+        bool lipAvailable = surface.TryGetMouthAnchor(out var lip) && surface.TryEvaluate(lip, out _);
+        var sourceFilm = lipAvailable ? FindFilm(lip) : -1;
+        bool sourceAvailable = sourceFilm >= 0;
         // Controller fixed time is a float, slightly larger than exact double 1/60.
         // Equal subdivisions consume the full admitted time once; a tolerance in
         // step-count selection must never create a nanosecond collision-only step.
@@ -133,7 +137,7 @@ internal sealed partial class SalivaRuntime
             if (dt < 1e-7) microstepCount++;
             terrainBudget = 32; surfaceBudget = 40;
             ground.BeginStep();
-            if (Emitting)
+            if (Emitting && sourceAvailable)
             {
                 var requested = config.BodyFluidFlowMlPerSecond * (LargeVisibilityPreview ? 20 : 1) * 1e-6 * dt;
                 var accepted = Math.Min(requested, Math.Max(0, InventoryLimit - TotalVolume));
@@ -142,13 +146,13 @@ internal sealed partial class SalivaRuntime
             }
             // Mouth supply accumulates in a true lip cap. The skin film is a receiving/
             // wetting owner, rather than the default destination for the entire source flux.
-            if (sourceBead < 0)
+            if (sourceAvailable && sourceBead < 0)
             {
                 for (var bead = 0; bead < beads.Length; bead++)
                     if (beads[bead].Volume <= 0 && !BeadSlotReserved(bead))
                     { beads[bead] = default; sourceBead = bead; break; }
             }
-            if (sourceBead >= 0)
+            if (sourceAvailable && sourceBead >= 0)
             {
                 ref var cap = ref beads[sourceBead];
                 cap.Film = sourceFilm; cap.Anchor = lip;
@@ -186,7 +190,8 @@ internal sealed partial class SalivaRuntime
         }
         DeferredSeconds = Math.Max(DeferredSeconds, Math.Max(0, seconds - elapsed));
         Status = $"Conservative saliva: cells={CountCells()} volume={TotalVolume * 1e6:F4}ml ledgerError={ConservationError:E2}m³ deferred={DeferredSeconds:F4}s; " +
-            $"lastRuntimeSubsteps={lastRuntimeSubsteps},lastRuntimeStepSeconds={lastRuntimeStepSeconds:E9},microstepCount={microstepCount}; groundCells={ground.CellCount},terrainPending={ground.PendingProbes}";
+            $"lastRuntimeSubsteps={lastRuntimeSubsteps},lastRuntimeStepSeconds={lastRuntimeStepSeconds:E9},microstepCount={microstepCount}; groundCells={ground.CellCount},terrainPending={ground.PendingProbes}; " +
+            $"skinGenerationChanges={skinGenerationChanges},retiredInvalidSkinFilm={retiredSkinFilm * 1e6:F5}ml,threadTimeDebt={threads[0].TimeDebt + threads[1].TimeDebt:F5}s,sourceAvailable={sourceAvailable}; body=thincoat/mobilecaps/permeable-neck";
     }
 
     private int CountCells() { var count = 0; foreach (var film in films) count += film.CellCount; return count; }
@@ -200,6 +205,7 @@ internal sealed partial class SalivaRuntime
 
     private double AddBead(int film, FluidSurfaceAnchor anchor, double requested)
     {
+        var hasSample = surface.TryEvaluate(anchor, out var worldSample);
         var free = -1;
         for (var i = 0; i < beads.Length; i++)
         {
@@ -207,12 +213,15 @@ internal sealed partial class SalivaRuntime
             if (beads[i].Film == film && beads[i].Anchor.Triangle == anchor.Triangle && beads[i].Anchor.Generation == anchor.Generation)
             {
                 var accepted = Math.Min(requested, Math.Max(0, BeadLimit - beads[i].Volume));
-                beads[i].Volume += accepted; return accepted;
+                beads[i].Volume += accepted;
+                if (hasSample) { beads[i].LastWorldSample = worldSample; beads[i].HasWorldSample = true; }
+                return accepted;
             }
         }
         if (free < 0) return 0;
         var volume = Math.Min(requested, BeadLimit);
-        beads[free] = new() { Film = film, Anchor = anchor, Volume = volume };
+        beads[free] = new() { Film = film, Anchor = anchor, Volume = volume,
+            LastWorldSample = worldSample, HasWorldSample = hasSample };
         return volume;
     }
 
@@ -221,8 +230,10 @@ internal sealed partial class SalivaRuntime
         for (var cell = 0; cell < films[film].CellCount; cell++)
         {
             var sample = films[film].GetCell(cell);
-            if (sample.Thickness <= 0.0008) continue;
-            var excess = sample.Volume - sample.Geometry.Area * 0.0006;
+            // Contact film owns a thin coating, not a stationary millimetre-thick
+            // receiving reservoir. Recover pooled inventory into mobile contact caps.
+            if (sample.Thickness <= 0.00005) continue;
+            var excess = sample.Volume - sample.Geometry.Area * 0.000025;
             var received = AddBead(film, films[film].GetAnchor(cell), excess);
             if (received > 0) films[film].TakeVolume(cell, received);
         }
@@ -233,7 +244,14 @@ internal sealed partial class SalivaRuntime
         for (var i = 0; i < beads.Length; i++)
         {
             ref var bead = ref beads[i];
-            if (bead.Volume <= 0 || !surface.TryEvaluate(bead.Anchor, out var sample)) continue;
+            if (bead.Volume <= 0) continue;
+            if (bead.Anchor.Generation != generation)
+            {
+                if (bead.HasWorldSample && !BeadSlotReserved(i)) ReleaseBead(i, bead.LastWorldSample, bead.LastWorldSample.Velocity);
+                continue;
+            }
+            if (!surface.TryEvaluate(bead.Anchor, out var sample)) continue;
+            bead.LastWorldSample = sample; bead.HasWorldSample = true;
             BeadDimensions(bead.Volume, out _, out _, out var footprintRadius);
             var tangentGravity = Gravity - sample.Normal * Vector3.Dot(Gravity, sample.Normal);
             var drive = Density * bead.Volume * tangentGravity.Length();
@@ -243,16 +261,17 @@ internal sealed partial class SalivaRuntime
             if (outward > adhesion)
             {
                 if (!BeadSlotReserved(i) && TryStartThread(i, sample)) continue;
-                // Unknown initial contact or a full thread pool retains the released-cap
-                // inventory here; neither condition proves a safe free-drop transition.
+                if (!BeadSlotReserved(i) && ReleaseBead(i, sample, sample.Velocity)) continue;
                 continue;
             }
             if (BeadSlotReserved(i)) continue; // An owned neck attachment keeps its cap/slot until release or recovery.
             if (drive <= retention || tangentGravity.LengthSquared() < 1e-12f) continue;
-            // Contact-layer viscous drag scales with footprint area/thickness, so speed
-            // changes with volume, orientation and pinning load instead of a global slider.
-            var drag = 3 * viscosity * Math.PI * footprintRadius * footprintRadius / 0.0001;
-            var speed = (drive - retention) / Math.Max(1e-9, drag);
+            // Reduced rolling/sliding-cap drag uses Stokes-sized viscous resistance,
+            // rather than assuming the whole cap shears a 100µm no-slip layer. This
+            // avoids metre-scale transit times. SurfaceSpeed is an artistic m/s cap;
+            // size, local world gravity, hysteresis and viscosity still set the load.
+            var drag = 6 * Math.PI * viscosity * Radius(bead.Volume);
+            var speed = Math.Min(config.BodyFluidSurfaceSpeed, (drive - retention) / Math.Max(1e-9, drag));
             var displacement = Vector3.Normalize(tangentGravity) * (float)(speed * dt);
             var candidate = bead.Anchor;
             bead.WalkBlocked = false;
@@ -260,12 +279,25 @@ internal sealed partial class SalivaRuntime
             surfaceBudget--;
             var completed = surface.TryWalk(ref candidate, displacement, out var walked);
             bead.WalkBlocked = !completed;
+            if (surface.BudgetExhausted) continue;
             // A false walk can still reach a verified edge through known triangles.
             // Commit only that known travel; the unknown remainder never becomes an exit.
             if (!surface.TryEvaluate(candidate, out walked)) continue;
             var travel = Vector3.Distance(sample.Position, walked.Position);
-            if (!float.IsFinite(travel) || travel <= 1e-7f || Vector3.Dot(Gravity, walked.Position - sample.Position) < -1e-8f) continue;
+            if (!float.IsFinite(travel) || Vector3.Dot(Gravity, walked.Position - sample.Position) < -1e-8f) continue;
+            if (travel <= 1e-7f)
+            {
+                // A resolved open/split edge is allowed to shed liquid in this reduced
+                // model. A budget failure above remains pending, never an inferred exit.
+                if (!completed)
+                {
+                    if (TryStartThread(i, sample)) continue;
+                    ReleaseBead(i, sample, sample.Velocity + displacement / (float)dt);
+                }
+                continue;
+            }
             bead.Anchor = candidate;
+            bead.LastWorldSample = walked;
             bead.RunoffDistance += travel;
             if (i == sourceBead)
             {
@@ -355,19 +387,11 @@ internal sealed partial class SalivaRuntime
             if (thread.Model.TotalVolume > 0) continue;
             var direction = Vector3.Normalize(Gravity);
             var neckRadius = Math.Clamp(Radius(beads[bead].Volume) * 0.1, 0.00006, 0.0002);
-            // Probe the initial bridge sweep before seeding. A close chin/neck transfers
-            // directly into its film; an unknown surface budget cannot become a free thread.
+            // The user-selected reduced transport model allows a neck to pass through
+            // the body. Its source stays material-attached; terrain is still checked at
+            // the terminal drop. This avoids immediate source-face reabsorption.
             var start = sample.Position + sample.Normal * (float)(neckRadius + 0.00008);
             var end = start + direction * 0.005f;
-            if (surfaceBudget <= 0) return false;
-            surfaceBudget--;
-            if (surface.TryContact(start, end, (float)neckRadius, out var contact, out _, out _))
-            {
-                var received = Deposit(contact, beads[bead].Volume);
-                beads[bead].Volume -= received;
-                return received > 0;
-            }
-            if (surface.BudgetExhausted) return false;
             // The geometric neck is a small part of the released cap; the remaining
             // volume becomes the real terminal gravity load owned by this same model.
             var accepted = thread.Model.InitializePendant(start, end, sample.Velocity, beads[bead].Volume, neckRadius);
@@ -375,6 +399,7 @@ internal sealed partial class SalivaRuntime
             beads[bead].Volume -= accepted;
             thread.Anchor = beads[bead].Anchor; thread.Bead = bead; thread.Attached = true; thread.TipAttached = false; thread.Deferred = 0;
             thread.RequestedSeconds = thread.SimulatedSeconds = 0; thread.AcceptedProposals = thread.PendingSteps = thread.SolverNoProgress = 0;
+            thread.TimeDebt = 0;
             thread.PendingContact = false; thread.ContactSegment = 0;
             thread.Model.SetEndpoint(false, true, start, sample.Velocity);
             return true;
@@ -386,9 +411,51 @@ internal sealed partial class SalivaRuntime
     {
         var film = FindFilm(anchor);
         if (film < 0) return 0;
-        var accepted = films[film].AddVolume(anchor, requested);
+        var accepted = 0.0;
+        if (films[film].TryGetCell(anchor, out var cell))
+        {
+            var sample = films[film].GetCell(cell);
+            var deficit = Math.Max(0, sample.Geometry.Area * 0.000025 - sample.Volume);
+            accepted = films[film].AddVolume(anchor, Math.Min(requested, deficit));
+        }
         if (accepted < requested) accepted += AddBead(film, anchor, requested - accepted);
         return accepted;
+    }
+
+    private bool ReleaseBead(int index, FluidSurfaceSample sample, Vector3 velocity)
+    {
+        ref var bead = ref beads[index];
+        var radius = (float)Radius(bead.Volume);
+        if (!TryAddDrop(sample.Position + sample.Normal * (radius + 0.00008f), velocity, bead.Volume, 0.12)) return false;
+        bead.Volume = 0;
+        if (sourceBead == index) sourceBead = -1;
+        return true;
+    }
+
+    private void ReleaseChangedSkinGeneration()
+    {
+        skinGenerationChanges++;
+        sourceBead = -1;
+        // World-space free material survives shape changes. A stale material anchor
+        // cannot safely be rebound by triangle number to a replacement mesh.
+        foreach (var thread in threads)
+        {
+            if (thread.Model.TotalVolume <= 0) continue;
+            thread.Model.SetEndpoint(false, false, thread.Model.GetNodePosition(0), thread.Model.GetNodeVelocity(0));
+            var last = thread.Model.NodeCount - 1;
+            thread.Model.SetEndpoint(true, false, thread.Model.GetNodePosition(last), thread.Model.GetNodeVelocity(last));
+            thread.Attached = thread.TipAttached = false; thread.Bead = -1;
+        }
+        for (var i = 0; i < beads.Length; i++)
+            if (beads[i].Volume > 0 && beads[i].HasWorldSample)
+                ReleaseBead(i, beads[i].LastWorldSample, beads[i].LastWorldSample.Velocity);
+        // A thin old film has no verified replacement support. Explicitly retire only
+        // that owner and report it; ground, reservoir, drops and filament are retained.
+        foreach (var film in films)
+        {
+            var retired = film.Clear();
+            retiredSkinFilm += retired; RetiredVolume += retired;
+        }
     }
 
     private static double Radius(double volume) => Math.Cbrt(Math.Max(0, volume) * 3 / (4 * Math.PI));
@@ -402,11 +469,11 @@ internal sealed partial class SalivaRuntime
         height = sphereRadius * (1 - cosine);
         footprintRadius = sphereRadius * Math.Sin(contactAngle);
     }
-    private bool TryAddDrop(Vector3 position, Vector3 velocity, double volume)
+    private bool TryAddDrop(Vector3 position, Vector3 velocity, double volume, double skinCooldown = 0)
     {
         if (volume <= 0) return true;
         for (var i = 0; i < drops.Length; i++)
-            if (drops[i].Volume <= 0) { drops[i] = new() { Position = position, Velocity = velocity, Volume = volume }; return true; }
+            if (drops[i].Volume <= 0) { drops[i] = new() { Position = position, Velocity = velocity, Volume = volume, SkinCooldown = skinCooldown }; return true; }
         return false;
     }
 
@@ -417,10 +484,11 @@ internal sealed partial class SalivaRuntime
         reservoir = 0; generation = 0; sourceBead = -1; acceptedSourceSeconds = 0; runoffTransitions = 0; coalescedVolume = 0;
         wettingTrailTransfer = actualCoatVolume = 0;
         lastRuntimeSubsteps = 0; lastRuntimeStepSeconds = 0; microstepCount = 0;
+        skinGenerationChanges = 0; retiredSkinFilm = 0;
         foreach (var film in films) film.Clear();
         Array.Clear(beads); Array.Clear(drops);
         foreach (var thread in threads)
-        { thread.Model.Clear(); thread.Attached = thread.TipAttached = false; thread.Bead = -1; thread.Deferred = 0; thread.PendingContact = false; thread.ContactSegment = 0; }
+        { thread.Model.Clear(); thread.Attached = thread.TipAttached = false; thread.Bead = -1; thread.Deferred = thread.TimeDebt = 0; thread.PendingContact = false; thread.ContactSegment = 0; }
         ground.Clear();
     }
 

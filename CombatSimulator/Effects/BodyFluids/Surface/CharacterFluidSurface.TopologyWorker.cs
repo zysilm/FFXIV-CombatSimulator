@@ -28,7 +28,7 @@ public sealed unsafe partial class CharacterFluidSurface
 
     private sealed record TopologyMetadataResult(Vertex[] Vertices, Face[] Faces, Cluster[] Clusters,
         Vector3[] Current, Vector3[] Previous, uint[] VertexFrames, TriangleSweepBounds[] TriangleBounds,
-        double BuildMilliseconds);
+        double BuildMilliseconds, int SeamPairs);
 
     private TopologyMetadataRequest? topologyMetadataRequest;
     public bool TopologyMetadataPending => topologyMetadataRequest != null;
@@ -85,10 +85,11 @@ public sealed unsafe partial class CharacterFluidSurface
         var timer = Stopwatch.StartNew();
         cancellation.ThrowIfCancellationRequested();
         BuildAdjacency(triangles, cancellation);
+        int seamPairs = BuildVerifiedSeamAdjacency(points, triangles, cancellation);
         var builtClusters = BuildClusters(points, triangles, cancellation);
         cancellation.ThrowIfCancellationRequested();
         return new(points, triangles, builtClusters, new Vector3[points.Length], new Vector3[points.Length],
-            new uint[points.Length], new TriangleSweepBounds[triangles.Length], timer.Elapsed.TotalMilliseconds);
+            new uint[points.Length], new TriangleSweepBounds[triangles.Length], timer.Elapsed.TotalMilliseconds, seamPairs);
     }
 
     // Called only after UpdateActor has validated the current native identities and partial bindings.
@@ -115,6 +116,7 @@ public sealed unsafe partial class CharacterFluidSurface
             currentVertices = result.Current; previousVertices = result.Previous; vertexFrames = result.VertexFrames;
             triangleSweepBounds = result.TriangleBounds;
             LastTopologyBuildMilliseconds = result.BuildMilliseconds;
+            VerifiedSeamPairs = result.SeamPairs;
             poseAvailable = previousPoseAvailable = false;
             FinishTopologyMetadata(request.Loaded, request.Omitted);
             TopologyBuildStatus = "Managed adjacency/clusters installed atomically";

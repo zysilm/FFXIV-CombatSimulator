@@ -69,20 +69,17 @@ public sealed unsafe partial class CharacterFluidSurface
         return true;
     }
 
-    /// <summary>Edge is opposite barycentric coordinate 0/1/2. Only actual shared vertex edges are linked.
-    /// Open/split/nonmanifold edges return false, as do unavailable poses and exhausted skin budgets.</summary>
+    /// <summary>Edge is opposite barycentric coordinate 0/1/2. Native shared edges and pose-verified
+    /// duplicate seams are linked. Real gaps/nonmanifold edges remain boundaries.</summary>
     public bool TryGetAdjacentTriangle(FluidSurfaceAnchor anchor, int edge, out FluidSurfaceAnchor neighbor, out float edgeLength)
     {
         neighbor = default; edgeLength = 0;
         if (!poseAvailable || anchor.Generation != Generation || anchor.Triangle < 0 || anchor.Triangle >= faces.Length || edge < 0 || edge > 2) return false;
         var face = faces[anchor.Triangle];
-        int next = Neighbour(face, edge);
-        if (next < 0 || faces[next].Slot != face.Slot || faces[next].Mesh != face.Mesh) return false;
+        if (!TryResolvedNeighbour(anchor.Triangle, edge, out int next)) return false;
         int first = edge == 0 ? face.B : edge == 1 ? face.C : face.A;
         int second = edge == 0 ? face.C : edge == 1 ? face.A : face.B;
-        var other = faces[next];
-        if ((other.A != first && other.B != first && other.C != first) ||
-            (other.A != second && other.B != second && other.C != second) || !Skin(first) || !Skin(second)) return false;
+        if (!Skin(first) || !Skin(second)) return ContactPending("Adjacent edge skin budget/pose unavailable");
         edgeLength = Vector3.Distance(currentVertices[first], currentVertices[second]);
         if (!float.IsFinite(edgeLength) || edgeLength <= 1e-7f) { edgeLength = 0; return false; }
         neighbor = new(Generation, next, new Vector3(1f / 3f));
@@ -96,7 +93,6 @@ public sealed unsafe partial class CharacterFluidSurface
         var result = new List<FluidSurfaceAnchor>(maximum);
         var seen = new HashSet<int> { anchor.Triangle };
         var queue = new Queue<int>(); queue.Enqueue(anchor.Triangle);
-        var start = faces[anchor.Triangle];
         while (queue.Count > 0 && result.Count < maximum)
         {
             int index = queue.Dequeue();
@@ -104,8 +100,7 @@ public sealed unsafe partial class CharacterFluidSurface
             var face = faces[index];
             for (int e = 0; e < 3; e++)
             {
-                int next = Neighbour(face, e);
-                if (next < 0 || seen.Count >= maximum || faces[next].Slot != start.Slot || faces[next].Mesh != start.Mesh || !seen.Add(next)) continue;
+                if (!TryResolvedNeighbour(index, e, out int next) || seen.Count >= maximum || !seen.Add(next)) continue;
                 queue.Enqueue(next);
             }
         }
@@ -178,7 +173,8 @@ public sealed unsafe partial class CharacterFluidSurface
             $"modelSnapshot={LastModelSnapshotMilliseconds:0.000}ms backgroundDecode={LastModelDecodeMilliseconds:0.000}ms cachedModels={modelLoads.Count} " +
             $"topologyBuild='{TopologyBuildStatus}' topologySnapshot={LastTopologySnapshotMilliseconds:0.000}ms " +
             $"topologyWorker={LastTopologyBuildMilliseconds:0.000}ms topologyInstall={LastTopologyInstallMilliseconds:0.000}ms " +
-            $"poseAvailable={poseAvailable} poseFailure='{CapturePoseFailureReason}' triangles={faces.Length} vertices={vertices.Length} lip={LipStatus}\n");
+            $"poseAvailable={poseAvailable} poseFailure='{CapturePoseFailureReason}' triangles={faces.Length} vertices={vertices.Length} " +
+            $"verifiedSeamPairs={VerifiedSeamPairs} walk='{WalkStatus}' lip={LipStatus}\n");
         foreach (string item in topologyDiagnostics) output.AppendLine(item);
         output.Append(DescribeFacialBones());
         return output.ToString();

@@ -29,6 +29,7 @@ internal sealed partial class GroundFilmRuntime
     private int supportCount, tileCount, failedCount, frontierCursor;
     private int newTiles, newCells;
     private long step;
+    private double timeDebt;
     private uint generation = 1;
     public double Volume => film.TotalVolume;
     public double DeferredSeconds { get; private set; }
@@ -63,12 +64,33 @@ internal sealed partial class GroundFilmRuntime
         }
         var x = Grid(point.X); var z = Grid(point.Z);
         if (!RegisterTile(x, z, support, false)) return 0;
+        var contactCell = -1;
         for (var i = 0; i < film.CellCount; i++)
         {
             if (cells[i].X != x || cells[i].Z != z || cells[i].Support != support) continue;
-            if (Contains(film.GetCell(i).Geometry, point)) return film.AddVolume(i, requested);
+            if (Contains(film.GetCell(i).Geometry, point)) { contactCell = i; break; }
         }
-        return 0; // An excluded numerical sliver cannot consume the caller's liquid.
+        if (contactCell < 0) return 0;
+        // An impact initially occupies an actual contact footprint, instead of trying
+        // to squeeze its whole volume into one 3mm half-tile. Only clipped cells on
+        // this same verified terrain triangle participate; no support is fabricated.
+        RegisterTile(x - 1, z, support, true);
+        RegisterTile(x + 1, z, support, true);
+        RegisterTile(x, z - 1, support, true);
+        RegisterTile(x, z + 1, support, true);
+        var accepted = 0.0;
+        const double impactThickness = 0.0005;
+        for (var i = 0; i < film.CellCount && accepted < requested; i++)
+        {
+            if (cells[i].Support != support || Math.Abs(cells[i].X - x) + Math.Abs(cells[i].Z - z) > 1) continue;
+            var sample = film.GetCell(i);
+            var deficit = Math.Max(0, sample.Geometry.Area * impactThickness - sample.Volume);
+            accepted += film.AddVolume(i, Math.Min(requested - accepted, deficit));
+        }
+        // Existing local capacity can accept the remaining load. Rejected inventory
+        // stays with the drop and is retried as the bounded frontier grows.
+        accepted += film.AddVolume(contactCell, requested - accepted);
+        return accepted;
     }
 
     /// <summary>At most four delegate calls per step. Pending means budget unavailable, never unsupported terrain.</summary>
@@ -77,9 +99,11 @@ internal sealed partial class GroundFilmRuntime
         if (!double.IsFinite(seconds) || seconds <= 0 || !WorldGeometryBuilder.Finite(gravity)) return default;
         step++;
         GrowFrontier(probe);
-        var result = film.Advance(seconds, gravity);
-        DeferredSeconds = result.DeferredSeconds;
-        return result;
+        timeDebt += seconds;
+        var result = film.Advance(Math.Min(timeDebt, 4.0 / 60), gravity);
+        timeDebt = Math.Max(0, timeDebt - result.SimulatedSeconds);
+        DeferredSeconds = timeDebt;
+        return result with { DeferredSeconds = timeDebt };
     }
 
     private void GrowFrontier(GroundSupportProbe? probe)
@@ -234,6 +258,7 @@ internal sealed partial class GroundFilmRuntime
         var retired = film.Clear();
         supportCount = tileCount = failedCount = frontierCursor = vertexCount = 0;
         step = 0; generation++; if (generation == 0) generation = 1;
+        timeDebt = 0;
         DeferredSeconds = 0; ProbeCalls = PendingProbes = 0; BudgetHit = false;
         newTiles = newCells = 0;
         return retired;

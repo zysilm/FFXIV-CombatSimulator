@@ -51,6 +51,7 @@ internal sealed unsafe class WorldFluidPass : IDisposable
         public Vector4 Optics;
         public Vector4 Absorption;
         public Matrix4x4 InverseViewProjection;
+        public Vector4 Medium;
     }
 
     private const string Shader = """
@@ -59,6 +60,7 @@ internal sealed unsafe class WorldFluidPass : IDisposable
             float4 Camera; float4 OutputSize; float4 DepthSize;
             float4 Optics; float4 Absorption;
             row_major float4x4 InverseViewProjection;
+            float4 Medium;
         };
         Texture2D<float> SceneDepth : register(t0);
         Texture2D<float4> SceneColor : register(t1);
@@ -66,11 +68,11 @@ internal sealed unsafe class WorldFluidPass : IDisposable
         struct Vertex { float3 position : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0; float2 liquid : TEXCOORD1;
             float3 volumeCenter : TEXCOORD2; float3 volumeRadii : TEXCOORD3; };
         struct Pixel { float4 position : SV_POSITION; float3 world : TEXCOORD0; float3 normal : TEXCOORD1; float2 liquid : TEXCOORD2;
-            nointerpolation float3 volumeCenter : TEXCOORD3; nointerpolation float3 volumeRadii : TEXCOORD4; };
+            nointerpolation float3 volumeCenter : TEXCOORD3; nointerpolation float3 volumeRadii : TEXCOORD4; float2 materialUV : TEXCOORD5; };
         Pixel VSMain(Vertex v) {
             Pixel p; p.position = mul(float4(v.position,1), ViewProjection);
             p.world = v.position; p.normal = v.normal; p.liquid = v.liquid;
-            p.volumeCenter=v.volumeCenter; p.volumeRadii=v.volumeRadii; return p;
+            p.volumeCenter=v.volumeCenter; p.volumeRadii=v.volumeRadii; p.materialUV=v.uv; return p;
         }
         bool ProjectWorld(float3 world, out float2 uv) {
             float4 clip = mul(float4(world,1),ViewProjection);
@@ -84,6 +86,33 @@ internal sealed unsafe class WorldFluidPass : IDisposable
             float softbox = pow(saturate(dot(r,normalize(float3(-0.5,0.8,-0.25)))),spread);
             float strip = pow(saturate(dot(r,normalize(float3(0.6,0.3,0.4)))),spread*0.7);
             return base + softbox*3 + strip*0.8;
+        }
+        float HashCell(float2 p) {
+            float3 h=frac(float3(p.x,p.y,p.x)*0.1031);
+            h+=dot(h,h.yzx+33.33);
+            return frac((h.x+h.y)*h.z);
+        }
+        float SmoothNoise(float2 p) {
+            float2 cell=floor(p), f=frac(p);
+            f=f*f*(3-2*f);
+            return lerp(lerp(HashCell(cell),HashCell(cell+float2(1,0)),f.x),
+                lerp(HashCell(cell+float2(0,1)),HashCell(cell+float2(1,1)),f.x),f.y);
+        }
+        float SurfaceFoam(float2 materialUV) {
+            // Material coordinates are in metres, carried by the producer's mesh.
+            // Fixed bubbles follow the surface; no frame-random flicker or world-space swimming.
+            float2 coordinate=materialUV/0.0012;
+            float aa=clamp(length(fwidth(coordinate)),0.015,0.5);
+            float2 cell=floor(coordinate);
+            float h=HashCell(cell);
+            float2 center=float2(0.3+0.4*h,0.3+0.4*HashCell(cell+17));
+            float d=length(frac(coordinate)-center);
+            float r=0.12+0.1*HashCell(cell+51);
+            float ring=1-smoothstep(0.035,0.035+aa,abs(d-r));
+            float fill=0.15*(1-smoothstep(r-aa,r+aa,d));
+            float visible=step(h,Medium.y*0.7);
+            // Subpixel bubbles converge to a faint average rather than blinking.
+            return visible*lerp(saturate(ring+fill),0.15,saturate(aa*2));
         }
         float4 PSMain(Pixel p) : SV_TARGET {
             float2 uv = p.position.xy / OutputSize.xy;
@@ -155,6 +184,16 @@ internal sealed unsafe class WorldFluidPass : IDisposable
             float3 transmittance = exp(-Absorption.rgb*thickness);
             float3 reflection = StudioReflection(reflect(-v,n),Optics.y);
             float3 rgb = (1-effectiveF)*transmittance*background + effectiveF*reflection;
+            if (Medium.x > 0 || Medium.y > 0) {
+                // Bounded artistic scattering approximation, not a volumetric bubble solver.
+                float body=1-exp(-max(0,p.liquid.x)*2400);
+                float irregular=0.65+0.35*SmoothNoise(p.materialUV/0.004);
+                float haze=Medium.x*body*irregular;
+                float foam=SurfaceFoam(p.materialUV)*0.55;
+                float whitening=saturate(haze+foam*(1-haze));
+                float3 milk=float3(0.78,0.80,0.81);
+                rgb=lerp(rgb,milk,whitening);
+            }
             // Coverage only: rgb already contains the refracted background.
             return float4(rgb,saturate(p.liquid.y));
         }
@@ -212,6 +251,7 @@ internal sealed unsafe class WorldFluidPass : IDisposable
                     Optics = new Vector4(material.IndexOfRefraction, material.Roughness, material.RefractionStrength, material.ReflectionStrength),
                     Absorption = new Vector4(material.Absorption, (float)material.DiagnosticView),
                     InverseViewProjection = inverseViewProjection,
+                    Medium = new Vector4(material.Cloudiness, material.FoamAmount, 0, 0),
                 };
                 Upload(context, constants, &p, (uint)sizeof(Parameters));
                 fixed (FluidVertex* data = vertices)

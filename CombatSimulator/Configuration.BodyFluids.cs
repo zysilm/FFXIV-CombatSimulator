@@ -8,6 +8,7 @@ public partial class Configuration
     internal static class BodyFluidDefaults
     {
         internal const float Flow = 0.006f, Viscosity = 0.18f, Reflection = 0.35f, Roughness = 0.08f,
+            Cloudiness = 0.28f, Foam = 0.22f,
             SurfaceSpeed = 0.12f, Relaxation = 0.45f,
             FilamentLength = 0.18f, PuddleLifetime = 25f, Opacity = 0.38f, VisualScale = 2f;
     }
@@ -18,6 +19,8 @@ public partial class Configuration
     public float BodyFluidViscosityPaSeconds { get; set; } = BodyFluidDefaults.Viscosity;
     public float BodyFluidReflectionStrength { get; set; } = BodyFluidDefaults.Reflection;
     public float BodyFluidRoughness { get; set; } = BodyFluidDefaults.Roughness;
+    public float BodyFluidCloudiness { get; set; } = BodyFluidDefaults.Cloudiness;
+    public float BodyFluidFoamAmount { get; set; } = BodyFluidDefaults.Foam;
     public float BodyFluidSurfaceSpeed { get; set; } = BodyFluidDefaults.SurfaceSpeed;
     public float BodyFluidFilamentRelaxation { get; set; } = BodyFluidDefaults.Relaxation;
     public float BodyFluidFilamentLength { get; set; } = BodyFluidDefaults.FilamentLength;
@@ -35,6 +38,8 @@ public partial class Configuration
         BodyFluidViscosityPaSeconds = BodyFluidDefaults.Viscosity;
         BodyFluidReflectionStrength = BodyFluidDefaults.Reflection;
         BodyFluidRoughness = BodyFluidDefaults.Roughness;
+        BodyFluidCloudiness = BodyFluidDefaults.Cloudiness;
+        BodyFluidFoamAmount = BodyFluidDefaults.Foam;
         BodyFluidSurfaceSpeed = BodyFluidDefaults.SurfaceSpeed;
         BodyFluidFilamentRelaxation = BodyFluidDefaults.Relaxation;
         BodyFluidFilamentLength = BodyFluidDefaults.FilamentLength;
@@ -56,6 +61,8 @@ public partial class Configuration
         BodyFluidViscosityPaSeconds = FluidClamp(BodyFluidViscosityPaSeconds, 0.03f, 1.2f, BodyFluidDefaults.Viscosity);
         BodyFluidReflectionStrength = FluidClamp(BodyFluidReflectionStrength, 0f, 1f, BodyFluidDefaults.Reflection);
         BodyFluidRoughness = FluidClamp(BodyFluidRoughness, 0.02f, 1f, BodyFluidDefaults.Roughness);
+        BodyFluidCloudiness = FluidClamp(BodyFluidCloudiness, 0f, 1f, BodyFluidDefaults.Cloudiness);
+        BodyFluidFoamAmount = FluidClamp(BodyFluidFoamAmount, 0f, 1f, BodyFluidDefaults.Foam);
         BodyFluidSurfaceSpeed = FluidClamp(BodyFluidSurfaceSpeed, 0.01f, 0.5f, BodyFluidDefaults.SurfaceSpeed);
         BodyFluidFilamentRelaxation = FluidClamp(BodyFluidFilamentRelaxation, 0.05f, 2f, BodyFluidDefaults.Relaxation);
         BodyFluidFilamentLength = FluidClamp(BodyFluidFilamentLength, 0.03f, 0.35f, BodyFluidDefaults.FilamentLength);
@@ -71,6 +78,8 @@ public partial class Configuration
         {
             ReflectionStrength = FluidClamp(BodyFluidReflectionStrength, 0f, 1f, BodyFluidDefaults.Reflection),
             Roughness = FluidClamp(BodyFluidRoughness, 0.02f, 1f, BodyFluidDefaults.Roughness),
+            Cloudiness = FluidClamp(BodyFluidCloudiness, 0f, 1f, BodyFluidDefaults.Cloudiness),
+            FoamAmount = FluidClamp(BodyFluidFoamAmount, 0f, 1f, BodyFluidDefaults.Foam),
         };
 
     private static float FluidClamp(float value, float min, float max, float fallback) =>

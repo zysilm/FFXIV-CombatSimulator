@@ -24,8 +24,9 @@ internal sealed partial class SalivaRuntime
     /// <summary>Append continuous film, bounded thread and curved drop/puddle surfaces to the producer's builder.</summary>
     public void AppendGeometry(FluidGeometryBuilder builder)
     {
-        if (generation != surface.Generation) return;
-        foreach (var film in films) film.AppendGeometry(builder);
+        // Detached material belongs to world space, not the lip's current topology.
+        if (generation == surface.Generation)
+            foreach (var film in films) film.AppendGeometry(builder);
         foreach (var thread in threads)
         {
             if (thread.Model.TotalVolume <= 0) continue;

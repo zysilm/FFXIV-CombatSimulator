@@ -69,6 +69,11 @@ public sealed partial class BodyFluidController : IDisposable
                 if (!enabled || renderer.IsSuspended) return;
                 var player = Services.ObjectTable.LocalPlayer;
                 if (!Services.ClientState.IsLoggedIn || player == null) { ClearCore(); return; }
+                // Shape/cloth rebuilds retain world liquid, but another actor or
+                // territory owns a different world. Retire it before replacing IDs.
+                if (actorIdentity != 0 && (actorIdentity != player.Address ||
+                    objectIdentity != player.GameObjectId || territoryIdentity != Services.ClientState.TerritoryType))
+                { ClearCore(); return; }
                 if (!Emitting && !HasLiquid()) return;
                 activeWork = true;
                 frameworkFrame++;

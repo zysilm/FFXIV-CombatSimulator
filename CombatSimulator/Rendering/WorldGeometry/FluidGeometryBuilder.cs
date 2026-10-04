@@ -75,6 +75,7 @@ public sealed class FluidGeometryBuilder
         var intervals = (long)(positions.Length - 1) * subdivisionsPerSegment;
         var required = intervals * radialSides * 6 + 2L * radialSides * (2 * capRings - 1) * 3;
         if (required > vertices.Length - Count) { Overflowed = true; return; }
+        float threadLength = 0;
         for (var i = 0; i < positions.Length; i++)
         {
             if (!WorldGeometryBuilder.Finite(positions[i]) || !float.IsFinite(radii[i]) || radii[i] <= 0) return;
@@ -82,6 +83,7 @@ public sealed class FluidGeometryBuilder
             {
                 var distanceSquared = (positions[i] - positions[i - 1]).LengthSquared();
                 if (!float.IsFinite(distanceSquared) || distanceSquared < 1e-12f) return;
+                threadLength += MathF.Sqrt(distanceSquared);
             }
         }
         Span<FluidVertex> previousRing = stackalloc FluidVertex[32];
@@ -99,7 +101,7 @@ public sealed class FluidGeometryBuilder
                 EvaluateThread(positions, radii, segment, t, out center, out tangent, out radius, out slope);
                 radialFrame = TransportThreadFrame(previousTangent, tangent, radialFrame);
                 var u = (segment + t) / (positions.Length - 1);
-                FillThreadRing(currentRing, center, tangent, radialFrame, radius, slope, u, radialSides);
+                FillThreadRing(currentRing, center, tangent, radialFrame, radius, slope, u * threadLength, radialSides);
                 for (var side = 0; side < radialSides; side++)
                 {
                     var next = (side + 1) % radialSides;
@@ -109,7 +111,7 @@ public sealed class FluidGeometryBuilder
                 currentRing[..radialSides].CopyTo(previousRing);
                 previousTangent = tangent;
             }
-        AddThreadCap(center, tangent, radialFrame, radius, radialSides, capRings, 1);
+        AddThreadCap(center, tangent, radialFrame, radius, radialSides, capRings, threadLength);
     }
 
     private static void EvaluateThread(ReadOnlySpan<Vector3> positions, ReadOnlySpan<float> radii,
@@ -162,7 +164,7 @@ public sealed class FluidGeometryBuilder
             var v = (float)side / sides; var angle = v * MathF.Tau;
             var radial = frame * MathF.Cos(angle) + bitangent * MathF.Sin(angle);
             var normal = Vector3.Normalize(radial - tangent * slope);
-            ring[side] = new FluidVertex(center + radial * radius, normal, new Vector2(u, v), 2 * radius);
+            ring[side] = new FluidVertex(center + radial * radius, normal, new Vector2(u, v * MathF.Tau * radius), 2 * radius);
         }
     }
 
@@ -173,7 +175,7 @@ public sealed class FluidGeometryBuilder
         Span<FluidVertex> current = stackalloc FluidVertex[32];
         var bitangent = Vector3.Cross(outwardAxis, frame);
         for (var side = 0; side < sides; side++)
-            previous[side] = new FluidVertex(center + outwardAxis * radius, outwardAxis, new Vector2(u, (float)side / sides), 2 * radius);
+            previous[side] = new FluidVertex(center + outwardAxis * radius, outwardAxis, new Vector2(u, (float)side / sides * MathF.Tau * radius), 2 * radius);
         for (var ring = 1; ring <= rings; ring++)
         {
             var theta = (float)ring / rings * MathF.PI * 0.5f;
@@ -182,7 +184,7 @@ public sealed class FluidGeometryBuilder
                 var v = (float)side / sides; var angle = v * MathF.Tau;
                 var radial = frame * MathF.Cos(angle) + bitangent * MathF.Sin(angle);
                 var normal = outwardAxis * MathF.Cos(theta) + radial * MathF.Sin(theta);
-                current[side] = new FluidVertex(center + normal * radius, normal, new Vector2(u, v), 2 * radius);
+                current[side] = new FluidVertex(center + normal * radius, normal, new Vector2(u, v * MathF.Tau * radius), 2 * radius);
             }
             for (var side = 0; side < sides; side++)
             {
@@ -224,7 +226,7 @@ public sealed class FluidGeometryBuilder
             var normal = Vector3.Normalize(unit / radii);
             var inverse = normal / radii;
             var chord = 2 * Vector3.Dot(unit / radii, normal) / inverse.LengthSquared();
-            return new FluidVertex(center + unit * radii, normal, new Vector2(u, v), MathF.Max(0, chord),
+            return new FluidVertex(center + unit * radii, normal, new Vector2(u * MathF.Tau * radii.X, v * MathF.PI * radii.Y), MathF.Max(0, chord),
                 volumeCenter: center, volumeRadii: radii);
         }
         for (var y = 0; y < latitude; y++)

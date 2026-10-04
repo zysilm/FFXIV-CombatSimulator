@@ -659,12 +659,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 switch (fluidCommand)
                 {
                     case "on":
-                    case "thick":
-                        bodyFluidController.Start(largeVisibilityPreview: true);
-                        config.Save();
-                        break;
                     case "normal":
                         bodyFluidController.Start(largeVisibilityPreview: false);
+                        config.Save();
+                        break;
+                    case "thick":
+                        bodyFluidController.Start(largeVisibilityPreview: true);
                         config.Save();
                         break;
                     case "off":

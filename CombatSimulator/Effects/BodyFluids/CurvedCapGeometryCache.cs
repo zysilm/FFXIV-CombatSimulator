@@ -259,7 +259,8 @@ internal sealed class CurvedCapGeometryCache
     {
         float h = (float)(heights[i] * VolumeCorrection);
         // SkinLift is only rasterization separation and is excluded from optical thickness and inventory.
-        return new(positions[i], normals[i], Vector2.Zero, h, Math.Clamp(h / 0.00002f, 0, 1));
+        var uv = owner?.GetMaterialCoordinate(cells[i], barycentrics[i]) ?? Vector2.Zero;
+        return new(positions[i], normals[i], uv, h, Math.Clamp(h / 0.00002f, 0, 1));
     }
 
     private static Vector3 Point(FilmCellGeometry g, Vector3 bary) => g.A * bary.X + g.B * bary.Y + g.C * bary.Z;
@@ -527,7 +528,8 @@ internal sealed class CurvedCapGeometryCache
         private FluidVertex Vertex(int i)
         {
             float h = (float)(profile[i] * correction);
-            return new(free[i], freeNormals[i], Vector2.Zero, h, Math.Clamp(h / 0.00002f, 0, 1));
+            var uv = owner?.GetMaterialCoordinate(mappedCells[i], mappedBary[i]) ?? Vector2.Zero;
+            return new(free[i], freeNormals[i], uv, h, Math.Clamp(h / 0.00002f, 0, 1));
         }
     }
 }

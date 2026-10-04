@@ -30,7 +30,8 @@ public readonly struct FluidVertex
 
 /// <summary>Immutable optical parameters. Reflection currently uses an explicit studio fallback.</summary>
 public readonly record struct FluidMaterial(float IndexOfRefraction, float Roughness, Vector3 Absorption,
-    float RefractionStrength, float ReflectionStrength, FluidDiagnosticView DiagnosticView = FluidDiagnosticView.Composite)
+    float RefractionStrength, float ReflectionStrength, FluidDiagnosticView DiagnosticView = FluidDiagnosticView.Composite,
+    float Cloudiness = 0, float FoamAmount = 0)
 {
     public static FluidMaterial Default => new(1.333f, 0.08f, new Vector3(0.2f, 0.08f, 0.03f), 1f, 1f);
     internal bool IsValid => float.IsFinite(IndexOfRefraction) && IndexOfRefraction >= 1 && IndexOfRefraction <= 2.5f
@@ -38,6 +39,8 @@ public readonly record struct FluidMaterial(float IndexOfRefraction, float Rough
         && WorldGeometryBuilder.Finite(Absorption) && Absorption.X >= 0 && Absorption.Y >= 0 && Absorption.Z >= 0
         && float.IsFinite(RefractionStrength) && RefractionStrength >= 0 && RefractionStrength <= 4
         && float.IsFinite(ReflectionStrength) && ReflectionStrength >= 0 && ReflectionStrength <= 4
+        && float.IsFinite(Cloudiness) && Cloudiness >= 0 && Cloudiness <= 1
+        && float.IsFinite(FoamAmount) && FoamAmount >= 0 && FoamAmount <= 1
         && (uint)DiagnosticView <= (uint)FluidDiagnosticView.RefractionOffsetPixels;
 }
 

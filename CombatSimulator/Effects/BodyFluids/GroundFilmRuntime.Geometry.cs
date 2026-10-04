@@ -63,7 +63,7 @@ internal sealed partial class GroundFilmRuntime
     private FluidVertex GroundVertex(int index, double correction)
     {
         var h = (float)(heights[index] * correction);
-        return new FluidVertex(lifted[index], normals[index], Vector2.Zero, h, Math.Clamp(h / 0.00001f, 0, 1));
+        return new FluidVertex(lifted[index], normals[index], new Vector2(vertices[index].X, vertices[index].Z), h, Math.Clamp(h / 0.00001f, 0, 1));
     }
 
     private static int ClipTile(GroundSupportHit support, int x, int z, Span<FilmCellGeometry> output)

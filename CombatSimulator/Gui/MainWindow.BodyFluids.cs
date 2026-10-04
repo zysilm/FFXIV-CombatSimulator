@@ -53,6 +53,13 @@ public partial class MainWindow
         if (ImGui.SliderFloat("Highlight roughness##bodyfluids", ref roughness, 0.02f, 1f, "%.2f"))
         { config.BodyFluidRoughness = roughness; config.Save(); }
         HelpMarker("Lower reflection keeps the liquid clearer. Higher roughness broadens highlights. Clear removes accumulated liquid.");
+        var cloudiness = config.BodyFluidCloudiness;
+        if (ImGui.SliderFloat("Cloudiness##bodyfluids", ref cloudiness, 0f, 1f, "%.2f"))
+        { config.BodyFluidCloudiness = cloudiness; config.Save(); }
+        var foam = config.BodyFluidFoamAmount;
+        if (ImGui.SliderFloat("Foam flecks##bodyfluids", ref foam, 0f, 1f, "%.2f"))
+        { config.BodyFluidFoamAmount = foam; config.Save(); }
+        HelpMarker("Cloudiness adds a translucent milky tint. Foam adds small, irregular white flecks that follow the liquid surface. Both are cosmetic controls; zero keeps the clear material.");
         if (enabled && BodyFluids != null)
         {
             ImGui.TextWrapped(BodyFluids.SurfaceStatus);

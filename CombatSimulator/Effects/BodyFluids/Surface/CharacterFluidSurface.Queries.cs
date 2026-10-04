@@ -71,25 +71,32 @@ public sealed unsafe partial class CharacterFluidSurface
         segmentMaximum.Z >= minimum.Z && segmentMinimum.Z <= maximum.Z;
 
     /// <summary>
-    /// Local material-space walk only. Returns false at a mesh boundary; anchor/sample are left at the edge.
+    /// Local material-space walk over native shared edges and verified duplicate seam edges.
+    /// Returns false at a real/unverified boundary; anchor/sample are left at the edge.
     /// Eight edge transitions maximum. Budget exhaustion stops travel rather than teleporting to another part.
     /// </summary>
     public bool TryWalk(ref FluidSurfaceAnchor anchor, Vector3 worldDisplacement, out FluidSurfaceSample sample)
     {
         sample = default;
-        if (!Finite(worldDisplacement) || !TryEvaluate(anchor, out sample)) return false;
+        WalkStatus = "Walking";
+        if (!Finite(worldDisplacement)) { WalkStatus = "Invalid displacement"; return false; }
+        if (!TryEvaluate(anchor, out sample)) { WalkStatus = "Anchor pose unavailable"; return ContactPending(WalkStatus); }
         var remaining = worldDisplacement;
         for (int step = 0; step < 8; step++)
         {
-            if (!Triangle(anchor.Triangle, out var a, out var b, out var c)) return false;
+            if (!Triangle(anchor.Triangle, out var a, out var b, out var c))
+            { WalkStatus = "Walk triangle pose unavailable"; return ContactPending(WalkStatus); }
             var normal = SafeNormal(Vector3.Cross(b - a, c - a));
             remaining -= normal * Vector3.Dot(normal, remaining);
             var point = a * anchor.Barycentric.X + b * anchor.Barycentric.Y + c * anchor.Barycentric.Z;
-            if (!Barycentric(point + remaining, a, b, c, out var target)) return false;
+            if (!Barycentric(point + remaining, a, b, c, out var target))
+            { WalkStatus = "Walk material projection unavailable"; return ContactPending(WalkStatus); }
             if (target.X >= -1e-6f && target.Y >= -1e-6f && target.Z >= -1e-6f)
             {
                 anchor.Barycentric = NormalizeBarycentric(target);
-                return TryEvaluate(anchor, out sample);
+                bool evaluated = TryEvaluate(anchor, out sample);
+                WalkStatus = evaluated ? "Complete" : "Walk destination pose unavailable";
+                return evaluated || ContactPending(WalkStatus);
             }
             float fraction = 1;
             int edge = -1;
@@ -100,21 +107,33 @@ public sealed unsafe partial class CharacterFluidSurface
                 float crossing = Math.Clamp(oldValue / (oldValue - newValue), 0, 1);
                 if (crossing <= fraction) { fraction = crossing; edge = e; }
             }
-            if (edge < 0) return false;
+            if (edge < 0) { WalkStatus = "No resolvable crossed edge"; return ContactPending(WalkStatus); }
             var edgePoint = point + remaining * fraction;
             anchor.Barycentric = NormalizeBarycentric(Vector3.Lerp(anchor.Barycentric, target, fraction));
-            TryEvaluate(anchor, out sample);
-            int next = Neighbour(faces[anchor.Triangle], edge);
-            if (next < 0 || !Triangle(next, out var na, out var nb, out var nc)) return false;
+            if (!TryEvaluate(anchor, out sample)) { WalkStatus = "Edge pose unavailable"; return ContactPending(WalkStatus); }
+            if (!TryResolvedNeighbour(anchor.Triangle, edge, out int next))
+            { WalkStatus = BudgetExhausted ? ContactPendingReason : "Open/unverified seam boundary"; return false; }
+            if (!Triangle(next, out var na, out var nb, out var nc))
+            { WalkStatus = "Neighbour pose unavailable"; return ContactPending(WalkStatus); }
             var nextNormal = SafeNormal(Vector3.Cross(nb - na, nc - na));
-            if (Vector3.Dot(normal, nextNormal) < -0.25f || !Barycentric(edgePoint, na, nb, nc, out var nextBary)) return false;
+            if (Vector3.Dot(normal, nextNormal) < -0.25f) { WalkStatus = "Sharp folded edge"; return false; }
+            if (!Barycentric(edgePoint, na, nb, nc, out var nextBary) || nextBary.X < -0.002f || nextBary.Y < -0.002f || nextBary.Z < -0.002f)
+            { WalkStatus = "Neighbour material point unavailable"; return ContactPending(WalkStatus); }
+            EdgeVertices(faces[anchor.Triangle], edge, out int first, out int second);
+            var axis = currentVertices[second] - currentVertices[first];
+            if (axis.LengthSquared() <= 1e-14f) { WalkStatus = "Degenerate crossed edge"; return ContactPending(WalkStatus); }
+            axis = Vector3.Normalize(axis);
+            float turn = MathF.Atan2(Vector3.Dot(axis, Vector3.Cross(normal, nextNormal)), Vector3.Dot(normal, nextNormal));
             anchor.Triangle = next; anchor.Barycentric = NormalizeBarycentric(nextBary);
             remaining *= 1 - fraction;
+            // Parallel transport around the true shared edge preserves tangential travel length.
+            // Repeated projection alone damps movement at every curved triangle transition.
+            remaining = Vector3.Transform(remaining, Quaternion.CreateFromAxisAngle(axis, turn));
             remaining -= nextNormal * Vector3.Dot(nextNormal, remaining);
         }
-        BudgetExhausted = true;
+        WalkStatus = "Eight-edge transition budget exhausted";
         TryEvaluate(anchor, out sample);
-        return false;
+        return ContactPending(WalkStatus);
     }
 
     /// <summary>
@@ -201,12 +220,13 @@ public sealed unsafe partial class CharacterFluidSurface
     private static bool Barycentric(Vector3 point, Vector3 a, Vector3 b, Vector3 c, out Vector3 barycentric)
     {
         var v0 = b - a; var v1 = c - a; var v2 = point - a;
-        float d00 = Vector3.Dot(v0, v0), d01 = Vector3.Dot(v0, v1), d11 = Vector3.Dot(v1, v1);
-        float denominator = d00 * d11 - d01 * d01;
+        static double Dot(Vector3 x, Vector3 y) => (double)x.X * y.X + (double)x.Y * y.Y + (double)x.Z * y.Z;
+        double d00 = Dot(v0, v0), d01 = Dot(v0, v1), d11 = Dot(v1, v1);
+        double denominator = d00 * d11 - d01 * d01;
         barycentric = default;
         if (!(denominator > 1e-16f)) return false;
-        float d20 = Vector3.Dot(v2, v0), d21 = Vector3.Dot(v2, v1);
-        float y = (d11 * d20 - d01 * d21) / denominator, z = (d00 * d21 - d01 * d20) / denominator;
+        double d20 = Dot(v2, v0), d21 = Dot(v2, v1);
+        float y = (float)((d11 * d20 - d01 * d21) / denominator), z = (float)((d00 * d21 - d01 * d20) / denominator);
         barycentric = new(1 - y - z, y, z);
         return Finite(barycentric);
     }

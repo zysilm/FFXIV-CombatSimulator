@@ -69,6 +69,7 @@ public sealed unsafe partial class CharacterFluidSurface
         boneCount = skeletonBoneCount = 0;
         ClearLipAnchor(); partialBindings = Array.Empty<PartialBinding>(); surfaceBones.Clear();
         deformationContext = null; deformationContextFailure = "No actor context";
+        VerifiedSeamPairs = 0; WalkStatus = "No actor";
         nextDeformationPoll = 0; deformationNeedsRebuild = false;
         unchecked { deformationEpoch++; }
         surfaceBoneNames = Array.Empty<string>(); topologyDiagnostics.Clear(); diagnosticSeed = -1;
