@@ -18,12 +18,15 @@ internal sealed partial class SalivaRuntime
         internal const int Rows = 16, Columns = 7;
         internal readonly FluidSurfaceAnchor[] Centers = new FluidSurfaceAnchor[Rows];
         internal readonly FluidSurfaceAnchor[] Left = new FluidSurfaceAnchor[Rows], Right = new FluidSurfaceAnchor[Rows];
+        internal readonly FluidSurfaceAnchor[] Samples = new FluidSurfaceAnchor[Rows * Columns];
+        internal readonly FluidSurfaceAnchor[] PendingSamples = new FluidSurfaceAnchor[Columns];
         internal readonly Vector3[] Base = new Vector3[Rows * Columns], Free = new Vector3[Rows * Columns], Normals = new Vector3[Rows * Columns];
         internal readonly Vector3[] Support = new Vector3[Rows * Columns];
         internal readonly Vector2[] UV = new Vector2[Rows * Columns];
-        internal readonly float[] Profile = new float[Rows * Columns], Length = new float[Rows];
+        internal readonly float[] Profile = new float[Rows * Columns], CoatHeight = new float[Rows * Columns], Length = new float[Rows];
         internal int Count;
-        internal void Reset() => Count = 0;
+        internal int RetainedSlot = -1;
+        internal void Reset() { Count = 0; RetainedSlot = -1; }
     }
 
     private void RecordRivulet(int index, FluidSurfaceAnchor anchor, FluidSurfaceSample sample)
@@ -38,37 +41,59 @@ internal sealed partial class SalivaRuntime
             if (distance > .025f) path.Reset();
             else if (path.Count == 1 && distance < .0003f) return;
         }
-        if (surfaceBudget < 2 || rivuletSampleBudget < 2 || surface.BudgetExhausted) return;
+        const int lateralSamples = RivuletPath.Columns - 1;
+        if (surfaceBudget < 2 || rivuletSampleBudget < lateralSamples || surface.BudgetExhausted) return;
         var downhill = Gravity - sample.Normal * Vector3.Dot(Gravity, sample.Normal);
         if (downhill.LengthSquared() < 1e-8f) return;
         var across = Vector3.Normalize(Vector3.Cross(sample.Normal, downhill));
         BeadDimensions(beads[index].Volume, out _, out _, out var footprint);
         float halfWidth = Math.Clamp((float)footprint * .65f, .00035f, .0025f);
-        var left = anchor; var right = anchor;
+        const int middle = RivuletPath.Columns / 2;
         surfaceBudget -= 2;
-        rivuletSampleBudget -= 2;
-        if (!surface.TryWalk(ref left, -across * halfWidth, out _) ||
-            !surface.TryWalk(ref right, across * halfWidth, out _) || surface.BudgetExhausted) return;
+        rivuletSampleBudget -= lateralSamples;
+        // Cache each material column once. Interpolating world-space endpoint
+        // positions cuts through convex modded skin, even with a correct mesh.
+        for (int col = 0; col < RivuletPath.Columns; col++)
+        {
+            var sampleAnchor = anchor;
+            float x = (float)(col - middle) / middle;
+            if (col != middle && (!surface.TryWalk(ref sampleAnchor, across * (halfWidth * x), out _) || surface.BudgetExhausted)) return;
+            path.PendingSamples[col] = sampleAnchor;
+        }
+        var left = path.PendingSamples[0]; var right = path.PendingSamples[RivuletPath.Columns - 1];
         int at = path.Count;
         if (path.Count > 1 && surface.TryEvaluate(path.Centers[path.Count - 2], out var previous) &&
             Vector3.Distance(previous.Position, sample.Position) < .0013f) at--;
         if (at == RivuletPath.Rows)
         {
-            Array.Copy(path.Centers, 1, path.Centers, 0, at - 1);
-            Array.Copy(path.Left, 1, path.Left, 0, at - 1);
-            Array.Copy(path.Right, 1, path.Right, 0, at - 1);
-            at--;
+            // The full segment remains in its independent retained owner.
+            // Start the next segment at the old tip instead of erasing its tail.
+            path.Centers[0] = path.Centers[at - 1];
+            path.Left[0] = path.Left[at - 1]; path.Right[0] = path.Right[at - 1];
+            Array.Copy(path.Samples, (at - 1) * RivuletPath.Columns, path.Samples, 0, RivuletPath.Columns);
+            path.RetainedSlot = -1;
+            at = 1;
         }
         path.Centers[at] = anchor; path.Left[at] = left; path.Right[at] = right;
+        Array.Copy(path.PendingSamples, 0, path.Samples, at * RivuletPath.Columns, RivuletPath.Columns);
         path.Count = at + 1;
+        PreserveRivulet(index);
     }
 
     private bool AppendRivulet(int index, FluidGeometryBuilder builder)
     {
         var path = rivulets[index];
         if (path == null || path.Count < 2 || beads[index].Volume <= 0) return false;
+        return AppendRivuletSurface(path, beads[index].Volume, builder);
+    }
+
+    private bool AppendRivuletSurface(RivuletPath path, double volume, FluidGeometryBuilder builder, int coatOutlet = -1)
+    {
+        if (path.Count < 2 || volume <= 0) return false;
         const int columns = RivuletPath.Columns;
         int count = path.Count;
+        int required = (count - 1) * (columns - 1) * 6;
+        if (builder.Count + required > WorldGeometryRenderer.MaxVertices) return false;
         Vector3 previous = default;
         for (int row = 0; row < count; row++)
         {
@@ -78,17 +103,13 @@ internal sealed partial class SalivaRuntime
             path.Length[row] = row == 0 ? 0 : path.Length[row - 1] + Vector3.Distance(previous, center.Position);
             if (row > 0 && Vector3.Distance(previous, center.Position) > .004f) return false;
             previous = center.Position;
-            surface.TryGetMaterialCoordinate(path.Centers[row], out var centerUv);
-            surface.TryGetMaterialCoordinate(path.Left[row], out var leftUv);
-            surface.TryGetMaterialCoordinate(path.Right[row], out var rightUv);
             for (int col = 0; col < columns; col++)
             {
-                float x = (float)col / (columns - 1) * 2 - 1;
                 int vertex = row * columns + col;
-                var side = x < 0 ? left : right;
-                path.Base[vertex] = Vector3.Lerp(center.Position, side.Position, MathF.Abs(x));
-                path.Support[vertex] = Vector3.Normalize(Vector3.Lerp(center.Normal, side.Normal, MathF.Abs(x)));
-                path.UV[vertex] = Vector2.Lerp(centerUv, x < 0 ? leftUv : rightUv, MathF.Abs(x));
+                if (!surface.TryEvaluate(path.Samples[vertex], out var support)) return false;
+                path.Base[vertex] = support.Position;
+                path.Support[vertex] = support.Normal;
+                surface.TryGetMaterialCoordinate(path.Samples[vertex], out path.UV[vertex]);
             }
         }
         float length = path.Length[count - 1];
@@ -113,11 +134,16 @@ internal sealed partial class SalivaRuntime
                 integral += Prism(a, b, c) + Prism(b, d, c);
             }
         if (integral <= 1e-12) return false;
-        float height = (float)(beads[index].Volume / integral);
+        float height = (float)(volume / integral);
         if (!float.IsFinite(height) || height <= 0 || height > .01f) return false;
         int vertices = count * columns;
         for (int i = 0; i < vertices; i++)
-            path.Free[i] = path.Base[i] + path.Support[i] * (path.Profile[i] * height + .00008f);
+        {
+            // The retained trace sits on the owner's existing wet coat. Adding
+            // that local thickness avoids letting a broad film bury the strip.
+            path.CoatHeight[i] = coatOutlet < 0 ? 0 : WetCoatThickness(path.Samples[i], coatOutlet);
+            path.Free[i] = path.Base[i] + path.Support[i] * (path.Profile[i] * height + path.CoatHeight[i] + .00008f);
+        }
         Array.Clear(path.Normals, 0, vertices);
         for (int row = 0; row < count - 1; row++)
             for (int col = 0; col < columns - 1; col++)
@@ -130,8 +156,6 @@ internal sealed partial class SalivaRuntime
             if (path.Normals[i].LengthSquared() <= 1e-16f) return false;
             path.Normals[i] = Vector3.Normalize(path.Normals[i]);
         }
-        int required = (count - 1) * (columns - 1) * 6;
-        if (builder.Count + required > WorldGeometryRenderer.MaxVertices) return false;
         for (int row = 0; row < count - 1; row++)
             for (int col = 0; col < columns - 1; col++)
             {
@@ -152,7 +176,17 @@ internal sealed partial class SalivaRuntime
             if (Vector3.Dot(n, support) < 0) n = -n;
             path.Normals[a] += n; path.Normals[b] += n; path.Normals[c] += n;
         }
-        FluidVertex Vertex(int i) => new(path.Free[i], path.Normals[i], path.UV[i], path.Profile[i] * height,
+        FluidVertex Vertex(int i) => new(path.Free[i], path.Normals[i], path.UV[i], path.Profile[i] * height + path.CoatHeight[i],
             Math.Clamp(path.Profile[i] * height / .00002f, 0, 1));
+    }
+
+    private float WetCoatThickness(FluidSurfaceAnchor anchor, int outlet)
+    {
+        float thickness = 0;
+        int first = outlet * FilmsPerOutlet, end = Math.Min(first + FilmsPerOutlet, films.Length);
+        for (int film = first; film < end; film++)
+            if (films[film].TryGetCell(anchor, out int cell))
+                thickness = Math.Max(thickness, (float)films[film].GetCell(cell).Thickness);
+        return thickness;
     }
 }

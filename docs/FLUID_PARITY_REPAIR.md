@@ -1,4 +1,4 @@
-# Fluid behavior parity repair
+# Fluid behavior parity repair (checkpoint 69b3a67)
 
 Baseline: `7c16c34`, checked out separately at `C:/PROJECT/CombatSimulator-fluid-baseline`. Current UI/refactor was preserved in a stash checkpoint before repair; the feature branch was not reset or switched.
 
@@ -26,3 +26,5 @@ Ten scenarios, 600 frames each: upright skin flow, downward pendant/ground impac
 The repaired implementation matches the baseline CSV row-for-row across all 6,000 frames. Compared values include inventories, emitted/retired mass, conservation/deferred time, cap positions and material coordinates, filament positions/velocities/stresses/break inventories/contact flags/time debt, ground cell inventory/geometry, and the complete generated vertex-byte hash (positions, normals, thickness and coverage included). The saved pre-repair implementation differs on 300 wet-patch frames. These results establish parity for these fixed inputs; they do not establish universal equivalence.
 
 See [the reproducible harness](../Tests/FluidParity/README.md). Shader execution, transparency sorting, actual deformed/modded actor surfaces, landmark selection and game frame timing are outside this offline test. The game was not driven by test commands during this repair. User settings were not overwritten.
+
+Later corrections intentionally change faulty free-drop contact and curved-rivulet geometry; see [Rue/contact corrections](FLUID_RUE_CONTACT_FIX.md). The equality results above describe checkpoint 69b3a67, not all later changes.

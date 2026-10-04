@@ -244,12 +244,13 @@ internal sealed partial class SalivaRuntime
 
     private void StepDrops(double dt)
     {
-        var start = dropStepOrder++ % drops.Length;
+        var start = dropStepOrder;
+        var nextQueryStart = (start + 1) % drops.Length;
         for (var order = 0; order < drops.Length; order++)
         {
             var i = (start + order) % drops.Length;
             ref var drop = ref drops[i];
-            if (drop.Volume <= 0 || terrainBudget <= 0 || drop.SkinCooldown <= 0 && surfaceBudget <= 0) continue;
+            if (drop.Volume <= 0) continue;
             var radius = (float)Radius(drop.Volume);
             var velocity = drop.Velocity + Gravity * (float)dt;
             var next = drop.Position + (drop.Velocity + velocity) * (float)(dt * 0.5);
@@ -257,34 +258,49 @@ internal sealed partial class SalivaRuntime
             FluidSurfaceSample skinSample = default;
             var skinFraction = 1f;
             var skinHit = false;
-            if (drop.SkinCooldown <= 0)
+            if (drop.SkinCooldown <= 0 && surfaceBudget > 0 && !surface.BudgetExhausted)
             {
                 surfaceBudget--;
                 skinHit = surface.TryContact(drop.Position, next, radius, out anchor, out skinSample, out skinFraction);
-                if (surface.BudgetExhausted) continue;
+                // A skin query is an optional wetting transfer, never a hard
+                // collision. Unknown contact must not suspend gravity in midair.
+                if (surface.BudgetExhausted) skinHit = false;
             }
             drop.SkinCooldown = Math.Max(0, drop.SkinCooldown - dt);
-            var groundHit = TryGround(drop.Position, next - Vector3.UnitY * radius,
-                out var point, out var normal, out var groundFraction, out var a, out var b, out var c);
-            if (skinHit && (!groundHit || skinFraction <= groundFraction))
+            bool deferredGround = drop.HasPendingGroundSweep;
+            var groundStart = deferredGround ? drop.GroundSweepStart : drop.Position;
+            bool canQueryGround = terrainBudget > 0;
+            if (canQueryGround) nextQueryStart = (i + 1) % drops.Length;
+            Vector3 point = default, normal = default, a = default, b = default, c = default;
+            float groundFraction = 1;
+            var groundHit = canQueryGround && TryGround(groundStart, next - Vector3.UnitY * radius,
+                out point, out normal, out groundFraction, out a, out b, out c);
+            if (!canQueryGround)
+            {
+                if (!deferredGround) drop.GroundSweepStart = drop.Position;
+                drop.HasPendingGroundSweep = true;
+                DeferredSeconds = Math.Max(DeferredSeconds, dt);
+            }
+            else drop.HasPendingGroundSweep = false;
+            if (skinHit && (!groundHit || !deferredGround && skinFraction <= groundFraction))
             {
                 var accepted = Deposit(anchor, drop.Volume, drop.Outlet);
                 drop.Volume -= accepted;
-                if (drop.Volume > 0)
-                {
-                    // Pool/patch saturation must not pin a remaining drop forever.
-                    // Pass through body geometry briefly, preserving gravity velocity.
-                    drop.Position = next; drop.Velocity = velocity; drop.SkinCooldown = 0.12;
-                }
+                // Wetting consumes only accepted inventory. Any remainder passes
+                // through the body and can still reach terrain in this same sweep.
+                if (drop.Volume > 0) drop.SkinCooldown = 0.12;
             }
-            else if (groundHit)
+            if (groundHit && drop.Volume > 0)
             {
                 var accepted = AddPuddle(point, normal, a, b, c, drop.Volume, drop.Outlet);
                 drop.Volume -= accepted;
                 if (drop.Volume > 0) { drop.Position = point + normal * (radius * 0.99f); drop.Velocity = Vector3.Zero; }
             }
-            else { drop.Position = next; drop.Velocity = velocity; }
+            else if (drop.Volume > 0) { drop.Position = next; drop.Velocity = velocity; }
         }
+        // Resume after the last terrain-tested drop, so a full pool receives
+        // checks in batches rather than making later slots wait dozens of frames.
+        dropStepOrder = nextQueryStart;
     }
 
     private bool TryGround(Vector3 start, Vector3 end, out Vector3 point, out Vector3 normal,

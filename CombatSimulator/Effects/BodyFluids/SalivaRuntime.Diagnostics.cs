@@ -102,7 +102,7 @@ internal sealed partial class SalivaRuntime
             var tangentRetention = SurfaceTension * capFootprint * 2 * 0.025;
             details.Insert(0,
                 $"inventory:reservoir={reservoir * 1e6:F5}ml,film={filmVolume * 1e6:F5}ml/{filmCount},bead={beadVolume * 1e6:F5}ml/{beadCount}," +
-                $"thread={threadVolume * 1e6:F5}ml/{threadCount},terminalSubset={terminalVolume * 1e6:F5}ml,breakPending={breakVolume * 1e6:F5}ml,drop={dropVolume * 1e6:F5}ml/{dropCount},ground={groundVolume * 1e6:F5}ml/{groundCount}; " +
+                $"thread={threadVolume * 1e6:F5}ml/{threadCount},terminalSubset={terminalVolume * 1e6:F5}ml,breakPending={breakVolume * 1e6:F5}ml,drop={dropVolume * 1e6:F5}ml/{dropCount},ground={groundVolume * 1e6:F5}ml/{groundCount},retained={RetainedRivuletVolume * 1e6:F5}ml; " +
                 $"sourceCap:V={capVolume * 1e6:F5}ml,h={capHeight * 1e3:F3}mm,footprintR={capFootprint * 1e3:F3}mm,outward={capLoad * 1e6:F2}uN,retention={capRetention * 1e6:F2}uN,acceptedSourceAge={acceptedSourceSeconds:F4}s; " +
                 $"runoff:sourceTangent={tangentLoad * 1e6:F2}uN,tangentRetention={tangentRetention * 1e6:F2}uN,caps={runoffCount},blocked={blockedCaps},transitions={runoffTransitions},coalescedTransfer={coalescedVolume * 1e6:F5}ml; " +
                 $"coat:thickness=.025mm,actualCoatVolume={actualCoatVolume * 1e6:F5}ml,wettingTrailTransfer={wettingTrailTransfer * 1e6:F5}ml; " +

@@ -24,6 +24,9 @@ internal sealed partial class SalivaRuntime
     /// <summary>Append continuous film, bounded thread and curved drop/puddle surfaces to the producer's builder.</summary>
     public void AppendGeometry(FluidGeometryBuilder builder)
     {
+        // Reserve geometry for established skin traces before broad wet films,
+        // transient droplets and ground pools can consume the shared frame budget.
+        AppendRetainedRivulets(builder);
         // Detached material belongs to world space, not the lip's current topology.
         if (generation == surface.Generation)
             for (int i = 0; i < films.Length; i++)

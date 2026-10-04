@@ -240,7 +240,7 @@ public sealed partial class BodyFluidController : IDisposable
             return $"Body fluids: {(enabled ? "enabled" : "off")}, emitting={Emitting}, largeVisibilityPreview={simulation.LargeVisibilityPreview}, poseFrames={poseFrames}, steps={steps}, " +
                 $"vertices={(surfaceProbeTime > 0 || visualProbeTime > 0 ? geometry.Count : fluidGeometry.Count)}, geometryOverflow={fluidGeometry.Overflowed}, view={productionView}, " +
                 $"{fluidGeometry.DescribeVisibility()}, " +
-                $"rivulets={simulation.RivuletsDrawn},appearance=per-site, " +
+                $"rivulets={simulation.RivuletsDrawn},retainedRivulets={simulation.RetainedRivuletsDrawn},retainedRecycled={simulation.RetainedRivuletsRecycled},appearance=per-site, " +
                 $"framework[{frameworkTimings.Describe()}],pose[{poseTimings.Describe()}], " +
                 $"skinVertices={surface.SkinVerticesThisFrame},triangleTests={surface.TriangleTestsThisFrame},candidates={surface.BroadPhaseCandidatesThisFrame},boundsBuilt={surface.TriangleBoundsBuiltThisFrame},budgetHit={surface.BudgetExhausted},contactPending='{surface.ContactPendingReason}'; " +
                 $"runtime={simulation.Status},volume error={simulation.ConservationError * 1e6:F5} ml; {simulation.InventoryDiagnostics}; {simulation.CapGeometryDiagnostics}; surface={SurfaceStatus}; render={renderer.Status}; " +

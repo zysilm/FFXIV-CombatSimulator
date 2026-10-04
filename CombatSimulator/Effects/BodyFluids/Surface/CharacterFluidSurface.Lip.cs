@@ -110,25 +110,31 @@ public sealed unsafe partial class CharacterFluidSurface
     private void TrySelectLipCandidate()
     {
         if (lipBound || lipSelectionAttempted || lipCandidateTriangles.Length == 0 || !poseAvailable) return;
-        var left = BonePosition(lowerLipLeft); var right = BonePosition(lowerLipRight);
-        var center = (left + right) * 0.5f;
-        var upper = (BonePosition(upperLipLeft) + BonePosition(upperLipRight)) * 0.5f;
-        var outward = Vector3.Cross(right - left, upper - center);
+        // Bind in the loaded model's deformed reference space, not whichever
+        // facial expression happens to be active on the first captured frame.
+        // The center of the upper/lower landmarks targets the mouth opening;
+        // projecting onto lower-lip-only triangles selects its supporting edge.
+        if (!ReferenceOutletPoint(lowerLipLeft, out var left) || !ReferenceOutletPoint(lowerLipRight, out var right) ||
+            !ReferenceOutletPoint(upperLipLeft, out var upperLeft) || !ReferenceOutletPoint(upperLipRight, out var upperRight) ||
+            !ReferenceOutletPoint(facialOrigin, out var origin)) return;
+        var lower = (left + right) * 0.5f;
+        var upper = (upperLeft + upperRight) * 0.5f;
+        var center = (lower + upper) * 0.5f;
+        var outward = Vector3.Cross(right - left, upper - lower);
         if (!Finite(outward) || outward.LengthSquared() < 1e-12f)
         { LipStatus = "Lip landmark frame degenerate; emission disabled"; lipSelectionAttempted = true; return; }
         outward = Vector3.Normalize(outward);
-        if (Vector3.Dot(outward, center - BonePosition(facialOrigin)) < 0) outward = -outward;
+        if (Vector3.Dot(outward, center - origin) < 0) outward = -outward;
         // A local anatomical scale bounds the projection; never search the body or use a head-offset source.
         float maxDistance = Math.Max(Vector3.Distance(left, right) * 1.5f, 0.004f);
         float bestDistance = maxDistance * maxDistance;
         int best = -1; Vector3 bestBary = default;
         foreach (int index in lipCandidateTriangles)
         {
-            if (!Triangle(index, out var a, out var b, out var c))
-            {
-                if (BudgetExhausted) { LipStatus = "Lip candidate skin budget pending; emission disabled"; return; }
-                continue;
-            }
+            var candidate = faces[index];
+            var a = vertices[candidate.A].Position;
+            var b = vertices[candidate.B].Position;
+            var c = vertices[candidate.C].Position;
             var normal = SafeNormal(Vector3.Cross(b - a, c - a));
             if (Vector3.Dot(normal, outward) < 0.15f) continue;
             var bary = ClosestTriangleBarycentric(center, a, b, c);
@@ -141,7 +147,7 @@ public sealed unsafe partial class CharacterFluidSurface
         if (best < 0) { LipStatus = "No outward local lower-lip triangle within landmark distance; emission disabled"; return; }
         lipAnchor = new(Generation, best, bestBary); lipBound = true; LipAnchorIsValidated = false;
         var face = faces[best];
-        LipStatus = $"AUTO ANATOMICAL LIP BOUND generation={Generation} slot={face.Slot} mesh={face.Mesh} indexEntry={face.IndexEntry} " +
+        LipStatus = $"REFERENCE LIP EDGE BOUND generation={Generation} slot={face.Slot} mesh={face.Mesh} indexEntry={face.IndexEntry} " +
             $"resolvedVertices={face.V0},{face.V1},{face.V2} bary={bestBary} boneProjection={MathF.Sqrt(bestDistance) * 1000:0.000} mm; manual marker confirmation optional";
         Services.Log.Info($"Body fluid lip: {LipStatus}");
     }

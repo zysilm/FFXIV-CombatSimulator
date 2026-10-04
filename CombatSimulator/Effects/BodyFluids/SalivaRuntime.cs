@@ -62,7 +62,7 @@ internal sealed partial class SalivaRuntime
     {
         get
         {
-            var total = reservoir + GroundVolume;
+            var total = reservoir + GroundVolume + RetainedRivuletVolume;
             foreach (var film in films) total += film.Volume;
             foreach (var bead in beads) total += bead.Volume;
             foreach (var thread in threads) total += thread.Model.TotalVolume;
@@ -83,7 +83,14 @@ internal sealed partial class SalivaRuntime
         public bool HasWorldSample;
         public FluidSurfaceSample LastWorldSample;
     }
-    private struct Drop { public int Outlet; public long Created; public double Volume, SkinCooldown; public Vector3 Position, Velocity; }
+    private struct Drop
+    {
+        public int Outlet;
+        public long Created;
+        public double Volume, SkinCooldown;
+        public Vector3 Position, Velocity, GroundSweepStart;
+        public bool HasPendingGroundSweep;
+    }
     private sealed class Thread
     {
         public int Outlet;
@@ -149,7 +156,7 @@ internal sealed partial class SalivaRuntime
             lastRuntimeSubsteps++; lastRuntimeStepSeconds = dt;
             if (dt < 1e-7) microstepCount++;
             terrainBudget = 32; surfaceBudget = 40;
-            rivuletSampleBudget = 8;
+            rivuletSampleBudget = 24;
             foreach (var ground in grounds) ground?.BeginStep();
             SupplyOutlets(dt);
             for (var i = 0; i < films.Length; i++)
@@ -224,10 +231,11 @@ internal sealed partial class SalivaRuntime
             for (var i = 0; i < beads.Length; i++)
                 if (!IsSourceBead(i) && !BeadSlotReserved(i) &&
                     (free < 0 || beads[i].Created < beads[free].Created)) free = i;
-            if (free >= 0) RetiredVolume += beads[free].Volume;
         }
         if (free < 0) return 0;
         var volume = Math.Min(requested, BeadLimit);
+        PreserveRivulet(free);
+        RetiredVolume += beads[free].Volume;
         rivulets[free]?.Reset();
         beads[free] = new() { Outlet = filmOutlets[film], Created = ++ownerSequence, Film = film, Anchor = anchor, Volume = volume,
             LastWorldSample = worldSample, HasWorldSample = hasSample };
@@ -468,6 +476,7 @@ internal sealed partial class SalivaRuntime
     private void ReleaseChangedSkinGeneration()
     {
         skinGenerationChanges++;
+        ClearRetainedRivulets(true);
         foreach (var state in outletStates) { state.Bead = -1; state.Available = false; }
         // World-space free material survives shape changes. A stale material anchor
         // cannot safely be rebound by triangle number to a replacement mesh.
@@ -518,6 +527,7 @@ internal sealed partial class SalivaRuntime
     private void RetireInventory()
     {
         RetiredVolume += TotalVolume;
+        ClearRetainedRivulets(false);
         foreach (var state in outletStates) state.Reset();
         generation = 0; runoffTransitions = 0; coalescedVolume = 0;
         wettingTrailTransfer = actualCoatVolume = 0;

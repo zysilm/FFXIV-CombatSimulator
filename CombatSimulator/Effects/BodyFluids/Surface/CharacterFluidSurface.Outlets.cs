@@ -10,10 +10,10 @@ public sealed unsafe partial class CharacterFluidSurface
     private sealed class OutletBinding
     {
         public uint Generation;
-        public Vector3 Offset, LocalTarget;
+        public Vector3 Offset, LocalTarget, LocalForward;
         public BodyFluidOutletKind Kind;
         public int Bone, Slot, Scan, Selected;
-        public bool Eye, Complete, Bound;
+        public bool Eye, FrontPatch, Complete, Bound;
         public HashSet<int> Influences = new();
         public PriorityQueue<int, float> Candidates = new();
         public int[] Triangles = Array.Empty<int>();
@@ -65,7 +65,8 @@ public sealed unsafe partial class CharacterFluidSurface
             anchor = binding.Selected < 0 ? binding.Left : binding.Selected > 0 ? binding.Right : binding.Center;
         }
         if (!TryEvaluate(anchor, out _)) { OutletStatus = "Current outlet pose/query budget unavailable"; return false; }
-        binding.Status = $"Bound slot={binding.Slot}; outlet={(binding.Selected < 0 ? "left" : binding.Selected > 0 ? "right" : "center")}; patch={binding.Triangles.Length}";
+        string driver = (uint)binding.Bone < (uint)surfaceBoneNames.Length ? surfaceBoneNames[binding.Bone] : "loaded";
+        binding.Status = $"Bound slot={binding.Slot}; driver={driver}; outlet={(binding.Selected < 0 ? "left" : binding.Selected > 0 ? "right" : "center")}; patch={binding.Triangles.Length}";
         OutletStatus = binding.Status;
         return true;
     }
@@ -94,8 +95,13 @@ public sealed unsafe partial class CharacterFluidSurface
                 result.Slot = 11; result.Eye = true; break;
             case BodyFluidOutletKind.Part1Left:
             case BodyFluidOutletKind.Part1Right:
-                name = kind == BodyFluidOutletKind.Part1Left ? "j_mune_l" : "j_mune_r";
-                names = new[] { name }; result.Slot = 1; neutral = new(0, 0, .035f); break;
+                string partSide = kind == BodyFluidOutletKind.Part1Left ? "l" : "r";
+                // The loaded Rue profile uses a separate weighted pose driver.
+                // Its visible vertices do not carry the stock driver's weights.
+                string customDriver = $"iv_c_mune_{partSide}", stockDriver = $"j_mune_{partSide}";
+                name = ResolveSurfaceBone(customDriver) >= 0 ? customDriver : stockDriver;
+                names = new[] { customDriver, stockDriver }; result.Slot = 1; result.FrontPatch = true;
+                neutral = new(0, 0, .30f); break;
             case BodyFluidOutletKind.Part2:
             case BodyFluidOutletKind.Part3:
                 name = "j_kosi"; names = new[] { name, "j_asi_a_l", "j_asi_a_r" }; result.Slot = 3;
@@ -115,6 +121,8 @@ public sealed unsafe partial class CharacterFluidSurface
             // Translate the loaded rig's forward/up frame into this driver's local frame.
             // A local Z axis on a side driver need not point toward the visible front patch.
             neutral = Vector3.TransformNormal(forward * neutral.Z + up * neutral.Y, inverseBind[result.Bone]);
+            if (result.FrontPatch)
+                result.LocalForward = SafeNormal(Vector3.TransformNormal(forward, inverseBind[result.Bone]));
         }
         result.LocalTarget = neutral + offset;
         if (result.Bone < 0) result.Status = "Required loaded pose driver missing";
@@ -152,7 +160,9 @@ public sealed unsafe partial class CharacterFluidSurface
         if (!Matrix4x4.Invert(inverseBind[binding.Bone], out var reference))
         { binding.Status = "Reference driver unavailable"; return; }
         var target = Vector3.Transform(binding.LocalTarget, reference);
-        float radius = binding.Slot == 11 ? .04f : .18f;
+        // Front profiles rank the actual deformed weighted patch against an
+        // exterior query point. A fixed 35mm skin depth rejects modded shapes.
+        float radius = binding.FrontPatch ? .40f : binding.Slot == 11 ? .04f : .18f;
         while (binding.Scan < faces.Length && outletScanRemaining > 0)
         {
             outletScanRemaining--;
@@ -232,7 +242,9 @@ public sealed unsafe partial class CharacterFluidSurface
     private bool FindOutletAnchor(OutletBinding binding, Vector3 target, out FluidSurfaceAnchor anchor)
     {
         anchor = default;
-        float best = binding.Slot == 11 ? .025f * .025f : .10f * .10f;
+        float best = binding.FrontPatch ? float.PositiveInfinity : binding.Slot == 11 ? .025f * .025f : .10f * .10f;
+        Vector3 front = binding.FrontPatch ? SafeNormal(Vector3.TransformNormal(binding.LocalForward, boneWorld[binding.Bone])) : default;
+        Vector3 origin = binding.FrontPatch ? Vector3.Transform(binding.Offset, boneWorld[binding.Bone]) : default;
         foreach (int index in binding.Triangles)
         {
             if (!OutletTriangle(index, binding, out var a, out var b, out var c))
@@ -242,7 +254,18 @@ public sealed unsafe partial class CharacterFluidSurface
                 continue;
             }
             Vector3 bary = ClosestTriangleBarycentric(target, a, b, c);
-            float distance = Vector3.DistanceSquared(target, a * bary.X + b * bary.Y + c * bary.Z);
+            Vector3 point = a * bary.X + b * bary.Y + c * bary.Z;
+            if (binding.FrontPatch)
+            {
+                // Select an outward visible front surface, never the nearest
+                // interior/back patch around an under-skin pose landmark.
+                Vector3 normal = SafeNormal(Vector3.Cross(b - a, c - a));
+                Vector3 delta = point - origin;
+                float depth = Vector3.Dot(delta, front);
+                if (Vector3.Dot(normal, front) < .15f || depth <= 0 || depth > .30f ||
+                    (delta - front * depth).LengthSquared() > .12f * .12f) continue;
+            }
+            float distance = Vector3.DistanceSquared(target, point);
             if (!Finite(bary) || distance >= best) continue;
             best = distance; anchor = new(Generation, index, bary);
         }

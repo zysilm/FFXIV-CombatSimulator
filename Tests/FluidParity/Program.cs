@@ -9,9 +9,13 @@ using CombatSimulator.Effects.BodyFluids.Simulation;
 using CombatSimulator.Effects.BodyFluids.Surface;
 using CombatSimulator.Rendering.WorldGeometry;
 CultureInfo.CurrentCulture=CultureInfo.InvariantCulture;
+if(args.Contains("--contacts")){ ContactChecks.Run(); return; }
+#if CURRENT
+if(args.Contains("--retained")){ RetainedChecks.Run(); return; }
+#endif
 string output=args.Length>0?args[0]:"results.csv";
 using var writer=new StreamWriter(output);
-writer.WriteLine("scenario,frame,emitted,retired,total,error,deferred,film,cap,thread,drop,ground,reservoir,capcount,threadcount,dropcount,groundcells,vertices,xsum,ysum,zsum,thicknesssum,coveragesum,statehash,geometryhash");
+writer.WriteLine("scenario,frame,emitted,retired,total,error,deferred,film,cap,thread,drop,ground,reservoir,retained,capcount,threadcount,dropcount,groundcells,vertices,xsum,ysum,zsum,thicknesssum,coveragesum,statehash,geometryhash");
 foreach(string scenario in new[]{"upright","downward","roll","corner","budget","generation","stop","capacity","wetpatch","parameters"}) {
  var config=new Configuration {BodyFluidSettingsVersion=2};
  float flow=scenario=="capacity"?.12f:.006f;
@@ -50,6 +54,10 @@ foreach(string scenario in new[]{"upright","downward","roll","corner","budget","
 #else
   var ground=(GroundFilmRuntime)Read(runtime,"ground");gv=ground.Volume;gc=ground.CellCount;
 #endif
+  double retainedVolume=0;
+#if CURRENT
+  retainedVolume=(double)(runtime.GetType().GetProperty("RetainedRivuletVolume",BindingFlags.Instance|BindingFlags.Public)?.GetValue(runtime)??0d);
+#endif
   double xs=0,ys=0,zs=0,ts=0,cs=0;foreach(var v in builder.Vertices){xs+=v.Position.X;ys+=v.Position.Y;zs+=v.Position.Z;ts+=v.Thickness;cs+=v.Coverage;}
   using var state=new MemoryStream();using(var b=new BinaryWriter(state,System.Text.Encoding.UTF8,true)){
    // Compare wet inventory and material coordinates rather than empty pool capacity or owner tags.
@@ -59,8 +67,12 @@ foreach(string scenario in new[]{"upright","downward","roll","corner","budget","
    foreach(var drop in drops)if((double)Read(drop!,"Volume")>0){b.Write((double)Read(drop!,"Volume"));Vec(b,(Vector3)Read(drop!,"Position"));Vec(b,(Vector3)Read(drop!,"Velocity"));}
   }
   foreach(var g in GroundOwners(runtime))if(g!=null&&g.Volume>0){var film=(SurfaceFilm)Read(g,"film");using var b=new BinaryWriter(state,System.Text.Encoding.UTF8,true);b.Write(g.Volume);for(int c=0;c<film.CellCount;c++){var cell=film.GetCell(c);b.Write(cell.Volume);Vec(b,cell.Geometry.A);Vec(b,cell.Geometry.B);Vec(b,cell.Geometry.C);}}
+#if CURRENT
+  var residentField=runtime.GetType().GetField("retainedRivulets",BindingFlags.Instance|BindingFlags.NonPublic);
+  if(residentField?.GetValue(runtime) is Array residents){using var b=new BinaryWriter(state,System.Text.Encoding.UTF8,true);foreach(var resident in residents){if(resident==null||(double)Read(resident,"Volume")<=0)continue;b.Write((double)Read(resident,"Volume"));b.Write((int)Read(resident,"Outlet"));var path=Read(resident,"Path");int rows=(int)Read(path,"Count");b.Write(rows);var anchors=(FluidSurfaceAnchor[])Read(path,"Samples");for(int i=0;i<rows*7;i++){b.Write(anchors[i].Generation);b.Write(anchors[i].Triangle);Vec(b,anchors[i].Barycentric);}}}
+#endif
   string sh=Convert.ToHexString(SHA256.HashData(state.ToArray()));string gh=Convert.ToHexString(SHA256.HashData(MemoryMarshal.AsBytes(builder.Vertices)));
-  writer.WriteLine(string.Join(',',scenario,frame,runtime.EmittedVolume.ToString("R"),runtime.RetiredVolume.ToString("R"),runtime.TotalVolume.ToString("R"),runtime.ConservationError.ToString("R"),runtime.DeferredSeconds.ToString("R"),fv.ToString("R"),bv.ToString("R"),tv.ToString("R"),dv.ToString("R"),gv.ToString("R"),(runtime.TotalVolume-fv-bv-tv-dv-gv).ToString("R"),bc,tc,dc,gc,builder.Count,xs.ToString("R"),ys.ToString("R"),zs.ToString("R"),ts.ToString("R"),cs.ToString("R"),sh,gh));
+  writer.WriteLine(string.Join(',',scenario,frame,runtime.EmittedVolume.ToString("R"),runtime.RetiredVolume.ToString("R"),runtime.TotalVolume.ToString("R"),runtime.ConservationError.ToString("R"),runtime.DeferredSeconds.ToString("R"),fv.ToString("R"),bv.ToString("R"),tv.ToString("R"),dv.ToString("R"),gv.ToString("R"),(runtime.TotalVolume-fv-bv-tv-dv-gv-retainedVolume).ToString("R"),retainedVolume.ToString("R"),bc,tc,dc,gc,builder.Count,xs.ToString("R"),ys.ToString("R"),zs.ToString("R"),ts.ToString("R"),cs.ToString("R"),sh,gh));
   if(!double.IsFinite(runtime.TotalVolume)||Math.Abs(runtime.ConservationError)>1e-13)throw new Exception($"Conservation failure {scenario}/{frame}: {runtime.ConservationError}");
  }
  Console.WriteLine($"{scenario}: total={runtime.TotalVolume:R}, emitted={runtime.EmittedVolume:R}, retired={runtime.RetiredVolume:R}");

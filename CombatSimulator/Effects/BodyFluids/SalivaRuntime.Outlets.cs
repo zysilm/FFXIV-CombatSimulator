@@ -8,6 +8,8 @@ namespace CombatSimulator.Effects.BodyFluids;
 
 internal sealed partial class SalivaRuntime
 {
+    private readonly long[] outletFilmUses = new long[OutletCount * FilmsPerOutlet];
+    private long outletFilmSequence;
     private sealed class OutletState
     {
         public BodyFluidOutletSettings? Settings;
@@ -84,7 +86,59 @@ internal sealed partial class SalivaRuntime
     }
 
     private int FindOutletFilm(int source, FluidSurfaceAnchor anchor)
-        => FindFilm(anchor, source);
+    {
+        int film = FindFilm(anchor, source);
+        if (film >= 0)
+        {
+            outletFilmUses[film] = ++outletFilmSequence;
+            return film;
+        }
+        // A source must not permanently stop after visiting four wet patches.
+        // This policy applies only to source binding; ordinary body receivers
+        // retain their existing conservative capacity/optional-transfer behavior.
+        int first = source * FilmsPerOutlet, end = first + FilmsPerOutlet;
+        int victim = -1, bestRank = int.MaxValue;
+        for (int candidate = first; candidate < end; candidate++)
+        {
+            int rank = 0;
+            bool canRelease = true;
+            for (int i = 0; i < beads.Length; i++)
+            {
+                if (beads[i].Film != candidate || beads[i].Outlet != source) continue;
+                if (BeadSlotReserved(i)) rank = 2;
+                else if (beads[i].Volume > 0) rank = Math.Max(rank, 1);
+                if (beads[i].Volume > 0 && !beads[i].HasWorldSample)
+                {
+                    if (!surface.TryEvaluate(beads[i].Anchor, out var verified))
+                    { canRelease = false; break; }
+                    beads[i].LastWorldSample = verified; beads[i].HasWorldSample = true;
+                }
+            }
+            if (!canRelease) continue;
+            if (victim < 0 || rank < bestRank || rank == bestRank && outletFilmUses[candidate] < outletFilmUses[victim])
+            { victim = candidate; bestRank = rank; }
+        }
+        if (victim < 0) return -1; // Unknown poses still defer; never guess a release position.
+        for (int i = 0; i < beads.Length; i++)
+        {
+            if (beads[i].Film != victim || beads[i].Outlet != source) continue;
+            PreserveRivulet(i);
+            // An old neck retains its actual material endpoint and model inventory.
+            // It stops borrowing from this receiving bank before the bank is reused.
+            foreach (var thread in threads)
+                if (thread.Bead == i) thread.Bead = -1;
+            if (beads[i].Volume > 0)
+            {
+                var sample = beads[i].LastWorldSample;
+                if (surface.TryEvaluate(beads[i].Anchor, out var current)) sample = current;
+                ReleaseBead(i, sample, sample.Velocity);
+            }
+            else ReleaseSourceRole(i);
+        }
+        RetiredVolume += films[victim].Clear();
+        outletFilmUses[victim] = ++outletFilmSequence;
+        return films[victim].TryBind(anchor) ? victim : -1;
+    }
 
     public string DescribeOutlet(BodyFluidOutletKind kind)
     {
@@ -104,6 +158,7 @@ internal sealed partial class SalivaRuntime
             if (oldest < 0 || beads[i].Created < beads[oldest].Created) oldest = i;
         }
         if (oldest < 0) return -1;
+        PreserveRivulet(oldest);
         RetiredVolume += beads[oldest].Volume;
         beads[oldest] = new() { Created = ++ownerSequence };
         rivulets[oldest]?.Reset();
