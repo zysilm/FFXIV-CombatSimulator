@@ -23,20 +23,23 @@ internal sealed partial class SalivaRuntime
     private static readonly Vector3 Gravity = new(0, -9.81f, 0);
     private readonly CharacterFluidSurface surface;
     private readonly Configuration config;
-    private readonly SurfaceFilmRuntime[] films = new SurfaceFilmRuntime[4];
+    private const int FilmsPerOutlet = 4;
+    private SurfaceFilmRuntime[] films = new SurfaceFilmRuntime[FilmsPerOutlet];
+    private int[] filmOutlets = new int[FilmsPerOutlet];
     private const int BeadCapacity = 32;
     private readonly Bead[] beads = new Bead[BeadCapacity];
     private readonly Thread[] threads = new Thread[4];
     private readonly Drop[] drops = new Drop[64];
     private long ownerSequence;
     private int dropStepOrder;
-    private readonly GroundFilmRuntime ground = new();
+    private readonly GroundFilmRuntime?[] grounds = new GroundFilmRuntime[OutletCount];
     private readonly GroundSupportProbe groundProbe;
-    private double reservoir;
-    private double acceptedSourceSeconds;
-    private int sourceBead = -1;
-    private FluidSurfaceAnchor previousSourceOutlet;
-    private long nextSourceLog;
+    private const int OutletCount = 9;
+    private readonly OutletState[] outletStates = new OutletState[OutletCount];
+    private int outletOrder;
+    private double reservoir { get { double total = 0; foreach (var state in outletStates) total += state.Reservoir; return total; } }
+    private int sourceBead => outletStates[0].Bead;
+    private double acceptedSourceSeconds => outletStates[0].AcceptedSeconds;
     private long runoffTransitions;
     private double coalescedVolume;
     private double wettingTrailTransfer, actualCoatVolume;
@@ -59,7 +62,7 @@ internal sealed partial class SalivaRuntime
     {
         get
         {
-            var total = reservoir + ground.Volume;
+            var total = reservoir + GroundVolume;
             foreach (var film in films) total += film.Volume;
             foreach (var bead in beads) total += bead.Volume;
             foreach (var thread in threads) total += thread.Model.TotalVolume;
@@ -71,6 +74,7 @@ internal sealed partial class SalivaRuntime
 
     private struct Bead
     {
+        public int Outlet;
         public long Created;
         public double Volume, RunoffDistance;
         public int Film;
@@ -79,9 +83,10 @@ internal sealed partial class SalivaRuntime
         public bool HasWorldSample;
         public FluidSurfaceSample LastWorldSample;
     }
-    private struct Drop { public long Created; public double Volume, SkinCooldown; public Vector3 Position, Velocity; }
+    private struct Drop { public int Outlet; public long Created; public double Volume, SkinCooldown; public Vector3 Position, Velocity; }
     private sealed class Thread
     {
+        public int Outlet;
         public long Created;
         // Eight material nodes keep the initial 5mm bridge away from tiny-segment
         // stiffness; render sampling remains smooth and topology can still coarsen.
@@ -106,7 +111,9 @@ internal sealed partial class SalivaRuntime
     {
         this.surface = surface; this.config = config;
         groundProbe = ProbeGroundFilm;
-        for (var i = 0; i < films.Length; i++) films[i] = new(surface);
+        for (var i = 0; i < outletStates.Length; i++) outletStates[i] = new() { LastSettings = new() { Kind = (BodyFluidOutletKind)i, SettingsVersion = 1 } };
+        for (var i = 0; i < films.Length; i++)
+        { films[i] = new(surface); filmOutlets[i] = i / FilmsPerOutlet; }
         for (var i = 0; i < threads.Length; i++) threads[i] = new();
     }
 
@@ -119,10 +126,6 @@ internal sealed partial class SalivaRuntime
         if (seconds < 1e-7)
         { DeferredSeconds = seconds; Status = "Paused: requested runtime time below numerical resolution"; return; }
         config.ClampBodyFluids();
-        viscosity = config.BodyFluidViscosityPaSeconds;
-        foreach (var film in films) film.SetMaterial(viscosity);
-        foreach (var thread in threads) thread.Model.SetMaterial(viscosity, config.BodyFluidFilamentRelaxation, config.BodyFluidStringiness);
-        ground.SetMaterial(viscosity);
         if (seconds > 0.15)
         { DeferredSeconds = seconds; Status = "Paused: source pose gap exceeds 150 ms"; return; }
         // The anatomical selector already requires a supported, outward lower-lip triangle.
@@ -130,18 +133,10 @@ internal sealed partial class SalivaRuntime
         // DLL reloads and shape replacements must not silently disable a valid source.
         if (generation != 0 && generation != surface.Generation) ReleaseChangedSkinGeneration();
         generation = surface.Generation;
-        FluidSurfaceSample lipSample = default;
-        bool lipAvailable = surface.TryGetMouthAnchor(out var lip) && surface.TryEvaluate(lip, out lipSample);
-        var sourceFilm = lipAvailable ? FindFilm(lip) : -1;
-        bool sourceAvailable = sourceFilm >= 0;
-        if (sourceAvailable && sourceBead >= 0)
-        {
-            var previous = previousSourceOutlet;
-            if (previous.Generation == lip.Generation && (previous.Triangle != lip.Triangle ||
-                Vector3.DistanceSquared(previous.Barycentric, lip.Barycentric) > 1e-8f))
-                sourceBead = -1; // Existing material stays put; only new supply changes outlet.
-        }
-        if (sourceAvailable) previousSourceOutlet = lip;
+        PrepareOutlets();
+        for (int i = 0; i < films.Length; i++) films[i].SetMaterial(GetOutletSettings((BodyFluidOutletKind)filmOutlets[i]).ViscosityPaSeconds);
+        bool sourceAvailable = false;
+        foreach (var state in outletStates) sourceAvailable |= state.Available;
         // Controller fixed time is a float, slightly larger than exact double 1/60.
         // Equal subdivisions consume the full admitted time once; a tolerance in
         // step-count selection must never create a nanosecond collision-only step.
@@ -155,59 +150,8 @@ internal sealed partial class SalivaRuntime
             if (dt < 1e-7) microstepCount++;
             terrainBudget = 32; surfaceBudget = 40;
             rivuletSampleBudget = 8;
-            ground.BeginStep();
-            if (Emitting && sourceAvailable)
-            {
-                var requested = config.BodyFluidFlowMlPerSecond * (LargeVisibilityPreview ? 20 : 1) * 1e-6 * dt;
-                reservoir += requested; EmittedVolume += requested;
-                acceptedSourceSeconds += dt;
-            }
-            // Mouth supply accumulates in a true lip cap. The skin film is a receiving/
-            // wetting owner, rather than the default destination for the entire source flux.
-            if (sourceAvailable && sourceBead < 0)
-            {
-                for (var bead = 0; bead < beads.Length; bead++)
-                    if (beads[bead].Volume <= 0 && !BeadSlotReserved(bead))
-                    { beads[bead] = new() { Created = ++ownerSequence }; rivulets[bead]?.Reset(); sourceBead = bead; break; }
-                if (sourceBead < 0)
-                {
-                    var oldest = -1;
-                    for (var bead = 0; bead < beads.Length; bead++)
-                        if (!BeadSlotReserved(bead) && (oldest < 0 || beads[bead].Created < beads[oldest].Created)) oldest = bead;
-                    if (oldest >= 0)
-                    {
-                        RetiredVolume += beads[oldest].Volume;
-                        beads[oldest] = new() { Created = ++ownerSequence };
-                        rivulets[oldest]?.Reset(); sourceBead = oldest;
-                    }
-                }
-            }
-            if (sourceAvailable && sourceBead >= 0)
-            {
-                ref var cap = ref beads[sourceBead];
-                cap.Film = sourceFilm; cap.Anchor = lip;
-                var accepted = Math.Min(reservoir, Math.Max(0, BeadLimit - cap.Volume));
-                cap.Volume += accepted; reservoir -= accepted;
-                long now = Environment.TickCount64;
-                if (now >= nextSourceLog)
-                {
-                    nextSourceLog = now + 5000;
-                    Services.Log.Info($"Body fluid supply: {surface.LipOutletStatus}; film={sourceFilm},sourceBead={sourceBead}," +
-                        $"lipTriangle={lip.Triangle},capTriangle={cap.Anchor.Triangle},lipPosition={lipSample.Position}," +
-                        $"accepted={accepted * 1e6:F6}ml,capVolume={cap.Volume * 1e6:F6}ml,reservoir={reservoir * 1e6:F6}ml");
-                }
-                if (films[sourceFilm].TryGetCell(lip, out var cell))
-                {
-                    var sample = films[sourceFilm].GetCell(cell);
-                    BeadDimensions(cap.Volume, out _, out _, out var footprintRadius);
-                    var contactArea = Math.Min(sample.Geometry.Area, Math.PI * footprintRadius * footprintRadius);
-                    // Maintain only a local 25µm contact wetting layer. This is a bounded
-                    // artistic wetting target, not a fixed proportion of incoming flow.
-                    var wettingDeficit = Math.Max(0, contactArea * 0.000025 - sample.Volume);
-                    var wetted = films[sourceFilm].AddVolume(lip, Math.Min(cap.Volume, wettingDeficit));
-                    cap.Volume -= wetted;
-                }
-            }
+            foreach (var ground in grounds) ground?.BeginStep();
+            SupplyOutlets(dt);
             for (var i = 0; i < films.Length; i++)
             {
                 if (films[i].CellCount == 0) continue;
@@ -219,8 +163,12 @@ internal sealed partial class SalivaRuntime
             StepBeads(dt);
             StepThreads(dt);
             StepDrops(dt);
-            if (ground.Volume > 0)
+            for (int order = 0; order < grounds.Length; order++)
             {
+                int i = (outletOrder + order) % grounds.Length;
+                var ground = grounds[i];
+                if (ground == null || ground.Volume <= 0) continue;
+                ground.SetMaterial(GetOutletSettings((BodyFluidOutletKind)i).ViscosityPaSeconds);
                 var spread = ground.Advance(dt, Gravity, groundProbe);
                 DeferredSeconds = Math.Max(DeferredSeconds, spread.DeferredSeconds);
             }
@@ -230,15 +178,28 @@ internal sealed partial class SalivaRuntime
         double threadDebt = 0;
         foreach (var thread in threads) threadDebt += thread.TimeDebt;
         Status = $"Conservative saliva: cells={CountCells()} volume={TotalVolume * 1e6:F4}ml ledgerError={ConservationError:E2}m³ deferred={DeferredSeconds:F4}s; " +
-            $"lastRuntimeSubsteps={lastRuntimeSubsteps},lastRuntimeStepSeconds={lastRuntimeStepSeconds:E9},microstepCount={microstepCount}; groundCells={ground.CellCount},terrainPending={ground.PendingProbes}; " +
+            $"lastRuntimeSubsteps={lastRuntimeSubsteps},lastRuntimeStepSeconds={lastRuntimeStepSeconds:E9},microstepCount={microstepCount}; groundCells={GroundCellCount}; " +
             $"skinGenerationChanges={skinGenerationChanges},retiredInvalidSkinFilm={retiredSkinFilm * 1e6:F5}ml,threadTimeDebt={threadDebt:F5}s,sourceAvailable={sourceAvailable}; body=thincoat/mobilecaps/permeable-neck";
     }
 
     private int CountCells() { var count = 0; foreach (var film in films) count += film.CellCount; return count; }
-    private int FindFilm(FluidSurfaceAnchor anchor)
+    private int FindFilm(FluidSurfaceAnchor anchor, int outlet = 0)
     {
-        for (var i = 0; i < films.Length; i++) if (films[i].TryGetCell(anchor, out _)) return i;
-        for (var i = 0; i < films.Length; i++)
+        int first = outlet * FilmsPerOutlet, end = first + FilmsPerOutlet;
+        if (end > films.Length)
+        {
+            // Allocate additional banks only when a new site actually binds.
+            // The default Mouth case keeps the original four-patch working set.
+            int previous = films.Length;
+            Array.Resize(ref films, end);
+            Array.Resize(ref filmOutlets, end);
+            for (int i = previous; i < end; i++)
+            { films[i] = new(surface); filmOutlets[i] = i / FilmsPerOutlet; }
+        }
+        for (var i = first; i < end; i++) if (films[i].TryGetCell(anchor, out _)) return i;
+        // Preserve the original four-patch capacity and first-empty allocation for
+        // each owner. A missing receiver defers transfer; it never clears wet skin.
+        for (var i = first; i < end; i++)
             if (films[i].Volume <= 0 && films[i].TryBind(anchor)) return i;
         return -1;
     }
@@ -249,8 +210,8 @@ internal sealed partial class SalivaRuntime
         var free = -1;
         for (var i = 0; i < beads.Length; i++)
         {
-            if (beads[i].Volume <= 0) { if (free < 0 && i != sourceBead && !BeadSlotReserved(i)) free = i; continue; }
-            if (beads[i].Film == film && beads[i].Anchor.Triangle == anchor.Triangle && beads[i].Anchor.Generation == anchor.Generation)
+            if (beads[i].Volume <= 0) { if (free < 0 && !IsSourceBead(i) && !BeadSlotReserved(i)) free = i; continue; }
+            if (beads[i].Outlet == filmOutlets[film] && beads[i].Film == film && beads[i].Anchor.Triangle == anchor.Triangle && beads[i].Anchor.Generation == anchor.Generation)
             {
                 var accepted = Math.Min(requested, Math.Max(0, BeadLimit - beads[i].Volume));
                 beads[i].Volume += accepted;
@@ -261,14 +222,14 @@ internal sealed partial class SalivaRuntime
         if (free < 0)
         {
             for (var i = 0; i < beads.Length; i++)
-                if (i != sourceBead && !BeadSlotReserved(i) &&
+                if (!IsSourceBead(i) && !BeadSlotReserved(i) &&
                     (free < 0 || beads[i].Created < beads[free].Created)) free = i;
             if (free >= 0) RetiredVolume += beads[free].Volume;
         }
         if (free < 0) return 0;
         var volume = Math.Min(requested, BeadLimit);
         rivulets[free]?.Reset();
-        beads[free] = new() { Created = ++ownerSequence, Film = film, Anchor = anchor, Volume = volume,
+        beads[free] = new() { Outlet = filmOutlets[film], Created = ++ownerSequence, Film = film, Anchor = anchor, Volume = volume,
             LastWorldSample = worldSample, HasWorldSample = hasSample };
         return volume;
     }
@@ -296,6 +257,8 @@ internal sealed partial class SalivaRuntime
             int i = (start + offset) % beads.Length;
             ref var bead = ref beads[i];
             if (bead.Volume <= 0) continue;
+            var site = GetOutletSettings((BodyFluidOutletKind)bead.Outlet);
+            viscosity = site.ViscosityPaSeconds;
             if (bead.Anchor.Generation != generation)
             {
                 if (bead.HasWorldSample && !BeadSlotReserved(i)) ReleaseBead(i, bead.LastWorldSample, bead.LastWorldSample.Velocity);
@@ -323,7 +286,7 @@ internal sealed partial class SalivaRuntime
             // avoids metre-scale transit times. SurfaceSpeed is an artistic m/s cap;
             // size, local world gravity, hysteresis and viscosity still set the load.
             var drag = 6 * Math.PI * viscosity * Radius(bead.Volume);
-            var speed = Math.Min(config.BodyFluidSurfaceSpeed, (drive - retention) / Math.Max(1e-9, drag));
+            var speed = Math.Min(site.SurfaceSpeed, (drive - retention) / Math.Max(1e-9, drag));
             var displacement = Vector3.Normalize(tangentGravity) * (float)(speed * dt);
             var candidate = bead.Anchor;
             bead.WalkBlocked = false;
@@ -352,14 +315,14 @@ internal sealed partial class SalivaRuntime
             bead.LastWorldSample = walked;
             bead.RunoffDistance += travel;
             RecordRivulet(i, candidate, walked);
-            if (i == sourceBead)
+            if (IsSourceBead(i))
             {
                 // Role transition only: inventory/slot/possible thread references stay
                 // with this cap. Subsequent supply creates another cap at the mouth.
-                sourceBead = -1;
+                ReleaseSourceRole(i);
                 runoffTransitions++;
             }
-            var patch = FindFilm(candidate);
+            var patch = FindFilm(candidate, bead.Outlet);
             if (patch >= 0)
             {
                 bead.Film = patch;
@@ -404,7 +367,8 @@ internal sealed partial class SalivaRuntime
             {
                 if (beads[i].Volume <= 0) break;
                 if (beads[j].Volume <= 0 || BeadSlotReserved(j) || beads[i].Film != beads[j].Film) continue;
-                var recipient = i == sourceBead ? j : j == sourceBead ? i :
+                if (beads[i].Outlet != beads[j].Outlet) continue;
+                var recipient = IsSourceBead(i) ? j : IsSourceBead(j) ? i :
                     beads[i].Volume >= beads[j].Volume ? i : j;
                 var donor = recipient == i ? j : i;
                 // Keep the established runoff cap at its own anchor. An empty source
@@ -461,6 +425,7 @@ internal sealed partial class SalivaRuntime
             // volume becomes the real terminal gravity load owned by this same model.
             var accepted = thread.Model.InitializePendant(start, end, sample.Velocity, beads[bead].Volume, neckRadius);
             if (accepted <= 0) return false;
+            thread.Outlet = beads[bead].Outlet;
             thread.Created = ++ownerSequence;
             beads[bead].Volume -= accepted;
             rivulets[bead]?.Reset();
@@ -474,9 +439,9 @@ internal sealed partial class SalivaRuntime
         return false;
     }
 
-    private double Deposit(FluidSurfaceAnchor anchor, double requested)
+    private double Deposit(FluidSurfaceAnchor anchor, double requested, int outlet)
     {
-        var film = FindFilm(anchor);
+        var film = FindFilm(anchor, outlet);
         if (film < 0) return 0;
         var accepted = 0.0;
         if (films[film].TryGetCell(anchor, out var cell))
@@ -493,17 +458,17 @@ internal sealed partial class SalivaRuntime
     {
         ref var bead = ref beads[index];
         var radius = (float)Radius(bead.Volume);
-        if (!TryAddDrop(sample.Position + sample.Normal * (radius + 0.00008f), velocity, bead.Volume, 0.12)) return false;
+        if (!TryAddDrop(sample.Position + sample.Normal * (radius + 0.00008f), velocity, bead.Volume, 0.12, bead.Outlet)) return false;
         bead.Volume = 0;
         rivulets[index]?.Reset();
-        if (sourceBead == index) sourceBead = -1;
+        ReleaseSourceRole(index);
         return true;
     }
 
     private void ReleaseChangedSkinGeneration()
     {
         skinGenerationChanges++;
-        sourceBead = -1;
+        foreach (var state in outletStates) { state.Bead = -1; state.Available = false; }
         // World-space free material survives shape changes. A stale material anchor
         // cannot safely be rebound by triangle number to a replacement mesh.
         foreach (var thread in threads)
@@ -537,15 +502,15 @@ internal sealed partial class SalivaRuntime
         height = sphereRadius * (1 - cosine);
         footprintRadius = sphereRadius * Math.Sin(contactAngle);
     }
-    private bool TryAddDrop(Vector3 position, Vector3 velocity, double volume, double skinCooldown = 0)
+    private bool TryAddDrop(Vector3 position, Vector3 velocity, double volume, double skinCooldown = 0, int outlet = 0)
     {
         if (volume <= 0) return true;
         for (var i = 0; i < drops.Length; i++)
-            if (drops[i].Volume <= 0) { drops[i] = new() { Created = ++ownerSequence, Position = position, Velocity = velocity, Volume = volume, SkinCooldown = skinCooldown }; return true; }
+            if (drops[i].Volume <= 0) { drops[i] = new() { Outlet = outlet, Created = ++ownerSequence, Position = position, Velocity = velocity, Volume = volume, SkinCooldown = skinCooldown }; return true; }
         var oldest = 0;
         for (var i = 1; i < drops.Length; i++) if (drops[i].Created < drops[oldest].Created) oldest = i;
         RetiredVolume += drops[oldest].Volume;
-        drops[oldest] = new() { Created = ++ownerSequence, Position = position, Velocity = velocity, Volume = volume, SkinCooldown = skinCooldown };
+        drops[oldest] = new() { Outlet = outlet, Created = ++ownerSequence, Position = position, Velocity = velocity, Volume = volume, SkinCooldown = skinCooldown };
         return true;
     }
 
@@ -553,8 +518,8 @@ internal sealed partial class SalivaRuntime
     private void RetireInventory()
     {
         RetiredVolume += TotalVolume;
-        reservoir = 0; generation = 0; sourceBead = -1; acceptedSourceSeconds = 0; runoffTransitions = 0; coalescedVolume = 0;
-        previousSourceOutlet = default;
+        foreach (var state in outletStates) state.Reset();
+        generation = 0; runoffTransitions = 0; coalescedVolume = 0;
         wettingTrailTransfer = actualCoatVolume = 0;
         lastRuntimeSubsteps = 0; lastRuntimeStepSeconds = 0; microstepCount = 0;
         skinGenerationChanges = 0; retiredSkinFilm = 0;
@@ -563,7 +528,7 @@ internal sealed partial class SalivaRuntime
         foreach (var path in rivulets) path?.Reset();
         foreach (var thread in threads)
         { thread.Model.Clear(); thread.Attached = thread.TipAttached = false; thread.Bead = -1; thread.Deferred = thread.TimeDebt = 0; thread.PendingContact = false; thread.ContactSegment = 0; }
-        ground.Clear();
+        foreach (var ground in grounds) ground?.Clear();
     }
 
     public void Clear()

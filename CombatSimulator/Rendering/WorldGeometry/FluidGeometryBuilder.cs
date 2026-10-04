@@ -7,6 +7,8 @@ namespace CombatSimulator.Rendering.WorldGeometry;
 public sealed class FluidGeometryBuilder
 {
     private readonly FluidVertex[] vertices;
+    private readonly byte[] groupIds;
+    public byte Group { get; set; }
     public int Count { get; private set; }
     public bool Overflowed { get; private set; }
     public ReadOnlySpan<FluidVertex> Vertices => vertices.AsSpan(0, Count);
@@ -14,8 +16,33 @@ public sealed class FluidGeometryBuilder
     {
         if (capacity < 3 || capacity > WorldGeometryRenderer.MaxVertices) throw new ArgumentOutOfRangeException(nameof(capacity));
         vertices = new FluidVertex[capacity - capacity % 3];
+        groupIds = new byte[vertices.Length];
     }
-    public void Reset() { Count = 0; Overflowed = false; }
+    public void Reset() { Count = 0; Overflowed = false; Group = 0; }
+
+    /// <summary>Stable material grouping without changing the shared geometry budget or allocating per frame.
+    /// Groups not represented by the supplied spans use group zero.</summary>
+    public void PartitionGroups(Span<FluidVertex> destination, Span<int> counts, Span<int> offsets)
+    {
+        if (counts.Length == 0 || counts.Length > 256 || offsets.Length != counts.Length)
+            throw new ArgumentException("Group spans must have matching lengths between 1 and 256.");
+        if (destination.Length < Count) throw new ArgumentException("Destination must fit all submitted vertices.", nameof(destination));
+        counts.Clear();
+        for (int i = 0; i < Count; i++)
+            counts[groupIds[i] < counts.Length ? groupIds[i] : 0]++;
+        Span<int> cursors = stackalloc int[256];
+        int total = 0;
+        for (int group = 0; group < counts.Length; group++)
+        {
+            offsets[group] = cursors[group] = total;
+            total += counts[group];
+        }
+        for (int i = 0; i < Count; i++)
+        {
+            int group = groupIds[i] < counts.Length ? groupIds[i] : 0;
+            destination[cursors[group]++] = vertices[i];
+        }
+    }
 
     /// <summary>Read-only status diagnostic; no extra work in the render or pose callbacks.</summary>
     public string DescribeVisibility()
@@ -205,6 +232,7 @@ public sealed class FluidGeometryBuilder
         if (Vector3.Dot(geometricNormal, a.Normal + b.Normal + c.Normal) < 0)
             (b, c) = (c, b);
         if (Count + 3 > vertices.Length) { Overflowed = true; return; }
+        groupIds[Count] = groupIds[Count + 1] = groupIds[Count + 2] = Group;
         vertices[Count++] = a; vertices[Count++] = b; vertices[Count++] = c;
     }
     internal static bool Valid(FluidVertex v) => WorldGeometryBuilder.Finite(v.Position) && WorldGeometryBuilder.Finite(v.Normal)

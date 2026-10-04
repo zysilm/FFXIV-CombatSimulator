@@ -37,7 +37,11 @@ public sealed partial class BodyFluidController : IDisposable
     public double LastCpuMilliseconds { get; private set; }
     public bool Emitting => manualEmission || koEmission;
     public string SurfaceStatus => $"{surface.Status}; {surface.LipStatus}; {surface.LipOutletStatus}; {surface.DeformationStatus}";
-    public string RenderStatus => renderer.Status;
+    public string RenderStatus => DescribeMaterialLayers();
+    public string GetOutletStatus(BodyFluidOutletKind kind)
+    {
+        lock (gate) return simulation.DescribeOutlet(kind);
+    }
 
     public BodyFluidController(Configuration config, BoneTransformService bones, WorldGeometryRenderer worldRenderer, IPluginLog log)
     {
@@ -45,6 +49,7 @@ public sealed partial class BodyFluidController : IDisposable
         surface = new CharacterFluidSurface(bones);
         simulation = new SalivaRuntime(surface, config);
         renderer = worldRenderer.CreateLayer("Saliva");
+        InitializeMaterialLayers();
         bones.OnPosePrepared += OnPosePrepared;
     }
 
@@ -63,7 +68,7 @@ public sealed partial class BodyFluidController : IDisposable
                 {
                     enabled = config.BodyFluidsEnabled;
                     config.ClampBodyFluids();
-                    renderer.SetEnabled(enabled);
+                    SetMaterialLayersEnabled(enabled);
                     if (!enabled) ClearCore();
                 }
                 if (!enabled || renderer.IsSuspended) return;
@@ -101,7 +106,7 @@ public sealed partial class BodyFluidController : IDisposable
             config.ClampBodyFluids();
             surface.IncludeBodySurface = true;
             surface.ApplyRaceDeformation = true;
-            renderer.SetEnabled(true);
+            SetMaterialLayersEnabled(true);
             if (renderer.IsSuspended) return;
             manualEmission = true;
         }
@@ -135,7 +140,7 @@ public sealed partial class BodyFluidController : IDisposable
             if (disposed || !Services.ClientState.IsLoggedIn || player == null) return;
             ClearCore();
             enabled = config.BodyFluidsEnabled = true;
-            renderer.SetEnabled(true);
+            SetMaterialLayersEnabled(true);
             if (renderer.IsSuspended) return;
             visualProbeOrigin = bones.GetBoneWorldPos(player.Address, "j_kao") ?? player.Position + Vector3.UnitY * 1.3f;
             visualProbeTime = 12; visualProbeDeadline = Environment.TickCount64 + 12000;
@@ -155,7 +160,7 @@ public sealed partial class BodyFluidController : IDisposable
         simulation.LargeVisibilityPreview = false;
         surface.Clear();
         surface.ApplyRaceDeformation = true;
-        geometry.Reset(); fluidGeometry.Reset(); renderer.Clear();
+        geometry.Reset(); fluidGeometry.Reset(); ClearMaterialLayers();
         steps = poseFrames = 0;
         actorIdentity = 0; objectIdentity = 0;
         previousPoseTicks = frameworkFrame = capturedFrame = 0;
@@ -181,10 +186,10 @@ public sealed partial class BodyFluidController : IDisposable
                 previousPoseTicks = started;
                 if (visualProbeTime > 0) { DrawLegacyGeometryProbe(poseDelta); return; }
                 if (!surface.CapturePose(poseDelta))
-                { LogUnavailableDiagnosticPose(); accumulatedTime = 0; renderer.Clear(); return; }
+                { LogUnavailableDiagnosticPose(); accumulatedTime = 0; ClearMaterialLayers(); return; }
                 poseFrames++;
                 if (surfaceProbeTime > 0) { DrawSurfaceProbe(Math.Clamp(poseDelta, 0, .1f)); accumulatedTime = 0; return; }
-                if (poseDelta > .15f) { accumulatedTime = 0; renderer.Clear(); return; }
+                if (poseDelta > .15f) { accumulatedTime = 0; ClearMaterialLayers(); return; }
                 var count = 0;
                 while (accumulatedTime + 1e-6f >= Step && count++ < 2)
                 {
@@ -198,11 +203,7 @@ public sealed partial class BodyFluidController : IDisposable
                 simulation.AppendGeometry(fluidGeometry);
                 if (simulation.LargeVisibilityPreview)
                     fluidGeometry.ExaggerateForVisibilityPreview(16, .003f, 4);
-                var material = config.CreateBodyFluidMaterial() with { DiagnosticView = productionView };
-                // The requested large visibility preview also restores the original
-                // material test's full reflection weight. Normal settings stay intact.
-                if (simulation.LargeVisibilityPreview) material = material with { ReflectionStrength = 1 };
-                renderer.SubmitFluidFrame(fluidGeometry.Vertices, material);
+                SubmitMaterialFrames();
             }
             catch (Exception ex)
             {
@@ -239,7 +240,7 @@ public sealed partial class BodyFluidController : IDisposable
             return $"Body fluids: {(enabled ? "enabled" : "off")}, emitting={Emitting}, largeVisibilityPreview={simulation.LargeVisibilityPreview}, poseFrames={poseFrames}, steps={steps}, " +
                 $"vertices={(surfaceProbeTime > 0 || visualProbeTime > 0 ? geometry.Count : fluidGeometry.Count)}, geometryOverflow={fluidGeometry.Overflowed}, view={productionView}, " +
                 $"{fluidGeometry.DescribeVisibility()}, " +
-                $"rivulets={simulation.RivuletsDrawn},visibleThickness={config.BodyFluidThicknessScale:F2}x, " +
+                $"rivulets={simulation.RivuletsDrawn},appearance=per-site, " +
                 $"framework[{frameworkTimings.Describe()}],pose[{poseTimings.Describe()}], " +
                 $"skinVertices={surface.SkinVerticesThisFrame},triangleTests={surface.TriangleTestsThisFrame},candidates={surface.BroadPhaseCandidatesThisFrame},boundsBuilt={surface.TriangleBoundsBuiltThisFrame},budgetHit={surface.BudgetExhausted},contactPending='{surface.ContactPendingReason}'; " +
                 $"runtime={simulation.Status},volume error={simulation.ConservationError * 1e6:F5} ml; {simulation.InventoryDiagnostics}; {simulation.CapGeometryDiagnostics}; surface={SurfaceStatus}; render={renderer.Status}; " +
@@ -253,6 +254,7 @@ public sealed partial class BodyFluidController : IDisposable
         {
             if (disposed) return;
             ClearCore(); disposed = true;
+            DisposeMaterialLayers();
             renderer.Dispose();
         }
     }

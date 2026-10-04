@@ -24,7 +24,7 @@ namespace CombatSimulator.Rendering.WorldGeometry;
 public sealed unsafe class WorldGeometryRenderer : IDisposable
 {
     public const int MaxVertices = 32766;
-    public const int MaxLayers = 8;
+    public const int MaxLayers = 16;
     private delegate void UiDelegate(AtkServer* server, bool flag);
     private delegate void TargetDelegate(ImmediateContext* context, RenderCommandSetTarget* command);
     private readonly object gate = new();

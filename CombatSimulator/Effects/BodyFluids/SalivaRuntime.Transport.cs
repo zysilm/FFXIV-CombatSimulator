@@ -13,6 +13,9 @@ internal sealed partial class SalivaRuntime
     {
         foreach (var thread in threads)
         {
+            var site = GetOutletSettings((BodyFluidOutletKind)thread.Outlet);
+            viscosity = site.ViscosityPaSeconds;
+            thread.Model.SetMaterial(viscosity, site.FilamentRelaxation, site.Stringiness);
             if (!thread.PendingContact && thread.Model.TotalVolume > 0) ConvertCollapsedPieces(thread);
             if (thread.Model.TotalVolume <= 0)
             {
@@ -115,7 +118,7 @@ internal sealed partial class SalivaRuntime
                 else
                 {
                     var inventory = thread.Model.TerminalVolume;
-                    var received = AddPuddle(point, normal, a, b, c, inventory);
+                    var received = AddPuddle(point, normal, a, b, c, inventory, thread.Outlet);
                     thread.Model.TakeTerminalVolume(received);
                     // An unaccepted terrain inventory stays pending at the proposal,
                     // never silently falls through the ground or loses its volume.
@@ -132,7 +135,7 @@ internal sealed partial class SalivaRuntime
                 if (thread.PendingContact) continue;
                 var position = (segment.A + segment.B) * 0.5f;
                 var velocity = (thread.Model.GetNodeVelocity(i) + thread.Model.GetNodeVelocity(i + 1)) * 0.5f;
-                if (TryAddDrop(position, velocity, segment.PendingBreakVolume, 0.12)) thread.Model.TakeBreakVolume(i, segment.PendingBreakVolume);
+                if (TryAddDrop(position, velocity, segment.PendingBreakVolume, 0.12, thread.Outlet)) thread.Model.TakeBreakVolume(i, segment.PendingBreakVolume);
             }
             if (!thread.PendingContact) ConvertCollapsedPieces(thread);
         }
@@ -172,7 +175,7 @@ internal sealed partial class SalivaRuntime
             position += (segment.A + segment.B) * (float)(segment.Volume * 0.5);
             momentum += (thread.Model.GetNodeVelocity(i) + thread.Model.GetNodeVelocity(i + 1)) * (float)(segment.Volume * 0.5);
         }
-        if (!TryAddDrop(position / (float)total, momentum / (float)total, total, 0.12)) return;
+        if (!TryAddDrop(position / (float)total, momentum / (float)total, total, 0.12, thread.Outlet)) return;
         thread.Model.TakeTerminalVolume(thread.Model.TerminalVolume);
         for (var i = first; i <= last; i++) thread.Model.TakeVolume(i, thread.Model.GetSegment(i).Volume);
     }
@@ -206,7 +209,7 @@ internal sealed partial class SalivaRuntime
             if (length > diameter || Vector3.Distance(minimum, maximum) > diameter) continue;
             var center = origin + new Vector3((float)(px / volume), (float)(py / volume), (float)(pz / volume));
             var inherited = new Vector3((float)(vx / volume), (float)(vy / volume), (float)(vz / volume));
-            if (!TryAddDrop(center, inherited, volume, 0.12)) return;
+            if (!TryAddDrop(center, inherited, volume, 0.12, thread.Outlet)) return;
             for (var i = first; i < segment; i++) thread.Model.TakeVolume(i, thread.Model.GetSegment(i).Volume);
         }
     }
@@ -265,7 +268,7 @@ internal sealed partial class SalivaRuntime
                 out var point, out var normal, out var groundFraction, out var a, out var b, out var c);
             if (skinHit && (!groundHit || skinFraction <= groundFraction))
             {
-                var accepted = Deposit(anchor, drop.Volume);
+                var accepted = Deposit(anchor, drop.Volume, drop.Outlet);
                 drop.Volume -= accepted;
                 if (drop.Volume > 0)
                 {
@@ -276,7 +279,7 @@ internal sealed partial class SalivaRuntime
             }
             else if (groundHit)
             {
-                var accepted = AddPuddle(point, normal, a, b, c, drop.Volume);
+                var accepted = AddPuddle(point, normal, a, b, c, drop.Volume, drop.Outlet);
                 drop.Volume -= accepted;
                 if (drop.Volume > 0) { drop.Position = point + normal * (radius * 0.99f); drop.Velocity = Vector3.Zero; }
             }
@@ -304,8 +307,9 @@ internal sealed partial class SalivaRuntime
         return true;
     }
 
-    private double AddPuddle(Vector3 point, Vector3 normal, Vector3 a, Vector3 b, Vector3 c, double requested)
+    private double AddPuddle(Vector3 point, Vector3 normal, Vector3 a, Vector3 b, Vector3 c, double requested, int outlet)
     {
+        var ground = grounds[outlet] ??= new GroundFilmRuntime();
         var accepted = ground.AddContact(point, normal, a, b, c, requested);
         if (accepted < requested && ground.CapacityFull)
         {

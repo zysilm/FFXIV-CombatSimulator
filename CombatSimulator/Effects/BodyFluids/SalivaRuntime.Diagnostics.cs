@@ -37,7 +37,7 @@ internal sealed partial class SalivaRuntime
             }
             foreach (var bead in beads) { beadVolume += bead.Volume; if (bead.Volume > 0) beadCount++; }
             foreach (var drop in drops) { dropVolume += drop.Volume; if (drop.Volume > 0) dropCount++; }
-            groundVolume = ground.Volume; groundCount = ground.CellCount;
+            groundVolume = GroundVolume; groundCount = GroundCellCount;
             var details = new StringBuilder(768);
             var runoffCount = 0; var blockedCaps = 0;
             for (var i = 0; i < beads.Length; i++)
@@ -110,7 +110,8 @@ internal sealed partial class SalivaRuntime
                 $"peakH={peakThickness * 1e3:F4}mm,wetA={wetArea * 1e6:F3}mm²,meanH={averageThickness * 1e3:F4}mm,secondaryPoolThreshold=.800mm; " +
                 $"contacts:threadsPending={pendingCount},surfaceCallsLeft={surfaceBudget}/40,terrainCallsLeft={terrainBudget}/32," +
                 $"triangleTests={surface.TriangleTestsThisFrame}/4096,budgetHit={surface.BudgetExhausted};");
-            details.Append($" ground:{ground.Inspect()};");
+            for (int i = 0; i < grounds.Length; i++)
+                if (grounds[i] != null) details.Append($" ground[{i}]:{grounds[i]!.Inspect()};");
             return details.ToString();
         }
     }

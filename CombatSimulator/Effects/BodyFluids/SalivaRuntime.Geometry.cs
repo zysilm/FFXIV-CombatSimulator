@@ -24,21 +24,27 @@ internal sealed partial class SalivaRuntime
     /// <summary>Append continuous film, bounded thread and curved drop/puddle surfaces to the producer's builder.</summary>
     public void AppendGeometry(FluidGeometryBuilder builder)
     {
-        float scale = LargeVisibilityPreview ? 1 : config.BodyFluidThicknessScale;
-        int filmStart = builder.Count;
         // Detached material belongs to world space, not the lip's current topology.
         if (generation == surface.Generation)
-            foreach (var film in films) film.AppendGeometry(builder);
-        builder.ExaggerateForVisibilityPreview(scale, 0, scale, filmStart);
+            for (int i = 0; i < films.Length; i++)
+            {
+                builder.Group = (byte)filmOutlets[i];
+                int first = builder.Count;
+                films[i].AppendGeometry(builder);
+                float scale = VisualScale(filmOutlets[i]);
+                builder.ExaggerateForVisibilityPreview(scale, 0, scale, first);
+            }
         foreach (var thread in threads)
         {
             if (thread.Model.TotalVolume <= 0) continue;
+            builder.Group = (byte)thread.Outlet;
+            float scale = VisualScale(thread.Outlet);
             if (thread.Model.TerminalVolume > 0 && thread.Model.GetSegment(thread.Model.SegmentCount - 1).Volume <= 0)
             {
                 // True reservoir radius; the neck's end cap slightly overlaps the
                 // sphere pole. This is a reduced junction, not extra visual inventory.
                 var center = thread.PendingContact ? thread.PreviousTerminalCenter : thread.Model.TerminalCenter;
-                AppendFreeDrop(builder, center, thread.Model.TerminalVelocity, thread.Model.TerminalVolume);
+                AppendFreeDrop(builder, center, thread.Model.TerminalVelocity, thread.Model.TerminalVolume, thread.Outlet);
             }
             for (var i = 0; i < thread.Model.SegmentCount; i++)
             {
@@ -108,6 +114,8 @@ internal sealed partial class SalivaRuntime
         {
             int index = (firstCap + step) % beads.Length;
             var bead = beads[index];
+            builder.Group = (byte)bead.Outlet;
+            float scale = VisualScale(bead.Outlet);
             if (bead.Volume <= 0) { curvedCapGeometry[index]?.Invalidate(); continue; }
             int capStart = builder.Count;
             if (AppendRivulet(index, builder))
@@ -142,16 +150,25 @@ internal sealed partial class SalivaRuntime
         foreach (var drop in drops)
         {
             if (drop.Volume <= 0) continue;
-            AppendFreeDrop(builder, drop.Position, drop.Velocity, drop.Volume);
+            AppendFreeDrop(builder, drop.Position, drop.Velocity, drop.Volume, drop.Outlet);
         }
-        int groundStart = builder.Count;
-        ground.AppendGeometry(builder);
-        builder.ExaggerateForVisibilityPreview(scale, 0, scale, groundStart);
+        for (int i = 0; i < grounds.Length; i++)
+        {
+            if (grounds[i] == null) continue;
+            builder.Group = (byte)i;
+            int groundStart = builder.Count;
+            grounds[i]!.AppendGeometry(builder);
+            float scale = VisualScale(i);
+            builder.ExaggerateForVisibilityPreview(scale, 0, scale, groundStart);
+        }
     }
 
-    private void AppendFreeDrop(FluidGeometryBuilder builder, Vector3 center, Vector3 velocity, double volume)
+    private float VisualScale(int outlet) => LargeVisibilityPreview ? 1 : GetOutletSettings((BodyFluidOutletKind)outlet).ThicknessScale;
+
+    private void AppendFreeDrop(FluidGeometryBuilder builder, Vector3 center, Vector3 velocity, double volume, int outlet)
     {
-        float radius = (float)Radius(volume) * (LargeVisibilityPreview ? 1 : config.BodyFluidThicknessScale);
+        builder.Group = (byte)outlet;
+        float radius = (float)Radius(volume) * VisualScale(outlet);
         float speed = velocity.Length();
         var direction = speed > .01f ? velocity / speed : -Vector3.UnitY;
         float stretch = 1 + Math.Clamp(speed * .18f, 0, .4f);
