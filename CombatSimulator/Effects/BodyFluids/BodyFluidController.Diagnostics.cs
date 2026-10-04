@@ -65,8 +65,7 @@ public sealed partial class BodyFluidController
         lock (gate)
         {
             if (surfaceProbeTime <= 0) ClearCore();
-            manualEmission = false;
-            timedEmission = 0;
+            manualEmission = koEmission = false;
         }
     }
 

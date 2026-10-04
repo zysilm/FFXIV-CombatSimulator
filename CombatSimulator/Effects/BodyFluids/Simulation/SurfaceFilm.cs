@@ -36,7 +36,6 @@ public sealed class SurfaceFilm
     private const double ContactHysteresis = 0.025; // cos(theta_R) - cos(theta_A).
     private const double ResidualThickness = 2e-6;
     private const double MaximumAdmissionThickness = 0.002;
-    private const double MaximumInventory = 20e-6;
     private const int MaximumSubsteps = 12;
     private readonly Cell[] cells;
     private readonly Edge[] edges;
@@ -135,7 +134,9 @@ public sealed class SurfaceFilm
     {
         if (!IsCell(index) || !double.IsFinite(requested) || requested <= 0) return 0;
         var room = Math.Max(0, cells[index].Geometry.Area * MaximumAdmissionThickness - cells[index].Volume);
-        var accepted = Math.Min(requested, Math.Min(room, Math.Max(0, MaximumInventory - TotalVolume)));
+        // Optional global inventory limits belong to the emitter; this local
+        // solver only admits volumes inside its valid thin-film thickness.
+        var accepted = Math.Min(requested, room);
         cells[index].Volume += accepted;
         TotalVolume += accepted; AcceptedVolume += accepted;
         return accepted;

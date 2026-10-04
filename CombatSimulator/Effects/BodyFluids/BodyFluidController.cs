@@ -25,17 +25,17 @@ public sealed partial class BodyFluidController : IDisposable
     private readonly WorldGeometryBuilder geometry = new();
     private readonly FluidGeometryBuilder fluidGeometry = new(WorldGeometryRenderer.MaxVertices);
     private readonly FluidTimingWindow frameworkTimings = new(), poseTimings = new();
-    private float accumulatedTime, timedEmission, visualProbeTime;
+    private float accumulatedTime, visualProbeTime;
     private long visualProbeDeadline;
     private Vector3 visualProbeOrigin;
-    private bool manualEmission, enabled, disposed;
+    private bool manualEmission, koEmission, enabled, disposed;
     private FluidDiagnosticView productionView;
     private long steps, poseFrames, frameworkFrame, capturedFrame, previousPoseTicks;
     private nint actorIdentity;
     private ulong objectIdentity;
     private uint territoryIdentity;
     public double LastCpuMilliseconds { get; private set; }
-    public bool Emitting => manualEmission || timedEmission > 0;
+    public bool Emitting => manualEmission || koEmission;
     public string SurfaceStatus => $"{surface.Status}; {surface.LipStatus}; {surface.DeformationStatus}";
     public string RenderStatus => renderer.Status;
 
@@ -109,7 +109,7 @@ public sealed partial class BodyFluidController : IDisposable
 
     public void StopEmission()
     {
-        lock (gate) { manualEmission = false; timedEmission = 0; simulation.Emitting = false; }
+        lock (gate) { manualEmission = koEmission = false; simulation.Emitting = false; }
     }
 
     public void SetGeometryInspection(FluidDiagnosticView view)
@@ -121,7 +121,8 @@ public sealed partial class BodyFluidController : IDisposable
     {
         lock (gate)
             if (!disposed && surfaceProbeTime <= 0 && visualProbeTime <= 0 && config.BodyFluidsEnabled && config.BodyFluidsOnPlayerKo)
-            { surface.IncludeBodySurface = true; surface.ApplyRaceDeformation = true; timedEmission = 10; }
+            { surface.IncludeBodySurface = true; surface.ApplyRaceDeformation = true;
+                koEmission = true; }
     }
 
     public void BeginProbe() { lock (gate) worldRenderer.BeginProbe(); }
@@ -145,9 +146,9 @@ public sealed partial class BodyFluidController : IDisposable
 
     private void ClearCore()
     {
-        manualEmission = false;
+        manualEmission = koEmission = false;
         productionView = FluidDiagnosticView.Composite;
-        timedEmission = accumulatedTime = visualProbeTime = surfaceProbeTime = 0;
+        accumulatedTime = visualProbeTime = surfaceProbeTime = 0;
         visualProbeDeadline = surfaceProbeDeadline = 0;
         diagnosticTriangles = Array.Empty<FluidSurfaceAnchor>(); diagnosticGeneration = 0;
         simulation.Emitting = false; simulation.Clear();
@@ -190,7 +191,6 @@ public sealed partial class BodyFluidController : IDisposable
                     config.ClampBodyFluids();
                     simulation.Emitting = Emitting;
                     simulation.Advance(Step);
-                    timedEmission = MathF.Max(0, timedEmission - Step);
                     accumulatedTime = MathF.Max(0, accumulatedTime - Step);
                     steps++;
                 }

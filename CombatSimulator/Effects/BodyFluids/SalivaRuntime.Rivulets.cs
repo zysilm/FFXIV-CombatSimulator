@@ -8,7 +8,7 @@ namespace CombatSimulator.Effects.BodyFluids;
 
 internal sealed partial class SalivaRuntime
 {
-    private readonly RivuletPath[] rivulets = new RivuletPath[16];
+    private readonly RivuletPath[] rivulets = new RivuletPath[BeadCapacity];
     public int RivuletsDrawn { get; private set; }
 
     // The mobile owner's existing volume is reconstructed as an attached strip.

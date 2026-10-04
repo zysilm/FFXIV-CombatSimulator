@@ -8,7 +8,7 @@ namespace CombatSimulator.Effects.BodyFluids;
 internal sealed partial class SalivaRuntime
 {
     private const int CapChartWorkBudget = 8192;
-    private readonly CurvedCapGeometryCache?[] curvedCapGeometry = new CurvedCapGeometryCache?[16];
+    private readonly CurvedCapGeometryCache?[] curvedCapGeometry = new CurvedCapGeometryCache?[BeadCapacity];
     private int capGeometryOrder;
     public int CapGeometryVerifiedCount { get; private set; }
     public int CapGeometryPendingCount { get; private set; }

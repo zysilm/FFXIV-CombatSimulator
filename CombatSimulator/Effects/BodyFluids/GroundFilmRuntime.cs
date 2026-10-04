@@ -18,9 +18,9 @@ internal delegate GroundProbeResult GroundSupportProbe(Vector3 from, Vector3 to,
 /// </summary>
 internal sealed partial class GroundFilmRuntime
 {
-    private const int Capacity = 384, SupportCapacity = 64;
+    private const int Capacity = 768, SupportCapacity = 128;
     // A 6mm tile admits a small pendant impact without filling a tiny half-tile
-    // and expands a visible footprint with the same fixed 384-cell/query budget.
+    // and expands a visible footprint with a fixed cell/query budget.
     private const float GridSize = 0.006f, WeldTolerance = 0.00005f;
     private const double MinimumArea = 1e-9;
     private readonly SurfaceFilm film = new(Capacity, Capacity * 3);
@@ -39,6 +39,7 @@ internal sealed partial class GroundFilmRuntime
     public int PendingProbes { get; private set; }
     public bool BudgetHit { get; private set; }
     public int CellCount => film.CellCount;
+    public bool CapacityFull { get; private set; }
 
     private struct Tile { public int X, Z, Support; }
     private struct Cell { public int X, Z, Support, A, B, C, ConnectedEdges; }
@@ -51,6 +52,7 @@ internal sealed partial class GroundFilmRuntime
     {
         newTiles = newCells = ProbeCalls = PendingProbes = 0;
         BudgetHit = false;
+        CapacityFull = false;
     }
 
     public double AddContact(Vector3 point, Vector3 normal, Vector3 a, Vector3 b, Vector3 c, double requested)
@@ -61,7 +63,7 @@ internal sealed partial class GroundFilmRuntime
         var support = FindSupport(hit);
         if (support < 0)
         {
-            if (supportCount == supports.Length) { BudgetHit = true; return 0; }
+            if (supportCount == supports.Length) { BudgetHit = CapacityFull = true; return 0; }
             support = supportCount++; supports[support] = NormalizeSupport(hit);
         }
         var x = Grid(point.X); var z = Grid(point.Z);
@@ -164,7 +166,7 @@ internal sealed partial class GroundFilmRuntime
         var count = ClipTile(supports[support], x, z, pieces);
         if (count == 0) return false;
         if (newTiles >= 2 || newCells + count > 8) { BudgetHit = true; return false; }
-        if (film.CellCount + count > Capacity || tileCount == tiles.Length) { BudgetHit = true; return false; }
+        if (film.CellCount + count > Capacity || tileCount == tiles.Length) { BudgetHit = CapacityFull = true; return false; }
         if (requireConnection)
         {
             var connected = false;
@@ -255,13 +257,21 @@ internal sealed partial class GroundFilmRuntime
 
     public string Inspect() => $"Ground film: cells={film.CellCount}/{Capacity}, edges={film.EdgeCount}, tiles={tileCount}, supports={supportCount}/{SupportCapacity}, volume={Volume * 1e6:F5}ml, probes={ProbeCalls}/4, newTiles={newTiles}/2,newCells={newCells}/8, pending={PendingProbes}, budgetHit={BudgetHit}, deferred={DeferredSeconds:F5}s, grid={GridSize * 1000:0}mm; verified static triangle clips, shared 3D edges; unknown/steps sealed; collision/render correspondence requires in-game proof";
     public string Status => Inspect();
+    public double Recycle()
+    {
+        // Recycling storage does not grant extra work in this frame.
+        var tilesUsed = newTiles; var cellsUsed = newCells; var probesUsed = ProbeCalls;
+        var retired = Clear();
+        newTiles = tilesUsed; newCells = cellsUsed; ProbeCalls = probesUsed;
+        return retired;
+    }
     public double Clear()
     {
         var retired = film.Clear();
         supportCount = tileCount = failedCount = frontierCursor = vertexCount = 0;
         step = 0; generation++; if (generation == 0) generation = 1;
         timeDebt = 0;
-        DeferredSeconds = 0; ProbeCalls = PendingProbes = 0; BudgetHit = false;
+        DeferredSeconds = 0; ProbeCalls = PendingProbes = 0; BudgetHit = CapacityFull = false;
         newTiles = newCells = 0;
         return retired;
     }

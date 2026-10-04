@@ -22,6 +22,7 @@ public partial class MainWindow
         var onKo = config.BodyFluidsOnPlayerKo;
         if (ImGui.Checkbox("Emit on player KO##bodyfluids", ref onKo))
         { config.BodyFluidsOnPlayerKo = onKo; config.Save(); }
+        HelpMarker("Emission continues until Stop emission or Clear. Older effects are recycled only when storage is full.");
         if (ImGui.Button("Start preview##bodyfluids"))
         { BodyFluids?.Start(); config.Save(); }
         ImGui.SameLine();

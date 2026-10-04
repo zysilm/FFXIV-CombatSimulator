@@ -241,8 +241,10 @@ internal sealed partial class SalivaRuntime
 
     private void StepDrops(double dt)
     {
-        for (var i = 0; i < drops.Length; i++)
+        var start = dropStepOrder++ % drops.Length;
+        for (var order = 0; order < drops.Length; order++)
         {
+            var i = (start + order) % drops.Length;
             ref var drop = ref drops[i];
             if (drop.Volume <= 0 || terrainBudget <= 0 || drop.SkinCooldown <= 0 && surfaceBudget <= 0) continue;
             var radius = (float)Radius(drop.Volume);
@@ -303,7 +305,17 @@ internal sealed partial class SalivaRuntime
     }
 
     private double AddPuddle(Vector3 point, Vector3 normal, Vector3 a, Vector3 b, Vector3 c, double requested)
-        => ground.AddContact(point, normal, a, b, c, requested);
+    {
+        var accepted = ground.AddContact(point, normal, a, b, c, requested);
+        if (accepted < requested && ground.CapacityFull)
+        {
+            // Preserve the puddle until the larger pool is genuinely full and a
+            // new impact cannot be admitted. Retire its ledger before reuse.
+            RetiredVolume += ground.Recycle();
+            accepted += ground.AddContact(point, normal, a, b, c, requested - accepted);
+        }
+        return accepted;
+    }
 
     private GroundProbeResult ProbeGroundFilm(Vector3 from, Vector3 to, out GroundSupportHit hit)
     {
