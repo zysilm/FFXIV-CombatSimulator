@@ -80,6 +80,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly Dev.IDevExperimental devExperimental;
     private readonly Effects.NpcScaleController npcScaleController;
     private readonly Effects.PlayerWeaponVisibilityController playerWeaponVisibilityController;
+    private readonly Effects.BodyFluids.BodyFluidController bodyFluidController;
+    private readonly Rendering.WorldGeometry.WorldGeometryRenderer worldGeometryRenderer;
+    private readonly Rendering.WorldGeometry.WorldGeometryPreview worldGeometryPreview;
+    public Rendering.WorldGeometry.WorldGeometryRenderer WorldGeometry => worldGeometryRenderer;
     private readonly EnemyControlController enemyControlController;
     private readonly HookSafetyChecker hookSafetyChecker;
     private readonly UpdateLogPopupController updateLogPopupController;
@@ -192,6 +196,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
         weaponDropController = new WeaponDropController(boneTransformService, config, log, ragdollController);
         playerWeaponVisibilityController = new Effects.PlayerWeaponVisibilityController(config, objectTable, boneTransformService);
+        worldGeometryRenderer = new Rendering.WorldGeometry.WorldGeometryRenderer(gameInterop, sigScanner, log);
+        bodyFluidController = new Effects.BodyFluids.BodyFluidController(config, boneTransformService, worldGeometryRenderer, log);
+        worldGeometryPreview = new Rendering.WorldGeometry.WorldGeometryPreview(worldGeometryRenderer);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
         dismembermentController.PlayerRagdollController = ragdollController;
         // Clothes still on the corpse ride along when it is picked up; the dismemberment side owns the
@@ -462,6 +469,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnNpcDeathRagdoll = OnNpcDeathRagdoll;
         combatEngine.OnPlayerDeath = addr =>
         {
+            bodyFluidController.OnPlayerKo();
             weaponDropController.SpawnFor(addr, config.RagdollActivationDelay);
             armorDetachmentController.StripOnKo(addr);
             if (config.EnableDismemberRollaway && config.DismemberPocBones is { Count: > 0 })
@@ -512,6 +520,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         // GUI
         mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
+        mainWindow.BodyFluids = bodyFluidController;
         armorDetachmentController.AllowOnHitDetach = () => mainWindow.DevExperimentalUnlocked;
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
@@ -580,6 +589,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         spectatorController.Dispose();
         npcScaleController.Dispose();
         playerWeaponVisibilityController.Dispose();
+        bodyFluidController.Dispose();
+        worldGeometryPreview.Dispose();
+        worldGeometryRenderer.Dispose();
         npcSpawner.Dispose();
         useActionHook.Dispose();
         playerTargetController.Dispose();
@@ -619,6 +631,42 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         switch (parts[0].ToLowerInvariant())
         {
+            case "geometry":
+                var geometryCommand = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : "status";
+                if (geometryCommand == "marker" && clientState.IsLoggedIn && Services.ObjectTable.LocalPlayer is { } geometryPlayer)
+                {
+                    var markerOrigin = boneTransformService.GetBoneWorldPos(geometryPlayer.Address, "j_kao") ??
+                        (geometryPlayer.Position + Vector3.UnitY * 1.3f);
+                    worldGeometryPreview.Show(markerOrigin);
+                }
+                else if (geometryCommand == "clear") worldGeometryPreview.Clear();
+                chatGui.Print($"[CombatSim] World geometry: {worldGeometryPreview.Status}");
+                log.Info($"World geometry API preview: {worldGeometryPreview.Status}");
+                break;
+
+            case "fluid":
+                var fluidCommand = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : "status";
+                switch (fluidCommand)
+                {
+                    case "on":
+                        bodyFluidController.Start();
+                        config.Save();
+                        break;
+                    case "off":
+                        config.BodyFluidsEnabled = false;
+                        bodyFluidController.Clear();
+                        config.Save();
+                        break;
+                    case "stop": bodyFluidController.StopEmission(); break;
+                    case "clear": bodyFluidController.Clear(); break;
+                    case "probe": bodyFluidController.BeginProbe(); break;
+                    case "marker": bodyFluidController.BeginVisualProbe(); break;
+                }
+                var fluidStatus = bodyFluidController.Describe();
+                chatGui.Print($"[CombatSim] {fluidStatus}");
+                log.Info(fluidStatus);
+                break;
+
             case "start":
                 if (!useActionHook.IsHealthy)
                 {
@@ -853,6 +901,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             spectatorController.Tick(deltaTime);
             devExperimental.TickWorld(deltaTime);
             npcScaleController.Tick();
+            worldGeometryRenderer.Tick();
+            worldGeometryPreview.Tick(deltaTime);
+            bodyFluidController.Tick(deltaTime);
 
             if (!combatEngine.IsActive)
                 return;
@@ -1214,6 +1265,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnTerritoryChanged(uint territoryId)
     {
+        bodyFluidController.Clear();
+        worldGeometryPreview.Clear();
+        worldGeometryRenderer.ClearAll();
         // Despawn client-spawned NPCs first (they don't survive zone changes)
         npcSpawner.SpawnModeActive = false;
         if (npcSpawner.SpawnedNpcs.Count > 0)
@@ -1247,6 +1301,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     /// </summary>
     private void HandleLoggedOut()
     {
+        bodyFluidController.Clear();
+        worldGeometryPreview.Clear();
+        worldGeometryRenderer.ClearAll();
         try
         {
             npcSpawner.SpawnModeActive = false;

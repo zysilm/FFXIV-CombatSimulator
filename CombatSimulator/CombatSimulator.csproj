@@ -29,6 +29,7 @@
     <!-- Nested standalone tests and their generated obj sources are not plugin sources. -->
     <Compile Remove="**\Tests\**\*.cs" />
     <PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" />
+    <PackageReference Include="Silk.NET.Direct3D11" Version="2.21.0" />
     <!-- Complete BNpcBase <-> BNpcName links are not present in the game Excel sheets. ActorMorpher
          uses this supplemental dataset so every known monster name remains discoverable. -->
     <PackageReference Include="LuminaSupplemental.Excel" Version="4.3.7" />

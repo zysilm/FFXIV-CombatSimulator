@@ -34,6 +34,16 @@
           "Sylvan.Data.Csv": "1.4.3"
         }
       },
+      "Silk.NET.Direct3D11": {
+        "type": "Direct",
+        "requested": "[2.21.0, )",
+        "resolved": "2.21.0",
+        "contentHash": "PFOIzXdvJ6REPpRnmWmGfRhNLED6qdXoEGHlwTisd1K7zJVnA65u18AbqQDq61r36IXvPmUOD+ECfxiBMRkaSQ==",
+        "dependencies": {
+          "Silk.NET.Core": "2.21.0",
+          "Silk.NET.DXGI": "2.21.0"
+        }
+      },
       "BepuUtilities": {
         "type": "Transitive",
         "resolved": "2.5.0-beta.22",
@@ -48,6 +58,39 @@
         "type": "Transitive",
         "resolved": "30.0.1",
         "contentHash": "rcZtgbWR+As4G3Vpgx0AMNmShGuQLFjkHAPIIflzrfkJCx8/AOd4m96ZRmiU1Wi39qS5UVjV0P8qdgqOo5Cwyg=="
+      },
+      "Microsoft.DotNet.PlatformAbstractions": {
+        "type": "Transitive",
+        "resolved": "3.1.6",
+        "contentHash": "jek4XYaQ/PGUwDKKhwR8K47Uh1189PFzMeLqO83mXrXQVIpARZCcfuDedH50YDTepBkfijCZN5U/vZi++erxtg=="
+      },
+      "Microsoft.Extensions.DependencyModel": {
+        "type": "Transitive",
+        "resolved": "8.0.0",
+        "contentHash": "NSmDw3K0ozNDgShSIpsZcbFIzBX4w28nDag+TfaQujkXGazBm+lid5onlWoCBy4VsLxqnnKjEBbGSJVWJMf43g=="
+      },
+      "Silk.NET.Core": {
+        "type": "Transitive",
+        "resolved": "2.21.0",
+        "contentHash": "U8gATeEGvSIc1ogSdG/LKr6SLgOjkis7Oo/QzCq+aOoGjw4tHYRVpm02V+pHp/qlQhziBbdQ/Vl5d58cmFY+PA==",
+        "dependencies": {
+          "Microsoft.DotNet.PlatformAbstractions": "3.1.6",
+          "Microsoft.Extensions.DependencyModel": "8.0.0"
+        }
+      },
+      "Silk.NET.DXGI": {
+        "type": "Transitive",
+        "resolved": "2.21.0",
+        "contentHash": "4sUH4Kr+XFmmQyHmNS8EEEM5MfrVS/Z9TfdW3rzVtv2q8aJ7MW6nmKVKGucc75pSvWCM9txApUWS6H2qBL60Qw==",
+        "dependencies": {
+          "Silk.NET.Core": "2.21.0",
+          "Silk.NET.Maths": "2.21.0"
+        }
+      },
+      "Silk.NET.Maths": {
+        "type": "Transitive",
+        "resolved": "2.21.0",
+        "contentHash": "1Hv05KJmKXzzlp3+nFHl2A8yaugGkAj0gCSOaSsLFNFnwuLUIKLBGaC6y23JgGYnK+1t1DS40oPOquHQPI06rg=="
       },
       "Sylvan.Data.Csv": {
         "type": "Transitive",

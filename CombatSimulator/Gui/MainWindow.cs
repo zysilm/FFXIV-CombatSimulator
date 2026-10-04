@@ -276,6 +276,7 @@ public partial class MainWindow : IDisposable
     public void DrawProfessional()
     {
         ImGui.SetNextWindowSize(new Vector2(560, 500), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSizeConstraints(new Vector2(360, 240), new Vector2(float.MaxValue));
         var showWindow = config.ShowProfessionalWindow;
         if (!ImGui.Begin("Combat Simulator - Professional Mode", ref showWindow))
         {
@@ -293,6 +294,15 @@ public partial class MainWindow : IDisposable
         var contentHeight = ImGui.GetContentRegionAvail().Y;
         var totalWidth = ImGui.GetContentRegionAvail().X;
         var sidebarWidth = config.SidebarWidth;
+
+        // Restored/docked windows can briefly have less space than the sidebar
+        // and content minimums. Never pass an inverted interval to Math.Clamp.
+        if (totalWidth < 230f || contentHeight <= 0f)
+        {
+            ImGui.TextWrapped("Expand the window to show the controls.");
+            ImGui.End();
+            return;
+        }
 
         // Clamp sidebar width
         sidebarWidth = Math.Clamp(sidebarWidth, 80f, totalWidth - 150f);
@@ -341,6 +351,7 @@ public partial class MainWindow : IDisposable
                 break;
             case 3: // Effects
                 DrawHitVfxSection();
+                DrawBodyFluidsSection();
                 DrawExperimentalEffects();
                 DrawArmorDetachmentEntrySection();
                 DrawEnemyControlEntrySection();
