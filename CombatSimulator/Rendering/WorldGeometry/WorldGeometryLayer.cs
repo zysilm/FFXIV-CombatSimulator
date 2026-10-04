@@ -26,5 +26,8 @@ public sealed class WorldGeometryLayer : IDisposable
         bool clipSpace = false, bool diagnostic = false, bool shaded = true)
         => owner.Submit(State, vertices, testSceneDepth, clipSpace, diagnostic, shaded);
     public void Clear() => owner.ClearLayer(State);
+    /// <summary>Submit immutable liquid surface data; renderer owns scene snapshot and GPU state.</summary>
+    public void SubmitFluidFrame(ReadOnlySpan<FluidVertex> vertices, FluidMaterial material, bool testSceneDepth = true)
+        => owner.SubmitFluid(State, vertices, material, testSceneDepth);
     public void Dispose() => owner.RemoveLayer(State);
 }

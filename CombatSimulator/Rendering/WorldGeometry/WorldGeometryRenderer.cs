@@ -1,5 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 using System;
+using System.Diagnostics;
 using System.Numerics;
 using System.Threading;
 using CombatSimulator.Core;
@@ -31,6 +32,8 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
     private readonly LayerState?[] layers = new LayerState?[MaxLayers];
     private readonly Slot[] slots = new Slot[3];
     private readonly WorldTrianglePass pass = new();
+    private readonly WorldFluidPass fluidPass = new();
+    private readonly WorldGpuTiming gpuTiming = new();
     private Hook<UiDelegate>? uiHook;
     private Hook<TargetDelegate>? targetHook;
     private bool disposed, faulted, externalViewConflict, hooksEnabled;
@@ -38,17 +41,26 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
     private long probeDeadline, nextCompatibilityCheck;
     private long submitted, drawn, skipped, drawnBatches;
     private bool hasQueuedFrame;
+    private bool cameraEyeLogged;
     private uint lastQueuedFrame;
     private string status = "Off";
+    private readonly double[] submitWaits = new double[256];
+    private int submitWaitCursor, submitWaitWindow;
+    private long submitWaitCount;
+    private double submitWaitLast, submitWaitMax;
 
     internal sealed class LayerState
     {
         internal readonly string Name;
         internal readonly int Capacity;
         internal WorldVertex[]? Vertices;
+        internal FluidVertex[]? FluidVertices;
+        internal bool Fluid;
+        internal FluidMaterial Material;
         internal int Count, Generation;
         internal bool Enabled, Disposed, TestSceneDepth = true, ClipSpace, Diagnostic, Shaded = true;
         internal int LastDrawMode = -1;
+        internal int LastOpticalShapeMode = -1;
         internal bool ProjectionLogged;
         internal string Status = "Off";
         internal WorldDepthProbe? DepthProbe;
@@ -61,11 +73,14 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
         public LayerState Layer;
         public int Generation, Start, Count;
         public bool TestSceneDepth, ClipSpace, Diagnostic, Shaded, BudgetLimited;
+        public bool Fluid;
+        public FluidMaterial Material;
     }
 
     private sealed class Slot
     {
         public readonly WorldVertex[] Vertices = new WorldVertex[MaxVertices];
+        public readonly FluidVertex[] FluidVertices = new FluidVertex[MaxVertices];
         public readonly Batch[] Batches = new Batch[MaxLayers];
         public int BatchCount;
         public nint Marker, Target;
@@ -78,6 +93,54 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
     public bool IsSuspended => Volatile.Read(ref externalViewConflict) || Volatile.Read(ref faulted) || Volatile.Read(ref disposed);
     public long DrawnFrames => Interlocked.Read(ref drawn);
     public long DrawnBatches => Interlocked.Read(ref drawnBatches);
+    /// <summary>GPU measurements are asynchronous; NaN percentiles mean no valid samples yet.</summary>
+    public string GpuTimingStatus { get { lock (gate) return gpuTiming.Status; } }
+    public void ResetGpuTiming() { lock (gate) gpuTiming.ResetStatistics(); }
+    public const string RefractionDiagnosticLegend = "path: gray=thin surface, green=closed ray accepted, magenta=analytic entry failed, white=analytic exit invalid, blue=TIR, yellow=background depth/unprojection invalid, orange=air-plane invalid/behind exit/>20m, purple=offscreen projection, red=foreground rejection; offset: dark blue=0px, green=1px, yellow=4px, red=16px+ (final sampled UV displacement)";
+    /// <summary>Initialization and submit-lock waiting are distinct CPU scopes; formatting occurs only on demand.</summary>
+    public string CpuTimingStatus
+    {
+        get
+        {
+            lock (gate)
+            {
+                Span<double> ordered = stackalloc double[256];
+                submitWaits.AsSpan(0, submitWaitWindow).CopyTo(ordered);
+                ordered = ordered[..submitWaitWindow]; ordered.Sort();
+                var p95 = submitWaitWindow == 0 ? double.NaN : ordered[Math.Max(0, (int)Math.Ceiling(submitWaitWindow * 0.95) - 1)];
+                var last = submitWaitCount == 0 ? double.NaN : submitWaitLast;
+                var maximum = submitWaitCount == 0 ? double.NaN : submitWaitMax;
+                return $"renderCPU[{fluidPass.InitializationTimingStatus}]; SubmitFluid renderer-lock wait count={submitWaitCount}, window={submitWaitWindow}/256, last={last:F3}ms, p95={p95:F3}ms, max={maximum:F3}ms; scopes exclude producer simulation/model/geometry CPU";
+            }
+        }
+    }
+
+    /// <summary>Main-thread read-only optical proof placement. No game camera or render state is changed.</summary>
+    public bool TryGetPreviewOrigin(Vector3 reference, out Vector3 origin)
+    {
+        origin = default;
+        if (IsSuspended || !WorldGeometryBuilder.Finite(reference)) return false;
+        var mgr = GameCameraManager.Instance();
+        var camera = mgr == null || mgr->Camera == null ? null : &mgr->Camera->CameraBase.SceneCamera;
+        if (camera == null || camera->RenderCamera == null || camera->RenderCamera->StandardZ) return false;
+        var gameView = camera->ViewMatrix; var gameProjection = camera->RenderCamera->ProjectionMatrix;
+        var affineView = *(Matrix4x4*)&gameView;
+        affineView.M14 = affineView.M24 = affineView.M34 = 0; affineView.M44 = 1;
+        if (!Matrix4x4.Invert(affineView, out var inverseView)) return false;
+        var eye = inverseView.Translation;
+        var right = Vector3.TransformNormal(Vector3.UnitX, inverseView);
+        var towardEye = eye - reference;
+        if (!WorldGeometryBuilder.Finite(eye) || !WorldGeometryBuilder.Finite(right)
+            || !WorldGeometryBuilder.Finite(towardEye) || right.LengthSquared() < 1e-8f || towardEye.LengthSquared() < 1e-8f) return false;
+        var candidate = reference + Vector3.Normalize(right) * 0.22f + Vector3.Normalize(towardEye) * 0.10f;
+        if (!WorldGeometryBuilder.Finite(candidate)) return false;
+        var clip = Vector4.Transform(new Vector4(candidate, 1), affineView * *(Matrix4x4*)&gameProjection);
+        if (!float.IsFinite(clip.X) || !float.IsFinite(clip.Y) || !float.IsFinite(clip.Z)
+            || !float.IsFinite(clip.W) || clip.W <= 1e-6f || clip.Z / clip.W < 0 || clip.Z / clip.W > 1) return false;
+        var uv = new Vector2(clip.X / clip.W * 0.5f + 0.5f, 0.5f - clip.Y / clip.W * 0.5f);
+        if (!float.IsFinite(uv.X) || !float.IsFinite(uv.Y) || uv.X < 0.03f || uv.X > 0.97f || uv.Y < 0.03f || uv.Y > 0.97f) return false;
+        origin = candidate; return true;
+    }
 
     public WorldGeometryRenderer(IGameInteropProvider interop, ISigScanner scanner, IPluginLog log)
     {
@@ -157,6 +220,8 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
             }
             vertices[..count].CopyTo(layer.Vertices);
             var hadGeometry = layer.Count > 0;
+            if (layer.Fluid) layer.Generation++;
+            layer.Fluid = false;
             layer.Count = count;
             layer.TestSceneDepth = testSceneDepth;
             layer.ClipSpace = clipSpace;
@@ -164,6 +229,32 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
             layer.Shaded = shaded;
             if (!hadGeometry) layer.Status = "Waiting for main-view submission";
             // Hook changes are performed only by main-thread Tick/SetEnabled/BeginProbe.
+        }
+    }
+
+    internal void SubmitFluid(LayerState layer, ReadOnlySpan<FluidVertex> vertices, FluidMaterial material, bool testSceneDepth)
+    {
+        if (!material.IsValid) throw new ArgumentOutOfRangeException(nameof(material));
+        var count = Math.Min(vertices.Length, layer.Capacity);
+        count -= count % 3;
+        for (var i = 0; i < count; i++)
+            if (!FluidGeometryBuilder.Valid(vertices[i])) throw new ArgumentException("Fluid surface contains invalid vertex data", nameof(vertices));
+        var lockRequested = Stopwatch.GetTimestamp();
+        lock (gate)
+        {
+            submitWaitLast = Stopwatch.GetElapsedTime(lockRequested).TotalMilliseconds;
+            submitWaits[submitWaitCursor] = submitWaitLast; submitWaitCursor = (submitWaitCursor + 1) % submitWaits.Length;
+            submitWaitWindow = Math.Min(submitWaits.Length, submitWaitWindow + 1); submitWaitCount++;
+            submitWaitMax = Math.Max(submitWaitMax, submitWaitLast);
+            if (disposed || faulted || layer.Disposed) return;
+            if (count == 0) { ClearLayer(layer); return; }
+            layer.FluidVertices ??= new FluidVertex[layer.Capacity];
+            vertices[..count].CopyTo(layer.FluidVertices);
+            if (!layer.Fluid) layer.Generation++;
+            if (layer.Material.DiagnosticView != material.DiagnosticView) layer.LastDrawMode = -1;
+            layer.Fluid = true; layer.Material = material; layer.Count = count;
+            layer.TestSceneDepth = testSceneDepth; layer.ClipSpace = layer.Diagnostic = false;
+            layer.Status = "Waiting for liquid scene snapshot";
         }
     }
 
@@ -185,7 +276,7 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
         {
             if (layer.Disposed) return;
             ClearLayer(layer);
-            layer.Disposed = true; layer.Enabled = false; layer.Vertices = null;
+            layer.Disposed = true; layer.Enabled = false; layer.Vertices = null; layer.FluidVertices = null;
             for (var i = 0; i < layers.Length; i++) if (ReferenceEquals(layers[i], layer)) layers[i] = null;
             RefreshHooks();
         }
@@ -236,6 +327,10 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
 
     private void RefreshHooks()
     {
+        var hasFluid = false;
+        foreach (var layer in layers)
+            if (layer != null && !layer.Disposed && layer.Enabled && layer.Fluid && layer.Count > 0) hasFluid = true;
+        if (!hasFluid || disposed || faulted || externalViewConflict) { fluidPass.Dispose(); gpuTiming.Dispose(); }
         var want = !disposed && !faulted && !externalViewConflict && (HasGeometry() || probeRemaining > 0);
         if (want == hooksEnabled) return;
         if (want) { targetHook?.Enable(); uiHook?.Enable(); hasQueuedFrame = false; }
@@ -320,9 +415,21 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
         var affineView = *(Matrix4x4*)&view;
         affineView.M14 = affineView.M24 = affineView.M34 = 0;
         affineView.M44 = 1;
+        // Derive the eye in exactly the world space used by our proven view
+        // transform. RenderCamera.Origin is not a verified world-space eye.
+        if (!Matrix4x4.Invert(affineView, out var inverseView)
+            || !WorldGeometryBuilder.Finite(inverseView.Translation))
+        { status = "Main scene view is not invertible; drawing skipped"; skipped++; return; }
         slot.ViewProjection = affineView * *(Matrix4x4*)&projection;
+        slot.CameraPosition = inverseView.Translation;
         var origin = camera->RenderCamera->Origin;
-        slot.CameraPosition = new Vector3(origin.X, origin.Y, origin.Z);
+        if (!cameraEyeLogged)
+        {
+            cameraEyeLogged = true;
+            var renderOrigin = new Vector3(origin.X, origin.Y, origin.Z);
+            var eyeInView = Vector3.Transform(slot.CameraPosition, affineView);
+            log.Info($"World geometry camera: inverseSceneViewEye={slot.CameraPosition}, renderOrigin={renderOrigin}, difference={renderOrigin - slot.CameraPosition}, eyeTransformedToView={eyeInView}, viewDeterminant={affineView.GetDeterminant():G9}; shader uses inverseSceneViewEye; RenderCamera.Origin semantics unverified");
+        }
         slot.Width = target->ActualWidth; slot.Height = target->ActualHeight;
         slot.Target = (nint)target; slot.Marker = (nint)marker;
         submitted++;
@@ -359,11 +466,13 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
         {
             if (counts[i] == 0) continue;
             var layer = layers[i]!;
-            layer.Vertices!.AsSpan(0, counts[i]).CopyTo(slot.Vertices.AsSpan(offset));
+            if (layer.Fluid) layer.FluidVertices!.AsSpan(0, counts[i]).CopyTo(slot.FluidVertices.AsSpan(offset));
+            else layer.Vertices!.AsSpan(0, counts[i]).CopyTo(slot.Vertices.AsSpan(offset));
             slot.Batches[slot.BatchCount++] = new Batch {
                 Layer = layer, Generation = layer.Generation, Start = offset, Count = counts[i],
                 TestSceneDepth = layer.TestSceneDepth, ClipSpace = layer.ClipSpace,
                 Diagnostic = layer.Diagnostic, Shaded = layer.Shaded, BudgetLimited = counts[i] < layer.Count,
+                Fluid = layer.Fluid, Material = layer.Material,
             };
             offset += counts[i];
             if (counts[i] < layer.Count) layer.Status = "Rendering with a reduced shared-frame vertex budget";
@@ -424,12 +533,61 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
         var anyDrawn = false;
         try
         {
+            // Capture once, before any producer draw: refracted background never contains plugin geometry.
+            var needsFluid = false;
+            for (var i = 0; i < slot.BatchCount; i++)
+            {
+                ref var candidate = ref slot.Batches[i];
+                if (candidate.Fluid && !candidate.Layer.Disposed && candidate.Layer.Enabled && candidate.Layer.Generation == candidate.Generation)
+                    needsFluid = true;
+            }
+            if (needsFluid) gpuTiming.Begin(nativeDevice, d3d);
+            var fluidReady = false;
+            if (needsFluid)
+            {
+                try { fluidReady = fluidPass.CaptureScene(nativeDevice, d3d, slot.Width, slot.Height); }
+                catch (Exception ex)
+                {
+                    fluidPass.Dispose();
+                    foreach (var layer in layers)
+                        if (layer != null && layer.Fluid && layer.Enabled)
+                        { layer.Count = 0; layer.Generation++; layer.Status = "Liquid resources rejected; see log"; }
+                    log.Error(ex, "World liquid resources rejected; ordinary producer layers remain available");
+                }
+            }
             for (var i = 0; i < slot.BatchCount; i++)
             {
                 ref var batch = ref slot.Batches[i];
                 var layer = batch.Layer;
                 if (layer.Disposed || !layer.Enabled || layer.Generation != batch.Generation) continue;
                 var matrix = batch.ClipSpace ? Matrix4x4.Identity : slot.ViewProjection;
+                if (batch.Fluid)
+                {
+                    var ellipsoidVertices = 0;
+                    for (var vertex = 0; vertex < batch.Count; vertex++)
+                        if (slot.FluidVertices[batch.Start + vertex].VolumeRadii.X > 0) ellipsoidVertices++;
+                    var shapeMode = ellipsoidVertices > 0 ? 1 : 0;
+                    if (layer.LastDrawMode != 3 || layer.LastOpticalShapeMode != shapeMode)
+                    {
+                        layer.LastDrawMode = 3; layer.LastOpticalShapeMode = shapeMode;
+                        log.Info($"World fluid layer {layer.Name}: {fluidPass.Status}; smoothVertices={batch.Count}, closedEllipsoidVertices={ellipsoidVertices}, thinSurfaceVertices={batch.Count - ellipsoidVertices}, stride={sizeof(FluidVertex)}; IOR={batch.Material.IndexOfRefraction}; diagnostic={batch.Material.DiagnosticView}; normal-selected front surface; analytic ellipsoid interior + bounded scene-depth air propagation; thin surface local approximation; pre-UI snapshot");
+                    }
+                    try
+                    {
+                        if (!fluidReady || !fluidPass.Draw(nativeDevice, d3d, srv, slot.FluidVertices.AsSpan(batch.Start, batch.Count),
+                            matrix, slot.CameraPosition, slot.Width, slot.Height, depth->ActualWidth, depth->ActualHeight,
+                            batch.TestSceneDepth, batch.Material))
+                        { skipped++; layer.Status = fluidPass.Status; continue; }
+                    }
+                    catch (Exception ex)
+                    {
+                        skipped++; layer.Count = 0; layer.Generation++;
+                        layer.Status = "Liquid draw rejected; see log";
+                        log.Error(ex, $"World liquid layer {layer.Name} stopped after draw failure; context restored");
+                        continue;
+                    }
+                    anyDrawn = true; drawnBatches++; layer.Status = fluidPass.Status; continue;
+                }
                 if (batch.Diagnostic) Diagnose(nativeDevice, d3d, srv, slot, batch, matrix, depth->ActualWidth, depth->ActualHeight);
                 if (!pass.Draw(nativeDevice, d3d, srv, slot.Vertices.AsSpan(batch.Start, batch.Count), matrix,
                     slot.CameraPosition, slot.Width, slot.Height, depth->ActualWidth, depth->ActualHeight,
@@ -440,7 +598,7 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
             }
             if (anyDrawn) { drawn++; status = "Rendering world geometry"; }
         }
-        finally { nativeDevice->Release(); }
+        finally { gpuTiming.End(d3d); nativeDevice->Release(); }
     }
 
     private void Diagnose(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11ShaderResourceView* srv,
@@ -509,12 +667,14 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
             disposed = true; hooksEnabled = false;
             foreach (var layer in layers) if (layer != null)
             {
-                layer.Disposed = true; layer.Enabled = false; layer.Vertices = null;
+                layer.Disposed = true; layer.Enabled = false; layer.Vertices = null; layer.FluidVertices = null;
                 layer.DepthProbe?.Dispose(); layer.DepthProbe = null;
             }
             Array.Clear(layers);
             foreach (var slot in slots) { slot.Marker = 0; slot.BatchCount = 0; Array.Clear(slot.Batches); }
             pass.Dispose();
+            fluidPass.Dispose();
+            gpuTiming.Dispose();
         }
         uiHook?.Dispose(); targetHook?.Dispose();
     }

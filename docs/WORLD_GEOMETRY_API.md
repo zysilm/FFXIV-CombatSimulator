@@ -41,7 +41,30 @@ layer.Dispose();
 
 游戏 ViewMatrix 的齐次列在实机中为零/未定义填充。服务只在自己的副本中补齐 `(0,0,0,1)`，再乘游戏投影矩阵；不写相机。这个修正经实机三维标记与人物遮挡验证。底层使用 D3D11.1 context state 保存/恢复完整渲染状态，私有状态清空以免保留 backbuffer 影响 resize。
 
-现阶段的限制：DynamicPortrait 加载时暂停服务，主视图识别尚无可靠契约；透明物体按层/提交顺序混合，没有完整透明排序或 OIT；材料不支持场景折射、贴图或自定义 shader。当前 API 是插件内共享能力，尚未提供跨插件 IPC。
+现阶段的限制：DynamicPortrait 加载时暂停服务，主视图识别尚无可靠契约；透明物体按层/提交顺序混合，没有完整透明排序或 OIT。普通 WorldVertex 材质不支持贴图或自定义 shader；折射使用下面独立的 FluidVertex 路径。当前 API 是插件内共享能力，尚未提供跨插件 IPC。
+
+## 连续液面与折射 API
+
+`FluidGeometryBuilder` 独立于任何发射器，输出 `FluidVertex`：世界位置、自由液面法线、UV、实际液体厚度、覆盖率。`Thickness` 使用米，绝不能用到场景 depth 的距离冒充液体厚度；`Coverage` 是像素覆盖而非液体不透明度。
+
+```csharp
+var liquidLayer = renderer.CreateLayer("My liquid", capacity: 12288);
+var liquidMesh = new FluidGeometryBuilder(12288);
+liquidMesh.AddEllipsoid(center, new Vector3(0.003f));
+liquidLayer.SetEnabled(true);
+liquidLayer.SubmitFluidFrame(liquidMesh.Vertices, FluidMaterial.Default);
+// 模拟形状变化后 Reset/重建/Submit；停止这个功能时 Clear/Dispose。
+```
+
+`AddEllipsoid` 使用解析平滑法线，并在顶点中声明 `VolumeCenter/VolumeRadii`。shader据此解析光线的入点、内部弦长、出点和两次Snell折射，再用scene-depth背景传播出射光线；吸收只用真实内部弦长。未声明闭合体（radii为0）的薄膜/细丝保留局部薄层近似。`FluidVertex`现为64字节，旧构造参数继续有效；调用者不能把变形球冠/贴肤面声明成完整自由椭球。
+
+`AddThread` 接收变半径中心线，使用距离缩放 Hermite 插值、平行移动标架和端帽。`AddTriangle` 支持调用者输出共享顶点连续液膜、地液和其他自由表面；builder 只做有界几何构建，绝不调用模型、地形或骨骼 API。
+
+`FluidMaterial` 包含 IOR、粗糙度、吸收系数、折射强度、反光权重和诊断模式。服务每帧将已有场景颜色复制一次，各功能共享这个快照并结合 scene depth 进行屏幕空间折射；透明合成 RGB 已包含背景，不能再次乘“不透明度”。反光是显式程序棚灯 fallback，权重0保留透射，尚未读取游戏环境探针。深度决定遮挡、背景位置和错误采样回退，不代表液体厚度。屏幕外/被遮挡背景无法恢复；闭合椭球传播最多3次背景平面修正，缺少有效背景则回退原UV。该新路径尚需实机验收。推导依据：[PBRT Dielectric BSDF](https://pbr-book.org/4ed/Reflection_Models/Dielectric_BSDF)、[Sphere intersection](https://pbr-book.org/4ed/Shapes/Spheres)。
+
+`FluidDiagnosticView` 可检查仅折射背景、正面法线、深度拒绝（红）/通过（绿）、背向（红）/正向（绿）。DepthDecision 明确绕过遮挡以显示拒绝原因，只用于诊断。生产使用 Composite。失效的折射资源只停止 liquid pass，普通标记层仍继续；每个 layer 的 Clear 不影响其他消费者。
+
+`GpuTimingStatus` 使用四组 timestamp/disjoint queries，以 DONOTFLUSH 在后续帧读取，不 Flush 或等待 GPU。统计范围是有液面时的插件绘制段（快照、液面及同时存在的普通层），不是整游戏帧；无结果时 NaN，不当作0ms。2026-10-04 静态液滴已由用户确认透明和遮挡正常；完整动态液体真实性与性能仍在验证。
 
 ## 实机复用验证
 

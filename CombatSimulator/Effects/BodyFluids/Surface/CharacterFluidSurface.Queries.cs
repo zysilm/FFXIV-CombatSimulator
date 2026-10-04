@@ -21,7 +21,11 @@ public sealed unsafe partial class CharacterFluidSurface
         Vector3.Transform(v.Position, matrices[v.B0]) * v.Weights.X +
         Vector3.Transform(v.Position, matrices[v.B1]) * v.Weights.Y +
         Vector3.Transform(v.Position, matrices[v.B2]) * v.Weights.Z +
-        Vector3.Transform(v.Position, matrices[v.B3]) * v.Weights.W;
+        Vector3.Transform(v.Position, matrices[v.B3]) * v.Weights.W +
+        Vector3.Transform(v.Position, matrices[v.B4]) * v.ExtraWeights.X +
+        Vector3.Transform(v.Position, matrices[v.B5]) * v.ExtraWeights.Y +
+        Vector3.Transform(v.Position, matrices[v.B6]) * v.ExtraWeights.Z +
+        Vector3.Transform(v.Position, matrices[v.B7]) * v.ExtraWeights.W;
     private bool Triangle(int fi, out Vector3 a, out Vector3 b, out Vector3 c)
     {
         a = b = c = default;
@@ -30,6 +34,41 @@ public sealed unsafe partial class CharacterFluidSurface
         a = currentVertices[face.A]; b = currentVertices[face.B]; c = currentVertices[face.C];
         return Vector3.Cross(b - a, c - a).LengthSquared() > 1e-14f;
     }
+
+    private bool ContactPending(string reason)
+    {
+        BudgetExhausted = true;
+        ContactPendingReason = reason;
+        return false;
+    }
+
+    private bool CacheTriangleSweepBounds(int fi)
+    {
+        ref var bounds = ref triangleSweepBounds[fi];
+        if (bounds.Frame == frame) return true;
+        var face = faces[fi];
+        if (!Skin(face.A) || !Skin(face.B) || !Skin(face.C))
+            return ContactPending(BudgetExhausted ? "Skin vertex budget exhausted" : "Triangle pose unavailable/nonfinite");
+        var a = currentVertices[face.A]; var b = currentVertices[face.B]; var c = currentVertices[face.C];
+        var pa = previousVertices[face.A]; var pb = previousVertices[face.B]; var pc = previousVertices[face.C];
+        bounds.Minimum = Vector3.Min(Vector3.Min(Vector3.Min(a, b), c), Vector3.Min(Vector3.Min(pa, pb), pc));
+        bounds.Maximum = Vector3.Max(Vector3.Max(Vector3.Max(a, b), c), Vector3.Max(Vector3.Max(pa, pb), pc));
+        // All three temporal slice triangles lie in the six-endpoint box. PlaneContact additionally
+        // shifts each slice's from-point by centroidDelta/3 and permits a 1mm interior start.
+        // The barycentric test also permits two negative coordinates of up to 0.0001 each.
+        // Cover these terms before rejecting; this is broad phase for that same three-slice approximation.
+        var relativeMotion = Vector3.Abs(((a - pa) + (b - pb) + (c - pc)) / 9f);
+        var padding = relativeMotion + new Vector3(0.001f) + (bounds.Maximum - bounds.Minimum) * 0.0002f;
+        bounds.Minimum -= padding; bounds.Maximum += padding;
+        if (!Finite(bounds.Minimum) || !Finite(bounds.Maximum)) return ContactPending("Triangle sweep bounds nonfinite");
+        bounds.Frame = frame; TriangleBoundsBuiltThisFrame++;
+        return true;
+    }
+
+    private static bool BoundsOverlap(Vector3 segmentMinimum, Vector3 segmentMaximum, Vector3 minimum, Vector3 maximum) =>
+        segmentMaximum.X >= minimum.X && segmentMinimum.X <= maximum.X &&
+        segmentMaximum.Y >= minimum.Y && segmentMinimum.Y <= maximum.Y &&
+        segmentMaximum.Z >= minimum.Z && segmentMinimum.Z <= maximum.Z;
 
     /// <summary>
     /// Local material-space walk only. Returns false at a mesh boundary; anchor/sample are left at the edge.
@@ -87,7 +126,9 @@ public sealed unsafe partial class CharacterFluidSurface
         out FluidSurfaceAnchor anchor, out FluidSurfaceSample sample, out float fraction)
     {
         anchor = default; sample = default; fraction = 1;
-        if (!HasSurface || !Finite(start) || !Finite(end)) return false;
+        if (BudgetExhausted) return ContactPending(ContactPendingReason.Length == 0 ? "Earlier pose query exhausted its budget" : ContactPendingReason);
+        if (!HasSurface) return ContactPending("Surface pose/topology unavailable");
+        if (!Finite(start) || !Finite(end) || !float.IsFinite(radius)) return ContactPending("Contact sweep input nonfinite");
         radius = Math.Clamp(radius, 0.0001f, 0.03f);
         var segmentMinimum = Vector3.Min(start, end) - new Vector3(radius);
         var segmentMaximum = Vector3.Max(start, end) + new Vector3(radius);
@@ -97,23 +138,25 @@ public sealed unsafe partial class CharacterFluidSurface
         {
             var minimum = Vector3.Min(cluster.Minimum, cluster.PreviousMinimum);
             var maximum = Vector3.Max(cluster.Maximum, cluster.PreviousMaximum);
-            if (segmentMaximum.X < minimum.X || segmentMinimum.X > maximum.X ||
-                segmentMaximum.Y < minimum.Y || segmentMinimum.Y > maximum.Y ||
-                segmentMaximum.Z < minimum.Z || segmentMinimum.Z > maximum.Z) continue;
+            if (!BoundsOverlap(segmentMinimum, segmentMaximum, minimum, maximum)) continue;
             foreach (var leaf in cluster.Children)
             {
                 if (leaf.BoundsFrame != frame) UpdateBounds(leaf);
                 var leafMinimum = Vector3.Min(leaf.Minimum, leaf.PreviousMinimum);
                 var leafMaximum = Vector3.Max(leaf.Maximum, leaf.PreviousMaximum);
-                if (segmentMaximum.X < leafMinimum.X || segmentMinimum.X > leafMaximum.X ||
-                    segmentMaximum.Y < leafMinimum.Y || segmentMinimum.Y > leafMaximum.Y ||
-                    segmentMaximum.Z < leafMinimum.Z || segmentMinimum.Z > leafMaximum.Z) continue;
+                if (!BoundsOverlap(segmentMinimum, segmentMaximum, leafMinimum, leafMaximum)) continue;
                 foreach (int fi in leaf.Triangles)
                 {
-                if (tests >= MaxTriangleTests) { BudgetExhausted = true; goto Finished; }
+                if (BroadPhaseCandidatesThisFrame >= MaxBroadPhaseCandidates)
+                { ContactPending("Broad-phase candidate budget exhausted"); goto Finished; }
+                BroadPhaseCandidatesThisFrame++;
+                if (!CacheTriangleSweepBounds(fi)) goto Finished;
+                ref var bounds = ref triangleSweepBounds[fi];
+                if (!BoundsOverlap(segmentMinimum, segmentMaximum, bounds.Minimum, bounds.Maximum)) continue;
+                if (tests >= MaxTriangleTests) { ContactPending("Narrow-phase triangle budget exhausted"); goto Finished; }
                 tests++;
-                if (!Triangle(fi, out var a, out var b, out var c)) continue;
                 var face = faces[fi];
+                var a = currentVertices[face.A]; var b = currentVertices[face.B]; var c = currentVertices[face.C];
                 var pa = previousVertices[face.A]; var pb = previousVertices[face.B]; var pc = previousVertices[face.C];
                 for (int slice = 0; slice < 3; slice++)
                 {
@@ -134,7 +177,8 @@ public sealed unsafe partial class CharacterFluidSurface
         Finished:
         if (found < 0 || BudgetExhausted) return false;
         anchor = new(Generation, found, foundBary);
-        return TryEvaluate(anchor, out sample);
+        if (TryEvaluate(anchor, out sample)) return true;
+        return ContactPending("Contact found but current triangle sample unavailable");
     }
 
     private static bool PlaneContact(Vector3 from, Vector3 to, float radius, Vector3 a, Vector3 b, Vector3 c,

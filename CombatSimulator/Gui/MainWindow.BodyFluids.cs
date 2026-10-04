@@ -28,40 +28,31 @@ public partial class MainWindow
         if (ImGui.Button("Stop emission##bodyfluids")) BodyFluids?.StopEmission();
         ImGui.SameLine();
         if (ImGui.Button("Clear##bodyfluids")) BodyFluids?.Clear();
+        if (ImGui.Button("Reset defaults##bodyfluids"))
+        {
+            BodyFluids?.Clear();
+            config.ResetBodyFluids();
+            config.Save();
+        }
+        HelpMarker("Reset restores all saliva settings, stops emission and clears existing saliva.");
 
         var flow = config.BodyFluidFlowMlPerSecond;
-        if (ImGui.SliderFloat("Flow##bodyfluids", ref flow, 0.01f, 0.6f, "%.2f ml/s"))
+        if (ImGui.SliderFloat("Flow##bodyfluids", ref flow, 0.001f, 0.12f, "%.3f ml/s"))
         { config.BodyFluidFlowMlPerSecond = flow; config.Save(); }
-        var speed = config.BodyFluidSurfaceSpeed;
-        if (ImGui.SliderFloat("Skin flow speed##bodyfluids", ref speed, 0.01f, 0.5f, "%.2f m/s"))
-        { config.BodyFluidSurfaceSpeed = speed; config.Save(); }
+        var viscosity = config.BodyFluidViscosityPaSeconds;
+        if (ImGui.SliderFloat("Viscosity##bodyfluids", ref viscosity, 0.03f, 1.2f, "%.3f Pa s"))
+        { config.BodyFluidViscosityPaSeconds = viscosity; config.Save(); }
+        HelpMarker("Higher viscosity slows skin flow and resists stretching. These are artistic controls, not measured saliva properties.");
         var relaxation = config.BodyFluidFilamentRelaxation;
-        if (ImGui.SliderFloat("String persistence##bodyfluids", ref relaxation, 0.05f, 2f, "%.2f s"))
+        if (ImGui.SliderFloat("Stress relaxation##bodyfluids", ref relaxation, 0.05f, 2f, "%.2f s"))
         { config.BodyFluidFilamentRelaxation = relaxation; config.Save(); }
-        var length = config.BodyFluidFilamentLength;
-        if (ImGui.SliderFloat("String length##bodyfluids", ref length, 0.03f, 0.35f, "%.2f m"))
-        { config.BodyFluidFilamentLength = length; config.Save(); }
-        var lifetime = config.BodyFluidPuddleLifetime;
-        if (ImGui.SliderFloat("Puddle lifetime##bodyfluids", ref lifetime, 2f, 90f, "%.0f s"))
-        { config.BodyFluidPuddleLifetime = lifetime; config.Save(); }
-        var opacity = config.BodyFluidOpacity;
-        if (ImGui.SliderFloat("Visibility##bodyfluids", ref opacity, 0.05f, 0.8f, "%.2f"))
-        { config.BodyFluidOpacity = opacity; config.Save(); }
-        var visualScale = config.BodyFluidVisualScale;
-        if (ImGui.SliderFloat("Visual thickness##bodyfluids", ref visualScale, 1f, 4f, "%.1fx"))
-        { config.BodyFluidVisualScale = visualScale; config.Save(); }
-        HelpMarker("Enlarges visible drops and strings without changing flow, collision, or fluid volume.");
-        if (ImGui.TreeNode("Mouth placement##bodyfluids"))
-        {
-            HelpMarker("Small adjustments for different faces and body mods. These move only the fluid source.");
-            var forward = config.BodyFluidMouthForwardOffset;
-            if (ImGui.SliderFloat("Forward##bodyfluidmouth", ref forward, -0.1f, 0.1f, "%.3f m"))
-            { config.BodyFluidMouthForwardOffset = forward; config.Save(); }
-            var height = config.BodyFluidMouthHeightOffset;
-            if (ImGui.SliderFloat("Height##bodyfluidmouth", ref height, -0.1f, 0.1f, "%.3f m"))
-            { config.BodyFluidMouthHeightOffset = height; config.Save(); }
-            ImGui.TreePop();
-        }
+        var reflection = config.BodyFluidReflectionStrength;
+        if (ImGui.SliderFloat("Reflection strength##bodyfluids", ref reflection, 0f, 1f, "%.2f"))
+        { config.BodyFluidReflectionStrength = reflection; config.Save(); }
+        var roughness = config.BodyFluidRoughness;
+        if (ImGui.SliderFloat("Highlight roughness##bodyfluids", ref roughness, 0.02f, 1f, "%.2f"))
+        { config.BodyFluidRoughness = roughness; config.Save(); }
+        HelpMarker("Lower reflection keeps the liquid clearer. Higher roughness broadens highlights. Clear removes accumulated liquid.");
         if (enabled && BodyFluids != null)
         {
             ImGui.TextWrapped(BodyFluids.SurfaceStatus);

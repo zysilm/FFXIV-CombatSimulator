@@ -17,6 +17,9 @@ internal sealed class FluidModelData
     public uint[] BoneNameOffsets = Array.Empty<uint>();
     public byte[] Strings = Array.Empty<byte>();
     public MdlStructs.SubmeshStruct[] Submeshes = Array.Empty<MdlStructs.SubmeshStruct>();
+    public MdlStructs.ShapeStruct[] Shapes = Array.Empty<MdlStructs.ShapeStruct>();
+    public MdlStructs.ShapeMeshStruct[] ShapeMeshes = Array.Empty<MdlStructs.ShapeMeshStruct>();
+    public MdlStructs.ShapeValueStruct[] ShapeValues = Array.Empty<MdlStructs.ShapeValueStruct>();
 
     public static FluidModelData FromMdlFile(MdlFile mdl) => new()
     {
@@ -29,5 +32,8 @@ internal sealed class FluidModelData
         BoneNameOffsets = mdl.BoneNameOffsets ?? Array.Empty<uint>(),
         Strings = mdl.Strings ?? Array.Empty<byte>(),
         Submeshes = mdl.Submeshes ?? Array.Empty<MdlStructs.SubmeshStruct>(),
+        Shapes = mdl.Shapes ?? Array.Empty<MdlStructs.ShapeStruct>(),
+        ShapeMeshes = mdl.ShapeMeshes ?? Array.Empty<MdlStructs.ShapeMeshStruct>(),
+        ShapeValues = mdl.ShapeValues ?? Array.Empty<MdlStructs.ShapeValueStruct>(),
     };
 }

@@ -13,8 +13,8 @@ internal sealed class FluidLiveCommandBridge
 {
     private static readonly HashSet<string> Commands = new(StringComparer.Ordinal)
     {
-        "on", "off", "stop", "clear", "status", "trace", "surface", "surfacebody", "confirm-lip",
-        "material", "materialoff", "refraction", "normals", "inspect", "inspectdepth",
+        "on", "off", "stop", "clear", "status", "trace", "surface", "surfacebody", "surfacebodyraw", "confirm-lip",
+        "material", "materialoff", "refraction", "normals", "refractionpath", "refractionoffset", "inspect", "inspectdepth",
         "inspectnormal", "inspectoff", "probe",
     };
     private readonly string path;
