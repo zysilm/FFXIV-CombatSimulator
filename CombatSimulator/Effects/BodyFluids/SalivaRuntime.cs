@@ -41,6 +41,7 @@ internal sealed partial class SalivaRuntime
     private double retiredSkinFilm;
     private uint generation;
     private int terrainBudget, surfaceBudget;
+    private int rivuletSampleBudget, beadStepOrder;
     public bool Emitting { get; set; }
     /// <summary>Temporary visibility experiment: more supply and exaggerated rendered thickness, never saved to settings.</summary>
     public bool LargeVisibilityPreview { get; set; }
@@ -112,7 +113,7 @@ internal sealed partial class SalivaRuntime
         config.ClampBodyFluids();
         viscosity = config.BodyFluidViscosityPaSeconds;
         foreach (var film in films) film.SetMaterial(viscosity);
-        foreach (var thread in threads) thread.Model.SetMaterial(viscosity, config.BodyFluidFilamentRelaxation);
+        foreach (var thread in threads) thread.Model.SetMaterial(viscosity, config.BodyFluidFilamentRelaxation, config.BodyFluidStringiness);
         ground.SetMaterial(viscosity);
         if (seconds > 0.15)
         { DeferredSeconds = seconds; Status = "Paused: source pose gap exceeds 150 ms"; return; }
@@ -136,6 +137,7 @@ internal sealed partial class SalivaRuntime
             lastRuntimeSubsteps++; lastRuntimeStepSeconds = dt;
             if (dt < 1e-7) microstepCount++;
             terrainBudget = 32; surfaceBudget = 40;
+            rivuletSampleBudget = 8;
             ground.BeginStep();
             if (Emitting && sourceAvailable)
             {
@@ -150,7 +152,7 @@ internal sealed partial class SalivaRuntime
             {
                 for (var bead = 0; bead < beads.Length; bead++)
                     if (beads[bead].Volume <= 0 && !BeadSlotReserved(bead))
-                    { beads[bead] = default; sourceBead = bead; break; }
+                    { beads[bead] = default; rivulets[bead]?.Reset(); sourceBead = bead; break; }
             }
             if (sourceAvailable && sourceBead >= 0)
             {
@@ -220,6 +222,7 @@ internal sealed partial class SalivaRuntime
         }
         if (free < 0) return 0;
         var volume = Math.Min(requested, BeadLimit);
+        rivulets[free]?.Reset();
         beads[free] = new() { Film = film, Anchor = anchor, Volume = volume,
             LastWorldSample = worldSample, HasWorldSample = hasSample };
         return volume;
@@ -241,8 +244,11 @@ internal sealed partial class SalivaRuntime
 
     private void StepBeads(double dt)
     {
-        for (var i = 0; i < beads.Length; i++)
+        int start = beadStepOrder;
+        beadStepOrder = (beadStepOrder + 1) % beads.Length;
+        for (var offset = 0; offset < beads.Length; offset++)
         {
+            int i = (start + offset) % beads.Length;
             ref var bead = ref beads[i];
             if (bead.Volume <= 0) continue;
             if (bead.Anchor.Generation != generation)
@@ -252,6 +258,7 @@ internal sealed partial class SalivaRuntime
             }
             if (!surface.TryEvaluate(bead.Anchor, out var sample)) continue;
             bead.LastWorldSample = sample; bead.HasWorldSample = true;
+            RecordRivulet(i, bead.Anchor, sample);
             BeadDimensions(bead.Volume, out _, out _, out var footprintRadius);
             var tangentGravity = Gravity - sample.Normal * Vector3.Dot(Gravity, sample.Normal);
             var drive = Density * bead.Volume * tangentGravity.Length();
@@ -299,6 +306,7 @@ internal sealed partial class SalivaRuntime
             bead.Anchor = candidate;
             bead.LastWorldSample = walked;
             bead.RunoffDistance += travel;
+            RecordRivulet(i, candidate, walked);
             if (i == sourceBead)
             {
                 // Role transition only: inventory/slot/possible thread references stay
@@ -397,6 +405,7 @@ internal sealed partial class SalivaRuntime
             var accepted = thread.Model.InitializePendant(start, end, sample.Velocity, beads[bead].Volume, neckRadius);
             if (accepted <= 0) return false;
             beads[bead].Volume -= accepted;
+            rivulets[bead]?.Reset();
             thread.Anchor = beads[bead].Anchor; thread.Bead = bead; thread.Attached = true; thread.TipAttached = false; thread.Deferred = 0;
             thread.RequestedSeconds = thread.SimulatedSeconds = 0; thread.AcceptedProposals = thread.PendingSteps = thread.SolverNoProgress = 0;
             thread.TimeDebt = 0;
@@ -428,6 +437,7 @@ internal sealed partial class SalivaRuntime
         var radius = (float)Radius(bead.Volume);
         if (!TryAddDrop(sample.Position + sample.Normal * (radius + 0.00008f), velocity, bead.Volume, 0.12)) return false;
         bead.Volume = 0;
+        rivulets[index]?.Reset();
         if (sourceBead == index) sourceBead = -1;
         return true;
     }
@@ -487,6 +497,7 @@ internal sealed partial class SalivaRuntime
         skinGenerationChanges = 0; retiredSkinFilm = 0;
         foreach (var film in films) film.Clear();
         Array.Clear(beads); Array.Clear(drops);
+        foreach (var path in rivulets) path?.Reset();
         foreach (var thread in threads)
         { thread.Model.Clear(); thread.Attached = thread.TipAttached = false; thread.Bead = -1; thread.Deferred = thread.TimeDebt = 0; thread.PendingContact = false; thread.ContactSegment = 0; }
         ground.Clear();

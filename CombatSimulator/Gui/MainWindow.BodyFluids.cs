@@ -40,9 +40,17 @@ public partial class MainWindow
         if (ImGui.SliderFloat("Flow##bodyfluids", ref flow, 0.001f, 0.12f, "%.3f ml/s"))
         { config.BodyFluidFlowMlPerSecond = flow; config.Save(); }
         var viscosity = config.BodyFluidViscosityPaSeconds;
+        var thicknessScale = config.BodyFluidThicknessScale;
+        if (ImGui.SliderFloat("Visible thickness##bodyfluids", ref thicknessScale, 1f, 4f, "%.2fx"))
+        { config.BodyFluidThicknessScale = thicknessScale; config.Save(); }
+        HelpMarker("Enlarges visible liquid thickness for close-up testing without changing flow, gravity or contact timing. Reset restores 1x.");
         if (ImGui.SliderFloat("Viscosity##bodyfluids", ref viscosity, 0.03f, 1.2f, "%.3f Pa s"))
         { config.BodyFluidViscosityPaSeconds = viscosity; config.Save(); }
         HelpMarker("Higher viscosity slows skin flow and resists stretching. These are artistic controls, not measured saliva properties.");
+        var stringiness = config.BodyFluidStringiness;
+        if (ImGui.SliderFloat("Stringiness##bodyfluids", ref stringiness, 1f, 20f, "%.1f"))
+        { config.BodyFluidStringiness = stringiness; config.Save(); }
+        HelpMarker("Raises the thread's stretching resistance independently of skin flow. Higher values keep a hanging strand cohesive for longer. This is an artistic calibration, not measured saliva rheology.");
         var relaxation = config.BodyFluidFilamentRelaxation;
         if (ImGui.SliderFloat("Stress relaxation##bodyfluids", ref relaxation, 0.05f, 2f, "%.2f s"))
         { config.BodyFluidFilamentRelaxation = relaxation; config.Save(); }

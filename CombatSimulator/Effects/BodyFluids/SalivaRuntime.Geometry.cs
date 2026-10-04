@@ -30,12 +30,12 @@ internal sealed partial class SalivaRuntime
         foreach (var thread in threads)
         {
             if (thread.Model.TotalVolume <= 0) continue;
-            if (thread.Model.TerminalVolume > 0)
+            if (thread.Model.TerminalVolume > 0 && thread.Model.GetSegment(thread.Model.SegmentCount - 1).Volume <= 0)
             {
                 // True reservoir radius; the neck's end cap slightly overlaps the
                 // sphere pole. This is a reduced junction, not extra visual inventory.
                 var center = thread.PendingContact ? thread.PreviousTerminalCenter : thread.Model.TerminalCenter;
-                builder.AddEllipsoid(center, new Vector3((float)Radius(thread.Model.TerminalVolume)), 24, 12);
+                AppendFreeDrop(builder, center, thread.Model.TerminalVelocity, thread.Model.TerminalVolume);
             }
             for (var i = 0; i < thread.Model.SegmentCount; i++)
             {
@@ -62,6 +62,22 @@ internal sealed partial class SalivaRuntime
                     var right = thread.Model.GetSegment(Math.Min(segment - 1, index)).Radius;
                     thread.RenderRadii[node] = (float)Math.Max(1e-6, (left + right) * 0.5);
                 }
+                if (segment == thread.Model.SegmentCount && thread.Model.TerminalVolume > 0)
+                {
+                    // Reconstruct neck and loaded pendant as one smooth free surface.
+                    // It is the same owned terminal volume, not an overlapping sphere.
+                    var direction = thread.RenderPositions[count - 1] - thread.RenderPositions[count - 2];
+                    direction = direction.LengthSquared() > 1e-12f ? Vector3.Normalize(direction) : -Vector3.UnitY;
+                    var center = thread.PendingContact ? thread.PreviousTerminalCenter : thread.Model.TerminalCenter;
+                    var radius = (float)Radius(thread.Model.TerminalVolume);
+                    thread.RenderPositions[count] = center - direction * (radius * .3f);
+                    thread.RenderRadii[count++] = radius * .9f;
+                    thread.RenderPositions[count] = center + direction * (radius * .3f);
+                    thread.RenderRadii[count++] = radius * .9f;
+                    thread.RenderPositions[count] = center + direction * (radius * .85f);
+                    thread.RenderRadii[count++] = radius * .35f;
+                    inventory += thread.Model.TerminalVolume;
+                }
                 double reconstructed = 0;
                 for (var node = 0; node < count - 1; node++)
                 {
@@ -74,10 +90,11 @@ internal sealed partial class SalivaRuntime
                 reconstructed += 2 * Math.PI / 3 * (Math.Pow(thread.RenderRadii[0], 3) + Math.Pow(thread.RenderRadii[count - 1], 3));
                 var correction = reconstructed > 0 ? Math.Sqrt(inventory / reconstructed) : 1;
                 for (var node = 0; node < count; node++) thread.RenderRadii[node] *= (float)correction;
-                builder.AddThread(thread.RenderPositions.AsSpan(0, count), thread.RenderRadii.AsSpan(0, count), 12, 1);
+                builder.AddThread(thread.RenderPositions.AsSpan(0, count), thread.RenderRadii.AsSpan(0, count), 16, 2);
             }
         }
         int capWork = CapChartWorkBudget;
+        RivuletsDrawn = 0;
         CapGeometryVerifiedCount = CapGeometryPendingCount = CapGeometryHiddenCount = 0;
         CapGeometrySupportedCount = CapGeometryTrianglesThisFrame = 0;
         CapGeometryPendingReason = string.Empty;
@@ -89,6 +106,7 @@ internal sealed partial class SalivaRuntime
             int index = (firstCap + step) % beads.Length;
             var bead = beads[index];
             if (bead.Volume <= 0) { curvedCapGeometry[index]?.Invalidate(); continue; }
+            if (AppendRivulet(index, builder)) { RivuletsDrawn++; continue; }
             var cache = curvedCapGeometry[index] ??= new CurvedCapGeometryCache();
             bool ready = false;
             if (bead.Film >= 0 && bead.Film < films.Length && surface.TryEvaluate(bead.Anchor, out var sample))
@@ -115,9 +133,23 @@ internal sealed partial class SalivaRuntime
         foreach (var drop in drops)
         {
             if (drop.Volume <= 0) continue;
-            builder.AddEllipsoid(drop.Position, new Vector3((float)Radius(drop.Volume)), 12, 6);
+            AppendFreeDrop(builder, drop.Position, drop.Velocity, drop.Volume);
         }
         ground.AppendGeometry(builder);
+    }
+
+    private static void AppendFreeDrop(FluidGeometryBuilder builder, Vector3 center, Vector3 velocity, double volume)
+    {
+        float radius = (float)Radius(volume);
+        float speed = velocity.Length();
+        var direction = speed > .01f ? velocity / speed : -Vector3.UnitY;
+        float stretch = 1 + Math.Clamp(speed * .18f, 0, .4f);
+        float radial = radius / MathF.Sqrt(stretch);
+        float dot = Math.Clamp(Vector3.Dot(Vector3.UnitY, direction), -1, 1);
+        var axis = Vector3.Cross(Vector3.UnitY, direction);
+        var rotation = dot < -.9999f ? Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI) :
+            axis.LengthSquared() < 1e-10f ? Quaternion.Identity : Quaternion.CreateFromAxisAngle(Vector3.Normalize(axis), MathF.Acos(dot));
+        builder.AddEllipsoid(center, new Vector3(radial, radius * stretch, radial), 24, 12, rotation);
     }
 
 }

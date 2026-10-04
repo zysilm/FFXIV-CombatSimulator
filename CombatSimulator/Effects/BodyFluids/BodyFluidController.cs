@@ -198,6 +198,8 @@ public sealed partial class BodyFluidController : IDisposable
                 simulation.AppendGeometry(fluidGeometry);
                 if (simulation.LargeVisibilityPreview)
                     fluidGeometry.ExaggerateForVisibilityPreview(16, .003f, 4);
+                else if (config.BodyFluidThicknessScale > 1)
+                    fluidGeometry.ExaggerateForVisibilityPreview(config.BodyFluidThicknessScale, 0, config.BodyFluidThicknessScale);
                 var material = config.CreateBodyFluidMaterial() with { DiagnosticView = productionView };
                 // The requested large visibility preview also restores the original
                 // material test's full reflection weight. Normal settings stay intact.
@@ -239,6 +241,7 @@ public sealed partial class BodyFluidController : IDisposable
             return $"Body fluids: {(enabled ? "enabled" : "off")}, emitting={Emitting}, largeVisibilityPreview={simulation.LargeVisibilityPreview}, poseFrames={poseFrames}, steps={steps}, " +
                 $"vertices={(surfaceProbeTime > 0 || visualProbeTime > 0 ? geometry.Count : fluidGeometry.Count)}, geometryOverflow={fluidGeometry.Overflowed}, view={productionView}, " +
                 $"{fluidGeometry.DescribeVisibility()}, " +
+                $"rivulets={simulation.RivuletsDrawn},visibleThickness={config.BodyFluidThicknessScale:F2}x, " +
                 $"framework[{frameworkTimings.Describe()}],pose[{poseTimings.Describe()}], " +
                 $"skinVertices={surface.SkinVerticesThisFrame},triangleTests={surface.TriangleTestsThisFrame},candidates={surface.BroadPhaseCandidatesThisFrame},boundsBuilt={surface.TriangleBoundsBuiltThisFrame},budgetHit={surface.BudgetExhausted},contactPending='{surface.ContactPendingReason}'; " +
                 $"runtime={simulation.Status},volume error={simulation.ConservationError * 1e6:F5} ml; {simulation.InventoryDiagnostics}; {simulation.CapGeometryDiagnostics}; surface={SurfaceStatus}; render={renderer.Status}; " +

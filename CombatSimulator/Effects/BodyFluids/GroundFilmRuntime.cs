@@ -19,7 +19,9 @@ internal delegate GroundProbeResult GroundSupportProbe(Vector3 from, Vector3 to,
 internal sealed partial class GroundFilmRuntime
 {
     private const int Capacity = 384, SupportCapacity = 64;
-    private const float GridSize = 0.003f, WeldTolerance = 0.00005f;
+    // A 6mm tile admits a small pendant impact without filling a tiny half-tile
+    // and expands a visible footprint with the same fixed 384-cell/query budget.
+    private const float GridSize = 0.006f, WeldTolerance = 0.00005f;
     private const double MinimumArea = 1e-9;
     private readonly SurfaceFilm film = new(Capacity, Capacity * 3);
     private readonly GroundSupportHit[] supports = new GroundSupportHit[SupportCapacity];
@@ -72,7 +74,7 @@ internal sealed partial class GroundFilmRuntime
         }
         if (contactCell < 0) return 0;
         // An impact initially occupies an actual contact footprint, instead of trying
-        // to squeeze its whole volume into one 3mm half-tile. Only clipped cells on
+        // to squeeze its whole volume into one small half-tile. Only clipped cells on
         // this same verified terrain triangle participate; no support is fabricated.
         RegisterTile(x - 1, z, support, true);
         RegisterTile(x + 1, z, support, true);
@@ -251,7 +253,7 @@ internal sealed partial class GroundFilmRuntime
         return Contains(new FilmCellGeometry(s.A, s.B, s.C, Vector3.Normalize(cross)), s.Point);
     }
 
-    public string Inspect() => $"Ground film: cells={film.CellCount}/{Capacity}, edges={film.EdgeCount}, tiles={tileCount}, supports={supportCount}/{SupportCapacity}, volume={Volume * 1e6:F5}ml, probes={ProbeCalls}/4, newTiles={newTiles}/2,newCells={newCells}/8, pending={PendingProbes}, budgetHit={BudgetHit}, deferred={DeferredSeconds:F5}s, grid=3mm; verified static triangle clips, shared 3D edges; unknown/steps sealed; collision/render correspondence requires in-game proof";
+    public string Inspect() => $"Ground film: cells={film.CellCount}/{Capacity}, edges={film.EdgeCount}, tiles={tileCount}, supports={supportCount}/{SupportCapacity}, volume={Volume * 1e6:F5}ml, probes={ProbeCalls}/4, newTiles={newTiles}/2,newCells={newCells}/8, pending={PendingProbes}, budgetHit={BudgetHit}, deferred={DeferredSeconds:F5}s, grid={GridSize * 1000:0}mm; verified static triangle clips, shared 3D edges; unknown/steps sealed; collision/render correspondence requires in-game proof";
     public string Status => Inspect();
     public double Clear()
     {

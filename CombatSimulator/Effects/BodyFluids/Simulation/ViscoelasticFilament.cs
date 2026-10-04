@@ -17,6 +17,7 @@ public sealed class ViscoelasticFilament
 {
     private const double Density = 1000, SurfaceTension = 0.055, ElasticModulus = 8;
     private double viscosity = 0.18, relaxationSeconds = 0.45;
+    private double stringiness = 1;
     private const double MaximumInventory = 1e-6, MinimumLength = 1e-5;
     private const double NeckRadius = 25e-6, MaximumStress = 100;
     private readonly Vector3[] positions, velocities, forces, rhs, solved;
@@ -70,10 +71,11 @@ public sealed class ViscoelasticFilament
     /// Viscosity controls implicit extensional drag/capillary redistribution; relaxation controls
     /// exponential Maxwell stress decay. Updating either preserves all current segment inventories.
     /// </summary>
-    public void SetMaterial(double viscosityPaSeconds, double stressRelaxationSeconds)
+    public void SetMaterial(double viscosityPaSeconds, double stressRelaxationSeconds, double extensionalResistance = 1)
     {
         viscosity = double.IsFinite(viscosityPaSeconds) ? Math.Clamp(viscosityPaSeconds, 0.03, 1.2) : 0.18;
         relaxationSeconds = double.IsFinite(stressRelaxationSeconds) ? Math.Clamp(stressRelaxationSeconds, 0.05, 2) : 0.45;
+        stringiness = double.IsFinite(extensionalResistance) ? Math.Clamp(extensionalResistance, 1, 20) : 1;
     }
 
     public ViscoelasticFilament(int nodeCount = 24)
@@ -197,7 +199,7 @@ public sealed class ViscoelasticFilament
         // Pending fragments still use this topology's midpoint/velocity ownership.
         // Resolve their receiving inventory before changing any indexed endpoints.
         for (var segment = 0; segment < SegmentCount; segment++) if (brokenVolumes[segment] > 0) return 0;
-        var removed = 0;
+        var removed = CoalesceCompressedTerminal(previousPositions);
         for (var i = 0; i < SegmentCount && removed < 4 && NodeCount > 2; i++)
         {
             if (broken[i] || volumes[i] <= 0 || brokenVolumes[i] > 0) continue;
@@ -260,6 +262,57 @@ public sealed class ViscoelasticFilament
             removed++; i = Math.Max(-1, i - 2);
         }
         return removed;
+    }
+
+    // A compressed endpoint interval can lie inside the actual terminal sphere.
+    // The generic neighbour merge refuses it to protect that sphere's centre,
+    // which formerly left a 10µm interval rejecting every solver trial forever.
+    // Absorb only this compact distal material into its existing terminal owner;
+    // retain an outside material node, centre, inventory and local momentum.
+    private int CoalesceCompressedTerminal(Span<Vector3> previousPositions)
+    {
+        if (TerminalVolume <= 0 || pinned[1] || NodeCount < 3) return 0;
+        int last = SegmentCount - 1;
+        if (broken[last] || volumes[last] <= 0 || Length(last) >= 4 * MinimumLength) return 0;
+        var center = TerminalCenter;
+        double nextVolume = TerminalVolume;
+        int baseNode = last - 1;
+        int removed = 0;
+        while (baseNode >= 0 && removed < 4)
+        {
+            int absorbed = baseNode + 1;
+            if (broken[absorbed] || volumes[absorbed] <= 0 || brokenVolumes[absorbed] > 0) return 0;
+            nextVolume += volumes[absorbed]; removed++;
+            double radius = Math.Cbrt(nextVolume * 3 / (4 * Math.PI));
+            if (Vector3.Distance(positions[baseNode], center) > radius + 4 * MinimumLength)
+            {
+                if (broken[baseNode] || volumes[baseNode] <= 0) return 0;
+                var oldMomentum = Momentum(baseNode, SegmentCount);
+                var direction = Vector3.Normalize(center - positions[baseNode]);
+                double absorbedVolume = nextVolume - TerminalVolume;
+                var oldEndpoint = positions[NodeCount - 1];
+                TerminalVolume = nextVolume;
+                activeNodes = baseNode + 2;
+                positions[baseNode + 1] = center - direction * (float)radius;
+                previousPositions[baseNode + 1] = oldEndpoint;
+                // Half of the retained interval is carried by each endpoint;
+                // the terminal endpoint additionally carries the whole reservoir.
+                var baseMomentum = new Momentum3(velocities[baseNode], NodeVolumeWeight(baseNode));
+                velocities[baseNode + 1] = (oldMomentum - baseMomentum).ToVector3(1 / (TerminalVolume + volumes[baseNode] * .5));
+                Array.Clear(volumes, baseNode + 1, volumes.Length - baseNode - 1);
+                Array.Clear(stresses, baseNode + 1, stresses.Length - baseNode - 1);
+                Array.Clear(broken, baseNode + 1, broken.Length - baseNode - 1);
+                Array.Clear(brokenVolumes, baseNode + 1, brokenVolumes.Length - baseNode - 1);
+                LastRemeshMomentumError = (Momentum(baseNode, SegmentCount) - oldMomentum).Length * Density;
+                CoarsenedSegments += removed; CoarsenedVolume += absorbedVolume;
+                return removed;
+            }
+            // Only intervals whose endpoint is already in the terminal body may
+            // be absorbed. Long outside strands retain their material nodes.
+            if (Vector3.Distance(positions[baseNode], center) > radius || baseNode == 0) return 0;
+            baseNode--;
+        }
+        return 0;
     }
 
     private double NodeVolumeWeight(int node) =>
@@ -440,8 +493,8 @@ public sealed class ViscoelasticFilament
             var area = volumes[i] / length;
             var strainRate = Vector3.Dot(velocities[i + 1] - velocities[i], direction) / length;
             var decay = Math.Exp(-dt / relaxationSeconds);
-            stresses[i] = Math.Clamp(stresses[i] * decay + 3 * ElasticModulus * relaxationSeconds * strainRate * (1 - decay),
-                -MaximumStress, MaximumStress);
+            stresses[i] = Math.Clamp(stresses[i] * decay + 3 * ElasticModulus * stringiness * relaxationSeconds * strainRate * (1 - decay),
+                -MaximumStress * stringiness, MaximumStress * stringiness);
             var tension = SurfaceTension * Math.PI * Math.Sqrt(area / Math.PI) + area * stresses[i];
             var force = direction * (float)tension;
             forces[i] += force; forces[i + 1] -= force;
@@ -452,7 +505,7 @@ public sealed class ViscoelasticFilament
             // transverse tension stiffness is implicit. The capillary axial derivative is
             // negative (-T/2L at fixed V), so it remains explicit with accepted-step strain
             // control instead of pretending the full capillary Hessian is positive definite.
-            var coefficient = axial * (dt * 3 * viscosity * area / length) +
+            var coefficient = axial * (dt * 3 * viscosity * stringiness * area / length) +
                 (Matrix3.Identity - axial) * (dt * dt * Math.Max(0, tension) / length);
             blocks[i] += coefficient; blocks[i + 1] += coefficient;
             couplings[i] = coefficient * -1;

@@ -213,9 +213,12 @@ public sealed class FluidGeometryBuilder
         && WorldGeometryBuilder.Finite(v.VolumeCenter) && WorldGeometryBuilder.Finite(v.VolumeRadii)
         && (v.VolumeRadii == Vector3.Zero || (v.VolumeRadii.X > 0 && v.VolumeRadii.Y > 0 && v.VolumeRadii.Z > 0));
     /// <summary>Analytic smooth normals and normal-chord liquid thickness.</summary>
-    public void AddEllipsoid(Vector3 center, Vector3 radii, int longitude = 48, int latitude = 24)
+    public void AddEllipsoid(Vector3 center, Vector3 radii, int longitude = 48, int latitude = 24, Quaternion orientation = default)
     {
         if (!WorldGeometryBuilder.Finite(center) || !WorldGeometryBuilder.Finite(radii) || radii.X <= 0 || radii.Y <= 0 || radii.Z <= 0) return;
+        if (!float.IsFinite(orientation.LengthSquared())) return;
+        bool rotated = orientation != default && orientation != Quaternion.Identity;
+        orientation = orientation.LengthSquared() > 1e-8f ? Quaternion.Normalize(orientation) : Quaternion.Identity;
         longitude = Math.Clamp(longitude, 12, 64); latitude = Math.Clamp(latitude, 6, 32);
         if (Count + longitude * (latitude - 1) * 6 > vertices.Length) { Overflowed = true; return; }
         FluidVertex Point(int x, int y)
@@ -226,8 +229,9 @@ public sealed class FluidGeometryBuilder
             var normal = Vector3.Normalize(unit / radii);
             var inverse = normal / radii;
             var chord = 2 * Vector3.Dot(unit / radii, normal) / inverse.LengthSquared();
-            return new FluidVertex(center + unit * radii, normal, new Vector2(u * MathF.Tau * radii.X, v * MathF.PI * radii.Y), MathF.Max(0, chord),
-                volumeCenter: center, volumeRadii: radii);
+            return new FluidVertex(center + Vector3.Transform(unit * radii, orientation), Vector3.Transform(normal, orientation),
+                new Vector2(u * MathF.Tau * radii.X, v * MathF.PI * radii.Y), MathF.Max(0, chord),
+                volumeCenter: center, volumeRadii: rotated ? Vector3.Zero : radii);
         }
         for (var y = 0; y < latitude; y++)
             for (var x = 0; x < longitude; x++)

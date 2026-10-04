@@ -21,6 +21,8 @@ public partial class Configuration
     public float BodyFluidRoughness { get; set; } = BodyFluidDefaults.Roughness;
     public float BodyFluidCloudiness { get; set; } = BodyFluidDefaults.Cloudiness;
     public float BodyFluidFoamAmount { get; set; } = BodyFluidDefaults.Foam;
+    public float BodyFluidThicknessScale { get; set; } = 1f;
+    public float BodyFluidStringiness { get; set; } = 6f;
     public float BodyFluidSurfaceSpeed { get; set; } = BodyFluidDefaults.SurfaceSpeed;
     public float BodyFluidFilamentRelaxation { get; set; } = BodyFluidDefaults.Relaxation;
     public float BodyFluidFilamentLength { get; set; } = BodyFluidDefaults.FilamentLength;
@@ -40,6 +42,8 @@ public partial class Configuration
         BodyFluidRoughness = BodyFluidDefaults.Roughness;
         BodyFluidCloudiness = BodyFluidDefaults.Cloudiness;
         BodyFluidFoamAmount = BodyFluidDefaults.Foam;
+        BodyFluidThicknessScale = 1f;
+        BodyFluidStringiness = 6f;
         BodyFluidSurfaceSpeed = BodyFluidDefaults.SurfaceSpeed;
         BodyFluidFilamentRelaxation = BodyFluidDefaults.Relaxation;
         BodyFluidFilamentLength = BodyFluidDefaults.FilamentLength;
@@ -63,6 +67,8 @@ public partial class Configuration
         BodyFluidRoughness = FluidClamp(BodyFluidRoughness, 0.02f, 1f, BodyFluidDefaults.Roughness);
         BodyFluidCloudiness = FluidClamp(BodyFluidCloudiness, 0f, 1f, BodyFluidDefaults.Cloudiness);
         BodyFluidFoamAmount = FluidClamp(BodyFluidFoamAmount, 0f, 1f, BodyFluidDefaults.Foam);
+        BodyFluidThicknessScale = FluidClamp(BodyFluidThicknessScale, 1f, 4f, 1f);
+        BodyFluidStringiness = FluidClamp(BodyFluidStringiness, 1f, 20f, 6f);
         BodyFluidSurfaceSpeed = FluidClamp(BodyFluidSurfaceSpeed, 0.01f, 0.5f, BodyFluidDefaults.SurfaceSpeed);
         BodyFluidFilamentRelaxation = FluidClamp(BodyFluidFilamentRelaxation, 0.05f, 2f, BodyFluidDefaults.Relaxation);
         BodyFluidFilamentLength = FluidClamp(BodyFluidFilamentLength, 0.03f, 0.35f, BodyFluidDefaults.FilamentLength);
