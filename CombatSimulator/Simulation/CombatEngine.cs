@@ -1904,12 +1904,19 @@ public class CombatEngine : IDisposable
 
     private void TriggerManualPlayerHitFeedback(IReadOnlyList<AppliedActionDamage> hits)
     {
+        var weaponSoundQueued = false;
         foreach (var hit in hits)
         {
             if (hit.DamageResult.Damage <= 0)
                 continue;
 
             PlayHitReactionOnTarget(hit.Target, isDamage: true);
+            // Fighting Mode reports actual weapon contact; do not add the swing-start delay again.
+            if (!weaponSoundQueued && hit.DamageResult.DamageType == SimDamageType.Physical)
+            {
+                animationController.QueuePlayerWeaponImpact(GetGameEntityId(hit.Target), 0f);
+                weaponSoundQueued = true;
+            }
         }
     }
 

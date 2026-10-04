@@ -5131,8 +5131,23 @@ public unsafe partial class RagdollController : IDisposable
                                 Math.Clamp(MathF.Max(45f, config.RagdollJointSpringFrequency), 45f, 60f), 2f),
                         });
 
-                    // Limit the two permitted axes as a compact reach cone. The swivel-hinge
-                    // itself locks wrist roll.
+                    // The swivel-hinge also accepts an inverted transverse axis. Keep the
+                    // hand's transverse normal in its original forearm-relative hemisphere
+                    // so axial flipping cannot hide from the longitudinal swing cone.
+                    // The 80-degree cap leaves room for the full 55-degree wrist bend.
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                        new SwingLimit
+                        {
+                            AxisLocalA = NormalizeOrFallback(Vector3.Transform(
+                                secondTransverseWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)), Vector3.UnitZ),
+                            AxisLocalB = NormalizeOrFallback(Vector3.Transform(
+                                secondTransverseWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)), Vector3.UnitZ),
+                            MaximumSwingAngle = DegreesToRadians(80f),
+                            SpringSettings = new SpringSettings(
+                                Math.Clamp(MathF.Max(45f, config.RagdollJointSpringFrequency), 45f, 60f), 2f),
+                        });
+
+                    // Limit the two permitted bend axes as a compact reach cone.
                     var childLongLocal = NormalizeOrFallback(Vector3.Transform(
                         longAxisWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)), Vector3.UnitY);
                     var parentReferenceLocal = NormalizeOrFallback(Vector3.Transform(
