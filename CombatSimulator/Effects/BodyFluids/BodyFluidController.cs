@@ -84,12 +84,14 @@ public sealed partial class BodyFluidController : IDisposable
         }
     }
 
-    public void Start()
+    public void Start(bool largeVisibilityPreview = false)
     {
         lock (gate)
         {
             if (disposed || !Services.ClientState.IsLoggedIn) return;
             if (visualProbeTime > 0 || surfaceProbeTime > 0) ClearCore();
+            simulation.LargeVisibilityPreview = largeVisibilityPreview;
+            productionView = FluidDiagnosticView.Composite;
             enabled = config.BodyFluidsEnabled = true;
             config.ClampBodyFluids();
             surface.IncludeBodySurface = true;
@@ -144,6 +146,7 @@ public sealed partial class BodyFluidController : IDisposable
         visualProbeDeadline = surfaceProbeDeadline = 0;
         diagnosticTriangles = Array.Empty<FluidSurfaceAnchor>(); diagnosticGeneration = 0;
         simulation.Emitting = false; simulation.Clear();
+        simulation.LargeVisibilityPreview = false;
         surface.Clear();
         surface.ApplyRaceDeformation = true;
         geometry.Reset(); fluidGeometry.Reset(); renderer.Clear();
@@ -188,7 +191,13 @@ public sealed partial class BodyFluidController : IDisposable
                 }
                 fluidGeometry.Reset();
                 simulation.AppendGeometry(fluidGeometry);
-                renderer.SubmitFluidFrame(fluidGeometry.Vertices, config.CreateBodyFluidMaterial() with { DiagnosticView = productionView });
+                if (simulation.LargeVisibilityPreview)
+                    fluidGeometry.ExaggerateForVisibilityPreview(16, .003f, 4);
+                var material = config.CreateBodyFluidMaterial() with { DiagnosticView = productionView };
+                // The requested large visibility preview also restores the original
+                // material test's full reflection weight. Normal settings stay intact.
+                if (simulation.LargeVisibilityPreview) material = material with { ReflectionStrength = 1 };
+                renderer.SubmitFluidFrame(fluidGeometry.Vertices, material);
             }
             catch (Exception ex)
             {
@@ -222,8 +231,9 @@ public sealed partial class BodyFluidController : IDisposable
     public string Describe()
     {
         lock (gate)
-            return $"Body fluids: {(enabled ? "enabled" : "off")}, emitting={Emitting}, poseFrames={poseFrames}, steps={steps}, " +
+            return $"Body fluids: {(enabled ? "enabled" : "off")}, emitting={Emitting}, largeVisibilityPreview={simulation.LargeVisibilityPreview}, poseFrames={poseFrames}, steps={steps}, " +
                 $"vertices={(surfaceProbeTime > 0 || visualProbeTime > 0 ? geometry.Count : fluidGeometry.Count)}, geometryOverflow={fluidGeometry.Overflowed}, view={productionView}, " +
+                $"{fluidGeometry.DescribeVisibility()}, " +
                 $"framework[{frameworkTimings.Describe()}],pose[{poseTimings.Describe()}], " +
                 $"skinVertices={surface.SkinVerticesThisFrame},triangleTests={surface.TriangleTestsThisFrame},candidates={surface.BroadPhaseCandidatesThisFrame},boundsBuilt={surface.TriangleBoundsBuiltThisFrame},budgetHit={surface.BudgetExhausted},contactPending='{surface.ContactPendingReason}'; " +
                 $"runtime={simulation.Status},volume error={simulation.ConservationError * 1e6:F5} ml; {simulation.InventoryDiagnostics}; {simulation.CapGeometryDiagnostics}; surface={SurfaceStatus}; render={renderer.Status}; " +

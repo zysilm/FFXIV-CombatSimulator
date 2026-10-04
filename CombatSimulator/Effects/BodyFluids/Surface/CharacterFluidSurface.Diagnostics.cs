@@ -19,7 +19,7 @@ public sealed unsafe partial class CharacterFluidSurface
     {
         lipBound = false; lipAnchor = default;
         LipAnchorIsValidated = false; lipSelectionAttempted = false;
-        LipStatus = "No verified lip landmark/profile; emission disabled";
+        LipStatus = "No current anatomical lip anchor; emission disabled";
     }
 
     public bool TryGetMouthAnchor(out FluidSurfaceAnchor anchor)

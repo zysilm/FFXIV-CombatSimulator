@@ -17,6 +17,48 @@ public sealed class FluidGeometryBuilder
     }
     public void Reset() { Count = 0; Overflowed = false; }
 
+    /// <summary>Read-only status diagnostic; no extra work in the render or pose callbacks.</summary>
+    public string DescribeVisibility()
+    {
+        float peakThickness = 0, coverageSum = 0;
+        int covered = 0;
+        for (int i = 0; i < Count; i++)
+        {
+            peakThickness = MathF.Max(peakThickness, vertices[i].Thickness);
+            coverageSum += vertices[i].Coverage;
+            if (vertices[i].Coverage > 0) covered++;
+        }
+        return $"submittedLiquid:maxThickness={peakThickness * 1000:F3}mm,meanCoverage={(Count > 0 ? coverageSum / Count : 0):F3},coveredVertices={covered}/{Count}";
+    }
+
+    /// <summary>
+    /// Diagnostic geometry exaggeration only. Leaves liquid ownership, contacts and shader/material untouched.
+    /// Thin surfaces are thickened along their normals; declared ellipsoids grow uniformly about their center.
+    /// This visible volume does not represent conserved simulation inventory. Adds no vertices or allocations.
+    /// </summary>
+    public void ExaggerateForVisibilityPreview(float thicknessMultiplier, float minimumThickness, float ellipsoidScale)
+    {
+        if (!float.IsFinite(thicknessMultiplier) || !float.IsFinite(minimumThickness) || !float.IsFinite(ellipsoidScale)) return;
+        thicknessMultiplier = Math.Clamp(thicknessMultiplier, 1, 16);
+        minimumThickness = Math.Clamp(minimumThickness, 0, .01f);
+        ellipsoidScale = Math.Clamp(ellipsoidScale, 1, 4);
+        for (int i = 0; i < Count; i++)
+        {
+            var vertex = vertices[i];
+            bool closed = vertex.VolumeRadii.X > 0 && vertex.VolumeRadii.Y > 0 && vertex.VolumeRadii.Z > 0;
+            if (closed)
+                vertices[i] = new FluidVertex(vertex.VolumeCenter + (vertex.Position - vertex.VolumeCenter) * ellipsoidScale,
+                    vertex.Normal, vertex.UV, vertex.Thickness * ellipsoidScale, vertex.Coverage,
+                    vertex.VolumeCenter, vertex.VolumeRadii * ellipsoidScale);
+            else if (vertex.Thickness > 0)
+            {
+                float thickness = Math.Clamp(vertex.Thickness * thicknessMultiplier, minimumThickness, .02f);
+                vertices[i] = new FluidVertex(vertex.Position + vertex.Normal * (thickness - vertex.Thickness),
+                    vertex.Normal, vertex.UV, thickness, vertex.Coverage);
+            }
+        }
+    }
+
     /// <summary>
     /// A continuous variable-radius Hermite thread with parallel-transport frames
     /// and hemispherical caps. Input nodes are simulation samples, not separate beads.

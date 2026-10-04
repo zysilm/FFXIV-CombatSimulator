@@ -14,7 +14,7 @@ public sealed unsafe partial class CharacterFluidSurface
     private bool lipSelectionAttempted;
     private readonly record struct ValidatedLipProfile(ModelLoadKey Model, ulong ObjectIdentity, nint DrawIdentity, int Mesh, uint IndexEntry, int V0, int V1, int V2, Vector3 Barycentric);
     private ValidatedLipProfile? validatedLipProfile;
-    /// <summary>Automatic selection is a candidate until its red marker passes the actual game lip proof.</summary>
+    /// <summary>Optional manual red-marker confirmation; automatic anatomical binding does not depend on it.</summary>
     public bool LipAnchorIsValidated { get; private set; }
 
     public bool ValidateCurrentLipAnchor()
@@ -62,7 +62,7 @@ public sealed unsafe partial class CharacterFluidSurface
         int count = Math.Min(candidates.Count, 256);
         lipCandidateTriangles = new int[count];
         for (int i = 0; i < count; i++) lipCandidateTriangles[i] = candidates[i].Face;
-        LipStatus = count == 0 ? "No supported visible lower-lip-weighted face patch; emission disabled" : $"Lower lip candidate patch={count} triangles; awaiting final pose / red-marker proof";
+        LipStatus = count == 0 ? "No supported visible lower-lip-weighted face patch; emission disabled" : $"Lower lip candidate patch={count} triangles; awaiting final pose";
         TryRestoreValidatedLipProfile();
     }
 
@@ -131,8 +131,8 @@ public sealed unsafe partial class CharacterFluidSurface
         if (best < 0) { LipStatus = "No outward local lower-lip triangle within landmark distance; emission disabled"; return; }
         lipAnchor = new(Generation, best, bestBary); lipBound = true; LipAnchorIsValidated = false;
         var face = faces[best];
-        LipStatus = $"AUTO LIP CANDIDATE UNVERIFIED generation={Generation} slot={face.Slot} mesh={face.Mesh} indexEntry={face.IndexEntry} " +
-            $"resolvedVertices={face.V0},{face.V1},{face.V2} bary={bestBary} boneProjection={MathF.Sqrt(bestDistance) * 1000:0.000} mm; emission disabled until red-marker proof";
+        LipStatus = $"AUTO ANATOMICAL LIP BOUND generation={Generation} slot={face.Slot} mesh={face.Mesh} indexEntry={face.IndexEntry} " +
+            $"resolvedVertices={face.V0},{face.V1},{face.V2} bary={bestBary} boneProjection={MathF.Sqrt(bestDistance) * 1000:0.000} mm; manual marker confirmation optional";
         Services.Log.Info($"Body fluid lip: {LipStatus}");
     }
 

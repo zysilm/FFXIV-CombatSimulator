@@ -198,7 +198,7 @@ public sealed unsafe partial class CharacterFluidSurface
     public bool TryGetMouth(out FluidSurfaceSample sample)
     {
         sample = default;
-        return LipAnchorIsValidated && TryGetMouthAnchor(out var anchor) && TryEvaluate(anchor, out sample);
+        return TryGetMouthAnchor(out var anchor) && TryEvaluate(anchor, out sample);
     }
 
     public bool TryEvaluate(FluidSurfaceAnchor anchor, out FluidSurfaceSample sample)

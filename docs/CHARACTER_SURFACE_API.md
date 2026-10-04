@@ -16,7 +16,7 @@ Framework 调用 `UpdateActor(address, objectId, territory)` 采集合法身份�
 - `TryGetAdjacentTriangle`、`GetAdjacentTriangles`：真实已验证邻接和有界局部 patch，不将靠得很近的两层皮肤当作连接。
 - `TryGetDiagnosticTriangle`、`TryGetTriangleVertexIds`：只读三角形/顶点身份，适合贴肤膜、标记与实际表面诊断。
 
-唇缘候选/验证是附加功能，普通身体接触查询不应依赖它。当前发射器需要经过实机红点确认的材料唇锚点，不能把 jaw/head 固定偏移当成嘴唇。
+唇缘候选/验证是附加功能，普通身体接触查询不应依赖它。当前发射器使用受下唇骨骼权重、外法线与局部距离约束的自动材料唇锚点；实机红点确认是可选诊断，不再因热重载或 shape 重建而阻塞出液。不能把 jaw/head 固定偏移当成嘴唇。
 
 ## 性能和未知状态
 

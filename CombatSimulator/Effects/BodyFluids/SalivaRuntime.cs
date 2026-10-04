@@ -40,6 +40,8 @@ internal sealed partial class SalivaRuntime
     private uint generation;
     private int terrainBudget, surfaceBudget;
     public bool Emitting { get; set; }
+    /// <summary>Temporary visibility experiment: more supply and exaggerated rendered thickness, never saved to settings.</summary>
+    public bool LargeVisibilityPreview { get; set; }
     public double EmittedVolume { get; private set; }
     public double RetiredVolume { get; private set; }
     public double DeferredSeconds { get; private set; }
@@ -105,8 +107,15 @@ internal sealed partial class SalivaRuntime
         foreach (var film in films) film.SetMaterial(viscosity);
         foreach (var thread in threads) thread.Model.SetMaterial(viscosity, config.BodyFluidFilamentRelaxation);
         ground.SetMaterial(viscosity);
-        if (seconds > 0.15 || !surface.LipAnchorIsValidated || !surface.TryGetMouthAnchor(out var lip) || !surface.TryEvaluate(lip, out var mouth))
-        { DeferredSeconds = seconds; Status = "Paused: source pose/verified lip unavailable or pose gap"; return; }
+        if (seconds > 0.15)
+        { DeferredSeconds = seconds; Status = "Paused: source pose gap exceeds 150 ms"; return; }
+        // The anatomical selector already requires a supported, outward lower-lip triangle.
+        // Manual marker confirmation is diagnostic, not a runtime emission prerequisite:
+        // DLL reloads and shape replacements must not silently disable a valid source.
+        if (!surface.TryGetMouthAnchor(out var lip))
+        { DeferredSeconds = seconds; Status = "Paused: no current anatomical lip anchor; " + surface.LipStatus; return; }
+        if (!surface.TryEvaluate(lip, out var mouth))
+        { DeferredSeconds = seconds; Status = "Paused: lip surface evaluation unavailable/budget"; return; }
         if (generation != 0 && generation != lip.Generation) RetireInventory();
         generation = lip.Generation;
         var sourceFilm = FindFilm(lip);
@@ -126,7 +135,7 @@ internal sealed partial class SalivaRuntime
             ground.BeginStep();
             if (Emitting)
             {
-                var requested = config.BodyFluidFlowMlPerSecond * 1e-6 * dt;
+                var requested = config.BodyFluidFlowMlPerSecond * (LargeVisibilityPreview ? 20 : 1) * 1e-6 * dt;
                 var accepted = Math.Min(requested, Math.Max(0, InventoryLimit - TotalVolume));
                 reservoir += accepted; EmittedVolume += accepted;
                 acceptedSourceSeconds += requested > 0 ? dt * accepted / requested : 0;

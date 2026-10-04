@@ -5,7 +5,8 @@ namespace CombatSimulator.Rendering.WorldGeometry;
 
 /// <summary>
 /// World-space surface. Thin producers supply a local normal-thickness estimate;
-/// explicitly declared closed ellipsoids derive their interior path analytically.
+/// closed ellipsoid metadata is retained for reusable producers. The renderer
+/// currently uses the original local single-interface optical approximation.
 /// Thickness never includes the gap to scene depth. Legacy curved caps are approximate.
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]

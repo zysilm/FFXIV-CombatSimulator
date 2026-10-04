@@ -96,7 +96,7 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
     /// <summary>GPU measurements are asynchronous; NaN percentiles mean no valid samples yet.</summary>
     public string GpuTimingStatus { get { lock (gate) return gpuTiming.Status; } }
     public void ResetGpuTiming() { lock (gate) gpuTiming.ResetStatistics(); }
-    public const string RefractionDiagnosticLegend = "path: gray=thin surface, green=closed ray accepted, magenta=analytic entry failed, white=analytic exit invalid, blue=TIR, yellow=background depth/unprojection invalid, orange=air-plane invalid/behind exit/>20m, purple=offscreen projection, red=foreground rejection; offset: dark blue=0px, green=1px, yellow=4px, red=16px+ (final sampled UV displacement)";
+    public const string RefractionDiagnosticLegend = "path: gray=original local single-interface refraction, purple=offscreen projection, red=foreground rejection; offset: dark blue=0px, green=1px, yellow=4px, red=16px+ (final sampled UV displacement)";
     /// <summary>Initialization and submit-lock waiting are distinct CPU scopes; formatting occurs only on demand.</summary>
     public string CpuTimingStatus
     {
@@ -570,7 +570,7 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
                     if (layer.LastDrawMode != 3 || layer.LastOpticalShapeMode != shapeMode)
                     {
                         layer.LastDrawMode = 3; layer.LastOpticalShapeMode = shapeMode;
-                        log.Info($"World fluid layer {layer.Name}: {fluidPass.Status}; smoothVertices={batch.Count}, closedEllipsoidVertices={ellipsoidVertices}, thinSurfaceVertices={batch.Count - ellipsoidVertices}, stride={sizeof(FluidVertex)}; IOR={batch.Material.IndexOfRefraction}; diagnostic={batch.Material.DiagnosticView}; normal-selected front surface; analytic ellipsoid interior + bounded scene-depth air propagation; thin surface local approximation; pre-UI snapshot");
+                        log.Info($"World fluid layer {layer.Name}: {fluidPass.Status}; smoothVertices={batch.Count}, closedEllipsoidVertices={ellipsoidVertices}, thinSurfaceVertices={batch.Count - ellipsoidVertices}, stride={sizeof(FluidVertex)}; IOR={batch.Material.IndexOfRefraction}; diagnostic={batch.Material.DiagnosticView}; normal-selected front surface; original local single-interface refraction for all producers; pre-UI snapshot");
                     }
                     try
                     {

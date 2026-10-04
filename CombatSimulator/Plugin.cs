@@ -659,7 +659,12 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 switch (fluidCommand)
                 {
                     case "on":
-                        bodyFluidController.Start();
+                    case "thick":
+                        bodyFluidController.Start(largeVisibilityPreview: true);
+                        config.Save();
+                        break;
+                    case "normal":
+                        bodyFluidController.Start(largeVisibilityPreview: false);
                         config.Save();
                         break;
                     case "off":
@@ -707,7 +712,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                                 fluidCommand == "normals" ? Rendering.WorldGeometry.FluidDiagnosticView.NormalFacing :
                                 Rendering.WorldGeometry.FluidDiagnosticView.Composite;
                             if (worldGeometryRenderer.TryGetPreviewOrigin(fluidOrigin, out var opticalOrigin))
-                                worldFluidPreview.Show(opticalOrigin, opticalView, config.CreateBodyFluidMaterial());
+                                worldFluidPreview.Show(opticalOrigin, opticalView, config.CreateBodyFluidMaterial() with { ReflectionStrength = 1 });
                             else
                                 log.Info("Fluid material preview waiting for a valid visible main-camera placement.");
                         }

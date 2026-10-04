@@ -77,13 +77,6 @@ internal sealed unsafe class WorldFluidPass : IDisposable
             uv = float2(clip.x,-clip.y)/max(clip.w,0.000001)*0.5+0.5;
             return clip.w > 0.000001 && all(isfinite(uv));
         }
-        bool BackgroundWorld(float2 uv, out float3 world) {
-            int2 q = clamp(int2(uv*DepthSize.xy),int2(0,0),int2(DepthSize.xy)-1);
-            float depth = SceneDepth.Load(int3(q,0));
-            float4 homogeneous = mul(float4(uv.x*2-1,1-uv.y*2,depth,1),InverseViewProjection);
-            world = homogeneous.xyz/max(abs(homogeneous.w),0.000001)*sign(homogeneous.w);
-            return depth > 0 && abs(homogeneous.w)>0.000001 && all(isfinite(world));
-        }
         float3 StudioReflection(float3 r, float roughness) {
             // Procedural studio only: no claim of matching game probes or scene lighting.
             float3 base = lerp(float3(0.035,0.04,0.05),float3(0.18,0.22,0.28),saturate(r.y*0.5+0.5));
@@ -122,66 +115,15 @@ internal sealed unsafe class WorldFluidPass : IDisposable
             float eta = 1 / Optics.x;
             float3 incident = -v;
             float3 transmitted = refract(incident,n,eta);
-            // Thin branch assumes locally parallel interfaces and normal thickness
-            // supplied by the producer. Grazing incidence increases, not decreases,
-            // the interior path. An attached curved cap needs a declared substrate
-            // normal for a complete one-interface-to-skin model; it remains approximate.
-            float thickness = max(0,p.liquid.x)/max(0.1,-dot(transmitted,n));
-            // Thin surfaces keep the local liquid-only displacement approximation.
-            // Closed ellipsoids declare enough geometry for two Snell interfaces.
+            // Restore the original accepted single-interface visual approximation.
+            // This is local refraction, not a physically traced two-interface lens.
+            // Volume metadata remains available to future producers but does not
+            // select a separate optical path or erase the local offset on failure.
+            float thickness = max(0,p.liquid.x)*facing;
             float3 bent = p.world + (transmitted-incident) * thickness * Optics.z;
             float2 bentUv;
             if (!ProjectWorld(bent,bentUv)) bentUv=uv;
-            int pathReason=0; // 0: thin surface; codes match renderer diagnostic legend.
-            float exitFresnel=0;
-            bool totalInternalReflection=false;
-            if (all(p.volumeRadii > 0)) {
-                pathReason=2; // Analytic entry is not yet proven.
-                float3 localEye=(Camera.xyz-p.volumeCenter)/p.volumeRadii;
-                float3 localRay=incident/p.volumeRadii;
-                float quadratic=dot(localRay,localRay);
-                float closest=-dot(localEye,localRay)/quadratic;
-                float3 closestPoint=localEye+localRay*closest;
-                float halfSquared=(1-dot(closestPoint,closestPoint))/quadratic;
-                if (halfSquared > 0 && closest > 0) {
-                    float entryDistance=closest-sqrt(halfSquared);
-                    float3 front=Camera.xyz+incident*entryDistance;
-                    float3 localFront=(front-p.volumeCenter)/p.volumeRadii;
-                    float3 frontNormal=normalize(localFront/p.volumeRadii);
-                    float3 insideRay=refract(incident,frontNormal,eta);
-                    float3 insideLocal=insideRay/p.volumeRadii;
-                    float exitDistance=max(0,-2*dot(localFront,insideLocal)/dot(insideLocal,insideLocal));
-                    float3 exitPoint=front+insideRay*exitDistance;
-                    float3 exitNormal=normalize((exitPoint-p.volumeCenter)/(p.volumeRadii*p.volumeRadii));
-                    float3 outsideRay=refract(insideRay,-exitNormal,Optics.x);
-                    bool exitValid=exitDistance>0 && all(isfinite(exitPoint)) && all(isfinite(exitNormal)) && all(isfinite(outsideRay));
-                    pathReason=exitValid ? 1 : 3;
-                    // Beer absorption uses only the actual distance inside liquid.
-                    // Scene depth below supplies an air propagation target, never thickness.
-                    thickness=exitDistance; n=frontNormal; facing=saturate(dot(n,v));
-                    float ef0=(Optics.x-1)/(Optics.x+1); ef0*=ef0;
-                    exitFresnel=ef0+(1-ef0)*pow(1-saturate(dot(insideRay,exitNormal)),5);
-                    totalInternalReflection=dot(outsideRay,outsideRay)<0.000001;
-                    if (!totalInternalReflection) {
-                        float2 candidate=uv;
-                        bool valid=true;
-                        // Three bounded background-plane refinements. Screen space
-                        // contains only visible geometry; missing/occluded rays fall back.
-                        [unroll] for (int iteration=0;iteration<3;iteration++) {
-                            float3 backgroundPoint;
-                            if (!BackgroundWorld(candidate,backgroundPoint)) { if (pathReason!=3) pathReason=5; valid=false; break; }
-                            float denominator=dot(outsideRay,incident);
-                            float airDistance=dot(backgroundPoint-exitPoint,incident)/max(denominator,0.000001);
-                            if (denominator <= 0.000001 || airDistance < 0 || airDistance > 20) { if (pathReason!=3) pathReason=6; valid=false; break; }
-                            float2 projected;
-                            if (!ProjectWorld(exitPoint+outsideRay*airDistance,projected)
-                                || any(projected<=0) || any(projected>=1)) { if (pathReason!=3) pathReason=7; valid=false; break; }
-                            candidate=projected;
-                        }
-                        bentUv=valid ? uv+(candidate-uv)*Optics.z : uv;
-                    } else { if (pathReason!=3) pathReason=4; bentUv=uv; }
-                }
-            }
+            int pathReason=0; // Original local single-interface approximation.
             float edge = saturate(min(min(uv.x,uv.y),min(1-uv.x,1-uv.y))*40);
             float2 offset = clamp(bentUv-uv,-0.04,0.04)*edge;
             float2 refractedUv = uv + offset;
@@ -191,12 +133,6 @@ internal sealed unsafe class WorldFluidPass : IDisposable
             if (any(refractedUv <= 0) || any(refractedUv >= 1)) { pathReason=7; refractedUv = uv; }
             if (Absorption.w > 4.5 && Absorption.w < 5.5) {
                 float3 reasonColor=float3(0.3,0.3,0.3);
-                if (pathReason==1) reasonColor=float3(0,1,0);
-                if (pathReason==2) reasonColor=float3(1,0,0.6);
-                if (pathReason==3) reasonColor=float3(1,1,1);
-                if (pathReason==4) reasonColor=float3(0,0.2,1);
-                if (pathReason==5) reasonColor=float3(1,1,0);
-                if (pathReason==6) reasonColor=float3(1,0.45,0);
                 if (pathReason==7) reasonColor=float3(0.55,0,1);
                 if (pathReason==8) reasonColor=float3(1,0,0);
                 return float4(reasonColor,1);
@@ -213,7 +149,6 @@ internal sealed unsafe class WorldFluidPass : IDisposable
                 return float4(background,saturate(p.liquid.y));
             float f0 = (Optics.x-1)/(Optics.x+1); f0 *= f0;
             float fresnel = f0 + (1-f0)*pow(1-facing,5);
-            fresnel = totalInternalReflection ? 1 : 1-(1-fresnel)*(1-exitFresnel);
             // Explicit artistic reflection weight: scale both optical branches
             // together so weight zero is clear transmission, without a dark rim.
             float effectiveF = saturate(fresnel * Optics.w);
