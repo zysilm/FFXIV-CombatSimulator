@@ -81,6 +81,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly Effects.NpcScaleController npcScaleController;
     private readonly Effects.PlayerWeaponVisibilityController playerWeaponVisibilityController;
     private readonly Effects.BodyFluids.BodyFluidController bodyFluidController;
+#if DEV_EXPERIMENTAL
+    private readonly Dev.FluidLiveCommandBridge fluidLiveCommands;
+#endif
     private readonly Rendering.WorldGeometry.WorldGeometryRenderer worldGeometryRenderer;
     private readonly Rendering.WorldGeometry.WorldGeometryPreview worldGeometryPreview;
     public Rendering.WorldGeometry.WorldGeometryRenderer WorldGeometry => worldGeometryRenderer;
@@ -198,6 +201,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         playerWeaponVisibilityController = new Effects.PlayerWeaponVisibilityController(config, objectTable, boneTransformService);
         worldGeometryRenderer = new Rendering.WorldGeometry.WorldGeometryRenderer(gameInterop, sigScanner, log);
         bodyFluidController = new Effects.BodyFluids.BodyFluidController(config, boneTransformService, worldGeometryRenderer, log);
+#if DEV_EXPERIMENTAL
+        fluidLiveCommands = new Dev.FluidLiveCommandBridge(pluginInterface.GetPluginConfigDirectory(),
+            command => OnCommand(CommandName, "fluid " + command), log);
+#endif
         worldGeometryPreview = new Rendering.WorldGeometry.WorldGeometryPreview(worldGeometryRenderer);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
         dismembermentController.PlayerRagdollController = ragdollController;
@@ -828,6 +835,9 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             wasLoggedIn = loggedIn;
             if (!loggedIn)
                 return;
+#if DEV_EXPERIMENTAL
+            fluidLiveCommands.Tick();
+#endif
 
             // Real wall-clock delta for all per-frame simulation. The framework fires
             // once per rendered frame at whatever framerate the game runs; using a fixed
