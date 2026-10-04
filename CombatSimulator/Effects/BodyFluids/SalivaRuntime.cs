@@ -1,6 +1,7 @@
 // This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 using System;
 using System.Numerics;
+using CombatSimulator.Core;
 using CombatSimulator.Effects.BodyFluids.Simulation;
 using CombatSimulator.Effects.BodyFluids.Surface;
 using CombatSimulator.Rendering.WorldGeometry;
@@ -34,6 +35,8 @@ internal sealed partial class SalivaRuntime
     private double reservoir;
     private double acceptedSourceSeconds;
     private int sourceBead = -1;
+    private FluidSurfaceAnchor previousSourceOutlet;
+    private long nextSourceLog;
     private long runoffTransitions;
     private double coalescedVolume;
     private double wettingTrailTransfer, actualCoatVolume;
@@ -127,9 +130,18 @@ internal sealed partial class SalivaRuntime
         // DLL reloads and shape replacements must not silently disable a valid source.
         if (generation != 0 && generation != surface.Generation) ReleaseChangedSkinGeneration();
         generation = surface.Generation;
-        bool lipAvailable = surface.TryGetMouthAnchor(out var lip) && surface.TryEvaluate(lip, out _);
+        FluidSurfaceSample lipSample = default;
+        bool lipAvailable = surface.TryGetMouthAnchor(out var lip) && surface.TryEvaluate(lip, out lipSample);
         var sourceFilm = lipAvailable ? FindFilm(lip) : -1;
         bool sourceAvailable = sourceFilm >= 0;
+        if (sourceAvailable && sourceBead >= 0)
+        {
+            var previous = previousSourceOutlet;
+            if (previous.Generation == lip.Generation && (previous.Triangle != lip.Triangle ||
+                Vector3.DistanceSquared(previous.Barycentric, lip.Barycentric) > 1e-8f))
+                sourceBead = -1; // Existing material stays put; only new supply changes outlet.
+        }
+        if (sourceAvailable) previousSourceOutlet = lip;
         // Controller fixed time is a float, slightly larger than exact double 1/60.
         // Equal subdivisions consume the full admitted time once; a tolerance in
         // step-count selection must never create a nanosecond collision-only step.
@@ -176,6 +188,14 @@ internal sealed partial class SalivaRuntime
                 cap.Film = sourceFilm; cap.Anchor = lip;
                 var accepted = Math.Min(reservoir, Math.Max(0, BeadLimit - cap.Volume));
                 cap.Volume += accepted; reservoir -= accepted;
+                long now = Environment.TickCount64;
+                if (now >= nextSourceLog)
+                {
+                    nextSourceLog = now + 5000;
+                    Services.Log.Info($"Body fluid supply: {surface.LipOutletStatus}; film={sourceFilm},sourceBead={sourceBead}," +
+                        $"lipTriangle={lip.Triangle},capTriangle={cap.Anchor.Triangle},lipPosition={lipSample.Position}," +
+                        $"accepted={accepted * 1e6:F6}ml,capVolume={cap.Volume * 1e6:F6}ml,reservoir={reservoir * 1e6:F6}ml");
+                }
                 if (films[sourceFilm].TryGetCell(lip, out var cell))
                 {
                     var sample = films[sourceFilm].GetCell(cell);
@@ -534,6 +554,7 @@ internal sealed partial class SalivaRuntime
     {
         RetiredVolume += TotalVolume;
         reservoir = 0; generation = 0; sourceBead = -1; acceptedSourceSeconds = 0; runoffTransitions = 0; coalescedVolume = 0;
+        previousSourceOutlet = default;
         wettingTrailTransfer = actualCoatVolume = 0;
         lastRuntimeSubsteps = 0; lastRuntimeStepSeconds = 0; microstepCount = 0;
         skinGenerationChanges = 0; retiredSkinFilm = 0;

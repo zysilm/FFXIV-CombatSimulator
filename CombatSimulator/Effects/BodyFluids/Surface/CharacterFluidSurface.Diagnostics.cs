@@ -18,13 +18,15 @@ public sealed unsafe partial class CharacterFluidSurface
     public void ClearLipAnchor()
     {
         lipBound = false; lipAnchor = default;
+        lipEndsBound = false; nextLipEndAttempt = 0; lipOutlet = 0;
+        LipOutletStatus = "Outlet=center; endpoints pending";
         LipAnchorIsValidated = false; lipSelectionAttempted = false;
         LipStatus = "No current anatomical lip anchor; emission disabled";
     }
 
     public bool TryGetMouthAnchor(out FluidSurfaceAnchor anchor)
     {
-        anchor = lipAnchor;
+        anchor = lipEndsBound && lipOutlet != 0 ? (lipOutlet < 0 ? lipLeftOutlet : lipRightOutlet) : lipAnchor;
         return lipBound && poseAvailable && anchor.Generation == Generation && anchor.Triangle >= 0 && anchor.Triangle < faces.Length;
     }
 

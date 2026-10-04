@@ -12,6 +12,13 @@ public sealed unsafe partial class CharacterFluidSurface
     private readonly HashSet<int> allowedLipBones = new();
     private int lowerLipLeft = -1, lowerLipRight = -1, upperLipLeft = -1, upperLipRight = -1, facialOrigin = -1;
     private bool lipSelectionAttempted;
+    private FluidSurfaceAnchor lipLeftOutlet, lipRightOutlet;
+    private bool lipEndsBound;
+    private uint nextLipEndAttempt;
+    private int lipOutlet;
+    private long nextOutletLog;
+    private int loggedOutlet = int.MinValue;
+    public string LipOutletStatus { get; private set; } = "Outlet=center; endpoints pending";
     private readonly record struct ValidatedLipProfile(ModelLoadKey Model, ulong ObjectIdentity, nint DrawIdentity, int Mesh, uint IndexEntry, int V0, int V1, int V2, Vector3 Barycentric);
     private ValidatedLipProfile? validatedLipProfile;
     /// <summary>Optional manual red-marker confirmation; automatic anatomical binding does not depend on it.</summary>
@@ -29,6 +36,7 @@ public sealed unsafe partial class CharacterFluidSurface
 
     private void BuildLipCandidates()
     {
+        lipEndsBound = false; nextLipEndAttempt = 0; lipOutlet = 0;
         allowedLipBones.Clear(); lipCandidateTriangles = Array.Empty<int>(); lipSelectionAttempted = false;
         // These names were observed in the current game's loaded face partial, not inferred jaw offsets.
         lowerLipLeft = ResolveSurfaceBone("j_f_dlip_02_l"); lowerLipRight = ResolveSurfaceBone("j_f_dlip_02_r");
@@ -59,7 +67,9 @@ public sealed unsafe partial class CharacterFluidSurface
             candidates.Add((i, distance));
         }
         candidates.Sort(static (a, b) => a.Distance.CompareTo(b.Distance));
-        int count = Math.Min(candidates.Count, 256);
+        // End outlets need the lip's side patches, not just the 256 triangles
+        // closest to its center. This scan is performed only on topology changes.
+        int count = Math.Min(candidates.Count, 768);
         lipCandidateTriangles = new int[count];
         for (int i = 0; i < count; i++) lipCandidateTriangles[i] = candidates[i].Face;
         LipStatus = count == 0 ? "No supported visible lower-lip-weighted face patch; emission disabled" : $"Lower lip candidate patch={count} triangles; awaiting final pose";
@@ -134,6 +144,84 @@ public sealed unsafe partial class CharacterFluidSurface
         LipStatus = $"AUTO ANATOMICAL LIP BOUND generation={Generation} slot={face.Slot} mesh={face.Mesh} indexEntry={face.IndexEntry} " +
             $"resolvedVertices={face.V0},{face.V1},{face.V2} bary={bestBary} boneProjection={MathF.Sqrt(bestDistance) * 1000:0.000} mm; manual marker confirmation optional";
         Services.Log.Info($"Body fluid lip: {LipStatus}");
+    }
+
+    private void UpdateLipOutlet()
+    {
+        if (!lipBound || !poseAvailable || lowerLipLeft < 0 || lowerLipRight < 0) return;
+        if (!lipEndsBound)
+        {
+            if (frame < nextLipEndAttempt) return;
+            // Observed loaded rig: dlip left/right span ~11mm (inner lower lip),
+            // dmlip left/right span ~27mm (outer lower lip). A successful projection
+            // of dlip is still near the center and is not a mouth-corner outlet.
+            int leftBone = ResolveSurfaceBone("j_f_dmlip_01_l"), rightBone = ResolveSurfaceBone("j_f_dmlip_01_r");
+            var left = BonePosition(leftBone >= 0 ? leftBone : lowerLipLeft);
+            var right = BonePosition(rightBone >= 0 ? rightBone : lowerLipRight);
+            var center = (BonePosition(lowerLipLeft) + BonePosition(lowerLipRight)) * .5f;
+            var upper = (BonePosition(upperLipLeft) + BonePosition(upperLipRight)) * .5f;
+            var outward = SafeNormal(Vector3.Cross(BonePosition(lowerLipRight) - BonePosition(lowerLipLeft), upper - center));
+            if (Vector3.Dot(outward, center - BonePosition(facialOrigin)) < 0) outward = -outward;
+            if (!TryEvaluate(lipAnchor, out var centerSample)) return;
+            // Bone landmarks lie under the skin. Move both targets to the same
+            // measured skin depth so their nearest face is not the central patch.
+            var skinOffset = centerSample.Position - center;
+            left += skinOffset; right += skinOffset;
+            // Lip bones are inside the skin. Reuse the measured center projection
+            // depth instead of a cutoff that can reject both visible end patches.
+            float distance = Vector3.Distance(centerSample.Position, center) +
+                MathF.Max(Vector3.Distance(left, right) * .5f, .004f);
+            // Bind once per topology generation, using the existing lip-only candidate
+            // set. Subsequent poses evaluate three material anchors, never rescan mesh.
+            bool leftBound = TryProjectLipEnd(left, outward, distance, out lipLeftOutlet);
+            bool rightBound = TryProjectLipEnd(right, outward, distance, out lipRightOutlet);
+            // Do not silently replace an unavailable corner with an inner-lip point.
+            lipEndsBound = leftBound && rightBound;
+            nextLipEndAttempt = frame + 120;
+            LipOutletStatus = $"Outlet=center; endpoint binding left={leftBound},right={rightBound},projectionLimit={distance * 1000:F2}mm";
+            Services.Log.Info($"Body fluid {LipOutletStatus}");
+            if (!lipEndsBound) return;
+        }
+        if (!TryEvaluate(lipAnchor, out var middle) || !TryEvaluate(lipLeftOutlet, out var l) ||
+            !TryEvaluate(lipRightOutlet, out var r)) return;
+        var lateral = BonePosition(lowerLipRight) - BonePosition(lowerLipLeft);
+        float width = lateral.Length();
+        if (width < 1e-6f) return;
+        // Decide from the current anatomical axis, not the lower lip's curvature:
+        // its center can remain lower than both skin projections on a tilted head.
+        float downhill = Vector3.Dot(lateral / width, -Vector3.UnitY);
+        const float entry = .15f, exit = .08f;
+        if (MathF.Abs(downhill) < exit) lipOutlet = 0;
+        else if (downhill > entry) lipOutlet = 1;
+        else if (downhill < -entry) lipOutlet = -1;
+        LipOutletStatus = $"Outlet={(lipOutlet < 0 ? "left" : lipOutlet > 0 ? "right" : "center")}; " +
+            $"posed lip width={width * 1000:F2}mm,downhillAxis={downhill:F3}," +
+            $"projectedWidth={Vector3.Distance(l.Position, r.Position) * 1000:F2}mm," +
+            $"leftBelowCenter={(middle.Position.Y - l.Position.Y) * 1000:F2}mm," +
+            $"rightBelowCenter={(middle.Position.Y - r.Position.Y) * 1000:F2}mm";
+        long now = Environment.TickCount64;
+        if (loggedOutlet != lipOutlet || now >= nextOutletLog)
+        {
+            loggedOutlet = lipOutlet; nextOutletLog = now + 5000;
+            Services.Log.Info($"Body fluid {LipOutletStatus}");
+        }
+    }
+
+    private bool TryProjectLipEnd(Vector3 target, Vector3 outward, float maximumDistance, out FluidSurfaceAnchor anchor)
+    {
+        anchor = default;
+        float best = maximumDistance * maximumDistance;
+        foreach (int index in lipCandidateTriangles)
+        {
+            if (!Triangle(index, out var a, out var b, out var c))
+            { if (BudgetExhausted) return false; continue; }
+            if (Vector3.Dot(SafeNormal(Vector3.Cross(b - a, c - a)), outward) < .15f) continue;
+            var bary = ClosestTriangleBarycentric(target, a, b, c);
+            float distance = Vector3.DistanceSquared(target, a * bary.X + b * bary.Y + c * bary.Z);
+            if (!Finite(bary) || distance >= best) continue;
+            best = distance; anchor = new(Generation, index, bary);
+        }
+        return anchor.Generation == Generation && anchor.Generation != 0;
     }
 
     // Closest point on the triangle's face/edges/vertices (material barycentric coordinates).

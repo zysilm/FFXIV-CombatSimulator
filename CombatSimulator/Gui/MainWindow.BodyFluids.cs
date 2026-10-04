@@ -44,7 +44,7 @@ public partial class MainWindow
         var thicknessScale = config.BodyFluidThicknessScale;
         if (ImGui.SliderFloat("Visible thickness##bodyfluids", ref thicknessScale, 1f, 4f, "%.2fx"))
         { config.BodyFluidThicknessScale = thicknessScale; config.Save(); }
-        HelpMarker("Enlarges visible liquid thickness for close-up testing without changing flow, gravity or contact timing. Reset restores 1x.");
+        HelpMarker("Enlarges visible liquid thickness without changing flow, gravity or contact timing. Reset restores 2x.");
         if (ImGui.SliderFloat("Viscosity##bodyfluids", ref viscosity, 0.03f, 1.2f, "%.3f Pa s"))
         { config.BodyFluidViscosityPaSeconds = viscosity; config.Save(); }
         HelpMarker("Higher viscosity slows skin flow and resists stretching. These are artistic controls, not measured saliva properties.");

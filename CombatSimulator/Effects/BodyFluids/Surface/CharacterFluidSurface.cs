@@ -186,6 +186,7 @@ public sealed unsafe partial class CharacterFluidSurface
         previousPoseAvailable = poseAvailable = true;
         CapturePoseFailureReason = string.Empty;
         TrySelectLipCandidate();
+        UpdateLipOutlet();
         return true;
     }
 

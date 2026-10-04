@@ -24,9 +24,12 @@ internal sealed partial class SalivaRuntime
     /// <summary>Append continuous film, bounded thread and curved drop/puddle surfaces to the producer's builder.</summary>
     public void AppendGeometry(FluidGeometryBuilder builder)
     {
+        float scale = LargeVisibilityPreview ? 1 : config.BodyFluidThicknessScale;
+        int filmStart = builder.Count;
         // Detached material belongs to world space, not the lip's current topology.
         if (generation == surface.Generation)
             foreach (var film in films) film.AppendGeometry(builder);
+        builder.ExaggerateForVisibilityPreview(scale, 0, scale, filmStart);
         foreach (var thread in threads)
         {
             if (thread.Model.TotalVolume <= 0) continue;
@@ -42,7 +45,7 @@ internal sealed partial class SalivaRuntime
                 var neck = thread.Model.GetSegment(i);
                 if (neck.PendingBreakVolume <= 0) continue;
                 var center = thread.PendingContact ? (thread.Previous[i] + thread.Previous[i + 1]) * 0.5f : (neck.A + neck.B) * 0.5f;
-                builder.AddEllipsoid(center, new Vector3((float)Radius(neck.PendingBreakVolume)), 12, 6);
+                builder.AddEllipsoid(center, new Vector3((float)Radius(neck.PendingBreakVolume) * scale), 12, 6);
             }
             var segment = 0;
             while (segment < thread.Model.SegmentCount)
@@ -89,7 +92,7 @@ internal sealed partial class SalivaRuntime
                 // The centerline's Hermite interpolation remains a bounded rendering approximation.
                 reconstructed += 2 * Math.PI / 3 * (Math.Pow(thread.RenderRadii[0], 3) + Math.Pow(thread.RenderRadii[count - 1], 3));
                 var correction = reconstructed > 0 ? Math.Sqrt(inventory / reconstructed) : 1;
-                for (var node = 0; node < count; node++) thread.RenderRadii[node] *= (float)correction;
+                for (var node = 0; node < count; node++) thread.RenderRadii[node] *= (float)correction * scale;
                 builder.AddThread(thread.RenderPositions.AsSpan(0, count), thread.RenderRadii.AsSpan(0, count), 16, 2);
             }
         }
@@ -106,7 +109,12 @@ internal sealed partial class SalivaRuntime
             int index = (firstCap + step) % beads.Length;
             var bead = beads[index];
             if (bead.Volume <= 0) { curvedCapGeometry[index]?.Invalidate(); continue; }
-            if (AppendRivulet(index, builder)) { RivuletsDrawn++; continue; }
+            int capStart = builder.Count;
+            if (AppendRivulet(index, builder))
+            {
+                builder.ExaggerateForVisibilityPreview(scale, 0, scale, capStart);
+                RivuletsDrawn++; continue;
+            }
             var cache = curvedCapGeometry[index] ??= new CurvedCapGeometryCache();
             bool ready = false;
             if (bead.Film >= 0 && bead.Film < films.Length && surface.TryEvaluate(bead.Anchor, out var sample))
@@ -118,6 +126,7 @@ internal sealed partial class SalivaRuntime
             if (ready)
             {
                 cache.Append(builder); CapGeometryVerifiedCount++;
+                builder.ExaggerateForVisibilityPreview(scale, 0, scale, capStart);
                 if (cache.UsesClippedSupport) CapGeometrySupportedCount++;
                 CapGeometryTrianglesThisFrame += cache.RenderedTriangles;
             }
@@ -135,12 +144,14 @@ internal sealed partial class SalivaRuntime
             if (drop.Volume <= 0) continue;
             AppendFreeDrop(builder, drop.Position, drop.Velocity, drop.Volume);
         }
+        int groundStart = builder.Count;
         ground.AppendGeometry(builder);
+        builder.ExaggerateForVisibilityPreview(scale, 0, scale, groundStart);
     }
 
-    private static void AppendFreeDrop(FluidGeometryBuilder builder, Vector3 center, Vector3 velocity, double volume)
+    private void AppendFreeDrop(FluidGeometryBuilder builder, Vector3 center, Vector3 velocity, double volume)
     {
-        float radius = (float)Radius(volume);
+        float radius = (float)Radius(volume) * (LargeVisibilityPreview ? 1 : config.BodyFluidThicknessScale);
         float speed = velocity.Length();
         var direction = speed > .01f ? velocity / speed : -Vector3.UnitY;
         float stretch = 1 + Math.Clamp(speed * .18f, 0, .4f);

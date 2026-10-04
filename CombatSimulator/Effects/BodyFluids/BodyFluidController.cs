@@ -36,7 +36,7 @@ public sealed partial class BodyFluidController : IDisposable
     private uint territoryIdentity;
     public double LastCpuMilliseconds { get; private set; }
     public bool Emitting => manualEmission || koEmission;
-    public string SurfaceStatus => $"{surface.Status}; {surface.LipStatus}; {surface.DeformationStatus}";
+    public string SurfaceStatus => $"{surface.Status}; {surface.LipStatus}; {surface.LipOutletStatus}; {surface.DeformationStatus}";
     public string RenderStatus => renderer.Status;
 
     public BodyFluidController(Configuration config, BoneTransformService bones, WorldGeometryRenderer worldRenderer, IPluginLog log)
@@ -198,8 +198,6 @@ public sealed partial class BodyFluidController : IDisposable
                 simulation.AppendGeometry(fluidGeometry);
                 if (simulation.LargeVisibilityPreview)
                     fluidGeometry.ExaggerateForVisibilityPreview(16, .003f, 4);
-                else if (config.BodyFluidThicknessScale > 1)
-                    fluidGeometry.ExaggerateForVisibilityPreview(config.BodyFluidThicknessScale, 0, config.BodyFluidThicknessScale);
                 var material = config.CreateBodyFluidMaterial() with { DiagnosticView = productionView };
                 // The requested large visibility preview also restores the original
                 // material test's full reflection weight. Normal settings stay intact.

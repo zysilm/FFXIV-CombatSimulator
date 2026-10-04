@@ -21,7 +21,7 @@ public partial class Configuration
     public float BodyFluidRoughness { get; set; } = BodyFluidDefaults.Roughness;
     public float BodyFluidCloudiness { get; set; } = BodyFluidDefaults.Cloudiness;
     public float BodyFluidFoamAmount { get; set; } = BodyFluidDefaults.Foam;
-    public float BodyFluidThicknessScale { get; set; } = 1f;
+    public float BodyFluidThicknessScale { get; set; } = 2f;
     public float BodyFluidStringiness { get; set; } = 6f;
     public float BodyFluidSurfaceSpeed { get; set; } = BodyFluidDefaults.SurfaceSpeed;
     public float BodyFluidFilamentRelaxation { get; set; } = BodyFluidDefaults.Relaxation;
@@ -36,13 +36,13 @@ public partial class Configuration
     {
         BodyFluidsEnabled = BodyFluidsOnPlayerKo = false;
         BodyFluidFlowMlPerSecond = BodyFluidDefaults.Flow;
-        BodyFluidSettingsVersion = 1;
+        BodyFluidSettingsVersion = 2;
         BodyFluidViscosityPaSeconds = BodyFluidDefaults.Viscosity;
         BodyFluidReflectionStrength = BodyFluidDefaults.Reflection;
         BodyFluidRoughness = BodyFluidDefaults.Roughness;
         BodyFluidCloudiness = BodyFluidDefaults.Cloudiness;
         BodyFluidFoamAmount = BodyFluidDefaults.Foam;
-        BodyFluidThicknessScale = 1f;
+        BodyFluidThicknessScale = 2f;
         BodyFluidStringiness = 6f;
         BodyFluidSurfaceSpeed = BodyFluidDefaults.SurfaceSpeed;
         BodyFluidFilamentRelaxation = BodyFluidDefaults.Relaxation;
@@ -67,7 +67,12 @@ public partial class Configuration
         BodyFluidRoughness = FluidClamp(BodyFluidRoughness, 0.02f, 1f, BodyFluidDefaults.Roughness);
         BodyFluidCloudiness = FluidClamp(BodyFluidCloudiness, 0f, 1f, BodyFluidDefaults.Cloudiness);
         BodyFluidFoamAmount = FluidClamp(BodyFluidFoamAmount, 0f, 1f, BodyFluidDefaults.Foam);
-        BodyFluidThicknessScale = FluidClamp(BodyFluidThicknessScale, 1f, 4f, 1f);
+        if (BodyFluidSettingsVersion < 2)
+        {
+            if (BodyFluidThicknessScale == 1f) BodyFluidThicknessScale = 2f;
+            BodyFluidSettingsVersion = 2;
+        }
+        BodyFluidThicknessScale = FluidClamp(BodyFluidThicknessScale, 1f, 4f, 2f);
         BodyFluidStringiness = FluidClamp(BodyFluidStringiness, 1f, 20f, 6f);
         BodyFluidSurfaceSpeed = FluidClamp(BodyFluidSurfaceSpeed, 0.01f, 0.5f, BodyFluidDefaults.SurfaceSpeed);
         BodyFluidFilamentRelaxation = FluidClamp(BodyFluidFilamentRelaxation, 0.05f, 2f, BodyFluidDefaults.Relaxation);

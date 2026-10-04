@@ -36,13 +36,13 @@ public sealed class FluidGeometryBuilder
     /// Thin surfaces are thickened along their normals; declared ellipsoids grow uniformly about their center.
     /// This visible volume does not represent conserved simulation inventory. Adds no vertices or allocations.
     /// </summary>
-    public void ExaggerateForVisibilityPreview(float thicknessMultiplier, float minimumThickness, float ellipsoidScale)
+    public void ExaggerateForVisibilityPreview(float thicknessMultiplier, float minimumThickness, float ellipsoidScale, int firstVertex = 0)
     {
         if (!float.IsFinite(thicknessMultiplier) || !float.IsFinite(minimumThickness) || !float.IsFinite(ellipsoidScale)) return;
         thicknessMultiplier = Math.Clamp(thicknessMultiplier, 1, 16);
         minimumThickness = Math.Clamp(minimumThickness, 0, .01f);
         ellipsoidScale = Math.Clamp(ellipsoidScale, 1, 4);
-        for (int i = 0; i < Count; i++)
+        for (int i = Math.Clamp(firstVertex, 0, Count); i < Count; i++)
         {
             var vertex = vertices[i];
             bool closed = vertex.VolumeRadii.X > 0 && vertex.VolumeRadii.Y > 0 && vertex.VolumeRadii.Z > 0;
