@@ -64,7 +64,7 @@ public class TargetEffect
     public SimDamageType DamageType { get; set; }
 }
 
-public unsafe partial class AnimationController : IDisposable
+public unsafe class AnimationController : IDisposable
 {
     private readonly IPluginLog log;
     private readonly IClientState clientState;
@@ -689,7 +689,6 @@ public unsafe partial class AnimationController : IDisposable
     {
         try
         {
-            ObservePlayerWeaponSound(a1, idx);
             if (a1 != 0 &&
                 Environment.TickCount64 <= guardSoundWindowUntilTicks &&
                 Array.IndexOf(GuardSoundIndices, idx) >= 0)
@@ -773,7 +772,6 @@ public unsafe partial class AnimationController : IDisposable
     /// </summary>
     public void Tick(float deltaTime)
     {
-        TickPlayerImpactSounds(deltaTime);
         TickGuardVisualRestore(deltaTime);
         TickPendingTargetVfx(deltaTime);
         TickPendingNpcTimelineVfx(deltaTime);
@@ -789,7 +787,6 @@ public unsafe partial class AnimationController : IDisposable
 
     public void RemoveAllActiveVfx()
     {
-        pendingPlayerImpactSounds.Clear();
         pendingNpcTimelineVfx.Clear();
         for (var i = trackedActorVfx.Count - 1; i >= 0; i--)
             RemoveTrackedActorVfxAt(i);
@@ -869,18 +866,6 @@ public unsafe partial class AnimationController : IDisposable
     {
         if (request.Targets.Count == 0)
             return;
-
-        if (request.IsSourcePlayer)
-        {
-            // Match the existing target-VFX contact delay, independently of VFX toggles.
-            var delay = config.EnableHitFeedback ? MathF.Max(0f, config.HitFeedbackDelay) : 0f;
-            foreach (var target in request.Targets)
-                if (target.Damage > 0 && target.DamageType == SimDamageType.Physical)
-                {
-                    QueuePlayerWeaponImpact((uint)target.TargetId, delay);
-                    break; // One weapon cue per action, not a stacked chorus for an AoE.
-                }
-        }
 
         try
         {
