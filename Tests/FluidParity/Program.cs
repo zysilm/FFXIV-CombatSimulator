@@ -10,6 +10,7 @@ using CombatSimulator.Effects.BodyFluids.Surface;
 using CombatSimulator.Rendering.WorldGeometry;
 CultureInfo.CurrentCulture=CultureInfo.InvariantCulture;
 if(args.Contains("--contacts")){ ContactChecks.Run(); return; }
+if(args.Contains("--ground")){ GroundChecks.Run(); return; }
 #if CURRENT
 if(args.Contains("--retained")){ RetainedChecks.Run(); return; }
 #endif
