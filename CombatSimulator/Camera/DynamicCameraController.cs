@@ -309,6 +309,33 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
     /// <summary>The game's vertical tilt offset seen just before we zeroed it (diagnostics).</summary>
     public float DebugTiltOffset { get; private set; }
+    private long nextLookAtLog;
+    private long lookAtOverrides;
+    private float lastLookAtRenderedChi;
+
+    /// <summary>Keep native yaw and camera position, but remove the distance-dependent
+    /// vertical aim offset for the owned death shot. No pitch feedback or matrix writes.</summary>
+    public Vector3? OverrideDeathLookAt(Vector3 nativeLookAt, Vector3 cameraPosition)
+    {
+        if (!enforceCameraLock || !config.EnableDynamicCamera ||
+            GetCurrentOwner?.Invoke() != CameraOwner.DynamicDeath || !float.IsFinite(enforceDirV)) return null;
+        var delta = nativeLookAt - cameraPosition;
+        var horizontal = MathF.Sqrt(delta.X * delta.X + delta.Z * delta.Z);
+        if (!float.IsFinite(horizontal) || horizontal < .01f || !float.IsFinite(cameraPosition.Y)) return null;
+        var owned = nativeLookAt;
+        owned.Y = cameraPosition.Y + horizontal * MathF.Tan(enforceDirV);
+        if (!float.IsFinite(owned.Y)) return null;
+        lookAtOverrides++;
+        var now = Environment.TickCount64;
+        if (now >= nextLookAtLog)
+        {
+            nextLookAtLog = now + 5000;
+            log.Info($"DynamicCam look-at override: nativeY={nativeLookAt.Y:F4}, ownedY={owned.Y:F4}, " +
+                $"cameraY={cameraPosition.Y:F4}, horizontal={horizontal:F3}, commandedChi={-enforceDirV:F4}, " +
+                $"renderedChi={lastLookAtRenderedChi:F4}, calls={lookAtOverrides}");
+        }
+        return owned;
+    }
     /// <summary>Runtime wheel-driven coverage / zoom-out (death shot), for the overlay.</summary>
     public float DeathCoverage => deathCoveragePref;
     public float DeathZoomOut => deathZoomOut;
@@ -1116,6 +1143,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         // Where the camera ACTUALLY is and points, measured. Yaw is the player's, always —
         // we take whatever it currently is and solve around it.
         DynamicCameraSolver.MeasureAngles(view.Forward, out var yawReal, out var chiReal);
+        lastLookAtRenderedChi = chiReal;
 
         // Measure the game's orbit direction: where it put the camera relative to the pivot
         // we handed it last frame. This is the exact mapping the pivot decomposition needs.
@@ -1852,6 +1880,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private void RestoreMinDistance()
     {
         enforceCameraLock = false;
+        nextLookAtLog = 0;
         if (!distanceLimitsOverridden)
             return;
         try

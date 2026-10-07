@@ -40,6 +40,9 @@ public unsafe class ActiveCameraController : IDisposable
     // getCameraPosition hook (resolved by sig-anchoring against setCameraLookAt) — replaces orbit center
     private delegate void GetCameraPositionDelegate(nint camera, nint target, Vector3* position, nint swapPerson);
     private Hook<GetCameraPositionDelegate>? getCameraPosHook;
+    private delegate void SetCameraLookAtDelegate(nint camera, Vector3* lookAt, Vector3* cameraPosition, Vector3* scratch);
+    private Hook<SetCameraLookAtDelegate>? setCameraLookAtHook;
+    public Func<Vector3, Vector3, Vector3?>? ModeLookAtOverride { get; set; }
     // Hypostasis-known signature for Camera::SetCameraLookAt — getCameraPosition lives at vtable[setLookAtIdx + 1]
     private const string SetCameraLookAtSig = "40 53 48 83 EC 30 44 8B 89 ?? ?? ?? ?? 48 8B DA";
 
@@ -227,6 +230,19 @@ public unsafe class ActiveCameraController : IDisposable
             getCameraPosHook = gameInterop.HookFromAddress<GetCameraPositionDelegate>(getCamPosAddr, GetCameraPositionDetour);
             getCameraPosHook.Enable();
 
+            try
+            {
+                setCameraLookAtHook = gameInterop.HookFromAddress<SetCameraLookAtDelegate>(setLookAtAddr, SetCameraLookAtDetour);
+                setCameraLookAtHook.Enable();
+                log.Info("ActiveCamera: mode look-at hook created.");
+            }
+            catch (Exception ex)
+            {
+                setCameraLookAtHook?.Dispose();
+                setCameraLookAtHook = null;
+                log.Warning(ex, "ActiveCamera: mode look-at hook unavailable; orbit hook remains active.");
+            }
+
             log.Info($"ActiveCamera: setCameraLookAt resolved at vtable[{setLookAtIdx}] → getCameraPosition hook at 0x{getCamPosAddr:X}");
         }
         catch (Exception ex)
@@ -270,6 +286,27 @@ public unsafe class ActiveCameraController : IDisposable
             *position = pos;
         }
         catch { }
+    }
+
+    private void SetCameraLookAtDetour(nint camera, Vector3* lookAt, Vector3* cameraPosition, Vector3* scratch)
+    {
+        Vector3? ownedLookAt = null;
+        if (IsActive && lookAt != null && cameraPosition != null && ModeLookAtOverride != null)
+        {
+            try
+            {
+                var manager = GameCameraManager.Instance();
+                if (manager != null && (nint)manager->Camera == camera)
+                    ownedLookAt = ModeLookAtOverride(*lookAt, *cameraPosition);
+            }
+            catch (Exception ex) { log.Warning(ex, "Mode look-at override failed; using native target."); }
+        }
+        if (ownedLookAt.HasValue)
+        {
+            var point = ownedLookAt.Value;
+            setCameraLookAtHook!.Original(camera, &point, cameraPosition, scratch);
+        }
+        else setCameraLookAtHook!.Original(camera, lookAt, cameraPosition, scratch);
     }
 
     private Vector3 ApplyActiveCameraSideOffset(Vector3 pos)
@@ -489,5 +526,6 @@ public unsafe class ActiveCameraController : IDisposable
         RestoreMinDistance();
         shouldDrawHook?.Dispose();
         getCameraPosHook?.Dispose();
+        setCameraLookAtHook?.Dispose();
     }
 }

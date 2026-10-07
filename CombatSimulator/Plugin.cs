@@ -356,6 +356,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             activeCameraController.UpdateCollisionPolicy();
             dynamicCameraController.OnPreCameraUpdate(camera);
         };
+        activeCameraController.ModeLookAtOverride = dynamicCameraController.OverrideDeathLookAt;
 
         mapEnemyController = new MapEnemyController(
             objectTable,
