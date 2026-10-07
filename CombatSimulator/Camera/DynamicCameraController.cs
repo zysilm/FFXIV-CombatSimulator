@@ -71,11 +71,10 @@ public sealed unsafe class DynamicCameraController : IDisposable
     };
 
     /// <summary>Bounds on the death-shot camera angle χ (positive = raised, looking down;
-    /// negative = flat/below, looking up at the killer). The up end stops at −0.35: steeper
-    /// look-up pushes the camera far and low where framing gets unstable, and it is past the
-    /// point of diminishing dramatic return anyway.</summary>
-    private const float DeathAngleMin = -0.35f;
-    private const float DeathAngleMax = 0.80f;
+    /// negative = flat/below, looking up at the killer).</summary>
+    public const float DeathAngleMin = -0.50f;
+    public const float DeathAngleMax = 0.80f;
+    private const float DeathGroundClearance = 0.06f;
 
     // Internal solver bounds for the death shot. These were sliders once; nothing a player
     // wants is expressed through them that the remaining sliders do not cover, and a mis-set
@@ -1275,7 +1274,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
                 }
             }
             var safeFloor = hasCamGroundSample ? MathF.Max(smoothedGroundY, smoothedCamGroundY) : smoothedGroundY;
-            curCam.Y = MathF.Max(curCam.Y, safeFloor + 0.15f);
+            curCam.Y = MathF.Max(curCam.Y, safeFloor + DeathGroundClearance);
         }
 
         curDistance = MathF.Max(0.3f, curDistance);
@@ -1459,7 +1458,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         // back. The fit still PROJECTS at the measured pitch, so composition stays honest.
         var drop = MathF.Tan(MathF.Atan(band * MathF.Abs(lensBase.TanHalfV)) - chiForHeight);
         var desiredCamY = corpseMain.Y - xRefSmoothed * drop;
-        var cameraHeight = Math.Clamp(desiredCamY, floorY + 0.15f, floorY + 3.5f);
+        var cameraHeight = Math.Clamp(desiredCamY, floorY + DeathGroundClearance, floorY + 3.5f);
         DebugGroundY = floorY;
 
         DynamicCameraSolver.GroundedFitResult final;

@@ -269,8 +269,8 @@ public partial class MainWindow
                    "The camera's height above the ground is worked out from this (together with the angle below) every frame — " +
                    "you say where the body should be, it finds the height. A terrain probe keeps it out of the floor.");
 
-        var angle = Math.Clamp(config.DynCamDeathAngle, -0.35f, 0.80f);
-        if (ImGui.SliderFloat("Camera angle##dyncam", ref angle, -0.35f, 0.80f, "%.2f rad"))
+        var angle = Math.Clamp(config.DynCamDeathAngle, DynamicCameraController.DeathAngleMin, DynamicCameraController.DeathAngleMax);
+        if (ImGui.SliderFloat("Camera angle##dyncam", ref angle, DynamicCameraController.DeathAngleMin, DynamicCameraController.DeathAngleMax, "%.2f rad"))
         {
             config.DynCamDeathAngle = angle;
             config.Save();
