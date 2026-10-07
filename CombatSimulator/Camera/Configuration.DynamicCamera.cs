@@ -87,7 +87,7 @@ public partial class Configuration
     /// raises up on their elbows); NEGATIVE tips it up (flat on the ground, looking up past
     /// the body at the killer standing over it). Tilting further down needs more height and
     /// distance to still hold the killer in frame — the fit does that for you.</summary>
-    public float DynCamDeathAngle { get; set; } = -0.05f;
+    public float DynCamDeathAngle { get; set; } = 0.45f;
 
     /// <summary>Fill the frame with the body: the camera comes in as close as the constraints
     /// allow (every required body point, plus the killer, still in frame), with no distance
