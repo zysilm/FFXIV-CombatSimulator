@@ -4,7 +4,11 @@
     <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Keep warmed allocation/timing fixtures independent of tiered-JIT
+         transitions. This affects this offline executable only. -->
+    <RuntimeHostConfigurationOption Include="System.Runtime.TieredCompilation" Value="false" />
     <Compile Include="../../CombatSimulator/Animation/Hair/FlexibleHairSolver.cs" Link="Production/FlexibleHairSolver.cs" />
     <Compile Include="../../CombatSimulator/Animation/Hair/HairMeshEnvelope.cs" Link="Production/HairMeshEnvelope.cs" />
+    <Compile Include="../../CombatSimulator/Animation/Hair/HairMeshSample.cs" Link="Production/HairMeshSample.cs" />
   </ItemGroup>
 </Project>

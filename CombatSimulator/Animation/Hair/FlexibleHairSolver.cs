@@ -110,7 +110,8 @@ internal sealed class FlexibleHairSolver
         float compliance = float.IsFinite(bendCompliance) ? Math.Clamp(bendCompliance, .0001f, 1f) : .02f;
         for (int i = 0; i < Count; i++)
             for (int j = 0; j < Math.Min(64, body.Length); j++)
-                contactAllowances[i * 64 + j] = body[j].AllowRestOverlap ? body[j].InitialAllowance(Rest[i], head, rotation, radius) : 0;
+                contactAllowances[i * 64 + j] = body[j].AllowRestOverlap ?
+                    body[j].InitialAllowance(Rest[i], head, rotation, MathF.Max(radius, ContactRadii[i])) : 0;
         for (int iteration = 0; iteration < 8; iteration++)
         {
             UpdateFrames(rotation);
@@ -186,10 +187,17 @@ internal sealed class FlexibleHairSolver
                 {
                     var capsule = body[j];
                     float t = capsule.ClosestGuideParameter(Positions[p], Positions[i]);
-                    if (capsule.AllowRestOverlap && t < .2f) continue;
                     var point = Vector3.Lerp(Positions[p], Positions[i], t);
                     var delta = point - capsule.Nearest(point); float separation = delta.Length();
                     float shell = capsule.Radius + MathF.Max(radius, ContactRadii[i]);
+                    // The same rest-profile allowance must apply to edges and
+                    // endpoints. Otherwise the edge solver pushes a correctly
+                    // attached fringe away while endpoint contacts allow it.
+                    if (capsule.AllowRestOverlap)
+                    {
+                        var localRest = Vector3.Lerp(Rest[p], Rest[i], t);
+                        shell -= capsule.InitialAllowance(localRest, head, rotation, MathF.Max(radius, ContactRadii[i]));
+                    }
                     if (separation >= shell) continue;
                     float wp = inverseMass[p], wi = inverseMass[i];
                     float denominator = wp * (1 - t) * (1 - t) + wi * t * t;

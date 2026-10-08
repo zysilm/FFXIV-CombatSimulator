@@ -142,6 +142,9 @@ public unsafe partial class RagdollController
                 var attachment = invConnection * baseReferences[parentBone];
                 for (int i = 0; i < referenceModels.Length; i++) referenceModels[i] *= attachment;
             }
+            var skin = new Dictionary<string, Matrix4x4>(StringComparer.Ordinal);
+            AddHairSkinMatrices(skel.Pose, baseReferences, Matrix4x4.Identity, skin);
+            AddHairSkinMatrices(pose, referenceModels, poseAttachment, skin);
             var radii = new List<float>();
             for (int i = 0; i < points.Count; i++) radii.Add(0);
             var childPoints = new int[boneIndices.Count]; Array.Fill(childPoints, -1);
@@ -161,16 +164,19 @@ public unsafe partial class RagdollController
                 float meshRadius = 0;
                 int bone = boneIndices[i];
                 string name = pose->Skeleton->Bones[bone].Name.String ?? string.Empty;
-                if (meshBinding != null && bone < referenceModels.Length && meshBinding.Samples.TryGetValue(name, out var samples) &&
-                    Matrix4x4.Invert(referenceModels[bone], out var invBind))
+                if (meshBinding != null && meshBinding.Samples.TryGetValue(name, out var samples))
                 {
                     var cloud = new Vector3[samples.Length];
-                    var current = QsToMatrix(pose->ModelPose.Data[bone]) * poseAttachment;
+                    int admitted = 0;
                     for (int j = 0; j < samples.Length; j++)
-                        cloud[j] = Vector3.Transform(ModelToWorld(Vector3.Transform(samples[j], invBind * current)) - head, invHead);
-                    var envelope = HairMeshEnvelope.Fit(cloud, points[point], Vector3.Transform(-Vector3.UnitY, invHead));
-                    tip = envelope.Tip; meshRadius = envelope.Radius;
-                    log.Info($"Hair mesh guide: bone={name}, samples={samples.Length}, length={Vector3.Distance(tip, points[point]):F3}m, radius={meshRadius:F3}m");
+                        if (samples[j].TryPose(skin, out var posed))
+                            cloud[admitted++] = Vector3.Transform(ModelToWorld(posed) - head, invHead);
+                    if (admitted >= 4)
+                    {
+                        var envelope = HairMeshEnvelope.Fit(cloud.AsSpan(0, admitted), points[point], Vector3.Transform(-Vector3.UnitY, invHead));
+                        tip = envelope.Tip; meshRadius = envelope.Radius;
+                    }
+                    log.Info($"Hair mesh guide: bone={name}, samples={admitted}/{samples.Length}, length={Vector3.Distance(tip, points[point]):F3}m, thickness={meshRadius:F3}m; full skin weights, rooted fit");
                 }
                 childPoints[i] = points.Count;
                 points.Add(tip); parents.Add(point); radii.Add(meshRadius);
@@ -442,6 +448,18 @@ public unsafe partial class RagdollController
             if (parent >= 0 && parent < i) models[i] *= models[parent];
         }
         return models;
+    }
+
+    private static void AddHairSkinMatrices(HkaPose* pose, Matrix4x4[] references,
+        Matrix4x4 attachment, Dictionary<string, Matrix4x4> skin)
+    {
+        int count = Math.Min(references.Length, Math.Min(pose->ModelPose.Length, pose->Skeleton->Bones.Length));
+        for (int i = 0; i < count; i++)
+        {
+            string? name = pose->Skeleton->Bones[i].Name.String;
+            if (string.IsNullOrEmpty(name) || !Matrix4x4.Invert(references[i], out var inverse)) continue;
+            skin[name] = inverse * QsToMatrix(pose->ModelPose.Data[i]) * attachment;
+        }
     }
 
     private static bool TryHairPoseAttachment(SkeletonAccess skel, int partialIndex, HkaPose* pose,

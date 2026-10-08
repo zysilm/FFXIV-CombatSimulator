@@ -12,21 +12,28 @@ namespace CombatSimulator.Animation.Hair;
 /// No native references are retained; this is not a vertex-deformation backend.</summary>
 internal sealed class HairMeshBinding
 {
-    public readonly Dictionary<string, Vector3[]> Samples;
+    public readonly Dictionary<string, HairMeshSample[]> Samples;
     public readonly int VisibleVertices;
-    public HairMeshBinding(Dictionary<string, Vector3[]> samples, int vertices) { Samples = samples; VisibleVertices = vertices; }
+    public HairMeshBinding(Dictionary<string, HairMeshSample[]> samples, int vertices) { Samples = samples; VisibleVertices = vertices; }
     private sealed class Bucket
     {
-        public readonly List<Vector3> Points = new(256);
+        public readonly List<HairMeshSample> Points = new(256);
         public int Count;
-        public void Add(Vector3 p)
+        public void Add(Vector3 p, ReadOnlySpan<float> weights, ReadOnlySpan<byte> indices, string[] palette)
         {
             Count++;
-            if (Points.Count < 256) { Points.Add(p); return; }
             // Deterministic bounded reservoir across the entire loaded model.
             uint hash = unchecked((uint)Count * 2654435761u);
-            int index = (int)(hash % (uint)Count);
-            if (index < 256) Points[index] = p;
+            int index = Points.Count < 256 ? Points.Count : (int)(hash % (uint)Count);
+            if (index >= 256) return;
+            int used = 0;
+            for (int i = 0; i < weights.Length; i++) if (weights[i] > 0) used++;
+            var influences = new HairMeshInfluence[used];
+            for (int i = 0, j = 0; i < weights.Length; i++)
+                if (weights[i] > 0) influences[j++] = new(palette[indices[i]], weights[i]);
+            var sample = new HairMeshSample(p, influences);
+            if (index == Points.Count) Points.Add(sample);
+            else Points[index] = sample;
         }
     }
     public static HairMeshBinding? Decode(byte[] raw, uint attributes)
@@ -34,6 +41,8 @@ internal sealed class HairMeshBinding
         if (!RagdollController.TryReadFluidModelData(raw, out var mdl) || mdl.Lods.Length == 0 || mdl.Meshes.Length > 256) return null;
         var buckets = new Dictionary<string, Bucket>(StringComparer.Ordinal);
         int visibleVertices = 0; var lod = mdl.Lods[0];
+        Span<float> weights = stackalloc float[8];
+        Span<byte> indices = stackalloc byte[8];
         for (int mi = lod.MeshIndex; mi < Math.Min(mdl.Meshes.Length, lod.MeshIndex + lod.MeshCount); mi++)
         {
             var mesh = mdl.Meshes[mi];
@@ -56,31 +65,40 @@ internal sealed class HairMeshBinding
                     if ((mdl.Submeshes[s].AttributeIndexMask & attributes) == mdl.Submeshes[s].AttributeIndexMask)
                         Mark(mdl.Submeshes[s].IndexOffset, mdl.Submeshes[s].IndexCount);
             var palette = mdl.BoneTables[mesh.BoneTableIndex].BoneIndex;
+            var names = new string[palette.Length];
+            for (int i = 0; i < names.Length; i++)
+            {
+                if (palette[i] >= mdl.BoneNameOffsets.Length) continue;
+                uint start = mdl.BoneNameOffsets[palette[i]];
+                if (start >= mdl.Strings.Length) continue;
+                int end = (int)start;
+                while (end < mdl.Strings.Length && mdl.Strings[end] != 0) end++;
+                names[i] = Encoding.UTF8.GetString(mdl.Strings, (int)start, end - (int)start);
+            }
             for (int vi = 0; vi < used.Length; vi++)
             {
                 if (!used[vi]) continue;
-                if (!Read(mdl, mi, vi, out var position, out int localBone)) continue;
-                if (localBone >= palette.Length || palette[localBone] >= mdl.BoneNameOffsets.Length) continue;
-                uint nameStart = mdl.BoneNameOffsets[palette[localBone]];
-                if (nameStart >= mdl.Strings.Length) continue;
-                int end = (int)nameStart;
-                while (end < mdl.Strings.Length && mdl.Strings[end] != 0) end++;
-                string name = Encoding.UTF8.GetString(mdl.Strings, (int)nameStart, end - (int)nameStart);
+                if (!Read(mdl, mi, vi, weights, indices, out var position, out int localBone)) continue;
+                bool valid = true;
+                for (int i = 0; i < 8; i++)
+                    if (weights[i] > 0 && (indices[i] >= names.Length || string.IsNullOrEmpty(names[indices[i]]))) valid = false;
+                if (!valid || localBone < 0 || localBone >= names.Length) continue;
+                string name = names[localBone];
                 if (!buckets.TryGetValue(name, out var bucket)) buckets[name] = bucket = new();
-                bucket.Add(position); visibleVertices++;
+                bucket.Add(position, weights, indices, names); visibleVertices++;
                 if (visibleVertices > 200000) return null;
             }
         }
-        var samples = new Dictionary<string, Vector3[]>(StringComparer.Ordinal);
+        var samples = new Dictionary<string, HairMeshSample[]>(StringComparer.Ordinal);
         foreach (var item in buckets) samples[item.Key] = item.Value.Points.ToArray();
         return new(samples, visibleVertices);
     }
-    private static bool Read(FluidModelData mdl, int mi, int vi, out Vector3 position, out int bone)
+    private static bool Read(FluidModelData mdl, int mi, int vi, Span<float> weights, Span<byte> indices,
+        out Vector3 position, out int bone)
     {
         position = default; bone = -1;
         var mesh = mdl.Meshes[mi];
-        Span<float> weights = stackalloc float[8]; weights.Clear();
-        Span<byte> indices = stackalloc byte[8]; indices.Clear();
+        weights.Clear(); indices.Clear();
         bool hasPosition = false, hasWeights = false, hasIndices = false;
         foreach (var element in mdl.VertexDeclarations[mi].VertexElements)
         {
@@ -114,7 +132,11 @@ internal sealed class HairMeshBinding
             }
         }
         float largest = 0;
-        for (int i = 0; i < 8; i++) if (weights[i] > largest) { largest = weights[i]; bone = indices[i]; }
+        for (int i = 0; i < 8; i++)
+        {
+            if (!float.IsFinite(weights[i]) || weights[i] < 0) return false;
+            if (weights[i] > largest) { largest = weights[i]; bone = indices[i]; }
+        }
         return hasPosition && hasWeights && hasIndices && bone >= 0;
     }
     private static float Float(ReadOnlySpan<byte> bytes, int offset) => BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(bytes[offset..]));

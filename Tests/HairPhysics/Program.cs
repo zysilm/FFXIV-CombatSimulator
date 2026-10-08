@@ -58,6 +58,49 @@ var braidCloud = Enumerable.Range(0, 128).Select(i => new Vector3(.005f * MathF.
 var braid = HairMeshEnvelope.Fit(braidCloud, Vector3.Zero, -Vector3.UnitY);
 Check(braid.Tip.Y < -.7f && MathF.Abs(braid.Tip.X) < .03f, "Mesh braid replaced by a short guessed bone stub");
 Check(braid.Radius >= .004f && braid.Radius < .015f, "Mesh braid width is incorrect");
+// A broad, thin fringe begins above its cloud. Its width must not turn its
+// physical guide sideways or inflate its head-contact shell.
+var fringeCloud = Enumerable.Range(0, 256).Select(i => new Vector3(
+    .003f + ((i % 16) / 15f - .5f) * .18f, -.01f - (i / 16) / 15f * .06f,
+    (i % 3 - 1) * .001f)).ToArray();
+var fringe = HairMeshEnvelope.Fit(fringeCloud, Vector3.Zero, -Vector3.UnitY);
+Check(fringe.Tip.Y < -.06f && MathF.Abs(fringe.Tip.X) < .01f, "Fringe width became a sideways guide");
+Check(fringe.Radius < .006f, "Thin fringe width became a thick collision sphere");
+var tilt = Quaternion.CreateFromYawPitchRoll(.8f, .4f, -.7f);
+var tiltedFringe = HairMeshEnvelope.Fit(fringeCloud.Select(p => Vector3.Transform(p, tilt)).ToArray(),
+    Vector3.Zero, Vector3.Transform(-Vector3.UnitY, tilt));
+Check(Vector3.Distance(tiltedFringe.Tip, Vector3.Transform(fringe.Tip, tilt)) < .001f,
+    "Rooted fringe fitting depends on world axes");
+Check(MathF.Abs(tiltedFringe.Radius - fringe.Radius) < .001f, "Fringe thickness depends on world axes");
+var blendedSkin = new Dictionary<string, Matrix4x4>
+{
+    ["scalp"] = Matrix4x4.Identity,
+    ["side"] = Matrix4x4.CreateTranslation(.08f, 0, 0),
+};
+var blendedSample = new HairMeshSample(new(0, -.04f, 0), [new("scalp", .4f), new("side", .6f)]);
+Check(blendedSample.TryPose(blendedSkin, out var blend) && Vector3.Distance(blend, new(.048f, -.04f, 0)) < 1e-6f,
+    "Scalp/hair blended card was fitted as attached to its dominant bone");
+var missingSample = new HairMeshSample(Vector3.Zero, [new("unresolved", .4f), new("side", .6f)]);
+Check(!missingSample.TryPose(blendedSkin, out _), "Unresolved skin influences silently distort guide fitting");
+// A chord between two valid surface points may lie inside the approximate
+// scalp. Edge contacts must preserve the rest profile just like point contacts.
+var attachedFringe = new FlexibleHairSolver([-1, 0],
+    [new(-.06f, .08f, 0), new(.06f, .08f, 0)], .02f,
+    Vector3.Zero, Quaternion.Identity, Vector3.Zero, Vector3.Zero);
+attachedFringe.ContactRadii[1] = .02f;
+var faceEnvelope = new HairContactCapsule(Vector3.Zero, Vector3.Zero, .1f, true);
+float fringeLengthError = 0;
+for (int i = 0; i < 600; i++)
+{
+    Step(attachedFringe, Vector3.Zero, Quaternion.Identity, body: [faceEnvelope]);
+    fringeLengthError = MathF.Max(fringeLengthError,
+        MathF.Abs(Vector3.Distance(attachedFringe.Positions[0], attachedFringe.Positions[1]) - .12f));
+}
+Check(fringeLengthError < .001f, "Scalp edge contacts fight the rest attachment and stretch fringe");
+Check(attachedFringe.Positions[1].Y <= .081f, "Scalp edge contacts lift the entire fringe away from its rest surface");
+var turned = Quaternion.CreateFromAxisAngle(Vector3.UnitY, .7f);
+for (int i = 0; i < 180; i++) Step(attachedFringe, Vector3.Zero, turned, body: [faceEnvelope]);
+Check(attachedFringe.Positions.All(FlexibleHairSolver.Finite), "Turning attached fringe diverges");
 var crossed = new FlexibleHairSolver([-1, 0], [new(-.2f, 0, 0), new(.2f, 0, 0)], .02f,
     new(0, 1, 0), Quaternion.Identity, Vector3.Zero, Vector3.Zero);
 var torso = new HairContactCapsule(new(0, .9f, 0), new(0, 1.1f, 0), .03f);
