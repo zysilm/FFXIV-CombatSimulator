@@ -8,7 +8,7 @@ namespace CombatSimulator.Rendering.WorldGeometry;
 /// or cleared; enabling/disabling/disposing this layer never clears another producer.
 /// SetEnabled and Dispose should be called from the host's main/plugin thread.
 /// </summary>
-public sealed class WorldGeometryLayer : IDisposable
+public sealed partial class WorldGeometryLayer : IDisposable
 {
     private readonly WorldGeometryRenderer owner;
     internal readonly WorldGeometryRenderer.LayerState State;
@@ -26,8 +26,5 @@ public sealed class WorldGeometryLayer : IDisposable
         bool clipSpace = false, bool diagnostic = false, bool shaded = true)
         => owner.Submit(State, vertices, testSceneDepth, clipSpace, diagnostic, shaded);
     public void Clear() => owner.ClearLayer(State);
-    /// <summary>Submit immutable liquid surface data; renderer owns scene snapshot and GPU state.</summary>
-    public void SubmitFluidFrame(ReadOnlySpan<FluidVertex> vertices, FluidMaterial material, bool testSceneDepth = true)
-        => owner.SubmitFluid(State, vertices, material, testSceneDepth);
     public void Dispose() => owner.RemoveLayer(State);
 }

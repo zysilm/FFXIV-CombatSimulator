@@ -1,6 +1,0 @@
-artifacts/
-checkpoint/
-*.csv
-*.zip
-bin/
-obj/

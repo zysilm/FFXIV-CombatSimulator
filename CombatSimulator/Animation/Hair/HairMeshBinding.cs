@@ -4,7 +4,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Text;
-using CombatSimulator.Effects.BodyFluids.Surface;
+using CombatSimulator.Animation;
 
 namespace CombatSimulator.Animation.Hair;
 
@@ -38,7 +38,7 @@ internal sealed class HairMeshBinding
     }
     public static HairMeshBinding? Decode(byte[] raw, uint attributes)
     {
-        if (!RagdollController.TryReadFluidModelData(raw, out var mdl) || mdl.Lods.Length == 0 || mdl.Meshes.Length > 256) return null;
+        if (!RagdollController.TryReadModelGeometryData(raw, out var mdl) || mdl.Lods.Length == 0 || mdl.Meshes.Length > 256) return null;
         var buckets = new Dictionary<string, Bucket>(StringComparer.Ordinal);
         int visibleVertices = 0; var lod = mdl.Lods[0];
         Span<float> weights = stackalloc float[8];
@@ -93,7 +93,7 @@ internal sealed class HairMeshBinding
         foreach (var item in buckets) samples[item.Key] = item.Value.Points.ToArray();
         return new(samples, visibleVertices);
     }
-    private static bool Read(FluidModelData mdl, int mi, int vi, Span<float> weights, Span<byte> indices,
+    private static bool Read(ModelGeometryData mdl, int mi, int vi, Span<float> weights, Span<byte> indices,
         out Vector3 position, out int bone)
     {
         position = default; bone = -1;

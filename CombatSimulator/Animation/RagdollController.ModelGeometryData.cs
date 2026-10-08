@@ -1,6 +1,5 @@
 // This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 using System;
-using CombatSimulator.Effects.BodyFluids.Surface;
 using Lumina.Data.Parsing;
 
 namespace CombatSimulator.Animation;
@@ -10,11 +9,11 @@ public unsafe partial class RagdollController
     /// <summary>
     /// Read-only metadata bridge to the existing validated raw MDL parser. Does not
     /// create a ragdoll, change its shapes, or alter any existing parsing path.
-    /// Surface flow additionally needs submesh visibility, which collision fitting omits.
+    /// Includes submesh visibility and shape metadata for mesh consumers.
     /// </summary>
-    internal static bool TryReadFluidModelData(byte[] bytes, out FluidModelData data)
+    internal static bool TryReadModelGeometryData(byte[] bytes, out ModelGeometryData data)
     {
-        data = new FluidModelData();
+        data = new ModelGeometryData();
         if (!TryParseRawMdlCollisionData(bytes, out var parsed, out _)) return false;
         try
         {
@@ -97,7 +96,7 @@ public unsafe partial class RagdollController
                 if (!TryReadUInt16(span, ref offset, out var entry) || !TryReadUInt16(span, ref offset, out var replacement)) return false;
                 shapeValues[i] = new() { BaseIndicesIndex = entry, ReplacingVertexIndex = replacement };
             }
-            data = new FluidModelData {
+            data = new ModelGeometryData {
                 Data = parsed.Data, FileHeader = parsed.FileHeader,
                 Lods = parsed.Lods, Meshes = parsed.Meshes, VertexDeclarations = parsed.VertexDeclarations,
                 BoneTables = boneTables, BoneNameOffsets = parsed.BoneNameOffsets,

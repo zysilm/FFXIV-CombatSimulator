@@ -29,7 +29,7 @@ using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraMan
 
 namespace CombatSimulator;
 
-public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
+public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 {
     private const string CommandName = "/combatsim";
     private const int NpcRagdollActivationsPerFrame = 1;
@@ -78,15 +78,19 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     private readonly FightingModeController fightingModeController;
     private readonly SpectatorController spectatorController;
     private readonly Dev.IDevExperimental devExperimental;
+    partial void InitPrivateEffects();
+    partial void AttachPrivateEffects();
+    partial void TickPrivateEffects(float deltaTime);
+    partial void TickPrivateCommandBridge();
+    partial void OnPrivateEffectsKo();
+    partial void ClearPrivateEffects();
+    partial void DisposePrivateEffects();
+    partial void TryPrivateCommand(string[] parts, ref bool handled);
+
     private readonly Effects.NpcScaleController npcScaleController;
     private readonly Effects.PlayerWeaponVisibilityController playerWeaponVisibilityController;
-    private readonly Effects.BodyFluids.BodyFluidController bodyFluidController;
-#if DEV_EXPERIMENTAL
-    private readonly Dev.FluidLiveCommandBridge fluidLiveCommands;
-#endif
     private readonly Rendering.WorldGeometry.WorldGeometryRenderer worldGeometryRenderer;
     private readonly Rendering.WorldGeometry.WorldGeometryPreview worldGeometryPreview;
-    private readonly Rendering.WorldGeometry.WorldFluidPreview worldFluidPreview;
     public Rendering.WorldGeometry.WorldGeometryRenderer WorldGeometry => worldGeometryRenderer;
     private readonly EnemyControlController enemyControlController;
     private readonly HookSafetyChecker hookSafetyChecker;
@@ -202,13 +206,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         weaponDropController = new WeaponDropController(boneTransformService, config, log, ragdollController);
         playerWeaponVisibilityController = new Effects.PlayerWeaponVisibilityController(config, objectTable, boneTransformService);
         worldGeometryRenderer = new Rendering.WorldGeometry.WorldGeometryRenderer(gameInterop, sigScanner, log);
-        bodyFluidController = new Effects.BodyFluids.BodyFluidController(config, boneTransformService, worldGeometryRenderer, log);
-#if DEV_EXPERIMENTAL
-        fluidLiveCommands = new Dev.FluidLiveCommandBridge(pluginInterface.GetPluginConfigDirectory(),
-            command => OnCommand(CommandName, "fluid " + command), log);
-#endif
+        InitPrivateEffects();
         worldGeometryPreview = new Rendering.WorldGeometry.WorldGeometryPreview(worldGeometryRenderer);
-        worldFluidPreview = new Rendering.WorldGeometry.WorldFluidPreview(worldGeometryRenderer);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
         dismembermentController.PlayerRagdollController = ragdollController;
         // Clothes still on the corpse ride along when it is picked up; the dismemberment side owns the
@@ -480,7 +479,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnNpcDeathRagdoll = OnNpcDeathRagdoll;
         combatEngine.OnPlayerDeath = addr =>
         {
-            bodyFluidController.OnPlayerKo();
+            OnPrivateEffectsKo();
             weaponDropController.SpawnFor(addr, config.RagdollActivationDelay);
             armorDetachmentController.StripOnKo(addr);
             if (config.EnableDismemberRollaway && config.DismemberPocBones is { Count: > 0 })
@@ -531,7 +530,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
         // GUI
         mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
-        mainWindow.BodyFluids = bodyFluidController;
+        AttachPrivateEffects();
         armorDetachmentController.AllowOnHitDetach = () => mainWindow.DevExperimentalUnlocked;
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
@@ -600,9 +599,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         spectatorController.Dispose();
         npcScaleController.Dispose();
         playerWeaponVisibilityController.Dispose();
-        bodyFluidController.Dispose();
+        DisposePrivateEffects();
         worldGeometryPreview.Dispose();
-        worldFluidPreview.Dispose();
         worldGeometryRenderer.Dispose();
         npcSpawner.Dispose();
         useActionHook.Dispose();
@@ -641,6 +639,10 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             return;
         }
 
+        bool privateCommandHandled = false;
+        TryPrivateCommand(parts, ref privateCommandHandled);
+        if (privateCommandHandled) return;
+
         switch (parts[0].ToLowerInvariant())
         {
             case "geometry":
@@ -654,82 +656,6 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
                 else if (geometryCommand == "clear") worldGeometryPreview.Clear();
                 chatGui.Print($"[CombatSim] World geometry: {worldGeometryPreview.Status}");
                 log.Info($"World geometry API preview: {worldGeometryPreview.Status}");
-                break;
-
-            case "fluid":
-                var fluidCommand = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : "status";
-                switch (fluidCommand)
-                {
-                    case "on":
-                    case "normal":
-                        bodyFluidController.Start(largeVisibilityPreview: false);
-                        config.Save();
-                        break;
-                    case "thick":
-                        bodyFluidController.Start(largeVisibilityPreview: true);
-                        config.Save();
-                        break;
-                    case "off":
-                        config.BodyFluidsEnabled = false;
-                        bodyFluidController.Clear();
-                        config.Save();
-                        break;
-                    case "stop": bodyFluidController.StopEmission(); break;
-                    case "inspect": bodyFluidController.SetGeometryInspection(Rendering.WorldGeometry.FluidDiagnosticView.NormalFacing); break;
-                    case "inspectdepth": bodyFluidController.SetGeometryInspection(Rendering.WorldGeometry.FluidDiagnosticView.DepthDecision); break;
-                    case "inspectnormal": bodyFluidController.SetGeometryInspection(Rendering.WorldGeometry.FluidDiagnosticView.SignedNormalFacing); break;
-                    case "inspectoff": bodyFluidController.SetGeometryInspection(Rendering.WorldGeometry.FluidDiagnosticView.Composite); break;
-                    case "trace": bodyFluidController.BeginRuntimeTrace(); break;
-                    case "clear": bodyFluidController.Clear(); break;
-                    case "reset":
-                        bodyFluidController.Clear();
-                        config.ResetBodyFluids();
-                        config.Save();
-                        break;
-                    case "probe": bodyFluidController.BeginProbe(); break;
-                    case "marker": bodyFluidController.BeginVisualProbe(); break;
-                    case "surface": bodyFluidController.BeginSurfaceProbe(); break;
-                    case "surfacebody": bodyFluidController.BeginSurfaceProbe(includeBody: true); break;
-                    case "surfacebodyraw": bodyFluidController.BeginSurfaceProbe(includeBody: true, applyRaceDeformation: false); break;
-                    case "confirm-lip":
-                        chatGui.Print(bodyFluidController.ValidateLipAnchor()
-                            ? "[CombatSim] Current lip surface anchor validated."
-                            : "[CombatSim] No current lip surface anchor to validate; run fluid surface first.");
-                        break;
-                    case "material":
-                    case "refraction":
-                    case "normals":
-                    case "refractionpath":
-                    case "refractionoffset":
-                        bodyFluidController.PrepareMaterialProbe();
-                        worldGeometryRenderer.ResetGpuTiming();
-                        if (clientState.IsLoggedIn && Services.ObjectTable.LocalPlayer is { } fluidPlayer)
-                        {
-                            var fluidOrigin = boneTransformService.GetBoneWorldPos(fluidPlayer.Address, "j_kao") ??
-                                (fluidPlayer.Position + Vector3.UnitY * 1.3f);
-                            // Deliberately enlarged, beside the head; this is an optical proof, not saliva emission.
-                            var opticalView = fluidCommand == "refraction" ? Rendering.WorldGeometry.FluidDiagnosticView.RefractedBackgroundOnly :
-                                fluidCommand == "refractionpath" ? Rendering.WorldGeometry.FluidDiagnosticView.RefractionPathReason :
-                                fluidCommand == "refractionoffset" ? Rendering.WorldGeometry.FluidDiagnosticView.RefractionOffsetPixels :
-                                fluidCommand == "normals" ? Rendering.WorldGeometry.FluidDiagnosticView.NormalFacing :
-                                Rendering.WorldGeometry.FluidDiagnosticView.Composite;
-                            if (worldGeometryRenderer.TryGetPreviewOrigin(fluidOrigin, out var opticalOrigin))
-                                worldFluidPreview.Show(opticalOrigin, opticalView, config.CreateBodyFluidMaterial() with { ReflectionStrength = 1 });
-                            else
-                                log.Info("Fluid material preview waiting for a valid visible main-camera placement.");
-                        }
-                        break;
-                    case "materialoff": worldFluidPreview.Clear(); break;
-                }
-                var fluidStatus = bodyFluidController.Describe();
-                chatGui.Print($"[CombatSim] {fluidStatus}");
-                log.Info(fluidStatus);
-                if (fluidCommand is "material" or "refraction" or "normals" or "refractionpath" or "refractionoffset" or "materialoff" or "status")
-                {
-                    chatGui.Print($"[CombatSim] Liquid material: {worldFluidPreview.Status}");
-                    log.Info($"Liquid material: {worldFluidPreview.Status}");
-                    log.Info($"World geometry CPU: {worldGeometryRenderer.CpuTimingStatus}");
-                }
                 break;
 
             case "start":
@@ -893,9 +819,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             wasLoggedIn = loggedIn;
             if (!loggedIn)
                 return;
-#if DEV_EXPERIMENTAL
-            fluidLiveCommands.Tick();
-#endif
+            TickPrivateCommandBridge();
 
             // Real wall-clock delta for all per-frame simulation. The framework fires
             // once per rendered frame at whatever framerate the game runs; using a fixed
@@ -971,8 +895,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
             npcScaleController.Tick();
             worldGeometryRenderer.Tick();
             worldGeometryPreview.Tick(deltaTime);
-            worldFluidPreview.Tick(deltaTime);
-            bodyFluidController.Tick(deltaTime);
+            TickPrivateEffects(deltaTime);
 
             if (!combatEngine.IsActive)
                 return;
@@ -1334,9 +1257,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnTerritoryChanged(uint territoryId)
     {
-        bodyFluidController.Clear();
+        ClearPrivateEffects();
         worldGeometryPreview.Clear();
-        worldFluidPreview.Clear();
         worldGeometryRenderer.ClearAll();
         // Despawn client-spawned NPCs first (they don't survive zone changes)
         npcSpawner.SpawnModeActive = false;
@@ -1371,9 +1293,8 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
     /// </summary>
     private void HandleLoggedOut()
     {
-        bodyFluidController.Clear();
+        ClearPrivateEffects();
         worldGeometryPreview.Clear();
-        worldFluidPreview.Clear();
         worldGeometryRenderer.ClearAll();
         try
         {

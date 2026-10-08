@@ -121,6 +121,7 @@ public partial class MainWindow : IDisposable
     partial void DrawExperimentalEffects();
     partial void DrawPcDismemberSection();
     partial void GetDevExperimentalUnlocked(ref bool unlocked);
+    partial void DrawPrivateEffectsSection();
 
     public bool DevExperimentalUnlocked
     {
@@ -351,7 +352,7 @@ public partial class MainWindow : IDisposable
                 break;
             case 3: // Effects
                 DrawHitVfxSection();
-                DrawBodyFluidsSection();
+                DrawPrivateEffectsSection();
                 DrawExperimentalEffects();
                 DrawArmorDetachmentEntrySection();
                 DrawEnemyControlEntrySection();

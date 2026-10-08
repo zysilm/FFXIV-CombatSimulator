@@ -3,10 +3,10 @@ using System;
 using Lumina.Data.Files;
 using Lumina.Data.Parsing;
 
-namespace CombatSimulator.Effects.BodyFluids.Surface;
+namespace CombatSimulator.Animation;
 
 /// <summary>Managed geometry metadata shared by normal Lumina loading and the existing raw MDL parser bridge.</summary>
-internal sealed class FluidModelData
+internal sealed class ModelGeometryData
 {
     public byte[] Data = Array.Empty<byte>();
     public MdlStructs.ModelFileHeader FileHeader;
@@ -21,7 +21,7 @@ internal sealed class FluidModelData
     public MdlStructs.ShapeMeshStruct[] ShapeMeshes = Array.Empty<MdlStructs.ShapeMeshStruct>();
     public MdlStructs.ShapeValueStruct[] ShapeValues = Array.Empty<MdlStructs.ShapeValueStruct>();
 
-    public static FluidModelData FromMdlFile(MdlFile mdl) => new()
+    public static ModelGeometryData FromMdlFile(MdlFile mdl) => new()
     {
         Data = mdl.Data ?? Array.Empty<byte>(),
         FileHeader = mdl.FileHeader,
