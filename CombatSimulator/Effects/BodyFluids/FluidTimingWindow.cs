@@ -3,7 +3,8 @@ using System;
 
 namespace CombatSimulator.Effects.BodyFluids;
 
-/// <summary>Bounded timing samples; sorting/formatting happens only on explicit status requests.</summary>
+/// <summary>Bounded timing samples; sorting/formatting happens on status requests
+/// or low-frequency diagnostic summaries, never on every sample.</summary>
 internal sealed class FluidTimingWindow
 {
     private readonly double[] samples = new double[256];

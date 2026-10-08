@@ -18,3 +18,13 @@ The new `--ground` tests pass: 600 frames double wet area from 54 to 108 mm² wi
 Further evidence: an inclined supporting plane advances for 600 frames with world gravity; its liquid center moves downhill from X=2.589 to 0.279 mm, without losing mass or rendering below support. The live Dalamud log at 2026-10-07 22:39 confirms ongoing multi-site supply and Rue custom-driver binding for both Part 1 sites. No current full runtime trace or CPU/GPU timing sample was present in the inspected log. A user-run trace request is pending; it does not authorize automated game commands and does not establish visual acceptance.
 
 The goal remains active. Full completion is unproven until the remaining native/visual/performance checks have direct evidence. Offline triangles and bounded pools must not be presented as proof of live Rue accuracy or acceptable rendering performance.
+
+## Passive performance collection — 2026-10-08
+
+The resumed audit still found no current full fluid timing trace. The saved configuration has both `BodyFluidsEnabled` and `BodyFluidsOnPlayerKo` disabled; this is evidence about saved settings, not proof of current in-memory emission state. Neither setting was changed by the agent.
+
+Active fluid work now emits a `Fluid performance:` summary at most once per ten seconds, after an initial ten-second delay. It reads existing framework/pose timing windows, geometry counts and last-pose skin/query counters. It does not call `Describe`, evaluate skin anchors, perform collision queries, admit liquid or change simulation/render material settings. Clear resets the summary schedule. Disabled and empty inactive states do not invoke this reporting path.
+
+GPU statistics use a nonblocking `TryGetGpuTimingStatus` renderer accessor: a busy renderer causes the timing read to be skipped rather than waiting. Reading the existing statistics does not start GPU queries or force completion. GPU scope includes the fluid snapshot/render section and concurrent ordinary world-geometry layers, so it must not be reported as isolated fluid-only GPU cost. Summary formatting/logging is outside the existing framework timing sample; a timing sample alone does not include that reporting overhead.
+
+Release build and diff whitespace checks pass. No new live performance summary has yet been observed after this build. This instrumentation removes the need for repeated manual trace commands during ordinary use; it does not prove appearance, current native frame-time cost, or goal completion.

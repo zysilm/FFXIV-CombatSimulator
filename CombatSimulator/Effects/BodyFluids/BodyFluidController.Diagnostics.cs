@@ -16,6 +16,23 @@ public sealed partial class BodyFluidController
     private FluidSurfaceAnchor[] diagnosticTriangles = Array.Empty<FluidSurfaceAnchor>();
     private long nextTraceSample;
     private int traceSamplesRemaining;
+    private long nextPerformanceSummary;
+
+    // Passive evidence for ordinary use. Unlike Describe/trace this summary does
+    // not evaluate skin, traverse inventories, issue raycasts or wait on rendering.
+    private void SamplePerformanceSummary()
+    {
+        var now = Environment.TickCount64;
+        if (nextPerformanceSummary == 0) { nextPerformanceSummary = now + 10000; return; }
+        if (now < nextPerformanceSummary) return;
+        nextPerformanceSummary = now + 10000;
+        var gpu = worldRenderer.TryGetGpuTimingStatus(out var timing) ? timing : "busy; timing sample skipped";
+        log.Info($"Fluid performance: emitting={Emitting}, poseFrames={poseFrames}, steps={steps}, " +
+            $"vertices={fluidGeometry.Count}, overflow={fluidGeometry.Overflowed}, " +
+            $"retainedDrawn={simulation.RetainedRivuletsDrawn}, retainedRecycled={simulation.RetainedRivuletsRecycled}, " +
+            $"skinVertices={surface.SkinVerticesThisFrame}, triangleTests={surface.TriangleTestsThisFrame}, budgetHit={surface.BudgetExhausted}; " +
+            $"framework[{frameworkTimings.Describe()}], pose[{poseTimings.Describe()}]; {gpu}");
+    }
 
     /// <summary>Finite observation of this game's production state; never drives a separate simulation.</summary>
     public void BeginRuntimeTrace()

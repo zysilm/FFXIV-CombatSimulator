@@ -38,8 +38,20 @@ public sealed unsafe partial class CharacterFluidSurface
         int omitted = 0, loaded = 0;
         int deformedSlots = 0, rawUnknownSlots = 0, deformedRejected = 0, deformedVertices = 0;
         string firstDeformationFailure = "";
-        for (int slot = 0; slot < Math.Clamp(ns.CharBase->SlotCount, 0, MaxSlots); slot++)
+        // The topology budget is shared by all models. High-detail equipment/hair
+        // must not consume it before the face, which owns the mouth/eye outlets.
+        // Keep the same total limits and native slot identities; only admission
+        // priority changes. Hair is optional receiving geometry and goes last.
+        int slotCount = Math.Clamp(ns.CharBase->SlotCount, 0, MaxSlots);
+        Span<int> captureSlots = stackalloc int[MaxSlots];
+        int captureCount = 0;
+        if (slotCount > 11) captureSlots[captureCount++] = 11;
+        for (int slot = 0; slot < slotCount; slot++)
+            if (slot != 11 && slot != 10) captureSlots[captureCount++] = slot;
+        if (slotCount > 10) captureSlots[captureCount++] = 10;
+        for (int captureIndex = 0; captureIndex < captureCount; captureIndex++)
         {
+            int slot = captureSlots[captureIndex];
             if (FaceOnlyCapture && slot != 11) continue;
             var model = ns.CharBase->Models == null ? null : ns.CharBase->Models[slot];
             if (model == null || model->ModelResourceHandle == null)

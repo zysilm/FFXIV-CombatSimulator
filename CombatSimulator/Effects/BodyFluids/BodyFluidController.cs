@@ -89,7 +89,11 @@ public sealed partial class BodyFluidController : IDisposable
             }
             finally
             {
-                if (activeWork) frameworkTimings.Add(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                if (activeWork)
+                {
+                    frameworkTimings.Add(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                    SamplePerformanceSummary();
+                }
             }
         }
     }
@@ -165,6 +169,7 @@ public sealed partial class BodyFluidController : IDisposable
         actorIdentity = 0; objectIdentity = 0;
         previousPoseTicks = frameworkFrame = capturedFrame = 0;
         frameworkTimings.Clear(); poseTimings.Clear();
+        nextPerformanceSummary = 0;
     }
 
     private bool HasLiquid() => surfaceProbeTime > 0 || visualProbeTime > 0 || simulation.TotalVolume > 1e-15;

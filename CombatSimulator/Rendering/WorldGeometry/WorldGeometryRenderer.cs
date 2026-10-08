@@ -95,6 +95,15 @@ public sealed unsafe class WorldGeometryRenderer : IDisposable
     public long DrawnBatches => Interlocked.Read(ref drawnBatches);
     /// <summary>GPU measurements are asynchronous; NaN percentiles mean no valid samples yet.</summary>
     public string GpuTimingStatus { get { lock (gate) return gpuTiming.Status; } }
+    /// <summary>Read existing asynchronous timing statistics without waiting on
+    /// the render thread. This never starts queries, polls the GPU or flushes it.</summary>
+    public bool TryGetGpuTimingStatus(out string timingStatus)
+    {
+        timingStatus = string.Empty;
+        if (!Monitor.TryEnter(gate)) return false;
+        try { timingStatus = gpuTiming.Status; return true; }
+        finally { Monitor.Exit(gate); }
+    }
     public void ResetGpuTiming() { lock (gate) gpuTiming.ResetStatistics(); }
     public const string RefractionDiagnosticLegend = "path: gray=original local single-interface refraction, purple=offscreen projection, red=foreground rejection; offset: dark blue=0px, green=1px, yellow=4px, red=16px+ (final sampled UV displacement)";
     /// <summary>Initialization and submit-lock waiting are distinct CPU scopes; formatting occurs only on demand.</summary>
