@@ -664,18 +664,15 @@ public partial class Configuration : IPluginConfiguration
     public float WeaponDropBounce { get; set; } = 1.5f; // Bepu MaximumRecoveryVelocity — higher = bouncier
     public float WeaponDropFriction { get; set; } = 0.6f;
     public int WeaponDropSolverIterations { get; set; } = 4;
-    // Hair physics — the BEPU strand rig (real jointed rigid-body strands, reusing the garment
-    // tube primitives: BallSocket + relaxing SwingLimit + damping AngularMotor + fading
-    // pose-guide servo), anchored to the head ragdoll body. The only implementation — the
-    // legacy pendulum simulator is retired. Works for any hairstyle: the rig is built from the
-    // hair partial-skeleton bone tree, so it is name-/style-agnostic (mod hairstyles included).
+    // Independent flexible guides drive the existing hair bones. Contacts are one-way.
     public bool RagdollHairPhysics { get; set; } = false;
-    // Strand-vs-corpse contact. Off by default: strands spawn overlapping the head/body
-    // capsules and contact resolution on overlapping spawns can fling the ragdoll. Ground
-    // contact is always on regardless.
+    public float RagdollHairBendCompliance { get; set; } = 0.02f;
+    public float RagdollHairDamping { get; set; } = 2.2f;
+    // Legacy contact preference; the current solver always separates from body envelopes.
     public bool RagdollHairCollision { get; set; } = false;
     public float RagdollHairRigSegmentMass { get; set; } = 0.02f;        // per-segment mass (very light)
-    public float RagdollHairRigThickness { get; set; } = 0.008f;         // strand box half-thickness (m)
+    public float RagdollHairRigThickness { get; set; } = 0.008f;         // guide contact radius (m)
+    // Legacy serialized values retained for compatibility; the flexible solver does not read these.
     public float RagdollHairRigSwingLimit { get; set; } = 0.6f;          // per-joint swing ROM (radians)
     public float RagdollHairRigInitialSwingFactor { get; set; } = 0.28f; // spawn ROM fraction (holds style, relaxes to full)
     public float RagdollHairRigPoseGuideForce { get; set; } = 4f;        // servo force holding the style at spawn, fades out

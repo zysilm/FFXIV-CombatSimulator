@@ -198,6 +198,7 @@ public sealed unsafe class CombatSimulatorPlugin : IDalamudPlugin
         npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, npcActionProfileProvider, movementBlockHook, log);
         npcScaleController = new Effects.NpcScaleController(config, npcSelector, objectTable);
         ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
+        ragdollController.RunAnimatedHair = true;
         weaponDropController = new WeaponDropController(boneTransformService, config, log, ragdollController);
         playerWeaponVisibilityController = new Effects.PlayerWeaponVisibilityController(config, objectTable, boneTransformService);
         worldGeometryRenderer = new Rendering.WorldGeometry.WorldGeometryRenderer(gameInterop, sigScanner, log);

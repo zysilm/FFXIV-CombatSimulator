@@ -2732,6 +2732,7 @@ public unsafe partial class RagdollController : IDisposable
 
     private unsafe void ApplyDeferredFollowTransform(Dalamud.Plugin.Services.IFramework _)
     {
+        SampleAnimatedHairTerrain();
         if (!pendingFollowPos.HasValue)
             return;
         var pos = pendingFollowPos.Value;
@@ -2889,10 +2890,16 @@ public unsafe partial class RagdollController : IDisposable
 
     private void OnRenderFrame()
     {
-        if (!isActive) return;
+        if (!isActive)
+        {
+            try { OnAnimatedHairFrame(); }
+            catch (Exception ex) { RemoveHairRig(); log.Error(ex, "Animated hair update failed"); }
+            return;
+        }
 
         try
         {
+            if (!config.RagdollHairPhysics && hairRigActive) RemoveHairRig();
             var dt = ComputeFrameDelta();
             elapsed += dt;
 
@@ -2904,11 +2911,17 @@ public unsafe partial class RagdollController : IDisposable
             {
                 if (elapsed < activationDelay)
                 {
+                    OnAnimatedHairFrame();
                     // Keep sampling the animated pose so the last frame before handoff carries
                     // its velocity into the physics bodies (no freeze on activation).
                     if (config.RagdollCarryAnimationVelocity)
                         SampleHandoffPose(dt);
                     return;
+                }
+                lock (animatedHairGate)
+                {
+                    animatedHair = false;
+                    hairRigChains.Clear(); hairRigActive = false;
                 }
                 if (!InitializePhysics()) { Deactivate(); return; }
                 physicsStarted = true;
@@ -8189,7 +8202,7 @@ public unsafe partial class RagdollController : IDisposable
         if (ragdollBones.Count > 0)
             corpseWakeCenter = simulation.Bodies.GetBodyReference(ragdollBones[0].BodyHandle).Pose.Position;
 
-        var activityBlocksRest = externalBodyAwake || npcTraversalProxyActivityThisFrame ||
+        var activityBlocksRest = externalBodyAwake || HairNeedsStep || npcTraversalProxyActivityThisFrame ||
             npcColliderMovedNearCorpse || grabSlots.Count > 0 ||
             collapseSpikeActive || directedCollapseActive || wholeBodyCollapseActive ||
             entryConditioningActive || kneePowerLossActive || skeletonMoved || biomechanicalSettleActive;
@@ -8501,15 +8514,14 @@ public unsafe partial class RagdollController : IDisposable
                 // iteration, so it ends as the state immediately before the final tick.
                 CapturePrevBodyPoses(boneCount);
                 hasPrevPhysicsState = true;
-                UpdateHairKinematicRoots(); // drive hair anchors from the head before integrating
                 DriveGrabConstraints(FixedTimestep); // advance finite-force targets before solve
                 ApplyFallGravity(FixedTimestep); // a descent that bites, on top of the integrator's honest g
                 var steppedExternally = false;
                 StepAdditionalPhysics(FixedTimestep, ref steppedExternally);
                 if (!steppedExternally) simulation.Timestep(FixedTimestep);
                 ClampVelocities(maxLinear, maxAngular);
-                ClampHairRigVelocities();
                 ApplyStandingAnchorCorrection();
+                StepHairRig(); // one-way guides follow the accepted head pose
                 DetectImpact(FixedTimestep);
                 physicsAccumulator -= FixedTimestep;
                 substeps++;
@@ -8615,7 +8627,7 @@ public unsafe partial class RagdollController : IDisposable
 
             boneValid[i] = true;
         }
-        if (AnyExternalBodyAwake()) anyAwake = true;
+        if (AnyExternalBodyAwake() || HairNeedsStep) anyAwake = true;
 
         EnsureTerrainPatchCoverage(worldPositions, boneValid, boneCount);
 
@@ -8738,18 +8750,8 @@ public unsafe partial class RagdollController : IDisposable
             foreach (var boneName in severedBones)
                 HideLimbSubtree(skel, boneName);
 
-        // Apply hair physics (after rigid j_kao propagation). Skipped while resting —
-        // the body is settled, so hair has settled too.
-        if (hairRigActive)
-        {
-            // BEPU strands already integrated inside simulation.Timestep above (same simulation).
-            // Read their poses back into the hair bones and advance the settle (ROM relax + servo fade).
-            if (!resting)
-            {
-                ReadbackHairRig(skel);
-                TickHairRigSettle(substeps * FixedTimestep);
-            }
-        }
+        // Reassert flexible hair after head propagation, including settled frames.
+        if (hairRigActive) ReadbackHairRig(skel);
 
         // (Dev) Keep the character visible when the ragdoll is flung far from the frozen death
         // position. Culling tests the DrawObject's bounding sphere, whose centre tracks the
@@ -13371,6 +13373,7 @@ public unsafe partial class RagdollController : IDisposable
     public void Dispose()
     {
         Deactivate();
+        RemoveHairRig();
         boneService.OnRenderFrame -= OnRenderFrame;
         Core.Services.Framework.Update -= ApplyDeferredFollowTransform;
     }
