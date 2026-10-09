@@ -2732,6 +2732,7 @@ public unsafe partial class RagdollController : IDisposable
 
     private unsafe void ApplyDeferredFollowTransform(Dalamud.Plugin.Services.IFramework _)
     {
+        SampleAnimatedHairTerrain();
         if (!pendingFollowPos.HasValue)
             return;
         var pos = pendingFollowPos.Value;
@@ -2889,10 +2890,16 @@ public unsafe partial class RagdollController : IDisposable
 
     private void OnRenderFrame()
     {
-        if (!isActive) return;
+        if (!isActive)
+        {
+            try { OnAnimatedHairFrame(); }
+            catch (Exception ex) { RemoveHairRig(); log.Error(ex, "Animated hair update failed"); }
+            return;
+        }
 
         try
         {
+            if (!config.RagdollHairPhysics && hairRigActive) RemoveHairRig();
             var dt = ComputeFrameDelta();
             elapsed += dt;
 
@@ -2904,11 +2911,17 @@ public unsafe partial class RagdollController : IDisposable
             {
                 if (elapsed < activationDelay)
                 {
+                    OnAnimatedHairFrame();
                     // Keep sampling the animated pose so the last frame before handoff carries
                     // its velocity into the physics bodies (no freeze on activation).
                     if (config.RagdollCarryAnimationVelocity)
                         SampleHandoffPose(dt);
                     return;
+                }
+                lock (animatedHairGate)
+                {
+                    animatedHair = false;
+                    hairRigChains.Clear(); hairRigActive = false;
                 }
                 if (!InitializePhysics()) { Deactivate(); return; }
                 physicsStarted = true;
@@ -5131,8 +5144,23 @@ public unsafe partial class RagdollController : IDisposable
                                 Math.Clamp(MathF.Max(45f, config.RagdollJointSpringFrequency), 45f, 60f), 2f),
                         });
 
-                    // Limit the two permitted axes as a compact reach cone. The swivel-hinge
-                    // itself locks wrist roll.
+                    // The swivel-hinge also accepts an inverted transverse axis. Keep the
+                    // hand's transverse normal in its original forearm-relative hemisphere
+                    // so axial flipping cannot hide from the longitudinal swing cone.
+                    // The 80-degree cap leaves room for the full 55-degree wrist bend.
+                    simulation.Solver.Add(rb.BodyHandle, parentHandle,
+                        new SwingLimit
+                        {
+                            AxisLocalA = NormalizeOrFallback(Vector3.Transform(
+                                secondTransverseWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)), Vector3.UnitZ),
+                            AxisLocalB = NormalizeOrFallback(Vector3.Transform(
+                                secondTransverseWorld, Quaternion.Inverse(parentBodyRef.Pose.Orientation)), Vector3.UnitZ),
+                            MaximumSwingAngle = DegreesToRadians(80f),
+                            SpringSettings = new SpringSettings(
+                                Math.Clamp(MathF.Max(45f, config.RagdollJointSpringFrequency), 45f, 60f), 2f),
+                        });
+
+                    // Limit the two permitted bend axes as a compact reach cone.
                     var childLongLocal = NormalizeOrFallback(Vector3.Transform(
                         longAxisWorld, Quaternion.Inverse(childBodyRef.Pose.Orientation)), Vector3.UnitY);
                     var parentReferenceLocal = NormalizeOrFallback(Vector3.Transform(
@@ -8174,7 +8202,7 @@ public unsafe partial class RagdollController : IDisposable
         if (ragdollBones.Count > 0)
             corpseWakeCenter = simulation.Bodies.GetBodyReference(ragdollBones[0].BodyHandle).Pose.Position;
 
-        var activityBlocksRest = externalBodyAwake || npcTraversalProxyActivityThisFrame ||
+        var activityBlocksRest = externalBodyAwake || HairNeedsStep || npcTraversalProxyActivityThisFrame ||
             npcColliderMovedNearCorpse || grabSlots.Count > 0 ||
             collapseSpikeActive || directedCollapseActive || wholeBodyCollapseActive ||
             entryConditioningActive || kneePowerLossActive || skeletonMoved || biomechanicalSettleActive;
@@ -8486,15 +8514,14 @@ public unsafe partial class RagdollController : IDisposable
                 // iteration, so it ends as the state immediately before the final tick.
                 CapturePrevBodyPoses(boneCount);
                 hasPrevPhysicsState = true;
-                UpdateHairKinematicRoots(); // drive hair anchors from the head before integrating
                 DriveGrabConstraints(FixedTimestep); // advance finite-force targets before solve
                 ApplyFallGravity(FixedTimestep); // a descent that bites, on top of the integrator's honest g
                 var steppedExternally = false;
                 StepAdditionalPhysics(FixedTimestep, ref steppedExternally);
                 if (!steppedExternally) simulation.Timestep(FixedTimestep);
                 ClampVelocities(maxLinear, maxAngular);
-                ClampHairRigVelocities();
                 ApplyStandingAnchorCorrection();
+                StepHairRig(); // one-way guides follow the accepted head pose
                 DetectImpact(FixedTimestep);
                 physicsAccumulator -= FixedTimestep;
                 substeps++;
@@ -8600,7 +8627,7 @@ public unsafe partial class RagdollController : IDisposable
 
             boneValid[i] = true;
         }
-        if (AnyExternalBodyAwake()) anyAwake = true;
+        if (AnyExternalBodyAwake() || HairNeedsStep) anyAwake = true;
 
         EnsureTerrainPatchCoverage(worldPositions, boneValid, boneCount);
 
@@ -8723,18 +8750,8 @@ public unsafe partial class RagdollController : IDisposable
             foreach (var boneName in severedBones)
                 HideLimbSubtree(skel, boneName);
 
-        // Apply hair physics (after rigid j_kao propagation). Skipped while resting —
-        // the body is settled, so hair has settled too.
-        if (hairRigActive)
-        {
-            // BEPU strands already integrated inside simulation.Timestep above (same simulation).
-            // Read their poses back into the hair bones and advance the settle (ROM relax + servo fade).
-            if (!resting)
-            {
-                ReadbackHairRig(skel);
-                TickHairRigSettle(substeps * FixedTimestep);
-            }
-        }
+        // Reassert flexible hair after head propagation, including settled frames.
+        if (hairRigActive) ReadbackHairRig(skel);
 
         // (Dev) Keep the character visible when the ragdoll is flung far from the frozen death
         // position. Culling tests the DrawObject's bounding sphere, whose centre tracks the
@@ -8800,9 +8817,6 @@ public unsafe partial class RagdollController : IDisposable
         public Vector3 LocalOffset;
         public Vector3 TargetPosition;   // the grabber's grip, live
         public Vector3 CapturePosition;  // where the caught bone lay at the moment it was caught
-        public Vector3 AppliedTarget;    // where it was put last substep, for the follow velocity
-        public Vector3 AppliedVelocity;
-        public Vector3 AppliedAcceleration;
         public float MaxSpeed;
         public float ReelElapsed;
     }
@@ -8880,7 +8894,7 @@ public unsafe partial class RagdollController : IDisposable
     /// So the floor is derived from the rig's real mass: enough to carry it, plus enough again to
     /// accelerate it and to chase a walking grabber.
     /// </summary>
-    private const float GrabServoWeightHeadroom = 2.5f;
+    private const float GrabServoWeightHeadroom = 3.5f;
 
     /// <summary>Force floor for a spring grab: whatever the caller asked for, or enough to actually
     /// pick this body up, whichever is greater.</summary>
@@ -8899,13 +8913,10 @@ public unsafe partial class RagdollController : IDisposable
     /// bone already lies, and the bone is then reeled to the grip over this long. Long enough to read
     /// as a pull rather than a cut, short enough that nobody would call it slow.
     /// </summary>
-    private const float GrabReelSeconds = 0.25f;
+    private const float GrabReelSeconds = 0.18f;
 
-    // Advance the target on the fixed physics clock and keep its motion within the same velocity
-    // envelope as the bodies it drives.
+    // Limit physical body motion in the servo, rather than delaying the grip target.
     private const float GrabMaxSpeed = 12f;
-    private const float GrabMaxAcceleration = 45f;
-    private const float GrabMaxJerk = 360f;
     /// <summary>Request a firmer finite-force external Grab servo. This never makes a body
     /// kinematic and never changes internal joint stiffness or inertia.</summary>
     public bool GrabRigid { get; set; }
@@ -9044,9 +9055,6 @@ public unsafe partial class RagdollController : IDisposable
         suspendedNpcAddress = grabbingNpcAddress;
         slot.TargetPosition = initialTarget;
         slot.CapturePosition = GrabGripPoint(caught, slot.LocalOffset);
-        slot.AppliedTarget = slot.CapturePosition;
-        slot.AppliedVelocity = Vector3.Zero;
-        slot.AppliedAcceleration = Vector3.Zero;
         slot.ReelElapsed = 0f;
         slot.ConstraintHandle = simulation.Solver.Add(slot.BodyHandle,
             new OneBodyLinearServo
@@ -9079,43 +9087,18 @@ public unsafe partial class RagdollController : IDisposable
     private Vector3 AdvanceGrabTarget(GrabSlot slot, float dt)
     {
         slot.ReelElapsed = MathF.Min(slot.ReelElapsed + dt, GrabReelSeconds);
+        // Once the initial pull-in finishes, submit the current grip directly.
+        // The finite-force linear servo still governs how the body follows it;
+        // neither body position nor orientation is assigned here.
+        if (slot.ReelElapsed >= GrabReelSeconds)
+            return slot.TargetPosition;
+
         var reel = GrabReelSeconds <= 1e-4f ? 1f : slot.ReelElapsed / GrabReelSeconds;
         reel = reel * reel * (3f - 2f * reel);
-        var desired = Vector3.Lerp(slot.CapturePosition, slot.TargetPosition, reel);
-
-        if (dt <= 1e-5f)
-            return slot.AppliedTarget;
-
-        var error = desired - slot.AppliedTarget;
-        var desiredVelocity = ClampVectorLength(error / dt, slot.MaxSpeed);
-        var desiredAcceleration = ClampVectorLength(
-            (desiredVelocity - slot.AppliedVelocity) / dt, GrabMaxAcceleration);
-        var accelerationDelta = ClampVectorLength(
-            desiredAcceleration - slot.AppliedAcceleration, GrabMaxJerk * dt);
-        var acceleration = slot.AppliedAcceleration + accelerationDelta;
-        var velocity = ClampVectorLength(slot.AppliedVelocity + acceleration * dt, slot.MaxSpeed);
-        var step = velocity * dt;
-
-        var errorLengthSquared = error.LengthSquared();
-        var movingTowardTarget = Vector3.Dot(step, error) > 0f;
-        if (errorLengthSquared <= 1e-10f ||
-            (movingTowardTarget && step.LengthSquared() >= errorLengthSquared))
-        {
-            slot.AppliedTarget = desired;
-            slot.AppliedVelocity = Vector3.Zero;
-            slot.AppliedAcceleration = Vector3.Zero;
-        }
-        else
-        {
-            slot.AppliedTarget += step;
-            slot.AppliedVelocity = velocity;
-            slot.AppliedAcceleration = acceleration;
-        }
-
-        return slot.AppliedTarget;
+        return Vector3.Lerp(slot.CapturePosition, slot.TargetPosition, reel);
     }
 
-    /// <summary>Advance filtered Grab targets before the solver and update their finite-force servos.</summary>
+    /// <summary>Blend grab entry, then follow the live grip with finite-force position servos.</summary>
     private void DriveGrabConstraints(float dt)
     {
         if (grabSlots.Count == 0 || simulation == null) return;
@@ -13390,6 +13373,7 @@ public unsafe partial class RagdollController : IDisposable
     public void Dispose()
     {
         Deactivate();
+        RemoveHairRig();
         boneService.OnRenderFrame -= OnRenderFrame;
         Core.Services.Framework.Update -= ApplyDeferredFollowTransform;
     }

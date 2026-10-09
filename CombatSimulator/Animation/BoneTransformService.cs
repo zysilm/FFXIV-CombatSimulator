@@ -27,6 +27,9 @@ public unsafe class BoneTransformService : IDisposable
     /// <summary>Fired each frame during the render hook. Consumers subscribe here to apply bone modifications.</summary>
     public event Action? OnRenderFrame;
 
+    /// <summary>Read-only observers run after every plugin bone modifier, before native submission.</summary>
+    public event Action? OnPosePrepared;
+
     public BoneTransformService(IGameInteropProvider gameInterop, ISigScanner sigScanner, IPluginLog log)
     {
         this.log = log;
@@ -54,6 +57,15 @@ public unsafe class BoneTransformService : IDisposable
         catch (Exception ex)
         {
             log.Error(ex, "BoneTransformService: Error in render frame callback");
+        }
+
+        try
+        {
+            OnPosePrepared?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "BoneTransformService: Error in read-only pose observer");
         }
 
         return renderHook!.Original(a1, a2, a3, a4);
@@ -367,6 +379,7 @@ public unsafe class BoneTransformService : IDisposable
     public void Dispose()
     {
         OnRenderFrame = null;
+        OnPosePrepared = null;
         renderHook?.Dispose();
     }
 }

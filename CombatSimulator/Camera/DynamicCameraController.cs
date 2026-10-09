@@ -5,7 +5,6 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
-using System.Runtime.InteropServices;
 using CombatSimulator.Animation;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
@@ -72,11 +71,10 @@ public sealed unsafe class DynamicCameraController : IDisposable
     };
 
     /// <summary>Bounds on the death-shot camera angle χ (positive = raised, looking down;
-    /// negative = flat/below, looking up at the killer). The up end stops at −0.42: steeper
-    /// look-up pushes the camera far and low where framing gets unstable, and it is past the
-    /// point of diminishing dramatic return anyway.</summary>
-    private const float DeathAngleMin = -0.42f;
-    private const float DeathAngleMax = 0.80f;
+    /// negative = flat/below, looking up at the killer).</summary>
+    public const float DeathAngleMin = -0.50f;
+    public const float DeathAngleMax = 0.80f;
+    private const float DeathGroundClearance = 0.06f;
 
     // Internal solver bounds for the death shot. These were sliders once; nothing a player
     // wants is expressed through them that the remaining sliders do not cover, and a mis-set
@@ -96,12 +94,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private readonly BoneTransformService boneService;
     private readonly RagdollController playerRagdoll;
     private readonly IPluginLog log;
-
-    // --- camera collision patch (same mechanism the other camera modes use) ---
-    private readonly nint collisionPatchAddress;
-    private readonly byte[]? collisionOriginalBytes;
-    private static readonly byte[] CollisionPatchBytes = { 0x30, 0xC0, 0x90, 0x90, 0x90 };
-    private bool collisionPatchActive;
 
     private Phase phase = Phase.Off;
 
@@ -317,6 +309,33 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
     /// <summary>The game's vertical tilt offset seen just before we zeroed it (diagnostics).</summary>
     public float DebugTiltOffset { get; private set; }
+    private long nextLookAtLog;
+    private long lookAtOverrides;
+    private float lastLookAtRenderedChi;
+
+    /// <summary>Keep native yaw and camera position, but remove the distance-dependent
+    /// vertical aim offset for the owned death shot. No pitch feedback or matrix writes.</summary>
+    public Vector3? OverrideDeathLookAt(Vector3 nativeLookAt, Vector3 cameraPosition)
+    {
+        if (!enforceCameraLock || !config.EnableDynamicCamera ||
+            GetCurrentOwner?.Invoke() != CameraOwner.DynamicDeath || !float.IsFinite(enforceDirV)) return null;
+        var delta = nativeLookAt - cameraPosition;
+        var horizontal = MathF.Sqrt(delta.X * delta.X + delta.Z * delta.Z);
+        if (!float.IsFinite(horizontal) || horizontal < .01f || !float.IsFinite(cameraPosition.Y)) return null;
+        var owned = nativeLookAt;
+        owned.Y = cameraPosition.Y + horizontal * MathF.Tan(enforceDirV);
+        if (!float.IsFinite(owned.Y)) return null;
+        lookAtOverrides++;
+        var now = Environment.TickCount64;
+        if (now >= nextLookAtLog)
+        {
+            nextLookAtLog = now + 5000;
+            log.Info($"DynamicCam look-at override: nativeY={nativeLookAt.Y:F4}, ownedY={owned.Y:F4}, " +
+                $"cameraY={cameraPosition.Y:F4}, horizontal={horizontal:F3}, commandedChi={-enforceDirV:F4}, " +
+                $"renderedChi={lastLookAtRenderedChi:F4}, calls={lookAtOverrides}");
+        }
+        return owned;
+    }
     /// <summary>Runtime wheel-driven coverage / zoom-out (death shot), for the overlay.</summary>
     public float DeathCoverage => deathCoveragePref;
     public float DeathZoomOut => deathZoomOut;
@@ -354,21 +373,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
         combatZoomBias = Math.Clamp(config.DynCamCombatZoomMemory, 0.4f, 3.0f);
         combatPitchMemory = config.DynCamCombatPitchMemory;
         combatPitchMemoryValid = config.DynCamCombatPitchMemoryValid;
-
-        try
-        {
-            collisionPatchAddress = sigScanner.ScanModule("E8 ?? ?? ?? ?? 84 C0 0F 84 ?? ?? ?? ?? F3 0F 10 44 24 ?? 41 B7 01");
-            if (collisionPatchAddress != nint.Zero)
-            {
-                collisionOriginalBytes = new byte[CollisionPatchBytes.Length];
-                Marshal.Copy(collisionPatchAddress, collisionOriginalBytes, 0, collisionOriginalBytes.Length);
-            }
-        }
-        catch (Exception ex)
-        {
-            log.Warning(ex, "DynamicCam: camera collision signature not found — low death shots may clip terrain.");
-            collisionPatchAddress = nint.Zero;
-        }
     }
 
     /// <summary>Called from CombatEngine.BeforePlayerDeath, by which point the killing blow
@@ -394,7 +398,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         hasDirVOwned = false;
         hasTiltBias = false;
         hasXRef = false;
-        deathCoveragePref = Math.Clamp(config.DynCamDeathBodyVisibility, 0.25f, 1f);
+        deathCoveragePref = Math.Clamp(config.DynCamDeathBodyVisibility, 0.25f, 2f);
         lastDeathCoverageSetting = config.DynCamDeathBodyVisibility;
 
         CaptureTranslateStart();
@@ -480,7 +484,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
         StatusText = "off";
         coordinator.Release(CameraOwner.DynamicCam);
         coordinator.Release(CameraOwner.DynamicDeath);
-        DisableCollisionPatch();
     }
 
     public void Tick(float dt)
@@ -550,7 +553,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
         if (alive && phase is Phase.DeathTranslate or Phase.DeathHold)
         {
             phase = Phase.Combat;
-            DisableCollisionPatch();
             RestoreMinDistance();
         }
 
@@ -562,7 +564,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
             {
                 coordinator.Release(CameraOwner.DynamicCam);
                 coordinator.Release(CameraOwner.DynamicDeath);
-                DisableCollisionPatch();
                 RestoreMinDistance();
                 phase = Phase.Off;
                 hasCurState = false;
@@ -1082,10 +1083,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
             return;
         }
 
-        var wantCollisionOff = config.DynCamDeathDisableCollision;
-        if (wantCollisionOff && !collisionPatchActive) EnableCollisionPatch();
-        else if (!wantCollisionOff && collisionPatchActive) DisableCollisionPatch();
-
         // Save the game's distance band once — but not on the very first death tick. Combat
         // framing raises MaxDistance through the coordinator, and the coordinator gives that
         // raise back during the FIRST Apply after we stop requesting it (this frame). Saving
@@ -1121,8 +1118,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
             else
             {
                 var w = -wheel;
-                if (deathCoveragePref < 1f)
-                    deathCoveragePref = MathF.Min(1f, deathCoveragePref + w * 0.08f);
+                if (deathCoveragePref < 2f)
+                    deathCoveragePref = MathF.Min(2f, deathCoveragePref + w * 0.08f);
                 else
                     deathZoomOut = MathF.Min(DeathZoomMax, deathZoomOut * (1f + w * 0.12f));
             }
@@ -1132,7 +1129,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         if (MathF.Abs(config.DynCamDeathBodyVisibility - lastDeathCoverageSetting) > 0.0001f)
         {
             lastDeathCoverageSetting = config.DynCamDeathBodyVisibility;
-            deathCoveragePref = Math.Clamp(config.DynCamDeathBodyVisibility, 0.25f, 1f);
+            deathCoveragePref = Math.Clamp(config.DynCamDeathBodyVisibility, 0.25f, 2f);
         }
 
         BuildDeathAnchors(playerAddress,
@@ -1146,6 +1143,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         // Where the camera ACTUALLY is and points, measured. Yaw is the player's, always —
         // we take whatever it currently is and solve around it.
         DynamicCameraSolver.MeasureAngles(view.Forward, out var yawReal, out var chiReal);
+        lastLookAtRenderedChi = chiReal;
 
         // Measure the game's orbit direction: where it put the camera relative to the pivot
         // we handed it last frame. This is the exact mapping the pivot decomposition needs.
@@ -1304,7 +1302,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
                 }
             }
             var safeFloor = hasCamGroundSample ? MathF.Max(smoothedGroundY, smoothedCamGroundY) : smoothedGroundY;
-            curCam.Y = MathF.Max(curCam.Y, safeFloor + 0.15f);
+            curCam.Y = MathF.Max(curCam.Y, safeFloor + DeathGroundClearance);
         }
 
         curDistance = MathF.Max(0.3f, curDistance);
@@ -1488,7 +1486,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         // back. The fit still PROJECTS at the measured pitch, so composition stays honest.
         var drop = MathF.Tan(MathF.Atan(band * MathF.Abs(lensBase.TanHalfV)) - chiForHeight);
         var desiredCamY = corpseMain.Y - xRefSmoothed * drop;
-        var cameraHeight = Math.Clamp(desiredCamY, floorY + 0.15f, floorY + 3.5f);
+        var cameraHeight = Math.Clamp(desiredCamY, floorY + DeathGroundClearance, floorY + 3.5f);
         DebugGroundY = floorY;
 
         DynamicCameraSolver.GroundedFitResult final;
@@ -1696,6 +1694,20 @@ public sealed unsafe class DynamicCameraController : IDisposable
         if (requiredPoints.Count == 0)
             requiredPoints.Add(fallback + new Vector3(0f, 0.5f, 0f));
 
+        // Coverage above one adds space around the existing body anchors without
+        // moving them below the ground or changing the head-to-feet prefix.
+        if (deathCoveragePref > 1f)
+        {
+            var centre = chest ?? hips ?? fallback;
+            for (var i = 0; i < requiredPoints.Count; i++)
+            {
+                var point = requiredPoints[i];
+                requiredPoints[i] = new Vector3(
+                    centre.X + (point.X - centre.X) * deathCoveragePref, point.Y,
+                    centre.Z + (point.Z - centre.Z) * deathCoveragePref);
+            }
+        }
+
         if (fit == KillerFit.Dropped)
             return;
 
@@ -1868,6 +1880,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private void RestoreMinDistance()
     {
         enforceCameraLock = false;
+        nextLookAtLog = 0;
         if (!distanceLimitsOverridden)
             return;
         try
@@ -1913,36 +1926,6 @@ public sealed unsafe class DynamicCameraController : IDisposable
     }
 
     private static float Lerp(float a, float b, float t) => a + (b - a) * t;
-
-    // ------------------------------------------------------------------
-    // Collision patch
-    // ------------------------------------------------------------------
-
-    private void EnableCollisionPatch()
-    {
-        if (collisionPatchActive || collisionPatchAddress == nint.Zero)
-            return;
-        WriteMemory(collisionPatchAddress, CollisionPatchBytes);
-        collisionPatchActive = true;
-    }
-
-    private void DisableCollisionPatch()
-    {
-        if (!collisionPatchActive || collisionPatchAddress == nint.Zero || collisionOriginalBytes == null)
-            return;
-        WriteMemory(collisionPatchAddress, collisionOriginalBytes);
-        collisionPatchActive = false;
-    }
-
-    private static void WriteMemory(nint address, byte[] bytes)
-    {
-        VirtualProtect(address, (nuint)bytes.Length, 0x40, out var oldProtect);
-        Marshal.Copy(bytes, 0, address, bytes.Length);
-        VirtualProtect(address, (nuint)bytes.Length, oldProtect, out _);
-    }
-
-    [DllImport("kernel32.dll")]
-    private static extern bool VirtualProtect(nint lpAddress, nuint dwSize, uint flNewProtect, out uint lpflOldProtect);
 
     public void Dispose()
     {

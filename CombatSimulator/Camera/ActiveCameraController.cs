@@ -40,6 +40,9 @@ public unsafe class ActiveCameraController : IDisposable
     // getCameraPosition hook (resolved by sig-anchoring against setCameraLookAt) — replaces orbit center
     private delegate void GetCameraPositionDelegate(nint camera, nint target, Vector3* position, nint swapPerson);
     private Hook<GetCameraPositionDelegate>? getCameraPosHook;
+    private delegate void SetCameraLookAtDelegate(nint camera, Vector3* lookAt, Vector3* cameraPosition, Vector3* scratch);
+    private Hook<SetCameraLookAtDelegate>? setCameraLookAtHook;
+    public Func<Vector3, Vector3, Vector3?>? ModeLookAtOverride { get; set; }
     // Hypostasis-known signature for Camera::SetCameraLookAt — getCameraPosition lives at vtable[setLookAtIdx + 1]
     private const string SetCameraLookAtSig = "40 53 48 83 EC 30 44 8B 89 ?? ?? ?? ?? 48 8B DA";
 
@@ -227,6 +230,19 @@ public unsafe class ActiveCameraController : IDisposable
             getCameraPosHook = gameInterop.HookFromAddress<GetCameraPositionDelegate>(getCamPosAddr, GetCameraPositionDetour);
             getCameraPosHook.Enable();
 
+            try
+            {
+                setCameraLookAtHook = gameInterop.HookFromAddress<SetCameraLookAtDelegate>(setLookAtAddr, SetCameraLookAtDetour);
+                setCameraLookAtHook.Enable();
+                log.Info("ActiveCamera: mode look-at hook created.");
+            }
+            catch (Exception ex)
+            {
+                setCameraLookAtHook?.Dispose();
+                setCameraLookAtHook = null;
+                log.Warning(ex, "ActiveCamera: mode look-at hook unavailable; orbit hook remains active.");
+            }
+
             log.Info($"ActiveCamera: setCameraLookAt resolved at vtable[{setLookAtIdx}] → getCameraPosition hook at 0x{getCamPosAddr:X}");
         }
         catch (Exception ex)
@@ -272,6 +288,27 @@ public unsafe class ActiveCameraController : IDisposable
         catch { }
     }
 
+    private void SetCameraLookAtDetour(nint camera, Vector3* lookAt, Vector3* cameraPosition, Vector3* scratch)
+    {
+        Vector3? ownedLookAt = null;
+        if (IsActive && lookAt != null && cameraPosition != null && ModeLookAtOverride != null)
+        {
+            try
+            {
+                var manager = GameCameraManager.Instance();
+                if (manager != null && (nint)manager->Camera == camera)
+                    ownedLookAt = ModeLookAtOverride(*lookAt, *cameraPosition);
+            }
+            catch (Exception ex) { log.Warning(ex, "Mode look-at override failed; using native target."); }
+        }
+        if (ownedLookAt.HasValue)
+        {
+            var point = ownedLookAt.Value;
+            setCameraLookAtHook!.Original(camera, &point, cameraPosition, scratch);
+        }
+        else setCameraLookAtHook!.Original(camera, lookAt, cameraPosition, scratch);
+    }
+
     private Vector3 ApplyActiveCameraSideOffset(Vector3 pos)
     {
         // Side offset is view-relative, so apply it in the camera hook rather than
@@ -303,12 +340,7 @@ public unsafe class ActiveCameraController : IDisposable
         var modeOwnsAngles = owner is CameraOwner.Fighting2D or CameraOwner.FightingKO
             or CameraOwner.DynamicCam or CameraOwner.DynamicDeath;
 
-        // Collision patch
-        bool wantCollision = IsActive && config.ActiveCameraDisableCollision;
-        if (wantCollision && !collisionPatchActive)
-            EnableCollisionPatch();
-        else if (!wantCollision && collisionPatchActive)
-            DisableCollisionPatch();
+        UpdateCollisionPolicy();
 
         // ShouldDrawGameObject hook: enable when prevent fade is wanted
         bool wantPreventFade = IsActive && config.ActiveCameraPreventFade;
@@ -445,15 +477,31 @@ public unsafe class ActiveCameraController : IDisposable
         }
     }
 
+    // Dynamic Cam always supplies its own terrain clearance. This controller is
+    // the sole owner of the shared native patch, including when a mode resets.
+    public void UpdateCollisionPolicy()
+    {
+        if (config.EnableDynamicCamera || (IsActive && config.ActiveCameraDisableCollision))
+            EnableCollisionPatch();
+        else
+            DisableCollisionPatch();
+    }
+
     private void EnableCollisionPatch()
     {
-        if (collisionPatchActive || collisionPatchAddress == nint.Zero) return;
-        WriteMemory(collisionPatchAddress, CollisionPatchBytes);
+        if (collisionPatchAddress == nint.Zero) return;
+        for (var i = 0; i < CollisionPatchBytes.Length; i++)
+        {
+            if (((byte*)collisionPatchAddress)[i] == CollisionPatchBytes[i]) continue;
+            WriteMemory(collisionPatchAddress, CollisionPatchBytes);
+            break;
+        }
         collisionPatchActive = true;
     }
 
-    private void DisableCollisionPatch()
+    private void DisableCollisionPatch(bool force = false)
     {
+        if (!force && config.EnableDynamicCamera) return;
         if (!collisionPatchActive || collisionOriginalBytes == null) return;
         WriteMemory(collisionPatchAddress, collisionOriginalBytes);
         collisionPatchActive = false;
@@ -471,11 +519,13 @@ public unsafe class ActiveCameraController : IDisposable
 
     public void Dispose()
     {
+        DisableCollisionPatch(force: true);
         userActive = false;
         modeActive = false;
         UpdateEffectiveActive();
         RestoreMinDistance();
         shouldDrawHook?.Dispose();
         getCameraPosHook?.Dispose();
+        setCameraLookAtHook?.Dispose();
     }
 }
