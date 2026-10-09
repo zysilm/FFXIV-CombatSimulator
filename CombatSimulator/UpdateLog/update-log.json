@@ -1,5 +1,15 @@
 [
   {
+    "version": "2.8.1.6",
+    "date": "2026-10-10",
+    "title": "Combat Simulator 2.8.1.6",
+    "changes": [
+      "Improved Dynamic Camera framing and close-up angle consistency.",
+      "Reduced enemy grab latency and limited unnatural wrist rotation.",
+      "Reworked optional hair physics with continuous simulation and improved face-side collisions."
+    ]
+  },
+  {
     "version": "2.8.1.5",
     "date": "2026-09-28",
     "title": "Combat Simulator 2.8.1.5",
