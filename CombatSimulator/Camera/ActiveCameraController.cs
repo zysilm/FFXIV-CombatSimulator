@@ -73,6 +73,9 @@ public unsafe class ActiveCameraController : IDisposable
     public bool IsUserActive => userActive;
     public Func<bool>? DynamicCameraEnabledOverride { get; set; }
     public Func<bool>? ExternalOwnsAngles { get; set; }
+    public Func<ActiveCameraInputs?>? TemporaryInputs { get; set; }
+    private ActiveCameraInputs? Inputs => TemporaryInputs?.Invoke();
+    private static float Input(float? value, float fallback) => value.HasValue && float.IsFinite(value.Value) ? value.Value : fallback;
     private bool DynamicCameraEnabled => DynamicCameraEnabledOverride?.Invoke() ?? config.EnableDynamicCamera;
     public void ReleaseDistanceOverride() => RestoreMinDistance();
 
@@ -270,7 +273,11 @@ public unsafe class ActiveCameraController : IDisposable
         {
             // A mode-supplied center (fighting cameras, monster follow) replaces the
             // orbit center wholesale — priority was already resolved by the coordinator.
-            var modeCenter = CoordinatorOrbitCenter?.Invoke();
+            var focus = Inputs?.Focus;
+            if (focus.HasValue && (!float.IsFinite(focus.Value.X) || !float.IsFinite(focus.Value.Y) || !float.IsFinite(focus.Value.Z))) focus = null;
+            // A temporary Active focus is the current native personality's input. Do not
+            // let a lower-priority possession-follow pivot replace it while that actor grabs.
+            var modeCenter = focus.HasValue ? null : CoordinatorOrbitCenter?.Invoke();
             if (modeCenter.HasValue)
             {
                 *position = modeCenter.Value;
@@ -278,13 +285,13 @@ public unsafe class ActiveCameraController : IDisposable
             }
 
             // Default: the user's configured bone on the local player.
-            var bonePos = GetBoneWorldPosition(config.ActiveCameraBoneName);
+            var bonePos = focus ?? GetBoneWorldPosition(config.ActiveCameraBoneName);
             if (bonePos == null) return;
 
             var pos = bonePos.Value;
 
             // Height offset
-            pos.Y += config.ActiveCameraHeightOffset;
+            pos.Y += Input(Inputs?.Height, config.ActiveCameraHeightOffset);
             pos = ApplyActiveCameraSideOffset(pos);
 
             *position = pos;
@@ -317,7 +324,8 @@ public unsafe class ActiveCameraController : IDisposable
     {
         // Side offset is view-relative, so apply it in the camera hook rather than
         // baking it into smoothed fighting-camera centers computed in Tick.
-        if (config.ActiveCameraSideOffset == 0)
+        var sideOffset = Input(Inputs?.Side, config.ActiveCameraSideOffset);
+        if (sideOffset == 0)
             return pos;
 
         var camMgr = GameCameraManager.Instance();
@@ -325,8 +333,8 @@ public unsafe class ActiveCameraController : IDisposable
             return pos;
 
         float a = camMgr->Camera->DirH - MathF.PI / 2f;
-        pos.X += -config.ActiveCameraSideOffset * MathF.Sin(a);
-        pos.Z += -config.ActiveCameraSideOffset * MathF.Cos(a);
+        pos.X += -sideOffset * MathF.Sin(a);
+        pos.Z += -sideOffset * MathF.Cos(a);
         return pos;
     }
 
@@ -378,12 +386,12 @@ public unsafe class ActiveCameraController : IDisposable
                         savedMinDistance = gameCam->MinDistance;
                         distanceOverridden = true;
                     }
-                    gameCam->MinDistance = config.ActiveCameraMinZoomDistance;
+                    gameCam->MinDistance = Input(Inputs?.MinDistance, config.ActiveCameraMinZoomDistance);
 
                     // Lock vertical angle if configured
-                    if (config.ActiveCameraLockVertical)
+                    if (Inputs?.LockVertical ?? config.ActiveCameraLockVertical)
                     {
-                        gameCam->DirV = config.ActiveCameraVerticalAngle;
+                        gameCam->DirV = Input(Inputs?.VerticalAngle, config.ActiveCameraVerticalAngle);
                         gameCam->InputDeltaV = 0;
                         gameCam->InputDeltaVAdjusted = 0;
                     }

@@ -40,7 +40,7 @@ namespace CombatSimulator.Camera;
 /// read back as preferences rather than overwritten. The framing re-solves around
 /// whatever they do.
 /// </summary>
-public sealed unsafe class DynamicCameraController : IDisposable
+public sealed unsafe partial class DynamicCameraController : IDisposable
 {
     public enum Phase
     {
@@ -405,8 +405,8 @@ public sealed unsafe class DynamicCameraController : IDisposable
         hasDirVOwned = false;
         hasTiltBias = false;
         hasXRef = false;
-        deathCoveragePref = Math.Clamp(config.DynCamDeathBodyVisibility, 0.25f, 2f);
-        lastDeathCoverageSetting = config.DynCamDeathBodyVisibility;
+        deathCoveragePref = Math.Clamp(EffectiveDeathBodyVisibility, 0.25f, 2f);
+        lastDeathCoverageSetting = EffectiveDeathBodyVisibility;
 
         CaptureTranslateStart();
         phase = Phase.DeathTranslate;
@@ -1162,14 +1162,14 @@ public sealed unsafe class DynamicCameraController : IDisposable
         }
 
         // The coverage slider is the user speaking directly — reseed the wheel-driven pref.
-        if (MathF.Abs(config.DynCamDeathBodyVisibility - lastDeathCoverageSetting) > 0.0001f)
+        if (MathF.Abs(EffectiveDeathBodyVisibility - lastDeathCoverageSetting) > 0.0001f)
         {
-            lastDeathCoverageSetting = config.DynCamDeathBodyVisibility;
-            deathCoveragePref = Math.Clamp(config.DynCamDeathBodyVisibility, 0.25f, 2f);
+            lastDeathCoverageSetting = EffectiveDeathBodyVisibility;
+            deathCoveragePref = Math.Clamp(EffectiveDeathBodyVisibility, 0.25f, 2f);
         }
 
         BuildDeathAnchors(playerAddress,
-            config.DynCamDeathIgnoreKiller ? KillerFit.Dropped : killerFit);
+            EffectiveDeathIgnoreKiller ? KillerFit.Dropped : killerFit);
         if (requiredPoints.Count < 2)
         {
             StatusText = "death framing — no anchors";
@@ -1196,7 +1196,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
         // χ is the photographer's angle (positive = raised a little, looking down; negative
         // = flat on the ground looking up at the killer). Slider-only, by decision.
-        var chiTarget = Math.Clamp(config.DynCamDeathAngle, DeathAngleMin, DeathAngleMax);
+        var chiTarget = Math.Clamp(EffectiveDeathAngle, DeathAngleMin, DeathAngleMax);
 
         // Slew OUR DirV toward the slider value (open loop; nothing measured writes it). Done
         // up here so the fit can use the pitch we are actually commanding.
@@ -1279,7 +1279,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         if (phase == Phase.DeathTranslate)
         {
             translateElapsed += dt;
-            var duration = MathF.Max(0.05f, config.DynCamDeathTranslateDuration);
+            var duration = MathF.Max(0.05f, EffectiveDeathTranslateDuration);
             var t = Math.Clamp(translateElapsed / duration, 0f, 1f);
             var s = t * t * (3f - 2f * t);
 
@@ -1310,7 +1310,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
             {
                 KillerFit.FullBody => "death framing — corpse + killer (full body)",
                 KillerFit.HeadTorso => "death framing — corpse + killer (head/torso)",
-                _ => config.DynCamDeathIgnoreKiller
+                _ => EffectiveDeathIgnoreKiller
                     ? "death framing — corpse only (killer ignored)"
                     : "death framing — corpse only (killer out of reach)",
             };
@@ -1440,9 +1440,9 @@ public sealed unsafe class DynamicCameraController : IDisposable
         // safe margins (a body lying across the view spans the frame edge to edge) and the
         // camera tracks the killer in and out at the constraint boundary. Otherwise the
         // close-up slider is the floor.
-        var minStandoff = config.DynCamDeathMaximizeBody
+        var minStandoff = EffectiveDeathMaximizeBody
             ? 0.25f
-            : Math.Clamp(config.DynCamDeathCloseUpDistance, 0.1f, 6f);
+            : Math.Clamp(EffectiveDeathCloseUpDistance, 0.1f, 6f);
 
         // The lens each rung will fit with: the measured projection, rescaled for the FoV
         // value the rung plans to write. The rescale is anchored on the measured
@@ -1499,7 +1499,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         // centred-and-close instead of low-and-far.
         var lift = corpseMain.Y - floorY;
         var grounded = Math.Clamp((0.85f - lift) / 0.6f, 0f, 1f); // 1 at lift≤0.25, 0 by lift≥0.85
-        var band = Math.Clamp(config.DynCamDeathBodyBand, -0.85f, 0.3f) * grounded;
+        var band = Math.Clamp(EffectiveDeathBodyBand, -0.85f, 0.3f) * grounded;
 
         // Standoff reference for the height, smoothed and CLAMPED. Raw last-frame standoff fed
         // a second runaway loop (height→standoff→height); capping it at 4y keeps a large solved
@@ -1528,7 +1528,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         DynamicCameraSolver.GroundedFitResult final;
         float chosenFov;
 
-        if (config.DynCamDeathIgnoreKiller)
+        if (EffectiveDeathIgnoreKiller)
         {
             // Explicit corpse-only mode: use the player's covered body points and the base
             // lens directly. Reusing ladder level 3 would also select the wide lens, making
@@ -1770,12 +1770,16 @@ public sealed unsafe class DynamicCameraController : IDisposable
         feet = default;
         head = default;
 
+        var temporaryActor = TemporaryDeathActor?.Invoke();
+        UpdateTemporaryDeathFocus(temporaryActor);
         var address = killerAddress;
+        if (temporaryActor.HasValue && !TryResolveTemporaryDeathActor(temporaryActor.Value, out address))
+            return false;
         if (address == nint.Zero)
             return false;
 
         // Prefer re-resolving through the selector: the raw address can go stale.
-        var npc = killerEntityId != 0 ? npcSelector.GetSelectedNpc(killerEntityId) : null;
+        var npc = !temporaryActor.HasValue && killerEntityId != 0 ? npcSelector.GetSelectedNpc(killerEntityId) : null;
         if (npc is { BattleChara: not null })
             address = npc.Address;
 

@@ -1425,6 +1425,7 @@ public unsafe partial class EnemyControlController : IDisposable
     private void StartGrabAttack()
     {
         var pairs = config.EnemyControlGrabPairs;
+        ResolveExternalGripPairs(ref pairs);
         if (pairs == null || pairs.Count == 0)
         {
             log.Warning("EnemyControlMode: no grab pairs configured.");
@@ -1895,6 +1896,7 @@ public unsafe partial class EnemyControlController : IDisposable
     partial void OverrideExternalMovement(ref Vector3 move, ref float forward, ref float strafe);
     partial void OverrideExternalSpeed(float deltaTime, ref float speed);
     partial void ReleaseExternalControl();
+    partial void ResolveExternalGripPairs(ref List<EnemyControlGrabPairConfig> pairs);
     private bool ExternalControlActive
     {
         get { var active = false; GetExternalControlState(ref active); return active; }
