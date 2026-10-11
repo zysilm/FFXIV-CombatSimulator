@@ -39,7 +39,7 @@ jobs:
           unzip -o /tmp/dalamud.zip -d $HOME/dalamud
 
       - name: Build
-        run: dotnet build ${{ env.SOLUTION_DIR }}/${{ env.PLUGIN_NAME }}.csproj -c Release
+        run: dotnet build ${{ env.SOLUTION_DIR }}/${{ env.PLUGIN_NAME }}.csproj -c Release -p:DefineConstants=PUBLIC_BUILD
         env:
           DALAMUD_HOME: /home/runner/dalamud
 
@@ -69,7 +69,7 @@ jobs:
           dll="release/${{ env.PLUGIN_NAME }}.dll"
           test -f "$dll" || { echo "::error::Missing $dll"; exit 1; }
           status=0
-          for sym in MonsterModeController DevExperimentalModule VictorySequenceController BoneHoldTestModeController BodyFluidController WorldFluidPass; do
+          for sym in MonsterModeController DevExperimentalModule VictorySequenceController BoneHoldTestModeController BodyFluidController WorldFluidPass StoryController StoryProfile StoryProfileBook StoryNativeCamera CombatSimulator.Dev.Experimental.Resources; do
             if grep -qa "$sym" "$dll"; then
               echo "::error::Release artifact contains experimental symbol '$sym' — the private dev module must never ship."
               status=1

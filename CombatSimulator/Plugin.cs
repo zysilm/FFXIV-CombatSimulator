@@ -228,7 +228,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             if (npc != null) return (npc.BNpcBaseId, npc.BNpcNameId);
             // Untracked live enemy: read its real BNpc ids straight off the actor so the severed
             // piece is rebuilt via SetupBNpc (full appearance, incl. equipment) instead of a bare
-            // ModelCharaId — the latter shows a naked/un-geared body.
+            // ModelCharaId — the latter omits the configured equipment.
             if (objectTable.CreateObjectReference(address) is Dalamud.Game.ClientState.Objects.Types.IBattleNpc bnpc)
                 return (bnpc.BaseId, bnpc.NameId);
             return (0u, 0u);

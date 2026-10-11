@@ -34,7 +34,7 @@ jobs:
           unzip -o /tmp/dalamud.zip -d $HOME/dalamud
 
       - name: Build
-        run: dotnet build ${{ env.SOLUTION_DIR }}/${{ env.PLUGIN_NAME }}.csproj -c Release
+        run: dotnet build ${{ env.SOLUTION_DIR }}/${{ env.PLUGIN_NAME }}.csproj -c Release -p:DefineConstants=PUBLIC_BUILD
         env:
           DALAMUD_HOME: /home/runner/dalamud
 

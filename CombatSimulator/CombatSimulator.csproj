@@ -10,7 +10,7 @@
   <!-- Experimental dev module: a private git submodule at Dev/Experimental. When it is checked out
        its sources compile in and DEV_EXPERIMENTAL is defined; otherwise the SDK glob finds none of
        those files and the plugin builds against the no-op DevExperimentalStub. The public CI builds
-       without the submodule (verify-only, no deploy); the release build includes it. -->
+       without the submodule; public releases always exclude it. -->
   <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)\Dev\Experimental\DevExperimentalModule.cs') and !$([System.String]::Copy('$(DefineConstants)').Contains('PUBLIC_BUILD'))">
     <DefineConstants>$(DefineConstants);DEV_EXPERIMENTAL</DefineConstants>
   </PropertyGroup>
@@ -19,6 +19,9 @@
        compiled in but Plugin.cs selecting DevExperimentalStub. -->
   <ItemGroup Condition="$([System.String]::Copy('$(DefineConstants)').Contains('PUBLIC_BUILD'))">
     <Compile Remove="Dev\Experimental\**\*.cs" />
+    <EmbeddedResource Remove="Dev\Experimental\**\*" />
+    <Content Remove="Dev\Experimental\**\*" />
+    <None Remove="Dev\Experimental\**\*" />
   </ItemGroup>
   <!-- Private experimental data assets, embedded only when the dev submodule is present and this is
        not a public build. The public DLL never contains them. -->

@@ -40,8 +40,8 @@ All combat is client-side only - no data is sent to the server.
 ## Building from Source
 
 ```bash
-git clone --recursive https://github.com/zysilm/FFXIV-CombatSimulator.git
-dotnet build CombatSimulator/CombatSimulator.csproj -c Release
+git clone https://github.com/zysilm/FFXIV-CombatSimulator.git
+dotnet build CombatSimulator/CombatSimulator.csproj -c Release -p:DefineConstants=PUBLIC_BUILD
 ```
 
 Requires .NET 10.0 SDK and Dalamud.
