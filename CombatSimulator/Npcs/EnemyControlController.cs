@@ -406,7 +406,7 @@ public unsafe partial class EnemyControlController : IDisposable
             else if (!colliderRegistered && playerRagdoll.AddLiveCollider(controlledAddress))
                 colliderRegistered = true;
 
-            if (!ExternalControlActive && ImGui.GetIO().WantTextInput) return;
+            if ((!ExternalControlActive || ExternalManualControlActive) && ImGui.GetIO().WantTextInput) return;
 
             var dt = (float)fw.UpdateDelta.TotalSeconds;
             if (dt <= 0f || dt > 0.25f) dt = 1f / 60f;
@@ -414,7 +414,7 @@ public unsafe partial class EnemyControlController : IDisposable
             TickMovement(dt);
             if (!ExternalControlActive) TickSwarm(dt);
             enemyControlAttackCooldownRemaining = MathF.Max(0f, enemyControlAttackCooldownRemaining - dt);
-            if (!ExternalControlActive) TickAttackKey();
+            if (!ExternalControlActive || ExternalManualControlActive) TickAttackKey();
             TickGrabAttack(dt);
         }
         catch (Exception ex)
@@ -498,7 +498,7 @@ public unsafe partial class EnemyControlController : IDisposable
             posZ += move.Z * speed * dt;
         }
 
-        if (ExternalControlActive || config.EnemyControlGroundWalk)
+        if ((ExternalControlActive && !ExternalManualControlActive) || config.EnemyControlGroundWalk)
         {
             // Map collision/navmesh cannot see the separate BEPU ragdoll simulation. Resolve the
             // terrain first, then explicitly treat the player's structural ragdoll bodies as a
@@ -1316,10 +1316,12 @@ public unsafe partial class EnemyControlController : IDisposable
     /// starts/releases the configured grab pairs.</summary>
     public void OnAttackInput()
     {
-        if (ExternalControlActive) return;
+        if (ExternalControlActive && !ExternalManualControlActive) return;
         if (!IsActive) return;
 
-        if (config.EnemyControlAttackEnabled)
+        if (ExternalManualControlActive)
+            ToggleGrabAttack();
+        else if (config.EnemyControlAttackEnabled)
             PerformEnemyControlAttack();
         else
             ToggleGrabAttack();
@@ -1893,6 +1895,7 @@ public unsafe partial class EnemyControlController : IDisposable
     partial void ResolveExternalBody(ref RagdollController body);
     partial void ResolveExternalConform(ref EnemyControlGrabConformSolver solver);
     partial void GetExternalControlState(ref bool active);
+    partial void GetExternalManualControlState(ref bool active);
     partial void OverrideExternalMovement(ref Vector3 move, ref float forward, ref float strafe);
     partial void OverrideExternalSpeed(float deltaTime, ref float speed);
     partial void ReleaseExternalControl();
@@ -1900,5 +1903,9 @@ public unsafe partial class EnemyControlController : IDisposable
     private bool ExternalControlActive
     {
         get { var active = false; GetExternalControlState(ref active); return active; }
+    }
+    private bool ExternalManualControlActive
+    {
+        get { var active = false; GetExternalManualControlState(ref active); return active; }
     }
 }
