@@ -29,6 +29,8 @@ public enum CameraOwner
     Fighting2D = 30,
     /// <summary>Fighting Mode post-defeat camera (translate / bone follow / KO framing).</summary>
     FightingKO = 40,
+    /// <summary>Optional external camera provider. User camera can still take over.</summary>
+    External = 45,
     /// <summary>User-enabled Active Camera. Always wins.</summary>
     UserActiveCam = 50,
 }
@@ -54,6 +56,8 @@ public struct CameraRequest
     public float? Fov;
     public bool ClearInputH;
     public bool ClearInputV;
+    /// <summary>Allow an external provider to enforce temporary native zoom limits.</summary>
+    public bool BoundExternalDistance;
 }
 
 /// <summary>
@@ -67,7 +71,7 @@ public struct CameraRequest
 /// Framework.Update handler whose order relative to the plugin's is
 /// subscription-dependent, so a one-frame TTL could flicker.
 /// </summary>
-public sealed unsafe class CameraModeCoordinator
+public sealed unsafe partial class CameraModeCoordinator
 {
     private const int SlotTtl = 2;
 
@@ -78,12 +82,14 @@ public sealed unsafe class CameraModeCoordinator
     }
 
     private readonly Configuration config;
+    public Func<bool>? ActiveCameraEnabledOverride { get; set; }
     private readonly IPluginLog log;
 
     // Indexed by owner; small fixed set, iterated high→low.
     private static readonly CameraOwner[] OwnersDescending =
     {
         CameraOwner.UserActiveCam,
+        CameraOwner.External,
         CameraOwner.FightingKO,
         CameraOwner.Fighting2D,
         CameraOwner.DynamicDeath,
@@ -137,14 +143,16 @@ public sealed unsafe class CameraModeCoordinator
         // The user's Active Cam is represented as an implicit, always-live request
         // while enabled; ActiveCameraController does its own bone-orbit work when
         // it is the winner.
-        if (config.EnableActiveCamera)
+        if (ActiveCameraEnabledOverride?.Invoke() ?? config.EnableActiveCamera)
             slots[CameraOwner.UserActiveCam] = new Slot { Request = default, Ttl = SlotTtl };
+        else slots.Remove(CameraOwner.UserActiveCam);
 
         var winner = CameraOwner.None;
         CameraRequest winning = default;
         Vector3? orbitCenter = null;
         var anyMaxRaise = false;
         float maxRaise = 0f;
+        var boundExternalDistance = false;
 
         foreach (var owner in OwnersDescending)
         {
@@ -158,6 +166,7 @@ public sealed unsafe class CameraModeCoordinator
             }
 
             orbitCenter ??= slot.Request.OrbitCenter;
+            if (owner == CameraOwner.External && slot.Request.BoundExternalDistance) boundExternalDistance = true;
 
             if (slot.Request.MaxDistanceAtLeast.HasValue)
             {
@@ -181,6 +190,7 @@ public sealed unsafe class CameraModeCoordinator
             if (camMgr != null && camMgr->Camera != null)
             {
                 var gameCam = camMgr->Camera;
+                ApplyExternalDistanceLimits(gameCam, boundExternalDistance, false);
 
                 if (anyMaxRaise)
                 {
@@ -229,6 +239,7 @@ public sealed unsafe class CameraModeCoordinator
                     gameCam->Distance = winning.Distance.Value;
                     gameCam->InterpDistance = winning.Distance.Value;
                 }
+                ApplyExternalDistanceLimits(gameCam, boundExternalDistance, true);
                 if (winning.ClearInputH)
                 {
                     gameCam->InputDeltaH = 0;
@@ -263,6 +274,7 @@ public sealed unsafe class CameraModeCoordinator
     /// <summary>Drop all requests and restore MaxDistance / FoV (plugin unload / hard reset).</summary>
     public void Reset()
     {
+        ClearExternalCameraState();
         slots.Clear();
         CurrentOwner = CameraOwner.None;
         CurrentOrbitCenter = null;
@@ -289,4 +301,7 @@ public sealed unsafe class CameraModeCoordinator
         maxDistanceOverridden = false;
         fovOverridden = false;
     }
+
+    partial void ApplyExternalDistanceLimits(FFXIVClientStructs.FFXIV.Client.Game.Camera* camera, bool active, bool enforce);
+    partial void ClearExternalCameraState();
 }

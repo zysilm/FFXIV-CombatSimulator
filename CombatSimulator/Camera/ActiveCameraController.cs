@@ -71,6 +71,10 @@ public unsafe class ActiveCameraController : IDisposable
 
     public bool IsActive => effectiveActive;
     public bool IsUserActive => userActive;
+    public Func<bool>? DynamicCameraEnabledOverride { get; set; }
+    public Func<bool>? ExternalOwnsAngles { get; set; }
+    private bool DynamicCameraEnabled => DynamicCameraEnabledOverride?.Invoke() ?? config.EnableDynamicCamera;
+    public void ReleaseDistanceOverride() => RestoreMinDistance();
 
     /// <summary>Resolved orbit center from the CameraModeCoordinator (highest-priority
     /// live request that supplied one). When it has a value it replaces the orbit
@@ -338,7 +342,8 @@ public unsafe class ActiveCameraController : IDisposable
         // vertical lock in particular would overwrite the pitch they just solved for.
         var owner = GetCurrentOwner?.Invoke() ?? CameraOwner.None;
         var modeOwnsAngles = owner is CameraOwner.Fighting2D or CameraOwner.FightingKO
-            or CameraOwner.DynamicCam or CameraOwner.DynamicDeath;
+            or CameraOwner.DynamicCam or CameraOwner.DynamicDeath ||
+            owner == CameraOwner.External && (ExternalOwnsAngles?.Invoke() ?? true);
 
         UpdateCollisionPolicy();
 
@@ -481,7 +486,7 @@ public unsafe class ActiveCameraController : IDisposable
     // the sole owner of the shared native patch, including when a mode resets.
     public void UpdateCollisionPolicy()
     {
-        if (config.EnableDynamicCamera || (IsActive && config.ActiveCameraDisableCollision))
+        if (DynamicCameraEnabled || (IsActive && config.ActiveCameraDisableCollision))
             EnableCollisionPatch();
         else
             DisableCollisionPatch();
@@ -501,7 +506,7 @@ public unsafe class ActiveCameraController : IDisposable
 
     private void DisableCollisionPatch(bool force = false)
     {
-        if (!force && config.EnableDynamicCamera) return;
+        if (!force && DynamicCameraEnabled) return;
         if (!collisionPatchActive || collisionOriginalBytes == null) return;
         WriteMemory(collisionPatchAddress, collisionOriginalBytes);
         collisionPatchActive = false;

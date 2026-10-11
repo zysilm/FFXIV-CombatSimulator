@@ -24,6 +24,7 @@
        not a public build. The public DLL never contains them. -->
   <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\Dev\Experimental\DevExperimentalModule.cs') and !$([System.String]::Copy('$(DefineConstants)').Contains('PUBLIC_BUILD'))">
     <EmbeddedResource Include="Dev\Experimental\Assets\*.dat" />
+    <EmbeddedResource Include="Dev\Experimental\Resources\**\*.json" />
   </ItemGroup>
   <ItemGroup>
     <!-- Nested standalone tests and their generated obj sources are not plugin sources. -->

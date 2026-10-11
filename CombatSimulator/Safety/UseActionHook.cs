@@ -51,6 +51,7 @@ public unsafe class UseActionHook : IDisposable
     /// to prevent unintercepted actions from reaching the server.
     /// </summary>
     public bool IsHealthy => useActionHook != null && hookEnabled && !useActionHook.IsDisposed;
+    public Func<bool>? SuppressExternalInput { get; set; }
 
     public UseActionHook(
         IGameInteropProvider gameInterop,
@@ -131,6 +132,8 @@ public unsafe class UseActionHook : IDisposable
             if (actionType != ActionType.Action)
                 return CallOriginalGuarded(actionManager, actionType, actionId,
                     targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
+
+            if (SuppressExternalInput?.Invoke() == true) return true;
 
             if (config.FightingMode)
             {

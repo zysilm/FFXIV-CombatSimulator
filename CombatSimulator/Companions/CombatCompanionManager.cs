@@ -142,6 +142,7 @@ public unsafe class CombatCompanionManager : IDisposable
     };
 
     public IReadOnlyList<CombatCompanion> Companions => companions;
+    public Func<bool>? SuspendCombat { get; set; }
     public int PendingCount => pendingSpawns.Count + spawnQueue.Count;
     public bool HasActiveCompanions => config.EnableCombatCompanions && companions.Any(c => c.IsSpawned && c.State.IsAlive);
     public bool HasLivingCompanions => config.EnableCombatCompanions && companions.Any(c => c.IsSpawned && c.State.IsAlive);
@@ -1013,7 +1014,7 @@ public unsafe class CombatCompanionManager : IDisposable
         int companionCount,
         TerrainHeightCache? terrainCache)
     {
-        if (!companion.IsSpawned || companion.BattleChara == null)
+        if (SuspendCombat?.Invoke() == true || !companion.IsSpawned || companion.BattleChara == null)
             return;
 
         TickCompanionActionTimers(companion, deltaTime);

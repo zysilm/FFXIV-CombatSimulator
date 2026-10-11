@@ -425,6 +425,11 @@ public class CombatEngine : IDisposable
         }
     }
 
+    public void ClearQueuedActions()
+    {
+        lock (queueLock) actionQueue.Clear();
+    }
+
     public bool TryReplacePlayerAttack(uint actionId, ulong targetEntityId)
     {
         try

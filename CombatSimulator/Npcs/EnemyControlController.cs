@@ -32,12 +32,13 @@ namespace CombatSimulator.Npcs;
 /// Position/rotation are driven via MovementBlockHook (so the game's own movement doesn't fight
 /// our writes). No AI, not targetable.
 /// </summary>
-public unsafe class EnemyControlController : IDisposable
+public unsafe partial class EnemyControlController : IDisposable
 {
     private readonly IKeyState keyState;
     private readonly IGamepadState gamepad;
     private readonly IFramework framework;
-    private readonly RagdollController playerRagdoll;
+    private readonly RagdollController defaultPlayerRagdoll;
+    private RagdollController playerRagdoll { get { var body = defaultPlayerRagdoll; ResolveExternalBody(ref body); return body; } }
     private readonly AnimationController animation;
     private readonly BoneTransformService boneService;
     private readonly MovementBlockHook movementBlock;
@@ -51,7 +52,8 @@ public unsafe class EnemyControlController : IDisposable
     // Puts the grab on the body's surface instead of inside it: aims the pull at the hand's grip
     // volume, and curls the digits onto the grabbed bone. Created in the ctor because it has to be
     // subscribed to the render pass to write bones at all.
-    private readonly EnemyControlGrabConformSolver grabConform;
+    private readonly EnemyControlGrabConformSolver defaultGrabConform;
+    private EnemyControlGrabConformSolver grabConform { get { var solver = defaultGrabConform; ResolveExternalConform(ref solver); return solver; } }
 
     // Bookkeeping for whichever grab pairs (see config.EnemyControlGrabPairs) are currently held. Two
     // independent id spaces per pair: the ragdoll's own constraint slot, and the conform solver's —
@@ -165,7 +167,7 @@ public unsafe class EnemyControlController : IDisposable
         this.keyState = keyState;
         this.gamepad = gamepad;
         this.framework = framework;
-        this.playerRagdoll = playerRagdoll;
+        defaultPlayerRagdoll = playerRagdoll;
         this.animation = animation;
         this.boneService = boneService;
         this.movementBlock = movementBlock;
@@ -175,7 +177,7 @@ public unsafe class EnemyControlController : IDisposable
         this.corpseRagdollProvider = corpseRagdollProvider;
         this.config = config;
         this.log = log;
-        grabConform = new EnemyControlGrabConformSolver(boneService, playerRagdoll, config, log);
+        defaultGrabConform = new EnemyControlGrabConformSolver(boneService, playerRagdoll, config, log);
         if (config.EnemyControlSwarmEnabled && config.EnemyControlSwarmClimbCorpses)
             swarmClimbDelayRemaining = Math.Clamp(config.EnemyControlSwarmClimbDelay, 0f, 5f);
         framework.Update += OnUpdate;
@@ -404,15 +406,15 @@ public unsafe class EnemyControlController : IDisposable
             else if (!colliderRegistered && playerRagdoll.AddLiveCollider(controlledAddress))
                 colliderRegistered = true;
 
-            if (ImGui.GetIO().WantTextInput) return;
+            if (!ExternalControlActive && ImGui.GetIO().WantTextInput) return;
 
             var dt = (float)fw.UpdateDelta.TotalSeconds;
             if (dt <= 0f || dt > 0.25f) dt = 1f / 60f;
 
             TickMovement(dt);
-            TickSwarm(dt);
+            if (!ExternalControlActive) TickSwarm(dt);
             enemyControlAttackCooldownRemaining = MathF.Max(0f, enemyControlAttackCooldownRemaining - dt);
-            TickAttackKey();
+            if (!ExternalControlActive) TickAttackKey();
             TickGrabAttack(dt);
         }
         catch (Exception ex)
@@ -446,7 +448,7 @@ public unsafe class EnemyControlController : IDisposable
         // being pulled, the target rises too, the corpse follows, and the next IK sample raises the
         // creature again (an unbounded staircase/spiral). Keep the grab physically colliding and
         // horizontally movable, but terrain-ground its carrier until the constraint is released.
-        var allowCorpseTraversal = !grabAttackActive &&
+        var allowCorpseTraversal = !ExternalControlActive && !grabAttackActive &&
                                    config.NpcCollisionActive && config.RagdollNpcCorpseTraversal;
         if (allowCorpseTraversal)
             FootIkSolver?.Track(controlledAddress, dt);
@@ -476,7 +478,7 @@ public unsafe class EnemyControlController : IDisposable
         var forward = new Vector3(-MathF.Sin(dirH), 0f, -MathF.Cos(dirH));
         var right = new Vector3(MathF.Cos(dirH), 0f, -MathF.Sin(dirH));
         var move = forward * fwd + right * strafe;
-        if (FightingLane is { IsLaneActive: true })
+        if (!ExternalControlActive && FightingLane is { IsLaneActive: true })
         {
             var scalar = Vector3.Dot(move, FightingLane.LaneAxis);
             if (MathF.Abs(scalar) < 0.001f && (MathF.Abs(strafe) > 0.001f || MathF.Abs(fwd) > 0.001f))
@@ -484,16 +486,19 @@ public unsafe class EnemyControlController : IDisposable
             move = FightingLane.LaneAxis * scalar;
         }
 
+        OverrideExternalMovement(ref move, ref fwd, ref strafe);
         var inputMoving = move.LengthSquared() > 0.0001f;
         var oldPos = new Vector3(posX, posY, posZ);
         if (inputMoving)
         {
             if (move.LengthSquared() > 1f) move = Vector3.Normalize(move);
-            posX += move.X * config.EnemyControlMoveSpeed * dt;
-            posZ += move.Z * config.EnemyControlMoveSpeed * dt;
+            var speed = config.EnemyControlMoveSpeed;
+            OverrideExternalSpeed(dt, ref speed);
+            posX += move.X * speed * dt;
+            posZ += move.Z * speed * dt;
         }
 
-        if (config.EnemyControlGroundWalk)
+        if (ExternalControlActive || config.EnemyControlGroundWalk)
         {
             // Map collision/navmesh cannot see the separate BEPU ragdoll simulation. Resolve the
             // terrain first, then explicitly treat the player's structural ragdoll bodies as a
@@ -571,7 +576,7 @@ public unsafe class EnemyControlController : IDisposable
             // No ground clamp — the creature may sink below the floor (unlimited), by request.
         }
 
-        if (FightingLane is { IsLaneActive: true })
+        if (!ExternalControlActive && FightingLane is { IsLaneActive: true })
         {
             var constrained = FightingLane.ConstrainToLane(new Vector3(posX, posY, posZ));
             posX = constrained.X;
@@ -590,7 +595,11 @@ public unsafe class EnemyControlController : IDisposable
             character->SetMode(CharacterModes.Normal, 0);
             ActorVisualStateController.ApplyMoving(character, visualState, dt);
         }
-        else ActorVisualStateController.ClearMovement(character, visualState);
+        else if (!ExternalControlActive || visualState.Kind == ActorVisualStateKind.Moving)
+        {
+            ActorVisualStateController.ClearMovement(character, visualState);
+            if (ExternalControlActive) visualState.Kind = ActorVisualStateKind.None;
+        }
 
         // Write through MovementBlockHook so the game's own movement doesn't override us.
         movementBlock.SetApproachPosition(obj, posX, posY, posZ);
@@ -1307,6 +1316,7 @@ public unsafe class EnemyControlController : IDisposable
     /// starts/releases the configured grab pairs.</summary>
     public void OnAttackInput()
     {
+        if (ExternalControlActive) return;
         if (!IsActive) return;
 
         if (config.EnemyControlAttackEnabled)
@@ -1699,6 +1709,7 @@ public unsafe class EnemyControlController : IDisposable
 
     private void ApplyGrabAttackTimeline()
     {
+        if (ExternalControlActive && lastMovementActive) return; // Locomotion owns the timeline while carrying.
         if (controlledAddress == nint.Zero)
             return;
 
@@ -1752,7 +1763,7 @@ public unsafe class EnemyControlController : IDisposable
         if (!grabAttackTimelineCaptured)
             return;
 
-        if (controlledAddress != nint.Zero)
+        if (Core.Services.ObjectTable.LocalPlayer != null && EnemyControlObjectAlive())
         {
             var character = (Character*)controlledAddress;
             character->Timeline.BaseOverride = grabAttackSavedBaseOverride;
@@ -1825,6 +1836,7 @@ public unsafe class EnemyControlController : IDisposable
 
     public void Despawn()
     {
+        ReleaseExternalControl();
         if (controlledAddress == nint.Zero) { pendingDraw = false; return; }
 
         CancelGrabAttack();
@@ -1874,7 +1886,17 @@ public unsafe class EnemyControlController : IDisposable
     {
         framework.Update -= OnUpdate;
         boneService.OnRenderFrame -= ApplyArmPoseOverrides;
-        grabConform.Dispose();
         Despawn();
+        defaultGrabConform.Dispose();
+    }
+    partial void ResolveExternalBody(ref RagdollController body);
+    partial void ResolveExternalConform(ref EnemyControlGrabConformSolver solver);
+    partial void GetExternalControlState(ref bool active);
+    partial void OverrideExternalMovement(ref Vector3 move, ref float forward, ref float strafe);
+    partial void OverrideExternalSpeed(float deltaTime, ref float speed);
+    partial void ReleaseExternalControl();
+    private bool ExternalControlActive
+    {
+        get { var active = false; GetExternalControlState(ref active); return active; }
     }
 }

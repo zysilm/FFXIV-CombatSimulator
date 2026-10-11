@@ -78,6 +78,15 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private readonly FightingModeController fightingModeController;
     private readonly SpectatorController spectatorController;
     private readonly Dev.IDevExperimental devExperimental;
+    partial void InitPrivateDirectors();
+    partial void TickPrivateDirectors(float deltaTime);
+    partial void ResetPrivateDirectors();
+    partial void DisposePrivateDirectors();
+    partial void GetPrivateDirectorActive(ref bool active);
+    private bool PrivateDirectorActive
+    {
+        get { var active = false; GetPrivateDirectorActive(ref active); return active; }
+    }
     partial void InitPrivateEffects();
     partial void AttachPrivateEffects();
     partial void TickPrivateEffects(float deltaTime);
@@ -447,6 +456,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // them first to avoid dangling pointers.
         combatEngine.OnSimulationReset += () =>
         {
+            ResetPrivateDirectors();
             DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
             dismembermentController.RemoveAll();
@@ -530,6 +540,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 
         // GUI
         mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
+        InitPrivateDirectors();
         AttachPrivateEffects();
         armorDetachmentController.AllowOnHitDetach = () => mainWindow.DevExperimentalUnlocked;
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
@@ -570,6 +581,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 
     public void Dispose()
     {
+        DisposePrivateDirectors();
         framework.Update -= OnFrameworkUpdate;
         clientState.TerritoryChanged -= OnTerritoryChanged;
         pluginInterface.UiBuilder.Draw -= OnDraw;
@@ -860,8 +872,9 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             // Camera controllers run independently of combat. Submitters tick first,
             // then the coordinator resolves priority and writes the camera once, and
             // the orbit hook host reflects whether any mode supplies an orbit center.
-            fightingModeController.Tick(deltaTime);
+            if (!PrivateDirectorActive) fightingModeController.Tick(deltaTime);
             dynamicCameraController.Tick(deltaTime);
+            TickPrivateDirectors(deltaTime);
             gameCameraUpdateHook.Tick();
             cameraModeCoordinator.Apply(deltaTime);
             activeCameraController.SetModeActive(cameraModeCoordinator.WantsOrbitHook);
@@ -874,16 +887,19 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             // Guard + telegraphs are shared by Action Mode and Fighting Mode — tick
             // them centrally so neither mode owns their lifecycle (inert when nothing
             // is active).
-            playerGuardController.Tick(deltaTime);
-            telegraphSystem.Tick(deltaTime);
+            if (!PrivateDirectorActive)
+            {
+                playerGuardController.Tick(deltaTime);
+                telegraphSystem.Tick(deltaTime);
+            }
 
             // Fighting Mode combat input (guard key); gates internally on engagement.
-            fightingCombatController.Tick(deltaTime);
+            if (!PrivateDirectorActive) fightingCombatController.Tick(deltaTime);
 
             // Action Mode loop (player combo/guard + enemy telegraphs). Runs every
             // frame so guard windows and toggle-off cleanup are handled even
             // when the sim is not active; gates internally on config.ActionMode.
-            actionModeController.Tick(deltaTime);
+            if (!PrivateDirectorActive) actionModeController.Tick(deltaTime);
 
             // Hit feedback (camera punch decay + hitstop restore). Runs every frame.
             hitFeedbackController.Tick(deltaTime);
@@ -910,6 +926,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                 return;
             }
 
+            if (PrivateDirectorActive) return;
             mapEnemyController.Tick(deltaTime);
             combatEngine.Tick(deltaTime);
             ProcessPendingNpcRagdolls(deltaTime);
@@ -1257,6 +1274,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 
     private void OnTerritoryChanged(uint territoryId)
     {
+        ResetPrivateDirectors();
         ClearPrivateEffects();
         worldGeometryPreview.Clear();
         worldGeometryRenderer.ClearAll();
@@ -1293,6 +1311,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     /// </summary>
     private void HandleLoggedOut()
     {
+        ResetPrivateDirectors();
         ClearPrivateEffects();
         worldGeometryPreview.Clear();
         worldGeometryRenderer.ClearAll();

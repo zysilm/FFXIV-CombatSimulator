@@ -87,6 +87,13 @@ public sealed unsafe class DynamicCameraController : IDisposable
     private const float DeathZoomMax = 2.5f;
 
     private readonly Configuration config;
+    public Func<bool>? EnabledOverride { get; set; }
+    public Func<bool>? ActiveCameraEnabledOverride { get; set; }
+    public Func<bool>? ProfileFramingOverride { get; set; }
+    private bool DeathFramingEnabled => (ProfileFramingOverride?.Invoke() ?? false) || config.DynCamDeathFraming;
+    private bool CombatFramingEnabled => (ProfileFramingOverride?.Invoke() ?? false) || config.DynCamCombatFraming;
+    private bool CameraEnabled => EnabledOverride?.Invoke() ?? config.EnableDynamicCamera;
+    private bool ActiveCameraEnabled => ActiveCameraEnabledOverride?.Invoke() ?? config.EnableActiveCamera;
     private readonly CameraModeCoordinator coordinator;
     private readonly CombatEngine combatEngine;
     private readonly NpcSelector npcSelector;
@@ -288,7 +295,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// framework-time writer and before the game's own input application.</summary>
     public unsafe void OnPreCameraUpdate(FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCamera)
     {
-        if (!enforceCameraLock || gameCamera == null)
+        if (!enforceCameraLock || gameCamera == null || GetCurrentOwner?.Invoke() != CameraOwner.DynamicDeath)
             return;
 
         gameCamera->DirV = enforceDirV;
@@ -317,7 +324,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// vertical aim offset for the owned death shot. No pitch feedback or matrix writes.</summary>
     public Vector3? OverrideDeathLookAt(Vector3 nativeLookAt, Vector3 cameraPosition)
     {
-        if (!enforceCameraLock || !config.EnableDynamicCamera ||
+        if (!enforceCameraLock || !CameraEnabled ||
             GetCurrentOwner?.Invoke() != CameraOwner.DynamicDeath || !float.IsFinite(enforceDirV)) return null;
         var delta = nativeLookAt - cameraPosition;
         var horizontal = MathF.Sqrt(delta.X * delta.X + delta.Z * delta.Z);
@@ -379,7 +386,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// has long since been recorded (deaths are resolved on a delay).</summary>
     public void HandlePlayerDeath(nint killer, uint killerId)
     {
-        if (!config.EnableDynamicCamera || !config.DynCamDeathFraming || config.EnableActiveCamera)
+        if (!CameraEnabled || !DeathFramingEnabled || ActiveCameraEnabled)
             return;
 
         killerAddress = killer;
@@ -448,7 +455,9 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
     /// <summary>Drop the camera and undo everything we touched. Hooked to sim reset,
     /// territory change, logout and dispose.</summary>
-    public void Reset()
+    public void Reset() => Reset(true);
+
+    public void Reset(bool persistMemory)
     {
         phase = Phase.Off;
         hasCurState = false;
@@ -461,8 +470,12 @@ public sealed unsafe class DynamicCameraController : IDisposable
         ladderLevel = 0;
         // Combat zoom and pitch survive resets by design: persist what was learned, then reseed
         // from the persisted values — a new fight resumes at the zoom and angle last settled on.
-        PersistCombatZoom();
-        PersistCombatPitch();
+        if (persistMemory)
+        {
+            PersistCombatZoom();
+            PersistCombatPitch();
+        }
+        combatZoomDirty = combatPitchDirty = false;
         combatZoomBias = Math.Clamp(config.DynCamCombatZoomMemory, 0.4f, 3.0f);
         combatPitchMemory = config.DynCamCombatPitchMemory;
         combatPitchMemoryValid = config.DynCamCombatPitchMemoryValid;
@@ -486,8 +499,31 @@ public sealed unsafe class DynamicCameraController : IDisposable
         coordinator.Release(CameraOwner.DynamicDeath);
     }
 
+    private bool externalControlSuspended;
+
+    public void SuspendForExternalControl(bool suspended)
+    {
+        if (externalControlSuspended == suspended) return;
+        externalControlSuspended = suspended;
+        if (suspended)
+        {
+            // Preserve the solver state while allowing the temporary scene to use native zoom.
+            RestoreMinDistance();
+            coordinator.Release(CameraOwner.DynamicCam);
+            coordinator.Release(CameraOwner.DynamicDeath);
+        }
+        else
+        {
+            // A restored scene camera must not be mistaken for player scroll input.
+            prevObservedDistance = 0f;
+            wroteDistance = false;
+            pendingWheel = 0f;
+        }
+    }
+
     public void Tick(float dt)
     {
+        if (externalControlSuspended) return;
         try
         {
             TickCore(dt);
@@ -501,7 +537,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
     private void TickCore(float dt)
     {
-        if (!config.EnableDynamicCamera)
+        if (!CameraEnabled)
         {
             if (phase != Phase.Off) Reset();
             StatusText = "disabled";
@@ -510,7 +546,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
 
         // The user turning Active Camera on is an explicit choice about who drives; we step
         // aside entirely rather than leaking a pivot in through the coordinator's orbit cascade.
-        if (config.EnableActiveCamera)
+        if (ActiveCameraEnabled)
         {
             if (phase != Phase.Off) Reset();
             StatusText = "yielding — Active Camera is on";
@@ -560,7 +596,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         {
             // Death framing switched off: release every Dynamic Camera request and leave the
             // game's current camera untouched instead of pointing combat framing at a body.
-            if (!config.DynCamDeathFraming)
+            if (!DeathFramingEnabled)
             {
                 coordinator.Release(CameraOwner.DynamicCam);
                 coordinator.Release(CameraOwner.DynamicDeath);
@@ -592,7 +628,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
         switch (phase)
         {
             case Phase.Combat:
-                if (!config.DynCamCombatFraming)
+                if (!CombatFramingEnabled)
                 {
                     TransitionEnemyFitExtra(0f, dt);
                     coordinator.Release(CameraOwner.DynamicCam);
@@ -608,7 +644,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
                 // internal contribution return to the inactive state while the independent death
                 // camera performs its own measured translate; TickDeath never reads this value.
                 TransitionEnemyFitExtra(0f, dt);
-                if (!config.DynCamDeathFraming)
+                if (!DeathFramingEnabled)
                 {
                     coordinator.Release(CameraOwner.DynamicDeath);
                     StatusText = "death framing off";
@@ -1854,6 +1890,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// and resets so the wheel does not turn into disk IO.</summary>
     private void PersistCombatZoom(bool force = false)
     {
+        if (ProfileFramingOverride?.Invoke() == true) return;
         if (!combatZoomDirty && !force)
             return;
         combatZoomDirty = false;
@@ -1867,6 +1904,7 @@ public sealed unsafe class DynamicCameraController : IDisposable
     /// reset, so it is not a per-frame disk write.</summary>
     private void PersistCombatPitch()
     {
+        if (ProfileFramingOverride?.Invoke() == true) return;
         if (!combatPitchDirty)
             return;
         combatPitchDirty = false;
