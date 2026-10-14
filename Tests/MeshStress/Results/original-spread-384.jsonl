@@ -1,0 +1,3 @@
+{"kind":"built","sourceFaces":73475,"sourceVertices":37283,"partitionVertices":37283,"bodyRegions":32,"softBodies":59,"nativeMeshFaces":146950,"iterations":8,"substeps":16,"pose":"spread","policy":"all","buildMs":638.0545,"poolMiB":33.875,"rssMiB":82.390625}
+{"kind":"step","frame":0,"stepMs":508.0188,"CollisionMs":436.0715,"SolverMs":43.1973,"selectionMs":0,"childQueryMs":0,"dispatchMs":0,"refitMs":30.898,"MeshPairs":27,"MeshTriangleProducts":569352896,"ChildPairs":273152,"NativeRefits":31,"SkippedRefits":33,"CachedPosePasses":0,"boundedProcessed":0,"boundedSampled":0,"boundedLimited":0,"boundedPeakChildren":0,"poolMiB":51,"rssMiB":99.83984375}
+{"kind":"supervisor","exit":-532462766,"stopped":null,"peakRssMiB":283.99609375,"elapsedSeconds":19.8855347,"limitMiB":384}

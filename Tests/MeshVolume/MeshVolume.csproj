@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><AllowUnsafeBlocks>true</AllowUnsafeBlocks></PropertyGroup>
+  <ItemGroup><PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" /></ItemGroup>
+  <ItemGroup><Compile Include="../../CombatSimulator/Animation/MeshVolume/*.cs" Link="Production/%(Filename)%(Extension)" /></ItemGroup>
+  <ItemGroup><Compile Include="../../CombatSimulator/Animation/SurfaceProfiles/CharacterSurfaceProfile.cs" Link="Production/CharacterSurfaceProfile.cs" /><Compile Include="../../CombatSimulator/Animation/SurfaceProfiles/CharacterSurfaceRuntime.cs" Link="Production/CharacterSurfaceRuntime.cs" /></ItemGroup>
+</Project>

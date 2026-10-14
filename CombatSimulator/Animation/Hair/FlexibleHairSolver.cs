@@ -22,6 +22,7 @@ internal sealed class FlexibleHairSolver
     private readonly Quaternion[] frames;
     private readonly float[] contactAllowances;
     private readonly HairContactCapsule[] previousContacts = new HairContactCapsule[64];
+    private readonly HairContactPlane[] previousMeshSurfaces;
     private int previousContactCount;
     private Vector3 headPosition, previousHeadPosition;
     private Quaternion headRotation, previousHeadRotation;
@@ -38,6 +39,7 @@ internal sealed class FlexibleHairSolver
         int n = rest.Length;
         Positions = new Vector3[n]; Previous = new Vector3[n]; velocities = new Vector3[n];
         ContactRadii = new float[n];
+        previousMeshSurfaces = new HairContactPlane[n];
         before = new Vector3[n]; bendLambda = new Vector3[n]; lengths = new float[n];
         predictedVelocity = new Vector3[n]; contactNormals = new Vector3[n * 4]; contactVelocities = new Vector3[n * 4];
         contactCounts = new byte[n];
@@ -61,7 +63,7 @@ internal sealed class FlexibleHairSolver
 
     public void Step(float dt, Vector3 head, Quaternion rotation, float bendCompliance,
         float damping, ReadOnlySpan<HairContactPlane> ground, ReadOnlySpan<HairContactCapsule> body,
-        float radius)
+        float radius, ReadOnlySpan<HairContactPlane> meshSurfaces = default)
     {
         if (!(dt > 0 && dt <= .05f) || !Finite(head) || !Finite(rotation)) return;
         rotation = Quaternion.Normalize(rotation);
@@ -92,6 +94,15 @@ internal sealed class FlexibleHairSolver
             previousContacts[j] = body[j];
         }
         previousContactCount = body.Length;
+        for (int i = 0; i < Count; i++)
+        {
+            var surface = i < meshSurfaces.Length ? meshSurfaces[i] : default;
+            var previous = previousMeshSurfaces[i];
+            contactMoved |= surface.Valid != previous.Valid || (surface.Valid &&
+                (Vector3.DistanceSquared(surface.Point, previous.Point) > 1e-8f ||
+                 Vector3.DistanceSquared(surface.Normal, previous.Normal) > 1e-8f));
+            previousMeshSurfaces[i] = surface;
+        }
         if (!Awake && !headMoved && !contactMoved) return;
         Awake = true;
         Array.Clear(contactCounts);
@@ -146,6 +157,16 @@ internal sealed class FlexibleHairSolver
             {
                 if (Parents[i] < 0) continue; // scalp attachment must stay exact
                 float contactRadiusForPoint = MathF.Max(radius, ContactRadii[i]);
+                if (i < meshSurfaces.Length && meshSurfaces[i].Valid)
+                {
+                    var surface = meshSurfaces[i];
+                    float penetration = contactRadiusForPoint - Vector3.Dot(Positions[i] - surface.Point, surface.Normal);
+                    if (penetration > 0)
+                    {
+                        Positions[i] += surface.Normal * MathF.Min(penetration, .004f);
+                        RecordContact(i, surface.Normal, Vector3.Zero);
+                    }
+                }
                 if (i < ground.Length && ground[i].Valid)
                 {
                     var plane = ground[i];

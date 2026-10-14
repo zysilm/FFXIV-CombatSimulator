@@ -12,6 +12,8 @@ internal sealed class ModelGeometryData
     public MdlStructs.ModelFileHeader FileHeader;
     public MdlStructs.VertexDeclarationStruct[] VertexDeclarations = Array.Empty<MdlStructs.VertexDeclarationStruct>();
     public MdlStructs.LodStruct[] Lods = Array.Empty<MdlStructs.LodStruct>();
+    public MdlStructs.ExtraLodStruct[] ExtraLods = Array.Empty<MdlStructs.ExtraLodStruct>();
+    public bool ExtraLodEnabled;
     public MdlStructs.MeshStruct[] Meshes = Array.Empty<MdlStructs.MeshStruct>();
     public MdlStructs.BoneTableStruct[] BoneTables = Array.Empty<MdlStructs.BoneTableStruct>();
     public uint[] BoneNameOffsets = Array.Empty<uint>();
@@ -27,6 +29,8 @@ internal sealed class ModelGeometryData
         FileHeader = mdl.FileHeader,
         VertexDeclarations = mdl.VertexDeclarations ?? Array.Empty<MdlStructs.VertexDeclarationStruct>(),
         Lods = mdl.Lods ?? Array.Empty<MdlStructs.LodStruct>(),
+        ExtraLods = mdl.ExtraLods ?? Array.Empty<MdlStructs.ExtraLodStruct>(),
+        ExtraLodEnabled = mdl.ModelHeader.ExtraLodEnabled,
         Meshes = mdl.Meshes ?? Array.Empty<MdlStructs.MeshStruct>(),
         BoneTables = mdl.BoneTables ?? Array.Empty<MdlStructs.BoneTableStruct>(),
         BoneNameOffsets = mdl.BoneNameOffsets ?? Array.Empty<uint>(),

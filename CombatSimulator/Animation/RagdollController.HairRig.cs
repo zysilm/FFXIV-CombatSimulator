@@ -12,6 +12,7 @@ using BepuPhysics;
 using BepuPhysics.Collidables;
 using BepuPhysics.Trees;
 using CombatSimulator.Animation.Hair;
+using CombatSimulator.Animation.SurfaceProfiles;
 using HkaPose = FFXIVClientStructs.Havok.Animation.Rig.hkaPose;
 using CombatSimulator.Core;
 
@@ -28,9 +29,11 @@ public unsafe partial class RagdollController
         public Quaternion[] RestRotations = Array.Empty<Quaternion>(), RenderFrames = Array.Empty<Quaternion>();
         public Vector3[] RenderPositions = Array.Empty<Vector3>();
         public HairContactPlane[] Ground = Array.Empty<HairContactPlane>();
+        public HairContactPlane[] BodySurface = Array.Empty<HairContactPlane>();
     }
     private readonly List<HairRigChain> hairRigChains = new();
     private readonly HairContactCapsule[] hairContacts = new HairContactCapsule[64];
+    private readonly List<(string Name, Vector3 Minimum, Vector3 Maximum)> hairMeshBounds = new(64);
     private bool hairRigActive;
     private int hairKaoRagdollBodyIndex = -1, hairGroundCursor;
     public bool RunAnimatedHair { get; set; }
@@ -189,6 +192,7 @@ public unsafe partial class RagdollController
                 Solver = solver, BoneIndices = boneIndices.ToArray(), PointIndices = pointIndices.ToArray(), ChildPoints = childPoints,
                 RestRotations = restRotations.ToArray(), RenderFrames = new Quaternion[solver.Count],
                 RenderPositions = new Vector3[solver.Count], Ground = new HairContactPlane[solver.Count],
+                BodySurface = new HairContactPlane[solver.Count],
             });
         }
         hairRigActive = hairRigChains.Count > 0;
@@ -218,6 +222,7 @@ public unsafe partial class RagdollController
             for (int i = 0; i < ragdollBones.Count && contactCount < hairContacts.Length; i++)
             {
                 var rb = ragdollBones[i];
+                if (rb.ColliderShape == RagdollColliderShape.Mesh) continue;
                 if (rb.Name != "j_kao" && rb.Name != "j_kubi" && rb.Name != "j_kosi" &&
                     !rb.Name.StartsWith("j_sebo_", StringComparison.Ordinal) && !rb.Name.StartsWith("j_ude_", StringComparison.Ordinal)) continue;
                 var body = simulation!.Bodies.GetBodyReference(rb.BodyHandle);
@@ -247,10 +252,49 @@ public unsafe partial class RagdollController
                 break;
             }
         }
+        hairMeshBounds.Clear();
+        if (!animatedHair)
+            foreach (var bone in ragdollBones)
+                if (bone.ColliderShape == RagdollColliderShape.Mesh &&
+                    TryGetBoneGeometryBounds(bone.Name, out var minimum, out var maximum))
+                    hairMeshBounds.Add((bone.Name, minimum, maximum));
         foreach (var c in hairRigChains)
+        {
+            UpdateHairBodySurface(c, head, rotation);
             c.Solver.Step(FixedTimestep, head, rotation, config.RagdollHairBendCompliance,
                 config.RagdollHairDamping, c.Ground, hairContacts.AsSpan(0, contactCount),
-                Math.Clamp(config.RagdollHairRigThickness, .001f, .02f));
+                Math.Clamp(config.RagdollHairRigThickness, .001f, .02f), c.BodySurface);
+        }
+    }
+
+    private void UpdateHairBodySurface(HairRigChain chain, Vector3 head, Quaternion rotation)
+    {
+        Array.Clear(chain.BodySurface);
+        if (animatedHair) return;
+        for (var i = 0; i < chain.Solver.Count; i++)
+        {
+            if (chain.Solver.Parents[i] < 0) continue;
+            var point = chain.Solver.Positions[i];
+            var bestDistanceSq = .04f;
+            foreach (var bone in hairMeshBounds)
+            {
+                var boundPoint = Vector3.Clamp(point, bone.Minimum, bone.Maximum);
+                if (Vector3.DistanceSquared(point, boundPoint) > bestDistanceSq ||
+                    !TryGetCharacterSurface(bone.Name, point, CharacterSurfaceUsage.Physics, out var hit)) continue;
+                var distanceSq = Vector3.DistanceSquared(point, hit.Point);
+                if (distanceSq >= bestDistanceSq) continue;
+                bestDistanceSq = distanceSq;
+                var planePoint = hit.Point;
+                // Preserve authored scalp overlap rather than ejecting mod hair roots.
+                if (bone.Name == "j_kao")
+                {
+                    var rest = head + Vector3.Transform(chain.Solver.Rest[i], rotation);
+                    var restDepth = Vector3.Dot(rest - hit.Point, hit.Normal);
+                    if (restDepth < 0f) planePoint += hit.Normal * restDepth;
+                }
+                chain.BodySurface[i] = new HairContactPlane(true, planePoint, hit.Normal);
+            }
+        }
     }
 
     private void ReadbackHairRig(in SkeletonAccess skel)

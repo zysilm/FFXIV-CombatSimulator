@@ -11,6 +11,8 @@ using BepuPhysics.Collidables;
 using BepuPhysics.Constraints;
 using BepuUtilities.Memory;
 using CombatSimulator.Integration;
+using CombatSimulator.Animation.SurfaceProfiles;
+using CombatSimulator.Animation.MeshVolume;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
@@ -453,6 +455,7 @@ public unsafe partial class DismembermentController : IDisposable
         public Vector3 PreviousPosition;
         public Quaternion PreviousOrientation;
         public bool HasPreviousPose;
+        public Vector3[]? MeshScratch;
     }
 
     private struct NpcCollisionState
@@ -463,6 +466,7 @@ public unsafe partial class DismembermentController : IDisposable
         public TypedIndex FallbackShape;
         public bool IsFallback;
         public bool UsesRagdollDebug;
+        public int RagdollGeometryGeneration;
         public Vector3 FallbackPrevPos;
         public bool FallbackHasPrev;
     }
@@ -1989,7 +1993,8 @@ public unsafe partial class DismembermentController : IDisposable
             foreach (var ring in rig.Rings)
             {
                 if (ring.BodyIndices.Length == 0) continue;
-                if (!ragdoll.TryGetBoneCapsule(ring.BoneName, out var capsule)) continue;
+                var meshBody = ragdoll.IsMeshBody(ring.BoneName);
+                if (!ragdoll.TryGetBoneCapsule(ring.BoneName, out var capsule) && !meshBody) continue;
                 total++;
 
                 var centroid = Vector3.Zero;
@@ -2011,7 +2016,14 @@ public unsafe partial class DismembermentController : IDisposable
                 // Distance to the capsule's AXIS, not its centre: the centre sits half a bone-length
                 // along the segment from the bone origin the ring was built on, so a perfectly worn
                 // thigh ring would otherwise start out most of the way to its own threshold.
-                if (DistanceToCapsuleAxis(capsule, centroid) <= ring.Radius * WornRingFactor)
+                if (meshBody)
+                {
+                    if (ragdoll.TryGetCharacterSurface(ring.BoneName, centroid,
+                            CharacterSurfaceUsage.Physics, out var hit) &&
+                        Vector3.Distance(centroid, hit.Point) <= ring.Radius * WornRingFactor)
+                        on++;
+                }
+                else if (DistanceToCapsuleAxis(capsule, centroid) <= ring.Radius * WornRingFactor)
                     on++;
             }
         }
@@ -2020,12 +2032,20 @@ public unsafe partial class DismembermentController : IDisposable
             foreach (var body in rig.Bodies)
             {
                 if (string.IsNullOrEmpty(body.BoneName)) continue;
-                if (!ragdoll.TryGetBoneCapsule(body.BoneName, out var capsule)) continue;
+                var meshBody = ragdoll.IsMeshBody(body.BoneName);
+                if (!ragdoll.TryGetBoneCapsule(body.BoneName, out var capsule) && !meshBody) continue;
                 if (!TryGetGarmentRigBodyPose(c, body, out var position, out _, out _, out _)) continue;
                 total++;
 
                 // How far clear of the skin it is, so cloth thickness is all that has to be tolerated.
-                var surfaceGap = MathF.Max(0f, DistanceToCapsuleAxis(capsule, position) - capsule.Radius);
+                float surfaceGap;
+                if (meshBody)
+                {
+                    if (!ragdoll.TryGetCharacterSurface(body.BoneName, position,
+                            CharacterSurfaceUsage.Physics, out var hit)) continue;
+                    surfaceGap = Vector3.Distance(position, hit.Point);
+                }
+                else surfaceGap = MathF.Max(0f, DistanceToCapsuleAxis(capsule, position) - capsule.Radius);
                 if (surfaceGap <= WornChainMargin) on++;
             }
         }
@@ -2993,6 +3013,13 @@ public unsafe partial class DismembermentController : IDisposable
         {
             foreach (var state in pcNpcCollisionStates)
             {
+                if (state.UsesRagdollDebug &&
+                    (PlayerRagdollController == null || !PlayerRagdollController.IsSimulationReady ||
+                     state.RagdollGeometryGeneration != PlayerRagdollController.MeshGeometryGeneration))
+                {
+                    rebuild = true;
+                    break;
+                }
                 if (!state.UsesRagdollDebug && TryGetRagdollDebugCapsules(state.Address, out _))
                 {
                     rebuild = true;
@@ -3134,6 +3161,7 @@ public unsafe partial class DismembermentController : IDisposable
         foreach (var cap in capsules)
         {
             var shape = CreateRagdollMirrorShape(cap);
+            if (!shape.Exists) continue;
             var handle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
                 new RigidPose(cap.Position, cap.Orientation),
                 new CollidableDescription(shape, 0.04f),
@@ -3157,11 +3185,38 @@ public unsafe partial class DismembermentController : IDisposable
             Address = address,
             BoneStatics = statics,
             UsesRagdollDebug = true,
+            RagdollGeometryGeneration = PlayerRagdollController!.MeshGeometryGeneration,
         });
     }
 
     private TypedIndex CreateRagdollMirrorShape(RagdollController.DebugCapsule cap)
     {
+        if (cap.ColliderShape == RagdollController.RagdollColliderShape.Mesh)
+        {
+            if (bufferPool == null || PlayerRagdollController == null) return default;
+            foreach (var surface in PlayerRagdollController.GetCharacterSurfaceDebugBones(CharacterSurfaceUsage.Physics))
+            {
+                if (surface.Name != cap.Name || surface.Indices.Length < 3) continue;
+                var vertices = surface.Vertices.Span;
+                var indices = surface.Indices.Span;
+                bufferPool.Take<Triangle>(indices.Length / 3 * 2, out var triangles);
+                var inverse = Quaternion.Inverse(cap.Orientation);
+                for (var i = 0; i < indices.Length / 3; i++)
+                {
+                    var index = i * 3;
+                    var a = Vector3.Transform(vertices[indices[index]] - cap.Position, inverse);
+                    var b = Vector3.Transform(vertices[indices[index + 1]] - cap.Position, inverse);
+                    var c = Vector3.Transform(vertices[indices[index + 2]] - cap.Position, inverse);
+                    triangles[i * 2] = new Triangle(a, b, c);
+                    triangles[i * 2 + 1] = new Triangle(a, c, b);
+                }
+                var mesh = new BepuPhysics.Collidables.Mesh(triangles, Vector3.One, bufferPool);
+                return simulation!.Shapes.Add(mesh);
+            }
+            // A mesh body must never silently turn back into a capsule in the
+            // separate dropped-garment simulation.
+            return default;
+        }
         if (cap.ColliderShape == RagdollController.RagdollColliderShape.Box)
         {
             var h = cap.BoxHalfExtents;
@@ -3302,8 +3357,38 @@ public unsafe partial class DismembermentController : IDisposable
             if (!TryFindRagdollCapsule(capsules, bs.BoneName, out var cap))
                 continue;
 
+            // A source rebuild can replace a capsule with a mesh, and shape indices
+            // index separate batches. Never dereference an old index as another type.
+            if (cap.ColliderShape == RagdollController.RagdollColliderShape.Mesh &&
+                bs.Shape.Type != BepuPhysics.Collidables.Mesh.Id)
+            {
+                state.RagdollGeometryGeneration = -1;
+                return state;
+            }
+
             MoveKinematic(bs.Handle, cap.Position, cap.Orientation,
                 ref bs.PreviousPosition, ref bs.PreviousOrientation, ref bs.HasPreviousPose);
+            if (cap.ColliderShape == RagdollController.RagdollColliderShape.Mesh && PlayerRagdollController != null)
+            {
+                foreach (var surface in PlayerRagdollController.GetCharacterSurfaceDebugBones(CharacterSurfaceUsage.Physics))
+                {
+                    if (surface.Name != cap.Name) continue;
+                    if (bs.MeshScratch == null || bs.MeshScratch.Length != surface.Vertices.Length)
+                        bs.MeshScratch = new Vector3[surface.Vertices.Length];
+                    var inverse = Quaternion.Inverse(cap.Orientation);
+                    var vertices = surface.Vertices.Span;
+                    for (var vertex = 0; vertex < vertices.Length; vertex++)
+                        bs.MeshScratch[vertex] = Vector3.Transform(vertices[vertex] - cap.Position, inverse);
+                    ref var mesh = ref simulation.Shapes.GetShape<BepuPhysics.Collidables.Mesh>(bs.Shape.Index);
+                    if (!MeshSurfaceRefitter.Refit(ref mesh, bs.MeshScratch, surface.Indices.Span))
+                    {
+                        state.RagdollGeometryGeneration = -1;
+                        return state;
+                    }
+                    simulation.Bodies.GetBodyReference(bs.Handle).UpdateBounds();
+                    break;
+                }
+            }
             state.BoneStatics[i] = bs;
         }
 
@@ -8040,6 +8125,7 @@ public unsafe partial class DismembermentController : IDisposable
             // Stronger damping than weapons (0.97/0.92) so limbs tumble a bit then settle, not roll far.
             new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -config.RagdollGravity, 0), 0.93f, 0.84f),
             new SolveDescription(4, 1));
+        CollisionWorkBudget.Register(simulation.NarrowPhase.CollisionTaskRegistry, () => config.RagdollMeshContactQuality);
 
         var shape = new Capsule(LimbRadius, LimbHalfLength * 2f);
         limbShapeIndex = simulation.Shapes.Add(shape);

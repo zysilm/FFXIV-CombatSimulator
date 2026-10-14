@@ -99,6 +99,7 @@ public unsafe partial class RagdollController
             data = new ModelGeometryData {
                 Data = parsed.Data, FileHeader = parsed.FileHeader,
                 Lods = parsed.Lods, Meshes = parsed.Meshes, VertexDeclarations = parsed.VertexDeclarations,
+                ExtraLods = parsed.ExtraLods, ExtraLodEnabled = parsed.ExtraLodEnabled,
                 BoneTables = boneTables, BoneNameOffsets = parsed.BoneNameOffsets,
                 Strings = parsed.Strings, Submeshes = submeshes,
                 Shapes = shapes, ShapeMeshes = shapeMeshes, ShapeValues = shapeValues,

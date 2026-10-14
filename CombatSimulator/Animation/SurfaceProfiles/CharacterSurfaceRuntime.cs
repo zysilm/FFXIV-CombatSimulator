@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using CombatSimulator.Animation.MeshVolume;
 
 namespace CombatSimulator.Animation.SurfaceProfiles;
 
@@ -14,7 +15,8 @@ public readonly record struct CharacterSurfaceBoneSeed(
     float HalfLength,
     float RadiusX,
     float RadiusZ,
-    bool IsBox = false);
+    bool IsBox = false,
+    BodyMeshGeometry? Mesh = null);
 
 public readonly record struct CharacterSurfaceDebugBone(
     string Name,
@@ -51,6 +53,14 @@ public sealed class CharacterSurfaceRuntime
         if (!byName.TryGetValue(boneName, out var bone)) return false;
         bone.UpdatePose(position, orientation);
         return true;
+    }
+
+    /// <summary>Cached conservative world AABB, suitable for broadphase/envelopes.
+    /// Contact/support queries still evaluate the exact triangle surface.</summary>
+    public bool TryGetBounds(string boneName, out Vector3 min, out Vector3 max)
+    {
+        min = max = default;
+        return byName.TryGetValue(boneName, out var bone) && bone.TryGetBounds(out min, out max);
     }
 
     public bool TryGetNearestSurface(
@@ -120,10 +130,17 @@ public sealed class CharacterSurfaceRuntime
         return found;
     }
 
-    public IEnumerable<CharacterSurfaceDebugBone> GetDebugBones(CharacterSurfaceUsage usage)
+    public IEnumerable<CharacterSurfaceDebugBone> GetDebugBones(CharacterSurfaceUsage usage, int maximumFacesPerBone = 0, int maximumFacesTotal = 0)
     {
+        int remaining = maximumFacesTotal > 0 ? maximumFacesTotal : int.MaxValue;
         foreach (var bone in bones)
-            yield return bone.GetDebugBone(usage);
+        {
+            if (remaining <= 0) yield break;
+            int budget = maximumFacesPerBone > 0 ? Math.Min(maximumFacesPerBone, remaining) : remaining;
+            var debug = bone.GetDebugBone(usage, budget);
+            remaining -= debug.Indices.Length / 3;
+            yield return debug;
+        }
     }
 }
 
@@ -133,15 +150,24 @@ public sealed class CharacterSurfaceRuntimeBone
     private readonly CharacterSurfaceProfile profile;
     private readonly Vector3[] localVertices;
     private readonly int[] indices;
-    private readonly Vector3[] worldPhysics;
-    private readonly Vector3[] worldTraversal;
-    private readonly Vector3[] worldGrab;
-    private readonly Vector3[] worldGround;
+    private readonly SurfaceMeshBvh query;
+    private Vector3[]? debugWorld;
+    private float debugScale;
+    private int poseRevision;
+    private int debugRevision = -1;
+    private Vector3[]? sampledDebugWorld;
+    private int[]? sampledDebugIndices;
+    private int[]? sampledSourceIndices;
+    private int sampledDebugRevision = -1;
+    private float sampledDebugScale;
     private Vector3 position;
     private Quaternion orientation = Quaternion.Identity;
     private Vector3 boundsMin;
     private Vector3 boundsMax;
     private bool poseValid;
+    private readonly bool exactMesh;
+    private readonly BodyMeshGeometry? mesh;
+    private int meshRevision;
 
     public CharacterSurfaceRuntimeBone(CharacterSurfaceProfile profile, CharacterSurfaceBoneSeed seed)
     {
@@ -149,17 +175,21 @@ public sealed class CharacterSurfaceRuntimeBone
         Name = seed.Name;
         Role = seed.Role;
 
-        if (seed.IsBox)
+        if (seed.Mesh != null)
+        {
+            exactMesh = true;
+            mesh = seed.Mesh;
+            localVertices = seed.Mesh.Vertices;
+            indices = seed.Mesh.Indices;
+        }
+        else if (seed.IsBox)
             BuildBox(seed.HalfLength, seed.RadiusX, seed.RadiusZ, out localVertices, out indices);
         else
         {
             var rings = BuildRings(profile, seed);
             BuildMesh(rings, out localVertices, out indices);
         }
-        worldPhysics = new Vector3[localVertices.Length];
-        worldTraversal = new Vector3[localVertices.Length];
-        worldGrab = new Vector3[localVertices.Length];
-        worldGround = new Vector3[localVertices.Length];
+        query = mesh?.Query ?? new SurfaceMeshBvh(localVertices, indices);
     }
 
     public string Name { get; }
@@ -167,22 +197,25 @@ public sealed class CharacterSurfaceRuntimeBone
     public ReadOnlySpan<Vector3> LocalVertices => localVertices;
     public ReadOnlySpan<int> Indices => indices;
 
+    public bool TryGetBounds(out Vector3 min, out Vector3 max)
+    {
+        min = boundsMin; max = boundsMax;
+        return poseValid;
+    }
+
     public void UpdatePose(Vector3 newPosition, Quaternion newOrientation)
     {
+        var normalizedOrientation = Quaternion.Normalize(newOrientation);
+        if (poseValid && position == newPosition && orientation == normalizedOrientation &&
+            (mesh == null || meshRevision == mesh.Revision)) return;
         position = newPosition;
-        orientation = Quaternion.Normalize(newOrientation);
-        FillWorldVertices(worldPhysics, profile.UsageScale(CharacterSurfaceUsage.Physics));
-        FillWorldVertices(worldTraversal, profile.UsageScale(CharacterSurfaceUsage.Traversal));
-        FillWorldVertices(worldGrab, profile.UsageScale(CharacterSurfaceUsage.Grab));
-        FillWorldVertices(worldGround, profile.UsageScale(CharacterSurfaceUsage.Ground));
-
-        boundsMin = new Vector3(float.MaxValue);
-        boundsMax = new Vector3(float.MinValue);
-        foreach (var vertex in worldPhysics)
-        {
-            boundsMin = Vector3.Min(boundsMin, vertex);
-            boundsMax = Vector3.Max(boundsMax, vertex);
-        }
+        orientation = normalizedOrientation;
+        if (mesh != null && meshRevision != mesh.Revision) _ = mesh.Query;
+        meshRevision = mesh?.Revision ?? 0;
+        poseRevision = unchecked(poseRevision + 1);
+        float maximumScale = MathF.Max(MathF.Max(UsageScale(CharacterSurfaceUsage.Physics), UsageScale(CharacterSurfaceUsage.Traversal)),
+            MathF.Max(UsageScale(CharacterSurfaceUsage.Grab), UsageScale(CharacterSurfaceUsage.Ground)));
+        query.WorldBounds(position, orientation, maximumScale, out boundsMin, out boundsMax);
         poseValid = true;
     }
 
@@ -202,30 +235,11 @@ public sealed class CharacterSurfaceRuntimeBone
     {
         hit = default;
         if (!poseValid) return false;
-        var vertices = VerticesFor(usage);
-        var bestDistanceSq = float.MaxValue;
-        var bestPoint = Vector3.Zero;
-        var bestNormal = Vector3.UnitY;
-        for (var i = 0; i + 2 < indices.Length; i += 3)
-        {
-            var a = vertices[indices[i]];
-            var b = vertices[indices[i + 1]];
-            var c = vertices[indices[i + 2]];
-            var candidate = ClosestPointOnTriangle(worldPoint, a, b, c);
-            var distanceSq = Vector3.DistanceSquared(worldPoint, candidate);
-            if (distanceSq >= bestDistanceSq) continue;
-            var normal = Vector3.Cross(b - a, c - a);
-            if (normal.LengthSquared() < 1e-10f) continue;
-            normal = Vector3.Normalize(normal);
-            if (Vector3.Dot(normal, worldPoint - candidate) < 0f)
-                normal = -normal;
-            bestDistanceSq = distanceSq;
-            bestPoint = candidate;
-            bestNormal = normal;
-        }
-        if (bestDistanceSq == float.MaxValue) return false;
-        var localPoint = Vector3.Transform(bestPoint - position, Quaternion.Inverse(orientation));
-        hit = new CharacterSurfaceHit(Name, bestPoint, bestNormal, localPoint, bestDistanceSq);
+        var localQuery = Vector3.Transform(worldPoint - position, Quaternion.Inverse(orientation));
+        if (!query.Nearest(localQuery, UsageScale(usage), exactMesh ? 1e-16f : 1e-10f,
+                out var localPoint, out var localNormal, out var distanceSquared)) return false;
+        var bestPoint = position + Vector3.Transform(localPoint, orientation);
+        hit = new CharacterSurfaceHit(Name, bestPoint, Vector3.Transform(localNormal, orientation), localPoint, distanceSquared);
         return true;
     }
 
@@ -237,64 +251,54 @@ public sealed class CharacterSurfaceRuntimeBone
             sphereCenter.Z < boundsMin.Z - sphereRadius || sphereCenter.Z > boundsMax.Z + sphereRadius)
             return false;
 
-        var vertices = worldTraversal;
-        var sampleRadius = sphereRadius * 0.55f;
-        var diagonal = sampleRadius * 0.70710678f;
-        Span<Vector2> offsets = stackalloc Vector2[9]
-        {
-            Vector2.Zero,
-            new(sampleRadius, 0f), new(-sampleRadius, 0f),
-            new(0f, sampleRadius), new(0f, -sampleRadius),
-            new(diagonal, diagonal), new(-diagonal, diagonal),
-            new(diagonal, -diagonal), new(-diagonal, -diagonal),
-        };
-
-        var rayTop = boundsMax.Y + sphereRadius + 0.05f;
-        var rayLength = MathF.Max(0.1f, rayTop - boundsMin.Y + sphereRadius + 0.05f);
-        var found = false;
-        foreach (var offset in offsets)
-        {
-            var origin = new Vector3(sphereCenter.X + offset.X, rayTop, sphereCenter.Z + offset.Y);
-            for (var i = 0; i + 2 < indices.Length; i += 3)
-            {
-                var a = vertices[indices[i]];
-                var b = vertices[indices[i + 1]];
-                var c = vertices[indices[i + 2]];
-                var normal = Vector3.Cross(b - a, c - a);
-                var normalLength = normal.Length();
-                if (normalLength < 1e-6f || MathF.Abs(normal.Y) / normalLength < 0.25f)
-                    continue;
-                if (!RayTriangle(origin, -Vector3.UnitY, a, b, c, out var distance) ||
-                    distance < 0f || distance > rayLength)
-                    continue;
-                var horizontalDistanceSq = offset.LengthSquared();
-                var sphereRise = MathF.Sqrt(MathF.Max(0f, sphereRadius * sphereRadius - horizontalDistanceSq));
-                var candidate = origin.Y - distance + sphereRise;
-                if (!found || candidate > requiredCenterY)
-                {
-                    requiredCenterY = candidate;
-                    found = true;
-                }
-            }
-        }
-        return found;
+        return query.SphereSupport(sphereCenter, sphereRadius, position, orientation,
+            UsageScale(CharacterSurfaceUsage.Traversal), out requiredCenterY);
     }
 
-    public CharacterSurfaceDebugBone GetDebugBone(CharacterSurfaceUsage usage)
-        => new(Name, VerticesFor(usage), indices);
-
-    private Vector3[] VerticesFor(CharacterSurfaceUsage usage) => usage switch
+    public CharacterSurfaceDebugBone GetDebugBone(CharacterSurfaceUsage usage, int maximumFaces = 0)
     {
-        CharacterSurfaceUsage.Physics => worldPhysics,
-        CharacterSurfaceUsage.Traversal => worldTraversal,
-        CharacterSurfaceUsage.Grab => worldGrab,
-        CharacterSurfaceUsage.Ground => worldGround,
-        _ => worldPhysics,
-    };
+        int faces = indices.Length / 3;
+        if (maximumFaces <= 0 || maximumFaces >= faces) return new(Name, VerticesFor(usage), indices);
+        int length = maximumFaces * 3;
+        if (sampledDebugWorld == null || sampledDebugWorld.Length != length)
+        {
+            sampledDebugWorld = new Vector3[length]; sampledDebugIndices = new int[length]; sampledSourceIndices = new int[length];
+            for (int face = 0; face < maximumFaces; face++)
+                for (int corner = 0; corner < 3; corner++)
+                {
+                    int output = face * 3 + corner;
+                    sampledDebugIndices[output] = output;
+                    sampledSourceIndices[output] = indices[(int)((long)face * faces / maximumFaces) * 3 + corner];
+                }
+            sampledDebugRevision = -1;
+        }
+        float scale = UsageScale(usage);
+        if (sampledDebugRevision != poseRevision || sampledDebugScale != scale)
+        {
+            var radial = new Vector3(scale, 1f, scale);
+            for (int i = 0; i < length; i++) sampledDebugWorld[i] = position + Vector3.Transform(localVertices[sampledSourceIndices![i]] * radial, orientation);
+            sampledDebugRevision = poseRevision; sampledDebugScale = scale;
+        }
+        return new(Name, sampledDebugWorld, sampledDebugIndices!);
+    }
+
+    private float UsageScale(CharacterSurfaceUsage usage) => exactMesh ? 1f : MathF.Max(0.01f, profile.UsageScale(usage));
+
+    private Vector3[] VerticesFor(CharacterSurfaceUsage usage)
+    {
+        float scale = UsageScale(usage);
+        debugWorld ??= new Vector3[localVertices.Length];
+        if (debugRevision != poseRevision || debugScale != scale)
+        {
+            FillWorldVertices(debugWorld, scale);
+            debugRevision = poseRevision; debugScale = scale;
+        }
+        return debugWorld;
+    }
 
     private void FillWorldVertices(Vector3[] destination, float radialScale)
     {
-        radialScale = MathF.Max(0.01f, radialScale);
+        radialScale = exactMesh ? 1f : MathF.Max(0.01f, radialScale);
         for (var i = 0; i < localVertices.Length; i++)
         {
             var local = localVertices[i];

@@ -2559,12 +2559,79 @@ public partial class MainWindow : IDisposable
 
     private void DrawRagdollAdvancedSection()
     {
+        if (ImGui.CollapsingHeader("Mesh Collision [Experimental]##ragdollMeshCollisionSection"))
+            DrawRagdollMeshCollisionSection();
+
+        if (ImGui.CollapsingHeader("Ragdoll Dev Settings##ragdollDevSection"))
+            DrawRagdollDevSection();
+    }
+
+    private void DrawRagdollMeshCollisionSection()
+    {
+        var meshVolumes = config.RagdollMeshVolumes;
+        if (ImGui.Checkbox("Rendered Mesh Body Collision##ragdollMeshVolumes", ref meshVolumes))
+        {
+            config.RagdollMeshVolumes = meshVolumes;
+            config.RefreshRagdollMeshCache();
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Captures visible body/equipment surfaces once into a session cache. Body parts keep fixed collision shapes during ragdoll; no live skin or mesh refit. Unsupported regions use fallback volumes. Off by default.\nToggle off/on or refresh manually after Glamourer, race, model, outfit or scale changes. Fixed joint surfaces may differ from animated skin.\n\n" +
+                             ragdollController.MeshGeometryStatus);
+        if (meshVolumes)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Refresh Mesh##ragdollMeshRefresh")) config.RefreshRagdollMeshCache();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Replace the cached mesh with the current model and pose. Use after changing Glamourer, race, model, outfit or scale. An active ragdoll will restart with the new cache.");
+            var parallelPhysics = config.RagdollMeshParallelPhysics;
+            if (ImGui.Checkbox("Parallel Mesh Physics##ragdollMeshParallel", ref parallelPhysics))
+            {
+                config.RagdollMeshParallelPhysics = parallelPhysics;
+                config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Uses two CPU workers for mesh physics. Can improve CPU-bound scenes, but may compete with game rendering on busy CPUs. Changes apply immediately.");
+            var collisionLod = config.RagdollMeshCollisionLod;
+            if (ImGui.Checkbox("Collision Mesh LOD##ragdollMeshLod", ref collisionLod))
+            {
+                config.RagdollMeshCollisionLod = collisionLod;
+                config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Collision-only simplification, built in the background and retained in the session cache. Full surfaces remain available for queries. Performance depends on contact patterns; fewer triangles do not always mean faster physics.\nChanges take effect on the next ragdoll activation.");
+            if (collisionLod)
+            {
+                var toleranceMm = float.IsFinite(config.RagdollMeshLodToleranceMm)
+                    ? Math.Clamp(config.RagdollMeshLodToleranceMm, .5f, 50f) : 3f;
+                if (ImGui.SliderFloat("LOD Target Error##ragdollMeshLodError", ref toleranceMm, .5f, 50f, "%.1f mm"))
+                    config.RagdollMeshLodToleranceMm = toleranceMm;
+                if (ImGui.IsItemDeactivatedAfterEdit()) config.Save();
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Larger values allow more simplification, but can visibly change ground contact and body contours. This is a finite-sample approximation target for the cached surface.\n" +
+                                     "Fixed collision parts are not deformed with the skin during ragdoll. Changes take effect on the next ragdoll activation.");
+            }
+            var contactQuality = Math.Clamp(config.RagdollMeshContactQuality, 0, 100);
+            if (ImGui.SliderInt("Mesh Contact Quality##ragdollMeshQuality", ref contactQuality, 0, 100, "%d%%"))
+            {
+                config.RagdollMeshContactQuality = contactQuality;
+            }
+            if (ImGui.IsItemDeactivatedAfterEdit()) config.Save();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Lower values reduce body-to-body contact search for better performance; small or narrow contacts may be missed.\n" +
+                                 "Terrain contacts and the original body mesh remain complete. Changes apply immediately.\n" +
+                                 "Skin deformation and joint solving still have a fixed cost, so this does not set an FPS limit.");
+        }
+        ImGui.Spacing();
+    }
+
+    private void DrawRagdollDevSection()
+    {
         ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Per-Bone Physics Parameters");
-        ImGui.TextWrapped("Mesh-aware geometry is authoritative by default. Disable it to author explicit per-bone volumes and optional bones.");
         ImGui.Spacing();
 
         var surfaceProfiles = config.RagdollCharacterSurfaceProfiles;
-        if (ImGui.Checkbox("Mesh-Derived Body Thickness (Experimental)##ragdollSurfaceProfiles", ref surfaceProfiles))
+        if (ImGui.Checkbox("Mesh-Derived Fallback Thickness##ragdollSurfaceProfiles", ref surfaceProfiles))
         {
             config.RagdollCharacterSurfaceProfiles = surfaceProfiles;
             config.Save();
@@ -2575,8 +2642,8 @@ public partial class MainWindow : IDisposable
                 if (addr != nint.Zero) ragdollController.Activate(addr);
             }
         }
-        ImGui.SameLine();
-        ImGui.TextDisabled("Fits collision center, axis, length and thickness from the weighted body mesh; includes hands, feet and j_asi_e toes. Profiles do not author humanoid geometry while enabled. Default on.");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Fits collision center, axis, length and thickness from the weighted body mesh; includes hands, feet and j_asi_e toes. Profiles do not author humanoid geometry while enabled. Default on.");
         ImGui.Spacing();
 
         var debugOverlay = config.RagdollDebugOverlay;
@@ -2585,8 +2652,8 @@ public partial class MainWindow : IDisposable
             config.RagdollDebugOverlay = debugOverlay;
             config.Save();
         }
-        ImGui.SameLine();
-        ImGui.TextDisabled("Renders capsules and joints in 3D.");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Renders body surfaces and joints in 3D. With collision LOD enabled, the mesh wireframe shows the full source surface.");
         ImGui.Spacing();
 
         var groundLift = config.RagdollGroundPenetrationLift;
@@ -2595,13 +2662,12 @@ public partial class MainWindow : IDisposable
             config.RagdollGroundPenetrationLift = groundLift;
             config.Save();
         }
-        ImGui.SameLine();
-        ImGui.TextDisabled("On activation, uniformly lifts the whole rig if any bone would start underground (usually a bent knee). Off by default — conflicts with Ragdoll Follow.");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("On activation, uniformly lifts the whole rig if any bone would start underground (usually a bent knee). Off by default — conflicts with Ragdoll Follow.");
         ImGui.Spacing();
 
         if (surfaceProfiles)
         {
-            ImGui.TextDisabled("Per-bone profiles are not read while mesh-derived geometry is enabled. Anatomical joint topology is invariant in both modes.");
             return;
         }
 
@@ -2629,8 +2695,8 @@ public partial class MainWindow : IDisposable
                     if (addr != nint.Zero) ragdollController.Activate(addr);
                 }
             }
-            ImGui.SameLine();
-            ImGui.TextDisabled("Toggle all j_buki holster/scabbard bones.");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Toggle all j_buki holster/scabbard bones.");
         }
 
         if (ragdollController.IsActive)
@@ -2642,8 +2708,8 @@ public partial class MainWindow : IDisposable
                 if (addr != nint.Zero)
                     ragdollController.Activate(addr);
             }
-            ImGui.SameLine();
-            ImGui.TextDisabled("Press to apply.");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Reactivate the ragdoll to apply changed bone settings.");
             ImGui.Spacing();
         }
 

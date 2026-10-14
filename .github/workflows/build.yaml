@@ -10,6 +10,48 @@ env:
   SOLUTION_DIR: CombatSimulator
 
 jobs:
+  mesh-tests:
+    name: Offline mesh geometry and physics
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [RenderedGeometry, MeshVolume, MeshDeformation, HairPhysics, SurfaceQueries, BoundedMeshContacts, MeshDispatcher, MeshLod]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Run production-linked checks
+        run: dotnet run --project Tests/${{ matrix.project }}/${{ matrix.project }}.csproj -c Release
+      - name: Recover local skin penetration on solid terrain
+        if: matrix.project == 'BoundedMeshContacts'
+        run: dotnet run --project Tests/BoundedMeshContacts/BoundedMeshContacts.csproj -c Release -- --solid-terrain --deform-down
+
+  mesh-stress:
+    name: High-poly collision stress
+    runs-on: windows-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        pose: [dense, spread]
+        quality: [0, 100]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Run bounded native collision under a hard memory limit
+        run: dotnet run --project Tests/MeshStress/MeshStress.csproj -c Release -- --policy bounded --pose ${{ matrix.pose }} --quality ${{ matrix.quality }} --terrain-grid 12 --solid-terrain --iterations 8 --steps 600 --rss-mib 256 --seconds 120
+      - name: Run shared workers with collision LOD
+        if: matrix.quality == 0
+        run: dotnet run --project Tests/MeshStress/MeshStress.csproj -c Release -- --policy bounded --pose ${{ matrix.pose }} --quality 50 --terrain-grid 12 --solid-terrain --iterations 8 --steps 600 --frozen-mesh --background-lod --threads 2 --shared-dispatcher --rss-mib 256 --seconds 120
+
   build:
     runs-on: ubuntu-latest
     steps:

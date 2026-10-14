@@ -49,6 +49,9 @@ public class RagdollDebugOverlay
         var drawList = ImGui.GetForegroundDrawList();
         var editingBone = mainWindow.EditingBoneName;
         DrawCharacterSurfaces(drawList, editingBone);
+        if (!string.IsNullOrEmpty(ragdollController.MeshGeometryStatus))
+            drawList.AddText(ImGui.GetMainViewport().WorkPos + new Vector2(12f, 12f),
+                ImGui.GetColorU32(new Vector4(0.7f, 0.95f, 1f, 1f)), ragdollController.MeshGeometryStatus);
 
         foreach (var cap in capsules)
         {
@@ -73,8 +76,11 @@ public class RagdollDebugOverlay
             var xAxis = Vector3.Transform(Vector3.UnitX, cap.Orientation);
             var zAxis = Vector3.Transform(Vector3.UnitZ, cap.Orientation);
 
-            if (cap.ColliderShape == RagdollController.RagdollColliderShape.ProfileHull)
+            if (cap.ColliderShape == RagdollController.RagdollColliderShape.Mesh ||
+                cap.ColliderShape == RagdollController.RagdollColliderShape.ProfileHull)
             {
+                // The surface wireframe above is the contact geometry. This marker only
+                // identifies the body's centre and anatomical frame, not another collider.
                 DrawCircle3D(drawList, cap.Position, xAxis, zAxis,
                     MathF.Max(0.005f, cap.Radius * 0.35f), jointColor, thickness + 0.5f);
                 if (gameGui.WorldToScreen(cap.Position, out var profileLabelPos))
@@ -159,7 +165,9 @@ public class RagdollDebugOverlay
     {
         var normalColor = ImGui.GetColorU32(new Vector4(0.15f, 0.9f, 1f, 0.82f));
         var selectedColor = ImGui.GetColorU32(new Vector4(1f, 0.95f, 0.15f, 1f));
-        foreach (var surface in ragdollController.GetCharacterSurfaceDebugBones(CharacterSurfaceUsage.Physics))
+        // Display sampling only: full triangle surfaces remain in collision/query geometry.
+        // Limits bound projection/draw-list work even with multiple high-poly mod bodies.
+        foreach (var surface in ragdollController.GetCharacterSurfaceDebugBones(CharacterSurfaceUsage.Physics, 128, 2048))
         {
             var vertices = surface.Vertices.Span;
             var indices = surface.Indices.Span;

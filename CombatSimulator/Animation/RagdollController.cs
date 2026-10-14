@@ -10,6 +10,7 @@ using System.Numerics;
 using System.Text;
 using CombatSimulator.Animation.CollapseProfiles;
 using CombatSimulator.Animation.SurfaceProfiles;
+using CombatSimulator.Animation.MeshVolume;
 using CombatSimulator.Core;
 using BepuPhysics;
 using BepuPhysics.Collidables;
@@ -1702,7 +1703,7 @@ public unsafe partial class RagdollController : IDisposable
     // joints use dedicated frames. Every rigid joint adds only finite angular friction.
     public enum JointType { Ball, Hinge }
     public enum AnatomicalRole { Auto, Generic, Pelvis, Spine, Head, Shoulder, Elbow, Hand, Hip, Knee, Ankle, Foot, Cloth, SoftBody, Weapon }
-    public enum RagdollColliderShape { Capsule, Box, ProfileHull }
+    public enum RagdollColliderShape { Capsule, Box, ProfileHull, Mesh }
 
     public void SetDismemberedBones(IEnumerable<string> bones)
     {
@@ -1852,6 +1853,8 @@ public unsafe partial class RagdollController : IDisposable
         // body's COM pose back to the anatomical bone origin used by skeleton write-back. Collision
         // and surface queries stay at the body's real center. Zero for bone-centered shapes.
         public Vector3 ShapeCenterOffset;
+        public BodyMeshGeometry? MeshGeometry;
+        public MeshCollisionLodResult? MeshLod;
         // The mass this body was actually built with, so the joint above it can size its friction
         // against the weight it is holding rather than against a constant.
         public float Mass;
@@ -1885,8 +1888,9 @@ public unsafe partial class RagdollController : IDisposable
     }
 
     /// <summary>World-space profile triangles for developer visualization.</summary>
-    public IEnumerable<CharacterSurfaceDebugBone> GetCharacterSurfaceDebugBones(CharacterSurfaceUsage usage)
-        => characterSurfaceRuntime?.GetDebugBones(usage) ?? Array.Empty<CharacterSurfaceDebugBone>();
+    public IEnumerable<CharacterSurfaceDebugBone> GetCharacterSurfaceDebugBones(CharacterSurfaceUsage usage,
+        int maximumFacesPerBone = 0, int maximumFacesTotal = 0)
+        => characterSurfaceRuntime?.GetDebugBones(usage, maximumFacesPerBone, maximumFacesTotal) ?? Array.Empty<CharacterSurfaceDebugBone>();
 
     private CharacterSurfaceIdentity ReadCharacterSurfaceIdentity()
         => ReadCharacterSurfaceIdentity(targetCharacterAddress);
@@ -1911,7 +1915,7 @@ public unsafe partial class RagdollController : IDisposable
     private void BuildCharacterSurfaceRuntime(bool genericSkeleton)
     {
         characterSurfaceRuntime = null;
-        if (!config.RagdollCharacterSurfaceProfiles || genericSkeleton ||
+        if ((!config.RagdollCharacterSurfaceProfiles && !config.RagdollMeshVolumes) || genericSkeleton ||
             simulation == null || ragdollBones.Count == 0)
             return;
 
@@ -1966,7 +1970,8 @@ public unsafe partial class RagdollController : IDisposable
                 : AnatomicalRole.Generic.ToString();
             seeds[i] = new CharacterSurfaceBoneSeed(
                 rb.Name, role, halfLength, radiusX, radiusZ,
-                rb.ColliderShape == RagdollColliderShape.Box);
+                rb.ColliderShape == RagdollColliderShape.Box,
+                rb.MeshGeometry);
         }
 
         characterSurfaceRuntime = new CharacterSurfaceRuntime(profile, identity, seeds);
@@ -2890,6 +2895,8 @@ public unsafe partial class RagdollController : IDisposable
 
     private void OnRenderFrame()
     {
+        try { UpdateFrozenMeshCache(); }
+        catch (Exception ex) { log.Warning(ex, "Frozen collision cache capture failed; retrying when the model is ready."); }
         if (!isActive)
         {
             try { OnAnimatedHairFrame(); }
@@ -4084,6 +4091,8 @@ public unsafe partial class RagdollController : IDisposable
 
     private static float BodyBottom(in RagdollBone bone, BodyReference body)
     {
+        if (bone.MeshGeometry != null)
+            return bone.MeshGeometry.Bottom(body.Pose.Position, body.Pose.Orientation);
         if (bone.ColliderShape == RagdollColliderShape.Box)
         {
             var x = Vector3.Transform(Vector3.UnitX, body.Pose.Orientation);
@@ -4116,6 +4125,8 @@ public unsafe partial class RagdollController : IDisposable
 
     private bool InitializePhysics()
     {
+        activeRagdollMeshVolumes = config.RagdollMeshVolumes;
+        activeMeshCacheRevision = config.RagdollMeshCacheRevision;
         var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
         if (skelNullable == null) return false;
         var skel = skelNullable.Value;
@@ -4298,6 +4309,11 @@ public unsafe partial class RagdollController : IDisposable
                 // poses so the known beta fallback-removal path remains a last resort.
                 FallbackBatchThreshold = 256,
             });
+        if (config.RagdollMeshVolumes && !genericSkeleton)
+        {
+            CollisionWorkBudget.Register(simulation.NarrowPhase.CollisionTaskRegistry, () => config.RagdollMeshContactQuality);
+            InitializeMeshTiming();
+        }
 
         // Safety net: flat box well below the character prevents infinite falling
         // if the terrain mesh has gaps or winding issues.
@@ -4398,6 +4414,10 @@ public unsafe partial class RagdollController : IDisposable
 
         // Fit collision geometry before body creation. Bodies may be offset from their bone and use
         // a measured axis/length, but joint anchors and topology remain on the skeleton pivots.
+        var bodyMeshVolumes = config.RagdollMeshVolumes && !genericSkeleton
+            ? BuildBodyMeshVolumes(skel, defByName, nameToIndex, boneWorldPositions, boneWorldRotations)
+            : new Dictionary<int, BodyMeshGeometry>();
+        if (!config.RagdollMeshVolumes) MeshGeometryStatus = "Rendered mesh collision disabled";
         var structuralMeshFits = config.RagdollCharacterSurfaceProfiles && !genericSkeleton &&
                                  ReadCharacterSurfaceIdentity().IsHumanoid
             ? BuildStructuralMeshThicknessFits(skel, defByName, nameToIndex)
@@ -4426,6 +4446,8 @@ public unsafe partial class RagdollController : IDisposable
             : null;
         float resolvedTotalMass = 0f; // Tier D: sum of all enabled bodies' effective mass.
         float requiredRigLift = 0f;
+        float initialMeshPenetration = 0f;
+        string initialMeshPenetrationBone = string.Empty;
         foreach (var def in BoneDefs)
         {
             if (!nameToIndex.TryGetValue(def.Name, out var boneIdx)) continue;
@@ -4627,6 +4649,31 @@ public unsafe partial class RagdollController : IDisposable
                 shapeHalfLength = effectiveHalfLength;
             }
 
+            var effectiveMass = ResolveBoneMass(def, massByBone);
+            resolvedTotalMass += effectiveMass;
+            TypedIndex shapeIndex = default;
+            BodyInertia bodyInertia = default;
+            BodyMeshGeometry? meshVolume = null;
+            MeshCollisionLodResult? meshLod = null;
+            if (bodyMeshVolumes.TryGetValue(boneIdx, out var worldMesh) &&
+                TryCreateBodyMesh(def.Name, worldMesh, boneWorldPos, capsuleWorldRot, effectiveMass,
+                    out shapeIndex, out bodyInertia, out var meshCenter, out var localMesh, out meshLod))
+            {
+                meshVolume = localMesh;
+                runtimeColliderShape = RagdollColliderShape.Mesh;
+                capsuleCenter = meshCenter;
+                segmentHalfLength = 0f;
+                fittedShapeCenterOffset = Vector3.Transform(meshCenter - boneWorldPos,
+                    Quaternion.Inverse(capsuleWorldRot));
+                // Bounds are compatibility broad-phase metadata only. Contact and support use
+                // the exact local triangle surface, never this capsule envelope.
+                localMesh.Bounds(Vector3.Zero, Quaternion.Identity, out var minMesh, out var maxMesh);
+                var envelope = Vector3.Max(Vector3.Abs(minMesh), Vector3.Abs(maxMesh));
+                shapeRadius = new Vector2(envelope.X, envelope.Z).Length();
+                shapeHalfLength = envelope.Y;
+                shapeBoxHalfExtents = envelope;
+            }
+
             // Clamp body center above ground so bodies don't start underground.
             // Underground capsules cause explosive ground-collision forces in the first
             // frames. Lift just enough so the capsule bottom (center - extent - radius)
@@ -4634,7 +4681,17 @@ public unsafe partial class RagdollController : IDisposable
             // Accumulate one common lift from the actual runtime shapes. Translating the whole rig
             // together avoids preloading joints even when mesh-derived body centers are asymmetric.
             float bodyBottomExtent;
-            if (runtimeColliderShape == RagdollColliderShape.Box)
+            if (meshVolume != null)
+            {
+                bodyBottomExtent = capsuleCenter.Y - meshVolume.Bottom(capsuleCenter, capsuleWorldRot);
+                var penetration = groundY + bodyBottomExtent - capsuleCenter.Y;
+                if (penetration > initialMeshPenetration)
+                {
+                    initialMeshPenetration = penetration;
+                    initialMeshPenetrationBone = def.Name;
+                }
+            }
+            else if (runtimeColliderShape == RagdollColliderShape.Box)
             {
                 var xAxis = Vector3.Transform(Vector3.UnitX, capsuleWorldRot);
                 var yAxis = Vector3.Transform(Vector3.UnitY, capsuleWorldRot);
@@ -4661,15 +4718,14 @@ public unsafe partial class RagdollController : IDisposable
 
             // Tier D — resolve effective mass (anthropometric fraction x body mass, or
             // the hand-picked Mass when the toggle is off / bone not in the table).
-            var effectiveMass = ResolveBoneMass(def, massByBone);
-            resolvedTotalMass += effectiveMass;
-
-            TypedIndex shapeIndex;
-            BodyInertia bodyInertia;
             // Kept alongside the body so callers can ask for the volume the physics is actually
             // using (see TryGetBoneCapsule) rather than re-deriving it from the defs.
             var shapeCenterOffset = fittedShapeCenterOffset;
-            if (runtimeColliderShape == RagdollColliderShape.Box)
+            if (meshVolume != null)
+            {
+                // Shape and surface inertia were constructed/recentered together above.
+            }
+            else if (runtimeColliderShape == RagdollColliderShape.Box)
             {
                 var box = new Box(
                     shapeBoxHalfExtents.X * 2f,
@@ -4686,7 +4742,7 @@ public unsafe partial class RagdollController : IDisposable
             }
 
             bodyInertia = ApplyLimbInertia(
-                bodyInertia, def, useStructuralMeshGeometry || def.HasMeshFit);
+                bodyInertia, def, meshVolume != null || useStructuralMeshGeometry || def.HasMeshFit);
 
             // Allow sleeping even with settle collision; external kinematic colliders can wake
             // the corpse on contact, while permanent awake bodies keep solving tiny jitter.
@@ -4710,7 +4766,10 @@ public unsafe partial class RagdollController : IDisposable
                 var maxAng = activeRagdollIsGeneric ? GenericMaxAngularVelocity : HumanMaxAngularVelocity;
                 var scale = MathF.Max(0f, config.RagdollHandoffVelocityScale);
                 var br = simulation.Bodies.GetBodyReference(bodyHandle);
-                br.Velocity.Linear = ClampVectorLength(seed.Lin * scale, maxLin);
+                var centerVelocity = seed.Lin;
+                if (meshVolume != null)
+                    centerVelocity += Vector3.Cross(seed.Ang, capsuleCenter - boneWorldPos);
+                br.Velocity.Linear = ClampVectorLength(centerVelocity * scale, maxLin);
                 br.Velocity.Angular = ClampVectorLength(seed.Ang * scale, maxAng);
             }
 
@@ -4751,8 +4810,11 @@ public unsafe partial class RagdollController : IDisposable
                 ColliderShape = runtimeColliderShape,
                 BoxHalfExtents = shapeBoxHalfExtents,
                 ShapeCenterOffset = shapeCenterOffset,
+                MeshGeometry = meshVolume,
+                MeshLod = meshLod,
                 Mass = effectiveMass,
             });
+
 
             // Log initial state for diagnostics
             if (config.RagdollVerboseLog)
@@ -4767,24 +4829,47 @@ public unsafe partial class RagdollController : IDisposable
             }
         }
 
+        if (config.RagdollMeshVolumes && !genericSkeleton)
+        {
+            var acceptedMeshes = ragdollBones.Count(b => b.MeshGeometry != null);
+            var fallbackBodies = ragdollBones.Count - acceptedMeshes;
+            MeshGeometryStatus += $"; accepted {acceptedMeshes} mesh / {fallbackBodies} fallback bodies";
+            int fullFaces = 0, collisionFaces = 0;
+            float measuredError = 0;
+            foreach (var rb in ragdollBones)
+            {
+                fullFaces += rb.MeshGeometry?.Indices.Length / 3 ?? 0;
+                collisionFaces += rb.MeshLod?.CollisionFaceCount ?? rb.MeshGeometry?.Indices.Length / 3 ?? 0;
+                measuredError = MathF.Max(measuredError, rb.MeshLod?.MaximumSampledSurfaceError ?? 0);
+            }
+            MeshGeometryStatus += $"; initial collision {collisionFaces}/{fullFaces} faces, sampled initial error {measuredError * 1000:F2} mm";
+            log.Info($"Ragdoll collision geometry: {MeshGeometryStatus}");
+        }
+
         // Off by default (RagdollGroundPenetrationLift): fights Ragdoll Follow, which disagrees
         // with a post-lift root about where the corpse actually is and pops visibly. See
         // Configuration.cs for the full rationale.
-        if (config.RagdollGroundPenetrationLift && requiredRigLift > 0f)
+        // Surface meshes cannot rely on solid-volume overlap recovery. Only their
+        // real surfaces request this mandatory startup correction; legacy proxy
+        // envelopes remain controlled by RagdollGroundPenetrationLift.
+        var startupLift = config.RagdollGroundPenetrationLift ? requiredRigLift :
+            initialMeshPenetration > 0f ? initialMeshPenetration + 0.005f : 0f;
+        if (startupLift > 0f)
         {
             // Ordinary corrections are centimetres. Cap corrupt/remote terrain samples so one bad
             // ray cannot teleport the corpse; residual overlap is handled by damped contact recovery.
-            var lift = MathF.Min(requiredRigLift, 0.35f);
+            var lift = MathF.Min(startupLift, 0.35f);
             var offset = Vector3.UnitY * lift;
             foreach (var rb in ragdollBones)
             {
                 var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
                 body.Pose.Position += offset;
+                body.UpdateBounds();
             }
             var liftedNames = new List<string>(boneWorldPositions.Keys);
             foreach (var name in liftedNames)
                 boneWorldPositions[name] += offset;
-            log.Info($"[Ragdoll Init] uniformly lifted rig by {lift:F3}m (requested {requiredRigLift:F3}m).");
+            log.Info($"[Ragdoll Init] uniformly lifted rig by {lift:F3}m (requested {startupLift:F3}m; deepest mesh='{initialMeshPenetrationBone}').");
         }
         else if (requiredRigLift > 0f)
         {
@@ -5558,10 +5643,20 @@ public unsafe partial class RagdollController : IDisposable
             triangles[ti++] = new Triangle(v10, v11, v01);
         }
 
-        var terrainMesh = new BepuPhysics.Collidables.Mesh(triangles, Vector3.One, bufferPool);
-        var terrainIndex = simulation.Shapes.Add(terrainMesh);
-        simulation.Statics.Add(new StaticDescription(
-            Vector3.Zero, Quaternion.Identity, terrainIndex));
+        if (activeRagdollMeshVolumes && !activeRagdollIsGeneric)
+        {
+            // Keep the exact sampled top surface, with solid ground below it.
+            // Native convex/mesh queries bypass body/body contact sampling.
+            TerrainCollisionSurface.Add(simulation, bufferPool, new ReadOnlySpan<Triangle>(triangles.Memory, triCount));
+            bufferPool.Return(ref triangles);
+        }
+        else
+        {
+            var terrainMesh = new BepuPhysics.Collidables.Mesh(triangles, Vector3.One, bufferPool);
+            var terrainIndex = simulation.Shapes.Add(terrainMesh);
+            simulation.Statics.Add(new StaticDescription(
+                Vector3.Zero, Quaternion.Identity, terrainIndex));
+        }
         terrainPatchCenters.Add(center);
     }
 
@@ -6354,7 +6449,7 @@ public unsafe partial class RagdollController : IDisposable
 
         var s = ns.CharBase->Skeleton->Transform.Scale;
         var scale = new Vector3(s.X, s.Y, s.Z);
-        if (!IsFinite(scale) || scale.X <= 0f || scale.Y <= 0f || scale.Z <= 0f)
+        if (!IsFinite(scale) || MathF.Abs(scale.X) < 1e-6f || MathF.Abs(scale.Y) < 1e-6f || MathF.Abs(scale.Z) < 1e-6f)
             return Vector3.One;
 
         return scale;
@@ -6384,7 +6479,7 @@ public unsafe partial class RagdollController : IDisposable
             {
                 var s = gameObject->DrawObject->Scale;
                 scale = new Vector3(s.X, s.Y, s.Z);
-                if (IsFinite(scale) && scale.X > 0f && scale.Y > 0f && scale.Z > 0f)
+                if (IsFinite(scale) && MathF.Abs(scale.X) >= 1e-6f && MathF.Abs(scale.Y) >= 1e-6f && MathF.Abs(scale.Z) >= 1e-6f)
                     return true;
             }
         }
@@ -6396,7 +6491,7 @@ public unsafe partial class RagdollController : IDisposable
     // Capsules cannot represent non-uniform scale. Use the largest component so their volume
     // encloses the visual bone instead of leaving a thin axis that can pass through a corpse.
     private static float CollisionScale(Vector3 scale)
-        => MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
+        => MathF.Max(MathF.Abs(scale.X), MathF.Max(MathF.Abs(scale.Y), MathF.Abs(scale.Z)));
 
     private bool TryCreateMeshShape(List<Triangle> triangles, Vector3 scale, out TypedIndex shapeIndex)
     {
@@ -8109,8 +8204,18 @@ public unsafe partial class RagdollController : IDisposable
         if (skelNullable == null) return;
         var skel = skelNullable.Value;
 
-        // The draw object can be rebuilt mid-ragdoll (gear/glamour change) with a different
-        // bone count. Our stored bone indices and resting/awake sampling would then be stale.
+        if (activeRagdollMeshVolumes != config.RagdollMeshVolumes ||
+            (activeRagdollMeshVolumes && activeMeshCacheRevision != config.RagdollMeshCacheRevision))
+        {
+            log.Info("Frozen mesh collision option/cache refreshed; rebuilding physical geometry.");
+            RemoveHairRig();
+            DestroySimulation();
+            physicsStarted = false;
+            return;
+        }
+
+        // Manual refresh above can rebuild a changed skeleton. Without refresh, stop
+        // before using old bone indices; never read a new model to replace the cache.
         if (skel.BoneCount != initialBoneCount)
         {
             log.Info($"RagdollController: skeleton bone count changed ({initialBoneCount}->{skel.BoneCount}); deactivating.");
@@ -8176,6 +8281,7 @@ public unsafe partial class RagdollController : IDisposable
                 skeleton->Transform.Rotation.W);
             skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
         }
+
 
         if (skeletonMoved)
             BeginBiomechanicalSettle();
@@ -8506,6 +8612,9 @@ public unsafe partial class RagdollController : IDisposable
         else if (!resting)
         {
             physicsAccumulator += dt;
+            var meshFrameStart = activeRagdollMeshVolumes && !activeRagdollIsGeneric
+                ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+            meshCollisionTicks = meshSolveTicks = 0;
             var maxLinear = activeRagdollIsGeneric ? GenericMaxLinearVelocity : HumanMaxLinearVelocity;
             var maxAngular = activeRagdollIsGeneric ? GenericMaxAngularVelocity : HumanMaxAngularVelocity;
             while (physicsAccumulator >= FixedTimestep && substeps < MaxSubstepsPerFrame)
@@ -8515,12 +8624,14 @@ public unsafe partial class RagdollController : IDisposable
                 CapturePrevBodyPoses(boneCount);
                 hasPrevPhysicsState = true;
                 DriveGrabConstraints(FixedTimestep); // advance finite-force targets before solve
+                ApplyCachedMeshLod();
                 ApplyFallGravity(FixedTimestep); // a descent that bites, on top of the integrator's honest g
                 var steppedExternally = false;
                 StepAdditionalPhysics(FixedTimestep, ref steppedExternally);
-                if (!steppedExternally) simulation.Timestep(FixedTimestep);
+                if (!steppedExternally) StepPhysicsSimulation(FixedTimestep);
                 ClampVelocities(maxLinear, maxAngular);
                 ApplyStandingAnchorCorrection();
+                UpdateCharacterSurfaceRuntime();
                 StepHairRig(); // one-way guides follow the accepted head pose
                 DetectImpact(FixedTimestep);
                 physicsAccumulator -= FixedTimestep;
@@ -8533,7 +8644,17 @@ public unsafe partial class RagdollController : IDisposable
                     physicsAccumulator = 0f;
                     break;
                 }
+                // A costly mesh tick must not trigger several more costly catch-up
+                // ticks in the same render hook. Keep the fixed solver timestep;
+                // discard excess wall time just as at the existing substep cap.
+                if (meshFrameStart != 0 &&
+                    System.Diagnostics.Stopwatch.GetElapsedTime(meshFrameStart).TotalSeconds >= FixedTimestep)
+                {
+                    physicsAccumulator = 0f;
+                    break;
+                }
             }
+            ReportMeshPhysicsBudget(meshFrameStart, substeps);
             // If we hit the substep cap (severe hitch / very low fps), drop the backlog so
             // we don't fire a burst of catch-up steps on the next frame (spiral of death).
             if (substeps == MaxSubstepsPerFrame)
@@ -8661,9 +8782,7 @@ public unsafe partial class RagdollController : IDisposable
 
                 activeDefByName.TryGetValue(rb.Name, out var boneDef);
                 var capsuleYDir = Vector3.Transform(Vector3.UnitY, bodyRef.Pose.Orientation);
-                var capsuleBottomY = bodyRef.Pose.Position.Y
-                                     - MathF.Abs(capsuleYDir.Y) * boneDef.CapsuleHalfLength
-                                     - boneDef.CapsuleRadius;
+                var capsuleBottomY = BodyBottom(rb, bodyRef);
                 if (capsuleBottomY < lowestCapsuleBottomY)
                     lowestCapsuleBottomY = capsuleBottomY;
             }
@@ -9132,9 +9251,9 @@ public unsafe partial class RagdollController : IDisposable
     }
 
     /// <summary>
-    /// The world-space collision volume of a ragdoll bone — the surface the physics itself uses.
-    /// Callers that need something to conform to (a hand closing around a throat) can hit-test
-    /// against this instead of guessing a shape from the bone origin. False if the bone has no body
+    /// A compatibility bounding capsule for a ragdoll bone. Mesh bodies use actual triangle
+    /// surfaces for contact; use TryGetCharacterSurface for final conform/support decisions.
+    /// False if the bone has no body
     /// or the ragdoll isn't simulating yet.
     /// </summary>
     public bool TryGetBoneCapsule(string boneName, out BoneCapsule capsule)
@@ -13321,6 +13440,8 @@ public unsafe partial class RagdollController : IDisposable
 
     private void DestroySimulation()
     {
+        ClearRenderedGeometryCapture();
+        lastMeshLodInstall = 0;
         externalBodyGeneration++;
         impactFreezeRemaining = 0f;
         impactCooldownRemaining = 0f;
@@ -13366,6 +13487,7 @@ public unsafe partial class RagdollController : IDisposable
         weaponPrevValid = false;
         simulation?.Dispose();
         simulation = null;
+        ReleaseMeshDispatcher();
         bufferPool?.Clear();
         bufferPool = null;
     }
@@ -13373,6 +13495,7 @@ public unsafe partial class RagdollController : IDisposable
     public void Dispose()
     {
         Deactivate();
+        frozenMeshCache?.Dispose(); frozenMeshCache = null;
         RemoveHairRig();
         boneService.OnRenderFrame -= OnRenderFrame;
         Core.Services.Framework.Update -= ApplyDeferredFollowTransform;

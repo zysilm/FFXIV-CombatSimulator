@@ -160,4 +160,20 @@ long allocations = GC.GetAllocatedBytesForCurrentThread() - before;
 Check(allocations == 0, $"Worst-size solver allocates per-step memory: {allocations} bytes");
 Check(large.Positions.All(FlexibleHairSolver.Finite), "Maximum-size guide tree diverged");
 Console.WriteLine($"Maximum-size solver: 512 points, 12 body envelopes, {stopwatch.Elapsed.TotalMilliseconds / 300:F3} ms/step (offline CPU only; excludes native terrain and pose writeback).");
+// A sideways mesh face must collide independently of terrain and capsule envelopes.
+var wallHair = Make();
+var wallPlanes = rest.Select(p => new HairContactPlane(true, new(.1f, 1 + p.Y, p.Z), -Vector3.UnitX)).ToArray();
+for (int i = 0; i < 600; i++)
+    wallHair.Step(1f / 60, new(0, 1, 0), Quaternion.Identity, .02f, 2.2f, [], [], .005f, wallPlanes);
+Check(wallHair.Positions.Skip(1).All(p => p.X <= .0951f), "Triangle-plane body contact replaced by a capsule or ignored");
+Check(Vector3.Distance(wallHair.Positions[0], new(0, 1, 0)) < 1e-6f, "Mesh contact displaced scalp anchor");
+for (int i = 0; i < 600; i++)
+    wallHair.Step(1f / 60, new(0, 1, 0), Quaternion.Identity, .02f, 2.2f, [], [], .005f);
+Check(!wallHair.Awake, "Hair failed to sleep after mesh contact removal");
+wallHair.Step(1f / 60, new(0, 1, 0), Quaternion.Identity, .02f, 2.2f, [], [], .005f, wallPlanes);
+Check(wallHair.Awake, "Changed mesh surface failed to wake sleeping hair");
+before = GC.GetAllocatedBytesForCurrentThread();
+for (int i = 0; i < 300; i++)
+    wallHair.Step(1f / 60, new(0, 1, 0), Quaternion.Identity, .02f, 2.2f, [], [], .005f, wallPlanes);
+Check(GC.GetAllocatedBytesForCurrentThread() == before, "Mesh-plane contact allocated per step");
 Console.WriteLine($"PASS: {assertions} assertions; real production solver, curvature, inertia, lengths, head rotation, sleep/wake, teleport, contacts and zero step allocations.");
