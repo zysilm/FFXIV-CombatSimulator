@@ -26,9 +26,13 @@ public unsafe partial class RagdollController
 
     private const float HairSurfaceReach = .1f;
     private const float HairGroundResampleDistance = .1f;
+    private const int HairSurfaceSmoothing = 10;
     private readonly List<HairSurfaceRegion> hairSurfaceRegions = new();
     private readonly HashSet<string> hairSurfaceNames = new(StringComparer.Ordinal);
     private FrozenMeshGeometryCache? hairSurfaceCache;
+    // Immutable smoothed regions, shared across rebinds of the same cache (see SmoothedHairSurface).
+    private readonly Dictionary<string, PosedSurfaceRegion> smoothedHairSurfaces = new(StringComparer.Ordinal);
+    private FrozenMeshGeometryCache? smoothedHairSurfaceSource;
     private readonly HairContactCapsule[] animatedContactsNow = new HairContactCapsule[64];
     private readonly HairContactCapsule[] animatedContactsPrevious = new HairContactCapsule[64];
     private int animatedContactsNowCount, animatedContactsPreviousCount;
@@ -47,7 +51,7 @@ public unsafe partial class RagdollController
     /// when the cache itself is replaced (refresh, actor change).</summary>
     private void RefreshHairSurfaceRegions(in SkeletonAccess skel, nint address)
     {
-        var cache = CachedSurfaceFor(address);
+        var cache = config.RagdollHairBodyMesh ? CachedSurfaceFor(address) : null;
         if (cache == hairSurfaceCache) return;
         hairSurfaceCache = cache;
         hairSurfaceRegions.Clear(); hairSurfaceNames.Clear();
@@ -55,7 +59,7 @@ public unsafe partial class RagdollController
         foreach (var name in cache.Names)
         {
             if (!cache.TryGetSurfaceGeometry(name, out var geometry)) continue;
-            var region = new HairSurfaceRegion { Region = new PosedSurfaceRegion(name, geometry) };
+            var region = new HairSurfaceRegion { Region = SmoothedHairSurface(cache, name, geometry) };
             if (animatedHair) region.Bone = boneService.ResolveBoneIndex(skel, name);
             else
                 for (int i = 0; i < ragdollBones.Count; i++)
@@ -64,6 +68,24 @@ public unsafe partial class RagdollController
             hairSurfaceRegions.Add(region); hairSurfaceNames.Add(name);
         }
         log.Info($"Hair body surfaces: {hairSurfaceRegions.Count} cached rendered regions (capsule fallback elsewhere).");
+    }
+
+    /// <summary>
+    /// Hair (with a 1–2 cm shell) should feel the body's shape, not render facets and wrinkles:
+    /// a contact sliding over them changes direction every step (jitter). Smoothing a whole body
+    /// costs ~80 ms, so the result is kept per cache and reused when the rig rebinds (ragdoll
+    /// start, standing up), which would otherwise hitch at exactly those moments.
+    /// </summary>
+    private PosedSurfaceRegion SmoothedHairSurface(FrozenMeshGeometryCache cache, string name, BodyMeshGeometry geometry)
+    {
+        if (smoothedHairSurfaceSource != cache)
+        {
+            smoothedHairSurfaces.Clear();
+            smoothedHairSurfaceSource = cache;
+        }
+        if (!smoothedHairSurfaces.TryGetValue(name, out var region))
+            smoothedHairSurfaces[name] = region = new PosedSurfaceRegion(name, SurfaceSmoothing.Taubin(geometry, HairSurfaceSmoothing));
+        return region;
     }
 
     private void ClearHairSurfaceRegions()

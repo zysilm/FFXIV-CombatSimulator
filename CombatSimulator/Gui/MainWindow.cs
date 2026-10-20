@@ -4524,6 +4524,14 @@ public partial class MainWindow : IDisposable
                         }
                         HelpMarker("Collision thickness of a strand against the body/ground.");
 
+                        var hairBodyMesh = config.RagdollHairBodyMesh;
+                        if (ImGui.Checkbox("Collide with body mesh##hairrig", ref hairBodyMesh))
+                        {
+                            config.RagdollHairBodyMesh = hairBodyMesh;
+                            config.Save();
+                        }
+                        HelpMarker("Hair rests on a smoothed copy of the rendered body (shoulders, back, chest) instead of approximate body capsules. Off by default (capsules).");
+
                         if (ImGui.Button("Reset hair rig params##hairrig"))
                         {
                             config.RagdollHairRigSegmentMass = 0.02f;

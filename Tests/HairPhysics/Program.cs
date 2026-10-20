@@ -364,5 +364,68 @@ BodyMeshGeometry Ellipsoid(Vector3 radii)
     Check(lateMotion < .0002f && !s.Awake, $"Hair lying between body and floor keeps buzzing: {lateMotion * 1000:F2} mm/step");
     Console.WriteLine($"Lying ragdoll hair between body mesh and floor: late motion {lateMotion * 1000:F3} mm/step, asleep.");
 }
+// Standing, idle breathing: hair resting on a detailed render-like shoulder (dense facets with
+// 2 mm wrinkle noise). Face-normal contacts made the push direction jump between facets each
+// step; the hair surface is smoothed once and pushes from the closest point.
+{
+    BodyMeshGeometry Noisy(int seg, float noise)
+    {
+        var random = new Random(1); var v = new List<Vector3>(); var f = new List<int>();
+        var radii = new Vector3(.2f, .12f, .13f);
+        for (int i = 0; i <= seg; i++)
+            for (int j = 0; j <= seg; j++)
+            {
+                float theta = MathF.PI * i / seg, phi = 2 * MathF.PI * j / seg;
+                var p = new Vector3(radii.X * MathF.Sin(theta) * MathF.Cos(phi), radii.Y * MathF.Cos(theta), radii.Z * MathF.Sin(theta) * MathF.Sin(phi));
+                v.Add(p + p / p.Length() * (float)(random.NextDouble() * 2 - 1) * noise);
+            }
+        for (int i = 0; i < seg; i++)
+            for (int j = 0; j < seg; j++)
+            {
+                int a = i * (seg + 1) + j, b = a + 1, c = a + seg + 1, d = c + 1;
+                f.AddRange([a, c, b, b, c, d]);
+            }
+        return new BodyMeshGeometry(v.ToArray(), f.ToArray());
+    }
+    var detailed = Noisy(64, .002f);
+    var smoothed = SurfaceSmoothing.Taubin(detailed, 10);
+    double meanShift = 0;
+    for (int i = 0; i < detailed.Vertices.Length; i++) meanShift += detailed.Vertices[i].Length() - smoothed.Vertices[i].Length();
+    meanShift /= detailed.Vertices.Length;
+    Check(MathF.Abs((float)meanShift) < .002f, $"Hair surface smoothing shrinks the body: {meanShift * 1000:F2} mm");
+    double Breathing(BodyMeshGeometry geometry)
+    {
+        var region = new PosedSurfaceRegion("j_sebo_c", geometry);
+        var strand = new List<Vector3> { new(0, 0, -.06f) }; var strandParents = new List<int> { -1 };
+        for (int i = 1; i <= 6; i++) { strand.Add(new(.02f * i, -.06f * i, -.08f - .012f * i)); strandParents.Add(i - 1); }
+        var headStart = new Vector3(0, 1.55f, 0);
+        var s = new FlexibleHairSolver(strandParents.ToArray(), strand.ToArray(), .02f, headStart, Quaternion.Identity, Vector3.Zero, Vector3.Zero);
+        var points = new HairContactPlane[s.Count]; var segments = new HairContactPlane[s.Count];
+        var tips = new List<Vector3>(); Vector3 lastOrigin = default; var lastRotation = Quaternion.Identity;
+        for (int step = 0; step < 1200; step++)
+        {
+            float t = step / 60f;
+            var origin = new Vector3(0, 1.36f + .004f * MathF.Sin(t * 1.7f), -.09f);
+            var rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitX, .03f * MathF.Sin(t * 1.7f));
+            var headNow = headStart + new Vector3(0, .004f * MathF.Sin(t * 1.7f), 0);
+            HairContactPlane Plane(Vector3 p)
+            {
+                if (!region.TryContact(p, origin, rotation, .1f, out var hit, out var normal, out _)) return default;
+                var before = lastOrigin + Vector3.Transform(Vector3.Transform(hit - origin, Quaternion.Conjugate(rotation)), lastRotation);
+                return new(true, hit, normal, step > 0 ? (hit - before) * 60 : Vector3.Zero);
+            }
+            for (int i = 1; i < s.Count; i++) { points[i] = Plane(s.Positions[i]); segments[i] = Plane((s.Positions[i] + s.Positions[i - 1]) * .5f); }
+            s.Step(1f / 60, headNow, Quaternion.Identity, .02f, 2.2f, [], [], .015f, points, .15f, 9.81f, segments);
+            lastOrigin = origin; lastRotation = rotation;
+            if (step > 300) tips.Add(s.Positions[^1] - headNow);
+        }
+        double sum = 0;
+        for (int i = 1; i + 1 < tips.Count; i++) sum += ((tips[i + 1] - 2 * tips[i] + tips[i - 1]) * 3600).Length();
+        return sum / (tips.Count - 2);
+    }
+    double raw = Breathing(detailed), hairSurface = Breathing(smoothed);
+    Check(hairSurface < .2 && hairSurface < raw * .2, $"Hair still hops over body facets while breathing: {hairSurface:F2} vs unsmoothed {raw:F2} m/s^2");
+    Console.WriteLine($"Breathing shoulder, detailed noisy mesh: unsmoothed {raw:F2}, hair surface {hairSurface:F3} m/s^2 tip jitter; smoothing mean shift {meanShift * 1000:F2} mm.");
+}
 Console.WriteLine($"Surface contact: draped {draped * 1000:F1} mm, recovered from inside {buried * 1000:F1} mm, worst while carried {carried * 1000:F1} mm (shell 5 mm).");
 Console.WriteLine($"PASS: {assertions} assertions; real production solver, curvature, inertia, lengths, head rotation, sleep/wake, teleport, contacts and zero step allocations.");

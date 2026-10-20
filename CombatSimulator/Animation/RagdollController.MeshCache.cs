@@ -25,7 +25,7 @@ public unsafe partial class RagdollController
 
     // Weapon and hair contacts need the cache on the main controller only; body mesh volumes need it everywhere.
     private bool FrozenMeshCacheWanted => config.RagdollMeshVolumes ||
-        (config.WeaponBodyMeshContacts || config.RagdollHairPhysics) && RunAnimatedHair;
+        (config.WeaponBodyMeshContacts || config.RagdollHairPhysics && config.RagdollHairBodyMesh) && RunAnimatedHair;
 
     // Called from the render owner even while inactive. Only the main controller preloads
     // the local player; other controllers capture their own target on first activation.

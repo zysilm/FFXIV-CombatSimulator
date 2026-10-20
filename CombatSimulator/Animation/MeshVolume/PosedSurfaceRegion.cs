@@ -50,6 +50,15 @@ public sealed class PosedSurfaceRegion
             distanceSquared > reach * reach) return false;
         normal *= windingSign;
         signedDistance = Vector3.Dot(local - closest, normal);
+        // Outside, push from the closest surface point toward the query point. Unlike a face
+        // normal this direction is continuous across edges and vertices, so a contact sliding
+        // over facets does not jump direction each step. Inside keeps the outward face normal.
+        var away = local - closest;
+        if (signedDistance > 1e-5f && away.LengthSquared() > 1e-12f)
+        {
+            signedDistance = away.Length();
+            normal = away / signedDistance;
+        }
         point = origin + Vector3.Transform(closest, rotation);
         outwardNormal = Vector3.Transform(normal, rotation);
         return true;
