@@ -1202,6 +1202,7 @@ public unsafe partial class RagdollController : IDisposable
 
         foreach (var bodyHandle in handle.Bodies)
         {
+            if (handle.Generation == externalBodyGeneration) DetachWeaponContactBody(bodyHandle.Body);
             externalRigNoRagdollContactBodyHandles.Remove(bodyHandle.Body.Value);
             externalRigDynamicBodyHandles.Remove(bodyHandle.Body.Value);
             externalRigSelfCollideGroupByBody.Remove(bodyHandle.Body.Value);
@@ -4295,6 +4296,9 @@ public unsafe partial class RagdollController : IDisposable
                 NpcTraversalGhostKinematicBodies = npcTraversalGhostKinematicBodyHandles,
                 NpcTraversalDynamicBodies = npcTraversalDynamicBodyHandles,
                 SoftBodyBodies = softBodyBodyHandles,
+                WeaponContactBodies = weaponContactBodyHandles,
+                WeaponContactProxyBodies = weaponContactProxyHandles,
+                WeaponContactProxiedBodies = weaponContactProxiedBodyHandles,
                 SoftBodyStaticCollision = config.RagdollSoftTissueCollision,
                 Friction = config.RagdollFriction,
                 Config = config,
@@ -6461,7 +6465,7 @@ public unsafe partial class RagdollController : IDisposable
     /// value through Skeleton.Transform.Scale. Prefer the draw object so collision follows live
     /// live scale changes, and retain the skeleton value as a safe fallback.
     /// </summary>
-    private static Vector3 GetCharacterScale(nint address, SkeletonAccess ns)
+    internal static Vector3 GetCharacterScale(nint address, SkeletonAccess ns)
     {
         if (TryGetDrawObjectScale(address, out var drawScale))
             return drawScale;
@@ -13478,6 +13482,7 @@ public unsafe partial class RagdollController : IDisposable
         }
         npcTraversalProxyActivityThisFrame = false;
         softBodyBodyHandles.Clear();
+        ClearWeaponContactProxyState();
         npcCollisionStates.Clear();
         npcTraversalAnchors.Clear();
         attackStrikeTimer = 0f;
@@ -13496,6 +13501,7 @@ public unsafe partial class RagdollController : IDisposable
     {
         Deactivate();
         frozenMeshCache?.Dispose(); frozenMeshCache = null;
+        ClearWeaponContactMeshes();
         RemoveHairRig();
         boneService.OnRenderFrame -= OnRenderFrame;
         Core.Services.Framework.Update -= ApplyDeferredFollowTransform;
@@ -13527,6 +13533,11 @@ partial struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     // (ground) contacts only when SoftBodyStaticCollision is on.
     public HashSet<int>? SoftBodyBodies;
     public bool SoftBodyStaticCollision;
+    // Weapon-only body surfaces: kinematic twins touch only registered weapons, and those
+    // weapons skip the ragdoll volumes the twins stand in for.
+    public HashSet<int>? WeaponContactBodies;
+    public HashSet<int>? WeaponContactProxyBodies;
+    public HashSet<int>? WeaponContactProxiedBodies;
 
     private BepuSimulation? ExtensionSimulation { get; set; }
     public void Initialize(BepuSimulation simulation) { ExtensionSimulation = simulation; }
@@ -13535,6 +13546,21 @@ partial struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 
     public bool AllowContactGeneration(int workerIndex, CollidableReference a, CollidableReference b, ref float speculativeMargin)
     {
+        if (WeaponContactProxyBodies is { Count: > 0 } proxies)
+        {
+            var aProxy = a.Mobility == CollidableMobility.Kinematic && proxies.Contains(a.BodyHandle.Value);
+            var bProxy = b.Mobility == CollidableMobility.Kinematic && proxies.Contains(b.BodyHandle.Value);
+            if (aProxy || bProxy)
+            {
+                var other = aProxy ? b : a;
+                return other.Mobility == CollidableMobility.Dynamic && WeaponContactBodies!.Contains(other.BodyHandle.Value);
+            }
+            if (a.Mobility == CollidableMobility.Dynamic && b.Mobility == CollidableMobility.Dynamic &&
+                (WeaponContactBodies!.Contains(a.BodyHandle.Value) && WeaponContactProxiedBodies!.Contains(b.BodyHandle.Value) ||
+                 WeaponContactBodies.Contains(b.BodyHandle.Value) && WeaponContactProxiedBodies!.Contains(a.BodyHandle.Value)))
+                return false;
+        }
+
         // Soft-tissue bodies: no contacts with other BODIES ever — their capsules sit inside
         // the torso volume by design, so body contact is permanent interpenetration fighting
         // the jiggle springs; the joints' SwingLimit is the excursion backstop instead.

@@ -16,6 +16,7 @@ using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
+using CombatSimulator.Animation.MeshVolume;
 using BepuSimulation = BepuPhysics.Simulation;
 
 namespace CombatSimulator.Animation;
@@ -39,6 +40,8 @@ public unsafe class WeaponDropController : IDisposable
     private readonly WeaponReleaseContacts releaseContacts = new();
     private readonly HashSet<nint> externalOwners = new();
     private readonly HashSet<int> meshBodies = new();
+    // Kinematic body colliders built from the cached rendered body surface.
+    private readonly HashSet<int> meshColliders = new();
 
     /// <summary>Exclusive visual/physics ownership for another local controller.</summary>
     public IDisposable? AcquireExternalControl(nint address)
@@ -111,6 +114,8 @@ public unsafe class WeaponDropController : IDisposable
         public float CenterFactor;
         public Vector3 PreviousPosition;
         public bool ReleaseArm;
+        // Surface collider posed at BoneIndex itself (bone-local mesh) rather than along a segment.
+        public bool BoneFrame;
         public float Reach;
         public Vector3 TargetPosition;
     }
@@ -174,6 +179,7 @@ public unsafe class WeaponDropController : IDisposable
         for (int i = 0; i < entry.BodyColliders.Count; i++)
         {
             releaseContacts.Remove(entry.BodyColliders[i].Handle.Value);
+            meshColliders.Remove(entry.BodyColliders[i].Handle.Value);
             simulation.Bodies.Remove(entry.BodyColliders[i].Handle);
             if (bufferPool != null)
                 simulation.Shapes.RemoveAndDispose(entry.BodyColliders[i].Shape, bufferPool);
@@ -211,7 +217,7 @@ public unsafe class WeaponDropController : IDisposable
                     UpdateBodyColliders(entry);
                     UpdateReleaseContacts(entry);
                 }
-                if (meshBodies.Count > 0)
+                if (meshBodies.Count > 0 || meshColliders.Count > 0)
                 {
                     simulation.Solver.SubstepCount = 4;
                     simulation.Timestep(1f / 120f);
@@ -293,7 +299,8 @@ public unsafe class WeaponDropController : IDisposable
         // ground but makes weapons visibly float or clip on slopes, so build a small mesh
         // from game collision raycasts.
         (entry.GroundTile, entry.GroundShape) = CreateTerrainPatch(skelWorldPos.X, skelWorldPos.Z, skelWorldPos.Y);
-        entry.BodyColliders = CreateBodyColliders(skel, skelWorldPos, skelWorldRot);
+        entry.BodyColliders = CreateMeshBodyColliders(characterAddress, skel, skelWorldPos, skelWorldRot)
+                              ?? CreateBodyColliders(skel, skelWorldPos, skelWorldRot);
 
         foreach (var collider in entry.BodyColliders)
             if (collider.ReleaseArm)
@@ -450,6 +457,58 @@ public unsafe class WeaponDropController : IDisposable
         return result;
     }
 
+    /// <summary>
+    /// Body colliders from the cached rendered surface (one kinematic mesh per body region, coarse
+    /// LOD), so weapons rest on the visible body rather than on segment capsules. Null when the
+    /// actor has no usable cached surface (disabled, non-humanoid, unreadable model).
+    /// </summary>
+    private List<BodyKinematicCollider>? CreateMeshBodyColliders(nint characterAddress, SkeletonAccess skel,
+        Vector3 skelWorldPos, Quaternion skelWorldRot)
+    {
+        if (simulation == null || bufferPool == null) return null;
+        var cache = ragdoll.GetWeaponContactMesh(characterAddress);
+        if (cache == null || cache.Count == 0) return null;
+        var scale = RagdollController.GetCharacterScale(characterAddress, skel);
+        var result = new List<BodyKinematicCollider>();
+        foreach (var name in cache.Names)
+        {
+            var boneIndex = boneService.ResolveBoneIndex(skel, name);
+            if (boneIndex < 0 || boneIndex >= skel.BoneCount || !cache.TryGetCollisionGeometry(name, out var local)) continue;
+            BepuPhysics.Collidables.Mesh mesh;
+            try { mesh = TwoSidedMesh.Create(local, bufferPool); }
+            catch (Exception ex) { log.Warning(ex, $"WeaponDropController: body surface rejected for {name}"); continue; }
+            var shape = simulation.Shapes.Add(mesh);
+            BoneWorldPose(skel, boneIndex, skelWorldPos, skelWorldRot, scale, out var position, out var rotation);
+            var handle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
+                new RigidPose(position, rotation), default(BodyVelocity),
+                new CollidableDescription(shape, 0.04f), new BodyActivityDescription(0.01f)));
+            var reach = 0f;
+            foreach (var vertex in local.Vertices) reach = MathF.Max(reach, vertex.Length());
+            meshColliders.Add(handle.Value);
+            result.Add(new BodyKinematicCollider
+            {
+                Handle = handle,
+                Shape = shape,
+                BoneIndex = boneIndex,
+                ParentBoneIndex = -1,
+                BoneFrame = true,
+                PreviousPosition = position,
+                TargetPosition = position,
+                Reach = reach,
+                ReleaseArm = WeaponReleaseContacts.IsReleaseArm(name, null),
+            });
+        }
+        return result.Count > 0 ? result : null;
+    }
+
+    private static void BoneWorldPose(SkeletonAccess skel, int boneIndex, Vector3 skelWorldPos, Quaternion skelWorldRot,
+        Vector3 scale, out Vector3 position, out Quaternion rotation)
+    {
+        ref var pose = ref skel.Pose->ModelPose.Data[boneIndex];
+        position = ModelToWorld(new Vector3(pose.Translation.X, pose.Translation.Y, pose.Translation.Z) * scale, skelWorldPos, skelWorldRot);
+        rotation = Quaternion.Normalize(skelWorldRot * new Quaternion(pose.Rotation.X, pose.Rotation.Y, pose.Rotation.Z, pose.Rotation.W));
+    }
+
     private void UpdateBodyColliders(Entry entry)
     {
         if (simulation == null || entry.BodyColliders.Count == 0) return;
@@ -478,11 +537,19 @@ public unsafe class WeaponDropController : IDisposable
             skeleton->Transform.Rotation.Y,
             skeleton->Transform.Rotation.Z,
             skeleton->Transform.Rotation.W);
+        var scale = RagdollController.GetCharacterScale(entry.CharacterAddress, skel);
 
         for (int i = 0; i < entry.BodyColliders.Count; i++)
         {
             var bc = entry.BodyColliders[i];
             var bodyRef = simulation.Bodies.GetBodyReference(bc.Handle);
+            if (bc.BoneFrame && bc.BoneIndex >= 0 && bc.BoneIndex < skel.BoneCount)
+            {
+                BoneWorldPose(skel, bc.BoneIndex, skelWorldPos, skelWorldRot, scale, out var bonePosition, out var boneRotation);
+                MoveKinematicCollider(ref bc, bodyRef, bonePosition, boneRotation);
+                entry.BodyColliders[i] = bc;
+                continue;
+            }
             if (bc.BoneIndex < 0 || bc.BoneIndex >= skel.BoneCount ||
                 bc.ParentBoneIndex < 0 || bc.ParentBoneIndex >= skel.BoneCount)
             {
@@ -704,7 +771,7 @@ public unsafe class WeaponDropController : IDisposable
         bufferPool = new BufferPool();
         simulation = BepuSimulation.Create(
             bufferPool,
-            new WeaponDropNarrowPhaseCallbacks { Friction = simFriction, MaxRecoveryVelocity = simBounce, ReleaseContacts = releaseContacts, MeshBodies = meshBodies },
+            new WeaponDropNarrowPhaseCallbacks { Friction = simFriction, MaxRecoveryVelocity = simBounce, ReleaseContacts = releaseContacts, MeshBodies = meshBodies, MeshColliders = meshColliders },
             new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -simGravity, 0), simDamping, simAngularDamping),
             new SolveDescription(simSolverIterations, 1));
 
@@ -731,6 +798,7 @@ public unsafe class WeaponDropController : IDisposable
     private void DestroySimulation()
     {
         meshBodies.Clear();
+        meshColliders.Clear();
         simulation?.Dispose();
         simulation = null;
         bufferPool?.Clear();
@@ -750,6 +818,7 @@ public unsafe class WeaponDropController : IDisposable
 struct WeaponDropNarrowPhaseCallbacks : INarrowPhaseCallbacks
 {
     public HashSet<int>? MeshBodies;
+    public HashSet<int>? MeshColliders;
     public float Friction;
     public float MaxRecoveryVelocity;
     public WeaponReleaseContacts? ReleaseContacts;
@@ -780,7 +849,10 @@ struct WeaponDropNarrowPhaseCallbacks : INarrowPhaseCallbacks
         pairMaterial.MaximumRecoveryVelocity = MaxRecoveryVelocity;
         var mesh = MeshBodies != null &&
             (pair.A.Mobility == CollidableMobility.Dynamic && MeshBodies.Contains(pair.A.BodyHandle.Value) ||
-             pair.B.Mobility == CollidableMobility.Dynamic && MeshBodies.Contains(pair.B.BodyHandle.Value));
+             pair.B.Mobility == CollidableMobility.Dynamic && MeshBodies.Contains(pair.B.BodyHandle.Value)) ||
+            MeshColliders != null &&
+            (pair.A.Mobility == CollidableMobility.Kinematic && MeshColliders.Contains(pair.A.BodyHandle.Value) ||
+             pair.B.Mobility == CollidableMobility.Kinematic && MeshColliders.Contains(pair.B.BodyHandle.Value));
         pairMaterial.SpringSettings = mesh ? new SpringSettings(120, 4) : new SpringSettings(30, 1);
         return true;
     }

@@ -63,7 +63,8 @@ internal sealed class FlexibleHairSolver
 
     public void Step(float dt, Vector3 head, Quaternion rotation, float bendCompliance,
         float damping, ReadOnlySpan<HairContactPlane> ground, ReadOnlySpan<HairContactCapsule> body,
-        float radius, ReadOnlySpan<HairContactPlane> meshSurfaces = default)
+        float radius, ReadOnlySpan<HairContactPlane> meshSurfaces = default,
+        float swingDamping = 1f, float gravity = 9.81f, ReadOnlySpan<HairContactPlane> segmentSurfaces = default)
     {
         if (!(dt > 0 && dt <= .05f) || !Finite(head) || !Finite(rotation)) return;
         rotation = Quaternion.Normalize(rotation);
@@ -106,6 +107,8 @@ internal sealed class FlexibleHairSolver
         if (!Awake && !headMoved && !contactMoved) return;
         Awake = true;
         Array.Clear(contactCounts);
+        float fall = (float.IsFinite(gravity) ? Math.Clamp(gravity, 0f, 50f) : 9.81f) * dt;
+        float dampingRatio = float.IsFinite(swingDamping) ? Math.Clamp(swingDamping, 0f, 2f) : 1f;
         float drag = MathF.Exp(-(float.IsFinite(damping) ? Math.Clamp(damping, .05f, 15f) : 2.2f) * dt);
         for (int i = 0; i < Count; i++)
         {
@@ -113,7 +116,7 @@ internal sealed class FlexibleHairSolver
             if (Parents[i] < 0) Positions[i] = head + Vector3.Transform(Rest[i], rotation);
             else
             {
-                predictedVelocity[i] = velocities[i] * drag + new Vector3(0, -9.81f * dt, 0);
+                predictedVelocity[i] = velocities[i] * drag + new Vector3(0, -fall, 0);
                 Positions[i] += predictedVelocity[i] * dt;
             }
         }
@@ -164,14 +167,16 @@ internal sealed class FlexibleHairSolver
                     if (penetration > 0)
                     {
                         Positions[i] += surface.Normal * MathF.Min(penetration, .004f);
-                        RecordContact(i, surface.Normal, Vector3.Zero);
+                        RecordContact(i, surface.Normal, surface.Velocity);
                     }
                 }
                 if (i < ground.Length && ground[i].Valid)
                 {
                     var plane = ground[i];
                     var horizontal = Positions[i] - plane.Point; horizontal.Y = 0;
-                    if (horizontal.LengthSquared() < .04f)
+                    // Samples are refreshed when a point drifts away from them; a slightly
+                    // stale tangent plane is better than dropping support between refreshes.
+                    if (horizontal.LengthSquared() < .09f)
                     {
                         float penetration = contactRadiusForPoint - Vector3.Dot(Positions[i] - plane.Point, plane.Normal);
                         if (penetration > 0)
@@ -241,6 +246,27 @@ internal sealed class FlexibleHairSolver
                     if (wp > 0) RecordContact(p, normal, bodyVelocities[j]);
                     if (wi > 0) RecordContact(i, normal, bodyVelocities[j]);
                 }
+                // Mesh surface under this segment's midpoint: same bounded,
+                // distributed correction as the capsule segment contact above.
+                if (i < segmentSurfaces.Length && segmentSurfaces[i].Valid)
+                {
+                    var surface = segmentSurfaces[i];
+                    var middle = (Positions[p] + Positions[i]) * .5f;
+                    float penetration = MathF.Max(radius, ContactRadii[i]) - Vector3.Dot(middle - surface.Point, surface.Normal);
+                    float parentWeight = inverseMass[p], childWeight = inverseMass[i];
+                    float denominator = (parentWeight + childWeight) * .25f;
+                    if (penetration > 0 && denominator > 1e-8f)
+                    {
+                        var correction = surface.Normal * MathF.Min(penetration, .02f) / denominator;
+                        var parentCorrection = correction * parentWeight * .5f;
+                        var childCorrection = correction * childWeight * .5f;
+                        float largest = MathF.Max(parentCorrection.Length(), childCorrection.Length());
+                        float scale = largest > .004f ? .004f / largest : 1;
+                        Positions[p] += parentCorrection * scale; Positions[i] += childCorrection * scale;
+                        if (parentWeight > 0) RecordContact(p, surface.Normal, surface.Velocity);
+                        if (childWeight > 0) RecordContact(i, surface.Normal, surface.Velocity);
+                    }
+                }
             }
         }
         float maxSpeed = 0;
@@ -259,10 +285,10 @@ internal sealed class FlexibleHairSolver
                     var tangent = relative - axis * Vector3.Dot(relative, axis);
                     float lengthFactor = MathF.Max(.25f, lengths[i] * lengths[i] / (.08f * .08f));
                     float effectiveCompliance = compliance * (1 + depths[i] * depths[i]) * lengthFactor;
-                    // Critical bending damping follows the same compliance/mass
-                    // as the guide constraint. Air drag alone leaves a springy
-                    // underdamped strand, especially for short, stiff guides.
-                    float rate = Math.Clamp(2 * MathF.Sqrt((inverseMass[i] + inverseMass[p]) / effectiveCompliance), 4, 120);
+                    // Bending damping as a ratio of this guide's critical rate (same
+                    // compliance/mass as its constraint). 1 = critical: hair follows the
+                    // head without swinging. Real hair is underdamped and swings.
+                    float rate = MathF.Min(dampingRatio * 2 * MathF.Sqrt((inverseMass[i] + inverseMass[p]) / effectiveCompliance), 120);
                     velocities[i] = velocities[p] + tangent * MathF.Exp(-rate * dt);
                 }
                 for (int contact = 0; contact < contactCounts[i]; contact++)
@@ -329,7 +355,8 @@ internal sealed class FlexibleHairSolver
     }
 }
 
-internal readonly record struct HairContactPlane(bool Valid, Vector3 Point, Vector3 Normal);
+/// <summary>Local contact plane; Velocity is the surface's own motion at Point (zero for terrain).</summary>
+internal readonly record struct HairContactPlane(bool Valid, Vector3 Point, Vector3 Normal, Vector3 Velocity = default);
 internal readonly record struct HairContactCapsule(Vector3 A, Vector3 B, float Radius, bool AllowRestOverlap = false)
 {
     public float ClosestGuideParameter(Vector3 from, Vector3 to)

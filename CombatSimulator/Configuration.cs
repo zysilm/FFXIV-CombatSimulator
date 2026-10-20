@@ -668,6 +668,8 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollHairPhysics { get; set; } = false;
     public float RagdollHairBendCompliance { get; set; } = 0.02f;
     public float RagdollHairDamping { get; set; } = 2.2f;
+    // Bending damping as a fraction of critical: 1 follows the head without swinging; lower swings longer.
+    public float RagdollHairSwingDamping { get; set; } = 0.15f;
     // Legacy contact preference; the current solver always separates from body envelopes.
     public bool RagdollHairCollision { get; set; } = false;
     public float RagdollHairRigSegmentMass { get; set; } = 0.02f;        // per-segment mass (very light)

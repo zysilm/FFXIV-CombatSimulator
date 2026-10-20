@@ -30,10 +30,12 @@ public unsafe partial class RagdollController
         public Vector3[] RenderPositions = Array.Empty<Vector3>();
         public HairContactPlane[] Ground = Array.Empty<HairContactPlane>();
         public HairContactPlane[] BodySurface = Array.Empty<HairContactPlane>();
+        public HairContactPlane[] SegmentSurface = Array.Empty<HairContactPlane>();
+        public Vector3[] GroundQueryAt = Array.Empty<Vector3>();
+        public bool[] GroundQueried = Array.Empty<bool>();
     }
     private readonly List<HairRigChain> hairRigChains = new();
     private readonly HairContactCapsule[] hairContacts = new HairContactCapsule[64];
-    private readonly List<(string Name, Vector3 Minimum, Vector3 Maximum)> hairMeshBounds = new(64);
     private bool hairRigActive;
     private int hairKaoRagdollBodyIndex = -1, hairGroundCursor;
     public bool RunAnimatedHair { get; set; }
@@ -42,8 +44,8 @@ public unsafe partial class RagdollController
     private ulong animatedHairObject;
     private long animatedHairTimestamp;
     private float animatedHairAccumulator;
-    private Vector3 animatedHead;
-    private Quaternion animatedHeadRotation;
+    private Vector3 animatedHead, animatedFrameHead, animatedPreviousFrameHead;
+    private Quaternion animatedHeadRotation, animatedFrameHeadRotation, animatedPreviousFrameHeadRotation;
     private readonly object animatedHairGate = new();
     private int animatedGroundCursor;
     private HairMeshBinding? hairMesh;
@@ -83,6 +85,7 @@ public unsafe partial class RagdollController
     {
         var meshBinding = hairMesh;
         hairRigChains.Clear(); hairRigActive = false; hairGroundCursor = 0;
+        ClearHairSurfaceRegions();
         if (!animatedHair)
         {
             if (simulation == null) return;
@@ -192,10 +195,13 @@ public unsafe partial class RagdollController
                 Solver = solver, BoneIndices = boneIndices.ToArray(), PointIndices = pointIndices.ToArray(), ChildPoints = childPoints,
                 RestRotations = restRotations.ToArray(), RenderFrames = new Quaternion[solver.Count],
                 RenderPositions = new Vector3[solver.Count], Ground = new HairContactPlane[solver.Count],
-                BodySurface = new HairContactPlane[solver.Count],
+                BodySurface = new HairContactPlane[solver.Count], SegmentSurface = new HairContactPlane[solver.Count],
+                GroundQueryAt = new Vector3[solver.Count], GroundQueried = new bool[solver.Count],
             });
         }
         hairRigActive = hairRigChains.Count > 0;
+        if (hairRigActive)
+            RefreshHairSurfaceRegions(skel, animatedHair ? Services.ObjectTable.LocalPlayer?.Address ?? 0 : targetCharacterAddress);
         if (hairRigActive) log.Info($"HairRig: flexible guides built, partials={hairRigChains.Count}, drivenBones={totalBones}; one-way contacts, persistent rest curvature.");
         else log.Info("HairRig: no supported hair guides; original hair retained.");
     }
@@ -217,83 +223,32 @@ public unsafe partial class RagdollController
     private void StepHairRig()
     {
         if (!hairRigActive || !TryGetHairHead(out var head, out var rotation, out _, out _)) return;
-        int contactCount = 0;
+        if (!animatedHair) RefreshHairSurfaceRegions(default, targetCharacterAddress);
+        int contactCount = PrepareHairStepContacts();
         if (!animatedHair)
-            for (int i = 0; i < ragdollBones.Count && contactCount < hairContacts.Length; i++)
-            {
-                var rb = ragdollBones[i];
-                if (rb.ColliderShape == RagdollColliderShape.Mesh) continue;
-                if (rb.Name != "j_kao" && rb.Name != "j_kubi" && rb.Name != "j_kosi" &&
-                    !rb.Name.StartsWith("j_sebo_", StringComparison.Ordinal) && !rb.Name.StartsWith("j_ude_", StringComparison.Ordinal)) continue;
-                var body = simulation!.Bodies.GetBodyReference(rb.BodyHandle);
-                var edge = Vector3.Transform(Vector3.UnitY * rb.CapsuleHalfLength, body.Pose.Orientation);
-                hairContacts[contactCount++] = new(body.Pose.Position - edge, body.Pose.Position + edge, rb.CapsuleRadius, rb.Name == "j_kao");
-            }
-        else contactCount = CaptureAnimatedHairContacts();
-        int totalPoints = 0; foreach (var c in hairRigChains) totalPoints += c.Solver.Count;
-        // Fixed cap, using the existing BEPU static terrain. No native game
-        // raycasts, MDL reads or new colliders in the update path.
-        for (int query = 0; query < Math.Min(16, totalPoints); query++)
         {
-            int index = hairGroundCursor;
-            hairGroundCursor = (hairGroundCursor + 1) % totalPoints;
-            foreach (var c in hairRigChains)
+            // Fixed cap, using the existing BEPU static terrain. No native game
+            // raycasts, MDL reads or new colliders in the update path. Animated
+            // terrain sampling is supplied by the framework callback instead.
+            Span<(int Chain, int Point)> picks = stackalloc (int, int)[16];
+            int picked = PickHairGroundPoints(picks, 16, ref hairGroundCursor);
+            for (int k = 0; k < picked; k++)
             {
-                if (index >= c.Solver.Count) { index -= c.Solver.Count; continue; }
-                if (c.Solver.Parents[index] < 0) break;
+                var c = hairRigChains[picks[k].Chain]; int index = picks[k].Point;
                 var ray = new HairGroundRay();
-                if (!animatedHair)
-                {
-                    simulation!.RayCast(c.Solver.Positions[index] + Vector3.UnitY * .35f, -Vector3.UnitY, .7f, ref ray);
-                    c.Ground[index] = ray.Result;
-                }
-                // Animated terrain sampling is supplied by the framework callback,
-                // never by a native game collision query in the render callback.
-                break;
+                simulation!.RayCast(c.Solver.Positions[index] + Vector3.UnitY * .35f, -Vector3.UnitY, .7f, ref ray);
+                RecordHairGround(c, index, ray.Result);
             }
         }
-        hairMeshBounds.Clear();
-        if (!animatedHair)
-            foreach (var bone in ragdollBones)
-                if (bone.ColliderShape == RagdollColliderShape.Mesh &&
-                    TryGetBoneGeometryBounds(bone.Name, out var minimum, out var maximum))
-                    hairMeshBounds.Add((bone.Name, minimum, maximum));
+        // Ragdoll hair falls with the body's gravity; animated hair with the world's.
+        float gravity = animatedHair ? 9.81f : config.RagdollGravity;
         foreach (var c in hairRigChains)
         {
             UpdateHairBodySurface(c, head, rotation);
             c.Solver.Step(FixedTimestep, head, rotation, config.RagdollHairBendCompliance,
                 config.RagdollHairDamping, c.Ground, hairContacts.AsSpan(0, contactCount),
-                Math.Clamp(config.RagdollHairRigThickness, .001f, .02f), c.BodySurface);
-        }
-    }
-
-    private void UpdateHairBodySurface(HairRigChain chain, Vector3 head, Quaternion rotation)
-    {
-        Array.Clear(chain.BodySurface);
-        if (animatedHair) return;
-        for (var i = 0; i < chain.Solver.Count; i++)
-        {
-            if (chain.Solver.Parents[i] < 0) continue;
-            var point = chain.Solver.Positions[i];
-            var bestDistanceSq = .04f;
-            foreach (var bone in hairMeshBounds)
-            {
-                var boundPoint = Vector3.Clamp(point, bone.Minimum, bone.Maximum);
-                if (Vector3.DistanceSquared(point, boundPoint) > bestDistanceSq ||
-                    !TryGetCharacterSurface(bone.Name, point, CharacterSurfaceUsage.Physics, out var hit)) continue;
-                var distanceSq = Vector3.DistanceSquared(point, hit.Point);
-                if (distanceSq >= bestDistanceSq) continue;
-                bestDistanceSq = distanceSq;
-                var planePoint = hit.Point;
-                // Preserve authored scalp overlap rather than ejecting mod hair roots.
-                if (bone.Name == "j_kao")
-                {
-                    var rest = head + Vector3.Transform(chain.Solver.Rest[i], rotation);
-                    var restDepth = Vector3.Dot(rest - hit.Point, hit.Normal);
-                    if (restDepth < 0f) planePoint += hit.Normal * restDepth;
-                }
-                chain.BodySurface[i] = new HairContactPlane(true, planePoint, hit.Normal);
-            }
+                Math.Clamp(config.RagdollHairRigThickness, .001f, .02f), c.BodySurface,
+                config.RagdollHairSwingDamping, gravity, c.SegmentSurface);
         }
     }
 
@@ -347,6 +302,7 @@ public unsafe partial class RagdollController
         {
             RestoreAnimatedHairPose();
             hairRigChains.Clear(); hairRigActive = false; hairKaoRagdollBodyIndex = -1; hairGroundCursor = 0;
+            ClearHairSurfaceRegions();
             animatedHair = false; animatedHairDraw = 0; animatedHairObject = 0;
             animatedHairTimestamp = 0; animatedHairAccumulator = 0;
         }
@@ -386,8 +342,10 @@ public unsafe partial class RagdollController
         int headBone = boneService.ResolveBoneIndex(skel, "j_kao");
         if (headBone < 0 || headBone >= skel.Pose->ModelPose.Length) return;
         ref var head = ref skel.Pose->ModelPose.Data[headBone];
-        animatedHead = ModelToWorld(new(head.Translation.X, head.Translation.Y, head.Translation.Z));
-        animatedHeadRotation = ModelRotToWorld(new(head.Rotation.X, head.Rotation.Y, head.Rotation.Z, head.Rotation.W));
+        animatedPreviousFrameHead = animatedFrameHead; animatedPreviousFrameHeadRotation = animatedFrameHeadRotation;
+        animatedFrameHead = ModelToWorld(new(head.Translation.X, head.Translation.Y, head.Translation.Z));
+        animatedFrameHeadRotation = ModelRotToWorld(new(head.Rotation.X, head.Rotation.Y, head.Rotation.Z, head.Rotation.W));
+        animatedHead = animatedFrameHead; animatedHeadRotation = animatedFrameHeadRotation;
         long now = Stopwatch.GetTimestamp();
         float dt = animatedHairTimestamp == 0 ? FixedTimestep : Math.Clamp((float)Stopwatch.GetElapsedTime(animatedHairTimestamp, now).TotalSeconds, 0, .1f);
         animatedHairTimestamp = now;
@@ -396,12 +354,27 @@ public unsafe partial class RagdollController
             RestoreAnimatedHairPose();
             animatedHair = true; animatedHairDraw = (nint)skel.CharBase; animatedHairObject = player.GameObjectId;
             animatedHairAccumulator = 0;
+            animatedPreviousFrameHead = animatedFrameHead; animatedPreviousFrameHeadRotation = animatedFrameHeadRotation;
             BuildHairRig(skel);
         }
+        else RefreshHairSurfaceRegions(skel, player.Address);
+        // A teleport/redraw must reach the solver as one discontinuity it can carry, not be
+        // spread over interpolated steps that each look like (very fast) ordinary motion.
+        bool discontinuous = changed || Vector3.DistanceSquared(animatedPreviousFrameHead, animatedFrameHead) > 1f ||
+            MathF.Abs(Quaternion.Dot(animatedPreviousFrameHeadRotation, animatedFrameHeadRotation)) < .7071f;
+        if (discontinuous) { animatedPreviousFrameHead = animatedFrameHead; animatedPreviousFrameHeadRotation = animatedFrameHeadRotation; }
+        CaptureAnimatedHairFrame(skel, discontinuous);
         animatedHairAccumulator += dt;
         for (int step = 0; animatedHairAccumulator >= FixedTimestep && step < 4; step++)
-        { StepHairRig(); animatedHairAccumulator -= FixedTimestep; }
+        {
+            animatedHairAccumulator -= FixedTimestep;
+            animatedStepBlend = HairInputTiming.StepBlend(animatedHairAccumulator, dt);
+            animatedHead = Vector3.Lerp(animatedPreviousFrameHead, animatedFrameHead, animatedStepBlend);
+            animatedHeadRotation = Quaternion.Slerp(animatedPreviousFrameHeadRotation, animatedFrameHeadRotation, animatedStepBlend);
+            StepHairRig();
+        }
         if (animatedHairAccumulator >= FixedTimestep) animatedHairAccumulator = 0;
+        animatedStepBlend = 1;
         ReadbackHairRig(skel);
     }
 
@@ -424,23 +397,21 @@ public unsafe partial class RagdollController
         }
     }
 
-    private int CaptureAnimatedHairContacts()
+    private int CaptureAnimatedHairContacts(in SkeletonAccess skel)
     {
-        var player = Services.ObjectTable.LocalPlayer; if (player == null) return 0;
-        var access = boneService.TryGetSkeleton(player.Address); if (access == null) return 0;
-        var skel = access.Value; int count = 0;
+        int count = 0;
         foreach (var def in AllBoneDefaults)
         {
-            if (def.Name != "j_kao" && def.Name != "j_kubi" && def.Name != "j_kosi" &&
-                !def.Name.StartsWith("j_sebo_", StringComparison.Ordinal) && !def.Name.StartsWith("j_ude_", StringComparison.Ordinal)) continue;
+            // Regions with a cached rendered surface use it instead of an approximate capsule.
+            if (!IsHairContactBone(def.Name) || hairSurfaceNames.Contains(def.Name)) continue;
             int bone = boneService.ResolveBoneIndex(skel, def.Name);
-            if (bone < 0 || bone >= skel.Pose->ModelPose.Length || count == hairContacts.Length) continue;
+            if (bone < 0 || bone >= skel.Pose->ModelPose.Length || count == animatedContactsNow.Length) continue;
             ref var mt = ref skel.Pose->ModelPose.Data[bone];
             var origin = ModelToWorld(new(mt.Translation.X, mt.Translation.Y, mt.Translation.Z));
             var rotation = ModelRotToWorld(new(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W));
             float scale = MathF.Max(skelWorldScale.X, MathF.Max(skelWorldScale.Y, skelWorldScale.Z));
             var edge = Vector3.Transform(Vector3.UnitY * def.CapsuleHalfLength * scale, rotation);
-            hairContacts[count++] = new(origin, origin + edge * 2, def.CapsuleRadius * scale, def.Name == "j_kao");
+            animatedContactsNow[count++] = new(origin, origin + edge * 2, def.CapsuleRadius * scale, def.Name == "j_kao");
         }
         return count;
     }
@@ -452,30 +423,25 @@ public unsafe partial class RagdollController
         try
         {
             if (!animatedHair) return;
-            int count = 0; foreach (var c in hairRigChains) count += c.Solver.Count;
-            if (count == 0) return;
             // Bounded game collision reads belong to Framework, never the render
             // hook. Unsupported/missing terrain clears support instead of guessing.
-            for (int query = 0; query < Math.Min(8, count); query++)
+            Span<(int Chain, int Point)> picks = stackalloc (int, int)[8];
+            int picked = PickHairGroundPoints(picks, 8, ref animatedGroundCursor);
+            for (int k = 0; k < picked; k++)
             {
-                int index = animatedGroundCursor % count; animatedGroundCursor = (index + 1) % count;
-                foreach (var c in hairRigChains)
+                var c = hairRigChains[picks[k].Chain]; int index = picks[k].Point;
+                var point = c.Solver.Positions[index];
+                HairContactPlane plane = default;
+                if (BGCollisionModule.RaycastMaterialFilter(point + Vector3.UnitY * .35f, -Vector3.UnitY, out var hit, .7f))
                 {
-                    if (index >= c.Solver.Count) { index -= c.Solver.Count; continue; }
-                    if (c.Solver.Parents[index] < 0) break;
-                    var point = c.Solver.Positions[index];
-                    c.Ground[index] = default;
-                    if (BGCollisionModule.RaycastMaterialFilter(point + Vector3.UnitY * .35f, -Vector3.UnitY, out var hit, .7f))
+                    var normal = hit.Normal;
+                    if (FlexibleHairSolver.Finite(normal) && normal.LengthSquared() > 1e-8f)
                     {
-                        var normal = hit.Normal;
-                        if (FlexibleHairSolver.Finite(normal) && normal.LengthSquared() > 1e-8f)
-                        {
-                            normal = Vector3.Normalize(normal); if (normal.Y < 0) normal = -normal;
-                            if (normal.Y > .2f) c.Ground[index] = new(true, hit.Point, normal);
-                        }
+                        normal = Vector3.Normalize(normal); if (normal.Y < 0) normal = -normal;
+                        if (normal.Y > .2f) plane = new(true, hit.Point, normal);
                     }
-                    break;
                 }
+                RecordHairGround(c, index, plane);
             }
         }
         finally { Monitor.Exit(animatedHairGate); }

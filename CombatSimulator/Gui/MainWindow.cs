@@ -4377,6 +4377,24 @@ public partial class MainWindow : IDisposable
                 if (weaponMesh)
                     ImGui.TextColored(new Vector4(1f, 0.75f, 0.2f, 1f), "Warning: may cause severe stuttering.");
 
+                var weaponBodyMesh = config.WeaponBodyMeshContacts;
+                if (ImGui.Checkbox("Weapons collide with body mesh##weapondrop", ref weaponBodyMesh))
+                {
+                    config.WeaponBodyMeshContacts = weaponBodyMesh;
+                    config.Save();
+                }
+                if (weaponBodyMesh)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Refresh Mesh##weapondropMeshRefresh")) config.RefreshRagdollMeshCache();
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Recapture cached body surfaces. Use after changing Glamourer, race, model, outfit or scale.");
+                }
+                HelpMarker("Weapons land on a coarse copy of the rendered body surface instead of approximate body capsules. " +
+                    "Independent of Rendered Mesh Body Collision: ragdoll bodies keep their usual volumes, only weapon contacts use the mesh. Default on.\n" +
+                    "The local player's surface is cached in advance; other characters are captured once when their weapon drops (may hitch briefly). " +
+                    "Weapons do not push the body. Applies to new weapon drops.");
+
                 {
                     var wdGravity = config.WeaponDropGravity;
                     if (ImGui.SliderFloat("Gravity##weapondrop", ref wdGravity, 0.0f, 30.0f, "%.2f"))
@@ -4483,6 +4501,14 @@ public partial class MainWindow : IDisposable
                             config.RagdollHairDamping = damping;
                             config.Save();
                         }
+                        HelpMarker("Air drag on the whole strand.");
+                        var swing = config.RagdollHairSwingDamping;
+                        if (ImGui.SliderFloat("Swing damping##hairrig", ref swing, 0.05f, 1f, "%.2f"))
+                        {
+                            config.RagdollHairSwingDamping = swing;
+                            config.Save();
+                        }
+                        HelpMarker("How quickly a swing dies out. 1 = hair follows the head without swinging; lower values let it swing back and forth longer.");
                         var mass = config.RagdollHairRigSegmentMass;
                         if (ImGui.SliderFloat("Strand mass##hairrig", ref mass, 0.005f, 0.1f, "%.3f"))
                         {
@@ -4504,6 +4530,7 @@ public partial class MainWindow : IDisposable
                             config.RagdollHairRigThickness = 0.008f;
                             config.RagdollHairBendCompliance = 0.02f;
                             config.RagdollHairDamping = 2.2f;
+                            config.RagdollHairSwingDamping = 0.15f;
                             config.Save();
                         }
                         HelpMarker("Restore hair tuning defaults. Toggle hair physics to rebuild guide mass and binding.");

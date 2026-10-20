@@ -17,20 +17,44 @@ public unsafe partial class RagdollController
     private float cachedMeshLodTolerance;
     private long nextMeshCacheAttempt;
 
+    // Other actors' surfaces for weapon contacts only. A failed capture is kept as null so a
+    // non-humanoid or unreadable model is not retried on every weapon drop.
+    private const int MaxWeaponContactMeshes = 8;
+    private readonly Dictionary<nint, (uint Entity, nint Draw, FrozenMeshGeometryCache? Cache)> weaponContactMeshes = new();
+    private readonly List<nint> weaponContactMeshOrder = new();
+
+    // Weapon and hair contacts need the cache on the main controller only; body mesh volumes need it everywhere.
+    private bool FrozenMeshCacheWanted => config.RagdollMeshVolumes ||
+        (config.WeaponBodyMeshContacts || config.RagdollHairPhysics) && RunAnimatedHair;
+
     // Called from the render owner even while inactive. Only the main controller preloads
     // the local player; other controllers capture their own target on first activation.
     private void UpdateFrozenMeshCache()
     {
-        if (observedMeshEnabled != config.RagdollMeshVolumes || observedMeshCacheRevision != config.RagdollMeshCacheRevision)
+        var wanted = FrozenMeshCacheWanted;
+        if (observedMeshEnabled != wanted || observedMeshCacheRevision != config.RagdollMeshCacheRevision)
         {
             frozenMeshCache?.Dispose(); frozenMeshCache = null;
             frozenMeshActor = 0; nextMeshCacheAttempt = 0;
-            observedMeshEnabled = config.RagdollMeshVolumes;
+            ClearWeaponContactMeshes();
+            observedMeshEnabled = wanted;
             observedMeshCacheRevision = config.RagdollMeshCacheRevision;
         }
-        if (!config.RagdollMeshVolumes) return;
-        if (isActive && !TargetObjectAlive()) return;
-        var address = isActive ? targetCharacterAddress : RunAnimatedHair ? Core.Services.ObjectTable.LocalPlayer?.Address ?? 0 : 0;
+        if (!wanted) return;
+        // Body LOD follows the user's setting; weapon and hair contacts always use the coarse LOD.
+        var lodEnabled = config.RagdollMeshCollisionLod || config.WeaponBodyMeshContacts || config.RagdollHairPhysics;
+        var tolerance = config.RagdollMeshCollisionLod
+            ? (float.IsFinite(config.RagdollMeshLodToleranceMm) ? Math.Clamp(config.RagdollMeshLodToleranceMm, .5f, 50f) : 3f) * .001f
+            : Configuration.WeaponBodyMeshLodToleranceMm * .001f;
+        PollWeaponContactMeshes();
+        var localPlayer = Core.Services.ObjectTable.LocalPlayer?.Address ?? 0;
+        nint address;
+        if (config.RagdollMeshVolumes)
+        {
+            if (isActive && !TargetObjectAlive()) return;
+            address = isActive ? targetCharacterAddress : RunAnimatedHair ? localPlayer : 0;
+        }
+        else address = localPlayer; // Weapon-only: other actors are captured on demand by GetWeaponContactMesh.
         if (address == 0) return;
         var entity = ((GameObject*)address)->EntityId;
         if (frozenMeshActor != address || frozenMeshEntity != entity)
@@ -41,25 +65,67 @@ public unsafe partial class RagdollController
         if (frozenMeshCache == null && Environment.TickCount64 >= nextMeshCacheAttempt)
         {
             nextMeshCacheAttempt = Environment.TickCount64 + 2000;
-            CaptureFrozenMeshCache(address);
+            frozenMeshCache = CaptureFrozenMeshCache(address);
+            cachedMeshLodTolerance = -1; // Queue LOD once for this capture, including prewarming.
         }
         if (frozenMeshCache == null) return;
-        var tolerance = (float.IsFinite(config.RagdollMeshLodToleranceMm) ? Math.Clamp(config.RagdollMeshLodToleranceMm, .5f, 50f) : 3f) * .001f;
-        if (cachedMeshLodEnabled != config.RagdollMeshCollisionLod || cachedMeshLodTolerance != tolerance)
+        if (cachedMeshLodEnabled != lodEnabled || cachedMeshLodTolerance != tolerance)
         {
-            cachedMeshLodEnabled = config.RagdollMeshCollisionLod; cachedMeshLodTolerance = tolerance;
+            cachedMeshLodEnabled = lodEnabled; cachedMeshLodTolerance = tolerance;
             frozenMeshCache.ConfigureLod(cachedMeshLodEnabled, tolerance);
         }
         if (frozenMeshCache.Poll(out var error) && error != null)
             log.Warning(error, "Frozen collision cache LOD failed; full cached surface retained.");
     }
 
-    private void CaptureFrozenMeshCache(nint address)
+    /// <summary>Cached bone-local surface of an actor for weapon contacts. Reuses this controller's
+    /// own cache when it holds that actor; otherwise captures once (synchronously) per actor.</summary>
+    internal FrozenMeshGeometryCache? GetWeaponContactMesh(nint address)
+    {
+        if (!config.WeaponBodyMeshContacts || address == 0) return null;
+        var entity = ((GameObject*)address)->EntityId;
+        if (frozenMeshCache != null && frozenMeshActor == address && frozenMeshEntity == entity) return frozenMeshCache;
+        // Client-spawned actors can reuse an address and entity id; a new draw object means a new model.
+        var draw = (nint)((GameObject*)address)->DrawObject;
+        if (weaponContactMeshes.TryGetValue(address, out var known) && known.Entity == entity && known.Draw == draw) return known.Cache;
+        known.Cache?.Dispose();
+        weaponContactMeshOrder.Remove(address);
+        while (weaponContactMeshOrder.Count >= MaxWeaponContactMeshes)
+        {
+            var oldest = weaponContactMeshOrder[0];
+            weaponContactMeshOrder.RemoveAt(0);
+            if (weaponContactMeshes.Remove(oldest, out var evicted)) evicted.Cache?.Dispose();
+        }
+        // Body status text belongs to this controller's own ragdoll, not to another actor's capture.
+        var status = MeshGeometryStatus;
+        var cache = CaptureFrozenMeshCache(address);
+        MeshGeometryStatus = status;
+        cache?.ConfigureLod(true, Configuration.WeaponBodyMeshLodToleranceMm * .001f);
+        weaponContactMeshes[address] = (entity, draw, cache);
+        weaponContactMeshOrder.Add(address);
+        return cache;
+    }
+
+    private void PollWeaponContactMeshes()
+    {
+        foreach (var entry in weaponContactMeshes.Values)
+            if (entry.Cache != null && entry.Cache.Poll(out var error) && error != null)
+                log.Warning(error, "Weapon contact mesh LOD failed; full cached surface retained.");
+    }
+
+    private void ClearWeaponContactMeshes()
+    {
+        foreach (var entry in weaponContactMeshes.Values) entry.Cache?.Dispose();
+        weaponContactMeshes.Clear();
+        weaponContactMeshOrder.Clear();
+    }
+
+    private FrozenMeshGeometryCache? CaptureFrozenMeshCache(nint address)
     {
         var maybeSkeleton = boneService.TryGetSkeleton(address);
-        if (maybeSkeleton == null) return;
+        if (maybeSkeleton == null) return null;
         var skel = maybeSkeleton.Value;
-        if (skel.CharBase->Skeleton == null) return;
+        if (skel.CharBase->Skeleton == null) return null;
         var defs = GetBoneDefs();
         var names = new Dictionary<string, int>();
         var byName = new Dictionary<string, RagdollBoneDef>();
@@ -69,7 +135,7 @@ public unsafe partial class RagdollController
             if (index < 0) continue;
             names[def.Name] = index; byName[def.Name] = def;
         }
-        if (!IsHumanoidSkeleton(names)) return;
+        if (!IsHumanoidSkeleton(names)) return null;
         var previousAddress = targetCharacterAddress;
         targetCharacterAddress = address; // Capture resolves this actor's Penumbra collection.
         FrozenMeshGeometryCache? next = null;
@@ -78,7 +144,7 @@ public unsafe partial class RagdollController
             if (config.RagdollSoftTissueModBones && address == Core.Services.ObjectTable.LocalPlayer?.Address)
                 AppendModSoftTissueDefs(skel, defs, names, byName);
             var worldParts = CaptureBodyMeshVolumes(skel, byName, names);
-            if (worldParts.Count == 0) return;
+            if (worldParts.Count == 0) return null;
             next = new();
             var root = skel.CharBase->Skeleton->Transform;
             var rootPosition = new Vector3(root.Position.X, root.Position.Y, root.Position.Z);
@@ -92,9 +158,9 @@ public unsafe partial class RagdollController
                 var rotation = Quaternion.Normalize(rootRotation * new Quaternion(pose.Rotation.X, pose.Rotation.Y, pose.Rotation.Z, pose.Rotation.W));
                 next.Add(entry.Key, geometry, origin, rotation);
             }
-            frozenMeshCache = next; next = null;
-            cachedMeshLodTolerance = -1; // Queue LOD once for this capture, including prewarming.
-            log.Info($"Frozen collision cache loaded: {frozenMeshCache.Count} regions; reused until explicit refresh or actor change.");
+            var result = next; next = null;
+            log.Info($"Frozen collision cache loaded for 0x{address:X}: {result.Count} regions; reused until explicit refresh or actor change.");
+            return result;
         }
         finally { next?.Dispose(); targetCharacterAddress = previousAddress; }
     }

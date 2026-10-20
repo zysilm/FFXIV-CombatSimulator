@@ -198,25 +198,5 @@ public unsafe partial class RagdollController
         }
     }
 
-    private Mesh CreateBodyTriangleMesh(BodyMeshGeometry geometry)
-    {
-        bufferPool!.Take<Triangle>(geometry.Indices.Length / 3 * 2, out var triangles);
-        try
-        {
-            for (int i = 0; i < geometry.Indices.Length; i += 3)
-            {
-                var a = geometry.Vertices[geometry.Indices[i]];
-                var b = geometry.Vertices[geometry.Indices[i + 1]];
-                var c = geometry.Vertices[geometry.Indices[i + 2]];
-                triangles[i / 3 * 2] = new Triangle(a, b, c);
-                triangles[i / 3 * 2 + 1] = new Triangle(a, c, b);
-            }
-            return new Mesh(triangles, Vector3.One, bufferPool);
-        }
-        catch
-        {
-            bufferPool.Return(ref triangles);
-            throw;
-        }
-    }
+    private Mesh CreateBodyTriangleMesh(BodyMeshGeometry geometry) => TwoSidedMesh.Create(geometry, bufferPool!);
 }

@@ -27,6 +27,7 @@ public unsafe partial class RagdollController
     private void StepPhysicsSimulation(float timestep)
     {
         if (simulation == null) return;
+        SyncWeaponContactProxies();
         if (!config.RagdollMeshParallelPhysics || !activeRagdollMeshVolumes || activeRagdollIsGeneric)
         {
             ReleaseMeshDispatcher();

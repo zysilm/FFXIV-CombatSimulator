@@ -106,7 +106,7 @@ internal sealed class SurfaceMeshBvh
     }
 
     internal bool Nearest(Vector3 point, float radialScale, float minimumNormalSquared,
-        out Vector3 closest, out Vector3 normal, out float distanceSquared)
+        out Vector3 closest, out Vector3 normal, out float distanceSquared, bool faceTowardPoint = true)
     {
         closest = default; normal = Vector3.UnitY; distanceSquared = float.MaxValue; LastTriangleTests = 0;
         var radial = new Vector3(radialScale, 1f, radialScale);
@@ -137,7 +137,7 @@ internal sealed class SurfaceMeshBvh
             }
         }
         if (distanceSquared == float.MaxValue) return false;
-        if (Vector3.Dot(normal, point - closest) < 0f) normal = -normal;
+        if (faceTowardPoint && Vector3.Dot(normal, point - closest) < 0f) normal = -normal;
         return true;
     }
 

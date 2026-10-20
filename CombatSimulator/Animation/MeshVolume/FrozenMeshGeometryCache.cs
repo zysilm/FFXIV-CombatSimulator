@@ -17,6 +17,7 @@ public sealed class FrozenMeshGeometryCache : IDisposable
     private readonly Dictionary<string, Part> byName = new(StringComparer.Ordinal);
     private MeshLodBuildQueue? builds;
     public int Count => parts.Count;
+    public IEnumerable<string> Names => byName.Keys;
     public Task WhenIdle => builds?.WhenIdle ?? Task.CompletedTask;
 
     public void Add(string name, BodyMeshGeometry world, Vector3 boneOrigin, Quaternion boneRotation)
@@ -57,6 +58,15 @@ public sealed class FrozenMeshGeometryCache : IDisposable
         var vertices = new Vector3[part.Geometry.Vertices.Length];
         for (int i = 0; i < vertices.Length; i++) vertices[i] = origin + Vector3.Transform(part.Geometry.Vertices[i], rotation);
         world = new(vertices, (int[])part.Geometry.Indices.Clone());
+        return true;
+    }
+
+    /// <summary>Bone-local collision surface: the cached LOD once built, otherwise the full surface.</summary>
+    public bool TryGetCollisionGeometry(string name, out BodyMeshGeometry local)
+    {
+        local = null!;
+        if (!byName.TryGetValue(name, out var part)) return false;
+        local = part.Lod?.Geometry ?? part.Geometry;
         return true;
     }
 

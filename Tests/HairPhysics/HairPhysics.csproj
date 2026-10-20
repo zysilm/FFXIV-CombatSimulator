@@ -10,5 +10,9 @@
     <Compile Include="../../CombatSimulator/Animation/Hair/FlexibleHairSolver.cs" Link="Production/FlexibleHairSolver.cs" />
     <Compile Include="../../CombatSimulator/Animation/Hair/HairMeshEnvelope.cs" Link="Production/HairMeshEnvelope.cs" />
     <Compile Include="../../CombatSimulator/Animation/Hair/HairMeshSample.cs" Link="Production/HairMeshSample.cs" />
+    <Compile Include="../../CombatSimulator/Animation/Hair/HairInputTiming.cs" Link="Production/HairInputTiming.cs" />
+    <Compile Include="../../CombatSimulator/Animation/MeshVolume/PosedSurfaceRegion.cs" Link="Production/PosedSurfaceRegion.cs" />
+    <Compile Include="../../CombatSimulator/Animation/MeshVolume/BodyMeshGeometry.cs" Link="Production/BodyMeshGeometry.cs" />
+    <Compile Include="../../CombatSimulator/Animation/MeshVolume/SurfaceMeshBvh.cs" Link="Production/SurfaceMeshBvh.cs" />
   </ItemGroup>
 </Project>

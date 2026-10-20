@@ -131,3 +131,12 @@ BEPU 2.5.0-beta.22's two-leaf `BinnedBuild` fast path does not initialize leaf b
 The first LOD implementation synchronously simplified every accepted region during activation. The 40 ms work limit was per region and excluded preparation/final validation, so 32 regions could block the host for over a second. `MeshLodBuildQueue` now serializes builds on background task continuations using private managed vertex/index/binding snapshots. Workers never access the simulation, game memory or native pools. Activation starts with complete colliders. The host consumes at most one result per 16.7 ms, gathers current endpoints, validates current deformation and switches native shapes outside worker steps while retaining the original mass frame/inertia. Disposal cancels queued work without waiting and prevents publication from an old generation. Initial full capture/collider creation and contact warmup still cost time; this change removes synchronous LOD construction, not every activation cost.
 
 Actual game logs at 3 mm showed repeated deformation fallbacks and about 50,088/77,286 collision/full faces; collision detection consumed about 20–36 ms, versus skin/refit around 3–5 ms. Increasing tolerance can reduce fallback as well as permit more simplification. The GUI range is now 0.5–50 mm, default unchanged at 3 mm, next activation only. Higher values permit visible contour/support errors and do not guarantee a lower frame time. All explanations remain hover tooltips.
+
+## 武器专用身体 mesh 接触（2026-10-20）
+
+用户反馈：开启 `Rendered Mesh Body Collision` 后武器落到身上的效果明显变好，但整体 mesh 布娃娃仍有拖慢，默认不敢开。新增 `WeaponBodyMeshContacts`（默认开，Weapon Drop 区 **Weapons collide with body mesh**），与全身 mesh 开关解耦：布娃娃刚体保持原有体积，只有武器接触使用缓存的身体表面。
+
+- 缓存：复用 `FrozenMeshGeometryCache`。主控制器在仅武器模式下只预载本地玩家；其他角色在其武器掉落时按需同步捕获一次（以地址＋EntityId＋DrawObject 为键，最多 8 个，失败结果也缓存避免重复卡顿）。仅武器模式固定生成 8 mm 碰撞 LOD（`targetFaceRatio .15`，后台构建）；全身 mesh 自身仍按原 LOD 设置决定是否使用。`Refresh Mesh` 同时清空两类缓存。
+- 普通武器掉落（`WeaponDropController`）：有缓存时用每个身体区域一个运动学双面 mesh 替换原 18 根骨段胶囊，按游戏骨骼 ModelPose×角色缩放跟随；前臂/手区域沿用释放期接触屏蔽。存在 mesh 碰撞体时使用 2×1/120 s、4 子步和硬接触材质。无缓存（关闭、非人形、读取失败）回退原胶囊。
+- 武器回落（实验模块，布娃娃 simulation 内）：武器注册后，为没有 mesh 的布娃娃刚体创建运动学 mesh 孪生体，每次步进前同步到骨骼位姿并带同样刚体速度；孪生体只与已注册武器接触，武器则跳过被替代的原刚体体积。孪生体质量无限，武器不会反推布娃娃（用户确认可接受）。最后一把武器移除时孪生体随之删除。
+- `Tests/WeaponBodyMesh`（已加入 CI）：武器盒体在静止/移动、正反绕序的运动学身体壳上沉降，残余速度 <1 mm/s，稳定阶段竖向相对速度峰值约 2 mm/s，无下沉。尚未游戏内验证。
