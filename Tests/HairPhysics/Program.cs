@@ -306,5 +306,63 @@ Check(buried > .005f - .0015f, $"Hair that starts inside the body is not pushed 
 // The shoulder lifts 6 cm under resting hair (well below the fixed scalp root).
 SurfaceRun(new(.12f, .81f, 0), new(0, .05f, 0), 72, out var carried);
 Check(carried > -.004f, $"Rising body surface leaves hair inside it: {carried * 1000:F1} mm");
+// A ragdoll lying on its back: head and torso meshes dip a few mm into the floor, and the hair
+// runs from the head along the floor under the torso. Hair pinned between body and floor must
+// settle; body pushes into the ground previously fought the ground every step (buzzing).
+BodyMeshGeometry Ellipsoid(Vector3 radii)
+{
+    const int segments = 16;
+    var v = new List<Vector3>(); var f = new List<int>();
+    for (int i = 0; i <= segments; i++)
+        for (int j = 0; j <= segments; j++)
+        {
+            float theta = MathF.PI * i / segments, phi = 2 * MathF.PI * j / segments;
+            v.Add(new(radii.X * MathF.Sin(theta) * MathF.Cos(phi), radii.Y * MathF.Cos(theta), radii.Z * MathF.Sin(theta) * MathF.Sin(phi)));
+        }
+    for (int i = 0; i < segments; i++)
+        for (int j = 0; j < segments; j++)
+        {
+            int a = i * (segments + 1) + j, b = a + 1, c = a + segments + 1, d = c + 1;
+            f.AddRange([a, c, b, b, c, d]);
+        }
+    return new BodyMeshGeometry(v.ToArray(), f.ToArray());
+}
+{
+    var headRegion = new PosedSurfaceRegion("j_kao", Ellipsoid(new(.08f, .1f, .1f)));
+    var torsoRegion = new PosedSurfaceRegion("j_sebo_c", Ellipsoid(new(.16f, .1f, .25f)));
+    var headOrigin = new Vector3(0, .085f, 0); var torsoOrigin = new Vector3(0, .095f, .32f);
+    var lying = Quaternion.CreateFromAxisAngle(Vector3.UnitX, -MathF.PI / 2);
+    var strand = new List<Vector3> { new(0, .09f, -.04f) }; var strandParents = new List<int> { -1 };
+    for (int i = 1; i <= 6; i++) { strand.Add(new(0, .09f - .07f * i, -.11f - .01f * i)); strandParents.Add(i - 1); }
+    var s = new FlexibleHairSolver(strandParents.ToArray(), strand.ToArray(), .02f, headOrigin, lying, Vector3.Zero, Vector3.Zero);
+    var floor = Enumerable.Range(0, s.Count).Select(_ => new HairContactPlane(true, Vector3.Zero, Vector3.UnitY)).ToArray();
+    var points = new HairContactPlane[s.Count]; var segments = new HairContactPlane[s.Count];
+    HairContactPlane Nearest(Vector3 p, Vector3 rest)
+    {
+        HairContactPlane best = default; float bestDistance = float.MaxValue;
+        if (headRegion.TryContact(p, headOrigin, lying, .1f, out var h, out var n, out var d) && d < bestDistance)
+        {
+            var depth = Vector3.Dot(rest - h, n);
+            best = new(true, depth < 0 ? h + n * depth : h, n); bestDistance = d;
+        }
+        if (torsoRegion.TryContact(p, torsoOrigin, Quaternion.Identity, .1f, out var t, out var m, out var e) && e < bestDistance) best = new(true, t, m);
+        return best;
+    }
+    float lateMotion = 0;
+    for (int step = 0; step < 900; step++)
+    {
+        for (int i = 1; i < s.Count; i++)
+        {
+            int p = s.Parents[i];
+            points[i] = Nearest(s.Positions[i], headOrigin + Vector3.Transform(s.Rest[i], lying));
+            segments[i] = Nearest((s.Positions[i] + s.Positions[p]) * .5f, headOrigin + Vector3.Transform((s.Rest[i] + s.Rest[p]) * .5f, lying));
+        }
+        var previous = s.Positions.ToArray();
+        s.Step(1f / 60, headOrigin, lying, .02f, 2.2f, floor, [], .008f, points, .15f, 9.8f, segments);
+        if (step > 450) for (int i = 1; i < s.Count; i++) lateMotion = MathF.Max(lateMotion, Vector3.Distance(previous[i], s.Positions[i]));
+    }
+    Check(lateMotion < .0002f && !s.Awake, $"Hair lying between body and floor keeps buzzing: {lateMotion * 1000:F2} mm/step");
+    Console.WriteLine($"Lying ragdoll hair between body mesh and floor: late motion {lateMotion * 1000:F3} mm/step, asleep.");
+}
 Console.WriteLine($"Surface contact: draped {draped * 1000:F1} mm, recovered from inside {buried * 1000:F1} mm, worst while carried {carried * 1000:F1} mm (shell 5 mm).");
 Console.WriteLine($"PASS: {assertions} assertions; real production solver, curvature, inertia, lengths, head rotation, sleep/wake, teleport, contacts and zero step allocations.");

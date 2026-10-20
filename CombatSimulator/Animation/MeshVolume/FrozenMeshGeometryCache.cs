@@ -70,6 +70,15 @@ public sealed class FrozenMeshGeometryCache : IDisposable
         return true;
     }
 
+    /// <summary>Full-detail bone-local surface, for queries that do not pay physics contact cost.</summary>
+    public bool TryGetSurfaceGeometry(string name, out BodyMeshGeometry local)
+    {
+        local = null!;
+        if (!byName.TryGetValue(name, out var part)) return false;
+        local = part.Geometry;
+        return true;
+    }
+
     /// <summary>Rebase cached topology onto this simulation's rigid COM frame. No simplification/refit.</summary>
     public bool TryCreateLod(string name, BodyMeshGeometry local, out MeshCollisionLodResult result)
     {

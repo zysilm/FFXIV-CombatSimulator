@@ -163,11 +163,12 @@ internal sealed class FlexibleHairSolver
                 if (i < meshSurfaces.Length && meshSurfaces[i].Valid)
                 {
                     var surface = meshSurfaces[i];
-                    float penetration = contactRadiusForPoint - Vector3.Dot(Positions[i] - surface.Point, surface.Normal);
-                    if (penetration > 0)
+                    var normal = surface.Normal;
+                    float penetration = contactRadiusForPoint - Vector3.Dot(Positions[i] - surface.Point, normal);
+                    if (penetration > 0 && GroundAllows(ground, i, Positions[i], contactRadiusForPoint, normal))
                     {
-                        Positions[i] += surface.Normal * MathF.Min(penetration, .004f);
-                        RecordContact(i, surface.Normal, surface.Velocity);
+                        Positions[i] += normal * MathF.Min(penetration, .004f);
+                        RecordContact(i, normal, surface.Velocity);
                     }
                 }
                 if (i < ground.Length && ground[i].Valid)
@@ -251,20 +252,22 @@ internal sealed class FlexibleHairSolver
                 if (i < segmentSurfaces.Length && segmentSurfaces[i].Valid)
                 {
                     var surface = segmentSurfaces[i];
+                    var normal = surface.Normal;
                     var middle = (Positions[p] + Positions[i]) * .5f;
-                    float penetration = MathF.Max(radius, ContactRadii[i]) - Vector3.Dot(middle - surface.Point, surface.Normal);
+                    float penetration = MathF.Max(radius, ContactRadii[i]) - Vector3.Dot(middle - surface.Point, normal);
                     float parentWeight = inverseMass[p], childWeight = inverseMass[i];
                     float denominator = (parentWeight + childWeight) * .25f;
-                    if (penetration > 0 && denominator > 1e-8f)
+                    if (penetration > 0 && denominator > 1e-8f &&
+                        GroundAllows(ground, i, middle, MathF.Max(radius, ContactRadii[i]), normal))
                     {
-                        var correction = surface.Normal * MathF.Min(penetration, .02f) / denominator;
+                        var correction = normal * MathF.Min(penetration, .02f) / denominator;
                         var parentCorrection = correction * parentWeight * .5f;
                         var childCorrection = correction * childWeight * .5f;
                         float largest = MathF.Max(parentCorrection.Length(), childCorrection.Length());
                         float scale = largest > .004f ? .004f / largest : 1;
                         Positions[p] += parentCorrection * scale; Positions[i] += childCorrection * scale;
-                        if (parentWeight > 0) RecordContact(p, surface.Normal, surface.Velocity);
-                        if (childWeight > 0) RecordContact(i, surface.Normal, surface.Velocity);
+                        if (parentWeight > 0) RecordContact(p, normal, surface.Velocity);
+                        if (childWeight > 0) RecordContact(i, normal, surface.Velocity);
                     }
                 }
             }
@@ -310,6 +313,21 @@ internal sealed class FlexibleHairSolver
         }
         quietSeconds = !headMoved && !contactMoved && maxSpeed < .008f ? quietSeconds + dt : 0;
         Awake = quietSeconds < .75f;
+    }
+
+    /// <summary>
+    /// A body surface must not push hair into supporting ground. Hair lying under a resting
+    /// body is pinned between it and the floor, and the body's mesh dips slightly into the
+    /// floor, so that hair counts as inside the body. Pushing it down (or, redirected, sideways
+    /// along ever-changing nearest faces) against the ground never converges and the hair
+    /// buzzes. Near the ground, a body push with any component into the ground is dropped.
+    /// </summary>
+    private static bool GroundAllows(ReadOnlySpan<HairContactPlane> ground, int point, Vector3 position, float radius, Vector3 normal)
+    {
+        if (point >= ground.Length || !ground[point].Valid) return true;
+        var plane = ground[point];
+        return Vector3.Dot(normal, plane.Normal) >= -.05f ||
+               Vector3.Dot(position - plane.Point, plane.Normal) > radius + .03f;
     }
 
     private void RecordContact(int point, Vector3 normal, Vector3 surfaceVelocity)

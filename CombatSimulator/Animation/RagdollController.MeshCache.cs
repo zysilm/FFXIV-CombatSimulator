@@ -41,8 +41,8 @@ public unsafe partial class RagdollController
             observedMeshCacheRevision = config.RagdollMeshCacheRevision;
         }
         if (!wanted) return;
-        // Body LOD follows the user's setting; weapon and hair contacts always use the coarse LOD.
-        var lodEnabled = config.RagdollMeshCollisionLod || config.WeaponBodyMeshContacts || config.RagdollHairPhysics;
+        // Body LOD follows the user's setting; weapon contacts always use the coarse LOD (hair queries the full surface).
+        var lodEnabled = config.RagdollMeshCollisionLod || config.WeaponBodyMeshContacts;
         var tolerance = config.RagdollMeshCollisionLod
             ? (float.IsFinite(config.RagdollMeshLodToleranceMm) ? Math.Clamp(config.RagdollMeshLodToleranceMm, .5f, 50f) : 3f) * .001f
             : Configuration.WeaponBodyMeshLodToleranceMm * .001f;

@@ -43,22 +43,18 @@ public unsafe partial class RagdollController
         return weaponContactMeshes.TryGetValue(address, out var known) && known.Entity == entity ? known.Cache : null;
     }
 
-    /// <summary>Bind cached regions to this skeleton (animated) or to ragdoll bodies. Rebinds when
-    /// the cache is replaced or a region's coarse LOD becomes available.</summary>
+    /// <summary>Bind cached regions to this skeleton (animated) or to ragdoll bodies. Rebinds only
+    /// when the cache itself is replaced (refresh, actor change).</summary>
     private void RefreshHairSurfaceRegions(in SkeletonAccess skel, nint address)
     {
         var cache = CachedSurfaceFor(address);
-        bool rebuild = cache != hairSurfaceCache;
-        if (!rebuild && cache != null)
-            foreach (var region in hairSurfaceRegions)
-                if (cache.TryGetCollisionGeometry(region.Region.Name, out var geometry) && geometry != region.Region.Geometry) { rebuild = true; break; }
-        if (!rebuild) return;
+        if (cache == hairSurfaceCache) return;
         hairSurfaceCache = cache;
         hairSurfaceRegions.Clear(); hairSurfaceNames.Clear();
         if (cache == null) return;
         foreach (var name in cache.Names)
         {
-            if (!cache.TryGetCollisionGeometry(name, out var geometry)) continue;
+            if (!cache.TryGetSurfaceGeometry(name, out var geometry)) continue;
             var region = new HairSurfaceRegion { Region = new PosedSurfaceRegion(name, geometry) };
             if (animatedHair) region.Bone = boneService.ResolveBoneIndex(skel, name);
             else
