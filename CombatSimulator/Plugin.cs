@@ -67,6 +67,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private readonly CombatCompanionManager companionManager;
     private readonly NpcAiController npcAiController;
     private readonly NpcCorpseFootIkSolver npcCorpseFootIkSolver;
+    private readonly VirtualEnemyLookAtController virtualEnemyLookAt;
     private readonly PlayerTargetController playerTargetController;
     private readonly MapEnemyController mapEnemyController;
     private readonly MovementBlockHook movementBlockHook;
@@ -342,6 +343,10 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         npcCorpseFootIkSolver.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
         enemyControlController.FootIkSolver = npcCorpseFootIkSolver;
         companionManager.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
+        virtualEnemyLookAt = new VirtualEnemyLookAtController(boneTransformService, config, npcSpawner, combatEngine,
+            addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr) ||
+                    fightingModeController?.ControlsEnemy(addr) == true,
+            log);
 
         // Custom in-simulation target lock system. Takes over the game's target
         // keybinds during simulation; the engine reads the locked target for
@@ -621,6 +626,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         combatLogWindow.Dispose();
         hpBarOverlay.Dispose();
         mainWindow.Dispose();
+        virtualEnemyLookAt.Dispose();
         npcAiController.Dispose();
         npcCorpseFootIkSolver.Dispose();
         combatEngine.Dispose();

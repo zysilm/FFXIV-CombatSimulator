@@ -1444,6 +1444,29 @@ public partial class MainWindow : IDisposable
                 }
             }
         }
+
+        DrawVirtualEnemyLookAtSection();
+    }
+
+    private void DrawVirtualEnemyLookAtSection()
+    {
+        ImGui.Separator();
+        var lookAt = config.VirtualEnemyLookAtTarget;
+        if (ImGui.Checkbox("Look at target##veLookAt", ref lookAt))
+        {
+            config.VirtualEnemyLookAtTarget = lookAt;
+            config.Save();
+        }
+        HelpMarker("Virtual enemies keep looking at whoever they are fighting (you or a companion) by turning a bone, layered on their animation. Turns at most 70° sideways and 35° up/down. Off by default.");
+        if (!lookAt) return;
+        ImGui.Indent();
+        var bone = config.VirtualEnemyLookAtBone ?? "j_kao";
+        ImGui.SetNextItemWidth(160);
+        if (ImGui.InputTextWithHint("Bone##veLookAt", "j_kao", ref bone, 64))
+            config.VirtualEnemyLookAtBone = bone;
+        if (ImGui.IsItemDeactivatedAfterEdit()) config.Save();
+        HelpMarker("Which bone turns toward the target. j_kao = head (default), j_kubi = neck (head follows), j_sebo_c = upper chest (neck and head follow). Enemies without this bone are left alone.");
+        ImGui.Unindent();
     }
 
     private void DrawSimulationSection()

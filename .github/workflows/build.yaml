@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [RenderedGeometry, MeshVolume, MeshDeformation, HairPhysics, SurfaceQueries, BoundedMeshContacts, MeshDispatcher, MeshLod, WeaponBodyMesh]
+        project: [RenderedGeometry, MeshVolume, MeshDeformation, HairPhysics, SurfaceQueries, BoundedMeshContacts, MeshDispatcher, MeshLod, WeaponBodyMesh, HeadLookAt]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
