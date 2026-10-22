@@ -1457,7 +1457,7 @@ public partial class MainWindow : IDisposable
             config.VirtualEnemyLookAtTarget = lookAt;
             config.Save();
         }
-        HelpMarker("Virtual enemies keep looking at whoever they are fighting (you or a companion) by turning a bone, layered on their animation. Turns at most 70° sideways and 35° up/down. Off by default.");
+        HelpMarker("Virtual enemies keep looking at whoever they are fighting (you or a companion) by turning a bone, layered on their animation. Turns at most 70° sideways and 35° up/down. On by default.");
         if (!lookAt) return;
         ImGui.Indent();
         var bone = config.VirtualEnemyLookAtBone ?? "j_kao";

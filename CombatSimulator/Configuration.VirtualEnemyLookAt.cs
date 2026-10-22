@@ -4,7 +4,7 @@ namespace CombatSimulator;
 public partial class Configuration
 {
     /// <summary>Virtual enemies turn a bone (default head) toward their current target.
-    /// Off by default.</summary>
-    public bool VirtualEnemyLookAtTarget { get; set; } = false;
+    /// On by default.</summary>
+    public bool VirtualEnemyLookAtTarget { get; set; } = true;
     public string VirtualEnemyLookAtBone { get; set; } = "j_kao";
 }
