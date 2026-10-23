@@ -182,6 +182,7 @@ public unsafe partial class EnemyControlController : IDisposable
             swarmClimbDelayRemaining = Math.Clamp(config.EnemyControlSwarmClimbDelay, 0f, 5f);
         framework.Update += OnUpdate;
         boneService.OnRenderFrame += ApplyArmPoseOverrides;
+        boneService.OnPosePrepared += UpdatePreparedGrabTargets;
     }
 
     // Center the camera on the creature's body, not its origin (feet). Try common center
@@ -1539,6 +1540,16 @@ public unsafe partial class EnemyControlController : IDisposable
         grabAttackRestoreTimer = 1.0f;
     }
 
+    private void UpdatePreparedGrabTargets()
+    {
+        if (!grabAttackActive) return;
+        foreach (var pair in activeGrabPairs)
+        {
+            var target = grabConform.GripAnchor(pair.ConformSlotId) ?? ResolveGrabAttackTarget(pair.NpcBone);
+            if (target.HasValue) playerRagdoll.UpdateGrabTarget(pair.RagdollSlotId, target.Value);
+        }
+    }
+
     private void TickGrabAttack(float dt)
     {
         if (grabAttackActive)
@@ -1556,9 +1567,6 @@ public unsafe partial class EnemyControlController : IDisposable
                 playerRagdoll.SetGrabTuning(pair.RagdollSlotId,
                     config.EnemyControlGrabServoForce, config.EnemyControlGrabServoSpeed, config.EnemyControlGrabServoFrequency);
 
-                var target = grabConform.GripAnchor(pair.ConformSlotId) ?? ResolveGrabAttackTarget(pair.NpcBone);
-                if (target.HasValue)
-                    playerRagdoll.UpdateGrabTarget(pair.RagdollSlotId, target.Value);
             }
 
             if (!lastMovementActive)
@@ -1889,6 +1897,7 @@ public unsafe partial class EnemyControlController : IDisposable
     {
         framework.Update -= OnUpdate;
         boneService.OnRenderFrame -= ApplyArmPoseOverrides;
+        boneService.OnPosePrepared -= UpdatePreparedGrabTargets;
         Despawn();
         defaultGrabConform.Dispose();
     }

@@ -31,14 +31,16 @@ public sealed unsafe class VirtualEnemyLookAtController : IDisposable
     private readonly Func<nint, bool> excluded;
     private readonly IPluginLog log;
 
-    private readonly record struct Pair(nint Enemy, nint Target);
-    // Built on the framework thread (simulation state lives there); read by the render hook.
-    private volatile Pair[] pairs = Array.Empty<Pair>();
-    // Enemies that still exist and are alive; only these may be touched when easing back.
-    private volatile HashSet<nint> living = new();
+    private readonly record struct Pair(LookAtActor Enemy, LookAtActor Target);
+    private sealed record FrameState(Pair[] Pairs, HashSet<LookAtActor> Living);
+    private static readonly FrameState Empty = new(Array.Empty<Pair>(), new());
+    // Publish target pairs and release eligibility atomically; readers never mix two ticks.
+    private volatile FrameState frame = Empty;
+    private bool wasRunning;
+    private long releaseUntil;
     private readonly Dictionary<int, Quaternion> delta = new(1);
-    private readonly Dictionary<nint, Quaternion> swings = new();
-    private readonly List<nint> released = new();
+    private readonly Dictionary<LookAtActor, Quaternion> swings = new();
+    private readonly List<LookAtActor> released = new();
     private long lastRender;
 
     public VirtualEnemyLookAtController(BoneTransformService bones, Configuration config, NpcSpawner spawner,
@@ -47,31 +49,43 @@ public sealed unsafe class VirtualEnemyLookAtController : IDisposable
         this.bones = bones; this.config = config; this.spawner = spawner;
         this.engine = engine; this.excluded = excluded; this.log = log;
         Core.Services.Framework.Update += OnFrameworkUpdate;
-        bones.OnRenderFrame += OnRenderFrame;
+        bones.OnFinalPoseModifiers += OnRenderFrame;
     }
 
     private void OnFrameworkUpdate(IFramework _)
     {
-        var alive = new HashSet<nint>();
+        bool running = config.VirtualEnemyLookAtTarget && engine.IsActive;
+        if (!running && wasRunning) releaseUntil = Environment.TickCount64 + 2000;
+        wasRunning = running;
+        if (!running && Environment.TickCount64 >= releaseUntil) { frame = Empty; return; }
+        var alive = new HashSet<LookAtActor>();
+        bool playerDefeated = engine.IsActive && !engine.State.PlayerState.IsAlive;
+        var actors = new Dictionary<nint, LookAtActor>();
+        foreach (var obj in Core.Services.ObjectTable)
+            if (obj.Address != 0) actors[obj.Address] = new(obj.Address, obj.EntityId);
         foreach (var npc in spawner.SpawnedNpcs)
-            if (npc.IsSpawned && npc.BattleChara != null && npc.IsAlive && !excluded(npc.Address)) alive.Add(npc.Address);
-        living = alive;
-        if (!config.VirtualEnemyLookAtTarget || !engine.IsActive) { pairs = Array.Empty<Pair>(); return; }
+            if (npc.IsSpawned && actors.TryGetValue(npc.Address, out var actor) && actor.EntityId == npc.SimulatedEntityId &&
+                HeadLookAtTargetPolicy.CanDrive(npc.IsAlive, excluded(npc.Address), playerDefeated)) alive.Add(actor);
+        if (!running) { frame = new(Array.Empty<Pair>(), alive); return; }
         var next = new List<Pair>();
         var player = Core.Services.ObjectTable.LocalPlayer;
+        var playerActor = player == null ? default : new LookAtActor(player.Address, player.EntityId);
         foreach (var npc in spawner.SpawnedNpcs)
         {
-            if (!alive.Contains(npc.Address)) continue;
-            var target = engine.GetNpcTarget(npc);
-            if (!target.IsAlive) continue;
-            nint address = 0;
-            if (target.IsPlayer) address = player?.Address ?? 0;
-            else
-                foreach (var obj in Core.Services.ObjectTable)
-                    if (obj.EntityId == target.EntityId) { address = obj.Address; break; }
-            if (address != 0 && address != npc.Address) next.Add(new Pair(npc.Address, address));
+            if (!actors.TryGetValue(npc.Address, out var enemy) || !alive.Contains(enemy)) continue;
+            var combatTarget = default(LookAtActor);
+            if (!playerDefeated)
+            {
+                var target = engine.GetNpcTarget(npc);
+                if (target.IsPlayer) combatTarget = playerActor;
+                else
+                    foreach (var actor in actors.Values)
+                        if (actor.EntityId == target.EntityId) { combatTarget = actor; break; }
+            }
+            if (HeadLookAtTargetPolicy.Select(enemy, combatTarget, playerActor, playerDefeated) is { } selected)
+                next.Add(new Pair(enemy, selected));
         }
-        pairs = next.ToArray();
+        frame = new(next.ToArray(), alive);
     }
 
     private void OnRenderFrame()
@@ -79,13 +93,15 @@ public sealed unsafe class VirtualEnemyLookAtController : IDisposable
         long now = Stopwatch.GetTimestamp();
         float dt = lastRender == 0 ? 1f / 60 : Math.Clamp((float)Stopwatch.GetElapsedTime(lastRender, now).TotalSeconds, 0, .1f);
         lastRender = now;
-        if (swings.Count == 0 && pairs.Length == 0) return;
+        var snapshot = frame;
+        if (swings.Count == 0 && snapshot.Pairs.Length == 0) return;
         var boneName = string.IsNullOrWhiteSpace(config.VirtualEnemyLookAtBone) ? "j_kao" : config.VirtualEnemyLookAtBone.Trim();
-        var current = pairs;
+        var current = snapshot.Pairs;
 
         foreach (var pair in current)
         {
-            var target = TargetPoint(pair.Target);
+            if (!IsCurrentActor(pair.Enemy) || !IsCurrentActor(pair.Target)) { swings.Remove(pair.Enemy); continue; }
+            var target = TargetPoint(pair.Target.Address);
             Apply(pair.Enemy, boneName, target, dt);
         }
         // Enemies no longer looking (disabled, died, lost target) ease back to their animation.
@@ -96,11 +112,11 @@ public sealed unsafe class VirtualEnemyLookAtController : IDisposable
             foreach (var pair in current) if (pair.Enemy == enemy) { active = true; break; }
             if (!active) released.Add(enemy);
         }
-        var stillThere = living;
+        var stillThere = snapshot.Living;
         foreach (var enemy in released)
         {
             // Despawned or dead: never touch its memory again; its ragdoll owns the head now.
-            if (stillThere.Contains(enemy)) Apply(enemy, boneName, null, dt);
+            if (stillThere.Contains(enemy) && IsCurrentActor(enemy)) Apply(enemy, boneName, null, dt);
             else swings.Remove(enemy);
         }
     }
@@ -114,9 +130,34 @@ public sealed unsafe class VirtualEnemyLookAtController : IDisposable
         return Finite(feet) ? feet + new Vector3(0, 1.5f, 0) : null;
     }
 
-    private void Apply(nint enemy, string boneName, Vector3? targetWorld, float dt)
+    private static bool IsCurrentActor(LookAtActor actor)
     {
-        var maybe = bones.TryGetSkeleton(enemy);
+        foreach (var obj in Core.Services.ObjectTable)
+            if (obj.Address == actor.Address && obj.EntityId == actor.EntityId) return true;
+        return false;
+    }
+
+    public IReadOnlyList<string> GetAvailableBoneNames()
+    {
+        var names = new HashSet<string>(System.StringComparer.Ordinal);
+        foreach (var npc in spawner.SpawnedNpcs)
+        {
+            if (!npc.IsSpawned) continue;
+            LookAtActor identity = default;
+            foreach (var obj in Core.Services.ObjectTable)
+                if (obj.Address == npc.Address) { identity = new(obj.Address, obj.EntityId); break; }
+            if (!identity.Valid) continue;
+            foreach (var name in bones.GetBoneNames(identity.Address)) names.Add(name);
+        }
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player != null)
+            foreach (var name in bones.GetBoneNames(player.Address)) names.Add(name);
+        return new List<string>(names);
+    }
+
+    private void Apply(LookAtActor enemy, string boneName, Vector3? targetWorld, float dt)
+    {
+        var maybe = bones.TryGetSkeleton(enemy.Address);
         if (maybe == null) { swings.Remove(enemy); return; }
         var skel = maybe.Value;
         var root = skel.CharBase->Skeleton;
@@ -172,7 +213,7 @@ public sealed unsafe class VirtualEnemyLookAtController : IDisposable
     public void Dispose()
     {
         Core.Services.Framework.Update -= OnFrameworkUpdate;
-        bones.OnRenderFrame -= OnRenderFrame;
-        pairs = Array.Empty<Pair>(); swings.Clear();
+        bones.OnFinalPoseModifiers -= OnRenderFrame;
+        frame = Empty; swings.Clear();
     }
 }

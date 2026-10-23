@@ -52,4 +52,24 @@ foreach (var bind in binds)
 // Degenerate inputs leave the animation alone.
 Check(MathF.Abs(HeadLookAtMath.Swing(Quaternion.Identity, Quaternion.Identity, head, head, MaxYaw, MaxPitch).W) > .99999f, "target at the bone");
 Check(MathF.Abs(HeadLookAtMath.Swing(Quaternion.Identity, Quaternion.Identity, head, new Vector3(float.NaN), MaxYaw, MaxPitch).W) > .99999f, "NaN target");
-Console.WriteLine($"PASS {checks} checks; look-at across bind conventions, animated head, yaw/pitch limits, local delta, no roll, degenerate inputs.");
+// A living observer keeps watching the defeated player even while a victory, grab,
+// Enemy Control or Fighting controller owns that observer. The observer's own death
+// always releases its pose to ragdoll instead of looking from a corpse.
+var enemy = new LookAtActor(100, 1);
+var player = new LookAtActor(200, 2);
+var companion = new LookAtActor(300, 3);
+Check(HeadLookAtTargetPolicy.Select(enemy, companion, player, false)==companion,"Living player's combat target selection changed");
+foreach(bool controlled in new[]{false,true})
+{
+    Check(HeadLookAtTargetPolicy.CanDrive(true,controlled,true),"Defeat look-at excluded a controlled living enemy");
+    Check(HeadLookAtTargetPolicy.Select(enemy,companion,player,true)==player,"Defeated player lost priority to companion");
+    Check(!HeadLookAtTargetPolicy.CanDrive(false,controlled,true),"Dead observer fights ragdoll ownership");
+    Check(HeadLookAtTargetPolicy.Select(enemy,default,player,true)==player,"No living combat target dropped corpse look-at");
+}
+Check(!HeadLookAtTargetPolicy.CanDrive(true,true,false),"Alive player's other controller lost pose ownership");
+Check(HeadLookAtTargetPolicy.Select(enemy,default,player,false)==null,"Missing combat target fabricated a target");
+Check(HeadLookAtTargetPolicy.Select(enemy,companion,default,true)==null,"Despawned defeated player used invalid native memory");
+Check(HeadLookAtTargetPolicy.Select(enemy,enemy,player,false)==null,"Observer targeted itself");
+Check(HeadLookAtTargetPolicy.Select(enemy,new LookAtActor(enemy.Address,99),player,false)==null,"Reused native slot became a self-target");
+Check(HeadLookAtTargetPolicy.Select(enemy,new LookAtActor(300,0),player,false)==null,"Unknown entity identity accepted");
+Console.WriteLine($"PASS {checks} checks; look-at math and target policy across defeat, grabs/stages, observer death, missing identities and revival.");

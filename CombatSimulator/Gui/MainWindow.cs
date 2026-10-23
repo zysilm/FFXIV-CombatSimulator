@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -82,6 +83,9 @@ public partial class MainWindow : IDisposable
     private string[] skeletonBoneNames = Array.Empty<string>();
     private Dictionary<string, string?> skeletonBoneParents = new();
     private bool skeletonBonesLoaded;
+    private string virtualEnemyLookAtBoneFilter = "";
+    private IReadOnlyList<string> virtualEnemyLookAtBoneNames = Array.Empty<string>();
+    public Func<IReadOnlyList<string>>? VirtualEnemyLookAtBonesProvider { get; set; }
     private List<(string Label, string Path)>? actionVfxCache;
     private string guardSuccessVfxFilter = "";
     private string enemyWarningVfxFilter = "";
@@ -1457,17 +1461,47 @@ public partial class MainWindow : IDisposable
             config.VirtualEnemyLookAtTarget = lookAt;
             config.Save();
         }
-        HelpMarker("Virtual enemies keep looking at whoever they are fighting (you or a companion) by turning a bone, layered on their animation. Turns at most 70° sideways and 35° up/down. On by default.");
+        HelpMarker("Virtual enemies look at their combat target while you are alive. After your defeat, living enemies keep watching you, including during victory sequences, grabs and other control modes. Turns at most 70° sideways and 35° up/down. Off by default.");
         if (!lookAt) return;
         ImGui.Indent();
         var bone = config.VirtualEnemyLookAtBone ?? "j_kao";
-        ImGui.SetNextItemWidth(160);
-        if (ImGui.InputTextWithHint("Bone##veLookAt", "j_kao", ref bone, 64))
-            config.VirtualEnemyLookAtBone = bone;
-        if (ImGui.IsItemDeactivatedAfterEdit()) config.Save();
+        ImGui.SetNextItemWidth(240);
+        if (ImGui.BeginCombo("Bone##veLookAt", VirtualEnemyBoneLabel(bone)))
+        {
+            if (ImGui.IsWindowAppearing())
+            {
+                RefreshSkeletonBones();
+                virtualEnemyLookAtBoneNames = VirtualEnemyLookAtBonesProvider?.Invoke() ?? skeletonBoneNames;
+                virtualEnemyLookAtBoneFilter = "";
+                ImGui.SetKeyboardFocusHere();
+            }
+            ImGui.SetNextItemWidth(-1);
+            ImGui.InputTextWithHint("##veLookAtBoneSearch", "Search bones...", ref virtualEnemyLookAtBoneFilter, 128);
+            var available = virtualEnemyLookAtBoneNames.Count > 0 ? virtualEnemyLookAtBoneNames : new[] { "j_kao", "j_kubi", "j_sebo_c" };
+            ImGui.BeginChild("##veLookAtBoneList", new Vector2(0, 230), false);
+            foreach (var name in available.OrderBy(n => n, StringComparer.OrdinalIgnoreCase))
+            {
+                var label = VirtualEnemyBoneLabel(name);
+                if (!label.Contains(virtualEnemyLookAtBoneFilter, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!ImGui.Selectable(label, name == bone)) continue;
+                config.VirtualEnemyLookAtBone = name;
+                config.Save();
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.EndChild();
+            ImGui.EndCombo();
+        }
         HelpMarker("Which bone turns toward the target. j_kao = head (default), j_kubi = neck (head follows), j_sebo_c = upper chest (neck and head follow). Enemies without this bone are left alone.");
         ImGui.Unindent();
     }
+
+    private static string VirtualEnemyBoneLabel(string name) => name switch
+    {
+        "j_kao" => "Head (j_kao)",
+        "j_kubi" => "Neck (j_kubi)",
+        "j_sebo_c" => "Upper chest (j_sebo_c)",
+        _ => name
+    };
 
     private void DrawSimulationSection()
     {

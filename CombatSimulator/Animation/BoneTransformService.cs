@@ -27,6 +27,9 @@ public unsafe class BoneTransformService : IDisposable
     /// <summary>Fired each frame during the render hook. Consumers subscribe here to apply bone modifications.</summary>
     public event Action? OnRenderFrame;
 
+    /// <summary>Final bone adjustments after animation/ragdoll/stage modifiers, before pose observers.</summary>
+    public event Action? OnFinalPoseModifiers;
+
     /// <summary>Read-only observers run after every plugin bone modifier, before native submission.</summary>
     public event Action? OnPosePrepared;
 
@@ -57,6 +60,15 @@ public unsafe class BoneTransformService : IDisposable
         catch (Exception ex)
         {
             log.Error(ex, "BoneTransformService: Error in render frame callback");
+        }
+
+        try
+        {
+            OnFinalPoseModifiers?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "BoneTransformService: Error in final pose modifier");
         }
 
         try
@@ -379,6 +391,7 @@ public unsafe class BoneTransformService : IDisposable
     public void Dispose()
     {
         OnRenderFrame = null;
+        OnFinalPoseModifiers = null;
         OnPosePrepared = null;
         renderHook?.Dispose();
     }

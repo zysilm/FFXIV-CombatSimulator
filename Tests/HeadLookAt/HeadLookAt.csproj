@@ -2,5 +2,6 @@
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
   <ItemGroup>
     <Compile Include="../../CombatSimulator/Animation/HeadLookAtMath.cs" Link="Production/HeadLookAtMath.cs" />
+    <Compile Include="../../CombatSimulator/Animation/HeadLookAtTargetPolicy.cs" Link="Production/HeadLookAtTargetPolicy.cs" />
   </ItemGroup>
 </Project>
