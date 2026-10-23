@@ -9,8 +9,6 @@ using System.Reflection;
 using System.Text.Json;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
-using LuminaSupplemental.Excel.Model;
-using LuminaSupplemental.Excel.Services;
 
 namespace CombatSimulator.Npcs;
 
@@ -53,18 +51,11 @@ public class NpcCatalogEntry
 
 /// <summary>
 /// Search catalog built from the game's ModelChara, ENpcBase, and BNpcBase sheets. ModelChara.Type
-/// is the authoritative category (1 Human, 2 DemiHuman, 3 Monster). The existing curated NpcNames
-/// resource provides localized names; otherwise non-Human ModelChara rows remain searchable by
-/// their model ID.
+/// is the authoritative category (1 Human, 2 DemiHuman, 3 Monster). Battle names require explicit
+/// source pairs. Unnamed appearances remain searchable by their Base/Model IDs.
 /// </summary>
 public class NpcCatalog
 {
-    // Gubal-derived BNpcLink rows are a many-to-many search graph, not a list of guaranteed
-    // SetupBNpc identities. A base linked to dozens of names is normally a script extraction
-    // cross-product. Keep only the least-ambiguous cluster for each name, and never accept an
-    // absolute base-name degree above this limit.
-    private const int MaxSupplementalNameDegree = 16;
-
     private readonly IDataManager dataManager;
     private readonly IPluginLog log;
 
@@ -134,133 +125,36 @@ public class NpcCatalog
 
         var addedSources = new HashSet<(NpcCatalogSource Source, uint Id, uint NameId)>();
 
-        // NpcNames supplies authoritative curated labels for older appearances. BNpcLink is useful
-        // for discovery, but its Gubal-derived rows form a many-to-many graph and cannot all be
-        // treated as exact SetupBNpc identities.
-        var curatedBattleNames = new Dictionary<uint, (string Name, uint NameId)>();
+        // Event-row legacy labels are fallback only. Battle names come exclusively from
+        // direct source pairs: old B: labels and Gubal degree heuristics cannot prove identity.
         var curatedEventNames = new Dictionary<uint, string>();
         var curatedNames = LoadEmbeddedNpcNames();
-        if (curatedNames == null)
-        {
-            log.Warning("NpcNames.json not found in embedded resources.");
-        }
-        else
-        {
-            foreach (var (key, nameValue) in curatedNames)
-            {
-                if (!TryResolveName(nameValue, bNpcNames, out var displayName, out var bNpcNameId))
-                    continue;
+        if (curatedNames != null)
+            foreach (var (key, value) in curatedNames)
+                if (key.StartsWith("E:", StringComparison.Ordinal) &&
+                    uint.TryParse(key.AsSpan(2), out var id) &&
+                    TryResolveName(value, bNpcNames, out var name, out _))
+                    curatedEventNames[id] = name;
 
-                if (key.StartsWith("B:", StringComparison.Ordinal) &&
-                    uint.TryParse(key.AsSpan(2), out var bNpcBaseId))
-                {
-                    curatedBattleNames[bNpcBaseId] = (displayName, bNpcNameId);
-                }
-                else if (key.StartsWith("E:", StringComparison.Ordinal) &&
-                         uint.TryParse(key.AsSpan(2), out var eNpcBaseId))
-                {
-                    curatedEventNames[eNpcBaseId] = displayName;
-                }
-            }
-        }
-
-        var battleNpcNameLinks = LoadBattleNpcNameLinks(
-            CsvLoader.BNpcLinkResourceName,
-            "BNpcLink");
-        var trustedBattleNpcNameLinks = LoadBattleNpcNameLinks(
-            CsvLoader.BNpcLinkNoGubalResourceName,
-            "BNpcLinkNoGubal");
-        var trustedBattleNpcPairs = new HashSet<(uint BaseId, uint NameId)>();
-        foreach (var (baseId, nameIds) in trustedBattleNpcNameLinks)
-            foreach (var nameId in nameIds)
-                trustedBattleNpcPairs.Add((baseId, nameId));
-        var minimumDegreeByName = BuildMinimumLinkDegreeByName(battleNpcNameLinks, bNpcRows);
-        var linkedBattleNpcVariants = 0;
-        var rejectedAmbiguousLinks = 0;
+        var battleNpcNameLinks = LoadBattleNpcNameLinks();
+        int linkedBattleNpcVariants = 0, unnamedBattleNpcAppearances = 0;
         foreach (var (id, model) in bNpcRows)
-        {
-            var linkedNameIds = battleNpcNameLinks.TryGetValue(id, out var nameIds)
-                ? nameIds
-                : Array.Empty<uint>();
-            var namesAddedForBase = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var addedAppearance = false;
-
-            if (curatedBattleNames.TryGetValue(id, out var curated))
+            foreach (var name in BattleNpcNameResolver.Resolve(id, battleNpcNameLinks, bNpcNames))
             {
-                var curatedNameId = curated.NameId;
-
-                // Literal curated labels have no native name row. Confirm the self-ID through
-                // BNpcLink before using it; numerical equality alone is not evidence of a pair.
-                if (curatedNameId == 0 && Array.IndexOf(linkedNameIds, id) >= 0)
-                    curatedNameId = id;
-
-                AddSourceEntry(
-                    id,
-                    curatedNameId,
-                    model.ModelId,
-                    curated.Name,
-                    model.Type,
-                    NpcCatalogSource.BNpcBase,
-                    addedSources);
-                namesAddedForBase.Add(curated.Name);
-                addedAppearance = true;
+                AddSourceEntry(id, name.NameId, model.ModelId, name.Name, model.Type,
+                    NpcCatalogSource.BNpcBase, addedSources);
+                if (name.NameId == 0) unnamedBattleNpcAppearances++;
+                else linkedBattleNpcVariants++;
             }
-
-            foreach (var linkedNameId in linkedNameIds)
-            {
-                if (!bNpcNames.TryGetValue(linkedNameId, out var linkedName) ||
-                    string.IsNullOrWhiteSpace(linkedName))
-                    continue;
-
-                if (!IsHighConfidenceLink(
-                        linkedNameId,
-                        linkedNameIds.Length,
-                        minimumDegreeByName,
-                        trustedBattleNpcPairs.Contains((id, linkedNameId))))
-                {
-                    rejectedAmbiguousLinks++;
-                    continue;
-                }
-                if (!namesAddedForBase.Add(linkedName))
-                    continue;
-
-                AddSourceEntry(
-                    id,
-                    linkedNameId,
-                    model.ModelId,
-                    linkedName,
-                    model.Type,
-                    NpcCatalogSource.BNpcBase,
-                    addedSources);
-                linkedBattleNpcVariants++;
-                addedAppearance = true;
-            }
-
-            if (!addedAppearance)
-            {
-                AddSourceEntry(
-                    id,
-                    0,
-                    model.ModelId,
-                    $"Battle NPC {id}",
-                    model.Type,
-                    NpcCatalogSource.BNpcBase,
-                    addedSources);
-            }
-        }
 
         // ENpcBase and ENpcResident share RowIds, so every named Event NPC can be added directly.
         // Unlike the previous Race/ModelCharaId heuristic this includes all three model categories.
         var residents = dataManager.GetExcelSheet<ENpcResident>();
         foreach (var (id, value) in eNpcRows)
         {
-            var name = curatedEventNames.GetValueOrDefault(id, string.Empty);
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                var resident = residents.GetRowOrDefault(id);
-                if (resident != null)
-                    name = resident.Value.Singular.ExtractText();
-            }
+            var resident = residents.GetRowOrDefault(id);
+            var name = resident?.Singular.ExtractText() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(name)) name = curatedEventNames.GetValueOrDefault(id, string.Empty);
             if (string.IsNullOrWhiteSpace(name))
                 continue;
 
@@ -318,47 +212,8 @@ public class NpcCatalog
         log.Info(
             $"NPC catalog loaded from ModelChara classification: {humans} Human, " +
             $"{demiHumans} DemiHuman, {monsters} Monster ({modelOnly} ModelChara-only), " +
-            $"{allEntries.Count} total; {linkedBattleNpcVariants} high-confidence linked BNpc " +
-            $"appearance/name variants, {rejectedAmbiguousLinks} ambiguous links rejected.");
-    }
-
-    private static Dictionary<uint, int> BuildMinimumLinkDegreeByName(
-        IReadOnlyDictionary<uint, uint[]> linksByBase,
-        IReadOnlyDictionary<uint, (NpcCatalogType Type, uint ModelId)> validBases)
-    {
-        var result = new Dictionary<uint, int>();
-        foreach (var (baseId, nameIds) in linksByBase)
-        {
-            if (!validBases.ContainsKey(baseId) || nameIds.Length == 0)
-                continue;
-
-            foreach (var nameId in nameIds)
-            {
-                if (!result.TryGetValue(nameId, out var minimum) || nameIds.Length < minimum)
-                    result[nameId] = nameIds.Length;
-            }
-        }
-        return result;
-    }
-
-    private static bool IsHighConfidenceLink(
-        uint nameId,
-        int baseNameDegree,
-        IReadOnlyDictionary<uint, int> minimumDegreeByName,
-        bool isTrustedPair)
-    {
-        if (isTrustedPair)
-            return true;
-
-        if (!minimumDegreeByName.TryGetValue(nameId, out var minimumDegree) ||
-            minimumDegree > MaxSupplementalNameDegree)
-            return false;
-
-        // Degree 1 is an exact relationship and should not be diluted by the same name appearing
-        // in broad cross-products elsewhere. For genuinely multi-form actors (for example Mythic
-        // Idol), retain the compact cluster around that name's least-ambiguous base.
-        var relativeLimit = Math.Max(2, minimumDegree * 2);
-        return baseNameDegree <= Math.Min(MaxSupplementalNameDegree, relativeLimit);
+            $"{allEntries.Count} total; {linkedBattleNpcVariants} direct-source BNpc " +
+            $"appearance/name variants, {unnamedBattleNpcAppearances} ID-labelled battle appearances.");
     }
 
     private int CountCategory(NpcCatalogType type)
@@ -391,53 +246,22 @@ public class NpcCatalog
         });
     }
 
-    private IReadOnlyDictionary<uint, uint[]> LoadBattleNpcNameLinks(
-        string resourceName,
-        string sourceLabel)
+    private IReadOnlyDictionary<uint, uint[]> LoadBattleNpcNameLinks()
     {
         try
         {
-            var links = CsvLoader.LoadResource<BNpcLink>(
-                resourceName,
-                true,
-                out var failedLines,
-                out var exceptions);
-
-            if (failedLines.Count > 0 || exceptions.Count > 0)
-                log.Warning(
-                    $"{sourceLabel} supplemental data loaded with {failedLines.Count} failed line(s) " +
-                    $"and {exceptions.Count} exception(s).");
-
-            var result = new Dictionary<uint, HashSet<uint>>();
-            foreach (var link in links)
-            {
-                if (!result.TryGetValue(link.BNpcBaseId, out var names))
-                {
-                    names = new HashSet<uint>();
-                    result[link.BNpcBaseId] = names;
-                }
-                names.Add(link.BNpcNameId);
-            }
-
-            var flattened = new Dictionary<uint, uint[]>(result.Count);
-            foreach (var (baseId, names) in result)
-            {
-                var values = new uint[names.Count];
-                names.CopyTo(values);
-                Array.Sort(values);
-                flattened[baseId] = values;
-            }
-
-            log.Info($"Loaded supplemental {sourceLabel} mappings for {flattened.Count} BNpcBase rows.");
-            return flattened;
+            using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(BattleNpcNameResolver.ResourceName)
+                ?? throw new InvalidDataException("Embedded direct battle NPC name links are missing.");
+            var links = BattleNpcNameResolver.ReadLinks(stream);
+            log.Info($"Loaded bundled direct BNpc name links for {links.Count} BNpcBase rows.");
+            return links;
         }
         catch (Exception ex)
         {
-            log.Error(ex, $"Failed to load supplemental {sourceLabel} data; continuing without it.");
+            log.Error(ex, "Direct battle NPC names unavailable; retaining appearances with ID labels.");
             return new Dictionary<uint, uint[]>();
         }
     }
-
     private static bool TryClassifyModel(byte modelType, out NpcCatalogType type)
     {
         type = modelType switch

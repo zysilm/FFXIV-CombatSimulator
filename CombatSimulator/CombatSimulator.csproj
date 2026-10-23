@@ -34,12 +34,11 @@
     <Compile Remove="**\Tests\**\*.cs" />
     <PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" />
     <PackageReference Include="Silk.NET.Direct3D11" Version="2.21.0" />
-    <!-- Complete BNpcBase <-> BNpcName links are not present in the game Excel sheets. ActorMorpher
-         uses this supplemental dataset so every known monster name remains discoverable. -->
-    <PackageReference Include="LuminaSupplemental.Excel" Version="4.3.7" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Npcs\NpcNames.json" />
+    <EmbeddedResource Include="Npcs\Data\BNpcLinkNoGubal.csv" />
+    <EmbeddedResource Include="Npcs\Data\LuminaSupplemental.LICENSE" />
     <EmbeddedResource Include="Resources\BuiltInBoneProfiles.json" />
     <EmbeddedResource Include="Resources\CharacterSurfaceProfiles.json" />
     <EmbeddedResource Include="Resources\CollapseProfiles\*.json" />
