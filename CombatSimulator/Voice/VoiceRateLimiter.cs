@@ -107,6 +107,10 @@ public sealed class VoiceRateLimiter
     /// cooldown still starts, so an unlabeled event does not retry and starve others every frame,
     /// but no voice slot or token is used.
     /// </summary>
+    /// <summary>Drop an actor's cooldown for one event (a guaranteed killing-blow line must not be
+    /// refused because the same enemy gloated over a companion a few seconds earlier).</summary>
+    public void ClearCooldown(ulong actorKey, VoiceEvent e) => eventReadyAt.Remove((actorKey, e));
+
     public void SpendCooldownOnly(ulong actorKey, VoiceEvent e) =>
         eventReadyAt[(actorKey, e)] = Now + VoiceEventPolicy.Cooldown(e);
 

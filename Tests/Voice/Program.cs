@@ -176,6 +176,15 @@ using (var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(poolPath))
 {
     var lines = doc.RootElement.GetProperty("lines").EnumerateArray().ToList();
     Check(lines.Count >= 150 && lines.Count <= 900, $"pool size {lines.Count} outside 150..900");
+    // The default pool is the original data-proven set; recognition-matched lines are opt-in.
+    var baseCount = lines.Count(l => !(l.TryGetProperty("extended", out var x) && x.GetBoolean()));
+    Check(baseCount >= 150 && baseCount < lines.Count, $"default (non-extended) pool size {baseCount}");
+    foreach (var gender in new[] { "male", "female" })
+        foreach (var ev in new[] { "Engage", "KilledPlayer", "Victory", "Death" })
+            Check(lines.Any(l => !(l.TryGetProperty("extended", out var x) && x.GetBoolean()) &&
+                                 l.GetProperty("gender").GetString() == gender &&
+                                 l.GetProperty("events").EnumerateArray().Any(e => e.GetString() == ev)),
+                $"default pool has no {gender} {ev} line");
     var voices = new HashSet<uint>();
     var yells = new HashSet<string>();
     var perEvent = new Dictionary<string, int>();

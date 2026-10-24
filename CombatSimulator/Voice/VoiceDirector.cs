@@ -67,6 +67,18 @@ public sealed unsafe class VoiceDirector
     private bool firstLineLogged;
     private int lastDeadCompanions = -1;
     private bool? lastPlayerAlive;
+    // Whole shipped pool; the picker gets it filtered by the extended-pool switch.
+    private List<VoiceLineEntry> allLines = new();
+    private bool? appliedExtended;
+    // Taunts over a fallen player: countdown to the next one (-1 = not running) and who spoke last.
+    private float defeatTauntTimer = -1f;
+    private uint lastDefeatSpeaker;
+    // A guaranteed killing-blow line waits this long for its speaker before it is given up.
+    private const float MaxKillHold = 30f;
+
+    /// <summary>True while a scripted scene owns the speech bubbles (private stories); enemy lines
+    /// hold off instead of talking over it.</summary>
+    public Func<bool>? LinesSuppressed { get; set; }
 
     private sealed class Tracked
     {
@@ -118,6 +130,7 @@ public sealed unsafe class VoiceDirector
         public float Weight { get; set; } = 1f;
         public string? Age { get; set; }
         public string? Sheet { get; set; }
+        public bool Extended { get; set; }
     }
 
     private sealed class LineFile
@@ -153,7 +166,7 @@ public sealed unsafe class VoiceDirector
                     if (voice == null || sheet == null || dto.Voice == 0 || events.Count == 0)
                         continue;
                     parsed.Add(new VoiceLineEntry(dto.Voice, dto.Yell, events.ToArray(), voice.Value, dto.Story, dto.Weight,
-                        VoiceLineEntry.ParseAge(dto.Age), sheet.Value));
+                        VoiceLineEntry.ParseAge(dto.Age), sheet.Value, dto.Extended));
                 }
             }
         }
@@ -161,7 +174,20 @@ public sealed unsafe class VoiceDirector
         {
             log.Warning($"Enemy voices: voiced line pool unreadable ({ex.Message}); voiced lines off.");
         }
-        linePicker.SetEntries(parsed);
+        allLines = parsed;
+        ApplyLinePool();
+    }
+
+    /// <summary>Hand the picker the original pool, or the original plus the speech-recognition
+    /// matched lines when the extended pool is switched on.</summary>
+    private void ApplyLinePool()
+    {
+        appliedExtended = config.EnemyVoiceExtendedLines;
+        var pool = new List<VoiceLineEntry>(allLines.Count);
+        foreach (var line in allLines)
+            if (!line.Extended || config.EnemyVoiceExtendedLines)
+                pool.Add(line);
+        linePicker.SetEntries(pool);
     }
 
     /// <summary>
@@ -210,7 +236,9 @@ public sealed unsafe class VoiceDirector
         if (!config.EnableEnemyVoices)
             return;
         var killer = combatEngine.LastPlayerKillerEntityId;
-        if (killer != 0)
+        if (GuaranteedKills)
+            QueueKill(killer);
+        else if (killer != 0)
             notified.Add((killer, VoiceEvent.KilledPlayer));
         if (!hasLivingCompanions())
             delayed.Add((0, VoiceEvent.Victory, limiter.Now + VictoryDelay));
@@ -230,6 +258,51 @@ public sealed unsafe class VoiceDirector
         // Re-seeded on the next combat frame: companions already dead are not a fresh kill.
         lastDeadCompanions = -1;
         lastPlayerAlive = null;
+        defeatTauntTimer = -1f;
+        lastDefeatSpeaker = 0;
+    }
+
+    private bool GuaranteedKills => config.EnemyVoiceGuaranteeKills && config.EnemyVoiceLines;
+
+    /// <summary>
+    /// Queue a killing-blow line that must be heard. It skips the nearest-speakers cut and the
+    /// per-actor kill cooldown, and waits (up to <see cref="MaxKillHold"/>) for the speaker to finish
+    /// its own shout and for the line gate. A killer that cannot speak — dead, a monster, no
+    /// fitting line — hands the line to the nearest living enemy that can.
+    /// </summary>
+    private void QueueKill(uint preferred)
+    {
+        var speaker = KillSpeaker(preferred);
+        if (speaker == 0)
+            return;
+        limiter.ClearCooldown(speaker, VoiceEvent.KilledPlayer);
+        if (!delayed.Exists(d => d.EntityId == speaker && d.Event == VoiceEvent.KilledPlayer))
+            delayed.Add((speaker, VoiceEvent.KilledPlayer, limiter.Now));
+    }
+
+    private uint KillSpeaker(uint preferred)
+    {
+        if (CanVoiceLine(preferred, VoiceEvent.KilledPlayer))
+            return preferred;
+        uint best = 0;
+        var bestDist = float.MaxValue;
+        foreach (var (id, t) in tracked)
+        {
+            if (t.Distance >= bestDist || !CanVoiceLine(id, VoiceEvent.KilledPlayer))
+                continue;
+            bestDist = t.Distance;
+            best = id;
+        }
+        return best;
+    }
+
+    /// <summary>Whether this tracked enemy is alive and has a curated line for the event in its voice.</summary>
+    private bool CanVoiceLine(uint id, VoiceEvent e)
+    {
+        if (id == 0 || !tracked.TryGetValue(id, out var t) || !t.Alive)
+            return false;
+        var voice = Resolver.ResolveBody(t.Address, id);
+        return voice != VoiceLineVoice.NonHuman && linePicker.Available(e, voice) > 0;
     }
 
     // ---- Audition (panel) ----
@@ -293,6 +366,8 @@ public sealed unsafe class VoiceDirector
         limiter.Advance(deltaTime);
         lineSettings.Gap = Math.Clamp(config.EnemyVoiceLineGap, 0f, 30f);
         linePicker.Advance(deltaTime);
+        if (appliedExtended != config.EnemyVoiceExtendedLines)
+            ApplyLinePool();
 
         RunAudition();
 
@@ -387,7 +462,9 @@ public sealed unsafe class VoiceDirector
         if (lastDeadCompanions >= 0 && deadCompanions > lastDeadCompanions)
         {
             var gloater = NearestLiving(0);
-            if (gloater != 0)
+            if (GuaranteedKills)
+                QueueKill(gloater);
+            else if (gloater != 0)
                 candidates.Add(new VoiceCandidate(gloater, VoiceEvent.KilledPlayer, tracked[gloater].Distance));
         }
         lastDeadCompanions = deadCompanions;
@@ -401,12 +478,17 @@ public sealed unsafe class VoiceDirector
             // until the line gate opens (a few seconds at most) instead of losing it.
             // A held line names its speaker, so wait for that actor too; the victory call (no
             // speaker yet) only waits for the line gate.
-            if (config.EnemyVoiceLines && limiter.Now - delayed[i].At < MaxVictoryHold &&
+            var guaranteedKill = delayed[i].Event == VoiceEvent.KilledPlayer && GuaranteedKills;
+            var maxHold = guaranteedKill ? MaxKillHold : MaxVictoryHold;
+            if (config.EnemyVoiceLines && limiter.Now - delayed[i].At < maxHold &&
                 !(delayed[i].EntityId != 0
                     ? SpeakerReady(delayed[i].EntityId, delayed[i].Event)
                     : linePicker.CanSpeak(0, delayed[i].Event)))
                 continue;
             var speaker = delayed[i].EntityId != 0 ? delayed[i].EntityId : PickVictorySpeaker();
+            // The held killer may have died or been despawned while it waited.
+            if (guaranteedKill && !CanVoiceLine(speaker, VoiceEvent.KilledPlayer))
+                speaker = KillSpeaker(speaker);
             if (speaker != 0 && tracked.TryGetValue(speaker, out var t))
             {
                 candidates.Add(new VoiceCandidate(speaker, delayed[i].Event, t.Distance));
@@ -415,11 +497,81 @@ public sealed unsafe class VoiceDirector
             delayed.RemoveAt(i);
         }
 
-        if (candidates.Count == 0)
+        if (candidates.Count > 0)
+        {
+            var allowed = VoiceRateLimiter.Closest(speakers, rateSettings.ClosestSpeakers);
+            // A ranged killer can stand outside the nearest few; its line is guaranteed anyway.
+            if (GuaranteedKills)
+                foreach (var c in candidates)
+                    if (c.Event == VoiceEvent.KilledPlayer)
+                        allowed.Add(c.ActorKey);
+            foreach (var c in VoiceRateLimiter.Arbitrate(candidates, allowed))
+                TrySpeak(c);
+        }
+
+        TickDefeatTaunts(deltaTime, playerAlive);
+    }
+
+    /// <summary>
+    /// After the party is wiped, surviving enemies take turns taunting the fallen player at the
+    /// configured interval, from the chosen categories. Waits for the line gate like any line;
+    /// ignores the per-event cooldowns, which are tuned for a running fight. Stops on revive,
+    /// reset or while a scripted scene owns the bubbles.
+    /// </summary>
+    private void TickDefeatTaunts(float deltaTime, bool playerAlive)
+    {
+        if (!config.EnemyVoiceDefeatTaunts || !config.EnemyVoiceLines || playerAlive || hasLivingCompanions() ||
+            LinesSuppressed?.Invoke() == true)
+        {
+            defeatTauntTimer = -1f;
             return;
-        var allowed = VoiceRateLimiter.Closest(speakers, rateSettings.ClosestSpeakers);
-        foreach (var c in VoiceRateLimiter.Arbitrate(candidates, allowed))
-            TrySpeak(c);
+        }
+
+        var interval = Math.Clamp(config.EnemyVoiceDefeatTauntInterval, 3f, 60f);
+        if (defeatTauntTimer < 0f)
+        {
+            // The first taunt follows the kill and victory calls, not on top of them.
+            defeatTauntTimer = interval;
+            return;
+        }
+        defeatTauntTimer -= deltaTime;
+        if (defeatTauntTimer > 0f || !linePicker.GateOpen(VoiceEvent.Taunt))
+            return;
+
+        var options = new List<VoiceEvent>(3);
+        if (config.EnemyVoiceDefeatTauntKill) options.Add(VoiceEvent.KilledPlayer);
+        if (config.EnemyVoiceDefeatTauntTaunt) options.Add(VoiceEvent.Taunt);
+        if (config.EnemyVoiceDefeatTauntVictory) options.Add(VoiceEvent.Victory);
+        defeatTauntTimer = interval;
+        if (options.Count == 0)
+            return;
+
+        var e = options[random.Next(options.Count)];
+        var speaker = PickDefeatTaunter(e);
+        if (speaker == 0 || !tracked.TryGetValue(speaker, out var t))
+            return;
+        var npc = npcSelector.GetSelectedNpc(speaker);
+        if (npc == null || npc.Address != t.Address)
+            return;
+        if (TrySpeakLine(new VoiceCandidate(speaker, e, t.Distance), npc, t, scripted: true))
+            lastDefeatSpeaker = speaker;
+    }
+
+    /// <summary>One of the three nearest enemies able to voice the event, avoiding whoever spoke
+    /// the previous taunt when there is a choice.</summary>
+    private uint PickDefeatTaunter(VoiceEvent e)
+    {
+        var able = new List<(uint Id, float Distance)>();
+        foreach (var (id, t) in tracked)
+            if (CanVoiceLine(id, e))
+                able.Add((id, t.Distance));
+        if (able.Count == 0)
+            return 0;
+        able.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+        var choices = able.GetRange(0, Math.Min(3, able.Count));
+        if (choices.Count > 1)
+            choices.RemoveAll(c => c.Id == lastDefeatSpeaker);
+        return choices[random.Next(choices.Count)].Id;
     }
 
     private void AddAllyDeath(uint deadId, Vector3 deadPos)
@@ -469,6 +621,8 @@ public sealed unsafe class VoiceDirector
 
     private void TrySpeak(in VoiceCandidate c)
     {
+        if (LinesSuppressed?.Invoke() == true)
+            return;
         var id = (uint)c.ActorKey;
         if (!tracked.TryGetValue(id, out var t))
             return;
@@ -518,16 +672,18 @@ public sealed unsafe class VoiceDirector
     /// A curated voiced line with its bubble. False means "not this time" (gate closed, chance
     /// roll, no fitting line, file missing) and the caller falls through to label-based shouts.
     /// </summary>
-    private bool TrySpeakLine(in VoiceCandidate c, SimulatedNpc npc, Tracked t)
+    private bool TrySpeakLine(in VoiceCandidate c, SimulatedNpc npc, Tracked t, bool scripted = false)
     {
-        if (linePicker.Count == 0 || !linePicker.CanSpeak(c.ActorKey, c.Event))
+        // Scripted talk (taunts over a fallen player) only waits for the shared line gate; the
+        // event cooldowns, chance roll and rate budget are for reacting to a running fight.
+        if (linePicker.Count == 0 || !(scripted ? linePicker.GateOpen(c.Event) : linePicker.CanSpeak(c.ActorKey, c.Event)))
             return false;
         // Monsters have no curated lines (none is non-human), so they stay on their own sounds
         // rather than speak with a human voice.
         var (voice, age) = Resolver.ResolveBodyAndAge(t.Address, (uint)c.ActorKey);
         if (voice == VoiceLineVoice.NonHuman || linePicker.Available(c.Event, voice) == 0)
             return false;
-        if (random.NextDouble() >= VoiceLinePicker.Chance(c.Event))
+        if (!scripted && random.NextDouble() >= VoiceLinePicker.Chance(c.Event))
             return false;
 
         var language = Resolver.ClientLanguage;
@@ -551,7 +707,7 @@ public sealed unsafe class VoiceDirector
                 linePicker.MarkUnavailable(line.VoiceId);
                 continue;
             }
-            if (!limiter.TryAdmit(c.ActorKey, c.Event))
+            if (!scripted && !limiter.TryAdmit(c.ActorKey, c.Event))
                 return false;
 
             Vector3? at = config.EnemyVoicePositional ? t.Position + new Vector3(0f, 1.2f, 0f) : null;

@@ -24,6 +24,8 @@ public sealed partial class CombatSimulatorPlugin
             config.EnableCombatCompanions ? companionManager.Companions.Count(c => c.IsSpawned && !c.State.IsAlive) : 0;
         combatModeRouter.AttackCommitted += (npc, request) => voiceDirector.NotifyAttackCommitted(npc, request);
         combatEngine.OnSimulationReset += voiceDirector.Reset;
+        // Stories speak through the same bubbles; enemy lines wait until the scene is over.
+        voiceDirector.LinesSuppressed = () => PrivateDirectorActive;
         mainWindow.VoiceDirector = voiceDirector;
     }
 

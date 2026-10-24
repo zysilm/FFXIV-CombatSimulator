@@ -44,7 +44,7 @@ public enum VoiceLineTextSheet
 /// not number them alike (file 8202037 is NpcYell 7768, not 2037); the pairs were proven offline.
 /// </summary>
 public sealed record VoiceLineEntry(uint VoiceId, uint YellId, VoiceEvent[] Events, VoiceLineVoice Voice, bool Story, float Weight,
-    VoiceLineAge Age = VoiceLineAge.Any, VoiceLineTextSheet Sheet = VoiceLineTextSheet.NpcYell)
+    VoiceLineAge Age = VoiceLineAge.Any, VoiceLineTextSheet Sheet = VoiceLineTextSheet.NpcYell, bool Extended = false)
 {
     public string PathFor(string language) => $"sound/voice/vo_line/{VoiceId:D7}_{language}.scd";
 
@@ -182,6 +182,10 @@ public sealed class VoiceLinePicker
         VoiceEvent.Engage => new[] { VoiceEvent.Engage, VoiceEvent.Taunt },
         _ => new[] { e },
     };
+
+    /// <summary>Only the shared line gate: no line on screen and the quiet gap after it has passed.
+    /// Scripted talk (taunts over a fallen player) waits on this alone, not on event cooldowns.</summary>
+    public bool GateOpen(VoiceEvent e) => Now >= busyUntil + (IsPriority(e) ? settings.PriorityGap : settings.Gap);
 
     public bool CanSpeak(ulong actorKey, VoiceEvent e)
     {

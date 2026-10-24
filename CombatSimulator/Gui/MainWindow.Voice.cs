@@ -56,6 +56,57 @@ public partial class MainWindow
             }
             HelpMarker("Show what the enemy says in the game's overhead speech bubble.");
 
+            var guarantee = config.EnemyVoiceGuaranteeKills;
+            if (ImGui.Checkbox("Always call out kills##enemyVoice", ref guarantee))
+            {
+                config.EnemyVoiceGuaranteeKills = guarantee;
+                config.Save();
+            }
+            HelpMarker("When the player or a companion falls, an enemy always says a kill line: it waits for the killer to finish its own shout, and if the killer cannot speak (a monster, already dead) the nearest enemy that can says it instead.");
+
+            var extended = config.EnemyVoiceExtendedLines;
+            if (ImGui.Checkbox("Extended line pool##enemyVoice", ref extended))
+            {
+                config.EnemyVoiceExtendedLines = extended;
+                config.Save();
+            }
+            HelpMarker("Off: about 180 lines whose voice and text were proven from the game's own data. On: about 620 lines, adding ones matched by speech recognition of the recordings. The wider pool is more varied but includes boss and primal lines recorded with heavy echo.");
+
+            var defeatTaunts = config.EnemyVoiceDefeatTaunts;
+            if (ImGui.Checkbox("Taunt the fallen##enemyVoice", ref defeatTaunts))
+            {
+                config.EnemyVoiceDefeatTaunts = defeatTaunts;
+                config.Save();
+            }
+            HelpMarker("After the party is wiped, surviving enemies keep taunting until you revive or reset. Pick which kinds of lines they use and how often.");
+            if (defeatTaunts)
+            {
+                ImGui.Indent();
+                SliderFloatSaved("Every (s)##enemyVoiceDefeat", () => config.EnemyVoiceDefeatTauntInterval, v => config.EnemyVoiceDefeatTauntInterval = v, 3f, 30f,
+                    "Seconds between taunts.");
+                var kill = config.EnemyVoiceDefeatTauntKill;
+                if (ImGui.Checkbox("Kill lines##enemyVoiceDefeat", ref kill))
+                {
+                    config.EnemyVoiceDefeatTauntKill = kill;
+                    config.Save();
+                }
+                ImGui.SameLine();
+                var taunt = config.EnemyVoiceDefeatTauntTaunt;
+                if (ImGui.Checkbox("Taunts##enemyVoiceDefeat", ref taunt))
+                {
+                    config.EnemyVoiceDefeatTauntTaunt = taunt;
+                    config.Save();
+                }
+                ImGui.SameLine();
+                var victory = config.EnemyVoiceDefeatTauntVictory;
+                if (ImGui.Checkbox("Victory lines##enemyVoiceDefeat", ref victory))
+                {
+                    config.EnemyVoiceDefeatTauntVictory = victory;
+                    config.Save();
+                }
+                ImGui.Unindent();
+            }
+
             var player = director.Player;
             if (player.FailureReason != null)
                 ImGui.TextColored(new System.Numerics.Vector4(1f, .45f, .35f, 1f), $"Voice playback unavailable: {player.FailureReason}");

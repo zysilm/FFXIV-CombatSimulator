@@ -38,6 +38,20 @@ public partial class Configuration
     // the old default; a value the user changed is left alone.
     public bool EnemyVoiceCadenceMigrated20261025 { get; set; } = false;
     public float EnemyVoiceAllyDeathRadius { get; set; } = 15f;
+    /// <summary>Also use the lines matched by speech recognition (Resources/VoiceLines.json entries
+    /// marked "extended"). Off: only the original script/duration-proven pool. The wider pool holds
+    /// many boss and primal lines recorded with heavy effects, so it is opt-in.</summary>
+    public bool EnemyVoiceExtendedLines { get; set; } = false;
+    /// <summary>A killing blow on the player or a companion always gets a line: it waits for the
+    /// speaker and the line gate, and a killer that cannot speak hands it to the nearest enemy that can.</summary>
+    public bool EnemyVoiceGuaranteeKills { get; set; } = true;
+    /// <summary>After the party is wiped, surviving enemies keep taunting the fallen player.</summary>
+    public bool EnemyVoiceDefeatTaunts { get; set; } = false;
+    /// <summary>Seconds between taunts over the fallen player.</summary>
+    public float EnemyVoiceDefeatTauntInterval { get; set; } = 8f;
+    public bool EnemyVoiceDefeatTauntKill { get; set; } = true;
+    public bool EnemyVoiceDefeatTauntTaunt { get; set; } = true;
+    public bool EnemyVoiceDefeatTauntVictory { get; set; } = true;
     /// <summary>Owner-recorded entry labels: label key ("pc", "npc", "mon/{sepack}") -> label -> entries.
     /// Overrides Resources/VoiceEntryLabels.json per key+label.</summary>
     public Dictionary<string, Dictionary<string, List<int>>> EnemyVoiceEntryLabels { get; set; } = new();
