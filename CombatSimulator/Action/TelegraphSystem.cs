@@ -414,6 +414,39 @@ public sealed class TelegraphSystem
         return false;
     }
 
+    /// <summary>
+    /// A telegraph still in its cast lead-in, for drawing a cast bar: Action Mode turns a cast
+    /// into lead-in instead of an engine cast, so the HP bar has nothing else to read.
+    /// </summary>
+    public bool TryGetCast(uint npcSimId, out uint actionId, out float progress)
+    {
+        foreach (var t in active)
+        {
+            if (t.Resolved || t.Source.SimulatedEntityId != npcSimId || t.LeadInTotal <= 0f)
+                continue;
+            actionId = t.Request.ActionId;
+            var total = t.LeadInTotal + t.WindupTotal;
+            progress = Math.Clamp((t.LeadInElapsed + t.WindupElapsed) / total, 0f, 1f);
+            return true;
+        }
+        actionId = 0;
+        progress = 0f;
+        return false;
+    }
+
+    /// <summary>Interrupt: cancel an enemy telegraph that is still in its cast lead-in (no strike).</summary>
+    public bool TryInterrupt(uint npcSimId)
+    {
+        foreach (var t in active)
+        {
+            if (t.Resolved || t.Source.SimulatedEntityId != npcSimId || t.IsApproachActive)
+                continue;
+            Finish(t, TelegraphOutcome.Dodged);
+            return true;
+        }
+        return false;
+    }
+
     public void Clear()
     {
         foreach (var t in active)

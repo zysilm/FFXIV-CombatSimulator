@@ -27,6 +27,9 @@ public class HpBarOverlay : IDisposable
     private readonly IClientState clientState;
     private readonly Configuration config;
 
+    /// <summary>A cast that is not an engine cast (Action-Mode telegraph lead-in): name + 0..1 progress.</summary>
+    public Func<SimulatedNpc, (string Name, float Progress)?>? ExternalCast { get; set; }
+
     private const float BarWidth = 200f;
     private const float BarHeight = 16f;
     private const float MpBarWidth = 184f;
@@ -238,13 +241,25 @@ public class HpBarOverlay : IDisposable
             0xFFFFFFFF,
             hpText);
 
-        // Cast bar
+        // Cast bar: the engine cast, or (Action Mode) a telegraph still in its cast lead-in.
+        string? castName = null;
+        float castPercent = 0f;
         if (npc.State.IsCasting && npc.CurrentCastSkill != null)
         {
-            var castBarY = barPos.Y + BarHeight + 2;
-            float castPercent = npc.State.CastTimeTotal > 0
+            castName = npc.CurrentCastSkill.Name;
+            castPercent = npc.State.CastTimeTotal > 0
                 ? npc.State.CastTimeElapsed / npc.State.CastTimeTotal
                 : 0;
+        }
+        else if (ExternalCast?.Invoke(npc) is { } external)
+        {
+            castName = external.Name;
+            castPercent = external.Progress;
+        }
+
+        if (castName != null)
+        {
+            var castBarY = barPos.Y + BarHeight + 2;
 
             drawList.AddRectFilled(
                 new Vector2(barPos.X, castBarY),
@@ -256,7 +271,7 @@ public class HpBarOverlay : IDisposable
                 new Vector2(barPos.X + BarWidth * castPercent, castBarY + 12),
                 ImGui.ColorConvertFloat4ToU32(new Vector4(0.8f, 0.5f, 0f, 1f)));
 
-            var castText = npc.CurrentCastSkill.Name;
+            var castText = castName;
             var castSize = ImGui.CalcTextSize(castText);
             drawList.AddText(
                 new Vector2(barPos.X + (BarWidth - castSize.X) / 2, castBarY),

@@ -155,6 +155,9 @@ public class JobActionKitProvider
             // seconds followed by damage appearing out of nowhere. Dropping it collapses the skill
             // into one readable burst where wind-up, circle, animation, VFX and damage line up.
             CastTime = 0f,
+            // Kept aside for the telegraphed-casts option, which restores it only for skills whose
+            // area can be drawn (so the lead-in is no longer silent).
+            NativeCastTime = data.CastTime,
             Cooldown = MathF.Max(2.5f, data.RecastTime),
             Range = data.Range > 0f ? data.Range : 3f,
             Radius = data.Radius,

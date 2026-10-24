@@ -18,6 +18,10 @@ public partial class Configuration
     public bool EnemyTelegraphRealShapes { get; set; } = false;
     // Spawn the game's own omen ground marker under each real-shape area (needs real shapes).
     public bool EnemyNativeOmenVfx { get; set; } = false;
+    // Skills with a drawable area get their real cast time back (cast bar + area during the cast,
+    // snapshot at cast start, interruptible). Needs real shapes; skills without an area stay instant.
+    public bool EnemyTelegraphedCasts { get; set; } = false;
+    public float EnemyMaxCastSeconds { get; set; } = 5f;
     // Keep drawing the overlay outline even while a native omen marks the same area.
     public bool EnemyAreaOverlayWithOmen { get; set; } = false;
 }

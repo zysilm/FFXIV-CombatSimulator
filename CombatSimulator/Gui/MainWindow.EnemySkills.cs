@@ -39,6 +39,19 @@ public partial class MainWindow
                 "Use the game's own ground marker for the area. Falls back to the drawn outline when the marker can't be shown.");
             EnemySkillToggle("Outline over omen", () => config.EnemyAreaOverlayWithOmen, v => config.EnemyAreaOverlayWithOmen = v,
                 "Also draw the outline on top of the native marker (to check the two match).");
+            EnemySkillToggle("Telegraphed casts", () => config.EnemyTelegraphedCasts, v => config.EnemyTelegraphedCasts = v,
+                "Area skills keep their real cast time: cast bar and area show during the cast, then it lands. Interject/Head Graze or a stun cancels it. Skills without an area stay instant.");
+            using (ImRaii.Disabled(!config.EnemyTelegraphedCasts))
+            {
+                var maxCast = config.EnemyMaxCastSeconds;
+                ImGui.SetNextItemWidth(180f);
+                if (ImGui.SliderFloat("Longest cast", ref maxCast, 0.5f, 6f, "%.1fs"))
+                {
+                    config.EnemyMaxCastSeconds = Math.Clamp(maxCast, 0.5f, 6f);
+                    config.Save();
+                }
+                HelpMarker("Real casts longer than this are shortened to it.");
+            }
             ImGui.Unindent();
         }
     }

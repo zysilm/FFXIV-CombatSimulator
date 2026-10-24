@@ -507,6 +507,8 @@ public class CombatEngine : IDisposable
             return result;
         }
 
+        TryInterruptEnemyCast(actionId, target);
+
         if (TryReplacePlayerAttack(actionId, target.EntityId))
         {
             result.Success = true;
@@ -655,6 +657,39 @@ public class CombatEngine : IDisposable
         }
 
         return result;
+    }
+
+    // Role interrupts and stuns. Interject/Head Graze stop interruptible casts; stuns stop any.
+    private static bool IsInterruptAction(uint actionId) => actionId is 7538 or 7551;
+    private static bool IsStunAction(uint actionId) => actionId is 7540 or 7863 or 16;
+
+    /// <summary>Action-Mode hook: cancel the enemy's telegraph that is still in its cast lead-in.</summary>
+    public Func<uint, bool>? InterruptTelegraphCast { get; set; }
+
+    /// <summary>
+    /// Telegraphed-casts option: the player's interrupt or stun on a casting enemy stops the cast
+    /// (engine cast bar, or an Action-Mode telegraph still in its lead-in). Purely local state.
+    /// </summary>
+    private void TryInterruptEnemyCast(uint actionId, SimulatedEntityState target)
+    {
+        if (!config.EnemyTelegraphedCasts || target.IsPlayer || target.IsCompanion)
+            return;
+        var stun = IsStunAction(actionId);
+        if (!stun && !IsInterruptAction(actionId))
+            return;
+
+        if (target.IsCasting && (stun || target.CastInterruptible))
+        {
+            target.IsCasting = false;
+            target.CastActionId = 0;
+            target.CastTimeElapsed = 0;
+            target.CastTimeTotal = 0;
+            AddLogEntry("You interrupt the cast.", CombatLogType.Info);
+            return;
+        }
+
+        if (target.EntityId <= uint.MaxValue && InterruptTelegraphCast?.Invoke((uint)target.EntityId) == true)
+            AddLogEntry("You interrupt the cast.", CombatLogType.Info);
     }
 
     public SimulatedActionResult ProcessNpcAction(

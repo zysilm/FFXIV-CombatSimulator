@@ -348,6 +348,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             // Don't commit a new attack while this enemy already has a live telegraph (fixes the
             // double-swing where the old 0.6s animation lock expired mid-animation).
             telegraphSystem.IsBusy);
+        npcAiController.AreaMarkers = enemyAreaMarkers;
+        combatEngine.InterruptTelegraphCast = telegraphSystem.TryInterrupt;
         npcCorpseFootIkSolver.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
         enemyControlController.FootIkSolver = npcCorpseFootIkSolver;
         companionManager.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
@@ -562,6 +564,10 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, dismembermentController, mainWindow, config, gameGui, clientState);
         combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
         telegraphOverlay = new TelegraphOverlay(telegraphSystem, gameGui, config);
+        hpBarOverlay.ExternalCast = npc =>
+            config.EnemyTelegraphedCasts && telegraphSystem.TryGetCast(npc.SimulatedEntityId, out var castActionId, out var castProgress)
+                ? (actionDataProvider.GetActionData(castActionId)?.Name ?? "Casting", castProgress)
+                : null;
         enemyAreaOverlay = new EnemyAreaOverlay(enemyAreaMarkers, gameGui, config);
         enemyOmenVfx = new CombatSimulator.ActionCombat.EnemyOmenVfx(
             enemyAreaMarkers, animationController, actionDataProvider.GetActionData, dataManager, config, log);
