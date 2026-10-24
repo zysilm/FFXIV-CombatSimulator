@@ -46,5 +46,6 @@
     <EmbeddedResource Include="Resources\Actions.json" />
     <EmbeddedResource Include="UpdateLog\update-log.json" />
     <EmbeddedResource Include="Resources\gaya_nosound.scd" />
+    <EmbeddedResource Include="Resources\VoiceEntryLabels.json" />
   </ItemGroup>
 </Project>

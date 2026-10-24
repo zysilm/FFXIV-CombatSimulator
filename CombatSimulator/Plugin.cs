@@ -546,6 +546,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // GUI
         mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
         mainWindow.VirtualEnemyLookAtBonesProvider = virtualEnemyLookAt.GetAvailableBoneNames;
+        InitVoice(dataManager);
         InitPrivateDirectors();
         AttachPrivateEffects();
         armorDetachmentController.AllowOnHitDetach = () => mainWindow.DevExperimentalUnlocked;
@@ -919,6 +920,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             worldGeometryRenderer.Tick();
             worldGeometryPreview.Tick(deltaTime);
             TickPrivateEffects(deltaTime);
+            // Before the active gate: the audition panel plays outside combat. Inert when voices are off.
+            TickVoice(deltaTime);
 
             if (!combatEngine.IsActive)
                 return;
