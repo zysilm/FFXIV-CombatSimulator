@@ -157,6 +157,9 @@ public unsafe partial class EnemyControlController : IDisposable
     public bool ControlsNpc(nint address)
         => (controlledNpc != null && controlledNpc.Address == address) || swarmFollowers.ContainsKey(address);
 
+    /// <summary>Only the possessed actor itself, not the pack following it.</summary>
+    public bool PossessesNpc(nint address) => controlledNpc != null && controlledNpc.Address == address;
+
     public EnemyControlController(IKeyState keyState, IGamepadState gamepad, IFramework framework,
         RagdollController playerRagdoll, AnimationController animation, BoneTransformService boneService,
         MovementBlockHook movementBlock, ActiveCameraController activeCamera,

@@ -70,32 +70,12 @@ public partial class MainWindow
                 config.EnemyVoiceDefeatTaunts = defeatTaunts;
                 config.Save();
             }
-            HelpMarker("After the party is wiped, surviving enemies keep taunting until you revive or reset. Pick which kinds of lines they use and how often.");
+            HelpMarker("After the party is wiped, surviving enemies keep gloating with kill lines until you revive or reset.");
             if (defeatTaunts)
             {
                 ImGui.Indent();
                 SliderFloatSaved("Every (s)##enemyVoiceDefeat", () => config.EnemyVoiceDefeatTauntInterval, v => config.EnemyVoiceDefeatTauntInterval = v, 1f, 30f,
                     "Seconds between taunts. Short intervals let several enemies talk at once, each under its own bubble.");
-                var kill = config.EnemyVoiceDefeatTauntKill;
-                if (ImGui.Checkbox("Kill lines##enemyVoiceDefeat", ref kill))
-                {
-                    config.EnemyVoiceDefeatTauntKill = kill;
-                    config.Save();
-                }
-                ImGui.SameLine();
-                var taunt = config.EnemyVoiceDefeatTauntTaunt;
-                if (ImGui.Checkbox("Taunts##enemyVoiceDefeat", ref taunt))
-                {
-                    config.EnemyVoiceDefeatTauntTaunt = taunt;
-                    config.Save();
-                }
-                ImGui.SameLine();
-                var victory = config.EnemyVoiceDefeatTauntVictory;
-                if (ImGui.Checkbox("Victory lines##enemyVoiceDefeat", ref victory))
-                {
-                    config.EnemyVoiceDefeatTauntVictory = victory;
-                    config.Save();
-                }
                 ImGui.Unindent();
             }
 

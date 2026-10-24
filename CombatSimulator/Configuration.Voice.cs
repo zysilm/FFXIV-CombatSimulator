@@ -45,9 +45,6 @@ public partial class Configuration
     public bool EnemyVoiceDefeatTaunts { get; set; } = false;
     /// <summary>Seconds between taunts over the fallen player.</summary>
     public float EnemyVoiceDefeatTauntInterval { get; set; } = 8f;
-    public bool EnemyVoiceDefeatTauntKill { get; set; } = true;
-    public bool EnemyVoiceDefeatTauntTaunt { get; set; } = true;
-    public bool EnemyVoiceDefeatTauntVictory { get; set; } = true;
     /// <summary>Voiced-line personas that are named story characters (Alphinaud, Y'shtola...) may be
     /// given to ordinary enemies. Off: only the unnamed personas are assigned. Not in the UI yet.</summary>
     public bool EnemyVoiceAllowStoryCharacters { get; set; } = true;

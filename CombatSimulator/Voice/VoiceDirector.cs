@@ -615,19 +615,10 @@ public sealed unsafe class VoiceDirector
         if (defeatTauntTimer > 0f)
             return;
 
-        var options = new List<VoiceEvent>(3);
-        if (config.EnemyVoiceDefeatTauntKill) options.Add(VoiceEvent.KilledPlayer);
-        if (config.EnemyVoiceDefeatTauntTaunt) options.Add(VoiceEvent.Taunt);
-        if (config.EnemyVoiceDefeatTauntVictory) options.Add(VoiceEvent.Victory);
-        if (options.Count == 0)
-        {
-            defeatTauntTimer = interval;
-            return;
-        }
-
+        // Kill lines (their chain already borrows victory and taunt lines when a voice lacks them).
         // Taunts may overlap (down to one a second, each enemy under its own bubble), but an
         // enemy still talking is skipped; if everyone is mid-line, try again next frame.
-        var e = options[random.Next(options.Count)];
+        const VoiceEvent e = VoiceEvent.KilledPlayer;
         var speaker = PickDefeatTaunter(e);
         if (speaker == 0 || !tracked.TryGetValue(speaker, out var t))
             return;
