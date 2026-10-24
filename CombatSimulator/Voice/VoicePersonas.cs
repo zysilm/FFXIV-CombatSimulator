@@ -14,14 +14,20 @@ namespace CombatSimulator.Voice;
 /// given one persona and speaks only its lines, so it keeps one voice for the whole fight.
 /// <see cref="Band"/> is <see cref="VoiceLineAge.Adult"/> for both male "mature" and female "adult".
 /// <see cref="Fallback"/> lists personas to borrow an event from when this one has no line for it.
+/// A <see cref="IsBoss"/> persona is built from the studio-processed (fx) boss/primal lines instead:
+/// it is given to monsters and demihumans only, whatever its recorded gender, and never to a human.
 /// </summary>
 public sealed record VoicePersona(string Id, string Language, VoiceLineVoice Voice, VoiceLineAge Band, bool Assignable, int Lines,
-    string? Character, IReadOnlyList<string> Fallback)
+    string? Character, IReadOnlyList<string> Fallback, bool IsBoss = false)
 {
     /// <summary>A named story character (Alphinaud, Y'shtola...), as opposed to an unnamed voice.</summary>
     public bool IsStoryCharacter => !string.IsNullOrEmpty(Character);
 
-    public string BandName => Band switch
+    /// <summary>The kind of speaker body this persona is for: its gender for a human voice,
+    /// <see cref="VoiceLineVoice.NonHuman"/> for a boss voice.</summary>
+    public VoiceLineVoice SpeakerVoice => IsBoss ? VoiceLineVoice.NonHuman : Voice;
+
+    public string BandName => IsBoss ? "boss" : Band switch
     {
         VoiceLineAge.Young => "young",
         VoiceLineAge.Elderly => "elderly",
@@ -102,6 +108,7 @@ public sealed class VoicePersonaTable
                 _ => VoiceLineVoice.NonHuman,
             };
             var band = VoicePersona.ParseBand(Str(row, "band"));
+            var boss = string.Equals(Str(row, "kind"), "boss", StringComparison.OrdinalIgnoreCase);
             if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(language))
                 continue;
             var fallback = new List<string>();
@@ -109,14 +116,62 @@ public sealed class VoicePersonaTable
                 foreach (var f in fb.EnumerateArray())
                     if (f.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(f.GetString()))
                         fallback.Add(f.GetString()!);
+            // A boss voice has no age band; its gender is only for the label.
             var assignable = row.TryGetProperty("assignable", out var a) && a.ValueKind == JsonValueKind.True &&
-                             voice != VoiceLineVoice.NonHuman && band != VoiceLineAge.Any;
+                             voice != VoiceLineVoice.NonHuman && (boss || band != VoiceLineAge.Any);
             var lines = row.TryGetProperty("lines", out var n) && n.ValueKind == JsonValueKind.Number ? n.GetInt32() : 0;
             var character = Str(row, "character");
-            table.Add(new VoicePersona(id, language, voice, band, assignable, lines,
-                string.IsNullOrWhiteSpace(character) ? null : character, fallback));
+            table.Add(new VoicePersona(id, language, voice, boss ? VoiceLineAge.Any : band, assignable, lines,
+                string.IsNullOrWhiteSpace(character) ? null : character, fallback, boss));
         }
         return table;
+    }
+
+    /// <summary>
+    /// Every persona a speaker with this body may be given by hand, in id order: all assignable
+    /// personas of its gender (any band) for a human, every boss persona for a monster/demihuman.
+    /// </summary>
+    public List<VoicePersona> Choices(string language, VoiceLineVoice speakerVoice, bool allowStoryCharacters)
+    {
+        var result = new List<VoicePersona>();
+        foreach (var p in all)
+            if (Usable(p, language, speakerVoice, allowStoryCharacters))
+                result.Add(p);
+        result.Sort((x, y) => string.CompareOrdinal(x.Id, y.Id));
+        return result;
+    }
+
+    /// <summary>A readable name for the voice picker: the character when known, else "Male voice 3
+    /// (mature)" or "Boss voice 2 (female)", numbered among the assignable personas of that kind.</summary>
+    public string Label(VoicePersona persona)
+    {
+        if (persona.IsStoryCharacter)
+            return persona.Character!;
+        var number = 1;
+        foreach (var p in all)
+            if (p.Assignable && p.Language == persona.Language && p.IsBoss == persona.IsBoss &&
+                (persona.IsBoss || p.Voice == persona.Voice) && string.CompareOrdinal(p.Id, persona.Id) < 0)
+                number++;
+        var gender = persona.Voice == VoiceLineVoice.Female ? "female" : "male";
+        return persona.IsBoss
+            ? $"Boss voice {number} ({gender})"
+            : $"{(persona.Voice == VoiceLineVoice.Female ? "Female" : "Male")} voice {number} ({persona.BandName})";
+    }
+
+    /// <summary>
+    /// The persona a saved choice names, for a speaker of this body in this language; null when it no
+    /// longer fits (other gender, removed, story characters off). A choice saved under the other
+    /// persona language maps to the same-numbered human persona there (the ja and en personas are the
+    /// same actors); boss personas are clustered per language and do not map.
+    /// </summary>
+    public VoicePersona? ResolveChoice(string? id, string language, VoiceLineVoice speakerVoice, bool allowStoryCharacters)
+    {
+        if (string.IsNullOrEmpty(id))
+            return null;
+        var p = Get(id);
+        if ((p == null || p.Language != language) && !id.Contains("-b", StringComparison.Ordinal) && id.Length > 3 && id[2] == '-')
+            p = Get(language + id.Substring(2));
+        return p != null && Usable(p, language, speakerVoice, allowStoryCharacters) ? p : null;
     }
 
     private static string? Str(JsonElement row, string name) =>
@@ -127,9 +182,12 @@ public sealed class VoicePersonaTable
     /// elderly voices, children young ones, adults any young or mature/adult voice (so a group of
     /// adults spreads over the most voices). An empty band falls to the next (female elderly has no
     /// persona and takes female adult). Empty only when the gender has no persona at all.
+    /// A non-human body (monster, demihuman) gets every boss persona, whatever their gender.
     /// </summary>
     public List<VoicePersona> Candidates(string language, VoiceLineVoice voice, VoiceLineAge bodyAge, bool allowStoryCharacters)
     {
+        if (voice == VoiceLineVoice.NonHuman)
+            return Choices(language, voice, allowStoryCharacters);
         VoiceLineAge[][] tiers = bodyAge switch
         {
             VoiceLineAge.Elderly => new[] { new[] { VoiceLineAge.Elderly }, new[] { VoiceLineAge.Adult }, new[] { VoiceLineAge.Young } },
@@ -152,7 +210,8 @@ public sealed class VoicePersonaTable
     /// <summary>
     /// The personas a speaker with <paramref name="persona"/> may voice lines from, in order: itself,
     /// then its fallbacks that are assignable, of the same language and gender (never crossing
-    /// gender), same band before other bands, file order within each.
+    /// gender), same band before other bands, file order within each. A boss persona falls back to
+    /// other boss personas only, most similar voice first (file order).
     /// </summary>
     public List<string> ChainFor(VoicePersona persona, bool allowStoryCharacters)
     {
@@ -162,7 +221,7 @@ public sealed class VoicePersonaTable
         {
             var p = Get(id);
             if (p == null || chain.Contains(p.Id) || otherBand.Contains(p.Id) ||
-                !Usable(p, persona.Language, persona.Voice, allowStoryCharacters))
+                !Usable(p, persona.Language, persona.SpeakerVoice, allowStoryCharacters))
                 continue;
             (p.Band == persona.Band ? chain : otherBand).Add(p.Id);
         }
@@ -170,8 +229,10 @@ public sealed class VoicePersonaTable
         return chain;
     }
 
-    private static bool Usable(VoicePersona p, string language, VoiceLineVoice voice, bool allowStoryCharacters) =>
-        p.Assignable && p.Language == language && p.Voice == voice && (allowStoryCharacters || !p.IsStoryCharacter);
+    /// <summary><paramref name="speakerVoice"/> is the speaker's body: a gender takes human personas
+    /// of that gender only, <see cref="VoiceLineVoice.NonHuman"/> boss personas only.</summary>
+    private static bool Usable(VoicePersona p, string language, VoiceLineVoice speakerVoice, bool allowStoryCharacters) =>
+        p.Assignable && p.Language == language && p.SpeakerVoice == speakerVoice && (allowStoryCharacters || !p.IsStoryCharacter);
 }
 
 /// <summary>An enemy's persona and the persona chain its lines come from (empty = no curated lines).</summary>
@@ -242,22 +303,37 @@ public sealed class VoicePersonaAssigner
     public static uint IdentitySeed(uint bNpcBaseId, uint bNpcNameId, uint entityId) =>
         VoiceSelection.StableHash(VoiceSelection.StableHash(VoiceSelection.StableHash(bNpcBaseId) ^ bNpcNameId) ^ entityId);
 
-    /// <summary>The persona of <paramref name="key"/>, assigning it on first call. Non-human bodies,
-    /// inactive personas and a gender without personas get <see cref="VoicePersonaAssignment.None"/>.</summary>
-    public VoicePersonaAssignment Assign(ulong key, uint identity, VoiceLineVoice voice, VoiceLineAge bodyAge)
+    /// <summary>Key under which a hand-picked voice is saved: the enemy's kind (BNpcBase + BNpcName),
+    /// so every enemy of that kind keeps it across fights and sessions; the name when both ids are 0.
+    /// Null when there is nothing to key on.</summary>
+    public static string? OverrideKey(uint bNpcBaseId, uint bNpcNameId, string? name) =>
+        bNpcBaseId != 0 || bNpcNameId != 0 ? $"{bNpcBaseId}:{bNpcNameId}"
+        : string.IsNullOrWhiteSpace(name) ? null : $"name:{name.Trim()}";
+
+    /// <summary>The persona of <paramref name="key"/>, assigning it on first call. Human bodies get a
+    /// persona of their gender and age, monsters and demihumans (<see cref="VoiceLineVoice.NonHuman"/>) a
+    /// boss persona. <paramref name="chosen"/> is a hand-picked persona id: used when it fits the body,
+    /// ignored otherwise. Inactive personas and a body without personas get
+    /// <see cref="VoicePersonaAssignment.None"/>.</summary>
+    public VoicePersonaAssignment Assign(ulong key, uint identity, VoiceLineVoice voice, VoiceLineAge bodyAge, string? chosen = null)
     {
         if (assigned.TryGetValue(key, out var existing))
             return existing;
         var result = VoicePersonaAssignment.None;
-        if (Language != null && voice is VoiceLineVoice.Male or VoiceLineVoice.Female)
+        if (Language != null)
         {
-            var candidates = table.Candidates(Language, voice, bodyAge, AllowStoryCharacters);
-            if (candidates.Count > 0)
+            var persona = table.ResolveChoice(chosen, Language, voice, AllowStoryCharacters);
+            if (persona == null)
             {
-                var chosen = Choose(candidates, identity);
-                remembered[identity] = chosen.Id;
-                result = new VoicePersonaAssignment(chosen, table.ChainFor(chosen, AllowStoryCharacters));
+                var candidates = table.Candidates(Language, voice, bodyAge, AllowStoryCharacters);
+                if (candidates.Count > 0)
+                {
+                    persona = Choose(candidates, identity);
+                    remembered[identity] = persona.Id;
+                }
             }
+            if (persona != null)
+                result = new VoicePersonaAssignment(persona, table.ChainFor(persona, AllowStoryCharacters));
         }
         assigned[key] = result;
         return result;

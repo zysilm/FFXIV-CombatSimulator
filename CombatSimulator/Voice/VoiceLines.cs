@@ -13,8 +13,8 @@ public enum VoiceLineVoice
 {
     Male,
     Female,
-    /// <summary>Monster/beast models. No curated line is non-human today, so these stay silent
-    /// (their label-based monster sounds still work).</summary>
+    /// <summary>Monster, beast and demihuman models. As a speaker they take only the processed boss
+    /// voices (<see cref="VoiceLineEntry.Fx"/> lines, through a boss persona), whatever the line's gender.</summary>
     NonHuman,
 }
 
@@ -44,9 +44,11 @@ public enum VoiceLineTextSheet
 /// not number them alike (file 8202037 is NpcYell 7768, not 2037); the pairs were proven offline.
 /// <see cref="Extended"/> is provenance only (matched by speech recognition). <see cref="Fx"/> marks a
 /// recording with heavy studio processing (reverb, layered or shifted voice: bosses, primals); a
-/// human speaker never gets one, it would make a common soldier sound like a god.
+/// human speaker never gets one, it would make a common soldier sound like a god, and a monster or
+/// demihuman gets only these.
 /// <see cref="PersonaJa"/>/<see cref="PersonaEn"/> name the speaker persona (one voice actor, see
 /// <see cref="VoicePersonaTable"/>) of the recording in that language; null when the line has none.
+/// For an fx line it is a boss persona.
 /// </summary>
 public sealed record VoiceLineEntry(uint VoiceId, uint YellId, VoiceEvent[] Events, VoiceLineVoice Voice, bool Story, float Weight,
     VoiceLineAge Age = VoiceLineAge.Any, VoiceLineTextSheet Sheet = VoiceLineTextSheet.NpcYell, bool Extended = false, bool Fx = false,
@@ -258,10 +260,22 @@ public sealed class VoiceLinePicker
 
     public bool WasRecent(uint voiceId) => recent.Contains(voiceId);
 
-    private bool Fits(VoiceLineEntry line, VoiceEvent e, VoiceLineVoice voice) =>
-        line.Voice == voice && !(line.Fx && IsHuman(voice)) && !unavailable.Contains(line.VoiceId) && Array.IndexOf(line.Events, e) >= 0;
+    /// <summary>Remember a line as heard without touching the gate or cooldowns (a voice preview).</summary>
+    public void MarkHeard(uint voiceId)
+    {
+        recent.Remove(voiceId);
+        recent.AddFirst(voiceId);
+        while (recent.Count > Math.Max(0, settings.RecentMemory))
+            recent.RemoveLast();
+    }
 
-    private static bool IsHuman(VoiceLineVoice voice) => voice is VoiceLineVoice.Male or VoiceLineVoice.Female;
+    private bool Fits(VoiceLineEntry line, VoiceEvent e, VoiceLineVoice voice) =>
+        SuitsSpeaker(line, voice) && !unavailable.Contains(line.VoiceId) && Array.IndexOf(line.Events, e) >= 0;
+
+    /// <summary>A human speaker takes unprocessed lines of its gender; a non-human one (monster,
+    /// demihuman) takes only processed boss lines, of either gender.</summary>
+    public static bool SuitsSpeaker(VoiceLineEntry line, VoiceLineVoice voice) =>
+        voice == VoiceLineVoice.NonHuman ? line.Fx || line.Voice == VoiceLineVoice.NonHuman : line.Voice == voice && !line.Fx;
 
     private static bool AgeFits(VoiceLineEntry line, VoiceLineAge age) =>
         age == VoiceLineAge.Any || line.Age == VoiceLineAge.Any || line.Age == age;
@@ -308,6 +322,74 @@ public sealed class VoiceLinePicker
                     return pick;
             }
         return null;
+    }
+
+    // ---- Taunts over the fallen: variety in one voice. ----
+
+    /// <summary>What a speaker says over a fallen party: its kill, victory and taunt lines together.</summary>
+    public static IReadOnlyList<VoiceEvent> FallenTauntEvents { get; } = new[] { VoiceEvent.KilledPlayer, VoiceEvent.Victory, VoiceEvent.Taunt };
+
+    /// <summary>Below this many lines the own persona's pool is topped up from its fallbacks.</summary>
+    public const int MinFallenTauntPool = 3;
+
+    /// <summary>
+    /// The lines a speaker locked to a persona chain may say over the fallen: every kill, victory and
+    /// taunt line of its own persona (<paramref name="personas"/>[0]). Only when that is fewer than
+    /// <see cref="MinFallenTauntPool"/> lines are the fallbacks' lines added, one whole persona at a time,
+    /// in chain order (same gender, so the voice stays close).
+    /// </summary>
+    public List<VoiceLineEntry> FallenTauntPool(VoiceLineVoice voice, IReadOnlyList<string> personas, string language)
+    {
+        var pool = new List<VoiceLineEntry>();
+        foreach (var persona in personas)
+        {
+            foreach (var line in entries)
+                if (line.PersonaFor(language) == persona && !pool.Contains(line) && FitsAny(line, FallenTauntEvents, voice))
+                    pool.Add(line);
+            if (pool.Count >= MinFallenTauntPool)
+                break;
+        }
+        return pool;
+    }
+
+    /// <summary>
+    /// A taunt over the fallen: uniform among <see cref="FallenTauntPool"/>, never a recent line while
+    /// another is fresh; when every line is recent, the one heard longest ago. Null = no line.
+    /// </summary>
+    public VoiceLineEntry? PickFallenTaunt(VoiceLineVoice voice, IReadOnlyList<string> personas, string language, Func<double> random) =>
+        PickUniform(FallenTauntPool(voice, personas, language), random);
+
+    /// <summary>Any line of exactly this persona (any event), for a voice preview; same no-repeat rule.</summary>
+    public VoiceLineEntry? PickAnyOf(VoiceLineVoice voice, string persona, string language, Func<double> random)
+    {
+        var pool = new List<VoiceLineEntry>();
+        foreach (var line in entries)
+            if (line.PersonaFor(language) == persona && SuitsSpeaker(line, voice) && !unavailable.Contains(line.VoiceId))
+                pool.Add(line);
+        return PickUniform(pool, random);
+    }
+
+    private VoiceLineEntry? PickUniform(List<VoiceLineEntry> pool, Func<double> random)
+    {
+        if (pool.Count == 0)
+            return null;
+        var fresh = pool.FindAll(l => !recent.Contains(l.VoiceId));
+        if (fresh.Count > 0)
+            return fresh[Math.Min(fresh.Count - 1, (int)(random() * fresh.Count))];
+        // Everything was heard lately: the oldest of them (the recent list is newest first).
+        VoiceLineEntry? oldest = null;
+        foreach (var id in recent)
+            if (pool.Find(l => l.VoiceId == id) is { } hit)
+                oldest = hit;
+        return oldest ?? pool[0];
+    }
+
+    private bool FitsAny(VoiceLineEntry line, IReadOnlyList<VoiceEvent> events, VoiceLineVoice voice)
+    {
+        foreach (var e in events)
+            if (Fits(line, e, voice))
+                return true;
+        return false;
     }
 
     private VoiceLineEntry? PickFrom(VoiceEvent e, VoiceLineVoice voice, Func<double> random, bool avoidRecent, VoiceLineAge age = VoiceLineAge.Any,

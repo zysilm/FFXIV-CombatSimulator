@@ -401,7 +401,7 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
 {
     var table = VoicePersonaTable.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "VoicePersonas.json")));
     Check(table.Count >= 100, $"persona table has only {table.Count} rows");
-    int AssignableIn(string lang) => table.All.Count(p => p.Assignable && p.Language == lang);
+    int AssignableIn(string lang) => table.All.Count(p => p.Assignable && !p.IsBoss && p.Language == lang);
     Check(AssignableIn("ja") == 15 && AssignableIn("en") == 14, $"assignable personas ja {AssignableIn("ja")} en {AssignableIn("en")}");
     Check(table.Get("ja-010")?.Character == "Alphinaud" && table.Get("ja-010")!.Voice == VoiceLineVoice.Male &&
           table.Get("ja-010")!.Band == VoiceLineAge.Young, "ja-010 is young male Alphinaud");
@@ -418,7 +418,8 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
             var chain = table.ChainFor(p, allowStory);
             Check(chain[0] == p.Id && chain.Distinct().Count() == chain.Count, $"{p.Id}: chain must start with itself, no repeats");
             var members = chain.Select(id => table.Get(id)!).ToList();
-            Check(members.All(m => m.Assignable && m.Voice == p.Voice && m.Language == p.Language), $"{p.Id}: chain crosses gender/language or uses a small persona");
+            // Boss personas are for non-human speakers: their chain stays among boss voices of any gender.
+            Check(members.All(m => m.Assignable && m.SpeakerVoice == p.SpeakerVoice && m.Language == p.Language), $"{p.Id}: chain crosses gender/kind/language or uses a small persona");
             Check(allowStory || members.All(m => !m.IsStoryCharacter), $"{p.Id}: story character in a chain with story characters off");
             var firstOther = members.FindIndex(m => m.Band != p.Band);
             Check(firstOther < 0 || members.Skip(firstOther).All(m => m.Band != p.Band), $"{p.Id}: same-band fallback after another band");
@@ -539,7 +540,7 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
         reached.Add(x.Assign(1, VoicePersonaAssigner.IdentitySeed(i, i * 3, i * 7), VoiceLineVoice.Female, VoiceLineAge.Adult).Persona!.Id);
     }
     Check(reached.Count == table.Candidates("ja", VoiceLineVoice.Female, VoiceLineAge.Adult, true).Count, "assignment never reaches some personas");
-    Check(assigner.Assign(77, seed, VoiceLineVoice.NonHuman, VoiceLineAge.Any) == VoicePersonaAssignment.None, "a monster got a persona");
+    Check(assigner.Assign(77, seed, VoiceLineVoice.NonHuman, VoiceLineAge.Any).Persona is { IsBoss: true }, "a monster did not get a boss persona");
 
     // Story characters off: only unnamed personas; English women then have none (curated lines stay silent).
     var noStory = new VoicePersonaAssigner();
@@ -574,12 +575,176 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
         foreach (var p in table.All.Where(p => p.Assignable && p.Language == lang))
             foreach (var ev in Enum.GetValues<VoiceEvent>())
                 for (var i = 0; i < 10; i++)
-                    Check(shipped.Pick(ev, p.Voice, table.ChainFor(p, true), lang, rnd.NextDouble)?.PersonaFor(lang) is { } got && !smallIds.Contains(got),
+                    // Boss voices have no AllyDeath line at all: silence there, never a small persona.
+                    Check(shipped.Pick(ev, p.SpeakerVoice, table.ChainFor(p, true), lang, rnd.NextDouble)?.PersonaFor(lang) is { } got ? !smallIds.Contains(got)
+                            : p.IsBoss && shipped.Available(ev, p.SpeakerVoice, table.ChainFor(p, true), lang) == 0,
                         $"{p.Id}: {ev} used a small persona's line");
 
     Console.WriteLine("Persona coverage (avg lines of the answering persona per event; borrow = candidates using a fallback):");
     foreach (var c in coverage)
         Console.WriteLine(c);
+
+    // ---- Taunts over the fallen: the speaker's own kill + victory + taunt lines, topped up only below 3. ----
+    var poolStats = new List<string>();
+    foreach (var lang in new[] { "ja", "en" })
+    foreach (var bossKind in new[] { false, true })
+    {
+        var ownSizes = new List<int>();
+        var poolSizes = new List<int>();
+        foreach (var p in table.All.Where(p => p.Assignable && p.Language == lang && p.IsBoss == bossKind))
+        {
+            var speaker = p.SpeakerVoice;
+            var chain = table.ChainFor(p, true);
+            var own = entries.Count(l => l.PersonaFor(lang) == p.Id && VoiceLinePicker.SuitsSpeaker(l, speaker) &&
+                                         VoiceLinePicker.FallenTauntEvents.Any(ev => l.Events.Contains(ev)));
+            var pool = shipped.FallenTauntPool(speaker, chain, lang);
+            ownSizes.Add(own);
+            poolSizes.Add(pool.Count);
+            Check(pool.Count > 0, $"{p.Id}: nothing to say over the fallen");
+            Check(pool.Count(l => l.PersonaFor(lang) == p.Id) == own, $"{p.Id}: fallen pool misses own lines");
+            Check(pool.All(l => l.Events.Any(ev => VoiceLinePicker.FallenTauntEvents.Contains(ev))), $"{p.Id}: fallen pool has a non-taunt line");
+            Check(pool.All(l => VoiceLinePicker.SuitsSpeaker(l, speaker)), $"{p.Id}: fallen pool crosses kind (fx/human)");
+            if (own >= VoiceLinePicker.MinFallenTauntPool)
+                Check(pool.All(l => l.PersonaFor(lang) == p.Id), $"{p.Id}: {own} own lines but the voice changed");
+            else
+                Check(pool.Count >= VoiceLinePicker.MinFallenTauntPool || pool.Count == entries.Count(l => chain.Contains(l.PersonaFor(lang)!) &&
+                          VoiceLinePicker.SuitsSpeaker(l, speaker) && l.Events.Any(ev => VoiceLinePicker.FallenTauntEvents.Contains(ev))),
+                    $"{p.Id}: small own pool ({own}) not topped up from fallbacks");
+            Check(pool.All(l => chain.Contains(l.PersonaFor(lang)!)), $"{p.Id}: fallen pool left the persona chain");
+            if (!p.IsBoss)
+                Check(pool.All(l => table.Get(l.PersonaFor(lang))!.Voice == p.Voice), $"{p.Id}: fallen pool crosses gender");
+            // Variety: 30 taunts in a row use the whole pool and never repeat the previous line.
+            var taunter = new VoiceLinePicker(new VoiceLineSettings());
+            taunter.SetEntries(entries);
+            var heard = new HashSet<uint>();
+            uint last = 0;
+            for (var i = 0; i < 30; i++)
+            {
+                var line = taunter.PickFallenTaunt(speaker, chain, lang, rnd.NextDouble)!;
+                Check(pool.Contains(line), $"{p.Id}: fallen taunt outside its pool");
+                Check(pool.Count == 1 || line.VoiceId != last, $"{p.Id}: fallen taunt repeated the previous line");
+                last = line.VoiceId;
+                heard.Add(line.VoiceId);
+                taunter.Commit(1, VoiceEvent.KilledPlayer, line, 2f);
+                taunter.Advance(8f);
+            }
+            Check(heard.Count == Math.Min(pool.Count, 30), $"{p.Id}: 30 fallen taunts used {heard.Count} of {pool.Count} lines");
+        }
+        foreach (var (kind, sizes) in new[] { ("own", ownSizes), ("pool", poolSizes) })
+        {
+            sizes.Sort();
+            poolStats.Add($"  {lang} {(bossKind ? "boss" : "human")} {kind}: min {sizes[0]}, median {sizes[sizes.Count / 2]}, max {sizes[^1]} ({sizes.Count} personas)");
+        }
+    }
+
+    // ---- Boss personas: the processed (fx) boss voices, for monsters and demihumans only. ----
+    var bosses = table.All.Where(p => p.IsBoss).ToList();
+    Check(bosses.Count >= 20 && bosses.All(b => b.Assignable && b.BandName == "boss" && b.SpeakerVoice == VoiceLineVoice.NonHuman),
+        $"boss personas: {bosses.Count}");
+    foreach (var e in entries)
+        foreach (var (lang, id) in new[] { ("ja", e.PersonaJa), ("en", e.PersonaEn) })
+            Check((table.Get(id)?.IsBoss == true) == e.Fx, $"vo {e.VoiceId} ({lang}): fx {e.Fx} but persona {id}");
+    var fxLine = entries.First(e => e.Fx);
+    var plainLine = entries.First(e => !e.Fx);
+    Check(VoiceLinePicker.SuitsSpeaker(fxLine, VoiceLineVoice.NonHuman) && !VoiceLinePicker.SuitsSpeaker(fxLine, fxLine.Voice) &&
+          !VoiceLinePicker.SuitsSpeaker(plainLine, VoiceLineVoice.NonHuman), "fx lines are for non-humans only");
+    var fxEvents = entries.Where(e => e.Fx).SelectMany(e => e.Events).Distinct().ToList();
+    var bossCoverage = new List<string>();
+    foreach (var lang in new[] { "ja", "en" })
+    {
+        var langBosses = table.Choices(lang, VoiceLineVoice.NonHuman, true);
+        Check(langBosses.Count > 0 && langBosses.All(b => b.IsBoss), $"{lang}: no boss choices");
+        Check(table.Candidates(lang, VoiceLineVoice.NonHuman, VoiceLineAge.Any, true).Count == langBosses.Count, $"{lang}: monster candidates are not the boss personas");
+        foreach (var g in new[] { VoiceLineVoice.Male, VoiceLineVoice.Female })
+            Check(table.Choices(lang, g, true).All(p => !p.IsBoss && p.Voice == g) &&
+                  table.Candidates(lang, g, VoiceLineAge.Adult, true).All(p => !p.IsBoss), $"{lang} {g}: boss persona offered to a human");
+        foreach (var b in langBosses)
+        {
+            var chain = table.ChainFor(b, true);
+            Check(chain[0] == b.Id && chain.All(id => table.Get(id)!.IsBoss && table.Get(id)!.Language == lang), $"{b.Id}: chain leaves the boss personas");
+            Check(shipped.Available(VoiceEvent.KilledPlayer, VoiceLineVoice.NonHuman, chain, lang) > 0, $"{b.Id}: kill chain unreachable");
+            foreach (var ev in fxEvents)
+            {
+                Check(shipped.Available(ev, VoiceLineVoice.NonHuman, chain, lang) > 0, $"{b.Id}: {ev} unreachable");
+                for (var i = 0; i < 5; i++)
+                    Check(shipped.Pick(ev, VoiceLineVoice.NonHuman, chain, lang, rnd.NextDouble) is { Fx: true } pick && chain.Contains(pick.PersonaFor(lang)!),
+                        $"{b.Id}: {ev} gave a non-boss line");
+            }
+        }
+        var perEvent = fxEvents.Select(ev =>
+            $"{ev} {langBosses.Count(b => shipped.CountFor(ev, VoiceLineVoice.NonHuman, b.Id, lang) > 0)}/{langBosses.Count}");
+        bossCoverage.Add($"  {lang} ({langBosses.Count} boss personas, own lines per event): {string.Join(", ", perEvent)}");
+    }
+    // Humans never hear fx; monsters only hear fx.
+    foreach (var lang in new[] { "ja", "en" })
+        foreach (var g in new[] { VoiceLineVoice.Male, VoiceLineVoice.Female })
+            for (var i = 0; i < 50; i++)
+                Check(shipped.Pick(VoiceEvent.Skill, g, rnd.NextDouble) is { Fx: false }, "human per-line pick gave an fx line");
+    // Monsters spread over the boss personas and keep theirs per identity.
+    var pack = new VoicePersonaAssigner();
+    pack.Configure(table, "en", true);
+    var enBosses = table.Choices("en", VoiceLineVoice.NonHuman, true).Count;
+    var packHeld = new List<string>();
+    for (uint i = 0; i < enBosses; i++)
+        packHeld.Add(pack.Assign(200 + i, VoicePersonaAssigner.IdentitySeed(9000, 40, 0x40000000 + i), VoiceLineVoice.NonHuman, VoiceLineAge.Any).Persona!.Id);
+    Check(packHeld.Distinct().Count() == enBosses, "concurrent monsters share boss personas");
+    var lonely = new VoicePersonaAssigner(); lonely.Configure(table, "en", true);
+    Check(lonely.Assign(1, VoicePersonaAssigner.IdentitySeed(9000, 40, 0x40000000), VoiceLineVoice.NonHuman, VoiceLineAge.Any).Persona!.Id == packHeld[0],
+        "same monster identity, different boss persona");
+
+    // ---- Hand-picked voices: key, lookup, validation, persistence. ----
+    Check(VoicePersonaAssigner.OverrideKey(1234, 567, "Bandit") == "1234:567" && VoicePersonaAssigner.OverrideKey(0, 567, null) == "0:567" &&
+          VoicePersonaAssigner.OverrideKey(0, 0, " Bandit ") == "name:Bandit" && VoicePersonaAssigner.OverrideKey(0, 0, "") == null, "override key");
+    var enMale = table.Choices("en", VoiceLineVoice.Male, true);
+    Check(enMale.Select(p => p.Band).Distinct().Count() == 3, "male choices do not span every band");
+    var pickedMale = enMale.Last();
+    var chooser = new VoicePersonaAssigner();
+    chooser.Configure(table, "en", true);
+    Check(chooser.Assign(1, seed, VoiceLineVoice.Male, VoiceLineAge.Young, pickedMale.Id).Persona == pickedMale, "hand-picked voice ignored");
+    Check(chooser.Assign(1, seed, VoiceLineVoice.Male, VoiceLineAge.Young, null).Persona == pickedMale, "assignment changed without a Forget");
+    chooser.Forget(1);
+    Check(chooser.Assign(1, seed, VoiceLineVoice.Male, VoiceLineAge.Young, null).Persona != null, "auto after clearing the choice");
+    // Saved in the config, so a new session (fresh assigner) applies it again.
+    var nextSession = new VoicePersonaAssigner();
+    nextSession.Configure(table, "en", true);
+    Check(nextSession.Assign(5, VoicePersonaAssigner.IdentitySeed(1, 2, 3), VoiceLineVoice.Male, VoiceLineAge.Adult, pickedMale.Id).Persona == pickedMale,
+        "hand-picked voice lost in a new session");
+    // A choice that does not fit is ignored: other gender, a boss voice for a human, a human voice for a monster.
+    var femaleId = table.Choices("en", VoiceLineVoice.Female, true)[0].Id;
+    var bossId = table.Choices("en", VoiceLineVoice.NonHuman, true)[0].Id;
+    Check(table.ResolveChoice(femaleId, "en", VoiceLineVoice.Male, true) == null && table.ResolveChoice(bossId, "en", VoiceLineVoice.Male, true) == null &&
+          table.ResolveChoice(pickedMale.Id, "en", VoiceLineVoice.NonHuman, true) == null && table.ResolveChoice("nope", "en", VoiceLineVoice.Male, true) == null,
+        "unfit hand-picked voice accepted");
+    Check(table.ResolveChoice(bossId, "en", VoiceLineVoice.NonHuman, true)?.Id == bossId, "boss voice choice for a monster");
+    var guarded = new VoicePersonaAssigner(); guarded.Configure(table, "en", true);
+    Check(guarded.Assign(1, seed, VoiceLineVoice.Male, VoiceLineAge.Adult, femaleId).Persona is { Voice: VoiceLineVoice.Male, IsBoss: false }, "unfit choice changed gender");
+    // A human choice saved on a Japanese client maps to the same actor on an English one; boss ids do not map.
+    var jaMale = table.Choices("ja", VoiceLineVoice.Male, true).First(p => table.Get("en" + p.Id.Substring(2)) is { Assignable: true });
+    Check(table.ResolveChoice(jaMale.Id, "en", VoiceLineVoice.Male, true)?.Id == "en" + jaMale.Id.Substring(2), "ja choice not mapped to en");
+    Check(table.ResolveChoice("ja-b01", "en", VoiceLineVoice.NonHuman, true) == null, "boss choice mapped across languages");
+    // Labels: names when known, else numbered voices.
+    Check(table.Label(table.Get("ja-010")!) == "Alphinaud", "named label");
+    foreach (var lang in new[] { "ja", "en" })
+    {
+        var voiceLabels = new List<string>();
+        foreach (var v in new[] { VoiceLineVoice.Male, VoiceLineVoice.Female, VoiceLineVoice.NonHuman })
+            foreach (var p in table.Choices(lang, v, true))
+            {
+                var label = table.Label(p);
+                voiceLabels.Add($"{v}:{label}");
+                Check(p.IsStoryCharacter ? label == p.Character
+                    : System.Text.RegularExpressions.Regex.IsMatch(label, p.IsBoss ? @"^Boss voice \d+ \((male|female)\)$" : @"^(Male|Female) voice \d+ \((young|mature|adult|elderly)\)$"),
+                    $"{p.Id}: label {label}");
+            }
+        Check(voiceLabels.Distinct().Count() == voiceLabels.Count, $"{lang}: duplicate voice labels");
+    }
+
+    Console.WriteLine("Fallen taunt pool sizes (own = persona's kill+victory+taunt lines; pool = after top-up):");
+    foreach (var s in poolStats)
+        Console.WriteLine(s);
+    Console.WriteLine("Boss personas:");
+    foreach (var s in bossCoverage)
+        Console.WriteLine(s);
 }
 
 Console.WriteLine($"PASS {checks} checks; voice mapping, language fallback, labels, rate limiting, arbitration, transition watch, voiced line pool, picker and personas.");
