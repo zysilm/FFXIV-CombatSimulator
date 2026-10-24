@@ -16,5 +16,15 @@ public partial class Configuration
     // aggro, auto-engage (Dev > NPC auto-engage), a hit, or an ally's call for help.
     public bool EnemyTacticsRespectEngage { get; set; } = true;
 
+    // Enemies on the player get spread slots from the engage planner (preferring flanks/rear)
+    // instead of each walking to its own pursuit point, where they stacked ~0.3y apart.
+    public bool EnemyTacticsPlayerSlots { get; set; } = true;
+
+    // Spacing accounts for body size above a humanoid's: big monsters are not walked into, and
+    // melee ring slots keep neighbours from overlapping.
+    public bool EnemyTacticsHitboxSpacing { get; set; } = true;
+
     public bool TacticsRespectEngage => EnhancedEnemyTactics && EnemyTacticsRespectEngage;
+    public bool TacticsPlayerSlots => EnhancedEnemyTactics && EnemyTacticsPlayerSlots;
+    public bool TacticsHitboxSpacing => EnhancedEnemyTactics && EnemyTacticsHitboxSpacing;
 }

@@ -31,4 +31,35 @@ foreach (var fps in new[] { 30, 60, 144, 240 })
 // Never overshoots below the desired height.
 Check(EnemyMovementMath.FollowTerrainY(1f, 0.9f, 1f, 50f) >= 0.9f - 1e-5f, "falls below the ground");
 
+// --- Hitbox spacing -----------------------------------------------------------------------------
+Check(Near(EnemyMovementMath.HitboxSpacingExtra(0.5f, 0.5f), 0f), "humanoid pair gets extra spacing");
+Check(Near(EnemyMovementMath.HitboxSpacingExtra(0.3f, 0.4f), 0f), "small bodies pull in");
+Check(Near(EnemyMovementMath.HitboxSpacingExtra(3f, 0.5f), 2.5f), "big monster extra wrong");
+Check(Near(EnemyMovementMath.HitboxSpacingExtra(0.5f, 3f), 2.5f), "extra not symmetric");
+
+// --- Melee ring ---------------------------------------------------------------------------------
+foreach (var r in new[] { 0.6f, 1.5f, 1.75f, 3f, 5f, 12f })
+{
+    var gap = EnemyMovementMath.MinMeleeSlotGap;
+    var angles = EnemyMovementMath.MeleeRingAngles(r, gap);
+    Check(angles.Length >= 1 && angles.Length <= EnemyMovementMath.MaxMeleeRingSlots, $"slot count {angles.Length} at r={r}");
+    Check(Near(angles[0], 0f), "first slot is not the front");
+    var min = float.MaxValue;
+    for (var i = 0; i < angles.Length; i++)
+    for (var j = i + 1; j < angles.Length; j++)
+        min = MathF.Min(min, EnemyMovementMath.ChordLength(r, angles[i], angles[j]));
+    if (angles.Length > 1)
+        Check(min >= gap - 1e-3f, $"slots {min:F2}y apart at r={r}, below {gap}");
+    foreach (var a in angles) Check(a > -180.001f && a <= 180.001f, $"angle {a} out of range");
+    if (angles.Length > 2) Check(MathF.Sign(angles[1]) == -MathF.Sign(angles[2]), "slots do not alternate sides");
+}
+Check(EnemyMovementMath.MeleeRingAngles(1.5f, 1.2f).Length >= 6, "a 1.5y ring should still fit six attackers");
+Check(EnemyMovementMath.MeleeRingAngles(12f, 1.2f).Length == EnemyMovementMath.MaxMeleeRingSlots, "large ring not capped");
+
+// --- Flank preference ---------------------------------------------------------------------------
+Check(Near(EnemyMovementMath.Frontness(0, 2, 0, 0, 0f), 1f), "slot ahead is not front");
+Check(Near(EnemyMovementMath.Frontness(0, -2, 0, 0, 0f), -1f), "slot behind is not rear");
+Check(Near(EnemyMovementMath.Frontness(2, 0, 0, 0, MathF.PI / 2), 1f), "yaw ignored");
+Check(Near(EnemyMovementMath.Frontness(2, 0, 0, 0, 0f), 0f), "flank is not neutral");
+
 Console.WriteLine($"AiMovement: {checks} checks passed.");

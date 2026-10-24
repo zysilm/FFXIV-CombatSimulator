@@ -29,6 +29,8 @@ public partial class MainWindow
         {
             TacticsCheckbox("Idle until engaged", () => config.EnemyTacticsRespectEngage, v => config.EnemyTacticsRespectEngage = v,
                 "Party mode stops force-engaging every enemy. Enemies wait until hit, auto-engaged, or called by an ally.");
+            TacticsCheckbox("Spread enemies around the player", () => config.EnemyTacticsPlayerSlots, v => config.EnemyTacticsPlayerSlots = v,
+                "Enemies attacking you take separate slots around you (leaning to your flanks and back) instead of stacking in front.");
         }
     }
 
