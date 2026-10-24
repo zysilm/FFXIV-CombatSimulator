@@ -22,6 +22,9 @@ public partial class Configuration
     // snapshot at cast start, interruptible). Needs real shapes; skills without an area stay instant.
     public bool EnemyTelegraphedCasts { get; set; } = false;
     public float EnemyMaxCastSeconds { get; set; } = 5f;
+    // HP phases: the longest cast waits until ≤50% HP; an enraged copy of the biggest area skill
+    // unlocks at ≤30%.
+    public bool EnemyHpPhaseSkills { get; set; } = false;
     // Keep drawing the overlay outline even while a native omen marks the same area.
     public bool EnemyAreaOverlayWithOmen { get; set; } = false;
 }

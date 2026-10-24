@@ -5,5 +5,7 @@
     <Compile Include="../../CombatSimulator/Simulation/CombatGeometry.cs" Link="Production/CombatGeometry.cs" />
     <Compile Include="../../CombatSimulator/Npcs/MonsterKitBuilder.cs" Link="Production/MonsterKitBuilder.cs" />
     <Compile Include="../../CombatSimulator/Simulation/TelegraphShape.cs" Link="Production/TelegraphShape.cs" />
+    <Compile Include="../../CombatSimulator/Npcs/NpcBehavior.cs" Link="Production/NpcBehavior.cs" />
+    <Compile Include="../../CombatSimulator/Npcs/EnemyPhasePlanner.cs" Link="Production/EnemyPhasePlanner.cs" />
   </ItemGroup>
 </Project>

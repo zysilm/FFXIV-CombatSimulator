@@ -91,6 +91,10 @@ public class NpcActionProfileProvider
             }
         }
 
+        // HP phases on top of whichever kit was built (per-enemy copies, so safe to edit).
+        if (config.EnemyHpPhaseSkills && behavior.Skills.Count > 0)
+            EnemyPhasePlanner.Apply(behavior.Skills);
+
         return behavior;
     }
 

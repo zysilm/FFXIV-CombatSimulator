@@ -30,6 +30,9 @@ public partial class MainWindow
             HelpMarker("Most real skills kept per monster. Area skills are preferred, plus one single-target attack.");
         }
 
+        EnemySkillToggle("HP phase skills", () => config.EnemyHpPhaseSkills, v => config.EnemyHpPhaseSkills = v,
+            "The longest cast is held until the enemy is at half HP; a stronger 'Enraged' area skill unlocks below 30%.");
+
         EnemySkillToggle("Real-shape telegraphs", () => config.EnemyTelegraphRealShapes, v => config.EnemyTelegraphRealShapes = v,
             "Enemy areas are drawn in their real shape (cone, line, donut, circle) and hit whoever stands inside when they land.");
         using (ImRaii.Disabled(!config.EnemyTelegraphRealShapes))

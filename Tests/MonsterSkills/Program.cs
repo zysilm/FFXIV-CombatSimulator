@@ -108,4 +108,26 @@ Check(!TelegraphShape.Build(AoeShape.Cone, 3, 0, 0, 90, 0, caster, hb, tgt, 2.5f
 var moved = new Vector3(14, 0, 10);
 Check(!breath.Contains(moved), "moving out after snapshot dodges");
 
+// ---- HP phases ----
+var phased = new List<NpcSkill>
+{
+    new() { ActionId = 1, Name = "Bite", Potency = 150, Cooldown = 10, NativeCastTime = 0 },
+    new() { ActionId = 2, Name = "Breath", Potency = 300, Cooldown = 12, NativeCastTime = 2.5f, Radius = 6 },
+    new() { ActionId = 3, Name = "Quake", Potency = 280, Cooldown = 20, NativeCastTime = 3.5f, Radius = 8 },
+};
+EnemyPhasePlanner.Apply(phased);
+Check(phased.Single(s => s.ActionId == 3 && s.HpThreshold < 1f && !s.Name.Contains("Enraged")).HpThreshold == 0.5f, "longest area cast gated at 50%");
+Check(phased.Count(s => s.HpThreshold >= 1f) == 2, "the rest stays usable at full HP");
+var enraged = phased.Single(s => s.Name.EndsWith("(Enraged)"));
+Check(enraged.ActionId == 3 && enraged.HpThreshold == 0.3f && enraged.Potency == 420 && enraged.Cooldown == 30, "enrage copies the biggest area skill");
+var solo = new List<NpcSkill> { new() { ActionId = 9, Name = "Slam", Potency = 200, Cooldown = 10, NativeCastTime = 3 } };
+EnemyPhasePlanner.Apply(solo);
+Check(solo[0].HpThreshold == 1f && solo.Count == 2 && solo[1].HpThreshold == 0.3f, "single skill not gated, still gets an enrage");
+var empty = new List<NpcSkill>();
+EnemyPhasePlanner.Apply(empty);
+Check(empty.Count == 0, "empty kit untouched");
+// Clones own their runtime state.
+var original = new NpcSkill { ActionId = 5, CooldownRemaining = 3 };
+Check(original.CloneDefinition().CooldownRemaining == 0, "clone resets cooldown");
+
 Console.WriteLine($"MonsterSkills: {checks} checks passed.");
