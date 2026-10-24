@@ -26,10 +26,11 @@ public sealed partial class CombatSimulatorPlugin
         combatEngine.OnSimulationReset += voiceDirector.Reset;
         // Stories speak through the same bubbles; enemy lines wait until the scene is over.
         voiceDirector.LinesSuppressed = () => PrivateDirectorActive;
-        // A story's performer is possessed through Enemy Control, as is a player-controlled enemy.
-        // Only that one actor: ControlsNpc also covers the pack following it, which after a defeat
-        // is every other enemy and silenced the taunts entirely.
-        voiceDirector.IsActorReserved = addr => enemyControlController.PossessesNpc(addr);
+        // Only a story's performer is held back, and only while the story runs, so it never talks
+        // over its own lines. Enemy Control possesses the killer on every defeat; that actor is
+        // often the last enemy standing and must still gloat. (ControlsNpc would also cover the
+        // pack following it, which silenced the taunts entirely.)
+        voiceDirector.IsActorReserved = addr => PrivateDirectorActive && enemyControlController.PossessesNpc(addr);
         mainWindow.VoiceDirector = voiceDirector;
     }
 
