@@ -43,6 +43,8 @@ public partial class MainWindow
                 "An enemy joining the fight wakes idle allies nearby. Below 20% HP some enemies run to an ally once, then return.");
             TacticsCheckbox("Reposition after attacks", () => config.EnemyTacticsReposition, v => config.EnemyTacticsReposition = v,
                 "Ranged/caster enemies sometimes shift firing spot after an attack; enemies standing inside another body step out.");
+            TacticsCheckbox("Big monsters turn slowly", () => config.EnemyTacticsHeavyTurn, v => config.EnemyTacticsHeavyTurn = v,
+                "Enemies larger than a humanoid turn more slowly, so getting to their flank or back matters.");
         }
     }
 

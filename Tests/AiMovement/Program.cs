@@ -78,6 +78,13 @@ Check(Near(EnemyMovementMath.Frontness(2, 0, 0, 0, 0f), 0f), "flank is not neutr
     Check(float.IsFinite(x) && float.IsFinite(z) && Near(MathF.Sqrt(x * x + z * z), 1f), "degenerate circle goal");
 }
 
+// --- Turn rate ----------------------------------------------------------------------------------
+Check(Near(EnemyMovementMath.TurnRate(5f, 0.5f), 5f), "humanoid turn rate changed");
+Check(Near(EnemyMovementMath.TurnRate(5f, 0.2f), 5f), "small body turns faster than base");
+Check(EnemyMovementMath.TurnRate(5f, 1f) < 5f && EnemyMovementMath.TurnRate(5f, 3f) < EnemyMovementMath.TurnRate(5f, 1f), "turn rate not decreasing with size");
+Check(Near(EnemyMovementMath.TurnRate(5f, 50f), EnemyMovementMath.MinTurnRate), "turn rate floor missing");
+Check(Near(EnemyMovementMath.TurnRate(0.5f, 50f), 0.5f), "floor raises a slow base rate");
+
 // --- Flee goal ----------------------------------------------------------------------------------
 {
     var (x, z) = EnemyMovementMath.FleeGoal(0, 0, 0, 10, 1.5f);

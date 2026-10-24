@@ -2089,7 +2089,7 @@ public unsafe partial class NpcAiController : IDisposable
         while (diff > MathF.PI) diff -= 2 * MathF.PI;
         while (diff < -MathF.PI) diff += 2 * MathF.PI;
 
-        var rotSpeed = 5.0f * deltaTime;
+        var rotSpeed = NpcTurnRate(npc) * deltaTime;
         float newRot;
         if (MathF.Abs(diff) < rotSpeed)
             newRot = targetRot;

@@ -47,6 +47,11 @@ public partial class Configuration
     public bool EnemyTacticsReposition { get; set; } = true;
 
     public bool TacticsReposition => EnhancedEnemyTactics && EnemyTacticsReposition;
+
+    // Enemies bigger than a humanoid turn slower (down to ~1.2 rad/s), so flanking pays off.
+    public bool EnemyTacticsHeavyTurn { get; set; } = true;
+
+    public bool TacticsHeavyTurn => EnhancedEnemyTactics && EnemyTacticsHeavyTurn;
     public bool TacticsStrafe => EnhancedEnemyTactics && EnemyTacticsStrafe;
     public bool TacticsThreat => EnhancedEnemyTactics && EnemyTacticsThreat;
     public bool TacticsRespectEngage => EnhancedEnemyTactics && EnemyTacticsRespectEngage;

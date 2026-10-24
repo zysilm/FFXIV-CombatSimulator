@@ -84,6 +84,20 @@ public static class EnemyMovementMath
         return 2f * ringRadius * MathF.Sin(d * MathF.PI / 360f);
     }
 
+    /// <summary>Slowest turn rate (rad/s) any actor is scaled down to.</summary>
+    public const float MinTurnRate = 1.2f;
+
+    /// <summary>
+    /// Turn rate for a body of <paramref name="hitboxRadius"/>: humanoids (and smaller) keep
+    /// <paramref name="baseRate"/>, bigger bodies turn proportionally slower (radius^0.75), so a
+    /// large monster cannot spin instantly and its flanks and back mean something.
+    /// </summary>
+    public static float TurnRate(float baseRate, float hitboxRadius)
+    {
+        var size = MathF.Max(1f, hitboxRadius / BaselineHitboxRadius);
+        return MathF.Max(MathF.Min(baseRate, MinTurnRate), baseRate / MathF.Pow(size, 0.75f));
+    }
+
     /// <summary>Threat a hit generates. Tanks generate a multiple of their damage, as in FFXIV's
     /// tank stance, so an enemy's attention follows the tank rather than raw DPS.</summary>
     public const float TankThreatMultiplier = 3.0f;

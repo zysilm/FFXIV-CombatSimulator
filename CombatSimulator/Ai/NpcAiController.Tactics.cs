@@ -379,6 +379,14 @@ public unsafe partial class NpcAiController
         return true;
     }
 
+    private const float BaseTurnRate = 5.0f;
+
+    /// <summary>Facing turn rate (rad/s): slower for big bodies with heavy turning enabled.</summary>
+    private float NpcTurnRate(SimulatedNpc npc)
+        => config.TacticsHeavyTurn
+            ? EnemyMovementMath.TurnRate(BaseTurnRate, npc.HitboxRadius)
+            : BaseTurnRate;
+
     private EnemyTacticsState Tactics(SimulatedNpc npc)
     {
         if (!tacticsStates.TryGetValue(npc.SimulatedEntityId, out var state))
