@@ -49,6 +49,9 @@ public sealed unsafe class VoiceDirector
     private readonly List<VoiceEvent> scratchEvents = new();
     private readonly List<(uint EntityId, VoiceEvent Event)> notified = new();
     private readonly List<(uint EntityId, VoiceEvent Event, float At)> delayed = new();
+    // Holds released this frame, so a release that still finds the line gate closed falls through
+    // to its shout instead of being queued again.
+    private readonly HashSet<(uint EntityId, VoiceEvent Event)> releasedHolds = new();
     private readonly HashSet<uint> seenThisFrame = new();
     private readonly List<(ulong, float)> speakers = new();
     private readonly Dictionary<string, int> entryCounts = new(StringComparer.OrdinalIgnoreCase);
@@ -214,6 +217,7 @@ public sealed unsafe class VoiceDirector
         tracked.Clear();
         notified.Clear();
         delayed.Clear();
+        releasedHolds.Clear();
         candidates.Clear();
         limiter.Reset();
         linePicker.Reset();
@@ -384,6 +388,7 @@ public sealed unsafe class VoiceDirector
         }
         lastDeadCompanions = deadCompanions;
 
+        releasedHolds.Clear();
         for (var i = delayed.Count - 1; i >= 0; i--)
         {
             if (delayed[i].At > limiter.Now)
@@ -395,7 +400,10 @@ public sealed unsafe class VoiceDirector
                 continue;
             var speaker = delayed[i].EntityId != 0 ? delayed[i].EntityId : PickVictorySpeaker();
             if (speaker != 0 && tracked.TryGetValue(speaker, out var t))
+            {
                 candidates.Add(new VoiceCandidate(speaker, delayed[i].Event, t.Distance));
+                releasedHolds.Add((speaker, delayed[i].Event));
+            }
             delayed.RemoveAt(i);
         }
 
@@ -456,6 +464,18 @@ public sealed unsafe class VoiceDirector
         var npc = npcSelector.GetSelectedNpc(id);
         if (npc == null || npc.Address != t.Address)
             return;
+
+        // Opening calls and killing-blow gloats land right as another line is often still showing
+        // (the killing attack's own skill shout, the first enemy's engage). Dropping them read as
+        // "enemies never react to a kill", so they wait for the gate like the victory call does.
+        if (config.EnemyVoiceLines && c.Event is (VoiceEvent.Engage or VoiceEvent.KilledPlayer) &&
+            !releasedHolds.Contains((id, c.Event)) && !linePicker.CanSpeak(c.ActorKey, c.Event))
+        {
+            var heldEvent = c.Event;
+            if (!delayed.Exists(d => d.EntityId == id && d.Event == heldEvent))
+                delayed.Add((id, heldEvent, limiter.Now));
+            return;
+        }
 
         if (config.EnemyVoiceLines && TrySpeakLine(c, npc, t))
             return;

@@ -105,7 +105,7 @@ public sealed class VoiceLinePicker
     {
         VoiceEvent.Skill => 0.3,
         VoiceEvent.Hurt => 0.35,
-        VoiceEvent.Engage => 0.7,
+        VoiceEvent.Engage => 0.9,
         VoiceEvent.LowHp => 0.8,
         VoiceEvent.AllyDeath => 0.7,
         VoiceEvent.Death => 0.75,
