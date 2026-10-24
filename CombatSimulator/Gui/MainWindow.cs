@@ -2467,6 +2467,8 @@ public partial class MainWindow : IDisposable
 
         DrawNpcScaleSection();
 
+        DrawEnemyVoiceSection();
+
         DrawPcDismemberSection();
 
         if (ImGui.CollapsingHeader("Enemy Dismemberment"))

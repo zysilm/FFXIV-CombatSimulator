@@ -23,11 +23,28 @@ public sealed class CombatModeRouter
         Func<bool>? forceTelegraphed = null)
     {
         this.config = config;
-        this.instant = instant;
-        this.telegraphed = telegraphed;
+        this.instant = new ObservedExecutor(this, instant);
+        this.telegraphed = new ObservedExecutor(this, telegraphed);
         this.forceTelegraphed = forceTelegraphed;
     }
 
     public IAttackExecutor AttackExecutor =>
         config.ActionMode || forceTelegraphed?.Invoke() == true ? telegraphed : instant;
+
+    /// <summary>
+    /// Raised after an executor accepted an attack (telegraphed: at windup start). Lets listeners
+    /// such as enemy voices react to the commit without adding raise points to every AI call site.
+    /// </summary>
+    public Action<Npcs.SimulatedNpc, NpcAttackRequest>? AttackCommitted { get; set; }
+
+    private sealed class ObservedExecutor(CombatModeRouter router, IAttackExecutor inner) : IAttackExecutor
+    {
+        public bool Execute(Npcs.SimulatedNpc source, in NpcAttackRequest req)
+        {
+            var ok = inner.Execute(source, req);
+            if (ok)
+                router.AttackCommitted?.Invoke(source, req);
+            return ok;
+        }
+    }
 }
