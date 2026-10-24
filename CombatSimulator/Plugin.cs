@@ -128,6 +128,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private readonly CombatLinkOverlay combatLinkOverlay;
     private readonly TelegraphOverlay telegraphOverlay;
     private readonly EnemyAreaOverlay enemyAreaOverlay;
+    private readonly CombatSimulator.ActionCombat.EnemyOmenVfx enemyOmenVfx;
     private readonly OsuParryOverlay osuParryOverlay;
     private readonly ReticleOverlay reticleOverlay;
     private readonly FightingDebugOverlay fightingDebugOverlay;
@@ -562,6 +563,9 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
         telegraphOverlay = new TelegraphOverlay(telegraphSystem, gameGui, config);
         enemyAreaOverlay = new EnemyAreaOverlay(enemyAreaMarkers, gameGui, config);
+        enemyOmenVfx = new CombatSimulator.ActionCombat.EnemyOmenVfx(
+            enemyAreaMarkers, animationController, actionDataProvider.GetActionData, dataManager, config, log);
+        enemyAreaOverlay.HasNativeOmen = enemyOmenVfx.HasOmen;
         osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config, playerGuardController)
         {
             AlsoEnabled = () => fightingModeController.IsEngaged,
@@ -615,6 +619,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             companionManager.DespawnAll();
             spectatorController.DespawnAll();
             npcSpawner.DespawnAll();
+            enemyOmenVfx.Dispose();
             combatEngine.StopSimulation();
             npcSelector.DeselectAll();
         }
@@ -909,6 +914,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                 playerGuardController.Tick(deltaTime);
                 telegraphSystem.Tick(deltaTime);
                 enemyAreaMarkers.Tick(deltaTime);
+                enemyOmenVfx.Tick();
             }
 
             // Fighting Mode combat input (guard key); gates internally on engagement.

@@ -16,6 +16,8 @@ public partial class Configuration
     // Telegraphs take the action's real shape (cone/rect/donut/circle, caster- or target-anchored),
     // snapshotted at commit; the hit at resolve uses the same snapshot and reaches everyone inside.
     public bool EnemyTelegraphRealShapes { get; set; } = false;
+    // Spawn the game's own omen ground marker under each real-shape area (needs real shapes).
+    public bool EnemyNativeOmenVfx { get; set; } = false;
     // Keep drawing the overlay outline even while a native omen marks the same area.
     public bool EnemyAreaOverlayWithOmen { get; set; } = false;
 }

@@ -32,6 +32,15 @@ public partial class MainWindow
 
         EnemySkillToggle("Real-shape telegraphs", () => config.EnemyTelegraphRealShapes, v => config.EnemyTelegraphRealShapes = v,
             "Enemy areas are drawn in their real shape (cone, line, donut, circle) and hit whoever stands inside when they land.");
+        using (ImRaii.Disabled(!config.EnemyTelegraphRealShapes))
+        {
+            ImGui.Indent();
+            EnemySkillToggle("Native omen markers", () => config.EnemyNativeOmenVfx, v => config.EnemyNativeOmenVfx = v,
+                "Use the game's own ground marker for the area. Falls back to the drawn outline when the marker can't be shown.");
+            EnemySkillToggle("Outline over omen", () => config.EnemyAreaOverlayWithOmen, v => config.EnemyAreaOverlayWithOmen = v,
+                "Also draw the outline on top of the native marker (to check the two match).");
+            ImGui.Unindent();
+        }
     }
 
     private void EnemySkillToggle(string label, Func<bool> get, Action<bool> set, string tooltip)
