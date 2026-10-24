@@ -158,6 +158,44 @@ Fourth pass (processed voices, offline; research files outside the repo):
   enemies use the whole pool minus `fx`; `extended` stays in the JSON as provenance only. `fx`
   lines stay in the file for a future monster/boss speaker.
 
+Fifth pass (more voices from already-proven lines; offline, no new recognition):
+- Of the 1,763 proven files, 1,196 were not in the pool. All of them were read (en + ja), and 319
+  were added (161 human, 158 fx): generic battle remarks, quips, grunts with words, rallying cries
+  and boss boasts. Lines that name people, places or factions, explain the story, are addressed to
+  the player's journey, or are healer/support lines were left out. Lines from speakers just short
+  of the persona bar were preferred, and so were the thin events. Old entries are unchanged
+  (fx lines got new boss persona ids, see below).
+- Added per event: Engage 73, Taunt 34, Skill 159, Hurt 13, LowHp 57, KilledPlayer 14,
+  AllyDeath 9, Victory 14, Death 12. Pool 941 lines: human 529 (male Victory 6 -> 16, Engage
+  32 -> 62; female Engage 22 -> 40, AllyDeath 10 -> 15), fx 412 (fx now has 2 AllyDeath lines).
+- fx uses the same fourth-pass rule (`reverb_scores.pkl` `fx`, score > 0).
+- Gender: 29 of the new human lines had an inconclusive line-level gender ("unknown"). They take
+  the gender of their speaker persona only when no gender vote contradicts it (e.g. `?/?/F` in a
+  female persona) and the line lands in a persona of that gender in both languages. One more
+  (8202012) sits in Alphinaud's Trust block. Every other new line has its own agreed gender.
+- Personas rebuilt with the same scripts (clustering unchanged, ARI ja/en 0.997). Every
+  existing persona id keeps its speaker, gender, band and name; 9 new small ids per language
+  (ja-070.., en-071..). Assignable personas: **ja 15 -> 23, en 14 -> 23**. New ones: male
+  mature Hythlodaeus (probable), Bakool Ja Ja, Emet-Selch (probable), an unnamed 18-line male
+  (ja-016 / en-016, "Here they come!"); male young ja-034 / en-035; female adult three unnamed
+  (ja-018 / en-018, ja-033 / en-034, ja-035 / en-036), plus en-015, which now passes in en as well.
+  Still none for female elderly; female young is still Ryne and Alisaie only.
+- Boss personas rebuilt with the same grouping: **ja 18 -> 26, en 13 -> 22**. Old ids stay on
+  the group that holds most of their old lines, but 121 of the 254 old fx lines moved to another
+  boss id (clusters that used to be merged now reach 8 lines on their own). A saved monster
+  override can therefore sound a bit different.
+
+Listen for (fifth pass):
+1. The persona-gendered lines (female ja-033 / en-034: 8203455 "This will hurt.", 8203457, 8203465,
+   8203472, 8203482, 8203488, 8203489, 8206400; female knight ja-035 / en-036: 8205746, 8205758,
+   8205762, 8205763, 8205765, 8205767; ja-018 / en-018: 8204258, 8204259, 8204267; Hythlodaeus
+   ja-017 / en-017: 8203220, 8203223, 8203234, 8203236): right gender, same voice as the rest of
+   that persona.
+2. The new unnamed male ja-016 / en-016 and females ja-018 / en-018, en-015 each sound like one
+   actor in the voice picker's Preview.
+3. Kill/victory variety: men now say "That's the last of them.", "Yes, yes! Rise once more! It
+   mustn't end yet!", "Down with you!"; monsters "Unenhanced as you are, you never stood a chance."
+
 Runtime: `Resources/VoiceLines.json` (voice id, text row, optional sheet, events, gender, age,
 story, weight, optional `extended` (provenance) and `fx` (processed voice: never picked for a
 male or female speaker; the only lines of a non-human one); no text). Text comes from the row's sheet (NpcYell unless `sheet` says
@@ -217,7 +255,7 @@ and en audio, see `voice-research\out\persona\README.md`), and `Resources/VoiceP
 lists each persona's gender, age band, character name and fallback list.
 
 - **Assignment.** On first sight in a fight an enemy gets one assignable persona (>= 8 lines,
-  >= 5 events; ja 15, en 14) of its gender and body band, chosen by a stable hash of BNpcBase,
+  >= 5 events; ja 23, en 23) of its gender and body band, chosen by a stable hash of BNpcBase,
   BNpcName and entity id. Bands: BodyType elderly -> elderly (female elderly has no persona and
   takes female adult); child -> young; adult (or unknown) -> any young or mature/adult persona.
   A persona already held by an enemy on the field is skipped while another is free, and an enemy
@@ -245,7 +283,7 @@ lists each persona's gender, age band, character name and fallback list.
   the enemy, with its bubble, through the same file/text checks as a combat line (it does not
   hold up the fight's line gate). de/fr clients show a hint instead (no personas there).
   `EnemyVoiceAllowStoryCharacters` (config file only, default true): false leaves out personas
-  with a character name (en then has no female persona: women stay on shouts).
+  with a character name (unnamed personas remain for both genders in ja and en).
 
 ## Taunts over the fallen: variety in one voice
 
@@ -255,8 +293,8 @@ recent, the one heard longest ago). The voice never changes: only when that comb
 fewer than 3 lines is it topped up with the persona's fallbacks (same gender for humans, other
 boss voices for monsters), one whole persona at a time. Guaranteed in-fight kill lines are
 unchanged (kill -> victory -> taunt chain). Pool sizes per assignable persona (own set / after
-top-up, min-median-max): humans ja 0-3-6 / 3-5-7, en 0-3-6 / 3-5-7; boss ja 1-3-12 / 3-4-13,
-en 0-4-14 / 3-7-15.
+top-up, min-median-max): humans ja 0-3-9 / 3-5-11, en 0-3-9 / 3-5-9; boss ja 1-3-15 / 3-4-16,
+en 1-3-15 / 3-5-15.
 
 Listen for: wipe against two or three humans and wait a minute: each keeps its own voice and
 cycles through different lines; a persona with many kill/victory/taunt lines does not repeat one
@@ -264,22 +302,22 @@ until it has said the others.
 
 ## Boss voices for monsters and demihumans
 
-The 254 fx lines (reverb/layered boss and primal recordings) are never given to a human. They now
+The 412 fx lines (reverb/layered boss and primal recordings) are never given to a human. They now
 voice every speaker `ResolveBodyAndAge` reports as non-human (monsters, beasts, demihumans).
 Offline (voice-research `voice_lines.csv` speaker clusters `cluster_ja` / `cluster_en`), the fx
 lines are grouped per language by speaker cluster and gender; clusters under 8 lines are merged
-into the most similar group of the same gender (ECAPA centroid cosine). Result: **18 ja and 13 en
-boss personas** (8-44 / 8-57 lines), ids `ja-bNN` / `en-bNN` in the fx lines' `pja` / `pen`, rows in
+into the most similar group of the same gender (ECAPA centroid cosine). Result: **26 ja and 22 en
+boss personas** (8-61 / 8-70 lines), ids `ja-bNN` / `en-bNN` in the fx lines' `pja` / `pen`, rows in
 `VoicePersonas.json` with `"kind": "boss"` and a fallback list of the other boss personas (same
 gender first, most similar first).
 
 - Each monster/demihuman locks onto one boss persona on first sight, regardless of gender, by
   the same stable identity hash and on-field spreading as humans.
 - A boss persona with no line for an event borrows from the most similar boss persona that has
-  one. Own lines per event (personas with at least one, ja / en): Taunt 18/18, 12/13; Skill 17/18,
-  13/13; Engage 16/18, 13/13; KilledPlayer 13/18, 9/13; LowHp 13/18, 11/13; Hurt 10/18, 9/13; Death
-  8/18, 6/13; Victory 5/18, 6/13; AllyDeath none (monsters say nothing for an ally's death; their
-  labeled sounds still play). Every boss persona reaches the kill chain through its fallbacks.
+  one. Own lines per event (personas with at least one, ja / en): Taunt 24/26, 19/22; Skill 26/26,
+  22/22; Engage 22/26, 20/22; KilledPlayer 16/26, 17/22; LowHp 21/26, 19/22; Hurt 14/26, 11/22;
+  Death 13/26, 12/22; Victory 8/26, 9/22; AllyDeath 2/26, 2/22 (2 lines; a chain without one stays
+  silent and the labeled sounds play). Every boss persona reaches the kill chain through its fallbacks.
 - Monster lines go through the normal events, the guaranteed kill line (a monster killer now says
   it itself) and taunts over the fallen.
 - de/fr: no personas, so monsters keep only their labeled sounds.
@@ -289,10 +327,10 @@ voice all fight; a female boss voice from a male-looking beast is expected (gend
 monsters). Report any fx line that sounds like a plain human voice (fx label wrong).
 
 Average lines the answering persona has per event (Tests/Voice prints the full table; event
-chain included, "borrow" = candidates that answer from a fallback): adult male (7 personas) Skill
-4.4, Engage 3.7, LowHp 3.4, kill 4.4, Death 1.1, AllyDeath ~1.2 (3 borrow), Victory 3.1 (3 borrow);
-elderly male (2) Skill 6, Engage 5.5, Death 1; adult female (ja 6 / en 5) Skill ~5.7, Engage ~4.8,
-kill 3, Death 1.2 (2-3 borrow). One enemy now repeats itself sooner than with the whole pool.
+chain included, "borrow" = candidates that answer from a fallback): adult male (12 personas) Skill
+4.6, Engage 5.3, LowHp 3.3, kill ~4.6, Death 1.1 (5 borrow), AllyDeath ~1.9 (7 borrow), Victory
+~2.8 (3 borrow); elderly male (2) Skill 11.5, Engage 9.5, Death 1; adult female (9) Skill ~6.9,
+Engage ~5.9, kill ~3.6, Death 1.1 (5 borrow). One enemy now repeats itself sooner than with the whole pool.
 
 Listen for:
 1. **Same enemy, one voice.** Pick one enemy and listen to all its lines through a fight: engage,
