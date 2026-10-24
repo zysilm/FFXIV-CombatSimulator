@@ -149,7 +149,7 @@ events.Clear();
 w.Observe(new VoiceActorSnapshot(true, true, true, 1000, 1000), events);
 Check(events.SequenceEqual(new[] { VoiceEvent.Skill }), "cast start");
 events.Clear();
-w.Observe(new VoiceActorSnapshot(true, true, true, 950, 1000), events);
+w.Observe(new VoiceActorSnapshot(true, true, true, 980, 1000), events);
 Check(events.Count == 0, "small hit counted as heavy");
 w.Observe(new VoiceActorSnapshot(true, true, false, 800, 1000), events);
 Check(events.SequenceEqual(new[] { VoiceEvent.Hurt }), "heavy hit");

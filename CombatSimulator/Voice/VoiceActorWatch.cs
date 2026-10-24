@@ -17,7 +17,10 @@ public readonly record struct VoiceActorSnapshot(bool Alive, bool Engaged, bool 
 public sealed class VoiceActorWatch
 {
     /// <summary>One frame's HP loss of at least this share of max HP is a "heavy hit".</summary>
-    public const float HeavyHitFraction = 0.12f;
+    // 12% almost never happened: enemy pools are large next to a single hit, so mid-fight "hurt"
+    // lines were effectively dead. 4% still skips chip damage; the per-event chance and cooldowns
+    // keep the result from becoming a line on every hit.
+    public const float HeavyHitFraction = 0.04f;
     public const float LowHpFraction = 0.30f;
 
     private bool seeded;

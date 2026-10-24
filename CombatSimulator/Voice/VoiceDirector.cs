@@ -399,8 +399,12 @@ public sealed unsafe class VoiceDirector
                 continue;
             // The killer's gloat is usually still on screen when the win is due; hold the call
             // until the line gate opens (a few seconds at most) instead of losing it.
+            // A held line names its speaker, so wait for that actor too; the victory call (no
+            // speaker yet) only waits for the line gate.
             if (config.EnemyVoiceLines && limiter.Now - delayed[i].At < MaxVictoryHold &&
-                !linePicker.CanSpeak(0, delayed[i].Event))
+                !(delayed[i].EntityId != 0
+                    ? SpeakerReady(delayed[i].EntityId, delayed[i].Event)
+                    : linePicker.CanSpeak(0, delayed[i].Event)))
                 continue;
             var speaker = delayed[i].EntityId != 0 ? delayed[i].EntityId : PickVictorySpeaker();
             if (speaker != 0 && tracked.TryGetValue(speaker, out var t))
@@ -460,26 +464,33 @@ public sealed unsafe class VoiceDirector
         return best;
     }
 
+    private bool SpeakerReady(ulong actorKey, VoiceEvent e) =>
+        linePicker.CanSpeak(actorKey, e) && limiter.CanAdmit(actorKey, e);
+
     private void TrySpeak(in VoiceCandidate c)
     {
         var id = (uint)c.ActorKey;
-        if (!limiter.CanAdmit(c.ActorKey, c.Event) || !tracked.TryGetValue(id, out var t))
+        if (!tracked.TryGetValue(id, out var t))
             return;
         var npc = npcSelector.GetSelectedNpc(id);
         if (npc == null || npc.Address != t.Address)
             return;
 
         // Opening calls and killing-blow gloats land right as another line is often still showing
-        // (the killing attack's own skill shout, the first enemy's engage). Dropping them read as
-        // "enemies never react to a kill", so they wait for the gate like the victory call does.
-        if (config.EnemyVoiceLines && c.Event is (VoiceEvent.Engage or VoiceEvent.KilledPlayer) &&
-            !releasedHolds.Contains((id, c.Event)) && !linePicker.CanSpeak(c.ActorKey, c.Event))
+        // (the killing attack's own skill shout, the first enemy's engage), and the killer is often
+        // still mid-shout itself. Dropping them read as "enemies never react to a kill", so they
+        // wait — for the line gate and for the speaker — like the victory call does.
+        var holdable = config.EnemyVoiceLines && c.Event is (VoiceEvent.Engage or VoiceEvent.KilledPlayer) &&
+                       !releasedHolds.Contains((id, c.Event));
+        if (holdable && !SpeakerReady(c.ActorKey, c.Event))
         {
             var heldEvent = c.Event;
             if (!delayed.Exists(d => d.EntityId == id && d.Event == heldEvent))
                 delayed.Add((id, heldEvent, limiter.Now));
             return;
         }
+        if (!limiter.CanAdmit(c.ActorKey, c.Event))
+            return;
 
         if (config.EnemyVoiceLines && TrySpeakLine(c, npc, t))
             return;

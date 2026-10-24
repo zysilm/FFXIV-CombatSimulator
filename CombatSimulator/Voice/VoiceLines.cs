@@ -150,7 +150,7 @@ public sealed class VoiceLinePicker
     /// seconds per enemy; voicing each would be a wall of talk.</summary>
     public static double Chance(VoiceEvent e) => e switch
     {
-        VoiceEvent.Skill => 0.3,
+        VoiceEvent.Skill => 0.45,
         VoiceEvent.Hurt => 0.35,
         VoiceEvent.Engage => 0.9,
         VoiceEvent.LowHp => 0.8,
@@ -188,7 +188,9 @@ public sealed class VoiceLinePicker
         var gap = IsPriority(e) ? settings.PriorityGap : settings.Gap;
         if (Now < busyUntil + gap)
             return false;
-        if (actorReadyAt.TryGetValue(actorKey, out var a) && Now < a)
+        // The per-actor rest keeps one enemy from monopolising the talk, but the outcome moments must
+        // get through: the killer has usually just voiced the killing attack itself.
+        if (!IsPriority(e) && actorReadyAt.TryGetValue(actorKey, out var a) && Now < a)
             return false;
         return !eventReadyAt.TryGetValue(e, out var t) || Now >= t;
     }

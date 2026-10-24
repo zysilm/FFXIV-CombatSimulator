@@ -33,7 +33,10 @@ public partial class Configuration
     public bool EnemyVoiceHumanoidUseAppearance { get; set; } = false;
     public bool EnemyVoiceIdleTaunts { get; set; } = true;
     /// <summary>Average seconds between idle taunts of one engaged enemy.</summary>
-    public float EnemyVoiceTauntInterval { get; set; } = 25f;
+    public float EnemyVoiceTauntInterval { get; set; } = 14f;
+    // One-time retune of the mid-fight cadence (taunt interval 25s → 14s) for configs that still hold
+    // the old default; a value the user changed is left alone.
+    public bool EnemyVoiceCadenceMigrated20261025 { get; set; } = false;
     public float EnemyVoiceAllyDeathRadius { get; set; } = 15f;
     /// <summary>Owner-recorded entry labels: label key ("pc", "npc", "mon/{sepack}") -> label -> entries.
     /// Overrides Resources/VoiceEntryLabels.json per key+label.</summary>
