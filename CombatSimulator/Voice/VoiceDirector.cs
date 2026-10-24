@@ -27,6 +27,9 @@ namespace CombatSimulator.Voice;
 public sealed unsafe class VoiceDirector
 {
     private const string BuiltInLabelsResource = "CombatSimulator.Resources.VoiceEntryLabels.json";
+    private const string VoiceLinesResource = "CombatSimulator.Resources.VoiceLines.json";
+    // Bubble time when a line's .scd header could not be read for its length.
+    private const float FallbackBubbleSeconds = 3f;
     private const float VictoryDelay = 1.5f;
     // A committed attack within this long after its own cast started is that cast resolving,
     // which was already voiced at cast start.
@@ -52,6 +55,14 @@ public sealed unsafe class VoiceDirector
     private (VoiceSource Source, uint Entry, bool Positional)? auditionRequest;
     private (nint Handle, string Path, uint Entry) lastAudition;
     private bool hadState;
+    private readonly VoiceLineSettings lineSettings = new();
+    private readonly VoiceLinePicker linePicker;
+    // Per voice id: bubble seconds (null = unreadable). Per yell id: client-language text.
+    private readonly Dictionary<uint, float?> lineSeconds = new();
+    private readonly Dictionary<uint, string> yellText = new();
+    private bool firstLineLogged;
+    private int lastDeadCompanions = -1;
+    private bool? lastPlayerAlive;
 
     private sealed class Tracked
     {
@@ -75,15 +86,75 @@ public sealed unsafe class VoiceDirector
         this.dataManager = dataManager;
         this.log = log;
         limiter = new VoiceRateLimiter(rateSettings);
+        linePicker = new VoiceLinePicker(lineSettings);
         Player = new NativeSoundPlayer(dataManager, log);
         Resolver = new VoiceProfileResolver(dataManager, config);
         ReloadLabels();
+        LoadLines();
     }
 
     public NativeSoundPlayer Player { get; }
     public VoiceProfileResolver Resolver { get; }
     public VoiceLabelTable Labels { get; } = new();
     public string LastVoiceDescription { get; private set; } = string.Empty;
+    public VoiceLinePicker Lines => linePicker;
+    public int LinesSpoken { get; private set; }
+
+    /// <summary>Spawned companions that are currently dead. A rise means an enemy just downed
+    /// one: the same gloat as killing the player. Set by the plugin; null = no companions.</summary>
+    public Func<int>? DeadCompanionCount { get; set; }
+
+    private sealed class LineDto
+    {
+        public uint Voice { get; set; }
+        public uint Yell { get; set; }
+        public string[]? Events { get; set; }
+        public string? Gender { get; set; }
+        public bool Story { get; set; }
+        public float Weight { get; set; } = 1f;
+    }
+
+    private sealed class LineFile
+    {
+        public List<LineDto>? Lines { get; set; }
+    }
+
+    /// <summary>The curated pool ships inside the DLL, so voiced lines work with no setup.</summary>
+    private void LoadLines()
+    {
+        var parsed = new List<VoiceLineEntry>();
+        try
+        {
+            using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(VoiceLinesResource);
+            if (stream != null)
+            {
+                using var reader = new StreamReader(stream);
+                var file = JsonConvert.DeserializeObject<LineFile>(reader.ReadToEnd());
+                foreach (var dto in file?.Lines ?? new List<LineDto>())
+                {
+                    var events = new List<VoiceEvent>();
+                    foreach (var name in dto.Events ?? Array.Empty<string>())
+                        if (Enum.TryParse<VoiceEvent>(name, true, out var e))
+                            events.Add(e);
+                    VoiceLineVoice? voice = dto.Gender?.ToLowerInvariant() switch
+                    {
+                        "male" => VoiceLineVoice.Male,
+                        "female" => VoiceLineVoice.Female,
+                        "nonhuman" => VoiceLineVoice.NonHuman,
+                        _ => null,
+                    };
+                    if (voice == null || dto.Voice == 0 || events.Count == 0)
+                        continue;
+                    parsed.Add(new VoiceLineEntry(dto.Voice, dto.Yell, events.ToArray(), voice.Value, dto.Story, dto.Weight));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warning($"Enemy voices: voiced line pool unreadable ({ex.Message}); voiced lines off.");
+        }
+        linePicker.SetEntries(parsed);
+    }
 
     /// <summary>
     /// Raised after a voice actually starts: speaker address, event, source and entry. Seam for
@@ -144,8 +215,12 @@ public sealed unsafe class VoiceDirector
         delayed.Clear();
         candidates.Clear();
         limiter.Reset();
+        linePicker.Reset();
         Resolver.Clear();
         hadState = false;
+        // Re-seeded on the next combat frame: companions already dead are not a fresh kill.
+        lastDeadCompanions = -1;
+        lastPlayerAlive = null;
     }
 
     // ---- Audition (panel) ----
@@ -207,6 +282,8 @@ public sealed unsafe class VoiceDirector
         rateSettings.MaxConcurrent = Math.Clamp(config.EnemyVoiceMaxConcurrent, 1, 8);
         rateSettings.ClosestSpeakers = Math.Clamp(config.EnemyVoiceClosestSpeakers, 1, 16);
         limiter.Advance(deltaTime);
+        lineSettings.Gap = Math.Clamp(config.EnemyVoiceLineGap, 0f, 30f);
+        linePicker.Advance(deltaTime);
 
         RunAudition();
 
@@ -216,6 +293,13 @@ public sealed unsafe class VoiceDirector
                 Reset();
             return;
         }
+
+        // Watched here rather than via CombatEngine.OnPlayerDeath, which only fires when the
+        // ragdoll is enabled: the killing-blow and victory lines must not depend on that.
+        var playerAlive = combatEngine.State.PlayerState.IsAlive;
+        if (lastPlayerAlive == true && !playerAlive)
+            NotifyPlayerDeath();
+        lastPlayerAlive = playerAlive;
 
         var playerPos = Core.Services.ObjectTable.LocalPlayer?.Position ?? Vector3.Zero;
         candidates.Clear();
@@ -234,6 +318,7 @@ public sealed unsafe class VoiceDirector
                 if (t != null)
                 {
                     limiter.Forget(id);
+                    linePicker.Forget(id);
                     Resolver.Forget(t.Address, id);
                 }
                 tracked[id] = t = new Tracked { Address = npc.Address };
@@ -277,6 +362,7 @@ public sealed unsafe class VoiceDirector
             {
                 Resolver.Forget(tracked[id].Address, id);
                 limiter.Forget(id);
+                linePicker.Forget(id);
                 tracked.Remove(id);
             }
         }
@@ -285,6 +371,17 @@ public sealed unsafe class VoiceDirector
             if (tracked.TryGetValue(id, out var t))
                 candidates.Add(new VoiceCandidate(id, e, t.Distance));
         notified.Clear();
+
+        // A companion went down. Who struck the blow is not tracked, so the nearest living
+        // enemy gloats; that is also the one the player is most likely watching.
+        var deadCompanions = DeadCompanionCount?.Invoke() ?? 0;
+        if (lastDeadCompanions >= 0 && deadCompanions > lastDeadCompanions)
+        {
+            var gloater = NearestLiving(0);
+            if (gloater != 0)
+                candidates.Add(new VoiceCandidate(gloater, VoiceEvent.KilledPlayer, tracked[gloater].Distance));
+        }
+        lastDeadCompanions = deadCompanions;
 
         for (var i = delayed.Count - 1; i >= 0; i--)
         {
@@ -327,16 +424,22 @@ public sealed unsafe class VoiceDirector
     private uint PickVictorySpeaker()
     {
         var killer = combatEngine.LastPlayerKillerEntityId;
+        var best = NearestLiving(killer);
+        return best != 0 ? best : killer;
+    }
+
+    private uint NearestLiving(uint except)
+    {
         uint best = 0;
         var bestDist = float.MaxValue;
         foreach (var (id, t) in tracked)
         {
-            if (!t.Alive || id == killer || t.Distance >= bestDist)
+            if (!t.Alive || id == except || t.Distance >= bestDist)
                 continue;
             bestDist = t.Distance;
             best = id;
         }
-        return best != 0 ? best : killer;
+        return best;
     }
 
     private void TrySpeak(in VoiceCandidate c)
@@ -346,6 +449,9 @@ public sealed unsafe class VoiceDirector
             return;
         var npc = npcSelector.GetSelectedNpc(id);
         if (npc == null || npc.Address != t.Address)
+            return;
+
+        if (config.EnemyVoiceLines && TrySpeakLine(c, npc, t))
             return;
 
         var source = Resolver.Resolve(new VoiceSpeaker(t.Address, id, npc.BNpcBaseId, npc.IsClientControlled));
@@ -365,6 +471,107 @@ public sealed unsafe class VoiceDirector
             return;
         LastVoiceDescription = $"{npc.Name}: {c.Event} -> {source} #{entry}";
         VoicePlayed?.Invoke(t.Address, c.Event, source, entry);
+    }
+
+    /// <summary>
+    /// A curated voiced line with its bubble. False means "not this time" (gate closed, chance
+    /// roll, no fitting line, file missing) and the caller falls through to label-based shouts.
+    /// </summary>
+    private bool TrySpeakLine(in VoiceCandidate c, SimulatedNpc npc, Tracked t)
+    {
+        if (linePicker.Count == 0 || !linePicker.CanSpeak(c.ActorKey, c.Event))
+            return false;
+        // Monsters have no curated lines (none is non-human), so they stay on their own sounds
+        // rather than speak with a human voice.
+        var voice = Resolver.ResolveBody(t.Address, (uint)c.ActorKey);
+        if (voice == VoiceLineVoice.NonHuman || linePicker.Available(c.Event, voice) == 0)
+            return false;
+        if (random.NextDouble() >= VoiceLinePicker.Chance(c.Event))
+            return false;
+
+        var language = Resolver.ClientLanguage;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var line = linePicker.Pick(c.Event, voice, random.NextDouble);
+            if (line == null)
+                return false;
+            // Client-language audio only: the bubble shows client-language text, and a German
+            // bubble over an English voice reads as broken. A missing file retires the line.
+            var path = line.PathFor(language);
+            var text = YellText(line.YellId);
+            if (text.Length == 0 || !dataManager.FileExists(path))
+            {
+                linePicker.MarkUnavailable(line.VoiceId);
+                continue;
+            }
+            var seconds = BubbleSeconds(line.VoiceId, path);
+            if (seconds == null)
+            {
+                linePicker.MarkUnavailable(line.VoiceId);
+                continue;
+            }
+            if (!limiter.TryAdmit(c.ActorKey, c.Event))
+                return false;
+
+            Vector3? at = config.EnemyVoicePositional ? t.Position + new Vector3(0f, 1.2f, 0f) : null;
+            var handle = Player.Play(path, 0, at, config.EnemyVoiceVolume, config.EnemyVoiceVolumeCategory);
+            if (!firstLineLogged)
+            {
+                // One line per session so a silent install is diagnosable from dalamud.log.
+                firstLineLogged = true;
+                log.Information($"Enemy voices: first voiced line vo {line.VoiceId} / yell {line.YellId} \"{text}\" path={path} " +
+                                $"handle=0x{handle:X} playerAvailable={Player.IsAvailable}{(Player.FailureReason != null ? $" ({Player.FailureReason})" : string.Empty)}");
+            }
+            // The bubble still shows if the sound player refused: the line is readable either way.
+            if (config.EnemyVoiceBubbles)
+                VoiceBubble.Open(t.Address, text, seconds.Value, log);
+            linePicker.Commit(c.ActorKey, c.Event, line, config.EnemyVoiceBubbles ? seconds.Value : seconds.Value - 1f);
+            LinesSpoken++;
+            LastVoiceDescription = $"{npc.Name}: {c.Event} -> \"{text}\" (vo {line.VoiceId})";
+            if (handle != 0)
+                VoicePlayed?.Invoke(t.Address, c.Event, new VoiceSource(VoiceSourceKind.YellLine, string.Empty, line.VoiceId - VoiceSelection.YellLineBase), 0);
+            return true;
+        }
+        return false;
+    }
+
+    private string YellText(uint yellId)
+    {
+        if (yellText.TryGetValue(yellId, out var cached))
+            return cached;
+        var text = string.Empty;
+        try
+        {
+            text = dataManager.GetExcelSheet<Lumina.Excel.Sheets.NpcYell>()?.GetRowOrDefault(yellId)?.Text.ExtractText().Trim() ?? string.Empty;
+        }
+        catch (Exception)
+        {
+            text = string.Empty;
+        }
+        yellText[yellId] = text;
+        return text;
+    }
+
+    /// <summary>Bubble time from the file's header; null when the file cannot be read (some
+    /// vo_line entries exist in the index but are empty, and those must never reach PlaySound).</summary>
+    private float? BubbleSeconds(uint voiceId, string path)
+    {
+        if (lineSeconds.TryGetValue(voiceId, out var cached))
+            return cached;
+        float? result;
+        try
+        {
+            var data = dataManager.GetFile(path)?.Data;
+            result = data == null || data.Length < 0x40
+                ? null
+                : VoiceLineAudio.BubbleSeconds(VoiceLineAudio.TryReadDuration(data, out var s) ? s : FallbackBubbleSeconds - 1.2f);
+        }
+        catch (Exception)
+        {
+            result = null;
+        }
+        lineSeconds[voiceId] = result;
+        return result;
     }
 
     private void RunAudition()

@@ -5,5 +5,7 @@
     <Compile Include="../../CombatSimulator/Voice/VoiceEvents.cs" Link="Production/VoiceEvents.cs" />
     <Compile Include="../../CombatSimulator/Voice/VoiceRateLimiter.cs" Link="Production/VoiceRateLimiter.cs" />
     <Compile Include="../../CombatSimulator/Voice/VoiceActorWatch.cs" Link="Production/VoiceActorWatch.cs" />
+    <Compile Include="../../CombatSimulator/Voice/VoiceLines.cs" Link="Production/VoiceLines.cs" />
+    <None Include="../../CombatSimulator/Resources/VoiceLines.json" Link="VoiceLines.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

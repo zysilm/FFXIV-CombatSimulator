@@ -8,7 +8,11 @@ The tests link the pure voice code (no Dalamud, no game memory): appearance to P
 labeled entries, user labels can remove shipped ones), event priority order, the rate limiter
 (same-actor gap, per-event cooldowns, token bucket, concurrency, critical events, 60 s flood
 bound), closest-N arbitration and the per-enemy transition watch (no events on first sight,
-engage, cast start, heavy hit, one low-HP line per life, single death).
+engage, cast start, heavy hit, one low-HP line per life, single death), and the voiced line
+pool and picker (shipped JSON shape and coverage, the in-game anchor pair 8202037 -> NpcYell
+7768, no line using the disproven 8200000+row mapping, gender filter, one line at a time with
+quiet gaps, per-enemy and per-event cooldowns, no immediate repeats, flood bound, .scd header
+duration).
 
 These offline tests do not certify native playback, volume routing, 3D positioning or what any
 sound entry actually sounds like; see docs/acceptance/voice.md for the in-game checklist.

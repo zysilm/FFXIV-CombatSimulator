@@ -5,9 +5,19 @@ namespace CombatSimulator;
 
 public partial class Configuration
 {
-    /// <summary>Master switch for enemy battle voices. Off by default: with it off no native
-    /// sound function is ever called and the director does no per-frame work.</summary>
-    public bool EnableEnemyVoices { get; set; } = false;
+    /// <summary>Master switch for enemy voices (voiced lines, bubbles and labeled shouts). On by
+    /// default: enemies talk out of the box. The native sound player is still only touched once a
+    /// fight is running, never at load.</summary>
+    public bool EnableEnemyVoices { get; set; } = true;
+    /// <summary>Curated voiced battle lines (Resources/VoiceLines.json) for human enemies.</summary>
+    public bool EnemyVoiceLines { get; set; } = true;
+    /// <summary>Show the line's text in the game's overhead speech bubble.</summary>
+    public bool EnemyVoiceBubbles { get; set; } = true;
+    /// <summary>Seconds of quiet after a voiced line before an ordinary event may start another.
+    /// Engage, kills, victory and deaths wait only half a second.</summary>
+    public float EnemyVoiceLineGap { get; set; } = 3.5f;
+    /// <summary>One-time switch-on for configs saved while voices were off-by-default.</summary>
+    public bool EnemyVoiceDefaultsMigrated20261024 { get; set; } = false;
     /// <summary>0..1 volume handed to the game's sound player (before the game's own sliders).</summary>
     public float EnemyVoiceVolume { get; set; } = 1.0f;
     /// <summary>Play at the speaker's position (3D) instead of flat in the listener's head.</summary>

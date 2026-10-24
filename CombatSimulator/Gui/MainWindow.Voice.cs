@@ -17,7 +17,7 @@ public partial class MainWindow
     /// <summary>Set by the plugin after construction; the section is hidden while null.</summary>
     public VoiceDirector? VoiceDirector { get; set; }
 
-    private static readonly string[] VoiceAuditionKinds = { "PC battle shout", "NPC battle voice", "Monster SE pack", "Current target", "NpcYell line" };
+    private static readonly string[] VoiceAuditionKinds = { "PC battle shout", "NPC battle voice", "Monster SE pack", "Current target", "Voiced line" };
     private static readonly string[] VoiceCategoryNames = { "Player (own sounds slider)", "Party", "Other (others' sounds slider)", "Bypass volume rules" };
     private static readonly int[] VoiceCategoryValues = { 0, 1, 2, 6 };
     private IReadOnlyList<string>? voicePcCodes;
@@ -25,35 +25,67 @@ public partial class MainWindow
     private int voicePcIndex;
     private int voiceNpcNumber = 1;
     private int voiceSePack = 3091;
-    private int voiceYellId = 1000;
+    private int voiceYellId = 8202037;
     private int voiceEntry;
     private bool voiceAuditionPositional;
 
     private void DrawEnemyVoiceSection()
     {
         var director = VoiceDirector;
-        if (director == null || !ImGui.CollapsingHeader("Enemy Voices [Experimental]"))
+        if (director == null || !ImGui.CollapsingHeader("Enemy Voices"))
             return;
 
         var enabled = config.EnableEnemyVoices;
-        if (ImGui.Checkbox("Enable enemy voices", ref enabled))
+        if (ImGui.Checkbox("Enemies talk", ref enabled))
         {
             config.EnableEnemyVoices = enabled;
             config.Save();
         }
-        HelpMarker("Enemies shout on engage, skills, heavy hits, low HP, deaths and victory, using the game's own voice files played locally through the game's sound player. Nothing is sent to the server. Off by default; while off, the native sound function is never called.\n\nOnly sound entries you have labeled below are ever played, so out of the box a source stays silent until you label it.");
-
-        var player = director.Player;
-        if (player.FailureReason != null)
-            ImGui.TextColored(new System.Numerics.Vector4(1f, .45f, .35f, 1f), $"Playback unavailable: {player.FailureReason}");
-        else if (enabled)
-            ImGui.TextDisabled($"Played {player.PlayCount} sounds. {director.LastVoiceDescription}");
+        HelpMarker("Human enemies call out battle lines during a fight (engaging, attacking, taking hits, low HP, kills, victory, dying) with the game's own voice recordings and a speech bubble. Voices are matched to the enemy's gender; monsters stay quiet. Everything plays locally; nothing is sent to the server.");
 
         using (ImRaii.Disabled(!enabled))
         {
             SliderFloatSaved("Voice volume##enemyVoice", () => config.EnemyVoiceVolume, v => config.EnemyVoiceVolume = v, 0f, 1f,
                 "Volume handed to the game's sound player, before the game's own volume sliders.");
 
+            var bubbles = config.EnemyVoiceBubbles;
+            if (ImGui.Checkbox("Speech bubbles##enemyVoice", ref bubbles))
+            {
+                config.EnemyVoiceBubbles = bubbles;
+                config.Save();
+            }
+            HelpMarker("Show what the enemy says in the game's overhead speech bubble.");
+
+            var player = director.Player;
+            if (player.FailureReason != null)
+                ImGui.TextColored(new System.Numerics.Vector4(1f, .45f, .35f, 1f), $"Voice playback unavailable: {player.FailureReason}");
+
+            if (ImGui.TreeNode("Advanced##enemyVoice"))
+            {
+                DrawEnemyVoiceAdvanced(director);
+                ImGui.TreePop();
+            }
+        }
+    }
+
+    private void DrawEnemyVoiceAdvanced(VoiceDirector director)
+    {
+        if (config.EnableEnemyVoices)
+            ImGui.TextDisabled($"Lines spoken {director.LinesSpoken}, sounds played {director.Player.PlayCount}. {director.LastVoiceDescription}");
+
+        var lines = config.EnemyVoiceLines;
+        if (ImGui.Checkbox("Voiced battle lines##enemyVoice", ref lines))
+        {
+            config.EnemyVoiceLines = lines;
+            config.Save();
+        }
+        var pool = director.Lines;
+        HelpMarker($"The built-in pool of {pool.Count} recorded battle lines. Off: only the labeled shouts below play.");
+        if (lines)
+            SliderFloatSaved("Quiet between lines (s)##enemyVoice", () => config.EnemyVoiceLineGap, v => config.EnemyVoiceLineGap = v, 0f, 15f,
+                "Silence after each line before an ordinary moment (skill, hit, taunt) may start the next. Engage, kills, victory and deaths only wait half a second. Only one line is ever on screen at a time.");
+
+        {
             var categoryIndex = Math.Max(0, Array.IndexOf(VoiceCategoryValues, config.EnemyVoiceVolumeCategory));
             ImGui.SetNextItemWidth(220f);
             if (ImGui.Combo("Volume category##enemyVoice", ref categoryIndex, VoiceCategoryNames, VoiceCategoryNames.Length))
@@ -92,7 +124,7 @@ public partial class MainWindow
                 config.EnemyVoiceIdleTaunts = taunts;
                 config.Save();
             }
-            HelpMarker("Engaged enemies occasionally voice a 'taunt'-labeled entry between attacks.");
+            HelpMarker("Engaged enemies occasionally taunt between attacks (a voiced line, or a 'taunt'-labeled shout).");
             if (taunts)
                 SliderFloatSaved("Taunt interval (s)##enemyVoice", () => config.EnemyVoiceTauntInterval, v => config.EnemyVoiceTauntInterval = v, 5f, 120f,
                     "Average seconds between taunts of one enemy (never more often than every 20 s).");
@@ -115,7 +147,7 @@ public partial class MainWindow
 
     private void DrawVoiceAudition(VoiceDirector director)
     {
-        if (!ImGui.TreeNode("Audition and entry labels##enemyVoice"))
+        if (!ImGui.TreeNode("Audition and shout labels##enemyVoice"))
             return;
 
         ImGui.SetNextItemWidth(200f);
@@ -153,12 +185,22 @@ public partial class MainWindow
                 break;
             case 4:
                 ImGui.SetNextItemWidth(200f);
-                if (ImGui.InputInt("NpcYell row##voiceAudition", ref voiceYellId))
-                    voiceYellId = Math.Max(0, voiceYellId);
-                source = new VoiceSource(VoiceSourceKind.YellLine, string.Empty, (uint)voiceYellId);
-                var yell = dataManager.GetExcelSheet<NpcYell>()?.GetRowOrDefault((uint)voiceYellId);
-                ImGui.TextWrapped(yell != null ? $"Text: {yell.Value.Text.ExtractText()}" : "No such NpcYell row.");
-                note = "Voiced lines are audition-only in this phase (not used by the director).";
+                if (ImGui.InputInt("vo_line id (8201000+)##voiceAudition", ref voiceYellId))
+                    voiceYellId = Math.Max((int)VoiceSelection.YellLineBase, voiceYellId);
+                source = new VoiceSource(VoiceSourceKind.YellLine, string.Empty, (uint)voiceYellId - VoiceSelection.YellLineBase);
+                // A vo_line id is not an NpcYell row number; only curated lines have known text.
+                var curated = director.Lines.Entries.FirstOrDefault(e => e.VoiceId == (uint)voiceYellId);
+                var yell = curated == null ? null : dataManager.GetExcelSheet<NpcYell>()?.GetRowOrDefault(curated.YellId);
+                ImGui.TextWrapped(yell != null
+                    ? $"Text (NpcYell {curated!.YellId}): {yell.Value.Text.ExtractText()}  [{string.Join(", ", curated.Events)}; {curated.Voice}{(curated.Story ? "; story" : string.Empty)}]"
+                    : "Not in the curated pool: text unknown.");
+                if (ImGui.Button("Next curated line##voiceAudition") && director.Lines.Count > 0)
+                {
+                    var entries = director.Lines.Entries;
+                    var index = entries.ToList().FindIndex(e => e.VoiceId == (uint)voiceYellId);
+                    voiceYellId = (int)entries[(index + 1) % entries.Count].VoiceId;
+                }
+                note = "Plays the voiced line file in your client language. Curated lines are what enemies say in combat.";
                 break;
         }
 

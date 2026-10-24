@@ -41,7 +41,11 @@ public sealed unsafe class VoiceProfileResolver
         _ => "en",
     };
 
-    public void Clear() => cache.Clear();
+    public void Clear()
+    {
+        cache.Clear();
+        bodyCache.Clear();
+    }
 
     public VoiceSource Resolve(in VoiceSpeaker speaker)
     {
@@ -61,7 +65,51 @@ public sealed unsafe class VoiceProfileResolver
         return source;
     }
 
-    public void Forget(nint address, uint entityId) => cache.Remove((address, entityId));
+    public void Forget(nint address, uint entityId)
+    {
+        cache.Remove((address, entityId));
+        bodyCache.Remove((address, entityId));
+    }
+
+    private readonly Dictionary<(nint, uint), VoiceLineVoice> bodyCache = new();
+
+    /// <summary>
+    /// Which voiced lines suit this actor: human models by their Customize sex byte, everything
+    /// else non-human. Same human test as <see cref="Resolve"/>; anything unreadable counts as
+    /// non-human, which keeps it silent rather than mis-voiced.
+    /// </summary>
+    public VoiceLineVoice ResolveBody(nint address, uint entityId)
+    {
+        if (address == 0)
+            return VoiceLineVoice.NonHuman;
+        var key = (address, entityId);
+        if (bodyCache.TryGetValue(key, out var cached))
+            return cached;
+        var body = VoiceLineVoice.NonHuman;
+        try
+        {
+            var character = (Character*)address;
+            var modelCharaId = character->ModelContainer.ModelCharaId;
+            var model = modelCharaId < 0 ? null : dataManager.GetExcelSheet<ModelChara>()?.GetRowOrDefault((uint)modelCharaId);
+            if (modelCharaId == 0 || model?.Type == 1)
+            {
+                // Customize byte 1 is the body sex (0 male, 1 female), as the shout mapping reads it.
+                var sex = ((byte*)&character->DrawData.CustomizeData)[1];
+                body = sex switch
+                {
+                    0 => VoiceLineVoice.Male,
+                    1 => VoiceLineVoice.Female,
+                    _ => VoiceLineVoice.NonHuman,
+                };
+            }
+        }
+        catch (Exception)
+        {
+            body = VoiceLineVoice.NonHuman;
+        }
+        bodyCache[key] = body;
+        return body;
+    }
 
     private VoiceSource ResolveUncached(in VoiceSpeaker speaker)
     {

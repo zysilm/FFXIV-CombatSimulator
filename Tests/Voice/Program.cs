@@ -169,4 +169,129 @@ events.Clear();
 w.Observe(new VoiceActorSnapshot(false, false, false, 0, 1000), events);
 Check(events.Count == 0, "death raised twice");
 
-Console.WriteLine($"PASS {checks} checks; voice mapping, language fallback, labels, rate limiting, arbitration and transition watch.");
+
+// ---- Curated voiced lines: the shipped pool parses and stays inside what was proven offline. ----
+var poolPath = Path.Combine(AppContext.BaseDirectory, "VoiceLines.json");
+using (var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(poolPath)))
+{
+    var lines = doc.RootElement.GetProperty("lines").EnumerateArray().ToList();
+    Check(lines.Count >= 150 && lines.Count <= 400, $"pool size {lines.Count} outside 150..400");
+    var voices = new HashSet<uint>();
+    var perEvent = new Dictionary<string, int>();
+    foreach (var l in lines)
+    {
+        var voice = l.GetProperty("voice").GetUInt32();
+        var yell = l.GetProperty("yell").GetUInt32();
+        Check(voices.Add(voice), $"voice {voice} listed twice");
+        Check(voice >= 8201000 && voice < 8300000, $"voice {voice} outside the vo_line range");
+        Check(yell > 0 && yell < 20000, $"yell {yell} outside NpcYell");
+        Check(yell != voice - VoiceSelection.YellLineBase, $"voice {voice} uses the disproven 8200000+row mapping");
+        var gender = l.GetProperty("gender").GetString();
+        Check(gender is "male" or "female", $"voice {voice}: gender {gender}");
+        foreach (var e in l.GetProperty("events").EnumerateArray())
+        {
+            Check(Enum.TryParse<VoiceEvent>(e.GetString(), out _), $"voice {voice}: unknown event {e.GetString()}");
+            perEvent[e.GetString()!] = perEvent.GetValueOrDefault(e.GetString()!) + 1;
+        }
+    }
+    // The owner's in-game anchor: this file says "...nothing left of you but a smoking crater" (NpcYell 7768), female.
+    Check(lines.Any(l => l.GetProperty("voice").GetUInt32() == 8202037 && l.GetProperty("yell").GetUInt32() == 7768 &&
+                         l.GetProperty("gender").GetString() == "female"), "anchor line 8202037 -> 7768 (female) missing");
+    foreach (var e in Enum.GetValues<VoiceEvent>())
+        Check(perEvent.GetValueOrDefault(e.ToString()) >= 5, $"event {e} has fewer than 5 lines");
+}
+
+VoiceLineEntry L(uint v, VoiceLineVoice g, params VoiceEvent[] ev) => new(v, v - 8200000 + 5731, ev, g, false, 1f);
+var lineSettings = new VoiceLineSettings { Gap = 3.5f, PriorityGap = 0.5f, ActorCooldown = 8f, RecentMemory = 2 };
+var picker = new VoiceLinePicker(lineSettings);
+picker.SetEntries(new[]
+{
+    L(8202001, VoiceLineVoice.Male, VoiceEvent.Skill), L(8202002, VoiceLineVoice.Male, VoiceEvent.Skill),
+    L(8202003, VoiceLineVoice.Male, VoiceEvent.Skill), L(8202004, VoiceLineVoice.Female, VoiceEvent.Skill),
+    L(8202005, VoiceLineVoice.Male, VoiceEvent.Taunt), L(8202006, VoiceLineVoice.Female, VoiceEvent.KilledPlayer),
+    new VoiceLineEntry(8202007, 1, Array.Empty<VoiceEvent>(), VoiceLineVoice.Male, false, 1f),
+});
+Check(picker.Count == 6, "an entry without events was kept");
+var rnd = new Random(3);
+// Gender filter: a female speaker never gets a male line, monsters get nothing.
+for (var i = 0; i < 50; i++)
+    Check(picker.Pick(VoiceEvent.Skill, VoiceLineVoice.Female, rnd.NextDouble)?.VoiceId == 8202004, "female skill line");
+Check(picker.Pick(VoiceEvent.Skill, VoiceLineVoice.NonHuman, rnd.NextDouble) == null, "monster got a human line");
+Check(picker.Available(VoiceEvent.Engage, VoiceLineVoice.Male) == 1, "engage borrows taunt lines");
+Check(picker.Pick(VoiceEvent.Victory, VoiceLineVoice.Female, rnd.NextDouble)?.VoiceId == 8202006, "victory borrows kill lines");
+Check(picker.Pick(VoiceEvent.Death, VoiceLineVoice.Male, rnd.NextDouble) == null, "no death line must mean silence, not another category");
+
+// One line at a time, a quiet gap after it, priority moments sooner.
+Check(picker.CanSpeak(1, VoiceEvent.Skill), "fresh picker refused");
+var first = picker.Pick(VoiceEvent.Skill, VoiceLineVoice.Male, rnd.NextDouble)!;
+picker.Commit(1, VoiceEvent.Skill, first, 2f);
+Check(picker.IsBusy && !picker.CanSpeak(2, VoiceEvent.Death), "a second line started while one is on screen");
+picker.Advance(2.6f);
+Check(!picker.CanSpeak(2, VoiceEvent.Taunt), "ordinary event ignored the quiet gap");
+Check(picker.CanSpeak(2, VoiceEvent.Death), "death waited the ordinary gap");
+picker.Advance(3.0f);
+Check(picker.CanSpeak(2, VoiceEvent.Taunt), "gap never ends");
+Check(!picker.CanSpeak(2, VoiceEvent.Skill), "skill event cooldown (8 s, across enemies) ignored");
+Check(!picker.CanSpeak(1, VoiceEvent.Taunt), "per-enemy cooldown ignored");
+picker.Advance(3f);
+Check(picker.CanSpeak(1, VoiceEvent.Skill), "cooldowns never end");
+
+// No immediate repeats: three male skill lines and a memory of two never repeat the previous one.
+var picker2 = new VoiceLinePicker(lineSettings);
+picker2.SetEntries(picker.Entries);
+uint previous = 0;
+for (var i = 0; i < 30; i++)
+{
+    var line = picker2.Pick(VoiceEvent.Skill, VoiceLineVoice.Male, rnd.NextDouble)!;
+    Check(line.VoiceId != previous, "same line twice in a row");
+    previous = line.VoiceId;
+    picker2.Commit((ulong)i, VoiceEvent.Skill, line, 1f);
+    picker2.Advance(30f);
+}
+// With only one candidate the recent memory gives way instead of going silent.
+var lone = picker2.Pick(VoiceEvent.KilledPlayer, VoiceLineVoice.Female, rnd.NextDouble)!;
+picker2.Commit(99, VoiceEvent.KilledPlayer, lone, 1f);
+picker2.Advance(30f);
+Check(picker2.Pick(VoiceEvent.KilledPlayer, VoiceLineVoice.Female, rnd.NextDouble)?.VoiceId == lone.VoiceId, "single line blocked by recent memory");
+picker2.MarkUnavailable(lone.VoiceId);
+Check(picker2.Pick(VoiceEvent.KilledPlayer, VoiceLineVoice.Female, rnd.NextDouble) == null, "an unavailable line was offered");
+
+// Long-run budget: six enemies asking every frame for a minute get a handful of taunts, not a wall.
+var picker3 = new VoiceLinePicker(new VoiceLineSettings());
+picker3.SetEntries(picker.Entries);
+var spoken = 0;
+for (var frame = 0; frame < 60 * 60; frame++)
+{
+    picker3.Advance(1f / 60f);
+    var actor = (ulong)(frame % 6);
+    if (!picker3.CanSpeak(actor, VoiceEvent.Taunt))
+        continue;
+    var line = picker3.Pick(VoiceEvent.Taunt, VoiceLineVoice.Male, rnd.NextDouble);
+    if (line == null)
+        continue;
+    picker3.Commit(actor, VoiceEvent.Taunt, line, 2f);
+    spoken++;
+}
+Check(spoken >= 3 && spoken <= 6, $"taunt flood produced {spoken} lines in 60 s");
+Check(VoiceLinePicker.IsPriority(VoiceEvent.Victory) && !VoiceLinePicker.IsPriority(VoiceEvent.Skill), "priority set");
+
+// SCD header duration: a synthetic MS-ADPCM header (block 70, 128 samples per block, 44100 Hz).
+var scd = new byte[0x200];
+"SEDB"u8.CopyTo(scd);
+BitConverter.GetBytes((ushort)0x30).CopyTo(scd, 0x0E);
+BitConverter.GetBytes(0x70).CopyTo(scd, 0x30 + 0x0C);
+BitConverter.GetBytes(0x100).CopyTo(scd, 0x70);
+BitConverter.GetBytes(70 * 345).CopyTo(scd, 0x100);
+BitConverter.GetBytes(1).CopyTo(scd, 0x104);
+BitConverter.GetBytes(44100).CopyTo(scd, 0x108);
+BitConverter.GetBytes(0x0C).CopyTo(scd, 0x10C);
+BitConverter.GetBytes((ushort)70).CopyTo(scd, 0x12C);
+BitConverter.GetBytes((ushort)128).CopyTo(scd, 0x132);
+Check(VoiceLineAudio.TryReadDuration(scd, out var secs) && Math.Abs(secs - 345 * 128 / 44100f) < 1e-3, $"adpcm duration {secs}");
+Check(!VoiceLineAudio.TryReadDuration(new byte[0x20], out _), "short file read as audio");
+Check(!VoiceLineAudio.TryReadDuration(new byte[0x200], out _), "zero file read as audio");
+BitConverter.GetBytes(0x06).CopyTo(scd, 0x10C);
+Check(!VoiceLineAudio.TryReadDuration(scd, out _), "unknown codec read as audio");
+Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds(30f) == 7f, "bubble clamp");
+
+Console.WriteLine($"PASS {checks} checks; voice mapping, language fallback, labels, rate limiting, arbitration, transition watch, voiced line pool and picker.");
