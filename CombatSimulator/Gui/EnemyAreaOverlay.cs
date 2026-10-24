@@ -50,6 +50,10 @@ public sealed class EnemyAreaOverlay
         {
             if (HasNativeOmen?.Invoke(m) == true && !config.EnemyAreaOverlayWithOmen)
                 continue;
+            // Single-target strike circles are the legacy telegraph, still governed by its own
+            // "Show telegraph circles" switch; only real areas are always drawn.
+            if (!m.Shape.IsArea && !config.ShowTelegraphs)
+                continue;
             DrawMarker(drawList, m);
         }
     }
