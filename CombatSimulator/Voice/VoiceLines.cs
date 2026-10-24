@@ -42,9 +42,12 @@ public enum VoiceLineTextSheet
 /// One curated voiced line. <see cref="VoiceId"/> is the vo_line file id and <see cref="YellId"/>
 /// the row with the same words in <see cref="Sheet"/>. They are separate because the game does
 /// not number them alike (file 8202037 is NpcYell 7768, not 2037); the pairs were proven offline.
+/// <see cref="Extended"/> is provenance only (matched by speech recognition). <see cref="Fx"/> marks a
+/// recording with heavy studio processing (reverb, layered or shifted voice: bosses, primals); a
+/// human speaker never gets one, it would make a common soldier sound like a god.
 /// </summary>
 public sealed record VoiceLineEntry(uint VoiceId, uint YellId, VoiceEvent[] Events, VoiceLineVoice Voice, bool Story, float Weight,
-    VoiceLineAge Age = VoiceLineAge.Any, VoiceLineTextSheet Sheet = VoiceLineTextSheet.NpcYell, bool Extended = false)
+    VoiceLineAge Age = VoiceLineAge.Any, VoiceLineTextSheet Sheet = VoiceLineTextSheet.NpcYell, bool Extended = false, bool Fx = false)
 {
     public string PathFor(string language) => $"sound/voice/vo_line/{VoiceId:D7}_{language}.scd";
 
@@ -245,7 +248,9 @@ public sealed class VoiceLinePicker
     public bool WasRecent(uint voiceId) => recent.Contains(voiceId);
 
     private bool Fits(VoiceLineEntry line, VoiceEvent e, VoiceLineVoice voice) =>
-        line.Voice == voice && !unavailable.Contains(line.VoiceId) && Array.IndexOf(line.Events, e) >= 0;
+        line.Voice == voice && !(line.Fx && IsHuman(voice)) && !unavailable.Contains(line.VoiceId) && Array.IndexOf(line.Events, e) >= 0;
+
+    private static bool IsHuman(VoiceLineVoice voice) => voice is VoiceLineVoice.Male or VoiceLineVoice.Female;
 
     private static bool AgeFits(VoiceLineEntry line, VoiceLineAge age) =>
         age == VoiceLineAge.Any || line.Age == VoiceLineAge.Any || line.Age == age;

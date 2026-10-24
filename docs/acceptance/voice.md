@@ -118,8 +118,33 @@ Third pass (speech recognition, offline, not shipped; research files outside the
   216, Hurt 58, LowHp 90, KilledPlayer 37, AllyDeath 21, Victory 19, Death 26 (female victory 7,
   kill 12, death 11; male victory 12).
 
+Fourth pass (processed voices, offline; research files outside the repo):
+- Many recognition-matched lines are boss/primal reads with studio processing (a hall/echo tail,
+  layered or "godlike" voice) but were gendered like normal voices, so plain soldiers sounded like
+  a primal. Every vo_line file was re-decoded at 32 kHz (ja and en separately) and measured blind.
+- Main measure: the final tail. After the last frame within 20 dB of the speech level, a line is
+  fitted to the energy envelope (dB) down to -60 dB or the end of the file; RT60 = -60 / slope. A
+  file that ends right after the speech (fit unusable) is bounded by its remaining length. Dry
+  battle barks: 0.05-0.3 s; processed reads: 0.8-2 s. Over all 4,176 files the distribution is
+  bimodal with its valley at 0.4-0.6 s, ja and en agree on 97% of files (different actors, same
+  mix), and per speaker cluster it is all-or-nothing (companions stay dry even in their own duty
+  dialogue; bosses, primals, Ascians, automata and the arena announcer are reverbed).
+- Score = mean over ja/en of log2(RT60 / 0.5 s) + 2 x (share of the speaker's ja/en clusters that
+  is processed - 0.5); `fx` if > 0. An AudioSet tagger (AST) was run only as a cross-check: its
+  echo tag ranks files the same way (Spearman 0.74). Harmonicity, modulation (SRMR), pause floor
+  and echo-autocorrelation features were weaker and are not used.
+- Calibration on text-only seeds (god/primal wording vs Trust/duty-support barks; 112 / 269):
+  precision 0.96, recall 0.88 at the fixed threshold; 5-fold held-out 0.97 / 0.86. The misses are
+  mostly seed errors (dry human villains saying "Kneel or die!", companions talking about gods).
+- Pool: 254 of 622 lines are `fx` (253 extended, 1 original: 8203204, borderline). 368 remain for
+  human speakers (female: Engage 22, KilledPlayer 4, Victory 5, Death 6; male: Engage 32,
+  KilledPlayer 13, Victory 6, Death 10). The `EnemyVoiceExtendedLines` switch is gone: human
+  enemies use the whole pool minus `fx`; `extended` stays in the JSON as provenance only. `fx`
+  lines stay in the file for a future monster/boss speaker.
+
 Runtime: `Resources/VoiceLines.json` (voice id, text row, optional sheet, events, gender, age,
-story, weight; no text). Text comes from the row's sheet (NpcYell unless `sheet` says
+story, weight, optional `extended` (provenance) and `fx` (processed voice: never picked for a
+male or female speaker); no text). Text comes from the row's sheet (NpcYell unless `sheet` says
 InstanceContentTextData) in the client language; audio is the client-language file only (a line
 whose file or text is missing is retired for the session). Enemy body: human models by Customize
 sex byte; anything else counts as non-human and gets no line (its labeled monster sounds still
@@ -135,14 +160,17 @@ fires with ragdoll on). Phase-1 limits still apply on top. When no line is spoke
 shout path runs exactly as in phase 1.
 
 Audition: Advanced > Audition > source **Voiced line**, enter a vo_line id (default 8202037) or
-press **Next curated line**; the curated text, events and gender are shown.
+press **Next curated line**; the curated text, events and gender are shown, and `fx` lines say
+"fx (not used by human enemies)".
 
 Flags: `EnableEnemyVoices` (true), `EnemyVoiceLines` (true), `EnemyVoiceBubbles` (true),
 `EnemyVoiceLineGap` (3.5), plus the phase-1 flags below.
 
 Offline: `dotnet run --project Tests/Voice/Voice.csproj -c Release` (pool shape, anchor pair,
 no disproven mapping, one file per sheet row, every entry has an age, every event covered, gender
-filter, age preference and fallback, gate timings, no repeats, flood bound, .scd header duration).
+filter, age preference and fallback, gate timings, no repeats, flood bound, .scd header duration,
+fx never picked for a human speaker (also over the shipped pool), the owner's boss examples are fx,
+engage/kill/victory/death still covered for both genders after fx).
 
 Listen for (third pass):
 1. Bubble vs voice: new lines from duty dialogue (Advanced > Audition shows
@@ -155,6 +183,13 @@ Listen for (third pass):
    suspect, not the pairing.
 4. Kept but worth one listen: 8202057 (English ASR heard "Come on!" for "Must hold on...").
 5. Story-flagged boss lines (weight 0.35) should be occasional, not frequent.
+
+Listen for (fourth pass, before merging): work through `reverb_listen.xlsx` (research folder) in
+Advanced > Audition by vo_line id and mark y/n. Section A (highest scores) should all ring on after
+the last word; section B straddles the threshold (fx above, clean below; this is where it can be
+wrong); section C should be dry; section D is dry by the tail but checked for pitched/layered
+voices the tail cannot see. In combat: human enemies should no longer sound like a primal, e.g.
+8203663 "Fools, braying before a god!" and 8205955 "You are naught but insects..." never play.
 
 # Phase 1 details (Advanced: labeled shouts)
 

@@ -64,14 +64,6 @@ public partial class MainWindow
             }
             HelpMarker("When the player or a companion falls, an enemy always says a kill line: it waits for the killer to finish its own shout, and if the killer cannot speak (a monster, already dead) the nearest enemy that can says it instead.");
 
-            var extended = config.EnemyVoiceExtendedLines;
-            if (ImGui.Checkbox("Extended line pool##enemyVoice", ref extended))
-            {
-                config.EnemyVoiceExtendedLines = extended;
-                config.Save();
-            }
-            HelpMarker("Off: about 180 lines whose voice and text were proven from the game's own data. On: about 620 lines, adding ones matched by speech recognition of the recordings. The wider pool is more varied but includes boss and primal lines recorded with heavy echo.");
-
             var defeatTaunts = config.EnemyVoiceDefeatTaunts;
             if (ImGui.Checkbox("Taunt the fallen##enemyVoice", ref defeatTaunts))
             {
@@ -242,7 +234,7 @@ public partial class MainWindow
                 // A vo_line id is not an NpcYell row number; only curated lines have known text.
                 var curated = director.Lines.Entries.FirstOrDefault(e => e.VoiceId == (uint)voiceYellId);
                 ImGui.TextWrapped(curated != null
-                    ? $"Text ({curated.Sheet} {curated.YellId}): {director.LineText(curated)}  [{string.Join(", ", curated.Events)}; {curated.Voice}; {curated.Age}{(curated.Story ? "; story" : string.Empty)}]"
+                    ? $"Text ({curated.Sheet} {curated.YellId}): {director.LineText(curated)}  [{string.Join(", ", curated.Events)}; {curated.Voice}; {curated.Age}{(curated.Story ? "; story" : string.Empty)}{(curated.Fx ? "; fx (not used by human enemies)" : string.Empty)}]"
                     : "Not in the curated pool: text unknown.");
                 if (ImGui.Button("Next curated line##voiceAudition") && director.Lines.Count > 0)
                 {

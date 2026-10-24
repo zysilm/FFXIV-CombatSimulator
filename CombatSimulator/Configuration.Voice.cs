@@ -38,10 +38,6 @@ public partial class Configuration
     // the old default; a value the user changed is left alone.
     public bool EnemyVoiceCadenceMigrated20261025 { get; set; } = false;
     public float EnemyVoiceAllyDeathRadius { get; set; } = 15f;
-    /// <summary>Also use the lines matched by speech recognition (Resources/VoiceLines.json entries
-    /// marked "extended"). Off: only the original script/duration-proven pool. The wider pool holds
-    /// many boss and primal lines recorded with heavy effects, so it is opt-in.</summary>
-    public bool EnemyVoiceExtendedLines { get; set; } = false;
     /// <summary>A killing blow on the player or a companion always gets a line: it waits for the
     /// speaker and the line gate, and a killer that cannot speak hands it to the nearest enemy that can.</summary>
     public bool EnemyVoiceGuaranteeKills { get; set; } = true;

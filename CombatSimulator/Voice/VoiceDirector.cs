@@ -67,9 +67,6 @@ public sealed unsafe class VoiceDirector
     private bool firstLineLogged;
     private int lastDeadCompanions = -1;
     private bool? lastPlayerAlive;
-    // Whole shipped pool; the picker gets it filtered by the extended-pool switch.
-    private List<VoiceLineEntry> allLines = new();
-    private bool? appliedExtended;
     // Taunts over a fallen player: countdown to the next one (-1 = not running) and who spoke last.
     private float defeatTauntTimer = -1f;
     private uint lastDefeatSpeaker;
@@ -133,6 +130,7 @@ public sealed unsafe class VoiceDirector
         public string? Age { get; set; }
         public string? Sheet { get; set; }
         public bool Extended { get; set; }
+        public bool Fx { get; set; }
     }
 
     private sealed class LineFile
@@ -168,7 +166,7 @@ public sealed unsafe class VoiceDirector
                     if (voice == null || sheet == null || dto.Voice == 0 || events.Count == 0)
                         continue;
                     parsed.Add(new VoiceLineEntry(dto.Voice, dto.Yell, events.ToArray(), voice.Value, dto.Story, dto.Weight,
-                        VoiceLineEntry.ParseAge(dto.Age), sheet.Value, dto.Extended));
+                        VoiceLineEntry.ParseAge(dto.Age), sheet.Value, dto.Extended, dto.Fx));
                 }
             }
         }
@@ -176,20 +174,8 @@ public sealed unsafe class VoiceDirector
         {
             log.Warning($"Enemy voices: voiced line pool unreadable ({ex.Message}); voiced lines off.");
         }
-        allLines = parsed;
-        ApplyLinePool();
-    }
-
-    /// <summary>Hand the picker the original pool, or the original plus the speech-recognition
-    /// matched lines when the extended pool is switched on.</summary>
-    private void ApplyLinePool()
-    {
-        appliedExtended = config.EnemyVoiceExtendedLines;
-        var pool = new List<VoiceLineEntry>(allLines.Count);
-        foreach (var line in allLines)
-            if (!line.Extended || config.EnemyVoiceExtendedLines)
-                pool.Add(line);
-        linePicker.SetEntries(pool);
+        // The whole pool; the picker itself keeps "fx" (processed boss/primal) lines from human speakers.
+        linePicker.SetEntries(parsed);
     }
 
     /// <summary>
@@ -369,8 +355,6 @@ public sealed unsafe class VoiceDirector
         limiter.Advance(deltaTime);
         lineSettings.Gap = Math.Clamp(config.EnemyVoiceLineGap, 0f, 30f);
         linePicker.Advance(deltaTime);
-        if (appliedExtended != config.EnemyVoiceExtendedLines)
-            ApplyLinePool();
 
         RunAudition();
 

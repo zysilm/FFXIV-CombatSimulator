@@ -176,15 +176,25 @@ using (var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(poolPath))
 {
     var lines = doc.RootElement.GetProperty("lines").EnumerateArray().ToList();
     Check(lines.Count >= 150 && lines.Count <= 900, $"pool size {lines.Count} outside 150..900");
-    // The default pool is the original data-proven set; recognition-matched lines are opt-in.
-    var baseCount = lines.Count(l => !(l.TryGetProperty("extended", out var x) && x.GetBoolean()));
-    Check(baseCount >= 150 && baseCount < lines.Count, $"default (non-extended) pool size {baseCount}");
+    // Human enemies use the whole pool minus "fx" (studio-processed boss/primal voices). "extended" is
+    // provenance only and filters nothing.
+    bool Flag(System.Text.Json.JsonElement l, string name) => l.TryGetProperty(name, out var x) && x.GetBoolean();
+    var fxCount = lines.Count(l => Flag(l, "fx"));
+    var humanCount = lines.Count - fxCount;
+    Check(fxCount > 0, "no line is marked fx");
+    Check(humanCount >= 300, $"pool for human speakers only {humanCount} lines after fx");
+    Check(lines.Count(l => Flag(l, "extended") && !Flag(l, "fx")) > 0, "no extended line left for human speakers");
+    // Owner's ear-checked boss/primal examples must be fx; the anchor smoking-crater line must not.
+    foreach (var v in new uint[] { 8203663, 8203653, 8205955, 8206395, 8206378, 8206393, 8203358 })
+        Check(lines.Any(l => l.GetProperty("voice").GetUInt32() == v && Flag(l, "fx")), $"boss line {v} not marked fx");
+    Check(!lines.Any(l => l.GetProperty("voice").GetUInt32() == 8202037 && Flag(l, "fx")), "anchor 8202037 marked fx");
     foreach (var gender in new[] { "male", "female" })
         foreach (var ev in new[] { "Engage", "KilledPlayer", "Victory", "Death" })
-            Check(lines.Any(l => !(l.TryGetProperty("extended", out var x) && x.GetBoolean()) &&
-                                 l.GetProperty("gender").GetString() == gender &&
-                                 l.GetProperty("events").EnumerateArray().Any(e => e.GetString() == ev)),
-                $"default pool has no {gender} {ev} line");
+        {
+            var n = lines.Count(l => !Flag(l, "fx") && l.GetProperty("gender").GetString() == gender &&
+                                     l.GetProperty("events").EnumerateArray().Any(e => e.GetString() == ev));
+            Check(n >= 3, $"human pool has only {n} {gender} {ev} lines after fx");
+        }
     var voices = new HashSet<uint>();
     var yells = new HashSet<string>();
     var perEvent = new Dictionary<string, int>();
@@ -237,6 +247,49 @@ Check(picker.Pick(VoiceEvent.Skill, VoiceLineVoice.NonHuman, rnd.NextDouble) == 
 Check(picker.Available(VoiceEvent.Engage, VoiceLineVoice.Male) == 1, "engage borrows taunt lines");
 Check(picker.Pick(VoiceEvent.Victory, VoiceLineVoice.Female, rnd.NextDouble)?.VoiceId == 8202006, "victory borrows kill lines");
 Check(picker.Pick(VoiceEvent.Death, VoiceLineVoice.Male, rnd.NextDouble) == null, "no death line must mean silence, not another category");
+
+// Processed (fx) lines are never given to a human speaker, even when they are the only fit.
+{
+    var fxPicker = new VoiceLinePicker(new VoiceLineSettings());
+    fxPicker.SetEntries(new[]
+    {
+        new VoiceLineEntry(8203663, 1, new[] { VoiceEvent.Taunt }, VoiceLineVoice.Male, false, 1f, Fx: true),
+        new VoiceLineEntry(8203664, 2, new[] { VoiceEvent.Taunt }, VoiceLineVoice.Male, false, 1f, Extended: true),
+        new VoiceLineEntry(8203665, 3, new[] { VoiceEvent.Death }, VoiceLineVoice.Female, false, 1f, Fx: true),
+    });
+    for (var i = 0; i < 50; i++)
+        Check(fxPicker.Pick(VoiceEvent.Taunt, VoiceLineVoice.Male, rnd.NextDouble)?.VoiceId == 8203664, "a male speaker got an fx line");
+    Check(fxPicker.Available(VoiceEvent.Taunt, VoiceLineVoice.Male) == 1, "fx line counted as available to a human");
+    Check(fxPicker.Pick(VoiceEvent.Death, VoiceLineVoice.Female, rnd.NextDouble) == null, "the only female death line is fx: must be silence");
+    Check(fxPicker.Count == 3, "fx lines must stay in the pool (kept for future monster/boss speakers)");
+}
+
+// The shipped pool as the director loads it: no human pick is ever an fx line, and every outcome
+// moment still has a line for both genders.
+{
+    using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(poolPath));
+    var entries = new List<VoiceLineEntry>();
+    foreach (var l in doc.RootElement.GetProperty("lines").EnumerateArray())
+    {
+        var evs = l.GetProperty("events").EnumerateArray().Select(e => Enum.Parse<VoiceEvent>(e.GetString()!)).ToArray();
+        var g = l.GetProperty("gender").GetString() == "female" ? VoiceLineVoice.Female : VoiceLineVoice.Male;
+        entries.Add(new VoiceLineEntry(l.GetProperty("voice").GetUInt32(), l.GetProperty("yell").GetUInt32(), evs, g, false, 1f,
+            Extended: l.TryGetProperty("extended", out var x) && x.GetBoolean(), Fx: l.TryGetProperty("fx", out var f) && f.GetBoolean()));
+    }
+    var shipped = new VoiceLinePicker(new VoiceLineSettings { RecentMemory = 0 });
+    shipped.SetEntries(entries);
+    var fxIds = entries.Where(e => e.Fx).Select(e => e.VoiceId).ToHashSet();
+    foreach (var g in new[] { VoiceLineVoice.Male, VoiceLineVoice.Female })
+        foreach (var ev in Enum.GetValues<VoiceEvent>())
+            for (var i = 0; i < 200; i++)
+            {
+                var pick = shipped.Pick(ev, g, rnd.NextDouble);
+                Check(pick == null || !fxIds.Contains(pick.VoiceId), $"shipped pool gave fx line {pick?.VoiceId} to a {g} speaker");
+            }
+    foreach (var g in new[] { VoiceLineVoice.Male, VoiceLineVoice.Female })
+        foreach (var ev in new[] { VoiceEvent.Engage, VoiceEvent.KilledPlayer, VoiceEvent.Victory, VoiceEvent.Death })
+            Check(shipped.Available(ev, g) > 0, $"shipped pool: no {g} {ev} line for human speakers");
+}
 
 // One line at a time, a quiet gap after it, priority moments sooner.
 Check(picker.CanSpeak(1, VoiceEvent.Skill), "fresh picker refused");
