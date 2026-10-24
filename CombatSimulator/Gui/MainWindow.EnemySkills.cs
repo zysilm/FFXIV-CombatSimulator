@@ -30,6 +30,9 @@ public partial class MainWindow
             HelpMarker("Most real skills kept per monster. Area skills are preferred, plus one single-target attack.");
         }
 
+        EnemySkillToggle("Humanoid AoE skill", () => config.EnemyKitIncludeAoe, v => config.EnemyKitIncludeAoe = v,
+            "Humanoid kits always include one area skill when the job has one, instead of only the strongest single-target skills.");
+
         EnemySkillToggle("HP phase skills", () => config.EnemyHpPhaseSkills, v => config.EnemyHpPhaseSkills = v,
             "The longest cast is held until the enemy is at half HP; a stronger 'Enraged' area skill unlocks below 30%.");
 

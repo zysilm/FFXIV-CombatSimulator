@@ -34,7 +34,7 @@ public class JobActionKitProvider
     private readonly ActionDataProvider actionDataProvider;
     private readonly IDataManager dataManager;
     private readonly IPluginLog log;
-    private readonly Dictionary<(uint Job, int Level, int Max, bool MeleeOnly), List<NpcSkill>> cache = new();
+    private readonly Dictionary<(uint Job, int Level, int Max, bool MeleeOnly, bool IncludeAoe), List<NpcSkill>> cache = new();
 
     public JobActionKitProvider(ActionDataProvider actionDataProvider, IDataManager dataManager, IPluginLog log)
     {
@@ -51,21 +51,22 @@ public class JobActionKitProvider
     /// otherwise flips the whole enemy to ranged intent and it camps 8–9.5y out instead of engaging
     /// in melee like its weapon implies.
     /// </summary>
-    public IReadOnlyList<NpcSkill> BuildKit(uint jobId, int levelCap, int maxSkills, bool meleeOnly = false)
+    public IReadOnlyList<NpcSkill> BuildKit(uint jobId, int levelCap, int maxSkills, bool meleeOnly = false,
+        bool includeAoe = false)
     {
         if (jobId == 0 || maxSkills <= 0)
             return Array.Empty<NpcSkill>();
 
-        var key = (jobId, levelCap, maxSkills, meleeOnly);
+        var key = (jobId, levelCap, maxSkills, meleeOnly, includeAoe);
         if (cache.TryGetValue(key, out var cached))
             return cached;
 
-        var kit = BuildKitUncached(jobId, levelCap, maxSkills, meleeOnly);
+        var kit = BuildKitUncached(jobId, levelCap, maxSkills, meleeOnly, includeAoe);
         cache[key] = kit;
         return kit;
     }
 
-    private List<NpcSkill> BuildKitUncached(uint jobId, int levelCap, int maxSkills, bool meleeOnly)
+    private List<NpcSkill> BuildKitUncached(uint jobId, int levelCap, int maxSkills, bool meleeOnly, bool includeAoe)
     {
         var empty = new List<NpcSkill>();
 
@@ -86,6 +87,7 @@ public class JobActionKitProvider
             return empty;
 
         var candidates = new List<(ActionData Data, byte Level)>();
+        var aoeCandidates = new List<(ActionData Data, byte Level)>();
         foreach (var action in actionSheet)
         {
             if (!action.IsPlayerAction || action.IsRoleAction)
@@ -93,6 +95,17 @@ public class JobActionKitProvider
             var lvl = action.ClassJobLevel;
             if (lvl < 1 || lvl > levelCap) // lvl 0 = PvP/shared duplicates
                 continue;
+            if (includeAoe && IsSelfCentredDamageAoe(action))
+            {
+                // PBAoEs (Overpower, Total Eclipse, Holy) target the caster, so the hostile-target
+                // test below drops them; they are only offered for the AoE slot.
+                if (action.ClassJobCategory.ValueNullable is { } aoeCjc &&
+                    (CategoryHasJob(aoeCjc, jobAbbr) || CategoryHasJob(aoeCjc, baseAbbr)) &&
+                    actionDataProvider.GetActionData(action.RowId) is { Potency: > 0 } aoeData &&
+                    !(meleeOnly && (aoeData.DamageType == SimDamageType.Magical || aoeData.Range > 5f)))
+                    aoeCandidates.Add((aoeData, lvl));
+                continue;
+            }
             if (action.AttackType.RowId == 0 || !action.CanTargetHostile)
                 continue; // non-damage / can't be aimed at the player
             var category = action.ActionCategory.RowId;
@@ -125,17 +138,56 @@ public class JobActionKitProvider
         // 30s, Air Anchor 40s…). Longer-recast actions only fill remaining slots if a job has fewer
         // than N GCDs (low level / small kit), so we never return empty.
         const float gcdRecast = 2.55f;
-        var kit = deduped.Where(c => c.Data.RecastTime <= gcdRecast)
+        var picked = deduped.Where(c => c.Data.RecastTime <= gcdRecast)
             .Concat(deduped.Where(c => c.Data.RecastTime > gcdRecast))
             .Take(maxSkills)
-            .Select((c, rank) => ToSkill(c.Data, rank))
             .ToList();
+
+        // AoE slot: ranking by potency keeps the single-target core, which on most jobs leaves
+        // no area at all. Guarantee one when the job has one — the newest GCD AoE, replacing the
+        // weakest pick when the kit is full.
+        if (includeAoe && !picked.Any(c => IsArea(c.Data)))
+        {
+            var aoe = deduped.Where(c => IsArea(c.Data))
+                .Concat(aoeCandidates.GroupBy(c => c.Data.ActionId).Select(g => g.First()))
+                .OrderBy(c => c.Data.RecastTime > gcdRecast)
+                .ThenByDescending(c => c.Level)
+                .ThenByDescending(c => c.Data.Potency)
+                .Select(c => ((ActionData Data, byte Level)?)c)
+                .FirstOrDefault();
+            if (aoe is { } chosen)
+            {
+                if (picked.Count >= maxSkills)
+                    picked[^1] = chosen;
+                else
+                    picked.Add(chosen);
+            }
+        }
+
+        var kit = picked.Select((c, rank) => ToSkill(c.Data, rank)).ToList();
 
         log.Info(
             $"JobActionKitProvider: job={jobId}({jobAbbr}/{baseAbbr}) lvl≤{levelCap} → {kit.Count} skills: " +
             string.Join(", ", kit.Select(s => $"{s.Name}#{s.ActionId}(p{s.Potency})")));
         return kit;
     }
+
+    private static bool IsArea(ActionData data) => data.Shape != AoeShape.Single && data.Radius > 0f;
+
+    /// <summary>
+    /// A GCD damage AoE centred on the caster. The sheet has no damage flag for self-targeted
+    /// actions; NeedToFaceTarget is what separates them from the self-targeted party heals
+    /// (Medica, Helios, Succor…), measured over every player AoE GCD: 0 heals among the
+    /// facing ones, 0 damage AoEs among the rest.
+    /// </summary>
+    private static bool IsSelfCentredDamageAoe(in Action action)
+        => !action.CanTargetHostile &&
+           action.Range == 0 &&
+           action.EffectRange > 0 &&
+           action.CastType is 2 or 3 or 5 or 10 &&
+           action.AttackType.RowId != 0 &&
+           action.NeedToFaceTarget &&
+           action.ActionCategory.RowId is ActionCategorySpell or ActionCategoryWeaponskill;
 
     private static NpcSkill ToSkill(ActionData data, int rank)
     {

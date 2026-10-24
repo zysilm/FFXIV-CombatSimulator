@@ -64,7 +64,8 @@ public class NpcActionProfileProvider
             // engage-range logic to ranged intent and the enemy camps at spell range instead of
             // closing in like its weapon implies.
             var meleeOnly = weaponStyle is not (NpcAttackStyle.Ranged or NpcAttackStyle.Magic);
-            var kit = jobKits.BuildKit(jobId, level, Math.Max(1, config.EnemyMaxRealSkills), meleeOnly);
+            var kit = jobKits.BuildKit(jobId, level, Math.Max(1, config.EnemyMaxRealSkills), meleeOnly,
+                config.EnemyKitIncludeAoe);
             if (kit.Count > 0)
             {
                 behavior.Skills = new List<NpcSkill>(kit.Count);
