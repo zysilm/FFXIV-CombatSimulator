@@ -578,9 +578,9 @@ public unsafe class NpcAiController : IDisposable
         UpdateDesiredEngageRange(npc, deltaTime);
 
         var targetPos = combatEngine.GetSimulatedEntityPosition(simulatedTarget);
-        var distToTarget = UsesPartyConfiguredRange(npc, simulatedTarget)
+        var distToTarget = (UsesPartyConfiguredRange(npc, simulatedTarget)
             ? FlatDistance(npcPos, targetPos)
-            : Vector3.Distance(npcPos, targetPos);
+            : Vector3.Distance(npcPos, targetPos)) - HitboxSpacingExtra(npc, simulatedTarget);
         var targetEntityId = simulatedTarget.EntityId;
 
         if (npc.State.IsCasting && npc.State.CastTargetId != targetEntityId)
@@ -935,10 +935,12 @@ public unsafe class NpcAiController : IDisposable
         // A melee enemy must stand where its swing reaches. With a raised hold distance (~2.5y+)
         // the hold ring plus the unlock buffer sat beyond attack range, so an enemy could keep a
         // spot it could never attack from. Cap both the ring and the release band at the reach.
+        var bodyExtra = HitboxSpacingExtra(npc, combatEngine.State.PlayerState);
+        targetDist += bodyExtra;
         var unlockRadius = targetDist + ApproachUnlockBuffer;
         if (HasMeleePositioningIntent(npc))
         {
-            var reach = GetEffectiveNpcAttackRange(npc, combatEngine.State.PlayerState) - SoloReachMargin;
+            var reach = GetEffectiveNpcAttackRange(npc, combatEngine.State.PlayerState) + bodyExtra - SoloReachMargin;
             if (reach > 0.5f)
             {
                 targetDist = MathF.Min(targetDist, reach);
@@ -1142,7 +1144,8 @@ public unsafe class NpcAiController : IDisposable
 
         var targetPos = partyPlan.Goal;
         var facePos = partyPlan.HasFaceTarget ? partyPlan.FaceTarget : npcPos;
-        var distToTarget = FlatDistance(npcPos, npcTargetPos);
+        // Measured past the body-size excess so a big body is neither walked into nor fought from inside.
+        var distToTarget = FlatDistance(npcPos, npcTargetPos) - HitboxSpacingExtra(npc, npcTarget);
         var partyAttackRange = PartyHoldRange(npc);
         var partyAttackEnvelope = PartyAttackEnvelope(npc);
         var rangeStateAvailable = TryGetOrCreateApproachPathState(npc, out var rangeState);
@@ -1617,6 +1620,31 @@ public unsafe class NpcAiController : IDisposable
     /// different points (target vs. path) and the writes fought. Mirrors the approach eligibility
     /// filter in <see cref="Tick"/>.
     /// </summary>
+    /// <summary>
+    /// Body-size excess (Enhanced tactics > hitbox spacing) subtracted from centre distance in every
+    /// range test and added to every stand-off, so they stay consistent: an enemy never holds a spot
+    /// its attack check calls out of range. 0 when off or for humanoid pairs.
+    /// </summary>
+    private float HitboxSpacingExtra(SimulatedNpc npc, SimulatedEntityState? target)
+    {
+        if (!config.TacticsHitboxSpacing || target == null)
+            return 0f;
+        return EnemyMovementMath.HitboxSpacingExtra(npc.HitboxRadius, EntityHitboxRadius(target));
+    }
+
+    private float EntityHitboxRadius(SimulatedEntityState entity)
+    {
+        nint address = 0;
+        if (entity.IsPlayer)
+            address = Core.Services.ObjectTable.LocalPlayer?.Address ?? 0;
+        else
+            address = combatEngine.ResolveExternalEntityAddress?.Invoke(entity.EntityId) ?? 0;
+        if (address == 0)
+            return EnemyMovementMath.BaselineHitboxRadius;
+        var r = ((GameObject*)address)->HitboxRadius;
+        return r > 0.01f ? r : EnemyMovementMath.BaselineHitboxRadius;
+    }
+
     private bool ApproachOwnsRotation(SimulatedNpc npc)
         => ApproachOwnsMovement &&
            npc.IsSpawned &&

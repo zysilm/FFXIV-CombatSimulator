@@ -375,7 +375,7 @@ public unsafe class CombatCompanionManager : IDisposable
                     new PartyEngagePlannerOptions(
                         PlayerAsNode: config.TacticsPlayerSlots,
                         PreferFlanks: config.TacticsPlayerSlots,
-                        HitboxSpacing: false,
+                        HitboxSpacing: config.TacticsHitboxSpacing,
                         PlayerHitboxRadius: ((GameObject*)player.Address)->HitboxRadius));
                 plannerBuildTimer = PlannerBuildInterval;
                 plannerAccumulatedDt = 0f;
@@ -1094,6 +1094,10 @@ public unsafe class CombatCompanionManager : IDisposable
         var targetPos = (Vector3)targetObj->Position;
         var sourcePos = (Vector3)sourceObj->Position;
         var dist = FlatDistance(sourcePos, targetPos);
+        // Enhanced tactics: measure past the body-size excess so a companion stops at a big monster's
+        // surface instead of walking into its centre.
+        if (config.TacticsHitboxSpacing)
+            dist -= EnemyMovementMath.HitboxSpacingExtra(sourceObj->HitboxRadius > 0.01f ? sourceObj->HitboxRadius : EnemyMovementMath.BaselineHitboxRadius, target.HitboxRadius);
         var effectiveRange = GetPartyAttackRange(companion.Behavior.AutoAttackStyle) + MeleeAttackRangeBuffer;
         var reachability = EvaluateCompanionReachability(companion, target, enemies);
         if (reachability.Reachable || dist <= effectiveRange)

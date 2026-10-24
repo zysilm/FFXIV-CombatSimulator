@@ -31,6 +31,8 @@ public partial class MainWindow
                 "Party mode stops force-engaging every enemy. Enemies wait until hit, auto-engaged, or called by an ally.");
             TacticsCheckbox("Spread enemies around the player", () => config.EnemyTacticsPlayerSlots, v => config.EnemyTacticsPlayerSlots = v,
                 "Enemies attacking you take separate slots around you (leaning to your flanks and back) instead of stacking in front.");
+            TacticsCheckbox("Body-size aware spacing", () => config.EnemyTacticsHitboxSpacing, v => config.EnemyTacticsHitboxSpacing = v,
+                "Ranges count from the edge of big bodies, and melee slots no longer overlap. Humanoid pairs are unchanged.");
         }
     }
 
