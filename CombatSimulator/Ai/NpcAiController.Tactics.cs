@@ -23,6 +23,12 @@ public unsafe partial class NpcAiController
         public bool Strafing;
         public Vector3 StrafeGoal;
         public float StrafeTimeLeft;
+        public float StrafeSpeed = StrafeSpeedScale;
+
+        // Ranged reposition after an attack / backstep out of a crowd.
+        public bool WasBusy;
+        public float RepositionCooldown;
+        public float BackstepCooldown;
 
         // Staggered engagement: whether this melee enemy holds one of its target's attacker
         // places, and the outer-ring spot it waits on otherwise.
@@ -207,6 +213,16 @@ public unsafe partial class NpcAiController
     private const float StrafeArriveDistance = 0.15f;
     // Do not pick a sidestep spot this close to another body.
     private const float StrafeClearance = 1.0f;
+
+    // Ranged/caster reposition: after an attack, sometimes run to a new spot further round the ring.
+    private const float RepositionChance = 0.5f;
+    private const float RepositionCooldownSeconds = 8f;
+    private const float RepositionArcMinDeg = 25f;
+    private const float RepositionArcMaxDeg = 45f;
+    // Backstep: bodies closer than this overlap (two ~0.5y radii); step this far away at most.
+    private const float CrowdedDistance = 0.8f;
+    private const float BackstepDistance = 0.7f;
+    private const float BackstepCooldownSeconds = 1.5f;
 
     // Staggered engagement: at most this many melee enemies fight one target at once (the same cap
     // CombatCompanionManager's pressure scoring aims for); the rest wait on a ring this far outside
@@ -394,18 +410,54 @@ public unsafe partial class NpcAiController
         float deltaTime,
         TerrainHeightCache? terrainCache)
     {
-        if (!config.TacticsStrafe)
+        if (!config.TacticsStrafe && !config.TacticsReposition)
             return false;
 
         var tactics = Tactics(npc);
+        tactics.RepositionCooldown = MathF.Max(0f, tactics.RepositionCooldown - deltaTime);
+        tactics.BackstepCooldown = MathF.Max(0f, tactics.BackstepCooldown - deltaTime);
         if (npc.AiState != NpcAiState.Combat || IsNpcBusyAttacking(npc))
         {
             tactics.Strafing = false;
+            tactics.WasBusy = true;
             return false;
+        }
+
+        // An attack (cast, swing, telegraph) finished since the last hold tick.
+        var justAttacked = tactics.WasBusy;
+        tactics.WasBusy = false;
+        var maxR = holdRange + bodyExtra;
+        var minR = MathF.Max(0.6f, holdRange * 0.75f) + bodyExtra;
+
+        if (!tactics.Strafing && config.TacticsReposition)
+        {
+            if (justAttacked && !HasMeleePositioningIntent(npc) && tactics.RepositionCooldown <= 0f &&
+                Random.Shared.NextSingle() < RepositionChance)
+            {
+                // Ranged/caster: shift to a new firing spot after an attack, as players do.
+                tactics.RepositionCooldown = RepositionCooldownSeconds;
+                var arc = RepositionArcMinDeg + Random.Shared.NextSingle() * (RepositionArcMaxDeg - RepositionArcMinDeg);
+                TryStartHoldMove(npc, tactics, npcPos, targetPos, arc, minR, maxR, 1f);
+            }
+            else if (tactics.BackstepCooldown <= 0f &&
+                     TryFindCrowdingBody(npc.SimulatedEntityId, npcPos, out var crowder))
+            {
+                // Standing inside another body: one short step straight away from it, kept in band.
+                tactics.BackstepCooldown = BackstepCooldownSeconds;
+                var away = npcPos - crowder;
+                away.Y = 0;
+                away = away.LengthSquared() > 0.0001f ? Vector3.Normalize(away) : new Vector3(MathF.Sin(npc.SimulatedEntityId), 0, MathF.Cos(npc.SimulatedEntityId));
+                var stepTo = npcPos + away * BackstepDistance;
+                var (bx, bz) = EnemyMovementMath.CircleGoal(targetPos.X, targetPos.Z, stepTo.X, stepTo.Z, 0f, minR, maxR);
+                StartHoldMove(tactics, new Vector3(bx, npcPos.Y, bz), StrafeSpeedScale);
+            }
         }
 
         if (!tactics.Strafing)
         {
+            if (!config.TacticsStrafe)
+                return false;
+
             tactics.StrafeTimer -= deltaTime;
             if (tactics.StrafeTimer > 0f)
                 return false;
@@ -415,29 +467,8 @@ public unsafe partial class NpcAiController
                 return false;
 
             var arc = StrafeArcMinDeg + Random.Shared.NextSingle() * (StrafeArcMaxDeg - StrafeArcMinDeg);
-            if (Random.Shared.Next(2) == 0)
-                arc = -arc;
-            var maxR = holdRange + bodyExtra;
-            var minR = MathF.Max(0.6f, holdRange * 0.75f) + bodyExtra;
-
-            Vector3? goal = null;
-            foreach (var sign in new[] { 1f, -1f })
-            {
-                var (gx, gz) = EnemyMovementMath.CircleGoal(targetPos.X, targetPos.Z, npcPos.X, npcPos.Z, arc * sign, minR, maxR);
-                var candidate = new Vector3(gx, npcPos.Y, gz);
-                if (IsSpotClear(npc.SimulatedEntityId, candidate, StrafeClearance))
-                {
-                    goal = candidate;
-                    break;
-                }
-            }
-
-            if (goal == null)
+            if (!TryStartHoldMove(npc, tactics, npcPos, targetPos, arc, minR, maxR, StrafeSpeedScale))
                 return false;
-
-            tactics.Strafing = true;
-            tactics.StrafeGoal = goal.Value;
-            tactics.StrafeTimeLeft = StrafeMaxDuration;
         }
 
         tactics.StrafeTimeLeft -= deltaTime;
@@ -450,12 +481,65 @@ public unsafe partial class NpcAiController
             return false;
         }
 
-        var speed = (npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f) * StrafeSpeedScale;
+        var speed = (npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f) * tactics.StrafeSpeed;
         var step = MathF.Min(remaining, speed * deltaTime);
         var next = npcPos + to / remaining * step;
         MoveTacticsStep(npc, gameObj, npcPos, next, deltaTime, terrainCache);
         ForceRotateToward(npc, npcPos + to, deltaTime);
         return true;
+    }
+
+    /// <summary>Start an arc move around the target (random side first, other side if blocked).</summary>
+    private bool TryStartHoldMove(
+        SimulatedNpc npc, EnemyTacticsState tactics, Vector3 npcPos, Vector3 targetPos,
+        float arcDeg, float minR, float maxR, float speedScale)
+    {
+        var first = Random.Shared.Next(2) == 0 ? -1f : 1f;
+        foreach (var sign in new[] { first, -first })
+        {
+            var (gx, gz) = EnemyMovementMath.CircleGoal(targetPos.X, targetPos.Z, npcPos.X, npcPos.Z, arcDeg * sign, minR, maxR);
+            var candidate = new Vector3(gx, npcPos.Y, gz);
+            if (IsSpotClear(npc.SimulatedEntityId, candidate, StrafeClearance))
+            {
+                StartHoldMove(tactics, candidate, speedScale);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void StartHoldMove(EnemyTacticsState tactics, Vector3 goal, float speedScale)
+    {
+        tactics.Strafing = true;
+        tactics.StrafeGoal = goal;
+        tactics.StrafeTimeLeft = StrafeMaxDuration;
+        tactics.StrafeSpeed = speedScale;
+    }
+
+    /// <summary>Nearest other body overlapping this one (closer than <see cref="CrowdedDistance"/>).</summary>
+    private bool TryFindCrowdingBody(uint selfId, Vector3 npcPos, out Vector3 crowder)
+    {
+        crowder = default;
+        var best = CrowdedDistance;
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player != null && combatEngine.State.PlayerState.IsAlive)
+        {
+            var d = FlatDistance(player.Position, npcPos);
+            if (d < best) { best = d; crowder = player.Position; }
+        }
+
+        foreach (var entity in combatEngine.State.Entities.Values)
+        {
+            if (!entity.IsAlive || entity.EntityId == selfId)
+                continue;
+            var position = combatEngine.GetSimulatedEntityPosition(entity);
+            if (position == Vector3.Zero)
+                continue;
+            var d = FlatDistance(position, npcPos);
+            if (d < best) { best = d; crowder = position; }
+        }
+
+        return best < CrowdedDistance;
     }
 
     /// <summary>True when no other living body (or the player) stands within <paramref name="clearance"/>.</summary>

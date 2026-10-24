@@ -41,6 +41,12 @@ public partial class Configuration
 
     public bool TacticsStagger => EnhancedEnemyTactics && EnemyTacticsStagger;
     public bool TacticsFlee => EnhancedEnemyTactics && EnemyTacticsFlee;
+
+    // Ranged/caster enemies sometimes move to a new firing spot after an attack (8s cooldown);
+    // any enemy standing inside another body takes one short step out (1.5s cooldown).
+    public bool EnemyTacticsReposition { get; set; } = true;
+
+    public bool TacticsReposition => EnhancedEnemyTactics && EnemyTacticsReposition;
     public bool TacticsStrafe => EnhancedEnemyTactics && EnemyTacticsStrafe;
     public bool TacticsThreat => EnhancedEnemyTactics && EnemyTacticsThreat;
     public bool TacticsRespectEngage => EnhancedEnemyTactics && EnemyTacticsRespectEngage;

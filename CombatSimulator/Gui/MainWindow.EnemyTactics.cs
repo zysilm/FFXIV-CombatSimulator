@@ -41,6 +41,8 @@ public partial class MainWindow
                 "At most three melee enemies fight one target; extras wait on an outer ring and step in when a place frees.");
             TacticsCheckbox("Call for help / flee at low HP", () => config.EnemyTacticsFlee, v => config.EnemyTacticsFlee = v,
                 "An enemy joining the fight wakes idle allies nearby. Below 20% HP some enemies run to an ally once, then return.");
+            TacticsCheckbox("Reposition after attacks", () => config.EnemyTacticsReposition, v => config.EnemyTacticsReposition = v,
+                "Ranged/caster enemies sometimes shift firing spot after an attack; enemies standing inside another body step out.");
         }
     }
 
