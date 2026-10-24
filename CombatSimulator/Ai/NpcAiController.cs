@@ -210,6 +210,7 @@ public unsafe partial class NpcAiController : IDisposable
             return;
 
         RefreshScaleDependentApproachState();
+        tickNpcs = npcs;
 
         skillTokens = MathF.Min(SkillTokenBurst, skillTokens + MathF.Max(0f, config.NpcSkillRateLimit) * deltaTime);
 
@@ -298,6 +299,8 @@ public unsafe partial class NpcAiController : IDisposable
 
             TickNpc(npc, deltaTime, targetPos, targetEntityId);
         }
+
+        TickCallForHelp(npcs);
 
         // In solo play this is controlled by EnableTargetApproach. In party
         // mode, enemy movement is always needed because real NPCs have no
@@ -580,6 +583,10 @@ public unsafe partial class NpcAiController : IDisposable
         }
 
         UpdateDesiredEngageRange(npc, deltaTime);
+
+        // Enhanced tactics: a fleeing enemy holds its attacks until it has regrouped.
+        if (IsTacticsFleeing(npc))
+            return;
 
         var targetPos = combatEngine.GetSimulatedEntityPosition(simulatedTarget);
         var distToTarget = (UsesPartyConfiguredRange(npc, simulatedTarget)
@@ -1048,6 +1055,9 @@ public unsafe partial class NpcAiController : IDisposable
         var gameObj = (GameObject*)npc.BattleChara;
         var npcPos = (Vector3)gameObj->Position;
 
+        if (TryTickFlee(npc, gameObj, npcPos, playerPos, tickNpcs, deltaTime, terrainCache))
+            return;
+
         var targetPos = ComputeApproachGoal(npc, npcPos, playerPos);
         targetPos.Y = playerPos.Y + config.DefaultNpcHeightOffset;
 
@@ -1131,6 +1141,9 @@ public unsafe partial class NpcAiController : IDisposable
             existingPathState.WaypointIndex = 0;
             existingPathState.PendingPath = null;
         }
+
+        if (TryTickFlee(npc, gameObj, npcPos, npcTargetPos, tickNpcs, deltaTime, terrainCache))
+            return;
 
         if (!partyEngagePlanner.TryGetPlan(npc.SimulatedEntityId, out var partyPlan))
         {

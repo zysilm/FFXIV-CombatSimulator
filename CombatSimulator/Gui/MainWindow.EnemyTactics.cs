@@ -39,6 +39,8 @@ public partial class MainWindow
                 "Enemies target whoever built the most threat on them (damage, tanks count triple) instead of the top DPS. Needs companions.");
             TacticsCheckbox("Take turns in melee", () => config.EnemyTacticsStagger, v => config.EnemyTacticsStagger = v,
                 "At most three melee enemies fight one target; extras wait on an outer ring and step in when a place frees.");
+            TacticsCheckbox("Call for help / flee at low HP", () => config.EnemyTacticsFlee, v => config.EnemyTacticsFlee = v,
+                "An enemy joining the fight wakes idle allies nearby. Below 20% HP some enemies run to an ally once, then return.");
         }
     }
 

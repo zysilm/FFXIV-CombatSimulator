@@ -78,6 +78,14 @@ Check(Near(EnemyMovementMath.Frontness(2, 0, 0, 0, 0f), 0f), "flank is not neutr
     Check(float.IsFinite(x) && float.IsFinite(z) && Near(MathF.Sqrt(x * x + z * z), 1f), "degenerate circle goal");
 }
 
+// --- Flee goal ----------------------------------------------------------------------------------
+{
+    var (x, z) = EnemyMovementMath.FleeGoal(0, 0, 0, 10, 1.5f);
+    Check(Near(x, 0f) && Near(z, 11.5f), "flee goal is not behind the ally");
+    (x, z) = EnemyMovementMath.FleeGoal(3, 3, 3, 3, 1.5f);
+    Check(Near(x, 3f) && Near(z, 3f), "degenerate flee goal");
+}
+
 // --- Threat -------------------------------------------------------------------------------------
 Check(EnemyMovementMath.HitThreat(1000, true) > EnemyMovementMath.HitThreat(2500, false), "tank hit does not outweigh a bigger dps hit");
 Check(Near(EnemyMovementMath.HitThreat(-5, false), 0f), "negative damage makes threat");

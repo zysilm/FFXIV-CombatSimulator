@@ -102,6 +102,20 @@ public static class EnemyMovementMath
         => maxThreat > 0.0001f ? Math.Clamp(threat / maxThreat, 0f, 1f) : 0f;
 
     /// <summary>
+    /// Where a fleeing enemy runs: just past its rescuer on the far side from the threat, so it ends
+    /// behind the ally rather than on top of it. (x, z); the caller keeps Y.
+    /// </summary>
+    public static (float X, float Z) FleeGoal(float threatX, float threatZ, float allyX, float allyZ, float behindDistance)
+    {
+        var dx = allyX - threatX;
+        var dz = allyZ - threatZ;
+        var len = MathF.Sqrt(dx * dx + dz * dz);
+        if (len < 0.001f)
+            return (allyX, allyZ);
+        return (allyX + dx / len * behindDistance, allyZ + dz / len * behindDistance);
+    }
+
+    /// <summary>
     /// A sidestep goal for an enemy holding range: rotate its bearing around the target by
     /// <paramref name="arcDeg"/> (sign = direction) and keep its distance clamped into
     /// [<paramref name="minRadius"/>, <paramref name="maxRadius"/>], so circling never walks it out of

@@ -35,7 +35,12 @@ public partial class Configuration
     // step in as places free. Engage delays also get a little random jitter.
     public bool EnemyTacticsStagger { get; set; } = true;
 
+    // An enemy entering the fight wakes idle allies within its aggro range (10y when unset); below
+    // 20% HP about a third of enemies run to an ally once, then return.
+    public bool EnemyTacticsFlee { get; set; } = true;
+
     public bool TacticsStagger => EnhancedEnemyTactics && EnemyTacticsStagger;
+    public bool TacticsFlee => EnhancedEnemyTactics && EnemyTacticsFlee;
     public bool TacticsStrafe => EnhancedEnemyTactics && EnemyTacticsStrafe;
     public bool TacticsThreat => EnhancedEnemyTactics && EnemyTacticsThreat;
     public bool TacticsRespectEngage => EnhancedEnemyTactics && EnemyTacticsRespectEngage;

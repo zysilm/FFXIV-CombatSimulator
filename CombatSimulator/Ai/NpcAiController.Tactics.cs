@@ -31,11 +31,169 @@ public unsafe partial class NpcAiController
         public Vector3 WaitSpot;
         public Vector3 WaitAnchor;
         public bool HasWaitSpot;
+
+        // Low-HP flee / call for help.
+        public bool CalledForHelp;
+        public bool HasFled;
+        public bool Fleeing;
+        public float FleeTimeLeft;
+        public uint FleeAllyId;
+        public Vector3 FleeFallback;
+    }
+
+    // Below this HP fraction some enemies (a stable per-enemy roll) break off once and run to an ally.
+    private const float FleeHpFraction = 0.2f;
+    private const float FleeChance = 0.35f;
+    private const float FleeMaxDuration = 4.0f;
+    // Slower than the approach run, so a pursuer can catch it.
+    private const float FleeSpeedScale = 0.8f;
+    private const float FleeArriveDistance = 1.0f;
+    private const float FleeBehindAllyDistance = 1.5f;
+    private const float FleeMinAllyDistance = 3.0f;
+    private const float FleeMaxAllyDistance = 30.0f;
+    // Used when an enemy's authored AggroRange is 0 (most of them).
+    private const float DefaultHelpRadius = 10f;
+
+    /// <summary>
+    /// Once per frame: every enemy that has just entered the fight wakes idle allies within its aggro
+    /// range (NpcBehavior.AggroRange, previously unread). Woken allies do not call further, so a call
+    /// reaches one hop, not the whole map.
+    /// </summary>
+    private void TickCallForHelp(IReadOnlyList<SimulatedNpc> npcs)
+    {
+        if (!config.TacticsFlee)
+            return;
+
+        foreach (var caller in npcs)
+        {
+            if (!caller.IsSpawned || !caller.State.IsAlive || !caller.IsEngaged)
+                continue;
+
+            var tactics = Tactics(caller);
+            if (tactics.CalledForHelp)
+                continue;
+            tactics.CalledForHelp = true;
+
+            var radius = caller.Behavior.AggroRange > 0f ? caller.Behavior.AggroRange : DefaultHelpRadius;
+            var callerPos = GetNpcPosition(caller);
+            foreach (var ally in npcs)
+            {
+                if (ally == caller || !ally.IsSpawned || !ally.State.IsAlive || ally.AiState != NpcAiState.Idle)
+                    continue;
+                if (FlatDistance(GetNpcPosition(ally), callerPos) > radius)
+                    continue;
+
+                Tactics(ally).CalledForHelp = true;
+                EngageNpc(ally);
+            }
+        }
+    }
+
+    /// <summary>True while an enemy is running from the fight; TickCombat holds its attacks.</summary>
+    private bool IsTacticsFleeing(SimulatedNpc npc)
+        => config.TacticsFlee && tacticsStates.TryGetValue(npc.SimulatedEntityId, out var t) && t.Fleeing;
+
+    /// <summary>
+    /// Low-HP flee: start (once per enemy, for the enemies whose stable roll says so) and drive the run
+    /// toward the nearest other living enemy, or its spawn point. Returns true when it moved the enemy
+    /// this frame; the approach pass then skips its own movement.
+    /// </summary>
+    private bool TryTickFlee(
+        SimulatedNpc npc,
+        GameObject* gameObj,
+        Vector3 npcPos,
+        Vector3 threatPos,
+        IReadOnlyList<SimulatedNpc> allies,
+        float deltaTime,
+        TerrainHeightCache? terrainCache)
+    {
+        if (!config.TacticsFlee || npc.AiState != NpcAiState.Combat)
+            return false;
+
+        var tactics = Tactics(npc);
+        if (!tactics.Fleeing)
+        {
+            var hp = npc.State.MaxHp > 0 ? (float)npc.State.CurrentHp / npc.State.MaxHp : 1f;
+            if (tactics.HasFled || hp > FleeHpFraction)
+                return false;
+            tactics.HasFled = true; // one decision per enemy, flee or not
+            if (StableRoll(npc.SimulatedEntityId) >= FleeChance)
+                return false;
+
+            SimulatedNpc? best = null;
+            var bestDist = float.MaxValue;
+            foreach (var ally in allies)
+            {
+                if (ally == npc || !ally.IsSpawned || !ally.State.IsAlive || ally.BattleChara == null)
+                    continue;
+                if (tacticsStates.TryGetValue(ally.SimulatedEntityId, out var allyTactics) && allyTactics.Fleeing)
+                    continue;
+                var d = FlatDistance(GetNpcPosition(ally), npcPos);
+                if (d < FleeMinAllyDistance || d > FleeMaxAllyDistance || d >= bestDist)
+                    continue;
+                best = ally;
+                bestDist = d;
+            }
+
+            if (best == null && FlatDistance(npc.SpawnPosition, npcPos) < FleeMinAllyDistance)
+                return false; // nowhere to run
+
+            tactics.Fleeing = true;
+            tactics.Admitted = false; // free its melee place for a waiter
+            tactics.FleeTimeLeft = FleeMaxDuration;
+            tactics.FleeAllyId = best?.SimulatedEntityId ?? 0;
+            tactics.FleeFallback = npc.SpawnPosition;
+            ClearNpcActionState(npc);
+            combatEngine.AddLogEntry($"{npc.Name} flees!", CombatLogType.Info);
+        }
+
+        var goal = tactics.FleeFallback;
+        if (tactics.FleeAllyId != 0)
+        {
+            var ally = allies.FirstOrDefault(a => a.SimulatedEntityId == tactics.FleeAllyId && a.State.IsAlive && a.BattleChara != null);
+            if (ally != null)
+            {
+                var allyPos = GetNpcPosition(ally);
+                var (gx, gz) = EnemyMovementMath.FleeGoal(threatPos.X, threatPos.Z, allyPos.X, allyPos.Z, FleeBehindAllyDistance);
+                goal = new Vector3(gx, allyPos.Y, gz);
+            }
+        }
+
+        tactics.FleeTimeLeft -= deltaTime;
+        var to = goal - npcPos;
+        to.Y = 0;
+        var remaining = to.Length();
+        if (remaining <= FleeArriveDistance || tactics.FleeTimeLeft <= 0f)
+        {
+            // Back into the fight; the next approach tick walks it in again.
+            tactics.Fleeing = false;
+            return false;
+        }
+
+        var speed = (npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f) * FleeSpeedScale;
+        var step = MathF.Min(remaining, speed * deltaTime);
+        MoveTacticsStep(npc, gameObj, npcPos, npcPos + to / remaining * step, deltaTime, terrainCache);
+        ForceRotateToward(npc, npcPos + to, deltaTime);
+        return true;
+    }
+
+    /// <summary>Deterministic per-enemy value in [0, 1) so the same enemy always makes the same choice.</summary>
+    private static float StableRoll(uint id)
+    {
+        var x = id ^ 0xF1EEu;
+        x ^= x >> 16;
+        x *= 0x7feb352du;
+        x ^= x >> 15;
+        x *= 0x846ca68bu;
+        x ^= x >> 16;
+        return (x & 0xFFFFFF) / 16777216.0f;
     }
 
     // Keyed by entity id, not address, and outside approachPaths: that state is dropped whenever
     // vnavmesh is off or the approach stops, and these timers must survive it.
     private readonly Dictionary<uint, EnemyTacticsState> tacticsStates = new();
+    // The enemy list of the Tick in progress (flee looks for allies in it).
+    private IReadOnlyList<SimulatedNpc> tickNpcs = Array.Empty<SimulatedNpc>();
 
     // Circling: every few seconds an enemy holding range may sidestep part-way around its target.
     private const float StrafeIntervalMin = 2.5f;
