@@ -84,6 +84,23 @@ public static class EnemyMovementMath
         return 2f * ringRadius * MathF.Sin(d * MathF.PI / 360f);
     }
 
+    /// <summary>Threat a hit generates. Tanks generate a multiple of their damage, as in FFXIV's
+    /// tank stance, so an enemy's attention follows the tank rather than raw DPS.</summary>
+    public const float TankThreatMultiplier = 3.0f;
+    /// <summary>Exponential threat decay time constant (s): an attacker who stops hitting is
+    /// gradually forgotten instead of holding aggro forever.</summary>
+    public const float ThreatDecayTau = 15f;
+
+    public static float HitThreat(int damage, bool isTank)
+        => MathF.Max(0, damage) * (isTank ? TankThreatMultiplier : 1f);
+
+    public static float DecayThreat(float threat, float deltaTime)
+        => threat * MathF.Exp(-MathF.Max(0f, deltaTime) / ThreatDecayTau);
+
+    /// <summary>A candidate's threat relative to the top of the table, in [0, 1] (0 when nobody has any).</summary>
+    public static float ThreatShare(float threat, float maxThreat)
+        => maxThreat > 0.0001f ? Math.Clamp(threat / maxThreat, 0f, 1f) : 0f;
+
     /// <summary>
     /// A sidestep goal for an enemy holding range: rotate its bearing around the target by
     /// <paramref name="arcDeg"/> (sign = direction) and keep its distance clamped into

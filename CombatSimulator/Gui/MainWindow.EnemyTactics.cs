@@ -35,6 +35,8 @@ public partial class MainWindow
                 "Ranges count from the edge of big bodies, and melee slots no longer overlap. Humanoid pairs are unchanged.");
             TacticsCheckbox("Circle while holding range", () => config.EnemyTacticsStrafe, v => config.EnemyTacticsStrafe = v,
                 "Every few seconds an enemy in range may walk a short arc around its target. Never mid-cast or mid-swing.");
+            TacticsCheckbox("Threat-based aggro", () => config.EnemyTacticsThreat, v => config.EnemyTacticsThreat = v,
+                "Enemies target whoever built the most threat on them (damage, tanks count triple) instead of the top DPS. Needs companions.");
         }
     }
 

@@ -43,6 +43,12 @@ public unsafe class CombatCompanionManager : IDisposable
     private readonly HashSet<int> allocatedIndices = new();
     private readonly Dictionary<nint, PathState> pathStates = new();
     private readonly Dictionary<uint, uint> enemyTargetByEnemyId = new();
+    // Enhanced tactics threat table: enemy id -> (attacker id -> decaying threat).
+    private readonly Dictionary<uint, Dictionary<uint, float>> threatByEnemy = new();
+    private const float ThreatScoreWeight = 150f;
+    // Wider than EnemyTargetSwitchThreshold so threat ties do not ping-pong an enemy between two
+    // attackers; together with EnemyTargetCurrentBonus this is the aggro hysteresis.
+    private const float ThreatSwitchThreshold = 60f;
     private uint nextEntityId = 0xF1000001;
 
     // Reachability is expensive (rebuilds the full engage-graph per probe) and is queried
@@ -271,6 +277,7 @@ public unsafe class CombatCompanionManager : IDisposable
             return;
 
         TickSensing(deltaTime);
+        DecayThreat(deltaTime);
 
         vnavmeshIpc.RefreshStatus();
         var terrainCache = BuildTerrainHeightCache(enemies);
@@ -412,6 +419,41 @@ public unsafe class CombatCompanionManager : IDisposable
     public void RegisterPlayerDamage(uint targetId, int damage)
     {
         RegisterPlayerDamage(damage);
+        AddThreat(targetId, combatEngine.State.PlayerState.EntityId, damage, combatEngine.State.PlayerState.IsTank);
+    }
+
+    private void AddThreat(uint enemyId, uint sourceId, int damage, bool isTank)
+    {
+        if (!config.TacticsThreat || enemyId == 0 || sourceId == 0 || damage <= 0)
+            return;
+
+        if (!threatByEnemy.TryGetValue(enemyId, out var table))
+            threatByEnemy[enemyId] = table = new Dictionary<uint, float>();
+        table[sourceId] = table.GetValueOrDefault(sourceId) + EnemyMovementMath.HitThreat(damage, isTank);
+    }
+
+    private void DecayThreat(float deltaTime)
+    {
+        if (threatByEnemy.Count == 0)
+            return;
+
+        foreach (var table in threatByEnemy.Values)
+        {
+            foreach (var key in table.Keys.ToList())
+                table[key] = EnemyMovementMath.DecayThreat(table[key], deltaTime);
+        }
+    }
+
+    // Threat term for the enemy target score: the candidate's share of the top threat on this enemy.
+    private float ThreatScore(uint enemyId, uint candidateId)
+    {
+        if (!threatByEnemy.TryGetValue(enemyId, out var table) || table.Count == 0)
+            return 0f;
+
+        var max = 0f;
+        foreach (var value in table.Values)
+            max = MathF.Max(max, value);
+        return EnemyMovementMath.ThreatShare(table.GetValueOrDefault(candidateId), max) * ThreatScoreWeight;
     }
 
     /// <summary>
@@ -495,7 +537,8 @@ public unsafe class CombatCompanionManager : IDisposable
         var balancedBest = SelectBalancedEnemyTarget(enemy.SimulatedEntityId, current.EntityId, candidates, pressureMap, enemy.Behavior.AutoAttackStyle);
         var currentScore = ScoreEnemyTargetCandidate(enemy.SimulatedEntityId, current.EntityId, current, pressureMap, enemy.Behavior.AutoAttackStyle);
         var bestScore = ScoreEnemyTargetCandidate(enemy.SimulatedEntityId, current.EntityId, balancedBest, pressureMap, enemy.Behavior.AutoAttackStyle);
-        if (balancedBest.EntityId != current.EntityId && bestScore > currentScore + EnemyTargetSwitchThreshold)
+        var switchThreshold = config.TacticsThreat ? ThreatSwitchThreshold : EnemyTargetSwitchThreshold;
+        if (balancedBest.EntityId != current.EntityId && bestScore > currentScore + switchThreshold)
         {
             enemyTargetByEnemyId[enemy.SimulatedEntityId] = balancedBest.EntityId;
             return balancedBest.State;
@@ -526,7 +569,10 @@ public unsafe class CombatCompanionManager : IDisposable
             .Where(kv => kv.Key != enemyId)
             .Count(kv => kv.Value == candidate.EntityId);
 
-        var score = candidate.Dps * EnemyTargetDpsWeight;
+        // Enhanced tactics: aggro follows threat (damage, tanks weighted up) instead of raw DPS.
+        var score = config.TacticsThreat
+            ? ThreatScore(enemyId, candidate.EntityId)
+            : candidate.Dps * EnemyTargetDpsWeight;
         score -= assignedCount * EnemyTargetAssignmentPenalty;
         if (candidate.EntityId == currentId)
             score += EnemyTargetCurrentBonus;
@@ -651,6 +697,7 @@ public unsafe class CombatCompanionManager : IDisposable
     public void ResetForCombatReset()
     {
         enemyTargetByEnemyId.Clear();
+        threatByEnemy.Clear();
         playerRecentDamage = 0;
         playerRecentDps = 0;
         selectedFocusTargetId = 0;
@@ -703,6 +750,7 @@ public unsafe class CombatCompanionManager : IDisposable
         allocatedIndices.Clear();
         pathStates.Clear();
         enemyTargetByEnemyId.Clear();
+        threatByEnemy.Clear();
         playerRecentDamage = 0;
         playerRecentDps = 0;
         selectedFocusTargetId = 0;
@@ -1163,6 +1211,7 @@ public unsafe class CombatCompanionManager : IDisposable
             if (result.Success)
             {
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
+                AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
                 skill.CooldownRemaining = skill.Cooldown / ActionPace();
                 companion.State.AnimationLock = 0.6f;
             }
@@ -1181,6 +1230,7 @@ public unsafe class CombatCompanionManager : IDisposable
             if (result.Success)
             {
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
+                AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
                 companion.State.AnimationLock = 0.6f;
             }
         }

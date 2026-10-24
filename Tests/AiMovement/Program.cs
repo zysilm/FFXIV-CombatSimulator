@@ -78,4 +78,17 @@ Check(Near(EnemyMovementMath.Frontness(2, 0, 0, 0, 0f), 0f), "flank is not neutr
     Check(float.IsFinite(x) && float.IsFinite(z) && Near(MathF.Sqrt(x * x + z * z), 1f), "degenerate circle goal");
 }
 
+// --- Threat -------------------------------------------------------------------------------------
+Check(EnemyMovementMath.HitThreat(1000, true) > EnemyMovementMath.HitThreat(2500, false), "tank hit does not outweigh a bigger dps hit");
+Check(Near(EnemyMovementMath.HitThreat(-5, false), 0f), "negative damage makes threat");
+{
+    float a = 100f, b = 100f;
+    for (var i = 0; i < 60; i++) a = EnemyMovementMath.DecayThreat(a, 1f / 60f);
+    for (var i = 0; i < 144; i++) b = EnemyMovementMath.DecayThreat(b, 1f / 144f);
+    Check(Near(a, b, 0.01f), "threat decay depends on frame rate");
+    Check(a < 100f && a > 90f, "threat decay too fast or absent");
+}
+Check(Near(EnemyMovementMath.ThreatShare(50, 100), 0.5f), "share wrong");
+Check(Near(EnemyMovementMath.ThreatShare(5, 0), 0f), "share with empty table");
+
 Console.WriteLine($"AiMovement: {checks} checks passed.");

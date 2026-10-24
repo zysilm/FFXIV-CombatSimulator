@@ -27,7 +27,12 @@ public partial class Configuration
     // Enemies holding range now and then walk a short arc around their target.
     public bool EnemyTacticsStrafe { get; set; } = true;
 
+    // Enemy target choice follows a decaying threat table (damage dealt, tanks x3) instead of
+    // recent DPS, with wider switch hysteresis.
+    public bool EnemyTacticsThreat { get; set; } = true;
+
     public bool TacticsStrafe => EnhancedEnemyTactics && EnemyTacticsStrafe;
+    public bool TacticsThreat => EnhancedEnemyTactics && EnemyTacticsThreat;
     public bool TacticsRespectEngage => EnhancedEnemyTactics && EnemyTacticsRespectEngage;
     public bool TacticsPlayerSlots => EnhancedEnemyTactics && EnemyTacticsPlayerSlots;
     public bool TacticsHitboxSpacing => EnhancedEnemyTactics && EnemyTacticsHitboxSpacing;
