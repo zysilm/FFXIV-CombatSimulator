@@ -1320,8 +1320,14 @@ public unsafe partial class EnemyControlController : IDisposable
         if (ExternalControlActive && !ExternalManualControlActive) return;
         if (!IsActive) return;
 
+        // A story that hands over manual control still owns the grab's lifecycle (it ends the grab on
+        // its own stage). Toggling here released the body mid-scene while the story carried on as if
+        // the hold were intact, so the attack input only re-grabs when the hold was lost.
         if (ExternalManualControlActive)
-            ToggleGrabAttack();
+        {
+            if (!grabAttackActive)
+                StartGrabAttack();
+        }
         else if (config.EnemyControlAttackEnabled)
             PerformEnemyControlAttack();
         else

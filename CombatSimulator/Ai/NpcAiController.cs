@@ -515,7 +515,12 @@ public unsafe class NpcAiController : IDisposable
                 break;
 
             case NpcAiState.Chasing:
-                if (npc.IsClientControlled)
+                if (ApproachOwnsMovement)
+                {
+                    npc.AiState = NpcAiState.Combat;
+                    TickCombat(npc, deltaTime, playerPos, playerEntityId, npcPos, distToPlayer);
+                }
+                else if (npc.IsClientControlled)
                     TickChasing(npc, deltaTime, playerPos, playerEntityId, npcPos, distToPlayer);
                 else
                     // Real NPCs don't chase — just keep trying combat from current pos
@@ -593,7 +598,9 @@ public unsafe class NpcAiController : IDisposable
 
         if (distToTarget > effectiveRange)
         {
-            if (npc.IsClientControlled && !UsesPartyConfiguredRange(npc, simulatedTarget))
+            // When the approach pass owns movement it already closes the distance; chasing here too
+            // moved the enemy twice per frame and its leash dropped the enemy into a silent Idle.
+            if (npc.IsClientControlled && !UsesPartyConfiguredRange(npc, simulatedTarget) && !ApproachOwnsMovement)
                 npc.AiState = NpcAiState.Chasing;
             // Real NPCs just wait
             return;
@@ -663,7 +670,7 @@ public unsafe class NpcAiController : IDisposable
             if (skill.CooldownRemaining > 0)
                 continue;
             var skillRange = GetEffectiveNpcSkillRange(npc, simulatedTarget, skill);
-            if ((npc.IsClientControlled || UsesPartyConfiguredRange(npc, simulatedTarget)) && distToTarget > skillRange)
+            if ((npc.IsClientControlled || ApproachOwnsMovement || UsesPartyConfiguredRange(npc, simulatedTarget)) && distToTarget > skillRange)
                 continue;
             if (hpPercent > skill.HpThreshold)
                 continue;
@@ -1405,8 +1412,9 @@ public unsafe class NpcAiController : IDisposable
         if (UsesPartyConfiguredRange(npc, target))
             return PartyAttackEnvelope(npc);
 
-        // For real NPCs: use a generous range since we can't move them.
-        if (!npc.IsClientControlled)
+        // Real NPCs get a generous range only when nothing moves them. With the approach pass active
+        // they are walked into range like any other enemy, so the +30y reach let them hit from afar.
+        if (!npc.IsClientControlled && !ApproachOwnsMovement)
             return ScaleNpcNonMeleeRange(npc.Behavior.AutoAttackRange + 30.0f);
 
         return npc.Behavior.AutoAttackStyle == NpcAttackStyle.Melee
@@ -1571,6 +1579,9 @@ public unsafe class NpcAiController : IDisposable
 
         return authoredRange;
     }
+
+    /// <summary>The approach pass in <see cref="Tick"/> moves every enemy (solo ring or party planner).</summary>
+    private bool ApproachOwnsMovement => config.EnableTargetApproach || config.EnableCombatCompanions;
 
     private bool UsesPartyConfiguredRange(SimulatedNpc npc, SimulatedEntityState target)
         => config.EnableCombatCompanions &&

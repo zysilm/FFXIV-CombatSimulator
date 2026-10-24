@@ -302,6 +302,11 @@ public class CombatEngine : IDisposable
             npc.EngageDelayTimer = 0;
             npc.DeadTimer = 0;
             npc.CurrentCastSkill = null;
+            npc.DesiredEngageRange = 0;
+            npc.IsRangedIntent = false;
+            npc.IntentDwellTimer = 0;
+            foreach (var skill in npc.Behavior.Skills)
+                skill.CooldownRemaining = 0;
 
             // Revive dead NPCs: reset death animation + restore normal mode
             unsafe
@@ -332,6 +337,7 @@ public class CombatEngine : IDisposable
         glamourerApplied = false;
         playerInitiatedCombat = false;
         pendingDeaths.Clear();
+        ClearQueuedActions();
 
         AddLogEntry("Combat state reset.", CombatLogType.Info);
 
