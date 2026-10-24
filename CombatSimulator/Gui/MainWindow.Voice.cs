@@ -2,6 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using CombatSimulator.Voice;
 using Dalamud.Bindings.ImGui;
@@ -11,6 +13,14 @@ namespace CombatSimulator.Gui;
 
 public partial class MainWindow
 {
+    // Voice picker filter: 0 = all voices, else an index into the categories present.
+    private int voicePickerCategory;
+
+    private static readonly string[] VoiceCategoryOrder =
+    {
+        "Male young", "Male mature", "Male elderly", "Female young", "Female adult", "Female elderly", "Boss",
+    };
+
     /// <summary>Set by the plugin after construction; the section is hidden while null.</summary>
     public VoiceDirector? VoiceDirector { get; set; }
 
@@ -90,6 +100,16 @@ public partial class MainWindow
             return;
         }
 
+        // Category filter for the voice lists below; any voice can go to any enemy.
+        var categories = new List<string> { "All" };
+        foreach (var name in VoiceCategoryOrder)
+            if (enemies[0].Choices.Any(c => c.Category == name))
+                categories.Add(name);
+        voicePickerCategory = Math.Clamp(voicePickerCategory, 0, categories.Count - 1);
+        ImGui.SetNextItemWidth(220f);
+        ImGui.SliderInt("Voice type##enemyVoiceFilter", ref voicePickerCategory, 0, categories.Count - 1, categories[voicePickerCategory]);
+        var filter = voicePickerCategory == 0 ? null : categories[voicePickerCategory];
+
         foreach (var enemy in enemies)
         {
             using var id = ImRaii.PushId((int)enemy.EntityId);
@@ -101,9 +121,14 @@ public partial class MainWindow
             {
                 if (ImGui.Selectable("Auto", enemy.ChosenId == null))
                     director.SetVoiceChoice(enemy.EntityId, null);
-                foreach (var (personaId, label) in enemy.Choices)
-                    if (ImGui.Selectable(label, personaId == enemy.ChosenId))
+                foreach (var (personaId, label, category) in enemy.Choices)
+                {
+                    if (filter != null && category != filter)
+                        continue;
+                    var shown = filter == null ? $"{label}  [{category}]" : label;
+                    if (ImGui.Selectable(shown, personaId == enemy.ChosenId))
                         director.SetVoiceChoice(enemy.EntityId, personaId);
+                }
                 ImGui.EndCombo();
             }
             ImGui.SameLine();

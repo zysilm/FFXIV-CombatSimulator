@@ -242,7 +242,7 @@ public sealed unsafe class VoiceDirector
     /// <summary>One row of the voice picker: a tracked enemy, its current persona, the hand-picked one
     /// (null = automatic) and every persona that fits its body, with readable labels.</summary>
     public sealed record VoiceEnemy(uint EntityId, string Name, VoicePersona? Current, string? ChosenId,
-        IReadOnlyList<(string Id, string Label)> Choices);
+        IReadOnlyList<(string Id, string Label, string Category)> Choices);
 
     /// <summary>Tracked enemies for the voice picker, nearest first (empty when personas are off).</summary>
     public List<VoiceEnemy> VoiceEnemies()
@@ -254,36 +254,39 @@ public sealed unsafe class VoiceDirector
         foreach (var (id, t) in tracked)
             order.Add((id, t));
         order.Sort((a, b) => a.T.Distance.CompareTo(b.T.Distance));
+        var choices = AllVoiceChoices();
         foreach (var (id, t) in order)
         {
-            var voice = Resolver.ResolveBody(t.Address, id);
             var key = OverrideKey(t);
             var chosen = key != null && config.EnemyVoicePersonaOverrides.TryGetValue(key, out var c) ? c : null;
-            list.Add(new VoiceEnemy(id, t.Name, PersonaOf(id, t).Persona, chosen, ChoicesFor(voice)));
+            list.Add(new VoiceEnemy(id, t.Name, PersonaOf(id, t).Persona, chosen, choices));
         }
         return list;
     }
 
-    private readonly Dictionary<VoiceLineVoice, List<(string, string)>> choiceCache = new();
-    private (VoicePersonaTable, string?) choiceCacheFor;
+    private List<(string, string, string)>? choiceCache;
+    private (VoicePersonaTable, string?, bool) choiceCacheFor;
 
-    private List<(string, string)> ChoicesFor(VoiceLineVoice voice)
+    /// <summary>Every assignable voice of the client language, any gender or boss, for the picker:
+    /// the owner may give any enemy any voice.</summary>
+    private List<(string, string, string)> AllVoiceChoices()
     {
         var table = personas.Table;
-        if (choiceCacheFor != (table, personas.Language))
+        var keyNow = (table, personas.Language, personas.AllowStoryCharacters);
+        if (choiceCache == null || choiceCacheFor != keyNow)
         {
-            choiceCache.Clear();
-            choiceCacheFor = (table, personas.Language);
+            choiceCache = new List<(string, string, string)>();
+            foreach (var p in table.AllChoices(personas.Language!, personas.AllowStoryCharacters))
+                choiceCache.Add((p.Id, table.Label(p), p.Category));
+            choiceCacheFor = keyNow;
         }
-        if (!choiceCache.TryGetValue(voice, out var list))
-        {
-            list = new List<(string, string)>();
-            foreach (var p in table.Choices(personas.Language!, voice, personas.AllowStoryCharacters))
-                list.Add((p.Id, table.Label(p)));
-            choiceCache[voice] = list;
-        }
-        return list;
+        return choiceCache;
     }
+
+    /// <summary>Which recorded voice kind an enemy's lines come from: its persona's (a hand-picked
+    /// voice may differ from the body), else the body's own.</summary>
+    private VoiceLineVoice LineVoice(uint id, VoiceLineVoice body) =>
+        personas.Active && personas.Get(id)?.Persona is { } p ? p.SpeakerVoice : body;
 
     /// <summary>Hand-pick an enemy's voice (null = automatic again). Saved per kind of enemy and applied
     /// at once to every tracked enemy of that kind.</summary>
@@ -443,6 +446,7 @@ public sealed unsafe class VoiceDirector
             return false;
         if (personas.Active)
         {
+            voice = LineVoice(id, voice);
             var chain = personas.Get(id)?.Chain;
             return chain != null && chain.Count > 0 && linePicker.Available(e, voice, chain, personas.Language!) > 0;
         }
@@ -797,6 +801,8 @@ public sealed unsafe class VoiceDirector
         // With personas the enemy speaks only its persona's lines (or a fallback's of the same kind); no
         // line there is silence for the line, never another random voice.
         var persona = personas.Active ? PersonaOf((uint)c.ActorKey, t) : null;
+        if (persona?.Persona is { } assigned)
+            voice = assigned.SpeakerVoice;
         var personaLanguage = personas.Language;
         if (persona != null
                 ? persona.Chain.Count == 0 || linePicker.Available(c.Event, voice, persona.Chain, personaLanguage!) == 0
@@ -874,7 +880,7 @@ public sealed unsafe class VoiceDirector
         var npc = npcSelector.GetSelectedNpc(id);
         if (npc == null || npc.Address != t.Address || PersonaOf(id, t).Persona is not { } persona)
             return;
-        var voice = Resolver.ResolveBody(t.Address, id);
+        var voice = persona.SpeakerVoice;
         var language = Resolver.ClientLanguage;
         for (var attempt = 0; attempt < 3; attempt++)
         {

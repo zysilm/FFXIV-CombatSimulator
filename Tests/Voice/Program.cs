@@ -709,15 +709,24 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
     nextSession.Configure(table, "en", true);
     Check(nextSession.Assign(5, VoicePersonaAssigner.IdentitySeed(1, 2, 3), VoiceLineVoice.Male, VoiceLineAge.Adult, pickedMale.Id).Persona == pickedMale,
         "hand-picked voice lost in a new session");
-    // A choice that does not fit is ignored: other gender, a boss voice for a human, a human voice for a monster.
+    // A hand-picked voice is honoured whatever the body: a woman's or a boss voice for a male soldier,
+    // a human voice for a monster. Only unknown ids are ignored.
     var femaleId = table.Choices("en", VoiceLineVoice.Female, true)[0].Id;
     var bossId = table.Choices("en", VoiceLineVoice.NonHuman, true)[0].Id;
-    Check(table.ResolveChoice(femaleId, "en", VoiceLineVoice.Male, true) == null && table.ResolveChoice(bossId, "en", VoiceLineVoice.Male, true) == null &&
-          table.ResolveChoice(pickedMale.Id, "en", VoiceLineVoice.NonHuman, true) == null && table.ResolveChoice("nope", "en", VoiceLineVoice.Male, true) == null,
-        "unfit hand-picked voice accepted");
+    Check(table.ResolveChoice(femaleId, "en", VoiceLineVoice.Male, true)?.Id == femaleId &&
+          table.ResolveChoice(bossId, "en", VoiceLineVoice.Male, true)?.Id == bossId &&
+          table.ResolveChoice(pickedMale.Id, "en", VoiceLineVoice.NonHuman, true)?.Id == pickedMale.Id,
+        "cross-kind hand-picked voice refused");
+    Check(table.ResolveChoice("nope", "en", VoiceLineVoice.Male, true) == null, "unknown voice id accepted");
     Check(table.ResolveChoice(bossId, "en", VoiceLineVoice.NonHuman, true)?.Id == bossId, "boss voice choice for a monster");
-    var guarded = new VoicePersonaAssigner(); guarded.Configure(table, "en", true);
-    Check(guarded.Assign(1, seed, VoiceLineVoice.Male, VoiceLineAge.Adult, femaleId).Persona is { Voice: VoiceLineVoice.Male, IsBoss: false }, "unfit choice changed gender");
+    var crossed = new VoicePersonaAssigner(); crossed.Configure(table, "en", true);
+    Check(crossed.Assign(1, seed, VoiceLineVoice.Male, VoiceLineAge.Adult, femaleId).Persona is { Voice: VoiceLineVoice.Female }, "female choice for a male body not applied");
+    // The picker lists every assignable voice of the language, any kind, each with a filter category.
+    var pickerChoices = table.AllChoices("en", true);
+    Check(pickerChoices.Any(p => p.IsBoss) && pickerChoices.Any(p => p.Voice == VoiceLineVoice.Female && !p.IsBoss) && pickerChoices.Any(p => p.Voice == VoiceLineVoice.Male && !p.IsBoss),
+        "picker does not list every kind");
+    Check(pickerChoices.All(p => p.Category is "Boss" or "Male young" or "Male mature" or "Male elderly" or "Female young" or "Female adult" or "Female elderly"),
+        "unknown picker category");
     // A human choice saved on a Japanese client maps to the same actor on an English one; boss ids do not map.
     var jaMale = table.Choices("ja", VoiceLineVoice.Male, true).First(p => table.Get("en" + p.Id.Substring(2)) is { Assignable: true });
     Check(table.ResolveChoice(jaMale.Id, "en", VoiceLineVoice.Male, true)?.Id == "en" + jaMale.Id.Substring(2), "ja choice not mapped to en");

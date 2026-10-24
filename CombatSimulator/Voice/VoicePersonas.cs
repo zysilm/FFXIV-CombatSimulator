@@ -34,6 +34,9 @@ public sealed record VoicePersona(string Id, string Language, VoiceLineVoice Voi
         _ => Voice == VoiceLineVoice.Male ? "mature" : "adult",
     };
 
+    /// <summary>Picker filter group: "Boss", or gender and band ("Male mature", "Female young"...).</summary>
+    public string Category => IsBoss ? "Boss" : $"{(Voice == VoiceLineVoice.Female ? "Female" : "Male")} {BandName}";
+
     /// <summary>For the debug view: the character when known, else the persona id.</summary>
     public string Display => IsStoryCharacter ? $"{Character} ({Id})" : Id;
 
@@ -171,8 +174,24 @@ public sealed class VoicePersonaTable
         var p = Get(id);
         if ((p == null || p.Language != language) && !id.Contains("-b", StringComparison.Ordinal) && id.Length > 3 && id[2] == '-')
             p = Get(language + id.Substring(2));
-        return p != null && Usable(p, language, speakerVoice, allowStoryCharacters) ? p : null;
+        // A hand-picked voice is honoured whatever the speaker's body: the owner may give a soldier a
+        // woman's or a boss voice. The lines then follow the persona's kind, not the body's.
+        return p != null && UsableAnyKind(p, language, allowStoryCharacters) ? p : null;
     }
+
+    /// <summary>Every assignable persona of the language, any gender or kind, for the voice picker.</summary>
+    public List<VoicePersona> AllChoices(string language, bool allowStoryCharacters)
+    {
+        var result = new List<VoicePersona>();
+        foreach (var p in all)
+            if (UsableAnyKind(p, language, allowStoryCharacters))
+                result.Add(p);
+        result.Sort((x, y) => string.CompareOrdinal(x.Id, y.Id));
+        return result;
+    }
+
+    private static bool UsableAnyKind(VoicePersona p, string language, bool allowStoryCharacters) =>
+        p.Assignable && p.Language == language && (allowStoryCharacters || !p.IsStoryCharacter);
 
     private static string? Str(JsonElement row, string name) =>
         row.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
