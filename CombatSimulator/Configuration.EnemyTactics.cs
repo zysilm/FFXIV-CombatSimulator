@@ -14,7 +14,9 @@ public partial class Configuration
 
     // Party mode no longer force-engages every enemy every frame: enemies start idle and join on
     // aggro, auto-engage (Dev > NPC auto-engage), a hit, or an ally's call for help.
-    public bool EnemyTacticsRespectEngage { get; set; } = true;
+    // Off by default, unlike its siblings: public builds have no auto-engage UI, so with this on
+    // the enemies there would only ever fight after the player strikes first.
+    public bool EnemyTacticsRespectEngage { get; set; } = false;
 
     // Enemies on the player get spread slots from the engage planner (preferring flanks/rear)
     // instead of each walking to its own pursuit point, where they stacked ~0.3y apart.

@@ -10,7 +10,8 @@ Main window > **Party** tab > collapsing header **Enhanced enemy tactics** (belo
 
 - **Enable enhanced enemy tactics** (`EnhancedEnemyTactics`, default **off**). Master switch. While it is off,
   every behaviour in section B is inert and enemies move as before.
-- Sub-switches (each default **on**, only effective with the master on, greyed out otherwise):
+- Sub-switches (each default **on** except "Idle until engaged", which defaults **off** because public builds
+  have no auto-engage UI; only effective with the master on, greyed out otherwise):
   Idle until engaged, Spread enemies around the player, Body-size aware spacing, Circle while holding range,
   Threat-based aggro, Take turns in melee, Call for help / flee at low HP, Reposition after attacks,
   Big monsters turn slowly, Charge from far away.
