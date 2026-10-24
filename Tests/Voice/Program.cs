@@ -175,7 +175,7 @@ var poolPath = Path.Combine(AppContext.BaseDirectory, "VoiceLines.json");
 using (var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(poolPath)))
 {
     var lines = doc.RootElement.GetProperty("lines").EnumerateArray().ToList();
-    Check(lines.Count >= 150 && lines.Count <= 900, $"pool size {lines.Count} outside 150..900");
+    Check(lines.Count >= 150 && lines.Count <= 1200, $"pool size {lines.Count} outside 150..1200");
     // Human enemies use the whole pool minus "fx" (studio-processed boss/primal voices). "extended" is
     // provenance only and filters nothing.
     bool Flag(System.Text.Json.JsonElement l, string name) => l.TryGetProperty(name, out var x) && x.GetBoolean();
@@ -402,7 +402,7 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
     var table = VoicePersonaTable.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "VoicePersonas.json")));
     Check(table.Count >= 100, $"persona table has only {table.Count} rows");
     int AssignableIn(string lang) => table.All.Count(p => p.Assignable && !p.IsBoss && p.Language == lang);
-    Check(AssignableIn("ja") == 15 && AssignableIn("en") == 14, $"assignable personas ja {AssignableIn("ja")} en {AssignableIn("en")}");
+    Check(AssignableIn("ja") == 23 && AssignableIn("en") == 23, $"assignable personas ja {AssignableIn("ja")} en {AssignableIn("en")}");
     Check(table.Get("ja-010")?.Character == "Alphinaud" && table.Get("ja-010")!.Voice == VoiceLineVoice.Male &&
           table.Get("ja-010")!.Band == VoiceLineAge.Young, "ja-010 is young male Alphinaud");
     Check(table.Get("en-004")?.BandName == "mature" && table.Get("en-003")?.BandName == "adult", "band names");
@@ -542,12 +542,13 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
     Check(reached.Count == table.Candidates("ja", VoiceLineVoice.Female, VoiceLineAge.Adult, true).Count, "assignment never reaches some personas");
     Check(assigner.Assign(77, seed, VoiceLineVoice.NonHuman, VoiceLineAge.Any).Persona is { IsBoss: true }, "a monster did not get a boss persona");
 
-    // Story characters off: only unnamed personas; English women then have none (curated lines stay silent).
+    // Story characters off: only unnamed personas (English women now have unnamed ones too).
     var noStory = new VoicePersonaAssigner();
     noStory.Configure(table, "en", false);
     var plain = noStory.Assign(1, seed, VoiceLineVoice.Male, VoiceLineAge.Adult);
     Check(plain.Persona != null && plain.Chain.All(id => !table.Get(id)!.IsStoryCharacter), "story character assigned with the flag off");
-    Check(noStory.Assign(2, seed, VoiceLineVoice.Female, VoiceLineAge.Adult) == VoicePersonaAssignment.None, "en female without story characters");
+    var plainF = noStory.Assign(2, seed, VoiceLineVoice.Female, VoiceLineAge.Adult);
+    Check(plainF.Persona != null && plainF.Chain.All(id => !table.Get(id)!.IsStoryCharacter), "en female without story characters");
 
     // No persona data, or a language without personas: inactive, and the per-line picker still works.
     foreach (var (data, lang) in new[] { (VoicePersonaTable.Empty, "en"), (table, "de"), (table, "fr") })
@@ -575,7 +576,7 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
         foreach (var p in table.All.Where(p => p.Assignable && p.Language == lang))
             foreach (var ev in Enum.GetValues<VoiceEvent>())
                 for (var i = 0; i < 10; i++)
-                    // Boss voices have no AllyDeath line at all: silence there, never a small persona.
+                    // A boss chain without a line for the event (AllyDeath is rare there) stays silent, never a small persona.
                     Check(shipped.Pick(ev, p.SpeakerVoice, table.ChainFor(p, true), lang, rnd.NextDouble)?.PersonaFor(lang) is { } got ? !smallIds.Contains(got)
                             : p.IsBoss && shipped.Available(ev, p.SpeakerVoice, table.ChainFor(p, true), lang) == 0,
                         $"{p.Id}: {ev} used a small persona's line");
