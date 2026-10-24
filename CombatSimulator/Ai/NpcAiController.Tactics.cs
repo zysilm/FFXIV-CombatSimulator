@@ -39,6 +39,8 @@ public unsafe partial class NpcAiController
         public bool HasWaitSpot;
 
         // Low-HP flee / call for help.
+        public bool Charging;
+
         public bool CalledForHelp;
         public bool HasFled;
         public bool Fleeing;
@@ -377,6 +379,26 @@ public unsafe partial class NpcAiController
                 return false;
         }
         return true;
+    }
+
+    // Charge: an enemy far from its target closes the gap at a sprint, dropping back to the normal
+    // run once it is near (hysteresis so it does not toggle at the boundary).
+    private const float ChargeStartDistance = 15f;
+    private const float ChargeStopDistance = 8f;
+    private const float ChargeSpeedScale = 1.8f;
+
+    /// <summary>Approach speed multiplier: <see cref="ChargeSpeedScale"/> while charging, else 1.</summary>
+    private float ApproachSpeedScale(SimulatedNpc npc, float distToTarget)
+    {
+        if (!config.TacticsCharge)
+            return 1f;
+
+        var tactics = Tactics(npc);
+        if (tactics.Charging)
+            tactics.Charging = distToTarget > ChargeStopDistance && npc.IsEngaged;
+        else
+            tactics.Charging = distToTarget > ChargeStartDistance && npc.IsEngaged;
+        return tactics.Charging ? ChargeSpeedScale : 1f;
     }
 
     private const float BaseTurnRate = 5.0f;

@@ -45,6 +45,8 @@ public partial class MainWindow
                 "Ranged/caster enemies sometimes shift firing spot after an attack; enemies standing inside another body step out.");
             TacticsCheckbox("Big monsters turn slowly", () => config.EnemyTacticsHeavyTurn, v => config.EnemyTacticsHeavyTurn = v,
                 "Enemies larger than a humanoid turn more slowly, so getting to their flank or back matters.");
+            TacticsCheckbox("Charge from far away", () => config.EnemyTacticsCharge, v => config.EnemyTacticsCharge = v,
+                "An engaged enemy more than 15y from its target runs at 1.8x speed until it is within 8y.");
         }
     }
 

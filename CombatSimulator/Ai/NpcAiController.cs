@@ -1084,7 +1084,8 @@ public unsafe partial class NpcAiController : IDisposable
             return;
         }
 
-        float speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;
+        float speed = (npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f)
+                      * ApproachSpeedScale(npc, FlatDistance(npcPos, playerPos));
         float remainingDist = Vector3.Distance(npcPos, moveTarget);
         float moveDist = speed * deltaTime;
 
@@ -1245,7 +1246,8 @@ public unsafe partial class NpcAiController : IDisposable
         }
 
         // Smooth movement toward the target position
-        float speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;
+        float speed = (npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f)
+                      * ApproachSpeedScale(npc, distToTarget);
         var flatMove = moveTarget - npcPos;
         flatMove.Y = 0;
         float remainingDist = flatMove.Length();

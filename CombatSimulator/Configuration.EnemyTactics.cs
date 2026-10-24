@@ -52,6 +52,11 @@ public partial class Configuration
     public bool EnemyTacticsHeavyTurn { get; set; } = true;
 
     public bool TacticsHeavyTurn => EnhancedEnemyTactics && EnemyTacticsHeavyTurn;
+
+    // An engaged enemy more than 15y from its target sprints (1.8x) until within 8y.
+    public bool EnemyTacticsCharge { get; set; } = true;
+
+    public bool TacticsCharge => EnhancedEnemyTactics && EnemyTacticsCharge;
     public bool TacticsStrafe => EnhancedEnemyTactics && EnemyTacticsStrafe;
     public bool TacticsThreat => EnhancedEnemyTactics && EnemyTacticsThreat;
     public bool TacticsRespectEngage => EnhancedEnemyTactics && EnemyTacticsRespectEngage;
