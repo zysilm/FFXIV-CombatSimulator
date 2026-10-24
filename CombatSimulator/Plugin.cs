@@ -323,6 +323,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnPlayerDamageDealt = companionManager.RegisterPlayerDamage;
         combatEngine.OnPlayerDamageDealtToTarget = companionManager.RegisterPlayerDamage;
         combatEngine.ForceNpcTarget = companionManager.ForceEnemyTarget;
+        WireVictoryCelebration();
         spectatorController = new SpectatorController(
             npcSelector, movementBlockHook, animationController.EmotePlayer,
             vnavmeshIpc, clientState, config,
@@ -874,6 +875,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             ProcessPendingGlamourerApplies();
 
             animationController.Tick(deltaTime);
+            victoryCelebration?.Tick(deltaTime);
             armorDetachmentController.Tick(deltaTime);
 
             // Camera controllers run independently of combat. Submitters tick first,
@@ -938,6 +940,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             combatEngine.Tick(deltaTime);
             ProcessPendingNpcRagdolls(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
+            // After AI: its movement cleanup would otherwise erase celebration loops every frame.
+            victoryCelebration?.Reassert();
             // Re-apply after NPC AI so the final frame pose is still constrained to the 2D lane.
             // Lane only — the full Tick already ran this frame; running it again would advance
             // camera smoothing and translate timers at double speed.
