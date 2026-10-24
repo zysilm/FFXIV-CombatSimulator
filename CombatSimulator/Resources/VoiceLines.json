@@ -123,7 +123,6 @@
     { "voice": 8203110, "yell": 13508, "events": ["Skill"], "gender": "female", "story": false, "weight": 1 },
     { "voice": 8203111, "yell": 13509, "events": ["Engage"], "gender": "female", "story": false, "weight": 1 },
     { "voice": 8203112, "yell": 13510, "events": ["Skill"], "gender": "female", "story": false, "weight": 1 },
-    { "voice": 8203122, "yell": 13520, "events": ["Hurt"], "gender": "female", "story": false, "weight": 1 },
     { "voice": 8203199, "yell": 13520, "events": ["Hurt"], "gender": "male", "story": false, "weight": 1 },
     { "voice": 8203200, "yell": 13521, "events": ["Hurt"], "gender": "male", "story": false, "weight": 1 },
     { "voice": 8203201, "yell": 13522, "events": ["LowHp"], "gender": "male", "story": false, "weight": 1 },
@@ -163,6 +162,21 @@
     { "voice": 8201346, "yell": 4837, "events": ["Engage"], "gender": "male", "story": true, "weight": 0.35 },
     { "voice": 8201348, "yell": 4945, "events": ["Engage"], "gender": "male", "story": true, "weight": 0.35 },
     { "voice": 8201339, "yell": 4948, "events": ["Engage"], "gender": "female", "story": true, "weight": 0.35 },
-    { "voice": 8201144, "yell": 4949, "events": ["Engage"], "gender": "female", "story": false, "weight": 1 }
+    { "voice": 8201144, "yell": 4949, "events": ["Engage"], "gender": "female", "story": false, "weight": 1 },
+    { "voice": 8201094, "yell": 3486, "events": ["Skill"], "gender": "female", "story": false, "weight": 1 },
+    { "voice": 8201095, "yell": 3487, "events": ["Engage", "Skill"], "gender": "female", "story": false, "weight": 1 },
+    { "voice": 8201097, "yell": 3489, "events": ["Skill"], "gender": "female", "story": false, "weight": 1 },
+    { "voice": 8201342, "yell": 4838, "events": ["Taunt"], "gender": "male", "story": false, "weight": 1 },
+    { "voice": 8202019, "yell": 7750, "events": ["Hurt"], "gender": "female", "story": false, "weight": 1 },
+    { "voice": 8202023, "yell": 7754, "events": ["Hurt"], "gender": "female", "story": false, "weight": 1 },
+    { "voice": 8202139, "yell": 7870, "events": ["Hurt"], "gender": "female", "story": false, "weight": 1 },
+    { "voice": 8202145, "yell": 7876, "events": ["Hurt", "Taunt"], "gender": "female", "story": false, "weight": 1 },
+    { "voice": 8202107, "yell": 7838, "events": ["KilledPlayer", "Victory"], "gender": "female", "story": false, "weight": 1 },
+    { "voice": 8202073, "yell": 7804, "events": ["AllyDeath"], "gender": "female", "story": false, "weight": 1 },
+    { "voice": 8202034, "yell": 7765, "events": ["AllyDeath"], "gender": "female", "story": false, "weight": 1 },
+    { "voice": 8202050, "yell": 7781, "events": ["AllyDeath"], "gender": "male", "story": false, "weight": 1 },
+    { "voice": 8202337, "yell": 10298, "events": ["AllyDeath"], "gender": "male", "story": false, "weight": 1 },
+    { "voice": 8203058, "yell": 13493, "events": ["AllyDeath"], "gender": "male", "story": false, "weight": 1 },
+    { "voice": 8202093, "yell": 7824, "events": ["AllyDeath"], "gender": "male", "story": false, "weight": 1 }
   ]
 }

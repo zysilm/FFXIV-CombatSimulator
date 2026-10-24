@@ -177,12 +177,15 @@ using (var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(poolPath))
     var lines = doc.RootElement.GetProperty("lines").EnumerateArray().ToList();
     Check(lines.Count >= 150 && lines.Count <= 400, $"pool size {lines.Count} outside 150..400");
     var voices = new HashSet<uint>();
+    var yells = new HashSet<uint>();
     var perEvent = new Dictionary<string, int>();
     foreach (var l in lines)
     {
         var voice = l.GetProperty("voice").GetUInt32();
         var yell = l.GetProperty("yell").GetUInt32();
         Check(voices.Add(voice), $"voice {voice} listed twice");
+        // One NpcYell row is one recorded line: two files claiming the same row means one pair is wrong.
+        Check(yells.Add(yell), $"yell {yell} claimed by two voice files");
         Check(voice >= 8201000 && voice < 8300000, $"voice {voice} outside the vo_line range");
         Check(yell > 0 && yell < 20000, $"yell {yell} outside NpcYell");
         Check(yell != voice - VoiceSelection.YellLineBase, $"voice {voice} uses the disproven 8200000+row mapping");

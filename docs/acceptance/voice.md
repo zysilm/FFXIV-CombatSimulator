@@ -50,7 +50,7 @@ QuestBattle constants (Zenos, Yugiri, Fordola, Y'shtola) that also fit the durat
 four languages; two Raubahn pairs failed it (French z = 7) and were dropped. These blocks are
 Trust / duty-support battle barks, which is why they are short and generic.
 
-Curation: 163 lines chosen by reading the text, each tagged with one or more events
+Curation (first pass): 163 lines chosen by reading the text, each tagged with one or more events
 (Engage 24, Taunt 23, Skill 57, Hurt 14, LowHp 28, KilledPlayer 8, AllyDeath 6, Victory 6,
 Death 10; 11 tagged story, weight 0.35). Support lines ("I'll tend your wounds"), place and
 character names and quest references were left out.
@@ -62,8 +62,32 @@ every speaker's median on the right side; per line 121 right, 5 wrong, 21 unsure
 require the line and its neighbours (same speaker block) to agree; inside the eight known blocks
 the speaker's gender is used. Independent check: all 9 script-named lines outside the training
 blocks (Zenos male; Y'shtola, Yugiri, Fordola, Alisaie female) came out right. Pitch alone does
-not work for shouts (male shouts reach 250-420 Hz); F3 is what separates. Pool: 102 male,
-61 female, 0 non-human.
+not work for shouts (male shouts reach 250-420 Hz); F3 is what separates. Pool: 107 male,
+70 female, 0 non-human.
+
+Second pass (offline, same tools widened):
+- Script constants: every Excel sheet was scanned for VOICE/YELL constant names. Only QuestBattle
+  holds voice constants (45; the Quest-sheet values in the voice id range are LOC/LEVEL ids).
+  Client Lua (`game_script/*.luab`) is plain Lua 5.1 event/cutscene code; battle scripting is
+  server-side, so it holds no further pairs. New: QB112 Y'shtola 1094, 1095, 1097 -> 3486, 3487,
+  3489 (002, 005 and 006 are named; 003/004 sit between them in both numbered sequences), Zenos
+  1342 -> 4838 and Alisaie 2579 -> 19921 (not shipped). Raubahn 1321 and Zenos 1343 are
+  script-paired but fail the duration model or differ in meaning across languages; not shipped.
+- Statistics: Japanese mora features (kana, kanji, latin, pauses, ellipses) are the strongest
+  single language (held-out AUC 0.86 vs en 0.83); all four combined AUC 0.93. Constant-offset
+  segments were scored against three nulls: shuffled durations, a reversed text sheet (keeps the
+  local structure of both sides) and the same search on other sheets. Above margin 40, NpcYell
+  gives exactly the 11 known blocks plus one narration block (vo 5573-5605), but null margins
+  reach 51-56 on the larger sheets, so that block is not counted as proven (and is unusable
+  anyway). InstanceContentTextData, PublicContentTextData, MassivePcContentTextData and Balloon
+  show no excess over their nulls.
+- Correction: vo 3122 and 3199 both claimed yell 13520. Rows 13520-13537 are one male speaker
+  set, so 3199 (male) is right and 3122 (female, last file of the previous block) was dropped.
+  Block edges carry such seam collisions (3064/3101 -> 13499, 3024-3026/3010-3012), so no edge
+  extensions were added. The pool test now rejects two files on one yell row.
+- Added 15 lines (4 script-proven, 11 from already-proven blocks that fill thin buckets: female
+  hurt/ally-down/kill, male ally-down). Events now: Engage 25, Taunt 25, Skill 60, Hurt 17,
+  LowHp 28, KilledPlayer 9, AllyDeath 12, Victory 7, Death 10.
 
 Runtime: `Resources/VoiceLines.json` (voice id, yell row, events, gender, story, weight; no text).
 Text comes from NpcYell in the client language; audio is the client-language file only (a line
@@ -187,14 +211,14 @@ Offline: `dotnet run --project Tests/Voice/Voice.csproj -c Release`.
   neighbour agreement filter. Report any wrong-gender line.
 - **Bubbles on client-spawned actors** use the same balloon call as crowd chatter; a corpse being
   ragdolled may carry its last words for a few seconds.
-- **German/French/Japanese clients** use their own audio and text; all 163 files exist and decode
+- **German/French/Japanese clients** use their own audio and text; all 177 files exist and decode
   in all four languages.
 
 ## 4. Open questions
 
-1. **More lines.** The remaining ~3,800 vo_line files have no proven text. More script-constant
-   pairs (Quest sheets, other QuestBattles) or listening sessions in the audition panel could
-   extend the pool; add rows to `Resources/VoiceLines.json`.
+1. **More lines.** The remaining ~3,800 vo_line files have no proven text, and the offline
+   sources are now exhausted (see "Second pass" above). Listening sessions in the audition
+   panel are the remaining route; add rows to `Resources/VoiceLines.json`.
 2. **Monster lines.** None curated; monsters keep their labeled SE packs.
 3. **Creation voice.** If a reliable read of the actor's voice id appears, plug it into
    `VoiceSelection.PcShoutFromVoiceId` (already mapped and tested for ids 1-168).
