@@ -998,6 +998,8 @@ public partial class MainWindow : IDisposable
             config.Save();
         }
 
+        DrawEnemyTacticsSection();
+
         // Companion clone gear — apply a Glamourer design's equipment to spawned
         // clones (equipment only, so customize/randomized look is preserved).
         // "(None)" keeps each clone's own inherited gear and also works when

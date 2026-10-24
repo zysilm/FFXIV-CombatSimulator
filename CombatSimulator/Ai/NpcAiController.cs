@@ -237,8 +237,9 @@ public unsafe class NpcAiController : IDisposable
 
         // Party mode is controlled by the companion feature toggle. When it is
         // active, all enemies join combat so party formation/targeting can run
-        // even before companion clones are spawned.
-        if (partyMode)
+        // even before companion clones are spawned. Enhanced tactics opts out: forcing it every frame
+        // made auto-engage and its delay dead settings and left enemies no idle phase.
+        if (partyMode && !config.TacticsRespectEngage)
         {
             foreach (var npc in npcs)
                 EngageNpc(npc);
@@ -350,6 +351,14 @@ public unsafe class NpcAiController : IDisposable
                 // Prevent Resetting state when approach is active
                 if (npc.AiState == NpcAiState.Resetting)
                     npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
+
+                // An enemy that has not been engaged yet holds its ground instead of walking into
+                // the fight on its own.
+                if (config.TacticsRespectEngage && npc.AiState == NpcAiState.Idle)
+                {
+                    StopApproachMoveAnim(npc);
+                    continue;
+                }
 
                 if (!partyMode || (!hasLivingCompanions && config.UseSoloTargetFormationWhenNoCompanions))
                 {
