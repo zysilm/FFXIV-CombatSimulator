@@ -369,6 +369,14 @@ public unsafe partial class NpcAiController : IDisposable
                     continue;
                 }
 
+                // A caster channelling a snapshotted area stands still: its hit area was frozen at
+                // cast start, so walking (approach, strafe, charge) would carry it off its own marker.
+                if (npc.CastArea != null && npc.State.IsCasting)
+                {
+                    StopApproachMoveAnim(npc);
+                    continue;
+                }
+
                 if (!partyMode || (!hasLivingCompanions && config.UseSoloTargetFormationWhenNoCompanions))
                 {
                     LogApproachRouteDebug(npc, "solo", partyMode, hasLivingCompanions);
