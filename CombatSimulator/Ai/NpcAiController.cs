@@ -1056,7 +1056,8 @@ public unsafe class NpcAiController : IDisposable
         if ((hasVnavmeshTarget || (config.NpcCollisionActive && config.RagdollNpcCorpseTraversal)) && terrainCache != null &&
             TryGetOrCreateApproachPathState(npc, out var pathState))
         {
-            newPos = CorrectMovingRootHeight(npc.Address, newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: true);
+            newPos = CorrectMovingRootHeight(npc.Address, newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: true,
+                horizontalStep: FlatDistance(npcPos, newPos));
         }
 
         StartApproachMoveAnim(npc, deltaTime);
@@ -1226,7 +1227,8 @@ public unsafe class NpcAiController : IDisposable
         if (terrainCache != null &&
             TryGetOrCreateApproachPathState(npc, out var pathState))
         {
-            newPos = CorrectMovingRootHeight(npc.Address, newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: false);
+            newPos = CorrectMovingRootHeight(npc.Address, newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: false,
+                horizontalStep: FlatDistance(npcPos, newPos));
         }
         else if (vnavmeshIpc.CanPathfind)
         {
@@ -1881,7 +1883,8 @@ public unsafe class NpcAiController : IDisposable
         TerrainHeightCache terrainCache,
         ApproachPathState state,
         float deltaTime,
-        bool preserveInitialClearance)
+        bool preserveInitialClearance,
+        float horizontalStep = 0f)
     {
         if (!terrainCache.TrySample(rootPosition.X, rootPosition.Z, out var terrainY))
             return rootPosition;
@@ -1906,11 +1909,7 @@ public unsafe class NpcAiController : IDisposable
             : 0f;
         var desiredY = terrainY + pelvisOffset + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;
         var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
-        var maxFall = MathF.Max(0.02f, 1.5f * deltaTime);
-        var deltaY = desiredY > fromY
-            ? desiredY - fromY
-            : Math.Clamp(desiredY - fromY, -maxFall, 0f);
-        var y = fromY + deltaY;
+        var y = EnemyMovementMath.FollowTerrainY(fromY, desiredY, deltaTime, horizontalStep);
 
         state.LastMoveRootY = y;
         state.HasLastMoveRootY = true;

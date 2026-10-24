@@ -1630,7 +1630,7 @@ public unsafe class CombatCompanionManager : IDisposable
         RotateToward(companion, moveTarget, deltaTime);
         if (terrainCache != null && TryGetCorpseTraversalPathState(companion.Address, out var terrainState))
         {
-            next = CorrectMovingRootHeight(companion.Address, next, terrainCache, terrainState, deltaTime);
+            next = CorrectMovingRootHeight(companion.Address, next, terrainCache, terrainState, deltaTime, FlatDistance(current, next));
         }
         else if (vnavmeshIpc.CanPathfind)
         {
@@ -2047,7 +2047,8 @@ public unsafe class CombatCompanionManager : IDisposable
         Vector3 rootPosition,
         TerrainHeightCache terrainCache,
         PathState state,
-        float deltaTime)
+        float deltaTime,
+        float horizontalStep = 0f)
     {
         if (!terrainCache.TrySample(rootPosition.X, rootPosition.Z, out var terrainY))
             return rootPosition;
@@ -2065,11 +2066,7 @@ public unsafe class CombatCompanionManager : IDisposable
             : terrainY;
         var desiredY = walkableY + state.StableRootTerrainClearance;
         var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
-        var maxFall = MathF.Max(0.02f, 1.5f * deltaTime);
-        var deltaY = desiredY > fromY
-            ? desiredY - fromY
-            : Math.Clamp(desiredY - fromY, -maxFall, 0f);
-        var y = fromY + deltaY;
+        var y = EnemyMovementMath.FollowTerrainY(fromY, desiredY, deltaTime, horizontalStep);
 
         state.LastMoveRootY = y;
         state.HasLastMoveRootY = true;
