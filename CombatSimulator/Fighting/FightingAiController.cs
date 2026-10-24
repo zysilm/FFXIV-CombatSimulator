@@ -64,6 +64,7 @@ public sealed unsafe class FightingAiController
     private float jumpTo;
     private float groundY;
     private bool groundYInitialized;
+    private float groundClearance;
     private bool airborne;
 
     public bool IsActive => npc != null;
@@ -143,7 +144,7 @@ public sealed unsafe class FightingAiController
         airborne = false; // knocked out of a hop
     }
 
-    public void Tick(float dt, float npcAlong, float playerAlong, float npcY)
+    public void Tick(float dt, float npcAlong, float playerAlong, float npcY, float? groundSample = null)
     {
         if (npc == null)
             return;
@@ -157,7 +158,14 @@ public sealed unsafe class FightingAiController
         if (!groundYInitialized)
         {
             groundY = npcY;
+            // Keep whatever clearance the model had over the floor when the fight began (some roots
+            // do not sit exactly on the ground), then track the floor under it from there on.
+            groundClearance = groundSample.HasValue ? Math.Clamp(npcY - groundSample.Value, -0.5f, 0.5f) : 0f;
             groundYInitialized = true;
+        }
+        else if (groundSample.HasValue)
+        {
+            groundY = groundSample.Value + groundClearance;
         }
 
         desiredAlong = npcAlong;

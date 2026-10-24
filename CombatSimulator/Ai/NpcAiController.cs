@@ -18,7 +18,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 
 namespace CombatSimulator.Ai;
 
-public unsafe class NpcAiController : IDisposable
+public unsafe partial class NpcAiController : IDisposable
 {
     public const float PlayerTriggeredEngageDelay = 0.5f;
 
@@ -89,6 +89,9 @@ public unsafe class NpcAiController : IDisposable
     // it only unlocks to re-approach if pushed beyond (approach distance + unlock).
     private const float ApproachLockBuffer = 1.5f;
     private const float ApproachUnlockBuffer = 1.5f;
+    // Solo ring: keep the hold spot this far inside the melee swing reach so a small player drift
+    // does not leave a locked enemy just out of range.
+    private const float SoloReachMargin = 0.25f;
 
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
@@ -171,6 +174,7 @@ public unsafe class NpcAiController : IDisposable
         approachLockedGoals.Clear();
         partyApproachDebugNextLogAt.Clear();
         lastApproachDebugRoute.Clear();
+        tacticsStates.Clear();
 
         // OnSimulationReset fires from both StopSimulation and ResetState.
         // StopSimulation flips IsActive false before invoking — skip auto-engage
@@ -206,6 +210,7 @@ public unsafe class NpcAiController : IDisposable
             return;
 
         RefreshScaleDependentApproachState();
+        tickNpcs = npcs;
 
         skillTokens = MathF.Min(SkillTokenBurst, skillTokens + MathF.Max(0f, config.NpcSkillRateLimit) * deltaTime);
 
@@ -234,8 +239,9 @@ public unsafe class NpcAiController : IDisposable
 
         // Party mode is controlled by the companion feature toggle. When it is
         // active, all enemies join combat so party formation/targeting can run
-        // even before companion clones are spawned.
-        if (partyMode)
+        // even before companion clones are spawned. Enhanced tactics opts out: forcing it every frame
+        // made auto-engage and its delay dead settings and left enemies no idle phase.
+        if (partyMode && !config.TacticsRespectEngage)
         {
             foreach (var npc in npcs)
                 EngageNpc(npc);
@@ -294,6 +300,8 @@ public unsafe class NpcAiController : IDisposable
             TickNpc(npc, deltaTime, targetPos, targetEntityId);
         }
 
+        TickCallForHelp(npcs);
+
         // In solo play this is controlled by EnableTargetApproach. In party
         // mode, enemy movement is always needed because real NPCs have no
         // natural client-side chase path in our simulation; TickApproach uses
@@ -335,6 +343,8 @@ public unsafe class NpcAiController : IDisposable
             }
 
             var terrainCache = BuildTerrainHeightCache(playerPos, approachNpcs);
+            if (partyMode)
+                UpdateMeleeAdmission(approachNpcs, targetByNpcId);
 
             for (int i = 0; i < approachNpcs.Count; i++)
             {
@@ -347,6 +357,14 @@ public unsafe class NpcAiController : IDisposable
                 // Prevent Resetting state when approach is active
                 if (npc.AiState == NpcAiState.Resetting)
                     npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
+
+                // An enemy that has not been engaged yet holds its ground instead of walking into
+                // the fight on its own.
+                if (config.TacticsRespectEngage && npc.AiState == NpcAiState.Idle)
+                {
+                    StopApproachMoveAnim(npc);
+                    continue;
+                }
 
                 if (!partyMode || (!hasLivingCompanions && config.UseSoloTargetFormationWhenNoCompanions))
                 {
@@ -444,6 +462,7 @@ public unsafe class NpcAiController : IDisposable
         {
             npc.AiState = NpcAiState.Engaging;
             StaggerTimers(npc);
+            ApplyEngageJitter(npc);
             log.Verbose($"NPC '{npc.Name}' engaging (auto-attack in {npc.AutoAttackTimer:F1}s).");
         }
     }
@@ -500,7 +519,7 @@ public unsafe class NpcAiController : IDisposable
                 break;
 
             case NpcAiState.Engaging:
-                if (npc.IsClientControlled)
+                if (npc.IsClientControlled && !ApproachOwnsRotation(npc))
                     RotateTowardPlayer(npc, playerPos, deltaTime);
                 if (npc.EngageDelayTimer > 0)
                 {
@@ -565,10 +584,14 @@ public unsafe class NpcAiController : IDisposable
 
         UpdateDesiredEngageRange(npc, deltaTime);
 
+        // Enhanced tactics: a fleeing enemy holds its attacks until it has regrouped.
+        if (IsTacticsFleeing(npc))
+            return;
+
         var targetPos = combatEngine.GetSimulatedEntityPosition(simulatedTarget);
-        var distToTarget = UsesPartyConfiguredRange(npc, simulatedTarget)
+        var distToTarget = (UsesPartyConfiguredRange(npc, simulatedTarget)
             ? FlatDistance(npcPos, targetPos)
-            : Vector3.Distance(npcPos, targetPos);
+            : Vector3.Distance(npcPos, targetPos)) - HitboxSpacingExtra(npc, simulatedTarget);
         var targetEntityId = simulatedTarget.EntityId;
 
         if (npc.State.IsCasting && npc.State.CastTargetId != targetEntityId)
@@ -578,8 +601,8 @@ public unsafe class NpcAiController : IDisposable
                 ActorVisualStateController.ApplyCombatIdle((Character*)npc.BattleChara, npc.VisualState);
         }
 
-        // Only rotate client-controlled NPCs
-        if (npc.IsClientControlled)
+        // Only rotate client-controlled NPCs (and only when the approach pass is not the facing owner)
+        if (npc.IsClientControlled && !ApproachOwnsRotation(npc))
             ForceRotateToward(npc, targetPos, deltaTime);
 
         // Skip leash check for real NPCs (they don't move) and when formation approach is active.
@@ -606,7 +629,7 @@ public unsafe class NpcAiController : IDisposable
             return;
         }
 
-        if (UsesPartyConfiguredRange(npc, simulatedTarget))
+        if (UsesPartyConfiguredRange(npc, simulatedTarget) && !ApproachOwnsRotation(npc))
             ForceRotateToward(npc, targetPos, deltaTime);
 
         // Handle casting
@@ -920,6 +943,22 @@ public unsafe class NpcAiController : IDisposable
                 ? npc.DesiredEngageRange
                 : ScaleNpcMeleeRange(config.TargetApproachDistance));
 
+        // A melee enemy must stand where its swing reaches. With a raised hold distance (~2.5y+)
+        // the hold ring plus the unlock buffer sat beyond attack range, so an enemy could keep a
+        // spot it could never attack from. Cap both the ring and the release band at the reach.
+        var bodyExtra = HitboxSpacingExtra(npc, combatEngine.State.PlayerState);
+        targetDist += bodyExtra;
+        var unlockRadius = targetDist + ApproachUnlockBuffer;
+        if (HasMeleePositioningIntent(npc))
+        {
+            var reach = GetEffectiveNpcAttackRange(npc, combatEngine.State.PlayerState) + bodyExtra - SoloReachMargin;
+            if (reach > 0.5f)
+            {
+                targetDist = MathF.Min(targetDist, reach);
+                unlockRadius = MathF.Min(unlockRadius, MathF.Max(targetDist, reach));
+            }
+        }
+
         // Hold a locked world spot — the enemy stands its ground and does NOT glide
         // with the player. Re-approach when the player has wandered away from that spot by
         // more than the unlock buffer, OR when the spot sits far INSIDE the desired hold
@@ -931,7 +970,7 @@ public unsafe class NpcAiController : IDisposable
             var ldx = lockedGoal.X - playerPos.X;
             var ldz = lockedGoal.Z - playerPos.Z;
             var lockedDistSq = ldx * ldx + ldz * ldz;
-            var unlock = targetDist + ApproachUnlockBuffer;
+            var unlock = unlockRadius;
             var tooClose = targetDist - ApproachUnlockBuffer;
             if (lockedDistSq <= unlock * unlock &&
                 (tooClose <= 0f || lockedDistSq >= tooClose * tooClose))
@@ -1016,6 +1055,9 @@ public unsafe class NpcAiController : IDisposable
         var gameObj = (GameObject*)npc.BattleChara;
         var npcPos = (Vector3)gameObj->Position;
 
+        if (TryTickFlee(npc, gameObj, npcPos, playerPos, tickNpcs, deltaTime, terrainCache))
+            return;
+
         var targetPos = ComputeApproachGoal(npc, npcPos, playerPos);
         targetPos.Y = playerPos.Y + config.DefaultNpcHeightOffset;
 
@@ -1042,7 +1084,8 @@ public unsafe class NpcAiController : IDisposable
             return;
         }
 
-        float speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;
+        float speed = (npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f)
+                      * ApproachSpeedScale(npc, FlatDistance(npcPos, playerPos));
         float remainingDist = Vector3.Distance(npcPos, moveTarget);
         float moveDist = speed * deltaTime;
 
@@ -1053,7 +1096,8 @@ public unsafe class NpcAiController : IDisposable
         if ((hasVnavmeshTarget || (config.NpcCollisionActive && config.RagdollNpcCorpseTraversal)) && terrainCache != null &&
             TryGetOrCreateApproachPathState(npc, out var pathState))
         {
-            newPos = CorrectMovingRootHeight(npc.Address, newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: true);
+            newPos = CorrectMovingRootHeight(npc.Address, newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: true,
+                horizontalStep: FlatDistance(npcPos, newPos));
         }
 
         StartApproachMoveAnim(npc, deltaTime);
@@ -1099,6 +1143,9 @@ public unsafe class NpcAiController : IDisposable
             existingPathState.PendingPath = null;
         }
 
+        if (TryTickFlee(npc, gameObj, npcPos, npcTargetPos, tickNpcs, deltaTime, terrainCache))
+            return;
+
         if (!partyEngagePlanner.TryGetPlan(npc.SimulatedEntityId, out var partyPlan))
         {
             if (terrainCache != null && approachPaths.TryGetValue(npc.Address, out var holdPathState))
@@ -1107,12 +1154,16 @@ public unsafe class NpcAiController : IDisposable
             LogPartyApproachDebug(npc, "no-plan", npcPos, npcTargetPos, null, npcPos, false,
                 distToTarget: FlatDistance(npcPos, npcTargetPos), attackRange: PartyHoldRange(npc));
             StopApproachMoveAnim(npc);
+            // The approach pass is the facing owner (see ApproachOwnsRotation), so keep facing the
+            // target while the planner has not produced a plan yet.
+            ForceRotateToward(npc, npcTargetPos, deltaTime);
             return;
         }
 
         var targetPos = partyPlan.Goal;
         var facePos = partyPlan.HasFaceTarget ? partyPlan.FaceTarget : npcPos;
-        var distToTarget = FlatDistance(npcPos, npcTargetPos);
+        // Measured past the body-size excess so a big body is neither walked into nor fought from inside.
+        var distToTarget = FlatDistance(npcPos, npcTargetPos) - HitboxSpacingExtra(npc, npcTarget);
         var partyAttackRange = PartyHoldRange(npc);
         var partyAttackEnvelope = PartyAttackEnvelope(npc);
         var rangeStateAvailable = TryGetOrCreateApproachPathState(npc, out var rangeState);
@@ -1124,9 +1175,20 @@ public unsafe class NpcAiController : IDisposable
         // target leaves that range. They deliberately do NOT kite: an enemy that backed away every
         // time you closed in was untouchable, and being able to strike from range it never has to
         // pay for is already advantage enough.
+        // Enhanced tactics: a melee enemy without an attacker place waits on the outer ring.
+        if (TryTickMeleeWait(npc, gameObj, npcPos, npcTargetPos, partyAttackRange, FlatDistance(npcPos, npcTargetPos) - distToTarget, deltaTime, terrainCache))
+            return;
+
         var shouldHoldRange = distToTarget <= outerEdge;
         if (shouldHoldRange)
         {
+            if (TryTickHoldStrafe(npc, gameObj, npcPos, npcTargetPos, partyAttackRange, FlatDistance(npcPos, npcTargetPos) - distToTarget, deltaTime, terrainCache))
+            {
+                if (rangeStateAvailable)
+                    rangeState.WasHoldingRange = true;
+                return;
+            }
+
             if (rangeStateAvailable)
             {
                 rangeState.WasHoldingRange = true;
@@ -1184,7 +1246,8 @@ public unsafe class NpcAiController : IDisposable
         }
 
         // Smooth movement toward the target position
-        float speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;
+        float speed = (npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f)
+                      * ApproachSpeedScale(npc, distToTarget);
         var flatMove = moveTarget - npcPos;
         flatMove.Y = 0;
         float remainingDist = flatMove.Length();
@@ -1223,7 +1286,8 @@ public unsafe class NpcAiController : IDisposable
         if (terrainCache != null &&
             TryGetOrCreateApproachPathState(npc, out var pathState))
         {
-            newPos = CorrectMovingRootHeight(npc.Address, newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: false);
+            newPos = CorrectMovingRootHeight(npc.Address, newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: false,
+                horizontalStep: FlatDistance(npcPos, newPos));
         }
         else if (vnavmeshIpc.CanPathfind)
         {
@@ -1580,6 +1644,44 @@ public unsafe class NpcAiController : IDisposable
     /// <summary>The approach pass in <see cref="Tick"/> moves every enemy (solo ring or party planner).</summary>
     private bool ApproachOwnsMovement => config.EnableTargetApproach || config.EnableCombatCompanions;
 
+    /// <summary>
+    /// True when the approach pass will tick this enemy this frame and therefore writes its facing.
+    /// Combat/Engaging used to rotate it too, so a moving enemy was turned 2–3 times per frame toward
+    /// different points (target vs. path) and the writes fought. Mirrors the approach eligibility
+    /// filter in <see cref="Tick"/>.
+    /// </summary>
+    /// <summary>
+    /// Body-size excess (Enhanced tactics > hitbox spacing) subtracted from centre distance in every
+    /// range test and added to every stand-off, so they stay consistent: an enemy never holds a spot
+    /// its attack check calls out of range. 0 when off or for humanoid pairs.
+    /// </summary>
+    private float HitboxSpacingExtra(SimulatedNpc npc, SimulatedEntityState? target)
+    {
+        if (!config.TacticsHitboxSpacing || target == null)
+            return 0f;
+        return EnemyMovementMath.HitboxSpacingExtra(npc.HitboxRadius, EntityHitboxRadius(target));
+    }
+
+    private float EntityHitboxRadius(SimulatedEntityState entity)
+    {
+        nint address = 0;
+        if (entity.IsPlayer)
+            address = Core.Services.ObjectTable.LocalPlayer?.Address ?? 0;
+        else
+            address = combatEngine.ResolveExternalEntityAddress?.Invoke(entity.EntityId) ?? 0;
+        if (address == 0)
+            return EnemyMovementMath.BaselineHitboxRadius;
+        var r = ((GameObject*)address)->HitboxRadius;
+        return r > 0.01f ? r : EnemyMovementMath.BaselineHitboxRadius;
+    }
+
+    private bool ApproachOwnsRotation(SimulatedNpc npc)
+        => ApproachOwnsMovement &&
+           npc.IsSpawned &&
+           npc.BattleChara != null &&
+           npc.SpawnPlacementFrames <= 0 &&
+           npc.AiState != NpcAiState.Dead;
+
     private bool UsesPartyConfiguredRange(SimulatedNpc npc, SimulatedEntityState target)
         => config.EnableCombatCompanions &&
            (combatEngine.HasLivingCompanions?.Invoke() == true ||
@@ -1878,7 +1980,8 @@ public unsafe class NpcAiController : IDisposable
         TerrainHeightCache terrainCache,
         ApproachPathState state,
         float deltaTime,
-        bool preserveInitialClearance)
+        bool preserveInitialClearance,
+        float horizontalStep = 0f)
     {
         if (!terrainCache.TrySample(rootPosition.X, rootPosition.Z, out var terrainY))
             return rootPosition;
@@ -1903,11 +2006,7 @@ public unsafe class NpcAiController : IDisposable
             : 0f;
         var desiredY = terrainY + pelvisOffset + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;
         var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
-        var maxFall = MathF.Max(0.02f, 1.5f * deltaTime);
-        var deltaY = desiredY > fromY
-            ? desiredY - fromY
-            : Math.Clamp(desiredY - fromY, -maxFall, 0f);
-        var y = fromY + deltaY;
+        var y = EnemyMovementMath.FollowTerrainY(fromY, desiredY, deltaTime, horizontalStep);
 
         state.LastMoveRootY = y;
         state.HasLastMoveRootY = true;
@@ -1992,7 +2091,7 @@ public unsafe class NpcAiController : IDisposable
         while (diff > MathF.PI) diff -= 2 * MathF.PI;
         while (diff < -MathF.PI) diff += 2 * MathF.PI;
 
-        var rotSpeed = 5.0f * deltaTime;
+        var rotSpeed = NpcTurnRate(npc) * deltaTime;
         float newRot;
         if (MathF.Abs(diff) < rotSpeed)
             newRot = targetRot;

@@ -32,6 +32,22 @@ public sealed class PartyEngagePlan
     public bool HasFaceTarget { get; init; }
 }
 
+/// <summary>
+/// Opt-in planner behaviours (Enhanced enemy tactics). <c>default</c> = the original planner.
+/// </summary>
+/// <param name="PlayerAsNode">Plan the local player as a target node, so enemies on the player get
+/// MCMF slots like every other target instead of the per-actor pursuit goal that stacked them.</param>
+/// <param name="PreferFlanks">With <paramref name="PlayerAsNode"/>, nudge slots on the player away
+/// from the side the player faces.</param>
+/// <param name="HitboxSpacing">Widen rings by body size and spread melee slots so neighbours do not
+/// overlap.</param>
+/// <param name="PlayerHitboxRadius">The player's hitbox radius (only read with the options above).</param>
+public readonly record struct PartyEngagePlannerOptions(
+    bool PlayerAsNode,
+    bool PreferFlanks,
+    bool HitboxSpacing,
+    float PlayerHitboxRadius);
+
 public sealed unsafe class PartyEngagePlanner
 {
     private const float RepathDistance = 1.5f;
@@ -52,6 +68,10 @@ public sealed unsafe class PartyEngagePlanner
     private const float MeleeFrontWeight = 4.0f;
     private const float IsolationWeight = 8.0f;
     private const float SlotStickyBonus = 55.0f;
+    // Cost added to a slot straight in front of the player (and taken off one straight behind). Small
+    // next to distance and crowding on purpose: a tilt toward the flanks, not a rule.
+    private const float FlankPreferenceWeight = 1.5f;
+    private static readonly float[] LegacyMeleeAngles = { 0f, -32f, 32f, -64f, 64f, -105f, 105f, 180f };
 
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly Dictionary<uint, PartyEngagePlan> plans = new();
@@ -59,6 +79,10 @@ public sealed unsafe class PartyEngagePlanner
     private readonly Dictionary<uint, TacticalSlot> assignedSlots = new();
     private readonly Dictionary<string, uint> slotReservations = new();
     private readonly Dictionary<uint, string> reservedSlotIds = new();
+    // Options and player pose of the Build in progress (read by slot generation and scoring).
+    private PartyEngagePlannerOptions options;
+    private uint buildPlayerId;
+    private float buildPlayerRotation;
 
     public PartyEngagePlanner(VNavmeshIpc vnavmeshIpc)
     {
@@ -106,10 +130,14 @@ public sealed unsafe class PartyEngagePlanner
         float commandRange,
         float commandRandomness,
         float partyMeleeAttackRange,
-        float partyRangedAttackRange)
+        float partyRangedAttackRange,
+        PartyEngagePlannerOptions plannerOptions = default)
     {
         plans.Clear();
         TickPathStateTimers(deltaTime);
+        options = plannerOptions;
+        buildPlayerId = playerEntityId;
+        buildPlayerRotation = playerRotation;
 
         var nodes = BuildNodes(
             commandAnchorPosition,
@@ -119,6 +147,21 @@ public sealed unsafe class PartyEngagePlanner
             enemyTargets,
             partyMeleeAttackRange,
             partyRangedAttackRange);
+
+        // The player is a target like any other: give it a node (it is never an actor itself —
+        // TargetId 0) so slot assignment spreads the enemies on it.
+        if (options.PlayerAsNode && playerEntityId != 0 && !nodes.ContainsKey(playerEntityId))
+        {
+            nodes[playerEntityId] = new PartyNode(
+                playerEntityId,
+                PartyNodeSide.Friendly,
+                playerPosition,
+                commandAnchorPosition,
+                GetPreferredEngageRange(NpcAttackStyle.Melee, partyMeleeAttackRange, partyRangedAttackRange),
+                0,
+                false,
+                options.PlayerHitboxRadius > 0.01f ? options.PlayerHitboxRadius : EnemyMovementMath.BaselineHitboxRadius);
+        }
 
         BuildSlotAssignments(nodes, commandRange, commandRandomness);
         var livePathKeys = new HashSet<string>();
@@ -144,7 +187,7 @@ public sealed unsafe class PartyEngagePlanner
             if (plans.ContainsKey(node.Id) || node.TargetId == 0)
                 continue;
 
-            if (node.TargetId == playerEntityId)
+            if (node.TargetId == playerEntityId && !options.PlayerAsNode)
             {
                 plans[node.Id] = BuildPlayerPursuitPlan(node, playerPosition, playerForward, commandRange, commandRandomness, livePathKeys);
                 continue;
@@ -299,7 +342,8 @@ public sealed unsafe class PartyEngagePlanner
                 commandAnchorPosition,
                 GetPreferredEngageRange(companion.Behavior.AutoAttackStyle, partyMeleeAttackRange, partyRangedAttackRange),
                 companionTargets.GetValueOrDefault(companion.SimulatedEntityId),
-                IsRangedStyle(companion.Behavior.AutoAttackStyle));
+                IsRangedStyle(companion.Behavior.AutoAttackStyle),
+                HitboxRadiusOf((GameObject*)companion.BattleChara));
         }
 
         foreach (var enemy in enemies)
@@ -324,10 +368,17 @@ public sealed unsafe class PartyEngagePlanner
                 enemy.SpawnPosition,
                 enemyRange,
                 enemyTargets.GetValueOrDefault(enemy.SimulatedEntityId),
-                enemyRanged);
+                enemyRanged,
+                enemy.HitboxRadius);
         }
 
         return nodes;
+    }
+
+    private static float HitboxRadiusOf(GameObject* obj)
+    {
+        var r = obj == null ? 0f : obj->HitboxRadius;
+        return r > 0.01f ? r : EnemyMovementMath.BaselineHitboxRadius;
     }
 
     private void ApplyMutualPair(
@@ -375,7 +426,8 @@ public sealed unsafe class PartyEngagePlanner
                     node.CommandAnchor,
                     node.PreferredEngageRange,
                     0,
-                    false),
+                    false,
+                    nodes.TryGetValue(node.TargetId, out var cycleTarget) ? cycleTarget.Radius : EnemyMovementMath.BaselineHitboxRadius),
                 commandRange,
                 commandRandomness,
                 livePathKeys,
@@ -609,11 +661,15 @@ public sealed unsafe class PartyEngagePlanner
         var actorForward = actor.Side == PartyNodeSide.Friendly ? axis : -axis;
         var right = new Vector3(actorForward.Z, 0, -actorForward.X);
         var range = MathF.Max(0.001f, actor.PreferredEngageRange);
+        // Ranges are humanoid-tuned centre distances; a big body on either side needs the excess.
+        var bodyExtra = options.HitboxSpacing
+            ? EnemyMovementMath.HitboxSpacingExtra(actor.Radius, target.Radius)
+            : 0f;
 
         if (actor.IsRanged)
         {
             var back = -actorForward;
-            var rowDistance = MathF.Max(range * 0.8f, 5.0f);
+            var rowDistance = MathF.Max(range * 0.8f, 5.0f) + bodyExtra;
             for (var i = 0; i < 5; i++)
             {
                 var slot = i - 2;
@@ -626,7 +682,10 @@ public sealed unsafe class PartyEngagePlanner
             yield break;
         }
 
-        var angles = new[] { 0f, -32f, 32f, -64f, 64f, -105f, 105f, 180f };
+        var ring = range + bodyExtra;
+        var angles = options.HitboxSpacing
+            ? EnemyMovementMath.MeleeRingAngles(ring, MathF.Max(EnemyMovementMath.MinMeleeSlotGap, 2f * actor.Radius + 0.2f))
+            : LegacyMeleeAngles;
         var baseAngle = MathF.Atan2(-actorForward.X, -actorForward.Z);
         for (var i = 0; i < angles.Length; i++)
         {
@@ -634,7 +693,7 @@ public sealed unsafe class PartyEngagePlanner
             yield return new TacticalSlot(
                 $"{actor.Side}:{target.Id}:melee:{i}",
                 i,
-                target.Position + new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * range);
+                target.Position + new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * ring);
         }
     }
 
@@ -685,7 +744,18 @@ public sealed unsafe class PartyEngagePlanner
                + MathF.Abs(candidate.SlotIndex - preferredSlot) * 0.35f
                + SlotCrowdingPenalty(actor.Id, candidate.Position, nodes)
                + InfluenceCost(actor, target, candidate.Position, nodes, commandRange, commandRandomness)
+               + FlankCost(target, candidate.Position)
                - stickyBonus;
+    }
+
+    // Attackers on the player lean toward its flanks and back (Enhanced enemy tactics).
+    private float FlankCost(PartyNode target, Vector3 slot)
+    {
+        if (!options.PlayerAsNode || !options.PreferFlanks || target.Id != buildPlayerId || buildPlayerId == 0)
+            return 0f;
+
+        return EnemyMovementMath.Frontness(slot.X, slot.Z, target.Position.X, target.Position.Z, buildPlayerRotation)
+               * FlankPreferenceWeight;
     }
 
     private float SlotCrowdingPenalty(uint actorId, Vector3 candidate, IReadOnlyDictionary<uint, PartyNode> nodes)
@@ -1259,7 +1329,8 @@ public sealed unsafe class PartyEngagePlanner
         Vector3 CommandAnchor,
         float PreferredEngageRange,
         uint TargetId,
-        bool IsRanged);
+        bool IsRanged,
+        float Radius = EnemyMovementMath.BaselineHitboxRadius);
 
     private enum PartyNodeSide
     {
