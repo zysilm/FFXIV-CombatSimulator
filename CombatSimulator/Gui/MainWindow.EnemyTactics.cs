@@ -33,6 +33,8 @@ public partial class MainWindow
                 "Enemies attacking you take separate slots around you (leaning to your flanks and back) instead of stacking in front.");
             TacticsCheckbox("Body-size aware spacing", () => config.EnemyTacticsHitboxSpacing, v => config.EnemyTacticsHitboxSpacing = v,
                 "Ranges count from the edge of big bodies, and melee slots no longer overlap. Humanoid pairs are unchanged.");
+            TacticsCheckbox("Circle while holding range", () => config.EnemyTacticsStrafe, v => config.EnemyTacticsStrafe = v,
+                "Every few seconds an enemy in range may walk a short arc around its target. Never mid-cast or mid-swing.");
         }
     }
 

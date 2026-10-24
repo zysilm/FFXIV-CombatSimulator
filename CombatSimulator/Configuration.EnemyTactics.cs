@@ -24,6 +24,10 @@ public partial class Configuration
     // melee ring slots keep neighbours from overlapping.
     public bool EnemyTacticsHitboxSpacing { get; set; } = true;
 
+    // Enemies holding range now and then walk a short arc around their target.
+    public bool EnemyTacticsStrafe { get; set; } = true;
+
+    public bool TacticsStrafe => EnhancedEnemyTactics && EnemyTacticsStrafe;
     public bool TacticsRespectEngage => EnhancedEnemyTactics && EnemyTacticsRespectEngage;
     public bool TacticsPlayerSlots => EnhancedEnemyTactics && EnemyTacticsPlayerSlots;
     public bool TacticsHitboxSpacing => EnhancedEnemyTactics && EnemyTacticsHitboxSpacing;

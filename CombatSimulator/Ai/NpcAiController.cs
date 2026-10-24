@@ -18,7 +18,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 
 namespace CombatSimulator.Ai;
 
-public unsafe class NpcAiController : IDisposable
+public unsafe partial class NpcAiController : IDisposable
 {
     public const float PlayerTriggeredEngageDelay = 0.5f;
 
@@ -174,6 +174,7 @@ public unsafe class NpcAiController : IDisposable
         approachLockedGoals.Clear();
         partyApproachDebugNextLogAt.Clear();
         lastApproachDebugRoute.Clear();
+        tacticsStates.Clear();
 
         // OnSimulationReset fires from both StopSimulation and ResetState.
         // StopSimulation flips IsActive false before invoking — skip auto-engage
@@ -1160,6 +1161,13 @@ public unsafe class NpcAiController : IDisposable
         var shouldHoldRange = distToTarget <= outerEdge;
         if (shouldHoldRange)
         {
+            if (TryTickHoldStrafe(npc, gameObj, npcPos, npcTargetPos, partyAttackRange, FlatDistance(npcPos, npcTargetPos) - distToTarget, deltaTime, terrainCache))
+            {
+                if (rangeStateAvailable)
+                    rangeState.WasHoldingRange = true;
+                return;
+            }
+
             if (rangeStateAvailable)
             {
                 rangeState.WasHoldingRange = true;

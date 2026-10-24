@@ -85,6 +85,25 @@ public static class EnemyMovementMath
     }
 
     /// <summary>
+    /// A sidestep goal for an enemy holding range: rotate its bearing around the target by
+    /// <paramref name="arcDeg"/> (sign = direction) and keep its distance clamped into
+    /// [<paramref name="minRadius"/>, <paramref name="maxRadius"/>], so circling never walks it out of
+    /// (or into) its attack band. Returned as (x, z); the caller keeps Y.
+    /// </summary>
+    public static (float X, float Z) CircleGoal(
+        float targetX, float targetZ, float actorX, float actorZ, float arcDeg, float minRadius, float maxRadius)
+    {
+        var dx = actorX - targetX;
+        var dz = actorZ - targetZ;
+        var dist = MathF.Sqrt(dx * dx + dz * dz);
+        var bearing = dist < 0.001f ? 0f : MathF.Atan2(dx, dz);
+        var lo = MathF.Max(0.1f, MathF.Min(minRadius, maxRadius));
+        var radius = Math.Clamp(dist, lo, MathF.Max(lo, maxRadius));
+        var angle = bearing + arcDeg * MathF.PI / 180f;
+        return (targetX + MathF.Sin(angle) * radius, targetZ + MathF.Cos(angle) * radius);
+    }
+
+    /// <summary>
     /// Slot preference relative to the target's facing: +1 straight in front, -1 straight behind.
     /// Scaled by the caller into a cost so attackers drift toward flanks/rear without overriding
     /// distance or crowding.

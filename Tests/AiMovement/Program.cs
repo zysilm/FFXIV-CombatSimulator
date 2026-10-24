@@ -62,4 +62,20 @@ Check(Near(EnemyMovementMath.Frontness(0, -2, 0, 0, 0f), -1f), "slot behind is n
 Check(Near(EnemyMovementMath.Frontness(2, 0, 0, 0, MathF.PI / 2), 1f), "yaw ignored");
 Check(Near(EnemyMovementMath.Frontness(2, 0, 0, 0, 0f), 0f), "flank is not neutral");
 
+// --- Circling goal ------------------------------------------------------------------------------
+{
+    var (x, z) = EnemyMovementMath.CircleGoal(0, 0, 0, 2, 90f, 1f, 3f);
+    Check(Near(x, 2f) && Near(z, 0f, 1e-3f), $"90 degree circle goal wrong ({x},{z})");
+    (x, z) = EnemyMovementMath.CircleGoal(0, 0, 0, 2, -45f, 1f, 3f);
+    Check(x < 0 && Near(MathF.Sqrt(x * x + z * z), 2f), "negative arc does not go the other way");
+    // Distance stays inside the band.
+    (x, z) = EnemyMovementMath.CircleGoal(5, 5, 5, 5.2f, 40f, 1.2f, 1.8f);
+    Check(Near(MathF.Sqrt((x - 5) * (x - 5) + (z - 5) * (z - 5)), 1.2f), "too-close actor not pushed to band");
+    (x, z) = EnemyMovementMath.CircleGoal(0, 0, 10, 0, 40f, 1.2f, 1.8f);
+    Check(Near(MathF.Sqrt(x * x + z * z), 1.8f), "too-far actor not pulled to band");
+    // Degenerate: actor on the target still yields a finite goal.
+    (x, z) = EnemyMovementMath.CircleGoal(0, 0, 0, 0, 30f, 1f, 2f);
+    Check(float.IsFinite(x) && float.IsFinite(z) && Near(MathF.Sqrt(x * x + z * z), 1f), "degenerate circle goal");
+}
+
 Console.WriteLine($"AiMovement: {checks} checks passed.");
