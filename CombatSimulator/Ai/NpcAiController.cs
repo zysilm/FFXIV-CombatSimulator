@@ -1024,15 +1024,12 @@ public unsafe class NpcAiController : IDisposable
         if (hasVnavmeshTarget)
             moveTarget = pathTarget;
 
+        // vnavmesh requested but no usable path (plugin unavailable, navmesh not built, path still
+        // pending). Walk straight at the goal like the party path does. Holding still here used to be
+        // covered by the Chasing state; now that the approach pass owns movement, freezing would leave
+        // the enemy standing out of range for good.
         if (config.UseVNavmeshTargetApproach && !hasVnavmeshTarget)
-        {
-            if (terrainCache != null && approachPaths.TryGetValue(npc.Address, out var noPathState))
-                CorrectStableRootHeight(gameObj, npcPos, terrainCache, noPathState, deltaTime, preserveInitialClearance: true);
-
-            StopApproachMoveAnim(npc);
-            ForceRotateToward(npc, playerPos, deltaTime);
-            return;
-        }
+            moveTarget = targetPos;
 
         if (Vector3.Distance(npcPos, moveTarget) <= 0.3f)
         {
