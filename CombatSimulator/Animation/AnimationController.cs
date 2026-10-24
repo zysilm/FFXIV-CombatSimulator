@@ -1860,12 +1860,47 @@ public unsafe class AnimationController : IDisposable
         }
     }
 
+    /// <summary>Post-fight celebration; assigned by the plugin. Null keeps PlayVictory a no-op.</summary>
+    public VictoryCelebrationDirector? Victory { get; set; }
+
     /// <summary>
-    /// Execute victory animation.
+    /// Execute victory animation: the survivors of the winning side celebrate in place.
+    /// Off unless config.EnableVictoryCelebration; party victories also need
+    /// config.VictoryCelebrationCompanions. The player is never animated here.
     /// </summary>
     public void PlayVictory(bool isPlayerVictory, IReadOnlyList<SimulatedNpc>? npcs = null)
     {
+        if (!config.EnableVictoryCelebration || Victory == null) return;
+        try
+        {
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            if (isPlayerVictory)
+            {
+                if (!config.VictoryCelebrationCompanions || Victory.Companions == null) return;
+                // Companions celebrate toward the player who led the fight.
+                Victory.Begin(CelebrationMood.PartyVictory, Victory.Companions(),
+                    player != null ? ((GameObject*)player.Address)->GetGameObjectId().Id : 0);
+                return;
+            }
+            if (npcs == null) return;
+            var winners = new List<(nint, uint)>();
+            foreach (var npc in npcs)
+                if (npc.BattleChara != null && npc.State.IsAlive && !npc.IsClientControlled)
+                    winners.Add((npc.Address, npc.SimulatedEntityId));
+            // Facing the fallen player gives a gloat its direction; emotes with no target ignore it.
+            Victory.Begin(CelebrationMood.EnemyVictory, winners,
+                player != null ? ((GameObject*)player.Address)->GetGameObjectId().Id : 0);
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "AnimationController: victory celebration failed to start.");
+        }
     }
+
+    /// <summary>A one-shot from the creature's own model family (see PlayNpcMeleeAnimationOnly),
+    /// used as a celebratory flourish by creatures that cannot play player emotes.</summary>
+    public ushort SelectModelFlourishTimeline(uint modelCharaId)
+        => modelCharaId == 0 ? (ushort)0 : npcModelActionTimelines.Select(modelCharaId);
 
     /// <summary>
     /// Play NPC auto-attack with full animation + VFX pipeline.

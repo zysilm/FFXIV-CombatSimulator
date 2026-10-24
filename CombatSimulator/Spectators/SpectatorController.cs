@@ -343,6 +343,7 @@ public sealed unsafe partial class SpectatorController : IDisposable
         TickLiveSpectators();
         TickRerolls();
         TickChatter(deltaTime);
+        TickReactions(deltaTime);
     }
 
     public void DespawnAll()
@@ -350,6 +351,7 @@ public sealed unsafe partial class SpectatorController : IDisposable
         spawnQueue.Clear();
         rerollQueue.Clear();
         rerollPool = Array.Empty<SpectatorEmote>();
+        ClearReactions();
 
         foreach (var pending in pendingSpectators)
             pending.Actor.DespawnRequested = true;

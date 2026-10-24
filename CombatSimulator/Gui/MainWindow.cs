@@ -2465,6 +2465,8 @@ public partial class MainWindow : IDisposable
             }
         }
 
+        DrawVictoryCelebrationSection();
+
         DrawNpcScaleSection();
 
         DrawEnemyVoiceSection();

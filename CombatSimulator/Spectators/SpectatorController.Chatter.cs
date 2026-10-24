@@ -110,6 +110,12 @@ public sealed unsafe partial class SpectatorController
             config.SpectatorDecisiveChatterLines = CreateDefaultDecisiveChatterLines();
             configChanged = true;
         }
+        if (config.SpectatorVictoryChatterLines == null || config.SpectatorDefeatChatterLines == null)
+        {
+            config.SpectatorVictoryChatterLines ??= SpectatorReactionPlan.CreateDefaultVictoryLines();
+            config.SpectatorDefeatChatterLines ??= SpectatorReactionPlan.CreateDefaultDefeatLines();
+            configChanged = true;
+        }
         if (config.SpectatorEmoteIds == null)
         {
             config.SpectatorEmoteIds = CreateDefaultEmoteIds();
@@ -307,7 +313,12 @@ public sealed unsafe partial class SpectatorController
         var source = phase switch
         {
             SpectatorChatterPhase.Battle => config.SpectatorBattleChatterLines,
-            SpectatorChatterPhase.Decisive => config.SpectatorDecisiveChatterLines,
+            SpectatorChatterPhase.Decisive => CurrentOutcomePool switch
+            {
+                SpectatorOutcomePool.Victory => config.SpectatorVictoryChatterLines,
+                SpectatorOutcomePool.Defeat => config.SpectatorDefeatChatterLines,
+                _ => config.SpectatorDecisiveChatterLines,
+            },
             _ when allowBattlePreview => config.SpectatorBattleChatterLines,
             _ => null,
         };
@@ -343,6 +354,27 @@ public sealed unsafe partial class SpectatorController
             ? SpectatorChatterPhase.Battle
             : SpectatorChatterPhase.Decisive;
     }
+
+    /// <summary>Which pool the decisive phase uses right now (see SpectatorReactionPlan).</summary>
+    public SpectatorOutcomePool CurrentOutcomePool
+    {
+        get
+        {
+            if (!config.SpectatorOutcomeChatter) return SpectatorOutcomePool.Decisive;
+            var enemyAlive = false;
+            foreach (var npc in npcSelector.SelectedNpcs)
+                if (npc.IsSpawned && npc.BattleChara != null && npc.Address != nint.Zero && npc.IsAlive)
+                {
+                    enemyAlive = true;
+                    break;
+                }
+            return SpectatorReactionPlan.ResolveOutcomePool(true, hasLivingFriendlySide(), enemyAlive,
+                HasUsableLine(config.SpectatorVictoryChatterLines), HasUsableLine(config.SpectatorDefeatChatterLines));
+        }
+    }
+
+    private static bool HasUsableLine(List<string>? lines)
+        => lines != null && lines.Exists(line => NormalizeChatterLine(line).Length > 0);
 
     private static string NormalizeChatterLine(string? line)
     {
