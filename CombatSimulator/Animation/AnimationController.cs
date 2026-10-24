@@ -72,6 +72,8 @@ public unsafe class AnimationController : IDisposable
     private readonly NpcModelActionTimelineProvider npcModelActionTimelines;
     private readonly NpcTimelineVfxTrackProvider npcTimelineVfxTracks;
     public EmoteTimelinePlayer EmotePlayer => emotePlayer;
+    /// <summary>Shared so monster skill kits read the same model families the animations come from.</summary>
+    public NpcModelActionTimelineProvider NpcModelActions => npcModelActionTimelines;
     private readonly Configuration config;
     private readonly IDataManager dataManager;
     private readonly Dictionary<uint, float> actionAnimationDurationCache = new();

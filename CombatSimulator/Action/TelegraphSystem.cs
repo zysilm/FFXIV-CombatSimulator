@@ -273,7 +273,12 @@ public sealed class TelegraphSystem
     {
         // Show the enemy attack even when it's blocked/dodged. Ranged/magic play their cast pose
         // (no projectile/damage) so a parried staff enemy isn't animation-less.
-        if (t.Request.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto)
+        // A real skill whiffs with its own timeline; the generic melee whiff picks a random one
+        // from the model family, which on a monster is some other skill's animation.
+        if (config.EnemyMonsterRealSkills && !t.Request.IsAutoAttack &&
+            t.Request.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto)
+            animationController.PlayNpcWindupPose(t.Source, t.Request.ActionId);
+        else if (t.Request.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto)
             animationController.PlayNpcMeleeAnimationOnly(t.Source);
         else
             animationController.PlayNpcWindupPose(t.Source, t.Request.ActionId);

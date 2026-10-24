@@ -207,6 +207,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         terrainHeightService = new TerrainHeightService();
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, gameInterop, sigScanner, config);
+        npcActionProfileProvider.MonsterKits = new MonsterActionKitProvider(
+            animationController.NpcModelActions, actionDataProvider, dataManager, log);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, npcActionProfileProvider, log);
         npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, npcActionProfileProvider, movementBlockHook, log);

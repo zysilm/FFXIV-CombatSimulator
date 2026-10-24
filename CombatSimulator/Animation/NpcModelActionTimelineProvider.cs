@@ -32,6 +32,8 @@ public sealed class NpcModelActionTimelineProvider
     {
         public HashSet<ushort> AllTimelines { get; init; } = new();
         public NpcModelActionSelection[] AttackPool { get; init; } = Array.Empty<NpcModelActionSelection>();
+        /// <summary>Every Action row whose AnimationEnd is one of this family's timelines.</summary>
+        public uint[] LinkedActionIds { get; init; } = Array.Empty<uint>();
         public string Prefix { get; init; } = string.Empty;
         public string Tier { get; init; } = "none";
     }
@@ -103,11 +105,7 @@ public sealed class NpcModelActionTimelineProvider
         if (modelCharaId == 0)
             return default;
 
-        if (!cache.TryGetValue(modelCharaId, out var family))
-        {
-            family = BuildFamily(modelCharaId);
-            cache[modelCharaId] = family;
-        }
+        var family = GetFamily(modelCharaId);
 
         if (preferredTimeline != 0 && family.AllTimelines.Contains(preferredTimeline))
             return new NpcModelActionSelection(preferredActionId, preferredTimeline);
@@ -131,6 +129,28 @@ public sealed class NpcModelActionTimelineProvider
         }
 
         return pool[start];
+    }
+
+    /// <summary>
+    /// The real Action rows authored for this model family (all of them, not just the attack
+    /// pool), for building a monster's skill kit. Empty for human models and for families that
+    /// only resolve through skeleton templates — those have no Action rows to read areas from.
+    /// </summary>
+    public IReadOnlyList<uint> GetLinkedActionIds(uint modelCharaId)
+        => modelCharaId == 0 ? Array.Empty<uint>() : GetFamily(modelCharaId).LinkedActionIds;
+
+    /// <summary>Whether <paramref name="timelineId"/> belongs to the model's own family.</summary>
+    public bool FamilyContainsTimeline(uint modelCharaId, ushort timelineId)
+        => modelCharaId != 0 && timelineId != 0 && GetFamily(modelCharaId).AllTimelines.Contains(timelineId);
+
+    private FamilyEntry GetFamily(uint modelCharaId)
+    {
+        if (!cache.TryGetValue(modelCharaId, out var family))
+        {
+            family = BuildFamily(modelCharaId);
+            cache[modelCharaId] = family;
+        }
+        return family;
     }
 
     private FamilyEntry BuildFamily(uint modelCharaId)
@@ -265,6 +285,7 @@ public sealed class NpcModelActionTimelineProvider
             {
                 AllTimelines = all,
                 AttackPool = pool,
+                LinkedActionIds = linked.Select(static action => action.RowId).ToArray(),
                 Prefix = prefix,
                 Tier = tier,
             };
