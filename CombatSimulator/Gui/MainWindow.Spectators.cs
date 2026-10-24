@@ -65,15 +65,17 @@ public partial class MainWindow
         {
             ImGui.Indent();
             DrawSpectatorEmotePool();
-            var reactions = config.SpectatorReactionEmotes;
-            if (ImGui.Checkbox("React to key moments##spectatorReactions", ref reactions))
-            {
-                config.SpectatorReactionEmotes = reactions;
-                config.Save();
-            }
-            HelpMarker("Most of the crowd plays a one-shot reaction (cheer, clap, shock, surprise) over its looped emote when the fight is decided, and in private builds when a story starts or a story grab begins. Staggered; the loop resumes afterwards.");
             ImGui.Unindent();
         }
+
+        // Top level rather than under the emote pool, where it sat below a long list and went unseen.
+        var reactions = config.SpectatorReactionEmotes;
+        if (ImGui.Checkbox("Crowd reacts to key moments##spectatorReactions", ref reactions))
+        {
+            config.SpectatorReactionEmotes = reactions;
+            config.Save();
+        }
+        HelpMarker("Most of the crowd plays a one-shot reaction (cheer, clap, shock, surprise) over its looped emote when the fight is decided, and in private builds when a story starts or a story grab begins. Staggered; the loop resumes afterwards.");
 
         var chatterState = config.SpectatorChatterEnabled ? "on" : "off";
         if (ImGui.CollapsingHeader(

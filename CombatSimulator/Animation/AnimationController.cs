@@ -1887,7 +1887,9 @@ public unsafe class AnimationController : IDisposable
             if (npcs == null) return;
             var winners = new List<(nint, uint)>();
             foreach (var npc in npcs)
-                if (npc.BattleChara != null && npc.State.IsAlive && !npc.IsClientControlled)
+                // Client-spawned enemies are the usual winners, so they must not be filtered out;
+                // actors under Enemy Control are skipped by the director's IsExternallyDriven.
+                if (npc.BattleChara != null && npc.State.IsAlive)
                     winners.Add((npc.Address, npc.SimulatedEntityId));
             // Facing the fallen player gives a gloat its direction; emotes with no target ignore it.
             Victory.Begin(CelebrationMood.EnemyVictory, winners,

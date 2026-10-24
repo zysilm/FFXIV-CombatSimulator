@@ -5,12 +5,12 @@
 namespace CombatSimulator;
 
 // Enhanced enemy tactics: movement, spacing and target-selection behaviours layered on the enemy
-// approach and the party engage planner. The master switch defaults off, and with it off every
-// behaviour below is inert, so existing setups move exactly as before. Sub-switches default on so
-// enabling the master gives the full set; each can then be turned off on its own to isolate it.
+// approach and the party engage planner. The master switch defaults on; with it off every behaviour
+// below is inert and enemies move as before. Sub-switches default on (except idle-until-engaged) so
+// the master gives the full set; each can be turned off on its own to isolate it.
 public partial class Configuration
 {
-    public bool EnhancedEnemyTactics { get; set; } = false;
+    public bool EnhancedEnemyTactics { get; set; } = true;
 
     // Party mode no longer force-engages every enemy every frame: enemies start idle and join on
     // aggro, auto-engage (Dev > NPC auto-engage), a hit, or an ally's call for help.

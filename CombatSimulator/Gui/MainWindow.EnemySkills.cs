@@ -9,12 +9,27 @@ using Dalamud.Interface.Utility.Raii;
 namespace CombatSimulator.Gui;
 
 // Enemy skills (what enemies use, how it is telegraphed, how it resolves). Drawn inside the map
-// enemies section right after the humanoid kit size. Every switch defaults off.
+// enemies section right after the humanoid kit size.
 public partial class MainWindow
 {
     private void DrawEnemySkillsSection()
     {
-        ImGui.TextDisabled("Enemy skills (apply to enemies added after a change)");
+        // Collapsed by default: the map enemies header is already long, and these are set-and-forget.
+        if (!ImGui.TreeNode("Enemy skills##enemySkillsSection"))
+            return;
+        try
+        {
+            DrawEnemySkillsContent();
+        }
+        finally
+        {
+            ImGui.TreePop();
+        }
+    }
+
+    private void DrawEnemySkillsContent()
+    {
+        ImGui.TextDisabled("Apply to enemies added after a change");
 
         EnemySkillToggle("Monster real skills", () => config.EnemyMonsterRealSkills, v => config.EnemyMonsterRealSkills = v,
             "Monsters use their own species' real skills (area, cast, animation) instead of auto-attack only.");
