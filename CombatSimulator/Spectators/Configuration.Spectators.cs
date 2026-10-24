@@ -33,6 +33,18 @@ public partial class Configuration
         Spectators.SpectatorController.CreateDefaultDecisiveChatterLines();
     public bool SpectatorCollectionReplaceRepairApplied { get; set; }
 
+    // Off: the decisive phase speaks from the shared decisive pool (original behavior). On: it
+    // uses the victory or defeat pool for the side that won, falling back when that pool is empty.
+    public bool SpectatorOutcomeChatter { get; set; }
+    [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
+    public List<string> SpectatorVictoryChatterLines { get; set; } =
+        Spectators.SpectatorReactionPlan.CreateDefaultVictoryLines();
+    [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
+    public List<string> SpectatorDefeatChatterLines { get; set; } =
+        Spectators.SpectatorReactionPlan.CreateDefaultDefeatLines();
+    // One-shot crowd emotes when the fight ends, a story starts or a story grab begins.
+    public bool SpectatorReactionEmotes { get; set; }
+
     // Legacy single-pool storage. SpectatorController copies this list verbatim into the
     // decisive pool on load, then clears this property. Null is intentional for new configs:
     // it distinguishes a new install from a config that actually contains the old list.

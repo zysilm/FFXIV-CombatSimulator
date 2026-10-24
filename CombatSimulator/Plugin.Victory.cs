@@ -32,6 +32,10 @@ public sealed unsafe partial class CombatSimulatorPlugin
             },
         };
         animationController.Victory = victoryCelebration;
+        // Crowd reactions to the result; React() is a no-op unless SpectatorReactionEmotes.
+        // spectatorController is constructed after this runs, hence the late lookup.
+        combatEngine.OnOutcomeDecided = playerWon => spectatorController?.React(
+            playerWon ? Spectators.SpectatorReaction.PlayerVictory : Spectators.SpectatorReaction.PlayerDefeat);
     }
 
     private IEnumerable<(nint Address, uint EntityId)> LivingCompanionActors()

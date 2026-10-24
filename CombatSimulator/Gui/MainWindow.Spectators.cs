@@ -24,6 +24,8 @@ public partial class MainWindow
     private uint selectedSpectatorEmoteId;
     private string spectatorNewBattleChatterLine = string.Empty;
     private string spectatorNewDecisiveChatterLine = string.Empty;
+    private string spectatorNewVictoryChatterLine = string.Empty;
+    private string spectatorNewDefeatChatterLine = string.Empty;
 
     private void DrawSpectatorsTab()
     {
@@ -33,6 +35,8 @@ public partial class MainWindow
         config.SpectatorExcludedENpcIds ??= new List<uint>();
         config.SpectatorBattleChatterLines ??= SpectatorController.CreateDefaultBattleChatterLines();
         config.SpectatorDecisiveChatterLines ??= SpectatorController.CreateDefaultDecisiveChatterLines();
+        config.SpectatorVictoryChatterLines ??= SpectatorReactionPlan.CreateDefaultVictoryLines();
+        config.SpectatorDefeatChatterLines ??= SpectatorReactionPlan.CreateDefaultDefeatLines();
         MigrateSpectatorExclusionsToNames();
         ResolveSavedSpectatorSelection();
 
@@ -61,6 +65,13 @@ public partial class MainWindow
         {
             ImGui.Indent();
             DrawSpectatorEmotePool();
+            var reactions = config.SpectatorReactionEmotes;
+            if (ImGui.Checkbox("React to key moments##spectatorReactions", ref reactions))
+            {
+                config.SpectatorReactionEmotes = reactions;
+                config.Save();
+            }
+            HelpMarker("Most of the crowd plays a one-shot reaction (cheer, clap, shock, surprise) over its looped emote when the fight is decided, and in private builds when a story starts or a story grab begins. Staggered; the loop resumes afterwards.");
             ImGui.Unindent();
         }
 
@@ -521,7 +532,22 @@ public partial class MainWindow
             SpectatorChatterPhase.Decisive => "Decisive",
             _ => "Waiting for an enemy roster (Test Once previews Battle)",
         };
+        if (chatterPhase == SpectatorChatterPhase.Decisive)
+            activePoolName = spectatorController.CurrentOutcomePool switch
+            {
+                SpectatorOutcomePool.Victory => "Victory",
+                SpectatorOutcomePool.Defeat => "Defeat",
+                _ => activePoolName,
+            };
         ImGui.TextDisabled($"Active dialogue: {activePoolName}");
+
+        var outcomeChatter = config.SpectatorOutcomeChatter;
+        if (ImGui.Checkbox("Outcome-aware finish lines##spectatorOutcomeChatter", ref outcomeChatter))
+        {
+            config.SpectatorOutcomeChatter = outcomeChatter;
+            config.Save();
+        }
+        HelpMarker("After the fight is decided, speak from the Victory pool when your side won and the Defeat pool when it lost, instead of the shared Decisive pool. An empty pool falls back to Decisive.");
 
         var previewLineCount = chatterPhase == SpectatorChatterPhase.Decisive
             ? config.SpectatorDecisiveChatterLines.Count
@@ -561,9 +587,11 @@ public partial class MainWindow
         {
             config.SpectatorBattleChatterLines = SpectatorController.CreateDefaultBattleChatterLines();
             config.SpectatorDecisiveChatterLines = SpectatorController.CreateDefaultDecisiveChatterLines();
+            config.SpectatorVictoryChatterLines = SpectatorReactionPlan.CreateDefaultVictoryLines();
+            config.SpectatorDefeatChatterLines = SpectatorReactionPlan.CreateDefaultDefeatLines();
             config.Save();
         }
-        ImGui.TextDisabled("Restores both pools. Custom lines in both pools will be replaced.");
+        ImGui.TextDisabled("Restores every pool. Custom lines in all pools will be replaced.");
 
         DrawSpectatorChatterPool(
             "Battle Lines",
@@ -577,6 +605,21 @@ public partial class MainWindow
             "Used after either the player/party side or enemy side is wiped out.",
             config.SpectatorDecisiveChatterLines,
             ref spectatorNewDecisiveChatterLine);
+        if (config.SpectatorOutcomeChatter)
+        {
+            DrawSpectatorChatterPool(
+                "Victory Lines",
+                "victory",
+                "Outcome-aware: used after every enemy is down while your side still stands.",
+                config.SpectatorVictoryChatterLines,
+                ref spectatorNewVictoryChatterLine);
+            DrawSpectatorChatterPool(
+                "Defeat Lines",
+                "defeat",
+                "Outcome-aware: used after your side is wiped while an enemy still stands.",
+                config.SpectatorDefeatChatterLines,
+                ref spectatorNewDefeatChatterLine);
+        }
         ImGui.Unindent();
     }
 

@@ -1442,6 +1442,7 @@ public class CombatEngine : IDisposable
             {
                 playerVictoryTriggered = true;
                 animationController.PlayVictory(isPlayerVictory: true);
+                OnOutcomeDecided?.Invoke(true);
             }
         }
     }
@@ -1482,7 +1483,12 @@ public class CombatEngine : IDisposable
 
         if (cinematicNpc == null)
             animationController.PlayVictory(isPlayerVictory: false, npcSelector.SelectedNpcs);
+        OnOutcomeDecided?.Invoke(false);
     }
+
+    /// <summary>Raised once per outcome at the victory trigger points (true = the player's side
+    /// won). Presentation-only listeners such as crowd reactions; voice can hook here too.</summary>
+    public Action<bool>? OnOutcomeDecided { get; set; }
 
     private void OnEntityDeath(SimulatedEntityState entity)
     {
