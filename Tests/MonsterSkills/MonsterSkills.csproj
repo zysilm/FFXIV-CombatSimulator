@@ -4,5 +4,6 @@
     <Compile Include="../../CombatSimulator/Simulation/CastTypeMapping.cs" Link="Production/CastTypeMapping.cs" />
     <Compile Include="../../CombatSimulator/Simulation/CombatGeometry.cs" Link="Production/CombatGeometry.cs" />
     <Compile Include="../../CombatSimulator/Npcs/MonsterKitBuilder.cs" Link="Production/MonsterKitBuilder.cs" />
+    <Compile Include="../../CombatSimulator/Simulation/TelegraphShape.cs" Link="Production/TelegraphShape.cs" />
   </ItemGroup>
 </Project>

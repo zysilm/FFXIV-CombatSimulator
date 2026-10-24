@@ -68,4 +68,44 @@ Check(MonsterKitBuilder.Cooldown(cone) == 12.5f, "cooldown floor 10 + cast");
 Check(MonsterKitBuilder.Potency(5000, 110, true, 2.5f) == 330 && MonsterKitBuilder.Potency(10, 110, true, 0) == 154, "potency band");
 Check(MonsterKitBuilder.Potency(5000, 110, false, 0) == 220, "instant ceiling 2x");
 
+// ---- Telegraph snapshot: what is drawn is what hits ----
+var caster = new Vector3(10, 0, 10);
+var tgt = new Vector3(10, 0, 14);       // 4y north (+Z) of the caster
+const float hb = 1.0f;
+// Foul Breath: CastType 3, r6, 90° → cone from the caster, reach 6 + hitbox.
+var breath = TelegraphShape.Build(AoeShape.Cone, 3, 6, 0, 90, 0, caster, hb, tgt, 2.5f);
+Check(breath.Kind == TelegraphKind.Cone && breath.Origin == caster && breath.IsArea, "cone anchored on caster");
+Check(MathF.Abs(breath.Rotation) < 1e-4f, "cone faces +Z target (yaw 0)");
+Check(breath.Contains(tgt) && breath.Contains(new Vector3(10, 0, 16.9f)), "target and 6.9y ahead inside (hitbox added)");
+Check(!breath.Contains(new Vector3(10, 0, 17.2f)), "beyond reach");
+Check(!breath.Contains(new Vector3(10, 0, 8)), "behind the caster is safe");
+Check(!breath.Contains(new Vector3(14, 0, 11)), "side step out of a 90° cone");
+Check(breath.Contains(caster), "standing on the caster's centre");
+var wide = TelegraphShape.Build(AoeShape.Cone, 13, 6, 0, 270, 0, caster, hb, tgt, 2.5f);
+Check(wide.Contains(new Vector3(14, 0, 9.5f)) && wide.Radius == 6, "270° cone reaches behind; type 13 adds no hitbox");
+// Yaw convention: target due east (+X) → yaw +90°.
+var east = TelegraphShape.Build(AoeShape.Cone, 13, 6, 0, 60, 0, caster, 0, new Vector3(15, 0, 10), 2.5f);
+Check(MathF.Abs(east.Rotation - MathF.PI / 2) < 1e-4f && east.Contains(new Vector3(14, 0, 10)) && !east.Contains(new Vector3(10, 0, 14)), "yaw = atan2(dx, dz)");
+// Silkscreen: CastType 4 rect 15 long, 4 wide.
+var silk = TelegraphShape.Build(AoeShape.Line, 4, 15, 4, 90, 0, caster, hb, tgt, 2.5f);
+Check(silk.Kind == TelegraphKind.Rect && silk.Contains(new Vector3(11.9f, 0, 25.5f)) && !silk.Contains(new Vector3(12.1f, 0, 20)), "rect width/length");
+Check(!silk.Contains(new Vector3(10, 0, 9)), "rect does not extend behind");
+// Charge (8): EffectRange 0 → reaches the target.
+var charge = TelegraphShape.Build(AoeShape.Line, 8, 0, 8, 90, 0, caster, hb, tgt, 2.5f);
+Check(charge.IsArea && charge.Contains(tgt) && charge.Radius > 4, "charge reaches target");
+// Self circle (5) vs target circle (2 aimed).
+var pbaoe = TelegraphShape.Build(AoeShape.CircleSelf, 5, 6, 0, 90, 0, caster, hb, tgt, 2.5f);
+Check(pbaoe.Origin == caster && pbaoe.Radius == 7, "type 5 on caster + hitbox");
+var fire2 = TelegraphShape.Build(AoeShape.Circle, 2, 5, 0, 90, 0, caster, hb, tgt, 2.5f);
+Check(fire2.Origin == tgt && fire2.Radius == 5, "aimed circle on target, no hitbox");
+var donut = TelegraphShape.Build(AoeShape.Donut, 10, 10, 0, 90, 4, caster, hb, tgt, 2.5f);
+Check(!donut.Contains(new Vector3(12, 0, 10)) && donut.Contains(new Vector3(16, 0, 10)), "donut hole");
+// Single target / sizeless → legacy 2.5y circle on the target, not an area.
+var single = TelegraphShape.Build(AoeShape.Single, 1, 0, 0, 90, 0, caster, hb, tgt, 2.5f);
+Check(!single.IsArea && single.Origin == tgt && single.Radius == 2.5f, "single fallback circle");
+Check(!TelegraphShape.Build(AoeShape.Cone, 3, 0, 0, 90, 0, caster, hb, tgt, 2.5f).IsArea, "sizeless cone falls back");
+// Snapshot is fixed: the shape does not follow a target that moves after commit.
+var moved = new Vector3(14, 0, 10);
+Check(!breath.Contains(moved), "moving out after snapshot dodges");
+
 Console.WriteLine($"MonsterSkills: {checks} checks passed.");

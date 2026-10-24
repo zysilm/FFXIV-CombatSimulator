@@ -12,4 +12,10 @@ public partial class Configuration
     // Monsters (no job) use their own model family's real Action rows instead of auto-attack only.
     public bool EnemyMonsterRealSkills { get; set; } = false;
     public int EnemyMaxMonsterSkills { get; set; } = 3;
+
+    // Telegraphs take the action's real shape (cone/rect/donut/circle, caster- or target-anchored),
+    // snapshotted at commit; the hit at resolve uses the same snapshot and reaches everyone inside.
+    public bool EnemyTelegraphRealShapes { get; set; } = false;
+    // Keep drawing the overlay outline even while a native omen marks the same area.
+    public bool EnemyAreaOverlayWithOmen { get; set; } = false;
 }

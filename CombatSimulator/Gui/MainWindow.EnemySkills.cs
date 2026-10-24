@@ -29,6 +29,9 @@ public partial class MainWindow
             }
             HelpMarker("Most real skills kept per monster. Area skills are preferred, plus one single-target attack.");
         }
+
+        EnemySkillToggle("Real-shape telegraphs", () => config.EnemyTelegraphRealShapes, v => config.EnemyTelegraphRealShapes = v,
+            "Enemy areas are drawn in their real shape (cone, line, donut, circle) and hit whoever stands inside when they land.");
     }
 
     private void EnemySkillToggle(string label, Func<bool> get, Action<bool> set, string tooltip)

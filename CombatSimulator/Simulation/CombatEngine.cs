@@ -667,7 +667,9 @@ public class CombatEngine : IDisposable
         bool suppressCasterActionEffect = false,
         bool suppressCastVfx = false,
         uint modelVfxActionId = 0,
-        bool modelTimelineOwnsVfx = false)
+        bool modelTimelineOwnsVfx = false,
+        TelegraphShape? area = null,
+        ulong excludeTargetId = 0)
     {
         var result = new SimulatedActionResult
         {
@@ -681,6 +683,34 @@ public class CombatEngine : IDisposable
         {
             result.FailReason = "Invalid target or source dead.";
             return result;
+        }
+
+        // A snapshotted telegraph area decides who is hit: everyone hostile standing in it at
+        // resolve, and only them — the primary included only if it stayed inside, the guarding
+        // player (excludeTargetId) spared without sparing the companions next to them.
+        List<SimulatedEntityState>? areaTargets = null;
+        if (area is { } areaShape)
+        {
+            areaTargets = new List<SimulatedEntityState>();
+            foreach (var candidate in GetHostileTargets(npc.State))
+            {
+                if (areaTargets.Count >= 32)
+                    break;
+                if (!candidate.IsAlive || candidate.EntityId == excludeTargetId)
+                    continue;
+                if (areaShape.Contains(GetEntityPosition(candidate)))
+                    areaTargets.Add(candidate);
+            }
+            if (areaTargets.Count == 0)
+            {
+                result.FailReason = "No targets in area.";
+                return result;
+            }
+            if (!areaTargets.Contains(target))
+            {
+                target = areaTargets[0];
+                result.TargetId = target.EntityId;
+            }
         }
 
         var resolvedActionData = actionDataProvider.GetActionData(actionId);
@@ -738,7 +768,7 @@ public class CombatEngine : IDisposable
         ApplyNpcAttackStyle(visualAction, attackStyle == NpcAttackStyle.Auto ? npc.Behavior.AutoAttackStyle : attackStyle);
         var hits = new List<AppliedActionDamage> { new(target, dmgResult) };
         var totalDamage = dmgResult.Damage;
-        foreach (var extraTarget in ResolveActionTargets(npc.State, target, visualAction, primaryAlreadyHit: true))
+        foreach (var extraTarget in areaTargets ?? ResolveActionTargets(npc.State, target, visualAction, primaryAlreadyHit: true))
         {
             if (extraTarget.EntityId == target.EntityId)
                 continue;
