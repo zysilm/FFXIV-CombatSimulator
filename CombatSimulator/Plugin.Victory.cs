@@ -22,6 +22,7 @@ public sealed unsafe partial class CombatSimulatorPlugin
         {
             MaxStagger = () => config.VictoryCelebrationStagger,
             Companions = LivingCompanionActors,
+            IsExternallyDriven = address => enemyControlController.ControlsNpc(address),
             // The celebration lasts exactly as long as the outcome it belongs to: a revive, a new
             // wave or stopping the simulation ends it and returns everyone to idle.
             OutcomeHolds = mood => config.EnableVictoryCelebration && combatEngine.IsActive && mood switch

@@ -36,6 +36,9 @@ public sealed unsafe class VictoryCelebrationDirector
     /// <summary>Living companions for a party victory, as (address, entity id).</summary>
     public Func<IEnumerable<(nint Address, uint EntityId)>>? Companions { get; set; }
 
+    /// <summary>True when another controller now drives this actor's movement.</summary>
+    public Func<nint, bool>? IsExternallyDriven { get; set; }
+
     /// <summary>Stagger ceiling in seconds; read when a celebration begins.</summary>
     public Func<float> MaxStagger { get; set; } = () => 1.5f;
 
@@ -122,6 +125,14 @@ public sealed unsafe class VictoryCelebrationDirector
             var performer = performers[i];
             if (!IsLive(performer.Address, performer.EntityId))
             {
+                performers.RemoveAt(i);
+                continue;
+            }
+            // Possession after the result (Enemy Control) moves the actor; a re-asserted emote
+            // loop would then slide across the ground. Hand it over once, cleanly.
+            if (IsExternallyDriven?.Invoke(performer.Address) == true)
+            {
+                ResetPerformer(performer);
                 performers.RemoveAt(i);
                 continue;
             }
