@@ -82,8 +82,8 @@ public partial class MainWindow
             if (defeatTaunts)
             {
                 ImGui.Indent();
-                SliderFloatSaved("Every (s)##enemyVoiceDefeat", () => config.EnemyVoiceDefeatTauntInterval, v => config.EnemyVoiceDefeatTauntInterval = v, 3f, 30f,
-                    "Seconds between taunts.");
+                SliderFloatSaved("Every (s)##enemyVoiceDefeat", () => config.EnemyVoiceDefeatTauntInterval, v => config.EnemyVoiceDefeatTauntInterval = v, 1f, 30f,
+                    "Seconds between taunts. Short intervals let several enemies talk at once, each under its own bubble.");
                 var kill = config.EnemyVoiceDefeatTauntKill;
                 if (ImGui.Checkbox("Kill lines##enemyVoiceDefeat", ref kill))
                 {

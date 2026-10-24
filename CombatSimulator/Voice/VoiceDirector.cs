@@ -73,6 +73,8 @@ public sealed unsafe class VoiceDirector
     // Taunts over a fallen player: countdown to the next one (-1 = not running) and who spoke last.
     private float defeatTauntTimer = -1f;
     private uint lastDefeatSpeaker;
+    // When each enemy's current line ends, so overlapping taunts never stack on one speaker.
+    private readonly Dictionary<uint, float> lineEndsAt = new();
     // A guaranteed killing-blow line waits this long for its speaker before it is given up.
     private const float MaxKillHold = 30f;
 
@@ -260,6 +262,7 @@ public sealed unsafe class VoiceDirector
         lastPlayerAlive = null;
         defeatTauntTimer = -1f;
         lastDefeatSpeaker = 0;
+        lineEndsAt.Clear();
     }
 
     private bool GuaranteedKills => config.EnemyVoiceGuaranteeKills && config.EnemyVoiceLines;
@@ -527,25 +530,29 @@ public sealed unsafe class VoiceDirector
             return;
         }
 
-        var interval = Math.Clamp(config.EnemyVoiceDefeatTauntInterval, 3f, 60f);
+        var interval = Math.Clamp(config.EnemyVoiceDefeatTauntInterval, 1f, 60f);
         if (defeatTauntTimer < 0f)
         {
             // The first taunt follows the kill and victory calls, not on top of them.
-            defeatTauntTimer = interval;
+            defeatTauntTimer = Math.Max(interval, 3f);
             return;
         }
         defeatTauntTimer -= deltaTime;
-        if (defeatTauntTimer > 0f || !linePicker.GateOpen(VoiceEvent.Taunt))
+        if (defeatTauntTimer > 0f)
             return;
 
         var options = new List<VoiceEvent>(3);
         if (config.EnemyVoiceDefeatTauntKill) options.Add(VoiceEvent.KilledPlayer);
         if (config.EnemyVoiceDefeatTauntTaunt) options.Add(VoiceEvent.Taunt);
         if (config.EnemyVoiceDefeatTauntVictory) options.Add(VoiceEvent.Victory);
-        defeatTauntTimer = interval;
         if (options.Count == 0)
+        {
+            defeatTauntTimer = interval;
             return;
+        }
 
+        // Taunts may overlap (down to one a second, each enemy under its own bubble), but an
+        // enemy still talking is skipped; if everyone is mid-line, try again next frame.
         var e = options[random.Next(options.Count)];
         var speaker = PickDefeatTaunter(e);
         if (speaker == 0 || !tracked.TryGetValue(speaker, out var t))
@@ -553,17 +560,18 @@ public sealed unsafe class VoiceDirector
         var npc = npcSelector.GetSelectedNpc(speaker);
         if (npc == null || npc.Address != t.Address)
             return;
+        defeatTauntTimer = interval;
         if (TrySpeakLine(new VoiceCandidate(speaker, e, t.Distance), npc, t, scripted: true))
             lastDefeatSpeaker = speaker;
     }
 
-    /// <summary>One of the three nearest enemies able to voice the event, avoiding whoever spoke
-    /// the previous taunt when there is a choice.</summary>
+    /// <summary>One of the three nearest enemies able to voice the event and not mid-line,
+    /// avoiding whoever spoke the previous taunt when there is a choice.</summary>
     private uint PickDefeatTaunter(VoiceEvent e)
     {
         var able = new List<(uint Id, float Distance)>();
         foreach (var (id, t) in tracked)
-            if (CanVoiceLine(id, e))
+            if (CanVoiceLine(id, e) && !(lineEndsAt.TryGetValue(id, out var end) && end > linePicker.Now))
                 able.Add((id, t.Distance));
         if (able.Count == 0)
             return 0;
@@ -674,9 +682,10 @@ public sealed unsafe class VoiceDirector
     /// </summary>
     private bool TrySpeakLine(in VoiceCandidate c, SimulatedNpc npc, Tracked t, bool scripted = false)
     {
-        // Scripted talk (taunts over a fallen player) only waits for the shared line gate; the
-        // event cooldowns, chance roll and rate budget are for reacting to a running fight.
-        if (linePicker.Count == 0 || !(scripted ? linePicker.GateOpen(c.Event) : linePicker.CanSpeak(c.ActorKey, c.Event)))
+        // Scripted talk (taunts over a fallen player) runs on its own clock and may overlap other
+        // speakers; the line gate, event cooldowns, chance roll and rate budget are for reacting
+        // to a running fight.
+        if (linePicker.Count == 0 || !scripted && !linePicker.CanSpeak(c.ActorKey, c.Event))
             return false;
         // Monsters have no curated lines (none is non-human), so they stay on their own sounds
         // rather than speak with a human voice.
@@ -723,6 +732,7 @@ public sealed unsafe class VoiceDirector
             if (config.EnemyVoiceBubbles)
                 VoiceBubble.Open(t.Address, text, seconds.Value, log);
             linePicker.Commit(c.ActorKey, c.Event, line, config.EnemyVoiceBubbles ? seconds.Value : seconds.Value - 1f);
+            lineEndsAt[(uint)c.ActorKey] = linePicker.Now + seconds.Value;
             LinesSpoken++;
             LastVoiceDescription = $"{npc.Name}: {c.Event} -> \"{text}\" (vo {line.VoiceId})";
             if (handle != 0)
