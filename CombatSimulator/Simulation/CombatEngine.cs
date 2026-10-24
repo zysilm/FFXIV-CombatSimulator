@@ -1020,10 +1020,13 @@ public class CombatEngine : IDisposable
         {
             AoeShape.Circle or AoeShape.GroundCircle =>
                 CombatGeometry.IsInsideCircle(primaryPos, candidatePos, radius),
-            AoeShape.CircleSelf or AoeShape.Donut =>
+            AoeShape.CircleSelf =>
                 CombatGeometry.IsInsideCircle(sourcePos, candidatePos, radius),
+            AoeShape.Donut =>
+                CombatGeometry.IsInsideDonut(sourcePos, candidatePos, actionData.InnerRadius, radius),
+            // The omen-derived angle (90° when the action has no omen, i.e. every player cone).
             AoeShape.Cone =>
-                CombatGeometry.IsInsideCone(sourcePos, primaryPos, candidatePos, radius),
+                CombatGeometry.IsInsideConeAngle(sourcePos, primaryPos, candidatePos, radius, actionData.ConeAngleDeg),
             AoeShape.Line =>
                 CombatGeometry.IsInsideLine(sourcePos, primaryPos, candidatePos, radius, actionData.Width),
             _ => false,
@@ -1071,6 +1074,11 @@ public class CombatEngine : IDisposable
             Radius = source.Radius,
             Shape = source.Shape,
             Width = source.Width,
+            CastType = source.CastType,
+            ConeAngleDeg = source.ConeAngleDeg,
+            InnerRadius = source.InnerRadius,
+            OmenVfxPath = source.OmenVfxPath,
+            CanTargetHostile = source.CanTargetHostile,
             DamageType = source.DamageType,
             NativeMpCost = source.NativeMpCost,
             MpCost = source.MpCost,
