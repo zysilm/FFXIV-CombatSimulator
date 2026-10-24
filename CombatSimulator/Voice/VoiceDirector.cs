@@ -55,11 +55,14 @@ public sealed unsafe class VoiceDirector
     private readonly HashSet<(uint EntityId, VoiceEvent Event)> releasedHolds = new();
     private readonly HashSet<uint> seenThisFrame = new();
     private readonly List<(ulong, float)> speakers = new();
-    private readonly Dictionary<string, int> entryCounts = new(StringComparer.OrdinalIgnoreCase);
     private readonly Random random = new();
-    private (VoiceSource Source, uint Entry, bool Positional)? auditionRequest;
-    private (nint Handle, string Path, uint Entry) lastAudition;
+    // A voice preview asked for by the panel, played on the next framework tick (entity id, 0 = none).
+    private uint previewRequest;
     private bool hadState;
+    // SoundVolumeCategory for PlaySound: 2 = "Other" (scaled by the game's others' sounds slider).
+    private const int VolumeCategory = 2;
+    // Voices play at the speaker, a little above its feet.
+    private static readonly Vector3 MouthOffset = new(0f, 1.2f, 0f);
     private readonly VoiceLineSettings lineSettings = new();
     private readonly VoiceLinePicker linePicker;
     // One speaker persona (voice actor) per enemy; empty data or a language without personas keeps
@@ -94,6 +97,8 @@ public sealed unsafe class VoiceDirector
         public readonly VoiceActorWatch Watch = new();
         public nint Address;
         public string Name = string.Empty;
+        public uint BNpcBaseId;
+        public uint BNpcNameId;
         public float LastCastStart = float.NegativeInfinity;
         public float LastCastTotal;
         public bool Alive;
@@ -114,7 +119,7 @@ public sealed unsafe class VoiceDirector
         limiter = new VoiceRateLimiter(rateSettings);
         linePicker = new VoiceLinePicker(lineSettings);
         Player = new NativeSoundPlayer(dataManager, log);
-        Resolver = new VoiceProfileResolver(dataManager, config);
+        Resolver = new VoiceProfileResolver(dataManager);
         ReloadLabels();
         LoadLines();
         LoadPersonas();
@@ -123,9 +128,11 @@ public sealed unsafe class VoiceDirector
     public NativeSoundPlayer Player { get; }
     public VoiceProfileResolver Resolver { get; }
     public VoiceLabelTable Labels { get; } = new();
-    public string LastVoiceDescription { get; private set; } = string.Empty;
     public VoiceLinePicker Lines => linePicker;
-    public int LinesSpoken { get; private set; }
+
+    /// <summary>Average seconds between idle taunts of one engaged enemy, derived from the one
+    /// chattiness knob (the pause between lines): the default 3.5 s pause gives a taunt every ~14 s.</summary>
+    public static float IdleTauntInterval(float lineGap) => Math.Clamp(4f * lineGap, 5f, 60f);
 
     /// <summary>Spawned companions that are currently dead. A rise means an enemy just downed
     /// one: the same gloat as killing the player. Set by the plugin; null = no companions.</summary>
@@ -232,24 +239,88 @@ public sealed unsafe class VoiceDirector
     public bool PersonasActive => personas.Active;
     public string? PersonaLanguage => personas.Language;
 
-    /// <summary>Tracked enemies and their personas, for the debug view.</summary>
-    public List<(uint EntityId, string Name, bool Alive, VoicePersonaAssignment? Assignment)> PersonaAssignments()
+    /// <summary>One row of the voice picker: a tracked enemy, its current persona, the hand-picked one
+    /// (null = automatic) and every persona that fits its body, with readable labels.</summary>
+    public sealed record VoiceEnemy(uint EntityId, string Name, VoicePersona? Current, string? ChosenId,
+        IReadOnlyList<(string Id, string Label)> Choices);
+
+    /// <summary>Tracked enemies for the voice picker, nearest first (empty when personas are off).</summary>
+    public List<VoiceEnemy> VoiceEnemies()
     {
-        var list = new List<(uint, string, bool, VoicePersonaAssignment?)>(tracked.Count);
+        var list = new List<VoiceEnemy>(tracked.Count);
+        if (!personas.Active)
+            return list;
+        var order = new List<(uint Id, Tracked T)>();
         foreach (var (id, t) in tracked)
-            list.Add((id, t.Name, t.Alive, personas.Get(id)));
+            order.Add((id, t));
+        order.Sort((a, b) => a.T.Distance.CompareTo(b.T.Distance));
+        foreach (var (id, t) in order)
+        {
+            var voice = Resolver.ResolveBody(t.Address, id);
+            var key = OverrideKey(t);
+            var chosen = key != null && config.EnemyVoicePersonaOverrides.TryGetValue(key, out var c) ? c : null;
+            list.Add(new VoiceEnemy(id, t.Name, PersonaOf(id, t).Persona, chosen, ChoicesFor(voice)));
+        }
         return list;
     }
 
-    /// <summary>The enemy's persona, assigned on first sight from its body (gender, BodyType age)
-    /// and identity; stays for as long as the enemy is tracked.</summary>
-    private VoicePersonaAssignment PersonaOf(uint id, Tracked t, uint bNpcBaseId, uint bNpcNameId)
+    private readonly Dictionary<VoiceLineVoice, List<(string, string)>> choiceCache = new();
+    private (VoicePersonaTable, string?) choiceCacheFor;
+
+    private List<(string, string)> ChoicesFor(VoiceLineVoice voice)
+    {
+        var table = personas.Table;
+        if (choiceCacheFor != (table, personas.Language))
+        {
+            choiceCache.Clear();
+            choiceCacheFor = (table, personas.Language);
+        }
+        if (!choiceCache.TryGetValue(voice, out var list))
+        {
+            list = new List<(string, string)>();
+            foreach (var p in table.Choices(personas.Language!, voice, personas.AllowStoryCharacters))
+                list.Add((p.Id, table.Label(p)));
+            choiceCache[voice] = list;
+        }
+        return list;
+    }
+
+    /// <summary>Hand-pick an enemy's voice (null = automatic again). Saved per kind of enemy and applied
+    /// at once to every tracked enemy of that kind.</summary>
+    public void SetVoiceChoice(uint entityId, string? personaId)
+    {
+        if (!tracked.TryGetValue(entityId, out var t) || OverrideKey(t) is not { } key)
+            return;
+        if (personaId == null)
+            config.EnemyVoicePersonaOverrides.Remove(key);
+        else
+            config.EnemyVoicePersonaOverrides[key] = personaId;
+        config.Save();
+        foreach (var (id, other) in tracked)
+            if (OverrideKey(other) == key)
+            {
+                personas.Forget(id);
+                PersonaOf(id, other);
+            }
+    }
+
+    /// <summary>Play one line of the enemy's current voice at the enemy (next framework tick).</summary>
+    public void RequestPreview(uint entityId) => previewRequest = entityId;
+
+    private static string? OverrideKey(Tracked t) => VoicePersonaAssigner.OverrideKey(t.BNpcBaseId, t.BNpcNameId, t.Name);
+
+    /// <summary>The enemy's persona, assigned on first sight from its body (gender, BodyType age; a
+    /// boss voice for monsters and demihumans), its identity and any hand-picked voice for its kind;
+    /// stays for as long as the enemy is tracked.</summary>
+    private VoicePersonaAssignment PersonaOf(uint id, Tracked t)
     {
         var existing = personas.Get(id);
         if (existing != null)
             return existing;
         var (voice, age) = Resolver.ResolveBodyAndAge(t.Address, id);
-        return personas.Assign(id, VoicePersonaAssigner.IdentitySeed(bNpcBaseId, bNpcNameId, id), voice, age);
+        var key = OverrideKey(t);
+        var chosen = key != null && config.EnemyVoicePersonaOverrides.TryGetValue(key, out var c) ? c : null;
+        return personas.Assign(id, VoicePersonaAssigner.IdentitySeed(t.BNpcBaseId, t.BNpcNameId, id), voice, age, chosen);
     }
 
     /// <summary>
@@ -326,7 +397,7 @@ public sealed unsafe class VoiceDirector
         lineEndsAt.Clear();
     }
 
-    private bool GuaranteedKills => config.EnemyVoiceGuaranteeKills && config.EnemyVoiceLines;
+    private bool GuaranteedKills => config.EnemyVoiceGuaranteeKills;
 
     /// <summary>
     /// Queue a killing-blow line that must be heard. It skips the nearest-speakers cut and the
@@ -361,13 +432,14 @@ public sealed unsafe class VoiceDirector
     }
 
     /// <summary>Whether this tracked enemy is alive and has a curated line for the event in its voice
-    /// (with personas: in its own persona or a fallback of it).</summary>
+    /// (with personas: in its own persona or a fallback of it). Monsters and demihumans speak only
+    /// through a boss persona, so they need personas (ja/en client).</summary>
     private bool CanVoiceLine(uint id, VoiceEvent e)
     {
         if (id == 0 || !tracked.TryGetValue(id, out var t) || !t.Alive)
             return false;
         var voice = Resolver.ResolveBody(t.Address, id);
-        if (voice == VoiceLineVoice.NonHuman)
+        if (voice == VoiceLineVoice.NonHuman && !personas.Active)
             return false;
         if (personas.Active)
         {
@@ -375,45 +447,6 @@ public sealed unsafe class VoiceDirector
             return chain != null && chain.Count > 0 && linePicker.Available(e, voice, chain, personas.Language!) > 0;
         }
         return linePicker.Available(e, voice) > 0;
-    }
-
-    // ---- Audition (panel) ----
-
-    /// <summary>Queue one play for the next framework tick, so the native call happens on the
-    /// framework thread like every other voice.</summary>
-    public void RequestAudition(VoiceSource source, uint entry, bool positional) =>
-        auditionRequest = (source, entry, positional);
-
-    public void StopAudition()
-    {
-        var (handle, path, entry) = lastAudition;
-        Player.TryStop(handle, path, entry);
-        lastAudition = default;
-    }
-
-    public string? LastAuditionPath => lastAudition.Path;
-
-    /// <summary>Sound-entry count from the .scd header (0 when unreadable). Same header offset as
-    /// the offline sweep: u16 sound-entry count at 0x30.</summary>
-    public int ReadEntryCount(string? path)
-    {
-        if (string.IsNullOrEmpty(path))
-            return 0;
-        // Cached: the panel asks every frame and a monster pack is a few hundred KB.
-        if (entryCounts.TryGetValue(path, out var cached))
-            return cached;
-        var count = 0;
-        try
-        {
-            var data = dataManager.GetFile(path)?.Data;
-            count = data != null && data.Length >= 0x32 ? BitConverter.ToUInt16(data, 0x30) : 0;
-        }
-        catch (Exception)
-        {
-            count = 0;
-        }
-        entryCounts[path] = count;
-        return count;
     }
 
     public string? ResolvePath(VoiceSource source) =>
@@ -425,22 +458,19 @@ public sealed unsafe class VoiceDirector
     {
         if (!config.EnableEnemyVoices)
         {
-            auditionRequest = null;
+            previewRequest = 0;
             if (hadState)
                 Reset();
             return;
         }
         hadState = true;
 
-        rateSettings.TokensPerSecond = Math.Clamp(config.EnemyVoicesPerSecond, 0.1f, 10f);
-        rateSettings.MaxConcurrent = Math.Clamp(config.EnemyVoiceMaxConcurrent, 1, 8);
-        rateSettings.ClosestSpeakers = Math.Clamp(config.EnemyVoiceClosestSpeakers, 1, 16);
         limiter.Advance(deltaTime);
         lineSettings.Gap = Math.Clamp(config.EnemyVoiceLineGap, 0f, 30f);
         linePicker.Advance(deltaTime);
         ConfigurePersonas();
 
-        RunAudition();
+        RunPreview();
 
         if (!combatEngine.IsActive)
         {
@@ -477,11 +507,14 @@ public sealed unsafe class VoiceDirector
                     Resolver.Forget(t.Address, id);
                     personas.Forget(id);
                 }
-                tracked[id] = t = new Tracked { Address = npc.Address, Name = npc.Name };
+                tracked[id] = t = new Tracked
+                {
+                    Address = npc.Address, Name = npc.Name, BNpcBaseId = npc.BNpcBaseId, BNpcNameId = npc.BNpcNameId,
+                };
             }
             // First sight fixes the voice; later frames are a lookup.
             if (personas.Active)
-                PersonaOf(id, t, npc.BNpcBaseId, npc.BNpcNameId);
+                PersonaOf(id, t);
 
             var go = (GameObject*)npc.BattleChara;
             t.Position = go->Position;
@@ -505,8 +538,8 @@ public sealed unsafe class VoiceDirector
                     AddAllyDeath(id, t.Position);
             }
 
-            if (npc.IsAlive && npc.IsEngaged && config.EnemyVoiceIdleTaunts &&
-                random.NextDouble() < deltaTime / Math.Max(5f, config.EnemyVoiceTauntInterval))
+            if (npc.IsAlive && npc.IsEngaged &&
+                random.NextDouble() < deltaTime / IdleTauntInterval(lineSettings.Gap))
                 candidates.Add(new VoiceCandidate(id, VoiceEvent.Taunt, t.Distance));
         }
 
@@ -556,7 +589,7 @@ public sealed unsafe class VoiceDirector
             // speaker yet) only waits for the line gate.
             var guaranteedKill = delayed[i].Event == VoiceEvent.KilledPlayer && GuaranteedKills;
             var maxHold = guaranteedKill ? MaxKillHold : MaxVictoryHold;
-            if (config.EnemyVoiceLines && limiter.Now - delayed[i].At < maxHold &&
+            if (limiter.Now - delayed[i].At < maxHold &&
                 !(delayed[i].EntityId != 0
                     ? SpeakerReady(delayed[i].EntityId, delayed[i].Event)
                     : linePicker.CanSpeak(0, delayed[i].Event)))
@@ -598,7 +631,7 @@ public sealed unsafe class VoiceDirector
     {
         // Not paused by a story: the defeat scene is exactly when the rest of the pack jeers. The
         // story's own performer is skipped in PickDefeatTaunter so it never talks over its lines.
-        if (!config.EnemyVoiceDefeatTaunts || !config.EnemyVoiceLines || playerAlive || hasLivingCompanions())
+        if (!config.EnemyVoiceDefeatTaunts || playerAlive || hasLivingCompanions())
         {
             defeatTauntTimer = -1f;
             return;
@@ -615,7 +648,9 @@ public sealed unsafe class VoiceDirector
         if (defeatTauntTimer > 0f)
             return;
 
-        // Kill lines (their chain already borrows victory and taunt lines when a voice lacks them).
+        // Any of the speaker's own kill, victory and taunt lines (VoiceLinePicker.FallenTauntPool), so
+        // one voice varies instead of repeating its single kill line. Speakers able to voice a kill
+        // line are exactly those with a non-empty pool (same three events, same persona chain).
         // Taunts may overlap (down to one a second, each enemy under its own bubble), but an
         // enemy still talking is skipped; if everyone is mid-line, try again next frame.
         const VoiceEvent e = VoiceEvent.KilledPlayer;
@@ -626,7 +661,7 @@ public sealed unsafe class VoiceDirector
         if (npc == null || npc.Address != t.Address)
             return;
         defeatTauntTimer = interval;
-        if (TrySpeakLine(new VoiceCandidate(speaker, e, t.Distance), npc, t, scripted: true))
+        if (TrySpeakLine(new VoiceCandidate(speaker, e, t.Distance), npc, t, scripted: true, fallenTaunt: true))
             lastDefeatSpeaker = speaker;
     }
 
@@ -709,7 +744,7 @@ public sealed unsafe class VoiceDirector
         // (the killing attack's own skill shout, the first enemy's engage), and the killer is often
         // still mid-shout itself. Dropping them read as "enemies never react to a kill", so they
         // wait — for the line gate and for the speaker — like the victory call does.
-        var holdable = config.EnemyVoiceLines && c.Event is (VoiceEvent.Engage or VoiceEvent.KilledPlayer) &&
+        var holdable = c.Event is (VoiceEvent.Engage or VoiceEvent.KilledPlayer) &&
                        !releasedHolds.Contains((id, c.Event));
         if (holdable && !SpeakerReady(c.ActorKey, c.Event))
         {
@@ -721,7 +756,7 @@ public sealed unsafe class VoiceDirector
         if (!limiter.CanAdmit(c.ActorKey, c.Event))
             return;
 
-        if (config.EnemyVoiceLines && TrySpeakLine(c, npc, t))
+        if (TrySpeakLine(c, npc, t))
             return;
 
         var source = Resolver.Resolve(new VoiceSpeaker(t.Address, id, npc.BNpcBaseId, npc.IsClientControlled));
@@ -736,32 +771,32 @@ public sealed unsafe class VoiceDirector
         if (!limiter.TryAdmit(c.ActorKey, c.Event))
             return;
 
-        Vector3? at = config.EnemyVoicePositional ? t.Position + new Vector3(0f, 1.2f, 0f) : null;
-        if (Player.Play(path, (uint)entry, at, config.EnemyVoiceVolume, config.EnemyVoiceVolumeCategory) == 0)
+        if (Player.Play(path, (uint)entry, t.Position + MouthOffset, config.EnemyVoiceVolume, VolumeCategory) == 0)
             return;
-        LastVoiceDescription = $"{npc.Name}: {c.Event} -> {source} #{entry}";
         VoicePlayed?.Invoke(t.Address, c.Event, source, entry);
     }
 
     /// <summary>
     /// A curated voiced line with its bubble. False means "not this time" (gate closed, chance
     /// roll, no fitting line, file missing) and the caller falls through to label-based shouts.
+    /// <paramref name="fallenTaunt"/>: a taunt over the fallen party, drawn from the speaker's whole
+    /// kill/victory/taunt pool instead of the event chain.
     /// </summary>
-    private bool TrySpeakLine(in VoiceCandidate c, SimulatedNpc npc, Tracked t, bool scripted = false)
+    private bool TrySpeakLine(in VoiceCandidate c, SimulatedNpc npc, Tracked t, bool scripted = false, bool fallenTaunt = false)
     {
         // Scripted talk (taunts over a fallen player) runs on its own clock and may overlap other
         // speakers; the line gate, event cooldowns, chance roll and rate budget are for reacting
         // to a running fight.
         if (linePicker.Count == 0 || !scripted && !linePicker.CanSpeak(c.ActorKey, c.Event))
             return false;
-        // Monsters have no curated lines (none is non-human), so they stay on their own sounds
-        // rather than speak with a human voice.
+        // Monsters and demihumans speak only through a boss persona (processed boss voices); without
+        // personas (de/fr client) they stay on their own sounds rather than borrow random voices.
         var (voice, age) = Resolver.ResolveBodyAndAge(t.Address, (uint)c.ActorKey);
-        if (voice == VoiceLineVoice.NonHuman)
+        if (voice == VoiceLineVoice.NonHuman && !personas.Active)
             return false;
-        // With personas the enemy speaks only its persona's lines (or a same-gender fallback's); no
+        // With personas the enemy speaks only its persona's lines (or a fallback's of the same kind); no
         // line there is silence for the line, never another random voice.
-        var persona = personas.Active ? PersonaOf((uint)c.ActorKey, t, npc.BNpcBaseId, npc.BNpcNameId) : null;
+        var persona = personas.Active ? PersonaOf((uint)c.ActorKey, t) : null;
         var personaLanguage = personas.Language;
         if (persona != null
                 ? persona.Chain.Count == 0 || linePicker.Available(c.Event, voice, persona.Chain, personaLanguage!) == 0
@@ -773,52 +808,86 @@ public sealed unsafe class VoiceDirector
         var language = Resolver.ClientLanguage;
         for (var attempt = 0; attempt < 3; attempt++)
         {
-            var line = persona != null
-                ? linePicker.Pick(c.Event, voice, persona.Chain, personaLanguage!, random.NextDouble)
-                : linePicker.Pick(c.Event, voice, random.NextDouble, age);
+            var line = persona == null ? linePicker.Pick(c.Event, voice, random.NextDouble, age)
+                : fallenTaunt ? linePicker.PickFallenTaunt(voice, persona.Chain, personaLanguage!, random.NextDouble)
+                : linePicker.Pick(c.Event, voice, persona.Chain, personaLanguage!, random.NextDouble);
             if (line == null)
                 return false;
-            // Client-language audio only: the bubble shows client-language text, and a German
-            // bubble over an English voice reads as broken. A missing file retires the line.
-            var path = line.PathFor(language);
-            var text = LineText(line);
-            if (text.Length == 0 || !dataManager.FileExists(path))
-            {
-                linePicker.MarkUnavailable(line.VoiceId);
+            if (!Playable(line, language, out var path, out var text, out var seconds))
                 continue;
-            }
-            var seconds = BubbleSeconds(line.VoiceId, path);
-            if (seconds == null)
-            {
-                linePicker.MarkUnavailable(line.VoiceId);
-                continue;
-            }
             if (!scripted && !limiter.TryAdmit(c.ActorKey, c.Event))
                 return false;
 
-            Vector3? at = config.EnemyVoicePositional ? t.Position + new Vector3(0f, 1.2f, 0f) : null;
-            var handle = Player.Play(path, 0, at, config.EnemyVoiceVolume, config.EnemyVoiceVolumeCategory);
-            if (!firstLineLogged)
-            {
-                // One line per session so a silent install is diagnosable from dalamud.log.
-                firstLineLogged = true;
-                log.Information($"Enemy voices: first voiced line vo {line.VoiceId} / yell {line.YellId} \"{text}\" path={path} " +
-                                $"handle=0x{handle:X} playerAvailable={Player.IsAvailable}{(Player.FailureReason != null ? $" ({Player.FailureReason})" : string.Empty)}");
-            }
-            // The bubble still shows if the sound player refused: the line is readable either way.
-            if (config.EnemyVoiceBubbles)
-                VoiceBubble.Open(t.Address, text, seconds.Value, log);
-            linePicker.Commit(c.ActorKey, c.Event, line, config.EnemyVoiceBubbles ? seconds.Value : seconds.Value - 1f);
-            lineEndsAt[(uint)c.ActorKey] = linePicker.Now + seconds.Value;
-            LinesSpoken++;
-            LastVoiceDescription = persona?.Persona != null
-                ? $"{npc.Name} [{persona.Persona.Display}]: {c.Event} -> \"{text}\" (vo {line.VoiceId}, {line.PersonaFor(personaLanguage)})"
-                : $"{npc.Name}: {c.Event} -> \"{text}\" (vo {line.VoiceId})";
+            var handle = PlayLine(line, path, text, seconds, t);
+            linePicker.Commit(c.ActorKey, c.Event, line, config.EnemyVoiceBubbles ? seconds : seconds - 1f);
+            lineEndsAt[(uint)c.ActorKey] = linePicker.Now + seconds;
             if (handle != 0)
                 VoicePlayed?.Invoke(t.Address, c.Event, new VoiceSource(VoiceSourceKind.YellLine, string.Empty, line.VoiceId - VoiceSelection.YellLineBase), 0);
             return true;
         }
         return false;
+    }
+
+    /// <summary>Client-language audio only: the bubble shows client-language text, and a German
+    /// bubble over an English voice reads as broken. A missing file, text or unreadable header
+    /// retires the line for the session.</summary>
+    private bool Playable(VoiceLineEntry line, string language, out string path, out string text, out float seconds)
+    {
+        path = line.PathFor(language);
+        text = LineText(line);
+        seconds = 0f;
+        var s = text.Length == 0 || !dataManager.FileExists(path) ? null : BubbleSeconds(line.VoiceId, path);
+        if (s == null)
+        {
+            linePicker.MarkUnavailable(line.VoiceId);
+            return false;
+        }
+        seconds = s.Value;
+        return true;
+    }
+
+    /// <summary>Play a checked line at the speaker, with its bubble. Returns the sound handle (0 =
+    /// refused; the bubble still shows, the line is readable either way).</summary>
+    private nint PlayLine(VoiceLineEntry line, string path, string text, float seconds, Tracked t)
+    {
+        var handle = Player.Play(path, 0, t.Position + MouthOffset, config.EnemyVoiceVolume, VolumeCategory);
+        if (!firstLineLogged)
+        {
+            // One line per session so a silent install is diagnosable from dalamud.log.
+            firstLineLogged = true;
+            log.Information($"Enemy voices: first voiced line vo {line.VoiceId} / yell {line.YellId} \"{text}\" path={path} " +
+                            $"handle=0x{handle:X} playerAvailable={Player.IsAvailable}{(Player.FailureReason != null ? $" ({Player.FailureReason})" : string.Empty)}");
+        }
+        if (config.EnemyVoiceBubbles)
+            VoiceBubble.Open(t.Address, text, seconds, log);
+        return handle;
+    }
+
+    /// <summary>The panel's Preview: one line of the enemy's own persona, at the enemy, through the same
+    /// checks and player as a combat line. Leaves the fight's line gate and cooldowns alone.</summary>
+    private void RunPreview()
+    {
+        var id = previewRequest;
+        previewRequest = 0;
+        if (id == 0 || !personas.Active || !tracked.TryGetValue(id, out var t))
+            return;
+        var npc = npcSelector.GetSelectedNpc(id);
+        if (npc == null || npc.Address != t.Address || PersonaOf(id, t).Persona is not { } persona)
+            return;
+        var voice = Resolver.ResolveBody(t.Address, id);
+        var language = Resolver.ClientLanguage;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var line = linePicker.PickAnyOf(voice, persona.Id, personas.Language!, random.NextDouble);
+            if (line == null)
+                return;
+            if (!Playable(line, language, out var path, out var text, out var seconds))
+                continue;
+            PlayLine(line, path, text, seconds, t);
+            linePicker.MarkHeard(line.VoiceId);
+            lineEndsAt[id] = linePicker.Now + seconds;
+            return;
+        }
     }
 
     /// <summary>A curated line's words in the client language, from its text sheet ("" if missing).</summary>
@@ -866,23 +935,5 @@ public sealed unsafe class VoiceDirector
         }
         lineSeconds[voiceId] = result;
         return result;
-    }
-
-    private void RunAudition()
-    {
-        if (auditionRequest is not { } request)
-            return;
-        auditionRequest = null;
-        var path = ResolvePath(request.Source);
-        if (path == null)
-        {
-            LastVoiceDescription = $"Audition: no file for {request.Source}";
-            return;
-        }
-        StopAudition();
-        Vector3? at = request.Positional ? Core.Services.ObjectTable.LocalPlayer?.Position : null;
-        var handle = Player.Play(path, request.Entry, at, config.EnemyVoiceVolume, config.EnemyVoiceVolumeCategory);
-        lastAudition = (handle, path, request.Entry);
-        LastVoiceDescription = handle != 0 ? $"Audition: {path} #{request.Entry}" : $"Audition refused: {path} #{request.Entry}";
     }
 }

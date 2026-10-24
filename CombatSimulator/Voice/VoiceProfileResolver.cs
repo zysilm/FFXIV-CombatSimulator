@@ -22,15 +22,9 @@ public readonly record struct VoiceSpeaker(nint Address, uint EntityId, uint BNp
 public sealed unsafe class VoiceProfileResolver
 {
     private readonly IDataManager dataManager;
-    private readonly Configuration config;
     private readonly Dictionary<(nint, uint), VoiceSource> cache = new();
-    private bool lastUseAppearance;
 
-    public VoiceProfileResolver(IDataManager dataManager, Configuration config)
-    {
-        this.dataManager = dataManager;
-        this.config = config;
-    }
+    public VoiceProfileResolver(IDataManager dataManager) => this.dataManager = dataManager;
 
     /// <summary>Client language as the two-letter code the voice files use.</summary>
     public string ClientLanguage => dataManager.Language switch
@@ -51,12 +45,6 @@ public sealed unsafe class VoiceProfileResolver
     {
         if (speaker.Address == 0)
             return VoiceSource.None;
-        // The humanoid option changes the answer for cached actors.
-        if (lastUseAppearance != config.EnemyVoiceHumanoidUseAppearance)
-        {
-            lastUseAppearance = config.EnemyVoiceHumanoidUseAppearance;
-            cache.Clear();
-        }
         var key = (speaker.Address, speaker.EntityId);
         if (cache.TryGetValue(key, out var cached))
             return cached;
@@ -75,8 +63,9 @@ public sealed unsafe class VoiceProfileResolver
 
     /// <summary>
     /// Which voiced lines suit this actor: human models by their Customize sex byte, everything
-    /// else non-human. Same human test as <see cref="Resolve"/>; anything unreadable counts as
-    /// non-human, which keeps it silent rather than mis-voiced.
+    /// else non-human (monsters and demihumans, which speak with the processed boss voices). Same
+    /// human test as <see cref="Resolve"/>; anything unreadable counts as non-human, so it never gets
+    /// a human voice of the wrong gender.
     /// </summary>
     public VoiceLineVoice ResolveBody(nint address, uint entityId) => ResolveBodyAndAge(address, entityId).Voice;
 
@@ -142,8 +131,8 @@ public sealed unsafe class VoiceProfileResolver
     {
         // Clones and companions are copies of real players: a player shout matching their look is
         // the obvious voice. Real humanoid field enemies are NPCs and keep a consistent NPC voice
-        // per BNpcBase unless the owner prefers appearance-matched shouts.
-        if (!speaker.IsClone && !config.EnemyVoiceHumanoidUseAppearance)
+        // per BNpcBase.
+        if (!speaker.IsClone)
         {
             var npc = VoiceSelection.NpcBattleFromId(speaker.BNpcBaseId);
             if (!npc.IsNone)

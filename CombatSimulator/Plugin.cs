@@ -945,7 +945,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             worldGeometryRenderer.Tick();
             worldGeometryPreview.Tick(deltaTime);
             TickPrivateEffects(deltaTime);
-            // Before the active gate: the audition panel plays outside combat. Inert when voices are off.
+            // Before the active gate: the director clears its state when the fight ends. Inert when voices are off.
             TickVoice(deltaTime);
 
             if (!combatEngine.IsActive)

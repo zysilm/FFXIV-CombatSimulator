@@ -40,18 +40,9 @@ public sealed partial class CombatSimulatorPlugin
     /// </summary>
     private void MigrateVoiceDefaults()
     {
-        if (!config.EnemyVoiceCadenceMigrated20261025)
-        {
-            if (System.Math.Abs(config.EnemyVoiceTauntInterval - 25f) < 0.01f)
-                config.EnemyVoiceTauntInterval = 14f;
-            config.EnemyVoiceCadenceMigrated20261025 = true;
-            config.Save();
-        }
-
         if (config.EnemyVoiceDefaultsMigrated20261024)
             return;
         config.EnableEnemyVoices = true;
-        config.EnemyVoiceLines = true;
         config.EnemyVoiceBubbles = true;
         config.EnemyVoiceDefaultsMigrated20261024 = true;
         config.Save();

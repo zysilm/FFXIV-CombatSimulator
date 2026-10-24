@@ -19,8 +19,9 @@ casters hold position while a snapshotted area cast channels.
 
 ## 0. Do these first (crash / safety)
 
-1. **Voice native call.** Enable *Enemy voices*, open the audition panel, play one PC shout. If the game
-   crashes or nothing plays, stop here and leave voices off — see [voice.md](voice.md) "audition checklist".
+1. **Voice native call.** Enable *Enemy voices*, start a fight, press **Preview** next to an enemy in
+   Enemy Voices > Advanced. If the game crashes or nothing plays, stop here and leave voices off — see
+   [voice.md](voice.md) section 0.
 2. **Omen markers.** Enable *Monster real skills* + *Real-shape telegraphs* + *Native omen markers*, fight one
    coeurl/goobbue. Markers must appear (or fall back to outlines) without errors; turn markers off if they
    misplace — see [monster-skills.md](monster-skills.md).
@@ -54,7 +55,7 @@ spots capped inside attack reach; player self-centred AoEs (Overpower etc.) now 
 
 | Feature | Where to enable | Detail |
 |---|---|---|
-| Enemy voices (phase 1) | Main window → Enemy voices section | [voice.md](voice.md) — silent until you label entries in the audition panel |
+| Enemy voices | Main window → Effects → Enemy Voices | [voice.md](voice.md) — on by default; Advanced holds the pause slider and the per-enemy voice picker |
 | Victory celebration | Main window → Victory Celebration | [victory-story.md](victory-story.md) §a |
 | Story pool / line variants / grips / scripted grab / cues | Dev → Stories | [victory-story.md](victory-story.md) §b–h; example profiles in `examples.json.example` |
 | Spectator reactions / outcome chatter | Spectators section | [victory-story.md](victory-story.md) §f |
