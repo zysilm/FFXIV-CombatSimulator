@@ -26,6 +26,8 @@ public sealed partial class CombatSimulatorPlugin
         combatEngine.OnSimulationReset += voiceDirector.Reset;
         // Stories speak through the same bubbles; enemy lines wait until the scene is over.
         voiceDirector.LinesSuppressed = () => PrivateDirectorActive;
+        // A story's performer is possessed through Enemy Control, as is a player-controlled enemy.
+        voiceDirector.IsActorReserved = addr => enemyControlController.ControlsNpc(addr) || devExperimental.ControlsNpc(addr);
         mainWindow.VoiceDirector = voiceDirector;
     }
 

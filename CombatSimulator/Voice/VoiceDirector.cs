@@ -79,6 +79,10 @@ public sealed unsafe class VoiceDirector
     /// hold off instead of talking over it.</summary>
     public Func<bool>? LinesSuppressed { get; set; }
 
+    /// <summary>Actors driven by something else (Enemy Control, a story performer) that must not be
+    /// picked for scripted taunts.</summary>
+    public Func<nint, bool>? IsActorReserved { get; set; }
+
     private sealed class Tracked
     {
         public readonly VoiceActorWatch Watch = new();
@@ -507,8 +511,9 @@ public sealed unsafe class VoiceDirector
     /// </summary>
     private void TickDefeatTaunts(float deltaTime, bool playerAlive)
     {
-        if (!config.EnemyVoiceDefeatTaunts || !config.EnemyVoiceLines || playerAlive || hasLivingCompanions() ||
-            LinesSuppressed?.Invoke() == true)
+        // Not paused by a story: the defeat scene is exactly when the rest of the pack jeers. The
+        // story's own performer is skipped in PickDefeatTaunter so it never talks over its lines.
+        if (!config.EnemyVoiceDefeatTaunts || !config.EnemyVoiceLines || playerAlive || hasLivingCompanions())
         {
             defeatTauntTimer = -1f;
             return;
@@ -555,7 +560,8 @@ public sealed unsafe class VoiceDirector
     {
         var able = new List<(uint Id, float Distance)>();
         foreach (var (id, t) in tracked)
-            if (CanVoiceLine(id, e) && !(lineEndsAt.TryGetValue(id, out var end) && end > linePicker.Now))
+            if (CanVoiceLine(id, e) && !(lineEndsAt.TryGetValue(id, out var end) && end > linePicker.Now) &&
+                IsActorReserved?.Invoke(t.Address) != true)
                 able.Add((id, t.Distance));
         if (able.Count == 0)
             return 0;
@@ -613,7 +619,8 @@ public sealed unsafe class VoiceDirector
 
     private void TrySpeak(in VoiceCandidate c)
     {
-        if (LinesSuppressed?.Invoke() == true)
+        // A story opening must not swallow a held killing-blow line; everything else waits.
+        if (LinesSuppressed?.Invoke() == true && c.Event != VoiceEvent.KilledPlayer)
             return;
         var id = (uint)c.ActorKey;
         if (!tracked.TryGetValue(id, out var t))
