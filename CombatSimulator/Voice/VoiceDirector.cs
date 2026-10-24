@@ -31,6 +31,7 @@ public sealed unsafe class VoiceDirector
     // Bubble time when a line's .scd header could not be read for its length.
     private const float FallbackBubbleSeconds = 3f;
     private const float VictoryDelay = 1.5f;
+    private const float MaxVictoryHold = 6f;
     // A committed attack within this long after its own cast started is that cast resolving,
     // which was already voiced at cast start.
     private const float CastResolveGrace = 1.0f;
@@ -386,6 +387,11 @@ public sealed unsafe class VoiceDirector
         for (var i = delayed.Count - 1; i >= 0; i--)
         {
             if (delayed[i].At > limiter.Now)
+                continue;
+            // The killer's gloat is usually still on screen when the win is due; hold the call
+            // until the line gate opens (a few seconds at most) instead of losing it.
+            if (config.EnemyVoiceLines && limiter.Now - delayed[i].At < MaxVictoryHold &&
+                !linePicker.CanSpeak(0, delayed[i].Event))
                 continue;
             var speaker = delayed[i].EntityId != 0 ? delayed[i].EntityId : PickVictorySpeaker();
             if (speaker != 0 && tracked.TryGetValue(speaker, out var t))
