@@ -53,6 +53,10 @@ public sealed class ActiveTelegraph
     public bool InGrace;
     public float GraceRemaining;
     public float GraceTotal;
+    /// <summary>Real-shape snapshot (only when real-shape telegraphs are on); see <see cref="TelegraphShape"/>.</summary>
+    public TelegraphShape Shape;
+    public bool HasShape;
+    public int MarkerId;
 
     public bool IsApproachActive => LeadInElapsed >= LeadInTotal;
     public float Progress => !IsApproachActive || WindupTotal <= 0f
@@ -76,6 +80,7 @@ public sealed class TelegraphSystem
     private readonly Func<bool> playerGuardActive;
     private readonly Action playerPerfectGuard;
     private readonly IPluginLog log;
+    private readonly EnemyAreaMarkers markers;
     private readonly List<ActiveTelegraph> active = new();
 
     public IReadOnlyList<ActiveTelegraph> Active => active;
@@ -86,7 +91,8 @@ public sealed class TelegraphSystem
         Configuration config,
         Func<bool> playerGuardActive,
         Action playerPerfectGuard,
-        IPluginLog log)
+        IPluginLog log,
+        EnemyAreaMarkers markers)
     {
         this.combatEngine = combatEngine;
         this.animationController = animationController;
@@ -94,6 +100,7 @@ public sealed class TelegraphSystem
         this.playerGuardActive = playerGuardActive;
         this.playerPerfectGuard = playerPerfectGuard;
         this.log = log;
+        this.markers = markers;
     }
 
     public void Spawn(SimulatedNpc source, in NpcAttackRequest req, float windup, float leadIn = 0f)
@@ -124,10 +131,25 @@ public sealed class TelegraphSystem
                 castVfxPlayed = animationController.PlayNpcCastVfx(source, castData);
         }
 
+        // Real shape: snapshot the action's own area now (origin, facing, size), draw it, and hit
+        // against exactly it at the strike. Off ⇒ the legacy circle on the target below.
+        var hasShape = false;
+        var shape = default(TelegraphShape);
+        var markerId = 0;
+        if (config.EnemyTelegraphRealShapes)
+        {
+            shape = SnapshotShape(combatEngine, source, req, target);
+            hasShape = true;
+            markerId = markers.Add(source.SimulatedEntityId, req.ActionId, shape, normalizedLeadIn + MathF.Max(0.01f, windup));
+        }
+
         // The enemy's real swing fires at the strike (when the circle closes), so it stays
         // synced with the telegraph and keeps its impact sound/reaction.
         active.Add(new ActiveTelegraph
         {
+            Shape = shape,
+            HasShape = hasShape,
+            MarkerId = markerId,
             Source = source,
             Request = req,
             AnchorPos = combatEngine.GetSimulatedEntityPosition(target),
@@ -236,12 +258,61 @@ public sealed class TelegraphSystem
     }
 
     private bool IsInside(ActiveTelegraph t, SimulatedEntityState target)
-        => CombatGeometry.IsInsideCircle(t.AnchorPos, combatEngine.GetSimulatedEntityPosition(target), t.Radius);
+    {
+        var pos = combatEngine.GetSimulatedEntityPosition(target);
+        return t.HasShape
+            ? t.Shape.Contains(pos)
+            : CombatGeometry.IsInsideCircle(t.AnchorPos, pos, t.Radius);
+    }
+
+    /// <summary>Real-shape areas resolve everyone standing in them, not just the primary.</summary>
+    private static bool HasArea(ActiveTelegraph t) => t.HasShape && t.Shape.IsArea;
+
+    /// <summary>
+    /// Snapshot the area of an enemy attack against <paramref name="target"/>, mirroring how
+    /// <see cref="CombatEngine.ProcessNpcAction"/> reads the action (a sized single-target skill
+    /// becomes a caster circle there, so it does here too).
+    /// </summary>
+    public static TelegraphShape SnapshotShape(
+        CombatEngine engine, SimulatedNpc source, in NpcAttackRequest req, SimulatedEntityState target)
+    {
+        var data = req.IsAutoAttack ? null : engine.GetActionData(req.ActionId);
+        var shape = data?.Shape ?? AoeShape.Single;
+        var radius = req.Radius > 0f ? req.Radius : data?.Radius ?? 0f;
+        if (req.Radius > 0f && shape == AoeShape.Single)
+            shape = AoeShape.CircleSelf;
+
+        return TelegraphShape.Build(
+            shape,
+            data?.CastType ?? 1,
+            radius,
+            data?.Width ?? 0f,
+            data?.ConeAngleDeg ?? CastTypeMapping.DefaultConeAngleDeg,
+            data?.InnerRadius ?? 0f,
+            engine.GetSimulatedEntityPosition(source.State),
+            source.HitboxRadius,
+            engine.GetSimulatedEntityPosition(target),
+            req.Radius > 0 ? req.Radius : MeleeStrikeRadius);
+    }
+
+    private SimulatedActionResult ResolveStrike(ActiveTelegraph t, ulong excludeTargetId = 0)
+        => combatEngine.ProcessNpcAction(
+            t.Source, t.Request.ActionId, t.Request.TargetId,
+            t.Request.Potency, t.Request.Style, t.Request.Radius,
+            suppressCasterActionEffect: t.WindupAnimationPlayed,
+            suppressCastVfx: t.CastVfxPlayed,
+            modelVfxActionId: t.ModelVfxActionId,
+            modelTimelineOwnsVfx: t.ModelTimelineOwnsVfx,
+            area: HasArea(t) ? t.Shape : null,
+            excludeTargetId: excludeTargetId);
 
     private void DoGuard(ActiveTelegraph t)
     {
         playerPerfectGuard();
-        if (!t.WindupAnimationPlayed)
+        // The guard protects the player, not the whole party: companions still standing in a
+        // real area take the hit (the full swing then plays through the strike).
+        var struckOthers = HasArea(t) && ResolveStrike(t, t.Request.TargetId).Success;
+        if (!t.WindupAnimationPlayed && !struckOthers)
             PlayWhiffSwing(t);
         Finish(t, TelegraphOutcome.Guarded);
     }
@@ -252,19 +323,15 @@ public sealed class TelegraphSystem
         // sync with the circle closing. (Same path normal mode uses, so feedback matches.) The
         // engine ties the sound/hit-react to a swing, so on a HIT this is the one case that can
         // briefly double-swing when a windup swing already played.
-        combatEngine.ProcessNpcAction(
-            t.Source, t.Request.ActionId, t.Request.TargetId,
-            t.Request.Potency, t.Request.Style, t.Request.Radius,
-            suppressCasterActionEffect: t.WindupAnimationPlayed,
-            suppressCastVfx: t.CastVfxPlayed,
-            modelVfxActionId: t.ModelVfxActionId,
-            modelTimelineOwnsVfx: t.ModelTimelineOwnsVfx);
+        ResolveStrike(t);
         Finish(t, TelegraphOutcome.Hit);
     }
 
     private void DoDodge(ActiveTelegraph t)
     {
-        if (!t.WindupAnimationPlayed)
+        // The primary stepped out, but a real area still lands on whoever else is inside it.
+        var struckOthers = HasArea(t) && ResolveStrike(t).Success;
+        if (!t.WindupAnimationPlayed && !struckOthers)
             PlayWhiffSwing(t);
         Finish(t, TelegraphOutcome.Dodged);
     }
@@ -273,7 +340,12 @@ public sealed class TelegraphSystem
     {
         // Show the enemy attack even when it's blocked/dodged. Ranged/magic play their cast pose
         // (no projectile/damage) so a parried staff enemy isn't animation-less.
-        if (t.Request.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto)
+        // A real skill whiffs with its own timeline; the generic melee whiff picks a random one
+        // from the model family, which on a monster is some other skill's animation.
+        if (config.EnemyMonsterRealSkills && !t.Request.IsAutoAttack &&
+            t.Request.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto)
+            animationController.PlayNpcWindupPose(t.Source, t.Request.ActionId);
+        else if (t.Request.Style is NpcAttackStyle.Melee or NpcAttackStyle.Auto)
             animationController.PlayNpcMeleeAnimationOnly(t.Source);
         else
             animationController.PlayNpcWindupPose(t.Source, t.Request.ActionId);
@@ -309,6 +381,8 @@ public sealed class TelegraphSystem
 
     private void Finish(ActiveTelegraph t, TelegraphOutcome outcome)
     {
+        markers.Remove(t.MarkerId);
+        t.MarkerId = 0;
         t.Outcome = outcome;
         t.InGrace = false;
         t.Resolved = true;
@@ -340,5 +414,43 @@ public sealed class TelegraphSystem
         return false;
     }
 
-    public void Clear() => active.Clear();
+    /// <summary>
+    /// A telegraph still in its cast lead-in, for drawing a cast bar: Action Mode turns a cast
+    /// into lead-in instead of an engine cast, so the HP bar has nothing else to read.
+    /// </summary>
+    public bool TryGetCast(uint npcSimId, out uint actionId, out float progress)
+    {
+        foreach (var t in active)
+        {
+            if (t.Resolved || t.Source.SimulatedEntityId != npcSimId || t.LeadInTotal <= 0f)
+                continue;
+            actionId = t.Request.ActionId;
+            var total = t.LeadInTotal + t.WindupTotal;
+            progress = Math.Clamp((t.LeadInElapsed + t.WindupElapsed) / total, 0f, 1f);
+            return true;
+        }
+        actionId = 0;
+        progress = 0f;
+        return false;
+    }
+
+    /// <summary>Interrupt: cancel an enemy telegraph that is still in its cast lead-in (no strike).</summary>
+    public bool TryInterrupt(uint npcSimId)
+    {
+        foreach (var t in active)
+        {
+            if (t.Resolved || t.Source.SimulatedEntityId != npcSimId || t.IsApproachActive)
+                continue;
+            Finish(t, TelegraphOutcome.Dodged);
+            return true;
+        }
+        return false;
+    }
+
+    public void Clear()
+    {
+        foreach (var t in active)
+            markers.Remove(t.MarkerId);
+        active.Clear();
+    }
 }

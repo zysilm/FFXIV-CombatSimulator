@@ -81,7 +81,8 @@ public unsafe class NpcSelector : IDisposable
         int maxHp = CalculateNpcHp(level, hpMultiplier);
         var weaponStyle = NpcWeaponClassifier.DetectFromCharacter(character, log, target.Name.TextValue);
         var behavior = actionProfileProvider.Create(
-            target.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, level);
+            target.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, level,
+            modelCharaId: (uint)Math.Max(0, originalModelCharaId));
 
         var npc = new SimulatedNpc
         {
@@ -317,7 +318,8 @@ public unsafe class NpcSelector : IDisposable
         int maxHp = CalculateNpcHp(level, hpMultiplier);
         var weaponStyle = NpcWeaponClassifier.DetectFromCharacter(character, log, obj.Name.TextValue);
         var behavior = actionProfileProvider.Create(
-            obj.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, level);
+            obj.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, level,
+            modelCharaId: (uint)Math.Max(0, originalModelCharaId));
 
         var npc = new SimulatedNpc
         {

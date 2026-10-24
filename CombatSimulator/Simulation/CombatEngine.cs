@@ -507,6 +507,8 @@ public class CombatEngine : IDisposable
             return result;
         }
 
+        TryInterruptEnemyCast(actionId, target);
+
         if (TryReplacePlayerAttack(actionId, target.EntityId))
         {
             result.Success = true;
@@ -657,6 +659,39 @@ public class CombatEngine : IDisposable
         return result;
     }
 
+    // Role interrupts and stuns. Interject/Head Graze stop interruptible casts; stuns stop any.
+    private static bool IsInterruptAction(uint actionId) => actionId is 7538 or 7551;
+    private static bool IsStunAction(uint actionId) => actionId is 7540 or 7863 or 16;
+
+    /// <summary>Action-Mode hook: cancel the enemy's telegraph that is still in its cast lead-in.</summary>
+    public Func<uint, bool>? InterruptTelegraphCast { get; set; }
+
+    /// <summary>
+    /// Telegraphed-casts option: the player's interrupt or stun on a casting enemy stops the cast
+    /// (engine cast bar, or an Action-Mode telegraph still in its lead-in). Purely local state.
+    /// </summary>
+    private void TryInterruptEnemyCast(uint actionId, SimulatedEntityState target)
+    {
+        if (!config.EnemyTelegraphedCasts || target.IsPlayer || target.IsCompanion)
+            return;
+        var stun = IsStunAction(actionId);
+        if (!stun && !IsInterruptAction(actionId))
+            return;
+
+        if (target.IsCasting && (stun || target.CastInterruptible))
+        {
+            target.IsCasting = false;
+            target.CastActionId = 0;
+            target.CastTimeElapsed = 0;
+            target.CastTimeTotal = 0;
+            AddLogEntry("You interrupt the cast.", CombatLogType.Info);
+            return;
+        }
+
+        if (target.EntityId <= uint.MaxValue && InterruptTelegraphCast?.Invoke((uint)target.EntityId) == true)
+            AddLogEntry("You interrupt the cast.", CombatLogType.Info);
+    }
+
     public SimulatedActionResult ProcessNpcAction(
         SimulatedNpc npc,
         uint actionId,
@@ -667,7 +702,9 @@ public class CombatEngine : IDisposable
         bool suppressCasterActionEffect = false,
         bool suppressCastVfx = false,
         uint modelVfxActionId = 0,
-        bool modelTimelineOwnsVfx = false)
+        bool modelTimelineOwnsVfx = false,
+        TelegraphShape? area = null,
+        ulong excludeTargetId = 0)
     {
         var result = new SimulatedActionResult
         {
@@ -681,6 +718,34 @@ public class CombatEngine : IDisposable
         {
             result.FailReason = "Invalid target or source dead.";
             return result;
+        }
+
+        // A snapshotted telegraph area decides who is hit: everyone hostile standing in it at
+        // resolve, and only them — the primary included only if it stayed inside, the guarding
+        // player (excludeTargetId) spared without sparing the companions next to them.
+        List<SimulatedEntityState>? areaTargets = null;
+        if (area is { } areaShape)
+        {
+            areaTargets = new List<SimulatedEntityState>();
+            foreach (var candidate in GetHostileTargets(npc.State))
+            {
+                if (areaTargets.Count >= 32)
+                    break;
+                if (!candidate.IsAlive || candidate.EntityId == excludeTargetId)
+                    continue;
+                if (areaShape.Contains(GetEntityPosition(candidate)))
+                    areaTargets.Add(candidate);
+            }
+            if (areaTargets.Count == 0)
+            {
+                result.FailReason = "No targets in area.";
+                return result;
+            }
+            if (!areaTargets.Contains(target))
+            {
+                target = areaTargets[0];
+                result.TargetId = target.EntityId;
+            }
         }
 
         var resolvedActionData = actionDataProvider.GetActionData(actionId);
@@ -738,7 +803,7 @@ public class CombatEngine : IDisposable
         ApplyNpcAttackStyle(visualAction, attackStyle == NpcAttackStyle.Auto ? npc.Behavior.AutoAttackStyle : attackStyle);
         var hits = new List<AppliedActionDamage> { new(target, dmgResult) };
         var totalDamage = dmgResult.Damage;
-        foreach (var extraTarget in ResolveActionTargets(npc.State, target, visualAction, primaryAlreadyHit: true))
+        foreach (var extraTarget in areaTargets ?? ResolveActionTargets(npc.State, target, visualAction, primaryAlreadyHit: true))
         {
             if (extraTarget.EntityId == target.EntityId)
                 continue;
@@ -1020,10 +1085,13 @@ public class CombatEngine : IDisposable
         {
             AoeShape.Circle or AoeShape.GroundCircle =>
                 CombatGeometry.IsInsideCircle(primaryPos, candidatePos, radius),
-            AoeShape.CircleSelf or AoeShape.Donut =>
+            AoeShape.CircleSelf =>
                 CombatGeometry.IsInsideCircle(sourcePos, candidatePos, radius),
+            AoeShape.Donut =>
+                CombatGeometry.IsInsideDonut(sourcePos, candidatePos, actionData.InnerRadius, radius),
+            // The omen-derived angle (90° when the action has no omen, i.e. every player cone).
             AoeShape.Cone =>
-                CombatGeometry.IsInsideCone(sourcePos, primaryPos, candidatePos, radius),
+                CombatGeometry.IsInsideConeAngle(sourcePos, primaryPos, candidatePos, radius, actionData.ConeAngleDeg),
             AoeShape.Line =>
                 CombatGeometry.IsInsideLine(sourcePos, primaryPos, candidatePos, radius, actionData.Width),
             _ => false,
@@ -1071,6 +1139,11 @@ public class CombatEngine : IDisposable
             Radius = source.Radius,
             Shape = source.Shape,
             Width = source.Width,
+            CastType = source.CastType,
+            ConeAngleDeg = source.ConeAngleDeg,
+            InnerRadius = source.InnerRadius,
+            OmenVfxPath = source.OmenVfxPath,
+            CanTargetHostile = source.CanTargetHostile,
             DamageType = source.DamageType,
             NativeMpCost = source.NativeMpCost,
             MpCost = source.MpCost,

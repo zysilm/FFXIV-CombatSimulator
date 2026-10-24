@@ -32,6 +32,9 @@ public class NpcActionProfileProvider
     /// (the production default, before the experimental module wires this) behaves the same as false.</summary>
     public Func<bool>? ForceAutoAttackOnly { private get; set; }
 
+    /// <summary>Monster kits from model-family Action rows; wired once the animation layer exists.</summary>
+    public MonsterActionKitProvider? MonsterKits { private get; set; }
+
     public NpcActionProfileProvider(JobActionKitProvider jobKits, Configuration config, IPluginLog log)
     {
         this.jobKits = jobKits;
@@ -44,7 +47,8 @@ public class NpcActionProfileProvider
     /// (0 = monster / NPC-only weapon → auto-attack only). <paramref name="weaponStyle"/> sets the
     /// auto-attack motion; <paramref name="level"/> caps the job kit.
     /// </summary>
-    public NpcBehavior Create(string npcName, uint jobId, NpcAttackStyle weaponStyle, int level, uint bNpcBaseId = 0)
+    public NpcBehavior Create(string npcName, uint jobId, NpcAttackStyle weaponStyle, int level, uint bNpcBaseId = 0,
+        uint modelCharaId = 0)
     {
         // Training dummies never attack.
         if (bNpcBaseId == TrainingDummyBNpcBaseId ||
@@ -60,7 +64,8 @@ public class NpcActionProfileProvider
             // engage-range logic to ranged intent and the enemy camps at spell range instead of
             // closing in like its weapon implies.
             var meleeOnly = weaponStyle is not (NpcAttackStyle.Ranged or NpcAttackStyle.Magic);
-            var kit = jobKits.BuildKit(jobId, level, Math.Max(1, config.EnemyMaxRealSkills), meleeOnly);
+            var kit = jobKits.BuildKit(jobId, level, Math.Max(1, config.EnemyMaxRealSkills), meleeOnly,
+                config.EnemyKitIncludeAoe);
             if (kit.Count > 0)
             {
                 behavior.Skills = new List<NpcSkill>(kit.Count);
@@ -73,6 +78,23 @@ public class NpcActionProfileProvider
                 log.Info($"Enemy '{npcName}' job {jobId} yielded no kit at level {level}; auto-attack only.");
             }
         }
+        else if (jobId == 0 && config.EnemyMonsterRealSkills && MonsterKits != null &&
+                 ForceAutoAttackOnly?.Invoke() != true)
+        {
+            // Monster: its own family's real skills (human models have no family → stays empty).
+            var kit = MonsterKits.BuildKit(modelCharaId, Math.Max(1, config.EnemyMaxMonsterSkills), behavior.AutoAttackPotency);
+            if (kit.Count > 0)
+            {
+                behavior.Skills = new List<NpcSkill>(kit.Count);
+                foreach (var skill in kit)
+                    behavior.Skills.Add(skill.CloneDefinition());
+                log.Info($"Enemy '{npcName}' → monster model {modelCharaId}, {kit.Count} real skills.");
+            }
+        }
+
+        // HP phases on top of whichever kit was built (per-enemy copies, so safe to edit).
+        if (config.EnemyHpPhaseSkills && behavior.Skills.Count > 0)
+            EnemyPhasePlanner.Apply(behavior.Skills);
 
         return behavior;
     }

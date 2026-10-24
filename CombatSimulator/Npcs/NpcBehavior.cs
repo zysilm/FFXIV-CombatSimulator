@@ -169,6 +169,13 @@ public class NpcSkill
     public int Priority { get; set; }
     public float HpThreshold { get; set; } = 1.0f;
     public NpcAttackStyle AttackStyle { get; set; } = NpcAttackStyle.Auto;
+    /// <summary>
+    /// The action's real cast time. <see cref="CastTime"/> stays 0 for generated kits (instant
+    /// enemies, the established behaviour); this is only consulted when telegraphed casts are on.
+    /// </summary>
+    public float NativeCastTime { get; set; }
+    /// <summary>Built from the monster's own model-family Action rows (not a player job kit).</summary>
+    public bool IsMonsterSkill { get; set; }
 
     // Runtime state
     public float CooldownRemaining { get; set; }

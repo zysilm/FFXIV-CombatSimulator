@@ -373,7 +373,8 @@ public unsafe class NpcSpawner : IDisposable
             // A bare-handed humanoid ENpc fights with its fists — pugilist/monk kit.
             if (jobId == 0 && mainHandWeapon == 0 && weaponUsesHumanJob)
                 jobId = NpcWeaponClassifier.MonkJobId;
-            var behavior = actionProfileProvider.Create(npcName, jobId, weaponStyle, npcLevel, request.BNpcBaseId);
+            var behavior = actionProfileProvider.Create(npcName, jobId, weaponStyle, npcLevel, request.BNpcBaseId,
+                (uint)Math.Max(0, character->ModelContainer.ModelCharaId));
             if (weaponStyle is NpcAttackStyle.Ranged or NpcAttackStyle.Magic || jobId != 0)
                 log.Info($"NPC weapon classify '{npcName}' from ENpcBase: packedMainHand=0x{mainHandWeapon:X} -> style={weaponStyle}, job={jobId}");
 

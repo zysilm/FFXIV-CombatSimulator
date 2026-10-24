@@ -42,7 +42,8 @@ public sealed class TelegraphOverlay
         var drawList = ImGui.GetBackgroundDrawList();
         foreach (var t in list)
         {
-            if (t.Resolved)
+            // Real-shape telegraphs are drawn from their area marker by EnemyAreaOverlay.
+            if (t.Resolved || t.HasShape)
                 continue;
             DrawCircle(drawList, t.AnchorPos, t.Radius, t.Progress);
         }

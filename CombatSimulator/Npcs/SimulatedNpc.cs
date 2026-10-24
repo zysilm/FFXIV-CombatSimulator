@@ -67,6 +67,8 @@ public unsafe class SimulatedNpc
 
     // Casting
     public NpcSkill? CurrentCastSkill { get; set; }
+    /// <summary>Area snapshotted when a telegraphed cast began; the cast resolves against it.</summary>
+    public CombatSimulator.Simulation.TelegraphShape? CastArea { get; set; }
 
     // Post-spawn placement enforcement: frames left during which the clone is pinned to
     // SpawnPosition. Something inside the game keeps relocating a freshly cloned humanoid onto the

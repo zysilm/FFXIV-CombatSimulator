@@ -14,7 +14,9 @@ public readonly record struct NpcAttackRequest(
     NpcAttackStyle Style,
     float Radius,
     float CastTime,
-    bool IsAutoAttack = false);
+    bool IsAutoAttack = false,
+    // Area snapshotted when a cast began (real-shape telegraphs); resolve against it, not live data.
+    CombatSimulator.Simulation.TelegraphShape? Area = null);
 
 /// <summary>
 /// Seam 2: how an enemy attack resolves. The enemy AI (skills, pathing, HP) is

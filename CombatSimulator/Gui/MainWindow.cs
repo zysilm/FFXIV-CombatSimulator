@@ -1164,6 +1164,7 @@ public partial class MainWindow : IDisposable
         }
         HelpMarker("Humanoid enemies cast their real job's strongest N damage skills (by weapon → job). " +
                    "Monsters and NPC-only weapons auto-attack only. 0 = everyone auto-attacks.");
+        DrawEnemySkillsSection();
 
         ImGui.Separator();
 

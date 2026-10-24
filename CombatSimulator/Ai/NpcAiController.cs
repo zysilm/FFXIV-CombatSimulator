@@ -157,6 +157,9 @@ public unsafe partial class NpcAiController : IDisposable
         combatEngine.OnSimulationReset += OnSimulationResetOrStop;
     }
 
+    /// <summary>Where telegraphed casts register their snapshotted area (null = none drawn).</summary>
+    public CombatSimulator.ActionCombat.EnemyAreaMarkers? AreaMarkers { private get; set; }
+
     private void ScheduleAutoEngage()
     {
         if (!config.EnableNpcAutoEngage || combatEngine.IsEnemyInitiationSuppressed)
@@ -617,6 +620,12 @@ public unsafe partial class NpcAiController : IDisposable
             }
         }
 
+        // A telegraphed cast runs to completion wherever its target goes: the area is fixed, so
+        // walking out of it is the dodge. Letting the range gate below pause it would let the
+        // player freeze a cast just by stepping back.
+        if (npc.CastArea != null && TickSnapshotCast(npc, deltaTime))
+            return;
+
         float effectiveRange = GetEffectiveNpcAttackRange(npc, simulatedTarget);
 
         if (distToTarget > effectiveRange)
@@ -711,18 +720,21 @@ public unsafe partial class NpcAiController : IDisposable
         {
             var skill = readySkills[Random.Shared.Next(readySkills.Count)];
             var mpCost = SkillMpCost(npc, skill.ActionId);
+            var castTime = EffectiveCastTime(skill);
 
             // Action Mode skips the engine cast bar — the telegraph executor owns the
             // windup uniformly (cast time feeds the telegraph duration).
-            if (!config.ActionMode && skill.CastTime > 0)
+            if (!config.ActionMode && castTime > 0)
             {
                 npc.State.IsCasting = true;
                 npc.State.CastActionId = skill.ActionId;
-                npc.State.CastTimeTotal = skill.CastTime;
+                npc.State.CastTimeTotal = castTime;
                 npc.State.CastTimeElapsed = 0;
                 npc.State.CastTargetId = targetEntityId;
+                npc.State.CastInterruptible = skill.Interruptible;
                 npc.CurrentCastSkill = skill;
                 npc.State.CurrentMp = Math.Max(0, npc.State.CurrentMp - mpCost);
+                BeginSnapshotCast(npc, skill, simulatedTarget, castTime);
 
                 combatEngine.AddLogEntry(
                     $"{npc.Name} begins casting {skill.Name}...",
@@ -731,7 +743,7 @@ public unsafe partial class NpcAiController : IDisposable
             else
             {
                 var ok = combatModeRouter.AttackExecutor.Execute(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
-                    skill.ActionId, targetEntityId, skill.Potency, skill.AttackStyle, skill.Radius, skill.CastTime));
+                    skill.ActionId, targetEntityId, skill.Potency, skill.AttackStyle, skill.Radius, castTime));
                 if (ok)
                 {
                     npc.State.CurrentMp = Math.Max(0, npc.State.CurrentMp - mpCost);
@@ -790,6 +802,90 @@ public unsafe partial class NpcAiController : IDisposable
         return Math.Max(1, (int)MathF.Round(MathF.Max(1f, npc.State.MaxMp) * fraction));
     }
 
+    /// <summary>
+    /// Cast time actually used. Generated kits keep <see cref="NpcSkill.CastTime"/> at 0 (a cast
+    /// with nothing on screen was 3 silent seconds); with telegraphed casts on, a skill that has a
+    /// drawable area gets its real cast back as a dodgeable windup. Skills with no area stay instant.
+    /// </summary>
+    private float EffectiveCastTime(NpcSkill skill)
+    {
+        if (skill.CastTime > 0f || skill.NativeCastTime <= 0f ||
+            !config.EnemyTelegraphedCasts || !config.EnemyTelegraphRealShapes)
+            return skill.CastTime;
+
+        var data = combatEngine.GetActionData(skill.ActionId);
+        var hasArea = skill.Radius > 0f ||
+                      (data != null && data.Shape != AoeShape.Single &&
+                       (data.Radius > 0f || CastTypeMapping.IsCharge(data.CastType)));
+        return hasArea
+            ? MathF.Min(skill.NativeCastTime, MathF.Max(0.5f, config.EnemyMaxCastSeconds))
+            : skill.CastTime;
+    }
+
+    /// <summary>
+    /// Real-shape option: freeze the cast's area now, the way the game places an omen when the
+    /// cast bar starts, and draw it for the length of the cast.
+    /// </summary>
+    private void BeginSnapshotCast(SimulatedNpc npc, NpcSkill skill, SimulatedEntityState target, float castTime)
+    {
+        npc.CastArea = null;
+        if (!config.EnemyTelegraphRealShapes)
+            return;
+
+        var req = new CombatSimulator.ActionCombat.NpcAttackRequest(
+            skill.ActionId, target.EntityId, skill.Potency, skill.AttackStyle, skill.Radius, castTime);
+        var shape = CombatSimulator.ActionCombat.TelegraphSystem.SnapshotShape(combatEngine, npc, req, target);
+        if (!shape.IsArea)
+            return;
+
+        npc.CastArea = shape;
+        var actionId = skill.ActionId;
+        AreaMarkers?.Add(npc.SimulatedEntityId, actionId, shape, castTime,
+            () => npc.State.IsCasting && npc.State.CastActionId == actionId && npc.CastArea != null);
+    }
+
+    /// <summary>
+    /// Advance a snapshotted cast. Returns true while it owns this frame. A cast the engine
+    /// stopped (interrupt/stun) spends the skill, so it is not immediately recast.
+    /// </summary>
+    private bool TickSnapshotCast(SimulatedNpc npc, float deltaTime)
+    {
+        var skill = npc.CurrentCastSkill;
+        if (skill == null)
+        {
+            npc.CastArea = null;
+            return false;
+        }
+
+        if (!npc.State.IsCasting)
+        {
+            skill.CooldownRemaining = skill.Cooldown / ActionPace();
+            npc.CurrentCastSkill = null;
+            npc.CastArea = null;
+            combatEngine.AddLogEntry($"{npc.Name}'s {skill.Name} is interrupted.", CombatLogType.Info);
+            return false;
+        }
+
+        if (npc.BattleChara != null)
+            ActorVisualStateController.ApplyActionLocked((Character*)npc.BattleChara, npc.VisualState);
+        npc.State.CastTimeElapsed += deltaTime;
+        if (npc.State.CastTimeElapsed < npc.State.CastTimeTotal)
+            return true;
+
+        var area = npc.CastArea;
+        npc.State.IsCasting = false;
+        npc.CastArea = null;
+        npc.CurrentCastSkill = null;
+        // CastTime 0: the wait already happened here; a telegraphed executor (Fighting Mode)
+        // must not add the cast again as lead-in.
+        var ok = combatModeRouter.AttackExecutor.Execute(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
+            skill.ActionId, npc.State.CastTargetId, skill.Potency, skill.AttackStyle, skill.Radius, 0f, Area: area));
+        if (ok)
+            skill.CooldownRemaining = skill.Cooldown / ActionPace();
+        npc.State.AnimationLock = MathF.Max(npc.State.AnimationLock, 0.6f);
+        return true;
+    }
+
     private void TickChasing(
         SimulatedNpc npc, float deltaTime,
         Vector3 playerPos, uint playerEntityId,
@@ -824,6 +920,7 @@ public unsafe partial class NpcAiController : IDisposable
         npc.State.CastTargetId = 0;
         npc.State.AnimationLock = 0;
         npc.CurrentCastSkill = null;
+        npc.CastArea = null; // its marker sees the cast end and leaves on the next tick
     }
 
     private void DiscardInvalidNpcActionState(SimulatedNpc npc)

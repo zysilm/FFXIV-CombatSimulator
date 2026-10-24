@@ -41,6 +41,13 @@ public static class CombatGeometry
     public static bool IsInsideCircle(Vector3 source, Vector3 candidate, float radius)
         => Distance2D(source, candidate) <= radius;
 
+    /// <summary>Ring around <paramref name="center"/>: outside the safe hole, inside the outer edge.</summary>
+    public static bool IsInsideDonut(Vector3 center, Vector3 candidate, float innerRadius, float outerRadius)
+    {
+        var d = Distance2D(center, candidate);
+        return d <= outerRadius && d >= MathF.Max(0f, innerRadius);
+    }
+
     /// <summary>
     /// Broad frontal cone (90° total) from <paramref name="source"/> aimed at
     /// <paramref name="primaryTarget"/>, reaching <paramref name="radius"/> yalms.

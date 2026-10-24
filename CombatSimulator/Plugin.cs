@@ -110,6 +110,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private readonly CombatSimulator.ActionCombat.ActionComboSink actionComboSink;
     private readonly CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter;
     private readonly CombatSimulator.ActionCombat.TelegraphSystem telegraphSystem;
+    private readonly CombatSimulator.ActionCombat.EnemyAreaMarkers enemyAreaMarkers = new();
     private readonly CombatSimulator.ActionCombat.PlayerGuardController playerGuardController;
     private readonly CombatSimulator.ActionCombat.ActionModeController actionModeController;
     private readonly CombatSimulator.ActionCombat.HitFeedbackController hitFeedbackController;
@@ -126,6 +127,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private readonly RagdollDebugOverlay ragdollDebugOverlay;
     private readonly CombatLinkOverlay combatLinkOverlay;
     private readonly TelegraphOverlay telegraphOverlay;
+    private readonly EnemyAreaOverlay enemyAreaOverlay;
+    private readonly CombatSimulator.ActionCombat.EnemyOmenVfx enemyOmenVfx;
     private readonly OsuParryOverlay osuParryOverlay;
     private readonly ReticleOverlay reticleOverlay;
     private readonly FightingDebugOverlay fightingDebugOverlay;
@@ -207,6 +210,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         terrainHeightService = new TerrainHeightService();
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, gameInterop, sigScanner, config);
+        npcActionProfileProvider.MonsterKits = new MonsterActionKitProvider(
+            animationController.NpcModelActions, actionDataProvider, dataManager, log);
         boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
         npcSelector = new NpcSelector(objectTable, targetManager, config, npcActionProfileProvider, log);
         npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, npcActionProfileProvider, movementBlockHook, log);
@@ -264,7 +269,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             log);
         playerGuardController.OnChainGuardResolved += combatEngine.RestorePlayerGuardMp;
         telegraphSystem = new CombatSimulator.ActionCombat.TelegraphSystem(
-            combatEngine, animationController, config, () => playerGuardController.IsGuardActive, playerGuardController.NotifyPerfectGuard, log);
+            combatEngine, animationController, config, () => playerGuardController.IsGuardActive, playerGuardController.NotifyPerfectGuard, log,
+            enemyAreaMarkers);
         var playerHitboxResolver = new CombatSimulator.ActionCombat.PlayerHitboxResolver(combatEngine, npcSelector, config);
         hitFeedbackController = new CombatSimulator.ActionCombat.HitFeedbackController(
             config, npcSelector.GetSelectedNpc, animationController, log);
@@ -276,13 +282,15 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             telegraphSystem, combatEngine, animationController, hitFeedbackController, gamepadState, log);
         combatModeRouter = new CombatSimulator.ActionCombat.CombatModeRouter(
             config,
-            new CombatSimulator.ActionCombat.InstantAttackExecutor(combatEngine),
+            new CombatSimulator.ActionCombat.InstantAttackExecutor(combatEngine, config,
+                (npc, actionId) => animationController.PlayNpcWindupPose(npc, actionId)),
             new CombatSimulator.ActionCombat.TelegraphedAttackExecutor(telegraphSystem, config),
             // Deferred: fightingModeController is constructed later in this ctor; the
             // router only queries at attack time.
             () => fightingModeController?.IsEngaged == true);
         // Clear any live telegraphs when a combat session ends.
         combatEngine.OnSimulationReset += telegraphSystem.Clear;
+        combatEngine.OnSimulationReset += enemyAreaMarkers.Clear;
         // Release any outstanding hitstop freezes when combat ends so no enemy is left frozen.
         combatEngine.OnSimulationReset += hitFeedbackController.Clear;
         // Super-armor enemies during their telegraph windup (no flinch from player hits).
@@ -341,6 +349,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             // Don't commit a new attack while this enemy already has a live telegraph (fixes the
             // double-swing where the old 0.6s animation lock expired mid-animation).
             telegraphSystem.IsBusy);
+        npcAiController.AreaMarkers = enemyAreaMarkers;
+        combatEngine.InterruptTelegraphCast = telegraphSystem.TryInterrupt;
         npcCorpseFootIkSolver.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
         enemyControlController.FootIkSolver = npcCorpseFootIkSolver;
         companionManager.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
@@ -556,6 +566,14 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, dismembermentController, mainWindow, config, gameGui, clientState);
         combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
         telegraphOverlay = new TelegraphOverlay(telegraphSystem, gameGui, config);
+        hpBarOverlay.ExternalCast = npc =>
+            config.EnemyTelegraphedCasts && telegraphSystem.TryGetCast(npc.SimulatedEntityId, out var castActionId, out var castProgress)
+                ? (actionDataProvider.GetActionData(castActionId)?.Name ?? "Casting", castProgress)
+                : null;
+        enemyAreaOverlay = new EnemyAreaOverlay(enemyAreaMarkers, gameGui, config);
+        enemyOmenVfx = new CombatSimulator.ActionCombat.EnemyOmenVfx(
+            enemyAreaMarkers, animationController, actionDataProvider.GetActionData, dataManager, config, log);
+        enemyAreaOverlay.HasNativeOmen = enemyOmenVfx.HasOmen;
         osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config, playerGuardController)
         {
             AlsoEnabled = () => fightingModeController.IsEngaged,
@@ -609,6 +627,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             companionManager.DespawnAll();
             spectatorController.DespawnAll();
             npcSpawner.DespawnAll();
+            enemyOmenVfx.Dispose();
             combatEngine.StopSimulation();
             npcSelector.DeselectAll();
         }
@@ -798,6 +817,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 
             if ((config.ActionMode || fightingModeController.IsEngaged) && config.ShowTelegraphs)
                 telegraphOverlay.Draw();
+            // Real-shape enemy areas (any mode); empty unless an enemy-skill option registered one.
+            enemyAreaOverlay.Draw();
 
             osuParryOverlay.Draw();
             reticleOverlay.Draw();
@@ -901,6 +922,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             {
                 playerGuardController.Tick(deltaTime);
                 telegraphSystem.Tick(deltaTime);
+                enemyAreaMarkers.Tick(deltaTime);
+                enemyOmenVfx.Tick();
             }
 
             // Fighting Mode combat input (guard key); gates internally on engagement.

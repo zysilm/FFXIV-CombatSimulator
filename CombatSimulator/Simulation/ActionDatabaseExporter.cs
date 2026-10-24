@@ -108,7 +108,7 @@ public class ActionDatabaseExporter
             var entry = new ExportEntry
             {
                 RefName = name,
-                RefShape = ActionDataProvider.MapCastType(action.CastType),
+                RefShape = ActionDataProvider.MapCastType(action.CastType, action.Range, action.CanTargetHostile),
                 RefRange = action.Range,
                 RefRadius = action.EffectRange,
                 RefWidth = action.XAxisModifier,

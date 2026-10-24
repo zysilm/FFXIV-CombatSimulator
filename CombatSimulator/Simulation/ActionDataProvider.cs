@@ -33,20 +33,7 @@ public enum ActionIntent
     Raise,
 }
 
-/// <summary>
-/// Geometry of an action's effect area, derived from the game's CastType column.
-/// Single is the safe default for anything we don't recognise.
-/// </summary>
-public enum AoeShape
-{
-    Single,        // CastType 1 — one target only
-    Circle,        // CastType 2 — circle centred on the target
-    Cone,          // CastType 3 — cone from the caster toward the target
-    Line,          // CastType 4 — line/rectangle from the caster (width = XAxisModifier)
-    CircleSelf,    // CastType 5 — circle centred on the caster (PBAoE)
-    GroundCircle,  // CastType 7 — circle placed at a ground location
-    Donut,         // CastType 10 — ring centred on the caster
-}
+// AoeShape lives in CastTypeMapping.cs (pure, linked by the offline tests).
 
 public class ActionData
 {
@@ -60,6 +47,15 @@ public class ActionData
     public float Radius { get; set; }
     public AoeShape Shape { get; set; } = AoeShape.Single;
     public float Width { get; set; }
+    /// <summary>Raw CastType column; decides hitbox padding and charges, which the shape alone can't.</summary>
+    public byte CastType { get; set; }
+    /// <summary>Full cone angle (degrees), read from the omen name; 90 when unknown.</summary>
+    public float ConeAngleDeg { get; set; } = CastTypeMapping.DefaultConeAngleDeg;
+    /// <summary>Donut safe radius. The sheet has none, so it is a fraction of the outer radius.</summary>
+    public float InnerRadius { get; set; }
+    /// <summary>Ground-marker VFX for this action (vfx/omen/eff/…), set only when the file exists.</summary>
+    public string OmenVfxPath { get; set; } = string.Empty;
+    public bool CanTargetHostile { get; set; }
     public SimDamageType DamageType { get; set; }
     public int NativeMpCost { get; set; }
     public int MpCost { get; set; }
@@ -128,21 +124,15 @@ public partial class ActionDataProvider
     }
 
     /// <summary>
-    /// Maps the game's CastType column to our simplified effect-area shape.
-    /// Unknown values collapse to Single so we never accidentally widen an
-    /// action into an AoE we don't understand.
+    /// Maps the game's CastType column to our simplified effect-area shape (rules and the data
+    /// behind them in <see cref="CastTypeMapping"/>). Unknown values collapse to Single so we
+    /// never accidentally widen an action into an AoE we don't understand.
     /// </summary>
-    public static AoeShape MapCastType(byte castType) => castType switch
-    {
-        1 => AoeShape.Single,
-        2 => AoeShape.Circle,
-        3 => AoeShape.Cone,
-        4 => AoeShape.Line,
-        5 => AoeShape.CircleSelf,
-        7 => AoeShape.GroundCircle,
-        10 => AoeShape.Donut,
-        _ => AoeShape.Single,
-    };
+    public static AoeShape MapCastType(byte castType) => CastTypeMapping.Map(castType);
+
+    /// <summary>Full mapping: type 2 is only target-centred when the action is aimed at a hostile.</summary>
+    public static AoeShape MapCastType(byte castType, float range, bool canTargetHostile)
+        => CastTypeMapping.Map(castType, range, canTargetHostile);
 
     /// <summary>
     /// Classify an action's damage as physical or magical from the AttackType row
@@ -202,8 +192,10 @@ public partial class ActionDataProvider
             RecastGroup = action.CooldownGroup,
             Range = action.Range,
             Radius = action.EffectRange,
-            Shape = MapCastType(action.CastType),
+            Shape = MapCastType(action.CastType, action.Range, action.CanTargetHostile),
             Width = action.XAxisModifier,
+            CastType = action.CastType,
+            CanTargetHostile = action.CanTargetHostile,
             NativeMpCost = action.PrimaryCostValue,
             MpCost = action.PrimaryCostValue,
             AnimationLock = 0.6f,
@@ -233,6 +225,11 @@ public partial class ActionDataProvider
         // Overlay curated/authored geometry from Actions.json. Potency is deliberately not read
         // from the file anymore; the virtual action model owns damage and MP pricing globally.
         ApplyDatabaseOverride(actionId, data);
+
+        // Area details the shape alone can't carry: the omen's cone angle and the donut hole.
+        ResolveOmen(action, data);
+        if (data.Shape == AoeShape.Donut)
+            data.InnerRadius = data.Radius * CastTypeMapping.DonutInnerFraction;
 
         // Combat potency is not reliably exposed by the client sheets. Use the action-game
         // model for both MP price and damage potency after geometry overrides are applied.
@@ -332,6 +329,32 @@ public partial class ActionDataProvider
         catch (Exception ex)
         {
             log.Warning(ex, $"[VFX] Failed to resolve VFX paths for action {data.ActionId}");
+        }
+    }
+
+    /// <summary>
+    /// The Omen sheet names the ground marker the game draws under a cast (e.g. gl_fan090_1bf).
+    /// The name also carries the cone's full angle, which the Action sheet itself does not. The
+    /// VFX path is only kept when the file exists: a missing .avfx handed to the game's loader
+    /// can take down its file thread, so every consumer can trust a non-empty path.
+    /// </summary>
+    private void ResolveOmen(Action action, ActionData data)
+    {
+        try
+        {
+            var name = action.Omen.ValueNullable?.Path.ExtractText();
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+
+            data.ConeAngleDeg = CastTypeMapping.ParseConeAngleDeg(name);
+            var withExt = name.EndsWith(".avfx", StringComparison.OrdinalIgnoreCase) ? name : name + ".avfx";
+            var path = withExt.Contains('/') ? withExt : $"vfx/omen/eff/{withExt}";
+            if (dataManager.FileExists(path))
+                data.OmenVfxPath = path;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"[VFX] Failed to resolve omen for action {data.ActionId}");
         }
     }
 
