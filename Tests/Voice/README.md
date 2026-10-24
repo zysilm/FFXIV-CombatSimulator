@@ -12,7 +12,10 @@ engage, cast start, heavy hit, one low-HP line per life, single death), and the 
 pool and picker (shipped JSON shape and coverage, the in-game anchor pair 8202037 -> NpcYell
 7768, no line using the disproven 8200000+row mapping, gender filter, one line at a time with
 quiet gaps, per-enemy and per-event cooldowns, no immediate repeats, flood bound, .scd header
-duration).
+duration), and the speaker personas (metadata parses, fallback chains stay within gender and
+language, every event reachable for every gender x body band, the answering persona is the first
+in the chain, stable and spread assignment, fx and small-persona lines never picked, clean
+per-line fallback without data or for de/fr). It prints the per-band coverage table.
 
 These offline tests do not certify native playback, volume routing, 3D positioning or what any
 sound entry actually sounds like; see docs/acceptance/voice.md for the in-game checklist.

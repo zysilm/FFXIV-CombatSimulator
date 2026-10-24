@@ -191,6 +191,54 @@ wrong); section C should be dry; section D is dry by the tail but checked for pi
 voices the tail cannot see. In combat: human enemies should no longer sound like a primal, e.g.
 8203663 "Fools, braying before a god!" and 8205955 "You are naught but insects..." never play.
 
+## Speaker personas: one enemy, one voice
+
+Before this, every line was picked on its own, so one enemy changed voice actor from line to line
+and a young and an old man drew from the same set. Now each line carries the **persona** of its
+recording (`pja` / `pen` in `VoiceLines.json`: one voice actor, found offline by clustering the ja
+and en audio, see `voice-research\out\persona\README.md`), and `Resources/VoicePersonas.json`
+lists each persona's gender, age band, character name and fallback list.
+
+- **Assignment.** On first sight in a fight an enemy gets one assignable persona (>= 8 lines,
+  >= 5 events; ja 15, en 14) of its gender and body band, chosen by a stable hash of BNpcBase,
+  BNpcName and entity id. Bands: BodyType elderly -> elderly (female elderly has no persona and
+  takes female adult); child -> young; adult (or unknown) -> any young or mature/adult persona.
+  A persona already held by an enemy on the field is skipped while another is free, and an enemy
+  seen again in the same session gets its previous persona back when it is free.
+- **Lines.** An enemy speaks only its persona's lines. With no line for the event (event chain
+  included: kill -> victory -> taunt, engage -> taunt) it borrows from the persona's fallbacks in
+  order (same gender only, same band first). Nothing in the chain: no voiced line (the labeled
+  shout fallback is unchanged). fx lines and lines of small personas never reach an enemy.
+- **Kills and defeat taunts** check the speaker's persona chain; a killer whose chain has no
+  kill-chain line hands the line to the nearest enemy whose chain has one.
+- **Languages.** ja and en clients use their own persona set. **de/fr clients pick per line as
+  before**: the personas were built from ja/en audio only and the de/fr recordings are other
+  actors that were never clustered. Missing or unreadable persona data also means per-line.
+- **Debug.** Advanced > Voiced battle lines > **Speaker personas** lists each tracked enemy and
+  its persona (character name when known). The last-line text shows `[persona]` and the line's
+  persona id. `EnemyVoiceAllowStoryCharacters` (config file only, default true): false leaves out
+  personas with a character name (en then has no female persona: women stay on shouts).
+
+Average lines the answering persona has per event (Tests/Voice prints the full table; event
+chain included, "borrow" = candidates that answer from a fallback): adult male (7 personas) Skill
+4.4, Engage 3.7, LowHp 3.4, kill 4.4, Death 1.1, AllyDeath ~1.2 (3 borrow), Victory 3.1 (3 borrow);
+elderly male (2) Skill 6, Engage 5.5, Death 1; adult female (ja 6 / en 5) Skill ~5.7, Engage ~4.8,
+kill 3, Death 1.2 (2-3 borrow). One enemy now repeats itself sooner than with the whole pool.
+
+Listen for:
+1. **Same enemy, one voice.** Pick one enemy and listen to all its lines through a fight: engage,
+   skills, hurt, low HP, death. Same actor every time (rarely a similar-sounding fallback actor for
+   a kill, ally-death or victory line). Advanced shows its persona; compare with the last line.
+2. **Two adult men sound different.** Two or more adult male enemies in one pack should get
+   different personas (the list shows them) and sound like different people.
+3. **Elderly bodies get elderly voices.** An old (BodyType elderly) man gets Gulool Ja Ja or the
+   unnamed elderly persona (ja-002 / en-002, "If you would oppose our crusade, then come!"); listen
+   to that one once: its band comes only from the age model (low confidence). An old woman gets an
+   adult female persona (no elderly female exists). A child model gets a young persona.
+4. **Kill line still guaranteed.** Every death of the player or a companion still gets a line.
+5. **Session stability.** End the fight and pull the same pack again: each enemy keeps its voice
+   unless two of them would now share one.
+
 # Phase 1 details (Advanced: labeled shouts)
 
 Phase-1 shouts play only for sound entries labeled in the audition panel and are the fallback

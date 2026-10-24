@@ -45,11 +45,22 @@ public enum VoiceLineTextSheet
 /// <see cref="Extended"/> is provenance only (matched by speech recognition). <see cref="Fx"/> marks a
 /// recording with heavy studio processing (reverb, layered or shifted voice: bosses, primals); a
 /// human speaker never gets one, it would make a common soldier sound like a god.
+/// <see cref="PersonaJa"/>/<see cref="PersonaEn"/> name the speaker persona (one voice actor, see
+/// <see cref="VoicePersonaTable"/>) of the recording in that language; null when the line has none.
 /// </summary>
 public sealed record VoiceLineEntry(uint VoiceId, uint YellId, VoiceEvent[] Events, VoiceLineVoice Voice, bool Story, float Weight,
-    VoiceLineAge Age = VoiceLineAge.Any, VoiceLineTextSheet Sheet = VoiceLineTextSheet.NpcYell, bool Extended = false, bool Fx = false)
+    VoiceLineAge Age = VoiceLineAge.Any, VoiceLineTextSheet Sheet = VoiceLineTextSheet.NpcYell, bool Extended = false, bool Fx = false,
+    string? PersonaJa = null, string? PersonaEn = null)
 {
     public string PathFor(string language) => $"sound/voice/vo_line/{VoiceId:D7}_{language}.scd";
+
+    /// <summary>Persona of this line's recording in a persona language ("ja"/"en"); null otherwise.</summary>
+    public string? PersonaFor(string? language) => language switch
+    {
+        "ja" => PersonaJa,
+        "en" => PersonaEn,
+        _ => null,
+    };
 
     /// <summary>Pool spelling of a text sheet; absent means NpcYell, an unknown name is null.</summary>
     public static VoiceLineTextSheet? ParseSheet(string? sheet) => sheet switch
@@ -255,11 +266,57 @@ public sealed class VoiceLinePicker
     private static bool AgeFits(VoiceLineEntry line, VoiceLineAge age) =>
         age == VoiceLineAge.Any || line.Age == VoiceLineAge.Any || line.Age == age;
 
-    private VoiceLineEntry? PickFrom(VoiceEvent e, VoiceLineVoice voice, Func<double> random, bool avoidRecent, VoiceLineAge age = VoiceLineAge.Any)
+    // ---- Persona-restricted picking: one enemy, one voice actor. ----
+
+    /// <summary>Lines of exactly this persona for exactly this event (no event chain).</summary>
+    public int CountFor(VoiceEvent e, VoiceLineVoice voice, string persona, string language)
+    {
+        var n = 0;
+        foreach (var line in entries)
+            if (Fits(line, e, voice) && line.PersonaFor(language) == persona)
+                n++;
+        return n;
+    }
+
+    /// <summary>How many lines could voice this event for a speaker with this persona chain (own
+    /// persona first, then its fallbacks), event chain included. 0 means the speaker stays silent.</summary>
+    public int Available(VoiceEvent e, VoiceLineVoice voice, IReadOnlyList<string> personas, string language)
+    {
+        var n = 0;
+        foreach (var persona in personas)
+            foreach (var chained in Chain(e))
+                n += CountFor(chained, voice, persona, language);
+        return n;
+    }
+
+    /// <summary>
+    /// Pick for a speaker locked to a persona. <paramref name="personas"/> is its own persona then the
+    /// fallbacks to borrow from, in order; the first persona that has a line anywhere in the event
+    /// chain (<see cref="Chain"/>, e.g. kill -> victory -> taunt) is used, so a speaker keeps its own
+    /// voice for a taunt rather than borrow another actor's kill line. Recent lines only when that
+    /// persona has nothing else for the event. No persona with a line = null (silence, never a
+    /// random voice). Age is not consulted: the persona is the age.
+    /// </summary>
+    public VoiceLineEntry? Pick(VoiceEvent e, VoiceLineVoice voice, IReadOnlyList<string> personas, string language, Func<double> random)
+    {
+        foreach (var persona in personas)
+            foreach (var chained in Chain(e))
+            {
+                var pick = PickFrom(chained, voice, random, avoidRecent: true, persona: persona, language: language)
+                           ?? PickFrom(chained, voice, random, avoidRecent: false, persona: persona, language: language);
+                if (pick != null)
+                    return pick;
+            }
+        return null;
+    }
+
+    private VoiceLineEntry? PickFrom(VoiceEvent e, VoiceLineVoice voice, Func<double> random, bool avoidRecent, VoiceLineAge age = VoiceLineAge.Any,
+        string? persona = null, string? language = null)
     {
         var total = 0.0;
         foreach (var line in entries)
-            if (Fits(line, e, voice) && AgeFits(line, age) && !(avoidRecent && recent.Contains(line.VoiceId)))
+            if (Fits(line, e, voice) && AgeFits(line, age) && !(avoidRecent && recent.Contains(line.VoiceId)) &&
+                (persona == null || line.PersonaFor(language) == persona))
                 total += line.Weight;
         if (total <= 0)
             return null;
@@ -267,7 +324,8 @@ public sealed class VoiceLinePicker
         VoiceLineEntry? last = null;
         foreach (var line in entries)
         {
-            if (!Fits(line, e, voice) || !AgeFits(line, age) || avoidRecent && recent.Contains(line.VoiceId))
+            if (!Fits(line, e, voice) || !AgeFits(line, age) || avoidRecent && recent.Contains(line.VoiceId) ||
+                persona != null && line.PersonaFor(language) != persona)
                 continue;
             last = line;
             r -= line.Weight;

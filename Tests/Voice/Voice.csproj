@@ -6,6 +6,8 @@
     <Compile Include="../../CombatSimulator/Voice/VoiceRateLimiter.cs" Link="Production/VoiceRateLimiter.cs" />
     <Compile Include="../../CombatSimulator/Voice/VoiceActorWatch.cs" Link="Production/VoiceActorWatch.cs" />
     <Compile Include="../../CombatSimulator/Voice/VoiceLines.cs" Link="Production/VoiceLines.cs" />
+    <Compile Include="../../CombatSimulator/Voice/VoicePersonas.cs" Link="Production/VoicePersonas.cs" />
     <None Include="../../CombatSimulator/Resources/VoiceLines.json" Link="VoiceLines.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../CombatSimulator/Resources/VoicePersonas.json" Link="VoicePersonas.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

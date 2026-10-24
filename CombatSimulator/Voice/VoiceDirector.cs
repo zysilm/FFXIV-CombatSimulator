@@ -28,6 +28,7 @@ public sealed unsafe class VoiceDirector
 {
     private const string BuiltInLabelsResource = "CombatSimulator.Resources.VoiceEntryLabels.json";
     private const string VoiceLinesResource = "CombatSimulator.Resources.VoiceLines.json";
+    private const string VoicePersonasResource = "CombatSimulator.Resources.VoicePersonas.json";
     // Bubble time when a line's .scd header could not be read for its length.
     private const float FallbackBubbleSeconds = 3f;
     private const float VictoryDelay = 1.5f;
@@ -61,6 +62,11 @@ public sealed unsafe class VoiceDirector
     private bool hadState;
     private readonly VoiceLineSettings lineSettings = new();
     private readonly VoiceLinePicker linePicker;
+    // One speaker persona (voice actor) per enemy; empty data or a language without personas keeps
+    // the per-line choice.
+    private readonly VoicePersonaAssigner personas = new();
+    private VoicePersonaTable personaTable = VoicePersonaTable.Empty;
+    private bool linesHaveJaPersonas, linesHaveEnPersonas;
     // Per voice id: bubble seconds (null = unreadable). Per yell id: client-language text.
     private readonly Dictionary<uint, float?> lineSeconds = new();
     private readonly Dictionary<(VoiceLineTextSheet, uint), string> yellText = new();
@@ -87,6 +93,7 @@ public sealed unsafe class VoiceDirector
     {
         public readonly VoiceActorWatch Watch = new();
         public nint Address;
+        public string Name = string.Empty;
         public float LastCastStart = float.NegativeInfinity;
         public float LastCastTotal;
         public bool Alive;
@@ -110,6 +117,7 @@ public sealed unsafe class VoiceDirector
         Resolver = new VoiceProfileResolver(dataManager, config);
         ReloadLabels();
         LoadLines();
+        LoadPersonas();
     }
 
     public NativeSoundPlayer Player { get; }
@@ -135,6 +143,8 @@ public sealed unsafe class VoiceDirector
         public string? Sheet { get; set; }
         public bool Extended { get; set; }
         public bool Fx { get; set; }
+        public string? Pja { get; set; }
+        public string? Pen { get; set; }
     }
 
     private sealed class LineFile
@@ -170,7 +180,8 @@ public sealed unsafe class VoiceDirector
                     if (voice == null || sheet == null || dto.Voice == 0 || events.Count == 0)
                         continue;
                     parsed.Add(new VoiceLineEntry(dto.Voice, dto.Yell, events.ToArray(), voice.Value, dto.Story, dto.Weight,
-                        VoiceLineEntry.ParseAge(dto.Age), sheet.Value, dto.Extended, dto.Fx));
+                        VoiceLineEntry.ParseAge(dto.Age), sheet.Value, dto.Extended, dto.Fx,
+                        string.IsNullOrEmpty(dto.Pja) ? null : dto.Pja, string.IsNullOrEmpty(dto.Pen) ? null : dto.Pen));
                 }
             }
         }
@@ -180,6 +191,65 @@ public sealed unsafe class VoiceDirector
         }
         // The whole pool; the picker itself keeps "fx" (processed boss/primal) lines from human speakers.
         linePicker.SetEntries(parsed);
+        linesHaveJaPersonas = parsed.Exists(l => l.PersonaJa != null);
+        linesHaveEnPersonas = parsed.Exists(l => l.PersonaEn != null);
+    }
+
+    /// <summary>Persona metadata ships inside the DLL too; without it lines are picked one by one.</summary>
+    private void LoadPersonas()
+    {
+        try
+        {
+            using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(VoicePersonasResource);
+            if (stream != null)
+            {
+                using var reader = new StreamReader(stream);
+                personaTable = VoicePersonaTable.Parse(reader.ReadToEnd());
+            }
+        }
+        catch (Exception ex)
+        {
+            personaTable = VoicePersonaTable.Empty;
+            log.Warning($"Enemy voices: speaker personas unreadable ({ex.Message}); lines are picked per line.");
+        }
+    }
+
+    /// <summary>Data and language for the assigner; a language whose lines carry no persona id gets
+    /// none (per-line choice).</summary>
+    private void ConfigurePersonas()
+    {
+        var language = Resolver.ClientLanguage;
+        var hasIds = VoicePersonaTable.PersonaLanguage(language) switch
+        {
+            "ja" => linesHaveJaPersonas,
+            "en" => linesHaveEnPersonas,
+            _ => false,
+        };
+        personas.Configure(hasIds ? personaTable : VoicePersonaTable.Empty, language, config.EnemyVoiceAllowStoryCharacters);
+    }
+
+    /// <summary>Personas pick the lines (data present for the client language).</summary>
+    public bool PersonasActive => personas.Active;
+    public string? PersonaLanguage => personas.Language;
+
+    /// <summary>Tracked enemies and their personas, for the debug view.</summary>
+    public List<(uint EntityId, string Name, bool Alive, VoicePersonaAssignment? Assignment)> PersonaAssignments()
+    {
+        var list = new List<(uint, string, bool, VoicePersonaAssignment?)>(tracked.Count);
+        foreach (var (id, t) in tracked)
+            list.Add((id, t.Name, t.Alive, personas.Get(id)));
+        return list;
+    }
+
+    /// <summary>The enemy's persona, assigned on first sight from its body (gender, BodyType age)
+    /// and identity; stays for as long as the enemy is tracked.</summary>
+    private VoicePersonaAssignment PersonaOf(uint id, Tracked t, uint bNpcBaseId, uint bNpcNameId)
+    {
+        var existing = personas.Get(id);
+        if (existing != null)
+            return existing;
+        var (voice, age) = Resolver.ResolveBodyAndAge(t.Address, id);
+        return personas.Assign(id, VoicePersonaAssigner.IdentitySeed(bNpcBaseId, bNpcNameId, id), voice, age);
     }
 
     /// <summary>
@@ -246,6 +316,7 @@ public sealed unsafe class VoiceDirector
         limiter.Reset();
         linePicker.Reset();
         Resolver.Clear();
+        personas.Clear();
         hadState = false;
         // Re-seeded on the next combat frame: companions already dead are not a fresh kill.
         lastDeadCompanions = -1;
@@ -289,13 +360,21 @@ public sealed unsafe class VoiceDirector
         return best;
     }
 
-    /// <summary>Whether this tracked enemy is alive and has a curated line for the event in its voice.</summary>
+    /// <summary>Whether this tracked enemy is alive and has a curated line for the event in its voice
+    /// (with personas: in its own persona or a fallback of it).</summary>
     private bool CanVoiceLine(uint id, VoiceEvent e)
     {
         if (id == 0 || !tracked.TryGetValue(id, out var t) || !t.Alive)
             return false;
         var voice = Resolver.ResolveBody(t.Address, id);
-        return voice != VoiceLineVoice.NonHuman && linePicker.Available(e, voice) > 0;
+        if (voice == VoiceLineVoice.NonHuman)
+            return false;
+        if (personas.Active)
+        {
+            var chain = personas.Get(id)?.Chain;
+            return chain != null && chain.Count > 0 && linePicker.Available(e, voice, chain, personas.Language!) > 0;
+        }
+        return linePicker.Available(e, voice) > 0;
     }
 
     // ---- Audition (panel) ----
@@ -359,6 +438,7 @@ public sealed unsafe class VoiceDirector
         limiter.Advance(deltaTime);
         lineSettings.Gap = Math.Clamp(config.EnemyVoiceLineGap, 0f, 30f);
         linePicker.Advance(deltaTime);
+        ConfigurePersonas();
 
         RunAudition();
 
@@ -395,9 +475,13 @@ public sealed unsafe class VoiceDirector
                     limiter.Forget(id);
                     linePicker.Forget(id);
                     Resolver.Forget(t.Address, id);
+                    personas.Forget(id);
                 }
-                tracked[id] = t = new Tracked { Address = npc.Address };
+                tracked[id] = t = new Tracked { Address = npc.Address, Name = npc.Name };
             }
+            // First sight fixes the voice; later frames are a lookup.
+            if (personas.Active)
+                PersonaOf(id, t, npc.BNpcBaseId, npc.BNpcNameId);
 
             var go = (GameObject*)npc.BattleChara;
             t.Position = go->Position;
@@ -438,6 +522,7 @@ public sealed unsafe class VoiceDirector
                 Resolver.Forget(tracked[id].Address, id);
                 limiter.Forget(id);
                 linePicker.Forget(id);
+                personas.Forget(id);
                 tracked.Remove(id);
             }
         }
@@ -681,7 +766,15 @@ public sealed unsafe class VoiceDirector
         // Monsters have no curated lines (none is non-human), so they stay on their own sounds
         // rather than speak with a human voice.
         var (voice, age) = Resolver.ResolveBodyAndAge(t.Address, (uint)c.ActorKey);
-        if (voice == VoiceLineVoice.NonHuman || linePicker.Available(c.Event, voice) == 0)
+        if (voice == VoiceLineVoice.NonHuman)
+            return false;
+        // With personas the enemy speaks only its persona's lines (or a same-gender fallback's); no
+        // line there is silence for the line, never another random voice.
+        var persona = personas.Active ? PersonaOf((uint)c.ActorKey, t, npc.BNpcBaseId, npc.BNpcNameId) : null;
+        var personaLanguage = personas.Language;
+        if (persona != null
+                ? persona.Chain.Count == 0 || linePicker.Available(c.Event, voice, persona.Chain, personaLanguage!) == 0
+                : linePicker.Available(c.Event, voice) == 0)
             return false;
         if (!scripted && random.NextDouble() >= VoiceLinePicker.Chance(c.Event))
             return false;
@@ -689,7 +782,9 @@ public sealed unsafe class VoiceDirector
         var language = Resolver.ClientLanguage;
         for (var attempt = 0; attempt < 3; attempt++)
         {
-            var line = linePicker.Pick(c.Event, voice, random.NextDouble, age);
+            var line = persona != null
+                ? linePicker.Pick(c.Event, voice, persona.Chain, personaLanguage!, random.NextDouble)
+                : linePicker.Pick(c.Event, voice, random.NextDouble, age);
             if (line == null)
                 return false;
             // Client-language audio only: the bubble shows client-language text, and a German
@@ -725,7 +820,9 @@ public sealed unsafe class VoiceDirector
             linePicker.Commit(c.ActorKey, c.Event, line, config.EnemyVoiceBubbles ? seconds.Value : seconds.Value - 1f);
             lineEndsAt[(uint)c.ActorKey] = linePicker.Now + seconds.Value;
             LinesSpoken++;
-            LastVoiceDescription = $"{npc.Name}: {c.Event} -> \"{text}\" (vo {line.VoiceId})";
+            LastVoiceDescription = persona?.Persona != null
+                ? $"{npc.Name} [{persona.Persona.Display}]: {c.Event} -> \"{text}\" (vo {line.VoiceId}, {line.PersonaFor(personaLanguage)})"
+                : $"{npc.Name}: {c.Event} -> \"{text}\" (vo {line.VoiceId})";
             if (handle != 0)
                 VoicePlayed?.Invoke(t.Address, c.Event, new VoiceSource(VoiceSourceKind.YellLine, string.Empty, line.VoiceId - VoiceSelection.YellLineBase), 0);
             return true;

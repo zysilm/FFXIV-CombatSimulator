@@ -397,4 +397,189 @@ BitConverter.GetBytes(0x06).CopyTo(scd, 0x10C);
 Check(!VoiceLineAudio.TryReadDuration(scd, out _), "unknown codec read as audio");
 Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds(30f) == 7f, "bubble clamp");
 
-Console.WriteLine($"PASS {checks} checks; voice mapping, language fallback, labels, rate limiting, arbitration, transition watch, voiced line pool and picker.");
+// ---- Speaker personas: one enemy, one voice actor. ----
+{
+    var table = VoicePersonaTable.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "VoicePersonas.json")));
+    Check(table.Count >= 100, $"persona table has only {table.Count} rows");
+    int AssignableIn(string lang) => table.All.Count(p => p.Assignable && p.Language == lang);
+    Check(AssignableIn("ja") == 15 && AssignableIn("en") == 14, $"assignable personas ja {AssignableIn("ja")} en {AssignableIn("en")}");
+    Check(table.Get("ja-010")?.Character == "Alphinaud" && table.Get("ja-010")!.Voice == VoiceLineVoice.Male &&
+          table.Get("ja-010")!.Band == VoiceLineAge.Young, "ja-010 is young male Alphinaud");
+    Check(table.Get("en-004")?.BandName == "mature" && table.Get("en-003")?.BandName == "adult", "band names");
+    Check(VoicePersonaTable.PersonaLanguage("de") == null && VoicePersonaTable.PersonaLanguage("fr") == null &&
+          VoicePersonaTable.PersonaLanguage("en") == "en", "only ja/en have personas");
+
+    // Fallback chains: itself first, then assignable personas of the same language and gender, same band first.
+    foreach (var p in table.All.Where(p => p.Assignable))
+        foreach (var allowStory in new[] { true, false })
+        {
+            if (!allowStory && p.IsStoryCharacter)
+                continue;
+            var chain = table.ChainFor(p, allowStory);
+            Check(chain[0] == p.Id && chain.Distinct().Count() == chain.Count, $"{p.Id}: chain must start with itself, no repeats");
+            var members = chain.Select(id => table.Get(id)!).ToList();
+            Check(members.All(m => m.Assignable && m.Voice == p.Voice && m.Language == p.Language), $"{p.Id}: chain crosses gender/language or uses a small persona");
+            Check(allowStory || members.All(m => !m.IsStoryCharacter), $"{p.Id}: story character in a chain with story characters off");
+            var firstOther = members.FindIndex(m => m.Band != p.Band);
+            Check(firstOther < 0 || members.Skip(firstOther).All(m => m.Band != p.Band), $"{p.Id}: same-band fallback after another band");
+        }
+
+    // The shipped pool with its persona ids, as the director loads it.
+    using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(poolPath));
+    var entries = new List<VoiceLineEntry>();
+    string? S(System.Text.Json.JsonElement l, string name) => l.TryGetProperty(name, out var x) ? x.GetString() : null;
+    foreach (var l in doc.RootElement.GetProperty("lines").EnumerateArray())
+    {
+        var evs = l.GetProperty("events").EnumerateArray().Select(e => Enum.Parse<VoiceEvent>(e.GetString()!)).ToArray();
+        var g = l.GetProperty("gender").GetString() == "female" ? VoiceLineVoice.Female : VoiceLineVoice.Male;
+        entries.Add(new VoiceLineEntry(l.GetProperty("voice").GetUInt32(), l.GetProperty("yell").GetUInt32(), evs, g, false, 1f,
+            VoiceLineEntry.ParseAge(S(l, "age")), Fx: l.TryGetProperty("fx", out var f) && f.GetBoolean(), PersonaJa: S(l, "pja"), PersonaEn: S(l, "pen")));
+    }
+    Check(entries.Count(e => e.PersonaJa != null) > 350 && entries.Count(e => e.PersonaEn != null) > 350, "pool lines lack persona ids");
+    foreach (var e in entries)
+    {
+        foreach (var (lang, id) in new[] { ("ja", e.PersonaJa), ("en", e.PersonaEn) })
+        {
+            if (id == null)
+                continue;
+            var p = table.Get(id);
+            Check(p != null && p.Language == lang, $"vo {e.VoiceId}: persona {id} unknown or of another language");
+            Check(e.Fx || !p!.Assignable || p.Voice == e.Voice,$"vo {e.VoiceId}: persona {id} is {p!.Voice}, line is {e.Voice}");
+        }
+    }
+    var shipped = new VoiceLinePicker(new VoiceLineSettings { RecentMemory = 24 });
+    shipped.SetEntries(entries);
+    var fxIds = entries.Where(e => e.Fx).Select(e => e.VoiceId).ToHashSet();
+
+    // Every gender x body age, every candidate persona: every event is reachable through its chain, and the
+    // persona that answers is in the chain, assignable, and never an fx line.
+    var bodies = new[] { VoiceLineAge.Young, VoiceLineAge.Adult, VoiceLineAge.Elderly, VoiceLineAge.Any };
+    var coverage = new List<string>();
+    foreach (var lang in new[] { "ja", "en" })
+        foreach (var g in new[] { VoiceLineVoice.Male, VoiceLineVoice.Female })
+            foreach (var body in bodies)
+            {
+                var candidates = table.Candidates(lang, g, body, true);
+                Check(candidates.Count > 0, $"{lang} {g} {body}: no persona");
+                if (body == VoiceLineAge.Elderly)
+                    Check(candidates.All(c => c.Band == (g == VoiceLineVoice.Male ? VoiceLineAge.Elderly : VoiceLineAge.Adult)), $"{lang} {g} elderly body band");
+                if (body == VoiceLineAge.Young)
+                    Check(candidates.All(c => c.Band == VoiceLineAge.Young), $"{lang} {g} child body band");
+                if (body == VoiceLineAge.Adult)
+                    Check(candidates.Any(c => c.Band == VoiceLineAge.Young) && candidates.Any(c => c.Band == VoiceLineAge.Adult) &&
+                          candidates.All(c => c.Band != VoiceLineAge.Elderly), $"{lang} {g} adult body spreads over young and adult");
+                var perEventLines = new List<string>();
+                foreach (var ev in Enum.GetValues<VoiceEvent>())
+                {
+                    var own = 0.0;
+                    var answering = 0.0;
+                    foreach (var c in candidates)
+                    {
+                        var chain = table.ChainFor(c, true);
+                        Check(shipped.Available(ev, g, chain, lang) > 0, $"{lang} {c.Id} ({g} {body}): {ev} unreachable");
+                        // How many lines the persona that actually answers has for this event (event chain included).
+                        var who = chain.First(p => VoiceLinePicker.Chain(ev).Any(ce => shipped.CountFor(ce, g, p, lang) > 0));
+                        answering += VoiceLinePicker.Chain(ev).Sum(ce => shipped.CountFor(ce, g, who, lang));
+                        if (who == c.Id)
+                            own++;
+                        for (var i = 0; i < 20; i++)
+                        {
+                            var pick = shipped.Pick(ev, g, chain, lang, rnd.NextDouble);
+                            Check(pick != null && !fxIds.Contains(pick.VoiceId), $"{lang} {c.Id}: {ev} gave {pick?.VoiceId}");
+                            Check(pick!.PersonaFor(lang) == who, $"{lang} {c.Id}: {ev} skipped to {pick.PersonaFor(lang)} instead of {who}");
+                        }
+                    }
+                    perEventLines.Add($"{ev} {answering / candidates.Count:0.0}{(own < candidates.Count ? $" ({candidates.Count - own} borrow)" : "")}");
+                }
+                if (body != VoiceLineAge.Any)
+                    coverage.Add($"  {lang} {g} {body} ({candidates.Count} personas): {string.Join(", ", perEventLines)}");
+            }
+
+    // Assignment: stable for one identity, spread across concurrent enemies, varied across identities.
+    var assigner = new VoicePersonaAssigner();
+    assigner.Configure(table, "en", true);
+    Check(assigner.Active && assigner.Language == "en", "assigner inactive with data");
+    var seed = VoicePersonaAssigner.IdentitySeed(1234, 567, 0x40001234);
+    var a1 = assigner.Assign(1, seed, VoiceLineVoice.Male, VoiceLineAge.Adult);
+    Check(a1.Persona != null && a1.Chain[0] == a1.Persona.Id, "adult male got no persona");
+    Check(assigner.Assign(1, seed + 1, VoiceLineVoice.Female, VoiceLineAge.Young) == a1, "an assigned enemy changed persona");
+    var fresh = new VoicePersonaAssigner();
+    fresh.Configure(table, "en", true);
+    Check(fresh.Assign(9, seed, VoiceLineVoice.Male, VoiceLineAge.Adult).Persona == a1.Persona, "same identity, different persona");
+    assigner.Clear();
+    assigner.Assign(50, seed + 77, VoiceLineVoice.Male, VoiceLineAge.Adult);
+    var again = assigner.Assign(51, seed, VoiceLineVoice.Male, VoiceLineAge.Adult);
+    Check(again.Persona == a1.Persona || assigner.Get(50)!.Persona == a1.Persona, "identity lost its persona after a reset");
+    // Concurrent adult men: all different until the candidates run out.
+    var crowd = new VoicePersonaAssigner();
+    crowd.Configure(table, "ja", true);
+    var adultMale = table.Candidates("ja", VoiceLineVoice.Male, VoiceLineAge.Adult, true).Count;
+    var held = new List<string>();
+    for (uint i = 0; i < adultMale; i++)
+        held.Add(crowd.Assign(100 + i, VoicePersonaAssigner.IdentitySeed(4000, 300, 0x40000000 + i), VoiceLineVoice.Male, VoiceLineAge.Adult).Persona!.Id);
+    Check(held.Distinct().Count() == adultMale, $"{adultMale} concurrent adult men share personas: {string.Join(",", held)}");
+    var extra = crowd.Assign(999, VoicePersonaAssigner.IdentitySeed(4000, 300, 0x40009999), VoiceLineVoice.Male, VoiceLineAge.Adult);
+    Check(extra.Persona != null, "a full field left an enemy without a persona");
+    // Independent identities (no spreading): usually different.
+    var differ = 0;
+    for (uint i = 0; i < 400; i++)
+    {
+        var x = new VoicePersonaAssigner(); x.Configure(table, "en", true);
+        var y = new VoicePersonaAssigner(); y.Configure(table, "en", true);
+        if (x.Assign(1, VoicePersonaAssigner.IdentitySeed(i, 7, 0x40000000 + i), VoiceLineVoice.Male, VoiceLineAge.Adult).Persona !=
+            y.Assign(1, VoicePersonaAssigner.IdentitySeed(i + 1000, 8, 0x40100000 + i), VoiceLineVoice.Male, VoiceLineAge.Adult).Persona)
+            differ++;
+    }
+    Check(differ >= 300, $"two independent adult men differ only {differ}/400 times");
+    // The hash reaches every candidate.
+    var reached = new HashSet<string>();
+    for (uint i = 0; i < 500; i++)
+    {
+        var x = new VoicePersonaAssigner(); x.Configure(table, "ja", true);
+        reached.Add(x.Assign(1, VoicePersonaAssigner.IdentitySeed(i, i * 3, i * 7), VoiceLineVoice.Female, VoiceLineAge.Adult).Persona!.Id);
+    }
+    Check(reached.Count == table.Candidates("ja", VoiceLineVoice.Female, VoiceLineAge.Adult, true).Count, "assignment never reaches some personas");
+    Check(assigner.Assign(77, seed, VoiceLineVoice.NonHuman, VoiceLineAge.Any) == VoicePersonaAssignment.None, "a monster got a persona");
+
+    // Story characters off: only unnamed personas; English women then have none (curated lines stay silent).
+    var noStory = new VoicePersonaAssigner();
+    noStory.Configure(table, "en", false);
+    var plain = noStory.Assign(1, seed, VoiceLineVoice.Male, VoiceLineAge.Adult);
+    Check(plain.Persona != null && plain.Chain.All(id => !table.Get(id)!.IsStoryCharacter), "story character assigned with the flag off");
+    Check(noStory.Assign(2, seed, VoiceLineVoice.Female, VoiceLineAge.Adult) == VoicePersonaAssignment.None, "en female without story characters");
+
+    // No persona data, or a language without personas: inactive, and the per-line picker still works.
+    foreach (var (data, lang) in new[] { (VoicePersonaTable.Empty, "en"), (table, "de"), (table, "fr") })
+    {
+        var off = new VoicePersonaAssigner();
+        off.Configure(data, lang, true);
+        Check(!off.Active && off.Language == null, $"personas active for {lang} without data");
+        Check(off.Assign(1, seed, VoiceLineVoice.Male, VoiceLineAge.Adult) == VoicePersonaAssignment.None, "inactive assigner assigned");
+    }
+    var switching = new VoicePersonaAssigner();
+    switching.Configure(table, "en", true);
+    switching.Assign(1, seed, VoiceLineVoice.Male, VoiceLineAge.Adult);
+    switching.Configure(table, "de", true);
+    Check(switching.Get(1) == null && !switching.Active, "language change kept English personas");
+    var bare = new VoiceLinePicker(new VoiceLineSettings());
+    bare.SetEntries(entries.Select(e => e with { PersonaJa = null, PersonaEn = null }));
+    Check(bare.Pick(VoiceEvent.KilledPlayer, VoiceLineVoice.Male, rnd.NextDouble) is { Fx: false }, "per-line pick without persona ids");
+    Check(bare.Available(VoiceEvent.Taunt, VoiceLineVoice.Male, new[] { "en-004" }, "en") == 0, "persona pick on lines without ids");
+    var thrown = false;
+    try { VoicePersonaTable.Parse("{ \"nope\": 1 }"); } catch (Exception) { thrown = true; }
+    Check(thrown, "malformed persona file parsed silently (the director must see it fail and fall back)");
+    // Pool lines in small (non-assignable) personas never reach an assigned speaker.
+    var smallIds = table.All.Where(p => !p.Assignable).Select(p => p.Id).ToHashSet();
+    foreach (var lang in new[] { "ja", "en" })
+        foreach (var p in table.All.Where(p => p.Assignable && p.Language == lang))
+            foreach (var ev in Enum.GetValues<VoiceEvent>())
+                for (var i = 0; i < 10; i++)
+                    Check(shipped.Pick(ev, p.Voice, table.ChainFor(p, true), lang, rnd.NextDouble)?.PersonaFor(lang) is { } got && !smallIds.Contains(got),
+                        $"{p.Id}: {ev} used a small persona's line");
+
+    Console.WriteLine("Persona coverage (avg lines of the answering persona per event; borrow = candidates using a fallback):");
+    foreach (var c in coverage)
+        Console.WriteLine(c);
+}
+
+Console.WriteLine($"PASS {checks} checks; voice mapping, language fallback, labels, rate limiting, arbitration, transition watch, voiced line pool, picker and personas.");

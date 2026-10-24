@@ -48,6 +48,9 @@ public partial class Configuration
     public bool EnemyVoiceDefeatTauntKill { get; set; } = true;
     public bool EnemyVoiceDefeatTauntTaunt { get; set; } = true;
     public bool EnemyVoiceDefeatTauntVictory { get; set; } = true;
+    /// <summary>Voiced-line personas that are named story characters (Alphinaud, Y'shtola...) may be
+    /// given to ordinary enemies. Off: only the unnamed personas are assigned. Not in the UI yet.</summary>
+    public bool EnemyVoiceAllowStoryCharacters { get; set; } = true;
     /// <summary>Owner-recorded entry labels: label key ("pc", "npc", "mon/{sepack}") -> label -> entries.
     /// Overrides Resources/VoiceEntryLabels.json per key+label.</summary>
     public Dictionary<string, Dictionary<string, List<int>>> EnemyVoiceEntryLabels { get; set; } = new();

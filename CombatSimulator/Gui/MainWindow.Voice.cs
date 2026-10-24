@@ -125,6 +125,8 @@ public partial class MainWindow
         var pool = director.Lines;
         HelpMarker($"The built-in pool of {pool.Count} recorded battle lines. Off: only the labeled shouts below play.");
         if (lines)
+            DrawEnemyVoicePersonas(director);
+        if (lines)
             SliderFloatSaved("Quiet between lines (s)##enemyVoice", () => config.EnemyVoiceLineGap, v => config.EnemyVoiceLineGap = v, 0f, 15f,
                 "Silence after each line before an ordinary moment (skill, hit, taunt) may start the next. Engage, kills, victory and deaths only wait half a second. Only one line is ever on screen at a time.");
 
@@ -174,6 +176,33 @@ public partial class MainWindow
 
             DrawVoiceAudition(director);
         }
+    }
+
+    /// <summary>Debug view: which speaker persona (voice actor) each tracked enemy was given.</summary>
+    private static void DrawEnemyVoicePersonas(VoiceDirector director)
+    {
+        if (!director.PersonasActive)
+        {
+            ImGui.TextDisabled("Speaker personas: off for this client language (lines picked one by one).");
+            return;
+        }
+        var assignments = director.PersonaAssignments();
+        if (!ImGui.TreeNode($"Speaker personas ({director.PersonaLanguage}, {assignments.Count} tracked)##enemyVoicePersonas"))
+            return;
+        if (assignments.Count == 0)
+            ImGui.TextDisabled("No enemy tracked (personas are given on first sight in a fight).");
+        foreach (var (id, name, alive, a) in assignments)
+        {
+            var who = a?.Persona is { } p
+                ? $"{p.Display} - {p.Voice.ToString().ToLowerInvariant()} {p.BandName}, {a.Chain.Count - 1} fallbacks"
+                : a == null ? "not assigned yet" : "none (no curated lines)";
+            var label = $"{(string.IsNullOrEmpty(name) ? "?" : name)} #{id:X}: {who}";
+            if (alive)
+                ImGui.TextUnformatted(label);
+            else
+                ImGui.TextDisabled(label);
+        }
+        ImGui.TreePop();
     }
 
     private void IntSliderSaved(string label, Func<int> get, Action<int> set, int min, int max, string help)
