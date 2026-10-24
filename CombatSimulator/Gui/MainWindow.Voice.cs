@@ -190,9 +190,8 @@ public partial class MainWindow
                 source = new VoiceSource(VoiceSourceKind.YellLine, string.Empty, (uint)voiceYellId - VoiceSelection.YellLineBase);
                 // A vo_line id is not an NpcYell row number; only curated lines have known text.
                 var curated = director.Lines.Entries.FirstOrDefault(e => e.VoiceId == (uint)voiceYellId);
-                var yell = curated == null ? null : dataManager.GetExcelSheet<NpcYell>()?.GetRowOrDefault(curated.YellId);
-                ImGui.TextWrapped(yell != null
-                    ? $"Text (NpcYell {curated!.YellId}): {yell.Value.Text.ExtractText()}  [{string.Join(", ", curated.Events)}; {curated.Voice}{(curated.Story ? "; story" : string.Empty)}]"
+                ImGui.TextWrapped(curated != null
+                    ? $"Text ({curated.Sheet} {curated.YellId}): {director.LineText(curated)}  [{string.Join(", ", curated.Events)}; {curated.Voice}; {curated.Age}{(curated.Story ? "; story" : string.Empty)}]"
                     : "Not in the curated pool: text unknown.");
                 if (ImGui.Button("Next curated line##voiceAudition") && director.Lines.Count > 0)
                 {

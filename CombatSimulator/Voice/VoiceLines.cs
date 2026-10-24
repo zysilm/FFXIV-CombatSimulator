@@ -18,14 +18,61 @@ public enum VoiceLineVoice
     NonHuman,
 }
 
+/// <summary>How old a recorded voice sounds, or how old a speaker's body is. Coarse on purpose:
+/// the line labels come from an age model smoothed per speaker and are only trusted this far.</summary>
+public enum VoiceLineAge
+{
+    /// <summary>Not known. A line without an age suits every speaker; a speaker without one
+    /// (monsters, unreadable bodies) takes any line.</summary>
+    Any,
+    Young,
+    Adult,
+    Elderly,
+}
+
+/// <summary>Excel sheet holding a voiced line's words. Most battle barks are NpcYell rows; duty
+/// dialogue lives in InstanceContentTextData.</summary>
+public enum VoiceLineTextSheet
+{
+    NpcYell,
+    InstanceContentTextData,
+}
+
 /// <summary>
 /// One curated voiced line. <see cref="VoiceId"/> is the vo_line file id and <see cref="YellId"/>
-/// the NpcYell row with the same words. They are separate because the game does not number them
-/// alike (file 8202037 is NpcYell 7768, not 2037); the pairs were proven offline.
+/// the row with the same words in <see cref="Sheet"/>. They are separate because the game does
+/// not number them alike (file 8202037 is NpcYell 7768, not 2037); the pairs were proven offline.
 /// </summary>
-public sealed record VoiceLineEntry(uint VoiceId, uint YellId, VoiceEvent[] Events, VoiceLineVoice Voice, bool Story, float Weight)
+public sealed record VoiceLineEntry(uint VoiceId, uint YellId, VoiceEvent[] Events, VoiceLineVoice Voice, bool Story, float Weight,
+    VoiceLineAge Age = VoiceLineAge.Any, VoiceLineTextSheet Sheet = VoiceLineTextSheet.NpcYell)
 {
     public string PathFor(string language) => $"sound/voice/vo_line/{VoiceId:D7}_{language}.scd";
+
+    /// <summary>Pool spelling of a text sheet; absent means NpcYell, an unknown name is null.</summary>
+    public static VoiceLineTextSheet? ParseSheet(string? sheet) => sheet switch
+    {
+        null or "" or "NpcYell" => VoiceLineTextSheet.NpcYell,
+        "InstanceContentTextData" => VoiceLineTextSheet.InstanceContentTextData,
+        _ => null,
+    };
+
+    /// <summary>Pool spelling of an age ("young", "adult", "elderly"); anything else is unknown.</summary>
+    public static VoiceLineAge ParseAge(string? age) => age?.ToLowerInvariant() switch
+    {
+        "young" => VoiceLineAge.Young,
+        "adult" => VoiceLineAge.Adult,
+        "elderly" => VoiceLineAge.Elderly,
+        _ => VoiceLineAge.Any,
+    };
+
+    /// <summary>Speaker age from the human Customize BodyType byte (1 adult, 3 elderly, 4 child).</summary>
+    public static VoiceLineAge AgeFromBodyType(byte bodyType) => bodyType switch
+    {
+        1 => VoiceLineAge.Adult,
+        3 => VoiceLineAge.Elderly,
+        4 => VoiceLineAge.Young,
+        _ => VoiceLineAge.Any,
+    };
 }
 
 /// <summary>Tunables for how often enemies talk. The defaults keep a big fight to roughly one line
@@ -158,12 +205,19 @@ public sealed class VoiceLinePicker
     }
 
     /// <summary>Weighted pick for an event and voice; recent lines only when nothing else fits.
-    /// <paramref name="random"/> returns [0,1).</summary>
-    public VoiceLineEntry? Pick(VoiceEvent e, VoiceLineVoice voice, Func<double> random)
+    /// With a speaker <paramref name="age"/>, lines of that age (or of no recorded age) come first
+    /// within each event of the chain; any other line of the event is the fallback, so an age
+    /// never silences a speaker. Not repeating a recent line still beats the age match (a small
+    /// elderly pool would otherwise loop). <paramref name="random"/> returns [0,1).</summary>
+    public VoiceLineEntry? Pick(VoiceEvent e, VoiceLineVoice voice, Func<double> random, VoiceLineAge age = VoiceLineAge.Any)
     {
         foreach (var chained in Chain(e))
         {
-            var pick = PickFrom(chained, voice, random, avoidRecent: true) ?? PickFrom(chained, voice, random, avoidRecent: false);
+            var pick = age == VoiceLineAge.Any ? null : PickFrom(chained, voice, random, avoidRecent: true, age);
+            pick ??= PickFrom(chained, voice, random, avoidRecent: true);
+            if (age != VoiceLineAge.Any)
+                pick ??= PickFrom(chained, voice, random, avoidRecent: false, age);
+            pick ??= PickFrom(chained, voice, random, avoidRecent: false);
             if (pick != null)
                 return pick;
         }
@@ -187,11 +241,14 @@ public sealed class VoiceLinePicker
     private bool Fits(VoiceLineEntry line, VoiceEvent e, VoiceLineVoice voice) =>
         line.Voice == voice && !unavailable.Contains(line.VoiceId) && Array.IndexOf(line.Events, e) >= 0;
 
-    private VoiceLineEntry? PickFrom(VoiceEvent e, VoiceLineVoice voice, Func<double> random, bool avoidRecent)
+    private static bool AgeFits(VoiceLineEntry line, VoiceLineAge age) =>
+        age == VoiceLineAge.Any || line.Age == VoiceLineAge.Any || line.Age == age;
+
+    private VoiceLineEntry? PickFrom(VoiceEvent e, VoiceLineVoice voice, Func<double> random, bool avoidRecent, VoiceLineAge age = VoiceLineAge.Any)
     {
         var total = 0.0;
         foreach (var line in entries)
-            if (Fits(line, e, voice) && !(avoidRecent && recent.Contains(line.VoiceId)))
+            if (Fits(line, e, voice) && AgeFits(line, age) && !(avoidRecent && recent.Contains(line.VoiceId)))
                 total += line.Weight;
         if (total <= 0)
             return null;
@@ -199,7 +256,7 @@ public sealed class VoiceLinePicker
         VoiceLineEntry? last = null;
         foreach (var line in entries)
         {
-            if (!Fits(line, e, voice) || avoidRecent && recent.Contains(line.VoiceId))
+            if (!Fits(line, e, voice) || !AgeFits(line, age) || avoidRecent && recent.Contains(line.VoiceId))
                 continue;
             last = line;
             r -= line.Weight;

@@ -89,11 +89,43 @@ Second pass (offline, same tools widened):
   hurt/ally-down/kill, male ally-down). Events now: Engage 25, Taunt 25, Skill 60, Hurt 17,
   LowHp 28, KilledPlayer 9, AllyDeath 12, Victory 7, Death 10.
 
-Runtime: `Resources/VoiceLines.json` (voice id, yell row, events, gender, story, weight; no text).
-Text comes from NpcYell in the client language; audio is the client-language file only (a line
+Third pass (speech recognition, offline, not shipped; research files outside the repo):
+- Every vo_line file in ja and en (4,100 / 4,092) was decoded to 16 kHz and transcribed with
+  Whisper large-v3, language forced per file. Each transcript was scored against every row of
+  NpcYell, InstanceContentTextData, Balloon and PublicContentTextData (en word-level, ja
+  character-level after NFKC and kana folding). A pair counts as **proven** only if the ja and the
+  en audio each read that row (en >= 0.80, ja >= 0.85 similarity), each language ranks it within
+  0.2 of its own best row, and the joint score beats the best differently worded row by >= 0.2.
+- Checks: on the 304 earlier pairs the rule proves 210, all to the same row (100% precision, 69%
+  recall; the rest are short shouts or kana/kanji ASR slips). Three decoy sheets (en and ja of
+  each row shuffled apart) give 0 proven. Removing the true row of each known pair and rerunning
+  gives 0 proven (a looser rule, kept as "probable" in the research table only, gave 10 of 297,
+  all near-identical wordings such as "Thank you." 助かったわ vs 助かったぜ).
+- Result: 1,763 proven files, 1,553 of them new; 1,256 match InstanceContentTextData (duty
+  dialogue), so the pool now has an optional `sheet` field. Balloon and PublicContentTextData
+  matched nothing.
+- Gender: wav2vec2 age/gender model (both languages) + the pitch/formant LDA + ECAPA speaker
+  clusters per language must agree, otherwise unknown (not used). Trust speaker blocks: 132 of
+  133 labeled lines right; the one "miss" (8202056, "The best defense is a good defense!") is a
+  Thancred line one file past his assumed block. All 164 labeled old pool lines agree with their
+  shipped gender.
+- Age: `young` / `adult` / `elderly` from the model's age and child probability, smoothed per
+  speaker cluster. Battle shouts read old to the model (Alphinaud ~46), so the bands are relative
+  and weak: no female line came out elderly, only 4 pool lines are young. Treat it as a hint.
+- Pool: 176 old lines kept (8202097 dropped: its English audio says "I will not yield!" while its
+  row says "I'm not done yet!"), 446 new lines read and tagged by hand, generic battle lines first
+  plus a few memorable boss lines with the story flag. 622 lines: Engage 105, Taunt 95, Skill
+  216, Hurt 58, LowHp 90, KilledPlayer 37, AllyDeath 21, Victory 19, Death 26 (female victory 7,
+  kill 12, death 11; male victory 12).
+
+Runtime: `Resources/VoiceLines.json` (voice id, text row, optional sheet, events, gender, age,
+story, weight; no text). Text comes from the row's sheet (NpcYell unless `sheet` says
+InstanceContentTextData) in the client language; audio is the client-language file only (a line
 whose file or text is missing is retired for the session). Enemy body: human models by Customize
 sex byte; anything else counts as non-human and gets no line (its labeled monster sounds still
-play). Gate: one line on screen at a time, then 3.5 s of quiet (Advanced) before ordinary events,
+play). Age: the Customize BodyType byte (1 adult, 3 elderly, 4 child) makes the picker prefer
+lines of that age (and lines without an age) within each event; any other line of the event is
+the fallback, and a fresh line of another age beats repeating a recent matching one. Gate: one line on screen at a time, then 3.5 s of quiet (Advanced) before ordinary events,
 0.5 s for engage / kill / victory / death; 8 s per enemy; per-event cooldowns across enemies
 (skill 8, hurt 10, taunt 12, engage 6, low HP 6, ally death 10, death 3 s); chance per event
 (skill 30%, hurt 35%, engage 70%, death 75%, others 70-100%); the last 24 lines are avoided.
@@ -109,8 +141,20 @@ Flags: `EnableEnemyVoices` (true), `EnemyVoiceLines` (true), `EnemyVoiceBubbles`
 `EnemyVoiceLineGap` (3.5), plus the phase-1 flags below.
 
 Offline: `dotnet run --project Tests/Voice/Voice.csproj -c Release` (pool shape, anchor pair,
-no disproven mapping, every event covered, gender filter, gate timings, no repeats, flood bound,
-.scd header duration).
+no disproven mapping, one file per sheet row, every entry has an age, every event covered, gender
+filter, age preference and fallback, gate timings, no repeats, flood bound, .scd header duration).
+
+Listen for (third pass):
+1. Bubble vs voice: new lines from duty dialogue (Advanced > Audition shows
+   `InstanceContentTextData <row>`) should say exactly what the bubble says, in en and ja. Report
+   any vo id where they differ; ASR only proved ja and en, so check de/fr wording too.
+2. Gender: no woman's voice from a male enemy and the reverse, now over 622 lines.
+3. Age: an old enemy (BodyType elderly) should lean on deep, older boss voices (e.g. 8203553
+   "Good, good. A fitting finale!", 8203568 "Burn!"); a child model on 8202429 "We can't fail
+   here! We can't!", 8205310, 8205413. If these sound wrong for their band, the band is the
+   suspect, not the pairing.
+4. Kept but worth one listen: 8202057 (English ASR heard "Come on!" for "Must hold on...").
+5. Story-flagged boss lines (weight 0.35) should be occasional, not frequent.
 
 # Phase 1 details (Advanced: labeled shouts)
 

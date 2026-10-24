@@ -71,21 +71,26 @@ public sealed unsafe class VoiceProfileResolver
         bodyCache.Remove((address, entityId));
     }
 
-    private readonly Dictionary<(nint, uint), VoiceLineVoice> bodyCache = new();
+    private readonly Dictionary<(nint, uint), (VoiceLineVoice Voice, VoiceLineAge Age)> bodyCache = new();
 
     /// <summary>
     /// Which voiced lines suit this actor: human models by their Customize sex byte, everything
     /// else non-human. Same human test as <see cref="Resolve"/>; anything unreadable counts as
     /// non-human, which keeps it silent rather than mis-voiced.
     /// </summary>
-    public VoiceLineVoice ResolveBody(nint address, uint entityId)
+    public VoiceLineVoice ResolveBody(nint address, uint entityId) => ResolveBodyAndAge(address, entityId).Voice;
+
+    /// <summary><see cref="ResolveBody"/> plus the body age from the Customize BodyType byte
+    /// (<see cref="VoiceLineAge.Any"/> for non-humans and unknown body types).</summary>
+    public (VoiceLineVoice Voice, VoiceLineAge Age) ResolveBodyAndAge(nint address, uint entityId)
     {
         if (address == 0)
-            return VoiceLineVoice.NonHuman;
+            return (VoiceLineVoice.NonHuman, VoiceLineAge.Any);
         var key = (address, entityId);
         if (bodyCache.TryGetValue(key, out var cached))
             return cached;
         var body = VoiceLineVoice.NonHuman;
+        var age = VoiceLineAge.Any;
         try
         {
             var character = (Character*)address;
@@ -93,22 +98,26 @@ public sealed unsafe class VoiceProfileResolver
             var model = modelCharaId < 0 ? null : dataManager.GetExcelSheet<ModelChara>()?.GetRowOrDefault((uint)modelCharaId);
             if (modelCharaId == 0 || model?.Type == 1)
             {
-                // Customize byte 1 is the body sex (0 male, 1 female), as the shout mapping reads it.
-                var sex = ((byte*)&character->DrawData.CustomizeData)[1];
-                body = sex switch
+                // Customize byte 1 is the body sex (0 male, 1 female), as the shout mapping reads it;
+                // byte 2 is BodyType (1 adult, 3 elderly, 4 child).
+                var customize = (byte*)&character->DrawData.CustomizeData;
+                body = customize[1] switch
                 {
                     0 => VoiceLineVoice.Male,
                     1 => VoiceLineVoice.Female,
                     _ => VoiceLineVoice.NonHuman,
                 };
+                if (body != VoiceLineVoice.NonHuman)
+                    age = VoiceLineEntry.AgeFromBodyType(customize[2]);
             }
         }
         catch (Exception)
         {
             body = VoiceLineVoice.NonHuman;
+            age = VoiceLineAge.Any;
         }
-        bodyCache[key] = body;
-        return body;
+        bodyCache[key] = (body, age);
+        return (body, age);
     }
 
     private VoiceSource ResolveUncached(in VoiceSpeaker speaker)

@@ -63,7 +63,7 @@ public sealed unsafe class VoiceDirector
     private readonly VoiceLinePicker linePicker;
     // Per voice id: bubble seconds (null = unreadable). Per yell id: client-language text.
     private readonly Dictionary<uint, float?> lineSeconds = new();
-    private readonly Dictionary<uint, string> yellText = new();
+    private readonly Dictionary<(VoiceLineTextSheet, uint), string> yellText = new();
     private bool firstLineLogged;
     private int lastDeadCompanions = -1;
     private bool? lastPlayerAlive;
@@ -116,6 +116,8 @@ public sealed unsafe class VoiceDirector
         public string? Gender { get; set; }
         public bool Story { get; set; }
         public float Weight { get; set; } = 1f;
+        public string? Age { get; set; }
+        public string? Sheet { get; set; }
     }
 
     private sealed class LineFile
@@ -147,9 +149,11 @@ public sealed unsafe class VoiceDirector
                         "nonhuman" => VoiceLineVoice.NonHuman,
                         _ => null,
                     };
-                    if (voice == null || dto.Voice == 0 || events.Count == 0)
+                    var sheet = VoiceLineEntry.ParseSheet(dto.Sheet);
+                    if (voice == null || sheet == null || dto.Voice == 0 || events.Count == 0)
                         continue;
-                    parsed.Add(new VoiceLineEntry(dto.Voice, dto.Yell, events.ToArray(), voice.Value, dto.Story, dto.Weight));
+                    parsed.Add(new VoiceLineEntry(dto.Voice, dto.Yell, events.ToArray(), voice.Value, dto.Story, dto.Weight,
+                        VoiceLineEntry.ParseAge(dto.Age), sheet.Value));
                 }
             }
         }
@@ -509,7 +513,7 @@ public sealed unsafe class VoiceDirector
             return false;
         // Monsters have no curated lines (none is non-human), so they stay on their own sounds
         // rather than speak with a human voice.
-        var voice = Resolver.ResolveBody(t.Address, (uint)c.ActorKey);
+        var (voice, age) = Resolver.ResolveBodyAndAge(t.Address, (uint)c.ActorKey);
         if (voice == VoiceLineVoice.NonHuman || linePicker.Available(c.Event, voice) == 0)
             return false;
         if (random.NextDouble() >= VoiceLinePicker.Chance(c.Event))
@@ -518,13 +522,13 @@ public sealed unsafe class VoiceDirector
         var language = Resolver.ClientLanguage;
         for (var attempt = 0; attempt < 3; attempt++)
         {
-            var line = linePicker.Pick(c.Event, voice, random.NextDouble);
+            var line = linePicker.Pick(c.Event, voice, random.NextDouble, age);
             if (line == null)
                 return false;
             // Client-language audio only: the bubble shows client-language text, and a German
             // bubble over an English voice reads as broken. A missing file retires the line.
             var path = line.PathFor(language);
-            var text = YellText(line.YellId);
+            var text = LineText(line);
             if (text.Length == 0 || !dataManager.FileExists(path))
             {
                 linePicker.MarkUnavailable(line.VoiceId);
@@ -561,20 +565,28 @@ public sealed unsafe class VoiceDirector
         return false;
     }
 
-    private string YellText(uint yellId)
+    /// <summary>A curated line's words in the client language, from its text sheet ("" if missing).</summary>
+    public string LineText(VoiceLineEntry line)
     {
-        if (yellText.TryGetValue(yellId, out var cached))
+        var key = (line.Sheet, line.YellId);
+        if (yellText.TryGetValue(key, out var cached))
             return cached;
         var text = string.Empty;
         try
         {
-            text = dataManager.GetExcelSheet<Lumina.Excel.Sheets.NpcYell>()?.GetRowOrDefault(yellId)?.Text.ExtractText().Trim() ?? string.Empty;
+            text = line.Sheet switch
+            {
+                VoiceLineTextSheet.InstanceContentTextData =>
+                    dataManager.GetExcelSheet<Lumina.Excel.Sheets.InstanceContentTextData>()?.GetRowOrDefault(line.YellId)?.Text.ExtractText(),
+                _ => dataManager.GetExcelSheet<Lumina.Excel.Sheets.NpcYell>()?.GetRowOrDefault(line.YellId)?.Text.ExtractText(),
+            };
+            text = text?.Trim() ?? string.Empty;
         }
         catch (Exception)
         {
             text = string.Empty;
         }
-        yellText[yellId] = text;
+        yellText[key] = text;
         return text;
     }
 

@@ -175,22 +175,27 @@ var poolPath = Path.Combine(AppContext.BaseDirectory, "VoiceLines.json");
 using (var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(poolPath)))
 {
     var lines = doc.RootElement.GetProperty("lines").EnumerateArray().ToList();
-    Check(lines.Count >= 150 && lines.Count <= 400, $"pool size {lines.Count} outside 150..400");
+    Check(lines.Count >= 150 && lines.Count <= 900, $"pool size {lines.Count} outside 150..900");
     var voices = new HashSet<uint>();
-    var yells = new HashSet<uint>();
+    var yells = new HashSet<string>();
     var perEvent = new Dictionary<string, int>();
     foreach (var l in lines)
     {
         var voice = l.GetProperty("voice").GetUInt32();
         var yell = l.GetProperty("yell").GetUInt32();
+        var sheetName = l.TryGetProperty("sheet", out var sh) ? sh.GetString() : null;
+        var sheet = VoiceLineEntry.ParseSheet(sheetName);
+        Check(sheet != null, $"voice {voice}: unknown text sheet {sheetName}");
         Check(voices.Add(voice), $"voice {voice} listed twice");
-        // One NpcYell row is one recorded line: two files claiming the same row means one pair is wrong.
-        Check(yells.Add(yell), $"yell {yell} claimed by two voice files");
+        // One text row is one recorded line: two files claiming the same row means one pair is wrong.
+        Check(yells.Add($"{sheet}:{yell}"), $"{sheet} row {yell} claimed by two voice files");
         Check(voice >= 8201000 && voice < 8300000, $"voice {voice} outside the vo_line range");
-        Check(yell > 0 && yell < 20000, $"yell {yell} outside NpcYell");
-        Check(yell != voice - VoiceSelection.YellLineBase, $"voice {voice} uses the disproven 8200000+row mapping");
+        Check(yell > 0 && yell < (sheet == VoiceLineTextSheet.NpcYell ? 20000u : 50000u), $"row {yell} outside {sheet}");
+        if (sheet == VoiceLineTextSheet.NpcYell)
+            Check(yell != voice - VoiceSelection.YellLineBase, $"voice {voice} uses the disproven 8200000+row mapping");
         var gender = l.GetProperty("gender").GetString();
         Check(gender is "male" or "female", $"voice {voice}: gender {gender}");
+        Check(l.TryGetProperty("age", out var age) && age.GetString() is "young" or "adult" or "elderly", $"voice {voice}: age missing or unknown");
         foreach (var e in l.GetProperty("events").EnumerateArray())
         {
             Check(Enum.TryParse<VoiceEvent>(e.GetString(), out _), $"voice {voice}: unknown event {e.GetString()}");
@@ -277,6 +282,39 @@ for (var frame = 0; frame < 60 * 60; frame++)
 }
 Check(spoken >= 3 && spoken <= 6, $"taunt flood produced {spoken} lines in 60 s");
 Check(VoiceLinePicker.IsPriority(VoiceEvent.Victory) && !VoiceLinePicker.IsPriority(VoiceEvent.Skill), "priority set");
+
+// Age preference: a matching (or age-less) line first, any line of the event as the fallback.
+Check(VoiceLineEntry.AgeFromBodyType(1) == VoiceLineAge.Adult && VoiceLineEntry.AgeFromBodyType(3) == VoiceLineAge.Elderly &&
+      VoiceLineEntry.AgeFromBodyType(4) == VoiceLineAge.Young && VoiceLineEntry.AgeFromBodyType(0) == VoiceLineAge.Any, "body type -> age");
+Check(VoiceLineEntry.ParseAge("Elderly") == VoiceLineAge.Elderly && VoiceLineEntry.ParseAge(null) == VoiceLineAge.Any &&
+      VoiceLineEntry.ParseAge("ancient") == VoiceLineAge.Any, "age parse");
+VoiceLineEntry A(uint v, VoiceLineAge age, VoiceEvent ev) => new(v, v - 8200000 + 5731, new[] { ev }, VoiceLineVoice.Male, false, 1f, age);
+var aged = new VoiceLinePicker(new VoiceLineSettings { RecentMemory = 0 });
+aged.SetEntries(new[]
+{
+    A(8202101, VoiceLineAge.Adult, VoiceEvent.Skill), A(8202102, VoiceLineAge.Adult, VoiceEvent.Skill),
+    A(8202103, VoiceLineAge.Elderly, VoiceEvent.Skill), A(8202104, VoiceLineAge.Any, VoiceEvent.Taunt),
+    A(8202105, VoiceLineAge.Elderly, VoiceEvent.Taunt), A(8202106, VoiceLineAge.Adult, VoiceEvent.Death),
+});
+for (var i = 0; i < 40; i++)
+{
+    Check(aged.Pick(VoiceEvent.Skill, VoiceLineVoice.Male, rnd.NextDouble, VoiceLineAge.Elderly)?.VoiceId == 8202103, "elderly speaker got an adult skill line");
+    Check(aged.Pick(VoiceEvent.Skill, VoiceLineVoice.Male, rnd.NextDouble, VoiceLineAge.Adult)?.VoiceId != 8202103, "adult speaker got the elderly line");
+    // An age-less line suits everyone: the adult speaker's taunt pool is that line alone.
+    Check(aged.Pick(VoiceEvent.Taunt, VoiceLineVoice.Male, rnd.NextDouble, VoiceLineAge.Adult)?.VoiceId == 8202104, "adult taunt");
+    // No young line exists: the young speaker still talks.
+    Check(aged.Pick(VoiceEvent.Death, VoiceLineVoice.Male, rnd.NextDouble, VoiceLineAge.Young)?.VoiceId == 8202106, "age silenced a speaker");
+}
+// Without a speaker age every line of the event is in play, as before.
+var seenAny = new HashSet<uint>();
+for (var i = 0; i < 200; i++)
+    seenAny.Add(aged.Pick(VoiceEvent.Skill, VoiceLineVoice.Male, rnd.NextDouble)!.VoiceId);
+Check(seenAny.SetEquals(new uint[] { 8202101, 8202102, 8202103 }), "age-less pick narrowed the pool");
+// A fresh other-age line beats repeating the only matching one.
+var agedRecent = new VoiceLinePicker(new VoiceLineSettings { RecentMemory = 4 });
+agedRecent.SetEntries(aged.Entries);
+agedRecent.Commit(1, VoiceEvent.Skill, aged.Entries[2], 1f);
+Check(agedRecent.Pick(VoiceEvent.Skill, VoiceLineVoice.Male, rnd.NextDouble, VoiceLineAge.Elderly)?.VoiceId != 8202103, "recent elderly line repeated over a fresh one");
 
 // SCD header duration: a synthetic MS-ADPCM header (block 70, 128 samples per block, 44100 Hz).
 var scd = new byte[0x200];
