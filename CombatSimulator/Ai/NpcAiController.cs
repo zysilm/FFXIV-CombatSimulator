@@ -89,6 +89,9 @@ public unsafe class NpcAiController : IDisposable
     // it only unlocks to re-approach if pushed beyond (approach distance + unlock).
     private const float ApproachLockBuffer = 1.5f;
     private const float ApproachUnlockBuffer = 1.5f;
+    // Solo ring: keep the hold spot this far inside the melee swing reach so a small player drift
+    // does not leave a locked enemy just out of range.
+    private const float SoloReachMargin = 0.25f;
 
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
@@ -920,6 +923,20 @@ public unsafe class NpcAiController : IDisposable
                 ? npc.DesiredEngageRange
                 : ScaleNpcMeleeRange(config.TargetApproachDistance));
 
+        // A melee enemy must stand where its swing reaches. With a raised hold distance (~2.5y+)
+        // the hold ring plus the unlock buffer sat beyond attack range, so an enemy could keep a
+        // spot it could never attack from. Cap both the ring and the release band at the reach.
+        var unlockRadius = targetDist + ApproachUnlockBuffer;
+        if (HasMeleePositioningIntent(npc))
+        {
+            var reach = GetEffectiveNpcAttackRange(npc, combatEngine.State.PlayerState) - SoloReachMargin;
+            if (reach > 0.5f)
+            {
+                targetDist = MathF.Min(targetDist, reach);
+                unlockRadius = MathF.Min(unlockRadius, MathF.Max(targetDist, reach));
+            }
+        }
+
         // Hold a locked world spot — the enemy stands its ground and does NOT glide
         // with the player. Re-approach when the player has wandered away from that spot by
         // more than the unlock buffer, OR when the spot sits far INSIDE the desired hold
@@ -931,7 +948,7 @@ public unsafe class NpcAiController : IDisposable
             var ldx = lockedGoal.X - playerPos.X;
             var ldz = lockedGoal.Z - playerPos.Z;
             var lockedDistSq = ldx * ldx + ldz * ldz;
-            var unlock = targetDist + ApproachUnlockBuffer;
+            var unlock = unlockRadius;
             var tooClose = targetDist - ApproachUnlockBuffer;
             if (lockedDistSq <= unlock * unlock &&
                 (tooClose <= 0f || lockedDistSq >= tooClose * tooClose))
