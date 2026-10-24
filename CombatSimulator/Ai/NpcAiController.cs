@@ -340,6 +340,8 @@ public unsafe partial class NpcAiController : IDisposable
             }
 
             var terrainCache = BuildTerrainHeightCache(playerPos, approachNpcs);
+            if (partyMode)
+                UpdateMeleeAdmission(approachNpcs, targetByNpcId);
 
             for (int i = 0; i < approachNpcs.Count; i++)
             {
@@ -457,6 +459,7 @@ public unsafe partial class NpcAiController : IDisposable
         {
             npc.AiState = NpcAiState.Engaging;
             StaggerTimers(npc);
+            ApplyEngageJitter(npc);
             log.Verbose($"NPC '{npc.Name}' engaging (auto-attack in {npc.AutoAttackTimer:F1}s).");
         }
     }
@@ -1158,6 +1161,10 @@ public unsafe partial class NpcAiController : IDisposable
         // target leaves that range. They deliberately do NOT kite: an enemy that backed away every
         // time you closed in was untouchable, and being able to strike from range it never has to
         // pay for is already advantage enough.
+        // Enhanced tactics: a melee enemy without an attacker place waits on the outer ring.
+        if (TryTickMeleeWait(npc, gameObj, npcPos, npcTargetPos, partyAttackRange, FlatDistance(npcPos, npcTargetPos) - distToTarget, deltaTime, terrainCache))
+            return;
+
         var shouldHoldRange = distToTarget <= outerEdge;
         if (shouldHoldRange)
         {

@@ -37,6 +37,8 @@ public partial class MainWindow
                 "Every few seconds an enemy in range may walk a short arc around its target. Never mid-cast or mid-swing.");
             TacticsCheckbox("Threat-based aggro", () => config.EnemyTacticsThreat, v => config.EnemyTacticsThreat = v,
                 "Enemies target whoever built the most threat on them (damage, tanks count triple) instead of the top DPS. Needs companions.");
+            TacticsCheckbox("Take turns in melee", () => config.EnemyTacticsStagger, v => config.EnemyTacticsStagger = v,
+                "At most three melee enemies fight one target; extras wait on an outer ring and step in when a place frees.");
         }
     }
 

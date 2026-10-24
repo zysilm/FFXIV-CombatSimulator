@@ -31,6 +31,11 @@ public partial class Configuration
     // recent DPS, with wider switch hysteresis.
     public bool EnemyTacticsThreat { get; set; } = true;
 
+    // At most three melee enemies fight one target at once; the rest wait on an outer ring and
+    // step in as places free. Engage delays also get a little random jitter.
+    public bool EnemyTacticsStagger { get; set; } = true;
+
+    public bool TacticsStagger => EnhancedEnemyTactics && EnemyTacticsStagger;
     public bool TacticsStrafe => EnhancedEnemyTactics && EnemyTacticsStrafe;
     public bool TacticsThreat => EnhancedEnemyTactics && EnemyTacticsThreat;
     public bool TacticsRespectEngage => EnhancedEnemyTactics && EnemyTacticsRespectEngage;
