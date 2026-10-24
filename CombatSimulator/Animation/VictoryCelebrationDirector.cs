@@ -77,6 +77,8 @@ public sealed unsafe class VictoryCelebrationDirector
             var character = (Character*)address;
             var humanoid = IsEmoteCapable(character);
             ushort flourish = 0;
+            // A creature's only safe animation is an attack-shaped flourish; that is not idling.
+            if (!humanoid && mood == CelebrationMood.Bystander) continue;
             if (!humanoid)
             {
                 flourish = animation.SelectModelFlourishTimeline((uint)Math.Max(0, character->ModelContainer.ModelCharaId));
