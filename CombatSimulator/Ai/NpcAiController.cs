@@ -485,9 +485,7 @@ public unsafe class NpcAiController : IDisposable
             npc.State.AnimationLock = Math.Max(0, npc.State.AnimationLock - deltaTime);
 
         // Natural MP regen (double the player's rate).
-        if (npc.State.CurrentMp < npc.State.MaxMp)
-            npc.State.CurrentMp = Math.Min(npc.State.MaxMp,
-                npc.State.CurrentMp + (int)(EnemyMpRegenPerSecond * deltaTime));
+        npc.State.RegenerateMp(EnemyMpRegenPerSecond, deltaTime);
 
         DiscardInvalidNpcActionState(npc);
 

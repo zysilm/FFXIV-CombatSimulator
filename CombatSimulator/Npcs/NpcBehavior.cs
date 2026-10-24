@@ -172,4 +172,13 @@ public class NpcSkill
 
     // Runtime state
     public float CooldownRemaining { get; set; }
+
+    /// <summary>A fresh copy with its own runtime state. Kits are cached and handed to many enemies,
+    /// so each enemy must own its skill objects or they all share one cooldown.</summary>
+    public NpcSkill CloneDefinition()
+    {
+        var copy = (NpcSkill)MemberwiseClone();
+        copy.CooldownRemaining = 0f;
+        return copy;
+    }
 }

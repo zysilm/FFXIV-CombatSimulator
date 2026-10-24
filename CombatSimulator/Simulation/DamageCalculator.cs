@@ -57,17 +57,21 @@ public class DamageCalculator
     private static int ApplyDamageTakenMultiplier(int damage, SimulatedEntityState target)
         => (int)MathF.Floor(damage * MathF.Max(0f, target.DamageTakenMultiplier));
 
-    public DamageResult CalculateNpcAutoAttack(SimulatedEntityState npc, SimulatedEntityState target, int potency = 110)
+    public DamageResult CalculateNpcAutoAttack(
+        SimulatedEntityState npc,
+        SimulatedEntityState target,
+        int potency = 110,
+        SimDamageType damageType = SimDamageType.Physical)
     {
-        var raw = CalculateDirectDamage(npc, potency, SimDamageType.Physical, enableCrit: false, enableDh: false, applyVariance: false);
-        var mitigated = ApplyDamageTaken(raw.Damage, target, SimDamageType.Physical);
+        var raw = CalculateDirectDamage(npc, potency, damageType, enableCrit: false, enableDh: false, applyVariance: false);
+        var mitigated = ApplyDamageTaken(raw.Damage, target, damageType);
 
         var corrected = ApplyLevelCorrection(mitigated, npc.Level, target.Level);
         corrected = ApplyLevelAdvantage(corrected, npc.Level, target.Level);
         corrected = ApplyDamageTakenMultiplier(corrected, target);
 
         raw.Damage = Math.Max(1, corrected);
-        raw.DamageType = SimDamageType.Physical;
+        raw.DamageType = damageType;
         return raw;
     }
 

@@ -65,6 +65,28 @@ public class SimulatedEntityState
     // Status effects
     public List<SimulatedStatus> StatusEffects { get; } = new();
 
+    // Sub-point MP carried between frames. Per-frame regen at high framerates is well under one
+    // point, so truncating each frame would round it away entirely.
+    private float mpRegenRemainder;
+
+    /// <summary>Regenerate MP at <paramref name="perSecond"/>, independent of framerate.</summary>
+    public void RegenerateMp(float perSecond, float deltaTime)
+    {
+        if (CurrentMp >= MaxMp)
+        {
+            mpRegenRemainder = 0f;
+            return;
+        }
+
+        mpRegenRemainder += perSecond * deltaTime;
+        var whole = (int)mpRegenRemainder;
+        if (whole <= 0)
+            return;
+
+        mpRegenRemainder -= whole;
+        CurrentMp = System.Math.Min(MaxMp, CurrentMp + whole);
+    }
+
     public void Reset()
     {
         CurrentHp = MaxHp;
@@ -81,6 +103,7 @@ public class SimulatedEntityState
         ComboTimer = 0;
         Cooldowns.Clear();
         StatusEffects.Clear();
+        mpRegenRemainder = 0f;
     }
 }
 

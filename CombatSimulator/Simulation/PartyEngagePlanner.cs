@@ -791,7 +791,6 @@ public sealed unsafe class PartyEngagePlanner
         foreach (var edge in edges)
             AddEdge(edge);
 
-        var flowEdges = new List<SlotEdge>();
         while (true)
         {
             var dist = Enumerable.Repeat(float.PositiveInfinity, nodeCount).ToArray();
@@ -852,7 +851,18 @@ public sealed unsafe class PartyEngagePlanner
                 var edge = graph[prevNode[v]][prevEdge[v]];
                 edge.Capacity -= aug;
                 graph[edge.To][edge.Reverse].Capacity += aug;
-                if (edge.Meta.HasValue)
+            }
+        }
+
+        // Read the assignment off the final flow, not off each augmenting path: a later path can
+        // cancel an earlier actor→slot choice through its reverse edge, and recording edges as they
+        // were first used kept those cancelled choices and dropped the actor that replaced them.
+        var flowEdges = new List<SlotEdge>();
+        foreach (var adjacency in graph)
+        {
+            foreach (var edge in adjacency)
+            {
+                if (edge.Meta.HasValue && edge.Capacity <= 0)
                     flowEdges.Add(edge.Meta.Value);
             }
         }

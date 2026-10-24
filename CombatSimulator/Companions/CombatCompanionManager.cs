@@ -409,8 +409,36 @@ public unsafe class CombatCompanionManager : IDisposable
         RegisterPlayerDamage(damage);
     }
 
+    /// <summary>
+    /// The enemy's current target as decided by <see cref="Tick"/>, which scores with the shared
+    /// pressure map. Callers outside that pass (AI, look-at, engine) only read the decision: rescoring
+    /// here without pressure disagreed with Tick and flipped the target every frame. A fresh
+    /// selection happens only when there is no live decision yet (new enemy, target died).
+    /// </summary>
     public SimulatedEntityState? SelectEnemyTarget(SimulatedNpc enemy)
-        => SelectEnemyTargetInternal(enemy, null);
+    {
+        if (config.EnableCombatCompanions &&
+            enemyTargetByEnemyId.TryGetValue(enemy.SimulatedEntityId, out var currentId) &&
+            ResolveTargetState(currentId) is { IsAlive: true } current)
+            return current;
+
+        return SelectEnemyTargetInternal(enemy, null);
+    }
+
+    private SimulatedEntityState? ResolveTargetState(uint entityId)
+    {
+        var player = combatEngine.State.PlayerState;
+        if (entityId == player.EntityId)
+            return player;
+
+        foreach (var companion in companions)
+        {
+            if (companion.SimulatedEntityId == entityId)
+                return companion.IsSpawned ? companion.State : null;
+        }
+
+        return null;
+    }
 
     private SimulatedEntityState? SelectEnemyTargetInternal(
         SimulatedNpc enemy,

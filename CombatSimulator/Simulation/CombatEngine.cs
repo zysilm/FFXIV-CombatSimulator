@@ -68,7 +68,10 @@ public class CombatEngine : IDisposable
     /// <summary>Optional cinematic victory sequence (dev-only); set after construction. Null = none.</summary>
     public IVictorySequence? VictorySequence { private get; set; }
     private bool playerDeathTriggered;
-    private bool victoryTriggered;
+    // One latch per outcome. The player-win latch re-arms when a living enemy joins (a new wave) and
+    // the enemy-win latch when the player is revived, so one session can resolve more than once.
+    private bool playerVictoryTriggered;
+    private bool enemyVictoryTriggered;
     private bool instantRagdollOverride;
     // Player auto-attack is gated on this — when NPCs auto-engage (Dev option),
     // the player does NOT swing back until they manually use an action.
@@ -208,7 +211,8 @@ public class CombatEngine : IDisposable
         LastPlayerDefeatedBy = string.Empty;
         LastPlayerKillerAddress = nint.Zero;
         LastPlayerKillerEntityId = 0;
-        victoryTriggered = false;
+        playerVictoryTriggered = false;
+        enemyVictoryTriggered = false;
         glamourerApplied = false;
         playerInitiatedCombat = false;
         pendingDeaths.Clear();
@@ -323,7 +327,8 @@ public class CombatEngine : IDisposable
         LastPlayerDefeatedBy = string.Empty;
         LastPlayerKillerAddress = nint.Zero;
         LastPlayerKillerEntityId = 0;
-        victoryTriggered = false;
+        playerVictoryTriggered = false;
+        enemyVictoryTriggered = false;
         glamourerApplied = false;
         playerInitiatedCombat = false;
         pendingDeaths.Clear();
@@ -353,6 +358,7 @@ public class CombatEngine : IDisposable
         ps.StatusEffects.Clear();
 
         playerDeathTriggered = false;
+        enemyVictoryTriggered = false;
         LastPlayerDefeatedBy = string.Empty;
         LastPlayerKillerAddress = nint.Zero;
         LastPlayerKillerEntityId = 0;
@@ -387,10 +393,10 @@ public class CombatEngine : IDisposable
         foreach (var entity in State.Entities.Values)
             TickCooldowns(entity, deltaTime);
 
-        // Tick animation locks
+        // Tick the player's animation lock. Enemy and companion locks are ticked by the controller
+        // that drives them (NpcAiController / CombatCompanionManager / FightingAiController); ticking
+        // them here as well ran every lock out at double speed.
         TickAnimationLock(State.PlayerState, deltaTime);
-        foreach (var entity in State.Entities.Values)
-            TickAnimationLock(entity, deltaTime);
 
         // Tick casting
         TickCasting(State.PlayerState, deltaTime);
@@ -673,17 +679,18 @@ public class CombatEngine : IDisposable
 
         var resolvedActionData = actionDataProvider.GetActionData(actionId);
 
-        // Calculate damage
+        // Calculate damage. Spells are mitigated by magic defense; the action's own type decides.
+        var damageType = resolvedActionData?.DamageType ?? SimDamageType.Physical;
         DamageResult dmgResult;
         if (potency > 0)
         {
-            dmgResult = damageCalculator.CalculateNpcAutoAttack(npc.State, target, potency);
+            dmgResult = damageCalculator.CalculateNpcAutoAttack(npc.State, target, potency, damageType);
         }
         else
         {
             if (resolvedActionData != null)
             {
-                dmgResult = damageCalculator.CalculateNpcAutoAttack(npc.State, target, resolvedActionData.Potency);
+                dmgResult = damageCalculator.CalculateNpcAutoAttack(npc.State, target, resolvedActionData.Potency, damageType);
             }
             else
             {
@@ -725,7 +732,7 @@ public class CombatEngine : IDisposable
         ApplyNpcAttackStyle(visualAction, attackStyle == NpcAttackStyle.Auto ? npc.Behavior.AutoAttackStyle : attackStyle);
         var hits = new List<AppliedActionDamage> { new(target, dmgResult) };
         var totalDamage = dmgResult.Damage;
-        foreach (var extraTarget in ResolveActionTargets(npc.State, target, visualAction))
+        foreach (var extraTarget in ResolveActionTargets(npc.State, target, visualAction, primaryAlreadyHit: true))
         {
             if (extraTarget.EntityId == target.EntityId)
                 continue;
@@ -733,7 +740,8 @@ public class CombatEngine : IDisposable
             var extraDamage = damageCalculator.CalculateNpcAutoAttack(
                 npc.State,
                 extraTarget,
-                visualAction.Potency > 0 ? visualAction.Potency : 110);
+                visualAction.Potency > 0 ? visualAction.Potency : 110,
+                damageType);
             extraTarget.CurrentHp = Math.Max(0, extraTarget.CurrentHp - extraDamage.Damage);
             hits.Add(new AppliedActionDamage(extraTarget, extraDamage));
             totalDamage += extraDamage.Damage;
@@ -866,7 +874,7 @@ public class CombatEngine : IDisposable
         ApplyNpcAttackStyle(visualAction, attackStyle == NpcAttackStyle.Auto ? companion.Behavior.AutoAttackStyle : attackStyle);
         var hits = new List<AppliedActionDamage> { new(targetNpc.State, dmgResult) };
         var totalDamage = dmgResult.Damage;
-        foreach (var extraTarget in ResolveActionTargets(companion.State, targetNpc.State, visualAction))
+        foreach (var extraTarget in ResolveActionTargets(companion.State, targetNpc.State, visualAction, primaryAlreadyHit: true))
         {
             if (extraTarget.EntityId == targetNpc.SimulatedEntityId)
                 continue;
@@ -942,10 +950,13 @@ public class CombatEngine : IDisposable
     private List<SimulatedEntityState> ResolveActionTargets(
         SimulatedEntityState source,
         SimulatedEntityState primaryTarget,
-        ActionData actionData)
+        ActionData actionData,
+        bool primaryAlreadyHit = false)
     {
+        // NPC and companion actions damage the primary before resolving the rest of the area, so a
+        // killing blow must not cancel the splash: the primary was checked alive before it was hit.
         var targets = new List<SimulatedEntityState>();
-        if (!primaryTarget.IsAlive || !IsHostile(source, primaryTarget))
+        if ((!primaryAlreadyHit && !primaryTarget.IsAlive) || !IsHostile(source, primaryTarget))
             return targets;
 
         targets.Add(primaryTarget);
@@ -1421,9 +1432,9 @@ public class CombatEngine : IDisposable
                 }
             }
 
-            if (allDead && !victoryTriggered)
+            if (allDead && !playerVictoryTriggered)
             {
-                victoryTriggered = true;
+                playerVictoryTriggered = true;
                 animationController.PlayVictory(isPlayerVictory: true);
             }
         }
@@ -1446,14 +1457,14 @@ public class CombatEngine : IDisposable
 
     public void TriggerEnemyVictoryIfPartyDefeated()
     {
-        if (victoryTriggered)
+        if (enemyVictoryTriggered)
             return;
         if (State.PlayerState.IsAlive)
             return;
         if (HasLivingCompanions?.Invoke() == true)
             return;
 
-        victoryTriggered = true;
+        enemyVictoryTriggered = true;
 
         // Try cinematic victory sequence first; fall back to normal emotes.
         SimulatedNpc? cinematicNpc = null;
@@ -1968,11 +1979,7 @@ public class CombatEngine : IDisposable
     private void TickMpRegen(SimulatedEntityState entity, float deltaTime)
     {
         // MP regenerates at ~200 MP per tick (3s), so ~67/s
-        if (entity.CurrentMp < entity.MaxMp)
-        {
-            entity.CurrentMp = Math.Min(entity.MaxMp,
-                entity.CurrentMp + (int)(67 * deltaTime));
-        }
+        entity.RegenerateMp(67f, deltaTime);
     }
 
     private static bool TrySpendMp(SimulatedEntityState entity, ActionData actionData, out string? failReason)
@@ -2003,6 +2010,8 @@ public class CombatEngine : IDisposable
     public void RegisterNpcEntity(SimulatedNpc npc)
     {
         State.Entities[npc.SimulatedEntityId] = npc.State;
+        if (npc.State.IsAlive)
+            playerVictoryTriggered = false;
     }
 
     /// <summary>

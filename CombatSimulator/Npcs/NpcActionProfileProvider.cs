@@ -63,7 +63,9 @@ public class NpcActionProfileProvider
             var kit = jobKits.BuildKit(jobId, level, Math.Max(1, config.EnemyMaxRealSkills), meleeOnly);
             if (kit.Count > 0)
             {
-                behavior.Skills = new List<NpcSkill>(kit);
+                behavior.Skills = new List<NpcSkill>(kit.Count);
+                foreach (var skill in kit)
+                    behavior.Skills.Add(skill.CloneDefinition());
                 log.Info($"Enemy '{npcName}' → job {jobId}, {kit.Count} real skills (style={weaponStyle}, lvl≤{level}).");
             }
             else
