@@ -503,7 +503,7 @@ public unsafe class NpcAiController : IDisposable
                 break;
 
             case NpcAiState.Engaging:
-                if (npc.IsClientControlled)
+                if (npc.IsClientControlled && !ApproachOwnsRotation(npc))
                     RotateTowardPlayer(npc, playerPos, deltaTime);
                 if (npc.EngageDelayTimer > 0)
                 {
@@ -581,8 +581,8 @@ public unsafe class NpcAiController : IDisposable
                 ActorVisualStateController.ApplyCombatIdle((Character*)npc.BattleChara, npc.VisualState);
         }
 
-        // Only rotate client-controlled NPCs
-        if (npc.IsClientControlled)
+        // Only rotate client-controlled NPCs (and only when the approach pass is not the facing owner)
+        if (npc.IsClientControlled && !ApproachOwnsRotation(npc))
             ForceRotateToward(npc, targetPos, deltaTime);
 
         // Skip leash check for real NPCs (they don't move) and when formation approach is active.
@@ -609,7 +609,7 @@ public unsafe class NpcAiController : IDisposable
             return;
         }
 
-        if (UsesPartyConfiguredRange(npc, simulatedTarget))
+        if (UsesPartyConfiguredRange(npc, simulatedTarget) && !ApproachOwnsRotation(npc))
             ForceRotateToward(npc, targetPos, deltaTime);
 
         // Handle casting
@@ -1125,6 +1125,9 @@ public unsafe class NpcAiController : IDisposable
             LogPartyApproachDebug(npc, "no-plan", npcPos, npcTargetPos, null, npcPos, false,
                 distToTarget: FlatDistance(npcPos, npcTargetPos), attackRange: PartyHoldRange(npc));
             StopApproachMoveAnim(npc);
+            // The approach pass is the facing owner (see ApproachOwnsRotation), so keep facing the
+            // target while the planner has not produced a plan yet.
+            ForceRotateToward(npc, npcTargetPos, deltaTime);
             return;
         }
 
@@ -1598,6 +1601,19 @@ public unsafe class NpcAiController : IDisposable
 
     /// <summary>The approach pass in <see cref="Tick"/> moves every enemy (solo ring or party planner).</summary>
     private bool ApproachOwnsMovement => config.EnableTargetApproach || config.EnableCombatCompanions;
+
+    /// <summary>
+    /// True when the approach pass will tick this enemy this frame and therefore writes its facing.
+    /// Combat/Engaging used to rotate it too, so a moving enemy was turned 2–3 times per frame toward
+    /// different points (target vs. path) and the writes fought. Mirrors the approach eligibility
+    /// filter in <see cref="Tick"/>.
+    /// </summary>
+    private bool ApproachOwnsRotation(SimulatedNpc npc)
+        => ApproachOwnsMovement &&
+           npc.IsSpawned &&
+           npc.BattleChara != null &&
+           npc.SpawnPlacementFrames <= 0 &&
+           npc.AiState != NpcAiState.Dead;
 
     private bool UsesPartyConfiguredRange(SimulatedNpc npc, SimulatedEntityState target)
         => config.EnableCombatCompanions &&
