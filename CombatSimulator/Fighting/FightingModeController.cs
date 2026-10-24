@@ -224,7 +224,12 @@ public unsafe sealed class FightingModeController : IFightingModeInputSink, IFig
             return;
 
         var e = ToVector3(targetObj->Position);
-        FightingAi.Tick(dt, AlongOf(e), AlongOf(ToVector3(playerObj->Position)), e.Y);
+        // Re-sample the floor each frame: the AI used to latch the first Y it saw, so on a slope
+        // the enemy floated or sank as it walked the lane.
+        float? groundY = Simulation.TerrainHeightService.TrySampleGround(e.X, e.Z, e.Y, out var sampled)
+            ? sampled
+            : null;
+        FightingAi.Tick(dt, AlongOf(e), AlongOf(ToVector3(playerObj->Position)), e.Y, groundY);
     }
 
     private static bool IsPlayerJumping()
