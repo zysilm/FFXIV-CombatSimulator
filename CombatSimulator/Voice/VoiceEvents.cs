@@ -19,6 +19,9 @@ public enum VoiceEvent
     AllyDeath,
     Victory,
     Taunt,
+    /// <summary>Idle remark in a lull (a musing or grumble, no provocation). Only the idle-talk timer
+    /// raises it; it never answers a kill, a victory or a taunt over the fallen.</summary>
+    Chatter,
 }
 
 /// <summary>
@@ -56,6 +59,7 @@ public static class VoiceEventPolicy
         VoiceEvent.Skill => 40,
         VoiceEvent.Hurt => 30,
         VoiceEvent.Taunt => 10,
+        VoiceEvent.Chatter => 5,
         _ => 0,
     };
 
@@ -75,6 +79,7 @@ public static class VoiceEventPolicy
         VoiceEvent.AllyDeath => 12f,
         VoiceEvent.Victory => 10f,
         VoiceEvent.Taunt => 20f,
+        VoiceEvent.Chatter => 20f,
         _ => 5f,
     };
 

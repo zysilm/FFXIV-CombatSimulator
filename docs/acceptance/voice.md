@@ -214,6 +214,23 @@ Recategorisation (by the Japanese text only):
 - Assignable personas **ja 23 -> 21, en 23 -> 21**: ja-019 / en-019 and ja-024 / en-024 (Emet-Selch,
   probable) dropped to 7 lines. Ids of every other speaker are unchanged.
 
+Idle remarks (`Chatter`):
+- New event for plot-neutral talk in a lull (musings, grumbles, observations): 4 pool lines moved
+  there, 34 added from earlier `proven` pairs by their Japanese meaning (no names of people, places,
+  factions or items, no system text, announcer or mechanic call-outs): 22 human (16 male, 6 female),
+  12 fx. Gender, age, fx and persona ids filled with the same tools as before (2 new 1-line ids,
+  ja-079 / en-080; boss ids unchanged). Pool 956 lines: male / female / fx Chatter 17 / 7 / 14.
+- The idle-talk timer of an engaged enemy asks for a remark or a taunt, evenly when its voice has
+  both (8 of 23 ja human personas have their own of each), a taunt otherwise. A remark is never a
+  kill or victory line and never a taunt over the fallen. Chatter counts as a line for the persona bar
+  but not as one of its 5 events.
+- Assignable personas **ja 21 -> 23, en 21 -> 23** (ja-019 / en-019 and ja-024 / en-024 are back with
+  a remark each).
+
+Listen for (recategorisation): after a wipe the killer and the taunters say only gloats or "it's over"
+lines, never "back to it" / "here I come"; a long fight brings an occasional remark (8204268
+獲物は焼いちまうか？それとも生で食うか？, 8206256 ここは露店が並ぶ賑やかな場所だったはず……) between taunts.
+
 Runtime: `Resources/VoiceLines.json` (voice id, text row, optional sheet, events, gender, age,
 story, weight, optional `extended` (provenance) and `fx` (processed voice: never picked for a
 male or female speaker; the only lines of a non-human one); no text). Text comes from the row's sheet (NpcYell unless `sheet` says
@@ -404,7 +421,7 @@ Prerequisite: PC labels done (at least attack, hurt, death, engage), one monster
 | Ally death | Another enemy within 15 y (setting) of the corpse | nearest living ally reacts | engage (taunt) |
 | Killed player | Enemy lands the killing blow on you | killer gloats | victory (taunt, engage) |
 | Victory | You die with no living companions | ~1.5 s later the nearest living non-killer enemy calls it | victory (taunt) |
-| Idle taunt | Engaged enemies (always on) | average every 4x **Pause between lines** per enemy (14 s at the default 3.5 s; 5-60 s), never more than every 20 s | taunt |
+| Idle taunt / remark | Engaged enemies (always on) | average every 4x **Pause between lines** per enemy (14 s at the default 3.5 s; 5-60 s), never more than every 20 s; a voiced remark (Chatter) about half the time when the voice has one | taunt |
 
 Voice choice per enemy (cached per address+entity):
 - Player clones (client-spawned humanoids) and companions: PC shout matching race, Hyur tribe

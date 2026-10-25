@@ -402,7 +402,7 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
     var table = VoicePersonaTable.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "VoicePersonas.json")));
     Check(table.Count >= 100, $"persona table has only {table.Count} rows");
     int AssignableIn(string lang) => table.All.Count(p => p.Assignable && !p.IsBoss && p.Language == lang);
-    Check(AssignableIn("ja") == 21 && AssignableIn("en") == 21, $"assignable personas ja {AssignableIn("ja")} en {AssignableIn("en")}");
+    Check(AssignableIn("ja") == 23 && AssignableIn("en") == 23, $"assignable personas ja {AssignableIn("ja")} en {AssignableIn("en")}");
     Check(table.Get("ja-010")?.Character == "Alphinaud" && table.Get("ja-010")!.Voice == VoiceLineVoice.Male &&
           table.Get("ja-010")!.Band == VoiceLineAge.Young, "ja-010 is young male Alphinaud");
     Check(table.Get("en-004")?.BandName == "mature" && table.Get("en-003")?.BandName == "adult", "band names");
@@ -619,6 +619,41 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
             if (shipped.Pick(VoiceEvent.KilledPlayer, g, rnd.NextDouble) is { } got)
                 Check(!LineIsEngage(got) || got.Events.Contains(VoiceEvent.KilledPlayer) || got.Events.Contains(VoiceEvent.Victory),
                     $"per-line {g} kill borrowed the opening line {got.VoiceId}");
+
+    // Idle remarks (Chatter): in the pool, only ever Chatter-only lines, never in a kill/victory pick or the
+    // fallen pool, and picked about half of the idle talk when a speaker has both remarks and taunts.
+    var chatter = entries.Where(l => l.Events.Contains(VoiceEvent.Chatter)).ToList();
+    Check(chatter.Count(l => !l.Fx) >= 10 && chatter.Count(l => l.Fx) >= 5, $"chatter lines: {chatter.Count}");
+    Check(chatter.All(l => l.Events.Length == 1), "a chatter line also carries another event");
+    foreach (var lang in new[] { "ja", "en" })
+        foreach (var p in table.All.Where(p => p.Assignable && p.Language == lang))
+        {
+            var chain = table.ChainFor(p, true);
+            Check(!shipped.FallenTauntPool(p.SpeakerVoice, chain, lang).Any(l => l.Events.Contains(VoiceEvent.Chatter)), $"{p.Id}: chatter in the fallen pool");
+            for (var i = 0; i < 20; i++)
+                foreach (var ev in new[] { VoiceEvent.KilledPlayer, VoiceEvent.Victory, VoiceEvent.Taunt })
+                    Check(shipped.Pick(ev, p.SpeakerVoice, chain, lang, rnd.NextDouble) is not { } got || !got.Events.Contains(VoiceEvent.Chatter),
+                        $"{p.Id}: {ev} gave chatter");
+        }
+    var chatterLine = new VoiceLineEntry(8209001, 1, new[] { VoiceEvent.Chatter }, VoiceLineVoice.Male, false, 1f);
+    Check(!VoiceLinePicker.Answers(chatterLine, VoiceEvent.KilledPlayer, VoiceEvent.Chatter) &&
+          !VoiceLinePicker.Answers(chatterLine with { Events = new[] { VoiceEvent.Chatter, VoiceEvent.Taunt } }, VoiceEvent.KilledPlayer, VoiceEvent.Taunt),
+        "chatter answers a kill");
+    var chatterOnly = new VoiceLinePicker(new VoiceLineSettings());
+    chatterOnly.SetEntries(new[] { chatterLine });
+    Check(chatterOnly.Available(VoiceEvent.KilledPlayer, VoiceLineVoice.Male) == 0 && chatterOnly.Available(VoiceEvent.Victory, VoiceLineVoice.Male) == 0 &&
+          chatterOnly.FallenTauntPool(VoiceLineVoice.Male, new[] { "x" }, "ja").Count == 0 &&
+          chatterOnly.Available(VoiceEvent.Chatter, VoiceLineVoice.Male) == 1, "chatter-only voice");
+    var idleChatter = 0;
+    for (var i = 0; i < 1000; i++)
+        if (VoiceLinePicker.IdleEvent(true, true, rnd.NextDouble()) == VoiceEvent.Chatter)
+            idleChatter++;
+    Check(idleChatter is > 400 and < 600, $"idle talk picked chatter {idleChatter}/1000");
+    Check(VoiceLinePicker.IdleEvent(false, true, 0.1) == VoiceEvent.Taunt && VoiceLinePicker.IdleEvent(true, false, 0.9) == VoiceEvent.Chatter &&
+          VoiceLinePicker.IdleEvent(false, false, 0.1) == VoiceEvent.Taunt, "idle event without one of the two");
+    var bothKinds = table.All.Count(p => p.Assignable && !p.IsBoss && p.Language == "ja" &&
+        shipped.CountFor(VoiceEvent.Chatter, p.SpeakerVoice, p.Id, "ja") > 0 && shipped.CountFor(VoiceEvent.Taunt, p.SpeakerVoice, p.Id, "ja") > 0);
+    Console.WriteLine($"Assignable ja human personas with own chatter and taunt lines: {bothKinds}");
 
     // ---- Taunts over the fallen: the speaker's own kill + victory + taunt lines, topped up only below 3. ----
     var poolStats = new List<string>();

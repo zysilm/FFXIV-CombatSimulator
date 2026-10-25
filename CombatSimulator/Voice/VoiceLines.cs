@@ -182,6 +182,7 @@ public sealed class VoiceLinePicker
         VoiceEvent.Skill => 8f,
         VoiceEvent.Hurt => 10f,
         VoiceEvent.Taunt => 12f,
+        VoiceEvent.Chatter => 12f,
         VoiceEvent.Engage => 6f,
         VoiceEvent.LowHp => 6f,
         VoiceEvent.AllyDeath => 10f,
@@ -199,15 +200,23 @@ public sealed class VoiceLinePicker
         _ => new[] { e },
     };
 
+    /// <summary>What an engaged enemy's idle-talk timer asks for: a remark or a taunt, evenly
+    /// (<paramref name="roll"/> in [0,1)) when the speaker has both; whichever it has otherwise
+    /// (a taunt when it has neither, so the labeled shout path stays as before).</summary>
+    public static VoiceEvent IdleEvent(bool hasChatter, bool hasTaunt, double roll) =>
+        hasChatter && (!hasTaunt || roll < 0.5) ? VoiceEvent.Chatter : VoiceEvent.Taunt;
+
     /// <summary>
     /// Whether a line tagged <paramref name="chained"/> may answer <paramref name="asked"/>. A kill or
     /// victory that borrows a taunt must not get an opening or resuming call ("here I come", "now it
     /// begins": taunts also tagged Engage), which reads as the enemy restarting the fight over a fallen
-    /// player. Taunts over the fallen use the same rule.
+    /// player. An idle remark (<see cref="VoiceEvent.Chatter"/>) never answers a kill or a victory.
+    /// Taunts over the fallen use the same rule.
     /// </summary>
     public static bool Answers(VoiceLineEntry line, VoiceEvent asked, VoiceEvent chained) =>
-        !(asked is VoiceEvent.KilledPlayer or VoiceEvent.Victory && chained == VoiceEvent.Taunt &&
-          Array.IndexOf(line.Events, VoiceEvent.Engage) >= 0);
+        !(asked is VoiceEvent.KilledPlayer or VoiceEvent.Victory &&
+          (Array.IndexOf(line.Events, VoiceEvent.Chatter) >= 0 ||
+           chained == VoiceEvent.Taunt && Array.IndexOf(line.Events, VoiceEvent.Engage) >= 0));
 
     /// <summary>Only the shared line gate: no line on screen and the quiet gap after it has passed.
     /// Scripted talk (taunts over a fallen player) waits on this alone, not on event cooldowns.</summary>
