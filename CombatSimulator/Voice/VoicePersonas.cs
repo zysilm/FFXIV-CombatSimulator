@@ -227,12 +227,16 @@ public sealed class VoicePersonaTable
     }
 
     /// <summary>
-    /// The personas a speaker with <paramref name="persona"/> may voice lines from, in order: itself,
-    /// then its fallbacks that are assignable, of the same language and gender (never crossing
-    /// gender), same band before other bands, file order within each. A boss persona falls back to
-    /// other boss personas only, most similar voice first (file order).
+    /// The personas a speaker with <paramref name="persona"/> may voice lines from: itself only. An
+    /// enemy must keep one voice; borrowing a "similar" persona's line for a missing event mixed two
+    /// actors under one enemy (Hythlodaeus's kill lines came from Zenos). A missing event is covered
+    /// by the speaker's own event chain (kill → victory → taunt) or stays silent.
     /// </summary>
-    public List<string> ChainFor(VoicePersona persona, bool allowStoryCharacters)
+    public List<string> ChainFor(VoicePersona persona, bool allowStoryCharacters) => new() { persona.Id };
+
+    /// <summary>The persona's similar voices in order (same language and kind, same band first). Kept
+    /// for reference and tests; speech no longer borrows from them.</summary>
+    public List<string> SimilarVoices(VoicePersona persona, bool allowStoryCharacters)
     {
         var chain = new List<string> { persona.Id };
         var otherBand = new List<string>();

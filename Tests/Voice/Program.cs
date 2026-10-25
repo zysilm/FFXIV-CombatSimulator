@@ -477,7 +477,10 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
                     foreach (var c in candidates)
                     {
                         var chain = table.ChainFor(c, true);
-                        Check(shipped.Available(ev, g, chain, lang) > 0, $"{lang} {c.Id} ({g} {body}): {ev} unreachable");
+                        // A persona never borrows another voice: an event it has no line for stays silent.
+                        Check(chain.Count == 1 && chain[0] == c.Id, $"{lang} {c.Id}: chain borrows another voice");
+                        if (shipped.Available(ev, g, chain, lang) == 0)
+                            continue;
                         // How many lines the persona that actually answers has for this event (event chain included).
                         var who = chain.First(p => VoiceLinePicker.Chain(ev).Any(ce => shipped.CountFor(ce, g, p, lang, ev) > 0));
                         answering += VoiceLinePicker.Chain(ev).Sum(ce => shipped.CountFor(ce, g, who, lang, ev));
@@ -576,18 +579,24 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
         foreach (var p in table.All.Where(p => p.Assignable && p.Language == lang))
             foreach (var ev in Enum.GetValues<VoiceEvent>())
                 for (var i = 0; i < 10; i++)
-                    // A boss chain without a line for the event (AllyDeath is rare there) stays silent, never a small persona.
+                    // A voice without a line for the event stays silent, never a small persona's line.
                     Check(shipped.Pick(ev, p.SpeakerVoice, table.ChainFor(p, true), lang, rnd.NextDouble)?.PersonaFor(lang) is { } got ? !smallIds.Contains(got)
-                            : p.IsBoss && shipped.Available(ev, p.SpeakerVoice, table.ChainFor(p, true), lang) == 0,
+                            : shipped.Available(ev, p.SpeakerVoice, table.ChainFor(p, true), lang) == 0,
                         $"{p.Id}: {ev} used a small persona's line");
 
     Console.WriteLine("Persona coverage (avg lines of the answering persona per event; borrow = candidates using a fallback):");
     foreach (var c in coverage)
         Console.WriteLine(c);
 
-    // Every assignable persona (human and boss) still reaches the kill chain after the recategorisation.
+    // No persona borrows another voice. A kill line is still guaranteed per fight: when the killer's own
+    // voice has none, another enemy whose voice does says it, so each language and kind needs some.
     foreach (var p in table.All.Where(p => p.Assignable))
-        Check(shipped.Available(VoiceEvent.KilledPlayer, p.SpeakerVoice, table.ChainFor(p, true), p.Language) > 0, $"{p.Id}: kill chain unreachable");
+        Check(table.ChainFor(p, true) is { Count: 1 } own && own[0] == p.Id, $"{p.Id}: chain borrows another voice");
+    foreach (var lang in new[] { "ja", "en" })
+        foreach (var kind in new[] { VoiceLineVoice.Male, VoiceLineVoice.Female, VoiceLineVoice.NonHuman })
+            Check(table.All.Any(p => p.Assignable && p.Language == lang && p.SpeakerVoice == kind &&
+                                     shipped.Available(VoiceEvent.KilledPlayer, kind, table.ChainFor(p, true), lang) > 0),
+                $"{lang} {kind}: no voice can say a kill line");
 
     // Lines that were wrongly read as kill/victory lines (Trust allies rejoining the fight, "now it begins",
     // a warning to an ally, a technique shout) must stay out of the kill and victory events.
@@ -670,20 +679,22 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
             var pool = shipped.FallenTauntPool(speaker, chain, lang);
             ownSizes.Add(own);
             poolSizes.Add(pool.Count);
-            Check(pool.Count > 0, $"{p.Id}: nothing to say over the fallen");
-            Check(pool.Count(l => l.PersonaFor(lang) == p.Id) == own, $"{p.Id}: fallen pool misses own lines");
+            // Own lines only: a voice with none simply does not taunt (another enemy does).
+            Check(pool.Count == own, $"{p.Id}: fallen pool is not exactly the own lines");
             Check(pool.All(l => l.Events.Any(ev => VoiceLinePicker.FallenTauntEvents.Contains(ev))), $"{p.Id}: fallen pool has a non-taunt line");
             Check(pool.All(l => VoiceLinePicker.SuitsSpeaker(l, speaker)), $"{p.Id}: fallen pool crosses kind (fx/human)");
-            if (own >= VoiceLinePicker.MinFallenTauntPool)
-                Check(pool.All(l => l.PersonaFor(lang) == p.Id), $"{p.Id}: {own} own lines but the voice changed");
-            else
-                Check(pool.Count >= VoiceLinePicker.MinFallenTauntPool || pool.Count == entries.Count(l => chain.Contains(l.PersonaFor(lang)!) &&
-                          VoiceLinePicker.SuitsSpeaker(l, speaker) && OverFallen(l)),
-                    $"{p.Id}: small own pool ({own}) not topped up from fallbacks");
+            Check(pool.All(l => l.PersonaFor(lang) == p.Id), $"{p.Id}: fallen pool changed the voice");
             Check(pool.All(l => chain.Contains(l.PersonaFor(lang)!)), $"{p.Id}: fallen pool left the persona chain");
             if (!p.IsBoss)
                 Check(pool.All(l => table.Get(l.PersonaFor(lang))!.Voice == p.Voice), $"{p.Id}: fallen pool crosses gender");
             // Variety: 30 taunts in a row use the whole pool and never repeat the previous line.
+            if (pool.Count == 0)
+            {
+                var silent = new VoiceLinePicker(new VoiceLineSettings());
+                silent.SetEntries(entries);
+                Check(silent.PickFallenTaunt(speaker, chain, lang, rnd.NextDouble) == null, $"{p.Id}: taunted with no own line");
+                continue;
+            }
             var taunter = new VoiceLinePicker(new VoiceLineSettings());
             taunter.SetEntries(entries);
             var heard = new HashSet<uint>();
@@ -731,11 +742,11 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
         foreach (var b in langBosses)
         {
             var chain = table.ChainFor(b, true);
-            Check(chain[0] == b.Id && chain.All(id => table.Get(id)!.IsBoss && table.Get(id)!.Language == lang), $"{b.Id}: chain leaves the boss personas");
-            Check(shipped.Available(VoiceEvent.KilledPlayer, VoiceLineVoice.NonHuman, chain, lang) > 0, $"{b.Id}: kill chain unreachable");
+            Check(chain.Count == 1 && chain[0] == b.Id, $"{b.Id}: chain borrows another voice");
             foreach (var ev in fxEvents)
             {
-                Check(shipped.Available(ev, VoiceLineVoice.NonHuman, chain, lang) > 0, $"{b.Id}: {ev} unreachable");
+                if (shipped.Available(ev, VoiceLineVoice.NonHuman, chain, lang) == 0)
+                    continue;
                 for (var i = 0; i < 5; i++)
                     Check(shipped.Pick(ev, VoiceLineVoice.NonHuman, chain, lang, rnd.NextDouble) is { Fx: true } pick && chain.Contains(pick.PersonaFor(lang)!),
                         $"{b.Id}: {ev} gave a non-boss line");
