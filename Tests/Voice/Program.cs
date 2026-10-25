@@ -479,8 +479,8 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
                         var chain = table.ChainFor(c, true);
                         Check(shipped.Available(ev, g, chain, lang) > 0, $"{lang} {c.Id} ({g} {body}): {ev} unreachable");
                         // How many lines the persona that actually answers has for this event (event chain included).
-                        var who = chain.First(p => VoiceLinePicker.Chain(ev).Any(ce => shipped.CountFor(ce, g, p, lang) > 0));
-                        answering += VoiceLinePicker.Chain(ev).Sum(ce => shipped.CountFor(ce, g, who, lang));
+                        var who = chain.First(p => VoiceLinePicker.Chain(ev).Any(ce => shipped.CountFor(ce, g, p, lang, ev) > 0));
+                        answering += VoiceLinePicker.Chain(ev).Sum(ce => shipped.CountFor(ce, g, who, lang, ev));
                         if (who == c.Id)
                             own++;
                         for (var i = 0; i < 20; i++)
@@ -585,6 +585,76 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
     foreach (var c in coverage)
         Console.WriteLine(c);
 
+    // Every assignable persona (human and boss) still reaches the kill chain after the recategorisation.
+    foreach (var p in table.All.Where(p => p.Assignable))
+        Check(shipped.Available(VoiceEvent.KilledPlayer, p.SpeakerVoice, table.ChainFor(p, true), p.Language) > 0, $"{p.Id}: kill chain unreachable");
+
+    // Lines that were wrongly read as kill/victory lines (Trust allies rejoining the fight, "now it begins",
+    // a warning to an ally, a technique shout) must stay out of the kill and victory events.
+    var notKill = new uint[] { 8202042, 8202043, 8202119, 8203050, 8203225, 8202342, 8202107, 8204215 };
+    foreach (var v in notKill)
+    {
+        var line = entries.FirstOrDefault(e => e.VoiceId == v);
+        Check(line == null || !line.Events.Contains(VoiceEvent.KilledPlayer) && !line.Events.Contains(VoiceEvent.Victory),
+            $"vo {v} is a kill/victory line again");
+    }
+    // A kill or victory that borrows a taunt never gets an opening/resuming call (a taunt also tagged Engage),
+    // and neither does a taunt over the fallen.
+    bool LineIsEngage(VoiceLineEntry l) => l.Events.Contains(VoiceEvent.Engage);
+    bool OverFallen(VoiceLineEntry l) => VoiceLinePicker.FallenTauntEvents.Any(ev => l.Events.Contains(ev) && VoiceLinePicker.Answers(l, VoiceEvent.KilledPlayer, ev));
+    Check(entries.Any(l => LineIsEngage(l) && l.Events.Contains(VoiceEvent.Taunt) && !l.Fx), "test needs an engage+taunt line");
+    foreach (var lang in new[] { "ja", "en" })
+        foreach (var p in table.All.Where(p => p.Assignable && p.Language == lang))
+        {
+            var chain = table.ChainFor(p, true);
+            for (var i = 0; i < 20; i++)
+                foreach (var ev in new[] { VoiceEvent.KilledPlayer, VoiceEvent.Victory })
+                    if (shipped.Pick(ev, p.SpeakerVoice, chain, lang, rnd.NextDouble) is { } got)
+                        Check(got.Events.Contains(VoiceEvent.KilledPlayer) || got.Events.Contains(VoiceEvent.Victory) || !LineIsEngage(got),
+                            $"{p.Id}: {ev} borrowed the opening line {got.VoiceId}");
+            Check(shipped.FallenTauntPool(p.SpeakerVoice, chain, lang).All(OverFallen), $"{p.Id}: an opening line in the fallen pool");
+        }
+    foreach (var g in new[] { VoiceLineVoice.Male, VoiceLineVoice.Female })
+        for (var i = 0; i < 200; i++)
+            if (shipped.Pick(VoiceEvent.KilledPlayer, g, rnd.NextDouble) is { } got)
+                Check(!LineIsEngage(got) || got.Events.Contains(VoiceEvent.KilledPlayer) || got.Events.Contains(VoiceEvent.Victory),
+                    $"per-line {g} kill borrowed the opening line {got.VoiceId}");
+
+    // Idle remarks (Chatter): in the pool, only ever Chatter-only lines, never in a kill/victory pick or the
+    // fallen pool, and picked about half of the idle talk when a speaker has both remarks and taunts.
+    var chatter = entries.Where(l => l.Events.Contains(VoiceEvent.Chatter)).ToList();
+    Check(chatter.Count(l => !l.Fx) >= 10 && chatter.Count(l => l.Fx) >= 5, $"chatter lines: {chatter.Count}");
+    Check(chatter.All(l => l.Events.Length == 1), "a chatter line also carries another event");
+    foreach (var lang in new[] { "ja", "en" })
+        foreach (var p in table.All.Where(p => p.Assignable && p.Language == lang))
+        {
+            var chain = table.ChainFor(p, true);
+            Check(!shipped.FallenTauntPool(p.SpeakerVoice, chain, lang).Any(l => l.Events.Contains(VoiceEvent.Chatter)), $"{p.Id}: chatter in the fallen pool");
+            for (var i = 0; i < 20; i++)
+                foreach (var ev in new[] { VoiceEvent.KilledPlayer, VoiceEvent.Victory, VoiceEvent.Taunt })
+                    Check(shipped.Pick(ev, p.SpeakerVoice, chain, lang, rnd.NextDouble) is not { } got || !got.Events.Contains(VoiceEvent.Chatter),
+                        $"{p.Id}: {ev} gave chatter");
+        }
+    var chatterLine = new VoiceLineEntry(8209001, 1, new[] { VoiceEvent.Chatter }, VoiceLineVoice.Male, false, 1f);
+    Check(!VoiceLinePicker.Answers(chatterLine, VoiceEvent.KilledPlayer, VoiceEvent.Chatter) &&
+          !VoiceLinePicker.Answers(chatterLine with { Events = new[] { VoiceEvent.Chatter, VoiceEvent.Taunt } }, VoiceEvent.KilledPlayer, VoiceEvent.Taunt),
+        "chatter answers a kill");
+    var chatterOnly = new VoiceLinePicker(new VoiceLineSettings());
+    chatterOnly.SetEntries(new[] { chatterLine });
+    Check(chatterOnly.Available(VoiceEvent.KilledPlayer, VoiceLineVoice.Male) == 0 && chatterOnly.Available(VoiceEvent.Victory, VoiceLineVoice.Male) == 0 &&
+          chatterOnly.FallenTauntPool(VoiceLineVoice.Male, new[] { "x" }, "ja").Count == 0 &&
+          chatterOnly.Available(VoiceEvent.Chatter, VoiceLineVoice.Male) == 1, "chatter-only voice");
+    var idleChatter = 0;
+    for (var i = 0; i < 1000; i++)
+        if (VoiceLinePicker.IdleEvent(true, true, rnd.NextDouble()) == VoiceEvent.Chatter)
+            idleChatter++;
+    Check(idleChatter is > 400 and < 600, $"idle talk picked chatter {idleChatter}/1000");
+    Check(VoiceLinePicker.IdleEvent(false, true, 0.1) == VoiceEvent.Taunt && VoiceLinePicker.IdleEvent(true, false, 0.9) == VoiceEvent.Chatter &&
+          VoiceLinePicker.IdleEvent(false, false, 0.1) == VoiceEvent.Taunt, "idle event without one of the two");
+    var bothKinds = table.All.Count(p => p.Assignable && !p.IsBoss && p.Language == "ja" &&
+        shipped.CountFor(VoiceEvent.Chatter, p.SpeakerVoice, p.Id, "ja") > 0 && shipped.CountFor(VoiceEvent.Taunt, p.SpeakerVoice, p.Id, "ja") > 0);
+    Console.WriteLine($"Assignable ja human personas with own chatter and taunt lines: {bothKinds}");
+
     // ---- Taunts over the fallen: the speaker's own kill + victory + taunt lines, topped up only below 3. ----
     var poolStats = new List<string>();
     foreach (var lang in new[] { "ja", "en" })
@@ -596,8 +666,7 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
         {
             var speaker = p.SpeakerVoice;
             var chain = table.ChainFor(p, true);
-            var own = entries.Count(l => l.PersonaFor(lang) == p.Id && VoiceLinePicker.SuitsSpeaker(l, speaker) &&
-                                         VoiceLinePicker.FallenTauntEvents.Any(ev => l.Events.Contains(ev)));
+            var own = entries.Count(l => l.PersonaFor(lang) == p.Id && VoiceLinePicker.SuitsSpeaker(l, speaker) && OverFallen(l));
             var pool = shipped.FallenTauntPool(speaker, chain, lang);
             ownSizes.Add(own);
             poolSizes.Add(pool.Count);
@@ -609,7 +678,7 @@ Check(VoiceLineAudio.BubbleSeconds(0.5f) == 2.5f && VoiceLineAudio.BubbleSeconds
                 Check(pool.All(l => l.PersonaFor(lang) == p.Id), $"{p.Id}: {own} own lines but the voice changed");
             else
                 Check(pool.Count >= VoiceLinePicker.MinFallenTauntPool || pool.Count == entries.Count(l => chain.Contains(l.PersonaFor(lang)!) &&
-                          VoiceLinePicker.SuitsSpeaker(l, speaker) && l.Events.Any(ev => VoiceLinePicker.FallenTauntEvents.Contains(ev))),
+                          VoiceLinePicker.SuitsSpeaker(l, speaker) && OverFallen(l)),
                     $"{p.Id}: small own pool ({own}) not topped up from fallbacks");
             Check(pool.All(l => chain.Contains(l.PersonaFor(lang)!)), $"{p.Id}: fallen pool left the persona chain");
             if (!p.IsBoss)

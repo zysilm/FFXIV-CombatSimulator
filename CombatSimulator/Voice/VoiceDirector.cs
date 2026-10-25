@@ -434,6 +434,11 @@ public sealed unsafe class VoiceDirector
         return best;
     }
 
+    /// <summary>Idle talk of an engaged enemy: an idle remark or a taunt, about evenly when its voice has
+    /// both (<see cref="VoiceLinePicker.IdleEvent"/>); a taunt when it has no remark.</summary>
+    private VoiceEvent IdleEvent(uint id) =>
+        VoiceLinePicker.IdleEvent(CanVoiceLine(id, VoiceEvent.Chatter), CanVoiceLine(id, VoiceEvent.Taunt), random.NextDouble());
+
     /// <summary>Whether this tracked enemy is alive and has a curated line for the event in its voice
     /// (with personas: in its own persona or a fallback of it). Monsters and demihumans speak only
     /// through a boss persona, so they need personas (ja/en client).</summary>
@@ -544,7 +549,7 @@ public sealed unsafe class VoiceDirector
 
             if (npc.IsAlive && npc.IsEngaged &&
                 random.NextDouble() < deltaTime / IdleTauntInterval(lineSettings.Gap))
-                candidates.Add(new VoiceCandidate(id, VoiceEvent.Taunt, t.Distance));
+                candidates.Add(new VoiceCandidate(id, IdleEvent(id), t.Distance));
         }
 
         // Drop actors that left the selection (despawned/deselected).
