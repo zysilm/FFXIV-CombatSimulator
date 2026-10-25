@@ -199,6 +199,16 @@ public sealed class VoiceLinePicker
         _ => new[] { e },
     };
 
+    /// <summary>
+    /// Whether a line tagged <paramref name="chained"/> may answer <paramref name="asked"/>. A kill or
+    /// victory that borrows a taunt must not get an opening or resuming call ("here I come", "now it
+    /// begins": taunts also tagged Engage), which reads as the enemy restarting the fight over a fallen
+    /// player. Taunts over the fallen use the same rule.
+    /// </summary>
+    public static bool Answers(VoiceLineEntry line, VoiceEvent asked, VoiceEvent chained) =>
+        !(asked is VoiceEvent.KilledPlayer or VoiceEvent.Victory && chained == VoiceEvent.Taunt &&
+          Array.IndexOf(line.Events, VoiceEvent.Engage) >= 0);
+
     /// <summary>Only the shared line gate: no line on screen and the quiet gap after it has passed.
     /// Scripted talk (taunts over a fallen player) waits on this alone, not on event cooldowns.</summary>
     public bool GateOpen(VoiceEvent e) => Now >= busyUntil + (IsPriority(e) ? settings.PriorityGap : settings.Gap);
@@ -221,7 +231,7 @@ public sealed class VoiceLinePicker
         var n = 0;
         foreach (var chained in Chain(e))
             foreach (var line in entries)
-                if (Fits(line, chained, voice))
+                if (Fits(line, chained, voice, e))
                     n++;
         return n;
     }
@@ -235,11 +245,11 @@ public sealed class VoiceLinePicker
     {
         foreach (var chained in Chain(e))
         {
-            var pick = age == VoiceLineAge.Any ? null : PickFrom(chained, voice, random, avoidRecent: true, age);
-            pick ??= PickFrom(chained, voice, random, avoidRecent: true);
+            var pick = age == VoiceLineAge.Any ? null : PickFrom(chained, voice, random, avoidRecent: true, age, asked: e);
+            pick ??= PickFrom(chained, voice, random, avoidRecent: true, asked: e);
             if (age != VoiceLineAge.Any)
-                pick ??= PickFrom(chained, voice, random, avoidRecent: false, age);
-            pick ??= PickFrom(chained, voice, random, avoidRecent: false);
+                pick ??= PickFrom(chained, voice, random, avoidRecent: false, age, asked: e);
+            pick ??= PickFrom(chained, voice, random, avoidRecent: false, asked: e);
             if (pick != null)
                 return pick;
         }
@@ -269,8 +279,9 @@ public sealed class VoiceLinePicker
             recent.RemoveLast();
     }
 
-    private bool Fits(VoiceLineEntry line, VoiceEvent e, VoiceLineVoice voice) =>
-        SuitsSpeaker(line, voice) && !unavailable.Contains(line.VoiceId) && Array.IndexOf(line.Events, e) >= 0;
+    private bool Fits(VoiceLineEntry line, VoiceEvent e, VoiceLineVoice voice, VoiceEvent? asked = null) =>
+        SuitsSpeaker(line, voice) && !unavailable.Contains(line.VoiceId) && Array.IndexOf(line.Events, e) >= 0 &&
+        (asked == null || Answers(line, asked.Value, e));
 
     /// <summary>A human speaker takes unprocessed lines of its gender; a non-human one (monster,
     /// demihuman) takes only processed boss lines, of either gender.</summary>
@@ -282,12 +293,13 @@ public sealed class VoiceLinePicker
 
     // ---- Persona-restricted picking: one enemy, one voice actor. ----
 
-    /// <summary>Lines of exactly this persona for exactly this event (no event chain).</summary>
-    public int CountFor(VoiceEvent e, VoiceLineVoice voice, string persona, string language)
+    /// <summary>Lines of exactly this persona for exactly this event (no event chain). With <paramref name="asked"/>,
+    /// only the lines that may answer that event through <paramref name="e"/> (<see cref="Answers"/>).</summary>
+    public int CountFor(VoiceEvent e, VoiceLineVoice voice, string persona, string language, VoiceEvent? asked = null)
     {
         var n = 0;
         foreach (var line in entries)
-            if (Fits(line, e, voice) && line.PersonaFor(language) == persona)
+            if (Fits(line, e, voice, asked) && line.PersonaFor(language) == persona)
                 n++;
         return n;
     }
@@ -299,7 +311,7 @@ public sealed class VoiceLinePicker
         var n = 0;
         foreach (var persona in personas)
             foreach (var chained in Chain(e))
-                n += CountFor(chained, voice, persona, language);
+                n += CountFor(chained, voice, persona, language, e);
         return n;
     }
 
@@ -316,8 +328,8 @@ public sealed class VoiceLinePicker
         foreach (var persona in personas)
             foreach (var chained in Chain(e))
             {
-                var pick = PickFrom(chained, voice, random, avoidRecent: true, persona: persona, language: language)
-                           ?? PickFrom(chained, voice, random, avoidRecent: false, persona: persona, language: language);
+                var pick = PickFrom(chained, voice, random, avoidRecent: true, persona: persona, language: language, asked: e)
+                           ?? PickFrom(chained, voice, random, avoidRecent: false, persona: persona, language: language, asked: e);
                 if (pick != null)
                     return pick;
             }
@@ -387,17 +399,17 @@ public sealed class VoiceLinePicker
     private bool FitsAny(VoiceLineEntry line, IReadOnlyList<VoiceEvent> events, VoiceLineVoice voice)
     {
         foreach (var e in events)
-            if (Fits(line, e, voice))
+            if (Fits(line, e, voice, VoiceEvent.KilledPlayer))
                 return true;
         return false;
     }
 
     private VoiceLineEntry? PickFrom(VoiceEvent e, VoiceLineVoice voice, Func<double> random, bool avoidRecent, VoiceLineAge age = VoiceLineAge.Any,
-        string? persona = null, string? language = null)
+        string? persona = null, string? language = null, VoiceEvent? asked = null)
     {
         var total = 0.0;
         foreach (var line in entries)
-            if (Fits(line, e, voice) && AgeFits(line, age) && !(avoidRecent && recent.Contains(line.VoiceId)) &&
+            if (Fits(line, e, voice, asked) && AgeFits(line, age) && !(avoidRecent && recent.Contains(line.VoiceId)) &&
                 (persona == null || line.PersonaFor(language) == persona))
                 total += line.Weight;
         if (total <= 0)
@@ -406,7 +418,7 @@ public sealed class VoiceLinePicker
         VoiceLineEntry? last = null;
         foreach (var line in entries)
         {
-            if (!Fits(line, e, voice) || !AgeFits(line, age) || avoidRecent && recent.Contains(line.VoiceId) ||
+            if (!Fits(line, e, voice, asked) || !AgeFits(line, age) || avoidRecent && recent.Contains(line.VoiceId) ||
                 persona != null && line.PersonaFor(language) != persona)
                 continue;
             last = line;

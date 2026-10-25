@@ -196,6 +196,24 @@ Listen for (fifth pass):
 3. Kill/victory variety: men now say "That's the last of them.", "Yes, yes! Rise once more! It
    mustn't end yet!", "Down with you!"; monsters "Unenhanced as you are, you never stood a chance."
 
+(The sixth pass, structure/second-recognition pairs, was reverted: it mixed wrong voices into the pool.
+Its `proven-v6` pairs are not used.)
+
+Recategorisation (by the Japanese text only):
+- Events had been set mostly from the English text, so Trust allies rejoining the fight after a raise
+  (8202042 もう一度、やってやる…！, 8202043 悪いな、再開だ！, 8202119 戦線に復帰する……！, 8203050) and "now it
+  begins" lines (8203225 ありがと、さてここからだ！, 8202342 ここからだ！) were kill/victory/taunt lines. Every
+  pool line was re-read in Japanese and tagged as said by an enemy: 142 lines changed events, 19 left the
+  pool (support/heal lines, mechanic call-outs, lines naming people or places, story asides). Log:
+  `voice-research\out\recat\changes.csv` (vo id, ja text, old -> new events, reason).
+- Kill/victory lines are now only gloats, dismissals and "it's over" calls: human male KilledPlayer
+  19 -> 8, Victory 16 -> 5; female 5 -> 3, 7 -> 3; fx 27 -> 13, 10 -> 2. The kill chain (kill -> victory
+  -> taunt) still reaches every assignable persona, but a borrowed taunt (and a taunt over the fallen)
+  is never a line also tagged Engage ("here I come" over a fallen player). Taunts that only make sense
+  while the opponent still stands ("still not yielding?") became Hurt reactions.
+- Assignable personas **ja 23 -> 21, en 23 -> 21**: ja-019 / en-019 and ja-024 / en-024 (Emet-Selch,
+  probable) dropped to 7 lines. Ids of every other speaker are unchanged.
+
 Runtime: `Resources/VoiceLines.json` (voice id, text row, optional sheet, events, gender, age,
 story, weight, optional `extended` (provenance) and `fx` (processed voice: never picked for a
 male or female speaker; the only lines of a non-human one); no text). Text comes from the row's sheet (NpcYell unless `sheet` says
