@@ -196,6 +196,53 @@ Listen for (fifth pass):
 3. Kill/victory variety: men now say "That's the last of them.", "Yes, yes! Rise once more! It
    mustn't end yet!", "Down with you!"; monsters "Unenhanced as you are, you never stood a chance."
 
+Sixth pass (more proven pairs from files that were not proven):
+- New evidence for the 2,329 non-proven files that have both languages: a second ja/en
+  recognition (beam 10, VAD, no carry-over of previous text), a duration-vs-text check (|z| <= 3
+  in each language), and block structure (the two nearest proven neighbours within 4 ids share
+  one sheet and one id-to-row offset, so that offset predicts the row). The speaker cluster
+  agreed with neither neighbour on 12% of true pairs, so it is only used for curation context.
+  - Rule A: take the best row over both runs. Each language must read it (en >= 0.8, ja >= 0.8),
+    rank it within 0.2 of its top score, and beat the best other wording by >= 0.2 joint.
+  - Rule S: take the structure-predicted row. Each language must read it (en >= 0.7,
+    ja >= 0.8, within 0.2 of its top), no other wording may read better jointly, and no row
+    1-3 rows away may pass as well.
+  - Both rules need both languages; if A and S pick different text, the pair is rejected.
+- Calibration (false accepts):
+  - On the proven pairs: 0 of 25,000 structure decoys (prediction shifted 1-3 rows, with and
+    without the true text, or a random row) and 0 of 1,200 recognition decoys (true text
+    removed, ja column shuffled), on the 600-pair sample that has both runs.
+  - On the non-proven files themselves: 0 in 3 shuffled-sheet runs over all 2,329, and 0 when
+    the accepted text is removed from the 273 accepted.
+  - 11 accepted files were already in the pool through the older duration or script-constant
+    proofs; all 11 agree.
+  - 273 newly proven (status `proven-v6` in voice_lines.xlsx): 139 rule A only, 101 A and S,
+    33 S only. 242 of them were probable, 27 unmatched, 4 short.
+- All 262 not yet in the pool were read (en + ja) with the fifth-pass judgement; 92 were added
+  (16 human: 8 male, 8 female; 76 fx). Every new line has its own agreed gender.
+  - Most were story dialogue, an arena announcer, mechanic call-outs or support lines.
+  - Added per event: Engage 16, Taunt 11, Skill 54, Hurt 6, LowHp 9, KilledPlayer 1,
+    AllyDeath 1, Death 1.
+  - Pool 1,033 lines: human 545, fx 488.
+- Personas rebuilt with the same scripts (clustering unchanged, ARI ja/en 0.997). Every existing
+  id keeps its speaker, gender, band and name. 4 new small ids (ja-079, ja-080, en-080, en-081).
+  Assignable personas: **ja 23 -> 23, en 23 -> 23**. The new human lines went to already
+  assignable personas (Ryne, Alisaie, G'raha, Gulool Ja Ja, ja-011, ja-018, ja-023) or to 1-2
+  line speakers. The near-bar speakers (ja-024: 7 lines, 4 events) had no usable new line.
+- Boss personas: **ja 26 -> 26, en 22 -> 22**, ids now stable. Every shipped fx line keeps its
+  boss id, and a new fx line joins the boss id its speaker cluster already carries (no new
+  cluster reached 8 lines). Saved monster overrides sound the same.
+
+Listen for (sixth pass):
+1. Structure-only pairs (the audio was never clearly recognised in both languages):
+   - human 8205164 "Hah! Let's see how you handle this!" (ja-006 / en-006)
+   - fx 8201220 "Unyielding as the earth!", 8204099 "Bare yourselves to me!", 8204032,
+     8205874, 8202352, 8203577, 8204378, 8205616, 8205838
+   Check that the bubble says what the voice says.
+2. New human lines: female 8202173, 8206011 (Ryne), 8205066, 8291190 (ja-018 / en-018), 8203102,
+   8206026, 8201411, 8201311; male 8205186, 8205187 (ja-006 / en-006), 8202124, 8202148, 8202539
+   "...Forgive me!" (Death), 8205180, 8201140.
+
 Runtime: `Resources/VoiceLines.json` (voice id, text row, optional sheet, events, gender, age,
 story, weight, optional `extended` (provenance) and `fx` (processed voice: never picked for a
 male or female speaker; the only lines of a non-human one); no text). Text comes from the row's sheet (NpcYell unless `sheet` says
