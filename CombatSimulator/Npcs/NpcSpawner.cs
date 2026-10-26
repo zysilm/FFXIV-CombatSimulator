@@ -372,6 +372,7 @@ public unsafe class NpcSpawner : IDisposable
             if (mainHandWeapon == 0 && weaponUsesHumanJob && TryGetDefaultFists(out var fistMain, out var fistOff))
             {
                 mainHandWeapon = fistMain; offHandWeapon = fistOff; defaultFists = true;
+                log.Info($"NPC '{npcName}' has no main-hand weapon: default fists 0x{fistMain:X}/0x{fistOff:X} assigned");
             }
             var weaponStyle = NpcWeaponClassifier.DetectFromPackedWeapon(mainHandWeapon);
             var jobId = weaponUsesHumanJob

@@ -49,21 +49,21 @@ public static unsafe class BodyTypeAnimationFallback
         var characterBase = (CharacterBase*)drawObject;
         if (characterBase->GetModelType() != CharacterBase.ModelType.Human) return;
         ushort race = ((Human*)characterBase)->RaceSexId;
+        byte bodyType = ((Human*)characterBase)->Customize.BodyType;
         // Standard adult bodies (..01) have their own files or the game's own fallbacks.
         int body = race % 100;
-        if (body is not (3 or 4)) return;
         bool changed = false;
         foreach (var timeline in timelines)
         {
             if (timeline == 0 || !considered.Add((race, timeline))) continue;
             var key = TimelineKey(timeline);
-            if (key.Length == 0) continue;
             string own = $"chara/human/c{race:D4}/animation/a0001/bt_common/{key}.pap";
             string adult = $"chara/human/{AdultMaleCode}/animation/a0001/bt_common/{key}.pap";
-            bool ownExists, adultExists;
-            try { ownExists = dataManager.FileExists(own); adultExists = dataManager.FileExists(adult); }
+            bool ownExists = false, adultExists = false;
+            try { if (key.Length > 0) { ownExists = dataManager.FileExists(own); adultExists = dataManager.FileExists(adult); } }
             catch (Exception ex) { log?.Warning(ex, $"Body-type animation fallback: cannot check {own}"); continue; }
-            if (ownExists || !adultExists) continue;
+            log?.Info($"Body-type animation fallback: body c{race:D4} (BodyType {bodyType}) timeline {timeline} '{key}': own file {(ownExists ? "present" : "missing")}, adult file {(adultExists ? "present" : "missing")}");
+            if (body is not (3 or 4) || key.Length == 0 || ownExists || !adultExists) continue;
             redirects[own] = adult;
             changed = true;
             log?.Info($"Body-type animation fallback: {own} -> {adult} (timeline {timeline} '{key}')");

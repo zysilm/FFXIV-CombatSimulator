@@ -1445,6 +1445,10 @@ public unsafe partial class EnemyControlController : IDisposable
         }
 
         CaptureGrabAttackTimeline();
+        // Young and elder bodies lack most emote files: swap in the adult male file before the pose
+        // is first set (ApplyGrabAttackTimeline may wait while locomotion owns the timeline).
+        if (controlledAddress != nint.Zero)
+            BodyTypeAnimationFallback.EnsureEmoteFiles((Character*)controlledAddress, ResolveGrabAnimationTimeline(config.EnemyControlGrabEmoteId));
         grabAttackRestorePending = false;
         grabAttackRestoreTimer = 0f;
 
