@@ -365,8 +365,15 @@ public unsafe class NpcSpawner : IDisposable
                 }
             }
 
-            var weaponStyle = NpcWeaponClassifier.DetectFromPackedWeapon(mainHandWeapon);
             var weaponUsesHumanJob = enpcIsHuman || bNpcAppearance?.ModelType == 1;
+            // A bare-handed humanoid is given the invisible fist weapon, so it classifies, fights
+            // and animates as a pugilist/monk instead of standing weaponless.
+            bool defaultFists = false;
+            if (mainHandWeapon == 0 && weaponUsesHumanJob && TryGetDefaultFists(out var fistMain, out var fistOff))
+            {
+                mainHandWeapon = fistMain; offHandWeapon = fistOff; defaultFists = true;
+            }
+            var weaponStyle = NpcWeaponClassifier.DetectFromPackedWeapon(mainHandWeapon);
             var jobId = weaponUsesHumanJob
                 ? NpcWeaponClassifier.DetectJobFromPackedWeapon(mainHandWeapon)
                 : 0u;
@@ -417,7 +424,7 @@ public unsafe class NpcSpawner : IDisposable
                 FramesWaited = 0,
                 MainHandWeapon = mainHandWeapon,
                 OffHandWeapon = offHandWeapon,
-                LoadWeapons = request.ENpcBaseId > 0 || bNpcAppearance?.HasWeapons == true,
+                LoadWeapons = request.ENpcBaseId > 0 || bNpcAppearance?.HasWeapons == true || defaultFists,
                 ModelScale = bNpcAppearance?.ModelScale,
             });
             requestByObjectIndex[index] = CloneRequest(request);
@@ -989,6 +996,31 @@ public unsafe class NpcSpawner : IDisposable
 
     private static ulong PackArmor(ulong model, uint stain1, uint stain2)
         => model | ((ulong)stain1 << 24) | ((ulong)stain2 << 32);
+
+    // The Emperor's New Fists: an invisible pugilist weapon, so a bare-handed humanoid gets a
+    // weapon set the job classifier knows without anything showing in its hands.
+    private const uint DefaultFistsItemId = 13775;
+    private const uint PugilistJobId = 2;
+    private ulong defaultFistsMain, defaultFistsOff;
+    private bool defaultFistsResolved;
+
+    private bool TryGetDefaultFists(out ulong mainHand, out ulong offHand)
+    {
+        if (!defaultFistsResolved)
+        {
+            defaultFistsResolved = true;
+            try
+            {
+                var item = dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>()?.GetRowOrDefault(DefaultFistsItemId);
+                if (item.HasValue && item.Value.ClassJobUse.RowId == PugilistJobId && item.Value.ModelMain != 0)
+                { defaultFistsMain = item.Value.ModelMain; defaultFistsOff = item.Value.ModelSub; }
+                else log.Warning($"Default fist weapon: item {DefaultFistsItemId} is not a pugilist weapon in this game data; bare-handed humanoids stay bare-handed");
+            }
+            catch (Exception ex) { log.Warning(ex, "Default fist weapon: item lookup failed"); }
+        }
+        mainHand = defaultFistsMain; offHand = defaultFistsOff;
+        return mainHand != 0;
+    }
 
     private static ulong PackWeapon(ulong model, uint stain1, uint stain2)
     {

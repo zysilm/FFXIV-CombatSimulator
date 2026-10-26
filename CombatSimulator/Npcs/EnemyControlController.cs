@@ -1747,6 +1747,8 @@ public unsafe partial class EnemyControlController : IDisposable
                 return;
             }
             grabAttackLoopResolveWarned = false;
+            // Young and elder bodies lack most emote files: swap in the adult male file before the pose plays.
+            BodyTypeAnimationFallback.EnsureEmoteFiles((Character*)controlledAddress, grabAttackLoopTimeline);
         }
 
         var character = (Character*)controlledAddress;
