@@ -34,6 +34,18 @@ public sealed unsafe partial class WorldGeometryRenderer : IDisposable
         ID3D11ShaderResourceView* srv, uint depthWidth, uint depthHeight, ref bool handled, ref bool anyDrawn);
     partial void EndSpecializedDraw(ID3D11DeviceContext* context);
     partial void DisposeSpecializedPasses();
+    /// <summary>A specialized producer may hold drawable data without any triangle vertices.</summary>
+    partial void HasSpecializedGeometry(LayerState layer, ref bool has);
+    partial void BeginSpecializedCollect(Slot slot);
+    /// <summary>Called on the render thread before each frame's draws with the validated scene targets.</summary>
+    partial void BeginSpecializedFrame(RenderTargetManager* targets, Texture* depth);
+
+    private bool LayerHasGeometry(LayerState layer)
+    {
+        var has = layer.Count > 0;
+        HasSpecializedGeometry(layer, ref has);
+        return has;
+    }
 
     public const int MaxVertices = 32766;
     public const int MaxLayers = 16;
@@ -143,7 +155,7 @@ public sealed unsafe partial class WorldGeometryRenderer : IDisposable
             if (layer.Disposed || disposed) return "Disposed";
             if (IsSuspended) return status;
             if (!layer.Enabled) return "Off";
-            return layer.Count == 0 ? "Waiting for geometry" : layer.Status;
+            return LayerHasGeometry(layer) ? layer.Status : "Waiting for geometry";
         }
     }
 
@@ -256,7 +268,7 @@ public sealed unsafe partial class WorldGeometryRenderer : IDisposable
     private bool HasGeometry()
     {
         foreach (var layer in layers)
-            if (layer != null && !layer.Disposed && layer.Enabled && layer.Count > 0) return true;
+            if (layer != null && !layer.Disposed && layer.Enabled && LayerHasGeometry(layer)) return true;
         return false;
     }
 
@@ -372,17 +384,19 @@ public sealed unsafe partial class WorldGeometryRenderer : IDisposable
     private void CollectBatches(Slot slot)
     {
         Span<int> counts = stackalloc int[MaxLayers];
-        var total = 0; var active = 0;
+        Span<bool> active = stackalloc bool[MaxLayers];
+        var total = 0; var activeLayers = 0;
         for (var i = 0; i < layers.Length; i++)
         {
             var layer = layers[i];
-            if (layer == null || layer.Disposed || !layer.Enabled || layer.Count == 0) { counts[i] = 0; continue; }
-            counts[i] = layer.Count; total += layer.Count; active++;
+            counts[i] = 0; active[i] = false;
+            if (layer == null || layer.Disposed || !layer.Enabled || !LayerHasGeometry(layer)) continue;
+            active[i] = true; counts[i] = layer.Count; total += layer.Count; activeLayers++;
         }
         if (total > MaxVertices)
         {
             // Fair initial shares ensure an oversized producer cannot starve all others.
-            var share = MaxVertices / active; share -= share % 3;
+            var share = MaxVertices / activeLayers; share -= share % 3;
             var remaining = MaxVertices;
             for (var i = 0; i < counts.Length; i++) { counts[i] = Math.Min(counts[i], share); remaining -= counts[i]; }
             for (var i = 0; i < counts.Length && remaining > 0; i++)
@@ -393,14 +407,15 @@ public sealed unsafe partial class WorldGeometryRenderer : IDisposable
             }
         }
         slot.BatchCount = 0;
+        BeginSpecializedCollect(slot);
         var offset = 0;
         for (var i = 0; i < counts.Length; i++)
         {
-            if (counts[i] == 0) continue;
+            if (!active[i]) continue;
             var layer = layers[i]!;
             bool copied = false;
             CopySpecializedSnapshot(layer, slot, offset, counts[i], ref copied);
-            if (!copied) layer.Vertices!.AsSpan(0, counts[i]).CopyTo(slot.Vertices.AsSpan(offset));
+            if (!copied && counts[i] > 0) layer.Vertices!.AsSpan(0, counts[i]).CopyTo(slot.Vertices.AsSpan(offset));
             slot.Batches[slot.BatchCount++] = new Batch {
                 Layer = layer, Generation = layer.Generation, Start = offset, Count = counts[i],
                 TestSceneDepth = layer.TestSceneDepth, ClipSpace = layer.ClipSpace,
@@ -466,6 +481,7 @@ public sealed unsafe partial class WorldGeometryRenderer : IDisposable
         var anyDrawn = false;
         try
         {
+            BeginSpecializedFrame(targets, depth);
             BeginSpecializedDraw(slot, nativeDevice, d3d);
             for (var i = 0; i < slot.BatchCount; i++)
             {
