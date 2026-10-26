@@ -43,12 +43,17 @@ public static unsafe class BodyTypeAnimationFallback
     /// </summary>
     public static void EnsureEmoteFiles(Character* character, params ushort[] timelines)
     {
-        if (character == null || dataManager == null) return;
+        if (character == null) { log?.Info("Body-type animation fallback: no character"); return; }
+        if (dataManager == null) { log?.Info("Body-type animation fallback: not initialised"); return; }
         var drawObject = character->GameObject.DrawObject;
-        if (drawObject == null || drawObject->GetObjectType() != ObjectType.CharacterBase) return;
+        if (drawObject == null || drawObject->GetObjectType() != ObjectType.CharacterBase)
+        { log?.Info($"Body-type animation fallback: character 0x{(nint)character:X} has no character draw object"); return; }
         var characterBase = (CharacterBase*)drawObject;
-        if (characterBase->GetModelType() != CharacterBase.ModelType.Human) return;
+        if (characterBase->GetModelType() != CharacterBase.ModelType.Human)
+        { log?.Info($"Body-type animation fallback: character 0x{(nint)character:X} is a {characterBase->GetModelType()} model, not a human body"); return; }
         ushort race = ((Human*)characterBase)->RaceSexId;
+        if (timelines.Length == 0 || Array.TrueForAll(timelines, t => t == 0))
+        { log?.Info($"Body-type animation fallback: body c{race:D4}: no timeline resolved (nothing to swap)"); return; }
         byte bodyType = ((Human*)characterBase)->Customize.BodyType;
         // Standard adult bodies (..01) have their own files or the game's own fallbacks.
         int body = race % 100;
