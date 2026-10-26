@@ -381,6 +381,13 @@ public unsafe class NpcSpawner : IDisposable
             // A bare-handed humanoid ENpc fights with its fists — pugilist/monk kit.
             if (jobId == 0 && mainHandWeapon == 0 && weaponUsesHumanJob)
                 jobId = NpcWeaponClassifier.MonkJobId;
+            // A humanoid clone keeps the local player's class, so its stance and attack motions
+            // followed the player's weapon, not its own. Give it the class its weapon belongs to.
+            if (weaponUsesHumanJob && jobId != 0 && jobId <= byte.MaxValue && character->CharacterData.ClassJob != jobId)
+            {
+                log.Info($"NPC '{npcName}': ClassJob {character->CharacterData.ClassJob} -> {jobId} to match its weapon");
+                character->CharacterData.ClassJob = (byte)jobId;
+            }
             var behavior = actionProfileProvider.Create(npcName, jobId, weaponStyle, npcLevel, request.BNpcBaseId,
                 (uint)Math.Max(0, character->ModelContainer.ModelCharaId));
             if (weaponStyle is NpcAttackStyle.Ranged or NpcAttackStyle.Magic || jobId != 0)
