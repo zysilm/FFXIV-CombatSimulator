@@ -13,19 +13,20 @@ using Silk.NET.DXGI;
 namespace CombatSimulator.Rendering.WorldGeometry;
 
 /// <summary>
-/// One explicitly requested batch of four depth samples. Input positions are texel
-/// coordinates in the source depth resource, not final backbuffer coordinates.
-/// Up to three input positions are followed by the resource's centre texel.
-/// Capture/Poll must run on the existing render-thread immediate context.
+/// One explicitly requested batch of depth samples (four by default, at most 64). Input
+/// positions are texel coordinates in the source depth resource, not final backbuffer
+/// coordinates. Up to <see cref="Capacity"/> - 1 input positions are followed by the
+/// resource's centre texel. Capture/Poll must run on the existing render-thread immediate context.
 ///
 /// D3D11 forbids partial CopySubresourceRegion of a depth-stencil subresource:
 /// https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-copysubresourceregion
-/// Instead, a four-thread CS reads the existing SRV into a private 4x1 R32_FLOAT
+/// Instead, a small CS reads the existing SRV into a private Nx1 R32_FLOAT
 /// texture. Only that tiny color texture is copied to a CPU staging resource.
 /// Poll uses DO_NOT_WAIT: no Flush, wait, scene texture write or full-depth copy.
 /// </summary>
 public sealed unsafe class WorldDepthProbe : IDisposable
 {
+    public const int MaximumCapacity = 64;
     private ID3D11DeviceContext1* context1;
     private ID3DDeviceContextState* isolatedState;
     private ID3D11ComputeShader* shader;
@@ -33,23 +34,50 @@ public sealed unsafe class WorldDepthProbe : IDisposable
     private ID3D11Texture2D* gathered;
     private ID3D11UnorderedAccessView* output;
     private ID3D11Texture2D* staging;
-    private readonly Vector2[] coordinates = new Vector2[4];
+    private readonly Vector2[] coordinates;
+    private readonly float[] values;
     private bool used, pending, disposed;
     private int pollCount;
     private string? report;
     private string description = "";
-    private nint capturedContext;
+    private nint capturedContext, resourceDevice, resourceContext;
+
+    /// <summary>Samples per batch, the last being the centre texel.</summary>
+    public int Capacity { get; }
+    /// <summary>Depth values of the completed batch, in input order then the centre texel; empty until read back.</summary>
+    public ReadOnlySpan<float> Values => HasValues ? values : default;
+    public bool HasValues { get; private set; }
+
+    public WorldDepthProbe(int capacity = 4)
+    {
+        Capacity = Math.Clamp(capacity, 4, MaximumCapacity);
+        coordinates = new Vector2[Capacity];
+        values = new float[Capacity];
+    }
 
     private const string ShaderSource = """
         Texture2D<float> SourceDepth : register(t0);
         RWTexture2D<float> Samples : register(u0);
-        cbuffer Positions : register(b0) { float4 Pixels[4]; };
-        [numthreads(4,1,1)] void main(uint3 p : SV_DispatchThreadID) {
-            Samples[uint2(p.x,0)] = SourceDepth.Load(int3(int2(Pixels[p.x].xy),0));
+        cbuffer Positions : register(b0) { float4 Pixels[64]; };
+        [numthreads(64,1,1)] void main(uint3 p : SV_DispatchThreadID) {
+            uint width, height;
+            Samples.GetDimensions(width, height);
+            if (p.x < width) Samples[uint2(p.x,0)] = SourceDepth.Load(int3(int2(Pixels[p.x].xy),0));
         }
         """;
 
-    /// <summary>Idempotent: this instance will submit at most one GPU batch.</summary>
+    /// <summary>
+    /// Allows one more batch on this instance, reusing its GPU resources, once the previous
+    /// batch has been read back or reported. Returns false while a batch is still pending.
+    /// </summary>
+    public bool Rearm()
+    {
+        if (disposed || pending) return false;
+        used = false; HasValues = false; report = null; pollCount = 0;
+        return true;
+    }
+
+    /// <summary>Idempotent until <see cref="Rearm"/>: submits at most one GPU batch.</summary>
     public void Capture(ID3D11Device* device, ID3D11DeviceContext* context,
         ID3D11ShaderResourceView* srv, ReadOnlySpan<Vector2> pixelPositions)
     {
@@ -80,8 +108,8 @@ public sealed unsafe class WorldDepthProbe : IDisposable
             if (!(((int)source.Format == 44 && (int)view.Format == 46)
                 || ((int)source.Format == 39 && (int)view.Format == 41)))
                 throw new InvalidOperationException($"Unsupported depth format pair: {description}");
-            var count = Math.Min(3, pixelPositions.Length);
-            for (var i = 0; i < 4; i++)
+            var count = Math.Min(Capacity - 1, pixelPositions.Length);
+            for (var i = 0; i < Capacity; i++)
             {
                 var point = i < count ? pixelPositions[i] : new Vector2(source.Width / 2, source.Height / 2);
                 if (!float.IsFinite(point.X) || !float.IsFinite(point.Y))
@@ -90,12 +118,14 @@ public sealed unsafe class WorldDepthProbe : IDisposable
                     Math.Clamp(MathF.Floor(point.X), 0, source.Width - 1),
                     Math.Clamp(MathF.Floor(point.Y), 0, source.Height - 1));
             }
+            // The centre texel always occupies the last slot.
+            coordinates[Capacity - 1] = new Vector2(source.Width / 2, source.Height / 2);
             EnsureResources(device, context);
-            var positions = stackalloc Vector4[4];
-            for (var i = 0; i < 4; i++) positions[i] = new Vector4(coordinates[i], 0, 0);
+            var positions = stackalloc Vector4[MaximumCapacity];
+            for (var i = 0; i < Capacity; i++) positions[i] = new Vector4(coordinates[i], 0, 0);
             MappedSubresource mapped;
             Marshal.ThrowExceptionForHR(context->Map((ID3D11Resource*)constants, 0, (Map)4, 0, &mapped));
-            try { Buffer.MemoryCopy(positions, mapped.PData, 64, 64); }
+            try { Buffer.MemoryCopy(positions, mapped.PData, MaximumCapacity * 16, MaximumCapacity * 16); }
             finally { context->Unmap((ID3D11Resource*)constants, 0); }
 
             ID3DDeviceContextState* previous = null;
@@ -153,10 +183,14 @@ public sealed unsafe class WorldDepthProbe : IDisposable
         if (hr < 0) { pending = false; return $"Depth probe Map failed: 0x{hr:X8}; {description}"; }
         try
         {
-            var values = (float*)mapped.PData;
+            var data = (float*)mapped.PData;
+            for (var i = 0; i < Capacity; i++) values[i] = data[i];
+            HasValues = true;
             var result = new StringBuilder($"Depth probe readback: {description}");
-            for (var i = 0; i < 4; i++)
-                result.Append($"; {(i == 3 ? "centre" : "pixel" + i)}=({coordinates[i].X:F0},{coordinates[i].Y:F0}) depth={values[i].ToString("G9", CultureInfo.InvariantCulture)}");
+            if (Capacity > 4) result.Append($"; samples={Capacity}");
+            else
+                for (var i = 0; i < Capacity; i++)
+                    result.Append($"; {(i == Capacity - 1 ? "centre" : "pixel" + i)}=({coordinates[i].X:F0},{coordinates[i].Y:F0}) depth={values[i].ToString("G9", CultureInfo.InvariantCulture)}");
             pending = false;
             return result.ToString();
         }
@@ -165,6 +199,10 @@ public sealed unsafe class WorldDepthProbe : IDisposable
 
     private void EnsureResources(ID3D11Device* device, ID3D11DeviceContext* context)
     {
+        // A rearmed probe keeps its resources while the device and context are unchanged.
+        if (staging != null && resourceDevice == (nint)device && resourceContext == (nint)context) return;
+        ReleaseResources();
+        resourceDevice = (nint)device; resourceContext = (nint)context;
         var guid = ID3D11DeviceContext1.Guid;
         ID3D11DeviceContext1* acquiredContext = null;
         Marshal.ThrowExceptionForHR(context->QueryInterface(&guid, (void**)&acquiredContext));
@@ -197,12 +235,12 @@ public sealed unsafe class WorldDepthProbe : IDisposable
             shader = createdShader;
         }
         finally { if (code != 0) Marshal.Release(code); if (errors != 0) Marshal.Release(errors); }
-        var bufferDesc = new BufferDesc { ByteWidth = 64, Usage = (Usage)2, BindFlags = 4, CPUAccessFlags = 0x10000 };
+        var bufferDesc = new BufferDesc { ByteWidth = MaximumCapacity * 16, Usage = (Usage)2, BindFlags = 4, CPUAccessFlags = 0x10000 };
         ID3D11Buffer* createdBuffer = null;
         Marshal.ThrowExceptionForHR(device->CreateBuffer(&bufferDesc, null, &createdBuffer));
         constants = createdBuffer;
         var textureDesc = new Texture2DDesc {
-            Width = 4, Height = 1, MipLevels = 1, ArraySize = 1,
+            Width = (uint)Capacity, Height = 1, MipLevels = 1, ArraySize = 1,
             Format = (Format)41, SampleDesc = new SampleDesc { Count = 1 },
             Usage = (Usage)0, BindFlags = 0x80,
         };
@@ -231,6 +269,12 @@ public sealed unsafe class WorldDepthProbe : IDisposable
         disposed = true;
         pending = false;
         report = null;
+        ReleaseResources();
+    }
+
+    private void ReleaseResources()
+    {
+        resourceDevice = resourceContext = 0;
         if (isolatedState != null) { isolatedState->Release(); isolatedState = null; }
         if (context1 != null) { context1->Release(); context1 = null; }
         if (shader != null) { shader->Release(); shader = null; }
