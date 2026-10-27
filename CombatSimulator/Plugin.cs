@@ -201,7 +201,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // Simulation
         actionDataProvider = new ActionDataProvider(dataManager, log, config);
         NpcWeaponClassifier.Initialize(dataManager, log);
-        Animation.BodyTypeAnimationFallback.Initialize(pluginInterface, dataManager, log);
         var jobActionKitProvider = new JobActionKitProvider(actionDataProvider, dataManager, log);
         npcActionProfileProvider = new NpcActionProfileProvider(jobActionKitProvider, config, log);
         damageCalculator = new DamageCalculator(new CombatStatProvider(dataManager, log));
@@ -609,7 +608,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     public void Dispose()
     {
         DisposePrivateDirectors();
-        Animation.BodyTypeAnimationFallback.Shutdown();
         framework.Update -= OnFrameworkUpdate;
         clientState.TerritoryChanged -= OnTerritoryChanged;
         pluginInterface.UiBuilder.Draw -= OnDraw;

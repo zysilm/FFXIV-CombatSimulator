@@ -1939,7 +1939,6 @@ public unsafe class AnimationController : IDisposable
     {
         if (npc.BattleChara == null) return;
         var character = (Character*)npc.BattleChara;
-        BodyTypeAnimationFallback.EnsureEmoteFiles(character, loopTimeline, introTimeline);
         EmotePlayer.PlayLoopedEmote(character, loopTimeline, introTimeline);
     }
 
