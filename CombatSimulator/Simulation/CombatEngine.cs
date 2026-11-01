@@ -53,7 +53,7 @@ public enum CombatLogType
     Info,
 }
 
-public class CombatEngine : IDisposable
+public partial class CombatEngine : IDisposable
 {
     private readonly ActionDataProvider actionDataProvider;
     private readonly DamageCalculator damageCalculator;
@@ -216,6 +216,7 @@ public class CombatEngine : IDisposable
         glamourerApplied = false;
         playerInitiatedCombat = false;
         pendingDeaths.Clear();
+        ClearDeferredHits();
 
         // Apply glamourer combat-ready preset on start
         ApplyResetGlamourer();
@@ -337,6 +338,7 @@ public class CombatEngine : IDisposable
         glamourerApplied = false;
         playerInitiatedCombat = false;
         pendingDeaths.Clear();
+        ClearDeferredHits();
         ClearQueuedActions();
 
         AddLogEntry("Combat state reset.", CombatLogType.Info);
@@ -417,6 +419,9 @@ public class CombatEngine : IDisposable
 
         // Tick auto-attack
         TickAutoAttack(deltaTime);
+
+        // Shots already in the air land now.
+        TickDeferredHits(deltaTime);
 
         // Tick MP regeneration
         TickMpRegen(State.PlayerState, deltaTime);
@@ -769,15 +774,16 @@ public class CombatEngine : IDisposable
             }
         }
 
+        // A bow or gun auto-attack starts its shot motion now and lands when the arrow arrives; the
+        // damage, flinch and death wait for that moment. Everything else lands as it always has.
+        var contactDelay = !suppressCasterActionEffect && area == null && actionId is 7 or 8
+            ? RangedContactDelay(npc.State, target)
+            : -1f;
+        var deferred = contactDelay >= 0f;
+
         // Apply damage to target
-        target.CurrentHp = Math.Max(0, target.CurrentHp - dmgResult.Damage);
-        if (target.IsPlayer)
-        {
-            State.TotalDamageTaken += dmgResult.Damage;
-            // Player was hit and survived → let auto-counter consider locking this attacker.
-            if (target.IsAlive)
-                OnPlayerHitByNpc?.Invoke(npc.SimulatedEntityId);
-        }
+        if (!deferred)
+            ApplyNpcHit(npc, target, dmgResult);
 
         // Trigger animation (NPC -> Player). Preserve the selected action id
         // so ranged/caster skills can use their own timelines/VFX instead of
@@ -813,16 +819,10 @@ public class CombatEngine : IDisposable
                 extraTarget,
                 visualAction.Potency > 0 ? visualAction.Potency : 110,
                 damageType);
-            extraTarget.CurrentHp = Math.Max(0, extraTarget.CurrentHp - extraDamage.Damage);
+            if (!deferred)
+                ApplyNpcHit(npc, extraTarget, extraDamage);
             hits.Add(new AppliedActionDamage(extraTarget, extraDamage));
             totalDamage += extraDamage.Damage;
-
-            if (extraTarget.IsPlayer)
-            {
-                State.TotalDamageTaken += extraDamage.Damage;
-                if (extraTarget.IsAlive)
-                    OnPlayerHitByNpc?.Invoke(npc.SimulatedEntityId);
-            }
         }
 
         if (suppressCasterActionEffect)
@@ -842,7 +842,7 @@ public class CombatEngine : IDisposable
                 modelTimelineOwnsVfx));
         }
         else
-            TriggerActionEffect(npc.State, visualAction, hits, suppressCastVfx);
+            TriggerActionEffect(npc.State, visualAction, hits, suppressCastVfx, contactDelay, deferHitReaction: deferred);
 
         result.Success = true;
         result.Damage = totalDamage;
@@ -858,7 +858,45 @@ public class CombatEngine : IDisposable
             $"{npc.Name} {actionName} → You: {dmgResult.Damage:N0} damage",
             CombatLogType.DamageTaken);
 
-        // Check player death
+        if (deferred)
+        {
+            DeferHit(contactDelay, () =>
+            {
+                if (!npc.IsSpawned)
+                    return;
+                foreach (var hit in hits)
+                {
+                    if (!hit.Target.IsAlive)
+                        continue;
+                    ApplyNpcHit(npc, hit.Target, hit.DamageResult);
+                    PlayHitReactionOnTarget(hit.Target, hit.DamageResult.Damage > 0, includePlayer: true);
+                }
+                FinishNpcDeaths(npc, hits, target, null);
+            });
+            return result;
+        }
+
+        FinishNpcDeaths(npc, hits, target, result);
+        return result;
+    }
+
+    /// <summary>Land one of an enemy's hits: HP, the damage-taken tally and the auto-counter cue.</summary>
+    private void ApplyNpcHit(SimulatedNpc npc, SimulatedEntityState target, DamageResult damage)
+    {
+        target.CurrentHp = Math.Max(0, target.CurrentHp - damage.Damage);
+        if (target.IsPlayer)
+        {
+            State.TotalDamageTaken += damage.Damage;
+            // Player was hit and survived → let auto-counter consider locking this attacker.
+            if (target.IsAlive)
+                OnPlayerHitByNpc?.Invoke(npc.SimulatedEntityId);
+        }
+    }
+
+    /// <summary>Deaths caused by an enemy's hits, the primary target first.</summary>
+    private void FinishNpcDeaths(SimulatedNpc npc, IReadOnlyList<AppliedActionDamage> hits,
+        SimulatedEntityState target, SimulatedActionResult? result)
+    {
         if (!target.IsAlive)
         {
             if (target.IsPlayer)
@@ -867,7 +905,8 @@ public class CombatEngine : IDisposable
                 LastPlayerKillerAddress = npc.Address;
                 LastPlayerKillerEntityId = npc.SimulatedEntityId;
             }
-            result.TargetKilled = true;
+            if (result != null)
+                result.TargetKilled = true;
             OnEntityDeath(target);
         }
         foreach (var hit in hits)
@@ -883,8 +922,6 @@ public class CombatEngine : IDisposable
             }
             OnEntityDeath(hit.Target);
         }
-
-        return result;
     }
 
     public SimulatedActionResult ProcessCompanionAction(
@@ -917,8 +954,14 @@ public class CombatEngine : IDisposable
         else
             dmgResult = damageCalculator.CalculateNpcAutoAttack(companion.State, targetNpc.State);
 
-        targetNpc.State.CurrentHp = Math.Max(0, targetNpc.State.CurrentHp - dmgResult.Damage);
-        State.TotalDamageDealt += dmgResult.Damage;
+        // A companion's bow or gun auto-attack lands when the arrow arrives (see RangedContactDelay).
+        var contactDelay = actionId is 7 or 8 ? RangedContactDelay(companion.State, targetNpc.State) : -1f;
+        var deferred = contactDelay >= 0f;
+        if (!deferred)
+        {
+            targetNpc.State.CurrentHp = Math.Max(0, targetNpc.State.CurrentHp - dmgResult.Damage);
+            State.TotalDamageDealt += dmgResult.Damage;
+        }
 
         // Companion aggro normally makes the target fight back. The dev player-hit gate
         // suppresses this path so only a confirmed local-player hit can release the pack.
@@ -955,15 +998,18 @@ public class CombatEngine : IDisposable
                 : resolvedActionData != null
                     ? damageCalculator.Calculate(companion.State, extraTarget, visualAction, false, EnableCriticalHits, EnableDirectHits, DamageMultiplier)
                     : damageCalculator.CalculateNpcAutoAttack(companion.State, extraTarget);
-            extraTarget.CurrentHp = Math.Max(0, extraTarget.CurrentHp - extraDamage.Damage);
+            if (!deferred)
+            {
+                extraTarget.CurrentHp = Math.Max(0, extraTarget.CurrentHp - extraDamage.Damage);
+                State.TotalDamageDealt += extraDamage.Damage;
+            }
             hits.Add(new AppliedActionDamage(extraTarget, extraDamage));
             totalDamage += extraDamage.Damage;
-            State.TotalDamageDealt += extraDamage.Damage;
 
             EngageIdleTarget(extraTarget.EntityId);
         }
 
-        TriggerActionEffect(companion.State, visualAction, hits);
+        TriggerActionEffect(companion.State, visualAction, hits, contactDelay: contactDelay, deferHitReaction: deferred);
 
         result.Success = true;
         result.Damage = totalDamage;
@@ -976,6 +1022,24 @@ public class CombatEngine : IDisposable
         AddLogEntry(
             $"{companion.Name} {actionName} -> {targetNpc.Name}: {dmgResult.Damage:N0} damage",
             CombatLogType.DamageDealt);
+
+        if (deferred)
+        {
+            DeferHit(contactDelay, () =>
+            {
+                foreach (var hit in hits)
+                {
+                    if (!hit.Target.IsAlive)
+                        continue;
+                    hit.Target.CurrentHp = Math.Max(0, hit.Target.CurrentHp - hit.DamageResult.Damage);
+                    State.TotalDamageDealt += hit.DamageResult.Damage;
+                    PlayHitReactionOnTarget(hit.Target, hit.DamageResult.Damage > 0);
+                    if (!hit.Target.IsAlive)
+                        OnEntityDeath(hit.Target);
+                }
+            });
+            return result;
+        }
 
         if (!targetNpc.State.IsAlive)
         {
@@ -1173,7 +1237,9 @@ public class CombatEngine : IDisposable
         SimulatedEntityState source,
         ActionData actionData,
         IReadOnlyList<AppliedActionDamage> hits,
-        bool suppressCastVfx = false)
+        bool suppressCastVfx = false,
+        float contactDelay = -1f,
+        bool deferHitReaction = false)
     {
         if (hits.Count == 0)
             return;
@@ -1181,14 +1247,17 @@ public class CombatEngine : IDisposable
         try
         {
             var request = BuildActionEffectRequest(source, actionData, hits, suppressCastVfx);
+            request.ContactDelay = contactDelay;
             animationController.PlayActionEffect(request);
 
             // ActionEffectHandler.Receive's internal target lookup typically fails for
             // client-spawned NPCs (0xF000xxxx EntityIds aren't in CharacterManager),
             // so the natural hit reaction never fires. Play the damage timeline
-            // directly on the target so it visibly flinches when hit.
-            foreach (var hit in hits)
-                PlayHitReactionOnTarget(hit.Target, hit.DamageResult.Damage > 0);
+            // directly on the target so it visibly flinches when hit. A shot still in the
+            // air flinches its target when it lands instead (see DeferHit).
+            if (!deferHitReaction)
+                foreach (var hit in hits)
+                    PlayHitReactionOnTarget(hit.Target, hit.DamageResult.Damage > 0);
         }
         catch (Exception ex)
         {
@@ -1850,15 +1919,6 @@ public class CombatEngine : IDisposable
             return;
 
         var dmg = damageCalculator.CalculateNpcAutoAttack(ps, npc.State, 110);
-        npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
-        State.TotalDamageDealt += dmg.Damage;
-        OnPlayerDamageDealt?.Invoke(dmg.Damage);
-        OnPlayerDamageDealtToTarget?.Invoke(npc.State.EntityId, dmg.Damage);
-        if (dmg.Damage > 0)
-            OnPlayerAttackLanded?.Invoke();
-        EngageIdleTarget(npc.State.EntityId);
-
-        // Trigger auto-attack animation + VFX
         var autoAttackData = new ActionData
         {
             ActionId = 7, // Auto-attack
@@ -1866,10 +1926,41 @@ public class CombatEngine : IDisposable
             DamageType = SimDamageType.Physical,
             AnimationLock = 0.6f,
         };
-        TriggerActionEffect(ps, npc.State, autoAttackData, dmg);
+        var hits = new List<AppliedActionDamage> { new(npc.State, dmg) };
+
+        // Bow or gun: the shot motion starts now; the hit lands when the arrow does.
+        var contactDelay = RangedContactDelay(ps, npc.State);
+        if (contactDelay >= 0f)
+        {
+            TriggerActionEffect(ps, autoAttackData, hits, contactDelay: contactDelay, deferHitReaction: true);
+            DeferHit(contactDelay, () =>
+            {
+                if (!npc.IsSpawned || !npc.State.IsAlive)
+                    return;
+                ApplyPlayerAutoAttack(ps, npc, dmg);
+                PlayHitReactionOnTarget(npc.State, dmg.Damage > 0);
+                if (!npc.State.IsAlive)
+                    OnEntityDeath(npc.State);
+            });
+            return;
+        }
+
+        ApplyPlayerAutoAttack(ps, npc, dmg);
+        TriggerActionEffect(ps, autoAttackData, hits);
 
         if (!npc.State.IsAlive)
             OnEntityDeath(npc.State);
+    }
+
+    private void ApplyPlayerAutoAttack(SimulatedEntityState ps, SimulatedNpc npc, DamageResult dmg)
+    {
+        npc.State.CurrentHp = Math.Max(0, npc.State.CurrentHp - dmg.Damage);
+        State.TotalDamageDealt += dmg.Damage;
+        OnPlayerDamageDealt?.Invoke(dmg.Damage);
+        OnPlayerDamageDealtToTarget?.Invoke(npc.State.EntityId, dmg.Damage);
+        if (dmg.Damage > 0)
+            OnPlayerAttackLanded?.Invoke();
+        EngageIdleTarget(npc.State.EntityId);
     }
 
     public ActionData? GetActionData(uint actionId) => actionDataProvider.GetActionData(actionId);
