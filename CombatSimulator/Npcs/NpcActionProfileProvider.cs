@@ -108,7 +108,7 @@ public class NpcActionProfileProvider
         {
             case NpcAttackStyle.Ranged:
                 behavior.AutoAttackStyle = NpcAttackStyle.Ranged;
-                behavior.AutoAttackActionId = 97;
+                behavior.AutoAttackActionId = 8; // "Shot": the bow/firearm auto-attack motion
                 behavior.AutoAttackRange = 25f;
                 behavior.AutoAttackPotency = PhysicalRangedAutoPotency;
                 behavior.MoveSpeed = 5f;

@@ -78,7 +78,7 @@ public class NpcBehavior
                 AutoAttackDelay = 3.0f,
                 AutoAttackRange = 25.0f,
                 AutoAttackPotency = 80,
-                AutoAttackActionId = 97,
+                AutoAttackActionId = 8,
                 AutoAttackStyle = NpcAttackStyle.Ranged,
                 MoveSpeed = 5.0f,
                 LeashDistance = 40.0f,

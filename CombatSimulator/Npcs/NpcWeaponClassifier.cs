@@ -119,6 +119,24 @@ public static unsafe class NpcWeaponClassifier
         return DetectJobFromWeapon(weapon.Id, weapon.Type, weapon.Variant);
     }
 
+    /// <summary>True when the character stands on a player-type (Human) skeleton, which carries the
+    /// player weapon stances and their battle animations; DemiHuman and Monster models do not.</summary>
+    public static bool IsHumanSkeleton(Character* character)
+        => character != null && IsHumanModel((uint)character->ModelContainer.ModelCharaId);
+
+    /// <summary>True when the main-hand weapon is a bow (archer / bard arm), i.e. the attacks loose arrows.</summary>
+    public static bool IsBowWielder(Character* character)
+    {
+        if (character == null)
+            return false;
+        var weapon = character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).ModelId;
+        if (weapon.Id == 0)
+            return false;
+        return RootOf(DetectJobFromWeapon(weapon.Id, weapon.Type, weapon.Variant)) == ArcherJobId;
+    }
+
+    private const uint ArcherJobId = 5;
+
     private static bool IsHumanModel(uint modelCharaId)
     {
         // Player-shaped characters traditionally use row 0; preserve that invariant even if

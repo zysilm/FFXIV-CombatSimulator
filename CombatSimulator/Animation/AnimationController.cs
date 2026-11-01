@@ -898,7 +898,12 @@ public unsafe class AnimationController : IDisposable
                 // weapon swing. Prefer an authored animation from their own mon_sp model family;
                 // retain a real action's exact family timeline when one is already known.
                 var playedModelAction = PlayNpcModelActionTimeline(request, modelCharaId, modelAction);
-                if (!playedModelAction && request.AttackStyle == NpcAttackStyle.Ranged)
+                // The monster shot timeline only exists for monster skeletons. A Human-skeleton
+                // archer or gunner already animates through Receive (its weapon stance carries the
+                // shot and weaponskill motions); forcing the monster timeline on it played nothing
+                // and cancelled the motion Receive had just started.
+                if (!playedModelAction && request.AttackStyle == NpcAttackStyle.Ranged &&
+                    !IsHumanSkeletonCaster(request.SourceEntityId))
                     PlayMonsterRangedAttackTimeline(request.SourceEntityId);
             }
         }
@@ -1265,13 +1270,14 @@ public unsafe class AnimationController : IDisposable
 
             // Fill header
             var seq = globalSequence++;
+            var actionId = ResolveAutoAttackActionId(casterPtr, request.ActionId);
             headerPtr->AnimationTargetId = request.Targets[0].TargetId;
-            headerPtr->ActionId = request.ActionId;
+            headerPtr->ActionId = actionId;
             headerPtr->GlobalSequence = seq;
             headerPtr->AnimationLock = request.AnimationLock;
             headerPtr->SourceSequence = 0; // Not client-initiated (prevents the game from expecting a server response)
             headerPtr->RotationInt = QuantizeRotation(request.SourceRotation);
-            headerPtr->SpellId = (ushort)(request.ActionId & 0xFFFF);
+            headerPtr->SpellId = (ushort)(actionId & 0xFFFF);
             headerPtr->ActionType = 1; // Action
             headerPtr->NumTargets = (byte)targetCount;
             headerPtr->ShowInLog = false; // Don't pollute the real action log
@@ -1334,6 +1340,26 @@ public unsafe class AnimationController : IDisposable
             Marshal.FreeHGlobal((nint)effectsPtr);
             Marshal.FreeHGlobal((nint)targetIdsPtr);
         }
+    }
+
+    /// <summary>
+    /// The generic auto-attack (action 7, "attack") resolves to the <c>battle/auto_attack</c> motion,
+    /// which bows and firearms do not carry in their weapon stance — the game sends those jobs
+    /// action 8 ("Shot", <c>battle/auto_attack_shot</c>) instead. Swap the id by the caster's actual
+    /// main-hand weapon so a bow or gun wielder, player or clone, visibly fires.
+    /// </summary>
+    private static uint ResolveAutoAttackActionId(Character* caster, uint actionId)
+    {
+        const uint Attack = 7, Shot = 8;
+        if (actionId != Attack || caster == null)
+            return actionId;
+        return NpcWeaponClassifier.DetectFromCharacter(caster) == NpcAttackStyle.Ranged ? Shot : actionId;
+    }
+
+    private bool IsHumanSkeletonCaster(uint sourceEntityId)
+    {
+        var caster = FindCharacter(sourceEntityId, isPlayer: false);
+        return caster != null && NpcWeaponClassifier.IsHumanSkeleton(caster);
     }
 
     private void PlayMonsterRangedAttackTimeline(uint sourceEntityId)
@@ -2097,7 +2123,7 @@ public unsafe class AnimationController : IDisposable
             NativeMemory.Clear(effectsPtr,   (nuint)effectsSize);
             NativeMemory.Clear(targetIdsPtr, (nuint)idsSize);
 
-            var aid = actionId == 0 ? 7u : actionId;
+            var aid = ResolveAutoAttackActionId(casterPtr, actionId == 0 ? 7u : actionId);
             headerPtr->AnimationTargetId  = 0xE0000000UL;
             headerPtr->ActionId           = aid;
             headerPtr->GlobalSequence     = globalSequence++;
@@ -2164,7 +2190,7 @@ public unsafe class AnimationController : IDisposable
             NativeMemory.Clear(effectsPtr,   (nuint)effectsSize);
             NativeMemory.Clear(targetIdsPtr, (nuint)idsSize);
 
-            var aid = actionId == 0 ? 7u : actionId;
+            var aid = ResolveAutoAttackActionId(casterPtr, actionId == 0 ? 7u : actionId);
             headerPtr->AnimationTargetId  = 0xE0000000UL;
             headerPtr->ActionId           = aid;
             headerPtr->GlobalSequence     = globalSequence++;

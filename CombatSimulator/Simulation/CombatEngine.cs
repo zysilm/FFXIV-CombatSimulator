@@ -850,7 +850,7 @@ public class CombatEngine : IDisposable
         result.IsDirectHit = dmgResult.IsDirectHit;
 
         // Log
-        var actionName = actionId == 7
+        var actionName = actionId is 7 or 8
             ? "auto-attacks"
             : $"uses {(!string.IsNullOrWhiteSpace(visualAction.Name) ? visualAction.Name : "action")}";
         // TODO: companion targets still render as "You" in this legacy log line.
@@ -970,7 +970,7 @@ public class CombatEngine : IDisposable
         result.IsCritical = dmgResult.IsCritical;
         result.IsDirectHit = dmgResult.IsDirectHit;
 
-        var actionName = actionId == 7
+        var actionName = actionId is 7 or 8
             ? "auto-attacks"
             : $"uses {(!string.IsNullOrWhiteSpace(visualAction.Name) ? visualAction.Name : "action")}";
         AddLogEntry(
