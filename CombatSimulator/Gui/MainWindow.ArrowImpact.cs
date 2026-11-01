@@ -1,12 +1,13 @@
 // This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 using System;
-using CombatSimulator.Effects;
 using Dalamud.Bindings.ImGui;
 
 namespace CombatSimulator.Gui;
 
 public partial class MainWindow
 {
+    private string arrowImpactBoneFilter = string.Empty;
+
     private void DrawArrowImpactSection()
     {
         if (!ImGui.CollapsingHeader("Arrows"))
@@ -19,20 +20,18 @@ public partial class MainWindow
             config.Save();
         }
         HelpMarker("Every arrow loosed from a bow, yours or an enemy's, stays lodged in the body it hit " +
-                   "and rides along with it. With no preferred spot the arrow can land anywhere on the body; " +
-                   "with preferred spots it lands on one of them first, in the flesh around them next, and " +
-                   "anywhere only now and then.");
+                   "and rides along with it. The arrow drawn is the one that bow fires. With no preferred " +
+                   "bone the arrow can land anywhere on the body; with preferred bones it lands on one of " +
+                   "them first, on a neighbouring bone next, and anywhere only now and then.");
         if (!enabled)
             return;
 
         ImGui.Indent();
-        ImGui.TextUnformatted("Preferred spots");
+        ImGui.TextUnformatted("Preferred bones");
         var spots = config.ArrowImpactPreferredSpots;
         var changed = false;
         for (var i = 0; i < spots.Count; i++)
         {
-            var spot = ArrowImpactController.FindSpot(spots[i]);
-            var label = spot?.Label ?? spots[i];
             if (ImGui.SmallButton($"x##arrowspot{i}"))
             {
                 spots.RemoveAt(i);
@@ -40,26 +39,35 @@ public partial class MainWindow
                 break;
             }
             ImGui.SameLine();
-            ImGui.TextUnformatted(label);
+            ImGui.TextUnformatted(spots[i]);
         }
         if (spots.Count == 0)
             ImGui.TextDisabled("None: arrows land anywhere on the body.");
 
+        // Every bone on the skeleton, the same list the grab pickers offer, with a filter box.
         ImGui.SetNextItemWidth(180);
-        if (ImGui.BeginCombo("##arrowspotadd", "Add a spot..."))
+        if (ImGui.BeginCombo("##arrowspotadd", "Add a bone..."))
         {
-            foreach (var spot in ArrowImpactController.HumanSpots)
+            ImGui.SetNextItemWidth(160);
+            ImGui.InputTextWithHint("##arrowspotfilter", "filter", ref arrowImpactBoneFilter, 32);
+            foreach (var bone in GrabbableBones())
             {
-                if (spots.Contains(spot.Key))
+                if (spots.Contains(bone))
                     continue;
-                if (ImGui.Selectable(spot.Label))
+                if (arrowImpactBoneFilter.Length > 0 &&
+                    bone.IndexOf(arrowImpactBoneFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+                if (ImGui.Selectable(bone))
                 {
-                    spots.Add(spot.Key);
+                    spots.Add(bone);
                     changed = true;
                 }
             }
             ImGui.EndCombo();
         }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Raw skeleton bones. The arrow lands in the flesh between the bone and its parent;\n" +
+                             "head, hands and feet also cover the body past the joint.");
         if (changed)
             config.Save();
 

@@ -51,6 +51,10 @@ public class ActionEffectRequest
     /// the simulator Action's unrelated caster/target VFX so it cannot overwrite that pairing.</summary>
     public bool SuppressActionVfx { get; set; }
 
+    /// <summary>Seconds from this effect being played to the weapon actually connecting (a bow's
+    /// release plus the arrow's flight). Negative = unknown; the hit-feedback delay rule applies.</summary>
+    public float ContactDelay { get; set; } = -1f;
+
     public List<TargetEffect> Targets { get; set; } = new();
 }
 
@@ -1065,7 +1069,9 @@ public unsafe class AnimationController : IDisposable
 
     private void EmitTargetVfx(string path, ActionEffectRequest request, uint targetSimId, nint casterAddrNow, nint targetAddrNow, uint targetEntityId)
     {
-        var delay = (request.IsSourcePlayer && config.EnableHitFeedback) ? MathF.Max(0f, config.HitFeedbackDelay) : 0f;
+        var delay = request.ContactDelay >= 0f
+            ? request.ContactDelay
+            : (request.IsSourcePlayer && config.EnableHitFeedback) ? MathF.Max(0f, config.HitFeedbackDelay) : 0f;
         if (delay <= 0.001f)
         {
             SpawnAndTrack(path, casterAddrNow, targetAddrNow, targetEntityId, UntrackedVfxTtl);
@@ -1373,11 +1379,12 @@ public unsafe class AnimationController : IDisposable
         if (arrows == null || !arrows.Enabled || request.AttackStyle == NpcAttackStyle.Magic)
             return;
 
-        var (casterAddr, casterEntityId) = ResolveActorAddress(request.SourceEntityId, request.IsSourcePlayer);
+        var (casterAddr, _) = ResolveActorAddress(request.SourceEntityId, request.IsSourcePlayer);
         if (casterAddr == 0 || !NpcWeaponClassifier.IsBowWielder((Character*)casterAddr))
             return;
 
-        var feedbackDelay = request.IsSourcePlayer && config.EnableHitFeedback ? MathF.Max(0f, config.HitFeedbackDelay) : 0f;
+        // The engine knows when the shot connects; without that the controller falls back to the
+        // shot's own release and flight time.
         foreach (var target in request.Targets)
         {
             if (target.Damage <= 0)
@@ -1385,7 +1392,7 @@ public unsafe class AnimationController : IDisposable
             var (targetAddr, targetEntityId) = ResolveActorAddress((uint)target.TargetId, false);
             if (targetAddr == 0)
                 continue;
-            arrows.NotifyShot(casterAddr, casterEntityId, targetAddr, targetEntityId, feedbackDelay);
+            arrows.NotifyShot(casterAddr, targetAddr, targetEntityId, request.ContactDelay);
         }
     }
 
