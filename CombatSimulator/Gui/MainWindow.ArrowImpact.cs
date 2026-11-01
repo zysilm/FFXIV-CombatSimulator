@@ -6,6 +6,7 @@ namespace CombatSimulator.Gui;
 
 public partial class MainWindow
 {
+    public Effects.ArrowImpactController? ArrowImpacts { get; set; }
     private string arrowImpactBoneFilter = string.Empty;
 
     private void DrawArrowImpactSection()
@@ -80,14 +81,36 @@ public partial class MainWindow
         }
         HelpMarker("Once a body carries this many, the oldest arrow falls away as a new one lands.");
 
-        var linger = config.ArrowImpactLingerSeconds;
-        ImGui.SetNextItemWidth(180);
-        if (ImGui.SliderFloat("Linger", ref linger, 5f, 180f, "%.0f s"))
+        var fallAway = config.ArrowImpactFallAway;
+        if (ImGui.Checkbox("Fall away after a while##arrowimpact", ref fallAway))
         {
-            config.ArrowImpactLingerSeconds = Math.Clamp(linger, 5f, 180f);
+            config.ArrowImpactFallAway = fallAway;
             config.Save();
         }
-        HelpMarker("How long each arrow stays before it falls away.");
+        HelpMarker("Off: arrows stay for as long as the body is there.");
+        if (fallAway)
+        {
+            var linger = config.ArrowImpactLingerSeconds;
+            ImGui.SetNextItemWidth(180);
+            if (ImGui.SliderFloat("Linger", ref linger, 5f, 180f, "%.0f s"))
+            {
+                config.ArrowImpactLingerSeconds = Math.Clamp(linger, 5f, 180f);
+                config.Save();
+            }
+        }
+
+        // Offered only when a bleeding effect has hooked in; it decides which bodies it can serve.
+        if (ArrowImpacts?.BleedAvailable == true)
+        {
+            var bleed = config.ArrowImpactBleed;
+            if (ImGui.Checkbox("Wounds bleed##arrowimpact", ref bleed))
+            {
+                config.ArrowImpactBleed = bleed;
+                config.Save();
+            }
+            HelpMarker("Each arrow opens a wound that bleeds down the body for a while, slowing as it goes. " +
+                       "Needs the body-fluid surface, which currently runs on your own character only.");
+        }
         ImGui.Unindent();
     }
 }

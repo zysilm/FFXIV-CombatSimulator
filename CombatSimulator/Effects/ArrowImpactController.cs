@@ -12,17 +12,24 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 
 namespace CombatSimulator.Effects;
 
+/// <summary>A projectile has lodged in a body: where it went in and the way its shaft points.</summary>
+public readonly record struct ArrowWound(nint Target, uint TargetEntityId, Vector3 Entry, Vector3 Direction);
+
 /// <summary>
 /// Arrows that stay lodged in the body they struck. Every damaging hit from a bow wielder, player or
-/// enemy, queues an arrow that lands when the shot arrives; the arrow is then parented to the struck
-/// bone in that bone's own frame, so it rides along with animation, ragdoll and scale. The arrow drawn
-/// is the shooter's own bow's arrow (<see cref="ArrowMeshLibrary"/>), submitted each frame through
-/// the world geometry layer.
+/// enemy, queues an arrow that lands when the shot arrives. The arrow drawn is the shooter's own
+/// bow's arrow (<see cref="ArrowMeshLibrary"/>), submitted each frame through the world geometry
+/// layer as an opaque prop.
 ///
 /// Where it lands: the body is approximated by one capsule per bone (the bone to its parent, with a
 /// flesh radius). Preferred bones are raw skeleton bones; with some configured, an arrow lands on one
-/// of them most of the time, on a neighbouring bone some of the time, and anywhere otherwise.
-/// Arrows favour the side facing the shooter and enter between the flight line and the surface normal.
+/// of them most of the time, on a neighbouring bone some of the time, and anywhere otherwise. The
+/// entry is always on the side facing the shooter and the shaft points back at the shooter.
+///
+/// How it rides: the arrow is pinned by two points, its tip and a point 30 cm back along the shaft,
+/// each held in the frames of two bones (the struck bone and its parent) and blended by where along
+/// the limb it hit, the way skin is weighted. A joint bending or twisting then moves the arrow as it
+/// moves the flesh, instead of swinging it with one bone.
 ///
 /// Poses are read in the final read-only pass, after every bone modifier (ragdoll, grabs, conform
 /// solvers) has written, so an arrow follows the body the player actually sees.
@@ -69,11 +76,12 @@ public sealed unsafe class ArrowImpactController : IDisposable
 
     private const float PenetrationMin = 0.26f;   // m of shaft buried past the skin: a third of the arrow,
     private const float PenetrationMax = 0.40f;   // a little more for a square hit, a little less for a glancing one
+    private const float TailAnchorDistance = 0.30f; // m back from the tip, the second pin point
     private const float FlightSpeed = 45f;        // m/s, for the landing delay when the engine gave none
     private const float ReleaseDelay = 0.6f;      // s from the shot motion starting to the arrow leaving
     private const float PreferredExact = 0.55f;   // chance a preferred bone itself is hit
     private const float PreferredNear = 0.30f;    // chance a neighbour of a preferred bone is hit
-    private const float ShooterSideBias = 0.75f;  // chance the entry is on the half facing the shooter
+    private const float EntryHalfAngle = 0.8f;    // rad either side of the shooter's bearing the entry may sit
     private const float PlainArrowLength = 0.72f;
     private const float PlainShaftRadius = 0.0045f;
     private const int PlainVertexBudget = 8 * 6 * 2 + 3 * 4 * 3;
@@ -85,8 +93,12 @@ public sealed unsafe class ArrowImpactController : IDisposable
     {
         public nint Target;
         public uint TargetEntityId;
-        public int BoneIndex;
-        public Vector3 LocalTip, LocalDirection;
+        /// <summary>The struck bone and the bone whose flesh shares the hit (its parent); -1 = none.</summary>
+        public int BoneA, BoneB;
+        /// <summary>How much of the arrow rides with BoneB (0 = all BoneA).</summary>
+        public float WeightB;
+        /// <summary>Tip and tail pins in each bone's frame, unscaled.</summary>
+        public Vector3 TipA, TipB, TailA, TailB;
         public float Roll;
         public double Expires;
         public ArrowMesh? Mesh;
@@ -104,6 +116,8 @@ public sealed unsafe class ArrowImpactController : IDisposable
 
     private readonly record struct SkeletonFrame(Vector3 Position, Quaternion Rotation, Vector3 Scale);
 
+    private readonly record struct Capsule(int Bone, int Parent, Vector3 Start, Vector3 End, Vector3 Joint, float Radius);
+
     private readonly Configuration config;
     private readonly BoneTransformService bones;
     private readonly IPluginLog log;
@@ -112,6 +126,7 @@ public sealed unsafe class ArrowImpactController : IDisposable
     private readonly ArrowMeshLibrary meshes;
     private readonly List<Arrow> arrows = new();
     private readonly List<PendingShot> pending = new();
+    private readonly List<ArrowWound> newWounds = new();
     private readonly Dictionary<nint, uint> trackedTargets = new();
     private readonly HashSet<nint> liveTargets = new();
     private readonly object gate = new();
@@ -132,6 +147,13 @@ public sealed unsafe class ArrowImpactController : IDisposable
     public bool Enabled => config.ArrowImpactEnabled;
     public int ArrowCount => Volatile.Read(ref arrowCount);
     public string LayerStatus => layer.Status;
+
+    /// <summary>Raised on the render thread, outside this controller's lock, when an arrow has
+    /// lodged. A consumer that makes wounds bleed subscribes here; it must only queue.</summary>
+    public event Action<ArrowWound>? Wounded;
+
+    /// <summary>True when something is listening for wounds, so bleeding can be offered.</summary>
+    public bool BleedAvailable => Wounded != null;
 
     private double Now => clock.Elapsed.TotalSeconds;
 
@@ -267,12 +289,21 @@ public sealed unsafe class ArrowImpactController : IDisposable
                 {
                     if (hadGeometry) layer.Clear();
                     hadGeometry = false;
-                    return;
                 }
+                else
+                {
+                    BuildGeometry();
+                    layer.SubmitFrame(builder.Vertices, opaque: true);
+                    hadGeometry = true;
+                }
+            }
 
-                BuildGeometry();
-                layer.SubmitFrame(builder.Vertices);
-                hadGeometry = true;
+            if (newWounds.Count > 0)
+            {
+                var listeners = Wounded;
+                if (listeners != null)
+                    foreach (var wound in newWounds) listeners(wound);
+                newWounds.Clear();
             }
         }
         catch (Exception ex)
@@ -290,50 +321,66 @@ public sealed unsafe class ArrowImpactController : IDisposable
         var access = skel.Value;
         if (!TryReadFrame(access, out var frame)) return;
 
-        if (!TrySegment(access, frame, shot, out var boneIndex, out var a, out var b, out var radius))
+        if (!TrySegment(access, frame, out var capsule))
             return;
 
         var rng = Random.Shared;
-        var axis = b - a;
+        var axis = capsule.End - capsule.Start;
         var axisLength = axis.Length();
         if (axisLength < 1e-4f) return;
         axis /= axisLength;
 
-        var along = a + axis * (axisLength * (0.15f + 0.7f * rng.NextSingle()));
+        var alongFraction = 0.15f + 0.7f * rng.NextSingle();
+        var along = capsule.Start + axis * (axisLength * alongFraction);
 
-        // Radial entry direction: perpendicular to the segment, usually on the shooter's side.
+        // Entry: on the side of the limb that faces the shooter, within a wedge about that bearing.
         var toShooter = shot.ShooterPosition - along;
         var side = toShooter - axis * Vector3.Dot(toShooter, axis);
         if (side.LengthSquared() < 1e-6f)
             side = Vector3.Cross(axis, MathF.Abs(axis.Y) < 0.9f ? Vector3.UnitY : Vector3.UnitX);
         side = Vector3.Normalize(side);
-        var angle = rng.NextSingle() < ShooterSideBias
-            ? (rng.NextSingle() * 2f - 1f) * 1.2f
-            : (rng.NextSingle() * 2f - 1f) * MathF.PI;
+        var angle = (rng.NextSingle() * 2f - 1f) * EntryHalfAngle;
         var normal = Vector3.Normalize(Vector3.Transform(side, Quaternion.CreateFromAxisAngle(axis, angle)));
 
-        var surface = along + normal * radius;
+        var surface = along + normal * capsule.Radius;
 
-        // Shaft direction: between the flight line and straight into the surface, with a little scatter,
-        // and always pointing into the body.
+        // Shaft: mostly the flight line, bent a little towards the surface normal with slight scatter,
+        // so the nock points back at the shooter. Never flatter than ~70° off the normal, or the
+        // buried shaft would skim back out of the curve.
         var flight = along - shot.ShooterPosition;
         flight = flight.LengthSquared() > 1e-6f ? Vector3.Normalize(flight) : -normal;
-        var direction = Vector3.Normalize(Vector3.Lerp(flight, -normal, 0.45f) + RandomUnit(rng) * 0.12f);
-        // Never flatter than 60° off the normal, or the buried shaft would skim back out of the curve.
+        var direction = Vector3.Normalize(Vector3.Lerp(flight, -normal, 0.25f) + RandomUnit(rng) * 0.08f);
         var into = Vector3.Dot(direction, normal);
-        if (into > -0.5f)
-            direction = Vector3.Normalize(direction - normal * (into + 0.7f));
+        if (into > -0.35f)
+            direction = Vector3.Normalize(direction - normal * (into + 0.55f));
 
-        // Deeper the squarer the hit: dot is -1 straight in, -0.5 at the flattest allowed angle.
-        var squareness = Math.Clamp((-Vector3.Dot(direction, normal) - 0.5f) / 0.5f, 0f, 1f);
+        // Deeper the squarer the hit: dot is -1 straight in, -0.35 at the flattest allowed angle.
+        var squareness = Math.Clamp((-Vector3.Dot(direction, normal) - 0.35f) / 0.65f, 0f, 1f);
         var penetration = PenetrationMin + (PenetrationMax - PenetrationMin) * (0.4f * squareness + 0.6f * rng.NextSingle());
         var tip = surface + direction * penetration;
+        var tail = tip - direction * TailAnchorDistance;
 
-        var (bonePos, boneRot) = BoneWorld(access, frame, boneIndex);
-        var inverse = Quaternion.Inverse(boneRot);
-        var localTip = Vector3.Transform(tip - bonePos, inverse) / frame.Scale;
-        var localDir = Vector3.Transform(direction, inverse);
-        if (!Finite(localTip) || !Finite(localDir)) return;
+        // Pin to the struck bone and its parent, weighted like skin: flesh at the parent joint rides
+        // the parent, flesh at the far joint is shared, flesh past the joint (head, hands) is the bone's.
+        var jointFraction = Vector3.Distance(along, capsule.Start) / MathF.Max(1e-4f, Vector3.Distance(capsule.Joint, capsule.Start));
+        var weightBone = Math.Clamp(0.5f * jointFraction, 0f, 1f);
+        var boneA = capsule.Bone;
+        var boneB = capsule.Parent;
+        var weightB = boneB >= 0 ? 1f - weightBone : 0f;
+
+        var (posA, rotA) = BoneWorld(access, frame, boneA);
+        var invA = Quaternion.Inverse(rotA);
+        var tipA = Vector3.Transform(tip - posA, invA) / frame.Scale;
+        var tailA = Vector3.Transform(tail - posA, invA) / frame.Scale;
+        Vector3 tipB = default, tailB = default;
+        if (boneB >= 0)
+        {
+            var (posB, rotB) = BoneWorld(access, frame, boneB);
+            var invB = Quaternion.Inverse(rotB);
+            tipB = Vector3.Transform(tip - posB, invB) / frame.Scale;
+            tailB = Vector3.Transform(tail - posB, invB) / frame.Scale;
+        }
+        if (!Finite(tipA) || !Finite(tailA) || !Finite(tipB) || !Finite(tailB)) return;
 
         // Caps: oldest arrow on this body, then oldest anywhere, then whatever the layer can hold.
         var onTarget = 0;
@@ -354,13 +401,15 @@ public sealed unsafe class ArrowImpactController : IDisposable
         {
             Target = shot.Target,
             TargetEntityId = shot.TargetEntityId,
-            BoneIndex = boneIndex,
-            LocalTip = localTip,
-            LocalDirection = localDir,
+            BoneA = boneA, BoneB = boneB, WeightB = weightB,
+            TipA = tipA, TipB = tipB, TailA = tailA, TailB = tailB,
             Roll = rng.NextSingle() * MathF.Tau,
-            Expires = now + Math.Max(1f, config.ArrowImpactLingerSeconds),
+            Expires = config.ArrowImpactFallAway ? now + Math.Max(1f, config.ArrowImpactLingerSeconds) : double.MaxValue,
             Mesh = shot.Mesh,
         });
+
+        if (config.ArrowImpactBleed && Wounded != null)
+            newWounds.Add(new ArrowWound(shot.Target, shot.TargetEntityId, surface, direction));
     }
 
     private int TotalVertexBudget()
@@ -371,10 +420,9 @@ public sealed unsafe class ArrowImpactController : IDisposable
     }
 
     /// <summary>Pick the capsule (bone-to-parent segment + flesh radius) this arrow lands in.</summary>
-    private bool TrySegment(SkeletonAccess access, SkeletonFrame frame, PendingShot shot,
-        out int boneIndex, out Vector3 a, out Vector3 b, out float radius)
+    private bool TrySegment(SkeletonAccess access, SkeletonFrame frame, out Capsule capsule)
     {
-        boneIndex = -1; a = b = default; radius = 0f;
+        capsule = default;
 
         var human = bones.ResolveBoneIndex(access, "j_sebo_c") >= 0 && bones.ResolveBoneIndex(access, "j_kosi") >= 0;
         var rng = Random.Shared;
@@ -390,12 +438,12 @@ public sealed unsafe class ArrowImpactController : IDisposable
                 if (wanted < 0) continue;
                 if (roll < PreferredExact)
                 {
-                    if (TryBoneSegment(access, frame, wanted, out boneIndex, out a, out b, out radius)) return true;
+                    if (TryBoneCapsule(access, frame, wanted, out capsule)) return true;
                 }
                 else if (roll < PreferredExact + PreferredNear)
                 {
                     var near = Neighbour(access, wanted, rng);
-                    if (near >= 0 && TryBoneSegment(access, frame, near, out boneIndex, out a, out b, out radius)) return true;
+                    if (near >= 0 && TryBoneCapsule(access, frame, near, out capsule)) return true;
                 }
                 else break;
             }
@@ -406,12 +454,12 @@ public sealed unsafe class ArrowImpactController : IDisposable
             for (var attempt = 0; attempt < 4; attempt++)
             {
                 var index = bones.ResolveBoneIndex(access, HumanRandomBones[rng.Next(HumanRandomBones.Length)]);
-                if (index >= 0 && TryBoneSegment(access, frame, index, out boneIndex, out a, out b, out radius))
+                if (index >= 0 && TryBoneCapsule(access, frame, index, out capsule))
                     return true;
             }
         }
 
-        return TryGenericSegment(access, frame, out boneIndex, out a, out b, out radius);
+        return TryGenericCapsule(access, frame, out capsule);
     }
 
     /// <summary>The parent or a child of <paramref name="bone"/>, or -1 when it has neither.</summary>
@@ -431,10 +479,9 @@ public sealed unsafe class ArrowImpactController : IDisposable
     /// as the head, hands and feet whose flesh continues beyond the joint. Radius from the human table
     /// when the bone is known, otherwise from the segment length.
     /// </summary>
-    private bool TryBoneSegment(SkeletonAccess access, SkeletonFrame frame, int index,
-        out int boneIndex, out Vector3 a, out Vector3 b, out float radius)
+    private bool TryBoneCapsule(SkeletonAccess access, SkeletonFrame frame, int index, out Capsule capsule)
     {
-        boneIndex = -1; a = b = default; radius = 0f;
+        capsule = default;
         if (index <= 0 || index >= access.BoneCount || index >= access.HavokSkeleton->Bones.Length) return false;
         var name = access.HavokSkeleton->Bones[index].Name.String ?? string.Empty;
         var scale = MathF.Max(0.05f, (frame.Scale.X + frame.Scale.Y + frame.Scale.Z) / 3f);
@@ -444,31 +491,32 @@ public sealed unsafe class ArrowImpactController : IDisposable
         var parent = ParentIndex(access, index);
         if (parent >= access.BoneCount) return false;
         if (parent > 0) (parentPos, _) = BoneWorld(access, frame, parent);
-        else parentPos = bonePos - Vector3.UnitY * 0.1f * scale;
+        else { parent = -1; parentPos = bonePos - Vector3.UnitY * 0.1f * scale; }
         var length = Vector3.Distance(bonePos, parentPos);
         if (length < 0.02f * scale || length > 2f * scale) return false;
 
         var outward = Vector3.Normalize(bonePos - parentPos);
+        float radius;
+        Vector3 end;
         if (HumanBoneShapes.TryGetValue(name, out var shape))
         {
             radius = shape.Radius * scale;
-            b = bonePos + outward * (shape.Extend * scale);
+            end = bonePos + outward * (shape.Extend * scale);
         }
         else
         {
             radius = Math.Clamp(length * 0.3f, 0.03f * scale, 0.2f * scale);
-            b = bonePos;
+            end = bonePos;
         }
-        a = parentPos;
-        boneIndex = index;
-        return Vector3.DistanceSquared(a, b) > 1e-6f;
+        if (Vector3.DistanceSquared(parentPos, end) <= 1e-6f) return false;
+        capsule = new Capsule(index, parent, parentPos, end, bonePos, radius);
+        return true;
     }
 
     /// <summary>Non-human skeleton: a random body bone with its parent segment as the capsule.</summary>
-    private bool TryGenericSegment(SkeletonAccess access, SkeletonFrame frame,
-        out int boneIndex, out Vector3 a, out Vector3 b, out float radius)
+    private bool TryGenericCapsule(SkeletonAccess access, SkeletonFrame frame, out Capsule capsule)
     {
-        boneIndex = -1; a = b = default; radius = 0f;
+        capsule = default;
         var havok = access.HavokSkeleton;
         var count = Math.Min(access.BoneCount, havok->Bones.Length);
         var rng = Random.Shared;
@@ -480,12 +528,11 @@ public sealed unsafe class ArrowImpactController : IDisposable
             if (name.StartsWith("j_f_", StringComparison.Ordinal) || name.Contains("buki") || name.Contains("ex_")) continue;
             var parent = ParentIndex(access, i);
             if (parent <= 0 || parent >= access.BoneCount) continue;
-            var (pa, _) = BoneWorld(access, frame, i);
-            var (pb, _) = BoneWorld(access, frame, parent);
-            var length = Vector3.Distance(pa, pb);
+            var (bonePos, _) = BoneWorld(access, frame, i);
+            var (parentPos, _) = BoneWorld(access, frame, parent);
+            var length = Vector3.Distance(bonePos, parentPos);
             if (length < 0.05f || length > 1.5f) continue;
-            boneIndex = i; a = pa; b = pb;
-            radius = Math.Clamp(length * 0.3f, 0.04f, 0.35f);
+            capsule = new Capsule(i, parent, parentPos, bonePos, bonePos, Math.Clamp(length * 0.3f, 0.04f, 0.35f));
             return true;
         }
         return false;
@@ -542,12 +589,21 @@ public sealed unsafe class ArrowImpactController : IDisposable
             }
             if (cached == null) continue;
             var (access, f) = cached.Value;
-            if (arrow.BoneIndex < 0 || arrow.BoneIndex >= access.BoneCount) continue;
+            if (arrow.BoneA < 0 || arrow.BoneA >= access.BoneCount || arrow.BoneB >= access.BoneCount) continue;
 
-            var (bonePos, boneRot) = BoneWorld(access, f, arrow.BoneIndex);
-            var tip = bonePos + Vector3.Transform(arrow.LocalTip * f.Scale, boneRot);
-            var direction = Vector3.Transform(arrow.LocalDirection, boneRot);
-            if (!Finite(tip) || !Finite(direction) || direction.LengthSquared() < 0.5f) continue;
+            var (posA, rotA) = BoneWorld(access, f, arrow.BoneA);
+            var tip = posA + Vector3.Transform(arrow.TipA * f.Scale, rotA);
+            var tail = posA + Vector3.Transform(arrow.TailA * f.Scale, rotA);
+            if (arrow.BoneB >= 0 && arrow.WeightB > 0f)
+            {
+                var (posB, rotB) = BoneWorld(access, f, arrow.BoneB);
+                var tipB = posB + Vector3.Transform(arrow.TipB * f.Scale, rotB);
+                var tailB = posB + Vector3.Transform(arrow.TailB * f.Scale, rotB);
+                tip = Vector3.Lerp(tip, tipB, arrow.WeightB);
+                tail = Vector3.Lerp(tail, tailB, arrow.WeightB);
+            }
+            var direction = tip - tail;
+            if (!Finite(tip) || !Finite(direction) || direction.LengthSquared() < 1e-6f) continue;
             direction = Vector3.Normalize(direction);
             if (arrow.Mesh != null) AddMeshArrow(arrow.Mesh, tip, direction, arrow.Roll);
             else AddPlainArrow(tip, direction, arrow.Roll);

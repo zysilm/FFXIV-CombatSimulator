@@ -73,7 +73,7 @@ public sealed unsafe partial class WorldGeometryRenderer : IDisposable
         internal readonly int Capacity;
         internal WorldVertex[]? Vertices;
         internal int Count, Generation;
-        internal bool Enabled, Disposed, TestSceneDepth = true, ClipSpace, Diagnostic, Shaded = true;
+        internal bool Enabled, Disposed, TestSceneDepth = true, ClipSpace, Diagnostic, Shaded = true, Opaque;
         internal int LastDrawMode = -1;
         internal bool ProjectionLogged;
         internal string Status = "Off";
@@ -87,7 +87,7 @@ public sealed unsafe partial class WorldGeometryRenderer : IDisposable
     {
         public LayerState Layer;
         public int Generation, Start, Count;
-        public bool TestSceneDepth, ClipSpace, Diagnostic, Shaded, BudgetLimited;
+        public bool TestSceneDepth, ClipSpace, Diagnostic, Shaded, Opaque, BudgetLimited;
     }
 
     private sealed partial class Slot
@@ -176,7 +176,7 @@ public sealed unsafe partial class WorldGeometryRenderer : IDisposable
     }
 
     internal void Submit(LayerState layer, ReadOnlySpan<WorldVertex> vertices,
-        bool testSceneDepth, bool clipSpace, bool diagnostic, bool shaded)
+        bool testSceneDepth, bool clipSpace, bool diagnostic, bool shaded, bool opaque = false)
     {
         lock (gate)
         {
@@ -197,6 +197,7 @@ public sealed unsafe partial class WorldGeometryRenderer : IDisposable
             layer.ClipSpace = clipSpace;
             layer.Diagnostic = diagnostic;
             layer.Shaded = shaded;
+            layer.Opaque = opaque;
             if (!hadGeometry) layer.Status = "Waiting for main-view submission";
             // Hook changes are performed only by main-thread Tick/SetEnabled/BeginProbe.
         }
@@ -419,7 +420,7 @@ public sealed unsafe partial class WorldGeometryRenderer : IDisposable
             slot.Batches[slot.BatchCount++] = new Batch {
                 Layer = layer, Generation = layer.Generation, Start = offset, Count = counts[i],
                 TestSceneDepth = layer.TestSceneDepth, ClipSpace = layer.ClipSpace,
-                Diagnostic = layer.Diagnostic, Shaded = layer.Shaded, BudgetLimited = counts[i] < layer.Count,
+                Diagnostic = layer.Diagnostic, Shaded = layer.Shaded, Opaque = layer.Opaque, BudgetLimited = counts[i] < layer.Count,
             };
             CaptureSpecializedBatch(layer, ref slot.Batches[slot.BatchCount - 1]);
             offset += counts[i];
@@ -496,7 +497,7 @@ public sealed unsafe partial class WorldGeometryRenderer : IDisposable
                 if (batch.Diagnostic) Diagnose(nativeDevice, d3d, srv, slot, batch, matrix, depth->ActualWidth, depth->ActualHeight);
                 if (!pass.Draw(nativeDevice, d3d, srv, slot.Vertices.AsSpan(batch.Start, batch.Count), matrix,
                     slot.CameraPosition, slot.Width, slot.Height, depth->ActualWidth, depth->ActualHeight,
-                    batch.TestSceneDepth, batch.Shaded))
+                    batch.TestSceneDepth, batch.Shaded, batch.Opaque))
                 { skipped++; layer.Status = "No D3D render target bound; drawing skipped"; continue; }
                 anyDrawn = true; drawnBatches++;
                 layer.Status = batch.BudgetLimited ? "Rendering with a reduced shared-frame vertex budget" : "Rendering";

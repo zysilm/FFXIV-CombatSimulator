@@ -69,6 +69,11 @@ internal sealed unsafe class WorldTrianglePass : IDisposable
             float fresnel = 0.02 + 0.98 * pow(1-facing,5);
             float3 light = normalize(float3(-0.35,0.8,-0.4));
             float specular = pow(saturate(abs(dot(n,normalize(light+v)))),64);
+            // Opaque props: a matte lit surface with full coverage, no liquid fresnel or see-through.
+            if (OutputSize.w > 0.5) {
+                float3 fill = p.color.rgb * (0.55 + 0.45*facing) + specular*0.18;
+                return float4(fill, 1);
+            }
             float3 rgb = p.color.rgb * (0.45 + 0.3*facing) + (fresnel*0.25 + specular*0.6);
             return float4(rgb, saturate(p.color.a * (0.6 + 0.4*fresnel)));
         }
@@ -76,7 +81,8 @@ internal sealed unsafe class WorldTrianglePass : IDisposable
 
     public bool Draw(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11ShaderResourceView* sceneDepth,
         ReadOnlySpan<WorldVertex> vertices, Matrix4x4 viewProjection, Vector3 camera,
-        uint width, uint height, uint depthWidth, uint depthHeight, bool testSceneDepth = true, bool shaded = true)
+        uint width, uint height, uint depthWidth, uint depthHeight, bool testSceneDepth = true, bool shaded = true,
+        bool opaque = false)
     {
         EnsureResources(device, context);
         ID3D11RenderTargetView* target = null;
@@ -91,7 +97,7 @@ internal sealed unsafe class WorldTrianglePass : IDisposable
             {
                 var p = new Parameters {
                     ViewProjection = viewProjection, Camera = new Vector4(camera, 0),
-                    OutputSize = new Vector4(width, height, shaded ? 1 : 0, 0),
+                    OutputSize = new Vector4(width, height, shaded ? 1 : 0, opaque ? 1 : 0),
                     DepthSize = new Vector4(depthWidth, depthHeight, testSceneDepth ? 1 : 0, 0),
                 };
                 Upload(context, constants, &p, (uint)sizeof(Parameters));

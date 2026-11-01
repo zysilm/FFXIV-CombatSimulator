@@ -13,6 +13,12 @@ public partial class Configuration
 
     public int ArrowImpactMaxPerTarget { get; set; } = 12;
 
-    /// <summary>Seconds an arrow stays before it falls away.</summary>
+    /// <summary>Arrows fall away after <see cref="ArrowImpactLingerSeconds"/>; off, they stay as long as the body does.</summary>
+    public bool ArrowImpactFallAway { get; set; } = false;
+
+    /// <summary>Seconds an arrow stays before it falls away, when <see cref="ArrowImpactFallAway"/> is on.</summary>
     public float ArrowImpactLingerSeconds { get; set; } = 45f;
+
+    /// <summary>A lodged arrow opens a wound that bleeds, where a bleeding effect is available. Off by default.</summary>
+    public bool ArrowImpactBleed { get; set; } = false;
 }

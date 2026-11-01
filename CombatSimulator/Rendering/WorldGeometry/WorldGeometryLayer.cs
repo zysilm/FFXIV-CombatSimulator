@@ -22,9 +22,11 @@ public sealed partial class WorldGeometryLayer : IDisposable
     public bool IsSuspended => owner.IsSuspended || State.Disposed;
 
     public void SetEnabled(bool value) => owner.SetLayerEnabled(State, value);
+    /// <param name="opaque">Solid shading with full coverage (props such as arrows), instead of the
+    /// translucent liquid look.</param>
     public void SubmitFrame(ReadOnlySpan<WorldVertex> vertices, bool testSceneDepth = true,
-        bool clipSpace = false, bool diagnostic = false, bool shaded = true)
-        => owner.Submit(State, vertices, testSceneDepth, clipSpace, diagnostic, shaded);
+        bool clipSpace = false, bool diagnostic = false, bool shaded = true, bool opaque = false)
+        => owner.Submit(State, vertices, testSceneDepth, clipSpace, diagnostic, shaded, opaque);
     public void Clear() => owner.ClearLayer(State);
     public void Dispose() => owner.RemoveLayer(State);
 }
