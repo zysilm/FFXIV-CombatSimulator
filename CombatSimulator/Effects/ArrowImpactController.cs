@@ -67,7 +67,8 @@ public sealed unsafe class ArrowImpactController : IDisposable
         ["foot_l"] = "j_asi_d_l", ["foot_r"] = "j_asi_d_r",
     };
 
-    private const float Penetration = 0.10f;      // m of shaft buried past the skin
+    private const float PenetrationMin = 0.26f;   // m of shaft buried past the skin: a third of the arrow,
+    private const float PenetrationMax = 0.40f;   // a little more for a square hit, a little less for a glancing one
     private const float FlightSpeed = 45f;        // m/s, for the landing delay when the engine gave none
     private const float ReleaseDelay = 0.6f;      // s from the shot motion starting to the arrow leaving
     private const float PreferredExact = 0.55f;   // chance a preferred bone itself is hit
@@ -323,7 +324,10 @@ public sealed unsafe class ArrowImpactController : IDisposable
         if (into > -0.5f)
             direction = Vector3.Normalize(direction - normal * (into + 0.7f));
 
-        var tip = surface + direction * Penetration;
+        // Deeper the squarer the hit: dot is -1 straight in, -0.5 at the flattest allowed angle.
+        var squareness = Math.Clamp((-Vector3.Dot(direction, normal) - 0.5f) / 0.5f, 0f, 1f);
+        var penetration = PenetrationMin + (PenetrationMax - PenetrationMin) * (0.4f * squareness + 0.6f * rng.NextSingle());
+        var tip = surface + direction * penetration;
 
         var (bonePos, boneRot) = BoneWorld(access, frame, boneIndex);
         var inverse = Quaternion.Inverse(boneRot);
@@ -431,13 +435,14 @@ public sealed unsafe class ArrowImpactController : IDisposable
         out int boneIndex, out Vector3 a, out Vector3 b, out float radius)
     {
         boneIndex = -1; a = b = default; radius = 0f;
-        if (index <= 0 || index >= access.BoneCount) return false;
+        if (index <= 0 || index >= access.BoneCount || index >= access.HavokSkeleton->Bones.Length) return false;
         var name = access.HavokSkeleton->Bones[index].Name.String ?? string.Empty;
         var scale = MathF.Max(0.05f, (frame.Scale.X + frame.Scale.Y + frame.Scale.Z) / 3f);
         var (bonePos, _) = BoneWorld(access, frame, index);
 
         Vector3 parentPos;
         var parent = ParentIndex(access, index);
+        if (parent >= access.BoneCount) return false;
         if (parent > 0) (parentPos, _) = BoneWorld(access, frame, parent);
         else parentPos = bonePos - Vector3.UnitY * 0.1f * scale;
         var length = Vector3.Distance(bonePos, parentPos);
@@ -474,7 +479,7 @@ public sealed unsafe class ArrowImpactController : IDisposable
             if (string.IsNullOrEmpty(name) || !name.StartsWith("j_", StringComparison.Ordinal)) continue;
             if (name.StartsWith("j_f_", StringComparison.Ordinal) || name.Contains("buki") || name.Contains("ex_")) continue;
             var parent = ParentIndex(access, i);
-            if (parent <= 0) continue;
+            if (parent <= 0 || parent >= access.BoneCount) continue;
             var (pa, _) = BoneWorld(access, frame, i);
             var (pb, _) = BoneWorld(access, frame, parent);
             var length = Vector3.Distance(pa, pb);
@@ -579,7 +584,7 @@ public sealed unsafe class ArrowImpactController : IDisposable
     /// <summary>Last resort when no arrow model can be read: a plain shaft with three fins.</summary>
     private void AddPlainArrow(Vector3 tip, Vector3 direction, float finRoll)
     {
-        var surface = tip - direction * Penetration;
+        var surface = tip - direction * PenetrationMin;
         var tail = tip - direction * PlainArrowLength;
 
         builder.AddTube(tail + direction * 0.012f, surface + direction * 0.012f, PlainShaftRadius, PlainShaftColor);
