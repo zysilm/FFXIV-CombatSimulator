@@ -167,9 +167,12 @@ public sealed unsafe class ArrowImpactController : IDisposable
         if (!Enabled || disposed || casterAddr == nint.Zero || targetAddr == nint.Zero)
             return;
 
-        var shooter = ((GameObject*)casterAddr)->Position;
-        var struck = ((GameObject*)targetAddr)->Position;
-        var distance = Vector3.Distance(shooter, struck);
+        // The arrow leaves the bow at chest height, not from the shooter's feet; aiming the shaft at
+        // the ground position pointed every arrow up out of the body.
+        Vector3 shooterFeet = ((GameObject*)casterAddr)->Position;
+        var shooter = bones.GetBoneWorldPos(casterAddr, "j_sebo_c") ?? shooterFeet + Vector3.UnitY * 1.3f;
+        Vector3 struck = ((GameObject*)targetAddr)->Position;
+        var distance = Vector3.Distance(shooterFeet, struck);
         if (!float.IsFinite(distance))
             return;
         if (delay < 0f)
@@ -349,7 +352,7 @@ public sealed unsafe class ArrowImpactController : IDisposable
         // buried shaft would skim back out of the curve.
         var flight = along - shot.ShooterPosition;
         flight = flight.LengthSquared() > 1e-6f ? Vector3.Normalize(flight) : -normal;
-        var direction = Vector3.Normalize(Vector3.Lerp(flight, -normal, 0.25f) + RandomUnit(rng) * 0.08f);
+        var direction = Vector3.Normalize(Vector3.Lerp(flight, -normal, 0.15f) + RandomUnit(rng) * 0.06f);
         var into = Vector3.Dot(direction, normal);
         if (into > -0.35f)
             direction = Vector3.Normalize(direction - normal * (into + 0.55f));
