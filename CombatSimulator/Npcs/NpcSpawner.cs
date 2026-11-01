@@ -1128,6 +1128,9 @@ public unsafe class NpcSpawner : IDisposable
     private const float SpawnFanRankSpacing = 2.5f;   // metres between ranks once an arc is full
     private const int SpawnFanMaxRanks = 8;
 
+    // Seed of the current surround group — see SurroundSpawnLayout.
+    private int surroundSeed;
+
     /// <summary>
     /// Where the next virtual enemy goes. <paramref name="slot"/> is its index within the group
     /// being placed, so a batch fans out instead of stacking.
@@ -1178,12 +1181,11 @@ public unsafe class NpcSpawner : IDisposable
                 return playerPos + fwd * radius;
             }
 
-            var angle = Random.Shared.NextSingle() * MathF.Tau;
-            var forward = new Vector3(
-                -MathF.Sin(angle),
-                0,
-                -MathF.Cos(angle));
-            return playerPos + forward * distance;
+            // Surround layout: slot 0 opens a new group, so a regenerated group scatters afresh while
+            // every later slot of the same group is laid out against the same seed.
+            if (slot <= 0)
+                surroundSeed = Random.Shared.Next();
+            return playerPos + SurroundSpawnLayout.Offset(slot, distance, surroundSeed);
         }
 
         return Vector3.Zero;

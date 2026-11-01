@@ -1297,7 +1297,7 @@ public partial class MainWindow : IDisposable
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Spawn virtual enemies directly in front of your character, using its real\n" +
                              "in-game facing (not any ragdoll/visual facing). Also applies when combat\n" +
-                             "reset regenerates/refreshes enemies. Off = random direction around you.");
+                             "reset regenerates/refreshes enemies. Off = a loose, layered ring around you.");
         ImGui.SameLine();
 
         var dist = config.SpawnDistance;
@@ -1309,7 +1309,7 @@ public partial class MainWindow : IDisposable
         }
         HelpMarker(config.SpawnInFront
             ? "Enemies spawn in front of your character (real in-game facing)."
-            : "Spawn direction is randomized around your character.");
+            : "Enemies surround your character in loose layers; the nearest stands at this distance.");
 
         // Level + HP multiplier (inline)
         var defaultLevel = config.DefaultNpcLevel;
