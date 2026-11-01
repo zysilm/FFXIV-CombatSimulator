@@ -100,6 +100,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private readonly Effects.NpcScaleController npcScaleController;
     private readonly Effects.PlayerWeaponVisibilityController playerWeaponVisibilityController;
     private readonly Rendering.WorldGeometry.WorldGeometryRenderer worldGeometryRenderer;
+    private readonly Effects.ArrowImpactController arrowImpactController;
     private readonly Rendering.WorldGeometry.WorldGeometryPreview worldGeometryPreview;
     public Rendering.WorldGeometry.WorldGeometryRenderer WorldGeometry => worldGeometryRenderer;
     private readonly EnemyControlController enemyControlController;
@@ -222,6 +223,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         weaponDropController = new WeaponDropController(boneTransformService, config, log, ragdollController);
         playerWeaponVisibilityController = new Effects.PlayerWeaponVisibilityController(config, objectTable, boneTransformService);
         worldGeometryRenderer = new Rendering.WorldGeometry.WorldGeometryRenderer(gameInterop, sigScanner, log);
+        arrowImpactController = new Effects.ArrowImpactController(config, boneTransformService, worldGeometryRenderer, log);
+        animationController.ArrowImpacts = arrowImpactController;
         InitPrivateEffects();
         worldGeometryPreview = new Rendering.WorldGeometry.WorldGeometryPreview(worldGeometryRenderer);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
@@ -641,6 +644,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         npcScaleController.Dispose();
         playerWeaponVisibilityController.Dispose();
         DisposePrivateEffects();
+        arrowImpactController.Dispose();
         worldGeometryPreview.Dispose();
         worldGeometryRenderer.Dispose();
         npcSpawner.Dispose();
@@ -944,6 +948,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             spectatorController.Tick(deltaTime);
             devExperimental.TickWorld(deltaTime);
             npcScaleController.Tick();
+            arrowImpactController.Tick();
             worldGeometryRenderer.Tick();
             worldGeometryPreview.Tick(deltaTime);
             TickPrivateEffects(deltaTime);

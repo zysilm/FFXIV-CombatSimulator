@@ -356,6 +356,7 @@ public partial class MainWindow : IDisposable
                 break;
             case 3: // Effects
                 DrawHitVfxSection();
+                DrawArrowImpactSection();
                 DrawPrivateEffectsSection();
                 DrawExperimentalEffects();
                 DrawArmorDetachmentEntrySection();

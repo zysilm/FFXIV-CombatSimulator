@@ -906,6 +906,8 @@ public unsafe class AnimationController : IDisposable
                     !IsHumanSkeletonCaster(request.SourceEntityId))
                     PlayMonsterRangedAttackTimeline(request.SourceEntityId);
             }
+
+            NotifyArrowImpacts(request);
         }
         catch (Exception ex)
         {
@@ -1360,6 +1362,31 @@ public unsafe class AnimationController : IDisposable
     {
         var caster = FindCharacter(sourceEntityId, isPlayer: false);
         return caster != null && NpcWeaponClassifier.IsHumanSkeleton(caster);
+    }
+
+    /// <summary>Arrows left in struck bodies; null until the effect is wired up.</summary>
+    public Effects.ArrowImpactController? ArrowImpacts { get; set; }
+
+    private void NotifyArrowImpacts(ActionEffectRequest request)
+    {
+        var arrows = ArrowImpacts;
+        if (arrows == null || !arrows.Enabled || request.AttackStyle == NpcAttackStyle.Magic)
+            return;
+
+        var (casterAddr, casterEntityId) = ResolveActorAddress(request.SourceEntityId, request.IsSourcePlayer);
+        if (casterAddr == 0 || !NpcWeaponClassifier.IsBowWielder((Character*)casterAddr))
+            return;
+
+        var feedbackDelay = request.IsSourcePlayer && config.EnableHitFeedback ? MathF.Max(0f, config.HitFeedbackDelay) : 0f;
+        foreach (var target in request.Targets)
+        {
+            if (target.Damage <= 0)
+                continue;
+            var (targetAddr, targetEntityId) = ResolveActorAddress((uint)target.TargetId, false);
+            if (targetAddr == 0)
+                continue;
+            arrows.NotifyShot(casterAddr, casterEntityId, targetAddr, targetEntityId, feedbackDelay);
+        }
     }
 
     private void PlayMonsterRangedAttackTimeline(uint sourceEntityId)
