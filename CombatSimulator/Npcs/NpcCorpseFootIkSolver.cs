@@ -34,6 +34,12 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
     /// it — filters out surface noise so a foot resting almost flush with a corpse doesn't twitch.</summary>
     private const float EngageThreshold = 0.03f;
 
+    /// <summary>Once a leg is bending for a corpse it keeps doing so until the surface has dropped to
+    /// this close to the animated ankle. Without the gap between this and <see cref="EngageThreshold"/>
+    /// a foot whose requirement hovers around the engage height (every foot does, once the root has
+    /// risen to meet it) would blend in and out every other frame.</summary>
+    private const float DisengageThreshold = 0.01f;
+
     /// <summary>Base ceiling on how far a leg will reach up for a corpse surface, scaled by the actor's
     /// visual size. Matches the ceiling the root correction already used for the same reason: crawling
     /// over a corpse is an opt-in movement policy, not a literal standing leg-length test.</summary>
@@ -89,6 +95,11 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         public readonly LegBlend BlendL = new();
         public readonly LegBlend BlendR = new();
         public float PelvisOffsetY;
+        // How far the caller has already raised this actor's root above its terrain stance for a
+        // corpse (see ReportRootLift). The ankles are measured on that raised pose, so a foot's
+        // remaining gain plus this lift is the absolute height the stance needs; the remaining gain
+        // alone would shrink by exactly what the root just rose, and the root would chase it back down.
+        public float AppliedRootLift;
         public float LastDeltaTime = 1f / 60f;
         public int MissedTicks;
     }
@@ -118,6 +129,20 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
 
         state.MissedTicks = 0;
         state.LastDeltaTime = deltaTime > 0f ? deltaTime : state.LastDeltaTime;
+    }
+
+    /// <summary>
+    /// Tell the solver how far the caller currently holds this actor's root above its plain terrain
+    /// stance on account of a corpse (0 when it stands on terrain). Call it every tick right after
+    /// the root height is decided, with the value the skeleton will be rendered at. The solver
+    /// measures the feet on that raised pose; adding the lift back turns each foot's remaining gain
+    /// into the absolute stance height it asks for, so <see cref="GetPelvisOffset"/> is a fixed
+    /// target rather than a correction the root then eats and re-requests every frame.
+    /// </summary>
+    public void ReportRootLift(nint actorAddress, float liftAboveTerrain)
+    {
+        if (actorAddress == nint.Zero || !actors.TryGetValue(actorAddress, out var state)) return;
+        state.AppliedRootLift = float.IsFinite(liftAboveTerrain) ? MathF.Max(0f, liftAboveTerrain) : 0f;
     }
 
     /// <summary>True once this actor's leg bones have been resolved and this solver is actively
@@ -191,20 +216,21 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
 
         var maxStepHeight = MaxStepHeightBase * MathF.Max(1f, GetVisualScale(address));
 
-        var neededL = SolveLeg(address, skel, skelPos, skelRot, state.Left, state.BlendL, maxStepHeight, state.LastDeltaTime);
-        var neededR = SolveLeg(address, skel, skelPos, skelRot, state.Right, state.BlendR, maxStepHeight, state.LastDeltaTime);
+        var neededL = SolveLeg(address, skel, skelPos, skelRot, state.Left, state.BlendL, maxStepHeight, state.LastDeltaTime, state.AppliedRootLift);
+        var neededR = SolveLeg(address, skel, skelPos, skelRot, state.Right, state.BlendR, maxStepHeight, state.LastDeltaTime, state.AppliedRootLift);
         state.PelvisOffsetY = MathF.Min(neededL, neededR);
     }
 
     /// <summary>
-    /// One leg's IK pass. Returns this leg's raw required height gain this frame (0 if it isn't
-    /// engaging) for <see cref="ProcessActor"/> to fold into the shared pelvis offset — independent of
-    /// this leg's own blend weight/timing below, which only governs how the correction itself eases in
-    /// and out once applied.
+    /// One leg's IK pass. Returns the absolute stance height this foot asks the root for (0 when
+    /// there is no corpse under it): the surface height above the animated ankle plus the lift the
+    /// caller already applies, so it stays the same number while the root rises to it. It is
+    /// independent of this leg's own blend weight/timing below, which only governs how the leg's
+    /// own correction eases in and out once applied.
     /// </summary>
     private float SolveLeg(
         nint address, SkeletonAccess skel, Vector3 skelPos, Quaternion skelRot,
-        LegBones bones, LegBlend blend, float maxStepHeight, float deltaTime)
+        LegBones bones, LegBlend blend, float maxStepHeight, float deltaTime, float appliedRootLift)
     {
         var hipPos = BoneWorldPosition(skel, skelPos, skelRot, bones.Hip);
         var kneePos = BoneWorldPosition(skel, skelPos, skelRot, bones.Knee);
@@ -223,11 +249,13 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
         if (groundY.HasValue)
         {
             var gain = groundY.Value - anklePos.Y;
-            if (gain > EngageThreshold && gain <= maxStepHeight)
-            {
-                neededGain = gain;
-                wantsEngage = true;
-            }
+            // The pelvis asks for the whole stance height, lift included, whenever a corpse is under
+            // the foot at all; the leg's own bend only engages for what the root has not covered,
+            // and stays engaged down to DisengageThreshold so it does not flicker at the edge.
+            if (gain + appliedRootLift <= maxStepHeight)
+                neededGain = MathF.Max(0f, gain + appliedRootLift);
+            var engageAt = blend.Weight > 0.001f ? DisengageThreshold : EngageThreshold;
+            wantsEngage = gain > engageAt && gain <= maxStepHeight;
         }
 
         if (wantsEngage && blend.Weight < 0.01f)

@@ -566,10 +566,14 @@ public unsafe partial class EnemyControlController : IDisposable
                 posY = terrainY;
                 corpseTraversalSupportActive = false;
             }
+            // The feet are measured on the root height decided here; the solver needs that lift to
+            // report a stance height that does not shrink by what the root just rose (see ReportRootLift).
+            FootIkSolver?.ReportRootLift(controlledAddress, posY - terrainY);
         }
         else
         {
             corpseTraversalSupportActive = false;
+            FootIkSolver?.ReportRootLift(controlledAddress, 0f);
             // ── Vertical: keyboard Q/E + gamepad D-pad up/down. Any height, but not below ground. ──
             var up = 0f;
             if (Down(VirtualKey.Q)) up += 1f;

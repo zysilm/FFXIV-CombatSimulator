@@ -2115,6 +2115,9 @@ public unsafe partial class NpcAiController : IDisposable
 
         state.LastMoveRootY = y;
         state.HasLastMoveRootY = true;
+        // The lift actually applied for the corpse (clearance and the plain height offset excluded),
+        // so the solver's stance height holds still while the root rises to it (see ReportRootLift).
+        footIkSolver.ReportRootLift(actorAddress, y - terrainY - state.StableRootTerrainClearance - config.DefaultNpcHeightOffset);
         return rootPosition with { Y = y };
     }
 
