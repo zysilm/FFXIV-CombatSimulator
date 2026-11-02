@@ -34,8 +34,9 @@ public partial class Configuration
     public bool EnemyTacticsThreat { get; set; } = true;
 
     // At most three melee enemies fight one target at once; the rest wait on an outer ring and
-    // step in as places free. Engage delays also get a little random jitter.
-    public bool EnemyTacticsStagger { get; set; } = true;
+    // step in as places free. Engage delays also get a little random jitter. Off by default: a
+    // crowd that mostly stands and watches reads as broken, not tactical.
+    public bool EnemyTacticsStagger { get; set; } = false;
 
     // An enemy entering the fight wakes idle allies within its aggro range (10y when unset); below
     // 20% HP about a third of enemies run to an ally once, then return.

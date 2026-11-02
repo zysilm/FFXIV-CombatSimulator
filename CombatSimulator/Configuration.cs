@@ -183,6 +183,7 @@ public partial class Configuration : IPluginConfiguration
     public bool KoStripHandsFeetRigidDefaultMigrated20260719 { get; set; } = false;
     public bool RagdollFingerPhysicsMigrated20260810 { get; set; } = false;
     public bool RagdollLegModelRebuildMigrated20260816 { get; set; } = false;
+    public bool EnemyTacticsStaggerDefaultOffMigrated20261102 { get; set; } = false;
     public bool RagdollFollowPositionDefaultMigrated20260816 { get; set; } = false;
     public bool RagdollNpcCorpseTraversalDefaultMigrated20260816 { get; set; } = false;
     public bool HitVfxDefaultMigrated20260830 { get; set; } = false;
@@ -1031,6 +1032,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateAnatomicalDefaultsOff();
         MigrateNpcCollisionMode();
         MigrateNpcCollisionMeshDefault(); // after the mode migration above, whose old default it lifts
+        MigrateEnemyTacticsStaggerDefaultOff();
         MigrateNpcCollisionConvexHullDefault(); // last of the three: it overrides both verdicts above
         MigrateGuidedCollapse();
         MigrateDynamicCameraPivotBone();
@@ -1804,6 +1806,20 @@ public partial class Configuration : IPluginConfiguration
         }
 
         return changed;
+    }
+
+    /// <summary>
+    /// "Take turns in melee" shipped on, so a saved profile holds true whether or not the player
+    /// ever chose it. One-time switch to the new default; turning it back on afterwards sticks.
+    /// </summary>
+    private void MigrateEnemyTacticsStaggerDefaultOff()
+    {
+        if (EnemyTacticsStaggerDefaultOffMigrated20261102)
+            return;
+
+        EnemyTacticsStagger = false;
+        EnemyTacticsStaggerDefaultOffMigrated20261102 = true;
+        Save();
     }
 
     private void MigrateFingerPhysicsDefaults()
