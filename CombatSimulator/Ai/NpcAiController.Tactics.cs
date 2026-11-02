@@ -226,10 +226,10 @@ public unsafe partial class NpcAiController
     private const float BackstepDistance = 0.7f;
     private const float BackstepCooldownSeconds = 1.5f;
 
-    // Staggered engagement: at most this many melee enemies fight one target at once (the same cap
-    // CombatCompanionManager's pressure scoring aims for); the rest wait on a ring this far outside
-    // their hold range and step in, closest first, when a place frees.
-    private const int MeleeAttackersPerTarget = 3;
+    // Staggered engagement: at most this many melee enemies fight one target at once (configurable,
+    // 3..20); the rest wait on a ring this far outside their hold range and step in, closest first,
+    // when a place frees.
+    private int MeleeAttackersPerTarget => Math.Clamp(config.EnemyTacticsMeleeAttackers, 3, 20);
     private const float WaitRingExtra = 3.5f;
     private const float WaitSpotRefreshDistance = 2.0f;
     private const float WaitSpotArriveDistance = 0.4f;

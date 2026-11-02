@@ -10,7 +10,7 @@ namespace CombatSimulator.Gui;
 
 public partial class MainWindow
 {
-    // Party tab > "Enhanced enemy tactics". Every switch here defaults to the pre-existing behaviour
+    // Targets tab > "Enhanced enemy tactics". Every switch here defaults to the pre-existing behaviour
     // while the master is off.
     private void DrawEnemyTacticsSection()
     {
@@ -38,7 +38,18 @@ public partial class MainWindow
             TacticsCheckbox("Threat-based aggro", () => config.EnemyTacticsThreat, v => config.EnemyTacticsThreat = v,
                 "Enemies target whoever built the most threat on them (damage, tanks count triple) instead of the top DPS. Needs companions.");
             TacticsCheckbox("Take turns in melee", () => config.EnemyTacticsStagger, v => config.EnemyTacticsStagger = v,
-                "At most three melee enemies fight one target; extras wait on an outer ring and step in when a place frees.");
+                "Only so many melee enemies fight one target at once; extras wait on an outer ring and step in when a place frees.");
+            using (ImRaii.Disabled(!config.EnemyTacticsStagger))
+            {
+                var attackers = Math.Clamp(config.EnemyTacticsMeleeAttackers, 3, 20);
+                ImGui.SetNextItemWidth(180);
+                if (ImGui.SliderInt("Melee attackers at once", ref attackers, 3, 20))
+                {
+                    config.EnemyTacticsMeleeAttackers = Math.Clamp(attackers, 3, 20);
+                    config.Save();
+                }
+                HelpMarker("How many melee enemies may be on one target at the same time. Ranged and casting enemies are not counted.");
+            }
             TacticsCheckbox("Call for help / flee at low HP", () => config.EnemyTacticsFlee, v => config.EnemyTacticsFlee = v,
                 "An enemy joining the fight wakes idle allies nearby. Below 20% HP some enemies run to an ally once, then return.");
             TacticsCheckbox("Reposition after attacks", () => config.EnemyTacticsReposition, v => config.EnemyTacticsReposition = v,

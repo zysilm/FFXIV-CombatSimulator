@@ -349,6 +349,7 @@ public partial class MainWindow : IDisposable
                 break;
             case 1: // Targets
                 DrawNpcAttackRangeSection();
+                DrawEnemyTacticsSection();
                 DrawMapEnemiesSection();
                 break;
             case 2: // Party
@@ -998,8 +999,6 @@ public partial class MainWindow : IDisposable
             config.PartyRangedAttackRange = rangedRange;
             config.Save();
         }
-
-        DrawEnemyTacticsSection();
 
         // Companion clone gear — apply a Glamourer design's equipment to spawned
         // clones (equipment only, so customize/randomized look is preserved).

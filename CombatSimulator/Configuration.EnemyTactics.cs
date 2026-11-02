@@ -33,10 +33,12 @@ public partial class Configuration
     // recent DPS, with wider switch hysteresis.
     public bool EnemyTacticsThreat { get; set; } = true;
 
-    // At most three melee enemies fight one target at once; the rest wait on an outer ring and
-    // step in as places free. Engage delays also get a little random jitter. Off by default: a
-    // crowd that mostly stands and watches reads as broken, not tactical.
-    public bool EnemyTacticsStagger { get; set; } = false;
+    // At most EnemyTacticsMeleeAttackers melee enemies fight one target at once; the rest wait on an
+    // outer ring and step in as places free. Engage delays also get a little random jitter.
+    public bool EnemyTacticsStagger { get; set; } = true;
+
+    // How many melee enemies may fight one target at once when taking turns (3..20).
+    public int EnemyTacticsMeleeAttackers { get; set; } = 8;
 
     // An enemy entering the fight wakes idle allies within its aggro range (10y when unset); below
     // 20% HP about a third of enemies run to an ally once, then return.
