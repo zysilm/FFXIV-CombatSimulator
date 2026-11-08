@@ -69,25 +69,16 @@ public partial class MainWindow
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("When you are knocked out, visually detach the selected armor slots.\nYour character only. Visual only.");
 
-        if (DevExperimentalUnlocked)
+        var onHit = config.KoStripOnHitEnabled;
+        if (ImGui.Checkbox("Detach on monster hit##armordetach_onhit", ref onHit))
         {
-            var onHit = config.KoStripOnHitEnabled;
-            if (ImGui.Checkbox("Detach on monster hit##armordetach_onhit", ref onHit))
-            {
-                config.KoStripOnHitEnabled = onHit;
-                if (onHit) config.KoStripEnabled = false;
-                config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Dev experimental: when a monster attack connects with your KO'd character,\n" +
-                                 "detach one configured armor slot first. Once configured gear is gone,\n" +
-                                 "monster part-separation profiles continue as usual.");
-        }
-        else if (config.KoStripOnHitEnabled)
-        {
-            config.KoStripOnHitEnabled = false;
+            config.KoStripOnHitEnabled = onHit;
+            if (onHit) config.KoStripEnabled = false;
             config.Save();
         }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Each enemy hit that damages you detaches the next selected armor slot\n" +
+                             "(Head and accessories first, then Body / Hands / Legs / Feet). Replaces Detach on KO.");
 
         var syncWithRagdoll = config.KoStripSyncWithRagdoll;
         if (ImGui.Checkbox("Sync with ragdoll##armordetach_sync_ragdoll", ref syncWithRagdoll))

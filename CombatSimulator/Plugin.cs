@@ -507,6 +507,12 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 
         // Weapon drop is co-triggered with ragdoll (same delay), so writes survive while animation is frozen
         combatEngine.OnNpcDeathRagdoll = OnNpcDeathRagdoll;
+        combatEngine.OnPlayerDamagedByNpc = () =>
+        {
+            var player = objectTable.LocalPlayer;
+            if (player != null && player.Address != nint.Zero)
+                armorDetachmentController.TryStripNextOnHit(player.Address);
+        };
         combatEngine.OnPlayerDeath = addr =>
         {
             OnPrivateEffectsKo();
@@ -565,7 +571,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         InitVoice(dataManager);
         InitPrivateDirectors();
         AttachPrivateEffects();
-        armorDetachmentController.AllowOnHitDetach = () => mainWindow.DevExperimentalUnlocked;
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, dismembermentController, mainWindow, config, gameGui, clientState);

@@ -34,6 +34,14 @@ while KoStrip still hid the source. This is independently sufficient to cause di
 - Only committed slots are logged as physics drops. Appearance failure logs now include expected
   and actual signatures, IPC acceptance and stable-draw frame counts.
 
+## Triggers
+
+Detach on KO and Detach on monster hit are mutually exclusive toggles at the top of the Armor
+Detachment window. On-hit detachment fires from `CombatEngine.OnPlayerDamagedByNpc` (every enemy hit
+that deals damage to the player, including the killing blow) and requests the next enabled slot in
+the order Head, Ears, Neck, Wrists, R/L Finger, Body, Hands, Legs, Feet. A failed preparation
+releases its slot for the next hit. Both triggers use the same preparation/commit lifecycle.
+
 ## Validation and limits
 
 `dotnet run --project Tests/GearDropLifecycle/GearDropLifecycle.csproj -c Release`

@@ -113,6 +113,8 @@ public partial class CombatEngine : IDisposable
     // Fired when an NPC's attack lands on the (still-alive) player; argument is the
     // attacker's simulated entity id. Drives auto-counter target acquisition.
     public Action<uint>? OnPlayerHitByNpc { get; set; }
+    /// <summary>Fired whenever an enemy hit deals damage to the player, including the killing blow.</summary>
+    public Action? OnPlayerDamagedByNpc { get; set; }
     public string LastPlayerDefeatedBy { get; private set; } = string.Empty;
     /// <summary>Address of the NPC that landed the killing blow on the player (0 if none).</summary>
     public nint LastPlayerKillerAddress { get; private set; }
@@ -887,6 +889,8 @@ public partial class CombatEngine : IDisposable
         if (target.IsPlayer)
         {
             State.TotalDamageTaken += damage.Damage;
+            if (damage.Damage > 0)
+                OnPlayerDamagedByNpc?.Invoke();
             // Player was hit and survived → let auto-counter consider locking this attacker.
             if (target.IsAlive)
                 OnPlayerHitByNpc?.Invoke(npc.SimulatedEntityId);

@@ -46,8 +46,6 @@ public unsafe class KoStripController : IDisposable
     }
     private readonly List<PreparedStrip> preparedStrips = new();
 
-    public Func<bool> AllowOnHitDetach { private get; set; } = () => false;
-
     public KoStripController(Configuration config, GlamourerIpc glamourer,
         DismembermentController dismemberment, IPluginLog log)
     {
@@ -223,7 +221,7 @@ public unsafe class KoStripController : IDisposable
         return false;
     }
 
-    private bool IsOnHitDetachActive() => config.KoStripOnHitEnabled && AllowOnHitDetach();
+    private bool IsOnHitDetachActive() => config.KoStripOnHitEnabled;
 
     private void DoStrip(nint characterAddress)
     {

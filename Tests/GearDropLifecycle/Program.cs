@@ -110,7 +110,7 @@ unsafe class Program
                 Check(f.Drops.Calls == 2, "completed drop suppressed next manual request");
             }),
             ("on-hit failure can retry the same slot", () => {
-                using var f = new Fixture(); f.Config.KoStripOnHitEnabled = true; f.Controller.AllowOnHitDetach = () => true;
+                using var f = new Fixture(); f.Config.KoStripOnHitEnabled = true;
                 f.Drops.FailCall = 1; Check(!f.Controller.TryStripNextOnHit(f.Address), "failed hit reported success");
                 Check(f.Controller.TryStripNextOnHit(f.Address) && f.Drops.Calls == 2, "failed slot stuck in done set");
             }),
