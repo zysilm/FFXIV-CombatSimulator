@@ -1547,7 +1547,6 @@ public partial class MainWindow : IDisposable
             if (ImGui.SliderFloat("Damage Multiplier", ref dmgMult, 0.1f, 5.0f, "%.1f"))
             {
                 config.DamageMultiplier = dmgMult;
-                combatEngine.DamageMultiplier = dmgMult;
                 config.Save();
             }
             HelpMarker("Global damage multiplier applied to all attacks.");
@@ -1556,7 +1555,6 @@ public partial class MainWindow : IDisposable
             if (ImGui.Checkbox("Critical Hits", ref crit))
             {
                 config.EnableCriticalHits = crit;
-                combatEngine.EnableCriticalHits = crit;
                 config.Save();
             }
             HelpMarker("Enable critical hit chance on attacks.");
@@ -1566,7 +1564,6 @@ public partial class MainWindow : IDisposable
             if (ImGui.Checkbox("Direct Hits", ref dh))
             {
                 config.EnableDirectHits = dh;
-                combatEngine.EnableDirectHits = dh;
                 config.Save();
             }
             HelpMarker("Enable direct hit chance on attacks.");
@@ -2100,7 +2097,7 @@ public partial class MainWindow : IDisposable
             config.ActionGuardKey = ActionGuardKeyValues[guardKeyIndex];
             config.Save();
         }
-        HelpMarker("Keyboard key used for Action Mode guard. Default is Shift so jump remains untouched.");
+        HelpMarker("Keyboard key used for Action Mode guard. Default is Ctrl so jump remains untouched.");
 
         var guardPadIndex = IndexOf(ActionGamepadButtonValues, config.ActionGuardGamepadButton);
         if (ImGui.Combo("Gamepad##actionguard", ref guardPadIndex, ActionGamepadButtonLabels, ActionGamepadButtonLabels.Length))
@@ -2480,12 +2477,13 @@ public partial class MainWindow : IDisposable
         {
             if (ImGui.Button("Reset Defaults##enemy_dismemberment_defaults"))
             {
-                config.EnableEnemyDismemberment = false;
-                config.EnemyHumanoidDismembermentCount = 3;
-                config.EnemyMonsterDismembermentBonePercent = 50.0f;
+                var defaults = new Configuration();
+                config.EnableEnemyDismemberment = defaults.EnableEnemyDismemberment;
+                config.EnemyHumanoidDismembermentCount = defaults.EnemyHumanoidDismembermentCount;
+                config.EnemyMonsterDismembermentBonePercent = defaults.EnemyMonsterDismembermentBonePercent;
                 config.Save();
             }
-            HelpMarker("Restore enemy settings to defaults: disabled, human limb count 3, monster bone percent 50%.");
+            HelpMarker("Restore enemy settings to defaults: enabled, human limb count 0, monster bone percent 100%.");
 
             var enemyDismember = config.EnableEnemyDismemberment;
             if (ImGui.Checkbox("Enable for enemies##enemy_dismemberment_enable", ref enemyDismember))

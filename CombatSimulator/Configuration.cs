@@ -1104,6 +1104,9 @@ public partial class Configuration : IPluginConfiguration
         nameof(MaxNpcRagdolls),
         nameof(PartyCompanionDeathRagdoll),
         nameof(PartyEnemyDeathRagdoll),
+        nameof(NpcRagdollSolverIterations),
+        nameof(NpcRagdollSolverSubsteps),
+        nameof(WeaponBodyMeshContacts),
     };
 
     /// <summary>
@@ -1124,6 +1127,8 @@ public partial class Configuration : IPluginConfiguration
         nameof(RagdollVerboseLog),
         // Lives under Effects now (its own dropdown), not this page.
         nameof(RagdollFollowPosition),
+        // A rebuild counter, not an option: zeroing it rebuilds every live ragdoll.
+        nameof(RagdollMeshCacheRevision),
 
         // One-shot migration records, not options. Resetting them would re-run the
         // migrations on next load (harmless thanks to their value guards, but wrong).
@@ -1135,6 +1140,9 @@ public partial class Configuration : IPluginConfiguration
     private static bool IsRagdollPageOption(string name)
     {
         if (RagdollPageResetExclusions.Contains(name)) return false;
+        // Every one-shot migration record, current and future: resetting one re-runs its migration on
+        // next load, and the leg-model rebuild migration wipes the saved bone profiles.
+        if (name.Contains("Migrated", StringComparison.Ordinal)) return false;
 
         return name.StartsWith("Ragdoll", StringComparison.Ordinal)
             || name.StartsWith("WeaponDrop", StringComparison.Ordinal)

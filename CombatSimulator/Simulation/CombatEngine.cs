@@ -151,9 +151,9 @@ public partial class CombatEngine : IDisposable
     public Action? BeforePlayerDeath { get; set; }
 
     // Configuration (set from plugin config)
-    public float DamageMultiplier { get; set; } = 1.0f;
-    public bool EnableCriticalHits { get; set; } = true;
-    public bool EnableDirectHits { get; set; } = true;
+    private float DamageMultiplier => config.DamageMultiplier;
+    private bool EnableCriticalHits => config.EnableCriticalHits;
+    private bool EnableDirectHits => config.EnableDirectHits;
     private const int GuardMpRestore = 1000;
     private const int BasicAttackMpRestore = 300;
 
