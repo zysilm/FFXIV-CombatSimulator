@@ -1054,7 +1054,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             return;
 
         // Weapon drop is part of ragdoll — same activation delay.
-        weaponDropController.SpawnFor(address, config.NpcRagdollActivationDelay);
+        weaponDropController.SpawnFor(address, Animation.RagdollTuning.NpcActivationDelay);
 
         if (HasLiveNpcRagdoll(address)) return;
 
@@ -1078,7 +1078,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         if (bones.Count > 0)
         {
             foreach (var bone in bones)
-                dismembermentController.SpawnFor(address, bone, config.NpcRagdollActivationDelay, null);
+                dismembermentController.SpawnFor(address, bone, Animation.RagdollTuning.NpcActivationDelay, null);
             log.Info($"NPC death ragdoll: selected {bones.Count} visual parts for 0x{address:X}");
         }
 
@@ -1088,7 +1088,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // together lands all of those on top of each other. Each activation pushes the next one
         // further out; the budget decays in ProcessPendingNpcRagdolls, so it only bites during a
         // burst and is back to zero by the next fight.
-        controller.Activate(address, config.NpcRagdollActivationDelay + npcRagdollStaggerBudget);
+        controller.Activate(address, Animation.RagdollTuning.NpcActivationDelay + npcRagdollStaggerBudget);
         npcRagdollStaggerBudget = MathF.Min(
             npcRagdollStaggerBudget + NpcRagdollActivationStagger, NpcRagdollMaxStagger);
         npcRagdolls[address] = controller;
@@ -1247,7 +1247,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     /// </summary>
     private float? ResolveCorpseTraversalHeight(nint actorAddress, Vector3 position)
     {
-        if (!config.NpcCollisionActive || !config.RagdollNpcCorpseTraversal)
+        if (!config.NpcCollisionActive)
             return null;
 
         var footProbeRadius = 0.24f;

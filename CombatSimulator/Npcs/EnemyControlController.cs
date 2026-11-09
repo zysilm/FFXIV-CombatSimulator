@@ -453,7 +453,7 @@ public unsafe partial class EnemyControlController : IDisposable
         // creature again (an unbounded staircase/spiral). Keep the grab physically colliding and
         // horizontally movable, but terrain-ground its carrier until the constraint is released.
         var allowCorpseTraversal = !ExternalControlActive && !grabAttackActive &&
-                                   config.NpcCollisionActive && config.RagdollNpcCorpseTraversal;
+                                   config.NpcCollisionActive;
         if (allowCorpseTraversal)
             FootIkSolver?.Track(controlledAddress, dt);
 
@@ -790,7 +790,7 @@ public unsafe partial class EnemyControlController : IDisposable
 
             var dynamicTraversal = false;
             if (corpseSlot.HasValue && swarmCorpseRagdoll != null && config.EnemyControlGroundWalk &&
-                config.NpcCollisionActive && config.RagdollNpcCorpseTraversal)
+                config.NpcCollisionActive)
             {
                 var visualScale = GetVisualScale(go);
                 // Let ordinary navigation cover long distances. Once the follower reaches the
@@ -980,7 +980,7 @@ public unsafe partial class EnemyControlController : IDisposable
         swarmCorpseReservations.Clear();
         swarmCorpseSlots.Clear();
         if (!config.EnemyControlSwarmClimbCorpses || !config.EnemyControlGroundWalk ||
-            !config.NpcCollisionActive || !config.RagdollNpcCorpseTraversal ||
+            !config.NpcCollisionActive ||
             corpseRagdoll.CollectCorpseTraversalSlots(swarmCorpseSlots) == 0)
         {
             ClearAllSwarmCorpseSlots();

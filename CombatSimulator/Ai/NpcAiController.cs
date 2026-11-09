@@ -265,7 +265,7 @@ public unsafe partial class NpcAiController : IDisposable
             if (isExternallyControlled(npc.Address))
                 continue;
 
-            if (config.NpcCollisionActive && config.RagdollNpcCorpseTraversal)
+            if (config.NpcCollisionActive)
                 footIkSolver.Track(npc.Address, deltaTime);
 
             // Keep active targets in battle stance (drawn weapon / combat idle)
@@ -1180,7 +1180,7 @@ public unsafe partial class NpcAiController : IDisposable
 
         if (Vector3.Distance(npcPos, moveTarget) <= 0.3f)
         {
-            if ((hasVnavmeshTarget || (config.NpcCollisionActive && config.RagdollNpcCorpseTraversal)) && terrainCache != null &&
+            if ((hasVnavmeshTarget || (config.NpcCollisionActive)) && terrainCache != null &&
                 TryGetOrCreateApproachPathState(npc, out var arrivedPathState))
                 CorrectStableRootHeight(gameObj, npcPos, terrainCache, arrivedPathState, deltaTime, preserveInitialClearance: true);
 
@@ -1198,7 +1198,7 @@ public unsafe partial class NpcAiController : IDisposable
             ? moveTarget
             : npcPos + Vector3.Normalize(moveTarget - npcPos) * moveDist;
 
-        if ((hasVnavmeshTarget || (config.NpcCollisionActive && config.RagdollNpcCorpseTraversal)) && terrainCache != null &&
+        if ((hasVnavmeshTarget || (config.NpcCollisionActive)) && terrainCache != null &&
             TryGetOrCreateApproachPathState(npc, out var pathState))
         {
             newPos = CorrectMovingRootHeight(npc.Address, newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: true,
@@ -2106,7 +2106,7 @@ public unsafe partial class NpcAiController : IDisposable
         // version tried to detect "both feet on the corpse" here itself with two probes either side of
         // centre, but a corpse is almost always wider than the probe spacing, so it still lifted root
         // for a single foot near the edge too — the exact float this was meant to fix.
-        var pelvisOffset = config.NpcCollisionActive && config.RagdollNpcCorpseTraversal
+        var pelvisOffset = config.NpcCollisionActive
             ? footIkSolver.GetPelvisOffset(actorAddress)
             : 0f;
         var desiredY = terrainY + pelvisOffset + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;

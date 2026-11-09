@@ -28,7 +28,7 @@ public unsafe partial class RagdollController
     {
         if (simulation == null) return;
         SyncWeaponContactProxies();
-        if (!config.RagdollMeshParallelPhysics || !activeRagdollMeshVolumes || activeRagdollIsGeneric)
+        if (!activeRagdollMeshVolumes || activeRagdollIsGeneric)
         {
             ReleaseMeshDispatcher();
             simulation.Timestep(timestep);

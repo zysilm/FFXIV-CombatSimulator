@@ -444,7 +444,6 @@ public partial class MainWindow
 
     /// <summary>
     /// Save/load/delete a named snapshot of the whole grab setup below (pairs, fitting, arm pose).
-    /// Interaction mirrors DrawRagdollBoneProfilesSection (Ragdoll's bone-profile list).
     /// </summary>
     private void DrawEnemyControlGrabProfilesSection()
     {
@@ -772,7 +771,7 @@ public partial class MainWindow
         }
 
         var pending = new List<string>();
-        foreach (var bone in config.RagdollBoneConfigs)
+        foreach (var bone in RagdollController.AllBoneDefaults)
             pending.Add(bone.Name);
         return pending;
     }

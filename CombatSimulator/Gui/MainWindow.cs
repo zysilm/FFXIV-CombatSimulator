@@ -40,13 +40,7 @@ public partial class MainWindow : IDisposable
         ("Head (j_kao)", "j_kao"),
     };
 
-    private static readonly string[] NpcCollisionModeLabels =
-    {
-        "Bone capsule",
-        "Convex hull",
-        "Mesh (skinned)",
-        "Animated mesh (experimental)",
-    };
+    private static readonly string[] NpcCollisionModeLabels = { "Fast", "Accurate" };
 
     private readonly Configuration config;
     private readonly NpcSelector npcSelector;
@@ -79,10 +73,8 @@ public partial class MainWindow : IDisposable
     private int glamourerResetSelectedIndex = -1;
     private bool showControlsPopup;
 
-    // Skeleton bone cache for ragdoll advanced UI
+    // Local player's skeleton bone names (Virtual Enemies look-at bone fallback list).
     private string[] skeletonBoneNames = Array.Empty<string>();
-    private Dictionary<string, string?> skeletonBoneParents = new();
-    private bool skeletonBonesLoaded;
     private string virtualEnemyLookAtBoneFilter = "";
     private IReadOnlyList<string> virtualEnemyLookAtBoneNames = Array.Empty<string>();
     public Func<IReadOnlyList<string>>? VirtualEnemyLookAtBonesProvider { get; set; }
@@ -91,8 +83,6 @@ public partial class MainWindow : IDisposable
     private string enemyWarningVfxFilter = "";
     private string hitVfxFilter = "";
 
-    private static readonly string[] SoftTissueScopeNames =
-        { "Standard (mod bones)", "All bones", "All bones except digits" };
     private static readonly string[] ActionGuardKeyLabels = { "Shift", "Ctrl", "Alt", "None" };
     private static readonly int[] ActionGuardKeyValues = { 16, 17, 18, 0 };
     private static readonly string[] ActionGamepadButtonLabels = { "R1", "L1", "R2", "L2", "Circle / East", "Cross / South", "Square / West", "Triangle / North", "None" };
@@ -110,11 +100,6 @@ public partial class MainWindow : IDisposable
     };
     private static readonly Regex AvfxPathRegex = new(@"\u0000([a-zA-Z0-9\/_]*?)\.avfx", RegexOptions.Compiled);
 
-    // Ragdoll bone profile state (Advanced page — per-bone configs)
-    private string newBoneProfileName = "";
-    private int selectedBoneProfileIndex = -1;
-    private bool boneProfileOverwritePopupOpen = false;
-    private string boneProfileOverwriteTarget = "";
 
     // Optional experimental dev hooks — implemented only when the private module is compiled in;
     // elided to no-ops otherwise (so the public build shows no dev section / entry / PC dismember).
@@ -214,11 +199,6 @@ public partial class MainWindow : IDisposable
     }
 
     private int selectedTab = 0;
-    /// <summary>Name of the bone currently being edited in the advanced UI (for overlay highlighting).</summary>
-    public string? EditingBoneName { get; private set; }
-    /// <summary>Which parameter is being actively dragged (for joint limit visualization).</summary>
-    public enum EditParam { None, Swing, TwistMin, TwistMax }
-    public EditParam EditingParameter { get; private set; }
 
     private static readonly string[] TabNames = new[]
     {
@@ -228,7 +208,6 @@ public partial class MainWindow : IDisposable
         "Effects",
         "Camera",
         "Ragdoll",
-        "Ragdoll (Adv)",
         "Virtual Enemies",
         "Spectators (Experimental)",
         "Settings",
@@ -377,24 +356,19 @@ public partial class MainWindow : IDisposable
                 if (ImGui.Button("Reset All to Defaults##ragdollpage"))
                     config.ResetRagdollPageDefaults();
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Restore every option on this page — ragdoll, guided collapse, NPC collision and its settle pass.\n\n" +
-                                     "Leaves Enable Ragdoll alone (resetting it would switch the feature off and take the page with it), " +
-                                     "and leaves the per-bone table and your saved profiles alone: the Advanced page has its own reset for " +
-                                     "the table, and the profiles are your work.");
+                    ImGui.SetTooltip("Restore every option on this page to its default.\n" +
+                                     "Leaves Enable Ragdoll alone: resetting it would switch the feature off and take the page with it.");
                 break;
-            case 6: // Ragdoll (Advanced)
-                DrawRagdollAdvancedSection();
-                break;
-            case 7: // Virtual Enemies
+            case 6: // Virtual Enemies
                 DrawVirtualEnemiesTab();
                 break;
-            case 8: // Spectators (Experimental)
+            case 7: // Spectators (Experimental)
                 DrawSpectatorsTab();
                 break;
-            case 9: // Settings
+            case 8: // Settings
                 DrawGuiSettingsSection();
                 break;
-            case 10: // Diagnose
+            case 9: // Diagnose
                 DrawDiagnoseSection();
                 break;
             default:
@@ -2619,405 +2593,8 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private void DrawRagdollAdvancedSection()
-    {
-        if (ImGui.CollapsingHeader("Mesh Collision [Experimental]##ragdollMeshCollisionSection"))
-            DrawRagdollMeshCollisionSection();
-
-        if (ImGui.CollapsingHeader("Ragdoll Dev Settings##ragdollDevSection"))
-            DrawRagdollDevSection();
-    }
-
-    private void DrawRagdollMeshCollisionSection()
-    {
-        var meshVolumes = config.RagdollMeshVolumes;
-        if (ImGui.Checkbox("Rendered Mesh Body Collision##ragdollMeshVolumes", ref meshVolumes))
-        {
-            config.RagdollMeshVolumes = meshVolumes;
-            config.RefreshRagdollMeshCache();
-            config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Captures visible body/equipment surfaces once into a session cache. Body parts keep fixed collision shapes during ragdoll; no live skin or mesh refit. Unsupported regions use fallback volumes. Off by default.\nToggle off/on or refresh manually after Glamourer, race, model, outfit or scale changes. Fixed joint surfaces may differ from animated skin.\n\n" +
-                             ragdollController.MeshGeometryStatus);
-        if (meshVolumes)
-        {
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Refresh Mesh##ragdollMeshRefresh")) config.RefreshRagdollMeshCache();
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Replace the cached mesh with the current model and pose. Use after changing Glamourer, race, model, outfit or scale. An active ragdoll will restart with the new cache.");
-            var parallelPhysics = config.RagdollMeshParallelPhysics;
-            if (ImGui.Checkbox("Parallel Mesh Physics##ragdollMeshParallel", ref parallelPhysics))
-            {
-                config.RagdollMeshParallelPhysics = parallelPhysics;
-                config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Uses two CPU workers for mesh physics. Can improve CPU-bound scenes, but may compete with game rendering on busy CPUs. Changes apply immediately.");
-            var collisionLod = config.RagdollMeshCollisionLod;
-            if (ImGui.Checkbox("Collision Mesh LOD##ragdollMeshLod", ref collisionLod))
-            {
-                config.RagdollMeshCollisionLod = collisionLod;
-                config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Collision-only simplification, built in the background and retained in the session cache. Full surfaces remain available for queries. Performance depends on contact patterns; fewer triangles do not always mean faster physics.\nChanges take effect on the next ragdoll activation.");
-            if (collisionLod)
-            {
-                var toleranceMm = float.IsFinite(config.RagdollMeshLodToleranceMm)
-                    ? Math.Clamp(config.RagdollMeshLodToleranceMm, .5f, 50f) : 3f;
-                if (ImGui.SliderFloat("LOD Target Error##ragdollMeshLodError", ref toleranceMm, .5f, 50f, "%.1f mm"))
-                    config.RagdollMeshLodToleranceMm = toleranceMm;
-                if (ImGui.IsItemDeactivatedAfterEdit()) config.Save();
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Larger values allow more simplification, but can visibly change ground contact and body contours. This is a finite-sample approximation target for the cached surface.\n" +
-                                     "Fixed collision parts are not deformed with the skin during ragdoll. Changes take effect on the next ragdoll activation.");
-            }
-            var contactQuality = Math.Clamp(config.RagdollMeshContactQuality, 0, 100);
-            if (ImGui.SliderInt("Mesh Contact Quality##ragdollMeshQuality", ref contactQuality, 0, 100, "%d%%"))
-            {
-                config.RagdollMeshContactQuality = contactQuality;
-            }
-            if (ImGui.IsItemDeactivatedAfterEdit()) config.Save();
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Lower values reduce body-to-body contact search for better performance; small or narrow contacts may be missed.\n" +
-                                 "Terrain contacts and the original body mesh remain complete. Changes apply immediately.\n" +
-                                 "Skin deformation and joint solving still have a fixed cost, so this does not set an FPS limit.");
-        }
-        ImGui.Spacing();
-    }
-
-    private void DrawRagdollDevSection()
-    {
-        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Per-Bone Physics Parameters");
-        ImGui.Spacing();
-
-        var surfaceProfiles = config.RagdollCharacterSurfaceProfiles;
-        if (ImGui.Checkbox("Mesh-Derived Fallback Thickness##ragdollSurfaceProfiles", ref surfaceProfiles))
-        {
-            config.RagdollCharacterSurfaceProfiles = surfaceProfiles;
-            config.Save();
-            if (ragdollController.IsActive)
-            {
-                var addr = ragdollController.TargetCharacterAddress;
-                ragdollController.Deactivate();
-                if (addr != nint.Zero) ragdollController.Activate(addr);
-            }
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Fits collision center, axis, length and thickness from the weighted body mesh; includes hands, feet and j_asi_e toes. Profiles do not author humanoid geometry while enabled. Default on.");
-        ImGui.Spacing();
-
-        var debugOverlay = config.RagdollDebugOverlay;
-        if (ImGui.Checkbox("Show Debug Overlay##ragdollAdv", ref debugOverlay))
-        {
-            config.RagdollDebugOverlay = debugOverlay;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Renders body surfaces and joints in 3D. With collision LOD enabled, the mesh wireframe shows the full source surface.");
-        ImGui.Spacing();
-
-        var groundLift = config.RagdollGroundPenetrationLift;
-        if (ImGui.Checkbox("Ground-Penetration Lift##ragdollAdv", ref groundLift))
-        {
-            config.RagdollGroundPenetrationLift = groundLift;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("On activation, uniformly lifts the whole rig if any bone would start underground (usually a bent knee). Off by default — conflicts with Ragdoll Follow.");
-        ImGui.Spacing();
-
-        if (surfaceProfiles)
-        {
-            return;
-        }
-
-        DrawRagdollBoneProfilesSection();
-        ImGui.Spacing();
-
-        // Quick toggle for weapon holster/sheathe bones
-        {
-            var bukiBones = new[] { "j_buki_kosi_l", "j_buki_kosi_r", "j_buki2_kosi_l", "j_buki2_kosi_r", "j_buki_sebo_l", "j_buki_sebo_r" };
-            bool anyOn = false;
-            foreach (var b in config.RagdollBoneConfigs)
-                if (Array.IndexOf(bukiBones, b.Name) >= 0 && b.Enabled) { anyOn = true; break; }
-
-            var bukiEnabled = anyOn;
-            if (ImGui.Checkbox("Sheathed Weapon Physics##ragdollAdv", ref bukiEnabled))
-            {
-                foreach (var b in config.RagdollBoneConfigs)
-                    if (Array.IndexOf(bukiBones, b.Name) >= 0)
-                        b.Enabled = bukiEnabled;
-                config.Save();
-                if (ragdollController.IsActive)
-                {
-                    var addr = ragdollController.TargetCharacterAddress;
-                    ragdollController.Deactivate();
-                    if (addr != nint.Zero) ragdollController.Activate(addr);
-                }
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Toggle all j_buki holster/scabbard bones.");
-        }
-
-        if (ragdollController.IsActive)
-        {
-            if (ImGui.Button("Apply Changes (Reactivate Ragdoll)"))
-            {
-                var addr = ragdollController.TargetCharacterAddress;
-                ragdollController.Deactivate();
-                if (addr != nint.Zero)
-                    ragdollController.Activate(addr);
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Reactivate the ragdoll to apply changed bone settings.");
-            ImGui.Spacing();
-        }
-
-        // Read skeleton bones from player character (once, or on refresh)
-        if (!skeletonBonesLoaded)
-            RefreshSkeletonBones();
-
-        if (ImGui.Button("Refresh Bones"))
-            RefreshSkeletonBones();
-        ImGui.SameLine();
-        ImGui.TextDisabled($"{skeletonBoneNames.Length} bones in skeleton");
-        ImGui.Spacing();
-
-        // Populate config from C# defaults + skeleton if empty
-        if (config.RagdollBoneConfigs.Count == 0)
-            PopulateBoneConfigsFromDefaults();
-
-        // Sync: add any skeleton bones not yet in config (new bones get disabled defaults)
-        SyncConfigWithSkeleton();
-
-        if (ImGui.Button("Reset All to Defaults##boneconfigs"))
-        {
-            // Clear JSON → GetBoneDefs falls back to C# DefaultBoneDefs
-            config.RagdollBoneConfigs.Clear();
-            config.Save();
-            // Re-populate UI from C# defaults
-            PopulateBoneConfigsFromDefaults();
-            if (ragdollController.IsActive)
-            {
-                var addr = ragdollController.TargetCharacterAddress;
-                ragdollController.Deactivate();
-                if (addr != nint.Zero)
-                    ragdollController.Activate(addr);
-            }
-        }
-
-        var enabledCount = 0;
-        foreach (var b in config.RagdollBoneConfigs)
-            if (b.Enabled) enabledCount++;
-        ImGui.SameLine();
-        ImGui.TextDisabled($"{enabledCount}/{config.RagdollBoneConfigs.Count} bones active");
-
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-
-        var jointTypes = new[] { "Ball", "Hinge" };
-        var anatomicalRoles = Enum.GetNames<RagdollController.AnatomicalRole>();
-        var colliderShapes = Enum.GetNames<RagdollController.RagdollColliderShape>();
-        var changed = false;
-        // EditingBoneName persists — only updated on value/toggle change
-
-        for (int i = 0; i < config.RagdollBoneConfigs.Count; i++)
-        {
-            var bone = config.RagdollBoneConfigs[i];
-            var id = $"##{bone.Name}";
-
-            // Enable/disable checkbox
-            var enabled = bone.Enabled;
-            if (ImGui.Checkbox($"##en{bone.Name}", ref enabled))
-            {
-                bone.Enabled = enabled;
-                changed = true;
-                EditingBoneName = bone.Name;
-                // Auto-reactivate so overlay updates immediately
-                if (ragdollController.IsActive)
-                {
-                    config.Save();
-                    var addr = ragdollController.TargetCharacterAddress;
-                    ragdollController.Deactivate();
-                    if (addr != nint.Zero)
-                        ragdollController.Activate(addr);
-                }
-            }
-            ImGui.SameLine();
-
-            // Header color: bright for enabled, dim for disabled
-            var headerColor = bone.Enabled
-                ? new Vector4(0.9f, 0.95f, 1f, 1f)
-                : new Vector4(0.5f, 0.5f, 0.5f, 1f);
-            ImGui.PushStyleColor(ImGuiCol.Text, headerColor);
-
-            var headerLabel = bone.Enabled
-                ? $"{bone.Name} ({(bone.JointType == 0 ? "Ball" : "Hinge")}){id}"
-                : $"{bone.Name} (off){id}";
-
-            var isOpen = ImGui.CollapsingHeader(headerLabel);
-            ImGui.PopStyleColor();
-
-            if (isOpen)
-            {
-                ImGui.Indent(10);
-
-                if (bone.SkeletonParent != null)
-                    ImGui.TextDisabled($"Skeleton parent: {bone.SkeletonParent}");
-
-                if (bone.Enabled)
-                {
-                    var jt = bone.JointType;
-                    if (ImGui.Combo($"Joint Type{id}", ref jt, jointTypes, jointTypes.Length))
-                    { bone.JointType = jt; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-
-                    var role = bone.AnatomicalRole;
-                    if (ImGui.Combo($"Anatomical Role{id}", ref role, anatomicalRoles, anatomicalRoles.Length))
-                    { bone.AnatomicalRole = role; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-
-                    var shape = bone.ColliderShape;
-                    if (ImGui.Combo($"Collider Shape{id}", ref shape, colliderShapes, colliderShapes.Length))
-                    { bone.ColliderShape = shape; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-
-                    var radius = bone.CapsuleRadius;
-                    if (ImGui.SliderFloat($"Capsule Radius{id}", ref radius, 0.01f, 0.3f, "%.3f"))
-                    { bone.CapsuleRadius = radius; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-
-                    var halfLen = bone.CapsuleHalfLength;
-                    if (ImGui.SliderFloat($"Capsule Half-Length{id}", ref halfLen, 0.0f, 0.3f, "%.3f"))
-                    { bone.CapsuleHalfLength = halfLen; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-
-                    if ((RagdollController.RagdollColliderShape)bone.ColliderShape == RagdollController.RagdollColliderShape.Box)
-                    {
-                        var boxX = bone.BoxHalfExtentX;
-                        if (ImGui.SliderFloat($"Box Half X{id}", ref boxX, 0.005f, 0.3f, "%.3f"))
-                        { bone.BoxHalfExtentX = boxX; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-
-                        var boxY = bone.BoxHalfExtentY;
-                        if (ImGui.SliderFloat($"Box Half Y{id}", ref boxY, 0.005f, 0.3f, "%.3f"))
-                        { bone.BoxHalfExtentY = boxY; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-
-                        var boxZ = bone.BoxHalfExtentZ;
-                        if (ImGui.SliderFloat($"Box Half Z{id}", ref boxZ, 0.005f, 0.3f, "%.3f"))
-                        { bone.BoxHalfExtentZ = boxZ; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-                    }
-
-                    var mass = bone.Mass;
-                    if (ImGui.SliderFloat($"Mass{id}", ref mass, 0.1f, 15.0f, "%.1f"))
-                    { bone.Mass = mass; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-
-                    var swing = bone.SwingLimit;
-                    if (ImGui.SliderFloat($"Swing Limit (rad){id}", ref swing, 0.0f, MathF.PI, "%.2f"))
-                    { bone.SwingLimit = swing; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
-
-                    if ((RagdollController.JointType)bone.JointType == RagdollController.JointType.Hinge)
-                    {
-                        var swingMin = bone.SwingMinLimit ?? 0f;
-                        if (ImGui.SliderFloat($"Swing Min Limit (rad){id}", ref swingMin, 0.0f, MathF.PI, "%.2f"))
-                        { bone.SwingMinLimit = swingMin; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
-
-                        var restAngle = bone.HingeRestAngle ?? 0f;
-                        if (ImGui.SliderFloat($"Hinge Rest Angle (rad){id}", ref restAngle, 0.0f, MathF.PI, "%.2f"))
-                        { bone.HingeRestAngle = restAngle; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.Swing; }
-
-                        var restFreq = bone.HingeRestSpringFreq ?? 0f;
-                        if (ImGui.SliderFloat($"Hinge Rest Freq (Hz){id}", ref restFreq, 0.0f, 30.0f, "%.1f"))
-                        { bone.HingeRestSpringFreq = restFreq; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-
-                        var restForce = bone.HingeRestMaxForce ?? 0f;
-                        if (ImGui.SliderFloat($"Hinge Rest Max Force{id}", ref restForce, 0.0f, 500.0f, "%.0f"))
-                        { bone.HingeRestMaxForce = restForce; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-                    }
-
-                    var twistMin = bone.TwistMinAngle;
-                    if (ImGui.SliderFloat($"Twist Min (rad){id}", ref twistMin, -MathF.PI, 0f, "%.2f"))
-                    { bone.TwistMinAngle = twistMin; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.TwistMin; }
-
-                    var twistMax = bone.TwistMaxAngle;
-                    if (ImGui.SliderFloat($"Twist Max (rad){id}", ref twistMax, 0f, MathF.PI, "%.2f"))
-                    { bone.TwistMaxAngle = twistMax; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.TwistMax; }
-
-                    // Soft body settings
-                    var softBody = bone.SoftBody;
-                    if (ImGui.Checkbox($"Soft Body##soft{bone.Name}", ref softBody))
-                    { bone.SoftBody = softBody; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-                    ImGui.SameLine();
-                    ImGui.TextDisabled("Bouncy spring physics (breast/jiggle)");
-
-                    if (bone.SoftBody)
-                    {
-                        var ssFreq = bone.SoftSpringFreq;
-                        if (ImGui.SliderFloat($"Spring Freq (Hz){id}", ref ssFreq, 1f, 30f, "%.1f"))
-                        { bone.SoftSpringFreq = ssFreq; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-
-                        var ssDamp = bone.SoftSpringDamp;
-                        if (ImGui.SliderFloat($"Spring Damping{id}", ref ssDamp, 0.05f, 1.0f, "%.2f"))
-                        { bone.SoftSpringDamp = ssDamp; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-
-                        var svFreq = bone.SoftServoFreq;
-                        if (ImGui.SliderFloat($"Servo Freq (Hz){id}", ref svFreq, 1f, 20f, "%.1f"))
-                        { bone.SoftServoFreq = svFreq; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-
-                        var svDamp = bone.SoftServoDamp;
-                        if (ImGui.SliderFloat($"Servo Damping{id}", ref svDamp, 0.05f, 1.0f, "%.2f"))
-                        { bone.SoftServoDamp = svDamp; changed = true; EditingBoneName = bone.Name; EditingParameter = EditParam.None; }
-                    }
-
-                    // Reset this bone to its default
-                    var defaultBone = Array.Find(
-                        RagdollController.AllBoneDefaults, candidate => candidate.Name == bone.Name);
-                    if (defaultBone != null)
-                    {
-                        if (ImGui.SmallButton($"Reset{id}"))
-                        {
-                            var def = CloneBoneConfig(defaultBone);
-                            bone.CapsuleRadius = def.CapsuleRadius;
-                            bone.CapsuleHalfLength = def.CapsuleHalfLength;
-                            bone.Mass = def.Mass;
-                            bone.SwingLimit = def.SwingLimit;
-                            bone.SwingMinLimit = def.SwingMinLimit;
-                            bone.HingeRestAngle = def.HingeRestAngle;
-                            bone.HingeRestSpringFreq = def.HingeRestSpringFreq;
-                            bone.HingeRestMaxForce = def.HingeRestMaxForce;
-                            bone.JointType = def.JointType;
-                            bone.TwistMinAngle = def.TwistMinAngle;
-                            bone.TwistMaxAngle = def.TwistMaxAngle;
-                            bone.AnatomicalRole = def.AnatomicalRole;
-                            bone.ColliderShape = def.ColliderShape;
-                            bone.BoxHalfExtentX = def.BoxHalfExtentX;
-                            bone.BoxHalfExtentY = def.BoxHalfExtentY;
-                            bone.BoxHalfExtentZ = def.BoxHalfExtentZ;
-                            bone.Enabled = def.Enabled;
-                            bone.SoftBody = def.SoftBody;
-                            bone.SoftSpringFreq = def.SoftSpringFreq;
-                            bone.SoftSpringDamp = def.SoftSpringDamp;
-                            bone.SoftServoFreq = def.SoftServoFreq;
-                            bone.SoftServoDamp = def.SoftServoDamp;
-                            changed = true;
-                            EditingBoneName = bone.Name;
-                        }
-                    }
-                }
-                else
-                {
-                    ImGui.TextDisabled("Enable this bone to edit parameters.");
-                }
-
-                ImGui.Unindent(10);
-                ImGui.Spacing();
-            }
-        }
-
-        if (changed)
-            config.Save();
-    }
-
     private unsafe void RefreshSkeletonBones()
     {
-        skeletonBonesLoaded = true;
         var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null) return;
 
@@ -3031,123 +2608,15 @@ public partial class MainWindow : IDisposable
         if (pose == null || pose->Skeleton == null) return;
 
         var havokBones = pose->Skeleton->Bones;
-        var parentIndices = pose->Skeleton->ParentIndices;
         var names = new List<string>();
-        var parents = new Dictionary<string, string?>();
-
         for (int i = 0; i < havokBones.Length; i++)
         {
             var name = havokBones[i].Name.String;
-            if (string.IsNullOrWhiteSpace(name)) continue;
-            names.Add(name);
-
-            string? parentName = null;
-            if (i < parentIndices.Length)
-            {
-                var pi = parentIndices[i];
-                if (pi >= 0 && pi < havokBones.Length)
-                    parentName = havokBones[pi].Name.String;
-            }
-            parents[name] = parentName;
+            if (!string.IsNullOrWhiteSpace(name))
+                names.Add(name);
         }
 
         skeletonBoneNames = names.ToArray();
-        skeletonBoneParents = parents;
-    }
-
-    /// <summary>Populate config from C# AllBoneDefaults (source of truth).</summary>
-    private void PopulateBoneConfigsFromDefaults()
-    {
-        config.RagdollBoneConfigs.Clear();
-        foreach (var def in RagdollController.AllBoneDefaults)
-            config.RagdollBoneConfigs.Add(CloneBoneConfig(def));
-        config.Save();
-    }
-
-    /// <summary>Add skeleton bones not yet in config. Never modifies existing entries.</summary>
-    private void SyncConfigWithSkeleton()
-    {
-        if (skeletonBoneNames.Length == 0) return;
-
-        var existing = new HashSet<string>();
-        foreach (var c in config.RagdollBoneConfigs)
-            existing.Add(c.Name);
-
-        bool added = false;
-        foreach (var boneName in skeletonBoneNames)
-        {
-            if (existing.Contains(boneName)) continue;
-
-            skeletonBoneParents.TryGetValue(boneName, out var skelParent);
-
-            // Check AllBoneDefaults for known defaults
-            RagdollBoneConfig? known = null;
-            foreach (var def in RagdollController.AllBoneDefaults)
-                if (def.Name == boneName) { known = CloneBoneConfig(def); break; }
-
-            if (known != null)
-            {
-                // Update skeleton parent from live data
-                known.SkeletonParent = skelParent;
-                config.RagdollBoneConfigs.Add(known);
-            }
-            else
-            {
-                // Unknown bone — safe disabled defaults
-                var unknown = new RagdollBoneConfig
-                {
-                    Name = boneName,
-                    SkeletonParent = skelParent,
-                    Enabled = false,
-                    CapsuleRadius = 0.03f,
-                    CapsuleHalfLength = 0.03f,
-                    Mass = 1.0f,
-                    SwingLimit = 0.3f,
-                    JointType = 0,
-                    TwistMinAngle = -0.2f,
-                    TwistMaxAngle = 0.2f,
-                };
-                RagdollController.FillProfileDefaults(unknown);
-                config.RagdollBoneConfigs.Add(unknown);
-            }
-            added = true;
-        }
-
-        if (added) config.Save();
-    }
-
-    private static RagdollBoneConfig CloneBoneConfig(RagdollBoneConfig src)
-    {
-        var clone = new RagdollBoneConfig
-        {
-            Name = src.Name,
-            SkeletonParent = src.SkeletonParent,
-            Enabled = src.Enabled,
-            CapsuleRadius = src.CapsuleRadius,
-            CapsuleHalfLength = src.CapsuleHalfLength,
-            Mass = src.Mass,
-            SwingLimit = src.SwingLimit,
-            SwingMinLimit = src.SwingMinLimit,
-            HingeRestAngle = src.HingeRestAngle,
-            HingeRestSpringFreq = src.HingeRestSpringFreq,
-            HingeRestMaxForce = src.HingeRestMaxForce,
-            JointType = src.JointType,
-            TwistMinAngle = src.TwistMinAngle,
-            TwistMaxAngle = src.TwistMaxAngle,
-            AnatomicalRole = src.AnatomicalRole,
-            ColliderShape = src.ColliderShape,
-            BoxHalfExtentX = src.BoxHalfExtentX,
-            BoxHalfExtentY = src.BoxHalfExtentY,
-            BoxHalfExtentZ = src.BoxHalfExtentZ,
-            Description = src.Description,
-            SoftBody = src.SoftBody,
-            SoftSpringFreq = src.SoftSpringFreq,
-            SoftSpringDamp = src.SoftSpringDamp,
-            SoftServoFreq = src.SoftServoFreq,
-            SoftServoDamp = src.SoftServoDamp,
-        };
-        RagdollController.FillProfileDefaults(clone);
-        return clone;
     }
 
     private void DrawDiagnoseSection()
@@ -3607,535 +3076,30 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private void DrawRagdollBoneProfilesSection()
-    {
-        if (!ImGui.CollapsingHeader("Bone Profiles", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
-        var profiles = config.RagdollBoneProfiles;
-        var profileNames = new string[profiles.Count];
-        for (int i = 0; i < profiles.Count; i++)
-            profileNames[i] = profiles[i].Name;
-
-        var hasSelection = selectedBoneProfileIndex >= 0 && selectedBoneProfileIndex < profiles.Count;
-
-        if (ImGui.BeginListBox("##BoneProfileSelect",
-                new Vector2(250, ImGui.GetTextLineHeightWithSpacing() * 6 + ImGui.GetStyle().FramePadding.Y * 2)))
-        {
-            for (int i = 0; i < profileNames.Length; i++)
-            {
-                bool isSelected = selectedBoneProfileIndex == i;
-                if (ImGui.Selectable(profileNames[i], isSelected))
-                    selectedBoneProfileIndex = i;
-                if (isSelected)
-                    ImGui.SetItemDefaultFocus();
-            }
-            ImGui.EndListBox();
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("Load##boneprofile") && hasSelection)
-            LoadBoneProfile(profiles[selectedBoneProfileIndex]);
-
-        ImGui.SameLine();
-        if (ImGui.Button("Overwrite##boneprofile") && hasSelection)
-        {
-            boneProfileOverwriteTarget = profiles[selectedBoneProfileIndex].Name;
-            boneProfileOverwritePopupOpen = true;
-            ImGui.OpenPopup("Confirm Overwrite##BoneProfileOverwrite");
-        }
-
-        ImGui.SameLine();
-        var io = ImGui.GetIO();
-        bool ctrlShiftHeld = io.KeyCtrl && io.KeyShift;
-        if (!ctrlShiftHeld)
-        {
-            ImGui.BeginDisabled();
-            ImGui.Button("Delete##boneprofile");
-            ImGui.EndDisabled();
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                ImGui.SetTooltip("Hold Ctrl+Shift to enable delete.");
-        }
-        else if (ImGui.Button("Delete##boneprofile") && hasSelection)
-        {
-            profiles.RemoveAt(selectedBoneProfileIndex);
-            selectedBoneProfileIndex = Math.Min(selectedBoneProfileIndex, profiles.Count - 1);
-            config.Save();
-        }
-
-        ImGui.SetNextItemWidth(250);
-        ImGui.InputText("##BoneProfileName", ref newBoneProfileName, 64);
-        ImGui.SameLine();
-        if (ImGui.Button("Save Profile##boneprofile") && newBoneProfileName.Length > 0)
-        {
-            var existingIdx = profiles.FindIndex(p =>
-                p.Name.Equals(newBoneProfileName, StringComparison.OrdinalIgnoreCase));
-            if (existingIdx >= 0)
-            {
-                boneProfileOverwriteTarget = newBoneProfileName;
-                boneProfileOverwritePopupOpen = true;
-                ImGui.OpenPopup("Confirm Overwrite##BoneProfileOverwrite");
-            }
-            else
-            {
-                SaveBoneProfile(newBoneProfileName);
-                newBoneProfileName = "";
-            }
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("Reset to Defaults##boneprofile"))
-            LoadBoneDefaults();
-        HelpMarker("Replace the live per-bone config list with built-in defaults from RagdollController.AllBoneDefaults. Does not modify saved profiles.");
-
-        // Overwrite confirmation popup
-        if (ImGui.BeginPopupModal("Confirm Overwrite##BoneProfileOverwrite", ref boneProfileOverwritePopupOpen,
-                ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoMove))
-        {
-            ImGui.Text($"Overwrite profile \"{boneProfileOverwriteTarget}\"?");
-            ImGui.Spacing();
-
-            if (ImGui.Button("Yes", new Vector2(80, 0)))
-            {
-                SaveBoneProfile(boneProfileOverwriteTarget);
-                newBoneProfileName = "";
-                boneProfileOverwritePopupOpen = false;
-                ImGui.CloseCurrentPopup();
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("No", new Vector2(80, 0)))
-            {
-                boneProfileOverwritePopupOpen = false;
-                ImGui.CloseCurrentPopup();
-            }
-            ImGui.EndPopup();
-        }
-    }
-
-    private void SaveBoneProfile(string name)
-    {
-        // Deep-copy the live bone configs into the snapshot
-        var snapshot = new RagdollBoneProfile { Name = name };
-        foreach (var b in config.RagdollBoneConfigs)
-            snapshot.Bones.Add(CloneBoneConfig(b));
-
-        var existing = config.RagdollBoneProfiles.FindIndex(p => p.Name == name);
-        if (existing >= 0)
-            config.RagdollBoneProfiles[existing] = snapshot;
-        else
-            config.RagdollBoneProfiles.Add(snapshot);
-
-        config.Save();
-        chatGui.Print($"[CombatSim] Bone profile '{name}' saved ({snapshot.Bones.Count} bones).");
-    }
-
-    private void LoadBoneProfile(RagdollBoneProfile p)
-    {
-        config.RagdollBoneConfigs.Clear();
-        foreach (var b in p.Bones)
-            config.RagdollBoneConfigs.Add(CloneBoneConfig(b));
-        config.Save();
-        chatGui.Print($"[CombatSim] Bone profile '{p.Name}' loaded ({p.Bones.Count} bones). Reactivate ragdoll to apply.");
-    }
-
-    private void LoadBoneDefaults()
-    {
-        config.RagdollBoneConfigs.Clear();
-        foreach (var def in RagdollController.AllBoneDefaults)
-            config.RagdollBoneConfigs.Add(CloneBoneConfig(def));
-        config.Save();
-        chatGui.Print("[CombatSim] Bone configs reset to defaults. Reactivate ragdoll to apply.");
-    }
-
     private void DrawGuidedCollapseSection()
     {
         if (!ImGui.CollapsingHeader("Guided Collapse##guidedcollapse"))
             return;
 
-        ImGui.Text("Guided Collapse");
-        HelpMarker("Optional procedural death-collapse controller layered on top of ragdoll activation. Requires Enable Ragdoll.");
-
         var guided = config.GuidedCollapse;
         var enabled = guided.Enabled;
-        if (ImGui.Checkbox("Enable Guided Collapse##guidedcollapse", ref enabled))
+        if (ImGui.Checkbox("Knee buckle on death##guidedcollapse", ref enabled))
         {
             guided.Enabled = enabled;
             config.Save();
         }
-
-        ImGui.SameLine();
-        if (ImGui.Button("Restore Defaults##guidedcollapse"))
-        {
-            config.ResetGuidedCollapseDefaults();
-            config.Save();
-        }
-        HelpMarker("Reset all Guided Collapse mode and tuning parameters to built-in defaults.");
+        HelpMarker("On death the knees give way first and the body folds forward over them, instead of dropping straight into a limp ragdoll. Requires Enable Ragdoll.");
 
         if (guided.Enabled && !config.EnableRagdoll)
-            ImGui.TextColored(new Vector4(1f, 0.75f, 0.25f, 1f), "Enable Ragdoll on the Ragdoll page; Guided Collapse only arms during ragdoll activation.");
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.25f, 1f), "Enable Ragdoll above; the knee buckle only arms during ragdoll activation.");
 
         if (guided.Enabled && config.RagdollActivationDelay > 0.001f)
         {
-            ImGui.TextColored(new Vector4(1f, 0.75f, 0.25f, 1f), "Activation Delay is not zero; guided collapse captures the delayed death-animation pose.");
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.25f, 1f), "Activation Delay is not zero; the buckle starts from the delayed death-animation pose.");
             ImGui.SameLine();
             if (ImGui.SmallButton("Set 0##guidedcollapseDelay"))
             {
                 config.RagdollActivationDelay = 0f;
-                config.Save();
-            }
-        }
-
-        using (ImRaii.Disabled(!guided.Enabled))
-        {
-            var mode = Math.Clamp(guided.Mode, 0, guidedCollapseModeNames.Length - 1);
-            if (ImGui.Combo("Mode##guidedcollapse", ref mode, guidedCollapseModeNames, guidedCollapseModeNames.Length))
-            {
-                guided.Mode = mode;
-                config.Save();
-            }
-
-            ImGui.Separator();
-            if (guided.Mode == 0)
-                DrawGuidedRelaxationSettings(guided.Relaxation);
-            else
-                DrawGuidedKneePowerLossSettings(guided.KneePowerLoss);
-        }
-    }
-
-    private void DrawGuidedRelaxationSettings(GuidedCollapseRelaxationSettings s)
-    {
-        ImGui.Text("Relaxation");
-        HelpMarker("Validated hold-then-fade active-ragdoll family. Good for power-off/limp deaths; does not try to kneel.");
-
-        var archetype = Math.Clamp(s.Archetype, 0, guidedRelaxationArchetypeNames.Length - 1);
-        if (ImGui.Combo("Relaxation mode##guidedrelax", ref archetype, guidedRelaxationArchetypeNames, guidedRelaxationArchetypeNames.Length))
-        {
-            s.Archetype = archetype;
-            config.Save();
-        }
-
-        var strength = Math.Clamp(s.Strength, 0.5f, 40f);
-        if (ImGui.SliderFloat("Strength (Hz)##guidedrelax", ref strength, 0.5f, 40f, "%.1f"))
-        {
-            s.Strength = strength;
-            config.Save();
-        }
-
-        var hold = Math.Clamp(s.Hold, 0f, 5f);
-        if (ImGui.SliderFloat("Hold (s)##guidedrelax", ref hold, 0f, 5f, "%.2f"))
-        {
-            s.Hold = hold;
-            config.Save();
-        }
-
-        var fade = Math.Clamp(s.Fade, 0.05f, 8f);
-        if (ImGui.SliderFloat("Fade (s)##guidedrelax", ref fade, 0.05f, 8f, "%.2f"))
-        {
-            s.Fade = fade;
-            config.Save();
-        }
-
-        var brakeStrength = Math.Clamp(s.BrakeStrength, 0f, 1f);
-        if (ImGui.SliderFloat("Eccentric brake##guidedrelax", ref brakeStrength, 0f, 1f, "%.2f"))
-        {
-            s.BrakeStrength = brakeStrength;
-            config.Save();
-        }
-        HelpMarker("After the hold fades, joints keep a velocity-resisting brake instead of going slack instantly — the body sinks, gets braked, sinks, rather than free-falling to limp. 0 = old instant-limp; ~0.3 = noticeable controlled settle. Takes effect on next death.");
-
-        using (ImRaii.Disabled(s.BrakeStrength <= 0f))
-        {
-            var brakeFade = Math.Clamp(s.BrakeFade, 0.05f, 4f);
-            if (ImGui.SliderFloat("Brake fade (s)##guidedrelax", ref brakeFade, 0.05f, 4f, "%.2f"))
-            {
-                s.BrakeFade = brakeFade;
-                config.Save();
-            }
-            HelpMarker("Seconds the eccentric brake decays over after the hold is gone, before the joint retires to the passive ragdoll. Longer = the body keeps paying out slowly for longer. Takes effect on next death.");
-        }
-
-        var hinge = Math.Clamp(s.HingeSoften, 0f, 1f);
-        if (ImGui.SliderFloat("Hinge strength##guidedrelax", ref hinge, 0f, 1f, "%.2f"))
-        {
-            s.HingeSoften = hinge;
-            config.Save();
-        }
-
-        var direction = Math.Clamp(s.Direction, 0, guidedCollapseDirectionNames.Length - 1);
-        if (ImGui.Combo("Topple direction##guidedrelax", ref direction, guidedCollapseDirectionNames, guidedCollapseDirectionNames.Length))
-        {
-            s.Direction = direction;
-            config.Save();
-        }
-
-        var topple = config.RagdollRelaxationTopple;
-        if (ImGui.Checkbox("Whole-body topple##guidedrelax", ref topple))
-        {
-            config.RagdollRelaxationTopple = topple;
-            config.Save();
-        }
-        HelpMarker("Drive a whole-body center-of-mass topple (the body loses balance over its feet and falls like an inverted pendulum) fused with the eccentric brake, instead of only a one-shot shove. Falls in 'Topple direction'. Off = the simple one-shot impulse below. Takes effect on next death.");
-
-        var asym = Math.Clamp(config.RagdollCollapseAsymmetry, 0f, 1f);
-        if (ImGui.SliderFloat("Asymmetry##guidedrelax", ref asym, 0f, 1f, "%.2f"))
-        {
-            config.RagdollCollapseAsymmetry = asym;
-            config.Save();
-        }
-        HelpMarker("Real collapses are never symmetric. Picks a random lead side each death — its leg buckles first and the body leans + twists toward it — instead of a flat mirror-image fall. 0 = symmetric (robotic), ~0.35 = natural, 1 = strongly one-sided. Takes effect on next death.");
-
-        var staged = config.RagdollStagedFailure;
-        if (ImGui.Checkbox("Staged muscle failure##guidedrelax", ref staged))
-        {
-            config.RagdollStagedFailure = staged;
-            config.Save();
-        }
-        HelpMarker("Let muscle groups fail in sequence — legs give first, trunk holds a beat longer, arms trail last — instead of every joint fading on one shared curve. Takes effect on next death.");
-
-        using (ImRaii.Disabled(!config.RagdollRelaxationTopple))
-        {
-            var momentum = Math.Clamp(config.RagdollToppleMomentumBias, 0f, 1f);
-            if (ImGui.SliderFloat("Momentum steering##guidedrelax", ref momentum, 0f, 1f, "%.2f"))
-            {
-                config.RagdollToppleMomentumBias = momentum;
-                config.Save();
-            }
-            HelpMarker("Bias the topple toward the body's actual horizontal motion at the handoff (carried from the death animation) so a moving corpse falls the way it was going. 0 = ignore momentum (use Topple direction only), ~0.5 = blend, 1 = fall along momentum when moving. Takes effect on next death.");
-        }
-
-        using (ImRaii.Disabled(s.Direction == 0 || config.RagdollRelaxationTopple))
-        {
-            var impulse = Math.Clamp(s.Impulse, 0f, 8f);
-            if (ImGui.SliderFloat("Topple impulse##guidedrelax", ref impulse, 0f, 8f, "%.2f"))
-            {
-                s.Impulse = impulse;
-                config.Save();
-            }
-            HelpMarker("Simple one-shot velocity shove at death. Only used when Whole-body topple is OFF.");
-        }
-    }
-
-    private void DrawGuidedKneePowerLossSettings(GuidedCollapseKneePowerLossSettings s)
-    {
-        ImGui.Text("Knee Power Loss");
-        HelpMarker("Current best directed collapse pattern: optional entry conditioning, then leg-extensor failure and forward torso release. Narrow straight stance still has known artifacts.");
-
-        var entry = s.EntryConditioningEnabled;
-        if (ImGui.Checkbox("Entry conditioning##guidedknee", ref entry))
-        {
-            s.EntryConditioningEnabled = entry;
-            config.Save();
-        }
-
-        using (ImRaii.Disabled(!s.EntryConditioningEnabled))
-        {
-            var stanceThreshold = Math.Clamp(s.EntryStanceThreshold, 0.05f, 1.0f);
-            if (ImGui.SliderFloat("Trigger stance width##guidedknee", ref stanceThreshold, 0.05f, 1.0f, "%.2f"))
-            {
-                s.EntryStanceThreshold = stanceThreshold;
-                config.Save();
-            }
-
-            var readyStance = Math.Clamp(s.EntryReadyStance, 0.05f, 1.2f);
-            if (ImGui.SliderFloat("Ready stance width##guidedknee", ref readyStance, 0.05f, 1.2f, "%.2f"))
-            {
-                s.EntryReadyStance = readyStance;
-                config.Save();
-            }
-
-            var readyKnee = Math.Clamp(s.EntryReadyKneeAngle, 1f, 60f);
-            if (ImGui.SliderFloat("Ready knee angle##guidedknee", ref readyKnee, 1f, 60f, "%.1f"))
-            {
-                s.EntryReadyKneeAngle = readyKnee;
-                config.Save();
-            }
-
-            var minDur = Math.Clamp(s.EntryMinDuration, 0.05f, 1.0f);
-            if (ImGui.SliderFloat("Entry min (s)##guidedknee", ref minDur, 0.05f, 1.0f, "%.2f"))
-            {
-                s.EntryMinDuration = minDur;
-                if (s.EntryMaxDuration < s.EntryMinDuration) s.EntryMaxDuration = s.EntryMinDuration;
-                config.Save();
-            }
-
-            var maxDur = Math.Clamp(s.EntryMaxDuration, s.EntryMinDuration, 1.5f);
-            if (ImGui.SliderFloat("Entry max (s)##guidedknee", ref maxDur, s.EntryMinDuration, 1.5f, "%.2f"))
-            {
-                s.EntryMaxDuration = maxDur;
-                config.Save();
-            }
-        }
-
-        if (ImGui.CollapsingHeader("Entry Advanced##guidedknee"))
-        {
-            var targetStart = Math.Clamp(s.EntryTargetStanceStart, 0.05f, 1.2f);
-            if (ImGui.SliderFloat("Target stance start##guidedknee", ref targetStart, 0.05f, 1.2f, "%.2f"))
-            {
-                s.EntryTargetStanceStart = targetStart;
-                config.Save();
-            }
-
-            var targetEnd = Math.Clamp(s.EntryTargetStanceEnd, 0.05f, 1.2f);
-            if (ImGui.SliderFloat("Target stance end##guidedknee", ref targetEnd, 0.05f, 1.2f, "%.2f"))
-            {
-                s.EntryTargetStanceEnd = targetEnd;
-                config.Save();
-            }
-
-            var downStart = Math.Clamp(s.EntryPelvisDownStart, 0f, 2f);
-            if (ImGui.SliderFloat("Pelvis down start##guidedknee", ref downStart, 0f, 2f, "%.2f"))
-            {
-                s.EntryPelvisDownStart = downStart;
-                config.Save();
-            }
-
-            var downEnd = Math.Clamp(s.EntryPelvisDownEnd, 0f, 2f);
-            if (ImGui.SliderFloat("Pelvis down end##guidedknee", ref downEnd, 0f, 2f, "%.2f"))
-            {
-                s.EntryPelvisDownEnd = downEnd;
-                config.Save();
-            }
-        }
-
-        ImGui.Separator();
-
-        var flexDegrees = Math.Clamp(s.KneeFlexDegrees, 0f, 90f);
-        if (ImGui.SliderFloat("Knee flex target##guidedknee", ref flexDegrees, 0f, 90f, "%.0f deg"))
-        {
-            s.KneeFlexDegrees = flexDegrees;
-            config.Save();
-        }
-
-        var buckleFlex = Math.Clamp(s.KneeBuckleFlexForce, 0f, 500f);
-        if (ImGui.SliderFloat("Buckle knee force##guidedknee", ref buckleFlex, 0f, 500f, "%.0f"))
-        {
-            s.KneeBuckleFlexForce = buckleFlex;
-            config.Save();
-        }
-
-        var torsoFlex = Math.Clamp(s.KneeTorsoFlexForce, 0f, 500f);
-        if (ImGui.SliderFloat("Torso knee force##guidedknee", ref torsoFlex, 0f, 500f, "%.0f"))
-        {
-            s.KneeTorsoFlexForce = torsoFlex;
-            config.Save();
-        }
-
-        var footSupport = Math.Clamp(s.BuckleFootSupportForce, 0f, 5000f);
-        if (ImGui.SliderFloat("Buckle foot support##guidedknee", ref footSupport, 0f, 5000f, "%.0f"))
-        {
-            s.BuckleFootSupportForce = footSupport;
-            config.Save();
-        }
-
-        if (ImGui.CollapsingHeader("Support Advanced##guidedknee"))
-        {
-            var footProxy = s.FootProxyEnabled;
-            if (ImGui.Checkbox("Foot contact proxy##guidedknee", ref footProxy))
-            {
-                s.FootProxyEnabled = footProxy;
-                config.Save();
-            }
-            HelpMarker("Applies the temporary foot support servo at a virtual sole point near the ground instead of the ankle body center. This targets narrow-stance knee artifacts without changing the final passive ragdoll.");
-
-            using (ImRaii.Disabled(!s.FootProxyEnabled))
-            {
-                var proxyForward = Math.Clamp(s.FootProxyForwardOffset, -0.05f, 0.25f);
-                if (ImGui.SliderFloat("Proxy forward##guidedknee", ref proxyForward, -0.05f, 0.25f, "%.3f"))
-                {
-                    s.FootProxyForwardOffset = proxyForward;
-                    config.Save();
-                }
-
-                var proxyDown = Math.Clamp(s.FootProxyDownOffset, 0f, 0.16f);
-                if (ImGui.SliderFloat("Proxy down##guidedknee", ref proxyDown, 0f, 0.16f, "%.3f"))
-                {
-                    s.FootProxyDownOffset = proxyDown;
-                    config.Save();
-                }
-
-                var proxyClearance = Math.Clamp(s.FootProxyGroundClearance, 0.004f, 0.08f);
-                if (ImGui.SliderFloat("Proxy clearance##guidedknee", ref proxyClearance, 0.004f, 0.08f, "%.3f"))
-                {
-                    s.FootProxyGroundClearance = proxyClearance;
-                    config.Save();
-                }
-            }
-
-            ImGui.Separator();
-
-            var torsoFoot = Math.Clamp(s.TorsoFootSupportForce, 0f, 5000f);
-            if (ImGui.SliderFloat("Torso foot support##guidedknee", ref torsoFoot, 0f, 5000f, "%.0f"))
-            {
-                s.TorsoFootSupportForce = torsoFoot;
-                config.Save();
-            }
-
-            var torsoPelvis = Math.Clamp(s.TorsoPelvisForce, 0f, 3000f);
-            if (ImGui.SliderFloat("Torso pelvis force##guidedknee", ref torsoPelvis, 0f, 3000f, "%.0f"))
-            {
-                s.TorsoPelvisForce = torsoPelvis;
-                config.Save();
-            }
-
-            var pelvisForce = Math.Clamp(s.BucklePelvisForce, 0f, 3000f);
-            if (ImGui.SliderFloat("Buckle pelvis force##guidedknee", ref pelvisForce, 0f, 3000f, "%.0f"))
-            {
-                s.BucklePelvisForce = pelvisForce;
-                config.Save();
-            }
-
-        }
-
-        var chestPitch = Math.Clamp(s.ChestPitchDegrees, -90f, 90f);
-        if (ImGui.SliderFloat("Chest pitch##guidedknee", ref chestPitch, -90f, 90f, "%.0f deg"))
-        {
-            s.ChestPitchDegrees = chestPitch;
-            config.Save();
-        }
-
-        if (ImGui.CollapsingHeader("Phase Transition Advanced##guidedknee"))
-        {
-            ImGui.Separator();
-
-            var buckleMin = Math.Clamp(s.BuckleMinDuration, 0.05f, 1.5f);
-            if (ImGui.SliderFloat("Buckle min (s)##guidedknee", ref buckleMin, 0.05f, 1.5f, "%.2f"))
-            {
-                s.BuckleMinDuration = buckleMin;
-                config.Save();
-            }
-
-            var buckleTimeout = Math.Clamp(s.BuckleTimeout, 0.1f, 3f);
-            if (ImGui.SliderFloat("Buckle timeout (s)##guidedknee", ref buckleTimeout, 0.1f, 3f, "%.2f"))
-            {
-                s.BuckleTimeout = buckleTimeout;
-                config.Save();
-            }
-
-            var dropToTorso = Math.Clamp(s.BucklePelvisDropToTorso, 0.05f, 1.5f);
-            if (ImGui.SliderFloat("Drop to torso##guidedknee", ref dropToTorso, 0.05f, 1.5f, "%.2f"))
-            {
-                s.BucklePelvisDropToTorso = dropToTorso;
-                config.Save();
-            }
-
-            var kneeToTorso = Math.Clamp(s.BuckleKneeAngleToTorso, 1f, 90f);
-            if (ImGui.SliderFloat("Knee angle to torso##guidedknee", ref kneeToTorso, 1f, 90f, "%.1f"))
-            {
-                s.BuckleKneeAngleToTorso = kneeToTorso;
-                config.Save();
-            }
-
-            var torsoMin = Math.Clamp(s.TorsoMinDuration, 0.05f, 2f);
-            if (ImGui.SliderFloat("Torso min (s)##guidedknee", ref torsoMin, 0.05f, 2f, "%.2f"))
-            {
-                s.TorsoMinDuration = torsoMin;
-                config.Save();
-            }
-
-            var torsoTimeout = Math.Clamp(s.TorsoTimeout, 0.1f, 3f);
-            if (ImGui.SliderFloat("Torso timeout (s)##guidedknee", ref torsoTimeout, 0.1f, 3f, "%.2f"))
-            {
-                s.TorsoTimeout = torsoTimeout;
                 config.Save();
             }
         }
@@ -4212,547 +3176,186 @@ public partial class MainWindow : IDisposable
             }
         }
 
-        if (config.EnableRagdoll && ImGui.CollapsingHeader("Basic Parameters"))
-        {
-            {
-                ImGui.Indent();
-
-                var gravity = config.RagdollGravity;
-                if (ImGui.SliderFloat("Gravity##ragdoll", ref gravity, 0.1f, 30.0f, "%.1f"))
-                {
-                    config.RagdollGravity = gravity;
-                    config.Save();
-                }
-
-                var damping = config.RagdollDamping;
-                if (ImGui.SliderFloat("Damping##ragdoll", ref damping, 0.8f, 1.0f, "%.3f"))
-                {
-                    config.RagdollDamping = damping;
-                    config.Save();
-                }
-                HelpMarker("Velocity damping per frame. Lower = more energy loss.");
-
-                var solverIter = config.RagdollSolverIterations;
-                if (ImGui.SliderInt("Solver Iterations##ragdoll", ref solverIter, 4, 64))
-                {
-                    config.RagdollSolverIterations = solverIter;
-                    config.Save();
-                }
-                HelpMarker("BEPU2 constraint solver velocity iterations per SUBSTEP (not per frame) — total solver " +
-                           "work is Iterations x Substeps. Iterations converge the constraints against each other at " +
-                           "the current sub-step; they do not make the sub-step finer, so they help a tangled load " +
-                           "path (a body carried by one bone) more than they help a stiff spring. Default 8. " +
-                           "Raised to a floor of 8 with party ragdolls on, and to 16 on non-humanoid rigs. " +
-                           "Takes effect on next ragdoll activation.");
-
-                var solverSubsteps = config.RagdollSolverSubsteps;
-                if (ImGui.SliderInt("Solver Substeps##ragdoll", ref solverSubsteps, 1, 64))
-                {
-                    config.RagdollSolverSubsteps = solverSubsteps;
-                    config.Save();
-                }
-                HelpMarker("Velocity-solve substeps per fixed timestep. 1 = legacy. Raising this re-integrates poses " +
-                           "and re-solves constraints at a finer sub-step, which is what a stiff spring needs to be " +
-                           "represented at all: effective solve rate is 60 x Substeps, and a spring wants roughly 10x " +
-                           "that of its own frequency. At 8 the 90 Hz limit wall (see below) is only ~5x oversampled. " +
-                           "BEPU's recommended lever for stiff limits, and the one that reduces energy pumping from " +
-                           "stale constraint directions during fast limb whip.\n\n" +
-                           "Costs ~linearly, and MULTIPLIES with Iterations. Before paying for more, try trading: " +
-                           "4 iterations x 16 substeps is the same total work as the default 8 x 8 but solves twice " +
-                           "as finely. Takes effect on next ragdoll activation.");
-
-                var limitFreq = config.RagdollLimitSpringFrequency;
-                if (ImGui.SliderFloat("Limit Wall Stiffness (Hz)##ragdoll", ref limitFreq, 30f, 180f, "%.0f"))
-                {
-                    config.RagdollLimitSpringFrequency = limitFreq;
-                    config.Save();
-                }
-                HelpMarker("Spring frequency of the joint LIMIT walls (swing cones + twist ranges). Higher = firmer wall so joints don't over-rotate past their range, but too high for the substep count over-drives the solver into jitter. 60 = soft, 90 = balanced default, 120+ = firm (raise Solver Substeps to match). Takes effect on next ragdoll activation.");
-
-                var softLimits = config.RagdollSoftLimits;
-                if (ImGui.Checkbox("Soft Swing Limits (balls)##ragdoll", ref softLimits))
-                {
-                    config.RagdollSoftLimits = softLimits;
-                    config.Save();
-                }
-                HelpMarker("Ball joints (hips/shoulders/spine) get a low-frequency, overdamped spring on their swing limits instead of the hard wall above: a limb sliding toward its range edge decelerates and settles rather than pinning at the extreme angle (the frozen 'spread-eagle' look). Knees/elbows keep the hard wall. Takes effect on next ragdoll activation.");
-
-                if (config.RagdollSoftLimits)
-                {
-                    var softFreq = config.RagdollSoftLimitFrequency;
-                    if (ImGui.SliderFloat("Soft Limit Frequency (Hz)##ragdoll", ref softFreq, 2f, 40f, "%.0f"))
-                    {
-                        config.RagdollSoftLimitFrequency = softFreq;
-                        config.Save();
-                    }
-
-                    var softDamp = config.RagdollSoftLimitDamping;
-                    if (ImGui.SliderFloat("Soft Limit Damping##ragdoll", ref softDamp, 0.5f, 10f, "%.1f"))
-                    {
-                        config.RagdollSoftLimitDamping = softDamp;
-                        config.Save();
-                    }
-                    HelpMarker("Damping ratio at the soft edge. 1 = critical (springy), 4 = overdamped default (sinks and stays), higher = syrupy.");
-                }
-
-                var jointFreq = MathF.Max(45f, config.RagdollJointSpringFrequency);
-                if (ImGui.SliderFloat("Joint Stiffness (Hz)##ragdoll", ref jointFreq, 45f, 120f, "%.0f"))
-                {
-                    config.RagdollJointSpringFrequency = jointFreq;
-                    config.Save();
-                }
-                HelpMarker("Spring frequency of the POSITIONAL joints that hold bones together, not the limit walls. 45 Hz is the unified structural minimum used during falling, contact and Grab; Grab does not retune internal joints. Higher reduces visible anchor stretch but needs enough solver substeps. Takes effect on next activation.");
-
-                var footJointFreq = config.RagdollFootJointSpringFrequency;
-                if (ImGui.SliderFloat("Foot Joint Stiffness (Hz)##ragdoll", ref footJointFreq, 0f, 150f, "%.0f"))
-                {
-                    config.RagdollFootJointSpringFrequency = footJointFreq;
-                    config.Save();
-                }
-                HelpMarker("Positional stiffness of the calf->foot joint specifically. The foot takes the hardest ground-impact impulses, so it rubber-bands first; give it a firmer spring than the body default. 60 = firm, 0 = use the body Joint Stiffness above. Takes effect on next ragdoll activation.");
-
-                ImGui.Unindent();
-            }
-        }
-
-        if (config.EnableRagdoll && ImGui.CollapsingHeader("Advanced Filters"))
-        {
-            {
-                ImGui.Indent();
-
-                var impactWeight = config.RagdollImpactWeight;
-                if (ImGui.Checkbox("Impact weight##ragdoll", ref impactWeight))
-                {
-                    config.RagdollImpactWeight = impactWeight;
-                    config.Save();
-                }
-                HelpMarker("Stage a hard landing rather than only simulating one: a few dozen milliseconds of freeze, " +
-                           "one heavy heave with a whip through the limbs, and a shake of the camera.\n\n" +
-                           "Physics on its own cannot make a body read heavy, and turning up bounciness is the wrong " +
-                           "instinct — a real coefficient of restitution gives you the decaying patter of a beach ball, " +
-                           "which reads LIGHTER the more you add. The weight comes from the freeze frame and the camera. " +
-                           "That is how a fighting game does it, and it is not simulation at all.");
-
-                var heavyBody = config.RagdollHeavyBody;
-                if (ImGui.Checkbox("Heavy body##ragdoll", ref heavyBody))
-                {
-                    config.RagdollHeavyBody = heavyBody;
-                    config.Save();
-                }
-                HelpMarker("Make the body itself read heavy, as opposed to its landing.\n\n" +
-                           "It falls harder than true gravity — no action game runs at an honest 9.8, because a game " +
-                           "camera flattens vertical travel and an audience's sense of how fast things fall comes from " +
-                           "films, not from a stopwatch. Only the descent is weighted, so the arc a blow throws the body " +
-                           "into keeps its shape.\n\n" +
-                           "For fallback limb volumes it also corrects the rotational inertia underestimated by a thin " +
-                           "capsule. Mesh-derived bodies already compute inertia from their measured visible geometry, " +
-                           "so they are deliberately not corrected a second time. Mass alone is not this lever: it " +
-                           "cancels out of free fall and out of gravity-driven joint acceleration.\n\n" +
-                           "Unlike Impact weight, this changes trajectories. Takes effect on the next ragdoll.");
-
-                var carryVel = config.RagdollCarryAnimationVelocity;
-                if (ImGui.Checkbox("Carry animation velocity##ragdoll", ref carryVel))
-                {
-                    config.RagdollCarryAnimationVelocity = carryVel;
-                    config.Save();
-                }
-                HelpMarker("At the animation->physics handoff (after the activation delay), seed each body with the velocity the death animation was carrying instead of starting at rest. Removes the 'freeze' hitch when an in-motion animation hands off to physics. Takes effect on next ragdoll activation.");
-
-                using (ImRaii.Disabled(!config.RagdollCarryAnimationVelocity))
-                {
-                    var velScale = config.RagdollHandoffVelocityScale;
-                    if (ImGui.SliderFloat("Handoff velocity scale##ragdoll", ref velScale, 0f, 5f, "%.2f"))
-                    {
-                        config.RagdollHandoffVelocityScale = velScale;
-                        config.Save();
-                    }
-                    HelpMarker("Scales the carried handoff velocity. 1 = exact animation speed. Lower if a fast death animation throws the corpse too hard. Takes effect on next ragdoll activation.");
-                }
-                var anthropometricMass = config.RagdollAnthropometricMass;
-                if (ImGui.Checkbox("Anthropometric Mass##ragdoll", ref anthropometricMass))
-                {
-                    config.RagdollAnthropometricMass = anthropometricMass;
-                    config.Save();
-                }
-                HelpMarker("Tier D: resolve per-bone mass from Winter body-segment fractions x total body mass instead of hand-picked values (fixes too-heavy thigh and non-pelvis-heavy trunk). Takes effect on next ragdoll activation.");
-
-                if (config.RagdollAnthropometricMass)
-                {
-                    var bodyMass = config.RagdollBodyMass;
-                    if (ImGui.SliderFloat("Body Mass (kg)##ragdoll", ref bodyMass, 30f, 150f, "%.0f"))
-                    {
-                        config.RagdollBodyMass = bodyMass;
-                        config.Save();
-                    }
-                    HelpMarker("Total body mass the anthropometric segment fractions scale against. 70 kg default. Takes effect on next ragdoll activation.");
-                }
-
-                var anatomicalHingeRestBias = config.RagdollAnatomicalHingeRestBias;
-                if (ImGui.Checkbox("Anatomical Hinge Rest Bias##ragdoll", ref anatomicalHingeRestBias))
-                {
-                    config.RagdollAnatomicalHingeRestBias = anatomicalHingeRestBias;
-                    config.Save();
-                }
-                HelpMarker("Passive spring on the knee/elbow hinge pulling it toward straight. Without it the hinge only velocity-damps, so a limb held bent by contact/weight (not just hanging free) never returns toward straight and can settle into a fixed bent pose. Takes effect on next ragdoll activation.");
-
-                var anatomicalRom = config.RagdollAnatomicalRom;
-                if (ImGui.Checkbox("Anatomical ROM (asymmetric limits)##ragdoll", ref anatomicalRom))
-                {
-                    config.RagdollAnatomicalRom = anatomicalRom;
-                    config.Save();
-                }
-                HelpMarker("Draw axial twist range (all joints) and knee/elbow flexion/hyperextension bounds from a clinical/ISB anatomical ROM table instead of the hand-set per-bone twist values and the symmetric fold-stop. Also adds directional swing limits for hips, arm-side shoulders and the spine chain. Off by default. Takes effect on next ragdoll activation.");
-
-                var selfCollision = config.RagdollSelfCollision;
-                if (ImGui.Checkbox("Self Collision##ragdoll", ref selfCollision))
-                {
-                    config.RagdollSelfCollision = selfCollision;
-                    config.Save();
-                }
-                HelpMarker("Enables contact between every non-adjacent ragdoll body (arms vs torso, legs vs legs). Only bodies sharing a joint are excluded. Contacts use overdamped recovery so overlap resolves without becoming another spring. Takes effect on next activation.");
-
-                var friction = config.RagdollFriction;
-                if (ImGui.SliderFloat("Friction##ragdoll", ref friction, 0.0f, 2.0f, "%.2f"))
-                {
-                    config.RagdollFriction = friction;
-                    config.Save();
-                }
-                HelpMarker("Surface friction for all ragdoll contacts. 0 = ice (limbs slide freely), 1 = grippy (default). Lower values make the body slide more realistically. Takes effect on next ragdoll activation.");
-
-                ImGui.Unindent();
-            }
-        }
-
         if (config.EnableRagdoll && ImGui.CollapsingHeader("Weapon Drop"))
         {
+            ImGui.Indent();
+            var weaponCollision = config.WeaponDropMeshCollision ? 2 : config.WeaponBodyMeshContacts ? 1 : 0;
+            ImGui.SetNextItemWidth(200f);
+            if (ImGui.Combo("Weapon collision##weapondrop", ref weaponCollision, WeaponCollisionLabels, WeaponCollisionLabels.Length))
             {
-                ImGui.Indent();
-                HelpMarker("On death the weapon detaches from the hand and falls with its own physics. Always active while ragdoll is enabled; tune the parameters below.");
-                var weaponMesh = config.WeaponDropMeshCollision;
-                if (ImGui.Checkbox("Mesh-based weapon collision##weapondrop", ref weaponMesh))
-                {
-                    config.WeaponDropMeshCollision = weaponMesh;
-                    config.Save();
-                }
-                HelpMarker("Fits up to 24 collision parts to the weapon mesh at release, reducing empty space around irregular weapons. Applies to new weapon simulations. Default off.\n" +
-                    "Mesh loading and fitting may hitch at death; extra collision parts increase physics CPU cost. Unavailable or unsupported geometry falls back to simple collision. Model variants may include hidden geometry; body collider accuracy also affects gaps.");
-                if (weaponMesh)
-                    ImGui.TextColored(new Vector4(1f, 0.75f, 0.2f, 1f), "Warning: may cause severe stuttering.");
-
-                var weaponBodyMesh = config.WeaponBodyMeshContacts;
-                if (ImGui.Checkbox("Weapons collide with body mesh##weapondrop", ref weaponBodyMesh))
-                {
-                    config.WeaponBodyMeshContacts = weaponBodyMesh;
-                    config.Save();
-                }
-                if (weaponBodyMesh)
-                {
-                    ImGui.SameLine();
-                    if (ImGui.SmallButton("Refresh Mesh##weapondropMeshRefresh")) config.RefreshRagdollMeshCache();
-                    if (ImGui.IsItemHovered())
-                        ImGui.SetTooltip("Recapture cached body surfaces. Use after changing Glamourer, race, model, outfit or scale.");
-                }
-                HelpMarker("Weapons land on a coarse copy of the rendered body surface instead of approximate body capsules. " +
-                    "Independent of Rendered Mesh Body Collision: ragdoll bodies keep their usual volumes, only weapon contacts use the mesh. Default on.\n" +
-                    "The local player's surface is cached in advance; other characters are captured once when their weapon drops (may hitch briefly). " +
-                    "Weapons do not push the body. Applies to new weapon drops.");
-
-                {
-                    var wdGravity = config.WeaponDropGravity;
-                    if (ImGui.SliderFloat("Gravity##weapondrop", ref wdGravity, 0.0f, 30.0f, "%.2f"))
-                    {
-                        config.WeaponDropGravity = wdGravity;
-                        config.Save();
-                    }
-
-                    var wdDamping = config.WeaponDropDamping;
-                    if (ImGui.SliderFloat("Damping##weapondrop", ref wdDamping, 0.80f, 1.00f, "%.3f"))
-                    {
-                        config.WeaponDropDamping = wdDamping;
-                        config.Save();
-                    }
-                    HelpMarker("Per-frame velocity multiplier. 1.0 = no damping, lower values settle faster.");
-
-                    var wdAngDamping = config.WeaponDropAngularDamping;
-                    if (ImGui.SliderFloat("Angular Damping##weapondrop", ref wdAngDamping, 0.50f, 1.00f, "%.3f"))
-                    {
-                        config.WeaponDropAngularDamping = wdAngDamping;
-                        config.Save();
-                    }
-                    HelpMarker("Spin damping per frame. Lower than Linear Damping so the capsule stops rotating on contact and does not roll away.");
-
-                    var wdBounce = config.WeaponDropBounce;
-                    if (ImGui.SliderFloat("Bounce##weapondrop", ref wdBounce, 0.0f, 5.0f, "%.2f"))
-                    {
-                        config.WeaponDropBounce = wdBounce;
-                        config.Save();
-                    }
-                    HelpMarker("BepuPhysics MaximumRecoveryVelocity — higher = bouncier weapons.");
-
-                    var wdFriction = config.WeaponDropFriction;
-                    if (ImGui.SliderFloat("Friction##weapondrop", ref wdFriction, 0.0f, 2.0f, "%.2f"))
-                    {
-                        config.WeaponDropFriction = wdFriction;
-                        config.Save();
-                    }
-
-                    var wdMass = config.WeaponDropMass;
-                    if (ImGui.SliderFloat("Mass (kg)##weapondrop", ref wdMass, 0.1f, 50.0f, "%.2f"))
-                    {
-                        config.WeaponDropMass = wdMass;
-                        config.Save();
-                    }
-
-                    var wdRadius = config.WeaponDropRadius;
-                    if (ImGui.SliderFloat("Capsule Radius##weapondrop", ref wdRadius, 0.005f, 0.2f, "%.3f"))
-                    {
-                        config.WeaponDropRadius = wdRadius;
-                        config.Save();
-                    }
-
-                    var wdHalf = config.WeaponDropHalfLength;
-                    if (ImGui.SliderFloat("Capsule Half-Length##weapondrop", ref wdHalf, 0.1f, 1.5f, "%.2f"))
-                    {
-                        config.WeaponDropHalfLength = wdHalf;
-                        config.Save();
-                    }
-
-                    var wdSolver = config.WeaponDropSolverIterations;
-                    if (ImGui.SliderInt("Solver Iterations##weapondrop", ref wdSolver, 1, 64))
-                    {
-                        config.WeaponDropSolverIterations = wdSolver;
-                        config.Save();
-                    }
-                    HelpMarker("Higher = more stable contact resolution, more CPU. Changing physics params clears all currently-dropped weapons.");
-                }
-
-                ImGui.Unindent();
+                config.WeaponDropMeshCollision = weaponCollision == 2;
+                config.WeaponBodyMeshContacts = weaponCollision >= 1;
+                config.Save();
             }
+            HelpMarker("On death the weapon detaches from the hand and falls with its own physics.\n" +
+                       "Simple: the weapon is a box and lands on approximate body capsules.\n" +
+                       "Body mesh (default): it lands on a coarse copy of the rendered body surface. The local player's surface is cached in advance; other characters are captured when their weapon drops (may hitch briefly).\n" +
+                       "Full mesh: the weapon's own shape is also fitted from its mesh (up to 24 parts). May cause stuttering at death.\n" +
+                       "Applies to new weapon drops.");
+            if (weaponCollision >= 1)
+            {
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Refresh Mesh##weapondropMeshRefresh")) config.RefreshRagdollMeshCache();
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Recapture cached body surfaces. Use after changing Glamourer, race, model, outfit or scale.");
+            }
+            if (weaponCollision == 2)
+                ImGui.TextColored(new Vector4(1f, 0.75f, 0.2f, 1f), "Warning: may cause severe stuttering.");
+            ImGui.Unindent();
         }
 
         if (ImGui.CollapsingHeader("Hair Physics"))
         {
+            ImGui.Indent();
+
+            var hairPhysics = config.RagdollHairPhysics;
+            if (ImGui.Checkbox("Enable Hair Physics##ragdoll", ref hairPhysics))
+            {
+                config.RagdollHairPhysics = hairPhysics;
+                config.Save();
+            }
+            HelpMarker("Simulate flexible hair guides with persistent hairstyle curvature, " +
+                       "with head-driven inertia/whip and ground contact. Uses loaded mesh weights to fit long hair guides. " +
+                       "Runs immediately while enabled, including normal animation.");
+
+            if (config.RagdollHairPhysics)
             {
                 ImGui.Indent();
-
-                var hairPhysics = config.RagdollHairPhysics;
-                if (ImGui.Checkbox("Enable Hair Physics##ragdoll", ref hairPhysics))
+                var hairBodyMesh = config.RagdollHairBodyMesh;
+                if (ImGui.Checkbox("Collide with body mesh##hairrig", ref hairBodyMesh))
                 {
-                    config.RagdollHairPhysics = hairPhysics;
+                    config.RagdollHairBodyMesh = hairBodyMesh;
                     config.Save();
                 }
-                HelpMarker("Simulate flexible hair guides with persistent hairstyle curvature, " +
-                           "with head-driven inertia/whip and ground contact. Uses loaded mesh weights to fit long hair guides. " +
-                           "Runs immediately while enabled, including normal animation.");
-
-                if (config.RagdollHairPhysics)
-                {
-                    {
-                        ImGui.Indent();
-
-                        var bend = config.RagdollHairBendCompliance;
-                        if (ImGui.SliderFloat("Flexibility##hairrig", ref bend, 0.001f, 0.2f, "%.3f"))
-                        {
-                            config.RagdollHairBendCompliance = bend;
-                            config.Save();
-                        }
-                        HelpMarker("Higher values allow more bending. Roots stay firmer than the ends; hairstyle curvature remains active.");
-                        var damping = config.RagdollHairDamping;
-                        if (ImGui.SliderFloat("Motion damping##hairrig", ref damping, 0.1f, 8f, "%.1f"))
-                        {
-                            config.RagdollHairDamping = damping;
-                            config.Save();
-                        }
-                        HelpMarker("Air drag on the whole strand.");
-                        var swing = config.RagdollHairSwingDamping;
-                        if (ImGui.SliderFloat("Swing damping##hairrig", ref swing, 0.05f, 1f, "%.2f"))
-                        {
-                            config.RagdollHairSwingDamping = swing;
-                            config.Save();
-                        }
-                        HelpMarker("How quickly a swing dies out. 1 = hair follows the head without swinging; lower values let it swing back and forth longer.");
-                        var mass = config.RagdollHairRigSegmentMass;
-                        if (ImGui.SliderFloat("Strand mass##hairrig", ref mass, 0.005f, 0.1f, "%.3f"))
-                        {
-                            config.RagdollHairRigSegmentMass = mass;
-                            config.Save();
-                        }
-
-                        var thickness = config.RagdollHairRigThickness;
-                        if (ImGui.SliderFloat("Strand thickness (m)##hairrig", ref thickness, 0.003f, 0.02f, "%.3f"))
-                        {
-                            config.RagdollHairRigThickness = thickness;
-                            config.Save();
-                        }
-                        HelpMarker("Collision thickness of a strand against the body/ground.");
-
-                        var hairBodyMesh = config.RagdollHairBodyMesh;
-                        if (ImGui.Checkbox("Collide with body mesh##hairrig", ref hairBodyMesh))
-                        {
-                            config.RagdollHairBodyMesh = hairBodyMesh;
-                            config.Save();
-                        }
-                        HelpMarker("Hair rests on a smoothed copy of the rendered body (shoulders, back, chest) instead of approximate body capsules. Off by default (capsules).");
-
-                        if (ImGui.Button("Reset hair rig params##hairrig"))
-                        {
-                            config.RagdollHairRigSegmentMass = 0.02f;
-                            config.RagdollHairRigThickness = 0.008f;
-                            config.RagdollHairBendCompliance = 0.02f;
-                            config.RagdollHairDamping = 2.2f;
-                            config.RagdollHairSwingDamping = 0.15f;
-                            config.Save();
-                        }
-                        HelpMarker("Restore hair tuning defaults. Toggle hair physics to rebuild guide mass and binding.");
-
-                        ImGui.Unindent();
-                    }
-                }
-
+                HelpMarker("Hair rests on a smoothed copy of the rendered body (shoulders, back, chest) instead of approximate body capsules. Off by default (capsules).");
                 ImGui.Unindent();
             }
+
+            ImGui.Unindent();
         }
 
         if (config.EnableRagdoll && ImGui.CollapsingHeader("Soft Tissue"))
         {
+            ImGui.Indent();
+
+            var softTissue = config.RagdollSoftTissueModBones ? 1 + Math.Clamp(config.RagdollSoftTissueScope, 0, 2) : 0;
+            ImGui.SetNextItemWidth(220);
+            if (ImGui.Combo("Soft tissue##softtissue", ref softTissue, SoftTissueLabels, SoftTissueLabels.Length))
             {
-                ImGui.Indent();
-
-                var modSoftBones = config.RagdollSoftTissueModBones;
-                if (ImGui.Checkbox("Mod skeleton jiggle bones##softtissue", ref modSoftBones))
-                {
-                    config.RagdollSoftTissueModBones = modSoftBones;
-                    config.Save();
-                }
-                HelpMarker("Auto-detect extra soft-tissue bones from body-mod skeletons (Rue/YAS/IVCS " +
-                           "lineage) by name prefix and simulate them as jiggle bodies during ragdoll. " +
-                           "Does nothing on vanilla skeletons. The breast bones (j_mune) are configured in " +
-                           "the Advanced bone table instead. Takes effect on next ragdoll activation.");
-
-                if (config.RagdollSoftTissueModBones)
-                {
-                    ImGui.Indent();
-
-                    var scope = config.RagdollSoftTissueScope;
-                    ImGui.SetNextItemWidth(220);
-                    if (ImGui.Combo("Bone coverage##softtissue", ref scope, SoftTissueScopeNames, SoftTissueScopeNames.Length))
-                    {
-                        config.RagdollSoftTissueScope = Math.Clamp(scope, 0, SoftTissueScopeNames.Length - 1);
-                        config.Save();
-                    }
-                    HelpMarker("Standard: extra bones from body-mod skeletons, excluding fingers " +
-                               "and toes (recommended). " +
-                               "All bones: every skeleton bone that is not already a ragdoll body, " +
-                               "vanilla bones included (experimental). All bones except digits: the " +
-                               "same, minus fingers and toes. Squash & stretch follows this " +
-                               "selection. Discovered bones are listed in the plugin log on ragdoll " +
-                               "activation.");
-
-                    ImGui.Unindent();
-                }
-
-                var softCollision = config.RagdollSoftTissueCollision;
-                if (ImGui.Checkbox("Soft tissue collision (experimental)##softtissue", ref softCollision))
-                {
-                    config.RagdollSoftTissueCollision = softCollision;
-                    config.Save();
-                }
-                HelpMarker("Soft bones also collide with the GROUND, so flesh pressed against the floor " +
-                           "reacts instead of sinking in. Body contact stays off regardless — flesh " +
-                           "capsules live inside the torso, so body contact would fight the springs " +
-                           "permanently. Costs extra contact pairs. Takes effect on next ragdoll " +
-                           "activation.");
-
-                var squash = config.RagdollSquashStretch;
-                if (ImGui.Checkbox("Squash & stretch (experimental)##softtissue", ref squash))
-                {
-                    config.RagdollSquashStretch = squash;
-                    config.Save();
-                }
-                HelpMarker("Soft bones visibly compress on hard impacts and flatten against the ground once " +
-                           "the corpse settles, with a springy rebound. Experimental: writes per-bone scale " +
-                           "into the skeleton pose.");
-
-                if (config.RagdollSquashStretch)
-                {
-                    var squashIntensity = config.RagdollSquashIntensity;
-                    if (ImGui.SliderFloat("Squash intensity##softtissue", ref squashIntensity, 0.0f, 1.0f, "%.2f"))
-                    {
-                        config.RagdollSquashIntensity = squashIntensity;
-                        config.Save();
-                    }
-                }
-
-                ImGui.Unindent();
+                config.RagdollSoftTissueModBones = softTissue > 0;
+                if (softTissue > 0) config.RagdollSoftTissueScope = softTissue - 1;
+                config.Save();
             }
+            HelpMarker("Extra bones simulated as jiggle bodies during ragdoll.\n" +
+                       "Mod bones (default): extra bones from body-mod skeletons (Rue/YAS/IVCS lineage), excluding fingers and toes. Does nothing on vanilla skeletons.\n" +
+                       "All bones: every skeleton bone that is not already a ragdoll body, vanilla bones included (experimental).\n" +
+                       "All bones except digits: the same, minus fingers and toes.\n" +
+                       "Discovered bones are listed in the plugin log on ragdoll activation. Takes effect on next ragdoll activation.");
+
+            var softCollision = config.RagdollSoftTissueCollision;
+            if (ImGui.Checkbox("Soft tissue collision (experimental)##softtissue", ref softCollision))
+            {
+                config.RagdollSoftTissueCollision = softCollision;
+                config.Save();
+            }
+            HelpMarker("Soft bones also collide with the GROUND, so flesh pressed against the floor " +
+                       "reacts instead of sinking in. Body contact stays off regardless. Costs extra contact pairs. " +
+                       "Takes effect on next ragdoll activation.");
+
+            var squash = config.RagdollSquashStretch ? SquashLevelIndex(config.RagdollSquashIntensity) : 0;
+            ImGui.SetNextItemWidth(220);
+            if (ImGui.Combo("Squash & stretch (experimental)##softtissue", ref squash, SquashLabels, SquashLabels.Length))
+            {
+                config.RagdollSquashStretch = squash > 0;
+                if (squash > 0) config.RagdollSquashIntensity = SquashIntensities[squash];
+                config.Save();
+            }
+            HelpMarker("Soft bones visibly compress on hard impacts and flatten against the ground once " +
+                       "the corpse settles, with a springy rebound. Writes per-bone scale into the skeleton pose.");
+
+            ImGui.Unindent();
         }
 
         if (config.EnableRagdoll && ImGui.CollapsingHeader("Combat NPC Ragdoll"))
         {
+            ImGui.Indent();
+
+            var npcRagdoll = config.EnableNpcDeathRagdoll;
+            if (ImGui.Checkbox("Ragdoll enemies on death##npcragdoll", ref npcRagdoll))
             {
-                ImGui.Indent();
-
-                var npcRagdoll = config.EnableNpcDeathRagdoll;
-                if (ImGui.Checkbox("Ragdoll enemies on death##npcragdoll", ref npcRagdoll))
-                {
-                    config.EnableNpcDeathRagdoll = npcRagdoll;
-                    config.PartyEnemyDeathRagdoll = npcRagdoll;
-                    config.Save();
-                }
-                HelpMarker("Apply ragdoll physics to enemy NPCs when they die in combat, including party mode enemies.");
-
-                if (config.EnableNpcDeathRagdoll)
-                {
-                    var npcDelay = config.NpcRagdollActivationDelay;
-                    if (ImGui.SliderFloat("Enemy activation delay (s)##npcragdoll", ref npcDelay, 0.0f, 5.0f, "%.1f"))
-                    {
-                        config.NpcRagdollActivationDelay = npcDelay;
-                        config.Save();
-                    }
-                    HelpMarker("Seconds after enemy death before ragdoll physics take over.");
-
-                }
-
-                var companionRagdoll = config.PartyCompanionDeathRagdoll;
-                if (ImGui.Checkbox("Ragdoll companions on death##companionragdoll", ref companionRagdoll))
-                {
-                    config.PartyCompanionDeathRagdoll = companionRagdoll;
-                    config.Save();
-                }
-                HelpMarker("Apply ragdoll physics to party companion clones when they die.");
-
-                ImGui.Separator();
-                ImGui.TextDisabled("Solver budget (enemy + companion corpses)");
-
-                var npcIter = config.NpcRagdollSolverIterations;
-                if (ImGui.SliderInt("NPC Solver Iterations##npcragdoll", ref npcIter, 1, 32))
-                {
-                    config.NpcRagdollSolverIterations = npcIter;
-                    config.Save();
-                }
-                HelpMarker("Velocity iterations per substep for enemy/companion corpses, kept separate from the " +
-                           "player's own (Advanced > Solver Iterations). Total work is Iterations x Substeps: 2 x 8 " +
-                           "here against the player's 4 x 16 is a quarter of the cost per corpse.\n\n" +
-                           "A ragdoll is only expensive for the second or two before it settles — after that it is " +
-                           "skipped entirely — so what spikes a wipe is many corpses being active at once, and this " +
-                           "is the figure that gets multiplied by the wave. Non-humanoid rigs ignore this and floor " +
-                           "at 16; their topology needs it to stay stable. Takes effect on next ragdoll activation.");
-
-                var npcSubsteps = config.NpcRagdollSolverSubsteps;
-                if (ImGui.SliderInt("NPC Solver Substeps##npcragdoll", ref npcSubsteps, 1, 64))
-                {
-                    config.NpcRagdollSolverSubsteps = npcSubsteps;
-                    config.Save();
-                }
-                HelpMarker("Substeps for enemy/companion corpses. 8 = a 480 Hz effective solve rate, which still " +
-                           "resolves the 90 Hz joint-limit wall at ~5x — enough that limits hold, just less exactly " +
-                           "than on the player's rig. Raise it if enemy corpses visibly punch through their joint " +
-                           "limits or refuse to settle. Takes effect on next ragdoll activation.");
-
-                ImGui.Unindent();
+                config.EnableNpcDeathRagdoll = npcRagdoll;
+                config.Save();
             }
+            HelpMarker("Apply ragdoll physics to enemy NPCs when they die in combat, including party mode enemies.");
+
+            var companionRagdoll = config.PartyCompanionDeathRagdoll;
+            if (ImGui.Checkbox("Ragdoll companions on death##companionragdoll", ref companionRagdoll))
+            {
+                config.PartyCompanionDeathRagdoll = companionRagdoll;
+                config.Save();
+            }
+            HelpMarker("Apply ragdoll physics to party companion clones when they die.");
+
+            ImGui.Unindent();
+        }
+
+        if (config.EnableRagdoll && ImGui.CollapsingHeader("Mesh Collision [Experimental]##ragdollMeshCollisionSection"))
+        {
+            ImGui.Indent();
+            var meshVolumes = config.RagdollMeshVolumes;
+            if (ImGui.Checkbox("Rendered Mesh Body Collision##ragdollMeshVolumes", ref meshVolumes))
+            {
+                config.RagdollMeshVolumes = meshVolumes;
+                config.RefreshRagdollMeshCache();
+                config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Captures visible body/equipment surfaces once into a session cache. Body parts keep fixed collision shapes during ragdoll; no live skin or mesh refit. Unsupported regions use fallback volumes. Off by default.\nRefresh after Glamourer, race, model, outfit or scale changes. Fixed joint surfaces may differ from animated skin.\n\n" +
+                                 ragdollController.MeshGeometryStatus);
+            if (meshVolumes)
+            {
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Refresh Mesh##ragdollMeshRefresh")) config.RefreshRagdollMeshCache();
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Replace the cached mesh with the current model and pose. Use after changing Glamourer, race, model, outfit or scale. An active ragdoll will restart with the new cache.");
+
+                var performance = MeshCollisionPerformanceIndex();
+                ImGui.SetNextItemWidth(200f);
+                if (ImGui.Combo("Mesh collision performance##ragdollMeshPerformance", ref performance,
+                        MeshCollisionPerformanceLabels, MeshCollisionPerformanceLabels.Length))
+                {
+                    config.RagdollMeshCollisionLod = performance == 2;
+                    if (performance == 2) config.RagdollMeshLodToleranceMm = 5.5f;
+                    config.RagdollMeshContactQuality = performance == 0 ? 100 : 50;
+                    config.Save();
+                }
+                HelpMarker("Quality: full collision surfaces and the most thorough body-to-body contact search.\n" +
+                           "Balanced (default): full surfaces, contact search reduced by half.\n" +
+                           "Performance: also simplifies the collision surfaces (5.5 mm target error), built in the background. " +
+                           "Can visibly change ground contact and body contours.\n" +
+                           "Surface simplification takes effect on the next ragdoll activation; contact search applies immediately.");
+            }
+            ImGui.Unindent();
         }
     }
+
+    private static readonly string[] WeaponCollisionLabels = { "Simple", "Body mesh", "Full mesh" };
+    private static readonly string[] SoftTissueLabels = { "Off", "Mod bones", "All bones", "All bones except digits" };
+    private static readonly string[] SquashLabels = { "Off", "Subtle", "Normal", "Strong" };
+    private static readonly float[] SquashIntensities = { 0f, 0.25f, 0.5f, 1f };
+    private static readonly string[] MeshCollisionPerformanceLabels = { "Quality", "Balanced", "Performance" };
+
+    private static int SquashLevelIndex(float intensity)
+    {
+        var best = 1;
+        for (var i = 2; i < SquashIntensities.Length; i++)
+            if (MathF.Abs(SquashIntensities[i] - intensity) < MathF.Abs(SquashIntensities[best] - intensity))
+                best = i;
+        return best;
+    }
+
+    private int MeshCollisionPerformanceIndex()
+        => config.RagdollMeshCollisionLod ? 2 : config.RagdollMeshContactQuality >= 100 ? 0 : 1;
 
     private void DrawNpcCollisionSection()
     {
@@ -4764,36 +3367,23 @@ public partial class MainWindow : IDisposable
                 config.RagdollNpcCollision = npcCollision;
                 config.Save();
             }
-            HelpMarker("Active combat targets have per-bone collision volumes for ragdoll interaction.");
+            HelpMarker("Active combat targets have per-bone collision volumes for ragdoll interaction. Client-controlled enemies and companions can step onto low corpse surfaces instead of pushing through them.");
 
             if (config.RagdollNpcCollision)
             {
                 ImGui.Indent();
-
-                var corpseTraversal = config.RagdollNpcCorpseTraversal;
-                if (ImGui.Checkbox("Allow NPCs to Step on Corpses##npccorpsetraversal", ref corpseTraversal))
-                {
-                    config.RagdollNpcCorpseTraversal = corpseTraversal;
-                    config.Save();
-                }
-                HelpMarker("Client-controlled enemies and companions can climb onto low corpse surfaces instead of pushing straight through them. Contacts become softer and less able to fling the corpse, while still producing a small weight/step reaction. Real map actors remain server-positioned. On by default.");
-
-                var collisionMode = (int)config.RagdollNpcCollisionMode;
-                if (collisionMode < 0 || collisionMode >= NpcCollisionModeLabels.Length)
-                    collisionMode = (int)RagdollNpcCollisionMode.BoneCapsule;
+                var collisionMode = config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.Mesh ? 1 : 0;
+                ImGui.SetNextItemWidth(200f);
                 if (ImGui.Combo("Collision shape##npccolmode", ref collisionMode, NpcCollisionModeLabels, NpcCollisionModeLabels.Length))
                 {
-                    config.RagdollNpcCollisionMode = (RagdollNpcCollisionMode)collisionMode;
-                    config.RagdollNpcCollisionConvexHull = config.RagdollNpcCollisionMode == RagdollNpcCollisionMode.ConvexHull;
+                    config.RagdollNpcCollisionMode = collisionMode == 1 ? RagdollNpcCollisionMode.Mesh : RagdollNpcCollisionMode.BoneCapsule;
                     config.Save();
                 }
-                HelpMarker("Bone capsule uses the existing per-bone capsule proxies. Convex hull uses a single activation-pose hull built from bone positions. Mesh (skinned) snapshots the rendered model mesh with the current Havok pose and tracks the root transform. Animated mesh is experimental: mount-only, low-frequency real skinned mesh rebuilds with soft contacts. Takes effect on next ragdoll activation.");
-
+                HelpMarker("Fast (default): the per-bone capsule proxies; nothing is built at activation.\nAccurate: snapshots the rendered model mesh with the current pose and tracks the root transform. Built at activation, may hitch. Takes effect on next ragdoll activation.");
                 ImGui.Unindent();
             }
         }
     }
-
 
     private void DrawGlamourerSection()
     {
@@ -5028,9 +3618,6 @@ public partial class MainWindow : IDisposable
     }
 
 
-    private static readonly string[] guidedCollapseModeNames = { "Relaxation", "Knee Power Loss" };
-    private static readonly string[] guidedRelaxationArchetypeNames = { "StiffHold", "UniformCollapse" };
-    private static readonly string[] guidedCollapseDirectionNames = { "None", "Random", "Forward", "Backward", "Sideways" };
 
 
     public void Dispose()

@@ -47,57 +47,16 @@ public class RagdollBoneConfig
 }
 
 [Serializable]
-public class RagdollBoneProfile
-{
-    public string Name { get; set; } = "";
-    public List<RagdollBoneConfig> Bones { get; set; } = new();
-}
-
-[Serializable]
 public class GuidedCollapseSettings
 {
+    // Knee buckle on death. The knee power-loss pattern is the only guided collapse; its tuning is
+    // fixed at the GuidedCollapseKneePowerLossSettings defaults.
     public bool Enabled { get; set; } = false;
-    public int Mode { get; set; } = 1; // 0=Relaxation, 1=KneePowerLoss
-    public GuidedCollapseRelaxationSettings Relaxation { get; set; } = new();
-    public GuidedCollapseKneePowerLossSettings KneePowerLoss { get; set; } = new();
-
-    public void ResetDefaults()
-    {
-        var defaults = new GuidedCollapseSettings();
-        Enabled = defaults.Enabled;
-        Mode = defaults.Mode;
-        Relaxation = defaults.Relaxation;
-        KneePowerLoss = defaults.KneePowerLoss;
-    }
-}
-
-[Serializable]
-public class GuidedCollapseRelaxationSettings
-{
-    public int Archetype { get; set; } = 1;        // 0=StiffHold, 1=UniformCollapse
-    public float Strength { get; set; } = 14f;
-    public float Hold { get; set; } = 0.3f;
-    public float Fade { get; set; } = 0.9f;
-    public float HingeSoften { get; set; } = 0.25f;
-    public int Direction { get; set; } = 1;        // 0=None,1=Random,2=Forward,3=Backward,4=Sideways
-    public float Impulse { get; set; } = 2.0f;
-    // Eccentric braking: after the hold fades, joints keep a velocity-resisting brake (the
-    // muscle "pays out" under load) instead of going slack instantly, so the body sinks →
-    // gets braked → sinks rather than free-falling to limp. BrakeStrength = residual torque
-    // ceiling as a fraction of full (0 = old instant-limp behavior, ~0.3 = noticeable brake);
-    // BrakeFade = seconds the brake decays over after the hold is gone.
-    public float BrakeStrength { get; set; } = 0.3f;
-    public float BrakeFade { get; set; } = 0.7f;
 }
 
 [Serializable]
 public class GuidedCollapseKneePowerLossSettings
 {
-    public float EntryStrength { get; set; } = 0.65f;
-    public float KneeYield { get; set; } = 0.55f;
-    public float FootGrip { get; set; } = 0.65f;
-    public float ForwardCommitment { get; set; } = 0.55f;
-    public float ReleaseTiming { get; set; } = 0.55f;
     public bool EntryConditioningEnabled { get; set; } = true;
     public float EntryStanceThreshold { get; set; } = 0.28f;
     public float EntryReadyStance { get; set; } = 0.30f;
@@ -128,7 +87,6 @@ public class GuidedCollapseKneePowerLossSettings
     public float BucklePelvisForce { get; set; } = 520f;
     public float TorsoPelvisForce { get; set; } = 275f;
     public float ChestPitchDegrees { get; set; } = 41f;
-    public bool UseSemanticControls { get; set; } = false;
     public float BuckleMinDuration { get; set; } = 0.24f;
     public float BuckleTimeout { get; set; } = 0.95f;
     public float BucklePelvisDropToTorso { get; set; } = 0.30f;
@@ -150,9 +108,7 @@ public class RecentNpcEntry
 public enum RagdollNpcCollisionMode
 {
     BoneCapsule = 0,
-    ConvexHull = 1,
     Mesh = 2,
-    AnimatedMesh = 3,
 }
 
 [Serializable]
@@ -172,19 +128,11 @@ public partial class Configuration : IPluginConfiguration
     public bool ActionAttackShapeDefaultsMigrated20260630 { get; set; } = false;
     public bool EnemyDismembermentDefaultsMigrated20260630 { get; set; } = false;
     public bool FightingSpacingDefaultsMigrated20260703 { get; set; } = false;
-    public bool ThinnerProfileTuningMigrated20260704 { get; set; } = false;
-    public bool AnatomicalDefaultsOffMigrated20260704 { get; set; } = false;
     public bool NpcCollisionMeshDefaultMigrated { get; set; } = false;
-    public bool NpcCollisionModeMigrated20260705 { get; set; } = false;
-    public bool RagdollShinBoxHalfYMigrated20260716 { get; set; } = false;
-    public bool RagdollDefaultProfileTuningMigrated20260716 { get; set; } = false;
     public bool NpcCollisionConvexHullDefaultMigrated20260716 { get; set; } = false;
-    public bool RagdollSoftBodyTuningMigrated20260719 { get; set; } = false;
-    public bool RagdollFingerPhysicsMigrated20260810 { get; set; } = false;
     public bool RagdollLegModelRebuildMigrated20260816 { get; set; } = false;
     public bool EnemyTacticsMeleeCapMigrated20261102 { get; set; } = false;
     public bool RagdollFollowPositionDefaultMigrated20260816 { get; set; } = false;
-    public bool RagdollNpcCorpseTraversalDefaultMigrated20260816 { get; set; } = false;
     public bool HitVfxDefaultMigrated20260830 { get; set; } = false;
 
     // General
@@ -214,7 +162,6 @@ public partial class Configuration : IPluginConfiguration
     public float PartyMeleeAttackRange { get; set; } = 1.5f;
     public float PartyRangedAttackRange { get; set; } = 9.5f;
     public bool PartyCompanionDeathRagdoll { get; set; } = true;
-    public bool PartyEnemyDeathRagdoll { get; set; } = true; // Legacy: merged into EnableNpcDeathRagdoll.
 
     // NPC Defaults
     public int DefaultNpcLevel { get; set; } = 90;
@@ -376,137 +323,11 @@ public partial class Configuration : IPluginConfiguration
     public bool ExtendTerrainDetection { get; set; } = false;
     // NPC death ragdoll
     public bool EnableNpcDeathRagdoll { get; set; } = true;
-    public float NpcRagdollActivationDelay { get; set; } = 0.5f;
-    public int MaxNpcRagdolls { get; set; } = 5;
-    public float RagdollGravity { get; set; } = 9.8f;
-    public float RagdollDamping { get; set; } = 0.97f;
-    // Velocity iterations per SUBSTEP, not per frame (BEPU2's SolveDescription takes it that way),
-    // so total solver work is this times RagdollSolverSubsteps. Iterations converge the constraints
-    // against one another; they do not refine the sub-step, so they buy convergence on a tangled
-    // load path rather than fidelity on a stiff spring.
-    // 4, not 8: paired with 16 substeps below this is the same total work as the old 8 x 8 while
-    // solving twice as finely, which is the trade Small Steps in Physics Simulation (Macklin 2019)
-    // argues for and which field-tested better here. Floors still apply (party 8, non-humanoid 16).
-    public int RagdollSolverIterations { get; set; } = 4;
-    // Velocity-solve substeps per fixed timestep. 1 = legacy behavior. Raising this re-integrates
-    // poses and re-solves constraints at a finer sub-step, which is BEPU's recommended lever for
-    // making a STIFF limit wall (see RagdollLimitSpringFrequency) well-conditioned instead of
-    // pumping energy — effective solve rate is 60 x this, and a spring wants roughly 10x its own
-    // frequency to be represented properly (at 8, the 90 Hz limit wall gets only ~5x).
-    // Costs ~linearly AND multiplies with the iteration count above, so trading iterations for
-    // substeps at equal total work (4 x 16 vs 8 x 8) is worth trying before paying for more.
-    // 16 with 4 iterations above = the same 64 solver passes the old 8 x 8 default cost, at a 960 Hz
-    // effective solve rate instead of 480. That takes the 90 Hz limit wall from ~5x oversampled to
-    // ~11x, which is what it wanted all along. Takes effect on next ragdoll activation.
-    public int RagdollSolverSubsteps { get; set; } = 16;
-    // The same two knobs for an NPC/companion corpse, which gets a much smaller budget: 2 x 8 = 16
-    // solver passes against the player's 64.
-    //
-    // A ragdoll is only expensive for the couple of seconds before it settles — after that it hits
-    // the resting fast path and is skipped entirely — so the cost that matters is (corpses dying at
-    // once) x (one active rig). Cutting the per-rig figure fourfold is what keeps a wave that wipes
-    // together from spiking. Nobody is inspecting the fourth body on the floor; the joint limits
-    // still hold at this rate, they just converge less exactly.
-    // Non-humanoid rigs still floor at 16 iterations (a stability need of their topology, see
-    // RagdollController.GenericSolverIterations). Takes effect on next ragdoll activation.
-    public int NpcRagdollSolverIterations { get; set; } = 2;
-    public int NpcRagdollSolverSubsteps { get; set; } = 8;
-    // Spring frequency (Hz) of the joint LIMIT walls (swing cones + twist ranges), not
-    // the positional joints. Higher = firmer wall so joints don't blow past their range
-    // under momentum (e.g. shoulders/waist over-rotating); too high relative to the
-    // 60Hz step can over-drive the solver into jitter. 60 = long-standing soft wall,
-    // 120 = very firm (needs substeps to stay stable), 90 = balanced default. Takes
-    // effect on next ragdoll activation.
-    public float RagdollLimitSpringFrequency { get; set; } = 90f;
-    // Soft-edge swing limits (ball joints): replace the hard 90Hz wall on swing cones and
-    // the Tier-C directional limits with a low-frequency, overdamped spring, so a joint
-    // sliding toward its range edge decelerates and settles instead of pinning at the
-    // extreme angle (the visual cause of splayed "spread-eagle" corpse poses freezing at
-    // their limits). Hinges (knee/elbow) keep the hard wall — a soft knee reads as
-    // hyperextension. Takes effect on next ragdoll activation.
-    public bool RagdollSoftLimits { get; set; } = true;
-    public float RagdollSoftLimitFrequency { get; set; } = 12f;
-    public float RagdollSoftLimitDamping { get; set; } = 4f;
-    // Spring frequency (Hz) of the POSITIONAL joints (the BallSocket/Weld that hold bones
-    // together at the joint), as opposed to the limit walls above. Higher = bones separate
-    // less under large impulses ("rubber-band" stretch); too high relative to the step needs
-    // more substeps to stay stable. The unified rig has a 45 Hz structural floor; unlike the
-    // former carry path, Grab never retunes this value. Takes effect on next activation.
-    public float RagdollJointSpringFrequency { get; set; } = 45f;
-    // Positional joint stiffness for the FOOT specifically (calf->foot BallSocket). The foot
-    // takes the hardest ground-impact impulses, so it rubber-bands first; give it a firmer
-    // spring than the body default. 60 = firm; falls back to RagdollJointSpringFrequency when
-    // set to 0. Takes effect on next ragdoll activation.
-    public float RagdollFootJointSpringFrequency { get; set; } = 60f;
-    // Animation-driven handoff: when the ragdoll activates after the death-animation delay,
-    // seed each physics body with the velocity the animation was carrying (finite-difference
-    // of the last animated frame) instead of starting at zero. Removes the "freeze" hitch
-    // when an in-motion death animation hands off to physics, and gives the topple its initial
-    // momentum. Disable to restore the old zero-velocity handoff.
-    public bool RagdollCarryAnimationVelocity { get; set; } = true;
-    // Scales the carried handoff velocity (1 = exact animation speed). Lower if a fast death
-    // animation throws the corpse too hard at handoff.
-    public float RagdollHandoffVelocityScale { get; set; } = 1.0f;
-    // Relaxation collapse also drives a whole-body center-of-mass topple (the body loses
-    // balance over its support base and falls like an inverted pendulum), fused with the
-    // muscle-failure brake, instead of only a one-shot directional shove. Off = a simple one-shot
-    // impulse.
-    // Stage a hard landing instead of merely simulating it: a brief freeze, one heavy heave with a whip
-    // on the limbs, and a camera shake. Physics alone cannot make a corpse read heavy — and restitution
-    // is the wrong lever, since a real one gives the decaying patter of a beach ball. The weight comes
-    // from the freeze frame and the camera, which is exactly how a fighting game does it.
-    public bool RagdollImpactWeight { get; set; } = true;
-
-    // Make the body itself read heavy, as opposed to the landing: fall harder than true gravity, and
-    // give the limbs the rotational inertia a real one has rather than the little a thin capsule
-    // implies. Kept separate from the landing staging above because unlike that, this changes
-    // trajectories — how far a kicked corpse flies, and how fast it tumbles on the way.
-    public bool RagdollHeavyBody { get; set; } = true;
-
-    public bool RagdollRelaxationTopple { get; set; } = true;
-    // Collapse asymmetry: real people never collapse symmetrically. Pick a random lead side
-    // each death — its leg buckles first and the whole-body topple leans + twists toward it —
-    // instead of a flat, mirror-image fall. 0 = perfectly symmetric (robotic), ~0.35 = natural
-    // lopsided collapse, 1 = strongly one-sided. Applies to the Relaxation topple/spike.
-    public float RagdollCollapseAsymmetry { get; set; } = 0.35f;
-    // Staged muscle failure: instead of every joint fading on one shared curve, let the muscle
-    // groups fail in sequence — legs give first, the trunk holds a beat longer, the arms trail
-    // last. More biological than a uniform limp. Off = single shared fade curve.
-    public bool RagdollStagedFailure { get; set; } = true;
-    // Momentum-steered topple: bias the fall direction toward the body's actual horizontal
-    // motion at the handoff (carried from the death animation), so a moving corpse falls the way
-    // it was going rather than a fixed preset. 0 = ignore momentum (use Topple direction only),
-    // ~0.5 = blend, 1 = fall purely along momentum when it is moving.
-    public float RagdollToppleMomentumBias { get; set; } = 0.5f;
-    // Knees use one signed flexion coordinate; elbows use flexion plus forearm pronation/
-    // supination. This topology is anatomical and is not controlled by profiles or filters.
-    public bool RagdollSelfCollision { get; set; } = true; // Body parts collide with each other (arms vs torso, etc)
-    public float RagdollFriction { get; set; } = 1.0f; // Surface friction (0=ice, 1=grippy). Lower = limbs slide more realistically.
-
-    // Tier D — Anthropometric segment masses. When on, each physics bone's mass is
-    // resolved as (Winter Table 3.1 body-mass fraction) x RagdollBodyMass instead of the
-    // hand-picked per-bone Mass values. Fixes wrong inertia (thigh too heavy, trunk not
-    // pelvis-heavy). Cloth/weapon/breast bones keep their tiny existing masses.
-    // Explicit Advanced Filter for setups that need a fixed total body mass.
-    public bool RagdollAnthropometricMass { get; set; } = true;
-    public float RagdollBodyMass { get; set; } = 70f; // Total body mass (kg) anthropometric fractions scale against.
-    // Tier C — Asymmetric swing-twist range of motion. When on, joints draw their axial
-    // twist range (all joints) and the knee/elbow flexion/hyperextension bounds from a
-    // clinical/ISB anatomical ROM table instead of the hand-set per-bone twist values and
-    // the symmetric fold-stop. Blocks knee/elbow backward hyperextension (the most visible
-    // anatomical violation) and gives each joint a correct asymmetric axial range. The
-    // ball-joint (hip/shoulder) asymmetric SWING ellipse is deferred to Tier A. Takes
-    // effect on next ragdoll activation.
-    // Default OFF after field testing: only useful in specific setups. The twist
-    // governors, hemisphere locks, and profile-table limits stay active regardless.
+    // Read by the private module; the ragdoll's gravity is fixed (RagdollTuning.Gravity).
+    [JsonIgnore] public float RagdollGravity => RagdollTuning.Gravity;
+    // Directional/asymmetric range-of-motion limits (Tier C). Default off after field testing and no
+    // longer in the UI; the code stays pending in-game validation of the swing-ROM split fix.
     public bool RagdollAnatomicalRom { get; set; } = false;
-    // Passive hinge rest bias — a soft spring on the knee/elbow hinge pulling it toward
-    // straight (the HingeRest* per-bone params). Without it the hinge only velocity-damps,
-    // so a limb resting on the ground (a supine corpse) never returns to straight and the
-    // knee stays visibly bent; the spring gives it a real "return to straight" that a ball
-    // joint's cone would, but without the ball's free sideways swing. Takes effect on next
-    // ragdoll activation.
-    public bool RagdollAnatomicalHingeRestBias { get; set; } = true;
 
     // Dismemberment POC: while the player ragdoll is active, collapse each selected limb's bone
     // subtree to ~0 scale so it vanishes from the body. Multi-select: stores the root bone name of
@@ -524,38 +345,13 @@ public partial class Configuration : IPluginConfiguration
     // knee power-loss). Config lives in GuidedCollapse; see DEATH_COLLAPSE_RESEARCH.md.
     public GuidedCollapseSettings GuidedCollapse { get; set; } = new();
     // Weapon drop physics — runs as part of ragdoll; weapon detaches and falls on death
-    public float WeaponDropGravity { get; set; } = 9.8f;
     public bool WeaponDropMeshCollision { get; set; } = false;
     public bool HidePlayerLeftWeapon { get; set; }
     public bool HidePlayerRightWeapon { get; set; }
-    public float WeaponDropDamping { get; set; } = 0.99f;
-    public float WeaponDropAngularDamping { get; set; } = 0.85f; // much stronger than linear: kills spin fast so capsule stops rolling
-    // Heavy on purpose. A real sword is a couple of kilos, but this box also has to not be skated
-    // around by the corpse's own collider or bounced by a contact it lands on — mass is the cheapest
-    // way to buy that, and nothing about the drop depends on it being physically honest.
-    public float WeaponDropMass { get; set; } = 15f;
-    public float WeaponDropRadius { get; set; } = 0.025f;
-    public float WeaponDropHalfLength { get; set; } = 0.4f;
-    public float WeaponDropBounce { get; set; } = 1.5f; // Bepu MaximumRecoveryVelocity — higher = bouncier
-    public float WeaponDropFriction { get; set; } = 0.6f;
-    public int WeaponDropSolverIterations { get; set; } = 4;
     // Independent flexible guides drive the existing hair bones. Contacts are one-way.
     public bool RagdollHairPhysics { get; set; } = false;
-    public float RagdollHairBendCompliance { get; set; } = 0.02f;
-    public float RagdollHairDamping { get; set; } = 2.2f;
-    // Bending damping as a fraction of critical: 1 follows the head without swinging; lower swings longer.
-    public float RagdollHairSwingDamping { get; set; } = 0.15f;
     // Hair contacts the cached rendered body surface (smoothed); off (default) = approximate body capsules.
     public bool RagdollHairBodyMesh { get; set; } = false;
-    // Legacy contact preference; the current solver always separates from body envelopes.
-    public bool RagdollHairCollision { get; set; } = false;
-    public float RagdollHairRigSegmentMass { get; set; } = 0.02f;        // per-segment mass (very light)
-    public float RagdollHairRigThickness { get; set; } = 0.008f;         // guide contact radius (m)
-    // Legacy serialized values retained for compatibility; the flexible solver does not read these.
-    public float RagdollHairRigSwingLimit { get; set; } = 0.6f;          // per-joint swing ROM (radians)
-    public float RagdollHairRigInitialSwingFactor { get; set; } = 0.28f; // spawn ROM fraction (holds style, relaxes to full)
-    public float RagdollHairRigPoseGuideForce { get; set; } = 4f;        // servo force holding the style at spawn, fades out
-    public float RagdollHairRigSettleSeconds { get; set; } = 1.0f;       // time to relax ROM to full + fade the pose guide
     // Soft tissue — mod-skeleton jiggle bones. Bones whose names match one of the
     // comma-separated prefixes (Rue/YAS/IVCS-lineage skeletons) are auto-registered as
     // SoftBody jiggle bodies at ragdoll activation. Vanilla skeletons have no matching
@@ -581,18 +377,6 @@ public partial class Configuration : IPluginConfiguration
     public float RagdollSquashIntensity { get; set; } = 0.5f; // 0..1, scales max compression
     // Ragdoll debug overlay — renders capsules and joint limits in 3D
     public bool RagdollDebugOverlay { get; set; } = false;
-    // Uniformly lifts the whole rig at activation if any bone's capsule/box would start
-    // underground. Off by default — it fights Ragdoll Follow (the two disagree about where the
-    // corpse root actually is right after a lift, causing a visible pop). Rare underground-start
-    // cases are left to damped contact recovery instead.
-    public bool RagdollGroundPenetrationLift { get; set; } = false;
-    // Ragdoll bone configs (Advanced) — per-bone physics parameters
-    // Empty = use built-in defaults from RagdollController.DefaultBoneDefs
-    public List<RagdollBoneConfig> RagdollBoneConfigs { get; set; } = new();
-
-    // Saved ragdoll bone profiles (snapshots of the per-bone advanced configs)
-    public List<RagdollBoneProfile> RagdollBoneProfiles { get; set; } = new();
-
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollVerboseLog { get; set; } = false;
     // Now surfaced under Effects > Ragdoll Follow (own dropdown, default on). Follows the ragdoll
@@ -602,22 +386,11 @@ public partial class Configuration : IPluginConfiguration
     public bool DevCompanionAppearanceVariant { get; set; } = false;
     public bool DevPartyApproachDebugLog { get; set; } = false;
     public bool RagdollNpcCollision { get; set; } = true;
-    // Let client-controlled enemies and companions treat settled ragdoll bodies as a low,
-    // walkable surface. The movement layer raises their root onto the corpse while the physics
-    // layer uses a soft, low-friction NPC contact so the body compresses/reacts without being
-    // launched sideways. Real map actors remain server-positioned.
-    public bool RagdollNpcCorpseTraversal { get; set; } = true;
-    /// <summary>Derive structural collision centers, axes, lengths and cross-sections from the
-    /// character's weighted body mesh, including hands, feet and j_asi_e toe endpoints. Profiles do
-    /// not author humanoid body geometry while enabled. Joint topology remains anatomical and
-    /// invariant; invalid measurements use deterministic built-in geometry per segment.</summary>
-    public bool RagdollCharacterSurfaceProfiles { get; set; } = true;
     public bool RagdollNpcCollisionAutoSize { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;
-    public bool RagdollNpcCollisionConvexHull { get; set; } = false;
-    // Bone capsule: the per-bone capsule proxies that already exist for the ragdoll — no hull or
-    // mesh built at activation, so nothing to stutter on. The convex-hull and mesh shapes are more
-    // faithful but pay for it in build cost; both are one dropdown away when wanted.
+    // Fast = the per-bone capsule proxies that already exist for the ragdoll, nothing built at
+    // activation. Accurate = a skinned snapshot of the rendered mesh, more faithful but built at
+    // activation (may hitch).
     public RagdollNpcCollisionMode RagdollNpcCollisionMode { get; set; } = RagdollNpcCollisionMode.BoneCapsule;
 
     /// <summary>
@@ -887,13 +660,6 @@ public partial class Configuration : IPluginConfiguration
         RemoveRetiredOptions();
         MigrateSplitVfxToggles();
         MigrateKoStripClothHoldPreset();
-        MigrateSkirtParentChains();
-        EnforceUnifiedRagdollTopology();
-        MigrateRagdollProfileMetadata();
-        MigrateRagdollShinBoxHalfY();
-        MigrateDefaultProfileTuning();
-        MigrateSoftBodyTuning();
-        MigrateFingerPhysicsDefaults();
         MigrateActionGuardDefaultButton();
         MigrateActionGuardVfxDefault();
         MigrateHitVfxDefault();
@@ -902,19 +668,14 @@ public partial class Configuration : IPluginConfiguration
         MigrateActionAttackShapeDefaults();
         MigrateEnemyDismembermentDefaults();
         MigrateFightingSpacingDefaults();
-        MigrateThinnerProfileTuning();
-        MigrateAnatomicalDefaultsOff();
-        MigrateNpcCollisionMode();
-        MigrateNpcCollisionMeshDefault(); // after the mode migration above, whose old default it lifts
+        MigrateNpcCollisionMeshDefault();
         MigrateEnemyTacticsMeleeCap();
-        MigrateNpcCollisionConvexHullDefault(); // last of the three: it overrides both verdicts above
-        MigrateGuidedCollapse();
+        MigrateNpcCollisionConvexHullDefault(); // after the mesh default above: it overrides that verdict
+        NormalizeNpcCollisionMode();
+        GuidedCollapse ??= new GuidedCollapseSettings();
         MigrateDynamicCameraPivotBone();
-        MigrateRagdollLegModelRebuild(); // before the profile housekeeping below: it clears RagdollBoneProfiles
+        MigrateRagdollLegModelRebuild();
         MigrateRagdollFollowPositionDefault();
-        MigrateRagdollNpcCorpseTraversalDefault();
-        RenameLegacyBoneProfiles();
-        SeedBuiltInBoneProfiles();
     }
 
     // Options that no longer exist. [JsonExtensionData] would otherwise keep their saved values in the
@@ -934,6 +695,25 @@ public partial class Configuration : IPluginConfiguration
         "KoStripCollapseWrists", "KoStripCollapseRFinger", "KoStripCollapseLFinger",
         "KoStripHandsFeetRigidDefaultMigrated20260719",
         "KoStripDelay", "KoStripDelaySeconds", "KoStripLHand", "KoStripRHand", "KoStripLFoot", "KoStripRFoot",
+        // Ragdoll pages, simplified 2026-11 (values fixed in RagdollTuning or the ON side of a switch).
+        "PartyEnemyDeathRagdoll", "NpcRagdollActivationDelay", "MaxNpcRagdolls", "RagdollGravity", "RagdollDamping",
+        "RagdollSolverIterations", "RagdollSolverSubsteps", "NpcRagdollSolverIterations", "NpcRagdollSolverSubsteps",
+        "RagdollLimitSpringFrequency", "RagdollSoftLimits", "RagdollSoftLimitFrequency", "RagdollSoftLimitDamping",
+        "RagdollJointSpringFrequency", "RagdollFootJointSpringFrequency", "RagdollCarryAnimationVelocity",
+        "RagdollHandoffVelocityScale", "RagdollImpactWeight", "RagdollHeavyBody", "RagdollRelaxationTopple",
+        "RagdollCollapseAsymmetry", "RagdollStagedFailure", "RagdollToppleMomentumBias", "RagdollSelfCollision",
+        "RagdollFriction", "RagdollAnthropometricMass", "RagdollBodyMass", "RagdollAnatomicalHingeRestBias",
+        "WeaponDropGravity", "WeaponDropDamping", "WeaponDropAngularDamping", "WeaponDropMass", "WeaponDropRadius",
+        "WeaponDropHalfLength", "WeaponDropBounce", "WeaponDropFriction", "WeaponDropSolverIterations",
+        "RagdollHairBendCompliance", "RagdollHairDamping", "RagdollHairSwingDamping", "RagdollHairCollision",
+        "RagdollHairRigSegmentMass", "RagdollHairRigThickness", "RagdollHairRigSwingLimit",
+        "RagdollHairRigInitialSwingFactor", "RagdollHairRigPoseGuideForce", "RagdollHairRigSettleSeconds",
+        "RagdollGroundPenetrationLift", "RagdollBoneConfigs", "RagdollBoneProfiles", "RagdollNpcCorpseTraversal",
+        "RagdollCharacterSurfaceProfiles", "RagdollNpcCollisionConvexHull", "RagdollMeshParallelPhysics",
+        "ThinnerProfileTuningMigrated20260704", "AnatomicalDefaultsOffMigrated20260704",
+        "NpcCollisionModeMigrated20260705", "RagdollShinBoxHalfYMigrated20260716",
+        "RagdollDefaultProfileTuningMigrated20260716", "RagdollSoftBodyTuningMigrated20260719",
+        "RagdollFingerPhysicsMigrated20260810", "RagdollNpcCorpseTraversalDefaultMigrated20260816",
     };
 
     private void RemoveRetiredOptions()
@@ -984,7 +764,6 @@ public partial class Configuration : IPluginConfiguration
             return;
 
         RagdollNpcCollisionMode = RagdollNpcCollisionMode.BoneCapsule;
-        RagdollNpcCollisionConvexHull = false;
         NpcCollisionConvexHullDefaultMigrated20260716 = true;
         Save();
     }
@@ -996,12 +775,7 @@ public partial class Configuration : IPluginConfiguration
     {
         nameof(ExtendTerrainDetection),
         nameof(EnableNpcDeathRagdoll),
-        nameof(NpcRagdollActivationDelay),
-        nameof(MaxNpcRagdolls),
         nameof(PartyCompanionDeathRagdoll),
-        nameof(PartyEnemyDeathRagdoll),
-        nameof(NpcRagdollSolverIterations),
-        nameof(NpcRagdollSolverSubsteps),
         nameof(WeaponBodyMeshContacts),
     };
 
@@ -1014,23 +788,12 @@ public partial class Configuration : IPluginConfiguration
         // which reads as the button having broken something rather than having restored it.
         nameof(EnableRagdoll),
 
-        // Data, not options. The per-bone table has its own reset on the Advanced page, and the saved
-        // profiles are the user's own work — a defaults button has no business destroying either.
-        nameof(RagdollBoneConfigs),
-        nameof(RagdollBoneProfiles),
-
         // Dev-only switch. Lives on the hidden panel, not this page.
         nameof(RagdollVerboseLog),
         // Lives under Effects now (its own dropdown), not this page.
         nameof(RagdollFollowPosition),
         // A rebuild counter, not an option: zeroing it rebuilds every live ragdoll.
         nameof(RagdollMeshCacheRevision),
-
-        // One-shot migration records, not options. Resetting them would re-run the
-        // migrations on next load (harmless thanks to their value guards, but wrong).
-        nameof(RagdollShinBoxHalfYMigrated20260716),
-        nameof(RagdollDefaultProfileTuningMigrated20260716),
-        nameof(RagdollSoftBodyTuningMigrated20260719),
     };
 
     private static bool IsRagdollPageOption(string name)
@@ -1069,16 +832,8 @@ public partial class Configuration : IPluginConfiguration
             property.SetValue(this, property.GetValue(defaults));
         }
 
-        ResetGuidedCollapseDefaults();
+        GuidedCollapse = new GuidedCollapseSettings();
         Save();
-    }
-
-    public void ResetGuidedCollapseDefaults(bool preserveEnabled = false)
-    {
-        var enabled = GuidedCollapse.Enabled;
-        GuidedCollapse.ResetDefaults();
-        if (preserveEnabled)
-            GuidedCollapse.Enabled = enabled;
     }
 
     public void ResetFightingModeDefaults(bool preserveEnabled = true)
@@ -1312,80 +1067,6 @@ public partial class Configuration : IPluginConfiguration
         Save();
     }
 
-    // Field-tuned bone values promoted into the built-in Thinner Volumes profiles
-    // (tighter hip cone/twist, tighter clavicle twist, slimmer upper arms, stronger
-    // knee rest bias). The seeder only adds MISSING profiles, so saved copies in
-    // existing configs must be patched here — targeted per-field so any other user
-    // divergence in those profiles is preserved.
-    private void MigrateThinnerProfileTuning()
-    {
-        if (ThinnerProfileTuningMigrated20260704)
-            return;
-
-        var changed = false;
-        foreach (var profile in RagdollBoneProfiles)
-        {
-            if (profile?.Name != "Thinner Volumes I" && profile?.Name != "Thinner Volumes II")
-                continue;
-            if (profile.Bones == null)
-                continue;
-
-            foreach (var bone in profile.Bones)
-            {
-                switch (bone.Name)
-                {
-                    case "j_asi_a_l":
-                    case "j_asi_a_r":
-                        bone.SwingLimit = 0.95f;
-                        bone.TwistMinAngle = -0.15f;
-                        bone.TwistMaxAngle = 0.15f;
-                        changed = true;
-                        break;
-                    case "j_sako_l":
-                    case "j_sako_r":
-                        bone.TwistMinAngle = -0.15f;
-                        bone.TwistMaxAngle = 0.15f;
-                        changed = true;
-                        break;
-                    case "j_ude_a_l":
-                    case "j_ude_a_r":
-                        bone.CapsuleRadius = 0.02f;
-                        bone.BoxHalfExtentZ = 0.024f;
-                        changed = true;
-                        break;
-                }
-            }
-        }
-
-        ThinnerProfileTuningMigrated20260704 = true;
-        if (changed)
-            Save();
-    }
-
-    // Preserve the field-tested opt-in default for anthropometric mass on existing configs.
-    private void MigrateAnatomicalDefaultsOff()
-    {
-        if (AnatomicalDefaultsOffMigrated20260704)
-            return;
-
-        RagdollAnthropometricMass = false;
-
-        AnatomicalDefaultsOffMigrated20260704 = true;
-        Save();
-    }
-
-    private void MigrateNpcCollisionMode()
-    {
-        if (NpcCollisionModeMigrated20260705)
-            return;
-
-        RagdollNpcCollisionMode = RagdollNpcCollisionConvexHull
-            ? RagdollNpcCollisionMode.ConvexHull
-            : RagdollNpcCollisionMode.BoneCapsule;
-        NpcCollisionModeMigrated20260705 = true;
-        Save();
-    }
-
     /// <summary>
     /// The skinned mesh is the default now: a corpse falling against a creature should meet the shape
     /// the player can see, not a stack of capsules standing in for it.
@@ -1405,13 +1086,6 @@ public partial class Configuration : IPluginConfiguration
         Save();
     }
 
-    private void MigrateGuidedCollapse()
-    {
-        GuidedCollapse ??= new GuidedCollapseSettings();
-        GuidedCollapse.Relaxation ??= new GuidedCollapseRelaxationSettings();
-        GuidedCollapse.KneePowerLoss ??= new GuidedCollapseKneePowerLossSettings();
-    }
-
     private void MigrateSplitVfxToggles()
     {
         if (!EnableSkillVfx)
@@ -1424,292 +1098,6 @@ public partial class Configuration : IPluginConfiguration
 
         if (changed)
             Save();
-    }
-
-    /// <summary>
-    /// Rewrites legacy skirt-bone parent references in the live RagdollBoneConfigs
-    /// list and all saved RagdollBoneProfiles to use the chained per-radial-slot
-    /// parenting (B-tier under matching A, C-tier under matching B) introduced
-    /// when the spine-anchored layout was replaced. Saves only if something
-    /// actually changed so this is cheap on every load.
-    /// </summary>
-    private void MigrateSkirtParentChains()
-    {
-        bool changed = false;
-        if (MigrateBoneList(RagdollBoneConfigs)) changed = true;
-        foreach (var profile in RagdollBoneProfiles)
-            if (MigrateBoneList(profile.Bones)) changed = true;
-        if (changed) Save();
-    }
-
-    private static bool MigrateBoneList(List<RagdollBoneConfig> bones)
-    {
-        bool changed = false;
-        foreach (var bone in bones)
-        {
-            var remapped = RemapLegacySkirtParent(bone.Name, bone.SkeletonParent);
-            if (remapped != bone.SkeletonParent)
-            {
-                bone.SkeletonParent = remapped;
-                changed = true;
-            }
-        }
-        return changed;
-    }
-
-    private static string? RemapLegacySkirtParent(string boneName, string? oldParent)
-    {
-        // Bones named j_sk_<pos>_<tier>_<side>. Tier 'b' under j_sebo_b and tier 'c'
-        // under j_sebo_c are the legacy flat-to-spine parents we replaced.
-        if (oldParent == null) return null;
-        if (!boneName.StartsWith("j_sk_")) return oldParent;
-        var parts = boneName.Split('_');
-        if (parts.Length != 5) return oldParent;
-        string pos = parts[2];
-        string tier = parts[3];
-        string side = parts[4];
-        if (tier == "b" && oldParent == "j_sebo_b") return $"j_sk_{pos}_a_{side}";
-        if (tier == "c" && oldParent == "j_sebo_c") return $"j_sk_{pos}_b_{side}";
-        return oldParent;
-    }
-
-    private void MigrateRagdollProfileMetadata()
-    {
-        bool changed = false;
-        if (MigrateRagdollBoneMetadata(RagdollBoneConfigs)) changed = true;
-        foreach (var profile in RagdollBoneProfiles)
-            if (MigrateRagdollBoneMetadata(profile.Bones)) changed = true;
-        if (changed) Save();
-    }
-
-    /// <summary>
-    /// j_asi_c is a skinning helper inside the lower leg, not a second anatomical segment.
-    /// Remove it from persisted authoring data and connect ankle/foot bodies directly to the
-    /// shin, matching the sole runtime topology.
-    /// </summary>
-    private void EnforceUnifiedRagdollTopology()
-    {
-        var changed = NormalizeUnifiedRagdollTopology(RagdollBoneConfigs);
-        foreach (var profile in RagdollBoneProfiles)
-            changed |= NormalizeUnifiedRagdollTopology(profile.Bones);
-        if (changed)
-            Save();
-    }
-
-    private static bool NormalizeUnifiedRagdollTopology(List<RagdollBoneConfig> bones)
-    {
-        var changed = bones.RemoveAll(b => b.Name is "j_asi_c_l" or "j_asi_c_r") > 0;
-        foreach (var bone in bones)
-        {
-            if (bone.Name == "j_asi_d_l" && bone.SkeletonParent == "j_asi_c_l")
-            {
-                bone.SkeletonParent = "j_asi_b_l";
-                changed = true;
-            }
-            else if (bone.Name == "j_asi_d_r" && bone.SkeletonParent == "j_asi_c_r")
-            {
-                bone.SkeletonParent = "j_asi_b_r";
-                changed = true;
-            }
-        }
-        return changed;
-    }
-
-    private static bool MigrateRagdollBoneMetadata(List<RagdollBoneConfig> bones)
-    {
-        bool changed = false;
-        foreach (var bone in bones)
-        {
-            var role = bone.AnatomicalRole;
-            var shape = bone.ColliderShape;
-            var bx = bone.BoxHalfExtentX;
-            var by = bone.BoxHalfExtentY;
-            var bz = bone.BoxHalfExtentZ;
-            RagdollController.FillProfileDefaults(bone);
-            if (role != bone.AnatomicalRole ||
-                shape != bone.ColliderShape ||
-                bx != bone.BoxHalfExtentX ||
-                by != bone.BoxHalfExtentY ||
-                bz != bone.BoxHalfExtentZ)
-                changed = true;
-        }
-        return changed;
-    }
-
-    /// <summary>
-    /// Promote the shorter knee/shin collision box into every saved profile and the live
-    /// advanced-bone list. Built-in profiles are copied into user config on first install,
-    /// so changing only the embedded JSON would leave every existing installation on 0.11.
-    /// </summary>
-    private void MigrateRagdollShinBoxHalfY()
-    {
-        if (RagdollShinBoxHalfYMigrated20260716)
-            return;
-
-        SetRagdollShinBoxHalfY(RagdollBoneConfigs);
-        foreach (var profile in RagdollBoneProfiles)
-            if (profile?.Bones != null)
-                SetRagdollShinBoxHalfY(profile.Bones);
-
-        RagdollShinBoxHalfYMigrated20260716 = true;
-        // Save even if no profiles exist yet, so the one-shot migration is recorded. A new
-        // install is seeded later in Initialize from the already-updated embedded profiles.
-        Save();
-    }
-
-    private static bool SetRagdollShinBoxHalfY(List<RagdollBoneConfig> bones)
-    {
-        var changed = false;
-        foreach (var bone in bones)
-        {
-            if (bone.Name is not ("j_asi_b_l" or "j_asi_b_r") ||
-                MathF.Abs(bone.BoxHalfExtentY - 0.035f) < 0.0001f)
-                continue;
-
-            bone.BoxHalfExtentY = 0.035f;
-            changed = true;
-        }
-        return changed;
-    }
-
-    /// <summary>
-    /// Promote the current field-tuned Default profile into installations that still carry
-    /// the previous built-in values. Match each old value exactly so a user's own Default
-    /// profile remains untouched wherever it has already diverged.
-    /// </summary>
-    private void MigrateDefaultProfileTuning()
-    {
-        if (RagdollDefaultProfileTuningMigrated20260716)
-            return;
-
-        var profile = RagdollBoneProfiles.FirstOrDefault(p =>
-            p?.Name.Equals("Default", StringComparison.OrdinalIgnoreCase) == true);
-        if (profile?.Bones != null)
-        {
-            foreach (var bone in profile.Bones)
-            {
-                if (bone.Name is "j_sako_l" or "j_sako_r")
-                {
-                    if (MathF.Abs(bone.TwistMinAngle - (-0.25f)) < 0.0001f)
-                    {
-                        bone.TwistMinAngle = -0.15f;
-                    }
-                    if (MathF.Abs(bone.TwistMaxAngle - 0.25f) < 0.0001f)
-                    {
-                        bone.TwistMaxAngle = 0.15f;
-                    }
-                }
-            }
-        }
-
-        RagdollDefaultProfileTuningMigrated20260716 = true;
-        // Record the one-shot even on a fresh install; its profile is seeded immediately
-        // afterwards from the already-updated embedded resource.
-        Save();
-    }
-
-    /// <summary>
-    /// Promote the fixed soft-tissue tuning into every saved j_mune config and enable the
-    /// bones. The shipped values (1 Hz BallSocket) let the breast sag a quarter meter under
-    /// gravity, so nobody can have liked them: any bone still carrying ALL the old values
-    /// verbatim is considered untouched and gets the new tuning + Enabled; a bone the user
-    /// tuned in any of these fields is left entirely alone (including Enabled).
-    /// </summary>
-    private void MigrateSoftBodyTuning()
-    {
-        if (RagdollSoftBodyTuningMigrated20260719)
-            return;
-
-        SetSoftBodyTuning(RagdollBoneConfigs);
-        foreach (var profile in RagdollBoneProfiles)
-            if (profile?.Bones != null)
-                SetSoftBodyTuning(profile.Bones);
-
-        RagdollSoftBodyTuningMigrated20260719 = true;
-        // Record the one-shot even on a fresh install; profiles are seeded afterwards from
-        // the already-updated embedded resource.
-        Save();
-    }
-
-    private static void SetSoftBodyTuning(List<RagdollBoneConfig> bones)
-    {
-        foreach (var bone in bones)
-        {
-            if (bone.Name is not ("j_mune_l" or "j_mune_r") || !bone.SoftBody)
-                continue;
-            var untouched =
-                MathF.Abs(bone.SoftSpringFreq - 1f) < 0.0001f &&
-                MathF.Abs(bone.SoftSpringDamp - 0.05f) < 0.0001f &&
-                MathF.Abs(bone.SoftServoFreq - 4f) < 0.0001f &&
-                MathF.Abs(bone.SoftServoDamp - 0.35f) < 0.0001f &&
-                MathF.Abs(bone.CapsuleHalfLength - 0.02f) < 0.0001f;
-            if (!untouched)
-                continue;
-
-            bone.SoftSpringFreq = 10f;
-            bone.SoftSpringDamp = 1f;
-            bone.SoftServoFreq = 3f;
-            bone.SoftServoDamp = 0.2f;
-            bone.CapsuleHalfLength = 0.045f;
-            bone.Enabled = true;
-        }
-    }
-
-    private static readonly Dictionary<string, string> LegacyBoneProfileNameMap = new()
-    {
-        { "Thickness",     "Default"            },
-        { "Flatter",       "Thinner Volumes I"  },
-        { "Complete Flat", "Thinner Volumes II" },
-    };
-
-    private void RenameLegacyBoneProfiles()
-    {
-        bool changed = false;
-        foreach (var profile in RagdollBoneProfiles)
-        {
-            if (LegacyBoneProfileNameMap.TryGetValue(profile.Name, out var newName))
-            {
-                profile.Name = newName;
-                changed = true;
-            }
-        }
-        if (changed) Save();
-    }
-
-    // The proximal joint of each finger is an explicit, small rigid body. Distal and mod-helper
-    // digit bones remain non-physical descendants, so they inherit this joint's pose without
-    // multiplying constraints or acquiring the loose generic soft-tissue tuning.
-    private static readonly HashSet<string> ProximalFingerPhysicsBones = new(StringComparer.Ordinal)
-    {
-        "j_oya_a_l", "j_oya_a_r",
-        "j_hito_a_l", "j_hito_a_r",
-        "j_naka_a_l", "j_naka_a_r",
-        "j_kusu_a_l", "j_kusu_a_r",
-        "j_ko_a_l", "j_ko_a_r",
-    };
-
-    private static bool ApplyFingerPhysicsDefaults(IEnumerable<RagdollBoneConfig> bones)
-    {
-        var changed = false;
-        foreach (var bone in bones)
-        {
-            if (bone == null || !ProximalFingerPhysicsBones.Contains(bone.Name))
-                continue;
-
-            if (!bone.Enabled)
-            {
-                bone.Enabled = true;
-                changed = true;
-            }
-
-            if (MathF.Abs(bone.CapsuleRadius - 0.01f) > 0.0001f)
-            {
-                bone.CapsuleRadius = 0.01f;
-                changed = true;
-            }
-        }
-
-        return changed;
     }
 
     /// <summary>
@@ -1728,20 +1116,6 @@ public partial class Configuration : IPluginConfiguration
         Save();
     }
 
-    private void MigrateFingerPhysicsDefaults()
-    {
-        if (RagdollFingerPhysicsMigrated20260810)
-            return;
-
-        ApplyFingerPhysicsDefaults(RagdollBoneConfigs);
-        foreach (var profile in RagdollBoneProfiles)
-            if (profile?.Bones != null)
-                ApplyFingerPhysicsDefaults(profile.Bones);
-
-        RagdollFingerPhysicsMigrated20260810 = true;
-        Save();
-    }
-
     /// <summary>
     /// 2.x.0.0: the leg model was rebuilt — j_asi_c (previously folded into j_asi_b as an inert
     /// mesh-sampling helper) is a real second knee-region body now, j_asi_b was resized to its
@@ -1751,12 +1125,6 @@ public partial class Configuration : IPluginConfiguration
     /// values for all of this from before the rebuild, so a normal default-value bump would only
     /// reach fresh installs — this forces every existing config back to the shipped defaults once.
     ///
-    /// Goes further than the "Reset All to Defaults" button on the Ragdoll page: that button
-    /// deliberately leaves RagdollBoneConfigs/RagdollBoneProfiles alone (user data, not options —
-    /// see RagdollPageResetExclusions), but any profile saved before this rebuild is missing
-    /// j_asi_c entirely. Loading one after this migration would silently reintroduce the exact
-    /// defect this release fixes, so both are cleared; SeedBuiltInBoneProfiles (run right after
-    /// this, in Initialize) repopulates the built-in ones from the now-updated resource file.
     /// </summary>
     private void MigrateRagdollLegModelRebuild()
     {
@@ -1764,8 +1132,6 @@ public partial class Configuration : IPluginConfiguration
             return;
 
         ResetRagdollPageDefaults();
-        RagdollBoneConfigs.Clear();
-        RagdollBoneProfiles.Clear();
 
         RagdollLegModelRebuildMigrated20260816 = true;
         Save();
@@ -1787,52 +1153,16 @@ public partial class Configuration : IPluginConfiguration
         Save();
     }
 
-    /// <summary>
-    /// RagdollNpcCorpseTraversal ("Allow NPCs to Step on Corpses") flips from false to true — but
-    /// every existing config already has the old value serialized explicitly, so the code default
-    /// alone would only reach fresh installs.
-    /// </summary>
-    private void MigrateRagdollNpcCorpseTraversalDefault()
+    // ConvexHull (1) and AnimatedMesh (3) were removed. A hull approximated what capsules already
+    // cover; the animated mesh becomes the static skinned snapshot it was refining.
+    private void NormalizeNpcCollisionMode()
     {
-        if (RagdollNpcCorpseTraversalDefaultMigrated20260816)
+        var mode = (int)RagdollNpcCollisionMode == 3 ? RagdollNpcCollisionMode.Mesh
+            : RagdollNpcCollisionMode == RagdollNpcCollisionMode.Mesh ? RagdollNpcCollisionMode.Mesh
+            : RagdollNpcCollisionMode.BoneCapsule;
+        if (mode == RagdollNpcCollisionMode)
             return;
-
-        RagdollNpcCorpseTraversal = true;
-
-        RagdollNpcCorpseTraversalDefaultMigrated20260816 = true;
+        RagdollNpcCollisionMode = mode;
         Save();
-    }
-
-    private void SeedBuiltInBoneProfiles()
-    {
-        List<RagdollBoneProfile>? builtIns;
-        try
-        {
-            var asm = System.Reflection.Assembly.GetExecutingAssembly();
-            using var stream = asm.GetManifestResourceStream("CombatSimulator.Resources.BuiltInBoneProfiles.json");
-            if (stream == null) return;
-            using var reader = new System.IO.StreamReader(stream);
-            var json = reader.ReadToEnd();
-            builtIns = System.Text.Json.JsonSerializer.Deserialize<List<RagdollBoneProfile>>(json);
-        }
-        catch
-        {
-            return;
-        }
-        if (builtIns == null) return;
-
-        bool changed = false;
-        foreach (var seed in builtIns)
-        {
-            // Keep embedded/seeded profiles aligned with the C# reset defaults even when an older
-            // resource or an existing installation predates proximal-finger physics.
-            ApplyFingerPhysicsDefaults(seed.Bones);
-            if (RagdollBoneProfiles.Any(p =>
-                    p.Name.Equals(seed.Name, StringComparison.OrdinalIgnoreCase)))
-                continue;
-            RagdollBoneProfiles.Add(seed);
-            changed = true;
-        }
-        if (changed) Save();
     }
 }

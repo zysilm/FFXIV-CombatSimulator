@@ -152,7 +152,7 @@ public partial class Configuration
     public float EnemyControlRightArmLowerRoll { get; set; } = 0f;
     /// <summary>
     /// Seeds the two built-in EnemyControl grab profiles once, idempotent by name (safe to call every
-    /// load, mirrors Configuration.SeedBuiltInBoneProfiles). "Default" mirrors this file's own field
+    /// load). "Default" mirrors this file's own field
     /// defaults; "Embrace" is a known-good two-hand carry pose baked in from tuned values.
     /// </summary>
     public void SeedEnemyControlGrabProfiles()

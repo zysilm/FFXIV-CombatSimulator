@@ -6320,12 +6320,7 @@ public unsafe partial class DismembermentController : IDisposable
         }
     }
 
-    private RagdollController.RagdollBoneDef[] GetRagdollBoneDefs()
-    {
-        if (config.RagdollBoneConfigs.Count > 0)
-            return RagdollController.BuildBoneDefsFromConfigs(config.RagdollBoneConfigs.ToArray());
-        return RagdollController.DefaultBoneDefs;
-    }
+    private static RagdollController.RagdollBoneDef[] GetRagdollBoneDefs() => RagdollController.DefaultBoneDefs;
 
     private bool IsHumanoidSkeleton(SkeletonAccess skel)
     {
@@ -7272,13 +7267,13 @@ public unsafe partial class DismembermentController : IDisposable
                 ExternalDynamicBodies = gearDynamicBodyHandles,
                 ExternalRigDynamicBodies = gearRigDynamicBodyHandles,
                 ExternalRigConnectedPairs = gearRigConnectedPairs,
-                Friction = config.RagdollFriction,
+                Friction = RagdollTuning.Friction,
                 Config = config,
                 RestrictedStatics = restrictedStaticHandles,
                 AllowedDynamicBodiesForRestrictedStatics = pcCollisionBodyHandles,
             },
             // Stronger damping than weapons (0.97/0.92) so limbs tumble a bit then settle, not roll far.
-            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -config.RagdollGravity, 0), 0.93f, 0.84f),
+            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -RagdollTuning.Gravity, 0), 0.93f, 0.84f),
             new SolveDescription(4, 1));
         CollisionWorkBudget.Register(simulation.NarrowPhase.CollisionTaskRegistry, () => config.RagdollMeshContactQuality);
 

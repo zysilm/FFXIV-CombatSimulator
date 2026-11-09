@@ -62,20 +62,6 @@ public unsafe class WeaponDropController : IDisposable
         }
     }
 
-    // Snapshot of physics-relevant config used when sim was created.
-    // If user changes any of these, we recreate the sim on next render frame
-    // (existing weapon bodies are dropped — they'll respawn on next death).
-    private float simGravity;
-    private float simDamping;
-    private float simAngularDamping;
-    private float simBounce;
-    private float simFriction;
-    private int simSolverIterations;
-    // Snapshot of the shape/inertia inputs too — the weapon capsule shape and inertia are
-    // cached once at sim creation, so changing these must also trigger a rebuild or they go stale.
-    private float simRadius;
-    private float simHalfLength;
-    private float simMass;
 
     private class Entry
     {
@@ -200,15 +186,6 @@ public unsafe class WeaponDropController : IDisposable
     {
         try
         {
-            // Recreate sim if any physics-relevant config changed
-            if (simulation != null && ConfigSnapshotChanged())
-            {
-                log.Info("WeaponDropController: config changed — clearing weapons and recreating simulation");
-                RemoveAll();
-                DestroySimulation();
-                return;
-            }
-
             // Advance only existing bodies. A new drop's first frame stays at its release pose.
             if (entries.Count > 0 && simulation != null)
             {
@@ -643,7 +620,7 @@ public unsafe class WeaponDropController : IDisposable
         var mesh = ragdoll.TryBuildWeaponMesh(weaponDraw);
         if (mesh != null)
         {
-            var meshShape = mesh.CreateShape(simulation!, bufferPool!, config.WeaponDropMass, out var meshInertia);
+            var meshShape = mesh.CreateShape(simulation!, bufferPool!, RagdollTuning.WeaponDropMass, out var meshInertia);
             shapeIndex = meshShape; half = mesh.Half; center = mesh.Center;
             var meshBody = simulation!.Bodies.Add(BodyDescription.CreateDynamic(
                 new RigidPose(worldPos + Vector3.Transform(center, worldRot), worldRot), default(BodyVelocity), meshInertia,
@@ -654,14 +631,14 @@ public unsafe class WeaponDropController : IDisposable
         // Per-weapon flat box: a capsule rolls forever, a box settles on a face. Length is taken from
         // the weapon's own skeleton span where available (so a long weapon gets a long box, a small
         // one stays small), falling back to the configured length; thin across so it lies flat.
-        var halfLength = MathF.Max(config.WeaponDropHalfLength, EstimateWeaponHalfLength(weaponDraw));
-        var halfWidth = MathF.Max(0.01f, config.WeaponDropRadius);
+        var halfLength = MathF.Max(RagdollTuning.WeaponDropHalfLength, EstimateWeaponHalfLength(weaponDraw));
+        var halfWidth = MathF.Max(0.01f, RagdollTuning.WeaponDropRadius);
         var halfThick = halfWidth * 0.4f;
         half = new Vector3(halfWidth, halfLength, halfThick);
         var box = new Box(halfWidth * 2f, halfLength * 2f, halfThick * 2f);
         var shape = simulation!.Shapes.Add(box);
         shapeIndex = shape;
-        var inertia = box.ComputeInertia(config.WeaponDropMass);
+        var inertia = box.ComputeInertia(RagdollTuning.WeaponDropMass);
         // Preserve the release pose exactly; do not lift the visible weapon to clear an approximate box.
 
         // Zero initial velocity (no jitter, no inheritance) — user requirement.
@@ -741,42 +718,20 @@ public unsafe class WeaponDropController : IDisposable
         weaponDraw->Rotation = rot;
     }
 
-    private bool ConfigSnapshotChanged()
-    {
-        return simGravity != config.WeaponDropGravity
-            || simDamping != config.WeaponDropDamping
-            || simAngularDamping != config.WeaponDropAngularDamping
-            || simBounce != config.WeaponDropBounce
-            || simFriction != config.WeaponDropFriction
-            || simSolverIterations != config.WeaponDropSolverIterations
-            || simRadius != config.WeaponDropRadius
-            || simHalfLength != config.WeaponDropHalfLength
-            || simMass != config.WeaponDropMass;
-    }
-
     private void EnsureSimulation()
     {
         if (simulation != null) return;
 
-        simGravity = config.WeaponDropGravity;
-        simDamping = config.WeaponDropDamping;
-        simAngularDamping = config.WeaponDropAngularDamping;
-        simBounce = config.WeaponDropBounce;
-        simFriction = config.WeaponDropFriction;
-        simSolverIterations = config.WeaponDropSolverIterations;
-        simRadius = config.WeaponDropRadius;
-        simHalfLength = config.WeaponDropHalfLength;
-        simMass = config.WeaponDropMass;
-
         bufferPool = new BufferPool();
         simulation = BepuSimulation.Create(
             bufferPool,
-            new WeaponDropNarrowPhaseCallbacks { Friction = simFriction, MaxRecoveryVelocity = simBounce, ReleaseContacts = releaseContacts, MeshBodies = meshBodies, MeshColliders = meshColliders },
-            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -simGravity, 0), simDamping, simAngularDamping),
-            new SolveDescription(simSolverIterations, 1));
+            new WeaponDropNarrowPhaseCallbacks { Friction = RagdollTuning.WeaponDropFriction, MaxRecoveryVelocity = RagdollTuning.WeaponDropBounce, ReleaseContacts = releaseContacts, MeshBodies = meshBodies, MeshColliders = meshColliders },
+            new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -RagdollTuning.WeaponDropGravity, 0),
+                RagdollTuning.WeaponDropDamping, RagdollTuning.WeaponDropAngularDamping),
+            new SolveDescription(RagdollTuning.WeaponDropSolverIterations, 1));
 
         // Weapon collision shapes are now built per weapon (per-drop boxes) in TryCreateWeaponBody.
-        log.Info($"WeaponDropController: simulation created (gravity={simGravity:F2}, bounce={simBounce:F2}, friction={simFriction:F2}, iter={simSolverIterations})");
+        log.Info($"WeaponDropController: simulation created (gravity={RagdollTuning.WeaponDropGravity:F2}, bounce={RagdollTuning.WeaponDropBounce:F2}, friction={RagdollTuning.WeaponDropFriction:F2}, iter={RagdollTuning.WeaponDropSolverIterations})");
     }
 
     private static Vector3 ModelToWorld(Vector3 modelPos, Vector3 skelWorldPos, Quaternion skelWorldRot)

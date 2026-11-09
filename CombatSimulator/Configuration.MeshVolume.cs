@@ -11,7 +11,6 @@ public partial class Configuration
     public bool WeaponBodyMeshContacts { get; set; } = true;
     public const float WeaponBodyMeshLodToleranceMm = 8f;
     public int RagdollMeshContactQuality { get; set; } = 50;
-    public bool RagdollMeshParallelPhysics { get; set; } = true;
     public bool RagdollMeshCollisionLod { get; set; } = false;
     public float RagdollMeshLodToleranceMm { get; set; } = 3f;
     [Newtonsoft.Json.JsonIgnore]

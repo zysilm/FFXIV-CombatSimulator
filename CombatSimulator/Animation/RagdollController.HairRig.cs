@@ -187,7 +187,7 @@ public unsafe partial class RagdollController
                 childPoints[i] = points.Count;
                 points.Add(tip); parents.Add(point); radii.Add(meshRadius);
             }
-            var solver = new FlexibleHairSolver(parents.ToArray(), points.ToArray(), config.RagdollHairRigSegmentMass, head, headRot, linear, angular);
+            var solver = new FlexibleHairSolver(parents.ToArray(), points.ToArray(), RagdollTuning.HairSegmentMass, head, headRot, linear, angular);
             radii.CopyTo(solver.ContactRadii);
             hairRigChains.Add(new HairRigChain
             {
@@ -241,14 +241,14 @@ public unsafe partial class RagdollController
             }
         }
         // Ragdoll hair falls with the body's gravity; animated hair with the world's.
-        float gravity = animatedHair ? 9.81f : config.RagdollGravity;
+        float gravity = animatedHair ? 9.81f : RagdollTuning.Gravity;
         foreach (var c in hairRigChains)
         {
             UpdateHairBodySurface(c, head, rotation);
-            c.Solver.Step(FixedTimestep, head, rotation, config.RagdollHairBendCompliance,
-                config.RagdollHairDamping, c.Ground, hairContacts.AsSpan(0, contactCount),
-                Math.Clamp(config.RagdollHairRigThickness, .001f, .02f), c.BodySurface,
-                config.RagdollHairSwingDamping, gravity, c.SegmentSurface);
+            c.Solver.Step(FixedTimestep, head, rotation, RagdollTuning.HairBendCompliance,
+                RagdollTuning.HairDamping, c.Ground, hairContacts.AsSpan(0, contactCount),
+                RagdollTuning.HairThickness, c.BodySurface,
+                RagdollTuning.HairSwingDamping, gravity, c.SegmentSurface);
         }
     }
 

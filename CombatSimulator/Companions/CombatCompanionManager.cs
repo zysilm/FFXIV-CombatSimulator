@@ -2139,7 +2139,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
         // vnavmesh normally creates this state. Corpse support needs the same vertical history
         // even without vnavmesh, otherwise companions never consult the bone-volume surface.
-        if (!config.NpcCollisionActive || !config.RagdollNpcCorpseTraversal)
+        if (!config.NpcCollisionActive)
             return false;
 
         state = new PathState();
