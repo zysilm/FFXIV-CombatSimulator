@@ -14,76 +14,122 @@ namespace CombatSimulator.Gui;
 /// </summary>
 public partial class MainWindow
 {
-    private static readonly string[] ShoulderSideLabels = { "Auto (opposite the enemy)", "Always left", "Always right" };
+    private static readonly string[] DynCamDirectsLabels = { "Combat and death", "Combat only", "Death only" };
+    private static readonly (bool Combat, bool Death)[] DynCamDirects = { (true, true), (true, false), (false, true) };
+    private static readonly string[] DynCamBodySizeLabels = { "Close", "Medium", "Wide" };
+    private static readonly float[] DynCamBodySizes = { 0.65f, 0.55f, 0.45f };
+    private static readonly string[] DynCamEnemiesLabels = { "Off", "Some", "All" };
+    private static readonly (bool FitVolume, float CrowdRelief)[] DynCamEnemies = { (false, 0f), (false, 0.5f), (true, 0.5f) };
+    private static readonly string[] DynCamPositionLabels = { "Centre", "Auto (opposite the enemy)", "Left", "Right" };
+    private static readonly (float Frac, int Side)[] DynCamPositions = { (0f, 0), (0.15f, 0), (0.15f, 1), (0.15f, 2) };
+    private static readonly string[] DynCamResponseLabels = { "Smooth", "Normal", "Snappy" };
+    private static readonly (float Follow, float Zoom)[] DynCamResponses = { (3f, 1.5f), (6f, 3f), (12f, 6f) };
+    private static readonly string[] DynCamDeathShotLabels = { "Looking up", "Default", "Looking down" };
+    private static readonly (float Band, float Angle)[] DynCamDeathShots = { (0.3f, -0.25f), (-0.45f, 0.45f), (-0.6f, 0.8f) };
 
-    private static readonly (string Label, string BoneName)[] DynCamPivotBones =
-    {
-        ("Hips (j_kosi)", "j_kosi"),
-        ("Lower Spine (j_sebo_a)", "j_sebo_a"),
-        ("Mid Spine (j_sebo_b)", "j_sebo_b"),
-        ("Upper Spine (j_sebo_c)", "j_sebo_c"),
-        ("Neck (j_kubi)", "j_kubi"),
-        ("Head (j_kao)", "j_kao"),
-    };
+    private static bool Near(float a, float b) => MathF.Abs(a - b) < 0.005f;
 
     public void DrawDynamicCamSection()
     {
-        if (!ImGui.CollapsingHeader("Dynamic Camera", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!config.EnableDynamicCamera || config.EnableActiveCamera)
+            return;
+        if (!ImGui.CollapsingHeader("Directed Camera", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
-        // Everything owned by the top-level section sits one level in. Its group headers are
-        // therefore visibly second-level, while each group indents its controls once more.
         ImGui.Indent();
-
         ImGui.TextWrapped(
-            "A directed camera for the simulation: the character is framed off to one side during " +
-            "the fight, and when they go down the shot pulls back to hold both the body and whoever " +
-            "killed them. You keep full control of the camera throughout — it re-frames around you, " +
-            "it never takes the stick away.");
-        ImGui.Separator();
-
-        var enabled = config.EnableDynamicCamera;
-        if (ImGui.Checkbox("Enable Dynamic Camera##dyncam", ref enabled))
-        {
-            config.EnableDynamicCamera = enabled;
-            config.Save();
-        }
-        HelpMarker("Runs while the combat simulation is active. Turning this off restores the game's own camera immediately.");
-
+            "The character is framed off to one side during the fight, and when they go down the shot pulls back " +
+            "to hold both the body and whoever killed them. You keep full control of the camera throughout.");
         DrawDynamicCamStatus();
 
-        if (!config.EnableDynamicCamera)
+        var directs = Array.FindIndex(DynCamDirects, d => d.Combat == config.DynCamCombatFraming && d.Death == config.DynCamDeathFraming);
+        ImGui.SetNextItemWidth(200);
+        if (PresetCombo("Directs##dyncam", DynCamDirectsLabels, directs, out var pickedDirects))
         {
-            ImGui.Unindent();
-            return;
+            (config.DynCamCombatFraming, config.DynCamDeathFraming) = DynCamDirects[pickedDirects];
+            config.Save();
+        }
+        HelpMarker("Combat: over-the-shoulder framing while you fight. Death: when you go down, the camera drops beside your body " +
+                   "and backs away only as far as it must to also hold the enemy that killed you.");
+
+        if (config.DynCamCombatFraming)
+        {
+            var size = Array.FindIndex(DynCamBodySizes, s => Near(s, config.DynCamSubjectScreenShare));
+            ImGui.SetNextItemWidth(200);
+            if (PresetCombo("Character size##dyncam", DynCamBodySizeLabels, size, out var pickedSize))
+            {
+                config.DynCamSubjectScreenShare = DynCamBodySizes[pickedSize];
+                config.Save();
+            }
+            HelpMarker("How much of the screen height your character fills in combat. Scroll-wheel zoom still works and is remembered.");
+
+            var enemies = Array.FindIndex(DynCamEnemies, e => e.FitVolume == config.DynCamEnemyVolumeFitting && Near(e.CrowdRelief, config.DynCamCrowdingRelief));
+            ImGui.SetNextItemWidth(200);
+            if (PresetCombo("Keep enemies in frame##dyncam", DynCamEnemiesLabels, enemies, out var pickedEnemies))
+            {
+                (config.DynCamEnemyVolumeFitting, config.DynCamCrowdingRelief) = DynCamEnemies[pickedEnemies];
+                config.Save();
+            }
+            HelpMarker("Some: pull back when several enemies spread wider than the frame. All: also keep every engaged enemy fully in view.");
+
+            var position = Array.FindIndex(DynCamPositions, p => Near(p.Frac, config.DynCamShoulderScreenFrac) &&
+                (p.Frac == 0f || p.Side == config.DynCamShoulderSide));
+            ImGui.SetNextItemWidth(200);
+            if (PresetCombo("Character position##dyncam", DynCamPositionLabels, position, out var pickedPosition))
+            {
+                (config.DynCamShoulderScreenFrac, config.DynCamShoulderSide) = DynCamPositions[pickedPosition];
+                config.Save();
+            }
+            HelpMarker("Where the character sits on screen. Auto keeps them on the far side from whatever they are fighting.");
+
+            var response = Array.FindIndex(DynCamResponses, r => Near(r.Follow, config.DynCamPivotSmoothing) && Near(r.Zoom, config.DynCamDistanceSmoothing));
+            ImGui.SetNextItemWidth(200);
+            if (PresetCombo("Responsiveness##dyncam", DynCamResponseLabels, response, out var pickedResponse))
+            {
+                (config.DynCamPivotSmoothing, config.DynCamDistanceSmoothing) = DynCamResponses[pickedResponse];
+                config.Save();
+            }
+            HelpMarker("How quickly the camera follows the body and settles its distance.");
         }
 
-        ImGui.Separator();
-        DrawDynamicCamCombatGroup();
-        DrawDynamicCamDeathGroup();
-        DrawDynamicCamDebugGroup();
+        if (config.DynCamDeathFraming)
+        {
+            var body = config.DynCamDeathBodyVisibility;
+            ImGui.SetNextItemWidth(200);
+            if (ImGui.SliderFloat("Body coverage##dyncam", ref body, 0.25f, 2f, "%.2f"))
+            {
+                config.DynCamDeathBodyVisibility = body;
+                config.Save();
+            }
+            HelpMarker("How much of your body stays in the death shot, counted from the head: 1.00 head to feet, 0.50 head to waist, " +
+                       "0.25 head and chest. Above 1.00 adds space around the body. The scroll wheel drives this live during the shot.");
 
-        // Page-level, always visible — a reset that hides inside a collapsed header is a
-        // reset nobody finds when their sliders are in a bad place.
-        ImGui.Separator();
-        if (ImGui.Button("Reset All to Defaults##dyncam"))
+            var shot = Array.FindIndex(DynCamDeathShots, s => Near(s.Band, config.DynCamDeathBodyBand) && Near(s.Angle, config.DynCamDeathAngle));
+            ImGui.SetNextItemWidth(200);
+            if (PresetCombo("Death shot##dyncam", DynCamDeathShotLabels, shot, out var pickedShot))
+            {
+                (config.DynCamDeathBodyBand, config.DynCamDeathAngle) = DynCamDeathShots[pickedShot];
+                config.Save();
+            }
+            HelpMarker("Looking up: flat on the ground, looking up past your body at the killer. " +
+                       "Looking down: raised up, showing more of the ground around the body.");
+        }
+
+        var toolbar = config.ShowDynamicCamToolbar;
+        if (ImGui.Checkbox("Show toolbar##dyncam", ref toolbar))
+        {
+            config.ShowDynamicCamToolbar = toolbar;
+            config.Save();
+        }
+        HelpMarker("A small floating bar to adjust body coverage, and whether the killer is framed, without this window open.");
+
+        if (ImGui.Button("Reset to Defaults##dyncam"))
             config.ResetDynamicCameraDefaults();
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Restore every option on this page to its shipped default. Leaves Enable Dynamic Camera itself " +
-                             "alone — resetting it would switch the feature off and take the page with it.");
         ImGui.Unindent();
     }
 
     private void DrawDynamicCamStatus()
     {
-        if (config.EnableActiveCamera)
-        {
-            ImGui.TextColored(new Vector4(1f, 0.8f, 0.2f, 1f),
-                "Active Camera is on — Dynamic Camera is standing aside.");
-            HelpMarker("Active Camera is an explicit choice about who drives the camera, so Dynamic Camera yields to it completely. " +
-                       "Turn Active Camera off (Camera page) to use Dynamic Camera.");
-        }
-
         var phase = dynamicCameraController.CurrentPhase;
         var color = phase switch
         {
@@ -95,260 +141,19 @@ public partial class MainWindow
         ImGui.TextColored(color, $"Status: {dynamicCameraController.StatusText}");
     }
 
-    private void DrawDynamicCamCombatGroup()
-    {
-        if (!ImGui.CollapsingHeader("Combat Framing##dyncam", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
-        ImGui.Indent();
-
-        var on = config.DynCamCombatFraming;
-        if (ImGui.Checkbox("Enable combat framing##dyncam", ref on))
-        {
-            config.DynCamCombatFraming = on;
-            config.Save();
-        }
-        HelpMarker("Over-the-shoulder framing while you are alive and fighting. Off = the game's normal camera until you die.");
-
-        if (!config.DynCamCombatFraming)
-        {
-            ImGui.Unindent();
-            return;
-        }
-
-        var share = config.DynCamSubjectScreenShare;
-        if (ImGui.SliderFloat("Body size on screen##dyncam", ref share, 0.35f, 0.75f, "%.2f"))
-        {
-            config.DynCamSubjectScreenShare = share;
-            config.Save();
-        }
-        HelpMarker("How much of the screen height your character fills. The camera distance is worked backwards from this, " +
-                   "so the body stays the same size whatever is going on.\n\n" +
-                   "Scroll-wheel zoom still works and is remembered — this is the baseline it scales.");
-
-        var fitEnemyVolume = config.DynCamEnemyVolumeFitting;
-        if (ImGui.Checkbox("Fit enemy volume##dyncam", ref fitEnemyVolume))
-        {
-            config.DynCamEnemyVolumeFitting = fitEnemyVolume;
-            config.Save();
-        }
-        HelpMarker("Combat only. Pulls the camera back far enough to keep the complete volume of visible engaged enemies in frame.\n\n" +
-                   "Turning it off smoothly returns to the normal combat-framing distance; it never affects death framing.");
-
-        var shoulder = config.DynCamShoulderScreenFrac;
-        if (ImGui.SliderFloat("Shoulder offset##dyncam", ref shoulder, 0f, 0.4f, "%.2f"))
-        {
-            config.DynCamShoulderScreenFrac = shoulder;
-            config.Save();
-        }
-        HelpMarker("How far off-centre the character sits, as a fraction of screen width. 0 puts them dead centre; larger values " +
-                   "open up more of the frame for the enemy in front of them.\n\n" +
-                   "Measured on screen, not in yalms, so the composition holds the same at every zoom level.");
-
-        var side = Math.Clamp(config.DynCamShoulderSide, 0, ShoulderSideLabels.Length - 1);
-        if (ImGui.Combo("Character sits##dyncam", ref side, ShoulderSideLabels, ShoulderSideLabels.Length))
-        {
-            config.DynCamShoulderSide = side;
-            config.Save();
-        }
-        HelpMarker("Auto keeps the character on the far side from whatever they are fighting, so the enemy always has room. " +
-                   "The switch is eased and needs the enemy to be clearly across the frame, so it does not flicker.");
-
-        var crowding = config.DynCamCrowdingRelief;
-        if (ImGui.SliderFloat("Crowd relief##dyncam", ref crowding, 0f, 1f, "%.2f"))
-        {
-            config.DynCamCrowdingRelief = crowding;
-            config.Save();
-        }
-        HelpMarker("Pulls the camera back when several enemies spread wider than the frame can hold. " +
-                   "This is the fix for the claustrophobic feeling a tight over-the-shoulder camera gets in a crowd. 0 disables it.");
-
-        var bones = DynCamPivotBones;
-        var boneLabels = new string[bones.Length];
-        for (var i = 0; i < bones.Length; i++)
-            boneLabels[i] = bones[i].Label;
-
-        var boneIdx = 2;
-        for (var i = 0; i < bones.Length; i++)
-            if (bones[i].BoneName == config.DynCamPivotBoneName) { boneIdx = i; break; }
-
-        if (ImGui.Combo("Framed on##dyncam", ref boneIdx, boneLabels, boneLabels.Length))
-        {
-            config.DynCamPivotBoneName = bones[boneIdx].BoneName;
-            config.Save();
-        }
-        HelpMarker("Which bone the camera orbits when pulled back. Zooming in blends the aim up toward the head on its own, so " +
-                   "this only sets where the shot rests at range.");
-
-        if (ImGui.TreeNode("Smoothing##dyncam"))
-        {
-            var height = config.DynCamHeightOffset;
-            if (ImGui.DragFloat("Height offset##dyncam", ref height, 0.01f, -1f, 2f, "%.2f"))
-            {
-                config.DynCamHeightOffset = height;
-                config.Save();
-            }
-
-            var pivotSmooth = config.DynCamPivotSmoothing;
-            if (ImGui.SliderFloat("Follow response##dyncam", ref pivotSmooth, 1f, 20f, "%.1f"))
-            {
-                config.DynCamPivotSmoothing = pivotSmooth;
-                config.Save();
-            }
-            HelpMarker("How quickly the camera follows the body. Higher is snappier.");
-
-            var distSmooth = config.DynCamDistanceSmoothing;
-            if (ImGui.SliderFloat("Zoom response##dyncam", ref distSmooth, 0.5f, 12f, "%.1f"))
-            {
-                config.DynCamDistanceSmoothing = distSmooth;
-                config.Save();
-            }
-            HelpMarker("How quickly the distance settles to the body-size target.");
-
-            var hold = config.DynCamInputHold;
-            if (ImGui.SliderFloat("Hands-off time##dyncam", ref hold, 0.2f, 6f, "%.1f s"))
-            {
-                config.DynCamInputHold = hold;
-                config.Save();
-            }
-            HelpMarker("After you touch the camera, this is how long it waits before resuming its own adjustments. " +
-                       "It never fights you — this only paces how soon it starts helping again.");
-
-            ImGui.TreePop();
-        }
-
-        ImGui.Unindent();
-    }
-
-    private void DrawDynamicCamDeathGroup()
-    {
-        if (!ImGui.CollapsingHeader("Death Framing##dyncam", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
-        ImGui.Indent();
-
-        var on = config.DynCamDeathFraming;
-        if (ImGui.Checkbox("Enable death framing##dyncam", ref on))
-        {
-            config.DynCamDeathFraming = on;
-            config.Save();
-        }
-        HelpMarker("When you go down, the camera drops to the ground beside your body — like a photographer lying next to it — " +
-                   "and backs away only as far as it must to also hold the enemy that killed you, head to toe.\n\n" +
-                   "Horizontal orbit remains under your control throughout the shot.");
-
-        if (!config.DynCamDeathFraming)
-        {
-            ImGui.Unindent();
-            return;
-        }
-
-        var body = config.DynCamDeathBodyVisibility;
-        if (ImGui.SliderFloat("Body coverage##dyncam", ref body, 0.25f, 2f, "%.2f"))
-        {
-            config.DynCamDeathBodyVisibility = body;
-            config.Save();
-        }
-        HelpMarker("How much of your body is guaranteed to stay in shot, counted from the head.\n\n" +
-                   "Above 1.00 adds space around the body's ground footprint, up to 2.00.\n" +
-                   "1.00 — head to feet\n" +
-                   "0.50 — head to waist\n" +
-                   "0.25 — head and chest only\n\n" +
-                   "Asking for less lets the camera sit closer and tighter. During the death shot the " +
-                   "SCROLL WHEEL drives this live — zooming in tightens toward the head, zooming out " +
-                   "restores full coverage and then backs the camera off.");
-
-        var bodyBand = config.DynCamDeathBodyBand;
-        if (ImGui.SliderFloat("Body position in frame##dyncam", ref bodyBand, -0.85f, 0.3f, "%.2f"))
-        {
-            config.DynCamDeathBodyBand = bodyBand;
-            config.Save();
-        }
-        HelpMarker("Where your body sits on screen: −0.85 is hard against the bottom edge, 0 is dead centre. Low values are " +
-                   "what make the shot read as a knockdown.\n\n" +
-                   "The camera's height above the ground is worked out from this (together with the angle below) every frame — " +
-                   "you say where the body should be, it finds the height. A terrain probe keeps it out of the floor.");
-
-        var angle = Math.Clamp(config.DynCamDeathAngle, DynamicCameraController.DeathAngleMin, DynamicCameraController.DeathAngleMax);
-        if (ImGui.SliderFloat("Camera angle##dyncam", ref angle, DynamicCameraController.DeathAngleMin, DynamicCameraController.DeathAngleMax, "%.2f rad"))
-        {
-            config.DynCamDeathAngle = angle;
-            config.Save();
-        }
-        HelpMarker("Which way the lens is tipped.\n\n" +
-                   "Negative — flat on the ground, looking up past your body at the killer standing over it. Dramatic, but " +
-                   "little ground in shot.\n" +
-                   "Positive — propped up on the elbows, looking down. Shows the ground and reads more as a body on the floor.\n\n" +
-                   "Tipping further down needs more height and distance to still fit the killer; the shot works that out for you, " +
-                   "so expect it to pull back as you raise this.\n\n" +
-                   "This slider is the ONLY vertical-angle control during the death shot — vertical camera drag is disabled " +
-                   "there (every attempt at live vertical adjustment fought the game's pitch pipeline and shook the shot). " +
-                   "Horizontal orbit stays fully yours, and the slider works live.");
-
-        var maximize = config.DynCamDeathMaximizeBody;
-        if (ImGui.Checkbox("Maximize body in frame##dyncam", ref maximize))
-        {
-            config.DynCamDeathMaximizeBody = maximize;
-            config.Save();
-        }
-        HelpMarker("The camera comes in as close as it can while keeping everything required in shot — the covered part of " +
-                   "your body presses against the frame edges (a body lying across the view spans it edge to edge), and the " +
-                   "killer stays fully visible. As the killer walks closer the shot tightens with them; as they back off it " +
-                   "widens just enough.\n\n" +
-                   "While this is on, the close-up distance below is ignored — the constraints ARE the distance.");
-
-        using (var d = Dalamud.Interface.Utility.Raii.ImRaii.Disabled(config.DynCamDeathMaximizeBody))
-        {
-            var closeUp = config.DynCamDeathCloseUpDistance;
-            if (ImGui.SliderFloat("Close-up distance##dyncam", ref closeUp, 0.1f, 6f, "%.1f y"))
-            {
-                config.DynCamDeathCloseUpDistance = closeUp;
-                config.Save();
-            }
-        }
-        HelpMarker("How close to your body the shot wants to sit. It only backs off from this when the killer (or the rest of " +
-                   "your body, per the coverage slider) would not otherwise fit — so this is the tightest the shot will ever be, " +
-                   "not a fixed distance.\n\n" +
-                   "Very small values get very intimate; lower Body coverage if the shot refuses to come as close as you ask.\n\n" +
-                   "Greyed out while Maximize body in frame is on.");
-
-        var duration = config.DynCamDeathTranslateDuration;
-        if (ImGui.SliderFloat("Move duration##dyncam", ref duration, 0.2f, 6f, "%.1f s"))
-        {
-            config.DynCamDeathTranslateDuration = duration;
-            config.Save();
-        }
-        HelpMarker("How long the camera takes to travel from wherever it was into the death composition.");
-
-
-        ImGui.Unindent();
-    }
-
-    private void DrawDynamicCamDebugGroup()
-    {
-        if (!ImGui.CollapsingHeader("Debug##dyncam"))
-            return;
-
-        ImGui.Indent();
-
-        var overlay = config.DynCamDebugOverlay;
-        if (ImGui.Checkbox("Show framing overlay##dyncam", ref overlay))
-        {
-            config.DynCamDebugOverlay = overlay;
-            config.Save();
-        }
-        HelpMarker("Draws the safe frame and every point the shot is required to keep visible, plus what the solver came up with.\n\n" +
-                   "Each point is plotted twice: green from the game's own projection, magenta from the framing maths. " +
-                   "They must sit on top of each other — if they do not, the framing is working from a wrong idea of the camera.");
-
-        ImGui.Unindent();
-    }
-
     /// <summary>Floating toolbar for tuning the framing in-game without the settings window in the way.</summary>
     public void DrawDynamicCamToolbar()
     {
         using var toolbarStyle = PushCompactToolbarStyle();
-        if (!ImGui.Begin("Dynamic Cam", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+        // Closable, so the toolbar can be dismissed while its camera mode is not selected.
+        var open = config.ShowDynamicCamToolbar;
+        var visible = ImGui.Begin("Dynamic Cam", ref open, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize);
+        if (!open)
+        {
+            config.ShowDynamicCamToolbar = false;
+            config.Save();
+        }
+        if (!visible)
         {
             ImGui.End();
             return;
@@ -360,6 +165,8 @@ public partial class MainWindow
             config.DynCamDeathIgnoreKiller = ignoreKiller;
             config.Save();
         }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Frame only your body in the death shot, not the killer.");
 
         ImGui.SameLine();
         var body = config.DynCamDeathBodyVisibility;

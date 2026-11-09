@@ -21,13 +21,12 @@ public partial class Configuration
     public uint EnemyControlModelId { get; set; } = 38;
     public uint EnemyControlModelNameId { get; set; } = 38;
     public float EnemyControlMoveSpeed { get; set; } = 6f;
-    public float EnemyControlVerticalSpeed { get; set; } = 2.5f;
+    [Newtonsoft.Json.JsonIgnore] public float EnemyControlVerticalSpeed => 2.5f;
     public int EnemyControlAttackKey { get; set; } = 0x59;
     public bool EnemyControlCameraFollowsControlledTarget { get; set; } = true;
     public bool EnemyControlGroundWalk { get; set; } = true;
     // Swarm control: selected living enemies hold stable randomized slots around the controlled
-    // creature. Both the feature and the attack override are opt-in so existing grab controls remain
-    // unchanged after upgrading.
+    // creature. Opt-in so existing grab controls remain unchanged after upgrading.
     public bool EnemyControlSwarmEnabled { get; set; } = false;
     public float EnemyControlSwarmFollowDistance { get; set; } = 2.5f;
     public float EnemyControlSwarmCompactness { get; set; } = 0.65f;
@@ -35,7 +34,7 @@ public partial class Configuration
     // references only; no positional constraint is created, and the option stays opt-in because it
     // deliberately changes the swarm from a leader ring into a mixed ring/corpse formation.
     public bool EnemyControlSwarmClimbCorpses { get; set; } = false;
-    public float EnemyControlSwarmClimbDelay { get; set; } = 1.25f;
+    [Newtonsoft.Json.JsonIgnore] public float EnemyControlSwarmClimbDelay => 1.25f;
     // Periodically choose a different landmark or a new small offset around the current landmark.
     // Without this, an assigned follower tracks one bone persistently.
     public bool EnemyControlSwarmRepositionOnCorpse { get; set; } = false;
@@ -43,18 +42,14 @@ public partial class Configuration
     public float EnemyControlSwarmLandmarkChangeFrequency { get; set; } = 1f;
     // Increase terrain refresh and root-support sampling/correction while swarm corpse occupation
     // is active. This does not add collision bodies and is independent of the deferred foot IK.
-    public bool EnemyControlSwarmEnhancedStompTracking { get; set; } = false;
+    [Newtonsoft.Json.JsonIgnore] public bool EnemyControlSwarmEnhancedStompTracking => true;
     // Temporary physics mass applied only while at least one swarm follower is physically supported
     // by its selected corpse. Higher values make kinematic footsteps less able to shove the corpse.
-    public float EnemyControlSwarmStompCorpseMassMultiplier { get; set; } = 3f;
+    [Newtonsoft.Json.JsonIgnore] public float EnemyControlSwarmStompCorpseMassMultiplier => 1f;
     // Strength of the bounded gait load sent through each finite-mass swarm traversal carrier.
     // Unlike corpse weight, this adds local step pressure and shear instead of making the whole rig
     // easier or harder to move. Aggregate load is capped by the controller for large swarms.
-    public float EnemyControlSwarmStompResponse { get; set; } = 1f;
-    // When enabled, the attack input plays a real melee swing instead of toggling grab. The default
-    // strike multiplier is intentionally tiny: physical limb contact should read, not launch.
-    public bool EnemyControlAttackEnabled { get; set; } = false;
-    public float EnemyControlAttackStrength { get; set; } = 0.015f;
+    [Newtonsoft.Json.JsonIgnore] public float EnemyControlSwarmStompResponse => 1.03f;
     // One pair per hold: which of the creature's own bones grabs, and which of the grabbed body's
     // bones it catches. Arbitrarily many can be live at once — e.g. one hand on the neck, the other
     // on the pelvis, for a carry/lift pose — so this is a list rather than a single fixed pair. The

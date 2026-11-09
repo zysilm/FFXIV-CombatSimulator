@@ -10,5 +10,6 @@ public partial class Configuration
 {
     public bool EnableVictoryCelebration { get; set; }
     public bool VictoryCelebrationCompanions { get; set; }
-    public float VictoryCelebrationStagger { get; set; } = 1.5f;
+    // Performers start together (the saved tuning was 0 s).
+    [Newtonsoft.Json.JsonIgnore] public float VictoryCelebrationStagger => 0f;
 }

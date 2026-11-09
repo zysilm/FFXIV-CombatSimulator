@@ -26,7 +26,7 @@ public partial class Configuration
 
     /// <summary>Bone the combat pivot orbits at range. Zooming in blends the aim up toward
     /// the head on its own, so this only sets where the shot sits when pulled back.</summary>
-    public string DynCamPivotBoneName { get; set; } = "j_sebo_c";
+    [Newtonsoft.Json.JsonIgnore] public string DynCamPivotBoneName => "j_sebo_c";
 
     /// <summary>Fraction of screen HEIGHT the player's body should occupy. Drives the
     /// target orbit distance.</summary>
@@ -45,13 +45,13 @@ public partial class Configuration
     /// This is the fix for the "claustrophobic in a crowd" complaint the real thing has.</summary>
     public float DynCamCrowdingRelief { get; set; } = 0.5f;
 
-    public float DynCamHeightOffset { get; set; } = 0.1f;
+    [Newtonsoft.Json.JsonIgnore] public float DynCamHeightOffset => 0.1f;
     public float DynCamPivotSmoothing { get; set; } = 6.0f;
     public float DynCamDistanceSmoothing { get; set; } = 3.0f;
 
     /// <summary>Seconds of hands-off after the player touches the camera before the
     /// framing resumes adapting. Never a lock — only a pause on OUR adjustments.</summary>
-    public float DynCamInputHold { get; set; } = 2.0f;
+    [Newtonsoft.Json.JsonIgnore] public float DynCamInputHold => 2.0f;
 
     /// <summary>The combat zoom the player last settled on, as a multiple of the framing
     /// distance. Learned from the scroll wheel and persisted so a new fight (or re-enabling
@@ -93,14 +93,14 @@ public partial class Configuration
     /// allow (every required body point, plus the killer, still in frame), with no distance
     /// floor. A body lying across the view ends up spanning the frame edge to edge. When off,
     /// the close-up distance below acts as the floor instead.</summary>
-    public bool DynCamDeathMaximizeBody { get; set; } = true;
+    [Newtonsoft.Json.JsonIgnore] public bool DynCamDeathMaximizeBody => true;
 
     /// <summary>How close the shot wants to sit to the body, in yalms. The fit only backs
     /// away from this when the killer will not otherwise fit. Ignored while
     /// <see cref="DynCamDeathMaximizeBody"/> is on.</summary>
-    public float DynCamDeathCloseUpDistance { get; set; } = 1.5f;
+    [Newtonsoft.Json.JsonIgnore] public float DynCamDeathCloseUpDistance => 1.5f;
 
-    public float DynCamDeathTranslateDuration { get; set; } = 2.0f;
+    [Newtonsoft.Json.JsonIgnore] public float DynCamDeathTranslateDuration => 2.0f;
 
 
     // The safe margin, lens band, give-up distance and zoom headroom used to be sliders here.
@@ -109,23 +109,6 @@ public partial class Configuration
     // silently broke the shot (an inverted lens range pinned the whole composition to a
     // super-wide 1.2 rad and shrank everyone). What the shot LOOKS like is fully expressed by
     // the sliders that remain — body coverage, body position, angle, close-up, duration.
-
-    /// <summary>One-shot: the first build framed combat on the mid spine, which put the aim at
-    /// the waist once you zoomed in. The shot now blends up toward the head as it closes, and
-    /// the resting anchor moved to the chest — but a config saved by that build has the old
-    /// bone persisted, so the corrected default would never reach it.</summary>
-    public bool MigratedDynCamPivotBone { get; set; }
-
-    private void MigrateDynamicCameraPivotBone()
-    {
-        if (MigratedDynCamPivotBone)
-            return;
-
-        MigratedDynCamPivotBone = true;
-        if (DynCamPivotBoneName == "j_sebo_b")
-            DynCamPivotBoneName = "j_sebo_c";
-        Save();
-    }
 
     /// <summary>Restore every Dynamic Camera option to its shipped default, leaving the master
     /// switch alone (resetting it would switch the feature off and take the page with it,
@@ -136,15 +119,12 @@ public partial class Configuration
 
         DynCamCombatFraming = d.DynCamCombatFraming;
         DynCamEnemyVolumeFitting = d.DynCamEnemyVolumeFitting;
-        DynCamPivotBoneName = d.DynCamPivotBoneName;
         DynCamSubjectScreenShare = d.DynCamSubjectScreenShare;
         DynCamShoulderScreenFrac = d.DynCamShoulderScreenFrac;
         DynCamShoulderSide = d.DynCamShoulderSide;
         DynCamCrowdingRelief = d.DynCamCrowdingRelief;
-        DynCamHeightOffset = d.DynCamHeightOffset;
         DynCamPivotSmoothing = d.DynCamPivotSmoothing;
         DynCamDistanceSmoothing = d.DynCamDistanceSmoothing;
-        DynCamInputHold = d.DynCamInputHold;
         DynCamCombatZoomMemory = d.DynCamCombatZoomMemory;
         DynCamCombatPitchMemory = d.DynCamCombatPitchMemory;
         DynCamCombatPitchMemoryValid = d.DynCamCombatPitchMemoryValid;
@@ -154,9 +134,6 @@ public partial class Configuration
         DynCamDeathBodyVisibility = d.DynCamDeathBodyVisibility;
         DynCamDeathBodyBand = d.DynCamDeathBodyBand;
         DynCamDeathAngle = d.DynCamDeathAngle;
-        DynCamDeathMaximizeBody = d.DynCamDeathMaximizeBody;
-        DynCamDeathCloseUpDistance = d.DynCamDeathCloseUpDistance;
-        DynCamDeathTranslateDuration = d.DynCamDeathTranslateDuration;
 
         DynCamDebugOverlay = d.DynCamDebugOverlay;
 

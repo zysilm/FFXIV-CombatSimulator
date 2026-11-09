@@ -534,15 +534,15 @@ public class HpBarOverlay : IDisposable
         var resolvedName = displayName;
         if (isDead)
         {
-            if (config.ShowDeathNameAlias && !string.IsNullOrWhiteSpace(config.DeathNameAlias))
+            if (!string.IsNullOrWhiteSpace(config.DeathNameAlias))
                 resolvedName = config.DeathNameAlias.Trim();
 
-            return config.ShowDeadLabel && !string.IsNullOrEmpty(config.DeadLabelText)
+            return !string.IsNullOrEmpty(config.DeadLabelText)
                 ? $"[{config.DeadLabelText}] {resolvedName}"
                 : resolvedName;
         }
 
-        return config.ShowSimLabel && !string.IsNullOrEmpty(config.SimLabelText)
+        return !string.IsNullOrEmpty(config.SimLabelText)
             ? $"[{config.SimLabelText}] {resolvedName}"
             : resolvedName;
     }

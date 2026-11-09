@@ -24,7 +24,6 @@ using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
-using LuminaAction = Lumina.Excel.Sheets.Action;
 
 namespace CombatSimulator.Gui;
 
@@ -69,13 +68,12 @@ public partial class MainWindow : IDisposable
 
     // Glamourer design list cache for combo box
     private List<KeyValuePair<Guid, string>> glamourerDesigns = new();
+    private bool glamourerDesignsLoaded;
     private int glamourerSelectedIndex = -1;
     private int glamourerResetSelectedIndex = -1;
     private bool showControlsPopup;
 
     // Local player's skeleton bone names (Virtual Enemies look-at bone fallback list).
-    private List<(string Label, string Path)>? actionVfxCache;
-    private string hitVfxFilter = "";
 
     private static readonly string[] ActionGuardKeyLabels = { "Shift", "Ctrl", "Alt", "None" };
     private static readonly int[] ActionGuardKeyValues = { 16, 17, 18, 0 };
@@ -92,7 +90,6 @@ public partial class MainWindow : IDisposable
         GamepadButtons.North,
         GamepadButtons.None,
     };
-    private static readonly Regex AvfxPathRegex = new(@"\u0000([a-zA-Z0-9\/_]*?)\.avfx", RegexOptions.Compiled);
 
 
     // Optional experimental dev hooks — implemented only when the private module is compiled in;
@@ -334,7 +331,6 @@ public partial class MainWindow : IDisposable
                 DrawExperimentalEffects();
                 DrawArmorDetachmentEntrySection();
                 DrawEnemyControlEntrySection();
-                DrawRagdollFollowEntrySection();
                 DrawGlamourerHeaderSection();
                 break;
             case 4: // Camera
@@ -2027,138 +2023,23 @@ public partial class MainWindow : IDisposable
         HelpMarker(help);
     }
 
-    private void DrawVfxPicker(string label, Func<string> get, System.Action<string> set, ref string filter)
+    /// <summary>Dropdown over named presets. Shows "Custom" when the saved values match none of them.</summary>
+    private static bool PresetCombo(string label, string[] names, int current, out int selected)
     {
-        EnsureActionVfxCache();
-        var list = actionVfxCache ?? new List<(string Label, string Path)> { ("None", "") };
-        var current = get();
-        var preview = FindVfxLabel(current);
-
-        if (!ImGui.BeginCombo(label, preview))
-            return;
-
-        ImGui.SetNextItemWidth(-1);
-        ImGui.InputText($"Filter##{label}", ref filter, 128);
-
-        for (var i = 0; i < list.Count; i++)
+        selected = current;
+        if (!ImGui.BeginCombo(label, current >= 0 && current < names.Length ? names[current] : "Custom"))
+            return false;
+        var changed = false;
+        for (var i = 0; i < names.Length; i++)
         {
-            var item = list[i];
-            if (!MatchesFilter(item, filter))
-                continue;
-
-            var selected = item.Path == current;
-            if (ImGui.Selectable($"{item.Label}##{label}{i}", selected))
+            if (ImGui.Selectable(names[i], i == current))
             {
-                set(item.Path);
-                config.Save();
+                selected = i;
+                changed = true;
             }
-            if (selected)
-                ImGui.SetItemDefaultFocus();
         }
-
         ImGui.EndCombo();
-    }
-
-    private void EnsureActionVfxCache()
-    {
-        if (actionVfxCache != null)
-            return;
-
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var list = new List<(string Label, string Path)> { ("None", "") };
-
-        void Add(string path, string source)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-                return;
-            if (!seen.Add(path))
-                return;
-
-            list.Add(($"{source}: {path}", path));
-        }
-
-        Add("vfx/common/eff/dk05th_stdn0t.avfx", "Common");
-        Add("vfx/common/eff/cmhit_fire1t.avfx", "Common");
-
-        try
-        {
-            var sheet = dataManager.GetExcelSheet<LuminaAction>();
-            if (sheet != null)
-            {
-                foreach (var action in sheet)
-                {
-                    var actionName = action.Name.ToString();
-                    if (string.IsNullOrWhiteSpace(actionName))
-                        actionName = $"Action {action.RowId}";
-
-                    var castLoc = action.VFX.ValueNullable?.VFX.ValueNullable?.Location.ExtractText();
-                    if (!string.IsNullOrWhiteSpace(castLoc))
-                        Add($"vfx/common/eff/{castLoc}.avfx", actionName);
-
-                    var startLoc = action.AnimationStart.ValueNullable?.VFX.ValueNullable?.Location.ExtractText();
-                    if (!string.IsNullOrWhiteSpace(startLoc))
-                        Add($"vfx/common/eff/{startLoc}.avfx", actionName);
-
-                    var endKey = action.AnimationEnd.ValueNullable?.Key.ExtractText();
-                    if (!string.IsNullOrWhiteSpace(endKey) && !endKey.Contains("[SKL_ID]"))
-                        AddVfxFromTmb($"chara/action/{endKey}.tmb", actionName, Add);
-
-                    var hitKey = action.ActionTimelineHit.ValueNullable?.Key.ExtractText();
-                    if (!string.IsNullOrWhiteSpace(hitKey) && !hitKey.Contains("[SKL_ID]") && !hitKey.Contains("normal_hit"))
-                        AddVfxFromTmb($"chara/action/{hitKey}.tmb", actionName, Add);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            log.Warning(ex, "Failed to build action VFX picker cache.");
-        }
-
-        list.Sort(1, Math.Max(0, list.Count - 1), Comparer<(string Label, string Path)>.Create(
-            (a, b) => string.Compare(a.Label, b.Label, StringComparison.OrdinalIgnoreCase)));
-        actionVfxCache = list;
-    }
-
-    private void AddVfxFromTmb(string tmbPath, string source, System.Action<string, string> add)
-    {
-        try
-        {
-            if (!dataManager.FileExists(tmbPath))
-                return;
-
-            var file = dataManager.GetFile(tmbPath);
-            if (file?.Data == null)
-                return;
-
-            var text = Encoding.UTF8.GetString(file.Data);
-            foreach (Match match in AvfxPathRegex.Matches(text))
-                add(match.Value.Trim('\0'), source);
-        }
-        catch
-        {
-        }
-    }
-
-    private string FindVfxLabel(string path)
-    {
-        EnsureActionVfxCache();
-        if (actionVfxCache != null)
-        {
-            foreach (var item in actionVfxCache)
-                if (string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase))
-                    return item.Label;
-        }
-
-        return string.IsNullOrWhiteSpace(path) ? "None" : path;
-    }
-
-    private static bool MatchesFilter((string Label, string Path) item, string filter)
-    {
-        if (string.IsNullOrWhiteSpace(filter))
-            return true;
-
-        return item.Label.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
-               item.Path.Contains(filter, StringComparison.OrdinalIgnoreCase);
+        return changed;
     }
 
     private static int IndexOf<T>(IReadOnlyList<T> values, T current)
@@ -2173,42 +2054,40 @@ public partial class MainWindow : IDisposable
         return Math.Max(0, values.Count - 1);
     }
 
+    private static readonly string[] ImpactStrengthLabels = { "Light", "Normal", "Strong" };
+    private static readonly (float HitstopMs, float Shake, float ShakeDuration)[] ImpactStrengthPresets =
+    {
+        (40f, 0.05f, 0.15f),
+        (81.53f, 0.1f, 0.2f),
+        (120f, 0.18f, 0.3f),
+    };
+
     private void DrawHitVfxSection()
     {
         if (ImGui.CollapsingHeader("VFX"))
         {
-            var characterVfx = config.EnableCharacterVfx;
-            if (ImGui.Checkbox("Enable Character VFX", ref characterVfx))
+            var actionVfx = config.EnableCharacterVfx || config.EnableTargetVfx;
+            if (ImGui.Checkbox("Action VFX", ref actionVfx))
             {
-                config.EnableCharacterVfx = characterVfx;
+                config.EnableCharacterVfx = config.EnableTargetVfx = actionVfx;
                 config.Save();
             }
-            HelpMarker("Spawn caster/character-side action effects such as cast circles, start effects, and caster timeline VFX.");
+            HelpMarker("Spawn action effects: cast circles and caster effects, and impact effects on the target.");
 
-            if (config.EnableCharacterVfx && hookSafetyChecker.HasConflicts)
+            if (actionVfx && hookSafetyChecker.HasConflicts)
             {
                 ImGui.SameLine();
                 ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "! Check Diagnose");
             }
 
-            ImGui.Spacing();
-
-            var targetVfx = config.EnableTargetVfx;
-            if (ImGui.Checkbox("Enable Target VFX", ref targetVfx))
+            var spark = config.EnableHitVfx || config.EnableHitSparkVfx;
+            if (ImGui.Checkbox("Impact spark", ref spark))
             {
-                config.EnableTargetVfx = targetVfx;
+                config.EnableHitVfx = config.EnableHitSparkVfx = spark;
                 config.Save();
             }
-            HelpMarker("Spawn target-side impact effects. If an action has no target VFX, the fallback hit VFX below can be used.");
-
-            if (config.EnableTargetVfx && hookSafetyChecker.HasConflicts)
-            {
-                ImGui.SameLine();
-                ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "! Check Diagnose");
-            }
-
-            ImGui.Separator();
-            ImGui.TextDisabled("Enemy action density");
+            HelpMarker("Spawn a spark on the struck target when an action has no impact effect of its own, and on Action Mode hits. " +
+                       "Spawning effects on modified or spawned enemies can be fragile -- turn off if you see issues.");
 
             var skillRate = config.NpcSkillRateLimit;
             ImGui.SetNextItemWidth(160);
@@ -2217,42 +2096,9 @@ public partial class MainWindow : IDisposable
                 config.NpcSkillRateLimit = skillRate;
                 config.Save();
             }
-            HelpMarker("Cap on how many skill casts ALL hostile NPCs may start per second between them. Each enemy " +
-                       "paces itself off its own cooldowns, but every cast costs VFX on the caster and each target, " +
-                       "an animation restart and flytext — all on one screen — so the visible density climbs with " +
-                       "the enemy count and nothing was holding the total down.\n\n" +
-                       "An enemy that can't get a slot doesn't idle: its cooldown is unspent so it goes the moment " +
-                       "one frees, and it auto-attacks in the meantime. Player and companions are never throttled. " +
+            HelpMarker("How many skill casts all hostile enemies together may start per second. An enemy that has to wait " +
+                       "auto-attacks meanwhile and casts as soon as a slot frees. Player and companions are never limited. " +
                        "0 = uncapped.");
-
-            var vfxCull = config.NpcSkillVfxMaxDistance;
-            ImGui.SetNextItemWidth(160);
-            if (ImGui.SliderFloat("Enemy VFX range##npcdensity", ref vfxCull, 0f, 100f, vfxCull <= 0f ? "unlimited" : "%.0f y"))
-            {
-                config.NpcSkillVfxMaxDistance = vfxCull;
-                config.Save();
-            }
-            HelpMarker("Skip action VFX for hostile casters further than this from the camera. Their damage, flytext " +
-                       "and animation still play — only the effect is dropped, at a distance where it is a few pixels " +
-                       "of glare anyway. Measured from the camera rather than from you, so a death cam sitting far " +
-                       "from your body still shows what is actually on screen. 0 = never skip.");
-
-            if (!config.EnableTargetVfx)
-                ImGui.BeginDisabled();
-
-            var enableVfx = config.EnableHitVfx;
-            if (ImGui.Checkbox("Use Fallback Hit VFX", ref enableVfx))
-            {
-                config.EnableHitVfx = enableVfx;
-                config.Save();
-            }
-            HelpMarker("When target-side action VFX are unavailable, spawn this configured hit effect on the damaged target.");
-
-            DrawVfxPicker("Fallback Hit VFX", () => config.HitVfxPath, v => config.HitVfxPath = v, ref hitVfxFilter);
-            HelpMarker("Game VFX path to spawn on hit. This list is built from action VFX data and timeline TMB files.");
-
-            if (!config.EnableTargetVfx)
-                ImGui.EndDisabled();
 
             if (!animationController.HitVfxAvailable)
             {
@@ -2262,31 +2108,26 @@ public partial class MainWindow : IDisposable
 
         if (ImGui.CollapsingHeader("Hit feedback"))
         {
-            HelpMarker("Impact feel for player attacks (Action Mode): hitstop + camera punch + spark, delayed to the weapon's contact frame.");
             var hitFeedback = config.EnableHitFeedback;
             if (ImGui.Checkbox("Enable hit feedback", ref hitFeedback))
             {
                 config.EnableHitFeedback = hitFeedback;
                 config.Save();
             }
+            HelpMarker("Impact feel for player attacks (Action Mode): hitstop and a camera punch, timed to the weapon's contact frame.");
             using (ImRaii.Disabled(!config.EnableHitFeedback))
             {
-                SliderFloatSaved("Feedback delay (s)", () => config.HitFeedbackDelay, v => config.HitFeedbackDelay = v, 0f, 1.0f,
-                    "Wait this long after the attack input before the feedback fires, so hitstop/camera/spark land when the weapon visually CONNECTS instead of at swing start. ~0.45 matches a normal swing's contact frame. 0 = instant.");
-                SliderFloatSaved("Hitstop (ms)", () => config.HitstopMs, v => config.HitstopMs = v, 0f, 150f,
-                    "Freeze the struck target's animation this long on impact -- the biggest single source of weight/impact feel. Keep short (40-90 ms) or it reads as lag. 0 = off. Only the target is frozen, never the player.");
-                SliderFloatSaved("Camera punch", () => config.HitCameraShake, v => config.HitCameraShake = v, 0f, 0.3f,
-                    "Brief screen-shake magnitude on impact (camera offset in yalms). Small = weighty, large = nauseating. Layered over the final camera pose. 0 = off.");
-                SliderFloatSaved("Punch duration", () => config.HitCameraShakeDuration, v => config.HitCameraShakeDuration = v, 0.05f, 0.5f,
-                    "Seconds the camera punch decays over.");
-                var spark = config.EnableHitSparkVfx;
-                if (ImGui.Checkbox("Hit spark VFX", ref spark))
+                var strength = Array.FindIndex(ImpactStrengthPresets, p =>
+                    MathF.Abs(p.HitstopMs - config.HitstopMs) < 0.01f &&
+                    MathF.Abs(p.Shake - config.HitCameraShake) < 0.0001f &&
+                    MathF.Abs(p.ShakeDuration - config.HitCameraShakeDuration) < 0.0001f);
+                ImGui.SetNextItemWidth(160);
+                if (PresetCombo("Impact strength##hitfeedback", ImpactStrengthLabels, strength, out var picked))
                 {
-                    config.EnableHitSparkVfx = spark;
+                    (config.HitstopMs, config.HitCameraShake, config.HitCameraShakeDuration) = ImpactStrengthPresets[picked];
                     config.Save();
                 }
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Spawn a spark on the struck target (uses the Hit VFX path). Spawning actor VFX on modified/spawned enemies can be fragile -- disable if you see issues.");
+                HelpMarker("How long the struck target freezes and how hard the camera punches on impact.");
             }
         }
 
@@ -2327,10 +2168,10 @@ public partial class MainWindow : IDisposable
                     config.Save();
                 }
 
-                var monsterPercent = Math.Clamp(config.EnemyMonsterDismembermentBonePercent, 0f, 100f);
-                if (ImGui.DragFloat("Monster bone percent##enemy_dismemberment_monster_percent", ref monsterPercent, 0.01f, 0f, 100f, "%.2f%%"))
+                var monsterPercent = Array.FindIndex(MonsterBonePercents, p => MathF.Abs(p - config.EnemyMonsterDismembermentBonePercent) < 0.01f);
+                if (PresetCombo("Monster bone percent##enemy_dismemberment_monster_percent", MonsterBonePercentLabels, monsterPercent, out var pickedPercent))
                 {
-                    config.EnemyMonsterDismembermentBonePercent = monsterPercent;
+                    config.EnemyMonsterDismembermentBonePercent = MonsterBonePercents[pickedPercent];
                     config.Save();
                 }
             }
@@ -2338,19 +2179,19 @@ public partial class MainWindow : IDisposable
         DrawPlayerWeaponVisibilitySection();
     }
 
+    private static readonly string[] MonsterBonePercentLabels = { "25%", "50%", "75%", "100%" };
+    private static readonly float[] MonsterBonePercents = { 25f, 50f, 75f, 100f };
+    private static readonly string[] HideWeaponLabels = { "None", "Main hand", "Off hand", "Both" };
+
     private void DrawPlayerWeaponVisibilitySection()
     {
         if (!ImGui.CollapsingHeader("Hide weapons")) return;
-        var left = config.HidePlayerLeftWeapon;
-        var right = config.HidePlayerRightWeapon;
-        if (ImGui.Checkbox("Left hand (off hand)##hide_player_weapon", ref left))
+        var hide = (config.HidePlayerRightWeapon ? 1 : 0) | (config.HidePlayerLeftWeapon ? 2 : 0);
+        ImGui.SetNextItemWidth(160f);
+        if (ImGui.Combo("Hide weapon##hide_player_weapon", ref hide, HideWeaponLabels, HideWeaponLabels.Length))
         {
-            config.HidePlayerLeftWeapon = left;
-            config.Save();
-        }
-        if (ImGui.Checkbox("Right hand (main hand)##hide_player_weapon", ref right))
-        {
-            config.HidePlayerRightWeapon = right;
+            config.HidePlayerRightWeapon = (hide & 1) != 0;
+            config.HidePlayerLeftWeapon = (hide & 2) != 0;
             config.Save();
         }
         HelpMarker("Player only. Hides the selected weapon slot, including dropped weapons, without changing equipment or attacks. Off hand includes shields and job accessories; two-handed weapons belong to the main-hand slot.");
@@ -2364,21 +2205,6 @@ public partial class MainWindow : IDisposable
         ("L Thigh", "j_asi_a_l"),     ("R Thigh", "j_asi_a_r"),
         ("L Shin", "j_asi_b_l"),      ("R Shin", "j_asi_b_r"),
     };
-
-    private void DrawRagdollFollowEntrySection()
-    {
-        if (!ImGui.CollapsingHeader("Ragdoll Follow"))
-            return;
-
-        var follow = config.RagdollFollowPosition;
-        if (ImGui.Checkbox("Follow flung corpses##ragdollfollow", ref follow))
-        {
-            config.RagdollFollowPosition = follow;
-            config.Save();
-        }
-        HelpMarker("Keeps a corpse's actual game-object position moving with its ragdoll body while it falls or slides, " +
-                   "so a corpse thrown far away doesn't get culled or unloaded. On by default.");
-    }
 
     private void DrawGlamourerHeaderSection()
     {
@@ -2710,22 +2536,6 @@ public partial class MainWindow : IDisposable
             }
             HelpMarker("Show a small window on simulated player defeat with a Revive button. Revive restores only the player and keeps the fight running.");
 
-            var showDynToolbar = config.ShowDynamicCamToolbar;
-            if (ImGui.Checkbox("Show Dynamic Cam Toolbar", ref showDynToolbar))
-            {
-                config.ShowDynamicCamToolbar = showDynToolbar;
-                config.Save();
-            }
-            HelpMarker("Show a floating toolbar to tune dynamic camera framing while playing.");
-
-            var showAcToolbar = config.ShowActiveCamToolbar;
-            if (ImGui.Checkbox("Show Active Cam Toolbar", ref showAcToolbar))
-            {
-                config.ShowActiveCamToolbar = showAcToolbar;
-                config.Save();
-            }
-            HelpMarker("Show a floating toolbar to quickly adjust active camera bone, zoom, and offsets.");
-
             if (ImGui.TreeNode("Player HP Bar Labels & Offsets"))
             {
                 var customName = config.CustomPlayerName;
@@ -2754,159 +2564,125 @@ public partial class MainWindow : IDisposable
 
                 ImGui.Separator();
 
-                var showSim = config.ShowSimLabel;
-                if (ImGui.Checkbox("Show Sim Label", ref showSim))
+                var simText = config.SimLabelText;
+                if (ImGui.InputTextWithHint("Sim Label", "empty = no label", ref simText, 32))
                 {
-                    config.ShowSimLabel = showSim;
+                    config.SimLabelText = simText;
                     config.Save();
                 }
-                HelpMarker("Show the [Sim] prefix on the live HP bar.");
-                if (showSim)
-                {
-                    var simText = config.SimLabelText;
-                    if (ImGui.InputText("Sim Label Text", ref simText, 32))
-                    {
-                        config.SimLabelText = simText;
-                        config.Save();
-                    }
-                }
+                HelpMarker("Prefix shown as [label] on the live HP bar. Leave empty to show none.");
 
-                var showDead = config.ShowDeadLabel;
-                if (ImGui.Checkbox("Show Dead Label", ref showDead))
+                var deadText = config.DeadLabelText;
+                if (ImGui.InputTextWithHint("Dead Label", "empty = no label", ref deadText, 32))
                 {
-                    config.ShowDeadLabel = showDead;
+                    config.DeadLabelText = deadText;
                     config.Save();
                 }
-                HelpMarker("Show the [DEAD] prefix on the HP bar when the player is defeated.");
-                if (showDead)
-                {
-                    var deadText = config.DeadLabelText;
-                    if (ImGui.InputText("Dead Label Text", ref deadText, 32))
-                    {
-                        config.DeadLabelText = deadText;
-                        config.Save();
-                    }
-                }
+                HelpMarker("Prefix shown as [label] on the HP bar while you are defeated. Leave empty to show none.");
 
-                var showDeathNameAlias = config.ShowDeathNameAlias;
-                if (ImGui.Checkbox("Show Death Name Alias", ref showDeathNameAlias))
+                var deathNameAlias = config.DeathNameAlias;
+                if (ImGui.InputTextWithHint("Death Name Alias", "empty = keep your name", ref deathNameAlias, 64))
                 {
-                    config.ShowDeathNameAlias = showDeathNameAlias;
+                    config.DeathNameAlias = deathNameAlias;
                     config.Save();
                 }
-                HelpMarker("Replace the player's displayed name on the simulated HP bars while defeated. The normal name returns on revive.");
-                if (showDeathNameAlias)
-                {
-                    var deathNameAlias = config.DeathNameAlias;
-                    if (ImGui.InputText("Death Name Alias", ref deathNameAlias, 64))
-                    {
-                        config.DeathNameAlias = deathNameAlias;
-                        config.Save();
-                    }
-                    HelpMarker("Virtual name shown only while defeated. Leave empty to keep the normal display name.");
-                }
+                HelpMarker("Name shown on the simulated HP bars only while you are defeated. The normal name returns on revive.");
 
                 ImGui.TreePop();
             }
         }
     }
 
+    private static readonly string[] CameraModeLabels = { "Game", "Follow bone", "Directed" };
+    private static readonly string[] ActiveCamVerticalLabels = { "Free", "Locked: level", "Locked: slight tilt", "Locked: strong tilt" };
+    private static readonly float[] ActiveCamVerticalAngles = { 0f, 0f, 0.4f, 0.8f };
+
     private void DrawActiveCamSection()
     {
-        if (ImGui.CollapsingHeader("Active Camera"))
+        // One mode instead of two Enable switches: Active Camera always took priority over the
+        // directed camera when both were on, so "Follow bone" here means exactly that.
+        var mode = config.EnableActiveCamera ? 1 : config.EnableDynamicCamera ? 2 : 0;
+        ImGui.SetNextItemWidth(200);
+        if (ImGui.Combo("Camera mode##camera", ref mode, CameraModeLabels, CameraModeLabels.Length))
         {
-            ImGui.Indent();
-
-            var enabled = config.EnableActiveCamera;
-            if (ImGui.Checkbox("Enable##activecam", ref enabled))
-            {
-                config.EnableActiveCamera = enabled;
-                config.Save();
-                activeCameraController.SetActive(enabled);
-            }
-            HelpMarker("Camera tracks the selected bone. You control rotation and zoom freely with mouse/keyboard.");
-
-            if (config.EnableActiveCamera)
-            {
-                // Bone selector
-                var bones = ActiveCameraController.CenterBones;
-                var boneNames = new string[bones.Length];
-                for (int b = 0; b < bones.Length; b++)
-                    boneNames[b] = bones[b].Label;
-
-                int boneIdx = 0;
-                for (int b = 0; b < bones.Length; b++)
-                    if (bones[b].BoneName == config.ActiveCameraBoneName) { boneIdx = b; break; }
-
-                if (ImGui.Combo("Center Bone##activecam", ref boneIdx, boneNames, boneNames.Length))
-                {
-                    config.ActiveCameraBoneName = bones[boneIdx].BoneName;
-                    config.Save();
-                }
-
-                // Height / Side offsets
-                var height = config.ActiveCameraHeightOffset;
-                if (ImGui.DragFloat("Height Offset##activecam", ref height, 0.01f, -5f, 10f, "%.2f"))
-                {
-                    config.ActiveCameraHeightOffset = height;
-                    config.Save();
-                }
-
-                var side = config.ActiveCameraSideOffset;
-                if (ImGui.DragFloat("Side Offset##activecam", ref side, 0.01f, -5f, 5f, "%.2f"))
-                {
-                    config.ActiveCameraSideOffset = side;
-                    config.Save();
-                }
-
-                // Vertical angle lock
-                var lockV = config.ActiveCameraLockVertical;
-                if (ImGui.Checkbox("Lock Vertical Angle##activecam", ref lockV))
-                {
-                    config.ActiveCameraLockVertical = lockV;
-                    config.Save();
-                }
-                HelpMarker("Lock the vertical camera angle to the value below. Mouse/keyboard vertical input is ignored.");
-
-                if (config.ActiveCameraLockVertical)
-                {
-                    var vAngle = config.ActiveCameraVerticalAngle;
-                    if (ImGui.DragFloat("Vertical Angle##activecam", ref vAngle, 0.01f, -MathF.PI / 2f, MathF.PI / 2f, "%.2f rad"))
-                    {
-                        config.ActiveCameraVerticalAngle = vAngle;
-                        config.Save();
-                    }
-                }
-
-                // Disable collision
-                var noCollision = config.ActiveCameraDisableCollision;
-                if (ImGui.Checkbox("Disable Camera Collision##activecam", ref noCollision))
-                {
-                    config.ActiveCameraDisableCollision = noCollision;
-                    config.Save();
-                }
-                HelpMarker("Camera passes through walls and objects.");
-
-                var minDist = config.ActiveCameraMinZoomDistance;
-                if (ImGui.SliderFloat("Min Zoom Distance##activecam", ref minDist, 0.0f, 2.0f, "%.2f"))
-                {
-                    config.ActiveCameraMinZoomDistance = minDist;
-                    config.Save();
-                }
-                HelpMarker("Minimum camera distance. Lower = closer zoom. Default 1.0.");
-
-                var preventFade = config.ActiveCameraPreventFade;
-                if (ImGui.Checkbox("Prevent Model Fade##activecam", ref preventFade))
-                {
-                    config.ActiveCameraPreventFade = preventFade;
-                    config.Save();
-                }
-                HelpMarker("Prevent characters and NPCs from disappearing when the camera zooms very close.");
-
-            }
-
-            ImGui.Unindent();
+            config.EnableActiveCamera = mode == 1;
+            config.EnableDynamicCamera = mode == 2;
+            config.Save();
+            activeCameraController.SetActive(mode == 1);
         }
+        HelpMarker("Game: the game's own camera.\n" +
+                   "Follow bone: the camera tracks a bone of your character; you rotate and zoom freely.\n" +
+                   "Directed: the camera frames you over the shoulder in combat and composes a shot when you go down.");
+
+        if (!config.EnableActiveCamera)
+            return;
+        if (!ImGui.CollapsingHeader("Follow-bone Camera", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        ImGui.Indent();
+
+        var bones = ActiveCameraController.CenterBones;
+        var boneNames = new string[bones.Length];
+        for (int b = 0; b < bones.Length; b++)
+            boneNames[b] = bones[b].Label;
+
+        int boneIdx = 0;
+        for (int b = 0; b < bones.Length; b++)
+            if (bones[b].BoneName == config.ActiveCameraBoneName) { boneIdx = b; break; }
+
+        ImGui.SetNextItemWidth(200);
+        if (ImGui.Combo("Center Bone##activecam", ref boneIdx, boneNames, boneNames.Length))
+        {
+            config.ActiveCameraBoneName = bones[boneIdx].BoneName;
+            config.Save();
+        }
+
+        var height = config.ActiveCameraHeightOffset;
+        ImGui.SetNextItemWidth(200);
+        if (ImGui.SliderFloat("Height Offset##activecam", ref height, -1f, 3f, "%.2f"))
+        {
+            config.ActiveCameraHeightOffset = height;
+            config.Save();
+        }
+
+        var vertical = !config.ActiveCameraLockVertical ? 0
+            : config.ActiveCameraVerticalAngle == 0f ? 1
+            : Array.FindIndex(ActiveCamVerticalAngles, a => a > 0f && MathF.Abs(a - config.ActiveCameraVerticalAngle) < 0.005f);
+        ImGui.SetNextItemWidth(200);
+        if (PresetCombo("Vertical angle##activecam", ActiveCamVerticalLabels, vertical, out var pickedVertical))
+        {
+            config.ActiveCameraLockVertical = pickedVertical > 0;
+            if (pickedVertical > 0) config.ActiveCameraVerticalAngle = ActiveCamVerticalAngles[pickedVertical];
+            config.Save();
+        }
+        HelpMarker("Free: you control the vertical angle. Locked: mouse/keyboard vertical input is ignored.");
+
+        var closeUp = config.ActiveCameraDisableCollision || config.ActiveCameraPreventFade;
+        if (ImGui.Checkbox("Close-up mode##activecam", ref closeUp))
+        {
+            config.ActiveCameraDisableCollision = config.ActiveCameraPreventFade = closeUp;
+            config.Save();
+        }
+        HelpMarker("The camera passes through walls and objects, and characters no longer fade out when it comes very close.");
+
+        var minDist = config.ActiveCameraMinZoomDistance;
+        ImGui.SetNextItemWidth(200);
+        if (ImGui.SliderFloat("Min Zoom Distance##activecam", ref minDist, 0.0f, 2.0f, "%.2f"))
+        {
+            config.ActiveCameraMinZoomDistance = minDist;
+            config.Save();
+        }
+        HelpMarker("Minimum camera distance. Lower = closer zoom.");
+
+        var toolbar = config.ShowActiveCamToolbar;
+        if (ImGui.Checkbox("Show toolbar##activecam", ref toolbar))
+        {
+            config.ShowActiveCamToolbar = toolbar;
+            config.Save();
+        }
+        HelpMarker("A small floating bar to adjust the camera offsets without this window open.");
+
+        ImGui.Unindent();
     }
 
     private void DrawGuidedCollapseSection()
@@ -3243,25 +3019,22 @@ public partial class MainWindow : IDisposable
 
         ImGui.Spacing();
 
-        if (!glamourerIpc.IsAvailable && glamourerDesigns.Count == 0)
+        // Load the design list once when the section is first shown, instead of a Refresh button.
+        if (!glamourerDesignsLoaded)
         {
-            ImGui.TextColored(new Vector4(1f, 0.5f, 0.3f, 1),
-                "Glamourer not detected. Click Refresh.");
-        }
-
-        if (ImGui.Button("Refresh Designs"))
-        {
-            var designs = glamourerIpc.GetDesignList();
-            glamourerDesigns = new List<KeyValuePair<Guid, string>>(designs);
+            glamourerDesignsLoaded = true;
+            glamourerDesigns = new List<KeyValuePair<Guid, string>>(glamourerIpc.GetDesignList());
             glamourerDesigns.Sort((a, b) => string.Compare(a.Value, b.Value, StringComparison.OrdinalIgnoreCase));
-
             glamourerSelectedIndex = FindDesignIndex(config.DeathGlamourerDesignId);
             glamourerResetSelectedIndex = FindDesignIndex(config.ResetGlamourerDesignId);
+        }
 
-            if (glamourerDesigns.Count > 0)
-                chatGui.Print($"[CombatSim] Found {glamourerDesigns.Count} Glamourer designs.");
-            else
-                chatGui.Print("[CombatSim] No Glamourer designs found. Is Glamourer installed?");
+        if (glamourerDesigns.Count == 0)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.5f, 0.3f, 1),
+                glamourerIpc.IsAvailable ? "No Glamourer designs found." : "Glamourer not detected.");
+            if (ImGui.SmallButton("Retry##glamourerdesigns"))
+                glamourerDesignsLoaded = false;
         }
 
         if (glamourerDesigns.Count > 0)
@@ -3377,7 +3150,15 @@ public partial class MainWindow : IDisposable
     public void DrawActiveCamToolbar()
     {
         using var toolbarStyle = PushCompactToolbarStyle();
-        if (!ImGui.Begin("Active Cam", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
+        // Closable, so the toolbar can be dismissed while its camera mode is not selected.
+        var open = config.ShowActiveCamToolbar;
+        var visible = ImGui.Begin("Active Cam", ref open, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize);
+        if (!open)
+        {
+            config.ShowActiveCamToolbar = false;
+            config.Save();
+        }
+        if (!visible)
         {
             ImGui.End();
             return;

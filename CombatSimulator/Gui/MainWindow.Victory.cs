@@ -21,7 +21,7 @@ public partial class MainWindow
             config.Save();
             if (!enabled) animationController.Victory?.Stop();
         }
-        HelpMarker("When your side is defeated, each living enemy plays a randomly chosen victory emote (humanoids) or a flourish from its own model family (creatures), with staggered start times. Ends on revive, reset or stop. Takes effect from the next fight result.");
+        HelpMarker("When your side is defeated, each living enemy plays a randomly chosen victory emote (humanoids) or a flourish from its own model family (creatures). Ends on revive, reset or stop. Takes effect from the next fight result.");
 
         using (ImRaii.Disabled(!config.EnableVictoryCelebration))
         {
@@ -32,9 +32,6 @@ public partial class MainWindow
                 config.Save();
             }
             HelpMarker("When every enemy is down, living combat companions celebrate the same way.");
-            SliderFloatSaved("Start stagger (s)##victoryStagger", () => config.VictoryCelebrationStagger,
-                v => config.VictoryCelebrationStagger = v, 0f, Animation.VictoryCelebrationPlan.MaxStaggerSeconds,
-                "Each performer starts after a random delay up to this long, so a group does not move in lockstep.");
             if (animationController.Victory is { IsActive: true } victory)
                 ImGui.TextDisabled($"Celebrating: {victory.PerformerCount}");
         }

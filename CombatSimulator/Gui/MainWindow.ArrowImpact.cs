@@ -1,5 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 using System;
+using System.Linq;
 using Dalamud.Bindings.ImGui;
 
 namespace CombatSimulator.Gui;
@@ -7,7 +8,17 @@ namespace CombatSimulator.Gui;
 public partial class MainWindow
 {
     public Effects.ArrowImpactController? ArrowImpacts { get; set; }
-    private string arrowImpactBoneFilter = string.Empty;
+
+    private static readonly string[] ArrowRegionLabels = { "Anywhere", "Head", "Torso", "Limbs" };
+    private static readonly string[][] ArrowRegionBones =
+    {
+        Array.Empty<string>(),
+        new[] { "j_kao" },
+        new[] { "j_sebo_a", "j_sebo_b", "j_sebo_c", "j_kosi" },
+        new[] { "j_ude_a_l", "j_ude_a_r", "j_ude_b_l", "j_ude_b_r", "j_asi_a_l", "j_asi_a_r", "j_asi_b_l", "j_asi_b_r" },
+    };
+    private static readonly string[] ArrowLingerLabels = { "Never", "After 45 s", "After 2 min", "After 3 min" };
+    private static readonly float[] ArrowLingerSeconds = { 0f, 45f, 120f, 180f };
 
     private void DrawArrowImpactSection()
     {
@@ -21,83 +32,35 @@ public partial class MainWindow
             config.Save();
         }
         HelpMarker("Every arrow loosed from a bow, yours or an enemy's, stays lodged in the body it hit " +
-                   "and rides along with it. The arrow drawn is the one that bow fires. With no preferred " +
-                   "bone the arrow can land anywhere on the body; with preferred bones it lands on one of " +
-                   "them first, on a neighbouring bone next, and anywhere only now and then.");
+                   "and rides along with it. The arrow drawn is the one that bow fires. Once a body carries " +
+                   "40, the oldest falls away as a new one lands.");
         if (!enabled)
             return;
 
         ImGui.Indent();
-        ImGui.TextUnformatted("Preferred bones");
         var spots = config.ArrowImpactPreferredSpots;
-        var changed = false;
-        for (var i = 0; i < spots.Count; i++)
-        {
-            if (ImGui.SmallButton($"x##arrowspot{i}"))
-            {
-                spots.RemoveAt(i);
-                changed = true;
-                break;
-            }
-            ImGui.SameLine();
-            ImGui.TextUnformatted(spots[i]);
-        }
-        if (spots.Count == 0)
-            ImGui.TextDisabled("None: arrows land anywhere on the body.");
-
-        // Every bone on the skeleton, the same list the grab pickers offer, with a filter box.
+        var region = Array.FindIndex(ArrowRegionBones, bones =>
+            bones.Length == spots.Count && bones.All(spots.Contains));
         ImGui.SetNextItemWidth(180);
-        if (ImGui.BeginCombo("##arrowspotadd", "Add a bone..."))
+        if (PresetCombo("Aim for##arrowimpact", ArrowRegionLabels, region, out var pickedRegion))
         {
-            ImGui.SetNextItemWidth(160);
-            ImGui.InputTextWithHint("##arrowspotfilter", "filter", ref arrowImpactBoneFilter, 32);
-            foreach (var bone in GrabbableBones())
-            {
-                if (spots.Contains(bone))
-                    continue;
-                if (arrowImpactBoneFilter.Length > 0 &&
-                    bone.IndexOf(arrowImpactBoneFilter, StringComparison.OrdinalIgnoreCase) < 0)
-                    continue;
-                if (ImGui.Selectable(bone))
-                {
-                    spots.Add(bone);
-                    changed = true;
-                }
-            }
-            ImGui.EndCombo();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Raw skeleton bones. The arrow lands in the flesh between the bone and its parent;\n" +
-                             "head, hands and feet also cover the body past the joint.");
-        if (changed)
+            spots.Clear();
+            spots.AddRange(ArrowRegionBones[pickedRegion]);
             config.Save();
+        }
+        HelpMarker("Anywhere: arrows land anywhere on the body. Otherwise they land in the chosen region first, " +
+                   "on a neighbouring bone next, and anywhere only now and then.");
 
-        var perTarget = config.ArrowImpactMaxPerTarget;
+        var linger = !config.ArrowImpactFallAway ? 0
+            : Array.FindIndex(ArrowLingerSeconds, s => s > 0f && MathF.Abs(s - config.ArrowImpactLingerSeconds) < 0.5f);
         ImGui.SetNextItemWidth(180);
-        if (ImGui.SliderInt("Arrows per body", ref perTarget, 1, 40))
+        if (PresetCombo("Fall away##arrowimpact", ArrowLingerLabels, linger, out var pickedLinger))
         {
-            config.ArrowImpactMaxPerTarget = Math.Clamp(perTarget, 1, 40);
+            config.ArrowImpactFallAway = pickedLinger > 0;
+            if (pickedLinger > 0) config.ArrowImpactLingerSeconds = ArrowLingerSeconds[pickedLinger];
             config.Save();
         }
-        HelpMarker("Once a body carries this many, the oldest arrow falls away as a new one lands.");
-
-        var fallAway = config.ArrowImpactFallAway;
-        if (ImGui.Checkbox("Fall away after a while##arrowimpact", ref fallAway))
-        {
-            config.ArrowImpactFallAway = fallAway;
-            config.Save();
-        }
-        HelpMarker("Off: arrows stay for as long as the body is there.");
-        if (fallAway)
-        {
-            var linger = config.ArrowImpactLingerSeconds;
-            ImGui.SetNextItemWidth(180);
-            if (ImGui.SliderFloat("Linger", ref linger, 5f, 180f, "%.0f s"))
-            {
-                config.ArrowImpactLingerSeconds = Math.Clamp(linger, 5f, 180f);
-                config.Save();
-            }
-        }
+        HelpMarker("Never: arrows stay for as long as the body is there.");
 
         // Offered only when a bleeding effect has hooked in; it decides which bodies it can serve.
         if (ArrowImpacts?.BleedAvailable == true)

@@ -138,16 +138,12 @@ public unsafe partial class EnemyControlController : IDisposable
     private readonly List<nint> staleSwarmAddresses = new();
     private readonly List<RagdollController.CorpseTraversalSlot> swarmCorpseSlots = new();
     private readonly Dictionary<int, nint> swarmCorpseReservations = new();
-    private readonly List<nint> attackSources = new();
     private Vector3 swarmCorpseCenter;
     private float swarmCorpseExclusionRadius;
     private float swarmElapsed;
     private float swarmClimbDelayRemaining;
     private float swarmStompMassHoldRemaining;
     private RagdollController? swarmCorpseRagdoll;
-    private float enemyControlAttackCooldownRemaining;
-    private const float EnemyControlAttackWindow = 0.75f;
-    private const float EnemyControlAttackCooldown = 0.35f;
 
     public bool IsActive => controlledAddress != nint.Zero;
     public int SwarmFollowerCount => swarmFollowers.Count;
@@ -417,7 +413,6 @@ public unsafe partial class EnemyControlController : IDisposable
 
             TickMovement(dt);
             if (!ExternalControlActive) TickSwarm(dt);
-            enemyControlAttackCooldownRemaining = MathF.Max(0f, enemyControlAttackCooldownRemaining - dt);
             if (!ExternalControlActive || ExternalManualControlActive) TickAttackKey();
             TickGrabAttack(dt);
         }
@@ -1258,18 +1253,6 @@ public unsafe partial class EnemyControlController : IDisposable
         }
     }
 
-    public void OnAttackModeChanged(bool enabled)
-    {
-        if (enabled)
-            CancelGrabAttack();
-        else
-        {
-            playerRagdoll.CancelAttackStrike();
-            if (swarmCorpseRagdoll != null && !ReferenceEquals(swarmCorpseRagdoll, playerRagdoll))
-                swarmCorpseRagdoll.CancelAttackStrike();
-        }
-    }
-
     private void ReleaseSwarmFollowers()
     {
         if (swarmFollowers.Count == 0)
@@ -1320,8 +1303,7 @@ public unsafe partial class EnemyControlController : IDisposable
         prevAttackKeyDown = down;
     }
 
-    /// <summary>Attack input performs a melee swing when Attack mode is enabled; otherwise it
-    /// starts/releases the configured grab pairs.</summary>
+    /// <summary>Attack input starts/releases the configured grab pairs.</summary>
     public void OnAttackInput()
     {
         if (ExternalControlActive && !ExternalManualControlActive) return;
@@ -1335,69 +1317,8 @@ public unsafe partial class EnemyControlController : IDisposable
             if (!grabAttackActive)
                 StartGrabAttack();
         }
-        else if (config.EnemyControlAttackEnabled)
-            PerformEnemyControlAttack();
         else
             ToggleGrabAttack();
-    }
-
-    private void PerformEnemyControlAttack()
-    {
-        if (enemyControlAttackCooldownRemaining > 0f || !EnemyControlObjectAlive())
-            return;
-
-        if (grabAttackActive || grabAttackRestorePending || activeGrabPairs.Count > 0)
-            CancelGrabAttack();
-
-        enemyControlAttackCooldownRemaining = EnemyControlAttackCooldown;
-        attackSources.Clear();
-        var attackRagdoll = config.EnemyControlSwarmEnabled && swarmCorpseRagdoll != null
-            ? swarmCorpseRagdoll
-            : playerRagdoll;
-        PlayPhysicalAttack(controlledAddress, controlledNpc, attackRagdoll);
-
-        if (config.EnemyControlSwarmEnabled)
-        {
-            foreach (var follower in swarmFollowers.Values)
-                PlayPhysicalAttack(follower.Npc.Address, follower.Npc, attackRagdoll);
-        }
-
-        if (attackSources.Count > 0)
-        {
-            // RagdollController shares one per-body hit budget across this whole group, so many
-            // simultaneous light attacks cannot stack into a launch.
-            var strength = Math.Clamp(config.EnemyControlAttackStrength, 0f, 0.25f);
-            attackRagdoll.BeginAttackStrike(attackSources, EnemyControlAttackWindow, strength);
-        }
-    }
-
-    private void PlayPhysicalAttack(
-        nint address,
-        Npcs.SimulatedNpc? knownNpc,
-        RagdollController attackRagdoll)
-    {
-        if (address == nint.Zero || !IsObjectAddressLive(address))
-            return;
-
-        attackRagdoll.AddLiveCollider(address);
-        var go = (GameObject*)address;
-        var corpseCenter = attackRagdoll.GetBodyWorldPosition("j_kosi") ??
-                           attackRagdoll.GetBodyWorldPosition("j_sebo_b");
-        if (corpseCenter.HasValue)
-        {
-            var toward = corpseCenter.Value - new Vector3(go->Position.X, go->Position.Y, go->Position.Z);
-            toward.Y = 0f;
-            if (toward.LengthSquared() > 0.0025f && toward.LengthSquared() < 8f * 8f)
-                movementBlock.SetApproachRotation(go, MathF.Atan2(toward.X, toward.Z));
-        }
-        var npc = knownNpc ?? new Npcs.SimulatedNpc
-        {
-            BattleChara = (BattleChara*)address,
-            SimulatedEntityId = go->EntityId,
-            Name = "EnemyControl",
-        };
-        animation.PlayNpcMeleeAnimationOnly(npc);
-        attackSources.Add(address);
     }
 
     public void CancelGrabAttack()

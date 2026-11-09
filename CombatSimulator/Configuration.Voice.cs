@@ -22,7 +22,7 @@ public partial class Configuration
     public float EnemyVoiceAllyDeathRadius { get; set; } = 15f;
     /// <summary>A killing blow on the player or a companion always gets a line: it waits for the
     /// speaker and the line gate, and a killer that cannot speak hands it to the nearest enemy that can.</summary>
-    public bool EnemyVoiceGuaranteeKills { get; set; } = true;
+    [Newtonsoft.Json.JsonIgnore] public bool EnemyVoiceGuaranteeKills => true;
     /// <summary>After the party is wiped, surviving enemies keep taunting the fallen player.</summary>
     public bool EnemyVoiceDefeatTaunts { get; set; } = false;
     /// <summary>Seconds between taunts over the fallen player.</summary>

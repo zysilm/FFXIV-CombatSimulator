@@ -48,7 +48,7 @@ public partial class MainWindow
             config.Save();
         }
         HelpMarker("Open the Enemy Control window: after a death, spawn or take over a controllable creature. " +
-                   "Every Enemy Control feature (spawn/control-killer, swarm, grab-as-attack) stays off until you enable it there.");
+                   "Every Enemy Control feature (on-death creature, swarm, grab) stays off until you enable it there.");
     }
 
     private static readonly (string Name, uint Id, uint NameId)[] EnemyControlModels =
@@ -97,27 +97,18 @@ public partial class MainWindow
 
         var active = ctrl.IsActive;
 
-        var onDeath = config.EnemyControlSpawnOnDeath;
-        if (ImGui.Checkbox("Spawn on death##EnemyControl", ref onDeath))
+        var onDeath = config.EnemyControlControlKiller ? 2 : config.EnemyControlSpawnOnDeath ? 1 : 0;
+        ImGui.SetNextItemWidth(140);
+        if (ImGui.Combo("On death##EnemyControl", ref onDeath, EnemyControlOnDeathLabels, EnemyControlOnDeathLabels.Length))
         {
-            config.EnemyControlSpawnOnDeath = onDeath;
-            if (onDeath) config.EnemyControlControlKiller = false; // mutually exclusive
-            config.Save();
-        }
-
-        var controlKiller = config.EnemyControlControlKiller;
-        if (ImGui.Checkbox("Control killer on death##EnemyControl", ref controlKiller))
-        {
-            config.EnemyControlControlKiller = controlKiller;
-            if (controlKiller)
-            {
-                config.EnemyControlSpawnOnDeath = false; // can't spawn while controlling the killer
-                ctrl.Despawn();                      // force-despawn any active EnemyControl
-            }
+            config.EnemyControlSpawnOnDeath = onDeath == 1;
+            config.EnemyControlControlKiller = onDeath == 2;
+            if (onDeath == 2) ctrl.Despawn(); // can't keep a spawned creature while controlling the killer
             config.Save();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("On death, take control of the enemy that just defeated you instead of\nspawning a creature. Same controls. Disables spawning while on.");
+            ImGui.SetTooltip("Spawn creature: a controllable creature appears when you are defeated.\n" +
+                             "Control killer: take control of the enemy that just defeated you instead. Same controls.");
 
         var modelIdx = Array.FindIndex(EnemyControlModels, m => m.Id == config.EnemyControlModelId);
         if (modelIdx < 0) modelIdx = 0;
@@ -163,15 +154,10 @@ public partial class MainWindow
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Clamp the creature to the floor (raycast / navmesh) so it walks instead of flying.\nOff = free flight (Q/E or L2/R2 up/down).");
 
-        ImGui.BeginDisabled(config.EnemyControlGroundWalk);
-        var vSpeed = config.EnemyControlVerticalSpeed;
-        if (ImGui.SliderFloat("Fly##EnemyControl", ref vSpeed, 1f, 15f, "%.1f")) { config.EnemyControlVerticalSpeed = vSpeed; config.Save(); }
-        ImGui.EndDisabled();
-
         var keyIdx = Array.FindIndex(EnemyControlAttackKeys, k => k.Key == config.EnemyControlAttackKey);
         if (keyIdx < 0) keyIdx = 0;
         ImGui.SetNextItemWidth(140);
-        if (ImGui.BeginCombo("Attack key##EnemyControl", EnemyControlAttackKeys[keyIdx].Name))
+        if (ImGui.BeginCombo("Grab key##EnemyControl", EnemyControlAttackKeys[keyIdx].Name))
         {
             for (int i = 0; i < EnemyControlAttackKeys.Length; i++)
                 if (ImGui.Selectable(EnemyControlAttackKeys[i].Name, i == keyIdx))
@@ -179,19 +165,16 @@ public partial class MainWindow
             ImGui.EndCombo();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(config.EnemyControlAttackEnabled
-                ? "Attack key plays a physical melee attack. With Swarm enabled, every follower attacks."
-                : "Attack key toggles the configured grab. Enable Attack below to replace grab with melee.");
+            ImGui.SetTooltip("Starts and releases the configured grab.");
 
         DrawEnemyControlGrabAnimationPicker();
         DrawEnemyControlGrabPairsList(ctrl);
         DrawEnemyControlArmPoseSection();
         DrawEnemyControlGrabProfilesSection();
         DrawEnemyControlSwarmSection(ctrl);
-        DrawEnemyControlAttackSection(ctrl);
 
         ImGui.TextDisabled("WASD = camera-relative move; Q/E = down/up");
-        ImGui.TextDisabled("Gamepad: left stick = move; L2/R2 = down/up; Cross = attack");
+        ImGui.TextDisabled("Gamepad: left stick = move; L2/R2 = down/up; Cross = grab");
         ImGui.TextDisabled(active ? "EnemyControl: active" : "EnemyControl: none");
 
         ImGui.End();
@@ -234,135 +217,55 @@ public partial class MainWindow
                              "distance. The controlled EnemyControl remains under free manual control.");
 
         ImGui.BeginDisabled(!config.EnemyControlSwarmEnabled || !config.EnemyControlSwarmClimbCorpses);
+        var moveAround = !config.EnemyControlSwarmRepositionOnCorpse ? 0
+            : Array.FindIndex(SwarmLandmarkFrequencies, f => f > 0f && MathF.Abs(f - config.EnemyControlSwarmLandmarkChangeFrequency) < 0.005f);
         ImGui.SetNextItemWidth(150);
-        var climbDelay = config.EnemyControlSwarmClimbDelay;
-        if (ImGui.SliderFloat("Climb delay##EnemyControlswarm", ref climbDelay, 0f, 5f, "%.2f s"))
+        if (PresetCombo("Followers move around##EnemyControlswarm", SwarmMoveAroundLabels, moveAround, out var pickedMove))
         {
-            config.EnemyControlSwarmClimbDelay = climbDelay;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Delay before followers begin reserving corpse landmarks after Swarm/climbing is enabled\n" +
-                             "or Reset is pressed.");
-        ImGui.EndDisabled();
-
-        ImGui.BeginDisabled(!config.EnemyControlSwarmEnabled || !config.EnemyControlSwarmClimbCorpses);
-        var reposition = config.EnemyControlSwarmRepositionOnCorpse;
-        if (ImGui.Checkbox("Followers occasionally change landmarks##EnemyControlswarm", ref reposition))
-        {
-            config.EnemyControlSwarmRepositionOnCorpse = reposition;
-            config.Save();
-            ctrl.OnSwarmRepositionSettingChanged(reposition);
-        }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Every several seconds, an occupied follower chooses another weighted landmark or a\n" +
-                             "new small offset around it. Off keeps its assigned bone until it becomes invalid.");
-
-        ImGui.BeginDisabled(!config.EnemyControlSwarmRepositionOnCorpse);
-        ImGui.SetNextItemWidth(150);
-        var landmarkFrequency = config.EnemyControlSwarmLandmarkChangeFrequency;
-        if (ImGui.SliderFloat("Landmark change frequency##EnemyControlswarm", ref landmarkFrequency,
-                0.25f, 4f, "%.2fx"))
-        {
+            var reposition = pickedMove > 0;
             var previousFrequency = config.EnemyControlSwarmLandmarkChangeFrequency;
-            config.EnemyControlSwarmLandmarkChangeFrequency = landmarkFrequency;
+            if (reposition) config.EnemyControlSwarmLandmarkChangeFrequency = SwarmLandmarkFrequencies[pickedMove];
+            if (reposition != config.EnemyControlSwarmRepositionOnCorpse)
+            {
+                config.EnemyControlSwarmRepositionOnCorpse = reposition;
+                ctrl.OnSwarmRepositionSettingChanged(reposition);
+            }
             config.Save();
-            ctrl.OnSwarmLandmarkChangeFrequencyChanged(previousFrequency, landmarkFrequency);
+            if (reposition && previousFrequency != config.EnemyControlSwarmLandmarkChangeFrequency)
+                ctrl.OnSwarmLandmarkChangeFrequencyChanged(previousFrequency, config.EnemyControlSwarmLandmarkChangeFrequency);
         }
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("1.00x is the original randomized 5-12 second change interval.\n" +
-                             "Higher values change landmarks more often; lower values hold them longer.");
+            ImGui.SetTooltip("How often a follower on a corpse picks another spot on it. Never keeps its spot\n" +
+                             "until it becomes invalid.");
         ImGui.EndDisabled();
 
-        var enhancedStomp = config.EnemyControlSwarmEnhancedStompTracking;
-        if (ImGui.Checkbox("High-frequency stomp tracking##EnemyControlswarm", ref enhancedStomp))
-        {
-            config.EnemyControlSwarmEnhancedStompTracking = enhancedStomp;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Refreshes terrain roughly four times faster, samples the approach path more densely,\n" +
-                             "and corrects root height faster while followers occupy corpse landmarks. No foot IK.");
-
+        var formation = Array.FindIndex(SwarmFormations, f =>
+            MathF.Abs(f.Distance - config.EnemyControlSwarmFollowDistance) < 0.005f &&
+            MathF.Abs(f.Compactness - config.EnemyControlSwarmCompactness) < 0.005f);
         ImGui.SetNextItemWidth(150);
-        var corpseMass = config.EnemyControlSwarmStompCorpseMassMultiplier;
-        if (ImGui.SliderFloat("Stomp corpse weight##EnemyControlswarm", ref corpseMass, 1f, 12f, "%.1fx"))
+        if (PresetCombo("Formation##EnemyControlswarm", SwarmFormationLabels, formation, out var pickedFormation))
         {
-            config.EnemyControlSwarmStompCorpseMassMultiplier = corpseMass;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Temporarily multiplies the selected corpse's physical mass only while swarm feet are\n" +
-                             "supported by it. This reduces corpse shoving without changing normal ragdoll motion.");
-
-        ImGui.SetNextItemWidth(150);
-        var stompResponse = config.EnemyControlSwarmStompResponse;
-        if (ImGui.SliderFloat("Swarm stomp response##EnemyControlswarm", ref stompResponse, 0f, 4f, "%.2fx"))
-        {
-            config.EnemyControlSwarmStompResponse = stompResponse;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Adds bounded alternating step pressure and sideways weight shift through each follower's\n" +
-                             "physical climbing carrier. 0 disables it; total load is capped for large swarms.");
-        ImGui.EndDisabled();
-
-        ImGui.SetNextItemWidth(150);
-        var distance = config.EnemyControlSwarmFollowDistance;
-        if (ImGui.SliderFloat("Follow distance##EnemyControlswarm", ref distance, 0.35f, 12f, "%.2f m"))
-        {
-            config.EnemyControlSwarmFollowDistance = distance;
+            (config.EnemyControlSwarmFollowDistance, config.EnemyControlSwarmCompactness) = SwarmFormations[pickedFormation];
             config.Save();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Radius of the randomized formation around the controlled EnemyControl.");
-
-        ImGui.SetNextItemWidth(150);
-        var compactness = config.EnemyControlSwarmCompactness;
-        if (ImGui.SliderFloat("Compactness##EnemyControlswarm", ref compactness, 0f, 1f, "%.2f"))
-        {
-            config.EnemyControlSwarmCompactness = compactness;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Higher values hold formation more tightly, reduce random drift, and catch up faster.\n" +
-                             "Lower values produce a looser, more organic swarm.");
+            ImGui.SetTooltip("How far followers spread around the controlled creature and how tightly they hold formation.");
 
         ImGui.TextDisabled($"Followers: {ctrl.SwarmFollowerCount} | On corpse: {ctrl.SwarmCorpseOccupantCount}");
         ImGui.Unindent();
     }
 
-    private void DrawEnemyControlAttackSection(EnemyControlController ctrl)
+    private static readonly string[] EnemyControlOnDeathLabels = { "Nothing", "Spawn creature", "Control killer" };
+    private static readonly string[] SwarmMoveAroundLabels = { "Never", "Sometimes", "Often", "Very often" };
+    private static readonly float[] SwarmLandmarkFrequencies = { 0f, 1f, 1.36f, 2f };
+    private static readonly string[] SwarmFormationLabels = { "Tight", "Normal", "Loose", "Wide" };
+    private static readonly (float Distance, float Compactness)[] SwarmFormations =
     {
-        if (!ImGui.CollapsingHeader("Attack##EnemyControlattack"))
-            return;
-
-        ImGui.Indent();
-        var enabled = config.EnemyControlAttackEnabled;
-        if (ImGui.Checkbox("Attack instead of grab##EnemyControlattack", ref enabled))
-        {
-            config.EnemyControlAttackEnabled = enabled;
-            config.Save();
-            ctrl.OnAttackModeChanged(enabled);
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("When enabled, the configured attack key plays a melee swing instead of toggling grab.\n" +
-                             "With Swarm enabled, the controlled EnemyControl and every follower swing together.");
-
-        ImGui.SetNextItemWidth(150);
-        var strength = config.EnemyControlAttackStrength;
-        if (ImGui.SliderFloat("Corpse reaction##EnemyControlattack", ref strength, 0f, 0.25f, "%.3f"))
-        {
-            config.EnemyControlAttackStrength = strength;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Extra impulse from measured limb speed. The default 0.015 is deliberately gentle.\n" +
-                             "0 keeps animation and direct collider contact but adds no strike impulse. Group attacks\n" +
-                             "share one hit budget per corpse body, so follower count does not multiply the force.");
-
-        ImGui.Unindent();
-    }
+        (1.5f, 0.9f),
+        (2.5f, 0.65f),
+        (5f, 0.35f),
+        (12f, 1f),
+    };
 
     private uint[]? EnemyControlGrabEmoteIds;
     private string[]? EnemyControlGrabEmoteNames;
@@ -904,61 +807,8 @@ public partial class MainWindow
         if (!ImGui.CollapsingHeader("Fitting##EnemyControlgrab"))
             return;
 
-        var rigid = config.EnemyControlGrabRigid;
-        if (ImGui.Checkbox("Take hold instantly##EnemyControlgrab", ref rigid))
-        { config.EnemyControlGrabRigid = rigid; config.Save(); }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Hold the caught bone exactly rather than pulling it with a spring: it is caught where it\n" +
-                             "lies, reeled into the hand over a quarter second, and from then on never trails a walking\n" +
-                             "creature.\n\n" +
-                             "Reads worse than the spring in practice, so it is off by default. The spring carries any\n" +
-                             "weight now and no longer stretches, which is most of what this was for.");
-
-        var softContact = config.EnemyControlGrabSoftContact;
-        if (ImGui.Checkbox("Rest on the creature##EnemyControlgrab", ref softContact))
-        { config.EnemyControlGrabSoftContact = softContact; config.Save(); }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Leave the creature's collider live through the grab, so the body hangs against it and rests\n" +
-                             "on it rather than through it. Turn off to let the corpse pass straight through the creature.");
-
-        // Spring-grab servo. Meaningless under "Take hold instantly" — a rigid grab drives the bone
-        // kinematically and never builds a servo. All three are re-applied every frame by
-        // EnemyControlController.TickGrabAttack, so they retune a grab that is already held.
-        ImGui.BeginDisabled(config.EnemyControlGrabRigid);
-
-        ImGui.SetNextItemWidth(120);
-        var servoFreq = config.EnemyControlGrabServoFrequency;
-        if (ImGui.SliderFloat("Hold stiffness##EnemyControlgrab", ref servoFreq, 5f, 120f, "%.0f Hz"))
-        { config.EnemyControlGrabServoFrequency = servoFreq; config.Save(); }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("How stiff the spring holding the body to the grip is — the one knob that decides whether a\n" +
-                             "grab bounces.\n\n" +
-                             "Too high and it fights its own force ceiling: stiffness rises with the square of this, so at\n" +
-                             "120 Hz a torso bone saturates past about a millimetre of error, and a saturated servo loses\n" +
-                             "its damping along with its spring — full force one way, then the other. That is the bounce.\n" +
-                             "Low enough and a few centimetres of travel stay in the linear range, so the body settles\n" +
-                             "into the hand instead of ringing; too low and it visibly sags out of the grip.\n\n" +
-                             "Retunes a grab that is already held — drag it mid-grab and watch.");
-
-        ImGui.SetNextItemWidth(120);
-        var servoForce = config.EnemyControlGrabServoForce;
-        if (ImGui.SliderFloat("Hold force##EnemyControlgrab", ref servoForce, 200f, 5000f, "%.0f N"))
-        { config.EnemyControlGrabServoForce = servoForce; config.Save(); }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Ceiling on the force the hold may apply. Floored internally at enough to carry this rig's own\n" +
-                             "weight with headroom, so setting it below that changes nothing. Raising it widens the error\n" +
-                             "range the spring can cover before it saturates.");
-
-        ImGui.SetNextItemWidth(120);
-        var servoSpeed = config.EnemyControlGrabServoSpeed;
-        if (ImGui.SliderFloat("Hold speed cap##EnemyControlgrab", ref servoSpeed, 1f, 100f, "%.0f m/s"))
-        { config.EnemyControlGrabServoSpeed = servoSpeed; config.Save(); }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Ceiling on how fast the hold may move the caught bone. Rarely the binding constraint at the\n" +
-                             "default; lower it to make a catch reel in slowly instead of snapping to the hand.");
-
-        ImGui.EndDisabled();
-
+        // Hold mode, servo and finger-conform tuning are no longer shown; they keep their saved values
+        // and are still stored in grab profiles.
         ImGui.SetNextItemWidth(120);
         var reach = config.EnemyControlGrabGripReach;
         if (ImGui.SliderFloat("Grip depth##EnemyControlgrab", ref reach, 0f, 3f, "%.2f"))
@@ -966,46 +816,14 @@ public partial class MainWindow
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Where in the hand the body sits, as a multiple of the grip volume the creature's own digits\n" +
                              "describe — so it scales itself to any hand size. Lower drags the body back towards the wrist,\n" +
-                             "higher pushes it out past the fingertips. 1.75 by default: the raw centroid sits closer to the\n" +
-                             "palm than a grip really closes around, because it averages in knuckles that barely move.");
+                             "higher pushes it out past the fingertips.");
 
-        var conform = config.EnemyControlGrabConformFingers;
-        if (ImGui.Checkbox("Conform fingers##EnemyControlgrab", ref conform))
-        { config.EnemyControlGrabConformFingers = conform; config.Save(); }
+        ImGui.SetNextItemWidth(120);
+        var clearance = config.EnemyControlGrabFingerClearance;
+        if (ImGui.SliderFloat("Skin gap##EnemyControlgrab", ref clearance, -0.02f, 0.05f, "%.3f m"))
+        { config.EnemyControlGrabFingerClearance = clearance; config.Save(); }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Curl the creature's digits onto the grabbed body's surface each frame instead of letting the\n" +
-                             "grab animation drive them through it. Digits are found by walking the skeleton below the grab\n" +
-                             "bone, so claws and talons work too; a creature with no digits just skips this.");
-
-        if (config.EnemyControlGrabConformFingers)
-        {
-            ImGui.Indent();
-
-            ImGui.SetNextItemWidth(120);
-            var strength = config.EnemyControlGrabFingerStrength;
-            if (ImGui.SliderFloat("Strength##EnemyControlgrab", ref strength, 0f, 1f, "%.2f"))
-            { config.EnemyControlGrabFingerStrength = strength; config.Save(); }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("How far each joint moves towards its conformed pose per frame. Below 1 it eases in, which\n" +
-                                 "hides the pop as the grab lands and rides out a body that is still thrashing.");
-
-            ImGui.SetNextItemWidth(120);
-            var maxAngle = config.EnemyControlGrabFingerMaxAngle;
-            if (ImGui.SliderFloat("Max bend##EnemyControlgrab", ref maxAngle, 0f, 120f, "%.0f deg"))
-            { config.EnemyControlGrabFingerMaxAngle = maxAngle; config.Save(); }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Ceiling on how far one joint may bend away from its animated pose. Keeps a digit from folding\n" +
-                                 "inside out reaching for a surface it was never going to touch.");
-
-            ImGui.SetNextItemWidth(120);
-            var clearance = config.EnemyControlGrabFingerClearance;
-            if (ImGui.SliderFloat("Skin gap##EnemyControlgrab", ref clearance, -0.02f, 0.05f, "%.3f m"))
-            { config.EnemyControlGrabFingerClearance = clearance; config.Save(); }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Extra gap between the digits and the skin, on top of the digit's own thickness.\n" +
-                                 "Raise it if the fingers still read as sunk in; go slightly negative to let them dimple the surface.");
-
-            ImGui.Unindent();
-        }
+            ImGui.SetTooltip("Extra gap between the creature's digits and the skin. Raise it if the fingers read as sunk in;\n" +
+                             "go slightly negative to let them dimple the surface.");
     }
 }

@@ -11,7 +11,8 @@ public partial class Configuration
     /// <summary>Preferred landing bones (raw skeleton bone names). Empty = anywhere on the body.</summary>
     public List<string> ArrowImpactPreferredSpots { get; set; } = new();
 
-    public int ArrowImpactMaxPerTarget { get; set; } = 12;
+    /// <summary>Once a body carries this many arrows, the oldest falls away as a new one lands.</summary>
+    [Newtonsoft.Json.JsonIgnore] public int ArrowImpactMaxPerTarget => 40;
 
     /// <summary>Arrows fall away after <see cref="ArrowImpactLingerSeconds"/>; off, they stay as long as the body does.</summary>
     public bool ArrowImpactFallAway { get; set; } = false;

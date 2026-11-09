@@ -130,8 +130,6 @@ public partial class Configuration : IPluginConfiguration
     public bool NpcCollisionConvexHullDefaultMigrated20260716 { get; set; } = false;
     public bool RagdollLegModelRebuildMigrated20260816 { get; set; } = false;
     public bool EnemyTacticsMeleeCapMigrated20261102 { get; set; } = false;
-    public bool RagdollFollowPositionDefaultMigrated20260816 { get; set; } = false;
-    public bool HitVfxDefaultMigrated20260830 { get; set; } = false;
 
     // General
     public bool ShowMainWindow { get; set; } = false;
@@ -376,10 +374,6 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollDebugOverlay { get; set; } = false;
     // Dev (Experimental) — hidden behind easter egg
     public bool RagdollVerboseLog { get; set; } = false;
-    // Now surfaced under Effects > Ragdoll Follow (own dropdown, default on). Follows the ragdoll
-    // root to keep a flung corpse from being culled/unloaded on long falls. Local player moves
-    // render-only (DrawObject.Position); NPC phantoms move full position.
-    public bool RagdollFollowPosition { get; set; } = true;
     public bool DevCompanionAppearanceVariant { get; set; } = false;
     public bool DevPartyApproachDebugLog { get; set; } = false;
     public bool RagdollNpcCollision { get; set; } = true;
@@ -440,10 +434,10 @@ public partial class Configuration : IPluginConfiguration
     // Skip action VFX for hostile casters further than this from the CAMERA (yalms). Their damage,
     // flytext and animation still play; they just stop contributing to the light show at a distance
     // where the effect is a few pixels anyway. 0 = never skip.
-    public float NpcSkillVfxMaxDistance { get; set; } = 30f;
+    [JsonIgnore] public float NpcSkillVfxMaxDistance => 30f;
 
     // Hit VFX on player when taking damage (empty = disabled)
-    public string HitVfxPath { get; set; } = "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx";
+    [JsonIgnore] public string HitVfxPath => "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx";
     public bool EnableHitVfx { get; set; } = true;
 
     // HP Bar bone tracking
@@ -454,11 +448,8 @@ public partial class Configuration : IPluginConfiguration
     public string CustomPlayerName { get; set; } = "";
 
     // Player HP bar label customization
-    public bool ShowSimLabel { get; set; } = true;
     public string SimLabelText { get; set; } = "Sim";
-    public bool ShowDeadLabel { get; set; } = true;
     public string DeadLabelText { get; set; } = "DEAD";
-    public bool ShowDeathNameAlias { get; set; } = false;
     public string DeathNameAlias { get; set; } = "";
 
     // Spawn Enemy defaults
@@ -602,11 +593,11 @@ public partial class Configuration : IPluginConfiguration
     // Delay (seconds) between the attack input and the impact feedback firing. The swing has ~0.5s of
     // windup before the weapon visually CONNECTS, so the hitstop/camera/spark must wait or they fire
     // at swing start and feel disconnected. ~0.45 lines up with the contact frame; tune to taste.
-    public float HitFeedbackDelay { get; set; } = 0.45f;
+    [JsonIgnore] public float HitFeedbackDelay => 0.38f;
     // Hitstop: freeze the struck target's animation for this many ms on impact. The single
     // biggest contributor to impact feel. Keep SHORT (40-90 ms) or it reads as lag. 0 = off. Only the
     // target is frozen (never the player), and the freeze is skipped/auto-released if it dies.
-    public float HitstopMs { get; set; } = 81.5f;
+    public float HitstopMs { get; set; } = 81.53f;
     // Camera punch: a brief decaying screen shake on impact (yalms of camera offset). Small = weighty,
     // large = nauseating. Layered on top of the final camera pose. 0 = off.
     public float HitCameraShake { get; set; } = 0.1f;
@@ -654,11 +645,11 @@ public partial class Configuration : IPluginConfiguration
     public void Initialize(IDalamudPluginInterface pi)
     {
         pluginInterface = pi;
+        MigrateHpBarLabelSwitches(); // before the purge below: it reads the retired switches
         RemoveRetiredOptions();
         MigrateSplitVfxToggles();
         MigrateKoStripClothHoldPreset();
         MigrateActionGuardDefaultButton();
-        MigrateHitVfxDefault();
         MigrateActionBasicAttackDefaultButton();
         MigrateActionAttackShapeDefaults();
         MigrateEnemyDismembermentDefaults();
@@ -668,9 +659,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateNpcCollisionConvexHullDefault(); // after the mesh default above: it overrides that verdict
         NormalizeNpcCollisionMode();
         GuidedCollapse ??= new GuidedCollapseSettings();
-        MigrateDynamicCameraPivotBone();
         MigrateRagdollLegModelRebuild();
-        MigrateRagdollFollowPositionDefault();
     }
 
     // Options that no longer exist. [JsonExtensionData] would otherwise keep their saved values in the
@@ -723,7 +712,40 @@ public partial class Configuration : IPluginConfiguration
         "KeepCompanionsOnReset", "PartyCommandRange", "PartyCommandRangeRandomness",
         "PartyMeleeAttackRange", "PartyRangedAttackRange",
         "SpectatorChatterBubbleDuration", "SpectatorChatterMaxConcurrent",
+        // Effects, Enemy Control, Camera and Settings tabs, simplified 2026-11.
+        "NpcSkillVfxMaxDistance", "HitVfxPath", "HitFeedbackDelay", "HitVfxDefaultMigrated20260830",
+        "VictoryCelebrationStagger", "EnemyVoiceGuaranteeKills", "ArrowImpactMaxPerTarget",
+        "RagdollFollowPosition", "RagdollFollowPositionDefaultMigrated20260816",
+        "EnemyControlAttackEnabled", "EnemyControlAttackStrength", "EnemyControlVerticalSpeed",
+        "EnemyControlSwarmClimbDelay", "EnemyControlSwarmEnhancedStompTracking",
+        "EnemyControlSwarmStompCorpseMassMultiplier", "EnemyControlSwarmStompResponse",
+        "DynCamPivotBoneName", "DynCamHeightOffset", "DynCamInputHold", "DynCamDeathMaximizeBody",
+        "DynCamDeathCloseUpDistance", "DynCamDeathTranslateDuration", "MigratedDynCamPivotBone",
+        "ShowSimLabel", "ShowDeadLabel", "ShowDeathNameAlias",
     };
+
+    // The Show*Label switches merged into their text: an empty text now means "off". A switch that was
+    // off clears its text once, so nothing that was hidden starts showing.
+    private void MigrateHpBarLabelSwitches()
+    {
+        if (PrivateConfigFields == null)
+            return;
+
+        var changed = false;
+        void Fold(string flag, Action clear)
+        {
+            if (PrivateConfigFields.TryGetValue(flag, out var token) && token.Type == JTokenType.Boolean && !token.Value<bool>())
+            {
+                clear();
+                changed = true;
+            }
+        }
+        Fold("ShowSimLabel", () => SimLabelText = "");
+        Fold("ShowDeadLabel", () => DeadLabelText = "");
+        Fold("ShowDeathNameAlias", () => DeathNameAlias = "");
+        if (changed)
+            Save();
+    }
 
     private void RemoveRetiredOptions()
     {
@@ -799,8 +821,6 @@ public partial class Configuration : IPluginConfiguration
 
         // Dev-only switch. Lives on the hidden panel, not this page.
         nameof(RagdollVerboseLog),
-        // Lives under Effects now (its own dropdown), not this page.
-        nameof(RagdollFollowPosition),
         // A rebuild counter, not an option: zeroing it rebuilds every live ragdoll.
         nameof(RagdollMeshCacheRevision),
     };
@@ -943,20 +963,6 @@ public partial class Configuration : IPluginConfiguration
         Save();
     }
 
-    private void MigrateHitVfxDefault()
-    {
-        if (HitVfxDefaultMigrated20260830)
-            return;
-
-        // This is the target-side impact authored for Heavy Swing (Action 31): bright, brief,
-        // physical, and free of an elemental theme. Preserve any genuinely custom path.
-        if (HitVfxPath == "vfx/common/eff/dk02ht_totu0y.avfx")
-            HitVfxPath = "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx";
-
-        HitVfxDefaultMigrated20260830 = true;
-        Save();
-    }
-
     private void MigrateActionBasicAttackDefaultButton()
     {
         if (ActionBasicAttackDefaultMigratedToSouth)
@@ -1090,22 +1096,6 @@ public partial class Configuration : IPluginConfiguration
         ResetRagdollPageDefaults();
 
         RagdollLegModelRebuildMigrated20260816 = true;
-        Save();
-    }
-
-    /// <summary>
-    /// 2.x.0.0: RagdollFollowPosition moves out from behind the hidden dev panel onto the public
-    /// Effects page and its default flips from false to true — but every existing config already has
-    /// the old value serialized explicitly, so the code default alone would only reach fresh installs.
-    /// </summary>
-    private void MigrateRagdollFollowPositionDefault()
-    {
-        if (RagdollFollowPositionDefaultMigrated20260816)
-            return;
-
-        RagdollFollowPosition = true;
-
-        RagdollFollowPositionDefaultMigrated20260816 = true;
         Save();
     }
 

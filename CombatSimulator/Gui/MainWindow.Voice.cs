@@ -51,28 +51,16 @@ public partial class MainWindow
             }
             HelpMarker("Show what the enemy says in the game's overhead speech bubble.");
 
-            var guarantee = config.EnemyVoiceGuaranteeKills;
-            if (ImGui.Checkbox("Always call out kills##enemyVoice", ref guarantee))
+            var taunt = !config.EnemyVoiceDefeatTaunts ? 0
+                : Array.FindIndex(DefeatTauntIntervals, s => s > 0f && MathF.Abs(s - config.EnemyVoiceDefeatTauntInterval) < 0.01f);
+            ImGui.SetNextItemWidth(160f);
+            if (PresetCombo("Taunt the fallen##enemyVoice", DefeatTauntLabels, taunt, out var pickedTaunt))
             {
-                config.EnemyVoiceGuaranteeKills = guarantee;
+                config.EnemyVoiceDefeatTaunts = pickedTaunt > 0;
+                if (pickedTaunt > 0) config.EnemyVoiceDefeatTauntInterval = DefeatTauntIntervals[pickedTaunt];
                 config.Save();
             }
-            HelpMarker("When the player or a companion falls, an enemy always says a kill line: it waits for the killer to finish its own shout, and if the killer cannot speak (already dead, no line) the nearest enemy that can says it instead.");
-
-            var defeatTaunts = config.EnemyVoiceDefeatTaunts;
-            if (ImGui.Checkbox("Taunt the fallen##enemyVoice", ref defeatTaunts))
-            {
-                config.EnemyVoiceDefeatTaunts = defeatTaunts;
-                config.Save();
-            }
-            HelpMarker("After the party is wiped, surviving enemies keep gloating until you revive or reset, each in its own voice with its kill, victory and taunt lines.");
-            if (defeatTaunts)
-            {
-                ImGui.Indent();
-                SliderFloatSaved("Every (s)##enemyVoiceDefeat", () => config.EnemyVoiceDefeatTauntInterval, v => config.EnemyVoiceDefeatTauntInterval = v, 1f, 30f,
-                    "Seconds between taunts. Short intervals let several enemies talk at once, each under its own bubble.");
-                ImGui.Unindent();
-            }
+            HelpMarker("After the party is wiped, surviving enemies keep gloating until you revive or reset, each in its own voice. Short intervals let several enemies talk at once, each under its own bubble.");
 
             var player = director.Player;
             if (player.FailureReason != null)
@@ -86,10 +74,21 @@ public partial class MainWindow
         }
     }
 
+    private static readonly string[] DefeatTauntLabels = { "Off", "Every 8 s", "Every 4 s", "Every 1 s" };
+    private static readonly float[] DefeatTauntIntervals = { 0f, 8f, 4f, 1f };
+    private static readonly string[] ChattinessLabels = { "Quiet", "Normal", "Chatty" };
+    private static readonly float[] ChattinessLineGaps = { 6f, 3.5f, 1.5f };
+
     private void DrawEnemyVoiceAdvanced(VoiceDirector director)
     {
-        SliderFloatSaved("Pause between lines (s)##enemyVoice", () => config.EnemyVoiceLineGap, v => config.EnemyVoiceLineGap = v, 0f, 15f,
-            "How chatty enemies are: the quiet after each line before an ordinary moment (skill, hit, taunt) may start the next, and how often engaged enemies taunt between attacks. Engage, kills, victory and deaths only wait half a second.");
+        var chattiness = Array.FindIndex(ChattinessLineGaps, g => MathF.Abs(g - config.EnemyVoiceLineGap) < 0.01f);
+        ImGui.SetNextItemWidth(160f);
+        if (PresetCombo("Chattiness##enemyVoice", ChattinessLabels, chattiness, out var pickedChattiness))
+        {
+            config.EnemyVoiceLineGap = ChattinessLineGaps[pickedChattiness];
+            config.Save();
+        }
+        HelpMarker("How long enemies stay quiet after a line before an ordinary moment (skill, hit, taunt) may start the next. Engage, kills, victory and deaths only wait half a second.");
 
         var enemies = director.VoiceEnemies();
         if (enemies.Count == 0)
@@ -107,7 +106,7 @@ public partial class MainWindow
                 categories.Add(name);
         voicePickerCategory = Math.Clamp(voicePickerCategory, 0, categories.Count - 1);
         ImGui.SetNextItemWidth(220f);
-        ImGui.SliderInt("Voice type##enemyVoiceFilter", ref voicePickerCategory, 0, categories.Count - 1, categories[voicePickerCategory]);
+        ImGui.Combo("Voice type##enemyVoiceFilter", ref voicePickerCategory, categories.ToArray(), categories.Count);
         var filter = voicePickerCategory == 0 ? null : categories[voicePickerCategory];
 
         foreach (var enemy in enemies)

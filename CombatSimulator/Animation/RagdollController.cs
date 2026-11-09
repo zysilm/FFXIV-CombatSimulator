@@ -7727,7 +7727,7 @@ public unsafe partial class RagdollController : IDisposable
                 // repositions (dismount / death transition). followWasActive means we wrote a
                 // follow position on the previous frame, so this frame's skeleton move is ours.
                 // Ground is still re-raycast below in both cases so the floor tracks the corpse.
-                if (!(config.RagdollFollowPosition && followWasActive && isLocalPlayerTarget))
+                if (!(followWasActive && isLocalPlayerTarget))
                     skeletonMoved = true;
                 if (config.RagdollVerboseLog)
                     log.Info($"[Ragdoll F{frameCount}] Skeleton moved {skelDist:F3}m: ({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3})→({newSkelPos.X:F3},{newSkelPos.Y:F3},{newSkelPos.Z:F3})");
@@ -8327,7 +8327,7 @@ public unsafe partial class RagdollController : IDisposable
         // GameObject.Position via SetApproachPosition, which also drags their nameplate / HP-bar
         // anchor along with the flying corpse.
         //
-        if (config.RagdollFollowPosition && ragdollBones.Count > 0 && targetCharacterAddress != nint.Zero)
+        if (ragdollBones.Count > 0 && targetCharacterAddress != nint.Zero)
         {
             try
             {
@@ -12189,49 +12189,6 @@ public unsafe partial class RagdollController : IDisposable
             ParkNpcStatics(ref npcState, new Vector3(0, -9999, 0));
             npcCollisionStates.RemoveAt(i);
         }
-    }
-
-    /// <summary>
-    /// Open a brief strike window: while it's open, the monster's collider bones impart their
-    /// swing velocity (× <paramref name="power"/>) as an impulse to nearby ragdoll bodies, so the
-    /// attack flings the body where the limb actually lands. Auto-closes after <paramref name="duration"/>s.
-    /// </summary>
-    public void BeginAttackStrike(float duration, float power)
-    {
-        if (standingActive) return;
-        strikeColliderAddresses.Clear();
-        if (strikeColliderAddress != nint.Zero)
-            strikeColliderAddresses.Add(strikeColliderAddress);
-        strikePower = power;
-        attackStrikeTimer = MathF.Max(attackStrikeTimer, duration);
-        struckThisWindow.Clear(); // a fresh swing may hit each body again
-        WakeRagdollBodiesForBiomechanicalSettle();
-        BeginBiomechanicalSettle();
-    }
-
-    /// <summary>Open one shared, deliberately non-stacking strike window for several attackers.
-    /// Every registered attacker's animated collider bones can make contact, but a corpse body is
-    /// impulsed at most once across the group so a swarm cannot multiply a light hit into a launch.</summary>
-    public void BeginAttackStrike(IReadOnlyCollection<nint> attackerAddresses, float duration, float power)
-    {
-        if (standingActive || attackerAddresses.Count == 0) return;
-
-        strikeColliderAddresses.Clear();
-        strikeColliderAddress = nint.Zero;
-        foreach (var address in attackerAddresses)
-        {
-            if (address == nint.Zero) continue;
-            strikeColliderAddresses.Add(address);
-            if (strikeColliderAddress == nint.Zero)
-                strikeColliderAddress = address; // optional weapon source; bone sources use the set
-        }
-        if (strikeColliderAddresses.Count == 0) return;
-
-        strikePower = MathF.Max(0f, power);
-        attackStrikeTimer = MathF.Max(attackStrikeTimer, duration);
-        struckThisWindow.Clear();
-        WakeRagdollBodiesForBiomechanicalSettle();
-        BeginBiomechanicalSettle();
     }
 
     public void CancelAttackStrike()
