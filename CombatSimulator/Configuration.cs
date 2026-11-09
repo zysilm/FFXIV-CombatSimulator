@@ -180,7 +180,6 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollDefaultProfileTuningMigrated20260716 { get; set; } = false;
     public bool NpcCollisionConvexHullDefaultMigrated20260716 { get; set; } = false;
     public bool RagdollSoftBodyTuningMigrated20260719 { get; set; } = false;
-    public bool KoStripHandsFeetRigidDefaultMigrated20260719 { get; set; } = false;
     public bool RagdollFingerPhysicsMigrated20260810 { get; set; } = false;
     public bool RagdollLegModelRebuildMigrated20260816 { get; set; } = false;
     public bool EnemyTacticsMeleeCapMigrated20261102 { get; set; } = false;
@@ -239,14 +238,9 @@ public partial class Configuration : IPluginConfiguration
     // behavior when Glamourer is not installed.
     public string PartyCompanionGlamourerDesignId { get; set; } = "";
 
-    // Armor Detachment: compact floating control UI, opened from Professional Mode > Effects.
-    public bool ShowArmorDetachmentControls { get; set; } = true;
-
-    // Armor Detachment: visually detach configured player gear slots on KO. Monster-hit detachment is
-    // a dev-only extension and is additionally runtime-gated by the dev unlock state.
+    // Armor Detachment (Effects tab). "Detach armor" is one dropdown over these two exclusive switches.
     public bool KoStripEnabled { get; set; } = false;
     public bool KoStripOnHitEnabled { get; set; } = false;
-    public bool KoStripSyncWithRagdoll { get; set; } = false;
     public bool KoStripHead { get; set; } = true;
     public bool KoStripBody { get; set; } = true;
     public bool KoStripHands { get; set; } = false;
@@ -258,146 +252,26 @@ public partial class Configuration : IPluginConfiguration
     public bool KoStripRFinger { get; set; } = false;
     public bool KoStripLFinger { get; set; } = false;
 
-    // Physically drop hats / accessories (separate models, not fused with skin) as falling rigid
-    // bodies instead of just hiding them. Head + accessory slots.
+    // Physically drop removed pieces instead of just hiding them. The UI sets both together; separate
+    // fields remain because hats/accessories and clothing take different runtime paths.
     public bool KoStripPhysicsDrop { get; set; } = true;
-
-    // Physically drop supported clothing (Body / Legs) as falling shells. Still includes the body skin
-    // baked into those equipment models.
     public bool KoStripPhysicsDropClothing { get; set; } = true;
 
     // Auto-recycle: despawn a physics-dropped piece a fixed time after it settles, rather than letting
-    // it linger indefinitely until reset/zone-change. Off by default — a stale dropped piece surviving
-    // into a zone transition is the known crash exposure this exists to reduce, matching the upstream
-    // RagdollSystem feature this was ported from (https://github.com/zysilm/RagdollSystem).
+    // it linger until reset/zone-change. Off by default — a stale dropped piece surviving into a zone
+    // transition is the known crash exposure this exists to reduce.
     public bool KoStripCloneAutoExpireEnabled { get; set; } = false;
     public float KoStripCloneAutoExpireSeconds { get; set; } = 2f;
 
-    // Garment polish layered on top of clothing physics drop: short visual body follow, body/ground
-    // friction damping, and delayed cloth collapse.
-    public bool KoStripAdvancedClothPhysics { get; set; } = true;
-
-    // Drive the upper garment (Body slot) with a ring-tube physics model instead of the
-    // chain-of-boxes rig. The tube wraps the corpse capsules, so the shirt slides down off the body
-    // instead of folding. Host ragdoll only; falls back to the chain rig when unavailable.
-    public bool KoStripGarmentTubeModel { get; set; } = false;
-
-    // Draw the garment tube's ring bodies as a wireframe overlay (tuning aid). Not saved-critical.
-    public bool KoStripGarmentTubeDebugDraw { get; set; } = false;
-
-    // Give a coat's j_sk_* columns real bodies hanging off the hem ring, instead of riding it rigidly.
-    // They then swing and fold, and — since the rig already collides with the body — drape over the legs
-    // and pool on the ground rather than passing through them. Costs roughly one body and one joint per
-    // skirt bone (~18 on a typical coat); only reachable when the tube model is on, which already brings
-    // a rig of its own.
-    public bool KoStripGarmentSkirtPhysics { get; set; } = true;
-    public float KoStripSkirtSegmentMass { get; set; } = 0.06f;
-    // Radians a segment may swing away from its parent. Too tight reads as a board; too loose lets a
-    // panel fold back through the leg it is hanging on.
-    public float KoStripSkirtSwingLimit { get; set; } = 0.9f;
-    // How much of that swing is allowed at birth. The rig relaxes from this to the full range over the
-    // first second, so a skirt does not burst out of its rest shape on the frame it is created.
-    public float KoStripSkirtInitialSwing { get; set; } = 0.3f;
-
-    // Pieces still attached to the body travel with it when the body is moved as a whole. Nothing but
-    // contact holds them on, so without this they are simply left where they were. Pieces that have
-    // already come away stay put; which is which is decided by whether the piece still wraps the bones
-    // it was built around, not by how near the body it happens to lie.
+    // Pieces still attached to the body travel with it when the body is moved as a whole. Pieces that
+    // have already come away stay put; which is which is decided by whether the piece still wraps the
+    // bones it was built around, not by how near the body it happens to lie.
     public bool KoStripGarmentFollowsBody { get; set; } = true;
 
-    // Friction the tube uses against the corpse (higher = clings/slides slower). Defaults match the
-    // values the tube shipped with (Math.Clamp(RagdollFriction, 0.45, 0.9) at RagdollFriction=1.0).
-    public const float KoStripGarmentTubeBodyFrictionDefault = 0.9f;
-    public float KoStripGarmentTubeBodyFriction { get; set; } = KoStripGarmentTubeBodyFrictionDefault;
-
-    // Friction the tube uses against the ground once it slides off the body. Default matches the
-    // value the tube shipped with (MathF.Max(RagdollFriction, 3.5) at RagdollFriction=1.0).
-    public const float KoStripGarmentTubeGroundFrictionDefault = 3.5f;
-    public float KoStripGarmentTubeGroundFriction { get; set; } = KoStripGarmentTubeGroundFrictionDefault;
-
-    // How long the tube stays visually bound to the body pose before handoff to physics. Default matches
-    // the value the tube shipped with (ClothHoldMinFrames = 18 frames @ 60fps).
-    public const float KoStripGarmentTubeHoldSecondsDefault = 0.3f;
-    public float KoStripGarmentTubeHoldSeconds { get; set; } = KoStripGarmentTubeHoldSecondsDefault;
-
-    // Manual fallback duration (seconds) for the "still attached" visual hold with Advanced clothing
-    // settle on. Auto mode is the default path; this only applies when Auto cloth hold is disabled.
-    public const float KoStripClothHoldSecondsDefault = 0.3f;
-    public float KoStripClothHoldSeconds { get; set; } = KoStripClothHoldSecondsDefault;
-
-    // Auto cloth hold: release the garment on an event (body settled, or slid down to the floor)
-    // rather than the fixed KoStripClothHoldSeconds timer.
-    public bool KoStripClothHoldAuto { get; set; } = true;
-
-    // Auto-hold feel: 0 Quick, 1 Natural, 2 Clingy, 3 Slide-to-floor, 4 Visual-only. Default Natural.
+    // Body/Legs garment behaviour. Stored values keep their historic numbering:
+    // 1 drop when the body settles, 3 slide to the floor then drop, 5 Visual only (enhanced).
     public const int KoStripClothHoldPresetDefault = 1;
     public int KoStripClothHoldPreset { get; set; } = KoStripClothHoldPresetDefault;
-
-    // Profile 5 has persistent attachment physics; profiles 0-4 retain their original numbering.
-    public Animation.Attachment.AttachmentSettings KoStripAttachmentBody { get; set; } = new();
-    public Animation.Attachment.AttachmentSettings KoStripAttachmentLegs { get; set; } = new()
-    {
-        Template = Animation.Attachment.GarmentTemplate.Trousers,
-        SlipDistance = 0.22f,
-    };
-    public Dictionary<string, Animation.Attachment.AttachmentSettings> KoStripAttachmentOverrides { get; set; } = new();
-    public bool KoStripAttachmentDebugDraw { get; set; }
-
-    // Visual-only preset tuning: how far (metres) and how fast (m/s) the garment slides down the body
-    // before it freezes and stays visual. Only used by the Visual-only preset — Slide-to-floor keeps its
-    // own fixed 0.8m / 0.20 m/s behaviour. Raise the distance if the garment stops short of the ground
-    // in a standing KO; raise the speed if the slide looks too slow.
-    public const float KoStripClothVisualOnlySlideDistanceDefault = 0.8f;
-    public float KoStripClothVisualOnlySlideDistance { get; set; } = KoStripClothVisualOnlySlideDistanceDefault;
-    public const float KoStripClothVisualOnlySlideSpeedDefault = 0.17f;
-    public float KoStripClothVisualOnlySlideSpeed { get; set; } = KoStripClothVisualOnlySlideSpeedDefault;
-
-    // Per-slot "collapse on drop" toggles for the physics-drop pieces. When a slot is enabled the
-    // dropped piece deflates/flattens like cloth; when disabled it keeps its full rigid shape (better
-    // for armor / rigid gear). Indexed via GearKeepModelSlot (0 Head,1 Body,2 Hands,3 Legs,4 Feet,
-    // 5 Ears,6 Neck,7 Wrists,8 RFinger,9 LFinger).
-    public bool KoStripCollapseHead { get; set; } = true;
-    public bool KoStripCollapseBody { get; set; } = true;
-    public bool KoStripCollapseHands { get; set; } = false;
-    public bool KoStripCollapseLegs { get; set; } = true;
-    public bool KoStripCollapseFeet { get; set; } = true;
-    public bool KoStripCollapseEars { get; set; } = false;
-    public bool KoStripCollapseNeck { get; set; } = false;
-    public bool KoStripCollapseWrists { get; set; } = false;
-    public bool KoStripCollapseRFinger { get; set; } = false;
-    public bool KoStripCollapseLFinger { get; set; } = false;
-
-    /// <summary>Whether the dropped piece for the given GearKeepModelSlot should collapse/deflate.
-    /// Unknown slots default to collapsing (matches the historic all-gear-deflates behavior).</summary>
-    public bool IsKoStripCollapseEnabled(int gearKeepModelSlot) => gearKeepModelSlot switch
-    {
-        0 => KoStripCollapseHead,
-        1 => KoStripCollapseBody,
-        2 => KoStripCollapseHands,
-        3 => KoStripCollapseLegs,
-        4 => KoStripCollapseFeet,
-        5 => KoStripCollapseEars,
-        6 => KoStripCollapseNeck,
-        7 => KoStripCollapseWrists,
-        8 => KoStripCollapseRFinger,
-        9 => KoStripCollapseLFinger,
-        _ => true,
-    };
-
-    /// <summary>Restore the default collapse mask: head/body/legs/feet collapse; gloves and accessories stay rigid.</summary>
-    public void ResetKoStripCollapseDefaults()
-    {
-        KoStripCollapseHead = true;
-        KoStripCollapseBody = true;
-        KoStripCollapseHands = false;
-        KoStripCollapseLegs = true;
-        KoStripCollapseFeet = true;
-        KoStripCollapseEars = false;
-        KoStripCollapseNeck = false;
-        KoStripCollapseWrists = false;
-        KoStripCollapseRFinger = false;
-        KoStripCollapseLFinger = false;
-    }
 
     /// <summary>
     /// Named like Armor Detachment, but not its to reset.
@@ -408,13 +282,13 @@ public partial class Configuration : IPluginConfiguration
         // it, which reads as the button having broken something rather than having restored it —
         // same reasoning as EnableRagdoll on the Ragdoll page (see RagdollPageResetExclusions).
         nameof(KoStripEnabled),
+        nameof(KoStripOnHitEnabled),
     };
 
     private static bool IsArmorDetachmentOption(string name)
     {
         if (ArmorDetachmentResetExclusions.Contains(name)) return false;
-        return name.StartsWith("KoStrip", StringComparison.Ordinal)
-            || name == nameof(ShowArmorDetachmentControls);
+        return name.StartsWith("KoStrip", StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -1010,9 +884,9 @@ public partial class Configuration : IPluginConfiguration
     public void Initialize(IDalamudPluginInterface pi)
     {
         pluginInterface = pi;
-        RemoveRetiredPlayerHpBarOptions();
+        RemoveRetiredOptions();
         MigrateSplitVfxToggles();
-        MigrateKoStripHandsFeetRigidDefaults();
+        MigrateKoStripClothHoldPreset();
         MigrateSkirtParentChains();
         EnforceUnifiedRagdollTopology();
         MigrateRagdollProfileMetadata();
@@ -1043,13 +917,33 @@ public partial class Configuration : IPluginConfiguration
         SeedBuiltInBoneProfiles();
     }
 
-    private void RemoveRetiredPlayerHpBarOptions()
+    // Options that no longer exist. [JsonExtensionData] would otherwise keep their saved values in the
+    // file forever and hand them back to any future property that reuses the name.
+    private static readonly string[] RetiredOptionNames =
+    {
+        "ShowDefeatedText", "DefeatedText",
+        // Armor Detachment, simplified 2026-11.
+        "ShowArmorDetachmentControls", "KoStripSyncWithRagdoll", "KoStripAdvancedClothPhysics",
+        "KoStripGarmentTubeModel", "KoStripGarmentTubeDebugDraw", "KoStripGarmentSkirtPhysics",
+        "KoStripSkirtSegmentMass", "KoStripSkirtSwingLimit", "KoStripSkirtInitialSwing",
+        "KoStripGarmentTubeBodyFriction", "KoStripGarmentTubeGroundFriction", "KoStripGarmentTubeHoldSeconds",
+        "KoStripClothHoldSeconds", "KoStripClothHoldAuto", "KoStripAttachmentBody", "KoStripAttachmentLegs",
+        "KoStripAttachmentOverrides", "KoStripAttachmentDebugDraw", "KoStripClothVisualOnlySlideDistance",
+        "KoStripClothVisualOnlySlideSpeed", "KoStripCollapseHead", "KoStripCollapseBody", "KoStripCollapseHands",
+        "KoStripCollapseLegs", "KoStripCollapseFeet", "KoStripCollapseEars", "KoStripCollapseNeck",
+        "KoStripCollapseWrists", "KoStripCollapseRFinger", "KoStripCollapseLFinger",
+        "KoStripHandsFeetRigidDefaultMigrated20260719",
+        "KoStripDelay", "KoStripDelaySeconds", "KoStripLHand", "KoStripRHand", "KoStripLFoot", "KoStripRFoot",
+    };
+
+    private void RemoveRetiredOptions()
     {
         if (PrivateConfigFields == null)
             return;
 
-        var changed = PrivateConfigFields.Remove("ShowDefeatedText");
-        changed |= PrivateConfigFields.Remove("DefeatedText");
+        var changed = false;
+        foreach (var name in RetiredOptionNames)
+            changed |= PrivateConfigFields.Remove(name);
         if (changed)
             Save();
     }
@@ -1059,17 +953,19 @@ public partial class Configuration : IPluginConfiguration
         pluginInterface?.SavePluginConfig(this);
     }
 
-    // Hands and Feet did not physically drop before paired-piece support existed, so their old
-    // collapse toggles had no visible effect. Move every existing config to the new rigid default once;
-    // after this migration the user remains free to opt either slot back into collapse.
-    private void MigrateKoStripHandsFeetRigidDefaults()
+    // Only three garment behaviours remain. Quick and Clingy differed from Natural only in how long the
+    // body had to rest; the old Visual only became Visual only (enhanced).
+    private void MigrateKoStripClothHoldPreset()
     {
-        if (KoStripHandsFeetRigidDefaultMigrated20260719)
+        var preset = KoStripClothHoldPreset switch
+        {
+            1 or 3 or 5 => KoStripClothHoldPreset,
+            4 => 5,
+            _ => KoStripClothHoldPresetDefault,
+        };
+        if (preset == KoStripClothHoldPreset)
             return;
-
-        KoStripCollapseHands = false;
-        KoStripCollapseFeet = false;
-        KoStripHandsFeetRigidDefaultMigrated20260719 = true;
+        KoStripClothHoldPreset = preset;
         Save();
     }
 

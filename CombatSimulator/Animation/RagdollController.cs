@@ -127,11 +127,6 @@ public unsafe partial class RagdollController : IDisposable
     private readonly HashSet<int> externalRigDynamicBodyHandles = new();
     private readonly HashSet<int> externalRigNoRagdollContactBodyHandles = new();
     private readonly HashSet<(int, int)> externalRigConnectedPairs = new();
-    // Bodies that must not collide with OTHER bodies in the same rig (a whole garment tube marked non-self-
-    // colliding at once — cheaper than enumerating every O(N^2) internal pair as connected). Keyed by body
-    // handle -> group id; two dynamics with the same non-zero group skip contact generation.
-    private readonly Dictionary<int, int> externalRigSelfCollideGroupByBody = new();
-    private int nextExternalRigSelfCollideGroup = 1;
     private readonly HashSet<int> softKinematicBodyHandles = new();
     // Kinematic proxies driven by living NPC/player skeletons. When corpse traversal is enabled,
     // the narrow phase gives only these contacts the soft, low-friction material that prevents a
@@ -660,14 +655,12 @@ public unsafe partial class RagdollController : IDisposable
         IReadOnlyList<ExternalRigBodySpec> bodySpecs,
         IReadOnlyList<ExternalRigJointSpec> jointSpecs,
         out ExternalRigHandle? handle,
-        bool collideWithRagdoll = true,
-        bool selfCollide = true)
+        bool collideWithRagdoll = true)
     {
         handle = null;
         if (!isActive || simulation == null || bufferPool == null || bodySpecs.Count == 0)
             return false;
 
-        var selfCollideGroup = selfCollide ? 0 : nextExternalRigSelfCollideGroup++;
         var rig = new ExternalRigHandle { Generation = externalBodyGeneration };
         try
         {
@@ -702,8 +695,6 @@ public unsafe partial class RagdollController : IDisposable
                 externalRigDynamicBodyHandles.Add(bodyHandle.Value);
                 if (!collideWithRagdoll)
                     externalRigNoRagdollContactBodyHandles.Add(bodyHandle.Value);
-                if (selfCollideGroup != 0)
-                    externalRigSelfCollideGroupByBody[bodyHandle.Value] = selfCollideGroup;
             }
 
             foreach (var joint in jointSpecs)
@@ -1205,7 +1196,6 @@ public unsafe partial class RagdollController : IDisposable
             if (handle.Generation == externalBodyGeneration) DetachWeaponContactBody(bodyHandle.Body);
             externalRigNoRagdollContactBodyHandles.Remove(bodyHandle.Body.Value);
             externalRigDynamicBodyHandles.Remove(bodyHandle.Body.Value);
-            externalRigSelfCollideGroupByBody.Remove(bodyHandle.Body.Value);
             RemoveExternalBody(bodyHandle);
         }
 
@@ -4290,7 +4280,6 @@ public unsafe partial class RagdollController : IDisposable
                 ExternalRigDynamicBodies = externalRigDynamicBodyHandles,
                 ExternalRigNoRagdollContactBodies = externalRigNoRagdollContactBodyHandles,
                 ExternalRigConnectedPairs = externalRigConnectedPairs,
-                ExternalRigSelfCollideGroupByBody = externalRigSelfCollideGroupByBody,
                 SoftKinematicBodies = softKinematicBodyHandles,
                 NpcCollisionKinematicBodies = npcCollisionKinematicBodyHandles,
                 NpcTraversalGhostKinematicBodies = npcTraversalGhostKinematicBodyHandles,
@@ -13469,8 +13458,6 @@ public unsafe partial class RagdollController : IDisposable
         externalRigDynamicBodyHandles.Clear();
         externalRigNoRagdollContactBodyHandles.Clear();
         externalRigConnectedPairs.Clear();
-        externalRigSelfCollideGroupByBody.Clear();
-        nextExternalRigSelfCollideGroup = 1;
         softKinematicBodyHandles.Clear();
         npcCollisionKinematicBodyHandles.Clear();
         npcTraversalGhostKinematicBodyHandles.Clear();
@@ -13522,7 +13509,6 @@ partial struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     public HashSet<int>? ExternalRigDynamicBodies;
     public HashSet<int>? ExternalRigNoRagdollContactBodies;
     public HashSet<(int, int)>? ExternalRigConnectedPairs;
-    public Dictionary<int, int>? ExternalRigSelfCollideGroupByBody;
     public HashSet<int>? SoftKinematicBodies;
     public HashSet<int>? NpcCollisionKinematicBodies;
     public HashSet<int>? NpcTraversalGhostKinematicBodies;
@@ -13650,12 +13636,6 @@ partial struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
                 if (ExternalRigConnectedPairs != null && ExternalRigConnectedPairs.Contains((rigLo, rigHi)))
                     return false;
 
-                // Bodies inside the same non-self-colliding rig (e.g. a garment tube) never collide with
-                // each other: the tube is held in shape by its distance-limit edges, and letting its own
-                // panels pile up on each other makes it jitter and refuse to settle.
-                if (aRig && bRig && IsSameSelfCollideGroup(aId, bId))
-                    return false;
-
                 // The garment rig should collide with the corpse ragdoll, but not with legacy
                 // single-piece dropped gear. Single gear remains ground-only by design below.
                 if ((aRig && bExternal && !bRig) || (bRig && aExternal && !aRig))
@@ -13706,33 +13686,6 @@ partial struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         ConfigureAdditionalContact(pair, ref manifold, ref pairMaterial, ref handled);
         if (handled) return true;
         pairMaterial.FrictionCoefficient = Friction;
-
-        // Garment tube contacts get their own configurable friction (separate from the legacy chain-rig
-        // gear material below): the tube relies on real sliding contact against the corpse, so this is
-        // the primary "how fast does it slide off" tuning knob. Bodies are tube-tagged via the self-
-        // collide group dict, which only tube rigs populate (selfCollide: false).
-        var aTube = pair.A.Mobility == CollidableMobility.Dynamic && IsTubeBody(pair.A.BodyHandle.Value);
-        var bTube = pair.B.Mobility == CollidableMobility.Dynamic && IsTubeBody(pair.B.BodyHandle.Value);
-        if (aTube || bTube)
-        {
-            var tubeOnGround = (aTube && pair.B.Mobility == CollidableMobility.Static) ||
-                                (bTube && pair.A.Mobility == CollidableMobility.Static);
-            if (tubeOnGround)
-            {
-                pairMaterial.MaximumRecoveryVelocity = 0.25f;
-                pairMaterial.FrictionCoefficient = Config?.KoStripGarmentTubeGroundFriction
-                    ?? Configuration.KoStripGarmentTubeGroundFrictionDefault;
-                pairMaterial.SpringSettings = new SpringSettings(12, 3);
-            }
-            else
-            {
-                pairMaterial.MaximumRecoveryVelocity = 0.08f;
-                pairMaterial.FrictionCoefficient = Config?.KoStripGarmentTubeBodyFriction
-                    ?? Configuration.KoStripGarmentTubeBodyFrictionDefault;
-                pairMaterial.SpringSettings = new SpringSettings(6, 4);
-            }
-            return true;
-        }
 
         // Self-collision (limb vs own limb) is dynamic-vs-dynamic. At rest the corpse's
         // capsules overlap (thighs touching, forearms on the torso, hands on legs); a crisp
@@ -13814,17 +13767,6 @@ partial struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     private bool IsExternalRigNoRagdollContact(int bodyHandle)
         => ExternalRigNoRagdollContactBodies != null && ExternalRigNoRagdollContactBodies.Contains(bodyHandle);
 
-    private bool IsSameSelfCollideGroup(int aHandle, int bHandle)
-        => ExternalRigSelfCollideGroupByBody != null &&
-           ExternalRigSelfCollideGroupByBody.TryGetValue(aHandle, out var ga) &&
-           ExternalRigSelfCollideGroupByBody.TryGetValue(bHandle, out var gb) &&
-           ga == gb;
-
-    // Only the garment tube currently spawns with selfCollide:false, so membership in this dict doubles
-    // as a "this body belongs to a tube rig" tag for contact-material purposes.
-    private bool IsTubeBody(int bodyHandle)
-        => ExternalRigSelfCollideGroupByBody != null && ExternalRigSelfCollideGroupByBody.ContainsKey(bodyHandle);
-
     private bool IsSoftKinematicContact(CollidablePair pair)
         => SoftKinematicBodies != null &&
            ((pair.A.Mobility == CollidableMobility.Kinematic && SoftKinematicBodies.Contains(pair.A.BodyHandle.Value)) ||
@@ -13836,8 +13778,7 @@ partial struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
             (pair.B.Mobility == CollidableMobility.Kinematic && NpcCollisionKinematicBodies.Contains(pair.B.BodyHandle.Value)));
 
     private bool UseAdvancedGearContactFriction()
-        => Config?.KoStripPhysicsDropClothing == true &&
-           Config.KoStripAdvancedClothPhysics;
+        => Config?.KoStripPhysicsDropClothing == true;
 
     // "Gear" for contact-material purposes = single dropped pieces (ExternalDynamic) AND articulated
     // garment-rig bodies (ExternalRigDynamic). In the player-ragdoll host sim a rig body is in BOTH sets,

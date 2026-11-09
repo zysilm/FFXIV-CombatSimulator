@@ -35,7 +35,6 @@ public unsafe class KoStripController : IDisposable
     // Addresses already stripped this session — so auto-KO doesn't re-fire every frame.
     private readonly HashSet<nint> stripped = new();
     private readonly Dictionary<nint, HashSet<byte>> onHitStripped = new();
-    private readonly Dictionary<nint, float> pendingKoStrip = new();
     private sealed class PreparedStrip
     {
         public nint Address;
@@ -135,55 +134,13 @@ public unsafe class KoStripController : IDisposable
     {
         if (!config.KoStripEnabled || IsOnHitDetachActive()) return;
         if (stripped.Contains(characterAddress)) return;
-        if (pendingKoStrip.ContainsKey(characterAddress)) return;
-
-        var delay = config.KoStripSyncWithRagdoll ? MathF.Max(0f, config.RagdollActivationDelay) : 0f;
-        if (delay > 0.001f)
-        {
-            pendingKoStrip[characterAddress] = delay;
-            log.Info($"KoStrip: scheduled ragdoll-synced strip for 0x{characterAddress:X} after {delay:F2}s");
-            return;
-        }
-
         DoStrip(characterAddress);
     }
 
     /// <summary>Strip now, ignoring the once-per-actor guard (manual test button).</summary>
-    public void StripNow(nint characterAddress)
-    {
-        pendingKoStrip.Remove(characterAddress);
-        DoStrip(characterAddress);
-    }
+    public void StripNow(nint characterAddress) => DoStrip(characterAddress);
 
-    public void Tick(float deltaTime)
-    {
-        TickPreparedStrips(deltaTime);
-        if (pendingKoStrip.Count == 0) return;
-        if (!config.KoStripEnabled || IsOnHitDetachActive())
-        {
-            pendingKoStrip.Clear();
-            return;
-        }
-
-        var dt = MathF.Max(0f, deltaTime);
-        var keys = new List<nint>(pendingKoStrip.Keys);
-        foreach (var address in keys)
-        {
-            if (!pendingKoStrip.TryGetValue(address, out var remaining))
-                continue;
-
-            remaining -= dt;
-            if (remaining > 0f)
-            {
-                pendingKoStrip[address] = remaining;
-                continue;
-            }
-
-            pendingKoStrip.Remove(address);
-            if (!stripped.Contains(address))
-                DoStrip(address);
-        }
-    }
+    public void Tick(float deltaTime) => TickPreparedStrips(deltaTime);
 
     public bool TryStripNextOnHit(nint characterAddress)
     {
@@ -261,7 +218,6 @@ public unsafe class KoStripController : IDisposable
             foreach (var piece in preparation.Pieces) piece.Cancel();
         preparedStrips.Clear();
         stripped.Clear();
-        pendingKoStrip.Clear();
         onHitStripped.Clear();
     }
 

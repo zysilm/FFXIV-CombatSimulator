@@ -1,105 +1,29 @@
 // This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 using System;
-using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation.Attachment;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
-using FFXIVClientStructs.FFXIV.Client.Game.Object;
-using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 
 namespace CombatSimulator.Animation;
 
 public unsafe partial class DismembermentController
 {
+    // Visual only (enhanced) tuning. Former per-slot/per-equipment editor values; the top's slide is
+    // further capped at 0.08 m and the lower garment's at 65% of thigh length (see UpdateRealAttachment).
+    private readonly record struct GarmentSlideTuning(float SlipDistance, float SpeedLimit, float BodyFriction, float Damping);
+    private static readonly GarmentSlideTuning TopSlideTuning = new(0.09f, 0.6f, 0.45f, 1.5f);
+    private static readonly GarmentSlideTuning LowerSlideTuning = new(0.13f, 0.6f, 0.45f, 1.5f);
+
     private sealed class RealAttachmentState
     {
         public readonly WholeGarmentSlide Motion = new();
         public readonly WaistRetentionMotion Waist = new();
         public float[] WaistWeights = Array.Empty<float>();
         public int LeftHip = -1, LeftKnee = -1, RightHip = -1, RightKnee = -1;
-        public AttachmentSettings Settings = null!;
+        public GarmentSlideTuning Settings;
         public int SkeletonSignature;
         public float Scale, TravelLimit;
-        public Vector3 Origin, Offset;
-    }
-
-    public readonly record struct AttachmentModel(string Key, string Label, int Slot);
-    public readonly record struct AttachmentDebugPoint(Vector3 Position, Vector3 Target, bool Anchored,
-        bool Contact, float Tension);
-
-    public List<AttachmentModel> GetAttachmentModels()
-    {
-        var result = new List<AttachmentModel>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        void Add(string? signature, int slot)
-        {
-            if (string.IsNullOrEmpty(signature)) return;
-            var key = AttachmentKey(slot, signature);
-            if (!seen.Add(key)) return;
-            var path = signature.Split('|')[0];
-            result.Add(new AttachmentModel(key, $"{(slot == 1 ? "Body" : "Legs")}: {path}", slot));
-        }
-        foreach (var c in clones)
-            if (c.GearRealAttachmentRequested) Add(c.GearExpectedAppearanceSignature, c.GearKeepModelSlot);
-        var player = objectTable.LocalPlayer;
-        if (player != null && player.Address != nint.Zero)
-        {
-            var draw = ((GameObject*)player.Address)->DrawObject;
-            if (draw != null)
-            {
-                var cb = (CharacterBase*)draw;
-                if (cb->Models != null)
-                    foreach (var slot in new[] { 1, 3 })
-                        if (slot < cb->SlotCount) Add(GetModelAppearanceSignature(cb->Models[slot]), slot);
-            }
-        }
-        return result;
-    }
-
-    private static string AttachmentKey(int slot, string signature) => $"{slot}:{signature}";
-
-    public void RebindRealAttachments()
-    {
-        // Settings are snapshots: explicit rebind makes structural edits predictable and recoverable.
-        foreach (var c in clones) if (c.GearRealAttachmentRequested) c.RealAttachment = null;
-    }
-
-    public void RefreshAttachmentLiveSettings()
-    {
-        foreach (var c in clones)
-        {
-            if (c.RealAttachment is not { } state) continue;
-            var saved = ResolveAttachmentSettings(c);
-            state.Settings.SlipDistance = saved.SlipDistance;
-            state.Settings.SpeedLimit = saved.SpeedLimit;
-            state.Settings.BodyFriction = saved.BodyFriction;
-            state.Settings.Damping = saved.Damping;
-        }
-    }
-
-    public void CollectAttachmentDebug(List<(Vector3 A, Vector3 B)> edges, List<AttachmentDebugPoint> points)
-    {
-        edges.Clear(); points.Clear();
-        foreach (var c in clones)
-            if (c.RealAttachment is { } state)
-            {
-                edges.Add((state.Origin, state.Origin + state.Offset));
-                points.Add(new(state.Origin + state.Offset, state.Origin, true, false, 0));
-            }
-    }
-
-    public string GetAttachmentStatus()
-        => $"Attached: {clones.FindAll(c => c.RealAttachment != null).Count}";
-
-    private AttachmentSettings ResolveAttachmentSettings(Clone c)
-    {
-        var defaults = c.GearKeepModelSlot == 1 ? config.KoStripAttachmentBody : config.KoStripAttachmentLegs;
-        if (c.GearExpectedAppearanceSignature is { } signature && config.KoStripAttachmentOverrides != null &&
-            config.KoStripAttachmentOverrides.TryGetValue(AttachmentKey(c.GearKeepModelSlot, signature), out var saved))
-            defaults = saved;
-        var result = (defaults ?? new AttachmentSettings()).Validated();
-        result.Template = AttachmentSettings.TemplateForSlot(result.Template, c.GearKeepModelSlot);
-        return result;
+        public Vector3 Offset;
     }
 
     private bool UpdateRealAttachment(SkeletonAccess target, Clone c)
@@ -133,7 +57,7 @@ public unsafe partial class DismembermentController
                 }
                 if (!float.IsFinite(limit) || limit == float.MaxValue) limit = .15f * scale;
             }
-            c.RealAttachment = new RealAttachmentState { Settings = ResolveAttachmentSettings(c),
+            c.RealAttachment = new RealAttachmentState { Settings = c.GearKeepModelSlot == 3 ? LowerSlideTuning : TopSlideTuning,
                 SkeletonSignature = signature, Scale = scale, TravelLimit = limit };
             if (c.GearKeepModelSlot == 3)
             {
@@ -158,7 +82,6 @@ public unsafe partial class DismembermentController
         state.Motion.Advance(attachmentFrameDt, localDirection, MathF.Max(0, -direction.Y),
             MathF.Min(state.Settings.SlipDistance * state.Scale, state.TravelLimit),
             state.Settings.SpeedLimit * state.Scale, state.Settings.BodyFriction, state.Settings.Damping);
-        state.Origin = origin;
         state.Offset = Vector3.Transform(state.Motion.Offset, rotation);
         if (c.GearKeepModelSlot == 3)
             state.Waist.Advance(attachmentFrameDt, AttachmentThigh(source, state.LeftHip, state.LeftKnee),

@@ -74,19 +74,16 @@ public unsafe partial class DismembermentController : IDisposable
     private const float GearLegsHandoffSlip = 0.06f;
     private const float GearBodyVisualBindSlip = 0.12f;
     private const float GearLegsVisualBindSlip = 0.07f;
-    // Auto cloth hold (event-driven release). Presets pick a rest dwell + safety cap; slide-to-floor
-    // slides down until the garment reaches the ground. All frame counts are 60fps-equivalent.
-    private const int ClothHoldPresetQuick = 0;
-    private const int ClothHoldPresetNatural = 1;
-    private const int ClothHoldPresetClingy = 2;
+    // Cloth hold (event-driven release). Stored preset ints: 1 Natural (release once the body settles),
+    // 3 Slide to floor (slide down until the garment reaches the ground), 5 Visual only (enhanced),
+    // which never arms and is handled by the real-attachment path. Any other value behaves as Natural.
+    // All frame counts are 60fps-equivalent.
     private const int ClothHoldPresetSlideToFloor = 3;
-    private const int ClothHoldPresetVisualOnly = 4;
+    private const int ClothHoldPresetVisualEnhanced = 5;
     private const int ClothHoldMinFrames = 18;             // always attach at least ~0.3s
     private const float ClothHoldRestSpeed = 0.15f;        // anchor speed (m/s) below which the body is "settled"
     private const float ClothHoldSlideSpeed = 0.20f;       // slide-to-floor descent speed (m/s)
     private const float ClothHoldSlideEaseFrames = 60f;    // ease in to full slide speed over ~1s
-    private const float ClothHoldVisualOnlySlideSpeed = 0.07f;       // slower visual-only descent (m/s)
-    private const float ClothHoldVisualOnlySlideEaseFrames = 150f;   // ease in over ~2.5s
     private const float ClothHoldSlideMaxDrop = 0.8f;      // slide-to-floor: release after this far even without a floor hit
     private const float ClothHoldFloorMargin = 0.02f;
     private const int MdlStringTableHeaderSize = 8;
@@ -110,49 +107,6 @@ public unsafe partial class DismembermentController : IDisposable
     private const float BodyGarmentPoseGuideTorsoForce = 0.95f;
     private const float BodyGarmentPoseGuideShoulderForce = 0.70f;
     private const float BodyGarmentPoseGuideArmForce = 0.42f;
-
-    // === Garment tube model (experimental, slot-1 upper garment) ===
-    // Three rings of TubeRingSegments boxes each, wrapping the corpse spine capsules. The rings drive the
-    // spine bones; sleeves/skirt follow via the normal parent-propagation in DriveGarmentRigBones.
-    private const int TubeRingSegments = 6;
-    private const float TubeRingClearance = 0.02f;    // cloth stand-off past the body capsule (m)
-    private const float TubeRingRadialHalf = 0.013f;  // panel thickness half-extent (m)
-    private const float TubeRingAxialHalf = 0.055f;   // panel height half-extent along the spine (m)
-    private const float TubeEdgeFrequency = 15f;      // distance-limit spring stiffness
-    private const float TubeEdgeDamping = 1.5f;
-    private const float TubeRingFrameSmooth = 0.35f;  // per-frame slerp toward the fresh ring frame
-    // Ring definitions: (spine bone driven, bone toward which the ring axis points, ring radius).
-    // The radii are authored against the STOCK body — they sit proud of the stock capsules, because a
-    // clothed torso is fatter than the crude capsule the physics uses. A rig whose profile changes
-    // those capsules moves them by BodyRadiusRatio; see there.
-    private static readonly (string Bone, string AxisToward, float Radius)[] TubeRingDefs =
-    {
-        ("j_kosi",   "j_sebo_a", 0.115f),  // hem / hips
-        ("j_sebo_b", "j_sebo_c", 0.105f),  // waist
-        ("j_sebo_c", "j_kubi",   0.110f),  // chest
-    };
-    // Guard rails on that ratio: a rig can be tuned to extremes, and neither a tube collapsed inside
-    // the body nor one blown out into a hoop is worth honouring.
-    private const float MinBodyRadiusRatio = 0.35f;
-    private const float MaxBodyRadiusRatio = 2.5f;
-
-    // === Garment tube model (experimental, slot-3 trousers) ===
-    // A hip ring around the pelvis + two rings per leg. The hip ring drives j_kosi; the leg rings drive
-    // their thigh/shin bones; feet propagate. Legs are joined to the hip by nearest-body distance edges
-    // (the Y junction). Legs are thinner, so they use fewer segments.
-    private const int TubeLegRingSegments = 5;
-    private const float TubePantsHipRadius = 0.115f;
-    // Per leg: (bone driven, bone toward which the ring axis points, radius). Down the leg.
-    private static readonly (string Bone, string AxisToward, float Radius)[] TubePantsLegRingsLeft =
-    {
-        ("j_asi_a_l", "j_asi_b_l", 0.080f),  // upper thigh
-        ("j_asi_b_l", "j_asi_d_l", 0.065f),  // lower thigh / knee
-    };
-    private static readonly (string Bone, string AxisToward, float Radius)[] TubePantsLegRingsRight =
-    {
-        ("j_asi_a_r", "j_asi_b_r", 0.080f),
-        ("j_asi_b_r", "j_asi_d_r", 0.065f),
-    };
 
     private BufferPool? bufferPool;
     private BepuSimulation? simulation;
@@ -297,8 +251,6 @@ public unsafe partial class DismembermentController : IDisposable
         public Vector3 GearHandoffReleaseVelocity;
         public Vector3 GearHandoffReleaseAngularVelocity;
         public bool GearHandoffHasReleaseVelocity;
-        public int GearVisualBindFramesRemaining;
-        public int GearVisualBindFramesTotal;                 // hold length this drop (config-driven), for progress normalization
         public bool GearVisualBindStarted;
         public Vector3 GearVisualBindLastRootPos;
         public Quaternion GearVisualBindLastRootRot = Quaternion.Identity;
@@ -368,38 +320,7 @@ public unsafe partial class DismembermentController : IDisposable
         // rig keeps its own copy inside ExternalRigHandle).
         public readonly List<GarmentSwingConstraint> SwingConstraints = new();
         public readonly List<GarmentPoseGuideConstraint> PoseGuideConstraints = new();
-        // Tube model only: rings of bodies that collectively drive one spine bone each. Empty for the
-        // chain rig. When non-empty, IsTube is set and the drive path switches to ring frames.
-        public readonly List<GarmentRing> Rings = new();
-        // Tube model only: coat/robe skirt-top bones each pinned to one hem-ring body, so the hem drapes
-        // per-segment as the ring deforms. Empty when the garment has no skirt bones.
-        public readonly List<TubeSkirtAttach> SkirtAttachments = new();
-        public bool IsTube;
         public bool IsLocal;
-    }
-
-    private struct TubeSkirtAttach
-    {
-        public int SkirtBoneIndex;
-        public int RingBodyIndex;       // index into GarmentRig.Bodies (the hem-ring body it rides)
-        public Vector3 LocalOffset;     // skirtBoneWorldPos - ringBodyPos, in the (stable) ring frame
-        public Quaternion FrameToSkirtRot;
-    }
-
-    // A ring of tube bodies encircling the torso at one spine bone. The ring's bodies drive that bone's
-    // world transform via the ring's centroid + orientation frame (see DriveTubeRings); no ring body maps
-    // to a bone individually (their GearRigBody.BoneIndex is -1).
-    private sealed class GarmentRing
-    {
-        public int[] BodyIndices = Array.Empty<int>();  // indices into GarmentRig.Bodies (== ExternalIndex)
-        public int BoneIndex;
-        public string BoneName = string.Empty;
-        public float Radius;                            // built ring radius; the yardstick for IsGarmentWorn
-        public Quaternion CapturedFrameInv;             // inverse of the birth ring frame
-        public Quaternion CapturedBoneWorldRot;         // bone world rotation at birth
-        public Vector3 CapturedOffsetLocal;             // (boneWorldPos - centroid) at birth, in ring frame
-        public Quaternion SmoothedFrame;                // frame-to-frame smoothed orientation
-        public bool HasSmoothed;
     }
 
     private struct GarmentSwingConstraint
@@ -699,7 +620,7 @@ public unsafe partial class DismembermentController : IDisposable
             GlamourBase64 = glamourBase64,
             GearKeepModelSlot = keepModelSlot,
             GearRealAttachmentRequested = keepModelSlot is 1 or 3 && config.KoStripPhysicsDropClothing &&
-                config.KoStripAdvancedClothPhysics && config.KoStripClothHoldAuto && config.KoStripClothHoldPreset == 5,
+                config.KoStripClothHoldPreset == ClothHoldPresetVisualEnhanced,
             // CharacterSetup.CopyFromCharacter copies the actor's game-side setup, not necessarily
             // the model currently rendered by Glamourer. Remember the live rendered garment so the
             // clone cannot arm against that bootstrap appearance while a race/customize redraw is
@@ -810,33 +731,6 @@ public unsafe partial class DismembermentController : IDisposable
         foreach (var c in clones) DespawnClone(c);
         clones.Clear();
         ClearPcNpcCollisionStatics();
-    }
-
-    public readonly struct DebugGarmentBox
-    {
-        public readonly Vector3 Position;
-        public readonly Quaternion Orientation;
-        public readonly Vector3 HalfExtents;
-        public DebugGarmentBox(Vector3 position, Quaternion orientation, Vector3 halfExtents)
-        {
-            Position = position;
-            Orientation = orientation;
-            HalfExtents = halfExtents;
-        }
-    }
-
-    /// <summary>Collect the live world boxes of every active garment-tube ring body, for the debug overlay.</summary>
-    public void CollectDebugGarmentTubeBoxes(List<DebugGarmentBox> buffer)
-    {
-        buffer.Clear();
-        foreach (var c in clones)
-        {
-            if (c.GearGarmentRig is not { IsTube: true } rig)
-                continue;
-            foreach (var rb in rig.Bodies)
-                if (TryGetGarmentRigBodyPose(c, rb, out var pos, out var rot, out _, out _))
-                    buffer.Add(new DebugGarmentBox(pos, Quaternion.Normalize(rot), rb.HalfExtents));
-        }
     }
 
     private void OnRenderFrame()
@@ -1574,22 +1468,6 @@ public unsafe partial class DismembermentController : IDisposable
             return false;
         }
 
-        if (UseGarmentTube(c))
-        {
-            if (!TryBuildGarmentTubeSpecs(skel, c, spec, skelPos, skelRot, out var tubeRig, out var tubeBodies, out var tubeJoints))
-                return false;
-
-            // Tube wraps the corpse (collideWithRagdoll: true) and its own panels never self-collide.
-            if (!ragdoll.TryCreateExternalRig(tubeBodies, tubeJoints, out var tubeHandle,
-                    collideWithRagdoll: true, selfCollide: false))
-                return false;
-
-            c.GearRagdollRig = tubeHandle;
-            c.GearGarmentRig = tubeRig;
-            log.Info($"GearDrop: clone idx={c.ObjectIndex} created garment TUBE rig bodies={tubeBodies.Count} rings={tubeRig.Rings.Count}");
-            return true;
-        }
-
         if (!TryBuildGarmentRigSpecs(skel, c, spec, skelPos, skelRot, out var rig, out var bodySpecs, out var joints))
             return false;
 
@@ -1602,9 +1480,6 @@ public unsafe partial class DismembermentController : IDisposable
         log.Info($"GearDrop: clone idx={c.ObjectIndex} created garment rig slot={c.GearKeepModelSlot} bodies={bodySpecs.Count}");
         return true;
     }
-
-    private bool UseGarmentTube(Clone c)
-        => config.KoStripGarmentTubeModel && (c.GearKeepModelSlot is 1 or 3) && UseAdvancedGarmentPhysics(c);
 
     /// <summary>Build the sim-agnostic body/joint specs for an equipment rig. Body, legs, and each isolated
     /// glove/boot all use articulated bone chains. Shared by the host and local simulations.</summary>
@@ -1836,115 +1711,7 @@ public unsafe partial class DismembermentController : IDisposable
         };
     }
 
-    /// <summary>Build the ring-tube spec for the slot-1 upper garment: 3 rings of boxes wrapping the corpse
-    /// spine capsules, connected by distance-limit edges (inextensible, compressible). The rings drive the
-    /// spine bones; the arms/skirt follow via parent propagation. Host ragdoll only.</summary>
-    private bool TryBuildGarmentTubeSpecs(SkeletonAccess skel, Clone c, GearShapeSpec spec,
-        Vector3 skelPos, Quaternion skelRot,
-        out GarmentRig rig,
-        out List<RagdollController.ExternalRigBodySpec> bodySpecs,
-        out List<RagdollController.ExternalRigJointSpec> joints)
-    {
-        rig = new GarmentRig { IsTube = true };
-        bodySpecs = new List<RagdollController.ExternalRigBodySpec>();
-        joints = new List<RagdollController.ExternalRigJointSpec>();
-
-        var seed = ResolveGearBodySeedVelocity(c);
-        var baseLinear = seed?.Linear ?? Vector3.Zero;
-        var baseAngular = seed?.Angular ?? Vector3.Zero;
-        var scale = c.SourceScale.X > 0f ? c.SourceScale.X : 1f;
-        var totalMass = MathF.Max(0.1f, spec.Mass);
-
-        return c.GearKeepModelSlot == 3
-            ? BuildPantsTube(skel, rig, bodySpecs, joints, skelPos, skelRot, totalMass, scale, baseLinear, baseAngular)
-            : BuildTorsoTube(skel, c, rig, bodySpecs, joints, skelPos, skelRot, totalMass, scale, baseLinear, baseAngular);
-    }
-
-    private bool BuildTorsoTube(SkeletonAccess skel, Clone c, GarmentRig rig,
-        List<RagdollController.ExternalRigBodySpec> bodySpecs, List<RagdollController.ExternalRigJointSpec> joints,
-        Vector3 skelPos, Quaternion skelRot, float totalMass, float scale, Vector3 baseLinear, Vector3 baseAngular)
-    {
-        var ringBodyMass = totalMass * 0.9f / (TubeRingDefs.Length * TubeRingSegments);
-        var rings = new List<GarmentRing>();
-        foreach (var def in TubeRingDefs)
-        {
-            var ring = AddTubeRing(skel, rig, bodySpecs, joints, skelPos, skelRot,
-                def.Bone, def.AxisToward, def.Radius, TubeRingSegments, TubeRingAxialHalf,
-                ringBodyMass, baseLinear, baseAngular, scale);
-            if (ring != null) rings.Add(ring);
-        }
-
-        // Stack the spine rings into a tube (vertical + diagonal edges between adjacent rings).
-        for (var k = 0; k + 1 < rings.Count; k++)
-            AddTubeRingToRingEdges(rig, joints, bodySpecs, rings[k], rings[k + 1]);
-
-        // Chains and pins are alternatives, not layers: a pinned skirt-top bone is written straight from
-        // its ring body every frame, which would simply overwrite whatever the chain solved for it.
-        if (rig.Rings.Count > 0)
-        {
-            if (config.KoStripGarmentSkirtPhysics)
-                BuildTubeSkirtChains(skel, c, rig, bodySpecs, joints, skelPos, skelRot, scale, baseLinear, baseAngular);
-            else
-                BuildTubeSkirtAttachments(skel, rig, bodySpecs, skelPos, skelRot);
-        }
-
-        return rig.Rings.Count >= 2 && bodySpecs.Count >= TubeRingSegments * 2;
-    }
-
-    private bool BuildPantsTube(SkeletonAccess skel, GarmentRig rig,
-        List<RagdollController.ExternalRigBodySpec> bodySpecs, List<RagdollController.ExternalRigJointSpec> joints,
-        Vector3 skelPos, Quaternion skelRot, float totalMass, float scale, Vector3 baseLinear, Vector3 baseAngular)
-    {
-        // Mass split: hip ring ~30%, each leg ~35% over its two rings.
-        var hipMass = totalMass * 0.30f / TubeRingSegments;
-        var legMass = totalMass * 0.35f / (TubePantsLegRingsLeft.Length * TubeLegRingSegments);
-
-        var hip = AddTubeRing(skel, rig, bodySpecs, joints, skelPos, skelRot,
-            "j_kosi", "j_sebo_a", TubePantsHipRadius, TubeRingSegments, TubeRingAxialHalf,
-            hipMass, baseLinear, baseAngular, scale);
-
-        BuildPantsLeg(skel, rig, bodySpecs, joints, skelPos, skelRot, TubePantsLegRingsLeft,
-            hip, legMass, scale, baseLinear, baseAngular);
-        BuildPantsLeg(skel, rig, bodySpecs, joints, skelPos, skelRot, TubePantsLegRingsRight,
-            hip, legMass, scale, baseLinear, baseAngular);
-
-        // Pants have no skirt bones; skip skirt attachment (would grab a coat's skirt by mistake).
-        return rig.Rings.Count >= 3 && bodySpecs.Count >= TubeRingSegments + TubeLegRingSegments * 2;
-    }
-
-    private void BuildPantsLeg(SkeletonAccess skel, GarmentRig rig,
-        List<RagdollController.ExternalRigBodySpec> bodySpecs, List<RagdollController.ExternalRigJointSpec> joints,
-        Vector3 skelPos, Quaternion skelRot,
-        (string Bone, string AxisToward, float Radius)[] legDefs, GarmentRing? hip,
-        float legMass, float scale, Vector3 baseLinear, Vector3 baseAngular)
-    {
-        var legRings = new List<GarmentRing>();
-        foreach (var def in legDefs)
-        {
-            var ring = AddTubeRing(skel, rig, bodySpecs, joints, skelPos, skelRot,
-                def.Bone, def.AxisToward, def.Radius, TubeLegRingSegments, TubeRingAxialHalf,
-                legMass, baseLinear, baseAngular, scale);
-            if (ring != null) legRings.Add(ring);
-        }
-
-        for (var k = 0; k + 1 < legRings.Count; k++)
-            AddTubeRingToRingEdges(rig, joints, bodySpecs, legRings[k], legRings[k + 1]);
-
-        // Y junction: tie the leg's top ring to the hip ring by nearest-body distance edges.
-        if (hip != null && legRings.Count > 0)
-            AddTubeJunctionEdges(joints, bodySpecs, hip, legRings[0]);
-    }
-
-    /// <summary>Build one ring of <paramref name="segments"/> boxes around <paramref name="boneName"/>,
-    /// add its circumferential distance-limit edges, capture its birth frame, and register it to drive the
-    /// bone. Returns null (nothing added) if the bone doesn't resolve.</summary>
     // === Is the garment still being worn? (see ShouldCarryExternalRig) ===
-    // A ring still has its bone inside it while the bone's body centre is within this much of the
-    // ring's centroid, as a multiple of the ring radius. A ring that has slid off the body encircles
-    // nothing, and its distance to the bone it used to sit on runs well past this — which is what
-    // separates a garment still worn from one the corpse merely happens to be lying on. Distance to
-    // the corpse cannot tell those two apart; being wrapped AROUND it can.
-    private const float WornRingFactor = 1.5f;
     // Chain rig: a piece is still on its bone while it is within this far of that bone's capsule.
     private const float WornChainMargin = 0.12f;
     // How much of a garment must still be on the body for the whole thing to come along. Half, so a
@@ -1975,9 +1742,8 @@ public unsafe partial class DismembermentController : IDisposable
     /// Is this garment still on the body, rather than lying on the floor next to it?
     ///
     /// Geometry, not proximity: a fallen coat is often DIRECTLY under the corpse, so distance says
-    /// nothing. What says everything is whether the garment still encloses the bones it was built
-    /// around — a worn tube has the spine running through its rings; a shed one is a flat loop with
-    /// nothing inside it.
+    /// nothing. A piece counts as on its bone while its rig body sits within cloth thickness of that
+    /// bone's skin.
     /// </summary>
     private bool IsGarmentWorn(Clone c)
     {
@@ -1988,66 +1754,24 @@ public unsafe partial class DismembermentController : IDisposable
         var ragdoll = PlayerRagdollController;
         if (rig == null || ragdoll == null || c.GearRagdollRig == null) return false;
 
-        if (rig.IsTube)
+        foreach (var body in rig.Bodies)
         {
-            foreach (var ring in rig.Rings)
+            if (string.IsNullOrEmpty(body.BoneName)) continue;
+            var meshBody = ragdoll.IsMeshBody(body.BoneName);
+            if (!ragdoll.TryGetBoneCapsule(body.BoneName, out var capsule) && !meshBody) continue;
+            if (!TryGetGarmentRigBodyPose(c, body, out var position, out _, out _, out _)) continue;
+            total++;
+
+            // How far clear of the skin it is, so cloth thickness is all that has to be tolerated.
+            float surfaceGap;
+            if (meshBody)
             {
-                if (ring.BodyIndices.Length == 0) continue;
-                var meshBody = ragdoll.IsMeshBody(ring.BoneName);
-                if (!ragdoll.TryGetBoneCapsule(ring.BoneName, out var capsule) && !meshBody) continue;
-                total++;
-
-                var centroid = Vector3.Zero;
-                var counted = 0;
-                foreach (var bodyListIndex in ring.BodyIndices)
-                {
-                    // BodyIndices index the garment's OWN body list; the pose lives behind that body's
-                    // ExternalIndex. Same hop DriveTubeRings makes.
-                    if (bodyListIndex < 0 || bodyListIndex >= rig.Bodies.Count) continue;
-                    if (!TryGetGarmentRigBodyPose(c, rig.Bodies[bodyListIndex],
-                            out var position, out _, out _, out _))
-                        continue;
-                    centroid += position;
-                    counted++;
-                }
-                if (counted == 0) continue;
-                centroid /= counted;
-
-                // Distance to the capsule's AXIS, not its centre: the centre sits half a bone-length
-                // along the segment from the bone origin the ring was built on, so a perfectly worn
-                // thigh ring would otherwise start out most of the way to its own threshold.
-                if (meshBody)
-                {
-                    if (ragdoll.TryGetCharacterSurface(ring.BoneName, centroid,
-                            CharacterSurfaceUsage.Physics, out var hit) &&
-                        Vector3.Distance(centroid, hit.Point) <= ring.Radius * WornRingFactor)
-                        on++;
-                }
-                else if (DistanceToCapsuleAxis(capsule, centroid) <= ring.Radius * WornRingFactor)
-                    on++;
+                if (!ragdoll.TryGetCharacterSurface(body.BoneName, position,
+                        CharacterSurfaceUsage.Physics, out var hit)) continue;
+                surfaceGap = Vector3.Distance(position, hit.Point);
             }
-        }
-        else
-        {
-            foreach (var body in rig.Bodies)
-            {
-                if (string.IsNullOrEmpty(body.BoneName)) continue;
-                var meshBody = ragdoll.IsMeshBody(body.BoneName);
-                if (!ragdoll.TryGetBoneCapsule(body.BoneName, out var capsule) && !meshBody) continue;
-                if (!TryGetGarmentRigBodyPose(c, body, out var position, out _, out _, out _)) continue;
-                total++;
-
-                // How far clear of the skin it is, so cloth thickness is all that has to be tolerated.
-                float surfaceGap;
-                if (meshBody)
-                {
-                    if (!ragdoll.TryGetCharacterSurface(body.BoneName, position,
-                            CharacterSurfaceUsage.Physics, out var hit)) continue;
-                    surfaceGap = Vector3.Distance(position, hit.Point);
-                }
-                else surfaceGap = MathF.Max(0f, DistanceToCapsuleAxis(capsule, position) - capsule.Radius);
-                if (surfaceGap <= WornChainMargin) on++;
-            }
+            else surfaceGap = MathF.Max(0f, DistanceToCapsuleAxis(capsule, position) - capsule.Radius);
+            if (surfaceGap <= WornChainMargin) on++;
         }
 
         return total > 0 && on >= total * WornFraction;
@@ -2067,416 +1791,6 @@ public unsafe partial class DismembermentController : IDisposable
 
         var t = Math.Clamp(Vector3.Dot(point - a, ab) / lengthSq, 0f, 1f);
         return Vector3.Distance(point, a + ab * t);
-    }
-
-    /// <summary>
-    /// How far this bone's body has moved from the stock rig, as a ratio of capsule radii.
-    ///
-    /// The tube collides with the corpse's capsules — that contact is the ONLY thing holding the
-    /// garment up. So a ring sized for the stock body on a rig whose torso profile is slim hangs clear
-    /// of it with nothing to catch on, and the clothes slide straight off.
-    ///
-    /// The authored ring radii cannot simply be replaced by the live capsule radius: they deliberately
-    /// sit proud of the stock capsules (a clothed thigh is nearly twice its physics capsule), and
-    /// swapping them out would yank the tube tight on every rig that works today. What a profile tells
-    /// us is only how the BODY moved relative to stock — so move the garment with it by the same ratio.
-    /// A stock profile lands on exactly 1 and reproduces the authored numbers untouched.
-    /// </summary>
-    private float BodyRadiusRatio(string boneName)
-    {
-        var stock = 0f;
-        foreach (var def in RagdollController.AllBoneDefaults)
-            if (def.Name == boneName) { stock = def.CapsuleRadius; break; }
-        if (stock <= 1e-4f) return 1f;
-
-        var live = 0f;
-        foreach (var bone in config.RagdollBoneConfigs)
-            if (bone.Name == boneName) { live = bone.CapsuleRadius; break; }
-        if (live <= 1e-4f) return 1f;
-
-        return Math.Clamp(live / stock, MinBodyRadiusRatio, MaxBodyRadiusRatio);
-    }
-
-    private GarmentRing? AddTubeRing(SkeletonAccess skel, GarmentRig rig,
-        List<RagdollController.ExternalRigBodySpec> bodySpecs, List<RagdollController.ExternalRigJointSpec> joints,
-        Vector3 skelPos, Quaternion skelRot,
-        string boneName, string axisTowardBone, float radius, int segments, float axialHalf,
-        float ringBodyMass, Vector3 baseLinear, Vector3 baseAngular, float scale)
-    {
-        if (!TryGetBoneWorldPosition(skel, skelPos, skelRot, boneName, out var center) ||
-            !TryGetBoneWorldRotation(skel, skelRot, boneName, out var boneRot))
-            return null;
-
-        var idx = boneService.ResolveBoneIndex(skel, boneName);
-        if (idx < 0 || idx >= skel.BoneCount) return null;
-
-        // Ring axis (along the limb/spine): toward the next bone, else the bone's own local Y.
-        var axis = TryGetBoneWorldPosition(skel, skelPos, skelRot, axisTowardBone, out var nextPos) &&
-                   (nextPos - center).LengthSquared() > 1e-6f
-            ? Vector3.Normalize(nextPos - center)
-            : NormalizeOrFallback(Vector3.Transform(Vector3.UnitY, boneRot), Vector3.UnitY);
-
-        // In-plane basis: seam u toward character forward projected onto the ring plane, v = axis × u.
-        var forward = Vector3.Transform(Vector3.UnitZ, boneRot);
-        var u = forward - Vector3.Dot(forward, axis) * axis;
-        u = u.LengthSquared() > 1e-6f ? Vector3.Normalize(u) : BuildAnyPerpendicular(axis);
-        var v = Vector3.Normalize(Vector3.Cross(axis, u));
-
-        var bodyRatio = BodyRadiusRatio(boneName);
-        var r = radius * bodyRatio * scale + TubeRingClearance;
-        var tangentialHalf = MathF.Max(0.02f, (MathF.PI * r / segments) * 0.92f);
-
-        if (MathF.Abs(bodyRatio - 1f) > 0.02f)
-            log.Info($"GarmentTube: ring '{boneName}' tracks the body profile — radius {radius:F3} -> {radius * bodyRatio:F3} (ratio {bodyRatio:F2})");
-
-        var ring = new GarmentRing { BoneIndex = idx, BoneName = boneName, Radius = r };
-        var bodyIndices = new int[segments];
-        var positions = new Vector3[segments];
-        for (var i = 0; i < segments; i++)
-        {
-            var theta = MathF.Tau * i / segments;
-            var radial = Vector3.Normalize(MathF.Cos(theta) * u + MathF.Sin(theta) * v);
-            var pos = center + r * radial;
-            positions[i] = pos;
-
-            var tangent = Vector3.Normalize(Vector3.Cross(axis, radial));
-            var bodyRot = QuaternionFromBasis(tangent, axis, radial);
-            var half = new Vector3(tangentialHalf, axialHalf * scale, TubeRingRadialHalf);
-
-            var bodyIndex = bodySpecs.Count;
-            var parts = new[] { new RagdollController.ExternalShapePart(half, Vector3.Zero, Quaternion.Identity) };
-            bodySpecs.Add(new RagdollController.ExternalRigBodySpec(
-                boneName, parts, MathF.Max(0.03f, ringBodyMass), pos, bodyRot, baseLinear, baseAngular));
-            rig.Bodies.Add(new GarmentRigBody
-            {
-                BoneIndex = -1,
-                BoneName = boneName,
-                ExternalIndex = bodyIndex,
-                BodyToBoneRotation = Quaternion.Identity,
-                SegmentHalfLength = 0f,
-                HalfExtents = half,
-            });
-            bodyIndices[i] = bodyIndex;
-            rig.MaxHalfExtent = MathF.Max(rig.MaxHalfExtent, MathF.Max(half.X, MathF.Max(half.Y, half.Z)));
-        }
-
-        var centroid = RingCentroid(positions);
-        var frame = ComputeRingFrame(positions, centroid, axis);
-        ring.BodyIndices = bodyIndices;
-        ring.CapturedFrameInv = Quaternion.Inverse(frame);
-        ring.CapturedBoneWorldRot = boneRot;
-        ring.CapturedOffsetLocal = Vector3.Transform(center - centroid, Quaternion.Inverse(frame));
-        ring.SmoothedFrame = frame;
-        ring.HasSmoothed = true;
-        rig.Rings.Add(ring);
-        rig.BoneIndices.Add(idx);
-
-        for (var i = 0; i < segments; i++)
-        {
-            var a = bodyIndices[i];
-            var b = bodyIndices[(i + 1) % segments];
-            var rest = (positions[i] - positions[(i + 1) % segments]).Length();
-            joints.Add(RagdollController.ExternalRigJointSpec.MakeDistanceLimit(
-                a, b, rest * 0.3f, rest * 1.05f, TubeEdgeFrequency, TubeEdgeDamping));
-        }
-
-        return ring;
-    }
-
-    // Vertical + one-diagonal-per-quad distance edges between two equal-segment rings (stacks them).
-    private void AddTubeRingToRingEdges(GarmentRig rig, List<RagdollController.ExternalRigJointSpec> joints,
-        List<RagdollController.ExternalRigBodySpec> bodySpecs, GarmentRing lower, GarmentRing upper)
-    {
-        var n = lower.BodyIndices.Length;
-        if (n == 0 || upper.BodyIndices.Length != n)
-            return;
-        for (var i = 0; i < n; i++)
-        {
-            var lo = lower.BodyIndices[i];
-            var up = upper.BodyIndices[i];
-            var restV = (bodySpecs[lo].Position - bodySpecs[up].Position).Length();
-            joints.Add(RagdollController.ExternalRigJointSpec.MakeDistanceLimit(
-                lo, up, restV * 0.2f, restV * 1.10f, TubeEdgeFrequency, TubeEdgeDamping));
-
-            var upDiag = upper.BodyIndices[(i + 1) % n];
-            var restD = (bodySpecs[lo].Position - bodySpecs[upDiag].Position).Length();
-            joints.Add(RagdollController.ExternalRigJointSpec.MakeDistanceLimit(
-                lo, upDiag, 0f, restD * 1.15f, TubeEdgeFrequency, TubeEdgeDamping));
-        }
-    }
-
-    // Y junction: connect each body of `to` to its nearest body in `from` (rings of differing segment
-    // counts, e.g. hip ring → leg top ring).
-    private void AddTubeJunctionEdges(List<RagdollController.ExternalRigJointSpec> joints,
-        List<RagdollController.ExternalRigBodySpec> bodySpecs, GarmentRing from, GarmentRing to)
-    {
-        foreach (var tb in to.BodyIndices)
-        {
-            if (tb < 0 || tb >= bodySpecs.Count) continue;
-            var tp = bodySpecs[tb].Position;
-            var best = -1;
-            var bestSq = float.MaxValue;
-            foreach (var fb in from.BodyIndices)
-            {
-                if (fb < 0 || fb >= bodySpecs.Count) continue;
-                var d = (bodySpecs[fb].Position - tp).LengthSquared();
-                if (d < bestSq) { bestSq = d; best = fb; }
-            }
-            if (best < 0) continue;
-            var rest = MathF.Sqrt(bestSq);
-            joints.Add(RagdollController.ExternalRigJointSpec.MakeDistanceLimit(
-                tb, best, rest * 0.2f, rest * 1.15f, TubeEdgeFrequency, TubeEdgeDamping));
-        }
-    }
-
-    // === Garment tube skirt chains (experimental) ===
-    // A coat's j_sk_* bones carry no physics in either rig: the tube pins each column's TOP bone to the
-    // hem ring and every tier below it rides along rigidly, and the chain rig poses them procedurally to
-    // hang straight down. Give each column a chain of bodies hanging off the hem instead and it swings
-    // and folds — and because the rig already collides with the corpse and the ground, the skirt drapes
-    // over the legs and pools on the floor rather than passing through them.
-    //
-    // Costs a body and a joint per skirt bone (~18 on a typical coat), which is why it is opt-in.
-    private const int MaxSkirtColumnJoints = 5;         // coats run 3 tiers; a cap keeps an odd rig sane
-    private const float SkirtSegmentHalfThickness = 0.012f;
-    private const float SkirtSegmentHalfLengthHint = 0.05f; // clamped against the real bone length
-    private const float SkirtSegmentMinHalfWidth = 0.03f;
-
-    private void BuildTubeSkirtChains(SkeletonAccess skel, Clone c, GarmentRig rig,
-        List<RagdollController.ExternalRigBodySpec> bodySpecs,
-        List<RagdollController.ExternalRigJointSpec> joints,
-        Vector3 skelPos, Quaternion skelRot, float scale, Vector3 baseLinear, Vector3 baseAngular)
-    {
-        if (rig.Rings.Count == 0) return;
-        var hem = rig.Rings[0];
-        if (hem.BodyIndices.Length == 0) return;
-
-        var mass = Math.Clamp(config.KoStripSkirtSegmentMass, 0.02f, 0.5f);
-        var swing = Math.Clamp(config.KoStripSkirtSwingLimit, 0.1f, 2.0f);
-        var initialSwing = Math.Clamp(config.KoStripSkirtInitialSwing, 0.05f, 1f);
-
-        // Width the panels to fill the hem between them. A fixed width leaves gaps a leg can poke
-        // straight through, and the columns are all the skirt has — so each one has to cover its own
-        // share of the circumference. Panels never collide with each other (the rig is built
-        // non-self-colliding), so erring wide costs nothing and closes the skirt.
-        var columnCount = CountSkirtColumns(skel);
-        if (columnCount == 0) return;
-
-        var panelHalfWidth = MathF.Max(
-            SkirtSegmentMinHalfWidth, MathF.PI * hem.Radius / columnCount * 0.95f);
-        var half = new Vector3(
-            panelHalfWidth, SkirtSegmentHalfLengthHint, SkirtSegmentHalfThickness * scale);
-
-        var indexByName = new Dictionary<string, int>();
-        var columns = 0;
-        var segments = 0;
-
-        for (var i = 0; i < skel.BoneCount && i < skel.ParentCount; i++)
-        {
-            if (!IsSkirtColumnTop(skel, i, out var topName)) continue;
-
-            // Walk the column down. Tier count and column count both vary by model, so follow the
-            // skeleton rather than assuming the usual a/b/c.
-            var column = new List<string> { topName };
-            var current = i;
-            while (column.Count < MaxSkirtColumnJoints)
-            {
-                var child = FirstSkirtChild(skel, current);
-                if (child < 0) break;
-                var childName = skel.HavokSkeleton->Bones[child].Name.String;
-                if (string.IsNullOrEmpty(childName)) break;
-                column.Add(childName);
-                current = child;
-            }
-
-            // One body per bone, each aimed at the next so the segment (and thus the bone it drives)
-            // comes out right; AddGarmentRigBody already owns that convention.
-            var columnBodies = new List<int>();
-            for (var tier = 0; tier < column.Count; tier++)
-            {
-                var childName = tier + 1 < column.Count ? column[tier + 1] : null;
-                if (!AddGarmentRigBody(skel, c, rig, bodySpecs, indexByName, column[tier], childName,
-                        skelPos, skelRot, half, mass, baseLinear, baseAngular))
-                    break;
-                columnBodies.Add(indexByName[column[tier]]);
-            }
-            if (columnBodies.Count == 0) continue;
-
-            // Hang the column off whichever hem body it was born nearest, then joint tier to tier. The
-            // hem ring is already the thing that follows the waist, so the skirt inherits that for free.
-            if (TryGetBoneWorldPosition(skel, skelPos, skelRot, column[0], out var topPos))
-            {
-                var anchor = NearestHemBody(hem, bodySpecs, topPos);
-                if (anchor >= 0)
-                    joints.Add(new RagdollController.ExternalRigJointSpec(
-                        anchor, columnBodies[0], topPos, swing, initialSwing));
-            }
-
-            for (var tier = 0; tier + 1 < columnBodies.Count; tier++)
-            {
-                if (!TryGetBoneWorldPosition(skel, skelPos, skelRot, column[tier + 1], out var jointPos))
-                    continue;
-                joints.Add(new RagdollController.ExternalRigJointSpec(
-                    columnBodies[tier], columnBodies[tier + 1], jointPos, swing, initialSwing));
-            }
-
-            columns++;
-            segments += columnBodies.Count;
-        }
-
-        if (columns > 0)
-            log.Info($"GearDrop: clone idx={c.ObjectIndex} skirt chains — {columns} column(s), " +
-                     $"{segments} segment(s), panel width {panelHalfWidth * 2f:F3}m");
-    }
-
-    private static int CountSkirtColumns(SkeletonAccess skel)
-    {
-        var count = 0;
-        for (var i = 0; i < skel.BoneCount && i < skel.ParentCount; i++)
-            if (IsSkirtColumnTop(skel, i, out _)) count++;
-        return count;
-    }
-
-    /// <summary>A skirt bone whose parent is NOT a skirt bone: the top of one hanging column.</summary>
-    private static bool IsSkirtColumnTop(SkeletonAccess skel, int index, out string name)
-    {
-        name = string.Empty;
-
-        var bone = skel.HavokSkeleton->Bones[index].Name.String;
-        if (bone == null || !bone.StartsWith("j_sk_", StringComparison.Ordinal)) return false;
-
-        var parent = skel.HavokSkeleton->ParentIndices[index];
-        if (parent >= 0 && parent < skel.BoneCount)
-        {
-            var parentName = skel.HavokSkeleton->Bones[parent].Name.String;
-            if (parentName != null && parentName.StartsWith("j_sk_", StringComparison.Ordinal))
-                return false;
-        }
-
-        name = bone;
-        return true;
-    }
-
-    private static int FirstSkirtChild(SkeletonAccess skel, int parent)
-    {
-        var count = Math.Min(skel.BoneCount, skel.ParentCount);
-        for (var i = 0; i < count; i++)
-        {
-            if (skel.HavokSkeleton->ParentIndices[i] != parent) continue;
-            var name = skel.HavokSkeleton->Bones[i].Name.String;
-            if (name != null && name.StartsWith("j_sk_", StringComparison.Ordinal)) return i;
-        }
-        return -1;
-    }
-
-    private static int NearestHemBody(GarmentRing hem,
-        List<RagdollController.ExternalRigBodySpec> bodySpecs, Vector3 point)
-    {
-        var best = -1;
-        var bestDistSq = float.MaxValue;
-        foreach (var bodyIndex in hem.BodyIndices)
-        {
-            if (bodyIndex < 0 || bodyIndex >= bodySpecs.Count) continue;
-            var d = (bodySpecs[bodyIndex].Position - point).LengthSquared();
-            if (d < bestDistSq) { bestDistSq = d; best = bodyIndex; }
-        }
-        return best;
-    }
-
-    // Pin each coat/robe skirt-top bone (a j_sk_* bone whose parent is not itself a skirt bone) to the
-    // nearest hem-ring body, so the hem follows the ring per-segment. Children of the top propagate.
-    private void BuildTubeSkirtAttachments(SkeletonAccess skel, GarmentRig rig,
-        List<RagdollController.ExternalRigBodySpec> bodySpecs, Vector3 skelPos, Quaternion skelRot)
-    {
-        if (rig.Rings.Count == 0) return;
-        var hem = rig.Rings[0];
-        if (hem.BodyIndices.Length == 0) return;
-
-        // Birth ring frame (stable orientation reference); ring bodies themselves spin freely (distance-
-        // limit only), so the skirt takes position from the nearest body but orientation from the frame.
-        var frameBirth = Quaternion.Normalize(Quaternion.Inverse(hem.CapturedFrameInv));
-        var frameBirthInv = Quaternion.Inverse(frameBirth);
-
-        for (var i = 0; i < skel.BoneCount && i < skel.ParentCount; i++)
-        {
-            var name = skel.HavokSkeleton->Bones[i].Name.String;
-            if (name == null || !name.StartsWith("j_sk_", StringComparison.Ordinal))
-                continue;
-            var parentIdx = skel.HavokSkeleton->ParentIndices[i];
-            if (parentIdx >= 0 && parentIdx < skel.BoneCount)
-            {
-                var parentName = skel.HavokSkeleton->Bones[parentIdx].Name.String;
-                if (parentName != null && parentName.StartsWith("j_sk_", StringComparison.Ordinal))
-                    continue; // not a top segment
-            }
-
-            if (!TryGetBoneWorldPosition(skel, skelPos, skelRot, name, out var skirtWorldPos) ||
-                !TryGetBoneWorldRotation(skel, skelRot, name, out var skirtWorldRot))
-                continue;
-
-            // Nearest hem-ring body by birth world distance.
-            var best = -1;
-            var bestDistSq = float.MaxValue;
-            foreach (var bodyIndex in hem.BodyIndices)
-            {
-                if (bodyIndex < 0 || bodyIndex >= bodySpecs.Count) continue;
-                var d = (bodySpecs[bodyIndex].Position - skirtWorldPos).LengthSquared();
-                if (d < bestDistSq) { bestDistSq = d; best = bodyIndex; }
-            }
-            if (best < 0) continue;
-
-            var bodyPos = bodySpecs[best].Position;
-            rig.SkirtAttachments.Add(new TubeSkirtAttach
-            {
-                SkirtBoneIndex = i,
-                RingBodyIndex = best,
-                LocalOffset = Vector3.Transform(skirtWorldPos - bodyPos, frameBirthInv),
-                FrameToSkirtRot = Quaternion.Normalize(frameBirthInv * skirtWorldRot),
-            });
-            rig.BoneIndices.Add(i); // driven, not propagated
-        }
-    }
-
-    private static Vector3 RingCentroid(IReadOnlyList<Vector3> positions)
-    {
-        var sum = Vector3.Zero;
-        foreach (var p in positions) sum += p;
-        return positions.Count > 0 ? sum / positions.Count : Vector3.Zero;
-    }
-
-    // Ring orientation frame: Y = ring axis (from the signed area of the polygon), Z = seam toward body[0].
-    private static Quaternion ComputeRingFrame(IReadOnlyList<Vector3> positions, Vector3 centroid, Vector3 fallbackAxis)
-    {
-        var n = Vector3.Zero;
-        var count = positions.Count;
-        for (var i = 0; i < count; i++)
-            n += Vector3.Cross(positions[i] - centroid, positions[(i + 1) % count] - centroid);
-        var axis = n.LengthSquared() > 1e-8f ? Vector3.Normalize(n) : NormalizeOrFallback(fallbackAxis, Vector3.UnitY);
-
-        var seam = positions.Count > 0 ? positions[0] - centroid : Vector3.UnitZ;
-        seam -= Vector3.Dot(seam, axis) * axis;
-        seam = seam.LengthSquared() > 1e-8f ? Vector3.Normalize(seam) : BuildAnyPerpendicular(axis);
-
-        var right = Vector3.Normalize(Vector3.Cross(axis, seam));
-        return QuaternionFromBasis(right, axis, seam);
-    }
-
-    private static Vector3 BuildAnyPerpendicular(Vector3 axis)
-    {
-        var a = Vector3.Normalize(axis);
-        var reference = MathF.Abs(a.Y) < 0.9f ? Vector3.UnitY : Vector3.UnitX;
-        return Vector3.Normalize(Vector3.Cross(a, reference));
-    }
-
-    // Quaternion from an orthonormal basis given as world X/Y/Z axes (columns of the rotation matrix).
-    private static Quaternion QuaternionFromBasis(Vector3 x, Vector3 y, Vector3 z)
-    {
-        var m = new Matrix4x4(
-            x.X, x.Y, x.Z, 0f,
-            y.X, y.Y, y.Z, 0f,
-            z.X, z.Y, z.Z, 0f,
-            0f, 0f, 0f, 1f);
-        return Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(m));
     }
 
     /// <summary>Create the garment rig inside the DismembermentController's own local simulation, used when
@@ -4037,10 +3351,7 @@ public unsafe partial class DismembermentController : IDisposable
             else
                 PlayerRagdollController?.ApplyExternalRigPoseGuidance(c.GearRagdollRig, poseGuideStrength);
         }
-        // The tube wraps the corpse and slides on real contacts; the handoff drag (an artificial pull
-        // toward the body) would fight that, so it is chain-rig only.
-        if (!rig.IsTube)
-            ApplyGarmentHandoffDrag(c, avgPos, avgLinear);
+        ApplyGarmentHandoffDrag(c, avgPos, avgLinear);
         MaybeResampleGearGround(c, avgPos);
 
         if (TryEstimateGarmentRigGroundStats(c, rig, out var averageGroundHeight, out var lowestGroundHeight))
@@ -4058,9 +3369,7 @@ public unsafe partial class DismembermentController : IDisposable
             return true;
 
         DriveGarmentRigBones(skel, c, rig, skelPos, skelRot);
-        // Chain rig drives the skirt hang explicitly; the tube's hem ring already drives j_kosi, so the
-        // skirt bones propagate from it — a second skirt driver would fight the ring.
-        if (c.GearKeepModelSlot == 1 && !rig.IsTube)
+        if (c.GearKeepModelSlot == 1)
             DriveSkirtHang(skel, c);
         return true;
     }
@@ -4187,9 +3496,6 @@ public unsafe partial class DismembermentController : IDisposable
             result.OriginalRotations[i] = Quaternion.Normalize(new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W));
         }
 
-        if (rig.IsTube)
-            DriveTubeRings(skel, c, rig, result, skelPos, skelRot, skelRotInv);
-
         foreach (var rb in rig.Bodies)
         {
             if (rb.BoneIndex < 0 || rb.BoneIndex >= skel.BoneCount)
@@ -4227,72 +3533,6 @@ public unsafe partial class DismembermentController : IDisposable
             var newRot = Quaternion.Normalize(parentDelta * result.OriginalRotations[i]);
 
             boneService.WriteBoneTransform(skel, i, newPos, newRot, result);
-        }
-    }
-
-    // Drive each tube ring's spine bone from the ring's live centroid + orientation frame. The bone rides
-    // the ring: bone world rot = frame * capturedFrameInv * capturedBoneRot; sleeves/skirt propagate from
-    // these driven spine bones in the parent-propagation loop above.
-    private void DriveTubeRings(SkeletonAccess skel, Clone c, GarmentRig rig,
-        BoneModificationResult result, Vector3 skelPos, Quaternion skelRot, Quaternion skelRotInv)
-    {
-        foreach (var ring in rig.Rings)
-        {
-            if (ring.BoneIndex < 0 || ring.BoneIndex >= skel.BoneCount || ring.BodyIndices.Length == 0)
-                continue;
-
-            var positions = new Vector3[ring.BodyIndices.Length];
-            var ok = true;
-            for (var i = 0; i < ring.BodyIndices.Length; i++)
-            {
-                var bodyListIndex = ring.BodyIndices[i];
-                if (bodyListIndex < 0 || bodyListIndex >= rig.Bodies.Count ||
-                    !TryGetGarmentRigBodyPose(c, rig.Bodies[bodyListIndex], out var pos, out _, out _, out _))
-                {
-                    ok = false;
-                    break;
-                }
-                positions[i] = pos;
-            }
-            if (!ok) continue;
-
-            var centroid = RingCentroid(positions);
-            var fallbackAxis = Vector3.Transform(Vector3.UnitY, ring.SmoothedFrame);
-            var frame = ComputeRingFrame(positions, centroid, fallbackAxis);
-            if (ring.HasSmoothed)
-                frame = Quaternion.Slerp(ring.SmoothedFrame, frame, TubeRingFrameSmooth);
-            frame = Quaternion.Normalize(frame);
-            ring.SmoothedFrame = frame;
-            ring.HasSmoothed = true;
-
-            var boneWorldRot = Quaternion.Normalize(frame * ring.CapturedFrameInv * ring.CapturedBoneWorldRot);
-            var boneWorldPos = centroid + Vector3.Transform(ring.CapturedOffsetLocal, frame);
-
-            var modelPos = Vector3.Transform(boneWorldPos - skelPos, skelRotInv);
-            var modelRot = Quaternion.Normalize(skelRotInv * boneWorldRot);
-            boneService.WriteBoneTransform(skel, ring.BoneIndex, modelPos, modelRot, result);
-        }
-
-        // Skirt-top bones ride their pinned hem-ring body's position, oriented by the (stable) hem ring
-        // frame — the ring bodies spin freely, so their orientation must not drive the skirt. Children
-        // propagate from these writes in the propagation pass.
-        if (rig.SkirtAttachments.Count > 0 && rig.Rings.Count > 0)
-        {
-            var hemFrame = rig.Rings[0].SmoothedFrame;
-            foreach (var attach in rig.SkirtAttachments)
-            {
-                if (attach.SkirtBoneIndex < 0 || attach.SkirtBoneIndex >= skel.BoneCount ||
-                    attach.RingBodyIndex < 0 || attach.RingBodyIndex >= rig.Bodies.Count)
-                    continue;
-                if (!TryGetGarmentRigBodyPose(c, rig.Bodies[attach.RingBodyIndex], out var bodyPos, out _, out _, out _))
-                    continue;
-
-                var skirtWorldPos = bodyPos + Vector3.Transform(attach.LocalOffset, hemFrame);
-                var skirtWorldRot = Quaternion.Normalize(hemFrame * attach.FrameToSkirtRot);
-                var modelPos = Vector3.Transform(skirtWorldPos - skelPos, skelRotInv);
-                var modelRot = Quaternion.Normalize(skelRotInv * skirtWorldRot);
-                boneService.WriteBoneTransform(skel, attach.SkirtBoneIndex, modelPos, modelRot, result);
-            }
         }
     }
 
@@ -4354,8 +3594,11 @@ public unsafe partial class DismembermentController : IDisposable
             ? skeletonRotation
             : c.SeveranceWorldRot;
 
-    private bool IsDeflatableGear(Clone c)
-        => c.GearKeepModelSlot >= 0 && config.IsKoStripCollapseEnabled(c.GearKeepModelSlot);
+    // Which dropped pieces flatten like cloth once they settle. Body/Legs/Hands/Feet normally ride an
+    // equipment rig and skip deflate entirely (ShouldSkipGarmentDeflate); this only decides the hat and
+    // the single-body fallback when a rig cannot be built. Gloves and accessories keep their rigid shape.
+    private static bool IsDeflatableGear(Clone c)
+        => c.GearKeepModelSlot is 0 or 1 or 3 or 4;
 
     private static bool IsPairedGearPiece(Clone c)
         => !string.IsNullOrEmpty(c.GearHiddenOppositeRootBone) && c.GearKeepModelSlot is 2 or 4;
@@ -4402,19 +3645,16 @@ public unsafe partial class DismembermentController : IDisposable
         => c.GearKeepModelSlot is 1 or 3;
 
     private bool UseAdvancedGarmentPhysics(Clone c)
-        => config.KoStripPhysicsDropClothing &&
-           config.KoStripAdvancedClothPhysics &&
-           IsGarmentHandoffGear(c);
+        => config.KoStripPhysicsDropClothing && IsGarmentHandoffGear(c);
 
     // Gloves/boots are rigid, but they use the same host-ragdoll/local-rig lifecycle and bone drive as
     // body/legs. Each side is a one-body rig, which guarantees a real dynamic collider without deflating.
     private bool UseEquipmentRig(Clone c)
         => UseAdvancedGarmentPhysics(c) || IsPairedGearPiece(c);
 
-    // Advanced garments (slot 1/3 with cloth physics on) never do the visual "deflate" squash: an
-    // articulated rig settles them, and even the single-body fallback (rig couldn't build) should just
-    // rest, not squash — the squash-through-body/standing-up artifacts are exactly what we're removing.
-    // Legacy (advanced off) garments and rigid slots (hat/gloves/boots) keep deflate.
+    // Body/legs garments never do the visual "deflate" squash: an articulated rig settles them, and even
+    // the single-body fallback (rig couldn't build) should just rest, not squash. Pieces on a rig skip it
+    // too; the hat and rig-less fallbacks keep deflate.
     private bool ShouldSkipGarmentDeflate(Clone c)
         => c.GearGarmentRig != null || UseAdvancedGarmentPhysics(c);
 
@@ -4426,10 +3666,6 @@ public unsafe partial class DismembermentController : IDisposable
         if (!c.GearVisualBindStarted)
         {
             c.GearVisualBindStarted = true;
-            // Manual-mode countdown length, in 60fps-equivalent frames (decrements by substepsThisFrame,
-            // so real wall-clock seconds at any framerate). 0s => 0 frames => drops immediately.
-            c.GearVisualBindFramesTotal = Math.Max(0, (int)MathF.Round(config.KoStripClothHoldSeconds * 60f));
-            c.GearVisualBindFramesRemaining = c.GearVisualBindFramesTotal;
             c.GearBindElapsedFrames = 0;
             c.GearBindRestFrames = 0;
             c.GearBindSlip = 0f;
@@ -4440,35 +3676,9 @@ public unsafe partial class DismembermentController : IDisposable
             c.GearVisualBindHasLastPose = false;
         }
 
-        // Tube model starts at the shoulders: keep the garment at its worn position (no pre-slide) through a
-        // brief bind, then hand off so the tube physics carries the full slide down the body.
-        var slipMax = UseGarmentTube(c)
-            ? 0f
-            : c.GearKeepModelSlot == 1 ? GearBodyVisualBindSlip : GearLegsVisualBindSlip;
+        var slipMax = c.GearKeepModelSlot == 1 ? GearBodyVisualBindSlip : GearLegsVisualBindSlip;
 
-        // Manual mode: fixed countdown, slip driven by the elapsed fraction (legacy behavior).
-        if (!config.KoStripClothHoldAuto)
-        {
-            if (c.GearVisualBindFramesRemaining <= 0)
-            {
-                // The frame before arming starts by mirroring the live source with zero slip. If the
-                // timer has already expired, re-apply the final slipped garment pose before handing it to
-                // physics; otherwise the rig is born from an unslipped pose and the visible garment snaps.
-                ApplyGarmentBindPose(skel, c, c.GearVisualBindFramesTotal <= 0 ? 0f : slipMax);
-                return false;
-            }
-            var progress = 1f - Math.Clamp(
-                c.GearVisualBindFramesRemaining / (float)Math.Max(1, c.GearVisualBindFramesTotal), 0f, 1f);
-            if (!ApplyGarmentBindPose(skel, c, slipMax * progress * progress))
-            {
-                c.GearVisualBindFramesRemaining = 0;
-                return false;
-            }
-            c.GearVisualBindFramesRemaining -= substepsThisFrame;
-            return true;
-        }
-
-        // Auto mode: release on an event (body settled, or garment slid to the floor), not a timer.
+        // Release on an event (body settled, or garment slid to the floor), not a timer.
         if (!ApplyGarmentBindPose(skel, c, ComputeAutoBindSlip(c, slipMax)))
             return false; // source skeleton gone -> arm now
 
@@ -4502,33 +3712,19 @@ public unsafe partial class DismembermentController : IDisposable
         return true;
     }
 
-    // Slip (garment slide-down, metres) for auto mode. Rest presets slide the full slipMax over the dwell
-    // window (monotonic, only once the body is settling); slide-to-floor accumulates unbounded at a steady
-    // descent speed so the garment keeps sliding until it reaches the ground. Visual-only uses the same
-    // slide, then stays attached instead of handing off to physics.
+    // Slip (garment slide-down, metres). Natural slides the full slipMax over the dwell window (monotonic,
+    // only once the body is settling); slide-to-floor accumulates unbounded at a steady descent speed so
+    // the garment keeps sliding until it reaches the ground.
     private float ComputeAutoBindSlip(Clone c, float slipMax)
     {
-        if (config.KoStripClothHoldPreset is ClothHoldPresetSlideToFloor or ClothHoldPresetVisualOnly)
+        if (config.KoStripClothHoldPreset == ClothHoldPresetSlideToFloor)
         {
-            var visualOnly = config.KoStripClothHoldPreset == ClothHoldPresetVisualOnly;
-            // Visual-only distance/speed are user-tunable; slide-to-floor keeps its fixed constants.
-            var visualOnlyMaxDrop = MathF.Max(0.05f, config.KoStripClothVisualOnlySlideDistance);
-            if (visualOnly &&
-                (c.GearBindSlip >= visualOnlyMaxDrop || GarmentBindReachedFloor(c)))
-            {
-                return c.GearBindSlip;
-            }
-
-            var easeFrames = visualOnly ? ClothHoldVisualOnlySlideEaseFrames : ClothHoldSlideEaseFrames;
-            var slideSpeed = visualOnly
-                ? MathF.Max(0.005f, config.KoStripClothVisualOnlySlideSpeed)
-                : ClothHoldSlideSpeed;
-            var ease = Math.Clamp(c.GearBindElapsedFrames / easeFrames, 0f, 1f);
-            c.GearBindSlip += slideSpeed * ease * frameDt;
+            var ease = Math.Clamp(c.GearBindElapsedFrames / ClothHoldSlideEaseFrames, 0f, 1f);
+            c.GearBindSlip += ClothHoldSlideSpeed * ease * frameDt;
             return c.GearBindSlip;
         }
 
-        var dwell = Math.Max(1, ClothHoldRestDwellFrames(config.KoStripClothHoldPreset));
+        var dwell = ClothHoldRestDwellFrames;
         var restProgress = Math.Clamp(c.GearBindRestFrames / (float)dwell, 0f, 1f);
         var target = slipMax * restProgress * restProgress;
         if (target > c.GearBindSlip) c.GearBindSlip = target; // monotonic - never slide back up
@@ -4537,28 +3733,15 @@ public unsafe partial class DismembermentController : IDisposable
 
     private bool ShouldReleaseGarmentBind(Clone c)
     {
-        // Tube: hand off as soon as its own configurable hold has elapsed — the tube physics does the
-        // sliding, so there is no reason to keep the garment stuck to the body (presets don't apply).
-        if (UseGarmentTube(c))
-        {
-            var tubeHoldFrames = Math.Max(1, (int)MathF.Round(config.KoStripGarmentTubeHoldSeconds * 60f));
-            return c.GearBindElapsedFrames >= tubeHoldFrames;
-        }
-
         if (c.GearBindElapsedFrames < ClothHoldMinFrames)
             return false;
 
-        var preset = config.KoStripClothHoldPreset;
-        if (preset == ClothHoldPresetVisualOnly)
-            return false;
+        if (config.KoStripClothHoldPreset == ClothHoldPresetSlideToFloor)
+            return c.GearBindElapsedFrames >= ClothHoldSlideCapFrames ||
+                   c.GearBindSlip >= ClothHoldSlideMaxDrop || GarmentBindReachedFloor(c);
 
-        if (c.GearBindElapsedFrames >= ClothHoldCapFrames(preset))
-            return true;
-
-        if (preset == ClothHoldPresetSlideToFloor)
-            return c.GearBindSlip >= ClothHoldSlideMaxDrop || GarmentBindReachedFloor(c);
-
-        return c.GearBindRestFrames >= ClothHoldRestDwellFrames(preset);
+        return c.GearBindElapsedFrames >= ClothHoldNaturalCapFrames ||
+               c.GearBindRestFrames >= ClothHoldRestDwellFrames;
     }
 
     // Slide-to-floor release test: the garment's lowest point has reached the ground under the anchor.
@@ -4593,22 +3776,9 @@ public unsafe partial class DismembermentController : IDisposable
         return c.GearBindAnchorWorld.Y - halfY <= c.GearBindGroundY + ClothHoldFloorMargin;
     }
 
-    private static int ClothHoldRestDwellFrames(int preset) => preset switch
-    {
-        ClothHoldPresetQuick => 9,    // ~0.15s
-        ClothHoldPresetClingy => 72,  // ~1.2s
-        ClothHoldPresetVisualOnly => int.MaxValue,
-        _ => 24,                       // Natural ~0.4s
-    };
-
-    private static int ClothHoldCapFrames(int preset) => preset switch
-    {
-        ClothHoldPresetQuick => 180,          // 3s
-        ClothHoldPresetClingy => 1500,        // 25s
-        ClothHoldPresetSlideToFloor => 3600,  // 60s
-        ClothHoldPresetVisualOnly => int.MaxValue,
-        _ => 600,                              // Natural 10s
-    };
+    private const int ClothHoldRestDwellFrames = 24;   // Natural: ~0.4s of rest before release
+    private const int ClothHoldNaturalCapFrames = 600; // Natural: release after 10s regardless
+    private const int ClothHoldSlideCapFrames = 3600;  // Slide to floor: release after 60s regardless
 
     private void ApplyLastGarmentVisualBindPose(Clone c)
     {
@@ -5271,21 +4441,6 @@ public unsafe partial class DismembermentController : IDisposable
 
         if (!IsDeflatableGear(c))
             return;
-
-        if (UseAdvancedGarmentPhysics(c))
-        {
-            if (c.GearArmedFrames <= GearGarmentHandoffFrames)
-                return;
-
-            var nearGround = IsGearNearGroundContact(c, hasGroundStats, averageHeight, lowestHeight);
-            var settledOnGround = nearGround && c.GearRestFrames >= 4;
-            var settledOnSupport = c.GearRestFrames >= 16 && c.GearArmedFrames >= GearGarmentHandoffFrames + 20;
-
-            if (settledOnGround || settledOnSupport)
-                c.GearDeflateFrames = Math.Min(c.GearDeflateFrames + substepsThisFrame, 60);
-
-            return;
-        }
 
         // Deflate only once the piece is resting NEAR the ground (was also firing on any low-velocity
         // frame, e.g. the apex of a launch arc, so a hat could visibly deflate mid-air). Keep a long hard

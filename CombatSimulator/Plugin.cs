@@ -568,6 +568,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
         mainWindow.VirtualEnemyLookAtBonesProvider = virtualEnemyLookAt.GetAvailableBoneNames;
         mainWindow.ArrowImpacts = arrowImpactController;
+        mainWindow.ArmorDetachment = armorDetachmentController;
         InitVoice(dataManager);
         InitPrivateDirectors();
         AttachPrivateEffects();
@@ -798,9 +799,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 
         if (config.ShowActiveCamToolbar)
             mainWindow.DrawActiveCamToolbar();
-
-        if (config.ShowArmorDetachmentControls)
-            mainWindow.DrawArmorDetachmentControls(armorDetachmentController);
 
         if (config.ShowEnemyControlGui)
             mainWindow.DrawEnemyControlWindow(enemyControlController);

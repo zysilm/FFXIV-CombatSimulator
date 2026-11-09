@@ -49,24 +49,6 @@ var cases = new (string, Action)[]
         for(var i=0;i<600;i++)motion.Advance(1f/60,-Vector3.UnitY,1,0,.4f,0,1);
         Check(motion.Offset.Length()<.0001f,"zero distance did not return to worn pose");
     }),
-    ("legacy rigid and invalid constructions map by slot", () => {
-        Check(AttachmentSettings.TemplateForSlot((GarmentTemplate)5, 3) == GarmentTemplate.Trousers, "legacy legs stay rigid");
-        Check(AttachmentSettings.TemplateForSlot((GarmentTemplate)5, 1) == GarmentTemplate.Top, "legacy body stays rigid");
-        Check(AttachmentSettings.TemplateForSlot(GarmentTemplate.Skirt, 3) == GarmentTemplate.Trousers, "legacy skirt did not use general lower-body motion");
-        Check(AttachmentSettings.TemplateForSlot(GarmentTemplate.Dress, 1) == GarmentTemplate.Dress, "dress lost");
-        Check(AttachmentSettings.TemplateForSlot((GarmentTemplate)999, 3) == GarmentTemplate.Trousers, "bad legs configuration");
-    }),
-    ("both clothing slots retain three metre slip settings", () => {
-        foreach (var template in new[] { GarmentTemplate.Top, GarmentTemplate.Trousers })
-        {
-            var s = new AttachmentSettings { Template = template, SlipDistance = 3 };
-            var saved = System.Text.Json.JsonSerializer.Deserialize<AttachmentSettings>(System.Text.Json.JsonSerializer.Serialize(s))!.Validated();
-            Check(saved.SlipDistance == 3, "three metre distance truncated");
-            s.SlipDistance = 4; Check(s.Validated().SlipDistance == 3, "distance range exceeded");
-        }
-        var legacy = System.Text.Json.JsonSerializer.Deserialize<AttachmentSettings>("{\"BodyFitEnabled\":true,\"HipHalfWidth\":0.4,\"SlipDistance\":2.5}")!;
-        Check(legacy.Validated().SlipDistance == 2.5f && !System.Text.Json.JsonSerializer.Serialize(legacy).Contains("BodyFit"), "removed settings broke migration");
-    }),
 };
 var failures = 0;
 foreach (var (name, test) in cases)

@@ -3,7 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 using System;
-using System.Numerics;
 using CombatSimulator.Dev;
 using Dalamud.Bindings.ImGui;
 
@@ -11,490 +10,103 @@ namespace CombatSimulator.Gui;
 
 public partial class MainWindow
 {
-    private static readonly string[] ArmorDetachmentClothHoldPresetLabels =
-    {
-        "Quick",
-        "Natural",
-        "Clingy",
-        "Slide to floor",
-        "Visual only",
-        "Visual only (enhanced)",
-    };
+    public KoStripController? ArmorDetachment { get; set; }
+
+    private static readonly string[] ArmorDetachmentTriggerLabels = { "Off", "On KO", "On each enemy hit" };
+    private static readonly string[] ArmorDetachmentRemovedLabels = { "Fall physically", "Just vanish" };
+    private static readonly string[] ArmorDetachmentLifetimeLabels =
+        { "Stay until reset", "Fade after 2 s", "Fade after 10 s", "Fade after 30 s" };
+    private static readonly float[] ArmorDetachmentLifetimeSeconds = { 0f, 2f, 10f, 30f };
+    private static readonly string[] ArmorDetachmentGarmentLabels =
+        { "Drop when the body settles", "Slide to the floor, then drop", "Stay on the body" };
+    private static readonly int[] ArmorDetachmentGarmentPresets = { 1, 3, 5 };
 
     private void DrawArmorDetachmentEntrySection()
     {
         if (!ImGui.CollapsingHeader("Armor Detachment"))
             return;
 
-        var showControls = config.ShowArmorDetachmentControls;
-        if (ImGui.Checkbox("Show Armor Detachment controls", ref showControls))
-        {
-            config.ShowArmorDetachmentControls = showControls;
-            config.Save();
-        }
-        HelpMarker("Open the compact Armor Detachment control window. Detachment modes stay off until enabled there.");
-    }
-
-    public void DrawArmorDetachmentControls(KoStripController ctrl)
-    {
-        var showWindow = config.ShowArmorDetachmentControls;
-        ImGui.SetNextWindowSize(new Vector2(540f, 720f), ImGuiCond.FirstUseEver);
-        ImGui.SetNextWindowSizeConstraints(new Vector2(360f, 240f),
-            new Vector2(MathF.Max(540f, ImGui.GetIO().DisplaySize.X), MathF.Max(240f, ImGui.GetIO().DisplaySize.Y - 60f)));
-        if (!ImGui.Begin("Armor Detachment", ref showWindow,
-                ImGuiWindowFlags.None))
-        {
-            if (config.ShowArmorDetachmentControls != showWindow)
-            {
-                config.ShowArmorDetachmentControls = showWindow;
-                config.Save();
-            }
-            ImGui.End();
-            return;
-        }
-
-        if (config.ShowArmorDetachmentControls != showWindow)
-        {
-            config.ShowArmorDetachmentControls = showWindow;
-            config.Save();
-        }
-
-        var enabled = config.KoStripEnabled;
-        if (ImGui.Checkbox("Detach on KO##armordetach", ref enabled))
-        {
-            config.KoStripEnabled = enabled;
-            if (enabled) config.KoStripOnHitEnabled = false;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("When you are knocked out, visually detach the selected armor slots.\nYour character only. Visual only.");
-
-        var onHit = config.KoStripOnHitEnabled;
-        if (ImGui.Checkbox("Detach on monster hit##armordetach_onhit", ref onHit))
-        {
-            config.KoStripOnHitEnabled = onHit;
-            if (onHit) config.KoStripEnabled = false;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Each enemy hit that damages you detaches the next selected armor slot\n" +
-                             "(Head and accessories first, then Body / Hands / Legs / Feet). Replaces Detach on KO.");
-
-        var syncWithRagdoll = config.KoStripSyncWithRagdoll;
-        if (ImGui.Checkbox("Sync with ragdoll##armordetach_sync_ragdoll", ref syncWithRagdoll))
-        {
-            config.KoStripSyncWithRagdoll = syncWithRagdoll;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("When Detach on KO is enabled, delay detachment by the player ragdoll activation delay.\n" +
-                             "Disable this to detach immediately on death while ragdoll can still be delayed.");
-
-        ImGui.Separator();
-        ImGui.TextDisabled("Slots");
-
-        ArmorDetachmentSlotCheckbox("Head", () => config.KoStripHead, v => config.KoStripHead = v);
-        ImGui.SameLine();
-        ArmorDetachmentSlotCheckbox("Body", () => config.KoStripBody, v => config.KoStripBody = v);
-        ImGui.SameLine();
-        ArmorDetachmentSlotCheckbox("Hands", () => config.KoStripHands, v => config.KoStripHands = v);
-        ArmorDetachmentSlotCheckbox("Legs", () => config.KoStripLegs, v => config.KoStripLegs = v);
-        ImGui.SameLine();
-        ArmorDetachmentSlotCheckbox("Feet", () => config.KoStripFeet, v => config.KoStripFeet = v);
-
-        ImGui.TextDisabled("Accessories");
-        ArmorDetachmentSlotCheckbox("Ears", () => config.KoStripEars, v => config.KoStripEars = v);
-        ImGui.SameLine();
-        ArmorDetachmentSlotCheckbox("Neck", () => config.KoStripNeck, v => config.KoStripNeck = v);
-        ImGui.SameLine();
-        ArmorDetachmentSlotCheckbox("Wrists", () => config.KoStripWrists, v => config.KoStripWrists = v);
-        ArmorDetachmentSlotCheckbox("R.Finger", () => config.KoStripRFinger, v => config.KoStripRFinger = v);
-        ImGui.SameLine();
-        ArmorDetachmentSlotCheckbox("L.Finger", () => config.KoStripLFinger, v => config.KoStripLFinger = v);
-
-        ImGui.Separator();
-
-        var physicsDrop = config.KoStripPhysicsDrop;
-        if (ImGui.Checkbox("Physics drop: hat / accessories##armordetachdrop", ref physicsDrop))
-        {
-            config.KoStripPhysicsDrop = physicsDrop;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Let droppable hat/accessory slots (Head, Ears, Neck, Wrists, Rings)\n" +
-                             "physically fall and tumble to the ground instead of just vanishing.");
-
-        var physicsDropCloth = config.KoStripPhysicsDropClothing;
-        if (ImGui.Checkbox("Physics drop: clothing##armordetachdropcloth", ref physicsDropCloth))
-        {
-            config.KoStripPhysicsDropClothing = physicsDropCloth;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Drop supported clothing slots (Body / Hands / Legs / Feet). Hands and Feet split\n" +
-                             "into independent left/right pieces. Body and Legs remain work in progress: their\n" +
-                             "equipment models can bake in body skin, which is filtered by material path.");
-
-        ImGui.BeginDisabled(!config.KoStripPhysicsDrop && !config.KoStripPhysicsDropClothing);
-        var autoExpire = config.KoStripCloneAutoExpireEnabled;
-        if (ImGui.Checkbox("Auto-recycle dropped pieces##armordetachautoexpire", ref autoExpire))
-        {
-            config.KoStripCloneAutoExpireEnabled = autoExpire;
-            config.Save();
-        }
-        ImGui.EndDisabled();
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Fades out and despawns a physics-dropped piece a fixed time after it settles,\n" +
-                             "instead of leaving it in the world until reset/zone-change. Reduces the chance\n" +
-                             "of a stale piece surviving into a zone transition. Default off.");
-
-        if (config.KoStripCloneAutoExpireEnabled)
-        {
-            ImGui.Indent();
-            ImGui.BeginDisabled(!config.KoStripPhysicsDrop && !config.KoStripPhysicsDropClothing);
-            var autoExpireSeconds = config.KoStripCloneAutoExpireSeconds;
-            if (ImGui.SliderFloat("Recycle after##armordetachautoexpireseconds", ref autoExpireSeconds, 2.0f, 30.0f, "%.1f s"))
-            {
-                config.KoStripCloneAutoExpireSeconds = autoExpireSeconds;
-                config.Save();
-            }
-            ImGui.EndDisabled();
-            if (config.KoStripCloneAutoExpireSeconds > 15.0f)
-            {
-                ImGui.TextColored(new Vector4(1f, 0.7f, 0.2f, 1f),
-                    "A long duration keeps more pieces around during a zone change.");
-            }
-            ImGui.Unindent();
-        }
-
-        var advancedCloth = config.KoStripAdvancedClothPhysics;
-        ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing);
-        if (ImGui.Checkbox("Advanced clothing settle##armordetachclothadvanced", ref advancedCloth))
-        {
-            config.KoStripAdvancedClothPhysics = advancedCloth;
-            config.Save();
-        }
-        ImGui.EndDisabled();
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Optional polish for Body / Legs physics drop: short visual follow on the\n" +
-                             "dying body, stronger contact friction/damping, and delayed collapse until\n" +
-                             "the garment is closer to rest. Default off.");
-
-        ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing || !config.KoStripAdvancedClothPhysics ||
-            config.KoStripClothHoldAuto && config.KoStripClothHoldPreset == 5);
-        var tubeModel = config.KoStripGarmentTubeModel;
-        if (ImGui.Checkbox("Tube model (Body / Legs, experimental)##armordetachtube", ref tubeModel))
-        {
-            config.KoStripGarmentTubeModel = tubeModel;
-            config.Save();
-        }
-        ImGui.EndDisabled();
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Experimental: drive the Body and Legs garments with a ring-tube physics model\n" +
-                             "that wraps the body, so the garment slides down off the corpse instead of\n" +
-                             "folding. Host ragdoll only; falls back to the chain rig otherwise. Default off.");
-
-        ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing);
-        var followsBody = config.KoStripGarmentFollowsBody;
-        if (ImGui.Checkbox("Still-attached pieces follow the body##armordetachfollow", ref followsBody))
-        {
-            config.KoStripGarmentFollowsBody = followsBody;
-            config.Save();
-        }
-        ImGui.EndDisabled();
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Anything still on the body travels with it when the body is moved as a whole.\n" +
-                             "Anything already detached stays where it fell. Default on.");
-
-        ImGui.BeginDisabled(!config.KoStripGarmentTubeModel);
-        var skirtPhysics = config.KoStripGarmentSkirtPhysics;
-        if (ImGui.Checkbox("Skirt physics##armordetachskirt", ref skirtPhysics))
-        {
-            config.KoStripGarmentSkirtPhysics = skirtPhysics;
-            config.Save();
-        }
-        ImGui.EndDisabled();
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Hang a coat's skirt columns off the hem as real chains instead of letting them ride it\n" +
-                             "rigidly, so they swing, fold, and drape over the legs and the ground rather than passing\n" +
-                             "through them.\n\n" +
-                             "Adds roughly one body and one joint per skirt bone (about 18 on a typical coat). Turn off\n" +
-                             "if that cost matters. Takes effect on the next drop.");
-
-        if (config.KoStripGarmentTubeModel && config.KoStripGarmentSkirtPhysics)
-        {
-            ImGui.Indent();
-
-            var skirtMass = config.KoStripSkirtSegmentMass;
-            if (ImGui.SliderFloat("Skirt segment mass##armordetachskirtmass", ref skirtMass, 0.02f, 0.5f, "%.3f kg"))
-            {
-                config.KoStripSkirtSegmentMass = skirtMass;
-                config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Heavier hangs stiffer and settles sooner; too light and the solver has a hard time\n" +
-                                 "holding a long thin chain together at all. Takes effect on the next drop.");
-
-            var skirtSwing = config.KoStripSkirtSwingLimit;
-            if (ImGui.SliderFloat("Skirt swing limit##armordetachskirtswing", ref skirtSwing, 0.1f, 2.0f, "%.2f rad"))
-            {
-                config.KoStripSkirtSwingLimit = skirtSwing;
-                config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("How far a segment may swing from the one above it. Too tight reads as a board;\n" +
-                                 "too loose lets a panel fold back through the leg it is hanging on.\n" +
-                                 "Takes effect on the next drop.");
-
-            var skirtInitial = config.KoStripSkirtInitialSwing;
-            if (ImGui.SliderFloat("Skirt birth tightness##armordetachskirtinit", ref skirtInitial, 0.05f, 1f, "%.2f"))
-            {
-                config.KoStripSkirtInitialSwing = skirtInitial;
-                config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Fraction of the swing range allowed at birth, relaxed to the full range over the\n" +
-                                 "first second. Low keeps the skirt in its rest shape as physics takes over instead of\n" +
-                                 "letting it burst open on frame one. Takes effect on the next drop.");
-
-            ImGui.Unindent();
-        }
-
-        ImGui.BeginDisabled(!config.KoStripGarmentTubeModel);
-        var tubeDebug = config.KoStripGarmentTubeDebugDraw;
-        if (ImGui.Checkbox("Tube debug wireframe##armordetachtubedebug", ref tubeDebug))
-        {
-            config.KoStripGarmentTubeDebugDraw = tubeDebug;
-            config.Save();
-        }
-        ImGui.EndDisabled();
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Draw the tube's ring bodies as a wireframe to see how the physics model behaves.");
-
-        ImGui.BeginDisabled(!config.KoStripGarmentTubeModel);
+        var trigger = config.KoStripOnHitEnabled ? 2 : config.KoStripEnabled ? 1 : 0;
         ImGui.SetNextItemWidth(200f);
-        var tubeBodyFriction = config.KoStripGarmentTubeBodyFriction;
-        if (ImGui.SliderFloat("Tube body friction##armordetachtubebodyfriction", ref tubeBodyFriction, 0.1f, 10f, "%.2f"))
+        if (ImGui.Combo("Detach armor##armordetach", ref trigger, ArmorDetachmentTriggerLabels, ArmorDetachmentTriggerLabels.Length))
         {
-            config.KoStripGarmentTubeBodyFriction = tubeBodyFriction;
+            config.KoStripEnabled = trigger == 1;
+            config.KoStripOnHitEnabled = trigger == 2;
             config.Save();
         }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Friction between the tube and the corpse. Higher = the shirt clings and\n" +
-                             $"slides down more slowly. Default {Configuration.KoStripGarmentTubeBodyFrictionDefault:0.00}.");
+        HelpMarker("Your character only.\nOn KO: every selected piece comes off when you are knocked out.\n" +
+                   "On each enemy hit: every hit that damages you removes the next selected piece\n" +
+                   "(head and accessories first, then body, hands, legs, feet).");
 
+        ArmorDetachmentCheckbox("Head", () => config.KoStripHead, v => config.KoStripHead = v);
+        ImGui.SameLine();
+        ArmorDetachmentCheckbox("Body", () => config.KoStripBody, v => config.KoStripBody = v);
+        ImGui.SameLine();
+        ArmorDetachmentCheckbox("Hands", () => config.KoStripHands, v => config.KoStripHands = v);
+        ImGui.SameLine();
+        ArmorDetachmentCheckbox("Legs", () => config.KoStripLegs, v => config.KoStripLegs = v);
+        ImGui.SameLine();
+        ArmorDetachmentCheckbox("Feet", () => config.KoStripFeet, v => config.KoStripFeet = v);
+        ImGui.SameLine();
+        ArmorDetachmentCheckbox("Accessories",
+            () => config.KoStripEars || config.KoStripNeck || config.KoStripWrists || config.KoStripRFinger || config.KoStripLFinger,
+            v => config.KoStripEars = config.KoStripNeck = config.KoStripWrists = config.KoStripRFinger = config.KoStripLFinger = v);
+
+        var removed = config.KoStripPhysicsDrop || config.KoStripPhysicsDropClothing ? 0 : 1;
         ImGui.SetNextItemWidth(200f);
-        var tubeGroundFriction = config.KoStripGarmentTubeGroundFriction;
-        if (ImGui.SliderFloat("Tube ground friction##armordetachtubegroundfriction", ref tubeGroundFriction, 0.1f, 10f, "%.2f"))
+        if (ImGui.Combo("Removed pieces##armordetach", ref removed, ArmorDetachmentRemovedLabels, ArmorDetachmentRemovedLabels.Length))
         {
-            config.KoStripGarmentTubeGroundFriction = tubeGroundFriction;
+            config.KoStripPhysicsDrop = config.KoStripPhysicsDropClothing = removed == 0;
             config.Save();
         }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Friction between the tube and the ground once it slides off the body.\n" +
-                             $"Default {Configuration.KoStripGarmentTubeGroundFrictionDefault:0.00}.");
+        HelpMarker("Fall physically: each piece drops as its own object.\nJust vanish: pieces are hidden without spawning anything.");
 
+        ImGui.BeginDisabled(removed != 0);
+
+        var lifetime = config.KoStripCloneAutoExpireEnabled
+            ? Math.Max(1, Array.IndexOf(ArmorDetachmentLifetimeSeconds, config.KoStripCloneAutoExpireSeconds))
+            : 0;
         ImGui.SetNextItemWidth(200f);
-        var tubeHoldSeconds = config.KoStripGarmentTubeHoldSeconds;
-        if (ImGui.SliderFloat("Tube handoff delay##armordetachtubehold", ref tubeHoldSeconds, 0f, 10f, "%.2f s"))
+        if (ImGui.Combo("Dropped pieces##armordetach", ref lifetime, ArmorDetachmentLifetimeLabels, ArmorDetachmentLifetimeLabels.Length))
         {
-            config.KoStripGarmentTubeHoldSeconds = Math.Clamp(tubeHoldSeconds, 0f, 10f);
+            config.KoStripCloneAutoExpireEnabled = lifetime > 0;
+            if (lifetime > 0) config.KoStripCloneAutoExpireSeconds = ArmorDetachmentLifetimeSeconds[lifetime];
             config.Save();
         }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("How long the tube stays visually bound to the body pose before physics takes\n" +
-                             $"over. Default {Configuration.KoStripGarmentTubeHoldSecondsDefault:0.00}s.");
+        HelpMarker("Fading pieces out reduces the chance of one surviving into a zone change.");
 
-        if (ImGui.Button("Reset tube tuning##armordetachtubereset"))
+        var garment = Math.Max(0, Array.IndexOf(ArmorDetachmentGarmentPresets, config.KoStripClothHoldPreset));
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.Combo("Body / Legs##armordetach", ref garment, ArmorDetachmentGarmentLabels, ArmorDetachmentGarmentLabels.Length))
         {
-            config.KoStripGarmentTubeBodyFriction = Configuration.KoStripGarmentTubeBodyFrictionDefault;
-            config.KoStripGarmentTubeGroundFriction = Configuration.KoStripGarmentTubeGroundFrictionDefault;
-            config.KoStripGarmentTubeHoldSeconds = Configuration.KoStripGarmentTubeHoldSecondsDefault;
+            config.KoStripClothHoldPreset = ArmorDetachmentGarmentPresets[garment];
             config.Save();
         }
-        ImGui.EndDisabled();
+        HelpMarker("Drop when the body settles: the garment stays on until the body comes to rest, then falls off.\n" +
+                   "Slide to the floor, then drop: it slides down the body and drops when it reaches the ground.\n" +
+                   "Stay on the body: it loosens and slides a little but never comes off. Some clipping is possible.");
 
-        if (config.KoStripGarmentTubeModel && config.KoStripClothHoldPreset != 5)
-            ImGui.TextDisabled("Tube model uses 'Tube handoff delay' above —\nthe cloth hold profile below is inactive.");
-
-        // Keep the selector reachable while Tube is on: choosing Real attachment turns Tube off.
-        // Other profiles still use the existing handoff path and its Tube timing when enabled.
-        ImGui.BeginDisabled(!config.KoStripPhysicsDropClothing || !config.KoStripAdvancedClothPhysics);
-        var clothHoldAuto = config.KoStripClothHoldAuto;
-        if (ImGui.Checkbox("Auto cloth hold##armordetachclothholdauto", ref clothHoldAuto))
-        {
-            config.KoStripClothHoldAuto = clothHoldAuto;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Automatically release the garment when the source body settles, or in\n" +
-                             "Slide to floor mode when the garment reaches the ground. Turn off to use\n" +
-                             "the manual hold timer below.");
-
-        if (config.KoStripClothHoldAuto)
-        {
-            var preset = Math.Clamp(config.KoStripClothHoldPreset, 0, ArmorDetachmentClothHoldPresetLabels.Length - 1);
-            ImGui.SetNextItemWidth(200f);
-            if (ImGui.Combo("Cloth hold preset##armordetachclothholdpreset", ref preset,
-                    ArmorDetachmentClothHoldPresetLabels, ArmorDetachmentClothHoldPresetLabels.Length))
-            {
-                config.KoStripClothHoldPreset = preset;
-                if (preset == 5) config.KoStripGarmentTubeModel = false;
-                config.Save();
-            }
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                ImGui.SetTooltip("Quick: release soon after the body rests.\n" +
-                                 "Natural: a short settling dwell.\n" +
-                                 "Clingy: waits longer and follows dragged bodies.\n" +
-                                 "Slide to floor: default, keeps sliding down until it touches the ground, then drops.\n" +
-                                 "Visual only: slowly slides to the floor and stays visual, never handing off to physics.\n" +
-                                 "Visual only (enhanced): bounded sliding with gentle lower-garment waist retention during wide stances, without skirt collision correction.");
-
-            if (preset == 5) DrawRealAttachmentSettings();
-
-            // Visual-only slide tuning (preset index 4). Only this preset uses these; slide-to-floor is fixed.
-            if (preset == 4)
-            {
-                ImGui.Indent();
-
-                var vSlideDist = config.KoStripClothVisualOnlySlideDistance;
-                ImGui.SetNextItemWidth(200f);
-                if (ImGui.SliderFloat("Visual-only slide distance##armordetachvisualslidedist", ref vSlideDist, 0.2f, 3.0f, "%.2f m"))
-                {
-                    config.KoStripClothVisualOnlySlideDistance = vSlideDist;
-                    config.Save();
-                }
-                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                    ImGui.SetTooltip("How far the garment slides down the body before it freezes (or until it\n" +
-                                     "reaches the ground). Raise it if the garment stops short in a standing KO.\n" +
-                                     $"Default {Configuration.KoStripClothVisualOnlySlideDistanceDefault:0.00}m.");
-
-                var vSlideSpeed = config.KoStripClothVisualOnlySlideSpeed;
-                ImGui.SetNextItemWidth(200f);
-                if (ImGui.SliderFloat("Visual-only slide speed##armordetachvisualslidespeed", ref vSlideSpeed, 0.02f, 0.5f, "%.2f m/s"))
-                {
-                    config.KoStripClothVisualOnlySlideSpeed = vSlideSpeed;
-                    config.Save();
-                }
-                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                    ImGui.SetTooltip("How fast the garment slides down. Raise it if the slide looks too slow.\n" +
-                                     $"Default {Configuration.KoStripClothVisualOnlySlideSpeedDefault:0.00} m/s.");
-
-                if (ImGui.Button("Reset##armordetachvisualslidereset"))
-                {
-                    config.KoStripClothVisualOnlySlideDistance = Configuration.KoStripClothVisualOnlySlideDistanceDefault;
-                    config.KoStripClothVisualOnlySlideSpeed = Configuration.KoStripClothVisualOnlySlideSpeedDefault;
-                    config.Save();
-                }
-
-                ImGui.Unindent();
-            }
-        }
-        else
-        {
-            var clothHold = config.KoStripClothHoldSeconds;
-            ImGui.SetNextItemWidth(200f);
-            if (ImGui.SliderFloat("Manual cloth hold##armordetachclothhold", ref clothHold, 0f, 20f, "%.1f s"))
-            {
-                config.KoStripClothHoldSeconds = Math.Clamp(MathF.Round(clothHold * 10f) / 10f, 0f, 20f);
-                config.Save();
-            }
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                ImGui.SetTooltip("How long the garment stays visually attached to the dying body before it\n" +
-                                 "drops as a free rigid body. 0 = drop immediately.\n" +
-                                 $"Default {Configuration.KoStripClothHoldSecondsDefault:0.00}s.");
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("Reset##armordetachclothholdreset"))
-        {
-            config.KoStripClothHoldAuto = true;
-            config.KoStripClothHoldPreset = Configuration.KoStripClothHoldPresetDefault;
-            config.KoStripClothHoldSeconds = Configuration.KoStripClothHoldSecondsDefault;
-            config.Save();
-        }
-        ImGui.EndDisabled();
-
-        ImGui.Separator();
-
-        ImGui.TextDisabled("Collapse on drop");
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Per-slot: checked = the dropped piece deflates/flattens like cloth.\n" +
-                             "Unchecked = it keeps its full rigid shape (better for armor / rigid gear).\n" +
-                             "Only affects physically-dropped pieces. Default: Head/Body/Legs collapse;\n" +
-                             "Hands/Feet and accessories stay rigid.");
-
-        var anyPhysicsDrop = config.KoStripPhysicsDrop || config.KoStripPhysicsDropClothing;
-        ImGui.BeginDisabled(!anyPhysicsDrop);
-
-        ImGui.TextDisabled("Clothing");
-        ArmorDetachmentCollapseCheckbox("Head", () => config.KoStripCollapseHead, v => config.KoStripCollapseHead = v);
-        ImGui.SameLine();
-        ArmorDetachmentCollapseCheckbox("Body", () => config.KoStripCollapseBody, v => config.KoStripCollapseBody = v);
-        ImGui.SameLine();
-        ArmorDetachmentCollapseCheckbox("Hands", () => config.KoStripCollapseHands, v => config.KoStripCollapseHands = v);
-        ArmorDetachmentCollapseCheckbox("Legs", () => config.KoStripCollapseLegs, v => config.KoStripCollapseLegs = v);
-        ImGui.SameLine();
-        ArmorDetachmentCollapseCheckbox("Feet", () => config.KoStripCollapseFeet, v => config.KoStripCollapseFeet = v);
-
-        ImGui.TextDisabled("Accessories");
-        ArmorDetachmentCollapseCheckbox("Ears", () => config.KoStripCollapseEars, v => config.KoStripCollapseEars = v);
-        ImGui.SameLine();
-        ArmorDetachmentCollapseCheckbox("Neck", () => config.KoStripCollapseNeck, v => config.KoStripCollapseNeck = v);
-        ImGui.SameLine();
-        ArmorDetachmentCollapseCheckbox("Wrists", () => config.KoStripCollapseWrists, v => config.KoStripCollapseWrists = v);
-        ArmorDetachmentCollapseCheckbox("R.Finger", () => config.KoStripCollapseRFinger, v => config.KoStripCollapseRFinger = v);
-        ImGui.SameLine();
-        ArmorDetachmentCollapseCheckbox("L.Finger", () => config.KoStripCollapseLFinger, v => config.KoStripCollapseLFinger = v);
-
-        if (ImGui.Button("Reset collapse defaults##armordetachcollapsereset"))
-        {
-            config.ResetKoStripCollapseDefaults();
-            config.Save();
-        }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Restore defaults: Head/Body/Legs/Feet collapse; Hands and accessories stay rigid.");
+        ArmorDetachmentCheckbox("Still-attached pieces follow the body",
+            () => config.KoStripGarmentFollowsBody, v => config.KoStripGarmentFollowsBody = v);
+        HelpMarker("Pieces still on the body travel with it when the body is moved as a whole.\nPieces that already came off stay where they fell.");
 
         ImGui.EndDisabled();
-
-        ImGui.Separator();
-
-        if (ImGui.Button("Reset All to Defaults##armordetachresetall"))
-        {
-            config.ResetArmorDetachmentDefaults();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Restore every Armor Detachment option above to its default — slots, physics drop,\n" +
-                             "garment tube, cloth hold, and the per-slot collapse mask. Leaves \"Detach on KO\" alone,\n" +
-                             "same as the Ragdoll page's reset button leaving its own master switch alone.");
-
-        ImGui.Separator();
 
         if (ImGui.Button("Detach Now##armordetach"))
         {
             var player = CombatSimulator.Core.Services.ObjectTable.LocalPlayer;
-            if (player != null) ctrl.StripNow(player.Address);
+            if (player != null) ArmorDetachment?.StripNow(player.Address);
         }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Detach configured armor from your character right now (test).");
-
-        ImGui.End();
+        HelpMarker("Detach the selected pieces from your character right now.");
+        ImGui.SameLine();
+        if (ImGui.Button("Reset to Defaults##armordetach"))
+            config.ResetArmorDetachmentDefaults();
     }
 
-    private void ArmorDetachmentSlotCheckbox(string label, Func<bool> get, Action<bool> set)
+    private void ArmorDetachmentCheckbox(string label, Func<bool> get, Action<bool> set)
     {
         var v = get();
-        if (ImGui.Checkbox($"{label}##armorDetachSlot", ref v))
-        {
-            set(v);
-            config.Save();
-        }
-    }
-
-    private void ArmorDetachmentCollapseCheckbox(string label, Func<bool> get, Action<bool> set)
-    {
-        var v = get();
-        if (ImGui.Checkbox($"{label}##armorDetachCollapse", ref v))
+        if (ImGui.Checkbox($"{label}##armordetach", ref v))
         {
             set(v);
             config.Save();

@@ -1,12 +1,11 @@
 # Visual only (enhanced)
 
-Cloth hold preset **5** (formerly labelled Real attachment). Body and Legs slots only.
-Saved preset indices and per-equipment override keys are unchanged.
+Shown in the UI as **Body / Legs: Stay on the body** (stored as cloth hold preset 5). Body and Legs only.
 
 ## Runtime
 
 Source: `Animation/DismembermentController.RealAttachment.cs`, `Animation/Attachment/WholeGarmentSlide.cs`,
-`Animation/Attachment/WaistRetentionMotion.cs`, settings in `Animation/Attachment/AttachmentSettings.cs`.
+`Animation/Attachment/WaistRetentionMotion.cs`.
 
 - The gear clone is never armed or released to physics. Every frame it copies the live source model
   pose and partial skeletons onto itself; native animation/body posing still applies.
@@ -26,23 +25,15 @@ auto-recycled; they remain until reset or zone change.
 
 ## Controls
 
-Effects tab → **Armor Detachment** → open the control window. Enable **Physics drop: clothing**,
-**Advanced clothing settle** and **Auto cloth hold**, then choose **Visual only (enhanced)** in
-**Cloth hold preset**. Settings are per slot (Body / Legs) or per equipment override:
-
-- **Material**: preset for sliding resistance and motion damping.
-- **Slip distance** (0–3 m): requested travel; the anatomical caps above still apply.
-- **Sliding speed limit**, **Sliding resistance**, **Motion damping**.
-
-These four update live. **Apply settings / restart slide** restarts the slide from the worn pose.
-Legacy fields (anchors, skirt opening/stiffness/thickness, body-fit) remain readable in saved JSON
-but are ignored.
+Effects tab → **Armor Detachment** → **Body / Legs** → **Stay on the body**. There is no tuning UI:
+the slide uses fixed values in `DismembermentController.RealAttachment.cs` (slip 0.09 m for tops,
+0.13 m for lower garments, speed 0.6 m/s, resistance 0.45, damping 1.5), still subject to the
+anatomical caps above. Former per-slot and per-equipment settings are removed from saved configs.
 
 ## Verification
 
 `dotnet run --project Tests/RetainedGarments -c Release` covers waist retention (wide/closed stance,
-no snapping across 30–300 FPS), whole-garment slide continuity and live distance reduction,
-legacy template migration and three-metre slip settings. `Tests/GearDropLifecycle` covers the
+no snapping across 30–300 FPS), whole-garment slide continuity and live distance reduction. `Tests/GearDropLifecycle` covers the
 separate preparation/commit detachment lifecycle.
 
 In-game check after reload: detach standing, fall onto each side, remain still, then stand again;
