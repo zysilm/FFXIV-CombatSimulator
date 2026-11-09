@@ -812,13 +812,16 @@ public unsafe partial class NpcAiController : IDisposable
 
     /// <summary>
     /// Cast time actually used. Generated kits keep <see cref="NpcSkill.CastTime"/> at 0 (a cast
-    /// with nothing on screen was 3 silent seconds); with telegraphed casts on, a skill that has a
+    /// with nothing on screen was 3 silent seconds); with real-shape telegraphs on, a skill that has a
     /// drawable area gets its real cast back as a dodgeable windup. Skills with no area stay instant.
     /// </summary>
+    // Real casts longer than this are shortened to it.
+    private const float EnemyMaxCastSeconds = 5f;
+
     private float EffectiveCastTime(NpcSkill skill)
     {
         if (skill.CastTime > 0f || skill.NativeCastTime <= 0f ||
-            !config.EnemyTelegraphedCasts || !config.EnemyTelegraphRealShapes)
+            !config.EnemyTelegraphRealShapes)
             return skill.CastTime;
 
         var data = combatEngine.GetActionData(skill.ActionId);
@@ -826,7 +829,7 @@ public unsafe partial class NpcAiController : IDisposable
                       (data != null && data.Shape != AoeShape.Single &&
                        (data.Radius > 0f || CastTypeMapping.IsCharge(data.CastType)));
         return hasArea
-            ? MathF.Min(skill.NativeCastTime, MathF.Max(0.5f, config.EnemyMaxCastSeconds))
+            ? MathF.Min(skill.NativeCastTime, EnemyMaxCastSeconds)
             : skill.CastTime;
     }
 
@@ -1679,7 +1682,7 @@ public unsafe partial class NpcAiController : IDisposable
         if (npc.IntentDwellTimer > 0f)
             npc.IntentDwellTimer = MathF.Max(0f, npc.IntentDwellTimer - deltaTime);
 
-        var meleeHold = ScaleNpcMeleeRange(MathF.Max(0.5f, config.PartyMeleeAttackRange));
+        var meleeHold = ScaleNpcMeleeRange(config.PartyMeleeAttackRange);
         // Solo play: the user-tuned Target Approach Distance is the authoritative standing
         // distance. PartyMeleeAttackRange is a party-formation value (1.5y, body-to-body) — letting
         // it override the solo hold made every engaged melee enemy walk right onto the player the
@@ -1689,7 +1692,7 @@ public unsafe partial class NpcAiController : IDisposable
             meleeHold = MathF.Max(
                 meleeHold,
                 ScaleNpcMeleeRange(MathF.Max(0.5f, config.TargetApproachDistance)));
-        var rangedHold = ScaleNpcNonMeleeRange(MathF.Max(1.0f, config.PartyRangedAttackRange));
+        var rangedHold = ScaleNpcNonMeleeRange(config.PartyRangedAttackRange);
         var hpPercent = npc.State.MaxHp > 0 ? (float)npc.State.CurrentHp / npc.State.MaxHp : 1f;
 
         // Physical ranged (bow/gun) auto-attacks at range. A caster fights at range whenever it OWNS
@@ -1762,7 +1765,7 @@ public unsafe partial class NpcAiController : IDisposable
     /// </summary>
     private float HitboxSpacingExtra(SimulatedNpc npc, SimulatedEntityState? target)
     {
-        if (!config.TacticsHitboxSpacing || target == null)
+        if (!config.EnhancedEnemyTactics || target == null)
             return 0f;
         return EnemyMovementMath.HitboxSpacingExtra(npc.HitboxRadius, EntityHitboxRadius(target));
     }
@@ -1796,8 +1799,8 @@ public unsafe partial class NpcAiController : IDisposable
     // auto-attack is a melee swing in FFXIV; their spells (full range) still fire from up close.
     private float GetPartyAttackRange(NpcAttackStyle style)
         => style is NpcAttackStyle.Ranged
-            ? ScaleNpcNonMeleeRange(MathF.Max(1.0f, config.PartyRangedAttackRange))
-            : ScaleNpcMeleeRange(MathF.Max(0.5f, config.PartyMeleeAttackRange));
+            ? ScaleNpcNonMeleeRange(config.PartyRangedAttackRange)
+            : ScaleNpcMeleeRange(config.PartyMeleeAttackRange);
 
     private bool TryUpdateVNavmeshPath(
         SimulatedNpc npc,

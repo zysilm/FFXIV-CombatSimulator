@@ -679,7 +679,7 @@ public partial class CombatEngine : IDisposable
     /// </summary>
     private void TryInterruptEnemyCast(uint actionId, SimulatedEntityState target)
     {
-        if (!config.EnemyTelegraphedCasts || target.IsPlayer || target.IsCompanion)
+        if (target.IsPlayer || target.IsCompanion)
             return;
         var stun = IsStunAction(actionId);
         if (!stun && !IsInterruptAction(actionId))

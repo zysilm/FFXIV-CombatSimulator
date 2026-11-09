@@ -137,24 +137,6 @@ public sealed unsafe class VirtualEnemyLookAtController : IDisposable
         return false;
     }
 
-    public IReadOnlyList<string> GetAvailableBoneNames()
-    {
-        var names = new HashSet<string>(System.StringComparer.Ordinal);
-        foreach (var npc in spawner.SpawnedNpcs)
-        {
-            if (!npc.IsSpawned) continue;
-            LookAtActor identity = default;
-            foreach (var obj in Core.Services.ObjectTable)
-                if (obj.Address == npc.Address) { identity = new(obj.Address, obj.EntityId); break; }
-            if (!identity.Valid) continue;
-            foreach (var name in bones.GetBoneNames(identity.Address)) names.Add(name);
-        }
-        var player = Core.Services.ObjectTable.LocalPlayer;
-        if (player != null)
-            foreach (var name in bones.GetBoneNames(player.Address)) names.Add(name);
-        return new List<string>(names);
-    }
-
     private void Apply(LookAtActor enemy, string boneName, Vector3? targetWorld, float dt)
     {
         var maybe = bones.TryGetSkeleton(enemy.Address);

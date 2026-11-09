@@ -35,12 +35,15 @@ public partial class MainWindow
             HelpMarker("Absolute final DrawObject scale. 0.99 gives every active target NPC a 0.99 visual scale instead of multiplying its authored variant size.");
         }
 
+        DrawNpcAttackRangeSlider();
+
         if (ImGui.Button("Reset Defaults##npcScale"))
         {
             config.EnableNpcScale = true;
             config.NpcScale = 0.99f;
+            config.NpcAttackRangeScale = 1f;
             config.Save();
         }
-        HelpMarker("Restore the default: enabled with a final visual scale of 0.99.");
+        HelpMarker("Restore the defaults: enabled with a final visual scale of 0.99 and 1.00x attack range.");
     }
 }

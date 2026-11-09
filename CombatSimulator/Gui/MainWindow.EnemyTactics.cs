@@ -23,41 +23,24 @@ public partial class MainWindow
             config.EnhancedEnemyTactics = master;
             config.Save();
         }
-        HelpMarker("Master switch for the behaviours below. Off = enemies move exactly as before.");
+        HelpMarker("Enemies spread around you, keep body-size aware spacing, circle and reposition while holding range,\n" +
+                   "pick targets by threat, take turns in melee, call for help or flee at low HP, and big monsters turn slowly.\n" +
+                   "Off = enemies move exactly as before.");
 
         using (ImRaii.Disabled(!config.EnhancedEnemyTactics))
         {
             TacticsCheckbox("Idle until engaged", () => config.EnemyTacticsRespectEngage, v => config.EnemyTacticsRespectEngage = v,
                 "Party mode stops force-engaging every enemy. Enemies wait until hit, auto-engaged, or called by an ally.");
-            TacticsCheckbox("Spread enemies around the player", () => config.EnemyTacticsPlayerSlots, v => config.EnemyTacticsPlayerSlots = v,
-                "Enemies attacking you take separate slots around you (leaning to your flanks and back) instead of stacking in front.");
-            TacticsCheckbox("Body-size aware spacing", () => config.EnemyTacticsHitboxSpacing, v => config.EnemyTacticsHitboxSpacing = v,
-                "Ranges count from the edge of big bodies, and melee slots no longer overlap. Humanoid pairs are unchanged.");
-            TacticsCheckbox("Circle while holding range", () => config.EnemyTacticsStrafe, v => config.EnemyTacticsStrafe = v,
-                "Every few seconds an enemy in range may walk a short arc around its target. Never mid-cast or mid-swing.");
-            TacticsCheckbox("Threat-based aggro", () => config.EnemyTacticsThreat, v => config.EnemyTacticsThreat = v,
-                "Enemies target whoever built the most threat on them (damage, tanks count triple) instead of the top DPS. Needs companions.");
-            TacticsCheckbox("Take turns in melee", () => config.EnemyTacticsStagger, v => config.EnemyTacticsStagger = v,
-                "Only so many melee enemies fight one target at once; extras wait on an outer ring and step in when a place frees.");
-            using (ImRaii.Disabled(!config.EnemyTacticsStagger))
-            {
-                var attackers = Math.Clamp(config.EnemyTacticsMeleeAttackers, 3, 20);
-                ImGui.SetNextItemWidth(180);
-                if (ImGui.SliderInt("Melee attackers at once", ref attackers, 3, 20))
-                {
-                    config.EnemyTacticsMeleeAttackers = Math.Clamp(attackers, 3, 20);
-                    config.Save();
-                }
-                HelpMarker("How many melee enemies may be on one target at the same time. Ranged and casting enemies are not counted.");
-            }
-            TacticsCheckbox("Call for help / flee at low HP", () => config.EnemyTacticsFlee, v => config.EnemyTacticsFlee = v,
-                "An enemy joining the fight wakes idle allies nearby. Below 20% HP some enemies run to an ally once, then return.");
-            TacticsCheckbox("Reposition after attacks", () => config.EnemyTacticsReposition, v => config.EnemyTacticsReposition = v,
-                "Ranged/caster enemies sometimes shift firing spot after an attack; enemies standing inside another body step out.");
-            TacticsCheckbox("Big monsters turn slowly", () => config.EnemyTacticsHeavyTurn, v => config.EnemyTacticsHeavyTurn = v,
-                "Enemies larger than a humanoid turn more slowly, so getting to their flank or back matters.");
             TacticsCheckbox("Charge from far away", () => config.EnemyTacticsCharge, v => config.EnemyTacticsCharge = v,
                 "An engaged enemy more than 15y from its target runs at 1.8x speed until it is within 8y.");
+            var attackers = Math.Clamp(config.EnemyTacticsMeleeAttackers, 3, 20);
+            ImGui.SetNextItemWidth(180);
+            if (ImGui.SliderInt("Melee attackers at once", ref attackers, 3, 20))
+            {
+                config.EnemyTacticsMeleeAttackers = Math.Clamp(attackers, 3, 20);
+                config.Save();
+            }
+            HelpMarker("How many melee enemies may be on one target at the same time; the rest wait on an outer ring.\nRanged and casting enemies are not counted.");
         }
     }
 

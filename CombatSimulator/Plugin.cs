@@ -487,10 +487,9 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             fightingModeController.Reset();
             dynamicCameraController.Reset();
 
-            // Keep companions across a combat *reset* (IsActive stays true) when the
-            // option is set — revive/heal them instead of despawning. Stopping the
-            // simulation (IsActive false) always despawns.
-            if (config.KeepCompanionsOnReset && combatEngine.State.IsActive)
+            // Keep companions across a combat *reset* (IsActive stays true) — revive/heal
+            // them instead of despawning. Stopping the simulation (IsActive false) always despawns.
+            if (combatEngine.State.IsActive)
                 companionManager.ResetForCombatReset();
             else
                 companionManager.DespawnAll();
@@ -566,7 +565,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 
         // GUI
         mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
-        mainWindow.VirtualEnemyLookAtBonesProvider = virtualEnemyLookAt.GetAvailableBoneNames;
         mainWindow.ArrowImpacts = arrowImpactController;
         mainWindow.ArmorDetachment = armorDetachmentController;
         InitVoice(dataManager);
@@ -578,7 +576,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
         telegraphOverlay = new TelegraphOverlay(telegraphSystem, gameGui, config);
         hpBarOverlay.ExternalCast = npc =>
-            config.EnemyTelegraphedCasts && telegraphSystem.TryGetCast(npc.SimulatedEntityId, out var castActionId, out var castProgress)
+            telegraphSystem.TryGetCast(npc.SimulatedEntityId, out var castActionId, out var castProgress)
                 ? (actionDataProvider.GetActionData(castActionId)?.Name ?? "Casting", castProgress)
                 : null;
         enemyAreaOverlay = new EnemyAreaOverlay(enemyAreaMarkers, gameGui, config);

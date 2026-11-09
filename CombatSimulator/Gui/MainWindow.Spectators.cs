@@ -18,6 +18,8 @@ public partial class MainWindow
 {
     private readonly SpectatorController spectatorController;
     private string spectatorSearchFilter = string.Empty;
+    private static readonly float[] SpectatorTalkChanceValues = { 1f, 5f, 15f, 100f };
+    private static readonly string[] SpectatorTalkChanceLabels = { "Quiet (1%)", "Normal (5%)", "Lively (15%)", "Constant (100%)" };
     private NpcCatalogEntry? selectedSpectatorEntry;
     private string spectatorEmoteSearch = string.Empty;
     private List<SpectatorEmoteChoice>? spectatorEmoteCache;
@@ -151,7 +153,7 @@ public partial class MainWindow
         var count = Math.Clamp(config.SpectatorSpawnCount, 1, SpectatorController.MaxSpectators);
         ImGui.TextDisabled("Random crowd size");
         ImGui.SetNextItemWidth(-1f);
-        if (ImGui.InputInt("##spectatorCount", ref count))
+        if (ImGui.SliderInt("##spectatorCount", ref count, 1, SpectatorController.MaxSpectators))
         {
             config.SpectatorSpawnCount = Math.Clamp(count, 1, SpectatorController.MaxSpectators);
             config.Save();
@@ -479,49 +481,23 @@ public partial class MainWindow
         ImGui.SameLine();
         ImGui.TextDisabled(spectatorController!.IsXivVoicesLoaded ? "detected" : "not detected");
 
-        var chancePerSecond = Math.Clamp(config.SpectatorChatterChancePerSecond, 0.1f, 100f);
+        var chances = SpectatorTalkChanceValues;
+        var chanceIndex = Array.FindIndex(chances, v => MathF.Abs(v - config.SpectatorChatterChancePerSecond) < 0.001f);
+        var chanceLabels = SpectatorTalkChanceLabels;
+        if (chanceIndex < 0)
+        {
+            // A saved value from the old free input stays selectable instead of being overwritten.
+            chanceLabels = chanceLabels.Append($"Custom ({config.SpectatorChatterChancePerSecond:0.#}%)").ToArray();
+            chanceIndex = chanceLabels.Length - 1;
+        }
         ImGui.SetNextItemWidth(180f);
-        if (ImGui.DragFloat(
-                "Talk chance##spectatorChatterChance",
-                ref chancePerSecond,
-                0.1f,
-                0.1f,
-                100f,
-                "%.1f%% / spectator / sec"))
+        if (ImGui.Combo("Talk chance##spectatorChatterChance", ref chanceIndex, chanceLabels, chanceLabels.Length) &&
+            chanceIndex < chances.Length)
         {
-            config.SpectatorChatterChancePerSecond = Math.Clamp(chancePerSecond, 0.1f, 100f);
+            config.SpectatorChatterChancePerSecond = chances[chanceIndex];
             config.Save();
         }
-        ImGui.TextDisabled("Each idle spectator rolls independently; the cap only limits overlap.");
-
-        var duration = Math.Clamp(config.SpectatorChatterBubbleDuration, 1.5f, 10f);
-        ImGui.SetNextItemWidth(150f);
-        if (ImGui.DragFloat(
-                "Bubble time##spectatorChatterDuration",
-                ref duration,
-                0.25f,
-                1.5f,
-                10f,
-                "%.1f s"))
-        {
-            config.SpectatorChatterBubbleDuration = Math.Clamp(duration, 1.5f, 10f);
-            config.Save();
-        }
-
-        var maxConcurrent = Math.Clamp(
-            config.SpectatorChatterMaxConcurrent,
-            1,
-            SpectatorController.MaxChatterConcurrent);
-        ImGui.SetNextItemWidth(150f);
-        if (ImGui.SliderInt(
-                "Max talking##spectatorChatterConcurrent",
-                ref maxConcurrent,
-                1,
-                SpectatorController.MaxChatterConcurrent))
-        {
-            config.SpectatorChatterMaxConcurrent = maxConcurrent;
-            config.Save();
-        }
+        HelpMarker("How often each idle spectator speaks (chance per spectator per second). At most 20 talk at once.");
 
         ImGui.TextDisabled(ttsBridge
             ? "XivVoices: enable Chat Messages + Say; disable Remote TTS for offline audio."
@@ -564,7 +540,7 @@ public partial class MainWindow
         }
         ImGui.EndDisabled();
         ImGui.SameLine();
-        ImGui.TextDisabled($"Talking: {spectatorController.ActiveChatterCount}/{maxConcurrent}");
+        ImGui.TextDisabled($"Talking: {spectatorController.ActiveChatterCount}/{SpectatorController.MaxChatterConcurrent}");
 
         if (!string.IsNullOrWhiteSpace(spectatorController.LastChatterError))
         {

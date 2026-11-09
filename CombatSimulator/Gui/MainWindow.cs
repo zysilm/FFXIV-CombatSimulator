@@ -74,13 +74,7 @@ public partial class MainWindow : IDisposable
     private bool showControlsPopup;
 
     // Local player's skeleton bone names (Virtual Enemies look-at bone fallback list).
-    private string[] skeletonBoneNames = Array.Empty<string>();
-    private string virtualEnemyLookAtBoneFilter = "";
-    private IReadOnlyList<string> virtualEnemyLookAtBoneNames = Array.Empty<string>();
-    public Func<IReadOnlyList<string>>? VirtualEnemyLookAtBonesProvider { get; set; }
     private List<(string Label, string Path)>? actionVfxCache;
-    private string guardSuccessVfxFilter = "";
-    private string enemyWarningVfxFilter = "";
     private string hitVfxFilter = "";
 
     private static readonly string[] ActionGuardKeyLabels = { "Shift", "Ctrl", "Alt", "None" };
@@ -327,7 +321,6 @@ public partial class MainWindow : IDisposable
                 DrawActionModeSection();
                 break;
             case 1: // Targets
-                DrawNpcAttackRangeSection();
                 DrawEnemyTacticsSection();
                 DrawMapEnemiesSection();
                 break;
@@ -467,7 +460,7 @@ public partial class MainWindow : IDisposable
         if (!compact)
         {
             var level = Math.Clamp(config.FastCombatLevel, 1, 300);
-            if (ImGui.SliderInt("Enemy level", ref level, 1, 300))
+            if (ImGui.SliderInt("Recipe enemy level", ref level, 1, 300))
             {
                 config.FastCombatLevel = level;
                 config.Save();
@@ -890,10 +883,7 @@ public partial class MainWindow : IDisposable
             return;
         }
 
-        var keepCompanionsOnReset = config.KeepCompanionsOnReset;
-        config.KeepCompanionsOnReset = true;
         combatEngine.ResetState();
-        config.KeepCompanionsOnReset = keepCompanionsOnReset;
         chatGui.Print("[CombatSim] Fast combat reset.");
     }
 
@@ -932,45 +922,6 @@ public partial class MainWindow : IDisposable
         if (ImGui.Checkbox("Sense party members", ref senseParty))
         {
             config.SensePartyMembers = senseParty;
-            config.Save();
-        }
-
-        var keepOnReset = config.KeepCompanionsOnReset;
-        if (ImGui.Checkbox("Keep companions on reset", ref keepOnReset))
-        {
-            config.KeepCompanionsOnReset = keepOnReset;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Resetting combat revives and heals existing companions\ninstead of despawning them. Stopping always despawns.");
-
-        ImGui.Separator();
-
-        var commandRange = Math.Clamp(config.PartyCommandRange, 3.0f, 50.0f);
-        if (ImGui.SliderFloat("Command range", ref commandRange, 3.0f, 50.0f, "%.1f yalms"))
-        {
-            config.PartyCommandRange = commandRange;
-            config.Save();
-        }
-
-        var commandRandomness = Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.6f);
-        if (ImGui.SliderFloat("Command range randomness", ref commandRandomness, 0.0f, 0.6f, "%.2f"))
-        {
-            config.PartyCommandRangeRandomness = commandRandomness;
-            config.Save();
-        }
-
-        var meleeRange = Math.Clamp(config.PartyMeleeAttackRange, 0.5f, 5.0f);
-        if (ImGui.SliderFloat("Melee attack range", ref meleeRange, 0.5f, 5.0f, "%.1f yalms"))
-        {
-            config.PartyMeleeAttackRange = meleeRange;
-            config.Save();
-        }
-
-        var rangedRange = Math.Clamp(config.PartyRangedAttackRange, 5.0f, 35.0f);
-        if (ImGui.SliderFloat("Ranged attack range", ref rangedRange, 5.0f, 35.0f, "%.1f yalms"))
-        {
-            config.PartyRangedAttackRange = rangedRange;
             config.Save();
         }
 
@@ -1077,23 +1028,20 @@ public partial class MainWindow : IDisposable
         if (!ImGui.CollapsingHeader("Map Enemies", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
-        var sensing = config.EnableMapEnemySensing;
-        if (ImGui.Checkbox("Sense map enemies", ref sensing))
+        var sensingMode = (config.EnableMapEnemySensing ? 1 : 0) | (config.EnableMapPlayerEnemySensing ? 2 : 0);
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.Combo("Map sensing##mapenemies", ref sensingMode, MapSensingLabels, MapSensingLabels.Length))
         {
-            config.EnableMapEnemySensing = sensing;
+            config.EnableMapEnemySensing = (sensingMode & 1) != 0;
+            config.EnableMapPlayerEnemySensing = (sensingMode & 2) != 0;
             config.Save();
         }
-        HelpMarker("During normal mixed battles, nearby map BattleNpcs can join the enemy pool. Existing recipes only use this when the recipe explicitly enables Map Enemies.");
+        HelpMarker("During normal mixed battles, nearby map enemies and/or visible players can join the enemy pool.\n" +
+                   "Recipes only use this when the recipe explicitly enables Map Enemies. A player sensed as an enemy\n" +
+                   "is never also cloned as a companion.");
 
-        var playerEnemySensing = config.EnableMapPlayerEnemySensing;
-        if (ImGui.Checkbox("Sense map players as enemies", ref playerEnemySensing))
-        {
-            config.EnableMapPlayerEnemySensing = playerEnemySensing;
-            config.Save();
-        }
-        HelpMarker("Nearby visible players can join the enemy pool instead of being cloned as companions. If companion sensing is also enabled, each visible player is randomly assigned to one side and never both.");
-
-        if (!sensing && !playerEnemySensing)
+        var sensing = sensingMode != 0;
+        if (!sensing)
             ImGui.BeginDisabled();
 
         var range = Math.Clamp(config.MapEnemySenseRange, 1.0f, 80.0f);
@@ -1110,25 +1058,11 @@ public partial class MainWindow : IDisposable
             config.Save();
         }
 
-        if (!sensing && !playerEnemySensing)
+        if (!sensing)
             ImGui.EndDisabled();
+        ImGui.TextDisabled("Enemy level and HP: Virtual Enemies tab.");
 
         ImGui.Separator();
-
-        var defaultLevel = config.DefaultNpcLevel;
-        if (ImGui.SliderInt("Enemy level", ref defaultLevel, 1, 300))
-        {
-            config.DefaultNpcLevel = defaultLevel;
-            config.Save();
-        }
-
-        var hpMult = config.DefaultNpcHpMultiplier;
-        if (ImGui.InputFloat("HP multiplier", ref hpMult, 0.0001f, 0.01f, "%.4f"))
-        {
-            if (hpMult < 0.0001f) hpMult = 0.0001f;
-            config.DefaultNpcHpMultiplier = hpMult;
-            config.Save();
-        }
 
         var maxSkills = config.EnemyMaxRealSkills;
         if (ImGui.SliderInt("Humanoid skills", ref maxSkills, 0, 8))
@@ -1151,11 +1085,10 @@ public partial class MainWindow : IDisposable
         HelpMarker("When you have no locked target, being hit by an enemy auto-locks that attacker. Pressing cancel stops auto-counter (no auto-lock even when hit) until you press confirm to lock a target again. Requires custom targeting.");
     }
 
-    private void DrawNpcAttackRangeSection()
-    {
-        if (!ImGui.CollapsingHeader("Enemy Attack Range", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
+    private static readonly string[] MapSensingLabels = { "Off", "Enemies", "Players", "Enemies + players" };
 
+    private void DrawNpcAttackRangeSlider()
+    {
         var scale = Math.Clamp(config.NpcAttackRangeScale, 0.1f, 100f);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Attack range scale", ref scale, 0.1f, 100f, "%.2fx",
@@ -1167,13 +1100,6 @@ public partial class MainWindow : IDisposable
         HelpMarker("Multiplies enemy attack/skill reach and the matching chase/formation stopping distance. " +
                    "Default is 1.00x. Increasing it lets enemies stop farther away and attack from that distance; " +
                    "very small NPC Scale values may need a large multiplier to restore usable melee reach.");
-
-        ImGui.SameLine();
-        if (ImGui.SmallButton("Reset##npcAttackRangeScale"))
-        {
-            config.NpcAttackRangeScale = 1f;
-            config.Save();
-        }
     }
 
     private void DrawVirtualEnemiesTab()
@@ -1285,24 +1211,17 @@ public partial class MainWindow : IDisposable
             ? "Enemies spawn in front of your character (real in-game facing)."
             : "Enemies surround your character in loose layers; the nearest stands at this distance.");
 
-        // Level + HP multiplier (inline)
-        var defaultLevel = config.DefaultNpcLevel;
-        ImGui.SetNextItemWidth(120);
-        if (ImGui.InputInt("Level", ref defaultLevel))
+        // Level + HP multiplier. These apply to every enemy: spawned, map-sensed and recipe enemies.
+        var defaultLevel = Math.Clamp(config.DefaultNpcLevel, 1, 300);
+        ImGui.SetNextItemWidth(160);
+        if (ImGui.SliderInt("Level##virtualEnemies", ref defaultLevel, 1, 300))
         {
-            config.DefaultNpcLevel = Math.Clamp(defaultLevel, 1, 300);
+            config.DefaultNpcLevel = defaultLevel;
             config.Save();
         }
 
         ImGui.SameLine();
-        var hpMult = config.DefaultNpcHpMultiplier;
-        ImGui.SetNextItemWidth(-1);
-        if (ImGui.InputFloat("HP Mult", ref hpMult, 0.0001f, 0.01f, "%.4f"))
-        {
-            if (hpMult < 0.0001f) hpMult = 0.0001f;
-            config.DefaultNpcHpMultiplier = hpMult;
-            config.Save();
-        }
+        DrawNpcHpMultiplierCombo();
 
         // Spawn button + counter
         ImGui.Spacing();
@@ -1429,6 +1348,29 @@ public partial class MainWindow : IDisposable
         DrawVirtualEnemyLookAtSection();
     }
 
+    private static readonly float[] NpcHpMultiplierValues = { 0.01f, 0.1f, 0.5f, 1f, 2f, 5f, 10f };
+
+    private void DrawNpcHpMultiplierCombo()
+    {
+        var current = config.DefaultNpcHpMultiplier;
+        var index = Array.FindIndex(NpcHpMultiplierValues, v => MathF.Abs(v - current) < 0.00001f);
+        var labels = NpcHpMultiplierValues.Select(v => $"HP ×{v:0.##}").ToList();
+        if (index < 0)
+        {
+            // Keep a saved value that is not one of the presets selectable, so it is never overwritten.
+            labels.Add($"HP ×{current:0.####} (custom)");
+            index = labels.Count - 1;
+        }
+        ImGui.SetNextItemWidth(-1);
+        if (ImGui.Combo("##npcHpMult", ref index, labels.ToArray(), labels.Count) && index < NpcHpMultiplierValues.Length)
+        {
+            config.DefaultNpcHpMultiplier = NpcHpMultiplierValues[index];
+            config.Save();
+        }
+    }
+
+    private static readonly string[] VirtualEnemyLookAtBones = { "j_kao", "j_kubi", "j_sebo_c" };
+
     private void DrawVirtualEnemyLookAtSection()
     {
         ImGui.Separator();
@@ -1442,41 +1384,24 @@ public partial class MainWindow : IDisposable
         if (!lookAt) return;
         ImGui.Indent();
         var bone = config.VirtualEnemyLookAtBone ?? "j_kao";
+        var bones = VirtualEnemyLookAtBones.Contains(bone) ? VirtualEnemyLookAtBones : VirtualEnemyLookAtBones.Append(bone).ToArray();
+        var boneIndex = Array.IndexOf(bones, bone);
+        var boneLabels = bones.Select(VirtualEnemyBoneLabel).ToArray();
         ImGui.SetNextItemWidth(240);
-        if (ImGui.BeginCombo("Bone##veLookAt", VirtualEnemyBoneLabel(bone)))
+        if (ImGui.Combo("Turn##veLookAt", ref boneIndex, boneLabels, boneLabels.Length))
         {
-            if (ImGui.IsWindowAppearing())
-            {
-                RefreshSkeletonBones();
-                virtualEnemyLookAtBoneNames = VirtualEnemyLookAtBonesProvider?.Invoke() ?? skeletonBoneNames;
-                virtualEnemyLookAtBoneFilter = "";
-                ImGui.SetKeyboardFocusHere();
-            }
-            ImGui.SetNextItemWidth(-1);
-            ImGui.InputTextWithHint("##veLookAtBoneSearch", "Search bones...", ref virtualEnemyLookAtBoneFilter, 128);
-            var available = virtualEnemyLookAtBoneNames.Count > 0 ? virtualEnemyLookAtBoneNames : new[] { "j_kao", "j_kubi", "j_sebo_c" };
-            ImGui.BeginChild("##veLookAtBoneList", new Vector2(0, 230), false);
-            foreach (var name in available.OrderBy(n => n, StringComparer.OrdinalIgnoreCase))
-            {
-                var label = VirtualEnemyBoneLabel(name);
-                if (!label.Contains(virtualEnemyLookAtBoneFilter, StringComparison.OrdinalIgnoreCase)) continue;
-                if (!ImGui.Selectable(label, name == bone)) continue;
-                config.VirtualEnemyLookAtBone = name;
-                config.Save();
-                ImGui.CloseCurrentPopup();
-            }
-            ImGui.EndChild();
-            ImGui.EndCombo();
+            config.VirtualEnemyLookAtBone = bones[boneIndex];
+            config.Save();
         }
-        HelpMarker("Which bone turns toward the target. j_kao = head (default), j_kubi = neck (head follows), j_sebo_c = upper chest (neck and head follow). Enemies without this bone are left alone.");
+        HelpMarker("What turns toward the target. Neck: the head follows. Upper chest: the neck and head follow. Enemies without this bone are left alone.");
         ImGui.Unindent();
     }
 
     private static string VirtualEnemyBoneLabel(string name) => name switch
     {
-        "j_kao" => "Head (j_kao)",
-        "j_kubi" => "Neck (j_kubi)",
-        "j_sebo_c" => "Upper chest (j_sebo_c)",
+        "j_kao" => "Head",
+        "j_kubi" => "Neck",
+        "j_sebo_c" => "Upper chest",
         _ => name
     };
 
@@ -1525,22 +1450,13 @@ public partial class MainWindow : IDisposable
             }
             HelpMarker("Global damage multiplier applied to all attacks.");
 
-            var crit = config.EnableCriticalHits;
-            if (ImGui.Checkbox("Critical Hits", ref crit))
+            var randomHits = config.EnableCriticalHits || config.EnableDirectHits;
+            if (ImGui.Checkbox("Random crits / direct hits", ref randomHits))
             {
-                config.EnableCriticalHits = crit;
+                config.EnableCriticalHits = config.EnableDirectHits = randomHits;
                 config.Save();
             }
-            HelpMarker("Enable critical hit chance on attacks.");
-
-            ImGui.SameLine();
-            var dh = config.EnableDirectHits;
-            if (ImGui.Checkbox("Direct Hits", ref dh))
-            {
-                config.EnableDirectHits = dh;
-                config.Save();
-            }
-            HelpMarker("Enable direct hit chance on attacks.");
+            HelpMarker("Attacks can randomly land as critical and/or direct hits. Off = every hit deals its base damage.");
 
             if (isActive)
             {
@@ -2027,42 +1943,28 @@ public partial class MainWindow : IDisposable
         }
     }
 
+    private static readonly string[] ActionDifficultyLabels = { "Easy", "Normal", "Hard" };
+
     private void DrawActionModeSection()
     {
         if (!ImGui.CollapsingHeader("Action Mode [Experimental]"))
             return;
 
-        var actionMode = config.ActionMode;
-        if (ImGui.Checkbox("Enable Action Mode", ref actionMode))
+        if (!config.ActionMode)
         {
-            config.ActionMode = actionMode;
-            if (actionMode)
-                config.FightingMode = false;
-            config.Save();
-        }
-        HelpMarker("Real-time action combat: button-driven light attacks and timed guard, with enemy attacks shown as telegraphs before hitbox resolution. Off = the normal tab-target simulation.");
-
-        if (ImGui.Button("Reset Action Mode Defaults"))
-        {
-            config.ResetActionModeDefaults();
-            config.Save();
-            actionMode = config.ActionMode;
-        }
-        HelpMarker("Restore all Action Mode tuning, input bindings, VFX choices, telegraph, guard, player, and parry-circle settings to built-in defaults. Keeps the current Enable Action Mode state.");
-
-        if (ImGui.Button("Recover Player Animation"))
-        {
-            ragdollController.Deactivate();
-            animationController.RecoverPlayerAnimationState();
-        }
-        HelpMarker("Force-clear CombatSimulator-owned player animation state if the local player gets stuck in a death, guard, or combat idle pose.");
-
-        if (!actionMode)
+            ImGui.TextWrapped("Action Mode is off. Turn it on with the Action Mode checkbox in the main window.");
             return;
+        }
 
-        ImGui.Separator();
-        ImGui.Text("Input");
-        ImGui.TextWrapped("Light attacks use any intercepted hotbar action. Guard uses an independent key, so it works on every job without action ids.");
+        var difficulty = Math.Clamp(config.ActionDifficulty, 0, ActionDifficultyLabels.Length - 1);
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.Combo("Difficulty##actionmode", ref difficulty, ActionDifficultyLabels, ActionDifficultyLabels.Length))
+        {
+            config.ActionDifficulty = difficulty;
+            config.Save();
+        }
+        HelpMarker("Sets enemy wind-up time, enemy attack pace and how forgiving guard timing is.\n" +
+                   "Easy: slower enemies, wider guard windows. Hard: faster enemies, tighter guard windows.");
 
         ImGui.Text("Guard key");
         var guardKeyIndex = IndexOf(ActionGuardKeyValues, config.ActionGuardKey);
@@ -2091,68 +1993,14 @@ public partial class MainWindow : IDisposable
         HelpMarker("Gamepad button used for the no-hotbar basic attack. Default is Cross / South on a PlayStation-style layout.");
         ImGui.TextDisabled("Keyboard: Q");
 
-        ImGui.Separator();
-        ImGui.Text("Player");
-        SliderFloatSaved("Swing interval", () => config.LightSwingInterval, v => config.LightSwingInterval = v, 0.15f, 1.0f, "Min seconds between light swings.");
-        SliderFloatSaved("Combo window", () => config.LightComboWindow, v => config.LightComboWindow = v, 0.2f, 1.5f, "Time to chain the next combo step.");
-        SliderFloatSaved("Hitbox range", () => config.PlayerHitboxRange, v => config.PlayerHitboxRange = v, 1f, 10f, "Frontal cone reach (yalms), measured to the target's SURFACE.");
-        SliderFloatSaved("Hitbox angle", () => config.PlayerHitboxAngleDeg, v => config.PlayerHitboxAngleDeg = v, 30f, 180f, "Frontal cone full angle (degrees).");
-        SliderFloatSaved("Large-enemy reach", () => config.MeleeTargetHitboxReach, v => config.MeleeTargetHitboxReach = v, 0f, 2f, "How much of the target's hitbox radius is added to melee reach, so big enemies are hittable from their surface instead of their centre (small enemies are unchanged). 0 = centre-to-centre, 1 = exact surface (like FFXIV), >1 = lenient.");
-
-        var potency = config.LightAttackPotency;
-        if (ImGui.InputInt("Light attack potency", ref potency))
-        {
-            config.LightAttackPotency = System.Math.Max(1, potency);
-            config.Save();
-        }
-
-        ImGui.Separator();
-        ImGui.Text("Guard");
-        SliderFloatSaved("Active window", () => config.GuardActiveWindow, v => config.GuardActiveWindow = v, 0.05f, 0.6f, "Early tolerance: how long a guard press stays active (press up to this long BEFORE the strike).");
-        SliderFloatSaved("Late tolerance", () => config.GuardLateTolerance, v => config.GuardLateTolerance = v, 0f, 0.5f, "Grace AFTER the strike closes during which a guard still counts (double-sided). 0 = strict.");
-        SliderFloatSaved("Chain window", () => config.ChainGuardWindow, v => config.ChainGuardWindow = v, 0f, 1.0f, "After a block, keep guard open this long to absorb the next attack with the SAME press (chain guard). 0 = single block per press.");
-        {
-            var maxChain = config.GuardMaxChain;
-            if (ImGui.SliderInt("Max chain blocks", ref maxChain, 0, 20))
-            {
-                config.GuardMaxChain = maxChain;
-                config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Max attacks ONE guard press can chain-block before the chain ends and you must re-guard. Stops a single press from blocking dozens of hits from a continuous swarm. 0 = unlimited (legacy).");
-        }
-        SliderFloatSaved("Recovery", () => config.GuardRecovery, v => config.GuardRecovery = v, 0.05f, 1.0f, "Lockout after a guard CHAIN ends.");
-        SliderFloatSaved("Cooldown", () => config.GuardCooldown, v => config.GuardCooldown = v, 0f, 1.0f, "Minimum time between guard attempts.");
-
-        DrawVfxPicker("Guard success VFX", () => config.GuardSuccessVfxPath, v => config.GuardSuccessVfxPath = v, ref guardSuccessVfxFilter);
-        DrawVfxPicker("Enemy warning VFX", () => config.EnemyTelegraphVfxPath, v => config.EnemyTelegraphVfxPath = v, ref enemyWarningVfxFilter);
-
-        ImGui.Separator();
-        ImGui.Text("Enemy / companion pacing");
-        SliderFloatSaved("Attack pace", () => config.ActionEnemyAttackSpeed, v => config.ActionEnemyAttackSpeed = v, 0.5f, 3.0f,
-            "Enemies and companions initiate attacks this many times faster (auto delay + skill cooldowns). 1.0 = unchanged.");
-
-        ImGui.Separator();
-        ImGui.Text("Enemy telegraph");
-        SliderFloatSaved("Windup", () => config.ActionWindupSeconds, v => config.ActionWindupSeconds = v, 0.15f, 1.5f,
-            "Time from the telegraph appearing to the strike landing — your reaction time, and the approach-circle duration.");
-        var windupSwing = config.ActionEnemyWindupSwing;
-        if (ImGui.Checkbox("Wind-up swing", ref windupSwing))
-        {
-            config.ActionEnemyWindupSwing = windupSwing;
-            config.Save();
-        }
-        HelpMarker("Enemy swings when the telegraph starts (body language during the windup). NOTE: the impact sound/hit-reaction is engine-tied to a swing, so the strike still swings — this means a second swing. Off = idle windup, one clean swing at the strike.");
         var showTele = config.ShowTelegraphs;
         if (ImGui.Checkbox("Show telegraph circles", ref showTele))
         {
             config.ShowTelegraphs = showTele;
             config.Save();
         }
-        SliderFloatSaved("Telegraph opacity", () => config.TelegraphAlpha, v => config.TelegraphAlpha = v, 0.05f, 1.0f, "Ground danger-zone opacity.");
+        HelpMarker("Draw ground danger zones under enemy attacks.");
 
-        ImGui.Separator();
-        ImGui.Text("Parry circle (osu-style)");
         var osu = config.OsuCircleEnabled;
         if (ImGui.Checkbox("Show parry circle", ref osu))
         {
@@ -2160,9 +2008,12 @@ public partial class MainWindow : IDisposable
             config.Save();
         }
         HelpMarker("Approach circle on the player that shrinks onto a target ring; aligned = the guard window.");
-        SliderFloatSaved("Anchor height", () => config.OsuAnchorHeight, v => config.OsuAnchorHeight = v, 0f, 2.2f, "Height on the player to draw the circle (yalms above feet; chest≈1.1, head≈1.6).");
-        SliderFloatSaved("Inner ring size", () => config.OsuInnerRadius, v => config.OsuInnerRadius = v, 0.08f, 0.5f, "Target ring radius in world units (~1.5× head ≈ 0.18).");
-        SliderFloatSaved("Outer start scale", () => config.OsuOuterStartScale, v => config.OsuOuterStartScale = v, 1.5f, 6.0f, "How wide the approach ring starts, relative to the inner ring.");
+
+        if (ImGui.Button("Reset Action Mode Defaults"))
+        {
+            config.ResetActionModeDefaults();
+            config.Save();
+        }
     }
 
     private void SliderFloatSaved(string label, Func<float> get, System.Action<float> set, float min, float max, string help)
@@ -2593,35 +2444,17 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private unsafe void RefreshSkeletonBones()
-    {
-        var player = Core.Services.ObjectTable.LocalPlayer;
-        if (player == null) return;
-
-        var gameObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;
-        if (gameObj->DrawObject == null) return;
-        var charBase = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)gameObj->DrawObject;
-        var skeleton = charBase->Skeleton;
-        if (skeleton == null || skeleton->PartialSkeletonCount < 1) return;
-        var partial = &skeleton->PartialSkeletons[0];
-        var pose = partial->GetHavokPose(0);
-        if (pose == null || pose->Skeleton == null) return;
-
-        var havokBones = pose->Skeleton->Bones;
-        var names = new List<string>();
-        for (int i = 0; i < havokBones.Length; i++)
-        {
-            var name = havokBones[i].Name.String;
-            if (!string.IsNullOrWhiteSpace(name))
-                names.Add(name);
-        }
-
-        skeletonBoneNames = names.ToArray();
-    }
-
     private void DrawDiagnoseSection()
     {
         DrawSafetyHookStatus();
+        ImGui.Spacing();
+
+        if (ImGui.Button("Recover Player Animation"))
+        {
+            ragdollController.Deactivate();
+            animationController.RecoverPlayerAnimationState();
+        }
+        HelpMarker("Force-clear CombatSimulator-owned player animation state if the local player gets stuck in a death, guard, or combat idle pose.");
         ImGui.Spacing();
 
         ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Plugin Conflict Diagnostics");

@@ -23,6 +23,7 @@ namespace CombatSimulator.Spectators;
 public sealed unsafe partial class SpectatorController
 {
     public const int MaxChatterConcurrent = 20;
+    private const float ChatterBubbleSeconds = 3.5f;
     public const int MaxChatterLines = 100;
     public const int MaxChatterLineLength = 180;
 
@@ -217,11 +218,7 @@ public sealed unsafe partial class SpectatorController
         if (spectators.Count == 0)
             return;
 
-        var maxConcurrent = Math.Clamp(
-            config.SpectatorChatterMaxConcurrent,
-            1,
-            MaxChatterConcurrent);
-        if (ActiveChatterCount >= maxConcurrent)
+        if (ActiveChatterCount >= MaxChatterConcurrent)
             return;
 
         var lines = GetUsableChatterLines(allowBattlePreview: false, out var phase);
@@ -258,7 +255,7 @@ public sealed unsafe partial class SpectatorController
         var triggerChanceThisTick = chancePerSecond >= 1d
             ? 1d
             : 1d - Math.Pow(1d - chancePerSecond, clampedDelta);
-        var availableSlots = maxConcurrent - ActiveChatterCount;
+        var availableSlots = MaxChatterConcurrent - ActiveChatterCount;
         foreach (var actor in candidates)
         {
             if (availableSlots <= 0)
@@ -426,7 +423,7 @@ public sealed unsafe partial class SpectatorController
             return false;
         }
 
-        var duration = Math.Clamp(config.SpectatorChatterBubbleDuration, 1.5f, 10f);
+        var duration = ChatterBubbleSeconds;
         try
         {
             var character = (Character*)battleChara;

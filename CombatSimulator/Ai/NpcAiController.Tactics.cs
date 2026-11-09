@@ -69,7 +69,7 @@ public unsafe partial class NpcAiController
     /// </summary>
     private void TickCallForHelp(IReadOnlyList<SimulatedNpc> npcs)
     {
-        if (!config.TacticsFlee)
+        if (!config.EnhancedEnemyTactics)
             return;
 
         foreach (var caller in npcs)
@@ -99,7 +99,7 @@ public unsafe partial class NpcAiController
 
     /// <summary>True while an enemy is running from the fight; TickCombat holds its attacks.</summary>
     private bool IsTacticsFleeing(SimulatedNpc npc)
-        => config.TacticsFlee && tacticsStates.TryGetValue(npc.SimulatedEntityId, out var t) && t.Fleeing;
+        => config.EnhancedEnemyTactics && tacticsStates.TryGetValue(npc.SimulatedEntityId, out var t) && t.Fleeing;
 
     /// <summary>
     /// Low-HP flee: start (once per enemy, for the enemies whose stable roll says so) and drive the run
@@ -115,7 +115,7 @@ public unsafe partial class NpcAiController
         float deltaTime,
         TerrainHeightCache? terrainCache)
     {
-        if (!config.TacticsFlee || npc.AiState != NpcAiState.Combat)
+        if (!config.EnhancedEnemyTactics || npc.AiState != NpcAiState.Combat)
             return false;
 
         var tactics = Tactics(npc);
@@ -238,7 +238,7 @@ public unsafe partial class NpcAiController
     /// <summary>Random extra wind-up when an enemy first engages, so a pack does not start in lockstep.</summary>
     private void ApplyEngageJitter(SimulatedNpc npc)
     {
-        if (config.TacticsStagger)
+        if (config.EnhancedEnemyTactics)
             npc.EngageDelayTimer = MathF.Max(npc.EngageDelayTimer, Random.Shared.NextSingle() * EngageDelayJitterMax);
     }
 
@@ -251,7 +251,7 @@ public unsafe partial class NpcAiController
         IReadOnlyList<SimulatedNpc> approachNpcs,
         IReadOnlyDictionary<uint, (SimulatedEntityState State, Vector3 Position)> targetByNpcId)
     {
-        if (!config.TacticsStagger)
+        if (!config.EnhancedEnemyTactics)
             return;
 
         var byTarget = new Dictionary<uint, List<(SimulatedNpc Npc, EnemyTacticsState Tactics, float Dist)>>();
@@ -318,7 +318,7 @@ public unsafe partial class NpcAiController
         float deltaTime,
         TerrainHeightCache? terrainCache)
     {
-        if (!config.TacticsStagger || !HasMeleePositioningIntent(npc))
+        if (!config.EnhancedEnemyTactics || !HasMeleePositioningIntent(npc))
             return false;
 
         var tactics = Tactics(npc);
@@ -405,7 +405,7 @@ public unsafe partial class NpcAiController
 
     /// <summary>Facing turn rate (rad/s): slower for big bodies with heavy turning enabled.</summary>
     private float NpcTurnRate(SimulatedNpc npc)
-        => config.TacticsHeavyTurn
+        => config.EnhancedEnemyTactics
             ? EnemyMovementMath.TurnRate(BaseTurnRate, npc.HitboxRadius)
             : BaseTurnRate;
 
@@ -440,7 +440,7 @@ public unsafe partial class NpcAiController
         float deltaTime,
         TerrainHeightCache? terrainCache)
     {
-        if (!config.TacticsStrafe && !config.TacticsReposition)
+        if (!config.EnhancedEnemyTactics)
             return false;
 
         var tactics = Tactics(npc);
@@ -459,7 +459,7 @@ public unsafe partial class NpcAiController
         var maxR = holdRange + bodyExtra;
         var minR = MathF.Max(0.6f, holdRange * 0.75f) + bodyExtra;
 
-        if (!tactics.Strafing && config.TacticsReposition)
+        if (!tactics.Strafing)
         {
             if (justAttacked && !HasMeleePositioningIntent(npc) && tactics.RepositionCooldown <= 0f &&
                 Random.Shared.NextSingle() < RepositionChance)
@@ -485,9 +485,6 @@ public unsafe partial class NpcAiController
 
         if (!tactics.Strafing)
         {
-            if (!config.TacticsStrafe)
-                return false;
-
             tactics.StrafeTimer -= deltaTime;
             if (tactics.StrafeTimer > 0f)
                 return false;

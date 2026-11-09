@@ -23,8 +23,6 @@ public partial class Configuration
     public bool SpectatorChatterEnabled { get; set; } = false;
     public bool SpectatorChatterTtsBridge { get; set; } = true;
     public float SpectatorChatterChancePerSecond { get; set; } = 5f;
-    public float SpectatorChatterBubbleDuration { get; set; } = 4.5f;
-    public int SpectatorChatterMaxConcurrent { get; set; } = 20;
     [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
     public List<string> SpectatorBattleChatterLines { get; set; } =
         Spectators.SpectatorController.CreateDefaultBattleChatterLines();

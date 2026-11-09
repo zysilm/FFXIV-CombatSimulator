@@ -122,9 +122,7 @@ public partial class Configuration : IPluginConfiguration
     public IDictionary<string, JToken>? PrivateConfigFields { get; set; }
 
     public bool ActionGuardDefaultMigratedToR2 { get; set; } = false;
-    public bool ActionGuardVfxDefaultMigratedToHeavySwing { get; set; } = false;
     public bool ActionBasicAttackDefaultMigratedToSouth { get; set; } = false;
-    public bool ActionMeleeRangeDefaultMigratedTo5 { get; set; } = false;
     public bool ActionAttackShapeDefaultsMigrated20260630 { get; set; } = false;
     public bool EnemyDismembermentDefaultsMigrated20260630 { get; set; } = false;
     public bool FightingSpacingDefaultsMigrated20260703 { get; set; } = false;
@@ -154,13 +152,12 @@ public partial class Configuration : IPluginConfiguration
     public bool EnableCombatCompanions { get; set; } = true;
     public int CombatCompanionMaxCount { get; set; } = 10;
     public bool SensePartyMembers { get; set; } = true;
-    // When true, resetting combat keeps existing companions (revived + healed)
-    // instead of despawning them. Stopping the simulation always despawns.
-    public bool KeepCompanionsOnReset { get; set; } = true;
-    public float PartyCommandRange { get; set; } = 8.0f;
-    public float PartyCommandRangeRandomness { get; set; } = 0.2f;
-    public float PartyMeleeAttackRange { get; set; } = 1.5f;
-    public float PartyRangedAttackRange { get; set; } = 9.5f;
+    // Party formation distances (yalms). Fixed; they also set how close enemies hold to their target
+    // (NpcAiController), so changing them moves the whole fight.
+    [JsonIgnore] public float PartyCommandRange => 10f;
+    [JsonIgnore] public float PartyCommandRangeRandomness => 0.15f;
+    [JsonIgnore] public float PartyMeleeAttackRange => 1.2f;
+    [JsonIgnore] public float PartyRangedAttackRange => 10.5f;
     public bool PartyCompanionDeathRagdoll { get; set; } = true;
 
     // NPC Defaults
@@ -560,7 +557,6 @@ public partial class Configuration : IPluginConfiguration
 
     // Input map: put these actions on the hotbar; a press is interpreted as the
     // mapped role instead of firing the real action. 0 = unmapped.
-    public uint ActionAttackId { get; set; } = 0;
     public uint ActionGuardId { get; set; } = 0;
     public uint ActionSkill1Id { get; set; } = 0;
     public uint ActionSkill2Id { get; set; } = 0;
@@ -570,34 +566,35 @@ public partial class Configuration : IPluginConfiguration
     public GamepadButtons ActionBasicAttackGamepadButton { get; set; } = GamepadButtons.South;
     public int ActionBasicAttackKey { get; set; } = 0x51; // SeVirtualKey.Q
 
-    // Telegraph / windup tuning
-    public float MinTelegraphWindup { get; set; } = 0.4f;  // floor so even instant attacks are readable
+    // Action Mode difficulty: 0 Easy, 1 Normal, 2 Hard. One choice sets the enemy windup and pace and
+    // the guard timing below together; Normal is the tuning the mode shipped with.
+    public const int ActionDifficultyDefault = 1;
+    public int ActionDifficulty { get; set; } = ActionDifficultyDefault;
+    private int ActionDifficultyIndex => Math.Clamp(ActionDifficulty, 0, 2);
 
     // Action-Mode attack pace: enemies AND companions initiate attacks this many
-    // times faster (auto-attack delay + skill cooldowns divided by this). Makes the
-    // fight feel action-paced instead of the slow tab-target ~3s cadence.
-    public float ActionEnemyAttackSpeed { get; set; } = 1.6f;
+    // times faster (auto-attack delay + skill cooldowns divided by this).
+    [JsonIgnore] public float ActionEnemyAttackSpeed => new[] { 1.2f, 1.6f, 2.0f }[ActionDifficultyIndex];
 
-    // Guard tuning
-    public float GuardActiveWindow { get; set; } = 0.22f;  // perfect-guard reaction window (early tolerance)
-    public float GuardLateTolerance { get; set; } = 0.15f; // grace after the strike closes (late tolerance)
-    public float ChainGuardWindow { get; set; } = 0.4f;    // after a block, keep guard open this long to absorb the next attack (chain guard)
-    public int GuardMaxChain { get; set; } = 3;            // max attacks ONE guard press can chain-block before the chain ends and you must re-guard (0 = unlimited). Stops one press tanking an entire swarm.
-    public float GuardRecovery { get; set; } = 0.35f;      // lockout after a guard CHAIN ends
-    public float GuardCooldown { get; set; } = 0.15f;      // min time between guard attempts
+    // Guard timing (from the difficulty).
+    [JsonIgnore] public float GuardActiveWindow => new[] { 0.3f, 0.22f, 0.15f }[ActionDifficultyIndex];  // early tolerance
+    [JsonIgnore] public float GuardLateTolerance => new[] { 0.2f, 0.15f, 0.08f }[ActionDifficultyIndex]; // grace after the strike
+    [JsonIgnore] public float ChainGuardWindow => new[] { 0.5f, 0.4f, 0.25f }[ActionDifficultyIndex];    // chain guard window
+    [JsonIgnore] public int GuardMaxChain => new[] { 5, 3, 2 }[ActionDifficultyIndex];                  // blocks per press
+
+    // Fixed Action Mode tuning.
+    [JsonIgnore] public float GuardRecovery => 0.35f;      // lockout after a guard CHAIN ends
+    [JsonIgnore] public float GuardCooldown => 0.15f;      // min time between guard attempts
     public ushort GuardTimelineId { get; set; } = 0;       // 0 = auto/fallback
-    public string GuardSuccessVfxPath { get; set; } = "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx";
-    public string EnemyTelegraphVfxPath { get; set; } = "vfx/common/eff/cmhit_fire1t.avfx";
-
-    // Player light-combo + hitbox tuning
-    public float LightComboWindow { get; set; } = 0.6f;    // time to chain the next swing
-    public float LightSwingInterval { get; set; } = 0.4f;  // min time between swings (cadence)
-    public float PlayerHitboxRange { get; set; } = 5f;     // melee basic-attack reach (yalms), measured to the target's SURFACE
-    public float PlayerHitboxAngleDeg { get; set; } = 100f; // melee selection cone full angle
-    // Edge-to-edge reach: the target's hitbox radius x this is added to the melee select range, so a
-    // large enemy is hittable from its surface (not its centre) while a small enemy is unchanged. This
-    // is how FFXIV itself measures melee range. 0 = old centre-to-centre, 1 = exact surface, >1 = lenient.
-    public float MeleeTargetHitboxReach { get; set; } = 1.0f;
+    [JsonIgnore] public string GuardSuccessVfxPath => "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx";
+    [JsonIgnore] public string EnemyTelegraphVfxPath => "vfx/common/eff/cmhit_fire1t.avfx";
+    [JsonIgnore] public float LightComboWindow => 0.6f;    // time to chain the next swing
+    [JsonIgnore] public float LightSwingInterval => 0.4f;  // min time between swings (cadence)
+    [JsonIgnore] public float PlayerHitboxRange => 5f;     // melee basic-attack reach (yalms), measured to the target's SURFACE
+    [JsonIgnore] public float PlayerHitboxAngleDeg => 100f; // melee selection cone full angle
+    // Edge-to-edge reach: the target's hitbox radius is added to the melee select range, so a large
+    // enemy is hittable from its surface (not its centre). This is how FFXIV itself measures melee range.
+    [JsonIgnore] public float MeleeTargetHitboxReach => 1.0f;
 
     // Impact feedback on a confirmed player attack: brief target hitstop + a
     // camera punch + an optional hit spark. All gated below.
@@ -623,7 +620,7 @@ public partial class Configuration : IPluginConfiguration
     // authored size; an enabled value of exactly 1.0 means an absolute final scale of 1.0.
     public bool EnableNpcScale { get; set; } = true;
     public float NpcScale { get; set; } = 0.99f;
-    public int LightAttackPotency { get; set; } = 120;
+    [JsonIgnore] public int LightAttackPotency => 120;
     // Soft-target selection: ranged basic attack / ranged skills use a longer, wider selection cone
     // and pick the smallest-angle enemy (not the nearest).
     public float RangedBasicRange { get; set; } = 25f;
@@ -631,25 +628,25 @@ public partial class Configuration : IPluginConfiguration
 
     // Telegraph overlay
     public bool ShowTelegraphs { get; set; } = false;
-    public float TelegraphAlpha { get; set; } = 0.45f;
+    [JsonIgnore] public float TelegraphAlpha => 0.45f;
     public float TelegraphThickness { get; set; } = 3.0f;
 
     // Action Mode windup: the strike resolves this long after the telegraph appears, so it's
     // the time the player has to react, and the duration of the osu-style approach circle.
-    public float ActionWindupSeconds { get; set; } = 0.39f;
+    [JsonIgnore] public float ActionWindupSeconds => new[] { 0.6f, 0.39f, 0.3f }[ActionDifficultyIndex];
 
     // Play a wind-up swing on the enemy when the telegraph starts so the windup has body
     // language (instead of the enemy standing idle until the strike). NOTE: the engine couples
     // the impact sound + hit-reaction to a swing, so the strike still swings — this produces a
     // second swing. Off = enemy idle during the windup, single clean swing at the strike.
-    public bool ActionEnemyWindupSwing { get; set; } = true;
+    [JsonIgnore] public bool ActionEnemyWindupSwing => true;
 
     // osu-style parry-timing circle drawn on the player. A steady inner ring + an outer
     // ring that shrinks onto it over the windup; aligned = the guard window.
     public bool OsuCircleEnabled { get; set; } = true;
-    public float OsuAnchorHeight { get; set; } = 1.1f;     // anchor height above feet (yalms; chest≈1.1)
-    public float OsuInnerRadius { get; set; } = 0.18f;     // inner ring radius in world units (~1.5× head)
-    public float OsuOuterStartScale { get; set; } = 3.2f;  // outer ring starts at inner × this
+    [JsonIgnore] public float OsuAnchorHeight => 1.1f;     // anchor height above feet (yalms; chest≈1.1)
+    [JsonIgnore] public float OsuInnerRadius => 0.18f;     // inner ring radius in world units (~1.5× head)
+    [JsonIgnore] public float OsuOuterStartScale => 3.2f;  // outer ring starts at inner × this
 
     [NonSerialized]
     private IDalamudPluginInterface? pluginInterface;
@@ -661,10 +658,8 @@ public partial class Configuration : IPluginConfiguration
         MigrateSplitVfxToggles();
         MigrateKoStripClothHoldPreset();
         MigrateActionGuardDefaultButton();
-        MigrateActionGuardVfxDefault();
         MigrateHitVfxDefault();
         MigrateActionBasicAttackDefaultButton();
-        MigrateActionMeleeRangeDefault();
         MigrateActionAttackShapeDefaults();
         MigrateEnemyDismembermentDefaults();
         MigrateFightingSpacingDefaults();
@@ -714,6 +709,20 @@ public partial class Configuration : IPluginConfiguration
         "NpcCollisionModeMigrated20260705", "RagdollShinBoxHalfYMigrated20260716",
         "RagdollDefaultProfileTuningMigrated20260716", "RagdollSoftBodyTuningMigrated20260719",
         "RagdollFingerPhysicsMigrated20260810", "RagdollNpcCorpseTraversalDefaultMigrated20260816",
+        // Combat / Targets / Party / Spectators, simplified 2026-11.
+        "ActionAttackId", "MinTelegraphWindup", "ActionEnemyAttackSpeed", "GuardActiveWindow",
+        "GuardLateTolerance", "ChainGuardWindow", "GuardMaxChain", "GuardRecovery", "GuardCooldown",
+        "GuardSuccessVfxPath", "EnemyTelegraphVfxPath", "LightComboWindow", "LightSwingInterval",
+        "PlayerHitboxRange", "PlayerHitboxAngleDeg", "MeleeTargetHitboxReach", "LightAttackPotency",
+        "TelegraphAlpha", "ActionWindupSeconds", "ActionEnemyWindupSwing", "OsuAnchorHeight",
+        "OsuInnerRadius", "OsuOuterStartScale",
+        "ActionGuardVfxDefaultMigratedToHeavySwing", "ActionMeleeRangeDefaultMigratedTo5",
+        "EnemyTacticsPlayerSlots", "EnemyTacticsHitboxSpacing", "EnemyTacticsStrafe", "EnemyTacticsThreat",
+        "EnemyTacticsStagger", "EnemyTacticsFlee", "EnemyTacticsReposition", "EnemyTacticsHeavyTurn",
+        "EnemyTelegraphedCasts", "EnemyMaxCastSeconds", "EnemyKitIncludeAoe", "EnemyHpPhaseSkills",
+        "KeepCompanionsOnReset", "PartyCommandRange", "PartyCommandRangeRandomness",
+        "PartyMeleeAttackRange", "PartyRangedAttackRange",
+        "SpectatorChatterBubbleDuration", "SpectatorChatterMaxConcurrent",
     };
 
     private void RemoveRetiredOptions()
@@ -906,7 +915,6 @@ public partial class Configuration : IPluginConfiguration
         var defaults = new Configuration();
 
         ActionMode = preserveEnabled ? enabled : defaults.ActionMode;
-        ActionAttackId = defaults.ActionAttackId;
         ActionGuardId = defaults.ActionGuardId;
         ActionSkill1Id = defaults.ActionSkill1Id;
         ActionSkill2Id = defaults.ActionSkill2Id;
@@ -915,35 +923,12 @@ public partial class Configuration : IPluginConfiguration
         ActionBasicAttackGamepadButton = defaults.ActionBasicAttackGamepadButton;
         ActionBasicAttackKey = defaults.ActionBasicAttackKey;
 
-        MinTelegraphWindup = defaults.MinTelegraphWindup;
-        ActionEnemyAttackSpeed = defaults.ActionEnemyAttackSpeed;
-
-        GuardActiveWindow = defaults.GuardActiveWindow;
-        GuardLateTolerance = defaults.GuardLateTolerance;
-        ChainGuardWindow = defaults.ChainGuardWindow;
-        GuardMaxChain = defaults.GuardMaxChain;
-        GuardRecovery = defaults.GuardRecovery;
-        GuardCooldown = defaults.GuardCooldown;
+        ActionDifficulty = defaults.ActionDifficulty;
         GuardTimelineId = defaults.GuardTimelineId;
-        GuardSuccessVfxPath = defaults.GuardSuccessVfxPath;
-        EnemyTelegraphVfxPath = defaults.EnemyTelegraphVfxPath;
-
-        LightComboWindow = defaults.LightComboWindow;
-        LightSwingInterval = defaults.LightSwingInterval;
-        PlayerHitboxRange = defaults.PlayerHitboxRange;
-        PlayerHitboxAngleDeg = defaults.PlayerHitboxAngleDeg;
-        LightAttackPotency = defaults.LightAttackPotency;
 
         ShowTelegraphs = defaults.ShowTelegraphs;
-        TelegraphAlpha = defaults.TelegraphAlpha;
         TelegraphThickness = defaults.TelegraphThickness;
-        ActionWindupSeconds = defaults.ActionWindupSeconds;
-        ActionEnemyWindupSwing = defaults.ActionEnemyWindupSwing;
-
         OsuCircleEnabled = defaults.OsuCircleEnabled;
-        OsuAnchorHeight = defaults.OsuAnchorHeight;
-        OsuInnerRadius = defaults.OsuInnerRadius;
-        OsuOuterStartScale = defaults.OsuOuterStartScale;
     }
 
     private void MigrateActionGuardDefaultButton()
@@ -955,18 +940,6 @@ public partial class Configuration : IPluginConfiguration
             ActionGuardGamepadButton = GamepadButtons.R2;
 
         ActionGuardDefaultMigratedToR2 = true;
-        Save();
-    }
-
-    private void MigrateActionGuardVfxDefault()
-    {
-        if (ActionGuardVfxDefaultMigratedToHeavySwing)
-            return;
-
-        if (GuardSuccessVfxPath == "vfx/common/eff/dk05th_stdn0t.avfx")
-            GuardSuccessVfxPath = "vfx/ws/wax_heavyswing/eff/wax_heavy1t0h.avfx";
-
-        ActionGuardVfxDefaultMigratedToHeavySwing = true;
         Save();
     }
 
@@ -996,27 +969,11 @@ public partial class Configuration : IPluginConfiguration
         Save();
     }
 
-    private void MigrateActionMeleeRangeDefault()
-    {
-        if (ActionMeleeRangeDefaultMigratedTo5)
-            return;
-
-        if (MathF.Abs(PlayerHitboxRange - 4f) < 0.001f)
-            PlayerHitboxRange = 5f;
-
-        ActionMeleeRangeDefaultMigratedTo5 = true;
-        Save();
-    }
-
     private void MigrateActionAttackShapeDefaults()
     {
         if (ActionAttackShapeDefaultsMigrated20260630)
             return;
 
-        if (MathF.Abs(PlayerHitboxRange - 4f) < 0.001f)
-            PlayerHitboxRange = 5f;
-        if (MathF.Abs(PlayerHitboxAngleDeg - 90f) < 0.001f)
-            PlayerHitboxAngleDeg = 100f;
         if (MathF.Abs(RangedBasicRange - 22f) < 0.001f)
             RangedBasicRange = 25f;
 
@@ -1110,7 +1067,6 @@ public partial class Configuration : IPluginConfiguration
         if (EnemyTacticsMeleeCapMigrated20261102)
             return;
 
-        EnemyTacticsStagger = true;
         EnemyTacticsMeleeAttackers = 8;
         EnemyTacticsMeleeCapMigrated20261102 = true;
         Save();

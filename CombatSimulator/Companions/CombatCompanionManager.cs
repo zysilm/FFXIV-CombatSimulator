@@ -375,14 +375,14 @@ public unsafe class CombatCompanionManager : IDisposable
                     companionTargets,
                     enemyTargets,
                     combatEngine.State.PlayerState.EntityId,
-                    MathF.Max(1.0f, config.PartyCommandRange),
-                    Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f),
-                    MathF.Max(0.5f, config.PartyMeleeAttackRange) + MeleeAttackRangeBuffer,
-                    MathF.Max(1.0f, config.PartyRangedAttackRange) + MeleeAttackRangeBuffer,
+                    config.PartyCommandRange,
+                    config.PartyCommandRangeRandomness,
+                    config.PartyMeleeAttackRange + MeleeAttackRangeBuffer,
+                    config.PartyRangedAttackRange + MeleeAttackRangeBuffer,
                     new PartyEngagePlannerOptions(
-                        PlayerAsNode: config.TacticsPlayerSlots,
-                        PreferFlanks: config.TacticsPlayerSlots,
-                        HitboxSpacing: config.TacticsHitboxSpacing,
+                        PlayerAsNode: config.EnhancedEnemyTactics,
+                        PreferFlanks: config.EnhancedEnemyTactics,
+                        HitboxSpacing: config.EnhancedEnemyTactics,
                         PlayerHitboxRadius: ((GameObject*)player.Address)->HitboxRadius));
                 plannerBuildTimer = PlannerBuildInterval;
                 plannerAccumulatedDt = 0f;
@@ -424,7 +424,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
     private void AddThreat(uint enemyId, uint sourceId, int damage, bool isTank)
     {
-        if (!config.TacticsThreat || enemyId == 0 || sourceId == 0 || damage <= 0)
+        if (!config.EnhancedEnemyTactics || enemyId == 0 || sourceId == 0 || damage <= 0)
             return;
 
         if (!threatByEnemy.TryGetValue(enemyId, out var table))
@@ -537,7 +537,7 @@ public unsafe class CombatCompanionManager : IDisposable
         var balancedBest = SelectBalancedEnemyTarget(enemy.SimulatedEntityId, current.EntityId, candidates, pressureMap, enemy.Behavior.AutoAttackStyle);
         var currentScore = ScoreEnemyTargetCandidate(enemy.SimulatedEntityId, current.EntityId, current, pressureMap, enemy.Behavior.AutoAttackStyle);
         var bestScore = ScoreEnemyTargetCandidate(enemy.SimulatedEntityId, current.EntityId, balancedBest, pressureMap, enemy.Behavior.AutoAttackStyle);
-        var switchThreshold = config.TacticsThreat ? ThreatSwitchThreshold : EnemyTargetSwitchThreshold;
+        var switchThreshold = config.EnhancedEnemyTactics ? ThreatSwitchThreshold : EnemyTargetSwitchThreshold;
         if (balancedBest.EntityId != current.EntityId && bestScore > currentScore + switchThreshold)
         {
             enemyTargetByEnemyId[enemy.SimulatedEntityId] = balancedBest.EntityId;
@@ -570,7 +570,7 @@ public unsafe class CombatCompanionManager : IDisposable
             .Count(kv => kv.Value == candidate.EntityId);
 
         // Enhanced tactics: aggro follows threat (damage, tanks weighted up) instead of raw DPS.
-        var score = config.TacticsThreat
+        var score = config.EnhancedEnemyTactics
             ? ThreatScore(enemyId, candidate.EntityId)
             : candidate.Dps * EnemyTargetDpsWeight;
         score -= assignedCount * EnemyTargetAssignmentPenalty;
@@ -1144,7 +1144,7 @@ public unsafe class CombatCompanionManager : IDisposable
         var dist = FlatDistance(sourcePos, targetPos);
         // Enhanced tactics: measure past the body-size excess so a companion stops at a big monster's
         // surface instead of walking into its centre.
-        if (config.TacticsHitboxSpacing)
+        if (config.EnhancedEnemyTactics)
             dist -= EnemyMovementMath.HitboxSpacingExtra(sourceObj->HitboxRadius > 0.01f ? sourceObj->HitboxRadius : EnemyMovementMath.BaselineHitboxRadius, target.HitboxRadius);
         var effectiveRange = GetPartyAttackRange(companion.Behavior.AutoAttackStyle) + MeleeAttackRangeBuffer;
         var reachability = EvaluateCompanionReachability(companion, target, enemies);
@@ -1322,8 +1322,8 @@ public unsafe class CombatCompanionManager : IDisposable
         delta.Y = 0;
         var limit = partyEngagePlanner.GetCommandLimit(
             companion.SimulatedEntityId,
-            MathF.Max(1.0f, config.PartyCommandRange),
-            Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f));
+            config.PartyCommandRange,
+            config.PartyCommandRangeRandomness);
         return delta.Length() <= limit;
     }
 
@@ -1347,8 +1347,8 @@ public unsafe class CombatCompanionManager : IDisposable
             combatAnchorActive ? combatAnchorRotation : player.Rotation,
             companionIndex,
             companionCount,
-            MathF.Max(1.0f, config.PartyCommandRange),
-            Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f));
+            config.PartyCommandRange,
+            config.PartyCommandRangeRandomness);
 
         MoveByPlan(companion, plan, deltaTime, terrainCache);
     }
@@ -1399,8 +1399,8 @@ public unsafe class CombatCompanionManager : IDisposable
 
     private float GetPartyAttackRange(NpcAttackStyle style)
         => style is NpcAttackStyle.Ranged or NpcAttackStyle.Magic
-            ? MathF.Max(1.0f, config.PartyRangedAttackRange)
-            : MathF.Max(0.5f, config.PartyMeleeAttackRange);
+            ? config.PartyRangedAttackRange
+            : config.PartyMeleeAttackRange;
 
     private float GetPartySkillRange(float skillRange, NpcAttackStyle style)
         => MathF.Min(skillRange, GetPartyAttackRange(style) + MeleeAttackRangeBuffer);
@@ -1615,10 +1615,10 @@ public unsafe class CombatCompanionManager : IDisposable
             enemyTargets,
             combatAnchorActive ? combatAnchorPosition : player.Position,
             companion.Behavior.AutoAttackStyle,
-            MathF.Max(1.0f, config.PartyCommandRange),
-            Math.Clamp(config.PartyCommandRangeRandomness, 0.0f, 0.8f),
-            MathF.Max(0.5f, config.PartyMeleeAttackRange) + MeleeAttackRangeBuffer,
-            MathF.Max(1.0f, config.PartyRangedAttackRange) + MeleeAttackRangeBuffer,
+            config.PartyCommandRange,
+            config.PartyCommandRangeRandomness,
+            config.PartyMeleeAttackRange + MeleeAttackRangeBuffer,
+            config.PartyRangedAttackRange + MeleeAttackRangeBuffer,
             ReachabilityRecoveryDistance);
     }
 

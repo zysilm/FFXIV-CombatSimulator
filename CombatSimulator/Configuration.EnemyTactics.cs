@@ -5,66 +5,26 @@
 namespace CombatSimulator;
 
 // Enhanced enemy tactics: movement, spacing and target-selection behaviours layered on the enemy
-// approach and the party engage planner. The master switch defaults on; with it off every behaviour
-// below is inert and enemies move as before. Sub-switches default on (except idle-until-engaged) so
-// the master gives the full set; each can be turned off on its own to isolate it.
+// approach and the party engage planner. With the master switch on, enemies spread around the player,
+// keep body-size aware spacing, circle and reposition while holding range, pick targets by threat,
+// take turns in melee, call for help / flee at low HP and (when big) turn slowly. Off = enemies move
+// exactly as before.
 public partial class Configuration
 {
     public bool EnhancedEnemyTactics { get; set; } = true;
 
     // Party mode no longer force-engages every enemy every frame: enemies start idle and join on
     // aggro, auto-engage (Dev > NPC auto-engage), a hit, or an ally's call for help.
-    // Off by default, unlike its siblings: public builds have no auto-engage UI, so with this on
-    // the enemies there would only ever fight after the player strikes first.
+    // Off by default: public builds have no auto-engage UI, so with this on the enemies there would
+    // only ever fight after the player strikes first.
     public bool EnemyTacticsRespectEngage { get; set; } = false;
-
-    // Enemies on the player get spread slots from the engage planner (preferring flanks/rear)
-    // instead of each walking to its own pursuit point, where they stacked ~0.3y apart.
-    public bool EnemyTacticsPlayerSlots { get; set; } = true;
-
-    // Spacing accounts for body size above a humanoid's: big monsters are not walked into, and
-    // melee ring slots keep neighbours from overlapping.
-    public bool EnemyTacticsHitboxSpacing { get; set; } = true;
-
-    // Enemies holding range now and then walk a short arc around their target.
-    public bool EnemyTacticsStrafe { get; set; } = true;
-
-    // Enemy target choice follows a decaying threat table (damage dealt, tanks x3) instead of
-    // recent DPS, with wider switch hysteresis.
-    public bool EnemyTacticsThreat { get; set; } = true;
-
-    // At most EnemyTacticsMeleeAttackers melee enemies fight one target at once; the rest wait on an
-    // outer ring and step in as places free. Engage delays also get a little random jitter.
-    public bool EnemyTacticsStagger { get; set; } = true;
 
     // How many melee enemies may fight one target at once when taking turns (3..20).
     public int EnemyTacticsMeleeAttackers { get; set; } = 8;
-
-    // An enemy entering the fight wakes idle allies within its aggro range (10y when unset); below
-    // 20% HP about a third of enemies run to an ally once, then return.
-    public bool EnemyTacticsFlee { get; set; } = true;
-
-    public bool TacticsStagger => EnhancedEnemyTactics && EnemyTacticsStagger;
-    public bool TacticsFlee => EnhancedEnemyTactics && EnemyTacticsFlee;
-
-    // Ranged/caster enemies sometimes move to a new firing spot after an attack (8s cooldown);
-    // any enemy standing inside another body takes one short step out (1.5s cooldown).
-    public bool EnemyTacticsReposition { get; set; } = true;
-
-    public bool TacticsReposition => EnhancedEnemyTactics && EnemyTacticsReposition;
-
-    // Enemies bigger than a humanoid turn slower (down to ~1.2 rad/s), so flanking pays off.
-    public bool EnemyTacticsHeavyTurn { get; set; } = true;
-
-    public bool TacticsHeavyTurn => EnhancedEnemyTactics && EnemyTacticsHeavyTurn;
 
     // An engaged enemy more than 15y from its target sprints (1.8x) until within 8y.
     public bool EnemyTacticsCharge { get; set; } = true;
 
     public bool TacticsCharge => EnhancedEnemyTactics && EnemyTacticsCharge;
-    public bool TacticsStrafe => EnhancedEnemyTactics && EnemyTacticsStrafe;
-    public bool TacticsThreat => EnhancedEnemyTactics && EnemyTacticsThreat;
     public bool TacticsRespectEngage => EnhancedEnemyTactics && EnemyTacticsRespectEngage;
-    public bool TacticsPlayerSlots => EnhancedEnemyTactics && EnemyTacticsPlayerSlots;
-    public bool TacticsHitboxSpacing => EnhancedEnemyTactics && EnemyTacticsHitboxSpacing;
 }

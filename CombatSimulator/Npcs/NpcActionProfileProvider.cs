@@ -65,7 +65,7 @@ public class NpcActionProfileProvider
             // closing in like its weapon implies.
             var meleeOnly = weaponStyle is not (NpcAttackStyle.Ranged or NpcAttackStyle.Magic);
             var kit = jobKits.BuildKit(jobId, level, Math.Max(1, config.EnemyMaxRealSkills), meleeOnly,
-                config.EnemyKitIncludeAoe);
+                includeAoe: true);
             if (kit.Count > 0)
             {
                 behavior.Skills = new List<NpcSkill>(kit.Count);
@@ -93,7 +93,7 @@ public class NpcActionProfileProvider
         }
 
         // HP phases on top of whichever kit was built (per-enemy copies, so safe to edit).
-        if (config.EnemyHpPhaseSkills && behavior.Skills.Count > 0)
+        if (behavior.Skills.Count > 0)
             EnemyPhasePlanner.Apply(behavior.Skills);
 
         return behavior;
