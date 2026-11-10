@@ -66,19 +66,23 @@ public static class WaterBuoyancy
         return Math.Clamp((surface - bottom) / (top - bottom), 0f, 1f);
     }
 
-    /// <summary>
-    /// How much lighter than a real body the floating body is. A real one is about 0.92 of water's
-    /// density and floats with only a sliver showing; scaled by this it rides with about half of itself
-    /// above the surface, which is what reads as floating on screen.
-    /// </summary>
-    public const float Lightness = 0.5f;
+    /// <summary>The liquids a body can be in. The index is what the configuration stores.</summary>
+    public static readonly string[] LiquidLabels = { "Water", "Dense liquid" };
 
     /// <summary>
-    /// Density of a body part relative to water, as used for buoyancy. The proportions are anatomical
-    /// (the chest holds the lungs and is lightest, shins and feet are heaviest), so the body floats chest
-    /// up with the legs trailing; the overall level is set by <see cref="Lightness"/>.
+    /// Density of the liquid relative to water. In water a body (0.92 overall) floats with only a sliver
+    /// showing, as a real one does. The dense liquid is twice as heavy, like a strong brine taken further,
+    /// and carries a body with about half of it above the surface.
     /// </summary>
-    public static float RelativeDensity(string boneName) => Anatomical(boneName) * Lightness;
+    public static float LiquidDensity(int liquid) => liquid == 1 ? 2f : 1f;
+
+    /// <summary>
+    /// Density of a body part relative to the liquid it is in. The proportions are anatomical (the chest
+    /// holds the lungs and is lightest, shins and feet are heaviest), so a body floats chest up with the
+    /// legs trailing; how high it rides depends on the liquid.
+    /// </summary>
+    public static float RelativeDensity(string boneName, float liquidDensity = 1f)
+        => Anatomical(boneName) / (liquidDensity > 0f ? liquidDensity : 1f);
 
     private static float Anatomical(string boneName)
     {

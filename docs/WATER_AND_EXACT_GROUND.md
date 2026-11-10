@@ -2,7 +2,7 @@
 
 Both live on the Ragdoll tab under **Ground Detection**.
 
-## Float in water (on by default)
+## Float in water (on by default, as Water)
 
 `Animation/WaterBuoyancy.cs` (pure) and `UpdateWaterProbe` / `ApplyWaterForces` in
 `Animation/RagdollController.cs`.
@@ -15,8 +15,9 @@ Both live on the Ragdoll tab under **Ground Detection**.
   implicit drag (linear 2.5 /s plus 1.5 /m x speed, angular 3 /s, all scaled by the submerged share)
   toward the water's own vertical motion. Nothing poses the body.
 - **Densities.** Anatomical proportions (chest 0.78, pelvis 0.96, head 1.02, thighs 1.03, arms 1.04,
-  hands 1.08, shins and feet 1.09) scaled by `Lightness` 0.5: 0.46 for a whole body, so about 54% of it
-  rides above the surface, chest up, legs trailing. A real body (0.92) shows only a sliver.
+  hands 1.08, shins and feet 1.09), divided by the density of the liquid. The dropdown offers two:
+  **Water** (1.0): 0.92 for a whole body, about 8% of it above the surface, as a real body floats;
+  **Dense liquid** (2.0): 0.46, about 54% above the surface. Either way chest up, legs trailing.
 - **Surface.** Three deep-water wave trains (5 m / 2.7 m / 1.3 m long, 2.5 / 1.4 / 0.7 cm high). The
   game's own water animation cannot be read, so the swell is kept small enough not to disagree with it.
 - A body in water never goes to rest, and the heavy-fall gravity boost is off while any part is wet.
@@ -25,7 +26,7 @@ Limits: only the player's and NPCs' ragdoll bodies float; dropped weapons, gear 
 Water with no collider (decorative puddles, some streams) is not detected. The swell is not the
 visible one.
 
-## Exact ground collision (off by default)
+## Exact ground collision (on by default)
 
 `Animation/WorldCollisionMesh.cs` (reads game memory), `Animation/CollisionMeshGeometry.cs` (pure) and
 `TryAddExactGround` in `Animation/RagdollController.cs`.

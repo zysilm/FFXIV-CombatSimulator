@@ -331,9 +331,11 @@ public partial class Configuration : IPluginConfiguration
     public bool ExtendTerrainDetection { get; set; } = false;
     // Build the ragdoll's ground from the game's own collision triangles instead of a 1 m grid of heights
     // sampled from them. Follows steps, edges and props exactly; costs more when a patch is built.
-    public bool RagdollExactGroundCollision { get; set; } = false;
+    public bool RagdollExactGroundCollision { get; set; } = true;
     // Bodies in water get buoyancy and drag (WaterBuoyancy) and float on the game's water surfaces.
     public bool RagdollWaterBuoyancy { get; set; } = true;
+    // Which liquid the water behaves as: index into WaterBuoyancy.LiquidLabels (0 water, 1 dense liquid).
+    public int RagdollWaterLiquid { get; set; } = 0;
     // NPC death ragdoll
     public bool EnableNpcDeathRagdoll { get; set; } = true;
     // Read by the private module; the ragdoll's gravity is fixed (RagdollTuning.Gravity).

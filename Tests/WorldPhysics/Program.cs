@@ -71,7 +71,7 @@ var cases = new (string, Action)[]
         Check(track.Where(p => p.T < reached.T).All(p => p.V > -.05f), "sank on the way up");
         Console.WriteLine($"      released 3 m down: surfaces after {reached.T:F1} s, fastest rise {track.Max(p => p.V):F2} m/s");
     }),
-    ("water: a whole body floats with about half of itself above the surface, chest lightest, shins heaviest", () => {
+    ("water: a body floats low in water and half out of the dense liquid, chest lightest, shins heaviest", () => {
         // Mass shares after Winter's anthropometric table, by the bone that carries them.
         var parts = new (string Bone, float Mass)[]
         {
@@ -79,15 +79,17 @@ var cases = new (string, Action)[]
             ("j_asi_a_l", .100f), ("j_asi_a_r", .100f), ("j_asi_b_l", .061f), ("j_asi_b_r", .061f),
             ("j_ude_a_l", .028f), ("j_ude_a_r", .028f), ("j_ude_b_l", .022f), ("j_ude_b_r", .022f),
         };
-        var density = parts.Sum(p => p.Mass) / parts.Sum(p => p.Mass / WaterBuoyancy.RelativeDensity(p.Bone));
-        Check(density > .40f && density <= .50f, $"whole-body density {density:F3}: at least half must ride above the surface");
-        foreach (var (bone, _) in parts) Check(WaterBuoyancy.RelativeDensity(bone) is > .3f and < .6f, $"{bone} density outside the stable range");
+        float Whole(int liquid) => parts.Sum(p => p.Mass) / parts.Sum(p => p.Mass / WaterBuoyancy.RelativeDensity(p.Bone, WaterBuoyancy.LiquidDensity(liquid)));
+        var water = Whole(0); var dense = Whole(1);
+        Check(WaterBuoyancy.LiquidLabels.Length == 2 && WaterBuoyancy.LiquidDensity(0) == 1 && WaterBuoyancy.LiquidDensity(99) == 1, "liquids");
+        Check(water > .90f && water < .99f, $"whole-body density in water {water:F3}");
+        Check(dense > .40f && dense <= .50f, $"whole-body density in the dense liquid {dense:F3}: at least half must ride above the surface");
         Check(WaterBuoyancy.RelativeDensity("j_sebo_b") < WaterBuoyancy.RelativeDensity("j_kosi") && WaterBuoyancy.RelativeDensity("j_kosi") < WaterBuoyancy.RelativeDensity("j_asi_b_l"), "density order");
-        Check(WaterBuoyancy.RelativeDensity("") == WaterBuoyancy.Lightness && WaterBuoyancy.RelativeDensity("n_unknown") == WaterBuoyancy.Lightness, "unknown bone density");
-        // The lightest and the thinnest part must still settle: a chest lying flat, 12 cm deep.
-        var chest = Float(0.3f, 0, 0.12f, WaterBuoyancy.RelativeDensity("j_sebo_b"), 15).Where(p => p.T > 10).ToList();
-        Check(chest.Max(p => MathF.Abs(p.V)) < .6f && chest.Max(p => p.Y) - chest.Min(p => p.Y) < .2f, "the lightest part does not settle");
-        Console.WriteLine($"      whole-body relative density {density:F3}: {1 - density:P0} of the body above the surface");
+        Check(WaterBuoyancy.RelativeDensity("") == 1 && WaterBuoyancy.RelativeDensity("n_unknown") == 1 && WaterBuoyancy.RelativeDensity("j_kosi", 0) == WaterBuoyancy.RelativeDensity("j_kosi"), "fallback densities");
+        // The lightest and thinnest part must still settle in the dense liquid: a chest lying flat, 12 cm deep.
+        var chest = Float(0.3f, 0, 0.12f, WaterBuoyancy.RelativeDensity("j_sebo_b", WaterBuoyancy.LiquidDensity(1)), 15).Where(p => p.T > 10).ToList();
+        Check(chest.Max(p => MathF.Abs(p.V)) < .6f && chest.Max(p => p.Y) - chest.Min(p => p.Y) < .2f, "the lightest part does not settle in the dense liquid");
+        Console.WriteLine($"      above the surface: {1 - water:P0} of the body in water, {1 - dense:P0} in the dense liquid");
     }),
     ("water: the surface stays within its swell, and its reported speed is its real rate of change", () => {
         for (var i = 0; i < 2000; i++)

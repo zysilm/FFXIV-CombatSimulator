@@ -7531,6 +7531,7 @@ public unsafe partial class RagdollController : IDisposable
         }
 
         waterClock += dt;
+        var liquidDensity = WaterBuoyancy.LiquidDensity(config.RagdollWaterLiquid);
         var any = false;
         var reach = waterLevel + WaterBuoyancy.MaxWaveHeight;
         foreach (var rb in ragdollBones)
@@ -7548,7 +7549,7 @@ public unsafe partial class RagdollController : IDisposable
             any = true;
             var linear = body.Velocity.Linear;
             var angular = body.Velocity.Angular;
-            WaterBuoyancy.Apply(ref linear, ref angular, submerged, WaterBuoyancy.RelativeDensity(rb.Name),
+            WaterBuoyancy.Apply(ref linear, ref angular, submerged, WaterBuoyancy.RelativeDensity(rb.Name, liquidDensity),
                 surfaceSpeed, RagdollTuning.Gravity, dt);
             body.Velocity.Linear = linear;
             body.Velocity.Angular = angular;

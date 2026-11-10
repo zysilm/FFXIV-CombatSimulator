@@ -2790,16 +2790,31 @@ public partial class MainWindow : IDisposable
                 HelpMarker("Off: the ground is a grid of heights sampled every metre, which smooths over steps, edges and props.\n" +
                            "On: the ground is the game's own collision mesh, triangle for triangle.\n" +
                            "Takes effect at the next ragdoll. Costs more at activation. Not used together with\n" +
-                           "Rendered Mesh Body Collision. Default off.");
+                           "Rendered Mesh Body Collision. Default on.");
 
-                var water = config.RagdollWaterBuoyancy;
-                if (ImGui.Checkbox("Float in water##ragdoll", ref water))
+                // One dropdown: off, or which liquid the water behaves as.
+                var liquid = config.RagdollWaterBuoyancy ? Math.Clamp(config.RagdollWaterLiquid, 0, Animation.WaterBuoyancy.LiquidLabels.Length - 1) + 1 : 0;
+                ImGui.SetNextItemWidth(Math.Clamp(ImGui.GetContentRegionAvail().X * 0.6f, 220f, 380f));
+                if (ImGui.BeginCombo("Float in water##ragdoll", liquid == 0 ? "Off" : Animation.WaterBuoyancy.LiquidLabels[liquid - 1]))
                 {
-                    config.RagdollWaterBuoyancy = water;
-                    config.Save();
+                    if (ImGui.Selectable("Off", liquid == 0))
+                    {
+                        config.RagdollWaterBuoyancy = false;
+                        config.Save();
+                    }
+                    for (var i = 0; i < Animation.WaterBuoyancy.LiquidLabels.Length; i++)
+                    {
+                        if (!ImGui.Selectable(Animation.WaterBuoyancy.LiquidLabels[i], liquid == i + 1)) continue;
+                        config.RagdollWaterBuoyancy = true;
+                        config.RagdollWaterLiquid = i;
+                        config.Save();
+                    }
+                    ImGui.EndCombo();
                 }
                 HelpMarker("A body in water is lifted and slowed by it: it rises to the surface, floats chest up and\n" +
-                           "rides the swell. Works where the game itself has a water surface (anywhere you can fish or swim).");
+                           "rides the swell. Works where the game itself has a water surface (anywhere you can fish or swim).\n" +
+                           "Water: floats as a real body does, with only a little showing above the surface.\n" +
+                           "Dense liquid: the water is twice as heavy and carries about half of the body above the surface.");
 
                 ImGui.Unindent();
             }
