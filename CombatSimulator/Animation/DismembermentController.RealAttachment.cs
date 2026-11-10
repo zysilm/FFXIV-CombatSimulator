@@ -8,11 +8,12 @@ namespace CombatSimulator.Animation;
 
 public unsafe partial class DismembermentController
 {
-    // Visual only (enhanced) tuning. Former per-slot/per-equipment editor values; the top's slide is
-    // further capped at 0.08 m and the lower garment's at 65% of thigh length (see UpdateRealAttachment).
-    private readonly record struct GarmentSlideTuning(float SlipDistance, float SpeedLimit, float BodyFriction, float Damping);
-    private static readonly GarmentSlideTuning TopSlideTuning = new(0.09f, 0.6f, 0.45f, 1.5f);
-    private static readonly GarmentSlideTuning LowerSlideTuning = new(0.13f, 0.6f, 0.45f, 1.5f);
+    // Visual only (enhanced) slide feel. The distance is the user's (KoStripTopSlideDistance /
+    // KoStripLowerSlideDistance, read every frame so edits apply live); the top's travel is further capped
+    // at 0.08 m and the lower garment's at 65% of thigh length (see UpdateRealAttachment).
+    private const float GarmentSlideSpeedLimit = 0.6f;
+    private const float GarmentSlideBodyFriction = 0.45f;
+    private const float GarmentSlideDamping = 1.5f;
 
     private sealed class RealAttachmentState
     {
@@ -20,7 +21,6 @@ public unsafe partial class DismembermentController
         public readonly WaistRetentionMotion Waist = new();
         public float[] WaistWeights = Array.Empty<float>();
         public int LeftHip = -1, LeftKnee = -1, RightHip = -1, RightKnee = -1;
-        public GarmentSlideTuning Settings;
         public int SkeletonSignature;
         public float Scale, TravelLimit;
         public Vector3 Offset;
@@ -57,8 +57,7 @@ public unsafe partial class DismembermentController
                 }
                 if (!float.IsFinite(limit) || limit == float.MaxValue) limit = .15f * scale;
             }
-            c.RealAttachment = new RealAttachmentState { Settings = c.GearKeepModelSlot == 3 ? LowerSlideTuning : TopSlideTuning,
-                SkeletonSignature = signature, Scale = scale, TravelLimit = limit };
+            c.RealAttachment = new RealAttachmentState { SkeletonSignature = signature, Scale = scale, TravelLimit = limit };
             if (c.GearKeepModelSlot == 3)
             {
                 var created = c.RealAttachment;
@@ -80,8 +79,9 @@ public unsafe partial class DismembermentController
         var direction = ResolveGarmentSlipDirection(source, origin, rotation, c.GearKeepModelSlot);
         var localDirection = Vector3.Transform(direction, Quaternion.Inverse(rotation));
         state.Motion.Advance(attachmentFrameDt, localDirection, MathF.Max(0, -direction.Y),
-            MathF.Min(state.Settings.SlipDistance * state.Scale, state.TravelLimit),
-            state.Settings.SpeedLimit * state.Scale, state.Settings.BodyFriction, state.Settings.Damping);
+            MathF.Min(Math.Clamp(c.GearKeepModelSlot == 3 ? config.KoStripLowerSlideDistance : config.KoStripTopSlideDistance, 0f, 3f)
+                * state.Scale, state.TravelLimit),
+            GarmentSlideSpeedLimit * state.Scale, GarmentSlideBodyFriction, GarmentSlideDamping);
         state.Offset = Vector3.Transform(state.Motion.Offset, rotation);
         if (c.GearKeepModelSlot == 3)
             state.Waist.Advance(attachmentFrameDt, AttachmentThigh(source, state.LeftHip, state.LeftKnee),

@@ -86,6 +86,19 @@ public partial class MainWindow
                    "Slide to the floor, then drop: it slides down the body and drops when it reaches the ground.\n" +
                    "Stay on the body: it loosens and slides a little but never comes off. Some clipping is possible.");
 
+        if (ArmorDetachmentGarmentPresets[garment] == 5)
+        {
+            ImGui.Indent();
+            ArmorDetachmentSlider("Top slide##armordetach", () => config.KoStripTopSlideDistance,
+                v => config.KoStripTopSlideDistance = v, 0.1f);
+            HelpMarker("How far the top slides down from where it is worn. It never moves more than 8 cm.");
+            ArmorDetachmentSlider("Lower slide##armordetach", () => config.KoStripLowerSlideDistance,
+                v => config.KoStripLowerSlideDistance = v, 0.5f);
+            HelpMarker("How far trousers or a skirt slide down from the waist. It never moves more than about\n" +
+                       "two thirds of the thigh, and the waistband stays on when the legs are spread.");
+            ImGui.Unindent();
+        }
+
         ArmorDetachmentCheckbox("Still-attached pieces follow the body",
             () => config.KoStripGarmentFollowsBody, v => config.KoStripGarmentFollowsBody = v);
         HelpMarker("Pieces still on the body travel with it when the body is moved as a whole.\nPieces that already came off stay where they fell.");
@@ -101,6 +114,17 @@ public partial class MainWindow
         ImGui.SameLine();
         if (ImGui.Button("Reset to Defaults##armordetach"))
             config.ResetArmorDetachmentDefaults();
+    }
+
+    private void ArmorDetachmentSlider(string label, Func<float> get, Action<float> set, float max)
+    {
+        var v = get();
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.SliderFloat(label, ref v, 0f, max, "%.2f m"))
+        {
+            set(Math.Clamp(v, 0f, max));
+            config.Save();
+        }
     }
 
     private void ArmorDetachmentCheckbox(string label, Func<bool> get, Action<bool> set)

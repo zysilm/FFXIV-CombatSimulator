@@ -215,6 +215,12 @@ public partial class Configuration : IPluginConfiguration
     public const int KoStripClothHoldPresetDefault = 1;
     public int KoStripClothHoldPreset { get; set; } = KoStripClothHoldPresetDefault;
 
+    // Stay on the body (preset 5): how far the top and the lower garment slide down from their worn
+    // position, in metres on a scale-one actor. The top never travels more than 0.08 m and the lower
+    // garment never more than 65% of the thigh, whatever is set here.
+    public float KoStripTopSlideDistance { get; set; } = 0.09f;
+    public float KoStripLowerSlideDistance { get; set; } = 0.13f;
+
     /// <summary>
     /// Named like Armor Detachment, but not its to reset.
     /// </summary>

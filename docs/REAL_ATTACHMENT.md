@@ -25,10 +25,9 @@ auto-recycled; they remain until reset or zone change.
 
 ## Controls
 
-Effects tab → **Armor Detachment** → **Body / Legs** → **Stay on the body**. There is no tuning UI:
-the slide uses fixed values in `DismembermentController.RealAttachment.cs` (slip 0.09 m for tops,
-0.13 m for lower garments, speed 0.6 m/s, resistance 0.45, damping 1.5), still subject to the
-anatomical caps above. Former per-slot and per-equipment settings are removed from saved configs.
+Effects tab → **Armor Detachment** → **Body / Legs** → **Stay on the body**, then **Top slide**
+(0–0.1 m, default 0.09) and **Lower slide** (0–0.5 m, default 0.13). Both apply live and remain subject
+to the anatomical caps above. Speed limit 0.6 m/s, resistance 0.45 and damping 1.5 are fixed in `DismembermentController.RealAttachment.cs`.
 
 ## Verification
 
