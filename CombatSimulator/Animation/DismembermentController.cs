@@ -261,6 +261,8 @@ public unsafe partial class DismembermentController : IDisposable
         public bool GearRealAttachmentRequested;
         public RealAttachmentState? RealAttachment;
         public bool GearTethered;                             // half off: some rig segments stay on the body
+        public SkirtRig? GearSkirt;                           // cloth lattice driving the j_sk_* bones, if the skeleton has them
+        public bool GearSkirtTried;
         public float GearGroundSampleX;                       // last horizontal position the ground was sampled at
         public float GearGroundSampleZ;
         public bool GearGroundHasSample;
@@ -321,6 +323,17 @@ public unsafe partial class DismembermentController : IDisposable
         public bool TetherLost;        // the body the pinned segments follow is gone; let them fall
         public float[] Flatten = Array.Empty<float>();
         public bool[] FlattenShapeApplied = Array.Empty<bool>();
+    }
+
+    // The skirt bones of a garment and the cloth that poses them (see SkirtCloth). Chains are in ring order.
+    private sealed class SkirtRig
+    {
+        public SkirtCloth Cloth = null!;
+        public int[][] Bones = Array.Empty<int[]>();              // [chain][tier a,b,c], -1 where the skeleton has none
+        public Quaternion[][] BoneWorldRotation = Array.Empty<Quaternion[]>(); // at the moment the cloth was created
+        public int[] AnchorBone = Array.Empty<int>();             // the bone each chain's waistband hangs from
+        public Vector3[] AnchorLocal = Array.Empty<Vector3>();    // waistband position in that bone's frame
+        public readonly HashSet<int> BoneSet = new();
     }
 
     private struct GarmentSwingConstraint
@@ -3540,11 +3553,171 @@ public unsafe partial class DismembermentController : IDisposable
             return true;
 
         DriveGarmentRigBones(skel, c, rig, skelPos, skelRot);
-        if (c.GearKeepModelSlot == 1)
+        var garment = c.GearKeepModelSlot is 1 or 3 && !IsPairedGearPiece(c);
+        // The skirt is cloth where the skeleton has skirt bones; the frozen hang remains only as the
+        // fallback for a top without them. Built before the collapse so it captures the worn shape.
+        var skirt = garment ? EnsureSkirtCloth(skel, c, skelPos, skelRot) : null;
+        if (skirt == null && c.GearKeepModelSlot == 1)
             DriveSkirtHang(skel, c);
-        if (c.GearKeepModelSlot is 1 or 3 && !IsPairedGearPiece(c))
+        if (garment)
             ApplyGarmentFlatten(skel, c, rig, skelPos, skelRot);
+        if (skirt != null)
+            DriveSkirtCloth(skel, c, skirt, skelPos, skelRot);
         return true;
+    }
+
+    // Skirt chains in ring order: each is next to the one before it, and the last is next to the first.
+    private static readonly (string Part, string Side)[] SkirtRing =
+    {
+        ("f", "l"), ("s", "l"), ("b", "l"), ("b", "r"), ("s", "r"), ("f", "r"),
+    };
+
+    private SkirtRig? EnsureSkirtCloth(SkeletonAccess skel, Clone c, Vector3 skelPos, Quaternion skelRot)
+    {
+        if (c.GearSkirtTried)
+            return c.GearSkirt;
+        c.GearSkirtTried = true;
+
+        var boneCount = Math.Min(skel.BoneCount, skel.ParentCount);
+        var chains = new List<SkirtCloth.ChainRest>();
+        var bones = new List<int[]>();
+        var rotations = new List<Quaternion[]>();
+        var anchorBones = new List<int>();
+        var anchorLocals = new List<Vector3>();
+
+        Vector3 WorldPos(int i)
+        {
+            ref var m = ref skel.Pose->ModelPose.Data[i];
+            return ModelToWorld(new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z), skelPos, skelRot);
+        }
+        Quaternion WorldRot(int i)
+        {
+            ref var m = ref skel.Pose->ModelPose.Data[i];
+            return Quaternion.Normalize(skelRot * new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W));
+        }
+
+        foreach (var (part, side) in SkirtRing)
+        {
+            var a = boneService.ResolveBoneIndex(skel, $"j_sk_{part}_a_{side}");
+            var b = boneService.ResolveBoneIndex(skel, $"j_sk_{part}_b_{side}");
+            var lower = boneService.ResolveBoneIndex(skel, $"j_sk_{part}_c_{side}");
+            if (a < 0 || b < 0 || a >= boneCount || b >= boneCount)
+                continue;
+            if (lower >= boneCount) lower = -1;
+            var parent = skel.HavokSkeleton->ParentIndices[a];
+            if (parent < 0 || parent >= boneCount)
+                continue;
+
+            var waist = WorldPos(a);
+            var mid = WorldPos(b);
+            if (Vector3.Distance(waist, mid) < 0.01f)
+                continue;
+            // A chain without a third bone still gets a lower particle, so its second bone has an edge to follow.
+            var low = lower >= 0 ? WorldPos(lower) : mid + (mid - waist) * 0.5f;
+            if (Vector3.Distance(mid, low) < 0.01f)
+                low = mid + (mid - waist) * 0.5f;
+
+            chains.Add(new SkirtCloth.ChainRest(waist, mid, low));
+            bones.Add(new[] { a, b, lower });
+            rotations.Add(new[] { WorldRot(a), WorldRot(b), lower >= 0 ? WorldRot(lower) : Quaternion.Identity });
+            anchorBones.Add(parent);
+            anchorLocals.Add(Vector3.Transform(waist - WorldPos(parent), Quaternion.Inverse(WorldRot(parent))));
+        }
+
+        if (chains.Count == 0)
+            return null;
+
+        var skirt = new SkirtRig
+        {
+            Cloth = new SkirtCloth(chains.ToArray(), chains.Count == SkirtRing.Length,
+                ResolveGearBodySeedVelocity(c)?.Linear ?? Vector3.Zero),
+            Bones = bones.ToArray(),
+            BoneWorldRotation = rotations.ToArray(),
+            AnchorBone = anchorBones.ToArray(),
+            AnchorLocal = anchorLocals.ToArray(),
+        };
+        foreach (var chain in skirt.Bones)
+            foreach (var bone in chain)
+                if (bone >= 0) skirt.BoneSet.Add(bone);
+        c.GearSkirt = skirt;
+        log.Info($"GearDrop: clone idx={c.ObjectIndex} skirt cloth with {chains.Count} chain(s)");
+        return skirt;
+    }
+
+    // Hang the skirt's waistband from the bones it is attached to (already posed by the rig this frame),
+    // advance the cloth against the body's legs and the ground, and pose the skirt bones from it.
+    private void DriveSkirtCloth(SkeletonAccess skel, Clone c, SkirtRig skirt, Vector3 skelPos, Quaternion skelRot)
+    {
+        var chainCount = skirt.Bones.Length;
+        Span<Vector3> waist = stackalloc Vector3[chainCount];
+        for (var chain = 0; chain < chainCount; chain++)
+        {
+            var parent = skirt.AnchorBone[chain];
+            if (parent < 0 || parent >= skel.BoneCount) return;
+            ref var m = ref skel.Pose->ModelPose.Data[parent];
+            var parentPos = ModelToWorld(new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z), skelPos, skelRot);
+            var parentRot = Quaternion.Normalize(skelRot * new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W));
+            waist[chain] = parentPos + Vector3.Transform(skirt.AnchorLocal[chain], parentRot);
+        }
+
+        Span<SkirtCloth.Capsule> legs = stackalloc SkirtCloth.Capsule[4];
+        var legCount = CollectSkirtLegCapsules(c, legs);
+        skirt.Cloth.Advance(frameDt, waist, legs[..legCount], c.GearGroundY, new Vector3(0f, -RagdollTuning.Gravity, 0f));
+
+        var skelRotInv = Quaternion.Inverse(skelRot);
+        for (var chain = 0; chain < chainCount; chain++)
+        {
+            for (var tier = 0; tier < 3; tier++)
+            {
+                var bone = skirt.Bones[chain][tier];
+                if (bone < 0 || bone >= skel.BoneCount) continue;
+                // The waistband bone sits exactly on its attachment; the cloth is shown one step late.
+                var world = tier == 0 ? waist[chain] : skirt.Cloth.Position(chain, tier);
+                var rotation = Quaternion.Normalize(skirt.Cloth.RotationDelta(chain, tier) * skirt.BoneWorldRotation[chain][tier]);
+                if (!float.IsFinite(world.LengthSquared()) || !float.IsFinite(rotation.LengthSquared())) continue;
+                var modelPos = Vector3.Transform(world - skelPos, skelRotInv);
+                var modelRot = Quaternion.Normalize(skelRotInv * rotation);
+                ref var m = ref skel.Pose->ModelPose.Data[bone];
+                m.Translation.X = modelPos.X; m.Translation.Y = modelPos.Y; m.Translation.Z = modelPos.Z;
+                m.Rotation.X = modelRot.X; m.Rotation.Y = modelRot.Y; m.Rotation.Z = modelRot.Z; m.Rotation.W = modelRot.W;
+            }
+        }
+    }
+
+    // The body's thighs and shins, which a skirt must stay out of: the ragdoll's capsules when it is
+    // running, otherwise the live source skeleton with nominal limb radii.
+    private int CollectSkirtLegCapsules(Clone c, Span<SkirtCloth.Capsule> capsules)
+    {
+        var n = 0;
+        var ragdoll = PlayerRagdollController;
+        if (ragdoll != null && ragdoll.IsSimulationReady && ragdoll.TargetCharacterAddress == c.SourceAddress)
+        {
+            foreach (var name in new[] { "j_asi_a_l", "j_asi_a_r", "j_asi_b_l", "j_asi_b_r" })
+            {
+                if (n >= capsules.Length || !ragdoll.TryGetBoneCapsule(name, out var capsule)) continue;
+                var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation) * capsule.HalfLength;
+                capsules[n++] = new SkirtCloth.Capsule(capsule.Center - axis, capsule.Center + axis, capsule.Radius);
+            }
+            if (n > 0) return n;
+        }
+
+        if (objectTable.LocalPlayer is not { } player || player.Address != c.SourceAddress) return 0;
+        var sourceN = boneService.TryGetSkeleton(c.SourceAddress);
+        if (sourceN == null || !TryGetSkeletonWorldTransform(sourceN.Value, out var sourcePos, out var sourceRot)) return 0;
+        var source = sourceN.Value;
+        var scale = c.SourceScale.X > 0f ? c.SourceScale.X : 1f;
+        foreach (var (from, to, radius) in new[]
+                 {
+                     ("j_asi_a_l", "j_asi_b_l", 0.085f), ("j_asi_a_r", "j_asi_b_r", 0.085f),
+                     ("j_asi_b_l", "j_asi_d_l", 0.06f), ("j_asi_b_r", "j_asi_d_r", 0.06f),
+                 })
+        {
+            if (n >= capsules.Length ||
+                !TryGetBoneWorldPosition(source, sourcePos, sourceRot, from, out var a) ||
+                !TryGetBoneWorldPosition(source, sourcePos, sourceRot, to, out var b)) continue;
+            capsules[n++] = new SkirtCloth.Capsule(a, b, radius * scale);
+        }
+        return n;
     }
 
     // The body's left-right direction at the moment the rig is built, from the shoulders (top) or hips
@@ -3647,6 +3820,8 @@ public unsafe partial class DismembermentController : IDisposable
         var boneCount = Math.Min(skel.BoneCount, skel.ParentCount);
         for (var i = 0; i < boneCount; i++)
         {
+            if (c.GearSkirt != null && c.GearSkirt.BoneSet.Contains(i))
+                continue;
             var owner = ownerOfBone[i];
             if (owner < 0 && !rig.BoneIndices.Contains(i))
             {
