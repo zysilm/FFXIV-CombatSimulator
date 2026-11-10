@@ -1645,7 +1645,8 @@ public unsafe partial class DismembermentController : IDisposable
         for (var i = 0; i < rig.Bodies.Count; i++)
         {
             var rb = rig.Bodies[i];
-            if (!GarmentTether.IsPinned(c.GearKeepModelSlot, rb.BoneName)) continue;
+            if (!GarmentTether.IsPinned(c.GearKeepModelSlot, rb.BoneName,
+                    c.GearKeepModelSlot == 1 ? config.KoStripTopHangFrom : config.KoStripLowerHangFrom)) continue;
             rb.Pinned = true;
             rig.Bodies[i] = rb;
             pinCenter += bodySpecs[i].Position;
@@ -1659,6 +1660,7 @@ public unsafe partial class DismembermentController : IDisposable
         }
 
         pinCenter /= pinned;
+        var pullStrength = GarmentTether.PullScale(config.KoStripHangPull);
         var towardFeet = ResolveGarmentSlipDirection(skel, skelPos, skelRot, c.GearKeepModelSlot);
         var lift = GarmentTether.LiftDirection(towardFeet, ResolveGarmentLateral(skel, c, skelPos, skelRot),
             Vector3.Transform(Vector3.UnitZ, skelRot));
@@ -1668,7 +1670,8 @@ public unsafe partial class DismembermentController : IDisposable
             var spec = bodySpecs[i];
             bodySpecs[i] = new RagdollController.ExternalRigBodySpec(spec.Name, spec.Parts, spec.Mass,
                 spec.Position, spec.Orientation,
-                spec.LinearVelocity + GarmentTether.PullVelocity(towardFeet, lift, Vector3.Distance(spec.Position, pinCenter)),
+                spec.LinearVelocity + GarmentTether.PullVelocity(towardFeet, lift,
+                    Vector3.Distance(spec.Position, pinCenter), pullStrength),
                 spec.AngularVelocity);
         }
 

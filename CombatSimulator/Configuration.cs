@@ -215,7 +215,14 @@ public partial class Configuration : IPluginConfiguration
     public const int KoStripClothHoldPresetDefault = 1;
     public int KoStripClothHoldPreset { get; set; } = KoStripClothHoldPresetDefault;
 
-    // Stay on the body (preset 5): how far the top and the lower garment slide down from their worn
+    // Half off, hanging on the body (preset 5): which part of the top / lower garment stays on the body
+    // (indices into GarmentTether.TopHangLabels / LowerHangLabels) and how hard the rest is pulled down
+    // (index into GarmentTether.PullLabels).
+    public int KoStripTopHangFrom { get; set; } = 0;
+    public int KoStripLowerHangFrom { get; set; } = 0;
+    public int KoStripHangPull { get; set; } = Animation.Attachment.GarmentTether.DefaultPull;
+
+    // Unselected previous implementation of preset 5 (whole-garment slide): how far the top and the lower garment slide down from their worn
     // position, in metres on a scale-one actor. The top never travels more than 0.08 m and the lower
     // garment never more than 65% of the thigh, whatever is set here.
     public float KoStripTopSlideDistance { get; set; } = 0.09f;

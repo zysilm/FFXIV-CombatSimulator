@@ -23,11 +23,40 @@ public static class GarmentTether
     public const float MaxFollowSpeed = 8f;
     public const float MaxFollowAngularSpeed = 20f;
 
-    /// <summary>True for the rig segments (named after the bone they start at) that stay on the body.</summary>
-    public static bool IsPinned(int slot, string boneName) => slot switch
+    /// <summary>Where a top can stay on the body. The index is what the configuration stores.</summary>
+    public static readonly string[] TopHangLabels = { "Waist", "Chest", "Collar", "Left sleeve", "Right sleeve" };
+    /// <summary>Where a lower garment can stay on the body. The index is what the configuration stores.</summary>
+    public static readonly string[] LowerHangLabels = { "Both shins", "Left shin", "Right shin", "Left leg", "Right leg", "Waist" };
+    /// <summary>How hard the free part is pulled down. The index is what the configuration stores.</summary>
+    public static readonly string[] PullLabels = { "None (just let go)", "Gentle", "Normal", "Strong" };
+    private static readonly float[] PullScales = { 0f, 0.5f, 1f, 1.5f };
+    public const int DefaultPull = 2;
+
+    public static float PullScale(int pull) => PullScales[Math.Clamp(pull, 0, PullScales.Length - 1)];
+
+    /// <summary>
+    /// True for the rig segments (named after the bone they start at) that stay on the body, for the
+    /// chosen hang point of a top (slot 1) or a lower garment (slot 3). Unknown choices use the default.
+    /// </summary>
+    public static bool IsPinned(int slot, string boneName, int hangFrom) => slot switch
     {
-        1 => boneName == "j_kosi",
-        3 => boneName is "j_asi_b_l" or "j_asi_b_r",
+        1 => hangFrom switch
+        {
+            1 => boneName == "j_sebo_b",
+            2 => boneName == "j_sebo_c",
+            3 => boneName is "j_ude_a_l" or "j_ude_b_l",
+            4 => boneName is "j_ude_a_r" or "j_ude_b_r",
+            _ => boneName == "j_kosi",
+        },
+        3 => hangFrom switch
+        {
+            1 => boneName == "j_asi_b_l",
+            2 => boneName == "j_asi_b_r",
+            3 => boneName is "j_asi_a_l" or "j_asi_b_l",
+            4 => boneName is "j_asi_a_r" or "j_asi_b_r",
+            5 => boneName == "j_kosi",
+            _ => boneName is "j_asi_b_l" or "j_asi_b_r",
+        },
         _ => false,
     };
 
@@ -55,10 +84,10 @@ public static class GarmentTether
     /// Velocity a free segment starts with. Segments farther from the pinned part have farther to travel
     /// as the garment folds over it, so the pull grows with distance (within bounds).
     /// </summary>
-    public static Vector3 PullVelocity(Vector3 towardFeet, Vector3 lift, float distanceFromPin)
+    public static Vector3 PullVelocity(Vector3 towardFeet, Vector3 lift, float distanceFromPin, float strength = 1f)
     {
         var reach = float.IsFinite(distanceFromPin) ? Math.Clamp(distanceFromPin / ReferenceDistance, 0.4f, 1.5f) : 1f;
-        return (towardFeet * PullSpeed + lift * LiftSpeed) * reach;
+        return (towardFeet * PullSpeed + lift * LiftSpeed) * (reach * MathF.Max(0f, strength));
     }
 
     /// <summary>Linear velocity that carries a pinned segment to its new pose, bounded so a teleport cannot launch it.</summary>

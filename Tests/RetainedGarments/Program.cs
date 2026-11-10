@@ -65,9 +65,20 @@ var cases = new (string, Action)[]
         Check(WholeGarmentSlide.Drive(new Vector3(0, float.NaN, 0)) == WholeGarmentSlide.RestingDrive, "NaN drive");
     }),
     ("half off: the top stays on at the waist, a lower garment at both shins", () => {
-        Check(GarmentTether.IsPinned(1, "j_kosi") && !GarmentTether.IsPinned(1, "j_sebo_a") && !GarmentTether.IsPinned(1, "j_ude_a_l"), "top pins");
-        Check(GarmentTether.IsPinned(3, "j_asi_b_l") && GarmentTether.IsPinned(3, "j_asi_b_r") && !GarmentTether.IsPinned(3, "j_kosi") && !GarmentTether.IsPinned(3, "j_asi_a_l"), "lower pins");
-        Check(!GarmentTether.IsPinned(2, "j_te_l") && !GarmentTether.IsPinned(4, "j_asi_b_l"), "gloves or boots pinned");
+        Check(GarmentTether.IsPinned(1, "j_kosi", 0) && !GarmentTether.IsPinned(1, "j_sebo_a", 0) && !GarmentTether.IsPinned(1, "j_ude_a_l", 0), "top pins");
+        Check(GarmentTether.IsPinned(3, "j_asi_b_l", 0) && GarmentTether.IsPinned(3, "j_asi_b_r", 0) && !GarmentTether.IsPinned(3, "j_kosi", 0) && !GarmentTether.IsPinned(3, "j_asi_a_l", 0), "lower pins");
+        Check(!GarmentTether.IsPinned(2, "j_te_l", 0) && !GarmentTether.IsPinned(4, "j_asi_b_l", 0), "gloves or boots pinned");
+        // Every selectable hang point pins something, never the whole rig, and bad saved values fall back to the default.
+        var top = new[] { "j_kosi", "j_sebo_a", "j_sebo_b", "j_sebo_c", "j_sako_l", "j_ude_a_l", "j_ude_b_l", "j_sako_r", "j_ude_a_r", "j_ude_b_r" };
+        var lower = new[] { "j_kosi", "j_asi_a_l", "j_asi_b_l", "j_asi_a_r", "j_asi_b_r" };
+        for (var i = 0; i < GarmentTether.TopHangLabels.Length; i++)
+        { var n = top.Count(b => GarmentTether.IsPinned(1, b, i)); Check(n >= 1 && n < top.Length, $"top hang {i} pins {n}"); }
+        for (var i = 0; i < GarmentTether.LowerHangLabels.Length; i++)
+        { var n = lower.Count(b => GarmentTether.IsPinned(3, b, i)); Check(n >= 1 && n < lower.Length, $"lower hang {i} pins {n}"); }
+        Check(GarmentTether.IsPinned(1, "j_kosi", 99) && GarmentTether.IsPinned(3, "j_asi_b_r", -1), "bad hang index");
+        Check(GarmentTether.IsPinned(1, "j_ude_b_l", 3) && !GarmentTether.IsPinned(1, "j_ude_b_r", 3) && GarmentTether.IsPinned(3, "j_asi_a_r", 4), "side-specific hang");
+        Check(GarmentTether.PullScale(GarmentTether.DefaultPull) == 1 && GarmentTether.PullScale(0) == 0 && GarmentTether.PullScale(99) == 1.5f && GarmentTether.PullScale(-3) == 0, "pull scale");
+        Check(GarmentTether.PullVelocity(-Vector3.UnitY, Vector3.UnitZ, .3f, 0) == Vector3.Zero, "zero pull moved the garment");
     }),
     ("a pinned segment puts its bone exactly on the live body bone", () => {
         var bodyToBone = Quaternion.CreateFromYawPitchRoll(.4f, -.7f, 1.2f); var offset = new Vector3(0, -.11f, 0);

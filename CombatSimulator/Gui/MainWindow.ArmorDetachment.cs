@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 using System;
+using CombatSimulator.Animation.Attachment;
 using CombatSimulator.Dev;
 using Dalamud.Bindings.ImGui;
 
@@ -87,6 +88,22 @@ public partial class MainWindow
                    "Half off, hanging on the body: the top is pulled down and hangs from the waist; trousers or a skirt\n" +
                    "are pulled down and hang from the shins. The loose part folds, lies flat and swings with the body.");
 
+        if (ArmorDetachmentGarmentPresets[garment] == 5)
+        {
+            ImGui.Indent();
+            ArmorDetachmentCombo("Top hangs from##armordetach", GarmentTether.TopHangLabels,
+                () => config.KoStripTopHangFrom, v => config.KoStripTopHangFrom = v);
+            HelpMarker("The part of the top that stays on the body. The rest is pulled off and hangs from it.");
+            ArmorDetachmentCombo("Lower hangs from##armordetach", GarmentTether.LowerHangLabels,
+                () => config.KoStripLowerHangFrom, v => config.KoStripLowerHangFrom = v);
+            HelpMarker("The part of trousers or a skirt that stays on the body.");
+            ArmorDetachmentCombo("Pull##armordetach", GarmentTether.PullLabels,
+                () => config.KoStripHangPull, v => config.KoStripHangPull = v);
+            HelpMarker("How hard the loose part is pulled down and away from the body when it comes off.\n" +
+                       "Applies to the next detachment.");
+            ImGui.Unindent();
+        }
+
         ArmorDetachmentCheckbox("Still-attached pieces follow the body",
             () => config.KoStripGarmentFollowsBody, v => config.KoStripGarmentFollowsBody = v);
         HelpMarker("Pieces still on the body travel with it when the body is moved as a whole.\nPieces that already came off stay where they fell.");
@@ -102,6 +119,17 @@ public partial class MainWindow
         ImGui.SameLine();
         if (ImGui.Button("Reset to Defaults##armordetach"))
             config.ResetArmorDetachmentDefaults();
+    }
+
+    private void ArmorDetachmentCombo(string label, string[] items, Func<int> get, Action<int> set)
+    {
+        var v = Math.Clamp(get(), 0, items.Length - 1);
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.Combo(label, ref v, items, items.Length))
+        {
+            set(v);
+            config.Save();
+        }
     }
 
     private void ArmorDetachmentCheckbox(string label, Func<bool> get, Action<bool> set)
