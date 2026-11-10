@@ -14,8 +14,9 @@ Both live on the Ragdoll tab under **Ground Detection**.
 - **Forces, per body, per fixed step.** Lift `g x submerged share / relative density` upward, then
   implicit drag (linear 2.5 /s plus 1.5 /m x speed, angular 3 /s, all scaled by the submerged share)
   toward the water's own vertical motion. Nothing poses the body.
-- **Densities.** Chest 0.78, pelvis 0.96, head 1.02, thighs 1.03, arms 1.04, shins and feet 1.09, hands
-  1.08: 0.92 for a whole body, so it floats low, chest up, legs trailing.
+- **Densities.** Anatomical proportions (chest 0.78, pelvis 0.96, head 1.02, thighs 1.03, arms 1.04,
+  hands 1.08, shins and feet 1.09) scaled by `Lightness` 0.5: 0.46 for a whole body, so about 54% of it
+  rides above the surface, chest up, legs trailing. A real body (0.92) shows only a sliver.
 - **Surface.** Three deep-water wave trains (5 m / 2.7 m / 1.3 m long, 2.5 / 1.4 / 0.7 cm high). The
   game's own water animation cannot be read, so the swell is kept small enough not to disagree with it.
 - A body in water never goes to rest, and the heavy-fall gravity boost is off while any part is wet.

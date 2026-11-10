@@ -67,11 +67,20 @@ public static class WaterBuoyancy
     }
 
     /// <summary>
-    /// Density of a body part relative to water. The chest holds the lungs and floats; limbs and head are
-    /// denser than water. Mass-weighted over a human body this comes out just under 1, so a body floats
-    /// low in the water, chest up, with the legs trailing down.
+    /// How much lighter than a real body the floating body is. A real one is about 0.92 of water's
+    /// density and floats with only a sliver showing; scaled by this it rides with about half of itself
+    /// above the surface, which is what reads as floating on screen.
     /// </summary>
-    public static float RelativeDensity(string boneName)
+    public const float Lightness = 0.5f;
+
+    /// <summary>
+    /// Density of a body part relative to water, as used for buoyancy. The proportions are anatomical
+    /// (the chest holds the lungs and is lightest, shins and feet are heaviest), so the body floats chest
+    /// up with the legs trailing; the overall level is set by <see cref="Lightness"/>.
+    /// </summary>
+    public static float RelativeDensity(string boneName) => Anatomical(boneName) * Lightness;
+
+    private static float Anatomical(string boneName)
     {
         if (string.IsNullOrEmpty(boneName)) return 1f;
         if (boneName.StartsWith("j_sebo", StringComparison.Ordinal) || boneName.StartsWith("j_mune", StringComparison.Ordinal)) return 0.78f;
