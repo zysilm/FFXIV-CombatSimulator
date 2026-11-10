@@ -23,10 +23,13 @@ public static class GarmentTether
     public const float MaxFollowSpeed = 8f;
     public const float MaxFollowAngularSpeed = 20f;
 
-    /// <summary>Where a top can stay on the body. The index is what the configuration stores.</summary>
-    public static readonly string[] TopHangLabels = { "Waist", "Chest", "Collar", "Left sleeve", "Right sleeve" };
-    /// <summary>Where a lower garment can stay on the body. The index is what the configuration stores.</summary>
-    public static readonly string[] LowerHangLabels = { "Both shins", "Left shin", "Right shin", "Left leg", "Right leg", "Waist" };
+    // Parts of a garment that can stay on the body, one bit each. The configuration stores the sum.
+    public const int TopWaist = 1, TopBelly = 2, TopChest = 4, TopCollar = 8,
+        TopLeftUpperArm = 16, TopLeftForearm = 32, TopRightUpperArm = 64, TopRightForearm = 128;
+    public const int LowerWaist = 1, LowerLeftThigh = 2, LowerLeftShin = 4, LowerRightThigh = 8, LowerRightShin = 16;
+    public const int DefaultTopHold = TopWaist;
+    public const int DefaultLowerHold = LowerLeftShin | LowerRightShin;
+
     /// <summary>How hard the free part is pulled down. The index is what the configuration stores.</summary>
     public static readonly string[] PullLabels = { "None (just let go)", "Gentle", "Normal", "Strong" };
     private static readonly float[] PullScales = { 0f, 0.5f, 1f, 1.5f };
@@ -35,29 +38,58 @@ public static class GarmentTether
     public static float PullScale(int pull) => PullScales[Math.Clamp(pull, 0, PullScales.Length - 1)];
 
     /// <summary>
-    /// True for the rig segments (named after the bone they start at) that stay on the body, for the
-    /// chosen hang point of a top (slot 1) or a lower garment (slot 3). Unknown choices use the default.
+    /// The hold bit of a rig segment (named after the bone it starts at) of a top (slot 1) or a lower
+    /// garment (slot 3); 0 for a segment that can never be held. The shoulder piece goes with the upper arm.
     /// </summary>
-    public static bool IsPinned(int slot, string boneName, int hangFrom) => slot switch
+    public static int HoldBit(int slot, string boneName) => slot switch
     {
-        1 => hangFrom switch
+        1 => boneName switch
         {
-            1 => boneName == "j_sebo_b",
-            2 => boneName == "j_sebo_c",
-            3 => boneName is "j_ude_a_l" or "j_ude_b_l",
-            4 => boneName is "j_ude_a_r" or "j_ude_b_r",
-            _ => boneName == "j_kosi",
+            "j_kosi" => TopWaist,
+            "j_sebo_a" => TopBelly,
+            "j_sebo_b" => TopChest,
+            "j_sebo_c" => TopCollar,
+            "j_sako_l" or "j_ude_a_l" => TopLeftUpperArm,
+            "j_ude_b_l" => TopLeftForearm,
+            "j_sako_r" or "j_ude_a_r" => TopRightUpperArm,
+            "j_ude_b_r" => TopRightForearm,
+            _ => 0,
         },
-        3 => hangFrom switch
+        3 => boneName switch
         {
-            1 => boneName == "j_asi_b_l",
-            2 => boneName == "j_asi_b_r",
-            3 => boneName is "j_asi_a_l" or "j_asi_b_l",
-            4 => boneName is "j_asi_a_r" or "j_asi_b_r",
-            5 => boneName == "j_kosi",
-            _ => boneName is "j_asi_b_l" or "j_asi_b_r",
+            "j_kosi" => LowerWaist,
+            "j_asi_a_l" => LowerLeftThigh,
+            "j_asi_b_l" => LowerLeftShin,
+            "j_asi_a_r" => LowerRightThigh,
+            "j_asi_b_r" => LowerRightShin,
+            _ => 0,
         },
-        _ => false,
+        _ => 0,
+    };
+
+    /// <summary>True for the rig segments that stay on the body under the chosen set of holds.</summary>
+    public static bool IsPinned(int slot, string boneName, int holds) => (HoldBit(slot, boneName) & holds) != 0;
+
+    /// <summary>The set of holds equal to a choice made with the earlier single-choice dropdowns.</summary>
+    public static int HoldsFromLegacyChoice(int slot, int choice) => slot switch
+    {
+        1 => choice switch
+        {
+            1 => TopChest,
+            2 => TopCollar,
+            3 => TopLeftUpperArm | TopLeftForearm,
+            4 => TopRightUpperArm | TopRightForearm,
+            _ => DefaultTopHold,
+        },
+        _ => choice switch
+        {
+            1 => LowerLeftShin,
+            2 => LowerRightShin,
+            3 => LowerLeftThigh | LowerLeftShin,
+            4 => LowerRightThigh | LowerRightShin,
+            5 => LowerWaist,
+            _ => DefaultLowerHold,
+        },
     };
 
     /// <summary>Pose a pinned segment's box must have for its bone to sit exactly on the live body bone.</summary>

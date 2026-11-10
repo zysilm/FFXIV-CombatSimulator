@@ -65,18 +65,27 @@ var cases = new (string, Action)[]
         Check(WholeGarmentSlide.Drive(new Vector3(0, float.NaN, 0)) == WholeGarmentSlide.RestingDrive, "NaN drive");
     }),
     ("half off: the top stays on at the waist, a lower garment at both shins", () => {
-        Check(GarmentTether.IsPinned(1, "j_kosi", 0) && !GarmentTether.IsPinned(1, "j_sebo_a", 0) && !GarmentTether.IsPinned(1, "j_ude_a_l", 0), "top pins");
-        Check(GarmentTether.IsPinned(3, "j_asi_b_l", 0) && GarmentTether.IsPinned(3, "j_asi_b_r", 0) && !GarmentTether.IsPinned(3, "j_kosi", 0) && !GarmentTether.IsPinned(3, "j_asi_a_l", 0), "lower pins");
-        Check(!GarmentTether.IsPinned(2, "j_te_l", 0) && !GarmentTether.IsPinned(4, "j_asi_b_l", 0), "gloves or boots pinned");
-        // Every selectable hang point pins something, never the whole rig, and bad saved values fall back to the default.
         var top = new[] { "j_kosi", "j_sebo_a", "j_sebo_b", "j_sebo_c", "j_sako_l", "j_ude_a_l", "j_ude_b_l", "j_sako_r", "j_ude_a_r", "j_ude_b_r" };
         var lower = new[] { "j_kosi", "j_asi_a_l", "j_asi_b_l", "j_asi_a_r", "j_asi_b_r" };
-        for (var i = 0; i < GarmentTether.TopHangLabels.Length; i++)
-        { var n = top.Count(b => GarmentTether.IsPinned(1, b, i)); Check(n >= 1 && n < top.Length, $"top hang {i} pins {n}"); }
-        for (var i = 0; i < GarmentTether.LowerHangLabels.Length; i++)
-        { var n = lower.Count(b => GarmentTether.IsPinned(3, b, i)); Check(n >= 1 && n < lower.Length, $"lower hang {i} pins {n}"); }
-        Check(GarmentTether.IsPinned(1, "j_kosi", 99) && GarmentTether.IsPinned(3, "j_asi_b_r", -1), "bad hang index");
-        Check(GarmentTether.IsPinned(1, "j_ude_b_l", 3) && !GarmentTether.IsPinned(1, "j_ude_b_r", 3) && GarmentTether.IsPinned(3, "j_asi_a_r", 4), "side-specific hang");
+        string Held(int slot, string[] bones, int holds) => string.Join(",", bones.Where(b => GarmentTether.IsPinned(slot, b, holds)));
+        Check(Held(1, top, GarmentTether.DefaultTopHold) == "j_kosi", "default top hold");
+        Check(Held(3, lower, GarmentTether.DefaultLowerHold) == "j_asi_b_l,j_asi_b_r", "default lower hold");
+        Check(Held(1, top, 0) == "" && Held(3, lower, 0) == "", "no holds still pinned something");
+        // Every segment of both rigs has exactly one hold bit, and every bit holds at least one segment.
+        foreach (var (slot, bones, bits) in new[] { (1, top, 8), (3, lower, 5) })
+        {
+            Check(bones.All(b => GarmentTether.HoldBit(slot, b) is var bit && bit != 0 && (bit & (bit - 1)) == 0), $"slot {slot} segment without a single hold");
+            for (var i = 0; i < bits; i++) Check(Held(slot, bones, 1 << i) != "", $"slot {slot} hold {1 << i} holds nothing");
+            Check(Held(slot, bones, (1 << bits) - 1) == string.Join(",", bones), $"slot {slot} all holds leave a segment loose");
+        }
+        // Several holds combine; the shoulder piece goes with its upper arm.
+        Check(Held(1, top, GarmentTether.TopWaist | GarmentTether.TopLeftUpperArm) == "j_kosi,j_sako_l,j_ude_a_l", "combined top holds");
+        Check(Held(3, lower, GarmentTether.LowerWaist | GarmentTether.LowerRightShin) == "j_kosi,j_asi_b_r", "combined lower holds");
+        Check(!GarmentTether.IsPinned(2, "j_te_l", 255) && !GarmentTether.IsPinned(4, "j_asi_b_l", 255), "gloves or boots pinned");
+        // The earlier single-choice dropdown values map to the same segments as before.
+        Check(Held(1, top, GarmentTether.HoldsFromLegacyChoice(1, 0)) == "j_kosi" && Held(1, top, GarmentTether.HoldsFromLegacyChoice(1, 2)) == "j_sebo_c", "legacy top choice");
+        Check(Held(1, top, GarmentTether.HoldsFromLegacyChoice(1, 3)) == "j_sako_l,j_ude_a_l,j_ude_b_l", "legacy left sleeve now includes the shoulder piece");
+        Check(Held(3, lower, GarmentTether.HoldsFromLegacyChoice(3, 4)) == "j_asi_a_r,j_asi_b_r" && Held(3, lower, GarmentTether.HoldsFromLegacyChoice(3, 99)) == "j_asi_b_l,j_asi_b_r", "legacy lower choice");
         Check(GarmentTether.PullScale(GarmentTether.DefaultPull) == 1 && GarmentTether.PullScale(0) == 0 && GarmentTether.PullScale(99) == 1.5f && GarmentTether.PullScale(-3) == 0, "pull scale");
         Check(GarmentTether.PullVelocity(-Vector3.UnitY, Vector3.UnitZ, .3f, 0) == Vector3.Zero, "zero pull moved the garment");
     }),

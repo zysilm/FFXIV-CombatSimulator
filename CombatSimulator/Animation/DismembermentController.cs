@@ -1650,14 +1650,14 @@ public unsafe partial class DismembermentController : IDisposable
         {
             var rb = rig.Bodies[i];
             if (!GarmentTether.IsPinned(c.GearKeepModelSlot, rb.BoneName,
-                    c.GearKeepModelSlot == 1 ? config.KoStripTopHangFrom : config.KoStripLowerHangFrom)) continue;
+                    c.GearKeepModelSlot == 1 ? config.KoStripTopHolds : config.KoStripLowerHolds)) continue;
             rb.Pinned = true;
             rig.Bodies[i] = rb;
             pinCenter += bodySpecs[i].Position;
             pinned++;
         }
 
-        if (pinned == 0 || pinned == rig.Bodies.Count)
+        if (pinned == 0)
         {
             c.GearTethered = false;
             return;

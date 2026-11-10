@@ -215,11 +215,11 @@ public partial class Configuration : IPluginConfiguration
     public const int KoStripClothHoldPresetDefault = 1;
     public int KoStripClothHoldPreset { get; set; } = KoStripClothHoldPresetDefault;
 
-    // Half off, hanging on the body (preset 5): which part of the top / lower garment stays on the body
-    // (indices into GarmentTether.TopHangLabels / LowerHangLabels) and how hard the rest is pulled down
-    // (index into GarmentTether.PullLabels).
-    public int KoStripTopHangFrom { get; set; } = 0;
-    public int KoStripLowerHangFrom { get; set; } = 0;
+    // Half off, hanging on the body (preset 5): which parts of the top / lower garment stay on the body
+    // (sums of the GarmentTether.Top* / Lower* bits) and how hard the rest is pulled down (index into
+    // GarmentTether.PullLabels).
+    public int KoStripTopHolds { get; set; } = Animation.Attachment.GarmentTether.DefaultTopHold;
+    public int KoStripLowerHolds { get; set; } = Animation.Attachment.GarmentTether.DefaultLowerHold;
     public int KoStripHangPull { get; set; } = Animation.Attachment.GarmentTether.DefaultPull;
 
     // Unselected previous implementation of preset 5 (whole-garment slide): how far the top and the lower garment slide down from their worn
@@ -659,6 +659,7 @@ public partial class Configuration : IPluginConfiguration
     {
         pluginInterface = pi;
         MigrateHpBarLabelSwitches(); // before the purge below: it reads the retired switches
+        MigrateKoStripHangChoices(); // reads retired keys, so before they are purged
         RemoveRetiredOptions();
         MigrateSplitVfxToggles();
         MigrateKoStripClothHoldPreset();
@@ -691,6 +692,7 @@ public partial class Configuration : IPluginConfiguration
         "KoStripCollapseLegs", "KoStripCollapseFeet", "KoStripCollapseEars", "KoStripCollapseNeck",
         "KoStripCollapseWrists", "KoStripCollapseRFinger", "KoStripCollapseLFinger",
         "KoStripHandsFeetRigidDefaultMigrated20260719",
+        "KoStripTopHangFrom", "KoStripLowerHangFrom",
         "KoStripDelay", "KoStripDelaySeconds", "KoStripLHand", "KoStripRHand", "KoStripLFoot", "KoStripRFoot",
         // Ragdoll pages, simplified 2026-11 (values fixed in RagdollTuning or the ON side of a switch).
         "PartyEnemyDeathRagdoll", "NpcRagdollActivationDelay", "MaxNpcRagdolls", "RagdollGravity", "RagdollDamping",
@@ -758,6 +760,18 @@ public partial class Configuration : IPluginConfiguration
         Fold("ShowDeathNameAlias", () => DeathNameAlias = "");
         if (changed)
             Save();
+    }
+
+    // The hang point was briefly a single choice per garment; it is now a set of holds.
+    private void MigrateKoStripHangChoices()
+    {
+        if (PrivateConfigFields == null)
+            return;
+
+        if (PrivateConfigFields.TryGetValue("KoStripTopHangFrom", out var top) && top.Type == JTokenType.Integer)
+            KoStripTopHolds = Animation.Attachment.GarmentTether.HoldsFromLegacyChoice(1, (int)top);
+        if (PrivateConfigFields.TryGetValue("KoStripLowerHangFrom", out var lower) && lower.Type == JTokenType.Integer)
+            KoStripLowerHolds = Animation.Attachment.GarmentTether.HoldsFromLegacyChoice(3, (int)lower);
     }
 
     private void RemoveRetiredOptions()

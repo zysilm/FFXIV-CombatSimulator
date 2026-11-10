@@ -11,8 +11,10 @@ in `Animation/DismembermentController.cs`.
 The garment is the same limp box chain as **Drop when the body settles** (see `GarmentFlatten`), with
 three differences:
 
-- **Pinned segments stay on the body.** Chosen by **Top hangs from** (Waist by default; Chest, Collar,
-  Left or Right sleeve) and **Lower hangs from** (Both shins by default; either shin, either leg, Waist). Each frame those boxes are re-placed on the live body bone
+- **Pinned segments stay on the body.** The user ticks any number of holds: for a top Collar, Chest,
+  Belly, Waist and each upper arm and forearm (default Waist); for a lower garment Waist and each thigh
+  and shin (default both shins). Stored as bit sums in `KoStripTopHolds` / `KoStripLowerHolds`. With
+  nothing ticked the piece drops off completely. Each frame those boxes are re-placed on the live body bone
   with the velocity that carries them there (bounded, so a teleport cannot launch them).
 - **The rest is pulled down.** When the rig is created every free segment gets a velocity toward the
   feet plus a lift off the body, on whichever side of the body faces up, scaled by its distance from the

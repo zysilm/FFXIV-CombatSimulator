@@ -28,7 +28,7 @@ public partial class MainWindow
             return;
 
         var trigger = config.KoStripOnHitEnabled ? 2 : config.KoStripEnabled ? 1 : 0;
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(ArmorDetachmentItemWidth());
         if (ImGui.Combo("Detach armor##armordetach", ref trigger, ArmorDetachmentTriggerLabels, ArmorDetachmentTriggerLabels.Length))
         {
             config.KoStripEnabled = trigger == 1;
@@ -54,7 +54,7 @@ public partial class MainWindow
             v => config.KoStripEars = config.KoStripNeck = config.KoStripWrists = config.KoStripRFinger = config.KoStripLFinger = v);
 
         var removed = config.KoStripPhysicsDrop || config.KoStripPhysicsDropClothing ? 0 : 1;
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(ArmorDetachmentItemWidth());
         if (ImGui.Combo("Removed pieces##armordetach", ref removed, ArmorDetachmentRemovedLabels, ArmorDetachmentRemovedLabels.Length))
         {
             config.KoStripPhysicsDrop = config.KoStripPhysicsDropClothing = removed == 0;
@@ -67,7 +67,7 @@ public partial class MainWindow
         var lifetime = config.KoStripCloneAutoExpireEnabled
             ? Math.Max(1, Array.IndexOf(ArmorDetachmentLifetimeSeconds, config.KoStripCloneAutoExpireSeconds))
             : 0;
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(ArmorDetachmentItemWidth());
         if (ImGui.Combo("Dropped pieces##armordetach", ref lifetime, ArmorDetachmentLifetimeLabels, ArmorDetachmentLifetimeLabels.Length))
         {
             config.KoStripCloneAutoExpireEnabled = lifetime > 0;
@@ -77,7 +77,7 @@ public partial class MainWindow
         HelpMarker("Fading pieces out reduces the chance of one surviving into a zone change.");
 
         var garment = Math.Max(0, Array.IndexOf(ArmorDetachmentGarmentPresets, config.KoStripClothHoldPreset));
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(ArmorDetachmentItemWidth());
         if (ImGui.Combo("Body / Legs##armordetach", ref garment, ArmorDetachmentGarmentLabels, ArmorDetachmentGarmentLabels.Length))
         {
             config.KoStripClothHoldPreset = ArmorDetachmentGarmentPresets[garment];
@@ -85,18 +85,49 @@ public partial class MainWindow
         }
         HelpMarker("Drop when the body settles: the garment stays on until the body comes to rest, then falls off\n" +
                    "and goes limp and flat wherever it is no longer around the body.\n" +
-                   "Half off, hanging on the body: the top is pulled down and hangs from the waist; trousers or a skirt\n" +
-                   "are pulled down and hang from the shins. The loose part folds, lies flat and swings with the body.");
+                   "Half off, hanging on the body: the parts ticked below stay on the body; the rest is pulled off,\n" +
+                   "folds, lies flat and swings with the body.");
 
         if (ArmorDetachmentGarmentPresets[garment] == 5)
         {
             ImGui.Indent();
-            ArmorDetachmentCombo("Top hangs from##armordetach", GarmentTether.TopHangLabels,
-                () => config.KoStripTopHangFrom, v => config.KoStripTopHangFrom = v);
-            HelpMarker("The part of the top that stays on the body. The rest is pulled off and hangs from it.");
-            ArmorDetachmentCombo("Lower hangs from##armordetach", GarmentTether.LowerHangLabels,
-                () => config.KoStripLowerHangFrom, v => config.KoStripLowerHangFrom = v);
-            HelpMarker("The part of trousers or a skirt that stays on the body.");
+
+            ImGui.TextUnformatted("Top stays on at");
+            HelpMarker("Tick every part of the top that should stay on the body. Everything else comes off and\n" +
+                       "hangs from the ticked parts. More holds keep it from drooping; left and right are the\n" +
+                       "character's own. Applies to the next detachment.");
+            if (ImGui.BeginTable("##armordetachtophold", 3, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchSame))
+            {
+                ImGui.TableSetupColumn("Left arm");
+                ImGui.TableSetupColumn("Body");
+                ImGui.TableSetupColumn("Right arm");
+                ImGui.TableHeadersRow();
+                ArmorDetachmentHoldRow(true, ("Upper arm", GarmentTether.TopLeftUpperArm), ("Collar", GarmentTether.TopCollar), ("Upper arm", GarmentTether.TopRightUpperArm));
+                ArmorDetachmentHoldRow(true, ("Forearm", GarmentTether.TopLeftForearm), ("Chest", GarmentTether.TopChest), ("Forearm", GarmentTether.TopRightForearm));
+                ArmorDetachmentHoldRow(true, null, ("Belly", GarmentTether.TopBelly), null);
+                ArmorDetachmentHoldRow(true, null, ("Waist", GarmentTether.TopWaist), null);
+                ImGui.EndTable();
+            }
+            if (config.KoStripTopHolds == 0)
+                ImGui.TextDisabled("Nothing ticked: the top drops off completely.");
+
+            ImGui.Spacing();
+            ImGui.TextUnformatted("Trousers / skirt stay on at");
+            HelpMarker("Tick every part of the lower garment that should stay on the body.\nApplies to the next detachment.");
+            if (ImGui.BeginTable("##armordetachlowerhold", 3, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchSame))
+            {
+                ImGui.TableSetupColumn("Left leg");
+                ImGui.TableSetupColumn("Body");
+                ImGui.TableSetupColumn("Right leg");
+                ImGui.TableHeadersRow();
+                ArmorDetachmentHoldRow(false, ("Thigh", GarmentTether.LowerLeftThigh), ("Waist", GarmentTether.LowerWaist), ("Thigh", GarmentTether.LowerRightThigh));
+                ArmorDetachmentHoldRow(false, ("Shin", GarmentTether.LowerLeftShin), null, ("Shin", GarmentTether.LowerRightShin));
+                ImGui.EndTable();
+            }
+            if (config.KoStripLowerHolds == 0)
+                ImGui.TextDisabled("Nothing ticked: the lower garment drops off completely.");
+
+            ImGui.Spacing();
             ArmorDetachmentCombo("Pull##armordetach", GarmentTether.PullLabels,
                 () => config.KoStripHangPull, v => config.KoStripHangPull = v);
             HelpMarker("How hard the loose part is pulled down and away from the body when it comes off.\n" +
@@ -121,10 +152,30 @@ public partial class MainWindow
             config.ResetArmorDetachmentDefaults();
     }
 
+    // Wide enough for the longest option at any window size, without swallowing the label.
+    private static float ArmorDetachmentItemWidth()
+        => Math.Clamp(ImGui.GetContentRegionAvail().X * 0.6f, 220f, 380f);
+
+    private void ArmorDetachmentHoldRow(bool top, params (string Label, int Bit)?[] cells)
+    {
+        ImGui.TableNextRow();
+        for (var column = 0; column < cells.Length; column++)
+        {
+            ImGui.TableNextColumn();
+            if (cells[column] is not { } cell) continue;
+            var holds = top ? config.KoStripTopHolds : config.KoStripLowerHolds;
+            var held = (holds & cell.Bit) != 0;
+            if (!ImGui.Checkbox($"{cell.Label}##armordetachhold{(top ? "t" : "l")}{cell.Bit}", ref held)) continue;
+            holds = held ? holds | cell.Bit : holds & ~cell.Bit;
+            if (top) config.KoStripTopHolds = holds; else config.KoStripLowerHolds = holds;
+            config.Save();
+        }
+    }
+
     private void ArmorDetachmentCombo(string label, string[] items, Func<int> get, Action<int> set)
     {
         var v = Math.Clamp(get(), 0, items.Length - 1);
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(ArmorDetachmentItemWidth());
         if (ImGui.Combo(label, ref v, items, items.Length))
         {
             set(v);
