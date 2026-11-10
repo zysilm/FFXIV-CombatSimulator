@@ -2781,6 +2781,26 @@ public partial class MainWindow : IDisposable
                 if (config.ExtendTerrainDetection)
                     ImGui.TextColored(new Vector4(1f, 0.75f, 0.2f, 1f), "Warning: may cause severe stuttering.");
 
+                var exactGround = config.RagdollExactGroundCollision;
+                if (ImGui.Checkbox("Exact ground collision##ragdoll", ref exactGround))
+                {
+                    config.RagdollExactGroundCollision = exactGround;
+                    config.Save();
+                }
+                HelpMarker("Off: the ground is a grid of heights sampled every metre, which smooths over steps, edges and props.\n" +
+                           "On: the ground is the game's own collision mesh, triangle for triangle.\n" +
+                           "Takes effect at the next ragdoll. Costs more at activation. Not used together with\n" +
+                           "Rendered Mesh Body Collision. Default off.");
+
+                var water = config.RagdollWaterBuoyancy;
+                if (ImGui.Checkbox("Float in water##ragdoll", ref water))
+                {
+                    config.RagdollWaterBuoyancy = water;
+                    config.Save();
+                }
+                HelpMarker("A body in water is lifted and slowed by it: it rises to the surface, floats chest up and\n" +
+                           "rides the swell. Works where the game itself has a water surface (anywhere you can fish or swim).");
+
                 ImGui.Unindent();
             }
         }

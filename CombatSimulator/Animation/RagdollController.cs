@@ -230,6 +230,14 @@ public unsafe partial class RagdollController : IDisposable
 
     // Ground height (physics ground may be lowered by floor offset)
     private float groundY;
+    // Water: still level of the surface over the corpse (NaN when there is none), probed now and then.
+    private float waterLevel = float.NaN;
+    private float waterProbeCountdown;
+    private Vector3 waterProbePosition;
+    private float waterClock;
+    private bool inWater;
+    private const float WaterProbeInterval = 0.5f;
+    private const float WaterProbeMoveDistance = 1.5f;
     // Real terrain ground (before floor offset), used for visual correction
     private float realGroundY;
     private readonly List<Vector2> terrainPatchCenters = new();
@@ -4011,6 +4019,10 @@ public unsafe partial class RagdollController : IDisposable
 
     private bool InitializePhysics()
     {
+        waterLevel = float.NaN;
+        waterProbeCountdown = 0f;
+        waterClock = 0f;
+        inWater = false;
         activeRagdollMeshVolumes = config.RagdollMeshVolumes;
         activeMeshCacheRevision = config.RagdollMeshCacheRevision;
         var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
@@ -5449,6 +5461,56 @@ public unsafe partial class RagdollController : IDisposable
         return ragdollBones.Count > 0;
     }
 
+    private const float ExactGroundSafetyNetDrop = 0.25f; // how far the sampled grid sits below exact ground
+    private const float ExactGroundVerticalReach = 8f;    // triangles this far above/below the patch height are taken
+    private const int ExactGroundMaxTriangles = 20000;
+    private readonly List<Vector3> exactGroundScratch = new();
+
+    /// <summary>
+    /// Add the game's collision triangles around (centerX, centerZ) as static ground. Both windings of
+    /// every triangle are added, since the game's meshes do not promise which way a face points. False
+    /// when the scene could not be read, had nothing there, or had too much.
+    /// </summary>
+    private bool TryAddExactGround(float centerX, float centerZ, float patchGroundY)
+    {
+        if (simulation == null || bufferPool == null) return false;
+
+        exactGroundScratch.Clear();
+        var min = new Vector3(centerX - TerrainPatchRadius, patchGroundY - ExactGroundVerticalReach, centerZ - TerrainPatchRadius);
+        var max = new Vector3(centerX + TerrainPatchRadius, patchGroundY + ExactGroundVerticalReach, centerZ + TerrainPatchRadius);
+        if (!WorldCollisionMesh.TryCollectGround(min, max, exactGroundScratch, ExactGroundMaxTriangles) ||
+            exactGroundScratch.Count < 3)
+        {
+            log.Info("RagdollController: exact ground unavailable for this patch; using the sampled grid");
+            return false;
+        }
+
+        var count = exactGroundScratch.Count / 3;
+        bufferPool.Take<Triangle>(count * 2, out var triangles);
+        var written = 0;
+        for (var i = 0; i < count; i++)
+        {
+            var a = exactGroundScratch[i * 3];
+            var b = exactGroundScratch[i * 3 + 1];
+            var c = exactGroundScratch[i * 3 + 2];
+            if (!float.IsFinite(a.LengthSquared() + b.LengthSquared() + c.LengthSquared())) continue;
+            if (Vector3.Cross(b - a, c - a).LengthSquared() < 1e-10f) continue; // degenerate
+            triangles[written++] = new Triangle(a, b, c);
+            triangles[written++] = new Triangle(a, c, b);
+        }
+        exactGroundScratch.Clear();
+        if (written == 0)
+        {
+            bufferPool.Return(ref triangles);
+            return false;
+        }
+
+        var mesh = new BepuPhysics.Collidables.Mesh(triangles.Slice(written), Vector3.One, bufferPool);
+        simulation.Statics.Add(new StaticDescription(Vector3.Zero, Quaternion.Identity, simulation.Shapes.Add(mesh)));
+        log.Info($"RagdollController: exact ground patch with {written / 2} triangles");
+        return true;
+    }
+
     /// <summary>
     /// Lay one terrain collision patch centered on (centerX, centerZ): raycast
     /// a grid of ground heights and add it to the simulation as a static mesh. Used
@@ -5479,6 +5541,14 @@ public unsafe partial class RagdollController : IDisposable
                 new Vector3(0, -1, 0), out var centerHit, TerrainRaycastDistance))
             patchGroundY = centerHit.Point.Y;
 
+        // Exact ground: the game's own collision triangles for this patch. The sampled grid below is then
+        // only a safety net under it, lowered so it never holds a body up where the grid is coarser than
+        // the real ground.
+        var gridDrop = config.RagdollExactGroundCollision && !(activeRagdollMeshVolumes && !activeRagdollIsGeneric) &&
+                       TryAddExactGround(centerX, centerZ, patchGroundY)
+            ? ExactGroundSafetyNetDrop
+            : 0f;
+
         var heights = new float[gridSize, gridSize];
         var ox = centerX - TerrainPatchRadius;
         var oz = centerZ - TerrainPatchRadius;
@@ -5490,9 +5560,9 @@ public unsafe partial class RagdollController : IDisposable
             if (BGCollisionModule.RaycastMaterialFilter(
                     new Vector3(wx, patchGroundY + TerrainRaycastStartYOffset, wz),
                     new Vector3(0, -1, 0), out var gridHit, TerrainRaycastDistance))
-                heights[gx, gz] = gridHit.Point.Y;
+                heights[gx, gz] = gridHit.Point.Y - gridDrop;
             else
-                heights[gx, gz] = patchGroundY;
+                heights[gx, gz] = patchGroundY - gridDrop;
         }
 
         var triCount = (gridSize - 1) * (gridSize - 1) * 2;
@@ -7429,9 +7499,68 @@ public unsafe partial class RagdollController : IDisposable
     private const float AirborneClearance = 0.06f;  // m of daylight before the rig counts as off the floor
     private const float FallGravityMinDescent = 1f; // m/s — below this it is not falling, it is sitting
 
+    // Look for a water surface over the corpse: at once after activation or a long move, otherwise twice a second.
+    private void UpdateWaterProbe(float dt)
+    {
+        if (!config.RagdollWaterBuoyancy || simulation == null || ragdollBones.Count == 0)
+        {
+            waterLevel = float.NaN;
+            inWater = false;
+            return;
+        }
+
+        var position = simulation.Bodies.GetBodyReference(ragdollBones[0].BodyHandle).Pose.Position;
+        waterProbeCountdown -= dt;
+        if (waterProbeCountdown > 0f && Vector3.DistanceSquared(position, waterProbePosition) < WaterProbeMoveDistance * WaterProbeMoveDistance)
+            return;
+
+        waterProbeCountdown = WaterProbeInterval;
+        waterProbePosition = position;
+        waterLevel = WorldCollisionMesh.TryFindWaterSurface(position, 30f, 60f, out var surface) ? surface : float.NaN;
+        if (float.IsNaN(waterLevel)) inWater = false;
+    }
+
+    // Lift and drag on every body that is in the water (see WaterBuoyancy). Bodies are only given forces;
+    // how the corpse floats, rolls and rides the swell is left to the solver.
+    private void ApplyWaterForces(float dt)
+    {
+        if (simulation == null || float.IsNaN(waterLevel) || ragdollBones.Count == 0)
+        {
+            inWater = false;
+            return;
+        }
+
+        waterClock += dt;
+        var any = false;
+        var reach = waterLevel + WaterBuoyancy.MaxWaveHeight;
+        foreach (var rb in ragdollBones)
+        {
+            var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
+            if (body.Kinematic) continue;
+            var position = body.Pose.Position;
+            var bottom = BodyBottom(rb, body);
+            if (bottom >= reach) continue;
+
+            var (surface, surfaceSpeed) = WaterBuoyancy.Surface(waterLevel, position.X, position.Z, waterClock, RagdollTuning.Gravity);
+            var submerged = WaterBuoyancy.Submerged(bottom, 2f * position.Y - bottom, surface);
+            if (submerged <= 0f) continue;
+
+            any = true;
+            var linear = body.Velocity.Linear;
+            var angular = body.Velocity.Angular;
+            WaterBuoyancy.Apply(ref linear, ref angular, submerged, WaterBuoyancy.RelativeDensity(rb.Name),
+                surfaceSpeed, RagdollTuning.Gravity, dt);
+            body.Velocity.Linear = linear;
+            body.Velocity.Angular = angular;
+            body.Awake = true; // moving water never lets a floating body rest
+        }
+        inWater = any;
+    }
+
     private void ApplyFallGravity(float dt)
     {
         if (simulation == null || ragdollBones.Count == 0) return;
+        if (inWater) return; // sinking is not falling
 
         // Being held is not falling.
         if (grabSlots.Count > 0 || standingActive) return;
@@ -7833,7 +7962,8 @@ public unsafe partial class RagdollController : IDisposable
         if (ragdollBones.Count > 0)
             corpseWakeCenter = simulation.Bodies.GetBodyReference(ragdollBones[0].BodyHandle).Pose.Position;
 
-        var activityBlocksRest = externalBodyAwake || HairNeedsStep || npcTraversalProxyActivityThisFrame ||
+        UpdateWaterProbe(dt);
+        var activityBlocksRest = inWater || externalBodyAwake || HairNeedsStep || npcTraversalProxyActivityThisFrame ||
             npcColliderMovedNearCorpse || grabSlots.Count > 0 ||
             directedCollapseActive ||
             entryConditioningActive || kneePowerLossActive || skeletonMoved || biomechanicalSettleActive;
@@ -8117,6 +8247,7 @@ public unsafe partial class RagdollController : IDisposable
                 DriveGrabConstraints(FixedTimestep); // advance finite-force targets before solve
                 ApplyCachedMeshLod();
                 ApplyFallGravity(FixedTimestep); // a descent that bites, on top of the integrator's honest g
+                ApplyWaterForces(FixedTimestep);
                 var steppedExternally = false;
                 StepAdditionalPhysics(FixedTimestep, ref steppedExternally);
                 if (!steppedExternally) StepPhysicsSimulation(FixedTimestep);

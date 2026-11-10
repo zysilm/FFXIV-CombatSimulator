@@ -329,6 +329,11 @@ public partial class Configuration : IPluginConfiguration
     // body onto an enemy doesn't fall through the floor on release. Costs extra
     // raycasts/triangles at activation, so default off.
     public bool ExtendTerrainDetection { get; set; } = false;
+    // Build the ragdoll's ground from the game's own collision triangles instead of a 1 m grid of heights
+    // sampled from them. Follows steps, edges and props exactly; costs more when a patch is built.
+    public bool RagdollExactGroundCollision { get; set; } = false;
+    // Bodies in water get buoyancy and drag (WaterBuoyancy) and float on the game's water surfaces.
+    public bool RagdollWaterBuoyancy { get; set; } = true;
     // NPC death ragdoll
     public bool EnableNpcDeathRagdoll { get; set; } = true;
     // Read by the private module; the ragdoll's gravity is fixed (RagdollTuning.Gravity).
